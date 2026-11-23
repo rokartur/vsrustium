@@ -1,15 +1,15 @@
 #!/bin/bash
 # Pixel check: reference capture (CDP) against the port's Metal readback, per theme. Run from the repo root on the Studio.
-# Prints "theme different anti_aliased total"; images land in $OUT. The port has no themes yet, so every theme is
-# diffed against its one frame.
+# Prints "theme different anti_aliased total"; images land in $OUT.
 set -uo pipefail
 OUT=${OUT:-/tmp/pixel-check}
 mkdir -p "$OUT"
-bun port/tools/ref-screenshot "$OUT/reference" >/dev/null
-(cd native && cargo build --release -q -p app --features screenshot && cargo build --release -q -p pixeldiff)
-VSCODE_GPUI_EXTENSIONS=${VSCODE_GPUI_EXTENSIONS:-$HOME/Developer/vscode-ref/extensions} \
-  timeout 120 native/target/release/code-gpui --user-data-dir "$(mktemp -d)" --screenshot "$OUT/port.png"
+bun port/tools/ref-screenshot "$OUT/reference" >/dev/null || exit 1
+(cd native && cargo build --release -q -p app --features screenshot && cargo build --release -q -p pixeldiff) || exit 1
 for theme in dark light hc; do
-  counts=$(native/target/release/pixeldiff "$OUT/reference/$theme.png" "$OUT/port.png" "$OUT/diff-$theme.png")
+  case $theme in dark) theme_id="Dark Modern" ;; light) theme_id="Light Modern" ;; hc) theme_id="Default High Contrast" ;; esac
+  VSCODE_GPUI_EXTENSIONS=${VSCODE_GPUI_EXTENSIONS:-$HOME/Developer/vscode-ref/extensions} \
+    timeout 120 native/target/release/code-gpui --user-data-dir "$(mktemp -d)" --theme "$theme_id" --screenshot "$OUT/port-$theme.png" 2>"$OUT/port-$theme.log" || { echo "$theme: code-gpui failed, see $OUT/port-$theme.log"; exit 1; }
+  counts=$(native/target/release/pixeldiff "$OUT/reference/$theme.png" "$OUT/port-$theme.png" "$OUT/diff-$theme.png")
   echo "$theme $counts"
 done

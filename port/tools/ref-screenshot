@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 // Captures the reference VS Code workbench through CDP (Page.captureScreenshot), so no Screen Recording permission is needed.
-// Usage: port/tools/ref-screenshot <out-dir>   (env REF = reference checkout, default ~/Developer/vscode-ref)
+// Usage: port/tools/ref-screenshot <out-dir> [dark|light|hc ...]   (env REF = reference checkout, default ~/Developer/vscode-ref)
+import { Database } from 'bun:sqlite';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,14 +9,15 @@ import { join } from 'node:path';
 const outDir = process.argv[2] ?? 'port/results/screenshots/reference';
 const ref = process.env.REF ?? join(process.env.HOME!, 'Developer/vscode-ref');
 const electron = join(ref, '.build/electron/Code - OSS.app/Contents/MacOS/Code - OSS');
-const themes = { dark: 'Default Dark Modern', light: 'Default Light Modern', hc: 'Default High Contrast' };
+const themes: Record<string, string> = { dark: 'Default Dark Modern', light: 'Default Light Modern', hc: 'Default High Contrast' };
+const selected = process.argv.length > 3 ? process.argv.slice(3) : Object.keys(themes);
 const width = 1024;
 const height = 768;
 const port = 9333;
 
 mkdirSync(outDir, { recursive: true });
-for (const [name, theme] of Object.entries(themes)) {
-	const png = await capture(theme);
+for (const name of selected) {
+	const png = await capture(themes[name]);
 	writeFileSync(join(outDir, `${name}.png`), png);
 	console.log(`${name}: ${png.length} bytes`);
 }
@@ -37,7 +39,14 @@ async function capture(theme: string) {
 		// The port ships without AI and sign-in (port/notes.md); this is the reference look of that product.
 		'chat.disableAIFeatures': true,
 	}));
-	const app = Bun.spawn([electron, ref, '--user-data-dir', userData, '--remote-debugging-port=' + port, '--disable-extension', 'GitHub.copilot-chat'], {
+	// Same product as the port: no accounts icon (profile storage key of globalCompositeBar.ts isAccountsActionVisible).
+	mkdirSync(join(userData, 'User/globalStorage'));
+	const storage = new Database(join(userData, 'User/globalStorage/state.vscdb'));
+	storage.run('CREATE TABLE ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)');
+	storage.run(`INSERT INTO ItemTable VALUES ('workbench.activity.showAccounts', 'false')`);
+	storage.close();
+	// vscode-api-tests adds the "Hello" status item; product builds exclude it (build/lib/extensions.ts excludedExtensions).
+	const app = Bun.spawn([electron, ref, '--user-data-dir', userData, '--remote-debugging-port=' + port, '--disable-extension', 'GitHub.copilot-chat', '--disable-extension', 'vscode.vscode-api-tests'], {
 		env: { ...process.env, VSCODE_DEV: '1', NODE_ENV: 'development' },
 		stdout: 'ignore',
 		stderr: 'ignore',
@@ -48,6 +57,9 @@ async function capture(theme: string) {
 		await until(async () => (await cdp('Runtime.evaluate', { expression: `!!document.querySelector('.monaco-workbench .part.statusbar')`, returnByValue: true })).result.value === true);
 		// Extensions settle their status bar items after the workbench appears.
 		await Bun.sleep(5000);
+		// The title bar dims when the window is not key, which depends on what else is frontmost on the Studio.
+		await cdp('Page.bringToFront');
+		await until(async () => (await cdp('Runtime.evaluate', { expression: `!document.querySelector('.part.titlebar.inactive')`, returnByValue: true })).result.value === true, 10000);
 		const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
 		return Buffer.from(data, 'base64');
 	} finally {
