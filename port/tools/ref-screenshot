@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 // Captures the reference VS Code workbench through CDP (Page.captureScreenshot), so no Screen Recording permission is needed.
-// Usage: port/tools/ref-screenshot <out-dir> [dark|light|hc ...]   (env REF = reference checkout, default ~/Developer/vscode-ref)
+// Usage: port/tools/ref-screenshot <out-dir> [dark|light|hc ...]   (env REF = reference checkout, default ~/Developer/vscode-ref;
+// env FOLDER = folder to open, default none)
 import { Database } from 'bun:sqlite';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -38,6 +39,11 @@ async function capture(theme: string) {
 		'update.mode': 'none',
 		// The port ships without AI and sign-in (port/notes.md); this is the reference look of that product.
 		'chat.disableAIFeatures': true,
+		// Not ported: the trust dialog and the Seti file icon theme (port/notes.md, milestone 3).
+		'security.workspace.trust.enabled': false,
+		'workbench.iconTheme': null,
+		// With AI off the secondary side bar only hosts chat, so the product without AI has none.
+		'workbench.secondarySideBar.defaultVisibility': 'hidden',
 	}));
 	// Same product as the port: no accounts icon (profile storage key of globalCompositeBar.ts isAccountsActionVisible).
 	mkdirSync(join(userData, 'User/globalStorage'));
@@ -46,7 +52,8 @@ async function capture(theme: string) {
 	storage.run(`INSERT INTO ItemTable VALUES ('workbench.activity.showAccounts', 'false')`);
 	storage.close();
 	// vscode-api-tests adds the "Hello" status item; product builds exclude it (build/lib/extensions.ts excludedExtensions).
-	const app = Bun.spawn([electron, ref, '--user-data-dir', userData, '--remote-debugging-port=' + port, '--disable-extension', 'GitHub.copilot-chat', '--disable-extension', 'vscode.vscode-api-tests'], {
+	const folder = process.env.FOLDER ? [process.env.FOLDER] : [];
+	const app = Bun.spawn([electron, ref, ...folder, '--user-data-dir', userData, '--remote-debugging-port=' + port, '--disable-extension', 'GitHub.copilot-chat', '--disable-extension', 'vscode.vscode-api-tests'], {
 		env: { ...process.env, VSCODE_DEV: '1', NODE_ENV: 'development' },
 		stdout: 'ignore',
 		stderr: 'ignore',
