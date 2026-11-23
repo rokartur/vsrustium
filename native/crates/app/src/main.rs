@@ -1,97 +1,85 @@
-//! The native app. Milestone 1: one GPUI window that starts the extension host and shows the seam working.
+//! The native app. Milestone 2: the empty workbench, themed from the built-in theme files, over the running extension host.
+
+mod theme;
+mod workbench;
 
 use std::path::PathBuf;
 use std::time::Duration;
 
 use exthost::rpc::Arg;
-use exthost::scan::scan_builtin_extensions;
+use exthost::scan::{ScannedExtension, scan_builtin_extensions};
 use exthost::session::{Session, SessionPaths, init_data};
 use exthost::{ExtensionHost, HostOptions, Runtime};
 use futures::StreamExt;
 use futures::channel::mpsc::{UnboundedSender, unbounded};
-use gpui::{App, Bounds, Context, SharedString, Window, WindowBounds, WindowOptions, div, prelude::*, px, rgb, size};
+use gpui::{App, Bounds, TitlebarOptions, Window, WindowBounds, WindowOptions, point, prelude::*, px, size};
 use gpui_platform::application;
 use serde_json::json;
+use theme::load_theme;
+use workbench::Workbench;
 
-struct Workbench {
-    status: Vec<SharedString>,
-}
-
-impl Render for Workbench {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .flex()
-            .flex_col()
-            .size_full()
-            .p_4()
-            .gap_1()
-            .bg(rgb(0x1f1f1f))
-            .text_color(rgb(0xcccccc))
-            .text_sm()
-            .children(self.status.iter().cloned())
-    }
-}
-
-fn main() {
+fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let runtime = if args.iter().any(|arg| arg == "--node") { Runtime::Node } else { Runtime::Bun };
-    let flag_value = |flag: &str| args.iter().position(|arg| arg == flag).and_then(|i| args.get(i + 1)).map(PathBuf::from);
-    let user_data = flag_value("--user-data-dir");
-    let screenshot = flag_value("--screenshot");
+    let flag_value = |flag: &str| args.iter().position(|arg| arg == flag).and_then(|i| args.get(i + 1)).cloned();
+    let user_data = flag_value("--user-data-dir").map(PathBuf::from);
+    let screenshot = flag_value("--screenshot").map(PathBuf::from);
+    // Settings id of workbench.colorTheme; the reference default theme is not ported yet, so Dark Modern is.
+    let theme_id = flag_value("--theme").unwrap_or_else(|| "Dark Modern".into());
+
+    let app_root = std::env::current_dir()?;
+    let extensions_dir = std::env::var_os("VSCODE_GPUI_EXTENSIONS").map(PathBuf::from).unwrap_or_else(|| app_root.join("extensions"));
+    let extensions = scan_builtin_extensions(&extensions_dir)?;
+    let theme = load_theme(&extensions, &theme_id)?;
+
     application().run(move |cx: &mut App| {
         // Same size as the reference capture in port/tools/ref-screenshot, so pixel diffs line up.
         let bounds = Bounds::centered(None, size(px(1024.), px(768.)), cx);
-        cx.open_window(WindowOptions { window_bounds: Some(WindowBounds::Windowed(bounds)), ..Default::default() }, |window, cx| {
+        // The workbench draws its own title bar, as the reference does with window.titleBarStyle custom.
+        let titlebar = TitlebarOptions { title: None, appears_transparent: true, traffic_light_position: Some(point(px(10.), px(10.))) };
+        let options = WindowOptions { window_bounds: Some(WindowBounds::Windowed(bounds)), titlebar: Some(titlebar), ..Default::default() };
+        cx.open_window(options, |window, cx| {
             cx.new(|cx| {
                 let (sender, mut receiver) = unbounded::<String>();
+                let workbench = Workbench { theme, app_root: app_root.clone() };
                 std::thread::Builder::new()
                     .name("exthost-session".into())
                     .spawn(move || {
-                        if let Err(error) = run_extension_host(runtime, user_data, &sender) {
+                        if let Err(error) = run_extension_host(runtime, app_root, extensions, user_data, &sender) {
                             let _ = sender.unbounded_send(format!("extension host failed: {error:#}"));
                         }
                     })
                     .expect("spawn exthost session thread");
-                cx.spawn_in(window, async move |this, cx| {
+                cx.spawn_in(window, async move |_, cx| {
                     while let Some(line) = receiver.next().await {
-                        let activated = line.starts_with(ACTIVATED_PREFIX);
-                        let updated = this.update(cx, |workbench: &mut Workbench, cx| {
-                            workbench.status.push(line.into());
-                            cx.notify();
-                        });
-                        if updated.is_err() {
-                            break;
+                        eprintln!("{line}");
+                        let (true, Some(path)) = (line.starts_with(ACTIVATED_PREFIX), screenshot.as_ref()) else { continue };
+                        // Captured once eager extensions are up, so the frame shows the workbench as the host left it.
+                        cx.background_executor().timer(Duration::from_millis(500)).await;
+                        let saved = cx.update(|window, _| save_screenshot(window, path)).and_then(|result| result);
+                        if let Err(error) = saved {
+                            eprintln!("screenshot failed: {error:#}");
+                            std::process::exit(1);
                         }
-                        if let (true, Some(path)) = (activated, screenshot.as_ref()) {
-                            // Let the frame with the last status line render before reading it back.
-                            cx.background_executor().timer(Duration::from_millis(500)).await;
-                            let saved = cx.update(|window, _| save_screenshot(window, path)).and_then(|result| result);
-                            if let Err(error) = saved {
-                                eprintln!("screenshot failed: {error:#}");
-                                std::process::exit(1);
-                            }
-                            cx.update(|_, cx| cx.quit()).ok();
-                        }
+                        cx.update(|_, cx| cx.quit()).ok();
                     }
                 })
                 .detach();
-                Workbench { status: vec![format!("starting extension host on {runtime:?}").into()] }
+                workbench
             })
         })
         .unwrap();
         cx.activate(true);
     });
+    Ok(())
 }
 
 /// Owns the session for the life of the app: handshake, one call each way, then serves host requests.
-fn run_extension_host(runtime: Runtime, user_data: Option<PathBuf>, status: &UnboundedSender<String>) -> anyhow::Result<()> {
-    let app_root = std::env::current_dir()?;
-    let extensions_dir = std::env::var_os("VSCODE_GPUI_EXTENSIONS").map(PathBuf::from).unwrap_or_else(|| app_root.join("extensions"));
+fn run_extension_host(runtime: Runtime, app_root: PathBuf, extensions: Vec<ScannedExtension>, user_data: Option<PathBuf>, status: &UnboundedSender<String>) -> anyhow::Result<()> {
     let user_data = match user_data {
         Some(dir) => dir,
         None => default_user_data()?,
     };
-    let extensions = scan_builtin_extensions(&extensions_dir)?;
     let paths = SessionPaths { app_root: &app_root, user_data: &user_data, workspace_folder: None };
     let init = init_data(&paths, &extensions, "1.147.0");
     let entry = app_root.join("out-exthost/bootstrap-exthost.js");
