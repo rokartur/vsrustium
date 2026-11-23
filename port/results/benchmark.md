@@ -1,6 +1,6 @@
 # Memory benchmark
 
-Method: `port/tools/bench` (Wu's `script/memory-benchmark`): fresh profile per run, 20 s settle, `footprint` summed over the process tree, median of 3. Mac Studio, macOS 27.2.1. Idle, no folder open. Copilot Chat excluded everywhere (removed by decision, see `port/notes.md`).
+Method: `port/tools/bench` (Wu's `script/memory-benchmark`): fresh profile per run, 20 s settle, `footprint` summed over the process tree, median of 3. Mac Studio, macOS 27.2.1. Idle, no folder open. Copilot Chat excluded everywhere (removed by decision, see `port/notes.md`; the port's scanner now skips it, `scan.rs` `REMOVED_BUILTINS`).
 
 | app | total MiB | extension host MiB | samples (KiB) |
 |---|---|---|---|
