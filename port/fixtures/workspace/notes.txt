@@ -1,1 +1,9 @@
-notes
+Port notes for the fixture workspace.
+
+This file opens in the editor for the pixel check.
+It is plain text, so no grammar colors it.
+
+Lines to check:
+	a tab-indented line
+    a space-indented line
+the end

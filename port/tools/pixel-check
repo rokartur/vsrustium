@@ -1,21 +1,23 @@
 #!/bin/bash
 # Pixel check: reference capture (CDP) against the port's Metal readback, per window and theme. Run from the repo root on the Studio.
-# Windows: "empty" (no folder) and "folder" (port/fixtures/workspace, copied outside the repo so git sees no repository).
+# Windows: "empty" (no folder), "folder" (port/fixtures/workspace, copied outside the repo so git sees no repository)
+# and "file" (the folder with notes.txt open). WINDOWS="file" checks only the listed windows.
 # Prints "window theme different anti_aliased total"; images land in $OUT/<window>.
 set -uo pipefail
 OUT=${OUT:-/tmp/pixel-check}
 mkdir -p "$OUT"
 rm -rf "$OUT/workspace" && cp -R port/fixtures/workspace "$OUT/workspace"
 (cd native && cargo build --release -q -p app --features screenshot && cargo build --release -q -p pixeldiff) || exit 1
-for window in empty folder; do
-  folder=$([[ $window == folder ]] && echo "$OUT/workspace")
+for window in ${WINDOWS:-empty folder file}; do
+  folder=$([[ $window != empty ]] && echo "$OUT/workspace")
+  file=$([[ $window == file ]] && echo "$OUT/workspace/notes.txt")
   dir="$OUT/$window"
   mkdir -p "$dir"
-  FOLDER=$folder bun port/tools/ref-screenshot "$dir/reference" >/dev/null || exit 1
+  FOLDER=$folder FILE=$file bun port/tools/ref-screenshot "$dir/reference" >/dev/null || exit 1
   for theme in dark light hc; do
     case $theme in dark) theme_id="Dark Modern" ;; light) theme_id="Light Modern" ;; hc) theme_id="Default High Contrast" ;; esac
     VSCODE_GPUI_EXTENSIONS=${VSCODE_GPUI_EXTENSIONS:-$HOME/Developer/vscode-ref/extensions} \
-      timeout 120 native/target/release/code-gpui $folder --user-data-dir "$(mktemp -d)" --theme "$theme_id" --screenshot "$dir/port-$theme.png" 2>"$dir/port-$theme.log" || { echo "$window $theme: code-gpui failed, see $dir/port-$theme.log"; exit 1; }
+      timeout 120 native/target/release/code-gpui $folder $file --user-data-dir "$(mktemp -d)" --theme "$theme_id" --screenshot "$dir/port-$theme.png" 2>"$dir/port-$theme.log" || { echo "$window $theme: code-gpui failed, see $dir/port-$theme.log"; exit 1; }
     counts=$(native/target/release/pixeldiff "$dir/reference/$theme.png" "$dir/port-$theme.png" "$dir/diff-$theme.png")
     echo "$window $theme $counts"
   done

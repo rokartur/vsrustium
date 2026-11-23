@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // Captures the reference VS Code workbench through CDP (Page.captureScreenshot), so no Screen Recording permission is needed.
 // Usage: port/tools/ref-screenshot <out-dir> [dark|light|hc ...]   (env REF = reference checkout, default ~/Developer/vscode-ref;
-// env FOLDER = folder to open, default none)
+// env FOLDER = folder to open, default none; env FILE = file to open in that window, default none)
 import { Database } from 'bun:sqlite';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -44,6 +44,8 @@ async function capture(theme: string) {
 		'workbench.iconTheme': null,
 		// With AI off the secondary side bar only hosts chat, so the product without AI has none.
 		'workbench.secondarySideBar.defaultVisibility': 'hidden',
+		// Not ported: the minimap (port/notes.md, milestone 4).
+		'editor.minimap.enabled': false,
 	}));
 	// Same product as the port: no accounts icon (profile storage key of globalCompositeBar.ts isAccountsActionVisible).
 	mkdirSync(join(userData, 'User/globalStorage'));
@@ -52,8 +54,8 @@ async function capture(theme: string) {
 	storage.run(`INSERT INTO ItemTable VALUES ('workbench.activity.showAccounts', 'false')`);
 	storage.close();
 	// vscode-api-tests adds the "Hello" status item; product builds exclude it (build/lib/extensions.ts excludedExtensions).
-	const folder = process.env.FOLDER ? [process.env.FOLDER] : [];
-	const app = Bun.spawn([electron, ref, ...folder, '--user-data-dir', userData, '--remote-debugging-port=' + port, '--disable-extension', 'GitHub.copilot-chat', '--disable-extension', 'vscode.vscode-api-tests'], {
+	const paths = [process.env.FOLDER, process.env.FILE].filter(path => path);
+	const app = Bun.spawn([electron, ref, ...paths, '--user-data-dir', userData, '--remote-debugging-port=' + port, '--disable-extension', 'GitHub.copilot-chat', '--disable-extension', 'vscode.vscode-api-tests'], {
 		env: { ...process.env, VSCODE_DEV: '1', NODE_ENV: 'development' },
 		stdout: 'ignore',
 		stderr: 'ignore',
@@ -67,6 +69,12 @@ async function capture(theme: string) {
 		// The title bar dims when the window is not key, which depends on what else is frontmost on the Studio.
 		await cdp('Page.bringToFront');
 		await until(async () => (await cdp('Runtime.evaluate', { expression: `!document.querySelector('.part.titlebar.inactive')`, returnByValue: true })).result.value === true, 10000);
+		// The editor's scrollbars show at open; park the pointer on the empty status bar and let them fade.
+		// Only with a file: with the move and wait the side bar sash shows grip dots the other windows' references lack.
+		if (process.env.FILE) {
+			await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 500, y: 754 });
+			await Bun.sleep(1500);
+		}
 		const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
 		return Buffer.from(data, 'base64');
 	} finally {
