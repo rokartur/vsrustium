@@ -46,6 +46,21 @@ Done when: `port/tools/pixel-check` diffs all three themes; every non-anti-alias
 - shortcut: the window border radius is the macOS 26+ value (16px); older macOS uses 10px.
 - shortcut: High Contrast Light has no registry defaults yet; loading it fails with "not ported".
 
+## Milestone 3: open a folder
+
+Scope: `code-gpui <folder>` passes the folder to the extension host as its workspace (`init_data` and `$initializeWorkspace`, the same `IWorkspaceData` as `exthost-probe --workspace`) and draws the window the reference shows with that folder open: Explorer active in the activity bar, the side bar with the folder tree and the collapsed Outline and Timeline sections, the folder name in the command center, the folder status bar. Clicking a folder row expands or collapses it.
+
+Done when: `port/tools/pixel-check` diffs the empty and the folder window (`port/fixtures/workspace`) in all three themes, with every non-anti-aliased difference listed in `port/results/pixels.md`; `cargo test -p app` passes with the tree test.
+
+- The tree (`explorer.rs`) is read from disk on every render: folders first, then names compared case-insensitively (`FileSorter` default), with `files.exclude`'s default names hidden.
+- pixel-check copies the fixture outside the repository, so the git extension finds no repository and the reference draws no SCM decorations.
+- The reference runs with `security.workspace.trust.enabled: false` (no trust dialog) and `workbench.secondarySideBar.defaultVisibility: hidden` (with AI off the secondary side bar is empty).
+- shortcut: no file icon theme; the reference is captured with `workbench.iconTheme: null`. Port Seti when the editor opens files.
+- shortcut: no file watcher; the tree shows the disk at the last redraw. Add a watcher with file operations.
+- shortcut: names sort with plain lowercase comparison, not `compareFileNamesDefault`'s numeric collation (`file10` before `file9`).
+- shortcut: an unreadable folder shows no children, without the reference's error.
+- shortcut: rows have no selection, focus, hover, keyboard navigation or scrolling; a tree taller than the side bar is clipped.
+
 ## Benchmarks
 
 - `port/tools/bench`: Wu's `script/memory-benchmark` method generalized to N apps (`APPS="name=cmd;..."`), plus an extension host line per app.

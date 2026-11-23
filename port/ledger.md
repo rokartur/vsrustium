@@ -283,7 +283,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | editor/contrib/wordOperations | src/vs/editor/contrib | todo |  |
 | editor/contrib/wordPartOperations | src/vs/editor/contrib | todo |  |
 | editor/contrib/zoneWidget | src/vs/editor/contrib | todo |  |
-| workbench/parts/activitybar | workbench part | ported | empty state only (view icons, settings gear, no badges or clicks); pixel-check (port/results/pixels.md): same geometry, codicon edge pixels only |
+| workbench/parts/activitybar | workbench part | ported | view icons with Explorer active when a folder is open, settings gear; no badges or clicks; pixel-check (port/results/pixels.md): same geometry, codicon edge pixels and active background rounding only |
 | workbench/parts/auxiliarybar | workbench part | todo |  |
 | workbench/parts/banner | workbench part | todo |  |
 | workbench/parts/chat | workbench part | removed | no sign-in/AI by decision (port/notes.md); not ported |
@@ -293,10 +293,10 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/parts/panel | workbench part | todo |  |
 | workbench/parts/partGrid | workbench part | stub | fixed floating layout drawn with flex (workbench.rs), no grid, sashes or hidden parts; pixel-check (port/results/pixels.md): part bounds match at 1024x768 |
 | workbench/parts/sessions | workbench part | removed | no sign-in/AI by decision (port/notes.md); not ported |
-| workbench/parts/sidebar | workbench part | todo |  |
-| workbench/parts/statusbar | workbench part | ported | no-folder state only (remote, problems, bell; entries from extensions not shown); pixel-check (port/results/pixels.md): text advance differs by half a device pixel |
-| workbench/parts/titlebar | workbench part | ported | active window only (command center, nav and layout actions; no menus, no clicks); pixel-check (port/results/pixels.md): blending rounding and glyph edges only |
-| workbench/parts/views | workbench part | todo |  |
+| workbench/parts/sidebar | workbench part | ported | Explorer only (title, folder section, collapsed Outline and Timeline), shown when a folder is open; pixel-check (port/results/pixels.md, milestone 3): chevron and label edge pixels only |
+| workbench/parts/statusbar | workbench part | ported | no-folder and folder colors (remote, problems, bell; entries from extensions not shown); pixel-check (port/results/pixels.md): text advance differs by half a device pixel |
+| workbench/parts/titlebar | workbench part | ported | active window only (command center with the folder name, nav and layout actions; no menus, no clicks); pixel-check (port/results/pixels.md): blending rounding and glyph edges only |
+| workbench/parts/views | workbench part | stub | pane headers drawn statically (workbench.rs section_header): no collapse, resize or view actions |
 | workbench/services/accessibility | workbench service | todo |  |
 | workbench/services/accounts | workbench service | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/services/actions | workbench service | todo |  |
@@ -419,7 +419,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/extensions | workbench contribution | todo |  |
 | workbench/contrib/externalTerminal | workbench contribution | todo |  |
 | workbench/contrib/externalUriOpener | workbench contribution | todo |  |
-| workbench/contrib/files | workbench contribution | todo |  |
+| workbench/contrib/files | workbench contribution | stub | Explorer tree read from disk (explorer.rs): folders first, default excludes, click to expand; no file icons, watcher, selection, file operations or opening files (port/notes.md milestone 3) |
 | workbench/contrib/folding | workbench contribution | todo |  |
 | workbench/contrib/format | workbench contribution | todo |  |
 | workbench/contrib/git | workbench contribution | todo |  |
