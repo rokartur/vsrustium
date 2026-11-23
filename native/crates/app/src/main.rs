@@ -1,11 +1,15 @@
 //! The native app: the workbench, themed from the built-in theme files, over the running extension host.
-//! Usage: code-gpui [folder] [--theme <settings id>] [--user-data-dir <dir>] [--screenshot <png>] [--node]
+//! Usage: code-gpui [folder [file]] [--theme <settings id>] [--user-data-dir <dir>] [--screenshot <png>] [--node]
 
+mod editor;
 mod explorer;
+mod host_sync;
+mod languages;
 mod theme;
 mod workbench;
 
 use std::path::PathBuf;
+use std::sync::mpsc::{Receiver, channel};
 use std::time::Duration;
 
 use exthost::rpc::Arg;
@@ -19,6 +23,8 @@ use gpui_platform::application;
 use serde_json::json;
 use anyhow::Context as _;
 use explorer::FileTree;
+use host_sync::{HostMessage, HostSync};
+use languages::Languages;
 use theme::load_theme;
 use workbench::Workbench;
 
@@ -31,8 +37,10 @@ fn main() -> anyhow::Result<()> {
     // Settings id of workbench.colorTheme; the reference default theme is not ported yet, so Dark Modern is.
     let theme_id = flag_value("--theme").unwrap_or_else(|| "Dark Modern".into());
     let value_flags = ["--user-data-dir", "--screenshot", "--theme"];
-    let folder = args.iter().enumerate().skip(1).find(|(i, arg)| !arg.starts_with("--") && !value_flags.contains(&args[i - 1].as_str()));
-    let folder = folder.map(|(_, path)| std::fs::canonicalize(path).with_context(|| format!("opening folder {path}"))).transpose()?;
+    let positional: Vec<&String> = args.iter().enumerate().skip(1).filter(|(i, arg)| !arg.starts_with("--") && !value_flags.contains(&args[i - 1].as_str())).map(|(_, arg)| arg).collect();
+    let canonical = |path: &String| std::fs::canonicalize(path).with_context(|| format!("opening {path}"));
+    let folder = positional.first().map(|path| canonical(path)).transpose()?;
+    let file = positional.get(1).map(|path| canonical(path)).transpose()?;
 
     let app_root = std::env::current_dir()?;
     let extensions_dir = std::env::var_os("VSCODE_GPUI_EXTENSIONS").map(PathBuf::from).unwrap_or_else(|| app_root.join("extensions"));
@@ -48,11 +56,16 @@ fn main() -> anyhow::Result<()> {
         cx.open_window(options, |window, cx| {
             cx.new(|cx| {
                 let (sender, mut receiver) = unbounded::<String>();
-                let workbench = Workbench { theme, app_root: app_root.clone(), folder: folder.clone().map(FileTree::new) };
+                let (host_sender, host_receiver) = channel();
+                let languages = Languages::new(&extensions);
+                let mut workbench = Workbench::new(theme, app_root.clone(), folder.clone().map(FileTree::new), languages, HostSync::new(host_sender));
+                if let Some(file) = file {
+                    workbench.open_file(file, true, cx);
+                }
                 std::thread::Builder::new()
                     .name("exthost-session".into())
                     .spawn(move || {
-                        if let Err(error) = run_extension_host(runtime, app_root, extensions, user_data, folder, &sender) {
+                        if let Err(error) = run_extension_host(runtime, app_root, extensions, user_data, folder, host_receiver, &sender) {
                             let _ = sender.unbounded_send(format!("extension host failed: {error:#}"));
                         }
                     })
@@ -81,13 +94,15 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Owns the session for the life of the app: handshake, one call each way, then serves host requests.
+/// Owns the session for the life of the app: handshake, one call each way, then serves host requests and
+/// forwards what the workbench tells the host.
 fn run_extension_host(
     runtime: Runtime,
     app_root: PathBuf,
     extensions: Vec<ScannedExtension>,
     user_data: Option<PathBuf>,
     folder: Option<PathBuf>,
+    workbench_messages: Receiver<HostMessage>,
     status: &UnboundedSender<String>,
 ) -> anyhow::Result<()> {
     let user_data = match user_data {
@@ -106,7 +121,15 @@ fn run_extension_host(
     let _ = status.unbounded_send(format!("main -> host: $test_latency(7) = {reply:?}"));
     let _ = status.unbounded_send(format!("host -> main: {} requests so far", session.log.host_calls.values().sum::<u32>()));
     let _ = status.unbounded_send(format!("{ACTIVATED_PREFIX}{}", session.log.activated.join(", ")));
-    while session.pump(Duration::from_secs(1))? {}
+    // The short pump timeout bounds how long a workbench change waits before the host hears of it.
+    loop {
+        for message in workbench_messages.try_iter() {
+            session.notify(message.proxy, message.method, message.args);
+        }
+        if !session.pump(Duration::from_millis(20))? {
+            break;
+        }
+    }
     let _ = status.unbounded_send("extension host exited".into());
     Ok(())
 }

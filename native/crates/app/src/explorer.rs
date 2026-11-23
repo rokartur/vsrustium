@@ -10,6 +10,7 @@ const EXCLUDED_NAMES: [&str; 6] = [".git", ".svn", ".hg", ".jj", ".DS_Store", "T
 pub struct FileTree {
     pub root: PathBuf,
     expanded: HashSet<PathBuf>,
+    pub selected: Option<PathBuf>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -24,7 +25,18 @@ pub struct Row {
 
 impl FileTree {
     pub fn new(root: PathBuf) -> Self {
-        Self { root, expanded: HashSet::new() }
+        Self { root, expanded: HashSet::new(), selected: None }
+    }
+
+    /// Expands the folders above `path` and selects it, as `explorer.autoReveal` does for the active editor.
+    pub fn reveal(&mut self, path: &Path) {
+        if !path.starts_with(&self.root) {
+            return;
+        }
+        for folder in path.ancestors().skip(1).take_while(|folder| *folder != self.root) {
+            self.expanded.insert(folder.to_path_buf());
+        }
+        self.selected = Some(path.to_path_buf());
     }
 
     pub fn toggle(&mut self, folder: &Path) {
@@ -96,6 +108,10 @@ mod tests {
 
         tree.toggle(&root.join("src"));
         assert_eq!(names(&tree).len(), 4);
+
+        tree.reveal(&root.join("src/main.ts"));
+        assert_eq!(names(&tree).len(), 5);
+        assert_eq!(tree.selected, Some(root.join("src/main.ts")));
         std::fs::remove_dir_all(root).unwrap();
     }
 }

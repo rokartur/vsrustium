@@ -2,11 +2,19 @@
 //! (src/vs/workbench/browser/media/floatingPanels.css), empty or with a folder in the Explorer.
 //! Sizes are the reference's CSS pixels.
 
+mod editor_view;
+
+use std::cell::Cell;
 use std::path::PathBuf;
+use std::rc::Rc;
+use std::sync::Arc;
 
-use gpui::{Context, Div, FontWeight, Rgba, Window, div, prelude::*, px, rgb, svg, transparent_black};
+use gpui::{ClickEvent, Context, Div, FontFeatures, FontWeight, Rgba, UniformListScrollHandle, Window, div, prelude::*, px, rgb, svg, transparent_black};
 
+use crate::editor::{EditorGroup, TextDocument};
 use crate::explorer::FileTree;
+use crate::host_sync::HostSync;
+use crate::languages::Languages;
 use crate::theme::{Theme, ThemeKind};
 
 pub struct Workbench {
@@ -15,6 +23,12 @@ pub struct Workbench {
     pub app_root: PathBuf,
     /// The opened folder; `None` is the empty window.
     pub folder: Option<FileTree>,
+    pub languages: Languages,
+    pub editors: EditorGroup,
+    host: HostSync,
+    editor_scroll: UniformListScrollHandle,
+    /// Window x of the text area, recorded at paint, to turn a click into a column.
+    text_area_left: Rc<Cell<f32>>,
 }
 
 impl Render for Workbench {
@@ -42,7 +56,7 @@ impl Render for Workbench {
                     .pb(px(4.))
                     // The side bar meets the activity bar flush; the bar draws the seam (floatingPanels.css).
                     .child(div().flex().child(self.activity_bar()).when(self.folder.is_some(), |row| row.child(self.side_bar(cx))))
-                    .child(self.editor_part()),
+                    .child(if self.editors.active().is_some() { self.text_editor_part(window, cx) } else { self.editor_part() }),
             )
             .child(self.status_bar());
         div()
@@ -59,6 +73,47 @@ impl Render for Workbench {
 }
 
 impl Workbench {
+    pub fn new(theme: Theme, app_root: PathBuf, folder: Option<FileTree>, languages: Languages, host: HostSync) -> Self {
+        Workbench {
+            theme,
+            app_root,
+            folder,
+            languages,
+            editors: EditorGroup::default(),
+            host,
+            editor_scroll: UniformListScrollHandle::new(),
+            text_area_left: Rc::default(),
+        }
+    }
+
+    /// A single click opens a preview editor, a double click a pinned one (`workbench.editor.enablePreview`).
+    pub fn open_file(&mut self, path: PathBuf, pinned: bool, cx: &mut Context<Self>) {
+        match self.editors.find(&path) {
+            Some(index) => {
+                self.editors.activate(index);
+                if pinned {
+                    self.editors.pin(index);
+                }
+            }
+            None => match TextDocument::read(&path, &self.languages) {
+                Ok(document) => self.editors.open(document, !pinned),
+                // shortcut: a read error is logged, not shown as the reference's editor error placeholder.
+                Err(error) => eprintln!("opening {}: {error}", path.display()),
+            },
+        }
+        self.editors_changed(cx);
+    }
+
+    /// Keeps the Explorer selection, the scroll position and the extension host in step with the group.
+    fn editors_changed(&mut self, cx: &mut Context<Self>) {
+        if let (Some(tree), Some(editor)) = (self.folder.as_mut(), self.editors.active()) {
+            tree.reveal(&editor.document.path);
+        }
+        self.editor_scroll = UniformListScrollHandle::new();
+        self.host.send_changes(&self.editors);
+        cx.notify();
+    }
+
     /// No color resolves to transparent, as an unset CSS variable does.
     fn color(&self, key: &str) -> Rgba {
         self.theme.color(key).unwrap_or(transparent_black().into())
@@ -160,6 +215,11 @@ impl Workbench {
             .child(self.icon("ellipsis", 22., 16., foreground));
         // explorerviewlet.css: in high contrast an explorer item has a 20px line from the row top, 1px above center.
         let label_line = if self.theme.kind == ThemeKind::HighContrastDark { 20. } else { 22. };
+        // The tree is not focused once the editor has focus, so the selection takes the inactive colors.
+        let selection = self.color("list.inactiveSelectionBackground");
+        // listWidget.ts: a selected row gets a 1px dotted listSelectionOutline (activeContrastBorder) inside it.
+        let selection_outline = self.theme.color("contrastActiveBorder");
+        let selected = tree.selected.clone();
         let folder_name = tree.root.file_name().unwrap_or_default().to_string_lossy().into_owned();
         let rows = tree.rows().into_iter().enumerate().map(|(index, row)| {
             let twistie = match (row.is_dir, row.expanded) {
@@ -168,6 +228,7 @@ impl Workbench {
                 (false, _) => None,
             };
             let path = row.path;
+            let is_dir = row.is_dir;
             div()
                 .id(index)
                 .h(px(22.))
@@ -182,10 +243,20 @@ impl Workbench {
                     None => div().size(px(16.)).flex_none(),
                 })
                 .child(div().self_start().ml(px(3.)).line_height(px(label_line)).child(row.name))
-                .when(row.is_dir, |row| row.on_click(cx.listener(move |workbench, _, _, cx| {
-                    workbench.folder.as_mut().expect("rows exist only with a folder").toggle(&path);
-                    cx.notify();
-                })))
+                .when(selected.as_ref() == Some(&path), |row| {
+                    // shortcut: dashed, GPUI has no dotted border.
+                    // An overlay, since a border on the row would push its content 1px like a CSS border, not an outline.
+                    let outline = selection_outline.map(|color| div().absolute().inset_0().rounded(px(4.)).border_1().border_dashed().border_color(color));
+                    row.relative().bg(selection).children(outline)
+                })
+                .on_click(cx.listener(move |workbench, event: &ClickEvent, _, cx| {
+                    if is_dir {
+                        workbench.folder.as_mut().expect("rows exist only with a folder").toggle(&path);
+                        cx.notify();
+                    } else {
+                        workbench.open_file(path.clone(), event.click_count() == 2, cx);
+                    }
+                }))
         });
         div()
             .w(px(256.))
@@ -276,8 +347,10 @@ impl Workbench {
             .bg(background)
             .text_color(foreground)
             .text_size(px(12.))
+            // statusbarpart.css: font-variant-numeric: tabular-nums.
+            .font_features(FontFeatures(Arc::new(vec![("tnum".into(), 1)])))
             .child(div().h(px(24.)).flex().child(self.icon("remote", 28., 16., foreground).h_full()).child(problems))
-            .child(self.icon("bell", 28., 16., foreground).h(px(24.)))
+            .child(div().h(px(24.)).flex().children(self.editor_status_items(foreground)).child(self.icon("bell", 28., 16., foreground).h_full()))
     }
 
     /// A codicon centered in a square box. Drawn from the icon's SVG: Wu's text system skips fonts
@@ -303,6 +376,8 @@ mod tests {
 
     use super::Workbench;
     use crate::explorer::FileTree;
+    use crate::host_sync::HostSync;
+    use crate::languages::Languages;
     use crate::theme::load_theme;
 
     #[gpui::test]
@@ -312,7 +387,9 @@ mod tests {
         let theme = load_theme(&[themes], "Dark Modern").unwrap();
         let folder = app_root.join("port/fixtures/workspace");
         let docs = folder.join("docs");
-        let (workbench, cx) = cx.add_window_view(|_, _| Workbench { theme, app_root: app_root.clone(), folder: Some(FileTree::new(folder)) });
+        let languages = Languages::new(&[]);
+        let host = HostSync::new(std::sync::mpsc::channel().0);
+        let (workbench, cx) = cx.add_window_view(|_, _| Workbench::new(theme, app_root.clone(), Some(FileTree::new(folder)), languages, host));
         cx.run_until_parked();
 
         // The first tree row (docs) spans y 96..118 under the side bar's "workspace" header (reference DOM dump).

@@ -149,6 +149,39 @@ fn registry_default(key: &str, kind: ThemeKind) -> ColorValue {
         "modernTab.activeForeground" => (Key("foreground"), Key("foreground"), Key("foreground")),
         "modernActivityBarItem.activeBackground" => (Key("modernTab.activeBackground"), Key("modernTab.activeBackground"), Key("modernTab.activeBackground")),
         "modernActivityBarItem.activeForeground" => (Key("modernTab.activeForeground"), Key("modernTab.activeForeground"), Key("modernTab.activeForeground")),
+        "editor.foreground" => (Hex("#BBBBBB"), Hex("#333333"), Hex("#FFFFFF")),
+        "editorLineNumber.foreground" => (Hex("#858585"), Hex("#237893"), Hex("#FFFFFF")),
+        "editorActiveLineNumber.foreground" => (Hex("#c6c6c6"), Hex("#0B216F"), Key("contrastActiveBorder")),
+        "editorLineNumber.activeForeground" => (
+            Key("editorActiveLineNumber.foreground"),
+            Key("editorActiveLineNumber.foreground"),
+            Key("editorActiveLineNumber.foreground"),
+        ),
+        "editor.lineHighlightBorder" => (Hex("#282828"), Hex("#eeeeee"), Hex("#f38518")),
+        "editorCursor.foreground" => (Hex("#AEAFAD"), Hex("#000000"), Hex("#FFFFFF")),
+        "editor.wordHighlightBackground" => (Hex("#575757B8"), Hex("#57575740"), None),
+        "editor.wordHighlightTextBackground" => (Key("editor.wordHighlightBackground"), Key("editor.wordHighlightBackground"), Key("editor.wordHighlightBackground")),
+        "editor.wordHighlightBorder" => (None, None, Key("contrastActiveBorder")),
+        "editor.wordHighlightTextBorder" => (Key("editor.wordHighlightBorder"), Key("editor.wordHighlightBorder"), Key("editor.wordHighlightBorder")),
+        "editorWhitespace.foreground" => (Hex("#e3e4e229"), Hex("#33333333"), Hex("#e3e4e229")),
+        "editorIndentGuide.background" => (Key("editorWhitespace.foreground"), Key("editorWhitespace.foreground"), Key("editorWhitespace.foreground")),
+        "editorIndentGuide.background1" => (Key("editorIndentGuide.background"), Key("editorIndentGuide.background"), Key("editorIndentGuide.background")),
+        "editorOverviewRuler.border" => (Hex("#7f7f7f4d"), Hex("#7f7f7f4d"), Hex("#7f7f7f4d")),
+        "editorOverviewRuler.selectionHighlightForeground" => (Hex("#A0A0A0CC"), Hex("#A0A0A0CC"), Hex("#A0A0A0CC")),
+        "editorOverviewRuler.wordHighlightTextForeground" => (
+            Key("editorOverviewRuler.selectionHighlightForeground"),
+            Key("editorOverviewRuler.selectionHighlightForeground"),
+            Key("editorOverviewRuler.selectionHighlightForeground"),
+        ),
+        "breadcrumb.foreground" => (Transparent(&Key("foreground"), 0.8), Transparent(&Key("foreground"), 0.8), Transparent(&Key("foreground"), 0.8)),
+        "breadcrumb.background" => (Key("editor.background"), Key("editor.background"), Key("editor.background")),
+        "editorGroupHeader.tabsBackground" => (Hex("#252526"), Hex("#F3F3F3"), None),
+        "editorGroupHeader.connectedTabsBackground" => (
+            Key("editorGroupHeader.tabsBackground"),
+            Key("editorGroupHeader.tabsBackground"),
+            Key("editorGroupHeader.tabsBackground"),
+        ),
+        "tab.border" => (Hex("#252526"), Hex("#F3F3F3"), Key("contrastBorder")),
         _ => (None, None, None),
     };
     match kind {
@@ -172,7 +205,7 @@ fn parse_hex(text: &str) -> Option<Rgba> {
 }
 
 /// Theme files are JSON with comments and trailing commas; drops both outside strings.
-fn strip_jsonc(text: &str) -> String {
+pub fn strip_jsonc(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();
     while let Some(c) = chars.next() {
@@ -257,6 +290,20 @@ mod tests {
             ("Default High Contrast", "contrastActiveBorder", "#f38518ff"),
             ("Default High Contrast", "sideBarSectionHeader.border", "#6fc3dfff"),
             ("Default High Contrast", "sideBarTitle.border", "#6fc3dfff"),
+            ("Dark Modern", "editorLineNumber.activeForeground", "#ccccccff"),
+            ("Dark Modern", "editor.lineHighlightBorder", "#282828ff"),
+            ("Dark Modern", "editor.wordHighlightTextBackground", "#575757b8"),
+            ("Dark Modern", "editorOverviewRuler.wordHighlightTextForeground", "#a0a0a0cc"),
+            ("Dark Modern", "breadcrumb.foreground", "#cccccccc"),
+            ("Dark Modern", "editorGroupHeader.connectedTabsBackground", "#2b2b2bff"),
+            ("Light Modern", "editor.wordHighlightTextBackground", "#57575740"),
+            ("Light Modern", "editorLineNumber.activeForeground", "#171184ff"),
+            ("Light Modern", "editorCursor.foreground", "#000000ff"),
+            ("Default High Contrast", "editorLineNumber.activeForeground", "#f38518ff"),
+            ("Default High Contrast", "editor.wordHighlightTextBorder", "#f38518ff"),
+            ("Default High Contrast", "editorOverviewRuler.border", "#7f7f7f4d"),
+            ("Default High Contrast", "editorLineNumber.foreground", "#ffffffff"),
+            ("Default High Contrast", "breadcrumb.foreground", "#ffffffcc"),
         ];
         for (theme, key, expected) in cases {
             assert_eq!(builtin_theme(theme).color(key).map(hex).as_deref(), Some(expected), "{theme} {key}");
@@ -265,5 +312,7 @@ mod tests {
         assert_eq!(builtin_theme("Default High Contrast").color("statusBar.noFolderBackground"), None);
         assert_eq!(builtin_theme("Default High Contrast").color("statusBar.background"), None);
         assert_eq!(builtin_theme("Default High Contrast").color("modernActivityBarItem.activeBackground"), None);
+        assert_eq!(builtin_theme("Default High Contrast").color("editor.wordHighlightTextBackground"), None);
+        assert_eq!(builtin_theme("Default High Contrast").color("editorGroupHeader.connectedTabsBackground"), None);
     }
 }
