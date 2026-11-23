@@ -72,6 +72,12 @@ pub fn init_data(paths: &SessionPaths, extensions: &[ScannedExtension], version:
     })
 }
 
+/// The `IWorkspaceData` of a single-folder workspace for `$initializeWorkspace`, with the id and name `init_data` gave it.
+pub fn workspace_data(init: &Value, folder: &Path) -> Value {
+    let name = &init["workspace"]["name"];
+    json!({ "id": init["workspace"]["id"], "name": name, "folders": [{ "uri": file_uri(folder), "name": name, "index": 0 }] })
+}
+
 fn workspace_id(folder: &Path) -> String {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();

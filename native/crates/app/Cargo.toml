@@ -17,5 +17,8 @@ gpui_platform = { workspace = true, features = ["font-kit"] }
 serde_json.workspace = true
 image = { version = "0.25", default-features = false, features = ["png"], optional = true }
 
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+
 [features]
 screenshot = ["gpui/test-support", "gpui_platform/test-support", "dep:image"]

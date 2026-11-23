@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use exthost::rpc::{Arg, Reply};
 use exthost::scan::{extension_identifier, scan_builtin_extensions};
-use exthost::session::{Session, SessionPaths, init_data};
+use exthost::session::{Session, SessionPaths, init_data, workspace_data};
 use exthost::{ExtensionHost, HostOptions, Runtime};
 use serde_json::{Value, json};
 
@@ -39,10 +39,7 @@ fn main() -> anyhow::Result<()> {
     let host = ExtensionHost::start(HostOptions { runtime, entry: &entry, extra_env: vec![], extra_args: vec![] }, &init)?;
     let handshake_ms = started.elapsed().as_secs_f64() * 1000.0;
     let mut session = Session::new(host);
-    let workspace_data = workspace.as_ref().map(|folder| {
-        json!({ "id": init["workspace"]["id"], "name": init["workspace"]["name"], "folders": [{ "uri": exthost::scan::file_uri(folder), "name": init["workspace"]["name"], "index": 0 }] })
-    });
-    session.start(&extensions, workspace_data)?;
+    session.start(&extensions, workspace.as_deref().map(|folder| workspace_data(&init, folder)))?;
     let started_ms = started.elapsed().as_secs_f64() * 1000.0;
 
     // Main -> host round trip.

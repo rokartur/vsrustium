@@ -1,20 +1,24 @@
-//! The empty workbench as the reference draws it with no folder open and the modern floating layout
-//! (src/vs/workbench/browser/media/floatingPanels.css). Sizes are the reference's CSS pixels.
+//! The workbench as the reference draws it in the modern floating layout
+//! (src/vs/workbench/browser/media/floatingPanels.css), empty or with a folder in the Explorer.
+//! Sizes are the reference's CSS pixels.
 
 use std::path::PathBuf;
 
-use gpui::{Context, Div, Rgba, Window, div, prelude::*, px, rgb, svg, transparent_black};
+use gpui::{Context, Div, FontWeight, Rgba, Window, div, prelude::*, px, rgb, svg, transparent_black};
 
+use crate::explorer::FileTree;
 use crate::theme::{Theme, ThemeKind};
 
 pub struct Workbench {
     pub theme: Theme,
     /// The repo root: codicon SVGs and the letterpress are read from upstream's own files under it.
     pub app_root: PathBuf,
+    /// The opened folder; `None` is the empty window.
+    pub folder: Option<FileTree>,
 }
 
 impl Render for Workbench {
-    fn render(&mut self, window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let viewport = window.viewport_size();
         let window_border = self.theme.color("window.activeBorder");
         // The reference lays the grid out at the full window size and shifts it inside the 1px window border.
@@ -28,7 +32,18 @@ impl Render for Workbench {
             .flex()
             .flex_col()
             .child(self.title_bar(f32::from(viewport.width)))
-            .child(div().flex_1().flex().flex_row().gap(px(4.)).px(px(4.)).pb(px(4.)).child(self.activity_bar()).child(self.editor_part()))
+            .child(
+                div()
+                    .flex_1()
+                    .flex()
+                    .flex_row()
+                    .gap(px(4.))
+                    .px(px(4.))
+                    .pb(px(4.))
+                    // The side bar meets the activity bar flush; the bar draws the seam (floatingPanels.css).
+                    .child(div().flex().child(self.activity_bar()).when(self.folder.is_some(), |row| row.child(self.side_bar(cx))))
+                    .child(self.editor_part()),
+            )
             .child(self.status_bar());
         div()
             .relative()
@@ -49,6 +64,11 @@ impl Workbench {
         self.theme.color(key).unwrap_or(transparent_black().into())
     }
 
+    /// A foreground key with no color inherits, as CSS `color` does; every part here inherits `foreground`.
+    fn foreground_or(&self, key: &str) -> Rgba {
+        self.theme.color(key).unwrap_or(self.color("foreground"))
+    }
+
     fn title_bar(&self, viewport_width: f32) -> Div {
         let foreground = self.color("titleBar.activeForeground");
         // Disabled codicon actions take disabledForeground (actionbar.css .disabled .action-label:not(.icon)).
@@ -66,7 +86,7 @@ impl Workbench {
             .border_color(self.color("commandCenter.border"))
             .text_color(self.color("commandCenter.foreground"))
             .text_size(px(12.))
-            .child("Search");
+            .child(self.folder.as_ref().map_or("Search".into(), |folder| folder.root.file_name().unwrap_or_default().to_string_lossy().into_owned()));
         let center = div()
             .absolute()
             .top(px(6.5))
@@ -79,7 +99,8 @@ impl Workbench {
             .child(self.icon("arrow-right", 22., 16., disabled).ml(px(4.)))
             .child(command_center.ml(px(10.)))
             .child(div().w(px(6.)));
-        let layout_actions = ["layout", "layout-sidebar-left-off", "layout-panel-off", "layout-sidebar-right-off"];
+        let side_bar_toggle = if self.folder.is_some() { "layout-sidebar-left" } else { "layout-sidebar-left-off" };
+        let layout_actions = ["layout", side_bar_toggle, "layout-panel-off", "layout-sidebar-right-off"];
         let right = div()
             .absolute()
             .top(px(7.5))
@@ -91,8 +112,9 @@ impl Workbench {
     }
 
     fn activity_bar(&self) -> Div {
-        let views = ["files", "search-large", "source-control", "debug-alt", "extensions"];
+        let views = ["search-large", "source-control", "debug-alt", "extensions"];
         let inactive = self.color("activityBar.inactiveForeground");
+        let explorer = if self.folder.is_some() { self.active_view_icon("files") } else { self.icon("files", 36., 24., inactive) };
         div()
             .w(px(44.))
             .flex()
@@ -101,11 +123,109 @@ impl Workbench {
             .justify_between()
             .py(px(3.))
             .border_1()
-            .rounded(px(8.))
+            .when(self.folder.is_some(), |bar| bar.rounded_l(px(8.)))
+            .when(self.folder.is_none(), |bar| bar.rounded(px(8.)))
             .bg(self.color("activityBar.background"))
             .border_color(self.color("surface.border"))
-            .child(div().flex().flex_col().gap(px(8.)).children(views.map(|name| self.icon(name, 36., 24., inactive))))
+            .child(div().flex().flex_col().gap(px(8.)).child(explorer).children(views.map(|name| self.icon(name, 36., 24., inactive))))
             .child(self.icon("settings-gear", 36., 24., inactive))
+    }
+
+    /// The checked view: a 32px rounded indicator behind the icon (activityaction.css); High Contrast
+    /// hides it and outlines the item in contrastActiveBorder instead.
+    fn active_view_icon(&self, name: &str) -> Div {
+        let indicator = div().absolute().top(px(2.)).left(px(2.)).size(px(32.)).rounded(px(4.));
+        let indicator = match (self.theme.color("modernActivityBarItem.activeBackground"), self.theme.color("contrastActiveBorder")) {
+            (Some(background), _) => indicator.bg(background),
+            (None, Some(outline)) => indicator.border_1().border_color(outline),
+            (None, None) => indicator,
+        };
+        div().relative().child(indicator).child(self.icon(name, 36., 24., self.color("modernActivityBarItem.activeForeground")))
+    }
+
+    /// The Explorer: title, the folder section with its tree, and the collapsed Outline and Timeline sections.
+    fn side_bar(&self, cx: &mut Context<Self>) -> Div {
+        let tree = self.folder.as_ref().expect("side bar is drawn only with a folder");
+        let foreground = self.foreground_or("sideBar.foreground");
+        let title = div()
+            .h(px(32.))
+            .flex_none()
+            .flex()
+            .items_center()
+            .justify_between()
+            .px(px(4.))
+            .when_some(self.theme.color("sideBarTitle.border"), |title, border| title.border_b_1().border_color(border))
+            // The h2 keeps its 32px line under the HC border-bottom, so it is laid out from the top, not centered.
+            .child(div().self_start().pl(px(8.)).line_height(px(32.)).text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).text_color(self.foreground_or("sideBarTitle.foreground")).child("Explorer"))
+            .child(self.icon("ellipsis", 22., 16., foreground));
+        // explorerviewlet.css: in high contrast an explorer item has a 20px line from the row top, 1px above center.
+        let label_line = if self.theme.kind == ThemeKind::HighContrastDark { 20. } else { 22. };
+        let folder_name = tree.root.file_name().unwrap_or_default().to_string_lossy().into_owned();
+        let rows = tree.rows().into_iter().enumerate().map(|(index, row)| {
+            let twistie = match (row.is_dir, row.expanded) {
+                (true, true) => Some("chevron-down"),
+                (true, false) => Some("chevron-right"),
+                (false, _) => None,
+            };
+            let path = row.path;
+            div()
+                .id(index)
+                .h(px(22.))
+                .mx(px(4.))
+                .flex()
+                .items_center()
+                .rounded(px(4.))
+                // monaco-tl-twistie: 3px row inset, 8px base indent plus 8px per level, a 16px icon, 6px before the label.
+                .pl(px(11. + 8. * (row.depth - 1) as f32))
+                .child(match twistie {
+                    Some(name) => self.icon(name, 16., 16., foreground),
+                    None => div().size(px(16.)).flex_none(),
+                })
+                .child(div().self_start().ml(px(3.)).line_height(px(label_line)).child(row.name))
+                .when(row.is_dir, |row| row.on_click(cx.listener(move |workbench, _, _, cx| {
+                    workbench.folder.as_mut().expect("rows exist only with a folder").toggle(&path);
+                    cx.notify();
+                })))
+        });
+        div()
+            .w(px(256.))
+            .flex()
+            .flex_col()
+            // The seam with the activity bar is the bar's border; the side bar keeps a transparent 1px edge.
+            .pl(px(1.))
+            .border_t_1()
+            .border_r_1()
+            .border_b_1()
+            .rounded_r(px(8.))
+            .bg(self.color("sideBar.background"))
+            .border_color(self.color("surface.border"))
+            .text_color(foreground)
+            .child(title)
+            .child(div().flex_1().overflow_hidden().flex().flex_col().child(self.section_header(&folder_name, true, false)).children(rows))
+            .child(self.section_header("Outline", false, true))
+            .child(self.section_header("Timeline", false, true))
+            // The pane view is laid out 5px shorter than the side bar content.
+            .child(div().h(px(5.)).flex_none())
+    }
+
+    /// A pane header (paneview.ts): 28px, sideBarSectionHeader colors, a top border on every section but the first.
+    fn section_header(&self, title: &str, expanded: bool, separated: bool) -> Div {
+        let foreground = self.foreground_or("sideBarSectionHeader.foreground");
+        let border = self.theme.color("sideBarSectionHeader.border").filter(|_| separated);
+        div()
+            .relative()
+            .h(px(28.))
+            .flex_none()
+            .mx(px(4.))
+            .pl(px(4.))
+            .flex()
+            .items_center()
+            .rounded(px(4.))
+            .bg(self.color("sideBarSectionHeader.background"))
+            .text_color(foreground)
+            .when_some(border, |header, border| header.child(div().absolute().top_0().left_0().right_0().h(px(1.)).bg(border)))
+            .child(self.icon(if expanded { "chevron-down" } else { "chevron-right" }, 16., 16., foreground).mx(px(2.)))
+            .child(div().text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).child(title.to_string()))
     }
 
     fn editor_part(&self) -> Div {
@@ -132,7 +252,10 @@ impl Workbench {
     }
 
     fn status_bar(&self) -> Div {
-        let foreground = self.color("statusBar.noFolderForeground");
+        let (foreground, background) = match self.folder {
+            Some(_) => (self.color("statusBar.foreground"), self.color("statusBar.background")),
+            None => (self.color("statusBar.noFolderForeground"), self.color("statusBar.noFolderBackground")),
+        };
         let problems = div()
             .h_full()
             .ml(px(3.))
@@ -150,7 +273,7 @@ impl Workbench {
             .justify_between()
             .items_center()
             .px(px(12.))
-            .bg(self.color("statusBar.noFolderBackground"))
+            .bg(background)
             .text_color(foreground)
             .text_size(px(12.))
             .child(div().h(px(24.)).flex().child(self.icon("remote", 28., 16., foreground).h_full()).child(problems))
@@ -168,5 +291,38 @@ impl Workbench {
             .items_center()
             .justify_center()
             .child(svg().external_path(path.to_string_lossy().into_owned()).size(px(icon_size)).text_color(color))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use exthost::scan::scan_extension;
+    use gpui::{Modifiers, TestAppContext, point, px};
+
+    use super::Workbench;
+    use crate::explorer::FileTree;
+    use crate::theme::load_theme;
+
+    #[gpui::test]
+    fn clicking_a_folder_row_toggles_it(cx: &mut TestAppContext) {
+        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
+        let theme = load_theme(&[themes], "Dark Modern").unwrap();
+        let folder = app_root.join("port/fixtures/workspace");
+        let docs = folder.join("docs");
+        let (workbench, cx) = cx.add_window_view(|_, _| Workbench { theme, app_root: app_root.clone(), folder: Some(FileTree::new(folder)) });
+        cx.run_until_parked();
+
+        // The first tree row (docs) spans y 96..118 under the side bar's "workspace" header (reference DOM dump).
+        let docs_row = point(px(120.), px(107.));
+        let docs_expanded = |cx: &mut gpui::VisualTestContext| {
+            workbench.read_with(cx, |workbench, _| workbench.folder.as_ref().unwrap().rows().iter().any(|row| row.path == docs && row.expanded))
+        };
+        cx.simulate_click(docs_row, Modifiers::none());
+        assert!(docs_expanded(cx));
+        cx.simulate_click(docs_row, Modifiers::none());
+        assert!(!docs_expanded(cx));
     }
 }

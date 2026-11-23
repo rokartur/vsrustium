@@ -134,6 +134,21 @@ fn registry_default(key: &str, kind: ThemeKind) -> ColorValue {
         "statusBar.foreground" => (Hex("#FFFFFF"), Hex("#FFFFFF"), Hex("#FFFFFF")),
         "statusBar.noFolderForeground" => (Key("statusBar.foreground"), Key("statusBar.foreground"), Key("statusBar.foreground")),
         "statusBar.noFolderBackground" => (Hex("#68217A"), Hex("#68217A"), None),
+        "statusBar.background" => (Hex("#007ACC"), Hex("#007ACC"), None),
+        "focusBorder" => (Hex("#007FD4"), Hex("#0090F1"), Hex("#F38518")),
+        "contrastActiveBorder" => (None, None, Key("focusBorder")),
+        "sideBar.border" => (None, None, Key("contrastBorder")),
+        "sideBarTitle.foreground" => (Key("sideBar.foreground"), Key("sideBar.foreground"), Key("sideBar.foreground")),
+        "sideBarTitle.border" => (None, None, Key("sideBar.border")),
+        "sideBarSectionHeader.background" => (Hex("#80808033"), Hex("#80808033"), None),
+        "sideBarSectionHeader.foreground" => (Key("sideBar.foreground"), Key("sideBar.foreground"), Key("sideBar.foreground")),
+        "sideBarSectionHeader.border" => (Key("contrastBorder"), Key("contrastBorder"), Key("contrastBorder")),
+        "list.inactiveSelectionBackground" => (Hex("#37373D"), Hex("#E4E6F1"), None),
+        "modernTab.activeBackground" => (Key("list.inactiveSelectionBackground"), Key("list.inactiveSelectionBackground"), Key("list.inactiveSelectionBackground")),
+        // oneOf(list.inactiveSelectionForeground, foreground), and the first has no default.
+        "modernTab.activeForeground" => (Key("foreground"), Key("foreground"), Key("foreground")),
+        "modernActivityBarItem.activeBackground" => (Key("modernTab.activeBackground"), Key("modernTab.activeBackground"), Key("modernTab.activeBackground")),
+        "modernActivityBarItem.activeForeground" => (Key("modernTab.activeForeground"), Key("modernTab.activeForeground"), Key("modernTab.activeForeground")),
         _ => (None, None, None),
     };
     match kind {
@@ -236,11 +251,19 @@ mod tests {
             ("Default High Contrast", "window.activeBorder", "#6fc3dfff"),
             ("Default High Contrast", "commandCenter.border", "#6fc3dfff"),
             ("Default High Contrast", "statusBar.noFolderForeground", "#ffffffff"),
+            ("Dark Modern", "modernActivityBarItem.activeBackground", "#ffffff22"),
+            ("Dark Modern", "modernActivityBarItem.activeForeground", "#ccccccff"),
+            ("Light Modern", "sideBarSectionHeader.border", "#e5e5e5ff"),
+            ("Default High Contrast", "contrastActiveBorder", "#f38518ff"),
+            ("Default High Contrast", "sideBarSectionHeader.border", "#6fc3dfff"),
+            ("Default High Contrast", "sideBarTitle.border", "#6fc3dfff"),
         ];
         for (theme, key, expected) in cases {
             assert_eq!(builtin_theme(theme).color(key).map(hex).as_deref(), Some(expected), "{theme} {key}");
         }
         assert_eq!(builtin_theme("Default High Contrast").color("commandCenter.background"), None);
         assert_eq!(builtin_theme("Default High Contrast").color("statusBar.noFolderBackground"), None);
+        assert_eq!(builtin_theme("Default High Contrast").color("statusBar.background"), None);
+        assert_eq!(builtin_theme("Default High Contrast").color("modernActivityBarItem.activeBackground"), None);
     }
 }
