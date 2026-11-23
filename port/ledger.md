@@ -283,19 +283,19 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | editor/contrib/wordOperations | src/vs/editor/contrib | todo |  |
 | editor/contrib/wordPartOperations | src/vs/editor/contrib | todo |  |
 | editor/contrib/zoneWidget | src/vs/editor/contrib | todo |  |
-| workbench/parts/activitybar | workbench part | todo |  |
+| workbench/parts/activitybar | workbench part | ported | empty state only (view icons, settings gear, no badges or clicks); pixel-check (port/results/pixels.md): same geometry, codicon edge pixels only |
 | workbench/parts/auxiliarybar | workbench part | todo |  |
 | workbench/parts/banner | workbench part | todo |  |
 | workbench/parts/chat | workbench part | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/parts/dialogs | workbench part | todo |  |
-| workbench/parts/editor | workbench part | todo |  |
+| workbench/parts/editor | workbench part | ported | empty state only (letterpress watermark, no groups or tabs); pixel-check (port/results/pixels.md): letterpress matches |
 | workbench/parts/notifications | workbench part | todo |  |
 | workbench/parts/panel | workbench part | todo |  |
-| workbench/parts/partGrid | workbench part | todo |  |
+| workbench/parts/partGrid | workbench part | stub | fixed floating layout drawn with flex (workbench.rs), no grid, sashes or hidden parts; pixel-check (port/results/pixels.md): part bounds match at 1024x768 |
 | workbench/parts/sessions | workbench part | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/parts/sidebar | workbench part | todo |  |
-| workbench/parts/statusbar | workbench part | todo |  |
-| workbench/parts/titlebar | workbench part | todo |  |
+| workbench/parts/statusbar | workbench part | ported | no-folder state only (remote, problems, bell; entries from extensions not shown); pixel-check (port/results/pixels.md): text advance differs by half a device pixel |
+| workbench/parts/titlebar | workbench part | ported | active window only (command center, nav and layout actions; no menus, no clicks); pixel-check (port/results/pixels.md): blending rounding and glyph edges only |
 | workbench/parts/views | workbench part | todo |  |
 | workbench/services/accessibility | workbench service | todo |  |
 | workbench/services/accounts | workbench service | removed | no sign-in/AI by decision (port/notes.md); not ported |
@@ -376,7 +376,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/textfile | workbench service | todo |  |
 | workbench/services/textmodelResolver | workbench service | todo |  |
 | workbench/services/textresourceProperties | workbench service | todo |  |
-| workbench/services/themes | workbench service | todo |  |
+| workbench/services/themes | workbench service | ported | built-in color themes by settings id, include chain, registry defaults for shell keys (theme.rs); cargo test -p app (2 tests); no token colors, icon themes or hc-light |
 | workbench/services/timer | workbench service | todo |  |
 | workbench/services/title | workbench service | todo |  |
 | workbench/services/treeSitter | workbench service | todo |  |

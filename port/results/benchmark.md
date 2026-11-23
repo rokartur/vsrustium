@@ -4,15 +4,15 @@ Method: `port/tools/bench` (Wu's `script/memory-benchmark`): fresh profile per r
 
 | app | total MiB | extension host MiB | samples (KiB) |
 |---|---|---|---|
-| port, Bun host | 109.0 | 57.0 | 111616 111616 111616 |
-| port, Node host (control) | 151.0 | 98.0 | 153600 154624 154624 |
+| port, Bun host | 109.0 | 41.0 | 111616 111616 110592 |
+| port, Node host (control) | 153.0 | 85.0 | 156672 157696 156672 |
 | VS Code 1.147.0 reference (dev build) | 1978.2 | 151.0 | 2050241 2003153 2025665 |
 | Wu a3ced28 (release) | 156.0 | 0 (no extension host) | 159744 158720 161792 |
 
-Extension host overhead, Bun against Node: -41 MiB (57 vs 98).
+Extension host overhead, Bun against Node: -44 MiB (41 vs 85). Port rows rerun with the empty workbench drawn (milestone 2); the other rows are from milestone 1.
 
 Read with care:
-- The port draws only a status window so far; its total is the shell plus the extension host, not a workbench. The comparable number today is the extension host line.
+- The port draws the empty workbench (no folder, no editor). Against milestone 1's status window the shell grew from 52 to 68 MiB and the Bun host dropped from 57 to 41 MiB, so the total stayed at 109 MiB; the host drop was not investigated.
 - The reference is an unbundled dev build (`VSCODE_DEV=1`), heavier than a packaged release. A packaged reference build is still to measure.
 - Wu measured 99 MiB in one earlier full run and 154 to 156 MiB in two later ones; cause not investigated.
 - With Copilot Chat loaded, the port's host grows to 197 MiB (Bun) and 735 MiB (Node), because its activation never completes against the stub main thread. The reference host stays at 150 MiB with or without it.

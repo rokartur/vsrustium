@@ -32,6 +32,20 @@ Host changes, all gated on `process.versions.bun` so Node behaves as upstream:
 
 Decision (Artur): the port ships no sign-in and no AI features. Copilot Chat, chat views, inline chat, language models, MCP and agent parts are removed, and so are the accounts UI and Settings Sync sign-in. The extension API stays as an inert surface, like telemetry: `vscode.authentication`, `vscode.lm` and `vscode.chat` report no providers, so third-party extensions keep loading. Ledger rows for these parts become `removed` (by decision), not `todo`.
 
+## Milestone 2: empty workbench
+
+Scope: the window the reference opens with no folder (title bar with command center and layout actions, activity bar, editor part with the letterpress watermark, no-folder status bar) in the modern floating layout, drawn by GPUI from the built-in theme JSON, in Dark Modern, Light Modern and Default High Contrast.
+
+Done when: `port/tools/pixel-check` diffs all three themes; every non-anti-aliased difference left is listed in `port/results/pixels.md` with its cause; the theme tests pass (`cargo test -p app`); the benchmark is rerun with the workbench drawn.
+
+- Theme resolution follows `ColorThemeData`: the `include` chain merged with the including file winning, then the `registerColor` default for the keys the shell paints (`theme.rs` `registry_default`). A key with no value is transparent, like an unset CSS variable.
+- `--theme` takes the settings id (`workbench.colorTheme`), not the extension id.
+- Codicons are drawn from `@vscode/codicons/src/icons/*.svg`, not `codicon.ttf`: Wu's macOS text system skips any font without an `m` glyph (`gpui_macos` `load_family`). The SVGs and the letterpress are read at runtime from the checkout, not embedded; codicons are CC-BY-4.0, the same files upstream ships.
+- `port/tools/ref-screenshot` brings the page to front and waits until the title bar is not `.inactive`; without it a capture could show the inactive title bar or the previous theme.
+- shortcut: the port always draws the active-window look (no `titleBar.inactive*`, `window.inactiveBorder`); add it with window focus events.
+- shortcut: the window border radius is the macOS 26+ value (16px); older macOS uses 10px.
+- shortcut: High Contrast Light has no registry defaults yet; loading it fails with "not ported".
+
 ## Benchmarks
 
 - `port/tools/bench`: Wu's `script/memory-benchmark` method generalized to N apps (`APPS="name=cmd;..."`), plus an extension host line per app.
