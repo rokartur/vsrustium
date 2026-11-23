@@ -269,7 +269,14 @@ impl Session {
                 self.log.activation_errors.insert(id, arg(1)["message"].as_str().map(str::to_owned).unwrap_or_else(|| arg(1).to_string()));
             }
             ("MainThreadWindow", "$getInitialState") => return Reply::Json(json!({ "isFocused": true, "isActive": true })),
-            ("MainThreadLanguageModelTools", "$getTools") => return Reply::Json(json!([])),
+            // No sign-in and no AI in the port: these APIs stay callable and report nothing.
+            ("MainThreadLanguageModelTools", "$getTools")
+            | ("MainThreadAuthentication", "$getAccounts")
+            | ("MainThreadLanguageModels", "$selectChatModels")
+            | (
+                "MainThreadChatAgents2",
+                "$provideCustomAgents" | "$provideInstructions" | "$provideSkills" | "$provideSlashCommands" | "$provideHooks" | "$providePlugins",
+            ) => return Reply::Json(json!([])),
             _ => {}
         }
         // shortcut: every other MainThread* method answers `undefined`; each shape gets a real implementation as its ledger row lands.
