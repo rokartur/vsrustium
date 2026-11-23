@@ -7,6 +7,12 @@ use std::path::{Path, PathBuf};
 
 use crate::languages::Languages;
 
+mod cursor;
+mod edit;
+
+pub use cursor::{Position, Selection};
+pub use edit::{ContentChanged, EditReason, History, utf16_column};
+
 pub struct TextDocument {
     pub path: PathBuf,
     pub lines: Vec<String>,
@@ -276,8 +282,12 @@ pub struct OpenEditor {
     pub preview: bool,
     /// The `$model<N>` id the text model gets, so the extension host sees a new editor per opened model.
     pub model_id: u32,
-    /// Cursor line and char column, 0-based.
-    pub cursor: (usize, usize),
+    pub selection: Selection,
+    /// Visible columns a vertical move could not place, kept while moving up and down (`leftoverVisibleColumns`).
+    leftover: isize,
+    /// `getVersionId`: 1 when opened, one more per content change.
+    pub version_id: u32,
+    history: History,
     /// The indent guide level of each line.
     pub guides: Vec<usize>,
     /// Occurrences of the word at the cursor, by line and char range.
@@ -288,21 +298,9 @@ impl OpenEditor {
     fn new(document: TextDocument, preview: bool, model_id: u32) -> Self {
         let indentation = document.indentation;
         let guides = indent_guides(&document.lines, indentation.tab_size, indentation.tab_size, document.off_side);
-        let mut editor = OpenEditor { document, preview, model_id, cursor: (0, 0), guides, highlights: Vec::new() };
-        editor.set_cursor(0, 0);
+        let mut editor = OpenEditor { document, preview, model_id, selection: Selection::default(), leftover: 0, version_id: 1, history: History::default(), guides, highlights: Vec::new() };
+        editor.refresh_highlights();
         editor
-    }
-
-    /// Moves the cursor, clamped to the document, and highlights the word under it.
-    pub fn set_cursor(&mut self, line: usize, column: usize) {
-        let line = line.min(self.document.lines.len() - 1);
-        let text = &self.document.lines[line];
-        let column = column.min(text.chars().count());
-        self.cursor = (line, column);
-        self.highlights = match word_at(text, column) {
-            Some(range) => word_occurrences(&self.document.lines, &text.chars().skip(range.start).take(range.len()).collect::<String>()),
-            None => Vec::new(),
-        };
     }
 }
 
@@ -470,11 +468,13 @@ mod tests {
         group.open(document, false);
         let editor = group.active_mut().unwrap();
         assert_eq!(editor.highlights, [(0, 0..4), (1, 5..9)]);
-        editor.set_cursor(5, 99);
-        assert_eq!(editor.cursor, (1, 9));
-        editor.set_cursor(0, 4);
+        editor.move_to(Position::new(0, 4), false);
         assert_eq!(editor.highlights.len(), 2);
-        editor.set_cursor(1, 4);
+        editor.move_to(Position::new(1, 4), false);
         assert_eq!(editor.highlights, [(1, 0..4)]);
+        editor.move_to(Position::new(1, 4), true);
+        editor.selection.anchor = Position::new(0, 0);
+        editor.refresh_highlights();
+        assert!(editor.highlights.is_empty());
     }
 }

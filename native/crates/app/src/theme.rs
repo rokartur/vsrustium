@@ -157,6 +157,13 @@ fn registry_default(key: &str, kind: ThemeKind) -> ColorValue {
             Key("editorActiveLineNumber.foreground"),
             Key("editorActiveLineNumber.foreground"),
         ),
+        "editor.selectionBackground" => (Hex("#264F78"), Hex("#ADD6FF"), Hex("#f3f518")),
+        "editor.selectionForeground" => (None, None, Hex("#000000")),
+        "editor.inactiveSelectionBackground" => (
+            Transparent(&Key("editor.selectionBackground"), 0.5),
+            Transparent(&Key("editor.selectionBackground"), 0.5),
+            Transparent(&Key("editor.selectionBackground"), 0.7),
+        ),
         "editor.lineHighlightBorder" => (Hex("#282828"), Hex("#eeeeee"), Hex("#f38518")),
         "editorCursor.foreground" => (Hex("#AEAFAD"), Hex("#000000"), Hex("#FFFFFF")),
         "editor.wordHighlightBackground" => (Hex("#575757B8"), Hex("#57575740"), None),

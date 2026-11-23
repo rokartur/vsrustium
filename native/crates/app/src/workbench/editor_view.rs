@@ -5,12 +5,12 @@
 use std::ops::Range;
 
 use gpui::{
-    Bounds, Context, Div, MouseButton, MouseDownEvent, Rgba, Window, canvas, div, fill, font, point, prelude::*, px, size,
-    uniform_list,
+    Bounds, Context, Div, ElementInputHandler, MouseButton, MouseDownEvent, MouseMoveEvent, Rgba, Window, canvas, div, fill, font, point,
+    prelude::*, px, size, uniform_list,
 };
 
 use super::Workbench;
-use crate::editor::{OpenEditor, column_at_visible, expand_tabs, visible_column};
+use crate::editor::{OpenEditor, Position, Selection, column_at_visible, expand_tabs, visible_column, word_at};
 use crate::theme::ThemeKind;
 
 const LINE_HEIGHT: f32 = 18.;
@@ -103,7 +103,9 @@ impl Workbench {
             .whitespace_nowrap()
             .when(editor.preview, |label| label.italic())
             .child(editor.document.name());
-        let close = self.icon("close-small", 20., 16., foreground).id(("close", index)).rounded(px(4.)).on_click(cx.listener(move |workbench, _, _, cx| {
+        // A dirty tab shows a filled circle where the close action goes, also when inactive (tabstitlecontrol.css).
+        let close_icon = if editor.is_dirty() { "circle-filled" } else { "close-small" };
+        let close = self.icon(close_icon, 20., 16., foreground).id(("close", index)).rounded(px(4.)).on_click(cx.listener(move |workbench, _, _, cx| {
             cx.stop_propagation();
             workbench.editors.close(index);
             workbench.editors_changed(cx);
@@ -125,7 +127,7 @@ impl Workbench {
                 }
                 workbench.editors_changed(cx);
             }))
-            .when(active, |tab| tab.child(div().absolute().top(px(5.5)).right(px(6.5)).child(close)));
+            .when(active || editor.is_dirty(), |tab| tab.child(div().absolute().top(px(5.5)).right(px(6.5)).child(close)));
         if !active {
             return div().h_full().flex_none().child(tab).mr(px(8.));
         }
@@ -181,7 +183,9 @@ impl Workbench {
     fn text_area(&self, editor: &OpenEditor, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let metrics = EditorMetrics::measure(window, editor.document.lines.len());
         let area_left = self.text_area_left.clone();
-        let list = uniform_list("editor-lines", editor.document.lines.len(), cx.processor(move |workbench, range: Range<usize>, _, cx| workbench.editor_lines(range, metrics, cx)))
+        let focus = self.editor_focus.clone();
+        let workbench = cx.entity();
+        let list = uniform_list("editor-lines", editor.document.lines.len(), cx.processor(move |workbench, range: Range<usize>, window, cx| workbench.editor_lines(range, metrics, window, cx)))
             .track_scroll(&self.editor_scroll)
             .size_full();
         div()
@@ -191,15 +195,28 @@ impl Workbench {
             .font_family(EDITOR_FONT)
             .text_size(px(EDITOR_FONT_SIZE))
             .line_height(px(LINE_HEIGHT))
-            .child(canvas(move |bounds, _, _| area_left.set(f32::from(bounds.left())), |_, _, _, _| {}).absolute().inset_0())
+            .track_focus(&self.editor_focus)
+            .on_key_down(cx.listener(Self::editor_key_down))
+            .on_mouse_up(MouseButton::Left, cx.listener(|workbench, _, _, _| workbench.selecting_text = false))
+            .on_mouse_up_out(MouseButton::Left, cx.listener(|workbench, _, _, _| workbench.selecting_text = false))
+            .child(
+                canvas(
+                    move |bounds, _, _| area_left.set(f32::from(bounds.left())),
+                    move |bounds, _, window, cx| window.handle_input(&focus, ElementInputHandler::new(bounds, workbench), cx),
+                )
+                .absolute()
+                .inset_0(),
+            )
             .child(list)
             .child(self.overview_ruler(editor).absolute().top_0().right_0().h_full())
     }
 
-    fn editor_lines(&mut self, range: Range<usize>, metrics: EditorMetrics, cx: &mut Context<Self>) -> Vec<Div> {
+    fn editor_lines(&mut self, range: Range<usize>, metrics: EditorMetrics, window: &mut Window, cx: &mut Context<Self>) -> Vec<Div> {
+        let focused = self.editor_focus.is_focused(window);
         let editor = self.editors.active().expect("lines are drawn only with an editor open");
+        let selection = editor.selection;
         let tab_size = editor.document.indentation.tab_size;
-        let (cursor_line, cursor_column) = editor.cursor;
+        let Position { line: cursor_line, column: cursor_column } = editor.selection.head;
         let colors = LineColors {
             number: self.color("editorLineNumber.foreground"),
             active_number: self.color("editorLineNumber.activeForeground"),
@@ -209,6 +226,7 @@ impl Workbench {
             word_border: self.theme.color("editor.wordHighlightTextBorder"),
             guide: self.color("editorIndentGuide.background1"),
             cursor: self.color("editorCursor.foreground"),
+            selection: self.color(if focused { "editor.selectionBackground" } else { "editor.inactiveSelectionBackground" }),
         };
         // currentLineHighlight.css: high contrast draws the exact border 1px wide.
         let line_border_width = if self.theme.kind == ThemeKind::HighContrastDark { 1. } else { 2. };
@@ -224,8 +242,16 @@ impl Workbench {
                     .text_color(if is_cursor_line { colors.active_number } else { colors.number })
                     .child((index + 1).to_string());
                 let mut content = div().relative().flex_1().h_full().text_color(colors.text);
-                if is_cursor_line {
+                // currentLineHighlight.ts draws the current line only while the selection is empty.
+                if is_cursor_line && selection.is_empty() {
                     content = content.child(div().absolute().inset_0().border(px(line_border_width)).border_color(colors.line_border));
+                }
+                if let Some((start, end, line_break)) = selected_columns(selection, index, text) {
+                    // A selected line break is one typicalHalfwidthCharacterWidth wide (viewLines.ts linesVisibleRangesForRange).
+                    // shortcut: square corners, where roundedSelection rounds the outer ones by 3px.
+                    let left = visible_column(text, start, tab_size) as f32 * char_width;
+                    let right = visible_column(text, end, tab_size) as f32 * char_width + if line_break { char_width } else { 0. };
+                    content = content.child(div().absolute().top_0().h_full().left(px(left)).w(px(right - left)).bg(colors.selection));
                 }
                 for level in 0..editor.guides[index] {
                     let x = (level * editor.document.indentation.tab_size) as f32 * char_width;
@@ -245,15 +271,23 @@ impl Workbench {
                     content = content.child(highlight);
                 }
                 content = content.child(div().absolute().top_0().left_0().whitespace_nowrap().child(expand_tabs(text, tab_size)));
-                if is_cursor_line {
+                if is_cursor_line && focused {
                     // shortcut: the cursor does not blink (editor.cursorBlinking "blink" hides it every 500ms).
                     let x = visible_column(text, cursor_column, tab_size) as f32 * char_width;
                     content = content.child(div().absolute().top_0().left(px(x)).w(px(2.)).h_full().bg(colors.cursor));
                 }
-                let content = content.on_mouse_down(MouseButton::Left, cx.listener(move |workbench, event: &MouseDownEvent, _, cx| {
-                    let x = f32::from(event.position.x) - workbench.text_area_left.get() - metrics.content_left();
-                    workbench.click_text(index, x / char_width, cx);
-                }));
+                let visible_at = move |workbench: &Workbench, x: gpui::Pixels| (f32::from(x) - workbench.text_area_left.get() - metrics.content_left()) / char_width;
+                let content = content
+                    .on_mouse_down(MouseButton::Left, cx.listener(move |workbench, event: &MouseDownEvent, window, cx| {
+                        window.focus(&workbench.editor_focus, cx);
+                        workbench.selecting_text = true;
+                        workbench.click_text(index, visible_at(workbench, event.position.x), event.modifiers.shift, event.click_count, cx);
+                    }))
+                    .on_mouse_move(cx.listener(move |workbench, event: &MouseMoveEvent, _, cx| {
+                        if workbench.selecting_text && event.pressed_button == Some(MouseButton::Left) {
+                            workbench.click_text(index, visible_at(workbench, event.position.x), true, 1, cx);
+                        }
+                    }));
                 div()
                     .w_full()
                     .h(px(LINE_HEIGHT))
@@ -266,20 +300,36 @@ impl Workbench {
             .collect()
     }
 
-    fn click_text(&mut self, line: usize, visible: f32, cx: &mut Context<Self>) {
+    /// A click places the cursor, Shift or a drag extends the selection, a double click selects the word
+    /// and a triple click the line.
+    /// shortcut: a drag selects only while the pointer is over the lines, and by chars, not by the words or lines it started with.
+    fn click_text(&mut self, line: usize, visible: f32, select: bool, click_count: usize, cx: &mut Context<Self>) {
         let editor = self.editors.active_mut().expect("text is clickable only with an editor open");
-        let tab_size = editor.document.indentation.tab_size;
-        let column = column_at_visible(&editor.document.lines[line], visible, tab_size);
-        editor.set_cursor(line, column);
-        self.host.send_selection(editor, "mouse");
-        cx.notify();
+        let text = &editor.document.lines[line];
+        let column = column_at_visible(text, visible, editor.document.indentation.tab_size);
+        let before = editor.selection;
+        match click_count {
+            2 => {
+                let word = word_at(text, column).unwrap_or(column..column);
+                editor.move_to(Position::new(line, word.start), false);
+                editor.move_to(Position::new(line, word.end), true);
+            }
+            3.. => {
+                let end = if line + 1 < editor.document.lines.len() { Position::new(line + 1, 0) } else { Position::new(line, text.chars().count()) };
+                editor.move_to(Position::new(line, 0), false);
+                editor.move_to(end, true);
+            }
+            _ => editor.move_to(Position::new(line, column), select),
+        }
+        let moved = editor.selection != before;
+        self.editor_edited(None, moved, "mouse", cx);
     }
 
     /// decorationsOverviewRuler.ts `_render`, in device pixels: word highlights in the center lane, the cursor
     /// across all lanes, then the 1px border on the left and top edges.
     fn overview_ruler(&self, editor: &OpenEditor) -> gpui::Canvas<()> {
         let line_count = editor.document.lines.len();
-        let cursor_line = editor.cursor.0;
+        let cursor_line = editor.selection.head.line;
         let highlight_lines: Vec<usize> = editor.highlights.iter().map(|(line, _)| *line).collect();
         let highlight = self.color("editorOverviewRuler.wordHighlightTextForeground");
         let cursor = self.theme.color("editorCursor.foreground").map(|color| Rgba { a: color.a * 0.7, ..color });
@@ -344,7 +394,7 @@ impl Workbench {
     pub(super) fn editor_status_items(&self, foreground: Rgba) -> Option<Div> {
         let editor = self.editors.active()?;
         let document = &editor.document;
-        let (line, column) = editor.cursor;
+        let Position { line, column } = editor.selection.head;
         let visible = visible_column(&document.lines[line], column, document.indentation.tab_size);
         let indentation = match document.indentation.insert_spaces {
             true => format!("Spaces: {}", document.indentation.tab_size),
@@ -391,6 +441,18 @@ struct LineColors {
     word_border: Option<Rgba>,
     guide: Rgba,
     cursor: Rgba,
+    selection: Rgba,
+}
+
+/// The selected chars of a line and whether its line break is selected too.
+fn selected_columns(selection: Selection, line: usize, text: &str) -> Option<(usize, usize, bool)> {
+    let (start, end) = (selection.start(), selection.end());
+    if selection.is_empty() || line < start.line || line > end.line {
+        return None;
+    }
+    let first = if line == start.line { start.column } else { 0 };
+    let last = if line == end.line { end.column } else { text.chars().count() };
+    Some((first, last, line < end.line))
 }
 
 /// `_initLanes` with three lanes: one device pixel for the border, then three thirds, the center taking the rest.

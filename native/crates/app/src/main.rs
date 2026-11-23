@@ -58,9 +58,9 @@ fn main() -> anyhow::Result<()> {
                 let (sender, mut receiver) = unbounded::<String>();
                 let (host_sender, host_receiver) = channel();
                 let languages = Languages::new(&extensions);
-                let mut workbench = Workbench::new(theme, app_root.clone(), folder.clone().map(FileTree::new), languages, HostSync::new(host_sender));
+                let mut workbench = Workbench::new(theme, app_root.clone(), folder.clone().map(FileTree::new), languages, HostSync::new(host_sender), cx);
                 if let Some(file) = file {
-                    workbench.open_file(file, true, cx);
+                    workbench.open_file(file, true, window, cx);
                 }
                 std::thread::Builder::new()
                     .name("exthost-session".into())
