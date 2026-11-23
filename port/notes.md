@@ -28,7 +28,9 @@ Host changes, all gated on `process.versions.bun` so Node behaves as upstream:
 
 ## Copilot Chat
 
-`GitHub.copilot-chat` (built in at 1.147.0) does not finish activating within 60 s on either runtime with the stub main thread; it waits on auth/language-model main-thread calls. It is a Microsoft service client; whether it ships at all is a product decision (open question for Artur), since the port must not add Microsoft endpoints.
+`GitHub.copilot-chat` (built in at 1.147.0) does not finish activating within 60 s on either runtime with the stub main thread; it waits on auth/language-model main-thread calls. It is a Microsoft service client.
+
+Decision (Artur): the port ships no sign-in and no AI features. Copilot Chat, chat views, inline chat, language models, MCP and agent parts are removed, and so are the accounts UI and Settings Sync sign-in. The extension API stays as an inert surface, like telemetry: `vscode.authentication`, `vscode.lm` and `vscode.chat` report no providers, so third-party extensions keep loading. Ledger rows for these parts become `removed` (by decision), not `todo`.
 
 ## Benchmarks
 
