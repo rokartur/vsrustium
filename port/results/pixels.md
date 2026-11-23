@@ -2,6 +2,27 @@
 
 `port/tools/pixel-check` on the Mac Studio: the reference workbench captured through CDP (`port/tools/ref-screenshot`, 1024x768 at 2x, frozen: solid cursor, reduced motion, no startup editor, `chat.disableAIFeatures`) against the port's frame read back from Metal (`code-gpui --theme <id> --screenshot`, built with `--features screenshot`). Neither capture needs Screen Recording permission. Diff: `native/crates/pixeldiff`, threshold 0, anti-aliased pixels counted apart.
 
+## Milestone 4: file open
+
+`notes.txt` open from the command line in the fixture folder (`FILE=... ref-screenshot`, `code-gpui <folder> <file>`), cursor at 1:1. The empty and folder windows are diffed in the same run and give the milestone 2 and 3 numbers unchanged. Reference md5: dark `91d050ee`, light `91283cb6`, hc `f841cf99`.
+
+| theme | different | anti-aliased | total |
+|---|---|---|---|
+| dark (Dark Modern) | 10859 (0.35%) | 26998 | 3145728 |
+| light (Light Modern) | 6376 (0.20%) | 25512 | 3145728 |
+| high contrast (Default High Contrast) | 4396 (0.14%) | 29520 | 3145728 |
+
+Differences of more than 2/255 per channel by region (dark / light / hc); the rest are 1 or 2 per channel, alpha blending rounding as before (in dark mostly the title bar and side bar as in milestone 3, plus 1363 in the overview ruler's 1px border at half coverage):
+
+- Status bar (1878 / 1907 / 1893): the right-aligned editor items sit up to 2 CSS px left of the reference. GPUI rounds each text box's width up to a whole logical pixel (`gpui/src/elements/text.rs` `size.width.ceil()`), Chrome keeps the fraction ("Ln 1, Col 1" is 61.34px with `tabular-nums`, as `statusbarpart.css` asks and the port now does), so the five items gain 0.05 to 0.67px each and the shift adds up from the right.
+- Side bar (305 / 269 / 982): the milestone 3 chevron and label edges, and in high contrast the selected row's outline: the reference draws `1px dotted` activeContrastBorder, the port a dashed border (GPUI has no dotted style).
+- Text (239 / 246 / 529): glyph edges; glyph x positions match the reference to the device pixel. In high contrast also the word highlight's dotted border, drawn dashed.
+- Tabs and breadcrumbs (300 / 325 / 436): codicon edges (close, split, more, breadcrumb chevron: resvg against Chrome's codicon font), label glyph edges, and the active tab's right edge at x 400.8, which Chrome anti-aliases and GPUI snaps to the device pixel.
+- Title bar (119 / 145 / 138) and gutter (13 / 20 / 37): glyph edges.
+- Overview ruler (0 / 81 / 79): a reference artifact. `decorationsOverviewRuler.ts` stores the cursor color with the cursor position and only refreshes it on the next cursor move, so after the harness's startup switch from the default dark theme the reference still paints the dark `#AEAFAD` cursor at 0.7 alpha in light and high contrast (sides 193,194,192 on white; 122 on black). The port uses the current theme's `editorCursor.foreground`, as a user who moves the cursor sees.
+
+No difference is a layout or color mismatch of the port's own making beyond the text-width rounding above.
+
 ## Milestone 3: folder open
 
 `port/fixtures/workspace` open (`FOLDER=... ref-screenshot`, `code-gpui <folder>`). The empty window is diffed again in the same run and gives the milestone 2 numbers unchanged. Reference md5: dark `e56bf35b`, light `77c70fbd`, hc `32e53f8c`.

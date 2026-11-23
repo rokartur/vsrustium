@@ -59,7 +59,27 @@ Done when: `port/tools/pixel-check` diffs the empty and the folder window (`port
 - shortcut: no file watcher; the tree shows the disk at the last redraw. Add a watcher with file operations.
 - shortcut: names sort with plain lowercase comparison, not `compareFileNamesDefault`'s numeric collation (`file10` before `file9`).
 - shortcut: an unreadable folder shows no children, without the reference's error.
-- shortcut: rows have no selection, focus, hover, keyboard navigation or scrolling; a tree taller than the side bar is clipped.
+- shortcut: rows have no focus outline, hover, keyboard navigation or scrolling; a tree taller than the side bar is clipped. Selection came with milestone 4.
+
+## Milestone 4: open a file
+
+Scope: `code-gpui <folder> <file>`, or a click on a file in the Explorer, opens the file in the editor part the way the reference shows it: the connected tab strip (preview tab on single click, pinned on double click or from the command line) with the split and more actions, breadcrumbs, the text with line numbers, current-line border, indent guides, the textual word highlight under the cursor and the three-lane overview ruler; the status bar gains Ln/Col, indentation, encoding, EOL and language mode. The extension host sees the document, the editor, the tab model and `onLanguage` activation (`host_sync.rs`).
+
+Done when: `port/tools/pixel-check` diffs the empty, folder and file windows (`notes.txt` open) in all three themes, with every non-anti-aliased difference listed in `port/results/pixels.md`; `cargo test -p app` passes with the model, language, host sync and editor tests.
+
+- The model (`editor.rs`) follows upstream: indentation from `indentationGuesser.ts`, guides from `guidesTextModelPart.ts`, word highlight from `textualHighlightProvider.ts` with `USUAL_WORD_SEPARATORS`, tab order from `EditorGroupModel` (new editors right of the active one, a preview replaces the preview, closing activates the most recent).
+- Languages (`languages.rs`) come from the scanned `contributes.languages`, matched like `getAssociationByPath`: filename, then the longest filename pattern, then the longest extension.
+- Tab, editor and model ids copy `mainThreadEditorTabs.ts` `_generateTabId`, `getId()` and `$model<n>`.
+- The reference runs with `editor.minimap.enabled: false`. With a file it parks the pointer on the status bar for 1.5 s so the editor scrollbars fade; the empty and folder windows skip that, since the wait also brings up the side bar sash's grip dots.
+- Host check: `code-gpui <fixture> <fixture>/src/main.ts` with `EXTHOST_TRACE=1` activates `vscode.typescript-language-features` and `vscode.emmet` on top of the folder-only set (git-base, npm, github, git, debug-auto-launch, merge-conflict), with no `$onUnexpectedError` or activation error.
+- shortcut: no minimap; port it with scrolling past one screen.
+- shortcut: no editing and no keyboard; a click sets the cursor. Add input with the edit operations and `$acceptModelChanged`.
+- shortcut: the cursor does not blink (the reference is captured with a solid cursor).
+- shortcut: `visibleRanges` sent to the host covers the whole document.
+- shortcut: no `firstLine` (shebang) language detection; a file with no association is plain text.
+- shortcut: High Contrast word highlight border is dashed; GPUI has no dotted border.
+- shortcut: the breadcrumb icon slot is empty until the file icon theme is ported.
+- shortcut: files are read as UTF-8 (with or without BOM), no encoding guessing or binary detection; a read error is logged, not shown as the editor's error placeholder.
 
 ## Benchmarks
 

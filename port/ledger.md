@@ -279,7 +279,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | editor/contrib/tokenization | src/vs/editor/contrib | todo |  |
 | editor/contrib/unicodeHighlighter | src/vs/editor/contrib | todo |  |
 | editor/contrib/unusualLineTerminators | src/vs/editor/contrib | todo |  |
-| editor/contrib/wordHighlighter | src/vs/editor/contrib | todo |  |
+| editor/contrib/wordHighlighter | src/vs/editor/contrib | ported | textual provider only (USUAL_WORD_SEPARATORS, whole words) on cursor move; cargo test -p app (editor::tests word highlight); pixel-check file window |
 | editor/contrib/wordOperations | src/vs/editor/contrib | todo |  |
 | editor/contrib/wordPartOperations | src/vs/editor/contrib | todo |  |
 | editor/contrib/zoneWidget | src/vs/editor/contrib | todo |  |
@@ -288,13 +288,13 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/parts/banner | workbench part | todo |  |
 | workbench/parts/chat | workbench part | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/parts/dialogs | workbench part | todo |  |
-| workbench/parts/editor | workbench part | ported | empty state only (letterpress watermark, no groups or tabs); pixel-check (port/results/pixels.md): letterpress matches |
+| workbench/parts/editor | workbench part | ported | one group: connected tab strip (preview/pinned, close, split and more actions drawn), breadcrumbs, text editor with gutter, current line, indent guides, word highlight, overview ruler, click sets the cursor; no editing, splits, minimap or scrolling sync (port/notes.md milestone 4); cargo test -p app (editor::tests); pixel-check file window (port/results/pixels.md milestone 4) |
 | workbench/parts/notifications | workbench part | todo |  |
 | workbench/parts/panel | workbench part | todo |  |
 | workbench/parts/partGrid | workbench part | stub | fixed floating layout drawn with flex (workbench.rs), no grid, sashes or hidden parts; pixel-check (port/results/pixels.md): part bounds match at 1024x768 |
 | workbench/parts/sessions | workbench part | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/parts/sidebar | workbench part | ported | Explorer only (title, folder section, collapsed Outline and Timeline), shown when a folder is open; pixel-check (port/results/pixels.md, milestone 3): chevron and label edge pixels only |
-| workbench/parts/statusbar | workbench part | ported | no-folder and folder colors (remote, problems, bell; entries from extensions not shown); pixel-check (port/results/pixels.md): text advance differs by half a device pixel |
+| workbench/parts/statusbar | workbench part | ported | no-folder and folder colors (remote, problems, bell), editor items Ln/Col, indentation, encoding, EOL, language with tabular-nums; entries from extensions not shown; pixel-check (port/results/pixels.md): text box widths round up to whole px |
 | workbench/parts/titlebar | workbench part | ported | active window only (command center with the folder name, nav and layout actions; no menus, no clicks); pixel-check (port/results/pixels.md): blending rounding and glyph edges only |
 | workbench/parts/views | workbench part | stub | pane headers drawn statically (workbench.rs section_header): no collapse, resize or view actions |
 | workbench/services/accessibility | workbench service | todo |  |
@@ -338,7 +338,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/integrity | workbench service | todo |  |
 | workbench/services/keybinding | workbench service | todo |  |
 | workbench/services/label | workbench service | todo |  |
-| workbench/services/language | workbench service | todo |  |
+| workbench/services/language | workbench service | ported | languages from contributes.languages matched like getAssociationByPath (languages.rs); no firstLine detection; cargo test -p app (languages::tests) |
 | workbench/services/languageDetection | workbench service | todo |  |
 | workbench/services/languageStatus | workbench service | todo |  |
 | workbench/services/layout | workbench service | todo |  |
@@ -419,7 +419,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/extensions | workbench contribution | todo |  |
 | workbench/contrib/externalTerminal | workbench contribution | todo |  |
 | workbench/contrib/externalUriOpener | workbench contribution | todo |  |
-| workbench/contrib/files | workbench contribution | stub | Explorer tree read from disk (explorer.rs): folders first, default excludes, click to expand; no file icons, watcher, selection, file operations or opening files (port/notes.md milestone 3) |
+| workbench/contrib/files | workbench contribution | stub | Explorer tree read from disk (explorer.rs): folders first, default excludes, click to expand, click opens a file as preview, double click pins, selection follows the active editor; no file icons, watcher or file operations (port/notes.md milestones 3, 4) |
 | workbench/contrib/folding | workbench contribution | todo |  |
 | workbench/contrib/format | workbench contribution | todo |  |
 | workbench/contrib/git | workbench contribution | todo |  |
