@@ -1,0 +1,18 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+# GPUI from Wu at the commit the performance bar is measured against; each crate used is Apache-2.0 (port/tools/check-licenses).
+gpui = { git = "https://github.com/dstrml/wu", rev = "a3ced2864abd933055b0d0afc5821e6cd9b0db2a" }
+gpui_platform = { git = "https://github.com/dstrml/wu", rev = "a3ced2864abd933055b0d0afc5821e6cd9b0db2a" }
+
+[profile.release]
+debug = "limited"

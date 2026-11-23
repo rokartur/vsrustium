@@ -374,12 +374,15 @@ function connectToRenderer(protocol: IMessagePassingProtocol): Promise<IRenderer
 				// e.g. while-true or process.nextTick endless loops
 				// So also use the native node module to do it from a separate thread
 				let watchdog: typeof nativeWatchdog;
-				try {
-					watchdog = require('@vscode/native-watchdog');
-					watchdog.start(initData.parentPid);
-				} catch (err) {
-					// no problem...
-					onUnexpectedError(err);
+				// Bun 1.4.5 panics on the addon's uv_thread_create (oven-sh/bun#18546); the parentPid poll above still runs.
+				if (!process.versions.bun) {
+					try {
+						watchdog = require('@vscode/native-watchdog');
+						watchdog.start(initData.parentPid);
+					} catch (err) {
+						// no problem...
+						onUnexpectedError(err);
+					}
 				}
 			}
 

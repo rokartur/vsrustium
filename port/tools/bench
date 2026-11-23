@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# Memory benchmark, same method as Wu's script/memory-benchmark (a3ced28): fresh throwaway user data dir,
+# settle, sum footprint(1) over the process tree, quit; runs alternate between apps; median per app.
+# Prints one TSV row per app plus one row per extension host process ("<app> exthost").
+#
+#   APPS="name1=command1;name2=command2" port/tools/bench
+#   Each command gets --user-data-dir <dir> appended. RUNS and SETTLE_SECONDS override the defaults.
+set -euo pipefail
+
+RUNS=${RUNS:-3}
+SETTLE_SECONDS=${SETTLE_SECONDS:-20}
+IFS=';' read -r -a apps <<< "${APPS:?set APPS=\"name=command;...\"}"
+
+descendant_pids() {
+  local pid=$1 child
+  echo "$pid"
+  for child in $(pgrep -P "$pid" 2>/dev/null); do
+    descendant_pids "$child"
+  done
+}
+
+footprint_kb() {
+  local line value unit
+  line=$(footprint -p "$1" 2>/dev/null | rg -m1 'Footprint:') || return 1
+  value=$(sed -E 's/.*Footprint: ([0-9.]+) ([KMG]B).*/\1/' <<< "$line")
+  unit=$(sed -E 's/.*Footprint: ([0-9.]+) ([KMG]B).*/\2/' <<< "$line")
+  case "$unit" in
+    KB) awk -v v="$value" 'BEGIN { printf "%d", v }' ;;
+    MB) awk -v v="$value" 'BEGIN { printf "%d", v * 1024 }' ;;
+    GB) awk -v v="$value" 'BEGIN { printf "%d", v * 1024 * 1024 }' ;;
+  esac
+}
+
+# The extension host is the process started with bootstrap-exthost.js (port) or --type=extensionHost / extensionHostProcess (Electron).
+is_extension_host() {
+  ps -o command= -p "$1" | rg -q 'bootstrap-exthost|extensionHost'
+}
+
+# Prints "<total kb> <extension host kb>".
+measure_once() {
+  local command=$1 data_dir pid p kb total=0 exthost=0
+  data_dir=$(mktemp -d)
+  ZED_STATELESS=1 bash -c "exec $command --user-data-dir '$data_dir'" >/dev/null 2>&1 &
+  pid=$!
+  sleep "$SETTLE_SECONDS"
+  for p in $(descendant_pids "$pid"); do
+    kb=$(footprint_kb "$p") || continue
+    total=$((total + kb))
+    if is_extension_host "$p"; then
+      exthost=$((exthost + kb))
+    fi
+  done
+  for p in $(descendant_pids "$pid" | sort -rn); do
+    kill "$p" 2>/dev/null || true
+  done
+  wait "$pid" 2>/dev/null || true
+  rm -rf "$data_dir"
+  echo "$total $exthost"
+}
+
+median_mb() {
+  printf '%s\n' "$@" | sort -n | awk '{ v[NR] = $1 } END { m = NR % 2 ? v[(NR + 1) / 2] : (v[NR / 2] + v[NR / 2 + 1]) / 2; printf "%.1f", m / 1024 }'
+}
+
+# macOS ships bash 3.2: no associative arrays, so samples sit at the app's index.
+totals=()
+exthosts=()
+for ((run = 1; run <= RUNS; run++)); do
+  for i in "${!apps[@]}"; do
+    echo "run $run/$RUNS: ${apps[$i]%%=*}" >&2
+    read -r total exthost <<< "$(measure_once "${apps[$i]#*=}")"
+    totals[$i]="${totals[$i]:-}$total "
+    exthosts[$i]="${exthosts[$i]:-}$exthost "
+  done
+done
+
+printf 'app\tmedian MiB\tsamples KB\n'
+for i in "${!apps[@]}"; do
+  name=${apps[$i]%%=*}
+  # shellcheck disable=SC2086
+  printf '%s\t%s\t%s\n' "$name" "$(median_mb ${totals[$i]})" "${totals[$i]}"
+  # shellcheck disable=SC2086
+  printf '%s exthost\t%s\t%s\n' "$name" "$(median_mb ${exthosts[$i]})" "${exthosts[$i]}"
+done

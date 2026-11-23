@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Starts code-gpui for a few seconds, prints its process tree and saves a screenshot of its window to port/results/raw/.
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+mkdir -p port/results/raw
+data_dir=$(mktemp -d)
+VSCODE_GPUI_EXTENSIONS=${VSCODE_GPUI_EXTENSIONS:-extensions} native/target/release/code-gpui --user-data-dir "$data_dir" "$@" &
+pid=$!
+sleep "${SETTLE_SECONDS:-6}"
+ps -o pid,ppid,rss,command -g "$(ps -o pgid= -p "$pid" | tr -d ' ')" | cut -c1-160
+window_id=$(swift -e 'import CoreGraphics; let pid = Int(CommandLine.arguments[1])!; let list = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID) as! [[String: Any]]; if let w = list.first(where: { ($0[kCGWindowOwnerPID as String] as? Int) == pid }) { print(w[kCGWindowNumber as String]!) }' "$pid" || true)
+if [[ -n "$window_id" ]]; then
+  screencapture -o -x -l "$window_id" port/results/raw/code-gpui.png && echo "screenshot: port/results/raw/code-gpui.png"
+else
+  echo "no window found for pid $pid"
+fi
+kill "$pid"
+wait "$pid" 2>/dev/null || true
+rm -rf "$data_dir"

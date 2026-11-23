@@ -1,0 +1,17 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+// Entry of the extension host bundle that the native (GPUI) app starts, on Bun or on Node.
+// It does what bootstrap-fork.ts and bootstrap-esm.ts do for the host, minus Electron's ASAR and crash reporter.
+import { product, pkg } from './bootstrap-meta.js';
+import { removeGlobalNodeJsModuleLookupPaths } from './bootstrap-node.js';
+
+globalThis._VSCODE_PRODUCT_JSON = { ...product };
+globalThis._VSCODE_PACKAGE_JSON = { ...pkg };
+globalThis._VSCODE_FILE_ROOT = import.meta.dirname;
+
+removeGlobalNodeJsModuleLookupPaths();
+
+await import('./vs/workbench/api/node/extensionHostProcess.js');

@@ -40,7 +40,7 @@ export abstract class RequireInterceptor {
 
 	constructor(
 		private _apiFactory: IExtensionApiFactory,
-		private _extensionRegistry: IExtensionRegistries,
+		protected _extensionRegistry: IExtensionRegistries,
 		@IInstantiationService private readonly _instaService: IInstantiationService,
 		@IExtHostConfiguration private readonly _extHostConfiguration: IExtHostConfiguration,
 		@IExtHostExtensionService private readonly _extHostExtensionService: IExtHostExtensionService,

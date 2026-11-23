@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Fails when the native workspace pulls a GPL crate (Wu's editor, rope, text, workspace, ... are GPL; its gpui family is Apache-2.0).
+set -euo pipefail
+cd "$(dirname "$0")/../../native"
+# Only the macOS graph ships; gpui_linux and gpui_windows pull Wu's GPL i18n crate on their own targets.
+metadata=$(cargo metadata --format-version 1 --locked --filter-platform aarch64-apple-darwin)
+# A dual license with a permissive choice ("Apache-2.0 OR GPL-2.0-only") is fine.
+offenders=$(jq -r '.packages[] | select((.license // "") | test("GPL") and (test("MIT|Apache-2.0|BSD") | not)) | "\(.name) \(.version) \(.license)"' <<< "$metadata")
+if [[ -n "$offenders" ]]; then
+  echo "GPL crates in the dependency graph:"
+  echo "$offenders"
+  exit 1
+fi
+jq -r '.packages[] | select(.source // "" | test("dstrml/wu")) | "\(.name)\t\(.license)"' <<< "$metadata" | sort
+echo "no GPL crates"

@@ -1,0 +1,12 @@
+#!/bin/bash
+# Mirror this checkout to the Mac Studio and run a command there (bash -l, at the mirror root).
+# Copies .git, runs `git clean` there (drops files deleted here), then copies every tracked and untracked non-ignored file.
+# Ignored files on the Studio (node_modules, out, native/target) survive between runs.
+set -euo pipefail
+root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
+remote_dir=Developer/vscode-gpui-work/port-src
+cd "$root"
+rsync -az --delete .git/ "studio:$remote_dir/.git/"
+ssh studio "cd ~/$remote_dir && git clean -fdq"
+git ls-files -co --exclude-standard -z | rsync -az --from0 --files-from=- . "studio:$remote_dir/"
+ssh studio "cd ~/$remote_dir && bash -lc $(printf '%q' "$1")"

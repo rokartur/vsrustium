@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Bundles the extension host for the native app into out-exthost/. Same bundle runs on Bun and Node.
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+bun build src/bootstrap-exthost.ts --target=node --format=esm --packages=external --outdir out-exthost
