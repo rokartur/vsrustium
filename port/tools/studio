@@ -13,7 +13,8 @@ if [[ $git_dir != "$common_dir" ]]; then
   remote_dir=$remote_dir-$(basename "$root")
   ssh studio "cd ~/Developer/vscode-gpui-work && test -d $(basename "$remote_dir") || cp -cR port-src $(basename "$remote_dir")"
 fi
-rsync -az --delete --exclude /worktrees/ "$common_dir/" "studio:$remote_dir/.git/"
+# Lock files are transient: another session's git command holds them for a moment and rsync fails on the vanished file.
+rsync -az --delete --exclude /worktrees/ --exclude '*.lock' "$common_dir/" "studio:$remote_dir/.git/"
 # A linked worktree keeps HEAD and index in its own git dir; the mirror is a plain checkout of that branch.
 [[ $git_dir == "$common_dir" ]] || rsync -az "$git_dir/HEAD" "$git_dir/index" "studio:$remote_dir/.git/"
 ssh studio "cd ~/$remote_dir && git clean -fdq"
