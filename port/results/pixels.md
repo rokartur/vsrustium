@@ -2,6 +2,10 @@
 
 `port/tools/pixel-check` on the Mac Studio: the reference workbench captured through CDP (`port/tools/ref-screenshot`, 1024x768 at 2x, frozen: solid cursor, reduced motion, no startup editor, `chat.disableAIFeatures`) against the port's frame read back from Metal (`code-gpui --theme <id> --screenshot`, built with `--features screenshot`). Neither capture needs Screen Recording permission. Diff: `native/crates/pixeldiff`, threshold 0, anti-aliased pixels counted apart.
 
+## Milestone 5: edit and save
+
+The file window with the editing work in (cursor drawn only when the editor is focused, selection drawing, dirty tabs) gives the milestone 4 numbers below unchanged in all three themes: dark 10859, light 6376, hc 4396 different pixels.
+
 ## Milestone 4: file open
 
 `notes.txt` open from the command line in the fixture folder (`FILE=... ref-screenshot`, `code-gpui <folder> <file>`), cursor at 1:1. The empty and folder windows are diffed in the same run and give the milestone 2 and 3 numbers unchanged. Reference md5: dark `91d050ee`, light `91283cb6`, hc `f841cf99`.

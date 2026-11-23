@@ -24,7 +24,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | mainthread/MainThreadDiaglogs | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadDecorations | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadDocumentContentProviders | MainThread* shape (Rust side) | stub | session.rs answers undefined |
-| mainthread/MainThreadDocuments | MainThread* shape (Rust side) | stub | session.rs answers undefined |
+| mainthread/MainThreadDocuments | MainThread* shape (Rust side) | stub | host_sync.rs sends model opened, changed, dirty and saved: cargo test -p app -- --ignored live_host (TypeScript diagnostics after an edit); $tryCreateDocument, $tryOpenDocument, $trySaveDocument answer undefined |
 | mainthread/MainThreadBulkEdits | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadTextEditors | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadTreeViews | MainThread* shape (Rust side) | stub | session.rs answers undefined |
@@ -43,7 +43,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | mainthread/MainThreadStorage | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadTelemetry | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadEditorInsets | MainThread* shape (Rust side) | stub | session.rs answers undefined |
-| mainthread/MainThreadEditorTabs | MainThread* shape (Rust side) | stub | session.rs answers undefined |
+| mainthread/MainThreadEditorTabs | MainThread* shape (Rust side) | stub | host_sync.rs sends $acceptTabOperation per tab change (cargo test -p app host_sync); $moveTab, $closeTab, $closeGroup answer undefined |
 | mainthread/MainThreadWebviews | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadWebviewPanels | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadCustomEditors | MainThread* shape (Rust side) | stub | session.rs answers undefined |
@@ -203,7 +203,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/test | src/vs/platform | todo |  |
 | platform/theme | src/vs/platform | todo |  |
 | platform/tunnel | src/vs/platform | todo |  |
-| platform/undoRedo | src/vs/platform | todo |  |
+| platform/undoRedo | src/vs/platform | stub | per-editor undo/redo history only, no cross-resource elements: cargo test -p app (editor::cursor::tests, editor::edit::tests) |
 | platform/update | src/vs/platform | todo |  |
 | platform/uriIdentity | src/vs/platform | todo |  |
 | platform/url | src/vs/platform | todo |  |
@@ -220,13 +220,13 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/workspace | src/vs/platform | todo |  |
 | platform/workspaces | src/vs/platform | todo |  |
 | editor/browser | src/vs/editor | todo |  |
-| editor/common | src/vs/editor | todo |  |
+| editor/common | src/vs/editor | stub | one cursor, core moves and deletes, typing, edit stack stops, alternative version id dirty state: cargo test -p app (editor::cursor::tests, editor::edit::tests); no multi-cursor, onEnter or indentation rules, grapheme clusters (port/notes.md milestone 5) |
 | editor/standalone | src/vs/editor | todo |  |
 | editor/test | src/vs/editor | todo |  |
 | editor/contrib/anchorSelect | src/vs/editor/contrib | todo |  |
 | editor/contrib/bracketMatching | src/vs/editor/contrib | todo |  |
 | editor/contrib/caretOperations | src/vs/editor/contrib | todo |  |
-| editor/contrib/clipboard | src/vs/editor/contrib | todo |  |
+| editor/contrib/clipboard | src/vs/editor/contrib | ported | Cmd+C/X/V with whole-line copy metadata: cargo test -p app keys_and_typed_text_edit_the_focused_editor_and_reach_the_host |
 | editor/contrib/codeAction | src/vs/editor/contrib | todo |  |
 | editor/contrib/codelens | src/vs/editor/contrib | todo |  |
 | editor/contrib/colorPicker | src/vs/editor/contrib | todo |  |
@@ -280,7 +280,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | editor/contrib/unicodeHighlighter | src/vs/editor/contrib | todo |  |
 | editor/contrib/unusualLineTerminators | src/vs/editor/contrib | todo |  |
 | editor/contrib/wordHighlighter | src/vs/editor/contrib | ported | textual provider only (USUAL_WORD_SEPARATORS, whole words) on cursor move; cargo test -p app (editor::tests word highlight); pixel-check file window |
-| editor/contrib/wordOperations | src/vs/editor/contrib | todo |  |
+| editor/contrib/wordOperations | src/vs/editor/contrib | ported | word moves, selects and deletes with USUAL_WORD_SEPARATORS: cargo test -p app (editor::cursor::tests, editor::edit::tests) |
 | editor/contrib/wordPartOperations | src/vs/editor/contrib | todo |  |
 | editor/contrib/zoneWidget | src/vs/editor/contrib | todo |  |
 | workbench/parts/activitybar | workbench part | ported | view icons with Explorer active when a folder is open, settings gear; no badges or clicks; pixel-check (port/results/pixels.md): same geometry, codicon edge pixels and active background rounding only |
@@ -288,7 +288,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/parts/banner | workbench part | todo |  |
 | workbench/parts/chat | workbench part | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/parts/dialogs | workbench part | todo |  |
-| workbench/parts/editor | workbench part | ported | one group: connected tab strip (preview/pinned, close, split and more actions drawn), breadcrumbs, text editor with gutter, current line, indent guides, word highlight, overview ruler, click sets the cursor; no editing, splits, minimap or scrolling sync (port/notes.md milestone 4); cargo test -p app (editor::tests); pixel-check file window (port/results/pixels.md milestone 4) |
+| workbench/parts/editor | workbench part | ported | one group: connected tab strip (preview/pinned, close, split and more actions drawn), breadcrumbs, text editor with gutter, current line, indent guides, word highlight, overview ruler, click, drag and keyboard selection, typing, undo, clipboard, save and dirty tabs (port/notes.md milestone 5); no splits, minimap or scrolling sync; cargo test -p app (editor::tests, workbench keys_and_typed_text_edit_the_focused_editor_and_reach_the_host); pixel-check file window (port/results/pixels.md milestone 4, unchanged at milestone 5) |
 | workbench/parts/notifications | workbench part | todo |  |
 | workbench/parts/panel | workbench part | todo |  |
 | workbench/parts/partGrid | workbench part | stub | fixed floating layout drawn with flex (workbench.rs), no grid, sashes or hidden parts; pixel-check (port/results/pixels.md): part bounds match at 1024x768 |
@@ -373,7 +373,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/telemetry | workbench service | todo |  |
 | workbench/services/terminal | workbench service | todo |  |
 | workbench/services/textMate | workbench service | todo |  |
-| workbench/services/textfile | workbench service | todo |  |
+| workbench/services/textfile | workbench service | stub | Cmd+S writes UTF-8 and clears dirty state (cargo test -p app keys_and_typed_text_edit_the_focused_editor_and_reach_the_host); no save participants, conflict check or encodings |
 | workbench/services/textmodelResolver | workbench service | todo |  |
 | workbench/services/textresourceProperties | workbench service | todo |  |
 | workbench/services/themes | workbench service | ported | built-in color themes by settings id, include chain, registry defaults for shell keys (theme.rs); cargo test -p app (2 tests); no token colors, icon themes or hc-light |

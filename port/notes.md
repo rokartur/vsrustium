@@ -73,13 +73,29 @@ Done when: `port/tools/pixel-check` diffs the empty, folder and file windows (`n
 - The reference runs with `editor.minimap.enabled: false`. With a file it parks the pointer on the status bar for 1.5 s so the editor scrollbars fade; the empty and folder windows skip that, since the wait also brings up the side bar sash's grip dots.
 - Host check: `code-gpui <fixture> <fixture>/src/main.ts` with `EXTHOST_TRACE=1` activates `vscode.typescript-language-features` and `vscode.emmet` on top of the folder-only set (git-base, npm, github, git, debug-auto-launch, merge-conflict), with no `$onUnexpectedError` or activation error.
 - shortcut: no minimap; port it with scrolling past one screen.
-- shortcut: no editing and no keyboard; a click sets the cursor. Add input with the edit operations and `$acceptModelChanged`.
+- shortcut: no editing and no keyboard; a click sets the cursor. Closed by milestone 5.
 - shortcut: the cursor does not blink (the reference is captured with a solid cursor).
 - shortcut: `visibleRanges` sent to the host covers the whole document.
 - shortcut: no `firstLine` (shebang) language detection; a file with no association is plain text.
 - shortcut: High Contrast word highlight border is dashed; GPUI has no dotted border.
 - shortcut: the breadcrumb icon slot is empty until the file icon theme is ported.
 - shortcut: files are read as UTF-8 (with or without BOM), no encoding guessing or binary detection; a read error is logged, not shown as the editor's error placeholder.
+
+## Milestone 5: edit and save
+
+Scope: one cursor with a selection in the active editor; the `coreCommands.ts` moves (char, word, line edge, document edge, with Shift to select), click, Shift+click, double and triple click and drag selection; typing and IME composition through GPUI's `EntityInputHandler`; Enter, Tab, Shift+Tab, the delete commands (char, word, to line start/end); Cmd+C/X/V with whole-line copy; undo/redo with the stops of `editStack.ts` and `shouldPushStackElementBetween`; Cmd+S writes the file; dirty state on the tab. The host gets `$acceptModelChanged` (with upstream `detailedReason`), `$acceptDirtyStateChanged`, `$acceptModelSaved`, selection changes and one `$acceptTabOperation` per tab change.
+
+Done when: `cargo test -p app` passes with `editor::cursor::tests`, `editor::edit::tests`, the host sync tests and `keys_and_typed_text_edit_the_focused_editor_and_reach_the_host` (keys typed into a window, Cmd+S writes the file, the editor is clean after); `VSCODE_GPUI_EXTENSIONS=~/Developer/vscode-ref/extensions cargo test -p app -- --ignored live_host` gets a new `MainThreadDiagnostics.$changeMany` from TypeScript after an edit; pixel-check of the file window unchanged.
+
+- The pure cursor model (`editor/cursor.rs`) has no GPUI dependency; the edit model and undo history (`editor/edit.rs`) live on `OpenEditor`. Dirty state is upstream's alternative version id: undo back to the saved text is clean.
+- Trap: a full `$acceptEditorTabModel` resync fires only `onDidChangeTabGroups`. TypeScript's `TabResourceTracker` listens to `onDidChangeTabs` and skips `geterr` for files it does not see in a tab, so diagnostics never came. `host_sync.rs` now diffs the tab list and sends TAB_OPEN/CLOSE/MOVE/UPDATE like `mainThreadEditorTabs.ts`.
+- Editing a preview editor pins it; word highlight stops while typing, as `_onPositionChanged` does.
+- shortcut: columns step over chars, not grapheme clusters; a ZWJ emoji takes several steps. Port `getLeftDeleteOffset` and the grapheme iterator when needed.
+- shortcut: Enter copies the leading whitespace only; no `onEnter` rules or indentation rules, so `{` does not indent the next line. Tab on a blank line takes the nearest non-blank indent above.
+- shortcut: save has no participants (format on save, trim whitespace, final newline), no conflict check and no encoding other than UTF-8.
+- shortcut: drag selection only tracks the pointer over lines; IME candidate windows get no bounds (`bounds_for_range` returns None).
+- shortcut: one cursor; no multi-cursor, column selection or find.
+- shortcut: the cursor still does not blink.
 
 ## Benchmarks
 
