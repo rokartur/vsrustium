@@ -597,4 +597,4 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | telemetry/network-capture | cross-cutting check | todo |  |
 | gallery/open-vsx | cross-cutting check | todo |  |
 | look/screenshot-diff | cross-cutting check | ported | native/crates/pixeldiff: cargo test -p pixeldiff 3 passed; no app screenshots yet (Studio sshd lacks Screen Recording permission) |
-| perf/memory-benchmark | cross-cutting check | ported | port/tools/bench (Wu method); results in port/results/benchmark.md |
+| perf/memory-benchmark | cross-cutting check | verified | port/tools/bench (Wu method), 3 runs on Studio; port/results/benchmark.md: exthost Bun 57 MiB, Node 98 MiB, reference 151 MiB |

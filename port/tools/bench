@@ -21,7 +21,7 @@ descendant_pids() {
 
 footprint_kb() {
   local line value unit
-  line=$(footprint -p "$1" 2>/dev/null | rg -m1 'Footprint:') || return 1
+  line=$(timeout 30 footprint -p "$1" 2>/dev/null | rg -m1 'Footprint:') || return 1
   value=$(sed -E 's/.*Footprint: ([0-9.]+) ([KMG]B).*/\1/' <<< "$line")
   unit=$(sed -E 's/.*Footprint: ([0-9.]+) ([KMG]B).*/\2/' <<< "$line")
   case "$unit" in
@@ -31,9 +31,10 @@ footprint_kb() {
   esac
 }
 
-# The extension host is the process started with bootstrap-exthost.js (port) or --type=extensionHost / extensionHostProcess (Electron).
+# The extension host: bootstrap-exthost.js in its arguments (port), or an Electron utility process whose
+# environment has VSCODE_ESM_ENTRYPOINT=vs/workbench/api/node/extensionHostProcess (reference).
 is_extension_host() {
-  ps -o command= -p "$1" | rg -q 'bootstrap-exthost|extensionHost'
+  ps -E -o command= -p "$1" | rg -q 'bootstrap-exthost|VSCODE_ESM_ENTRYPOINT=vs/workbench/api/node/extensionHostProcess'
 }
 
 # Prints "<total kb> <extension host kb>".
@@ -50,9 +51,12 @@ measure_once() {
       exthost=$((exthost + kb))
     fi
   done
-  for p in $(descendant_pids "$pid" | sort -rn); do
-    kill "$p" 2>/dev/null || true
-  done
+  # Bounded teardown: one Electron run hung for 25 min with plain kill + wait (cause not found).
+  local pids
+  pids=$(descendant_pids "$pid" | sort -rn)
+  kill $pids 2>/dev/null || true
+  sleep 3
+  kill -9 $pids 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
   rm -rf "$data_dir"
   echo "$total $exthost"
