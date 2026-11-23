@@ -5,7 +5,8 @@ fn main() -> anyhow::Result<()> {
     anyhow::ensure!(args.len() == 2 || args.len() == 3, "usage: pixeldiff <expected.png> <actual.png> [diff.png]");
     let expected = image::open(&args[0])?.to_rgba8();
     let actual = image::open(&args[1])?.to_rgba8();
-    let result = pixeldiff::diff(&expected, &actual, 0.1)?;
+    // Threshold 0, not pixelmatch's 0.1: 0.1 passes #181818 against #1f1f1f, a visible panel color change.
+    let result = pixeldiff::diff(&expected, &actual, 0.0)?;
     if let Some(path) = args.get(2) {
         result.diff_image.save(path)?;
     }

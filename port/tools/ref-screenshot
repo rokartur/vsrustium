@@ -1,0 +1,91 @@
+#!/usr/bin/env bun
+// Captures the reference VS Code workbench through CDP (Page.captureScreenshot), so no Screen Recording permission is needed.
+// Usage: port/tools/ref-screenshot <out-dir>   (env REF = reference checkout, default ~/Developer/vscode-ref)
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+const outDir = process.argv[2] ?? 'port/results/screenshots/reference';
+const ref = process.env.REF ?? join(process.env.HOME!, 'Developer/vscode-ref');
+const electron = join(ref, '.build/electron/Code - OSS.app/Contents/MacOS/Code - OSS');
+const themes = { dark: 'Default Dark Modern', light: 'Default Light Modern', hc: 'Default High Contrast' };
+const width = 1024;
+const height = 768;
+const port = 9333;
+
+mkdirSync(outDir, { recursive: true });
+for (const [name, theme] of Object.entries(themes)) {
+	const png = await capture(theme);
+	writeFileSync(join(outDir, `${name}.png`), png);
+	console.log(`${name}: ${png.length} bytes`);
+}
+// The CDP sockets of killed apps keep Bun's event loop alive.
+process.exit(0);
+
+async function capture(theme: string) {
+	const userData = mkdtempSync(join(tmpdir(), 'ref-shot-'));
+	mkdirSync(join(userData, 'User'));
+	// Frozen state: no blinking cursor, no animations, no startup editor, no update or tips noise.
+	writeFileSync(join(userData, 'User/settings.json'), JSON.stringify({
+		'workbench.colorTheme': theme,
+		'workbench.startupEditor': 'none',
+		'workbench.reduceMotion': 'on',
+		'editor.cursorBlinking': 'solid',
+		'window.restoreWindows': 'none',
+		'workbench.tips.enabled': false,
+		'update.mode': 'none',
+		// The port ships without AI and sign-in (port/notes.md); this is the reference look of that product.
+		'chat.disableAIFeatures': true,
+	}));
+	const app = Bun.spawn([electron, ref, '--user-data-dir', userData, '--remote-debugging-port=' + port, '--disable-extension', 'GitHub.copilot-chat'], {
+		env: { ...process.env, VSCODE_DEV: '1', NODE_ENV: 'development' },
+		stdout: 'ignore',
+		stderr: 'ignore',
+	});
+	try {
+		const cdp = await connect();
+		await cdp('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 2, mobile: false });
+		await until(async () => (await cdp('Runtime.evaluate', { expression: `!!document.querySelector('.monaco-workbench .part.statusbar')`, returnByValue: true })).result.value === true);
+		// Extensions settle their status bar items after the workbench appears.
+		await Bun.sleep(5000);
+		const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
+		return Buffer.from(data, 'base64');
+	} finally {
+		app.kill('SIGKILL');
+		await app.exited;
+		rmSync(userData, { recursive: true, force: true });
+	}
+}
+
+async function connect() {
+	const target = await until(async () => {
+		const targets: { type: string; url: string; webSocketDebuggerUrl: string }[] = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
+		return targets.find(t => t.type === 'page' && t.url.includes('workbench'));
+	});
+	const socket = new WebSocket(target.webSocketDebuggerUrl);
+	await new Promise(resolve => socket.addEventListener('open', resolve, { once: true }));
+	let nextId = 1;
+	const pending = new Map<number, (message: any) => void>();
+	socket.addEventListener('message', event => {
+		const message = JSON.parse(String(event.data));
+		pending.get(message.id)?.(message);
+		pending.delete(message.id);
+	});
+	return (method: string, params: object = {}) => new Promise<any>((resolve, reject) => {
+		const id = nextId++;
+		pending.set(id, message => message.error ? reject(new Error(`${method}: ${message.error.message}`)) : resolve(message.result));
+		socket.send(JSON.stringify({ id, method, params }));
+	});
+}
+
+async function until<T>(probe: () => Promise<T>, timeoutMs = 60000): Promise<NonNullable<T>> {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		const value = await probe().catch(() => undefined);
+		if (value) {
+			return value;
+		}
+		await Bun.sleep(250);
+	}
+	throw new Error('timed out');
+}
