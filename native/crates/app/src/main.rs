@@ -35,10 +35,13 @@ impl Render for Workbench {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let runtime = if args.iter().any(|arg| arg == "--node") { Runtime::Node } else { Runtime::Bun };
-    let user_data = args.iter().position(|arg| arg == "--user-data-dir").and_then(|i| args.get(i + 1)).map(PathBuf::from);
+    let flag_value = |flag: &str| args.iter().position(|arg| arg == flag).and_then(|i| args.get(i + 1)).map(PathBuf::from);
+    let user_data = flag_value("--user-data-dir");
+    let screenshot = flag_value("--screenshot");
     application().run(move |cx: &mut App| {
-        let bounds = Bounds::centered(None, size(px(800.), px(600.)), cx);
-        cx.open_window(WindowOptions { window_bounds: Some(WindowBounds::Windowed(bounds)), ..Default::default() }, |_, cx| {
+        // Same size as the reference capture in port/tools/ref-screenshot, so pixel diffs line up.
+        let bounds = Bounds::centered(None, size(px(1024.), px(768.)), cx);
+        cx.open_window(WindowOptions { window_bounds: Some(WindowBounds::Windowed(bounds)), ..Default::default() }, |window, cx| {
             cx.new(|cx| {
                 let (sender, mut receiver) = unbounded::<String>();
                 std::thread::Builder::new()
@@ -49,14 +52,25 @@ fn main() {
                         }
                     })
                     .expect("spawn exthost session thread");
-                cx.spawn(async move |this, cx| {
+                cx.spawn_in(window, async move |this, cx| {
                     while let Some(line) = receiver.next().await {
+                        let activated = line.starts_with(ACTIVATED_PREFIX);
                         let updated = this.update(cx, |workbench: &mut Workbench, cx| {
                             workbench.status.push(line.into());
                             cx.notify();
                         });
                         if updated.is_err() {
                             break;
+                        }
+                        if let (true, Some(path)) = (activated, screenshot.as_ref()) {
+                            // Let the frame with the last status line render before reading it back.
+                            cx.background_executor().timer(Duration::from_millis(500)).await;
+                            let saved = cx.update(|window, _| save_screenshot(window, path)).and_then(|result| result);
+                            if let Err(error) = saved {
+                                eprintln!("screenshot failed: {error:#}");
+                                std::process::exit(1);
+                            }
+                            cx.update(|_, cx| cx.quit()).ok();
                         }
                     }
                 })
@@ -89,10 +103,24 @@ fn run_extension_host(runtime: Runtime, user_data: Option<PathBuf>, status: &Unb
     let reply = session.call("ExtHostExtensionService", "$test_latency", vec![Arg::Json(json!(7))], Duration::from_secs(10))?;
     let _ = status.unbounded_send(format!("main -> host: $test_latency(7) = {reply:?}"));
     let _ = status.unbounded_send(format!("host -> main: {} requests so far", session.log.host_calls.values().sum::<u32>()));
-    let _ = status.unbounded_send(format!("eager extensions activated: {}", session.log.activated.join(", ")));
+    let _ = status.unbounded_send(format!("{ACTIVATED_PREFIX}{}", session.log.activated.join(", ")));
     while session.pump(Duration::from_secs(1))? {}
     let _ = status.unbounded_send("extension host exited".into());
     Ok(())
+}
+
+const ACTIVATED_PREFIX: &str = "eager extensions activated: ";
+
+/// Reads the last rendered frame back from Metal, so capture needs no Screen Recording permission.
+#[cfg(feature = "screenshot")]
+fn save_screenshot(window: &Window, path: &std::path::Path) -> anyhow::Result<()> {
+    window.render_to_image()?.save(path)?;
+    Ok(())
+}
+
+#[cfg(not(feature = "screenshot"))]
+fn save_screenshot(_window: &Window, _path: &std::path::Path) -> anyhow::Result<()> {
+    anyhow::bail!("built without the screenshot feature: cargo build --features screenshot")
 }
 
 fn default_user_data() -> anyhow::Result<PathBuf> {
