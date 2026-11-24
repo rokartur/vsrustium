@@ -325,7 +325,7 @@ impl FindModel {
         let replace_string = pattern.build(next.matches.as_deref(), state.preserve_case);
         let (start, end) = (selection.start(), selection.end());
         let caret = end_of(start, &replace_string);
-        let change = self.execute(editor, |editor| editor.execute_edits(vec![(start, end, replace_string.clone(), false)], Some(vec![Selection::caret(caret)]), REPLACE));
+        let change = self.execute(editor, viewport, |editor| editor.execute_edits(vec![(start, end, replace_string.clone(), false)], Some(vec![Selection::caret(caret)]), REPLACE));
         // Upstream adds the replace string's length to the start column, also for a multi-line one.
         self.set_start_position(Position::new(start.line, start.column + replace_string.chars().count()));
         self.research(editor, state, viewport, true, None);
@@ -359,7 +359,7 @@ impl FindModel {
                 _ => edits.push((found.range.start, found.range.end, text)),
             }
         }
-        let change = self.execute(editor, |editor| editor.execute_edits_tracking_primary(edits, REPLACE_ALL));
+        let change = self.execute(editor, viewport, |editor| editor.execute_edits_tracking_primary(edits, REPLACE_ALL));
         self.research(editor, state, viewport, false, None);
         change
     }
@@ -380,12 +380,17 @@ impl FindModel {
     }
 
     /// `_executeEditorCommand`: the edit between undo stops; the scopes follow it, the start position does not.
-    fn execute(&mut self, editor: &mut OpenEditor, edit: impl FnOnce(&mut OpenEditor) -> Option<ContentChanged>) -> Option<ContentChanged> {
+    /// cursor.ts `_executeEdit` reveals the cursors when the edit moved them, before the research reveals the match.
+    fn execute(&mut self, editor: &mut OpenEditor, viewport: Viewport, edit: impl FnOnce(&mut OpenEditor) -> Option<ContentChanged>) -> Option<ContentChanged> {
+        let selections = editor.selections.clone();
         editor.push_undo_stop();
         let change = edit(editor);
         editor.push_undo_stop();
         if let Some(change) = &change {
             self.track_scopes(change);
+        }
+        if editor.selections != selections {
+            editor.reveal_cursors("keyboard", viewport);
         }
         change
     }

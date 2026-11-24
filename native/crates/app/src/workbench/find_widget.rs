@@ -3,11 +3,12 @@
 //! editor's top right corner. The controller (editor/find/controller.rs) owns what it searches for.
 
 use std::cell::Cell;
+use std::collections::HashMap;
 use std::ops::Range;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    BoxShadow, Context, Div, FocusHandle, HighlightStyle, Keystroke, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Rgba, Stateful, Task, Window, canvas, div, point, prelude::*, px,
+    BoxShadow, Context, Div, FocusHandle, HighlightStyle, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Rgba, Stateful, Task, Window, canvas, div, point, prelude::*, px,
 };
 use serde_json::Value;
 
@@ -17,7 +18,7 @@ use super::input_box_view::{InputId, InputLook, InputView};
 use crate::commands::Outcome;
 use crate::editor::find::controller::{AutoFindInSelection, FindController, FindOptions, FocusAction, QueryOptions, SeedFromSelection};
 use crate::editor::find::state::{MATCHES_LIMIT, NewFindState};
-use crate::editor::{ContentChanged, OpenEditor, Position, Selection, VERTICAL_SCROLLBAR_WIDTH, VerticalReveal, Viewport, expand_tabs, visible_column};
+use crate::editor::{ContentChanged, OpenEditor, Position, Selection, VERTICAL_SCROLLBAR_WIDTH, Viewport, expand_tabs, visible_column};
 use crate::history::HistoryNavigator;
 use crate::input_box::InputBox;
 use crate::main_thread_quick_open::Owner;
@@ -39,6 +40,7 @@ const REPLACE_AREA_HEIGHT: f32 = 62.;
 const SLIDE: Duration = Duration::from_millis(200);
 /// `--vscode-shadow-lg` (style.css) blurs 12px; CSS takes sigma as half the blur, GPUI's blur_radius is sigma.
 const SHADOW_BLUR: f32 = 6.;
+const BUTTON_IDS: [&str; 7] = ["find-replace-toggle", "find-previous", "find-next", "find-selection", "find-close", "replace", "replace-all"];
 
 /// A find match's overview ruler mark, also drawn in the minimap unless past 1000 matches.
 pub(super) struct FindMark {
@@ -55,6 +57,8 @@ pub struct FindWidget {
     pub replace_view: InputView,
     pub find_focus: FocusHandle,
     pub replace_focus: FocusHandle,
+    /// The `SimpleButton`s and the Find in Selection toggle by id: a click focuses them (tabIndex 0).
+    pub button_focus: HashMap<&'static str, FocusHandle>,
     /// The model the controller is bound to; another active model restarts the find there (`onDidChangeModel`).
     model_id: Option<u32>,
     /// The width the sash set (`_resized`).
@@ -84,6 +88,7 @@ impl FindWidget {
             replace_view: InputView::default(),
             find_focus: cx.focus_handle(),
             replace_focus: cx.focus_handle(),
+            button_focus: BUTTON_IDS.into_iter().map(|id| (id, cx.focus_handle())).collect(),
             model_id: None,
             resized_width: None,
             sash_drag: None,
@@ -222,14 +227,14 @@ impl Workbench {
             false => Some(editor.highlights.first().map(|(line, columns)| editor.document.lines[*line].chars().skip(columns.start).take(columns.len()).collect::<String>())),
         };
         let (focus, change) = action(&mut find.controller, editor, viewport);
-        if let Some(word) = highlighted_word {
+        // An edit's cursor change stops the highlights; only a later find selection (source "api", which
+        // refreshed them) runs the query again, so Replace All leaves none.
+        let rerun = change.is_none() || !editor.highlights.is_empty();
+        if let Some(word) = highlighted_word.filter(|_| rerun) {
             editor.highlights = word.map_or_else(Vec::new, |word| crate::editor::word_occurrences(&editor.document.lines, &word));
         }
         let adjust_scroll = !self.find.controller.state.is_revealed || revealed || !self.selection_under_find_widget(selections[0]);
         self.layout_find_zone(adjust_scroll);
-        if self.find.controller.state.is_revealed && !revealed {
-            self.reveal_current_match();
-        }
         let editor = self.editors.active().expect("checked above");
         let (moved, scrolled) = (editor.selections != selections, editor.scroll != scroll || self.editors.viewport.top_whitespace != top_whitespace);
         match &change {
@@ -253,8 +258,11 @@ impl Workbench {
             } else {
                 self.find.find_view.reset();
                 self.find.replace_view.reset();
-                // `_hide(true)`.
+                // `_hide(true)`; wordHighlighter.ts `onDidFocusEditorText` runs its query from the selection again.
                 window.focus(&self.editor_focus, cx);
+                if let Some(editor) = self.editors.active_mut() {
+                    editor.refresh_highlights();
+                }
             }
         }
         match focus {
@@ -489,20 +497,13 @@ impl Workbench {
         end.line > start.line || left(start) > widget_left || left(end) > widget_left
     }
 
-    /// The research ran before the zone existed: its reveal of the current match runs again on the final layout.
-    fn reveal_current_match(&mut self) {
-        let viewport = self.editors.viewport;
-        let Some(range) = self.find.controller.state.current_match.clone() else { return };
-        let Some(editor) = self.editors.active_mut() else { return };
-        editor.reveal_range(range.start, range.end, VerticalReveal::CenterIfOutsideViewport, viewport);
-    }
-
     /// findDecorations.ts on one line: the find scopes and the range highlight across the line, then the matches,
-    /// the current one on top. Returns the boxes and the text colors of the matches (`findMatchInline`).
-    pub(super) fn find_line_decorations(&self, editor: &OpenEditor, index: usize, char_width: f32, scroll_left: f32) -> (Vec<Div>, Vec<(Range<usize>, HighlightStyle)>) {
-        let (mut boxes, mut text_colors) = (Vec::new(), Vec::new());
+    /// the current one on top. Returns the whole-line boxes, which decorations.ts draws under every other decoration,
+    /// the match boxes (zIndex 10 and 13, over the zIndex 0 ones) and the text colors of the matches (`findMatchInline`).
+    pub(super) fn find_line_decorations(&self, editor: &OpenEditor, index: usize, char_width: f32, scroll_left: f32) -> (Vec<Div>, Vec<Div>, Vec<(Range<usize>, HighlightStyle)>) {
+        let (mut whole_lines, mut boxes, mut text_colors) = (Vec::new(), Vec::new(), Vec::new());
         let Some(model) = self.find.controller.model.as_ref().filter(|_| self.find.model_id == Some(editor.model_id)) else {
-            return (boxes, text_colors);
+            return (whole_lines, boxes, text_colors);
         };
         let high_contrast = self.theme.kind.is_high_contrast();
         let on_line = |range: &Range<Position>| range.start.line <= index && index <= range.end.line;
@@ -518,11 +519,11 @@ impl Workbench {
         };
         let whole_line = || div().absolute().inset_0().left(px(scroll_left));
         for _ in model.find_scopes(editor).unwrap_or_default().iter().filter(|scope| on_line(scope)) {
-            boxes.push(bordered(whole_line(), self.theme.color("editor.findRangeHighlightBackground"), self.theme.color("editor.findRangeHighlightBorder"), 1.));
+            whole_lines.push(bordered(whole_line(), self.theme.color("editor.findRangeHighlightBackground"), self.theme.color("editor.findRangeHighlightBorder"), 1.));
         }
         for range_highlight in [&model.range_highlight, &self.find.go_to_match_highlight] {
             if range_highlight.as_ref().is_some_and(on_line) {
-                boxes.push(bordered(whole_line(), self.theme.color("editor.rangeHighlightBackground"), self.theme.color("editor.rangeHighlightBorder"), 1.));
+                whole_lines.push(bordered(whole_line(), self.theme.color("editor.rangeHighlightBackground"), self.theme.color("editor.rangeHighlightBorder"), 1.));
             }
         }
 
@@ -551,7 +552,7 @@ impl Workbench {
             }
         }
         boxes.extend(current);
-        (boxes, text_colors)
+        (whole_lines, boxes, text_colors)
     }
 
     /// findDecorations.ts's overview ruler and minimap marks in z-index order: the matches (10), or past 1000 matches
@@ -831,13 +832,14 @@ impl Workbench {
             .border_color(if checked { self.color("inputOption.activeBorder") } else { gpui::transparent_black().into() })
             .when(checked, |toggle| toggle.bg(self.color("inputOption.activeBackground")))
             .when(!enabled, |toggle| toggle.opacity(0.4))
-            .when(enabled, |toggle| {
-                toggle.cursor_pointer().hover(|toggle| toggle.bg(self.color("toolbar.hoverBackground"))).on_click(cx.listener(|workbench, _, window, cx| {
+            .when(enabled, |toggle| toggle.cursor_pointer().hover(|toggle| toggle.bg(self.color("toolbar.hoverBackground"))))
+            .map(|toggle| {
+                self.focusable_button(toggle, "find-selection", enabled, cx, |workbench, window, cx| {
                     workbench.run_find(window, cx, |find, editor, viewport| {
                         find.toggle_search_scope(editor, viewport);
                         (FocusAction::NoFocusChange, None)
                     })
-                }))
+                })
             })
     }
 
@@ -853,37 +855,59 @@ impl Workbench {
         cx: &mut Context<Self>,
         trigger: fn(&mut Workbench, &mut Window, &mut Context<Workbench>),
     ) -> Stateful<Div> {
-        self.icon(icon, 22., 16., if enabled { foreground } else { disabled })
+        let button = self
+            .icon(icon, 22., 16., if enabled { foreground } else { disabled })
             .id(id)
             .ml(px(3.))
             .rounded(px(5.))
+            .border_1()
+            .border_color(gpui::transparent_black())
+            .when(enabled, |button| button.cursor_pointer().hover(|button| button.bg(self.color("toolbar.hoverBackground"))));
+        self.focusable_button(button, id, enabled, cx, trigger)
+    }
+
+    /// A focusable button (tabIndex 0) with a 1px border: a mouse down focuses it, even disabled, and the border
+    /// draws the workbench focus outline (`outline-offset: -1px`); a click, Enter or Space triggers it when enabled.
+    fn focusable_button(&self, button: Stateful<Div>, id: &'static str, enabled: bool, cx: &mut Context<Self>, trigger: fn(&mut Workbench, &mut Window, &mut Context<Workbench>)) -> Stateful<Div> {
+        let focus_border = self.color("focusBorder");
+        button
+            .track_focus(&self.find.button_focus[id])
+            .focus(move |button| button.border_color(focus_border))
             .when(enabled, |button| {
                 button
-                    .cursor_pointer()
-                    .hover(|button| button.bg(self.color("toolbar.hoverBackground")))
                     .on_click(cx.listener(move |workbench, _, window, cx| trigger(workbench, window, cx)))
+                    .on_key_down(cx.listener(move |workbench, event: &KeyDownEvent, window, cx| {
+                        let keystroke = &event.keystroke;
+                        if matches!(keystroke.key.as_str(), "enter" | "space") && !keystroke.modifiers.modified() {
+                            cx.stop_propagation();
+                            trigger(workbench, window, cx);
+                        }
+                    }))
             })
     }
 
     /// The chevron at the left edge that shows and hides the replace input.
     fn replace_toggle(&self, replace: bool, height: f32, cx: &mut Context<Self>) -> Stateful<Div> {
         let icon = if replace { "chevron-down" } else { "chevron-right" };
-        self.icon(icon, 18., 16., self.foreground_or("editorWidget.foreground"))
+        let toggle = self
+            .icon(icon, 18., 16., self.foreground_or("editorWidget.foreground"))
             .id("find-replace-toggle")
             .absolute()
             .left(px(5.))
             .top(px(4.))
             .h(px(height - 10.))
             .rounded(px(4.))
+            .border_1()
+            .border_color(gpui::transparent_black())
             .cursor_pointer()
-            .hover(|button| button.bg(self.color("toolbar.hoverBackground")))
-            .on_click(cx.listener(|workbench, _, window, cx| {
-                workbench.run_find(window, cx, |find, editor, viewport| {
-                    let replace = !find.state.is_replace_revealed;
-                    find.change(editor, viewport, NewFindState { is_replace_revealed: Some(replace), ..Default::default() }, false);
-                    (FocusAction::NoFocusChange, None)
-                })
-            }))
+            .hover(|button| button.bg(self.color("toolbar.hoverBackground")));
+        self.focusable_button(toggle, "find-replace-toggle", true, cx, |workbench, window, cx| {
+            workbench.run_find(window, cx, |find, editor, viewport| {
+                let replace = !find.state.is_replace_revealed;
+                find.change(editor, viewport, NewFindState { is_replace_revealed: Some(replace), ..Default::default() }, false);
+                (FocusAction::NoFocusChange, None)
+            })
+        })
     }
 
     /// The 2px sash on the left edge: dragging it widens the widget past its initial width, a double click

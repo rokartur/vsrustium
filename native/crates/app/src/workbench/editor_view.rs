@@ -564,6 +564,8 @@ impl Workbench {
                 if collapsed == Some(true) {
                     content = content.child(div().absolute().inset_0().left(px(scroll_left)).bg(fold_background));
                 }
+                let (find_whole_lines, find_matches, find_colors) = self.find_line_decorations(editor, index, char_width, scroll_left);
+                content = content.children(find_whole_lines);
                 for (_, columns) in editor.highlights.iter().filter(|(line, _)| *line == index) {
                     let start = visible_column(text, columns.start, tab_size) as f32 * char_width;
                     let end = visible_column(text, columns.end, tab_size) as f32 * char_width;
@@ -577,8 +579,6 @@ impl Workbench {
                     }
                     content = content.child(highlight);
                 }
-                let (find_decorations, find_colors) = self.find_line_decorations(editor, index, char_width, scroll_left);
-                content = content.children(find_decorations);
                 // bracketMatching.css .bracket-match: background and a 1px border inside the bracket's box.
                 for (_, bytes) in bracket_matches.iter().flat_map(|(pair, _)| pair).filter(|(line, _)| *line == index) {
                     let start = visible_column(text, text[..bytes.start].chars().count(), tab_size) as f32 * char_width;
@@ -592,6 +592,7 @@ impl Workbench {
                     }
                     content = content.child(bracket);
                 }
+                content = content.children(find_matches);
                 let highlights = editor.document.tokens.highlights(&self.theme, &self.languages, &editor.document.lines, index, tab_size);
                 let text_runs = StyledText::new(expand_tabs(text, tab_size)).with_highlights(gpui::combine_highlights(highlights, find_colors));
                 content = content.child(div().absolute().top_0().left_0().whitespace_nowrap().child(text_runs));

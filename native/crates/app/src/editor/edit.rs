@@ -278,7 +278,7 @@ impl OpenEditor {
     }
 
     /// The word highlights at the primary head; a multi-line selection has none (wordHighlighter.ts `_onPositionChanged`).
-    pub(super) fn refresh_highlights(&mut self) {
+    pub fn refresh_highlights(&mut self) {
         let Selection { anchor, head } = self.selection();
         let text = &self.document.lines[head.line];
         self.highlights = match super::word_at(text, head.column).filter(|_| anchor.line == head.line) {

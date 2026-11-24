@@ -868,6 +868,18 @@ mod tests {
             (workbench.find.controller.state.search_string.clone(), editor.selection().head, editor.highlights.clone())
         });
         assert_eq!(highlights, ("an".to_string(), Position::new(1, 2), vec![(0, 2..5)]));
+        // onDidFocusEditorText: closing the widget focuses the editor, whose selection's word is highlighted.
+        cx.simulate_keystrokes("escape");
+        assert_eq!(workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().highlights.clone()), vec![(1, 0..3)]);
+
+        // SimpleButton: a focused button triggers on Enter.
+        run("actions.find", cx);
+        cx.simulate_input("a");
+        let position = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.find.controller.state.matches_position);
+        let before = position(cx);
+        workbench.update_in(cx, |workbench, window, cx| window.focus(&workbench.find.button_focus["find-next"].clone(), cx));
+        cx.simulate_keystrokes("enter");
+        assert_eq!(position(cx), before + 1);
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
