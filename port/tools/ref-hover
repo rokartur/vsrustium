@@ -1,0 +1,155 @@
+#!/usr/bin/env bun
+// Rests the pointer on workbench elements of the reference through CDP until their hover shows, then dumps the hover:
+// text, boxes of the hover, its container and pointer, the pointer's side, computed styles, and a screenshot.
+// Usage: port/tools/ref-hover <out-dir> <target>...   Targets: a CSS selector, optionally `@dx,dy` for the point
+// relative to the element's center. Env REF, FOLDER, FILE as port/tools/ref-screenshot, THEME (default dark), WAIT (ms, default 2000).
+import { Database } from 'bun:sqlite';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+const outDir = process.argv[2] ?? '/tmp/ref-contextmenu';
+const targets = process.argv.slice(3);
+const ref = process.env.REF ?? join(process.env.HOME!, 'Developer/vscode-ref');
+const electron = join(ref, '.build/electron/Code - OSS.app/Contents/MacOS/Code - OSS');
+const themes: Record<string, string> = { dark: 'Default Dark Modern', light: 'Default Light Modern', hc: 'Default High Contrast', hclight: 'Default High Contrast Light' };
+const port = 9337;
+
+mkdirSync(outDir, { recursive: true });
+const userData = mkdtempSync(join(tmpdir(), 'ref-hover-'));
+mkdirSync(join(userData, 'User'));
+// Same product settings as port/tools/ref-screenshot.
+writeFileSync(join(userData, 'User/settings.json'), JSON.stringify({
+	'workbench.colorTheme': themes[process.env.THEME ?? 'dark'],
+	'workbench.startupEditor': 'none',
+	'workbench.reduceMotion': 'on',
+	'editor.cursorBlinking': 'solid',
+	'window.restoreWindows': 'none',
+	'workbench.tips.enabled': false,
+	'update.mode': 'none',
+	'chat.disableAIFeatures': true,
+	'security.workspace.trust.enabled': false,
+	'workbench.secondarySideBar.defaultVisibility': 'hidden',
+	'editor.minimap.enabled': false,
+}));
+mkdirSync(join(userData, 'User/globalStorage'));
+const storage = new Database(join(userData, 'User/globalStorage/state.vscdb'));
+storage.run('CREATE TABLE ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)');
+storage.run(`INSERT INTO ItemTable VALUES ('workbench.activity.showAccounts', 'false')`);
+storage.close();
+const paths = [process.env.FOLDER, process.env.FILE].filter(path => path) as string[];
+const app = Bun.spawn([electron, ref, ...paths, '--force-color-profile=srgb', '--user-data-dir', userData, '--remote-debugging-port=' + port, '--disable-extension', 'GitHub.copilot-chat', '--disable-extension', 'vscode.vscode-api-tests'], {
+	env: { ...process.env, VSCODE_DEV: '1', NODE_ENV: 'development' },
+	stdout: 'ignore',
+	stderr: 'ignore',
+});
+try {
+	const cdp = await connect();
+	await cdp('Emulation.setDeviceMetricsOverride', { width: 1024, height: 768, deviceScaleFactor: 2, mobile: false });
+	await until(async () => (await evaluate(cdp, `!!document.querySelector('.monaco-workbench .part.statusbar')`)) === true);
+	await Bun.sleep(5000);
+	Bun.spawnSync(['open', '-a', join(ref, '.build/electron/Code - OSS.app')]);
+	await cdp('Page.bringToFront');
+	for (const [index, target] of targets.entries()) {
+		const [selector, offset] = target.split('@');
+		const [dx, dy] = (offset ?? '0,0').split(',').map(Number);
+		const name = `${index}-${selector.replace(/[^\w.-]+/g, '_')}`;
+		// Park the pointer on the window corner so the previous hover is gone and the next one waits its full delay.
+		await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 1020, y: 400 });
+		await Bun.sleep(1000);
+		const point = await evaluate(cdp, `(() => {
+			const element = document.querySelector(${JSON.stringify(selector)});
+			if (!element) return null;
+			const box = element.getBoundingClientRect();
+			return { x: box.left + box.width / 2 + ${dx}, y: box.top + box.height / 2 + ${dy}, target: { x: box.x, y: box.y, w: box.width, h: box.height } };
+		})()`);
+		if (!point) {
+			console.log(`${name}: no element`);
+			continue;
+		}
+		await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: point.x, y: point.y });
+		const shownAfter = await (async () => {
+			const start = Date.now();
+			while (Date.now() - start < Number(process.env.WAIT ?? 4000)) {
+				if (await evaluate(cdp, `!!document.querySelector('.workbench-hover')`)) { return Date.now() - start; }
+				await Bun.sleep(25);
+			}
+			return undefined;
+		})();
+		await Bun.sleep(300);
+		const dump = await evaluate(cdp, `(() => {
+			const hover = document.querySelector('.monaco-hover.workbench-hover');
+			if (!hover) return null;
+			const box = element => { const r = element.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; };
+			const style = (element, keys) => { const s = getComputedStyle(element); return Object.fromEntries(keys.map(key => [key, s.getPropertyValue(key)])); };
+			const pointer = document.querySelector('.workbench-hover-pointer');
+			const contents = hover.querySelector('.hover-contents');
+			return {
+				text: hover.innerText, html: contents?.innerHTML, className: hover.className, hover: box(hover), contents: contents && box(contents),
+				container: box(document.querySelector('.workbench-hover-container')),
+				pointer: pointer && { className: pointer.className, box: box(pointer), after: style(pointer, ['top', 'left', 'right', 'bottom']) },
+				style: style(hover, ['font-family', 'font-size', 'line-height', 'color', 'background-color', 'border-top-color', 'border-radius', 'box-shadow', 'max-width']),
+				contentsStyle: contents && style(contents, ['padding-top', 'padding-left', 'white-space']),
+				cursor: style(document.querySelector(${JSON.stringify(selector)}), ['cursor']).cursor,
+				// The element whose managed hover this is (hoverService.ts setupManagedHover marks it).
+				managedTarget: (target => target && box(target))(document.elementFromPoint(${point.x}, ${point.y})?.closest('[custom-hover]')),
+			};
+		})()`);
+		writeFileSync(join(outDir, `${name}.json`), JSON.stringify({ selector, point, shownAfter, ...dump }, null, 1));
+		await shot(cdp, join(outDir, `${name}.png`));
+		console.log(`${name}: ${shownAfter ?? 'no hover'} ms ${JSON.stringify(dump?.text)} ${dump?.pointer?.className ?? ''}`);
+	}
+} finally {
+	app.kill('SIGKILL');
+	await app.exited;
+	rmSync(userData, { recursive: true, force: true });
+}
+process.exit(0);
+
+async function shot(cdp: Cdp, path: string) {
+	const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
+	writeFileSync(path, Buffer.from(data, 'base64'));
+}
+
+async function evaluate(cdp: Cdp, expression: string) {
+	const { result, exceptionDetails } = await cdp('Runtime.evaluate', { expression, returnByValue: true });
+	if (exceptionDetails) {
+		throw new Error(exceptionDetails.exception?.description ?? exceptionDetails.text);
+	}
+	return result.value;
+}
+
+type Cdp = (method: string, params?: object) => Promise<any>;
+
+async function connect(): Promise<Cdp> {
+	const target = await until(async () => {
+		const targets: { type: string; url: string; webSocketDebuggerUrl: string }[] = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
+		return targets.find(t => t.type === 'page' && t.url.includes('workbench'));
+	});
+	const socket = new WebSocket(target.webSocketDebuggerUrl);
+	await new Promise(resolve => socket.addEventListener('open', resolve, { once: true }));
+	let nextId = 1;
+	const pending = new Map<number, (message: any) => void>();
+	socket.addEventListener('message', event => {
+		const message = JSON.parse(String(event.data));
+		pending.get(message.id)?.(message);
+		pending.delete(message.id);
+	});
+	return (method, params = {}) => new Promise<any>((resolve, reject) => {
+		const id = nextId++;
+		pending.set(id, message => message.error ? reject(new Error(`${method}: ${message.error.message}`)) : resolve(message.result));
+		socket.send(JSON.stringify({ id, method, params }));
+	});
+}
+
+async function until<T>(probe: () => Promise<T>, timeoutMs = 60000): Promise<NonNullable<T>> {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		const value = await probe().catch(() => undefined);
+		if (value) {
+			return value;
+		}
+		await Bun.sleep(250);
+	}
+	throw new Error('timed out');
+}
