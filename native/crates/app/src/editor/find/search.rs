@@ -73,7 +73,7 @@ impl SearchParams<'_> {
 }
 
 /// `escapeRegExpCharacters` (strings.ts).
-fn escape_regexp_characters(value: &str) -> String {
+pub fn escape_regexp_characters(value: &str) -> String {
     let mut escaped = String::with_capacity(value.len());
     for c in value.chars() {
         if "\\{}*+?|^$.[]()".contains(c) {
