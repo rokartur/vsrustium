@@ -76,21 +76,34 @@ impl Workbench {
     }
 
     /// `includeInHistory`: `ExcludeResourceGlobMatcher` over `files.exclude` and `search.exclude`, matching the path
-    /// relative to the folder, and the absolute path too when a pattern is absolute.
+    /// relative to its workspace folder with that folder's settings, and the absolute path too when a pattern is
+    /// absolute; a path outside every folder matches the global settings by its absolute path.
     fn history_exclude_matcher(&self) -> impl Fn(&Path) -> bool + use<> {
-        let root = self.workspace_path().map(Path::to_path_buf);
+        let workspace = self.workspace().cloned();
         let settings = self.settings.lock().unwrap();
-        let setting = |_: &Path, key: &str| settings.get_value(Some(key), &Overrides { resource: root.as_deref(), ..Overrides::default() }).unwrap_or(Value::Null);
-        let expression = search::query::excludes(root.as_deref().unwrap_or(Path::new("/")), &setting, true).unwrap_or_default();
-        let has_absolute_path = expression.keys().any(|key| key.starts_with('/'));
-        let matcher = files::glob::parse_exclude_expression(&expression, files::glob::Options::default());
+        let matcher_for = |root: Option<&Path>| {
+            let setting = |_: &Path, key: &str| settings.get_value(Some(key), &Overrides { resource: root, ..Overrides::default() }).unwrap_or(Value::Null);
+            let expression = search::query::excludes(root.unwrap_or(Path::new("/")), &setting, true).unwrap_or_default();
+            let has_absolute_path = expression.keys().any(|key| key.starts_with('/'));
+            (files::glob::parse_exclude_expression(&expression, files::glob::Options::default()), has_absolute_path)
+        };
+        let folder_matchers: Vec<_> = workspace.iter().flat_map(|workspace| &workspace.folders).map(|folder| matcher_for(Some(&folder.path))).collect();
+        let global_matcher = matcher_for(None);
         move |path: &Path| {
             let absolute = path.to_string_lossy();
-            let relative = root.as_deref().and_then(|root| path.strip_prefix(root).ok()).map(|relative| relative.to_string_lossy().into_owned());
+            let folder = workspace.as_ref().and_then(|workspace| workspace.folder_of(path).map(|folder| (workspace, folder)));
+            let ((matcher, has_absolute_path), relative) = match folder {
+                Some((workspace, folder)) => {
+                    let index = workspace.folders.iter().position(|candidate| candidate == folder).expect("folder of this workspace");
+                    let relative = path.iter().skip(folder.path.iter().count()).collect::<PathBuf>().to_string_lossy().into_owned();
+                    (&folder_matchers[index], Some(relative))
+                }
+                None => (&global_matcher, None),
+            };
             if matcher.matches(relative.as_deref().unwrap_or(&absolute), None, None).is_some() {
                 return true;
             }
-            let Some(relative) = relative.filter(|_| has_absolute_path) else { return false };
+            let Some(relative) = relative.filter(|_| *has_absolute_path) else { return false };
             matcher.matches(&absolute, None, None).is_some() && !matcher.is_excepted(&relative, None)
         }
     }
@@ -103,7 +116,7 @@ impl Workbench {
         }
         let include_history = self.setting("search.quickOpen.includeHistory").as_bool().unwrap_or(true);
         let sort_by_recency = self.setting("search.quickOpen.history.filterSortOrder") == "recency";
-        let workspace = self.workspace_path().map(Path::to_path_buf);
+        let workspace = self.workspace().cloned();
         let home = std::env::var("HOME").unwrap_or_default();
         let state = self.quick_access.files.as_mut().expect("set above");
 
@@ -117,10 +130,10 @@ impl Workbench {
         state.last_filter = Some(filter.clone());
 
         let query = fuzzy_scorer::prepare_query(&filter);
-        let history = anything_quick_access::editor_history_picks(&self.quick_access.editor_history.entries, &query, workspace.as_deref(), include_history, sort_by_recency, &mut state.scorer_cache);
+        let history = anything_quick_access::editor_history_picks(&self.quick_access.editor_history.entries, &query, workspace.as_ref(), include_history, sort_by_recency, &mut state.scorer_cache);
         let files = match &state.files {
             _ if query.piece.normalized.is_empty() => Some(Vec::new()),
-            Some(files) => Some(anything_quick_access::file_picks(files, &query, &history, workspace.as_deref(), &home, &mut state.scorer_cache)),
+            Some(files) => Some(anything_quick_access::file_picks(files, &query, &history, workspace.as_ref(), &home, &mut state.scorer_cache)),
             None => None,
         };
         // applyFastAndSlowPicks: history picks alone show once the merge delay passed, and not when empty.
@@ -177,7 +190,7 @@ impl Workbench {
     /// `createFileQueryCache`: one search lists the workspace files and the opened files outside it, then the picks
     /// update; the merge delay lets the history picks show alone while it runs.
     fn load_file_query_cache(&self, id: i64, window: &Window, cx: &mut Context<Self>) -> FilePickState {
-        let folders: Vec<PathBuf> = self.workspace_path().map(Path::to_path_buf).into_iter().collect();
+        let folders: Vec<PathBuf> = self.workspace().iter().flat_map(|workspace| &workspace.folders).map(|folder| folder.path.clone()).collect();
         let settings = self.settings.clone();
         let query = search::query::file_query(&folders, &serde_json::json!({ "filePattern": "", "sortByScore": true }), &|folder, key| {
             settings.lock().unwrap().get_value(Some(key), &Overrides { resource: Some(folder), ..Overrides::default() }).unwrap_or(Value::Null)

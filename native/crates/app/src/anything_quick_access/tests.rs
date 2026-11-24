@@ -81,7 +81,8 @@ fn file_results_put_label_matches_first() {
 
 #[test]
 fn picks_show_the_folder_relative_to_the_workspace_and_highlight_the_match() {
-    let workspace = Some(Path::new("/w"));
+    let folder = Workspace::folder("/w".into());
+    let workspace = Some(&folder);
     let picks = vec![FilePick::new("/w/src/main.ts".into(), workspace), FilePick::new("/w/README.md".into(), workspace)];
     assert_eq!((picks[0].label.as_str(), picks[0].description.as_str()), ("main.ts", "src"));
     assert_eq!(picks[1].description, "");
@@ -94,7 +95,8 @@ fn picks_show_the_folder_relative_to_the_workspace_and_highlight_the_match() {
 #[test]
 fn history_matches_labels_unless_the_query_has_a_path_separator() {
     let history = [PathBuf::from("/w/src/util.ts"), PathBuf::from("/w/docs/guide.md")];
-    let workspace = Some(Path::new("/w"));
+    let folder = Workspace::folder("/w".into());
+    let workspace = Some(&folder);
     let mut cache = FuzzyScorerCache::new();
     assert_eq!(editor_history_picks(&history, &prepare_query(""), workspace, true, false, &mut cache).len(), 2);
     assert!(editor_history_picks(&history, &prepare_query("src"), workspace, true, false, &mut cache).is_empty());

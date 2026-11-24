@@ -7,6 +7,8 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
+use config::workspace::Workspace;
+
 use crate::filters::Matches;
 use crate::fuzzy_scorer::{self, FuzzyScorerCache, PreparedQuery, ScorerItem};
 use crate::quick_input::path_label;
@@ -66,7 +68,7 @@ pub struct FilePick {
 }
 
 impl FilePick {
-    pub fn new(path: PathBuf, workspace: Option<&Path>) -> FilePick {
+    pub fn new(path: PathBuf, workspace: Option<&Workspace>) -> FilePick {
         let label = path.file_name().map_or_else(|| path.to_string_lossy().into_owned(), |name| name.to_string_lossy().into_owned());
         let description = path_label(path.parent().unwrap_or(&path), workspace);
         FilePick { path, label, description, label_highlights: Vec::new(), description_highlights: Vec::new() }
@@ -84,7 +86,7 @@ impl FilePick {
 
 /// `getEditorHistoryPicks`: every entry without a query, else the ones that match, sorted by score unless
 /// `search.quickOpen.history.filterSortOrder` is `recency`.
-pub fn editor_history_picks(history: &[PathBuf], query: &PreparedQuery, workspace: Option<&Path>, include_history: bool, sort_by_recency: bool, cache: &mut FuzzyScorerCache) -> Vec<FilePick> {
+pub fn editor_history_picks(history: &[PathBuf], query: &PreparedQuery, workspace: Option<&Workspace>, include_history: bool, sort_by_recency: bool, cache: &mut FuzzyScorerCache) -> Vec<FilePick> {
     let mut picks: Vec<FilePick> = history.iter().map(|path| FilePick::new(path.clone(), workspace)).collect();
     if query.piece.normalized.is_empty() {
         return picks;
@@ -172,7 +174,7 @@ fn compare_picks(a: &FilePick, b: &FilePick, query: &PreparedQuery, cache: &mut 
 
 /// `getFilePicks` over the loaded file list: an absolute path names the only pick, else the search results and
 /// the files the query names relative to a folder, without the editor history entries, scored by `getAdditionalPicks`.
-pub fn file_picks(files: &[FileEntry], query: &PreparedQuery, history: &[FilePick], workspace: Option<&Path>, home: &str, cache: &mut FuzzyScorerCache) -> Vec<FilePick> {
+pub fn file_picks(files: &[FileEntry], query: &PreparedQuery, history: &[FilePick], workspace: Option<&Workspace>, home: &str, cache: &mut FuzzyScorerCache) -> Vec<FilePick> {
     if query.piece.normalized.is_empty() {
         return Vec::new();
     }
@@ -188,7 +190,7 @@ pub fn file_picks(files: &[FileEntry], query: &PreparedQuery, history: &[FilePic
         return vec![pick];
     }
     let mut results = file_search_results(files, query, cache);
-    if let Some(relative) = relative_path_results(query, workspace.as_slice()) {
+    if let Some(relative) = relative_path_results(query, &workspace.iter().flat_map(|workspace| &workspace.folders).map(|folder| folder.path.as_path()).collect::<Vec<_>>()) {
         results.retain(|path| !relative.contains(path));
         results.extend(relative);
     }
