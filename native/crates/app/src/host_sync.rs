@@ -11,6 +11,7 @@ use exthost::scan::file_uri;
 use serde_json::{Value, json};
 
 use crate::editor::{EditorGroup, OpenEditor};
+use crate::theme::ThemeKind;
 
 #[derive(Debug)]
 pub struct HostMessage {
@@ -84,6 +85,17 @@ impl HostSync {
     pub fn send_selection(&self, editor: &OpenEditor, source: &str) {
         let selections = json!({ "selections": [selection(editor)], "source": source });
         self.send("ExtHostEditors", "$acceptEditorPropertiesChanged", vec![json!(snapshot_id(editor)), json!({ "options": null, "selections": selections, "visibleRanges": null })]);
+    }
+
+    /// mainThreadTheming.ts: the theme type behind `window.activeColorTheme.kind`, sent once at startup.
+    pub fn send_color_theme(&self, kind: ThemeKind) {
+        let scheme = match kind {
+            ThemeKind::Dark => "dark",
+            ThemeKind::Light => "light",
+            ThemeKind::HighContrastDark => "hcDark",
+            ThemeKind::HighContrastLight => "hcLight",
+        };
+        self.send("ExtHostTheming", "$onColorThemeChange", vec![json!(scheme)]);
     }
 
     fn send(&self, proxy: &'static str, method: &'static str, args: Vec<Value>) {
@@ -188,6 +200,7 @@ mod tests {
             language_id: language_id.into(),
             indentation: Indentation { tab_size: 4, insert_spaces: true },
             off_side: false,
+            tokens: Default::default(),
         }
     }
 
@@ -239,5 +252,14 @@ mod tests {
         let delta = &drain(&receiver)[0].args[0];
         assert_eq!(delta["newActiveEditor"], Value::Null);
         assert!(delta.get("addedEditors").is_none());
+    }
+
+    #[test]
+    fn sends_the_color_theme_type_the_host_reads() {
+        let (sender, receiver) = channel();
+        HostSync::new(sender).send_color_theme(ThemeKind::HighContrastLight);
+        let sent = drain(&receiver);
+        assert_eq!((sent[0].proxy, sent[0].method), ("ExtHostTheming", "$onColorThemeChange"));
+        assert_eq!(sent[0].args, [json!("hcLight")]);
     }
 }

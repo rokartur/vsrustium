@@ -1,10 +1,12 @@
 //! The native app: the workbench, themed from the built-in theme files, over the running extension host.
 //! Usage: code-gpui [folder [file]] [--theme <settings id>] [--user-data-dir <dir>] [--screenshot <png>] [--node]
 
+mod brackets;
 mod editor;
 mod explorer;
 mod host_sync;
 mod languages;
+mod syntax;
 mod theme;
 mod workbench;
 
@@ -49,7 +51,9 @@ fn main() -> anyhow::Result<()> {
 
     application().run(move |cx: &mut App| {
         // Same size as the reference capture in port/tools/ref-screenshot, so pixel diffs line up.
-        let bounds = Bounds::centered(None, size(px(1024.), px(768.)), cx);
+        let mut bounds = Bounds::centered(None, size(px(1024.), px(768.)), cx);
+        // A half-point origin (an odd display height, e.g. 1650 px over screen sharing) makes the drawable 1 point taller.
+        bounds.origin = point(bounds.origin.x.round(), bounds.origin.y.round());
         // The workbench draws its own title bar, as the reference does with window.titleBarStyle custom.
         let titlebar = TitlebarOptions { title: None, appears_transparent: true, traffic_light_position: Some(point(px(10.), px(10.))) };
         let options = WindowOptions { window_bounds: Some(WindowBounds::Windowed(bounds)), titlebar: Some(titlebar), ..Default::default() };
@@ -58,7 +62,9 @@ fn main() -> anyhow::Result<()> {
                 let (sender, mut receiver) = unbounded::<String>();
                 let (host_sender, host_receiver) = channel();
                 let languages = Languages::new(&extensions);
-                let mut workbench = Workbench::new(theme, app_root.clone(), folder.clone().map(FileTree::new), languages, HostSync::new(host_sender));
+                let host = HostSync::new(host_sender);
+                host.send_color_theme(theme.kind);
+                let mut workbench = Workbench::new(theme, app_root.clone(), folder.clone().map(FileTree::new), languages, host);
                 if let Some(file) = file {
                     workbench.open_file(file, true, cx);
                 }

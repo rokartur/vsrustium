@@ -14,11 +14,21 @@ pub enum ThemeKind {
     Dark,
     Light,
     HighContrastDark,
+    HighContrastLight,
+}
+
+impl ThemeKind {
+    /// `isHighContrast` (platform/theme/common/theme.ts): the `.hc-black` and `.hc-light` CSS rules.
+    pub fn is_high_contrast(self) -> bool {
+        matches!(self, ThemeKind::HighContrastDark | ThemeKind::HighContrastLight)
+    }
 }
 
 pub struct Theme {
     pub kind: ThemeKind,
     colors: HashMap<String, Rgba>,
+    /// The TextMate theme of the token colors (`ColorThemeData.tokenColors`).
+    pub tokens: textmate::Theme,
 }
 
 /// Finds the theme whose settings id (`id`, else `label`, as in `ColorThemeData.fromExtensionTheme`) is `settings_id`.
@@ -34,25 +44,29 @@ pub fn load_theme(extensions: &[ScannedExtension], settings_id: &str) -> anyhow:
                 "vs" => ThemeKind::Light,
                 "vs-dark" => ThemeKind::Dark,
                 "hc-black" => ThemeKind::HighContrastDark,
-                // shortcut: no hcLight registry defaults yet, add the hcLight column to registry_default when a light HC theme is needed.
-                other => bail!("theme {settings_id}: ui theme {other} is not ported"),
+                "hc-light" => ThemeKind::HighContrastLight,
+                other => bail!("theme {settings_id}: unknown ui theme {other}"),
             };
             let path = theme["path"].as_str().context("theme without path")?;
-            let mut colors = HashMap::new();
-            read_colors(&extension.location.join(path), &mut colors)?;
-            return Ok(Theme { kind, colors });
+            let (mut colors, mut token_colors) = (HashMap::new(), Vec::new());
+            read_colors(&extension.location.join(path), &mut colors, &mut token_colors)?;
+            let mut theme = Theme { kind, colors, tokens: textmate::Theme::new(&[]) };
+            theme.tokens = crate::syntax::token_theme(&theme, &token_colors);
+            return Ok(theme);
         }
     }
     bail!("no extension contributes the color theme {settings_id}")
 }
 
 /// Merges the included file first, so the including theme wins, as `_loadColorTheme` does.
-fn read_colors(path: &Path, colors: &mut HashMap<String, Rgba>) -> anyhow::Result<()> {
+/// shortcut: `tokenColors` as a path to a .tmTheme file is not read; no built-in theme uses one, port it with theme extensions from the Marketplace.
+fn read_colors(path: &Path, colors: &mut HashMap<String, Rgba>, token_colors: &mut Vec<Value>) -> anyhow::Result<()> {
     let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     let theme: Value = serde_json::from_str(&strip_jsonc(&text)).with_context(|| format!("parsing {}", path.display()))?;
     if let Some(include) = theme["include"].as_str() {
-        read_colors(&path.parent().unwrap().join(include), colors)?;
+        read_colors(&path.parent().unwrap().join(include), colors, token_colors)?;
     }
+    token_colors.extend(theme["tokenColors"].as_array().into_iter().flatten().cloned());
     if let Some(entries) = theme["colors"].as_object() {
         for (key, value) in entries {
             // A null or malformed value leaves the key to the registry default, as Color.fromHex does upstream.
@@ -101,6 +115,9 @@ enum ColorValue {
 /// (theme.ts, baseColors.ts, editorColors.ts). Keys not listed resolve to no color.
 fn registry_default(key: &str, kind: ThemeKind) -> ColorValue {
     use ColorValue::*;
+    if kind == ThemeKind::HighContrastLight {
+        return hc_light_default(key);
+    }
     let (dark, light, hc) = match key {
         "foreground" => (Hex("#CCCCCC"), Hex("#616161"), Hex("#FFFFFF")),
         "contrastBorder" => (None, None, Hex("#6FC3DF")),
@@ -182,12 +199,82 @@ fn registry_default(key: &str, kind: ThemeKind) -> ColorValue {
             Key("editorGroupHeader.tabsBackground"),
         ),
         "tab.border" => (Hex("#252526"), Hex("#F3F3F3"), Key("contrastBorder")),
+        "editorBracketMatch.background" => (Hex("#0064001A"), Hex("#0064001A"), Hex("#0064001A")),
+        "editorBracketMatch.border" => (Hex("#888"), Hex("#B9B9B9"), Key("contrastBorder")),
+        "editorOverviewRuler.bracketMatchForeground" => (Hex("#A0A0A0"), Hex("#A0A0A0"), Hex("#A0A0A0")),
+        "editorBracketHighlight.foreground1" => (Hex("#FFD700"), Hex("#0431FAFF"), Hex("#FFD700")),
+        "editorBracketHighlight.foreground2" => (Hex("#DA70D6"), Hex("#319331FF"), Hex("#DA70D6")),
+        "editorBracketHighlight.foreground3" => (Hex("#179FFF"), Hex("#7B3814FF"), Hex("#87CEFA")),
+        "editorBracketHighlight.unexpectedBracket.foreground" => (Hex("#FF1212CC"), Hex("#FF1212CC"), Hex("#FF3232")),
         _ => (None, None, None),
     };
     match kind {
         ThemeKind::Dark => dark,
         ThemeKind::Light => light,
         ThemeKind::HighContrastDark => hc,
+        ThemeKind::HighContrastLight => unreachable!(),
+    }
+}
+
+/// The `hcLight` column of the keys `registry_default` lists; a key missing here resolves to no color.
+fn hc_light_default(key: &str) -> ColorValue {
+    use ColorValue::*;
+    match key {
+        "foreground" => Hex("#292929"),
+        "contrastBorder" => Hex("#0F4A85"),
+        "disabledForeground" => Hex("#7F7F7F"),
+        "icon.foreground" => Hex("#292929"),
+        "editor.background" => Hex("#ffffff"),
+        "sideBar.background" => Hex("#FFFFFF"),
+        "window.activeBorder" => Key("contrastBorder"),
+        "titleBar.activeBackground" => Hex("#FFFFFF"),
+        "titleBar.activeForeground" => Hex("#292929"),
+        "commandCenter.foreground" => Key("titleBar.activeForeground"),
+        "commandCenter.border" => Key("contrastBorder"),
+        "activityBar.background" => Hex("#FFFFFF"),
+        "activityBar.foreground" => Key("editor.foreground"),
+        "activityBar.inactiveForeground" => Key("editor.foreground"),
+        "surface.background" => Key("sideBar.background"),
+        "surface.border" => Key("contrastBorder"),
+        "statusBar.foreground" => Key("editor.foreground"),
+        "statusBar.noFolderForeground" => Key("statusBar.foreground"),
+        "focusBorder" => Hex("#006BBD"),
+        "editorBracketMatch.background" => Hex("#0000"),
+        "editorBracketMatch.border" => Key("contrastBorder"),
+        "editorOverviewRuler.bracketMatchForeground" => Hex("#A0A0A0"),
+        "editorBracketHighlight.foreground1" => Hex("#0431FAFF"),
+        "editorBracketHighlight.foreground2" => Hex("#319331FF"),
+        "editorBracketHighlight.foreground3" => Hex("#7B3814FF"),
+        "editorBracketHighlight.unexpectedBracket.foreground" => Hex("#B5200D"),
+        "contrastActiveBorder" => Key("focusBorder"),
+        "sideBar.border" => Key("contrastBorder"),
+        "sideBarTitle.foreground" => Key("sideBar.foreground"),
+        "sideBarTitle.border" => Key("sideBar.border"),
+        "sideBarSectionHeader.foreground" => Key("sideBar.foreground"),
+        "sideBarSectionHeader.border" => Key("contrastBorder"),
+        "list.inactiveSelectionBackground" => Hex("#0F4A851A"),
+        "modernTab.activeBackground" => Key("list.inactiveSelectionBackground"),
+        "modernTab.activeForeground" => Key("foreground"),
+        "modernActivityBarItem.activeBackground" => Key("modernTab.activeBackground"),
+        "modernActivityBarItem.activeForeground" => Key("modernTab.activeForeground"),
+        "editor.foreground" => Key("foreground"),
+        "editorLineNumber.foreground" => Hex("#292929"),
+        "editorActiveLineNumber.foreground" => Key("contrastActiveBorder"),
+        "editorLineNumber.activeForeground" => Key("editorActiveLineNumber.foreground"),
+        "editor.lineHighlightBorder" => Key("contrastBorder"),
+        "editorCursor.foreground" => Hex("#0F4A85"),
+        "editor.wordHighlightBorder" => Key("contrastActiveBorder"),
+        "editor.wordHighlightTextBorder" => Key("editor.wordHighlightBorder"),
+        "editorWhitespace.foreground" => Hex("#CCCCCC"),
+        "editorIndentGuide.background" => Key("editorWhitespace.foreground"),
+        "editorIndentGuide.background1" => Key("editorIndentGuide.background"),
+        "editorOverviewRuler.border" => Hex("#666666"),
+        "editorOverviewRuler.selectionHighlightForeground" => Hex("#A0A0A0CC"),
+        "editorOverviewRuler.wordHighlightTextForeground" => Key("editorOverviewRuler.selectionHighlightForeground"),
+        "breadcrumb.foreground" => Transparent(&Key("foreground"), 0.8),
+        "breadcrumb.background" => Key("editor.background"),
+        "tab.border" => Key("contrastBorder"),
+        _ => None,
     }
 }
 
@@ -314,5 +401,22 @@ mod tests {
         assert_eq!(builtin_theme("Default High Contrast").color("modernActivityBarItem.activeBackground"), None);
         assert_eq!(builtin_theme("Default High Contrast").color("editor.wordHighlightTextBackground"), None);
         assert_eq!(builtin_theme("Default High Contrast").color("editorGroupHeader.connectedTabsBackground"), None);
+    }
+
+    #[test]
+    fn every_builtin_theme_loads_with_token_colors() {
+        let extensions = exthost::scan::scan_builtin_extensions(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../extensions")).unwrap();
+        let mut loaded = 0;
+        for extension in &extensions {
+            for contribution in extension.description["contributes"]["themes"].as_array().into_iter().flatten() {
+                let id = contribution["id"].as_str().or(contribution["label"].as_str()).unwrap();
+                let theme = load_theme(&extensions, id).unwrap_or_else(|error| panic!("{id}: {error:#}"));
+                // Index 0 is unused, 1 and 2 are the editor colors of the default rule.
+                assert!(theme.tokens.color_map().len() > 3, "{id} has no token colors");
+                loaded += 1;
+            }
+        }
+        assert_eq!(loaded, 19);
+        assert_eq!(builtin_theme("Default High Contrast Light").kind, ThemeKind::HighContrastLight);
     }
 }

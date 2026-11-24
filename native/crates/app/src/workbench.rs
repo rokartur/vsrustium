@@ -187,13 +187,13 @@ impl Workbench {
     }
 
     /// The checked view: a 32px rounded indicator behind the icon (activityaction.css); High Contrast
-    /// hides it and outlines the item in contrastActiveBorder instead.
+    /// hides it and outlines the item in contrastActiveBorder instead (menuActivityBar.css `.hc-black, .hc-light`).
     fn active_view_icon(&self, name: &str) -> Div {
         let indicator = div().absolute().top(px(2.)).left(px(2.)).size(px(32.)).rounded(px(4.));
-        let indicator = match (self.theme.color("modernActivityBarItem.activeBackground"), self.theme.color("contrastActiveBorder")) {
-            (Some(background), _) => indicator.bg(background),
-            (None, Some(outline)) => indicator.border_1().border_color(outline),
-            (None, None) => indicator,
+        let indicator = if self.theme.kind.is_high_contrast() {
+            indicator.when_some(self.theme.color("contrastActiveBorder"), |indicator, outline| indicator.border_1().border_color(outline))
+        } else {
+            indicator.when_some(self.theme.color("modernActivityBarItem.activeBackground"), |indicator, background| indicator.bg(background))
         };
         div().relative().child(indicator).child(self.icon(name, 36., 24., self.color("modernActivityBarItem.activeForeground")))
     }
@@ -214,7 +214,7 @@ impl Workbench {
             .child(div().self_start().pl(px(8.)).line_height(px(32.)).text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).text_color(self.foreground_or("sideBarTitle.foreground")).child("Explorer"))
             .child(self.icon("ellipsis", 22., 16., foreground));
         // explorerviewlet.css: in high contrast an explorer item has a 20px line from the row top, 1px above center.
-        let label_line = if self.theme.kind == ThemeKind::HighContrastDark { 20. } else { 22. };
+        let label_line = if self.theme.kind.is_high_contrast() { 20. } else { 22. };
         // The tree is not focused once the editor has focus, so the selection takes the inactive colors.
         let selection = self.color("list.inactiveSelectionBackground");
         // listWidget.ts: a selected row gets a 1px dotted listSelectionOutline (activeContrastBorder) inside it.
@@ -300,11 +300,12 @@ impl Workbench {
     }
 
     fn editor_part(&self) -> Div {
-        // letterpress-hcDark.svg paints its own fill; the others are black at the opacity the file sets (editorgroupview.css).
+        // The high contrast letterpress files paint their own fill; the others are black at the opacity the file sets (editorgroupview.css).
         let (file, color) = match self.theme.kind {
             ThemeKind::Dark => ("letterpress-dark.svg", rgb(0x000000)),
             ThemeKind::Light => ("letterpress-light.svg", rgb(0x000000)),
             ThemeKind::HighContrastDark => ("letterpress-hcDark.svg", rgb(0x3c3c3c)),
+            ThemeKind::HighContrastLight => ("letterpress-hcLight.svg", rgb(0xd9d9d9)),
         };
         let path = self.app_root.join("src/vs/workbench/browser/parts/editor/media").join(file);
         // .watermark-container is 280px tall and centered; the 256px letterpress sits at its top.
