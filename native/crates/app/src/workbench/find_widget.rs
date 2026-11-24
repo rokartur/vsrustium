@@ -216,7 +216,15 @@ impl Workbench {
         let find = &mut self.find;
         let (selections, scroll, revealed) = (editor.selections.clone(), editor.scroll, find.controller.state.is_revealed);
         let query = find.controller.query_options();
+        // wordHighlighter.ts `_run`: without text focus the highlights keep the previous query's word.
+        let highlighted_word = match self.editor_focus.is_focused(window) {
+            true => None,
+            false => Some(editor.highlights.first().map(|(line, columns)| editor.document.lines[*line].chars().skip(columns.start).take(columns.len()).collect::<String>())),
+        };
         let (focus, change) = action(&mut find.controller, editor, viewport);
+        if let Some(word) = highlighted_word {
+            editor.highlights = word.map_or_else(Vec::new, |word| crate::editor::word_occurrences(&editor.document.lines, &word));
+        }
         let adjust_scroll = !self.find.controller.state.is_revealed || revealed || !self.selection_under_find_widget(selections[0]);
         self.layout_find_zone(adjust_scroll);
         if self.find.controller.state.is_revealed && !revealed {

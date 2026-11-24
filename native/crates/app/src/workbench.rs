@@ -828,6 +828,17 @@ mod tests {
             (workbench.find.controller.state.is_regex, workbench.find.find_history.elements().len())
         });
         assert_eq!(restored, (true, 2));
+
+        use crate::editor::{Position, Selection};
+        // wordHighlighter.ts: a match found from the find input keeps the editor's highlighted word.
+        workbench.update(cx, |workbench, _| workbench.editors.active_mut().unwrap().set_selections(vec![Selection::caret(Position::new(0, 3))]));
+        cx.simulate_input("n");
+        cx.simulate_keystrokes("enter");
+        let highlights = workbench.read_with(cx, |workbench, _| {
+            let editor = workbench.editors.active().unwrap();
+            (workbench.find.controller.state.search_string.clone(), editor.selection().head, editor.highlights.clone())
+        });
+        assert_eq!(highlights, ("an".to_string(), Position::new(1, 2), vec![(0, 2..5)]));
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
