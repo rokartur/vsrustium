@@ -4,6 +4,7 @@
 
 pub mod disk;
 pub mod glob;
+pub mod operations;
 pub mod watcher;
 
 /// `FileType` of platform/files/common/files.ts.
@@ -70,7 +71,7 @@ fn operation_error(operation: Operation, message: impl Into<String>) -> FileErro
     FileError { name: "Error".into(), message: message.into(), operation: Some(operation) }
 }
 
-fn plain_error(message: impl Into<String>) -> FileError {
+pub fn plain_error(message: impl Into<String>) -> FileError {
     FileError { name: "Error".into(), message: message.into(), operation: None }
 }
 
@@ -337,8 +338,31 @@ fn mkdirp(fs: &mut impl FileSystem, directory: &Resource) -> Result<()> {
     Ok(())
 }
 
-/// `FileService.del` with `doValidateDelete`.
-pub fn delete(fs: &mut impl FileSystem, resource: &Resource, recursive: bool, use_trash: bool) -> Result<()> {
+/// `FileService.exists`.
+pub fn exists(fs: &mut impl FileSystem, resource: &Resource) -> Result<bool> {
+    with_provider(fs, resource)?;
+    Ok(fs.stat(resource).is_ok())
+}
+
+/// `FileService.canCreateFile` (`doValidateCreateFile`).
+pub fn validate_create_file(fs: &mut impl FileSystem, resource: &Resource, overwrite: bool) -> Result<()> {
+    if !overwrite && exists(fs, resource)? {
+        return Err(operation_error(
+            Operation::Other,
+            format!("Unable to create file '{}' that already exists when overwrite flag is not set", resource.for_error()),
+        ));
+    }
+    Ok(())
+}
+
+/// `FileService.createFile`.
+pub fn create_file(fs: &mut impl FileSystem, resource: &Resource, content: &[u8], overwrite: bool) -> Result<()> {
+    validate_create_file(fs, resource, overwrite)?;
+    write_file(fs, resource, content)
+}
+
+/// `FileService.canDelete` (`doValidateDelete`).
+pub fn validate_delete(fs: &mut impl FileSystem, resource: &Resource, recursive: bool, use_trash: bool) -> Result<()> {
     let capabilities = with_write_provider(fs, resource)?;
     if use_trash && capabilities & TRASH == 0 {
         return Err(plain_error(format!("Unable to delete file '{}' via trash because provider does not support it.", resource.for_error())));
@@ -350,6 +374,12 @@ pub fn delete(fs: &mut impl FileSystem, resource: &Resource, recursive: bool, us
     if !recursive && resolve(fs, resource)?.file_type & DIRECTORY != 0 && !fs.read_dir(resource)?.is_empty() {
         return Err(plain_error(format!("Unable to delete non-empty folder '{}'.", resource.for_error())));
     }
+    Ok(())
+}
+
+/// `FileService.del`.
+pub fn delete(fs: &mut impl FileSystem, resource: &Resource, recursive: bool, use_trash: bool) -> Result<()> {
+    validate_delete(fs, resource, recursive, use_trash)?;
     fs.delete(resource, recursive, use_trash)
 }
 
@@ -359,8 +389,23 @@ pub enum Mode {
     Copy,
 }
 
-/// `FileService.move` / `copy` (`doMoveCopy` with `doValidateMoveCopy`).
-pub fn move_or_copy(fs: &mut impl FileSystem, source: &Resource, target: &Resource, mode: Mode, overwrite: bool) -> Result<()> {
+/// What `doValidateMoveCopy` found out for `doMoveCopy`.
+struct MoveCopyCheck {
+    source_capabilities: u32,
+    exists: bool,
+    same_with_different_case: bool,
+}
+
+/// `FileService.canMove` / `canCopy`.
+pub fn validate_move_or_copy(fs: &mut impl FileSystem, source: &Resource, target: &Resource, mode: Mode, overwrite: bool) -> Result<()> {
+    if source.is_equal(target, false) {
+        return Ok(());
+    }
+    check_move_or_copy(fs, source, target, mode, overwrite).map(|_| ())
+}
+
+/// `doValidateMoveCopy` with the provider checks `move` / `copy` make first; `None` when source and target are the same.
+fn check_move_or_copy(fs: &mut impl FileSystem, source: &Resource, target: &Resource, mode: Mode, overwrite: bool) -> Result<Option<MoveCopyCheck>> {
     let source_capabilities = match mode {
         Mode::Move => with_write_provider(fs, source)?,
         Mode::Copy => with_provider(fs, source)?,
@@ -368,9 +413,8 @@ pub fn move_or_copy(fs: &mut impl FileSystem, source: &Resource, target: &Resour
     let target_capabilities = with_write_provider(fs, target)?;
     let same_provider = source.scheme == target.scheme;
     if source.is_equal(target, false) {
-        return Ok(());
+        return Ok(None);
     }
-
     let ignore_case = target_capabilities & PATH_CASE_SENSITIVE == 0;
     let mut same_with_different_case = false;
     if same_provider {
@@ -401,6 +445,16 @@ pub fn move_or_copy(fs: &mut impl FileSystem, source: &Resource, target: &Resour
                 target.for_error()
             )));
         }
+    }
+    Ok(Some(MoveCopyCheck { source_capabilities, exists, same_with_different_case }))
+}
+
+/// `FileService.move` / `copy` (`doMoveCopy`).
+pub fn move_or_copy(fs: &mut impl FileSystem, source: &Resource, target: &Resource, mode: Mode, overwrite: bool) -> Result<()> {
+    // Equal paths are a no-op, but the target is still resolved: moving a missing file onto itself fails.
+    let Some(check) = check_move_or_copy(fs, source, target, mode, overwrite)? else { return resolve(fs, target).map(|_| ()) };
+    let (source_capabilities, same_provider) = (check.source_capabilities, source.scheme == target.scheme);
+    if check.exists && !check.same_with_different_case {
         delete(fs, target, true, false)?;
     }
     mkdirp(fs, &target.dirname())?;

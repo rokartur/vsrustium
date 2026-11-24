@@ -137,7 +137,8 @@ pub fn decode(bytes: &[u8]) -> anyhow::Result<Message> {
         9 => Message::ReplyOk { req, value: Reply::Json(serde_json::from_slice(r.long()?)?) },
         10 => {
             let count = r.u32()?;
-            let json = serde_json::from_slice(r.long()?)?;
+            let mut json = serde_json::from_slice(r.long()?)?;
+            drop_undefined_refs(&mut json);
             let mut buffers = Vec::new();
             for _ in 0..count {
                 buffers.push(r.long()?.to_vec());
@@ -185,6 +186,27 @@ fn write_mixed_args(out: &mut Vec<u8>, args: &[Arg]) {
     }
 }
 
+/// `parseJsonAndRestoreBufferRefs`: `{"$$ref$$": -1}` is how `stringifyJsonWithBufferRefs` keeps `undefined`; the reviver
+/// turns it back into a missing key, or `undefined` (here `null`) in an array.
+fn drop_undefined_refs(value: &mut Value) {
+    let is_undefined = |value: &Value| value.get("$$ref$$").and_then(Value::as_i64) == Some(-1);
+    match value {
+        Value::Object(map) => {
+            map.retain(|_, value| !is_undefined(value));
+            map.values_mut().for_each(drop_undefined_refs);
+        }
+        Value::Array(items) => {
+            for item in items {
+                if is_undefined(item) {
+                    *item = Value::Null;
+                }
+                drop_undefined_refs(item);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn read_mixed_args(r: &mut Reader) -> anyhow::Result<Vec<Arg>> {
     let count = r.u8()?;
     let mut args = Vec::with_capacity(count as usize);
@@ -194,7 +216,8 @@ fn read_mixed_args(r: &mut Reader) -> anyhow::Result<Vec<Arg>> {
             ARG_VSBUFFER => Arg::Buffer(r.long()?.to_vec()),
             ARG_SERIALIZED_OBJECT_WITH_BUFFERS => {
                 let buffer_count = r.u32()?;
-                let json = serde_json::from_slice(r.long()?)?;
+                let mut json = serde_json::from_slice(r.long()?)?;
+                drop_undefined_refs(&mut json);
                 let mut buffers = Vec::new();
                 for _ in 0..buffer_count {
                     buffers.push(r.long()?.to_vec());
@@ -271,5 +294,14 @@ mod tests {
     fn matches_upstream_json_request_layout() {
         let bytes = encode(&Message::Request { req: 1, rpc_id: 9, method: "$m".into(), args: vec![Arg::Json(json!(42))], cancellable: false });
         assert_eq!(bytes, [&[1u8, 0, 0, 0, 1, 9, 2][..], b"$m", &[0, 0, 0, 4], b"[42]"].concat());
+    }
+
+    /// `{ oldResource: undefined, newResource }` as `stringifyJsonWithBufferRefs` writes it.
+    #[test]
+    fn undefined_refs_become_missing_keys() {
+        let json = json!({ "oldResource": {"$$ref$$": -1}, "newResource": {"path": "/a"}, "list": [{"$$ref$$": -1}, {"$$ref$$": 0}] });
+        let message = Message::Request { req: 1, rpc_id: 2, method: "$m".into(), args: vec![Arg::JsonWithBuffers { json, buffers: vec![vec![1]] }], cancellable: false };
+        let Message::Request { args, .. } = decode(&encode(&message)).unwrap() else { panic!("request expected") };
+        assert_eq!(args[0], Arg::JsonWithBuffers { json: json!({ "newResource": {"path": "/a"}, "list": [null, {"$$ref$$": 0}] }), buffers: vec![vec![1]] });
     }
 }

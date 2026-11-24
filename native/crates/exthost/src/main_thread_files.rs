@@ -3,11 +3,15 @@
 //! and the changes of the workspace folder, of extension watchers and of extension providers (`$onFileEvent`).
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use config::configuration::Overrides;
+use config::service::Settings;
 use files::disk::Disk;
+use files::operations::{FileOperation, SourceTarget, UndoInfo, WorkingCopyFiles};
 use files::watcher::{Change, ChangeType, Watcher};
 use files::{FileError, FileSystem, Mode, Resource, Stat};
 use serde_json::{Value, json};
@@ -46,11 +50,12 @@ pub struct MainThreadFiles {
     /// (`ExtensionHostManager._cachedActivationEvents`).
     activation_schemes: HashSet<String>,
     activated_schemes: HashSet<String>,
+    settings: Arc<Mutex<Settings>>,
 }
 
 impl MainThreadFiles {
     /// `WorkspaceWatcher.watchWorkspace`: each folder recursively, minus its `files.watcherExclude` patterns set to true.
-    pub fn new(folders: &[(PathBuf, Vec<String>)], extensions: &[ScannedExtension]) -> anyhow::Result<Self> {
+    pub fn new(folders: &[(PathBuf, Vec<String>)], extensions: &[ScannedExtension], settings: Arc<Mutex<Settings>>) -> anyhow::Result<Self> {
         let (sender, receiver) = channel();
         let workspace_sender = sender.clone();
         let mut watcher = Watcher::new(move |changes| {
@@ -76,6 +81,7 @@ impl MainThreadFiles {
             provider_watches: HashMap::new(),
             activation_schemes,
             activated_schemes: HashSet::new(),
+            settings,
         })
     }
 
@@ -230,7 +236,7 @@ fn watch(fs: &mut Providers, watch_session: u64, uri: &Value, options: &Value, c
     }
 }
 
-fn resource(uri: &Value) -> Resource {
+pub(crate) fn resource(uri: &Value) -> Resource {
     let part = |key: &str| uri[key].as_str().unwrap_or_default().to_owned();
     Resource { scheme: part("scheme"), authority: part("authority"), path: part("path") }
 }
@@ -240,8 +246,8 @@ fn uri(resource: &Resource) -> Value {
 }
 
 /// The file service's providers: the disk for `file`, `ExtHostFileSystem` for the schemes extensions registered.
-struct Providers<'a> {
-    session: &'a mut Session,
+pub(crate) struct Providers<'a> {
+    pub(crate) session: &'a mut Session,
 }
 
 impl Providers<'_> {
@@ -260,6 +266,11 @@ impl Providers<'_> {
             }
             Err(err) => Err(FileError { name: "Error".into(), message: err.to_string(), operation: None }),
         }
+    }
+
+    fn setting(&mut self, key: &str, resource: Option<&Path>) -> Value {
+        let settings = files(self.session).settings.lock().unwrap();
+        settings.get_value(Some(key), &Overrides { resource, ..Overrides::default() }).unwrap_or(Value::Null)
     }
 
     fn remote_done(&mut self, method: &str, resource: &Resource, args: Vec<Arg>) -> files::Result<()> {
@@ -354,4 +365,72 @@ impl FileSystem for Providers<'_> {
         }
         self.remote_done("$copy", from, vec![Arg::Json(uri(to)), Arg::Json(json!({ "overwrite": overwrite }))])
     }
+}
+
+/// The extension host's file operation participant (mainThreadFileSystemEventService.ts) and the working copy
+/// file service's settings.
+impl WorkingCopyFiles for Providers<'_> {
+    /// `WorkingCopyFileOperationParticipant.participate` with `files.participants.timeout`, then the participant of
+    /// mainThreadFileSystemEventService.ts: the host's `onWill*` edits, cancelled after the timeout.
+    fn participate(&mut self, operation: FileOperation, files: &[SourceTarget], undo: UndoInfo) {
+        let timeout = self.setting("files.participants.timeout", None).as_f64().unwrap_or_default();
+        if timeout <= 0.0 {
+            return;
+        }
+        let args = vec![json!(operation as u8), source_targets(files), json!(timeout)];
+        let reply = self.session.request_cancellable("ExtHostFileSystemEventService", "$onWillRunFileOperation", args, Duration::from_millis(timeout as u64));
+        let data = match reply {
+            Some(CallResult::Ok(Reply::Json(data))) => data,
+            Some(CallResult::Err(error)) => {
+                eprintln!("[file participants] {}", error.unwrap_or_default());
+                return;
+            }
+            _ => return,
+        };
+        if data["edit"]["edits"].as_array().is_none_or(Vec::is_empty) {
+            return;
+        }
+        // Upstream asks first ("Extension '{0}' wants to make refactoring changes ...") unless extension tests run;
+        // the dialog and the refactor preview come with the text edits of milestone 8 (port/notes.md).
+        if !self.session.runs_extension_tests() {
+            eprintln!("[onWill-handler] skipping additional workspace edit from extensions {}", data["extensionNames"]);
+            return;
+        }
+        eprintln!("[onWill-handler] applying additional workspace edit from extensions {}", data["extensionNames"]);
+        if let Err(error) = crate::main_thread_bulk_edits::apply(self, &data["edit"], undo.undo_redo_group_id) {
+            eprintln!("[file participants] {error}");
+        }
+    }
+
+    fn did_run(&mut self, operation: FileOperation, files: &[SourceTarget]) {
+        self.session.notify("ExtHostFileSystemEventService", "$onDidRunFileOperation", vec![json!(operation as u8), source_targets(files)]);
+    }
+
+    fn enable_trash(&mut self) -> bool {
+        self.setting("files.enableTrash", None) != false
+    }
+
+    /// `TextFileService.getEncodedReadable` of empty text: the BOM `getWriteEncoding` enforces for the encoding.
+    fn empty_file(&mut self, resource: &Resource) -> Vec<u8> {
+        let path = (resource.scheme == "file").then(|| Path::new(&resource.path));
+        match self.setting("files.encoding", path).as_str() {
+            Some("utf8bom") => vec![0xEF, 0xBB, 0xBF],
+            Some("utf16be") => vec![0xFE, 0xFF],
+            Some("utf16le") => vec![0xFF, 0xFE],
+            _ => Vec::new(),
+        }
+    }
+}
+
+/// `SourceTargetPair[]` as the host revives them; a create or delete has no `source`.
+fn source_targets(files: &[SourceTarget]) -> Value {
+    let mut pairs = Vec::new();
+    for pair in files {
+        let mut value = json!({ "target": uri(&pair.target) });
+        if let Some(source) = &pair.source {
+            value["source"] = uri(source);
+        }
+        pairs.push(value);
+    }
+    Value::Array(pairs)
 }

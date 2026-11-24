@@ -219,7 +219,7 @@ fn run_extension_host(
         let excludes: Vec<String> = excludes.as_ref().and_then(|excludes| excludes.as_object()).into_iter().flatten().filter(|(_, on)| **on == true).map(|(pattern, _)| pattern.clone()).collect();
         watched.push((folder.clone(), excludes));
     }
-    session.files = Some(MainThreadFiles::new(&watched, &extensions)?);
+    session.files = Some(MainThreadFiles::new(&watched, &extensions, settings.clone())?);
     session.workspace = Some(MainThreadWorkspace::new(folders, settings.clone(), &app_root));
     session.configuration = Some(MainThreadConfiguration::new(settings, development.is_some()));
     session.storage = Some(storage);
