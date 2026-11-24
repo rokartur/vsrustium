@@ -27,23 +27,61 @@ pub fn serve(session: &mut Session, req: u32, args: &[Arg]) -> Message {
             false
         }
     };
+    // The model changes the workbench queued reach the host before the reply, as the model events fire before the edit resolves.
+    session.flush_main_thread();
     Message::ReplyOk { req, value: Reply::Json(json!(applied)) }
 }
 
-/// `BulkEdit.perform`: consecutive file edits run as one `BulkFileEdits`, in the order the workspace edit lists them.
+/// `BulkEdit.perform`: consecutive edits of one kind run together, in the order the workspace edit lists them.
 pub(crate) fn apply(fs: &mut Providers, dto: &Value, undo_redo_group_id: Option<u64>) -> files::Result<()> {
-    let mut file_edits = Vec::new();
-    for edit in dto["edits"].as_array().into_iter().flatten() {
-        if edit.get("oldResource").is_none() && edit.get("newResource").is_none() {
-            operations::apply(fs, std::mem::take(&mut file_edits), undo_redo_group_id)?;
-            // Text and notebook cell edits need the text models of milestone 8 (port/roadmap.md); until then they fail here.
-            return Err(files::plain_error("text and cell edits are not supported yet"));
+    let edits = dto["edits"].as_array().map(Vec::as_slice).unwrap_or_default();
+    for group in edits.chunk_by(|a, b| kind(a) == kind(b)) {
+        match kind(&group[0]) {
+            // The bulk edit undo element waits for the workbench undo stack of the Explorer operations (port/notes.md).
+            EditKind::File => _ = operations::apply(fs, group.iter().map(file_edit).collect::<files::Result<_>>()?, undo_redo_group_id)?,
+            EditKind::Text => text_edits(fs, group)?,
+            // Notebook cell edits need the notebook models (milestone 13); until then they fail here.
+            EditKind::Cell => return Err(files::plain_error("cell edits are not supported yet")),
         }
-        file_edits.push(file_edit(edit)?);
     }
-    // The bulk edit undo element waits for the workbench undo stack of the Explorer operations (port/notes.md).
-    operations::apply(fs, file_edits, undo_redo_group_id)?;
     Ok(())
+}
+
+#[derive(PartialEq)]
+enum EditKind {
+    File,
+    Text,
+    Cell,
+}
+
+fn kind(edit: &Value) -> EditKind {
+    if edit.get("oldResource").is_some() || edit.get("newResource").is_some() {
+        EditKind::File
+    } else if edit.get("textEdit").is_some() {
+        EditKind::Text
+    } else {
+        EditKind::Cell
+    }
+}
+
+/// `BulkTextEdits.apply` runs in the workbench, which has the text models; the session reads what an extension's file
+/// system provider has, since the GPUI thread cannot call the extension host.
+fn text_edits(fs: &mut Providers, group: &[Value]) -> files::Result<()> {
+    let mut provider_files: Vec<Value> = Vec::new();
+    for edit in group {
+        let uri = &edit["resource"];
+        if uri["scheme"] == "file" || provider_files.iter().any(|file| file["uri"] == *uri) {
+            continue;
+        }
+        if let Ok(bytes) = files::read_file(fs, &resource(uri)) {
+            provider_files.push(json!({ "uri": uri, "bytes": bytes }));
+        }
+    }
+    match fs.session.ask_workbench("workbench", "applyTextEdits", vec![json!(group), json!(provider_files)]) {
+        Some(Ok(_)) => Ok(()),
+        Some(Err(error)) => Err(files::plain_error(error["message"].as_str().unwrap_or_default())),
+        None => Err(files::plain_error("Canceled")),
+    }
 }
 
 /// `reviveWorkspaceEditDto` and `BulkFileEdits.apply` of one `IWorkspaceFileEditDto`.

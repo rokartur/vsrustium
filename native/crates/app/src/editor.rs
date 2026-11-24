@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 use config::indentation::creation_options;
 use config::service::Settings;
+use files::encoding;
 
 use crate::languages::Languages;
 use crate::syntax::Tokenization;
@@ -40,8 +41,8 @@ pub struct TextDocument {
     pub path: PathBuf,
     pub lines: Vec<String>,
     pub eol: &'static str,
-    /// The `textFileService` encoding id: "utf8" or "utf8bom".
-    pub encoding: &'static str,
+    /// The `textFileService` encoding id, such as "utf8", "utf8bom" or "windows1252".
+    pub encoding: String,
     pub language_id: String,
     pub indentation: Indentation,
     /// `foldingRules.offSide` of the language, used by the indent guides of blank lines.
@@ -66,19 +67,28 @@ const DEFAULT_INDENTATION: Indentation = Indentation { tab_size: 4, insert_space
 impl TextDocument {
     pub fn read(path: &Path, languages: &Languages, settings: &Settings) -> std::io::Result<Self> {
         let bytes = std::fs::read(path)?;
-        Ok(Self::from_bytes("file", path, &bytes, languages, settings))
+        Ok(Self::from_bytes("file", path, &bytes, None, languages, settings))
     }
 
-    /// A document of any scheme from its bytes, as the text file model decodes them.
-    pub fn from_bytes(scheme: &str, path: &Path, bytes: &[u8], languages: &Languages, settings: &Settings) -> Self {
-        let (encoding, content) = match bytes.strip_prefix(b"\xEF\xBB\xBF") {
-            Some(rest) => ("utf8bom", rest),
-            None => ("utf8", &bytes[..]),
-        };
-        // shortcut: no encoding guessing or binary detection; non-UTF-8 bytes decode as U+FFFD. Port encoding.ts when a file needs it.
-        let text = String::from_utf8_lossy(content);
-        let (lines, eol) = split_lines(&text);
-        let language_id = languages.language_of(path, lines[0].as_str()).to_string();
+    /// A document of any scheme from its bytes, decoded as `TextFileService.readStream` does: in the `requested`
+    /// encoding, else the one its BOM or zero bytes show, else `files.encoding`.
+    // shortcut: binary files open as text; upstream refuses them (FILE_IS_BINARY) and shows the binary editor.
+    pub fn from_bytes(scheme: &str, path: &Path, bytes: &[u8], requested: Option<&str>, languages: &Languages, settings: &Settings) -> Self {
+        let detected = encoding::detect(bytes).encoding;
+        let encoding = encoding::read_encoding(settings, (scheme == "file").then_some(path), requested, detected);
+        let text = encoding::decode(bytes, &encoding);
+        Self::from_text(scheme, path, &text, encoding, None, languages, settings)
+    }
+
+    /// An untitled model (untitledTextEditorModel.ts): `language_id` or the language of its name and first line.
+    pub fn untitled(path: &Path, text: &str, language_id: Option<&str>, languages: &Languages, settings: &Settings) -> Self {
+        let (encoding, _) = encoding::write_encoding(settings, None, None);
+        Self::from_text("untitled", path, text, encoding, language_id, languages, settings)
+    }
+
+    pub fn from_text(scheme: &str, path: &Path, text: &str, encoding: String, language_id: Option<&str>, languages: &Languages, settings: &Settings) -> Self {
+        let (lines, eol) = split_lines(text);
+        let language_id = language_id.unwrap_or_else(|| languages.language_of(path, lines[0].as_str())).to_string();
         let off_side = languages.off_side(&language_id);
         let folding_markers = languages.folding_markers(&language_id);
         let block_comment = languages.block_comment(&language_id).map(|(start, end)| (start.to_string(), end.to_string()));
@@ -93,7 +103,13 @@ impl TextDocument {
 
     /// `UriComponents` as the extension host revives them.
     pub fn uri(&self) -> serde_json::Value {
-        serde_json::json!({ "$mid": 1, "scheme": self.scheme, "authority": "", "path": self.path.to_string_lossy(), "query": "", "fragment": "" })
+        let path = self.path.to_string_lossy();
+        // host_requests.rs `uri_parts` keys a non-file URI's authority as the `//authority` start of its path.
+        let (authority, path) = match path.strip_prefix("//").filter(|_| self.scheme != "file") {
+            Some(rest) => rest.split_at(rest.find('/').unwrap_or(rest.len())),
+            None => ("", &*path),
+        };
+        serde_json::json!({ "$mid": 1, "scheme": self.scheme, "authority": authority, "path": path, "query": "", "fragment": "" })
     }
 
     pub fn is(&self, scheme: &str, path: &Path) -> bool {
@@ -385,6 +401,8 @@ pub struct OpenEditor {
     /// When the extension host last opened this model (`$tryOpenDocument`): it stays open without an editor
     /// for `BoundModelReferenceCollection`'s 3 minutes after that.
     pub host_reference: Option<Instant>,
+    /// An untitled model the host opened for a path (`hasAssociatedFilePath`): dirty from the start, saved to that file.
+    pub associated_file: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -400,7 +418,7 @@ impl OpenEditor {
     fn new(document: TextDocument, preview: bool, model_id: u32) -> Self {
         let indentation = document.indentation;
         let guides = indent_guides(&document.lines, indentation.tab_size, indentation.tab_size, document.off_side);
-        let mut editor = OpenEditor { document, preview, model_id, selections: vec![Selection::default()], last_added: 0, leftovers: Vec::new(), column_select: None, version_id: 1, history: History::default(), guides, highlights: Vec::new(), folding: FoldingModel::default(), sticky_model: Default::default(), scroll: Scroll::default(), max_line_width: 0., host_reference: None };
+        let mut editor = OpenEditor { document, preview, model_id, selections: vec![Selection::default()], last_added: 0, leftovers: Vec::new(), column_select: None, version_id: 1, history: History::default(), guides, highlights: Vec::new(), folding: FoldingModel::default(), sticky_model: Default::default(), scroll: Scroll::default(), max_line_width: 0., host_reference: None, associated_file: false };
         editor.refresh_highlights();
         editor.refresh_folding_ranges();
         editor
@@ -470,9 +488,9 @@ impl EditorGroup {
         self.insert(editor, preview);
     }
 
-    /// Drops the models without an editor whose host reference ran out.
+    /// Drops the clean models without an editor whose host reference ran out; a dirty model stays, as text file models do.
     pub fn release_models(&mut self, now: Instant) {
-        self.models.retain(|model| model.host_reference.is_some_and(|opened| now.duration_since(opened) < HOST_REFERENCE_AGE));
+        self.models.retain(|model| model.is_dirty() || model.host_reference.is_some_and(|opened| now.duration_since(opened) < HOST_REFERENCE_AGE));
     }
 
     fn insert(&mut self, editor: OpenEditor, preview: bool) {
@@ -549,6 +567,18 @@ mod tests {
     }
 
     #[test]
+    fn a_non_file_uri_keeps_its_authority() {
+        let settings = Settings::load(config::registry::Registry::core(), std::env::temp_dir().join("code-gpui-no-user"), None);
+        let uri = |scheme: &str, path: &str| {
+            let document = TextDocument::from_bytes(scheme, Path::new(path), b"", None, &Languages::new(&[]), &settings);
+            (document.uri()["authority"].clone(), document.uri()["path"].clone(), document.uri_string())
+        };
+        assert_eq!(uri("foo", "//testing/virtual.js"), (serde_json::json!("testing"), serde_json::json!("/virtual.js"), "foo://testing/virtual.js".to_string()));
+        assert_eq!(uri("sc", "//auth"), (serde_json::json!("auth"), serde_json::json!(""), "sc://auth".to_string()));
+        assert_eq!(uri("file", "//w/a.ts"), (serde_json::json!(""), serde_json::json!("//w/a.ts"), "file:////w/a.ts".to_string()));
+    }
+
+    #[test]
     fn guesses_indentation_like_upstream() {
         let guess = |text: &str| guess_indentation(&lines(text), DEFAULT_INDENTATION);
         let spaces = |tab_size| Indentation { tab_size, insert_spaces: true };
@@ -598,7 +628,7 @@ mod tests {
             path: PathBuf::from(name),
             lines: vec![String::new()],
             eol: "\n",
-            encoding: "utf8",
+            encoding: "utf8".into(),
             language_id: "plaintext".into(),
             indentation: DEFAULT_INDENTATION,
             off_side: false,
@@ -627,7 +657,7 @@ mod tests {
             path: PathBuf::from("/w/a.txt"),
             lines: lines("Port notes\nport Port"),
             eol: "\n",
-            encoding: "utf8",
+            encoding: "utf8".into(),
             language_id: "plaintext".into(),
             indentation: DEFAULT_INDENTATION,
             off_side: false,

@@ -80,6 +80,11 @@ impl Settings {
         settings
     }
 
+    /// `<user data>/User`, `environmentService.userRoamingDataHome`.
+    pub fn user_home(&self) -> &Path {
+        &self.user_home
+    }
+
     /// `getValue(section, overrides)`.
     pub fn get_value(&self, section: Option<&str>, overrides: &Overrides) -> Option<Value> {
         self.configuration.get_value(section, overrides)

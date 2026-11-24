@@ -206,7 +206,8 @@ fn watch(fs: &mut Providers, watch_session: u64, uri: &Value, options: &Value, c
         eprintln!("MainThreadFileSystemEventService#$watch(): cannot watch resource as its scheme is not handled by the file service (path: {})", resource.for_error());
         return;
     }
-    let recursive = options["recursive"] == true && files::stat(fs, &resource).is_ok_and(|stat| stat.file_type & files::DIRECTORY != 0);
+    // A failed stat keeps the request recursive, as upstream ignores the error.
+    let recursive = options["recursive"] == true && !files::stat(fs, &resource).is_ok_and(|stat| stat.file_type & files::DIRECTORY == 0);
     if resource.scheme != "file" {
         let handle = files(fs.session).providers[&resource.scheme].handle;
         files(fs.session).provider_watches.insert(watch_session, handle);
@@ -411,6 +412,17 @@ impl WorkingCopyFiles for Providers<'_> {
     }
 
     fn did_run(&mut self, operation: FileOperation, files: &[SourceTarget]) {
+        // TextFileEditorModelManager listens first: a moved model continues at its target, a created file's model reverts to
+        // its new contents, which the session reads since the GPUI thread cannot call a provider.
+        let mut pairs = source_targets(files);
+        if operation == FileOperation::Create {
+            for (pair, file) in pairs.as_array_mut().expect("source_targets is an array").iter_mut().zip(files) {
+                if let Ok(bytes) = files::read_file(self, &file.target) {
+                    pair["bytes"] = json!(bytes);
+                }
+            }
+        }
+        _ = self.session.ask_workbench("workbench", "didRunFileOperation", vec![json!(operation as u8), pairs]);
         self.session.notify("ExtHostFileSystemEventService", "$onDidRunFileOperation", vec![json!(operation as u8), source_targets(files)]);
     }
 

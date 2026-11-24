@@ -28,10 +28,12 @@ pub struct HostMessage {
     pub files: Option<FileWork>,
 }
 
-/// Explorer file edits (`IExplorerService.applyBulkEdit`) or the undo or redo of earlier ones.
+/// Explorer file edits (`IExplorerService.applyBulkEdit`), the undo or redo of earlier ones, or the write of a
+/// saved model of an extension's file system provider.
 pub enum FileJob {
     Apply(Vec<FileEdit>),
     Reverse(FileUndo),
+    Write(files::Resource, Vec<u8>),
 }
 
 pub struct FileWork {
@@ -51,6 +53,7 @@ impl FileWork {
         let result = match self.job {
             FileJob::Apply(edits) => operations::apply(fs, edits, None),
             FileJob::Reverse(mut undo) => undo.reverse(fs).map(|()| undo),
+            FileJob::Write(resource, bytes) => files::write_file(fs, &resource, &bytes).map(|()| FileUndo { operations: Vec::new() }),
         };
         let _ = self.reply.send(result);
     }
@@ -178,6 +181,12 @@ impl HostSync {
     /// dirty state and tabs when it flipped, then where the cursor went.
     pub fn send_content_change(&mut self, group: &EditorGroup, index: usize, change: &ContentChanged) {
         let editor = &group.editors[index];
+        self.send_model_change(group, editor, change);
+        self.send_selection(editor, "keyboard");
+    }
+
+    /// The text of `editor`, shown or a model without an editor, changed: the change, then the dirty state and tabs when it flipped.
+    pub fn send_model_change(&mut self, group: &EditorGroup, editor: &OpenEditor, change: &ContentChanged) {
         let document = &editor.document;
         let uri = document.uri();
         let changes: Vec<Value> = change
@@ -199,7 +208,7 @@ impl HostSync {
             "isUndoing": change.is_undoing,
             "isRedoing": change.is_redoing,
             "isFlush": false,
-            "isEolChange": false,
+            "isEolChange": matches!(change.reason, EditReason::EolChange),
             "detailedReason": detailed_reason(change.reason),
         });
         let dirty = editor.is_dirty();
@@ -208,7 +217,6 @@ impl HostSync {
             self.send("ExtHostDocuments", "$acceptDirtyStateChanged", vec![uri, json!(dirty)]);
             self.send_tabs(group);
         }
-        self.send_selection(editor, "keyboard");
     }
 
     /// `editor`, open or a model the host opened, was written to disk while `was_dirty`.
@@ -359,6 +367,7 @@ fn detailed_reason(reason: EditReason) -> Value {
         EditReason::Cursor { kind, detailed_source } => json!({ "source": "cursor", "kind": kind, "detailedSource": detailed_source }),
         EditReason::Unknown(name) => json!({ "source": "unknown", "name": name }),
         EditReason::ApplyEdits => json!({ "source": "applyEdits" }),
+        EditReason::EolChange => json!({ "source": "eolChange" }),
     }
 }
 
@@ -398,7 +407,7 @@ mod tests {
             path: PathBuf::from(path),
             lines: vec!["héllo".into(), String::new()],
             eol: "\n",
-            encoding: "utf8",
+            encoding: "utf8".into(),
             language_id: language_id.into(),
             indentation: Indentation { tab_size: 4, insert_spaces: true },
             off_side: false,

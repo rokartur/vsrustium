@@ -2,13 +2,18 @@
 //! (IME, dead keys) through GPUI's input handler. Keybindings run before this (workbench/keyboard.rs).
 
 use std::ops::Range;
+use std::path::Path;
 
 use gpui::{Bounds, Context, EntityInputHandler, KeyDownEvent, Pixels, UTF16Selection, Window};
+
+use exthost::main_thread_files::resource;
+use futures::channel::oneshot;
 
 use super::Workbench;
 use serde_json::json;
 
 use crate::editor::{ContentChanged, Position, utf16_column};
+use crate::host_sync::FileJob;
 
 impl Workbench {
     /// Enter reaches the editor as typed text, the line break the browser's textarea would insert.
@@ -43,18 +48,50 @@ impl Workbench {
         cx.notify();
     }
 
-    /// shortcut: save writes the text as it is; no save participants (`$participateInSave`), no format on save,
+    /// Writes the editor's model, clean or not, and tells the host it was saved; a model of an extension's file
+    /// system provider is written through the host thread. The receiver answers whether the write succeeded.
+    /// shortcut: no save participants (`$participateInSave`, only `$trySaveDocument` runs them), no format on save,
     /// no conflict check against the file on disk.
-    pub(super) fn save_editor(&mut self, index: usize, cx: &mut Context<Self>) {
-        let editor = &mut self.editors.editors[index];
-        let was_dirty = editor.is_dirty();
-        if let Err(error) = editor.save() {
-            // shortcut: a save error is logged, not shown as the reference's notification.
-            eprintln!("saving {}: {error}", editor.document.path.display());
-            return;
+    pub(super) fn save_editor(&mut self, index: usize, cx: &mut Context<Self>) -> oneshot::Receiver<bool> {
+        let (sender, receiver) = oneshot::channel();
+        let editor = &self.editors.editors[index];
+        let (scheme, path) = (editor.document.scheme.clone(), editor.document.path.clone());
+        let version = editor.alternative_version_id();
+        let bytes = editor.saved_bytes();
+        if scheme == "file" {
+            let written = std::fs::write(&path, bytes).map_err(|error| error.to_string());
+            let _ = sender.send(self.finish_save(&scheme, &path, version, written, cx));
+            return receiver;
         }
-        self.host.send_saved(&self.editors, &self.editors.editors[index], was_dirty);
+        let write = self.host.run_files(FileJob::Write(resource(&editor.document.uri()), bytes));
+        cx.spawn(async move |workbench, cx| {
+            let written = match write.await {
+                Ok(result) => result.map(drop).map_err(|error| error.to_string()),
+                Err(_) => Err("Canceled".to_string()),
+            };
+            let saved = workbench.update(cx, |workbench, cx| workbench.finish_save(&scheme, &path, version, written, cx));
+            let _ = sender.send(saved.unwrap_or(false));
+        })
+        .detach();
+        receiver
+    }
+
+    /// The model is clean up to the version that was written, and the host hears it was saved.
+    fn finish_save(&mut self, scheme: &str, path: &Path, version: u32, written: Result<(), String>, cx: &mut Context<Self>) -> bool {
+        if let Err(error) = written {
+            // shortcut: a save error is logged, not shown as the reference's notification.
+            eprintln!("saving {}: {error}", path.display());
+            return false;
+        }
+        // An editor closed while its model was written has nothing left to mark.
+        let Some(model) = self.editors.model_mut(scheme, path) else { return true };
+        let was_dirty = model.is_dirty();
+        model.mark_saved_at(version);
+        let became_clean = was_dirty && !model.is_dirty();
+        let model = self.editors.model(scheme, path).expect("found above");
+        self.host.send_saved(&self.editors, model, became_clean);
         cx.notify();
+        true
     }
 
     /// A UTF-16 range of the primary cursor's line, the text the input handler works on, as the chars

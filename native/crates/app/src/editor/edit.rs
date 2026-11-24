@@ -51,6 +51,8 @@ pub enum EditReason {
     Unknown(&'static str),
     /// `EditSources.applyEdits`, which undo and redo report.
     ApplyEdits,
+    /// `EditSources.eolChange` of `setEOL`: the line ending changed, the text did not.
+    EolChange,
 }
 
 const TYPED: EditReason = EditReason::Cursor { kind: "type", detailed_source: "keyboard" };
@@ -155,6 +157,10 @@ impl CursorEdit {
 
 impl OpenEditor {
     pub fn is_dirty(&self) -> bool {
+        // untitledTextEditorModel.ts: dirty with an associated file path or any text.
+        if self.document.scheme == "untitled" {
+            return self.associated_file || self.document.lines != [""];
+        }
         self.history.alternative_version_id != self.history.saved_alternative_version_id
     }
 
@@ -547,7 +553,7 @@ impl OpenEditor {
 
     /// The text as it was written; the saved version is the clean one from now on.
     pub fn save(&mut self) -> std::io::Result<()> {
-        // shortcut: documents of extension file system providers save only through `$trySaveDocument`; the workbench's own save of them waits for the file service row.
+        // A content provider's model has no file to write; models of extension file system providers save through the host.
         if self.document.scheme != "file" {
             return Err(std::io::Error::new(std::io::ErrorKind::Unsupported, format!("no file system provider for {}", self.document.scheme)));
         }
@@ -556,15 +562,38 @@ impl OpenEditor {
         Ok(())
     }
 
-    /// The document as saving writes it: its EOL, with the BOM it was read with.
+    /// The document as saving writes it: its EOL, in its encoding, with the BOM that encoding takes.
     pub fn saved_bytes(&self) -> Vec<u8> {
         let document = &self.document;
-        let bom = if document.encoding == "utf8bom" { "\u{FEFF}" } else { "" };
-        format!("{bom}{}", document.lines.join(document.eol)).into_bytes()
+        files::encoding::encode(&document.lines.join(document.eol), &document.encoding, files::encoding::has_bom(&document.encoding))
+    }
+
+    /// `pushEOL`: the model takes the line ending of `EndOfLineSequence` (0 is LF) and is dirty.
+    // shortcut: the change is not on the undo stack, so undo skips it; add it when undo groups take non-text elements.
+    pub fn push_eol(&mut self, sequence: u64) -> Option<ContentChanged> {
+        let eol = if sequence == 1 { "\r\n" } else { "\n" };
+        if self.document.eol == eol {
+            return None;
+        }
+        let was_dirty = self.is_dirty();
+        self.document.eol = eol;
+        self.version_id += 1;
+        self.history.open = false;
+        self.history.alternative_version_id = self.version_id;
+        Some(ContentChanged { changes: Vec::new(), version_id: self.version_id, is_undoing: false, is_redoing: false, reason: EditReason::EolChange, was_dirty })
     }
 
     pub fn mark_saved(&mut self) {
         self.history.saved_alternative_version_id = self.history.alternative_version_id;
+    }
+
+    /// The version a save marks clean once its write is done, so edits made while it writes stay dirty.
+    pub fn alternative_version_id(&self) -> u32 {
+        self.history.alternative_version_id
+    }
+
+    pub fn mark_saved_at(&mut self, alternative_version_id: u32) {
+        self.history.saved_alternative_version_id = alternative_version_id;
     }
 
     /// `codeEditorWidget.executeEdits`: each edit is a range, its text, and `forceMoveMarkers`. Without
@@ -593,6 +622,8 @@ impl OpenEditor {
 
     fn execute_tracked(&mut self, edits: Vec<(Position, Position, String, bool)>, end: EndSelections, reason: EditReason) -> Option<ContentChanged> {
         let mut edits: Vec<_> = edits.into_iter().filter(|(start, end, text, _)| start != end || !text.is_empty()).collect();
+        // Edits at one position apply last to first, so the first one's text ends up first (`_doApplyEdits` sorts ties by sortIndex).
+        edits.reverse();
         edits.sort_by_key(|edit| std::cmp::Reverse(edit.0));
         let eol_len = self.document.eol.len();
         let lines = &self.document.lines;
@@ -948,13 +979,30 @@ pub(super) mod tests {
         assert_eq!((deleted.document.lines[0].as_str(), deleted.selection()), ("one 3", Selection::caret(Position::new(0, 4))));
     }
 
+    #[test]
+    fn edits_at_one_position_insert_in_their_order() {
+        // workspace.test.ts #80688: two inserts at 0,0 in one edit read 'import1;import2;'.
+        let mut model = editor("", "\n");
+        let at_start = |text: &str| (Position::new(0, 0), Position::new(0, 0), text.to_string(), true);
+        model.execute_edits(vec![at_start("import1;"), at_start("import2;")], None, EditReason::ApplyEdits);
+        assert_eq!(model.document.lines, ["import1;import2;"]);
+    }
+
+    #[test]
+    fn push_eol_changes_the_line_ending_and_dirties_the_model() {
+        let mut model = editor("foo\nbar", "\n");
+        assert!(model.push_eol(0).is_none());
+        let change = model.push_eol(1).expect("LF to CRLF");
+        assert_eq!((change.version_id, change.changes.len(), model.document.eol, model.is_dirty()), (2, 0, "\r\n", true));
+    }
+
     pub(in crate::editor) fn editor(text: &str, eol: &'static str) -> OpenEditor {
         let document = TextDocument {
             scheme: "file".into(),
             path: PathBuf::from("/w/a.ts"),
             lines: text.split('\n').map(String::from).collect(),
             eol,
-            encoding: "utf8",
+            encoding: "utf8".into(),
             language_id: "typescript".into(),
             indentation: Indentation { tab_size: 4, insert_spaces: true },
             off_side: false,
@@ -1036,7 +1084,7 @@ pub(super) mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let mut editor = editor("a", "\r\n");
         editor.document.path = dir.join("a.txt");
-        editor.document.encoding = "utf8bom";
+        editor.document.encoding = "utf8bom".into();
         editor.move_to(at(0, 1), false);
         editor.enter();
         editor.save().unwrap();

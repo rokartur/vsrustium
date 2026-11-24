@@ -2,11 +2,12 @@
 //! thread while the session thread waits, and what the workbench queued for the host goes out before the reply.
 
 use std::sync::mpsc::{Receiver, Sender, channel};
+use std::time::Duration;
 
 use exthost::main_thread::{MainThread, serialized_error};
 use exthost::main_thread_files::{Providers, resource};
 use exthost::rpc::{Arg, Reply};
-use exthost::session::Session;
+use exthost::session::{CallResult, Session};
 use files::FileSystem;
 use futures::channel::mpsc::UnboundedSender;
 use futures::channel::oneshot;
@@ -27,6 +28,8 @@ pub struct WorkbenchMainThread {
     pub messages: Receiver<HostMessage>,
     /// Host calls the workbench made with `HostSync::call`, waiting for their answer.
     pub waiting: Vec<(u32, oneshot::Sender<Result<Value, Value>>)>,
+    /// `$registerTextContentProvider` handles and schemes, newest first as textModelResolverService.ts keeps them.
+    pub content_providers: Vec<(Value, String)>,
 }
 
 impl MainThread for WorkbenchMainThread {
@@ -38,25 +41,50 @@ impl MainThread for WorkbenchMainThread {
                 _ => Value::Null,
             })
             .collect();
-        if !HOST_REQUESTS.contains(&(proxy, method)) {
-            return None;
+        match (proxy, method) {
+            ("MainThreadDocumentContentProviders", "$registerTextContentProvider") => {
+                self.content_providers.insert(0, (args[0].clone(), args[1].as_str().unwrap_or_default().to_string()));
+                return Some(Ok(Reply::Empty));
+            }
+            ("MainThreadDocumentContentProviders", "$unregisterTextContentProvider") => {
+                self.content_providers.retain(|(handle, _)| *handle != args[0]);
+                return Some(Ok(Reply::Empty));
+            }
+            _ if !HOST_REQUESTS.contains(&(proxy, method)) => return None,
+            _ => {}
         }
         // mainThreadFileSystem.ts reads and writes through the extension host; the session thread can call it, the GPUI thread cannot.
-        let through_provider = matches!(method, "$tryOpenDocument" | "$trySaveDocument") && {
-            let scheme = args[0]["scheme"].as_str().unwrap_or_default();
-            scheme != "file" && (Providers { session: &mut *session }).capabilities(scheme).is_some()
-        };
+        // Other host requests can come without arguments; only these two carry the document uri first.
+        let is_document_request = matches!(method, "$tryOpenDocument" | "$trySaveDocument");
+        let scheme = if is_document_request { args[0]["scheme"].as_str().unwrap_or_default() } else { "" };
+        let capabilities = if is_document_request { (Providers { session: &mut *session }).capabilities(scheme) } else { None };
+        let through_provider = scheme != "file" && capabilities.is_some();
+        if method == "$tryOpenDocument" {
+            // host_requests.rs reads the provider's bytes at 2 and whether paths ignore case at 3.
+            args.resize(3, Value::Null);
+            args.push(json!(capabilities.is_some_and(|capabilities| capabilities & files::PATH_CASE_SENSITIVE == 0)));
+        }
+        if method == "$trySaveDocument" && self.ask("workbench", "isDirty", vec![args[0].clone()]) == Ok(json!(true)) {
+            participate_in_save(session, &args[0]);
+        }
         let result = match (method, through_provider) {
             ("$tryOpenDocument", true) => match files::read_file(&mut Providers { session: &mut *session }, &resource(&args[0])) {
                 Ok(bytes) => {
-                    // host_requests.rs decodes the provider's bytes as it decodes a file.
-                    args.resize(2, Value::Null);
-                    args.push(json!(bytes));
+                    args[2] = json!(bytes);
                     self.ask(proxy, method, args)
                 }
                 Err(error) => Err(serialized_error(&format!("cannot open {}. Detail: {error}", uri_text(&args[0])))),
             },
             ("$trySaveDocument", true) => self.save_through_provider(session, &args[0]),
+            ("$tryOpenDocument", false) if self.has_content_provider(&args[0]) && self.ask("workbench", "hasModel", vec![args[0].clone()]) == Ok(json!(false)) => {
+                match self.provide_text_content(session, &args[0]) {
+                    Ok(text) => {
+                        args[2] = json!(text);
+                        self.ask(proxy, method, args)
+                    }
+                    Err(detail) => Err(serialized_error(&format!("cannot open {}. Detail: {detail}", uri_text(&args[0])))),
+                }
+            }
             _ => self.ask(proxy, method, args),
         };
         Some(result.map(|value| if value.is_null() { Reply::Empty } else { Reply::Json(value) }))
@@ -96,6 +124,26 @@ impl WorkbenchMainThread {
         receiver.recv().unwrap_or_else(|_| Err(serialized_error("Canceled")))
     }
 
+    fn has_content_provider(&self, uri: &Value) -> bool {
+        self.content_providers.iter().any(|(_, scheme)| uri["scheme"] == json!(scheme))
+    }
+
+    /// `ResourceModelCollection.ensureResolvedTextModelContent`: the first provider of the scheme that gives a string;
+    /// a provider that fails fails the open.
+    fn provide_text_content(&self, session: &mut Session, uri: &Value) -> Result<String, String> {
+        let handles: Vec<Value> = self.content_providers.iter().filter(|(_, scheme)| uri["scheme"] == json!(scheme)).map(|(handle, _)| handle.clone()).collect();
+        for handle in handles {
+            let args = vec![Arg::Json(handle), Arg::Json(uri.clone())];
+            match session.request("ExtHostDocumentContentProviders", "$provideTextDocumentContent", args, PROVIDER_TIMEOUT) {
+                Ok(CallResult::Ok(Reply::Json(Value::String(text)))) => return Ok(text),
+                Ok(CallResult::Ok(_)) => {}
+                Ok(CallResult::Err(error)) => return Err(error.and_then(|error| error["message"].as_str().map(String::from)).unwrap_or_default()),
+                Err(error) => return Err(error.to_string()),
+            }
+        }
+        Err(format!("Unable to resolve text model content for resource {}", uri_text(uri)))
+    }
+
     /// `$trySaveDocument` of a provider's document: the workbench gives the bytes, the provider writes it, the model is clean.
     fn save_through_provider(&self, session: &mut Session, uri: &Value) -> Result<Value, Value> {
         let bytes = match self.ask("workbench", "providerSaveText", vec![uri.clone()])? {
@@ -110,6 +158,23 @@ impl WorkbenchMainThread {
 }
 
 
+/// The time `$provideTextDocumentContent` gets, as main_thread_files.rs gives a file system provider.
+const PROVIDER_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// mainThreadSaveParticipant.ts: the host's `onWillSaveTextDocument` listeners apply their edits through
+/// `$tryApplyWorkspaceEdit` while this waits; a failed or late listener is logged and the save goes on.
+fn participate_in_save(session: &mut Session, uri: &Value) {
+    // SaveReason.EXPLICIT
+    let args = vec![uri.clone(), json!(1)];
+    if session.request_cancellable("ExtHostDocumentSaveParticipant", "$participateInSave", args, Duration::from_millis(1750)).is_none() {
+        eprintln!("[exthost] Aborted onWillSaveTextDocument-event after 1750ms");
+    }
+}
+
 fn uri_text(uri: &Value) -> String {
-    format!("{}:{}", uri["scheme"].as_str().unwrap_or_default(), uri["path"].as_str().unwrap_or_default())
+    let part = |key: &str| uri[key].as_str().unwrap_or_default();
+    match part("authority") {
+        "" => format!("{}:{}", part("scheme"), part("path")),
+        authority => format!("{}://{authority}{}", part("scheme"), part("path")),
+    }
 }

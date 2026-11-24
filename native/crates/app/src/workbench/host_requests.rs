@@ -1,14 +1,16 @@
 //! The MainThread* requests the workbench answers itself: mainThreadDocuments.ts, mainThreadEditors.ts with
 //! mainThreadEditor.ts, and mainThreadClipboard.ts. They arrive from the session thread through `main_thread.rs`.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use exthost::main_thread::serialized_error;
+use files::encoding;
 use gpui::{ClipboardItem, Context, Window};
 use serde_json::{Value, json};
 
 use super::Workbench;
+use super::bulk_text_edits::document_end;
 use crate::editor::{
     CursorEdit, EditReason, OpenEditor, Position, Replace, Selection, TextDocument, VerticalReveal, char_column, end_of, expand_snippet, guess_indentation, indent_guides,
     selections_after, text_between, uri_string, word_at,
@@ -21,6 +23,8 @@ pub const HOST_REQUESTS: &[(&str, &str)] = &[
     ("MainThreadClipboard", "$writeText"),
     ("MainThreadDocuments", "$tryOpenDocument"),
     ("MainThreadDocuments", "$trySaveDocument"),
+    ("MainThreadDocuments", "$tryCreateDocument"),
+    ("MainThreadDocumentContentProviders", "$onVirtualDocumentChange"),
     ("MainThreadTextEditors", "$tryShowTextDocument"),
     ("MainThreadTextEditors", "$trySetSelections"),
     ("MainThreadTextEditors", "$tryRevealRange"),
@@ -43,8 +47,12 @@ impl Workbench {
                 cx.write_to_clipboard(ClipboardItem::new_string(arg(0).as_str().unwrap_or_default().to_string()));
                 Ok(null)
             }
-            ("MainThreadDocuments", "$tryOpenDocument") => self.try_open_document(arg(0), arg(2), cx),
+            ("MainThreadDocuments", "$tryOpenDocument") => self.try_open_document(arg(0), arg(1), arg(2), arg(3) == true, cx),
             ("MainThreadDocuments", "$trySaveDocument") => self.try_save_document(arg(0), cx),
+            ("MainThreadDocuments", "$tryCreateDocument") => self.try_create_document(arg(0), cx),
+            ("workbench", "isDirty") => uri_parts(arg(0)).map(|(scheme, path)| json!(self.editors.model(scheme, &path).is_some_and(|model| model.is_dirty()))),
+            ("workbench", "hasModel") => uri_parts(arg(0)).map(|(scheme, path)| json!(self.editors.model(scheme, &path).is_some())),
+            ("MainThreadDocumentContentProviders", "$onVirtualDocumentChange") => self.virtual_document_change(arg(0), arg(1), cx),
             ("workbench", "providerSaveText") => self.provider_save_bytes(arg(0)),
             ("workbench", "providerSaved") => self.provider_saved(arg(0), cx),
             ("MainThreadTextEditors", "$tryShowTextDocument") => self.try_show_text_document(arg(0), arg(1), window, cx),
@@ -76,34 +84,149 @@ impl Workbench {
         }
     }
 
-    /// `$tryOpenDocument`: the model of a file, or of `provider_bytes` an extension's file system provider read,
-    /// opened without an editor and kept while the host references it.
-    fn try_open_document(&mut self, uri: &Value, provider_bytes: &Value, cx: &mut Context<Self>) -> HostResult {
-        let (scheme, path) = uri_parts(uri)?;
+    /// `$tryOpenDocument`: the model of a file, of the bytes an extension's file system provider read
+    /// (`provider_content` an array) or of a content provider's text (a string), opened without an editor and kept
+    /// while the host references it. `options.encoding` decodes a new model, or a clean open one again.
+    fn try_open_document(&mut self, uri: &Value, options: &Value, provider_content: &Value, ignore_path_case: bool, cx: &mut Context<Self>) -> HostResult {
+        let (scheme, ref path) = uri_parts(uri)?;
+        // uriIdentityService.ts `asCanonicalUri`: where the provider ignores path case, the casing opened first wins.
+        if ignore_path_case {
+            let lowercase = path.to_string_lossy().to_lowercase();
+            let models = self.editors.editors.iter().chain(&self.editors.models);
+            let first_casing = models.map(|model| &model.document).find(|document| document.scheme == scheme && document.path != *path && document.path.to_string_lossy().to_lowercase() == lowercase);
+            if let Some(document) = first_casing {
+                return self.try_open_document(&document.uri(), options, provider_content, false, cx);
+            }
+        }
+        let requested = options["encoding"].as_str();
         if let Some(model) = self.editors.model_mut(scheme, path) {
             model.host_reference = Some(Instant::now());
+            if let Some(requested) = requested {
+                self.set_model_encoding(uri, scheme, path, requested, cx)
+                    .map_err(|detail| serialized_error(&format!("cannot open {}. Detail: {detail}", uri_string(scheme, path))))?;
+            }
             return Ok(uri.clone());
         }
-        let document = match (scheme, provider_bytes) {
+        let document = match (scheme, provider_content) {
             (_, Value::Array(_)) => {
-                let bytes: Vec<u8> = serde_json::from_value(provider_bytes.clone()).expect("bytes from main_thread.rs");
-                TextDocument::from_bytes(scheme, path, &bytes, &self.languages, &self.settings.lock().unwrap())
+                let bytes: Vec<u8> = serde_json::from_value(provider_content.clone()).expect("bytes from main_thread.rs");
+                TextDocument::from_bytes(scheme, path, &bytes, requested, &self.languages, &self.settings.lock().unwrap())
             }
-            ("file", _) => TextDocument::read(path, &self.languages, &self.settings.lock().unwrap())
-                .map_err(|error| serialized_error(&format!("cannot open {}. Detail: Unable to read file '{}' ({error})", uri_string("file", path), path.display())))?,
-            // shortcut: untitled documents are not opened; they come with the untitled ledger row.
+            (_, Value::String(text)) => TextDocument::from_text(scheme, path, text, encoding::UTF8.into(), None, &self.languages, &self.settings.lock().unwrap()),
+            ("file", _) => {
+                let bytes = std::fs::read(path)
+                    .map_err(|error| serialized_error(&format!("cannot open {}. Detail: Unable to read file '{}' ({error})", uri_string("file", path), path.display())))?;
+                TextDocument::from_bytes(scheme, path, &bytes, requested, &self.languages, &self.settings.lock().unwrap())
+            }
+            // mainThreadDocuments.ts `_handleUntitledScheme`: an untitled model for the path, never over an existing file.
+            ("untitled", _) if path.exists() => return Err(serialized_error(&format!("cannot open {}. Detail: file already exists", uri_string(scheme, path)))),
+            ("untitled", _) => {
+                let mut document = TextDocument::untitled(path, "", None, &self.languages, &self.settings.lock().unwrap());
+                document.encoding = requested.map_or(document.encoding, str::to_string);
+                document
+            }
             _ => return Err(serialized_error(&format!("cannot open {scheme}:{}. Detail: Unable to resolve resource {scheme}:{}", path.display(), path.display()))),
         };
         let index = self.editors.open_model(document);
+        let model = &mut self.editors.models[index];
+        model.host_reference = Some(Instant::now());
+        model.associated_file = scheme == "untitled";
+        self.editors_changed(cx);
+        // `_handleUntitledScheme` ends in `_doCreateUntitled`, which marks the host's document dirty.
+        if scheme == "untitled" {
+            self.host.send("ExtHostDocuments", "$acceptDirtyStateChanged", vec![uri.clone(), json!(true)]);
+        }
+        Ok(uri.clone())
+    }
+
+    /// `setEncoding(encoding, EncodingMode.Decode)` of an open model: an untitled model takes the encoding, a clean
+    /// file model is read again in it (`forceResolveFromFile`) and takes the encoding the read settled on.
+    fn set_model_encoding(&mut self, uri: &Value, scheme: &str, path: &Path, requested: &str, cx: &mut Context<Self>) -> Result<(), String> {
+        let model = self.editors.model_mut(scheme, path).expect("the caller found the model");
+        if model.document.encoding == requested {
+            return Ok(());
+        }
+        if scheme == "untitled" {
+            model.document.encoding = requested.to_string();
+            self.host.send("ExtHostDocuments", "$acceptEncodingChanged", vec![uri.clone(), json!(requested)]);
+            return Ok(());
+        }
+        if model.is_dirty() {
+            return Err("Cannot re-open a dirty text document with different encoding. Save it first.".into());
+        }
+        // shortcut: a model of an extension's file system provider keeps its text, as the GPUI thread cannot read through the provider; it takes the encoding.
+        let bytes = match scheme {
+            "file" => Some(std::fs::read(path).map_err(|error| format!("Unable to read file '{}' ({error})", path.display()))?),
+            _ => None,
+        };
+        let detected = bytes.as_deref().and_then(|bytes| encoding::detect(bytes).encoding);
+        let resolved = encoding::read_encoding(&self.settings.lock().unwrap(), (scheme == "file").then_some(path), Some(requested), detected);
+        if model.document.encoding != resolved {
+            model.document.encoding = resolved.clone();
+            self.host.send("ExtHostDocuments", "$acceptEncodingChanged", vec![uri.clone(), json!(resolved)]);
+        }
+        if let Some(bytes) = bytes {
+            self.replace_clean_model_text(scheme, path, encoding::decode(&bytes, &resolved), cx);
+        }
+        Ok(())
+    }
+
+    /// `$tryCreateDocument`: a new untitled model named `Untitled-<n>` with the first free n.
+    // shortcut: `files.defaultLanguage` is not read; an untitled model without a language is plain text.
+    fn try_create_document(&mut self, options: &Value, cx: &mut Context<Self>) -> HostResult {
+        let path = (1..).map(|n| PathBuf::from(format!("Untitled-{n}"))).find(|path| self.editors.model("untitled", path).is_none()).expect("a free name");
+        let content = options["content"].as_str().unwrap_or_default();
+        let mut document = TextDocument::untitled(&path, content, options["language"].as_str(), &self.languages, &self.settings.lock().unwrap());
+        document.encoding = options["encoding"].as_str().map_or(document.encoding, str::to_string);
+        let uri = document.uri();
+        let index = self.editors.open_model(document);
         self.editors.models[index].host_reference = Some(Instant::now());
         self.editors_changed(cx);
-        Ok(uri.clone())
+        // mainThreadDocuments.ts `_doCreateUntitled` tells the host the new document is dirty, whatever the model says.
+        self.host.send("ExtHostDocuments", "$acceptDirtyStateChanged", vec![uri.clone(), json!(true)]);
+        Ok(uri)
+    }
+
+    /// `$onVirtualDocumentChange`: a content provider's new text replaces the model's.
+    fn virtual_document_change(&mut self, uri: &Value, value: &Value, cx: &mut Context<Self>) -> HostResult {
+        let (scheme, ref path) = uri_parts(uri)?;
+        if self.editors.model(scheme, path).is_some() {
+            self.replace_clean_model_text(scheme, path, value.as_str().unwrap_or_default().to_string(), cx);
+        }
+        Ok(Value::Null)
+    }
+
+    /// New text for a model in one edit, after which the model is clean: a content provider's model is no text file
+    /// model, and a file read again matches the disk.
+    // shortcut: one edit over the whole model where upstream applies computeMoreMinimalEdits; port the diff worker when an extension needs the smaller events.
+    fn replace_clean_model_text(&mut self, scheme: &str, path: &Path, text: String, cx: &mut Context<Self>) {
+        let model = self.editors.model_mut(scheme, path).expect("the caller found the model");
+        let end = document_end(&model.document.lines);
+        let change = model.execute_edits(vec![(Position::new(0, 0), end, text, false)], None, EditReason::ApplyEdits);
+        model.mark_saved();
+        if let Some(change) = change {
+            self.send_model_edit(scheme, path, &change);
+            cx.notify();
+        }
     }
 
     /// `$trySaveDocument`: `textFileService.save`, true once the model is saved; a clean model is not written.
     fn try_save_document(&mut self, uri: &Value, cx: &mut Context<Self>) -> HostResult {
-        let (scheme, path) = uri_parts(uri)?;
+        let (scheme, ref path) = uri_parts(uri)?;
         let Some(model) = self.editors.model_mut(scheme, path) else { return Ok(json!(false)) };
+        // textFileService.ts `saveAs`: an untitled model with a path becomes the model of that file.
+        // shortcut: no Save As dialog asks for the path of an untitled model without one; its save answers false.
+        if scheme == "untitled" {
+            if !model.associated_file {
+                return Ok(json!(false));
+            }
+            std::fs::write(path, model.saved_bytes()).map_err(|error| serialized_error(&format!("Unable to write file '{}' ({error})", path.display())))?;
+            model.document.scheme = "file".into();
+            model.associated_file = false;
+            model.mark_saved();
+            self.editors_changed(cx);
+            return Ok(json!(true));
+        }
         if !model.is_dirty() {
             return Ok(json!(true));
         }
@@ -116,7 +239,7 @@ impl Workbench {
 
     /// First half of `$trySaveDocument` through a provider: false without a model, true when clean, else the bytes to write.
     fn provider_save_bytes(&self, uri: &Value) -> HostResult {
-        let (scheme, path) = uri_parts(uri)?;
+        let (scheme, ref path) = uri_parts(uri)?;
         Ok(match self.editors.model(scheme, path) {
             None => json!(false),
             Some(model) if !model.is_dirty() => json!(true),
@@ -126,7 +249,7 @@ impl Workbench {
 
     /// Second half: the provider wrote the bytes, so the model is clean.
     fn provider_saved(&mut self, uri: &Value, cx: &mut Context<Self>) -> HostResult {
-        let (scheme, path) = uri_parts(uri)?;
+        let (scheme, ref path) = uri_parts(uri)?;
         let Some(model) = self.editors.model_mut(scheme, path) else { return Ok(json!(false)) };
         model.mark_saved();
         let model = self.editors.model(scheme, path).expect("just saved");
@@ -137,7 +260,7 @@ impl Workbench {
 
     /// `$tryShowTextDocument`: opens the model in the group, preview unless pinned, and returns the editor's id.
     fn try_show_text_document(&mut self, uri: &Value, options: &Value, window: &mut Window, cx: &mut Context<Self>) -> HostResult {
-        let (scheme, path) = uri_parts(uri)?;
+        let (scheme, ref path) = uri_parts(uri)?;
         let pinned = options["pinned"] == json!(true);
         if let Some(index) = self.editors.editors.iter().position(|editor| editor.document.is(scheme, path)) {
             self.editors.activate(index);
@@ -237,12 +360,15 @@ impl Workbench {
     }
 
     /// mainThreadEditor.ts `applyEdits`: false when the model moved past the host's version.
-    // shortcut: `setEndOfLine` is not applied; the model keeps its line ending.
     fn apply_host_edits(&mut self, version: &Value, edits: &Value, options: &Value, cx: &mut Context<Self>) -> HostResult {
         let editor = self.editors.active_mut().expect("checked by host_request");
         if version.as_u64() != Some(editor.version_id.into()) {
             return Ok(json!(false));
         }
+        if let Some(eol_change) = options["setEndOfLine"].as_u64().and_then(|sequence| editor.push_eol(sequence)) {
+            self.host.send_model_change(&self.editors, self.editors.active().expect("checked by host_request"), &eol_change);
+        }
+        let editor = self.editors.active_mut().expect("checked by host_request");
         let edits = edits
             .as_array()
             .into_iter()
@@ -277,20 +403,10 @@ impl Workbench {
         if ranges.is_empty() {
             ranges = editor.selections.iter().map(|selection| (selection.start(), selection.end())).collect();
         }
-        let adjust_indentation = options["keepWhitespace"] != json!(true);
-        let mut cursor_edits = Vec::new();
-        for &(start, end) in &ranges {
-            let line_indent: String = editor.document.lines[start.line].chars().take(start.column).take_while(|c| *c == ' ' || *c == '\t').collect();
-            let snippet = expand_snippet(template.as_str().unwrap_or_default(), &line_indent, adjust_indentation, editor.document.indentation, |name| {
-                snippet_variable(name, editor, start, end, clipboard.as_deref())
-            });
-            let prefix = |chars: usize| snippet.text.chars().take(chars).collect::<String>();
-            let selection = Selection { anchor: end_of(start, &prefix(snippet.selection.start)), head: end_of(start, &prefix(snippet.selection.end)) };
-            cursor_edits.push(CursorEdit::new(vec![Replace::new(start, end, snippet.text.clone())], selection));
-        }
-        let before: Vec<Selection> = ranges.iter().map(|&(start, end)| Selection { anchor: start, head: end }).collect();
-        let selections = selections_after(&cursor_edits, &before);
-        let edits = cursor_edits.into_iter().flat_map(|edit| edit.replaces).map(|replace| (replace.start, replace.end, replace.text, false)).collect();
+        let template = template.as_str().unwrap_or_default();
+        let keep_whitespace = options["keepWhitespace"] == json!(true);
+        let snippets: Vec<_> = ranges.into_iter().map(|(start, end)| (start, end, template, keep_whitespace)).collect();
+        let (edits, selections) = snippet_edits(editor, &snippets, clipboard.as_deref());
         if options["undoStopBefore"] == json!(true) {
             editor.push_undo_stop();
         }
@@ -301,6 +417,23 @@ impl Workbench {
         self.editor_edited(change, true, "snippet", cx);
         Ok(json!(true))
     }
+}
+
+/// `SnippetSession`: each template, with whitespace adjusted unless kept, replaces its range; the selections are
+/// each copy's first tab stop.
+pub(super) fn snippet_edits(editor: &OpenEditor, snippets: &[(Position, Position, &str, bool)], clipboard: Option<&str>) -> (Vec<(Position, Position, String, bool)>, Vec<Selection>) {
+    let mut cursor_edits = Vec::new();
+    for &(start, end, template, keep_whitespace) in snippets {
+        let line_indent: String = editor.document.lines[start.line].chars().take(start.column).take_while(|c| *c == ' ' || *c == '\t').collect();
+        let snippet = expand_snippet(template, &line_indent, !keep_whitespace, editor.document.indentation, |name| snippet_variable(name, editor, start, end, clipboard));
+        let prefix = |chars: usize| snippet.text.chars().take(chars).collect::<String>();
+        let selection = Selection { anchor: end_of(start, &prefix(snippet.selection.start)), head: end_of(start, &prefix(snippet.selection.end)) };
+        cursor_edits.push(CursorEdit::new(vec![Replace::new(start, end, snippet.text.clone())], selection));
+    }
+    let before: Vec<Selection> = snippets.iter().map(|&(start, end, _, _)| Selection { anchor: start, head: end }).collect();
+    let selections = selections_after(&cursor_edits, &before);
+    let edits = cursor_edits.into_iter().flat_map(|edit| edit.replaces).map(|replace| (replace.start, replace.end, replace.text, false)).collect();
+    (edits, selections)
 }
 
 /// snippetVariables.ts: the selection, model and file variables; the rest insert their default.
@@ -322,15 +455,21 @@ fn snippet_variable(name: &str, editor: &OpenEditor, start: Position, end: Posit
     }
 }
 
-fn uri_parts(uri: &Value) -> Result<(&str, &Path), Value> {
-    match (uri["scheme"].as_str(), uri["path"].as_str()) {
-        (Some(scheme), Some(path)) if !scheme.is_empty() && !path.is_empty() => Ok((scheme, Path::new(path))),
-        _ => Err(serialized_error("Invalid uri. Scheme and authority or path must be set.")),
+/// The scheme and path a model is keyed by; the authority of a non-file URI leads its path as `//authority`,
+/// which `TextDocument::uri` splits off again.
+pub(super) fn uri_parts(uri: &Value) -> Result<(&str, PathBuf), Value> {
+    let part = |key: &str| uri[key].as_str().unwrap_or_default();
+    let (scheme, authority, path) = (part("scheme"), part("authority"), part("path"));
+    match (scheme, authority) {
+        ("", _) => Err(serialized_error("Invalid uri. Scheme and authority or path must be set.")),
+        ("file", _) | (_, "") if path.is_empty() => Err(serialized_error("Invalid uri. Scheme and authority or path must be set.")),
+        ("file", _) | (_, "") => Ok((scheme, PathBuf::from(path))),
+        _ => Ok((scheme, PathBuf::from(format!("//{authority}{path}")))),
     }
 }
 
 /// `IRange`, 1-based with UTF-16 columns, validated against the model as `validateRange` does.
-fn range(editor: &OpenEditor, range: &Value) -> (Position, Position) {
+pub(super) fn range(editor: &OpenEditor, range: &Value) -> (Position, Position) {
     let start = position(editor, &range["startLineNumber"], &range["startColumn"]);
     let end = position(editor, &range["endLineNumber"], &range["endColumn"]);
     if end < start { (end, start) } else { (start, end) }

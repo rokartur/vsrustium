@@ -3,6 +3,7 @@
 //! Sizes are the reference's CSS pixels.
 
 mod actions;
+mod bulk_text_edits;
 mod context_menu;
 mod editor_commands;
 mod editor_menus;
