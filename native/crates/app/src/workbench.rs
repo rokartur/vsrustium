@@ -3,6 +3,7 @@
 //! Sizes are the reference's CSS pixels.
 
 mod editor_view;
+pub(crate) mod host_requests;
 mod text_input;
 
 use std::cell::Cell;

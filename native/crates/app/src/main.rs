@@ -7,12 +7,13 @@ mod editor;
 mod explorer;
 mod host_sync;
 mod languages;
+mod main_thread;
 mod syntax;
 mod theme;
 mod workbench;
 
 use std::path::PathBuf;
-use std::sync::mpsc::{Receiver, channel};
+use std::sync::mpsc::channel;
 use std::time::Duration;
 
 use exthost::extension_development::ExtensionDevelopment;
@@ -27,8 +28,9 @@ use gpui_platform::application;
 use serde_json::json;
 use anyhow::Context as _;
 use explorer::FileTree;
-use host_sync::{HostMessage, HostSync};
+use host_sync::HostSync;
 use languages::Languages;
+use main_thread::{HostRequest, WorkbenchMainThread};
 use theme::load_theme;
 use workbench::Workbench;
 
@@ -67,6 +69,8 @@ fn main() -> anyhow::Result<()> {
             cx.new(|cx| {
                 let (sender, mut receiver) = unbounded::<String>();
                 let (host_sender, host_receiver) = channel();
+                let (request_sender, mut requests) = unbounded::<HostRequest>();
+                let main_thread = WorkbenchMainThread { requests: request_sender, messages: host_receiver, providers: Default::default() };
                 let languages = Languages::new(&extensions);
                 let host = HostSync::new(host_sender);
                 host.send_color_theme(theme.kind);
@@ -78,7 +82,7 @@ fn main() -> anyhow::Result<()> {
                     .name("exthost-session".into())
                     .spawn(move || {
                         let runs_tests = development.as_ref().is_some_and(|development| development.tests_path.is_some());
-                        if let Err(error) = run_extension_host(runtime, app_root, extensions, user_data, folder, development, host_receiver, &sender) {
+                        if let Err(error) = run_extension_host(runtime, app_root, extensions, user_data, folder, development, main_thread, &sender) {
                             if runs_tests {
                                 eprintln!("extension host failed: {error:#}");
                                 std::process::exit(1);
@@ -87,6 +91,13 @@ fn main() -> anyhow::Result<()> {
                         }
                     })
                     .expect("spawn exthost session thread");
+                cx.spawn_in(window, async move |workbench, cx| {
+                    while let Some(request) = requests.next().await {
+                        let result = workbench.update_in(cx, |workbench, window, cx| workbench.host_request(&request.proxy, &request.method, &request.args, window, cx));
+                        let _ = request.reply.send(result.unwrap_or_else(|_| Err(exthost::main_thread::serialized_error("Canceled"))));
+                    }
+                })
+                .detach();
                 cx.spawn_in(window, async move |_, cx| {
                     while let Some(line) = receiver.next().await {
                         eprintln!("{line}");
@@ -122,7 +133,7 @@ fn run_extension_host(
     user_data: Option<PathBuf>,
     folder: Option<PathBuf>,
     development: Option<ExtensionDevelopment>,
-    workbench_messages: Receiver<HostMessage>,
+    main_thread: WorkbenchMainThread,
     status: &UnboundedSender<String>,
 ) -> anyhow::Result<()> {
     let user_data = match user_data {
@@ -139,6 +150,7 @@ fn run_extension_host(
     let host = ExtensionHost::start(HostOptions { runtime, entry: &entry, extra_env: vec![], extra_args: vec![] }, &init)?;
     let _ = status.unbounded_send(format!("handshake done, pid {}", host.child.id()));
     let mut session = Session::new(host);
+    session.main_thread = Some(Box::new(main_thread));
     session.start(&extensions, folder.as_deref().map(|folder| workspace_data(&init, folder)))?;
     let reply = session.call("ExtHostExtensionService", "$test_latency", vec![Arg::Json(json!(7))], Duration::from_secs(10))?;
     let _ = status.unbounded_send(format!("main -> host: $test_latency(7) = {reply:?}"));
@@ -149,9 +161,7 @@ fn run_extension_host(
     }
     // The short pump timeout bounds how long a workbench change waits before the host hears of it.
     loop {
-        for message in workbench_messages.try_iter() {
-            session.notify(message.proxy, message.method, message.args);
-        }
+        session.flush_main_thread();
         if !session.pump(Duration::from_millis(20))? {
             break;
         }

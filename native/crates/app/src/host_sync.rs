@@ -173,8 +173,7 @@ impl HostSync {
     }
 
     /// The active editor was written to disk while `was_dirty`.
-    pub fn send_saved(&mut self, group: &EditorGroup, was_dirty: bool) {
-        let editor = group.active().expect("only the active editor is saved");
+    pub fn send_saved(&mut self, group: &EditorGroup, editor: &OpenEditor, was_dirty: bool) {
         let uri = editor.document.uri();
         if was_dirty {
             self.send("ExtHostDocuments", "$acceptDirtyStateChanged", vec![uri.clone(), json!(false)]);
@@ -193,6 +192,11 @@ impl HostSync {
         let ranges = visible_ranges(editor, lines.clone());
         self.visible_lines = Some(lines);
         self.send("ExtHostEditors", "$acceptEditorPropertiesChanged", vec![json!(snapshot_id(editor)), json!({ "options": null, "selections": null, "visibleRanges": ranges })]);
+    }
+
+    /// mainThreadEditor.ts `_updatePropertiesNow` after the model's indentation options changed.
+    pub fn send_options(&self, editor: &OpenEditor) {
+        self.send("ExtHostEditors", "$acceptEditorPropertiesChanged", vec![json!(snapshot_id(editor)), json!({ "options": options(editor), "selections": null, "visibleRanges": null })]);
     }
 
     /// Tells the host where the cursor of the visible editor moved.
@@ -219,7 +223,7 @@ impl HostSync {
 }
 
 /// `TextEditorSnapshot.id`: the code editor's id and the model's id.
-fn snapshot_id(editor: &OpenEditor) -> String {
+pub fn snapshot_id(editor: &OpenEditor) -> String {
     format!("{CODE_EDITOR_ID},$model{}", editor.model_id)
 }
 
@@ -238,22 +242,26 @@ fn model_added_data(editor: &OpenEditor) -> Value {
 
 fn text_editor_add_data(editor: &OpenEditor, visible_lines: Range<usize>) -> Value {
     let document = &editor.document;
-    let indentation = document.indentation;
     json!({
         "id": snapshot_id(editor),
         "documentUri": document.uri(),
-        // TextEditorCursorStyle.Line, RenderLineNumbersType.On; indentSize follows tabSize by default.
-        "options": {
-            "tabSize": indentation.tab_size,
-            "indentSize": indentation.tab_size,
-            "originalIndentSize": "tabSize",
-            "insertSpaces": indentation.insert_spaces,
-            "cursorStyle": 1,
-            "lineNumbers": 1,
-        },
+        "options": options(editor),
         "selections": [selection(editor)],
         "visibleRanges": visible_ranges(editor, visible_lines),
         "editorPosition": 0,
+    })
+}
+
+/// `IResolvedTextEditorConfiguration`: TextEditorCursorStyle.Line, RenderLineNumbersType.On; indentSize follows tabSize by default.
+fn options(editor: &OpenEditor) -> Value {
+    let indentation = editor.document.indentation;
+    json!({
+        "tabSize": indentation.tab_size,
+        "indentSize": indentation.tab_size,
+        "originalIndentSize": "tabSize",
+        "insertSpaces": indentation.insert_spaces,
+        "cursorStyle": 1,
+        "lineNumbers": 1,
     })
 }
 
@@ -482,7 +490,7 @@ mod tests {
 
         let was_dirty = group.active().unwrap().is_dirty();
         group.active_mut().unwrap().save().unwrap();
-        sync.send_saved(&group, was_dirty);
+        sync.send_saved(&group, group.active().unwrap(), was_dirty);
         forward(&mut session);
         assert!(!session.log.console.iter().any(|line| line.starts_with("[unexpected]")), "{:#?}", session.log.console);
         std::fs::remove_dir_all(folder).unwrap();

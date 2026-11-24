@@ -115,7 +115,7 @@ impl Workbench {
             eprintln!("saving {}: {error}", editor.document.path.display());
             return;
         }
-        self.host.send_saved(&self.editors, was_dirty);
+        self.host.send_saved(&self.editors, self.editors.active().expect("just saved"), was_dirty);
         cx.notify();
     }
 

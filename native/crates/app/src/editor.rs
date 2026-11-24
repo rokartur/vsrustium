@@ -11,10 +11,12 @@ use crate::syntax::Tokenization;
 
 mod cursor;
 mod edit;
+mod snippet;
 mod view;
 
 pub use cursor::{Position, Selection};
-pub use edit::{ContentChanged, EditReason, History, utf16_column};
+pub use edit::{ContentChanged, EditReason, History, char_column, end_of, text_between, utf16_column};
+pub use snippet::expand as expand_snippet;
 pub use view::{HORIZONTAL_SCROLLBAR_HEIGHT, LINE_HEIGHT, Scrollbar, VERTICAL_SCROLLBAR_WIDTH, VerticalReveal, Viewport};
 
 pub struct TextDocument {
@@ -64,19 +66,8 @@ impl TextDocument {
         TextDocument { scheme: scheme.to_string(), path: path.to_path_buf(), lines, eol, encoding, language_id, indentation, off_side, tokens }
     }
 
-    /// `URI.toString()`: `file:///a%20b` for a file, `scheme:/path` for a URI without authority.
     pub fn uri_string(&self) -> String {
-        let mut uri = match self.scheme.as_str() {
-            "file" => String::from("file://"),
-            scheme => format!("{scheme}:"),
-        };
-        for byte in self.path.to_string_lossy().bytes() {
-            match byte {
-                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => uri.push(byte as char),
-                _ => uri.push_str(&format!("%{byte:02X}")),
-            }
-        }
-        uri
+        uri_string(&self.scheme, &self.path)
     }
 
     /// `UriComponents` as the extension host revives them.
@@ -120,6 +111,21 @@ fn split_lines(text: &str) -> (Vec<String>, &'static str) {
 }
 
 /// `guessIndentation` (indentationGuesser.ts), over UTF-16 code units as upstream counts them.
+/// `URI.toString()`: `file:///a%20b` for a file, `scheme:/path` for a URI without authority.
+pub fn uri_string(scheme: &str, path: &Path) -> String {
+    let mut uri = match scheme {
+        "file" => String::from("file://"),
+        scheme => format!("{scheme}:"),
+    };
+    for byte in path.to_string_lossy().bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => uri.push(byte as char),
+            _ => uri.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    uri
+}
+
 pub fn guess_indentation(lines: &[String], default: Indentation) -> Indentation {
     const ALLOWED_TAB_SIZE_GUESSES: [usize; 7] = [2, 4, 6, 8, 3, 5, 7];
     const MAX_ALLOWED_TAB_SIZE_GUESS: usize = 8;

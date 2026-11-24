@@ -413,11 +413,57 @@ impl OpenEditor {
 
     /// The text as it was written; the saved version is the clean one from now on.
     pub fn save(&mut self) -> std::io::Result<()> {
+        // shortcut: documents of extension file system providers save only through `$trySaveDocument`; the workbench's own save of them waits for the file service row.
+        if self.document.scheme != "file" {
+            return Err(std::io::Error::new(std::io::ErrorKind::Unsupported, format!("no file system provider for {}", self.document.scheme)));
+        }
+        std::fs::write(&self.document.path, self.saved_bytes())?;
+        self.mark_saved();
+        Ok(())
+    }
+
+    /// The document as saving writes it: its EOL, with the BOM it was read with.
+    pub fn saved_bytes(&self) -> Vec<u8> {
         let document = &self.document;
         let bom = if document.encoding == "utf8bom" { "\u{FEFF}" } else { "" };
-        std::fs::write(&document.path, format!("{bom}{}", document.lines.join(document.eol)))?;
+        format!("{bom}{}", document.lines.join(document.eol)).into_bytes()
+    }
+
+    pub fn mark_saved(&mut self) {
         self.history.saved_alternative_version_id = self.history.alternative_version_id;
-        Ok(())
+    }
+
+    /// `codeEditorWidget.executeEdits`: each edit is a range, its text, and `forceMoveMarkers`. Without
+    /// `end_selection` the selection follows the edits as the cursor's tracked range does.
+    pub fn execute_edits(&mut self, edits: Vec<(Position, Position, String, bool)>, end_selection: Option<Selection>, reason: EditReason) -> Option<ContentChanged> {
+        let mut edits: Vec<_> = edits.into_iter().filter(|(start, end, text, _)| start != end || !text.is_empty()).collect();
+        edits.sort_by_key(|edit| std::cmp::Reverse(edit.0));
+        let eol_len = self.document.eol.len();
+        let before = self.selection;
+        let markers = [document_offset(&self.document.lines, eol_len, before.start()), document_offset(&self.document.lines, eol_len, before.end())];
+        let force_moves: Vec<bool> = edits.iter().map(|edit| edit.3).collect();
+        let replaces = edits.into_iter().map(|(start, end, text, _)| Replace { start, end, text: normalize_line_breaks(&text) }).collect();
+        let change = self.apply(replaces, before, reason)?;
+        let selection = match end_selection {
+            Some(selection) => selection,
+            None => {
+                // Cursor selections are tracked with `AlwaysGrowsWhenTypingAtEdges`: the start sticks to the character before it, the end does not.
+                let [mut start, mut end] = markers;
+                for (change, force_move) in change.changes.iter().zip(force_moves) {
+                    let (from, to, inserted) = (change.range_offset, change.range_offset + change.range_length, change.text.encode_utf16().count());
+                    start = accept_edit(start, true, from, to, inserted, force_move);
+                    end = accept_edit(end, false, from, to, inserted, force_move);
+                }
+                let (start, end) = (document_position(&self.document.lines, eol_len, start), document_position(&self.document.lines, eol_len, end));
+                match before.head < before.anchor {
+                    true => Selection { anchor: end, head: start },
+                    false => Selection { anchor: start, head: end },
+                }
+            }
+        };
+        self.selection = selection;
+        self.history.undo.last_mut().expect("the edit just pushed its group").selection_after = selection;
+        Some(change)
     }
 
     fn apply_between_stops(&mut self, replaces: Vec<Replace>, selection: Selection, reason: EditReason) -> Option<ContentChanged> {
@@ -498,6 +544,66 @@ impl OpenEditor {
     }
 }
 
+/// intervalTree.ts `nodeAcceptEdit` for one marker: where an offset goes when `start..end` becomes `inserted` code units.
+fn accept_edit(marker: usize, stick_to_previous: bool, start: usize, end: usize, inserted: usize, force_move: bool) -> usize {
+    #[derive(PartialEq)]
+    enum Move {
+        MarkerDefined,
+        Forced,
+        ForcedStay,
+    }
+    let stays_before = |check: usize, semantics: Move| match marker.cmp(&check) {
+        std::cmp::Ordering::Less => true,
+        std::cmp::Ordering::Greater => false,
+        std::cmp::Ordering::Equal => match semantics {
+            Move::Forced => false,
+            Move::ForcedStay => true,
+            Move::MarkerDefined => stick_to_previous,
+        },
+    };
+    let deleted = end - start;
+    let common = deleted.min(inserted);
+    let semantics = if force_move { Move::Forced } else if deleted > 0 { Move::ForcedStay } else { Move::MarkerDefined };
+    if stays_before(start, semantics) {
+        return marker;
+    }
+    if common > 0 && !force_move && stays_before(start + common, if deleted > inserted { Move::ForcedStay } else { Move::MarkerDefined }) {
+        return marker;
+    }
+    if stays_before(end, if force_move { Move::Forced } else { Move::MarkerDefined }) {
+        return start + inserted;
+    }
+    (marker + inserted).saturating_sub(deleted)
+}
+
+/// The model offset of a position: UTF-16 code units, each line break counted as the document's EOL.
+fn document_offset(lines: &[String], eol_len: usize, position: Position) -> usize {
+    lines[..position.line].iter().map(|line| line.encode_utf16().count() + eol_len).sum::<usize>() + utf16_column(&lines[position.line], position.column)
+}
+
+fn document_position(lines: &[String], eol_len: usize, mut offset: usize) -> Position {
+    for (index, line) in lines.iter().enumerate() {
+        let length = line.encode_utf16().count();
+        if offset <= length || index == lines.len() - 1 {
+            return Position::new(index, char_column(line, offset.min(length)));
+        }
+        offset -= length + eol_len;
+    }
+    unreachable!("a document has at least one line")
+}
+
+/// The char column at a UTF-16 column; one inside a surrogate pair lands after the pair.
+pub fn char_column(line: &str, utf16: usize) -> usize {
+    let mut units = 0;
+    for (index, c) in line.chars().enumerate() {
+        if units >= utf16 {
+            return index;
+        }
+        units += c.len_utf16();
+    }
+    line.chars().count()
+}
+
 pub fn utf16_column(line: &str, column: usize) -> usize {
     line.chars().take(column).map(char::len_utf16).sum()
 }
@@ -518,7 +624,7 @@ pub fn text_between(lines: &[String], start: Position, end: Position) -> String 
 }
 
 /// Where text inserted at `start` ends.
-fn end_of(start: Position, text: &str) -> Position {
+pub fn end_of(start: Position, text: &str) -> Position {
     match text.rsplit_once('\n') {
         Some((before, last)) => Position::new(start.line + before.matches('\n').count() + 1, last.chars().count()),
         None => Position::new(start.line, start.column + text.chars().count()),
@@ -535,6 +641,27 @@ pub(super) mod tests {
     use super::*;
     use crate::editor::{EditorGroup, Indentation, TextDocument};
     use std::path::PathBuf;
+
+    #[test]
+    fn executed_edits_carry_the_selection_as_its_tracked_range() {
+        let api = EditReason::Unknown("MainThreadTextEditor");
+        // TextEditorEdit.insert forces markers to move: the caret ends after the text.
+        let mut inserted = editor("", "\n");
+        inserted.execute_edits(vec![(Position::new(0, 0), Position::new(0, 0), "Hello".into(), true)], None, api);
+        assert_eq!(inserted.selection, Selection::caret(Position::new(0, 5)));
+        // A replace at the caret grows the empty selection over the new text.
+        let mut replaced = editor("ab\ncd", "\r\n");
+        replaced.move_to(Position::new(1, 1), false);
+        replaced.execute_edits(vec![(Position::new(1, 1), Position::new(1, 1), "x\ny".into(), false)], None, api);
+        assert_eq!(replaced.selection, Selection { anchor: Position::new(1, 1), head: Position::new(2, 1) });
+        // Text deleted around the selection collapses it to the deletion's start; edits after it leave it alone.
+        let mut deleted = editor("one two three", "\n");
+        deleted.move_to(Position::new(0, 5), false);
+        deleted.move_to(Position::new(0, 6), true);
+        let edits = vec![(Position::new(0, 4), Position::new(0, 8), String::new(), false), (Position::new(0, 8), Position::new(0, 13), "3".into(), false)];
+        deleted.execute_edits(edits, None, api);
+        assert_eq!((deleted.document.lines[0].as_str(), deleted.selection), ("one 3", Selection::caret(Position::new(0, 4))));
+    }
 
     pub(in crate::editor) fn editor(text: &str, eol: &'static str) -> OpenEditor {
         let document = TextDocument {
