@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 
 use crate::console::format_console_entry;
+use crate::main_thread::{MainThread, Waiting};
 use crate::rpc::{self, Arg, Message, Reply};
 use crate::scan::{ScannedExtension, extension_identifier, file_uri};
 use crate::{ExtensionHost, Incoming, proxy_id, proxy_name};
@@ -175,11 +176,14 @@ pub struct Session {
     /// `IExtensionDescription`s by lowercase id, for `$getExtension`.
     extensions: HashMap<String, Value>,
     extension_tests_req: Option<u32>,
+    /// The workbench's handler for the MainThread* requests it owns.
+    pub main_thread: Option<Box<dyn MainThread>>,
+    waiting: Waiting,
 }
 
 impl Session {
     pub fn new(host: ExtensionHost) -> Self {
-        Session { host, next_req: 0, results: HashMap::new(), log: SessionLog::default(), extensions: HashMap::new(), extension_tests_req: None }
+        Session { host, next_req: 0, results: HashMap::new(), log: SessionLog::default(), extensions: HashMap::new(), extension_tests_req: None, main_thread: None, waiting: Waiting::default() }
     }
 
     /// The calls the workbench makes once the handshake is done (MainThreadConfiguration,
@@ -267,8 +271,7 @@ impl Session {
         match rpc::decode(&bytes)? {
             Message::Request { req, rpc_id, method, args, .. } => {
                 self.host.send(rpc::encode(&Message::Acknowledged { req }));
-                let reply = self.handle_host_request(proxy_name(rpc_id), &method, &args);
-                self.host.send(rpc::encode(&Message::ReplyOk { req, value: reply }));
+                self.serve(req, rpc_id, method, args);
             }
             Message::ReplyOk { req, value } => {
                 self.results.insert(req, CallResult::Ok(value));
@@ -279,6 +282,43 @@ impl Session {
             Message::Acknowledged { .. } | Message::Cancel { .. } => {}
         }
         Ok(self.extension_tests_req.is_none_or(|req| !self.results.contains_key(&req)))
+    }
+
+    /// Lets the workbench handler answer first; requests arriving while it calls the host wait for it.
+    fn serve(&mut self, req: u32, rpc_id: u8, method: String, args: Vec<Arg>) {
+        if self.waiting.busy {
+            self.waiting.requests.push_back((req, rpc_id, method, args));
+            return;
+        }
+        let proxy = proxy_name(rpc_id);
+        let handled = match self.main_thread.take() {
+            Some(mut main_thread) => {
+                self.waiting.busy = true;
+                let handled = main_thread.handle(self, proxy, &method, &args);
+                main_thread.flush(self);
+                self.waiting.busy = false;
+                self.main_thread = Some(main_thread);
+                handled
+            }
+            None => None,
+        };
+        let message = match handled {
+            Some(Ok(value)) => Message::ReplyOk { req, value },
+            Some(Err(error)) => Message::ReplyErr { req, error: Some(error) },
+            None => Message::ReplyOk { req, value: self.handle_host_request(proxy, &method, &args) },
+        };
+        self.host.send(rpc::encode(&message));
+        if let Some((req, rpc_id, method, args)) = self.waiting.requests.pop_front() {
+            self.serve(req, rpc_id, method, args);
+        }
+    }
+
+    /// Sends what the workbench queued for the host.
+    pub fn flush_main_thread(&mut self) {
+        if let Some(mut main_thread) = self.main_thread.take() {
+            main_thread.flush(self);
+            self.main_thread = Some(main_thread);
+        }
     }
 
     /// Host console, errors and logger lines go to stderr, the port's log.

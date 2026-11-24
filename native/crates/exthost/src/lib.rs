@@ -7,6 +7,7 @@ pub mod frame;
 pub mod proxy_ids;
 pub mod rpc;
 pub mod scan;
+pub mod main_thread;
 pub mod session;
 
 use std::io::{Read, Write};
