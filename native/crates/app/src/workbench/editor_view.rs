@@ -112,6 +112,14 @@ impl Workbench {
         }
     }
 
+    /// editorTabsControl.ts `getHoverTitle`: the long title, with a preview note on a preview editor's tab.
+    fn tab_hover(&self, index: usize) -> impl IntoElement {
+        let editor = &self.editors.editors[index];
+        let title = crate::quick_input::path_label(&editor.document.path, None);
+        let content = if editor.preview { super::hover::HoverContent::Preview(title) } else { super::hover::HoverContent::Text(title) };
+        self.hover_target(("tab-hover", index), content, super::hover::HoverOptions::mouse())
+    }
+
     /// A tab sized to its label (tab.sizing fit): 8px before the label, 30.5px after it for the close action.
     fn tab(&self, index: usize, active: bool, cx: &mut Context<Self>) -> Div {
         let editor = &self.editors.editors[index];
@@ -151,6 +159,7 @@ impl Workbench {
                 workbench.editors_changed(cx);
             }))
             .on_mouse_down(MouseButton::Right, cx.listener(move |workbench, event: &MouseDownEvent, window, cx| workbench.show_tab_context_menu(index, event.position, window, cx)))
+            .child(self.tab_hover(index))
             .when(active || editor.is_dirty(), |tab| tab.child(div().absolute().top(px(5.5)).right(px(6.5)).child(close)));
         if !active {
             return div().h_full().flex_none().child(tab).mr(px(8.));
@@ -933,7 +942,12 @@ impl Workbench {
         let encoding = if document.encoding == "utf8bom" { "UTF-8 with BOM" } else { "UTF-8" };
         let eol = if document.eol == "\r\n" { "CRLF" } else { "LF" };
         let labels = [selection_label(editor), indentation, encoding.into(), eol.into(), self.languages.name(&document.language_id).to_string()];
-        let items = labels.into_iter().map(|label| div().h_full().mx(px(3.)).px(px(5.)).flex().items_center().whitespace_nowrap().child(label));
+        // editorStatus.ts entry tooltips.
+        let tooltips = ["Go to Line/Column", "Select Indentation", "Select Encoding", "Select End of Line Sequence", "Select Language Mode"];
+        let items = labels.into_iter().zip(tooltips).map(|(label, tooltip)| {
+            let hover = self.hover_target(tooltip, super::hover::HoverContent::Text(tooltip.into()), super::hover::HoverOptions::status_bar());
+            div().relative().h_full().mx(px(3.)).px(px(5.)).flex().items_center().whitespace_nowrap().child(label).child(hover)
+        });
         Some(div().h_full().flex().text_color(foreground).children(items))
     }
 }

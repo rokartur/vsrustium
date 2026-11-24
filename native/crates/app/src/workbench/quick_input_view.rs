@@ -365,7 +365,7 @@ impl Workbench {
             // cornerRadius.large under Modern UI (roundedCorners.css).
             .rounded(px(RADIUS))
             .when(!frosted, |widget| widget.bg(self.color("quickInput.background")))
-            .when(frosted, |widget| widget.child(self.frosted_glass("quickInput.background")))
+            .when(frosted, |widget| widget.child(self.frosted_glass("quickInput.background", RADIUS)))
             .when(interactive, |widget| widget.child(self.quick_input_drag_tracker(cx)))
             .text_color(self.foreground_or("quickInput.foreground"))
             .when_some(self.theme.color("widget.border"), |widget, border| widget.border_1().border_color(border))
@@ -393,15 +393,16 @@ impl Workbench {
         Some(element)
     }
 
-    /// The `::before` layer of frostedGlass.css: the surface color at 92% over a 12px blur of what is behind it.
-    pub(super) fn frosted_glass(&self, surface: &str) -> impl IntoElement {
+    /// The `::before` layer of frostedGlass.css: the surface color at 92% over a 12px blur of what is behind it,
+    /// inside a 1px border with `radius` corners.
+    pub(super) fn frosted_glass(&self, surface: &str, radius: f32) -> impl IntoElement {
         let mut color = self.color(surface);
         color.a *= 0.92;
         canvas(
             |_, _, _| (),
             move |bounds, _, window, _| {
                 // Inside the 1px border, so the corners follow the padding box.
-                let radii = gpui::Corners::all(px(RADIUS - 1.));
+                let radii = gpui::Corners::all(px(radius - 1.));
                 window.paint_backdrop_blur(bounds, radii, px(12.));
                 window.paint_quad(fill(bounds, color).corner_radii(radii));
             },

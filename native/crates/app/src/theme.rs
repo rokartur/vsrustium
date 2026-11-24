@@ -492,6 +492,11 @@ fn quick_input_default(key: &str) -> (ColorValue, ColorValue, ColorValue) {
         "menu.selectionBorder" => (None, None, Key("contrastActiveBorder")),
         "menu.separatorBackground" => (Transparent(&Key("foreground"), 0.2), Transparent(&Key("foreground"), 0.2), Key("contrastBorder")),
         "editorWidget.border" => (Transparent(&Key("editorWidget.foreground"), 0.2), Transparent(&Key("editorWidget.foreground"), 0.2), Key("contrastBorder")),
+        // editorColors.ts, for the workbench hover (hover.css).
+        "editorHoverWidget.background" => (Key("editorWidget.background"), Key("editorWidget.background"), Key("editorWidget.background")),
+        "editorHoverWidget.foreground" => (Key("editorWidget.foreground"), Key("editorWidget.foreground"), Key("editorWidget.foreground")),
+        "editorHoverWidget.border" => (Key("editorWidget.border"), Key("editorWidget.border"), Key("editorWidget.border")),
+        "textLink.foreground" => (Hex("#3794FF"), Hex("#006AB1"), Hex("#21A6FF")),
         _ => (None, None, None),
     }
 }
@@ -540,6 +545,10 @@ fn quick_input_default_hc_light(key: &str) -> ColorValue {
         "menu.foreground" => Key("select.foreground"),
         "menu.background" => Key("select.background"),
         "menu.selectionBorder" => Key("contrastActiveBorder"),
+        "editorHoverWidget.background" => Key("editorWidget.background"),
+        "editorHoverWidget.foreground" => Key("editorWidget.foreground"),
+        "editorHoverWidget.border" => Key("editorWidget.border"),
+        "textLink.foreground" => Hex("#0F4A85"),
         _ => None,
     }
 }

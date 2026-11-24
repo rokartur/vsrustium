@@ -99,7 +99,8 @@ impl Workbench {
                 self.leave_chord_mode(cx);
                 cx.stop_propagation();
             }
-            _ => {}
+            // hoverService.ts `_keyDown` with hideOnKeyDown, which every workbench hover delegate sets.
+            _ => self.dismiss_hover(cx),
         }
     }
 

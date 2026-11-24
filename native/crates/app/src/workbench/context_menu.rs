@@ -73,7 +73,7 @@ impl Workbench {
         }
         let width = menu_width(&actions, &keybindings, window);
         let viewport = window.viewport_size();
-        let origin = layout2d(Size { width: f32::from(viewport.width), height: f32::from(viewport.height) }, Size { width, height: menu_height(&actions) }, anchor_rect(anchor));
+        let origin = layout2d(Size { width: f32::from(viewport.width), height: f32::from(viewport.height) }, Size { width, height: menu_height(&actions) }, anchor_rect(anchor), LayoutAnchorPosition::Before);
         let focus_to_return = window.focused(cx).expect("the menu's owner takes focus before showing it");
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
@@ -187,7 +187,7 @@ impl Workbench {
             .when(high_contrast, |panel| panel.bg(self.color("menu.background")))
             .when(!high_contrast, |panel| {
                 // --vscode-shadow-lg.
-                panel.child(self.frosted_glass("menu.background")).shadow(vec![BoxShadow { color: rgba(0x00000024).into(), offset: point(px(0.), px(0.)), blur_radius: px(12.), spread_radius: px(0.), inset: false }])
+                panel.child(self.frosted_glass("menu.background", RADIUS)).shadow(vec![BoxShadow { color: rgba(0x00000024).into(), offset: point(px(0.), px(0.)), blur_radius: px(12.), spread_radius: px(0.), inset: false }])
             })
             .on_modifiers_changed(cx.listener(|workbench, event: &ModifiersChangedEvent, _, cx| {
                 if let Some(menu) = workbench.context_menu.as_mut() {
@@ -353,10 +353,8 @@ fn is_focusable(action: &MenuAction) -> bool {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-enum LayoutAnchorPosition {
+pub(super) enum LayoutAnchorPosition {
     Before,
-    /// Menus that open above their anchor; no port menu asks for it yet.
-    #[cfg(test)]
     After,
 }
 
@@ -383,18 +381,15 @@ fn layout(viewport_size: f32, view_size: f32, anchor: &LayoutAnchor) -> f32 {
         LayoutAnchorPosition::Before if view_size <= viewport_size - after_boundary => after_boundary,
         LayoutAnchorPosition::Before if view_size <= before_boundary => before_boundary - view_size,
         LayoutAnchorPosition::Before => (viewport_size - view_size).max(0.),
-        #[cfg(test)]
         LayoutAnchorPosition::After if view_size <= before_boundary => before_boundary - view_size,
-        #[cfg(test)]
         LayoutAnchorPosition::After if view_size <= viewport_size - after_boundary && before_boundary < view_size / 2. => after_boundary,
-        #[cfg(test)]
         LayoutAnchorPosition::After => 0.,
     }
 }
 
-/// layout.ts `layout2d` with the context menu's options: aligned left, below the anchor, on the vertical axis.
-fn layout2d(viewport: Size<f32>, view: Size<f32>, anchor: Bounds<f32>) -> Point<Pixels> {
-    let vertical = LayoutAnchor { offset: anchor.origin.y, size: anchor.size.height, mode: LayoutAnchorMode::Avoid, position: LayoutAnchorPosition::Before };
+/// layout.ts `layout2d` aligned left on the vertical axis: below the anchor (`Before`) or above it (`After`).
+pub(super) fn layout2d(viewport: Size<f32>, view: Size<f32>, anchor: Bounds<f32>, position: LayoutAnchorPosition) -> Point<Pixels> {
+    let vertical = LayoutAnchor { offset: anchor.origin.y, size: anchor.size.height, mode: LayoutAnchorMode::Avoid, position };
     let top = layout(viewport.height, view.height, &vertical);
     // A view over the anchor's rows moves aside instead of aligning with it.
     let overlaps = top < vertical.offset + vertical.size && vertical.offset < top + view.height;

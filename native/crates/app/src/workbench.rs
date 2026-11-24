@@ -8,6 +8,7 @@ mod editor_commands;
 mod editor_menus;
 mod editor_view;
 mod explorer_actions;
+mod hover;
 pub(crate) mod host_requests;
 mod input_box_view;
 mod keyboard;
@@ -37,6 +38,7 @@ use crate::commands::Commands;
 use crate::editor::{EditorGroup, TextDocument};
 use crate::explorer::FileTree;
 use explorer_actions::DraggedItems;
+use hover::{HoverContent, HoverOptions, HoverPosition};
 use crate::file_icons::FileIconTheme;
 use crate::host_sync::HostSync;
 use crate::languages::Languages;
@@ -86,6 +88,7 @@ pub struct Workbench {
     pub menus: Vec<crate::menus::MenuItem>,
     pub(crate) context_menu: Option<context_menu::ContextMenu>,
     context_menus_shown: usize,
+    pub hovers: hover::Hovers,
     /// What the application menu shows now.
     installed_menubar: Option<menubar::Menubar>,
     /// The application storage (StorageScope.PROFILE and APPLICATION in the default profile), shared with the
@@ -125,6 +128,7 @@ impl Render for Workbench {
             .child(self.status_bar());
         let quick_input = self.quick_input_widget(window, cx);
         let context_menu = self.context_menu_widget(cx);
+        let hover = self.hover_widget(window, cx);
         self.update_menubar(window, cx);
         div()
             .relative()
@@ -136,6 +140,7 @@ impl Render for Workbench {
             .child(grid)
             .children(quick_input)
             .children(context_menu)
+            .children(hover)
             // shortcut: 16px is the macOS 26+ (Tahoe) corner radius (style.css .macos-tahoe); older macOS uses 10px, branch on the OS version if the port supports it.
             .when_some(window_border, |root, border| root.child(div().absolute().inset_0().border_1().rounded(px(16.)).border_color(border)))
     }
@@ -173,6 +178,7 @@ impl Workbench {
             menus: crate::menus::workbench_menus(),
             context_menu: None,
             context_menus_shown: 0,
+            hovers: hover::Hovers::default(),
             installed_menubar: None,
             profile_storage: Arc::new(Mutex::new(Storage::in_memory())),
             workspace_storage: Arc::new(Mutex::new(Storage::in_memory())),
@@ -259,6 +265,7 @@ impl Workbench {
             .items_center()
             // .command-center-center is 38vw wide plus its border (titlebarpart.css).
             .w(px(viewport_width * 0.38 + 2.))
+            .relative()
             .cursor_pointer()
             .h(px(24.))
             .pl(px(8.))
@@ -268,7 +275,8 @@ impl Workbench {
             .border_color(self.color("commandCenter.border"))
             .text_color(self.color("commandCenter.foreground"))
             .text_size(px(12.))
-            .child(self.workspace().map_or("Search".into(), Workspace::label));
+            .child(self.workspace().map_or("Search".into(), Workspace::label))
+            .child(self.hover_target("command-center", HoverContent::Text(self.command_center_tooltip()), HoverOptions::instant()));
         let center = div()
             .absolute()
             .top(px(6.5))
@@ -277,24 +285,45 @@ impl Workbench {
             .flex()
             .justify_center()
             .items_center()
-            .child(self.icon("arrow-left", 22., 16., disabled))
-            .child(self.icon("arrow-right", 22., 16., disabled).ml(px(4.)))
+            .child(self.icon("arrow-left", 22., 16., disabled).child(self.action_hover("Go Back", "workbench.action.navigateBack", HoverOptions::instant())))
+            .child(self.icon("arrow-right", 22., 16., disabled).ml(px(4.)).child(self.action_hover("Go Forward", "workbench.action.navigateForward", HoverOptions::instant())))
             .child(command_center.ml(px(10.)))
             .child(div().w(px(6.)));
         let side_bar_toggle = if self.folder.is_some() { "layout-sidebar-left" } else { "layout-sidebar-left-off" };
-        let layout_actions = ["layout", side_bar_toggle, "layout-panel-off", "layout-sidebar-right-off"];
+        let layout_actions = [
+            ("layout", "Customize Layout...", "workbench.action.customizeLayout"),
+            (side_bar_toggle, "Toggle Primary Side Bar", "workbench.action.toggleSidebarVisibility"),
+            ("layout-panel-off", "Toggle Panel", "workbench.action.togglePanel"),
+            ("layout-sidebar-right-off", "Toggle Secondary Side Bar", "workbench.action.toggleAuxiliaryBar"),
+        ];
         let right = div()
             .absolute()
             .top(px(7.5))
             .right(px(12.))
             .flex()
             .gap(px(4.))
-            .children(layout_actions.map(|name| self.icon(name, 22., 16., foreground).cursor_pointer()));
+            .children(layout_actions.map(|(name, title, command)| self.icon(name, 22., 16., foreground).cursor_pointer().child(self.action_hover(title, command, HoverOptions::instant()))));
         div().relative().h(px(35.)).flex_none().child(center).child(right)
     }
 
+    /// commandCenterControl.ts `getTooltip`; its submenu has no keybinding, so "Search {0} \u{2014} {1}" with the
+    /// macOS `window.title` default `${activeEditorShort}${separator}${rootName}`, the other variables empty here.
+    fn command_center_tooltip(&self) -> String {
+        let root_name = self.workspace().map(Workspace::label).unwrap_or_default();
+        let active_editor = self.editors.active().map(|editor| editor.document.name()).unwrap_or_default();
+        let title: Vec<_> = [active_editor, root_name.clone()].into_iter().filter(|part| !part.is_empty()).collect();
+        format!("Search {root_name} \u{2014} {}", title.join(" \u{2014} "))
+    }
+
     fn activity_bar(&self) -> Div {
-        let views = ["search-large", "source-control", "debug-alt", "extensions"];
+        let views = [
+            ("search-large", "Search", "workbench.view.search"),
+            ("source-control", "Source Control", "workbench.view.scm"),
+            ("debug-alt", "Run and Debug", "workbench.view.debug"),
+            ("extensions", "Extensions", "workbench.view.extensions"),
+        ];
+        // The side bar is on the left, so the hovers go right of the bar (activitybarPart.ts).
+        let hover = HoverOptions::composite_bar(HoverPosition::Right);
         let inactive = self.color("activityBar.inactiveForeground");
         let explorer = if self.folder.is_some() { self.active_view_icon("files") } else { self.icon("files", 36., 24., inactive) };
         div()
@@ -309,8 +338,15 @@ impl Workbench {
             .when(self.folder.is_none(), |bar| bar.rounded(px(8.)))
             .bg(self.color("activityBar.background"))
             .border_color(self.color("surface.border"))
-            .child(div().flex().flex_col().gap(px(8.)).child(explorer.cursor_pointer()).children(views.map(|name| self.icon(name, 36., 24., inactive).cursor_pointer())))
-            .child(self.icon("settings-gear", 36., 24., inactive).cursor_pointer())
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .child(explorer.cursor_pointer().child(self.action_hover("Explorer", "workbench.view.explorer", hover)))
+                    .children(views.map(|(name, title, command)| self.icon(name, 36., 24., inactive).cursor_pointer().child(self.action_hover(title, command, hover)))),
+            )
+            .child(self.icon("settings-gear", 36., 24., inactive).cursor_pointer().child(self.hover_target("manage", HoverContent::Text("Manage".into()), hover)))
     }
 
     /// The checked view: a 32px rounded indicator behind the icon (activityaction.css); High Contrast
@@ -391,10 +427,13 @@ impl Workbench {
                 icons.file_icon(&icon_path, self.languages.language_of(&icon_path, ""), self.theme.kind, 13., label_line, foreground)
             });
             let indent = 8. * (row.depth - 1) as f32;
+            let hover = self.hover_target(("explorer-hover", index), HoverContent::Text(crate::quick_input::path_label(&path, None)), HoverOptions::mouse());
             div()
                 .id(index)
                 // list.css: .monaco-list.mouse-support .monaco-list-row is cursor: pointer.
                 .cursor_pointer()
+                .relative()
+                .when(!row.is_new && !is_edited, |row| row.child(hover))
                 .h(px(22.))
                 .mx(px(4.))
                 .flex()
@@ -545,6 +584,7 @@ impl Workbench {
         };
         // statusbarpart.css: pointer only on items with a command; status.message has none.
         let problems = div()
+            .relative()
             .h_full()
             .cursor_pointer()
             .ml(px(3.))
@@ -554,7 +594,8 @@ impl Workbench {
             .child(self.icon("error", 16., 16., foreground))
             .child(" 0 ")
             .child(self.icon("warning", 16., 16., foreground))
-            .child(" 0");
+            .child(" 0")
+            .child(self.hover_target("status.problems", HoverContent::Text("No Problems".into()), HoverOptions::status_bar()));
         div()
             .h(px(28.))
             .flex_none()
@@ -567,8 +608,8 @@ impl Workbench {
             .text_size(px(12.))
             // statusbarpart.css: font-variant-numeric: tabular-nums.
             .font_features(FontFeatures(Arc::new(vec![("tnum".into(), 1)])))
-            .child(div().h(px(24.)).flex().child(self.icon("remote", 28., 16., foreground).h_full().cursor_pointer()).child(problems).children(self.status_bar_message()))
-            .child(div().h(px(24.)).flex().children(self.editor_status_items(foreground)).child(self.icon("bell", 28., 16., foreground).h_full().cursor_pointer()))
+            .child(div().h(px(24.)).flex().child(self.icon("remote", 28., 16., foreground).h_full().cursor_pointer().child(self.hover_target("status.host", HoverContent::Text("Open a Remote Window".into()), HoverOptions::status_bar()))).child(problems).children(self.status_bar_message()))
+            .child(div().h(px(24.)).flex().children(self.editor_status_items(foreground)).child(self.icon("bell", 28., 16., foreground).h_full().cursor_pointer().child(self.hover_target("status.notifications", HoverContent::Text("No Notifications".into()), HoverOptions::status_bar()))))
     }
 
     /// The `status.message` entry: multi-chord mode, else the latest status message (notificationsStatus.ts).
@@ -582,6 +623,7 @@ impl Workbench {
     fn icon(&self, name: &str, box_size: f32, icon_size: f32, color: Rgba) -> Div {
         let path = self.app_root.join("node_modules/@vscode/codicons/src/icons").join(format!("{name}.svg"));
         div()
+            .relative()
             .size(px(box_size))
             .flex_none()
             .flex()

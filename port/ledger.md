@@ -152,7 +152,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/globalKeybindings | src/vs/platform | todo |  |
 | platform/gpu | src/vs/platform | todo |  |
 | platform/history | src/vs/platform | todo |  |
-| platform/hover | src/vs/platform | todo |  |
+| platform/hover | src/vs/platform | ported | workbench/hover.rs: cargo test -p app hover (reference hover boxes, hoverService.test.ts pointer and side cases, delay, instant, leave, click and key hide); screenshot pairs vs ref-hover dumps (port/results/hover.md); markdown hovers wait for milestone 13 |
 | platform/imageResize | src/vs/platform | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | platform/instantiation | src/vs/platform | todo |  |
 | platform/ipc | src/vs/platform | n/a | Electron process, IPC or DOM layer; replaced by the single-process Rust/GPUI architecture (port/notes.md) |
