@@ -206,7 +206,8 @@ fn watch(fs: &mut Providers, watch_session: u64, uri: &Value, options: &Value, c
         eprintln!("MainThreadFileSystemEventService#$watch(): cannot watch resource as its scheme is not handled by the file service (path: {})", resource.for_error());
         return;
     }
-    let recursive = options["recursive"] == true && files::stat(fs, &resource).is_ok_and(|stat| stat.file_type & files::DIRECTORY != 0);
+    // A failed stat keeps the request recursive, as upstream ignores the error.
+    let recursive = options["recursive"] == true && !files::stat(fs, &resource).is_ok_and(|stat| stat.file_type & files::DIRECTORY == 0);
     if resource.scheme != "file" {
         let handle = files(fs.session).providers[&resource.scheme].handle;
         files(fs.session).provider_watches.insert(watch_session, handle);

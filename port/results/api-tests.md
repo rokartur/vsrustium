@@ -142,6 +142,10 @@ After saves through the extension host (`workbench.action.files.save`, `$save`, 
 
 After canonical casing in `$tryOpenDocument`, same grep: api-folder 106/2/1/293 (exit 1 after 10s), api-workspace 4/0/0. Left: `createFileSystemWatcher`.
 
+After a recursive `$watch` stays recursive when its stat fails, same grep: api-folder 107/2/0/293 (exit 0 after 11s), api-workspace 4/0/0. Every test of the workspace suites passes.
+
+The combined grep of the baseline (`vscode API - quick input|vscode API - commands|showInputBox|#7013|vscode API - configuration|vscode API - globalState|vscode API - workspace-fs|vscode API - workspace events|vscode API - workspace `) at the same commit: api-folder 133/2/3/264 (exit 1 after 12s) against 81/2/55 before, api-workspace 4/0/0. The 3 left are `vscode API - commands`: `vscode.diff` and `vscode.open` (`_workbench.diff`, `_workbench.open` not registered) and `vscode.open with untitled supports associated resource`.
+
 ## M12 participant confirmation
 
 Same `MOCHA_GREP` and setup as the bulk file edits section, on the Studio, the working tree of the participant confirmation commit.
