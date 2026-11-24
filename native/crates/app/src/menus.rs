@@ -25,6 +25,7 @@ pub enum MenuId {
     MenubarHelpMenu,
     MenubarPreferencesMenu,
     ThemesSubMenu,
+    ExplorerContext,
     #[cfg(test)]
     Test,
 }
@@ -32,7 +33,8 @@ pub enum MenuId {
 #[derive(Clone, Debug)]
 #[allow(clippy::large_enum_variant, reason = "a few dozen items, built once")]
 pub enum Entry {
-    Command { id: String, precondition: Option<Expr>, toggled: Option<Expr> },
+    /// `alt` is the command and title shown while Alt is held (`IMenuItem.alt`).
+    Command { id: String, precondition: Option<Expr>, toggled: Option<Expr>, alt: Option<(String, String)> },
     Submenu(MenuId),
 }
 
@@ -50,7 +52,7 @@ pub struct MenuItem {
 /// `MenuItemAction`, `SubmenuItemAction` or `Separator`, as a menu shows them.
 #[derive(Clone, Debug, PartialEq)]
 pub enum MenuAction {
-    Command { id: String, title: String, enabled: bool, checked: bool },
+    Command { id: String, title: String, enabled: bool, checked: bool, alt: Option<(String, String)> },
     Submenu { title: String, actions: Vec<MenuAction> },
     Separator,
 }
@@ -58,7 +60,7 @@ pub enum MenuAction {
 /// The workbench's registrations of the features the port has: menu, submenu or command id, title, group, order,
 /// `when`, and the command's precondition.
 type Row = (MenuId, Option<MenuId>, &'static str, &'static str, &'static str, f64, Option<&'static str>, Option<&'static str>);
-const WORKBENCH_MENUS: [Row; 20] = [
+const WORKBENCH_MENUS: [Row; 28] = [
     // menubar.contribution.ts
     (MenuId::MenubarMainMenu, Some(MenuId::MenubarFileMenu), "", "&&File", "", 1., None, None),
     (MenuId::MenubarMainMenu, Some(MenuId::MenubarEditMenu), "", "&&Edit", "", 2., None, None),
@@ -93,6 +95,15 @@ const WORKBENCH_MENUS: [Row; 20] = [
     (MenuId::MenubarHelpMenu, None, "workbench.action.showCommands", "Show All Commands", "1_welcome", 2., None, None),
     // themes.contribution.ts
     (MenuId::MenubarPreferencesMenu, Some(MenuId::ThemesSubMenu), "", "&&Themes", "2_configuration", 7., None, None),
+    // fileActions.contribution.ts, the ExplorerContext items of the commands the port has.
+    (MenuId::ExplorerContext, None, "explorer.newFile", "New File...", "navigation", 4., Some("explorerResourceIsFolder"), Some("!explorerResourceReadonly")),
+    (MenuId::ExplorerContext, None, "explorer.newFolder", "New Folder...", "navigation", 6., Some("explorerResourceIsFolder"), Some("!explorerResourceReadonly")),
+    (MenuId::ExplorerContext, None, "filesExplorer.cut", "Cut", "5_cutcopypaste", 8., Some("!explorerResourceIsRoot && !explorerResourceReadonly"), None),
+    (MenuId::ExplorerContext, None, "filesExplorer.copy", "Copy", "5_cutcopypaste", 10., Some("!explorerResourceIsRoot"), None),
+    (MenuId::ExplorerContext, None, "filesExplorer.paste", "Paste", "5_cutcopypaste", 20., Some("explorerResourceIsFolder"), Some("!explorerResourceReadonly && fileCopied")),
+    (MenuId::ExplorerContext, None, "renameFile", "Rename...", "7_modification", 10., Some("!explorerResourceIsRoot"), Some("!explorerResourceReadonly")),
+    (MenuId::ExplorerContext, None, "moveFileToTrash", "Delete", "7_modification", 20., Some("!explorerResourceIsRoot && explorerResourceMoveableToTrash"), None),
+    (MenuId::ExplorerContext, None, "deleteFile", "Delete Permanently", "7_modification", 20., Some("!explorerResourceIsRoot && !explorerResourceMoveableToTrash"), None),
 ];
 
 /// themes.contribution.ts: `ThemesSubMenu` items; the icon theme pickers are not ported.
@@ -104,12 +115,16 @@ pub fn workbench_menus() -> Vec<MenuItem> {
     for (menu, submenu, id, title, group, order, when, precondition) in WORKBENCH_MENUS {
         let entry = match submenu {
             Some(submenu) => Entry::Submenu(submenu),
-            None => Entry::Command { id: id.to_string(), precondition: precondition.and_then(Expr::deserialize), toggled: None },
+            None => {
+                // The Delete item runs Delete Permanently with Alt held.
+                let alt = (id == "moveFileToTrash").then(|| ("deleteFile".to_string(), "Delete Permanently".to_string()));
+                Entry::Command { id: id.to_string(), precondition: precondition.and_then(Expr::deserialize), toggled: None, alt }
+            }
         };
         items.push(MenuItem { menu, entry, title: title.to_string(), group: group.to_string(), order, when: when.and_then(Expr::deserialize) });
     }
     for (id, title, order) in THEMES_SUBMENU {
-        let entry = Entry::Command { id: id.to_string(), precondition: None, toggled: None };
+        let entry = Entry::Command { id: id.to_string(), precondition: None, toggled: None, alt: None };
         items.push(MenuItem { menu: MenuId::ThemesSubMenu, entry, title: title.to_string(), group: String::new(), order, when: None });
     }
     items
@@ -125,9 +140,9 @@ pub fn menu_actions(registry: &[MenuItem], menu: MenuId, context: &dyn Context) 
     let mut group: Option<&str> = None;
     for item in items {
         let action = match &item.entry {
-            Entry::Command { id, precondition, toggled } => {
+            Entry::Command { id, precondition, toggled, alt } => {
                 let checked = toggled.as_ref().is_some_and(|toggled| toggled.evaluate(context));
-                MenuAction::Command { id: id.clone(), title: item.title.clone(), enabled: holds(precondition), checked }
+                MenuAction::Command { id: id.clone(), title: item.title.clone(), enabled: holds(precondition), checked, alt: alt.clone() }
             }
             Entry::Submenu(submenu) => {
                 let submenu_actions = menu_actions(registry, *submenu, context);

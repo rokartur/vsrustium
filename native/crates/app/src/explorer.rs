@@ -82,6 +82,22 @@ impl FileTree {
         self.anchor = Some(path.to_path_buf());
     }
 
+    /// A right click: listWidget.ts `onViewPointer` focuses the row, or clears focus and selection outside the
+    /// rows; explorerView.ts `onContextMenu` then selects the row if the selection does not hold it.
+    pub fn context_menu_select(&mut self, path: Option<&Path>) {
+        let Some(path) = path else {
+            self.focused = None;
+            self.selected.clear();
+            self.anchor = None;
+            return;
+        };
+        self.focused = Some(path.to_path_buf());
+        self.anchor = Some(path.to_path_buf());
+        if !self.selected.iter().any(|selected| selected == path) {
+            self.selected = vec![path.to_path_buf()];
+        }
+    }
+
     /// listWidget.ts `MouseController`: Cmd+click toggles the row in the selection, Shift+click selects the
     /// visible rows from the anchor to it.
     pub fn click_select(&mut self, path: &Path, toggle: bool, range: bool) {

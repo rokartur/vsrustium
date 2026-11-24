@@ -3,6 +3,7 @@
 //! Sizes are the reference's CSS pixels.
 
 mod actions;
+mod context_menu;
 mod editor_commands;
 mod editor_view;
 mod explorer_actions;
@@ -26,7 +27,7 @@ use config::service::Settings;
 use config::workspace::Workspace;
 use storage::Storage;
 
-use gpui::{ClickEvent, Context, Div, DragMoveEvent, FocusHandle, FontFeatures, FontWeight, Rgba, Task, UniformListScrollHandle, Window, div, prelude::*, px, rgb, svg, transparent_black};
+use gpui::{ClickEvent, Context, Div, DragMoveEvent, FocusHandle, FontFeatures, FontWeight, MouseButton, MouseDownEvent, Rgba, Task, UniformListScrollHandle, Window, div, prelude::*, px, rgb, svg, transparent_black};
 use serde_json::Value;
 
 use crate::commands::Commands;
@@ -76,6 +77,8 @@ pub struct Workbench {
     pub explorer: explorer_actions::ExplorerState,
     /// `MenuRegistry`.
     pub menus: Vec<crate::menus::MenuItem>,
+    pub(crate) context_menu: Option<context_menu::ContextMenu>,
+    context_menus_shown: usize,
     /// What the application menu shows now.
     installed_menubar: Option<menubar::Menubar>,
     /// The application storage (StorageScope.PROFILE and APPLICATION in the default profile), shared with the
@@ -114,6 +117,7 @@ impl Render for Workbench {
             )
             .child(self.status_bar());
         let quick_input = self.quick_input_widget(window, cx);
+        let context_menu = self.context_menu_widget(cx);
         self.update_menubar(window, cx);
         div()
             .relative()
@@ -124,6 +128,7 @@ impl Render for Workbench {
             .text_size(px(13.))
             .child(grid)
             .children(quick_input)
+            .children(context_menu)
             // shortcut: 16px is the macOS 26+ (Tahoe) corner radius (style.css .macos-tahoe); older macOS uses 10px, branch on the OS version if the port supports it.
             .when_some(window_border, |root, border| root.child(div().absolute().inset_0().border_1().rounded(px(16.)).border_color(border)))
     }
@@ -156,6 +161,8 @@ impl Workbench {
             quick_access: quick_access::QuickAccess::default(),
             explorer: explorer_actions::ExplorerState::new(cx),
             menus: crate::menus::workbench_menus(),
+            context_menu: None,
+            context_menus_shown: 0,
             installed_menubar: None,
             profile_storage: Arc::new(Mutex::new(Storage::in_memory())),
             workspace_storage: Arc::new(Mutex::new(Storage::in_memory())),
@@ -334,7 +341,9 @@ impl Workbench {
             true => (self.color("list.activeSelectionBackground"), self.theme.color("list.activeSelectionForeground")),
             false => (self.color("list.inactiveSelectionBackground"), self.theme.color("list.inactiveSelectionForeground")),
         };
-        let focus_outline = self.theme.color("list.focusOutline").or(self.theme.color("focusBorder")).filter(|_| tree_focused);
+        // `.context-menu-visible .monaco-list.last-focused`: the tree's context menu keeps the focused row outlined.
+        let outlined = tree_focused || self.context_menu.as_ref().is_some_and(|menu| menu.focus_to_return == self.explorer.focus);
+        let focus_outline = self.theme.color("list.focusOutline").or(self.theme.color("focusBorder")).filter(|_| outlined);
         let edited = self.explorer.edit.as_ref().map(|edit| edit.renamed.clone());
         // listWidget.ts: the drop target folder and the rows below it take list.dropBackground.
         let drop_target = self.explorer.drop_target.as_ref().filter(|_| cx.has_active_drag());
@@ -421,7 +430,12 @@ impl Workbench {
                     }))
                 })
                 .when(!is_edited, |row| {
-                    row.on_click(cx.listener(move |workbench, event: &ClickEvent, window, cx| {
+                    let target = path.clone();
+                    row.on_mouse_down(MouseButton::Right, cx.listener(move |workbench, event: &MouseDownEvent, window, cx| {
+                        cx.stop_propagation();
+                        workbench.show_explorer_context_menu(Some(&target), event.position, window, cx);
+                    }))
+                    .on_click(cx.listener(move |workbench, event: &ClickEvent, window, cx| {
                         let modifiers = event.modifiers();
                         window.focus(&workbench.explorer.focus.clone(), cx);
                         let tree = workbench.folder.as_mut().expect("rows exist only with a folder");
@@ -438,6 +452,7 @@ impl Workbench {
                     }))
                 })
         });
+        let rows: Vec<_> = rows.collect();
         div()
             .w(px(256.))
             .flex()
@@ -452,7 +467,16 @@ impl Workbench {
             .border_color(self.color("surface.border"))
             .text_color(foreground)
             .child(title)
-            .child(div().flex_1().overflow_hidden().flex().flex_col().child(self.section_header(&folder_name, true, false)).child(div().id("explorer-tree").track_focus(&self.explorer.focus).flex().flex_col().children(rows)))
+            .child(div().flex_1().overflow_hidden().flex().flex_col().child(self.section_header(&folder_name, true, false)).child(
+                div()
+                    .id("explorer-tree")
+                    .track_focus(&self.explorer.focus)
+                    .flex_1()
+                    .flex()
+                    .flex_col()
+                    .on_mouse_down(MouseButton::Right, cx.listener(|workbench, event: &MouseDownEvent, window, cx| workbench.show_explorer_context_menu(None, event.position, window, cx)))
+                    .children(rows),
+            ))
             .child(self.section_header("Outline", false, true))
             .child(self.section_header("Timeline", false, true))
             // The pane view is laid out 5px shorter than the side bar content.

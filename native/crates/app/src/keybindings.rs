@@ -153,7 +153,6 @@ fn parse_chord(input: &str) -> (Option<Chord>, String) {
 
 /// Labels of a whole keybinding, chords separated by a space (`ModifierLabelProvider.toLabel`).
 // The aria and user settings labels wait for accessibility and the Keybindings editor; upstream tests cover them now.
-#[cfg(test)]
 pub fn label(chords: &[Chord]) -> String {
     chords.iter().map(Chord::label).collect::<Vec<_>>().join(" ")
 }

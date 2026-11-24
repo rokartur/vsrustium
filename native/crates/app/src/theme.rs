@@ -375,6 +375,13 @@ fn quick_input_default(key: &str) -> (ColorValue, ColorValue, ColorValue) {
         "select.foreground" => (Hex("#F0F0F0"), Key("foreground"), Hex("#FFFFFF")),
         "select.border" => (Hex("#3C3C3C"), Hex("#CECECE"), Key("contrastBorder")),
         "toolbar.hoverBackground" => (Hex("#5a5d5e50"), Hex("#b8b8b850"), None),
+        // menuColors.ts and editorWidget.border, the menu's fallback border (defaultStyles.ts defaultMenuStyles).
+        "menu.border" => (None, None, Key("contrastBorder")),
+        "menu.foreground" => (Key("select.foreground"), Key("select.foreground"), Key("select.foreground")),
+        "menu.background" => (Key("select.background"), Key("select.background"), Key("select.background")),
+        "menu.selectionBorder" => (None, None, Key("contrastActiveBorder")),
+        "menu.separatorBackground" => (Transparent(&Key("foreground"), 0.2), Transparent(&Key("foreground"), 0.2), Key("contrastBorder")),
+        "editorWidget.border" => (Transparent(&Key("editorWidget.foreground"), 0.2), Transparent(&Key("editorWidget.foreground"), 0.2), Key("contrastBorder")),
         _ => (None, None, None),
     }
 }
@@ -419,6 +426,10 @@ fn quick_input_default_hc_light(key: &str) -> ColorValue {
         "select.background" => Hex("#FFFFFF"),
         "select.foreground" => Key("foreground"),
         "select.border" => Key("contrastBorder"),
+        "menu.border" | "menu.separatorBackground" | "editorWidget.border" => Key("contrastBorder"),
+        "menu.foreground" => Key("select.foreground"),
+        "menu.background" => Key("select.background"),
+        "menu.selectionBorder" => Key("contrastActiveBorder"),
         _ => None,
     }
 }
