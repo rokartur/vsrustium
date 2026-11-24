@@ -71,11 +71,13 @@ impl Chord {
         caps
     }
 
+    #[cfg(test)]
     pub fn aria_label(&self) -> String {
         let key = if self.is_duplicate_modifier_case() { "" } else { KEY_CODES[self.key].0 };
         self.with_modifiers(["Control", "Shift", "Option", "Command"], "+", key)
     }
 
+    #[cfg(test)]
     pub fn user_settings_label(&self) -> String {
         let key = if self.is_duplicate_modifier_case() { String::new() } else { KEY_CODES[self.key].1.to_lowercase() };
         self.with_modifiers(["ctrl", "shift", "alt", "cmd"], "+", &key)
@@ -142,14 +144,18 @@ fn parse_chord(input: &str) -> (Option<Chord>, String) {
 }
 
 /// Labels of a whole keybinding, chords separated by a space (`ModifierLabelProvider.toLabel`).
+// The aria and user settings labels wait for accessibility and the Keybindings editor; upstream tests cover them now.
+#[cfg(test)]
 pub fn label(chords: &[Chord]) -> String {
     chords.iter().map(Chord::label).collect::<Vec<_>>().join(" ")
 }
 
+#[cfg(test)]
 pub fn aria_label(chords: &[Chord]) -> String {
     chords.iter().map(Chord::aria_label).collect::<Vec<_>>().join(" ")
 }
 
+#[cfg(test)]
 pub fn user_settings_label(chords: &[Chord]) -> String {
     chords.iter().map(Chord::user_settings_label).collect::<Vec<_>>().join(" ")
 }
@@ -281,11 +287,8 @@ impl Resolver {
         }
     }
 
-    pub fn keybindings(&self) -> &[Item] {
-        &self.keybindings
-    }
-
     /// Keybindings of a command, the one that wins first.
+    #[cfg(test)]
     pub fn lookup_keybindings(&self, command: &str) -> Vec<&Item> {
         self.lookup.get(command).map(|entries| entries.iter().rev().map(|&index| &self.keybindings[index]).collect()).unwrap_or_default()
     }

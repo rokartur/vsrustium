@@ -326,6 +326,7 @@ impl Expr {
         }
     }
 
+    #[cfg(test)]
     pub fn serialize(&self) -> String {
         match self {
             Expr::False => "false".into(),
@@ -381,25 +382,6 @@ impl Expr {
                 }
                 or_create(result.into_iter().map(Some).collect(), Some(Arc::new(self.clone())), true).expect("terms were given")
             }
-        }
-    }
-
-    /// The keys the expression reads.
-    pub fn keys(&self) -> Vec<&str> {
-        match self {
-            Expr::False | Expr::True => vec![],
-            Expr::And(terms, _) | Expr::Or(terms, _) => terms.iter().flat_map(Expr::keys).collect(),
-            Expr::In(key, value_key) | Expr::NotIn(key, value_key) => vec![key, value_key],
-            Expr::Defined(key)
-            | Expr::Not(key)
-            | Expr::Equals(key, _)
-            | Expr::NotEquals(key, _)
-            | Expr::Regex(key, _)
-            | Expr::NotRegex(key, _)
-            | Expr::Greater(key, _)
-            | Expr::GreaterEquals(key, _)
-            | Expr::Smaller(key, _)
-            | Expr::SmallerEquals(key, _) => vec![key],
         }
     }
 }
@@ -623,6 +605,7 @@ fn number_string(number: f64) -> String {
     format!("{number}")
 }
 
+#[cfg(test)]
 fn scalar_string(value: &Scalar) -> String {
     match value {
         Scalar::Number(number) => number_string(*number),

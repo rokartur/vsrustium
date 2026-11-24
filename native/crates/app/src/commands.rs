@@ -41,6 +41,7 @@ impl Commands {
     }
 
     /// Registers a table of upstream ids, such as the editor's command table, in one call.
+    #[allow(dead_code, reason = "Milestone 8 registers editor/commands.rs through it")]
     pub fn register_all<F>(&mut self, table: impl IntoIterator<Item = (&'static str, F)>)
     where
         F: Fn(&mut Workbench, Vec<Value>, &mut Window, &mut Context<Workbench>) -> Outcome + 'static,

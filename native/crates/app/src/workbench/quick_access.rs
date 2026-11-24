@@ -29,7 +29,7 @@ impl Default for QuickAccess {
 /// What accepting a pick of the shown picker does, by item handle.
 #[derive(Clone, Debug)]
 pub enum Accept {
-    Command { id: String, label: String, recently_used: bool },
+    Command { id: String, label: String },
     Nothing,
 }
 
@@ -152,7 +152,7 @@ impl Workbench {
                 label_highlights: pick.label_highlights,
                 ..Item::default()
             }));
-            accepts.push(Accept::Command { id: pick.id, label: pick.label, recently_used: pick.recently_used });
+            accepts.push(Accept::Command { id: pick.id, label: pick.label });
         }
         if accepts.is_empty() && !filter.is_empty() {
             entries = vec![Entry::Item(Item { handle: 0, label: "No matching commands".into(), pickable: true, ..Item::default() })];
@@ -199,7 +199,7 @@ impl Workbench {
 
     /// The command pick's `accept`: remembered in the history, then run; an error shows in a dialog.
     fn accept_quick_access_pick(&mut self, accept: Accept, window: &mut Window, cx: &mut Context<Self>) {
-        let Accept::Command { id, label, .. } = accept else { return };
+        let Accept::Command { id, label } = accept else { return };
         self.quick_access.history.push(&id);
         let outcome = self.execute_command(&id, Vec::new(), window, cx);
         show_failure(label, outcome, window, cx);
