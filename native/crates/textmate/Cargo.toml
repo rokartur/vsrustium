@@ -1,0 +1,10 @@
+[package]
+name = "textmate"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# Oniguruma 6.9, the engine vscode-oniguruma compiles to WASM; built from the bundled C sources, no bindgen.
+onig = { version = "6.5", default-features = false }
+serde_json.workspace = true

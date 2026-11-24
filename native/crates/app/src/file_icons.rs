@@ -101,7 +101,7 @@ impl FileIconTheme {
         let sections = match kind {
             ThemeKind::Dark => vec![(&self.base, 0)],
             ThemeKind::Light => vec![(&self.base, 0), (&self.light, 1)],
-            ThemeKind::HighContrastDark => vec![(&self.base, 0), (&self.high_contrast, 1)],
+            ThemeKind::HighContrastDark | ThemeKind::HighContrastLight => vec![(&self.base, 0), (&self.high_contrast, 1)],
         };
         let mut candidates: Vec<(usize, &String)> = Vec::new();
         for (section, qualifier) in sections {

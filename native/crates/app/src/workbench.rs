@@ -3,13 +3,17 @@
 //! Sizes are the reference's CSS pixels.
 
 mod editor_view;
+mod text_input;
 
 use std::cell::Cell;
+use std::ops::Range;
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-use gpui::{ClickEvent, Context, Div, FontFeatures, FontWeight, Rgba, UniformListScrollHandle, Window, div, prelude::*, px, rgb, svg, transparent_black};
+use config::service::Settings;
+
+use gpui::{ClickEvent, Context, Div, FocusHandle, FontFeatures, FontWeight, Rgba, UniformListScrollHandle, Window, div, prelude::*, px, rgb, svg, transparent_black};
 
 use crate::editor::{EditorGroup, TextDocument};
 use crate::explorer::FileTree;
@@ -28,10 +32,17 @@ pub struct Workbench {
     /// `None` draws files without icons, as `workbench.iconTheme: null` does.
     pub file_icons: Option<FileIconTheme>,
     pub editors: EditorGroup,
+    /// The window's settings, shared with the extension host thread that reloads them on file changes.
+    pub settings: Arc<Mutex<Settings>>,
     host: HostSync,
     editor_scroll: UniformListScrollHandle,
     /// Window x of the text area, recorded at paint, to turn a click into a column.
     text_area_left: Rc<Cell<f32>>,
+    pub editor_focus: FocusHandle,
+    /// The IME's marked text: a UTF-16 range of the cursor's line.
+    marked_text: Option<Range<usize>>,
+    /// A left button press in the text is held, so moves extend the selection.
+    selecting_text: bool,
 }
 
 impl Render for Workbench {
@@ -76,7 +87,7 @@ impl Render for Workbench {
 }
 
 impl Workbench {
-    pub fn new(theme: Theme, app_root: PathBuf, folder: Option<FileTree>, languages: Languages, host: HostSync) -> Self {
+    pub fn new(theme: Theme, app_root: PathBuf, folder: Option<FileTree>, languages: Languages, settings: Arc<Mutex<Settings>>, host: HostSync, cx: &mut Context<Self>) -> Self {
         Workbench {
             theme,
             app_root,
@@ -84,14 +95,19 @@ impl Workbench {
             languages,
             file_icons: None,
             editors: EditorGroup::default(),
+            settings,
             host,
             editor_scroll: UniformListScrollHandle::new(),
             text_area_left: Rc::default(),
+            editor_focus: cx.focus_handle(),
+            marked_text: None,
+            selecting_text: false,
         }
     }
 
-    /// A single click opens a preview editor, a double click a pinned one (`workbench.editor.enablePreview`).
-    pub fn open_file(&mut self, path: PathBuf, pinned: bool, cx: &mut Context<Self>) {
+    /// A single click opens a preview editor and keeps the focus in the Explorer, a double click opens a pinned
+    /// one and focuses it (`workbench.editor.enablePreview`).
+    pub fn open_file(&mut self, path: PathBuf, pinned: bool, window: &mut Window, cx: &mut Context<Self>) {
         match self.editors.find(&path) {
             Some(index) => {
                 self.editors.activate(index);
@@ -99,11 +115,16 @@ impl Workbench {
                     self.editors.pin(index);
                 }
             }
-            None => match TextDocument::read(&path, &self.languages) {
+            None => match TextDocument::read(&path, &self.languages, &self.settings.lock().unwrap()) {
                 Ok(document) => self.editors.open(document, !pinned),
                 // shortcut: a read error is logged, not shown as the reference's editor error placeholder.
                 Err(error) => eprintln!("opening {}: {error}", path.display()),
             },
+        }
+        self.marked_text = None;
+        match pinned && self.editors.active().is_some() {
+            true => window.focus(&self.editor_focus, cx),
+            false => window.blur(cx),
         }
         self.editors_changed(cx);
     }
@@ -191,13 +212,13 @@ impl Workbench {
     }
 
     /// The checked view: a 32px rounded indicator behind the icon (activityaction.css); High Contrast
-    /// hides it and outlines the item in contrastActiveBorder instead.
+    /// hides it and outlines the item in contrastActiveBorder instead (menuActivityBar.css `.hc-black, .hc-light`).
     fn active_view_icon(&self, name: &str) -> Div {
         let indicator = div().absolute().top(px(2.)).left(px(2.)).size(px(32.)).rounded(px(4.));
-        let indicator = match (self.theme.color("modernActivityBarItem.activeBackground"), self.theme.color("contrastActiveBorder")) {
-            (Some(background), _) => indicator.bg(background),
-            (None, Some(outline)) => indicator.border_1().border_color(outline),
-            (None, None) => indicator,
+        let indicator = if self.theme.kind.is_high_contrast() {
+            indicator.when_some(self.theme.color("contrastActiveBorder"), |indicator, outline| indicator.border_1().border_color(outline))
+        } else {
+            indicator.when_some(self.theme.color("modernActivityBarItem.activeBackground"), |indicator, background| indicator.bg(background))
         };
         div().relative().child(indicator).child(self.icon(name, 36., 24., self.color("modernActivityBarItem.activeForeground")))
     }
@@ -218,7 +239,7 @@ impl Workbench {
             .child(div().self_start().pl(px(8.)).line_height(px(32.)).text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).text_color(self.foreground_or("sideBarTitle.foreground")).child("Explorer"))
             .child(self.icon("ellipsis", 22., 16., foreground));
         // explorerviewlet.css: in high contrast an explorer item has a 20px line from the row top, 1px above center.
-        let label_line = if self.theme.kind == ThemeKind::HighContrastDark { 20. } else { 22. };
+        let label_line = if self.theme.kind.is_high_contrast() { 20. } else { 22. };
         // The tree is not focused once the editor has focus, so the selection takes the inactive colors.
         let selection = self.color("list.inactiveSelectionBackground");
         // listWidget.ts: a selected row gets a 1px dotted listSelectionOutline (activeContrastBorder) inside it.
@@ -237,7 +258,7 @@ impl Workbench {
             // views.css align-icons-and-twisties: with file icons and no folder icons a file's empty twistie collapses
             // to its 8px indent and the icon takes its place, so file and folder names line up.
             let file_icon = self.file_icons.as_ref().filter(|_| !is_dir).and_then(|icons| {
-                icons.file_icon(&path, self.languages.language_of(&path), self.theme.kind, 13., label_line, foreground)
+                icons.file_icon(&path, self.languages.language_of(&path, ""), self.theme.kind, 13., label_line, foreground)
             });
             let indent = 8. * (row.depth - 1) as f32;
             div()
@@ -264,12 +285,12 @@ impl Workbench {
                     let outline = selection_outline.map(|color| div().absolute().inset_0().rounded(px(4.)).border_1().border_dashed().border_color(color));
                     row.relative().bg(selection).children(outline)
                 })
-                .on_click(cx.listener(move |workbench, event: &ClickEvent, _, cx| {
+                .on_click(cx.listener(move |workbench, event: &ClickEvent, window, cx| {
                     if is_dir {
                         workbench.folder.as_mut().expect("rows exist only with a folder").toggle(&path);
                         cx.notify();
                     } else {
-                        workbench.open_file(path.clone(), event.click_count() == 2, cx);
+                        workbench.open_file(path.clone(), event.click_count() == 2, window, cx);
                     }
                 }))
         });
@@ -315,11 +336,12 @@ impl Workbench {
     }
 
     fn editor_part(&self) -> Div {
-        // letterpress-hcDark.svg paints its own fill; the others are black at the opacity the file sets (editorgroupview.css).
+        // The high contrast letterpress files paint their own fill; the others are black at the opacity the file sets (editorgroupview.css).
         let (file, color) = match self.theme.kind {
             ThemeKind::Dark => ("letterpress-dark.svg", rgb(0x000000)),
             ThemeKind::Light => ("letterpress-light.svg", rgb(0x000000)),
             ThemeKind::HighContrastDark => ("letterpress-hcDark.svg", rgb(0x3c3c3c)),
+            ThemeKind::HighContrastLight => ("letterpress-hcLight.svg", rgb(0xd9d9d9)),
         };
         let path = self.app_root.join("src/vs/workbench/browser/parts/editor/media").join(file);
         // .watermark-container is 280px tall and centered; the 256px letterpress sits at its top.
@@ -404,7 +426,7 @@ mod tests {
         let docs = folder.join("docs");
         let languages = Languages::new(&[]);
         let host = HostSync::new(std::sync::mpsc::channel().0);
-        let (workbench, cx) = cx.add_window_view(|_, _| Workbench::new(theme, app_root.clone(), Some(FileTree::new(folder)), languages, host));
+        let (workbench, cx) = cx.add_window_view(|_, cx| Workbench::new(theme, app_root.clone(), Some(FileTree::new(folder)), languages, crate::default_settings(), host, cx));
         cx.run_until_parked();
 
         // The first tree row (docs) spans y 96..118 under the side bar's "workspace" header (reference DOM dump).
@@ -416,5 +438,42 @@ mod tests {
         assert!(docs_expanded(cx));
         cx.simulate_click(docs_row, Modifiers::none());
         assert!(!docs_expanded(cx));
+    }
+
+    #[gpui::test]
+    fn keys_and_typed_text_edit_the_focused_editor_and_reach_the_host(cx: &mut TestAppContext) {
+        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
+        let theme = load_theme(&[themes], "Dark Modern").unwrap();
+        let dir = std::env::temp_dir().join(format!("code-gpui-keys-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("a.txt");
+        std::fs::write(&file, "ab\ncd").unwrap();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let (workbench, cx) = cx.add_window_view(|window, cx| {
+            let mut workbench = Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), crate::default_settings(), HostSync::new(sender), cx);
+            workbench.open_file(file.clone(), true, window, cx);
+            workbench
+        });
+        cx.run_until_parked();
+        receiver.try_iter().count();
+        let text = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document.lines.join("\n"));
+
+        cx.simulate_keystrokes("down end");
+        cx.simulate_input("!");
+        assert_eq!(text(cx), "ab\ncd!");
+        cx.simulate_keystrokes("shift-home cmd-c");
+        assert_eq!(cx.read_from_clipboard().and_then(|item| item.text()).as_deref(), Some("cd!"));
+        cx.simulate_keystrokes("backspace");
+        assert_eq!(text(cx), "ab\n");
+        cx.simulate_keystrokes("cmd-z cmd-z enter tab");
+        assert_eq!(text(cx), "ab\ncd\n    ");
+        cx.simulate_keystrokes("cmd-s");
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "ab\ncd\n    ");
+        assert!(workbench.read_with(cx, |workbench, _| !workbench.editors.active().unwrap().is_dirty()));
+        let methods: Vec<_> = receiver.try_iter().map(|message| message.method).collect();
+        assert_eq!(methods.iter().filter(|method| **method == "$acceptModelChanged").count(), 6);
+        assert_eq!(methods.last(), Some(&"$acceptModelSaved"));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

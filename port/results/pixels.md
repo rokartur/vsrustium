@@ -2,6 +2,32 @@
 
 `port/tools/pixel-check` on the Mac Studio: the reference workbench captured through CDP (`port/tools/ref-screenshot`, 1024x768 at 2x, frozen: solid cursor, reduced motion, no startup editor, `chat.disableAIFeatures`) against the port's frame read back from Metal (`code-gpui --theme <id> --screenshot`, built with `--features screenshot`). Neither capture needs Screen Recording permission. Diff: `native/crates/pixeldiff`, threshold 0, anti-aliased pixels counted apart.
 
+## Milestone 7: syntax colors and themes
+
+New window `main`: `port/fixtures/workspace/src/main.ts` open in the fixture folder, TypeScript grammar colors and bracket pair colors. New theme `hclight` (Default High Contrast Light) for every window. The reference now runs with `--force-color-profile=srgb` (port/notes.md); with it the empty, folder and file windows give the milestone 2, 3 and 4 numbers unchanged. Reference md5 (main): dark `c1172c60`, hc `1cf27616`, hclight `fc82315e`, light `2eba5cf1`.
+
+| window | dark | light | hc | hclight |
+|---|---|---|---|---|
+| empty | 3567 | 3600 | 398 | 401 |
+| folder | 7053 | 3882 | 775 | 689 |
+| file | 10859 | 6376 | 4396 | 3853 |
+| main | 12177 (0.39%) | 7627 (0.24%) | 5335 (0.17%) | 6626 (0.21%) |
+
+Different pixels; anti-aliased in main: 19723 / 18907 / 21547 / 20630; total 3145728.
+
+Pixels of main more than 2/255 off in any channel, anti-aliased ones included, by region (dark / light / hc / hclight): status bar 6526 / 6333 / 6761 / 6506, side bar 6127 / 4837 / 8052 / 6578, tabs and breadcrumbs 4621 / 4489 / 5065 / 5059, title bar 1598 / 1541 / 1782 / 1695, activity bar 1458 / 1614 / 1911 / 1837, text 819 / 775 / 843 / 874, gutter 194 / 229 / 337 / 253, overview ruler 17 / 34 / 45 / 1352.
+
+- Text: glyph edges only. Every token and bracket color matches the reference; the region has fewer differences than the plain text of the file window.
+- Status bar, side bar, tabs, title and activity bar: the milestone 2 to 4 differences (text-width rounding, codicon rasterization, dotted borders drawn dashed).
+- Overview ruler in hclight: a reference artifact. In some runs the reference's high contrast ruler canvas keeps its pre-switch paint, without the 1px `editorOverviewRuler.border` and the cursor mark; in this run hclight, in the run before hc (1352 there, 45 here).
+- Fixed in this milestone: High Contrast Light outlines the active activity bar item instead of filling it (menuActivityBar.css `.hc-black, .hc-light`), which took hclight folder from 3812 to 689.
+
+No difference is a layout or color mismatch of the port's own making beyond the text-width rounding.
+
+## Milestone 5: edit and save
+
+The file window with the editing work in (cursor drawn only when the editor is focused, selection drawing, dirty tabs) gives the milestone 4 numbers below unchanged in all three themes: dark 10859, light 6376, hc 4396 different pixels.
+
 ## Milestone 4: file open
 
 `notes.txt` open from the command line in the fixture folder (`FILE=... ref-screenshot`, `code-gpui <folder> <file>`), cursor at 1:1. The empty and folder windows are diffed in the same run and give the milestone 2 and 3 numbers unchanged. Reference md5: dark `91d050ee`, light `91283cb6`, hc `f841cf99`.

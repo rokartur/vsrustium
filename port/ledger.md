@@ -9,7 +9,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | seam/framing | extension host seam | verified | cargo test -p exthost (frame split/join tests); exthost-probe completes 34 activations over it |
 | seam/rpc | extension host seam | verified | cargo test -p exthost (layout check vs rpcProtocol.ts); exthost-probe $test_latency(7)=7 and host requests decoded on Bun and Node |
 | seam/handshake | extension host seam | verified | exthost-probe release: handshake Bun 226 ms, Node 644 ms; code-gpui spawns bun child (run-app-check) |
-| seam/init-data | extension host seam | ported | exthost-probe: host starts with session.rs init data; workspace, logLevel, loggers minimal |
+| seam/init-data | extension host seam | verified | port/tools/settings-check environment: vscode.env, storage, log and extension paths as the reference except appName (reference dev run), machineId format (uuid, upstream fallback) and isTelemetryEnabled (no telemetry); loggers [] |
 | seam/bun-runtime | extension host seam | verified | exthost-probe --runtime bun: 30/30 code extensions activate (copilot and sign-in extensions removed by decision) |
 | seam/node-control | extension host seam | verified | exthost-probe --runtime node: 30/30, same set as Bun |
 | seam/vscode-module-bun | extension host seam | ported | exthost-probe: CJS extensions and ESM github, markdown-language-features, mermaid-markdown-features activate on Bun; ESM added after startup not covered |
@@ -18,19 +18,19 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | mainthread/MainThreadCommands | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadComments | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadAuthentication | MainThread* shape (Rust side) | removed | no sign-in/AI by decision (port/notes.md); API stays inert: session.rs answers undefined, list getters []; exthost-probe 30/30 on Bun and Node |
-| mainthread/MainThreadSecretState | MainThread* shape (Rust side) | stub | session.rs answers undefined |
-| mainthread/MainThreadConfiguration | MainThread* shape (Rust side) | stub | session.rs answers undefined |
+| mainthread/MainThreadSecretState | MainThread* shape (Rust side) | verified | port/tools/settings-check secrets same as the reference; cargo test -p exthost main_thread_secret_state (on a throwaway keychain) |
+| mainthread/MainThreadConfiguration | MainThread* shape (Rust side) | verified | api-tests configuration 3/3; port/tools/settings-check configuration (reference fires extra empty events) |
 | mainthread/MainThreadDiagnostics | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadDiaglogs | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadDecorations | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadDocumentContentProviders | MainThread* shape (Rust side) | stub | session.rs answers undefined |
-| mainthread/MainThreadDocuments | MainThread* shape (Rust side) | stub | session.rs answers undefined |
+| mainthread/MainThreadDocuments | MainThread* shape (Rust side) | stub | host_sync.rs sends model opened, changed, dirty and saved: cargo test -p app -- --ignored live_host (TypeScript diagnostics after an edit); $tryCreateDocument, $tryOpenDocument, $trySaveDocument answer undefined |
 | mainthread/MainThreadBulkEdits | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadTextEditors | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadTreeViews | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadDownloadService | MainThread* shape (Rust side) | stub | session.rs answers undefined |
-| mainthread/MainThreadErrors | MainThread* shape (Rust side) | stub | session.rs answers undefined |
-| mainthread/MainThreadConsole | MainThread* shape (Rust side) | stub | session.rs answers undefined |
+| mainthread/MainThreadErrors | MainThread* shape (Rust side) | ported | session.rs writes `$onUnexpectedError` stacks to the port log (code-gpui stderr); seen in port/tools/api-tests api-folder.log |
+| mainthread/MainThreadConsole | MainThread* shape (Rust side) | ported | console.rs formats `$logExtensionHostMessage` like util.format to the port log; cargo test -p exthost console tests; mocha spec output in port/tools/api-tests logs |
 | mainthread/MainThreadLanguageFeatures | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadLanguages | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadMessageService | MainThread* shape (Rust side) | stub | session.rs answers undefined |
@@ -40,10 +40,10 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | mainthread/MainThreadTerminalShellIntegration | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadQuickOpen | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadStatusBar | MainThread* shape (Rust side) | stub | session.rs answers undefined |
-| mainthread/MainThreadStorage | MainThread* shape (Rust side) | stub | session.rs answers undefined |
+| mainthread/MainThreadStorage | MainThread* shape (Rust side) | verified | api-tests globalState / workspaceState 2/2; port/tools/settings-check state (restart, state.vscdb rows) same as the reference |
 | mainthread/MainThreadTelemetry | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadEditorInsets | MainThread* shape (Rust side) | stub | session.rs answers undefined |
-| mainthread/MainThreadEditorTabs | MainThread* shape (Rust side) | stub | session.rs answers undefined |
+| mainthread/MainThreadEditorTabs | MainThread* shape (Rust side) | stub | host_sync.rs sends $acceptTabOperation per tab change (cargo test -p app host_sync); $moveTab, $closeTab, $closeGroup answer undefined |
 | mainthread/MainThreadWebviews | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadWebviewPanels | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadCustomEditors | MainThread* shape (Rust side) | stub | session.rs answers undefined |
@@ -76,7 +76,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | mainthread/MainThreadSearch | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadShare | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadTask | MainThread* shape (Rust side) | stub | session.rs answers undefined |
-| mainthread/MainThreadExtensionService | MainThread* shape (Rust side) | stub | session.rs answers undefined |
+| mainthread/MainThreadExtensionService | MainThread* shape (Rust side) | ported | session.rs: `$getExtension`, `$asBrowserUri`, activation and runtime errors to the port log (no notification until milestone 11); `$extensionTestsExecute` result is code-gpui's exit code (api-workspace exits 1 with 4 failing, 0 with no test matched) |
 | mainthread/MainThreadSCM | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadQuickDiff | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadAgentEditorComments | MainThread* shape (Rust side) | removed | no sign-in/AI by decision (port/notes.md); API stays inert: session.rs answers undefined, list getters []; exthost-probe 30/30 on Bun and Node |
@@ -92,8 +92,8 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | mainthread/MainThreadMeteredConnection | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadGitHub | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadPower | MainThread* shape (Rust side) | stub | session.rs answers undefined |
-| mainthread/MainThreadLogger | MainThread* shape (Rust side) | stub | session.rs answers undefined |
-| mainthread/MainThreadTheming | MainThread* shape (Rust side) | stub | session.rs answers undefined |
+| mainthread/MainThreadLogger | MainThread* shape (Rust side) | stub | `$log` lines go to the port log; no logger registry, visibility or log files (desktop file loggers are written by the host itself) |
+| mainthread/MainThreadTheming | MainThread* shape (Rust side) | ported | host_sync.rs sends $onColorThemeChange at startup; no runtime theme switch yet |
 | mainthread/MainThreadLocalization | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadMcp | MainThread* shape (Rust side) | removed | no sign-in/AI by decision (port/notes.md); API stays inert: session.rs answers undefined, list getters []; exthost-probe 30/30 on Bun and Node |
 | mainthread/MainThreadDataChannels | MainThread* shape (Rust side) | stub | session.rs answers undefined |
@@ -123,7 +123,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/checksum | src/vs/platform | todo |  |
 | platform/clipboard | src/vs/platform | todo |  |
 | platform/commands | src/vs/platform | todo |  |
-| platform/configuration | src/vs/platform | todo |  |
+| platform/configuration | src/vs/platform | ported | cargo test -p config (json, jsonEdit, configurationModels, configurationRegistry cases); policy, configurationService, configurations, configurationVariables tests not ported |
 | platform/contextkey | src/vs/platform | todo |  |
 | platform/contextview | src/vs/platform | todo |  |
 | platform/cssDev | src/vs/platform | todo |  |
@@ -139,7 +139,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/editor | src/vs/platform | todo |  |
 | platform/encryption | src/vs/platform | todo |  |
 | platform/endpoint | src/vs/platform | todo |  |
-| platform/environment | src/vs/platform | todo |  |
+| platform/environment | src/vs/platform | ported | port/tools/settings-check environment; only the paths and values init data carries |
 | platform/extensionManagement | src/vs/platform | todo |  |
 | platform/extensionRecommendations | src/vs/platform | todo |  |
 | platform/extensionResourceLoader | src/vs/platform | todo |  |
@@ -166,7 +166,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/lifecycle | src/vs/platform | todo |  |
 | platform/list | src/vs/platform | todo |  |
 | platform/localTranscription | src/vs/platform | todo |  |
-| platform/log | src/vs/platform | todo |  |
+| platform/log | src/vs/platform | stub | the port log is code-gpui stderr: host console, errors, `$log` lines; no log levels, files or rotation |
 | platform/markdown | src/vs/platform | todo |  |
 | platform/markers | src/vs/platform | todo |  |
 | platform/mcp | src/vs/platform | removed | no sign-in/AI by decision (port/notes.md); not ported |
@@ -192,18 +192,18 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/remoteTunnel | src/vs/platform | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | platform/request | src/vs/platform | todo |  |
 | platform/sandbox | src/vs/platform | todo |  |
-| platform/secrets | src/vs/platform | todo |  |
+| platform/secrets | src/vs/platform | ported | port/tools/settings-check secrets; Keychain items instead of safeStorage encryption, secrets.test not ported |
 | platform/sharedProcess | src/vs/platform | todo |  |
 | platform/shell | src/vs/platform | todo |  |
 | platform/sign | src/vs/platform | todo |  |
 | platform/state | src/vs/platform | todo |  |
-| platform/storage | src/vs/platform | todo |  |
+| platform/storage | src/vs/platform | ported | cargo test -p storage (storage.integrationTest.ts cases); profile and workspace scopes only, storageService tests not ported |
 | platform/telemetry | src/vs/platform | todo |  |
 | platform/terminal | src/vs/platform | todo |  |
 | platform/test | src/vs/platform | todo |  |
-| platform/theme | src/vs/platform | todo |  |
+| platform/theme | src/vs/platform | ported | registry defaults for dark, light, hcDark, hcLight (theme.rs); cargo test -p app theme::tests |
 | platform/tunnel | src/vs/platform | todo |  |
-| platform/undoRedo | src/vs/platform | todo |  |
+| platform/undoRedo | src/vs/platform | stub | per-editor undo/redo history only, no cross-resource elements: cargo test -p app (editor::cursor::tests, editor::edit::tests) |
 | platform/update | src/vs/platform | todo |  |
 | platform/uriIdentity | src/vs/platform | todo |  |
 | platform/url | src/vs/platform | todo |  |
@@ -220,13 +220,13 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/workspace | src/vs/platform | todo |  |
 | platform/workspaces | src/vs/platform | todo |  |
 | editor/browser | src/vs/editor | todo |  |
-| editor/common | src/vs/editor | todo |  |
+| editor/common | src/vs/editor | stub | one cursor, core moves and deletes, typing, edit stack stops, alternative version id dirty state: cargo test -p app (editor::cursor::tests, editor::edit::tests); no multi-cursor, onEnter or indentation rules, grapheme clusters (port/notes.md milestone 5) |
 | editor/standalone | src/vs/editor | todo |  |
 | editor/test | src/vs/editor | todo |  |
 | editor/contrib/anchorSelect | src/vs/editor/contrib | todo |  |
-| editor/contrib/bracketMatching | src/vs/editor/contrib | todo |  |
+| editor/contrib/bracketMatching | src/vs/editor/contrib | ported | bracket pair colors and match boxes with overview ruler lane (brackets.rs); cargo test -p app brackets::tests; no Go to Bracket / Select to Bracket commands until keybindings |
 | editor/contrib/caretOperations | src/vs/editor/contrib | todo |  |
-| editor/contrib/clipboard | src/vs/editor/contrib | todo |  |
+| editor/contrib/clipboard | src/vs/editor/contrib | ported | Cmd+C/X/V with whole-line copy metadata: cargo test -p app keys_and_typed_text_edit_the_focused_editor_and_reach_the_host |
 | editor/contrib/codeAction | src/vs/editor/contrib | todo |  |
 | editor/contrib/codelens | src/vs/editor/contrib | todo |  |
 | editor/contrib/colorPicker | src/vs/editor/contrib | todo |  |
@@ -280,7 +280,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | editor/contrib/unicodeHighlighter | src/vs/editor/contrib | todo |  |
 | editor/contrib/unusualLineTerminators | src/vs/editor/contrib | todo |  |
 | editor/contrib/wordHighlighter | src/vs/editor/contrib | ported | textual provider only (USUAL_WORD_SEPARATORS, whole words) on cursor move; cargo test -p app (editor::tests word highlight); pixel-check file window |
-| editor/contrib/wordOperations | src/vs/editor/contrib | todo |  |
+| editor/contrib/wordOperations | src/vs/editor/contrib | ported | word moves, selects and deletes with USUAL_WORD_SEPARATORS: cargo test -p app (editor::cursor::tests, editor::edit::tests) |
 | editor/contrib/wordPartOperations | src/vs/editor/contrib | todo |  |
 | editor/contrib/zoneWidget | src/vs/editor/contrib | todo |  |
 | workbench/parts/activitybar | workbench part | ported | view icons with Explorer active when a folder is open, settings gear; no badges or clicks; pixel-check (port/results/pixels.md): same geometry, codicon edge pixels and active background rounding only |
@@ -288,7 +288,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/parts/banner | workbench part | todo |  |
 | workbench/parts/chat | workbench part | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/parts/dialogs | workbench part | todo |  |
-| workbench/parts/editor | workbench part | ported | one group: connected tab strip (preview/pinned, close, split and more actions drawn), breadcrumbs, text editor with gutter, current line, indent guides, word highlight, overview ruler, click sets the cursor; no editing, splits, minimap or scrolling sync (port/notes.md milestone 4); cargo test -p app (editor::tests); pixel-check file window (port/results/pixels.md milestone 4) |
+| workbench/parts/editor | workbench part | ported | one group: connected tab strip (preview/pinned, close, split and more actions drawn), breadcrumbs, text editor with gutter, current line, indent guides, word highlight, overview ruler, click, drag and keyboard selection, typing, undo, clipboard, save and dirty tabs (port/notes.md milestone 5); no splits, minimap or scrolling sync; cargo test -p app (editor::tests, workbench keys_and_typed_text_edit_the_focused_editor_and_reach_the_host); pixel-check file window (port/results/pixels.md milestone 4, unchanged at milestone 5) |
 | workbench/parts/notifications | workbench part | todo |  |
 | workbench/parts/panel | workbench part | todo |  |
 | workbench/parts/partGrid | workbench part | stub | fixed floating layout drawn with flex (workbench.rs), no grid, sashes or hidden parts; pixel-check (port/results/pixels.md): part bounds match at 1024x768 |
@@ -315,7 +315,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/checksum | workbench service | todo |  |
 | workbench/services/clipboard | workbench service | todo |  |
 | workbench/services/commands | workbench service | todo |  |
-| workbench/services/configuration | workbench service | todo |  |
+| workbench/services/configuration | workbench service | ported | cargo test -p config service (configurationEditing.test.ts write cases); port/tools/settings-check configuration |
 | workbench/services/configurationResolver | workbench service | todo |  |
 | workbench/services/contextmenu | workbench service | todo |  |
 | workbench/services/dataChannel | workbench service | todo |  |
@@ -338,14 +338,14 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/integrity | workbench service | todo |  |
 | workbench/services/keybinding | workbench service | todo |  |
 | workbench/services/label | workbench service | todo |  |
-| workbench/services/language | workbench service | ported | languages from contributes.languages matched like getAssociationByPath (languages.rs); no firstLine detection; cargo test -p app (languages::tests) |
+| workbench/services/language | workbench service | verified | getAssociationByPath plus firstLine detection (languages.rs); cargo test -p app languages::tests |
 | workbench/services/languageDetection | workbench service | todo |  |
 | workbench/services/languageStatus | workbench service | todo |  |
 | workbench/services/layout | workbench service | todo |  |
 | workbench/services/lifecycle | workbench service | todo |  |
 | workbench/services/localTranscription | workbench service | todo |  |
 | workbench/services/localization | workbench service | todo |  |
-| workbench/services/log | workbench service | todo |  |
+| workbench/services/log | workbench service | stub | same port log as platform/log; no Output view of logs (milestone 15) |
 | workbench/services/mcp | workbench service | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/services/menubar | workbench service | todo |  |
 | workbench/services/model | workbench service | todo |  |
@@ -364,19 +364,19 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/remote | workbench service | todo |  |
 | workbench/services/request | workbench service | todo |  |
 | workbench/services/search | workbench service | todo |  |
-| workbench/services/secrets | workbench service | todo |  |
+| workbench/services/secrets | workbench service | ported | port/tools/settings-check secrets |
 | workbench/services/sessions | workbench service | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/services/sharedProcess | workbench service | todo |  |
 | workbench/services/statusbar | workbench service | todo |  |
-| workbench/services/storage | workbench service | todo |  |
+| workbench/services/storage | workbench service | ported | port/tools/settings-check state; no application scope or flush on shutdown, writes are synchronous |
 | workbench/services/suggest | workbench service | todo |  |
 | workbench/services/telemetry | workbench service | todo |  |
 | workbench/services/terminal | workbench service | todo |  |
-| workbench/services/textMate | workbench service | todo |  |
-| workbench/services/textfile | workbench service | todo |  |
+| workbench/services/textMate | workbench service | verified | textmate crate (vscode-textmate 9.3.2, onig); cargo test -p textmate; colorize test 109/109 fixtures; pixel-check main window |
+| workbench/services/textfile | workbench service | stub | Cmd+S writes UTF-8 and clears dirty state (cargo test -p app keys_and_typed_text_edit_the_focused_editor_and_reach_the_host); no save participants, conflict check or encodings |
 | workbench/services/textmodelResolver | workbench service | todo |  |
 | workbench/services/textresourceProperties | workbench service | todo |  |
-| workbench/services/themes | workbench service | ported | built-in color themes by settings id, include chain, registry defaults for shell keys (theme.rs); cargo test -p app (2 tests); no token colors, icon themes or hc-light |
+| workbench/services/themes | workbench service | ported | all 19 built-in color themes incl. hc-light, tokenColors (theme.rs, syntax.rs); cargo test -p app theme::tests; no semanticTokenColors (needs semantic tokens), no icon themes |
 | workbench/services/timer | workbench service | todo |  |
 | workbench/services/title | workbench service | todo |  |
 | workbench/services/treeSitter | workbench service | todo |  |
@@ -498,50 +498,50 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/welcomeWalkthrough | workbench contribution | todo |  |
 | workbench/contrib/workspace | workbench contribution | todo |  |
 | workbench/contrib/workspaces | workbench contribution | todo |  |
-| extension/bat | built-in extension | todo |  |
-| extension/clojure | built-in extension | todo |  |
-| extension/coffeescript | built-in extension | todo |  |
+| extension/bat | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/clojure | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/coffeescript | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/configuration-editing | built-in extension | todo |  |
 | extension/copilot | built-in extension | removed | scan.rs REMOVED_BUILTINS; cargo test -p exthost skips_removed_builtins |
-| extension/cpp | built-in extension | todo |  |
-| extension/csharp | built-in extension | todo |  |
-| extension/css | built-in extension | todo |  |
+| extension/cpp | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/csharp | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/css | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/css-language-features | built-in extension | todo |  |
-| extension/dart | built-in extension | todo |  |
+| extension/dart | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/debug-auto-launch | built-in extension | todo |  |
 | extension/debug-server-ready | built-in extension | todo |  |
-| extension/diff | built-in extension | todo |  |
-| extension/docker | built-in extension | todo |  |
-| extension/dotenv | built-in extension | todo |  |
+| extension/diff | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/docker | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/dotenv | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/emmet | built-in extension | todo |  |
 | extension/extension-editing | built-in extension | todo |  |
-| extension/fsharp | built-in extension | todo |  |
+| extension/fsharp | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/git | built-in extension | todo |  |
 | extension/git-base | built-in extension | todo |  |
 | extension/github | built-in extension | todo |  |
 | extension/github-authentication | built-in extension | removed | scan.rs REMOVED_BUILTINS; cargo test -p exthost skips_removed_builtins |
-| extension/go | built-in extension | todo |  |
-| extension/groovy | built-in extension | todo |  |
+| extension/go | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/groovy | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/grunt | built-in extension | todo |  |
 | extension/gulp | built-in extension | todo |  |
-| extension/handlebars | built-in extension | todo |  |
-| extension/hlsl | built-in extension | todo |  |
-| extension/html | built-in extension | todo |  |
+| extension/handlebars | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/hlsl | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/html | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/html-language-features | built-in extension | todo |  |
-| extension/ini | built-in extension | todo |  |
+| extension/ini | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/ipynb | built-in extension | todo |  |
 | extension/jake | built-in extension | todo |  |
-| extension/java | built-in extension | todo |  |
-| extension/javascript | built-in extension | todo |  |
-| extension/json | built-in extension | todo |  |
+| extension/java | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/javascript | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/json | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/json-language-features | built-in extension | todo |  |
-| extension/julia | built-in extension | todo |  |
-| extension/latex | built-in extension | todo |  |
-| extension/less | built-in extension | todo |  |
-| extension/log | built-in extension | todo |  |
-| extension/lua | built-in extension | todo |  |
-| extension/make | built-in extension | todo |  |
-| extension/markdown-basics | built-in extension | todo |  |
+| extension/julia | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/latex | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/less | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/log | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/lua | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/make | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/markdown-basics | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/markdown-language-features | built-in extension | todo |  |
 | extension/markdown-math | built-in extension | todo |  |
 | extension/merge-conflict | built-in extension | todo |  |
@@ -549,50 +549,50 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | extension/microsoft-authentication | built-in extension | removed | scan.rs REMOVED_BUILTINS; cargo test -p exthost skips_removed_builtins |
 | extension/notebook-renderers | built-in extension | todo |  |
 | extension/npm | built-in extension | todo |  |
-| extension/objective-c | built-in extension | todo |  |
-| extension/perl | built-in extension | todo |  |
-| extension/php | built-in extension | todo |  |
+| extension/objective-c | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/perl | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/php | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/php-language-features | built-in extension | todo |  |
-| extension/powershell | built-in extension | todo |  |
+| extension/powershell | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/prompt-basics | built-in extension | removed | scan.rs REMOVED_BUILTINS; cargo test -p exthost skips_removed_builtins |
-| extension/pug | built-in extension | todo |  |
-| extension/python | built-in extension | todo |  |
-| extension/r | built-in extension | todo |  |
-| extension/razor | built-in extension | todo |  |
+| extension/pug | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/python | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/r | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/razor | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/references-view | built-in extension | todo |  |
-| extension/restructuredtext | built-in extension | todo |  |
-| extension/ruby | built-in extension | todo |  |
-| extension/rust | built-in extension | todo |  |
-| extension/scss | built-in extension | todo |  |
+| extension/restructuredtext | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/ruby | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/rust | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/scss | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/search-result | built-in extension | todo |  |
-| extension/shaderlab | built-in extension | todo |  |
-| extension/shellscript | built-in extension | todo |  |
+| extension/shaderlab | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/shellscript | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/simple-browser | built-in extension | todo |  |
-| extension/sql | built-in extension | todo |  |
-| extension/swift | built-in extension | todo |  |
+| extension/sql | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/swift | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/terminal-suggest | built-in extension | todo |  |
-| extension/theme-abyss | built-in extension | todo |  |
-| extension/theme-defaults | built-in extension | todo |  |
-| extension/theme-kimbie-dark | built-in extension | todo |  |
+| extension/theme-abyss | built-in extension | ported | loads with token colors: cargo test -p app theme::tests::every_builtin_theme_loads_with_token_colors; no reference colorize results for it |
+| extension/theme-defaults | built-in extension | verified | cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (all 10 default themes incl. hc_light) and theme::tests; pixel-check dark, light, hc, hclight |
+| extension/theme-kimbie-dark | built-in extension | ported | loads with token colors: cargo test -p app theme::tests::every_builtin_theme_loads_with_token_colors; no reference colorize results for it |
 | extension/theme-modern-icons | built-in extension | todo |  |
-| extension/theme-monokai | built-in extension | todo |  |
-| extension/theme-monokai-dimmed | built-in extension | todo |  |
-| extension/theme-quietlight | built-in extension | todo |  |
-| extension/theme-red | built-in extension | todo |  |
+| extension/theme-monokai | built-in extension | ported | loads with token colors: cargo test -p app theme::tests::every_builtin_theme_loads_with_token_colors; no reference colorize results for it |
+| extension/theme-monokai-dimmed | built-in extension | ported | loads with token colors: cargo test -p app theme::tests::every_builtin_theme_loads_with_token_colors; no reference colorize results for it |
+| extension/theme-quietlight | built-in extension | ported | loads with token colors: cargo test -p app theme::tests::every_builtin_theme_loads_with_token_colors; no reference colorize results for it |
+| extension/theme-red | built-in extension | ported | loads with token colors: cargo test -p app theme::tests::every_builtin_theme_loads_with_token_colors; no reference colorize results for it |
 | extension/theme-seti | built-in extension | todo |  |
-| extension/theme-solarized-dark | built-in extension | todo |  |
-| extension/theme-solarized-light | built-in extension | todo |  |
-| extension/theme-tomorrow-night-blue | built-in extension | todo |  |
+| extension/theme-solarized-dark | built-in extension | ported | loads with token colors: cargo test -p app theme::tests::every_builtin_theme_loads_with_token_colors; no reference colorize results for it |
+| extension/theme-solarized-light | built-in extension | ported | loads with token colors: cargo test -p app theme::tests::every_builtin_theme_loads_with_token_colors; no reference colorize results for it |
+| extension/theme-tomorrow-night-blue | built-in extension | ported | loads with token colors: cargo test -p app theme::tests::every_builtin_theme_loads_with_token_colors; no reference colorize results for it |
 | extension/tunnel-forwarding | built-in extension | removed | scan.rs REMOVED_BUILTINS; cargo test -p exthost skips_removed_builtins |
-| extension/typescript-basics | built-in extension | todo |  |
+| extension/typescript-basics | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/typescript-language-features | built-in extension | todo |  |
-| extension/vb | built-in extension | todo |  |
-| extension/vscode-api-tests | built-in extension | todo | reference baseline: port/results/api-tests-reference.md (folder 350/46/6, workspace 4/0/0) |
+| extension/vb | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/vscode-api-tests | built-in extension | ported | port/tools/api-tests: folder 35/41/133 with 193 not reached in 1800 s, workspace 0/0/4 (port/results/api-tests.md); reference 356/46/0 and 4/0/0 |
 | extension/vscode-colorize-perf-tests | built-in extension | todo |  |
-| extension/vscode-colorize-tests | built-in extension | todo |  |
+| extension/vscode-colorize-tests | built-in extension | verified | cargo test -p app syntax::tests::colorize_fixtures_match_the_reference: 109 fixtures, every token's text, scopes and color in 10 themes |
 | extension/vscode-test-resolver | built-in extension | todo |  |
-| extension/xml | built-in extension | todo |  |
-| extension/yaml | built-in extension | todo |  |
+| extension/xml | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/yaml | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | telemetry/source-search | cross-cutting check | todo |  |
 | telemetry/network-capture | cross-cutting check | todo |  |
 | gallery/open-vsx | cross-cutting check | todo |  |

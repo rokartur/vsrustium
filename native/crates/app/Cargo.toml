@@ -10,6 +10,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
+config = { path = "../config" }
 exthost = { path = "../exthost" }
 flate2 = "1"
 futures = "0.3"
@@ -18,6 +19,8 @@ ttf-parser = "0.25"
 gpui.workspace = true
 gpui_platform = { workspace = true, features = ["font-kit"] }
 serde_json.workspace = true
+onig = { version = "6.5", default-features = false }
+textmate = { path = "../textmate" }
 image = { version = "0.25", default-features = false, features = ["png"], optional = true }
 
 [dev-dependencies]

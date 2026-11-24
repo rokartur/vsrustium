@@ -73,13 +73,89 @@ Done when: `port/tools/pixel-check` diffs the empty, folder and file windows (`n
 - The reference runs with `editor.minimap.enabled: false`. With a file it parks the pointer on the status bar for 1.5 s so the editor scrollbars fade; the empty and folder windows skip that, since the wait also brings up the side bar sash's grip dots.
 - Host check: `code-gpui <fixture> <fixture>/src/main.ts` with `EXTHOST_TRACE=1` activates `vscode.typescript-language-features` and `vscode.emmet` on top of the folder-only set (git-base, npm, github, git, debug-auto-launch, merge-conflict), with no `$onUnexpectedError` or activation error.
 - shortcut: no minimap; port it with scrolling past one screen.
-- shortcut: no editing and no keyboard; a click sets the cursor. Add input with the edit operations and `$acceptModelChanged`.
+- shortcut: no editing and no keyboard; a click sets the cursor. Closed by milestone 5.
 - shortcut: the cursor does not blink (the reference is captured with a solid cursor).
 - shortcut: `visibleRanges` sent to the host covers the whole document.
 - shortcut: no `firstLine` (shebang) language detection; a file with no association is plain text.
 - shortcut: High Contrast word highlight border is dashed; GPUI has no dotted border.
 - shortcut: the breadcrumb icon slot is empty until the file icon theme is ported.
 - shortcut: files are read as UTF-8 (with or without BOM), no encoding guessing or binary detection; a read error is logged, not shown as the editor's error placeholder.
+
+## Milestone 5: edit and save
+
+Scope: one cursor with a selection in the active editor; the `coreCommands.ts` moves (char, word, line edge, document edge, with Shift to select), click, Shift+click, double and triple click and drag selection; typing and IME composition through GPUI's `EntityInputHandler`; Enter, Tab, Shift+Tab, the delete commands (char, word, to line start/end); Cmd+C/X/V with whole-line copy; undo/redo with the stops of `editStack.ts` and `shouldPushStackElementBetween`; Cmd+S writes the file; dirty state on the tab. The host gets `$acceptModelChanged` (with upstream `detailedReason`), `$acceptDirtyStateChanged`, `$acceptModelSaved`, selection changes and one `$acceptTabOperation` per tab change.
+
+Done when: `cargo test -p app` passes with `editor::cursor::tests`, `editor::edit::tests`, the host sync tests and `keys_and_typed_text_edit_the_focused_editor_and_reach_the_host` (keys typed into a window, Cmd+S writes the file, the editor is clean after); `VSCODE_GPUI_EXTENSIONS=~/Developer/vscode-ref/extensions cargo test -p app -- --ignored live_host` gets a new `MainThreadDiagnostics.$changeMany` from TypeScript after an edit; pixel-check of the file window unchanged.
+
+- The pure cursor model (`editor/cursor.rs`) has no GPUI dependency; the edit model and undo history (`editor/edit.rs`) live on `OpenEditor`. Dirty state is upstream's alternative version id: undo back to the saved text is clean.
+- Trap: a full `$acceptEditorTabModel` resync fires only `onDidChangeTabGroups`. TypeScript's `TabResourceTracker` listens to `onDidChangeTabs` and skips `geterr` for files it does not see in a tab, so diagnostics never came. `host_sync.rs` now diffs the tab list and sends TAB_OPEN/CLOSE/MOVE/UPDATE like `mainThreadEditorTabs.ts`.
+- Editing a preview editor pins it; word highlight stops while typing, as `_onPositionChanged` does.
+- shortcut: columns step over chars, not grapheme clusters; a ZWJ emoji takes several steps. Port `getLeftDeleteOffset` and the grapheme iterator when needed.
+- shortcut: Enter copies the leading whitespace only; no `onEnter` rules or indentation rules, so `{` does not indent the next line. Tab on a blank line takes the nearest non-blank indent above.
+- shortcut: save has no participants (format on save, trim whitespace, final newline), no conflict check and no encoding other than UTF-8.
+- shortcut: drag selection only tracks the pointer over lines; IME candidate windows get no bounds (`bounds_for_range` returns None).
+- shortcut: one cursor; no multi-cursor, column selection or find.
+- shortcut: the cursor still does not blink.
+
+## Milestone 6: API test harness
+
+Scope: `code-gpui <folder> --extensionDevelopmentPath=<dir> --extensionTestsPath=<path>` runs an extension's tests as upstream's extension development host does, and `port/tools/api-tests` runs `extensions/vscode-api-tests` suites api-folder and api-workspace with it.
+
+Done when: `port/tools/api-tests` prints passing/pending/failing per suite and writes them to `port/results/api-tests.md`; the run finishes (failures allowed) without a hang.
+
+- `exthost/src/extension_development.rs`: the extension under development is scanned with `isBuiltin: false`, `isUnderDevelopment: true` and replaces a built-in with the same id (the reference's `extensions/` holds `vscode-api-tests` too); init data gets `extensionDevelopmentLocationURI` and `extensionTestsLocationURI`. Only the `--flag=value` form is read, as `scripts/test-integration.sh` passes it.
+- After eager activation the session sends `$extensionTestsExecute`; its reply (0 or 1), 1 if the runner threw, or the host's own code if it died first, becomes code-gpui's exit code, like `_onExtensionHostExit`. A session error before that also exits 1, so a test run never leaves the window open.
+- The port log is code-gpui's stderr. Host console entries are formatted like Node's `util.format` (`console.rs`), so mocha's spec reporter reads as in the reference log; `$onUnexpectedError`, activation and runtime errors and `MainThreadLogger.$log` lines go there too.
+- The test extension, its compiled tests, `testrunner.js` and mocha come from the reference checkout (same 1.147.0 sources; the port tree has no compiled `out/`), copied to `/tmp` so the tests' file writes leave the reference clean. `rootPath` assertions compare against `__dirname`, so the workspace must be the copy's `testWorkspace`.
+- api-tests opens a window, so it takes the Studio GUI lock after the build. `MOCHA_GREP=<pattern>` (read by `testrunner.js`) runs one area, e.g. `MOCHA_GREP='vscode API - workspace'`; later milestones should use it, since the full folder suite does not get past the terminal tests within the timeout.
+- Mocha keeps upstream's 60 s per-test timeout. Tests that wait for a main-thread event the stubs never send (quick input, terminal, shell integration) each cost 60 to 120 s, so the folder suite hits its 1800 s `SUITE_TIMEOUT` after 30 of its suites; the table counts the reached tests and lists the rest as not reached.
+- One early run ended at 990 s with exit 0 and no mocha summary; the next full run went past the same point and hit the timeout, so the cause is not found. The script marks any run without mocha's summary as `incomplete: exit <code>` (or `timed out`), so such a run cannot pass as complete.
+- Finding: the folder suite holds chat, lm, browser-tools and run_in_terminal tests for AI features the port removes by decision; they can never pass, so the parity target of milestone 20 (356/46/0) needs those tests subtracted. Decision for Artur.
+- Rows `base/test`, `editor/test`, `platform/test` (upstream unit tests of the TypeScript layers) and `workbench/services/driver` (the smoke-test DOM driver) stay `todo`: the port has no TypeScript workbench to run them on, and the api-tests harness is its end-to-end check. Proposal: the `n/a` status of the roadmap's decision 1.
+- shortcut: a `.code-workspace` argument is opened as a single folder (the file), so the api-workspace suite fails its 4 tests; multi-root workspaces are milestone 12.
+
+## Milestone 7: syntax colors and themes
+
+Scope: TextMate tokenization of every built-in grammar, token colors from the theme's `tokenColors`, bracket pair colorization and bracket matching in the editor, all 19 built-in color themes including High Contrast Light, `firstLine` language detection.
+
+Done when: the colorize-tests fixtures give the reference's scopes and colors; pixel-check gains a `src/main.ts` window in dark, light, hc and hclight; `cargo test -p app` runs the grammar tests.
+
+- Closes the milestone 2 shortcut (High Contrast Light not ported) and the milestone 4 shortcut (no `firstLine` detection).
+- `native/crates/textmate` ports vscode-textmate 9.3.2 (the version in the reference's node_modules): grammar and plist reading, rules, the tokenizer loop with `\G` anchors, begin/while, injections, embedded languages, the theme trie and scope matchers. Regexes run on Oniguruma through the `onig` crate, the engine vscode-oniguruma wraps.
+- `syntax.rs` resolves `tokenColors` like `ColorThemeData`: the editor default rule, the theme rules, then the `token.*-token` defaults. `syntax::tests::colorize_fixtures_match_the_reference` checks the text, scopes and color of every token of the 109 fixtures in the 10 themes the reference results list.
+- Brackets (`brackets.rs`) follow `bracketPairsTree`: brackets from the language configuration outside strings, comments and regexes, nesting level colors `editorBracketHighlight.foreground1..6`, unexpected brackets in `editorBracketHighlight.unexpectedBracket.foreground`. The cursor's bracket match follows `matchBracket` then `findEnclosingBrackets`; only a touched bracket shows in the overview ruler.
+- Languages fall back to `firstLine` patterns (checked on the first 1000 characters, `FIRST_LINE_DETECTION_LENGTH_LIMIT`) when no filename or extension association matches.
+- `ref-screenshot` starts the reference with `--force-color-profile=srgb`. Without it Chromium converts to the main display's color profile, and with a screen sharing display attached to the Studio every non-gray pixel shifts (`#0F4A85` read back as `#224981`); the port renders sRGB.
+- The window origin is rounded to whole points: on a display with an odd pixel height the centered origin falls on a half point and the drawable grows to 1538 device pixels.
+- shortcut: no `semanticTokenColors`; they color semantic tokens, which come with the language features milestone.
+- shortcut: no tree-sitter; upstream uses it for TypeScript only behind `editor.experimental.preferTreeSitter.typescript`, off by default.
+- shortcut: the whole document is tokenized on the first draw; upstream tokenizes in the background. Port the background tokenizer when large files stall the first frame.
+- shortcut: an edit drops the tokens from its first line down and re-pairs every bracket (`Tokenization::invalidate_from`); upstream updates both incrementally.
+- shortcut: `tokenColors` given as a path to a .tmTheme file is not read; no built-in theme uses one.
+- shortcut: the theme type reaches the extension host after the eager extensions activate; upstream sends it before `$startExtensionHost`.
+- shortcut: no Go to Bracket, Select to Bracket or Force Retokenize commands until keybindings and the command palette land.
+
+## Milestone 10: settings, storage, secrets
+
+Scope shipped: `settings.json` (user, workspace, language overrides) feeding the workbench and `vscode.workspace.getConfiguration`, global and workspace state in `state.vscdb`, extension secrets in the macOS Keychain, the real environment in init data. Not shipped: the Settings editor, JSON settings validation and profiles (see the last items).
+
+Done when: api-tests `configuration.test` and `state.test` pass as in the reference (5/5); a setting changed in `settings.json` reaches an extension's `onDidChangeConfiguration` (`port/tools/settings-check configuration`, step "external edit"); storage survives a restart (`port/tools/settings-check state`).
+
+- `native/crates/config` ports the JSONC scanner and parser (`json.ts`, byte offsets), `jsonEdit.ts` (writes keep comments and layout), `ConfigurationModel` and `Configuration` with language overrides, the configuration registry with scopes and `[lang]` defaults, and the write path of `configurationEditing.ts` with its error messages. Core settings come from `core-settings.json`, dumped once from the reference's registry by `port/tools/dump-settings` (1506 settings, 1.7 MB embedded); extension settings come from each `contributes.configuration`. `[plaintext]`, `[go]`, `[makefile]`, `[shellscript]` and `[yaml]` defaults are added by hand from `modesRegistry.ts`.
+- `MainThreadConfiguration` (`exthost/src/main_thread_configuration.rs`) serves updates and removals and sends `$acceptConfigurationChanged` before the reply, as upstream's change event fires before the update resolves. `settings.json` files are polled every 100 ms by mtime and size (upstream batches watcher events by 100 ms) instead of an FSEvents watcher, which comes with milestone 12.
+- The workbench reads `workbench.colorTheme` and the editor indentation (`editor.tabSize`, `editor.insertSpaces`, `editor.detectIndentation`, per language) from the same model. The default theme is now the reference's default, Dark 2026; pixel-check passes `--theme`, so its windows are unchanged.
+- No policy, remote or in-memory configuration layers: the port has no policy source, remote or memory writes. Init data sends them empty, in upstream's shape.
+- `native/crates/storage` ports `SQLiteStorageDatabase` on rusqlite with upstream's `ItemTable`, the integrity check, the `.backup` file and recovery from it, and the in-memory cache that rebuilds a database corrupted at runtime. Writes are synchronous instead of flushed every 100 ms. Extension tests run on in-memory storage, as `storageMainService.ts` does for them.
+- Workspace storage is `User/workspaceStorage/<id>` with upstream's macOS id (MD5 of the path and the folder's birth time). `workspace.json` is not written; the port has no stale workspace storage cleanup.
+- Telemetry ids: `machineId` and `firstSessionDate` are kept in profile storage, `sessionId` is new per run. `machineId` is a uuid, upstream's fallback when it cannot hash a MAC address; upstream keeps it in `storage.json` (the `platform/state` service, not ported). No telemetry is sent, so `env.isTelemetryEnabled` is false.
+- `MainThreadSecretState` keeps each secret as a generic password item (service `Code - OSS Secret Storage`, account the upstream `{"extensionId","key"}` key). Upstream encrypts with Electron safeStorage, whose key sits in the Keychain, and stores the result in application storage; letting the Keychain encrypt the item gives the same protection without a key of our own. Extension tests keep secrets in memory.
+- `--extensionDevelopmentPath` and `--extensionTestsPath` are made absolute without resolving symlinks, so `context.extensionPath` matches the reference.
+- `port/tools/settings-check` runs four check extensions against the port and the reference and diffs their output. Known differences: the reference fires two empty change events before `editor.wordWrap`; `env.appName` is "Code - OSS Dev" in the reference's dev run; `machineId` format; `isTelemetryEnabled`.
+- Upstream tests ported: `json.test.ts`, `jsonEdit.test.ts`, `configurationModels.test.ts`, `configurationRegistry.test.ts`, the write cases of `configurationEditing.test.ts`, `storage.integrationTest.ts`. Not ported: `jsonFormatter`, `jsonParse`, `configurations`, `configurationVariables` (no variable resolver yet), `policyConfiguration` (no policies), `configurationService` and the storage service tests (their service shapes differ from the port's).
+- `chat.*` and sign-in settings stay in the registry as data only; no AI or sign-in features by decision.
+- Not shipped: the Settings editor. It needs the command palette and keybindings (milestone 9), a list and a text input widget (milestone 9) and the editor (milestone 8), which are in progress in parallel.
+- Not shipped: JSON settings validation. Diagnostics come from json-language-features through `MainThreadDiagnostics` and are drawn as squiggles, both milestone 13; the schema needs `vscode://schemas/settings/*` content (`MainThreadDocumentContentProviders`, milestone 12).
+- Not shipped: profiles. Switching, creating and exporting go through quick picks and the Settings editor (milestone 9 and above); storage and settings already take their paths from one place, so a profile is a different `User/profiles/<id>` folder once that UI exists.
 
 ## Benchmarks
 

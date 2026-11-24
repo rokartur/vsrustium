@@ -5,7 +5,17 @@
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
+use config::indentation::creation_options;
+use config::service::Settings;
+
 use crate::languages::Languages;
+use crate::syntax::Tokenization;
+
+mod cursor;
+mod edit;
+
+pub use cursor::{Position, Selection};
+pub use edit::{ContentChanged, EditReason, History, utf16_column};
 
 pub struct TextDocument {
     pub path: PathBuf,
@@ -17,6 +27,7 @@ pub struct TextDocument {
     pub indentation: Indentation,
     /// `foldingRules.offSide` of the language, used by the indent guides of blank lines.
     pub off_side: bool,
+    pub tokens: Tokenization,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -25,11 +36,12 @@ pub struct Indentation {
     pub insert_spaces: bool,
 }
 
-/// `editor.tabSize` and `editor.insertSpaces` defaults, the base `guessIndentation` starts from.
+/// `editor.tabSize` and `editor.insertSpaces` defaults, for documents built without settings.
+#[cfg(test)]
 const DEFAULT_INDENTATION: Indentation = Indentation { tab_size: 4, insert_spaces: true };
 
 impl TextDocument {
-    pub fn read(path: &Path, languages: &Languages) -> std::io::Result<Self> {
+    pub fn read(path: &Path, languages: &Languages, settings: &Settings) -> std::io::Result<Self> {
         let bytes = std::fs::read(path)?;
         let (encoding, content) = match bytes.strip_prefix(b"\xEF\xBB\xBF") {
             Some(rest) => ("utf8bom", rest),
@@ -38,14 +50,26 @@ impl TextDocument {
         // shortcut: no encoding guessing or binary detection; non-UTF-8 bytes decode as U+FFFD. Port encoding.ts when a file needs it.
         let text = String::from_utf8_lossy(content);
         let (lines, eol) = split_lines(&text);
-        let language_id = languages.language_of(path).to_string();
+        let language_id = languages.language_of(path, lines[0].as_str()).to_string();
         let off_side = languages.off_side(&language_id);
-        let indentation = guess_indentation(&lines, DEFAULT_INDENTATION);
-        Ok(TextDocument { path: path.to_path_buf(), lines, eol, encoding, language_id, indentation, off_side })
+        let indentation = creation_indentation(&lines, settings, path, &language_id);
+        let tokens = Tokenization::new(languages.grammars.grammar(&language_id));
+        Ok(TextDocument { path: path.to_path_buf(), lines, eol, encoding, language_id, indentation, off_side, tokens })
     }
 
     pub fn name(&self) -> String {
         self.path.file_name().unwrap_or_default().to_string_lossy().into_owned()
+    }
+}
+
+/// The indentation a model starts with (`TextModel.resolveOptions` from `getCreationOptions`): the language's
+/// `editor.tabSize` and `editor.insertSpaces`, guessed from the text when `editor.detectIndentation` is on.
+fn creation_indentation(lines: &[String], settings: &Settings, path: &Path, language_id: &str) -> Indentation {
+    let options = creation_options(&settings.configuration, path, language_id);
+    let configured = Indentation { tab_size: options.tab_size, insert_spaces: options.insert_spaces };
+    match options.detect_indentation {
+        true => guess_indentation(lines, configured),
+        false => configured,
     }
 }
 
@@ -276,8 +300,12 @@ pub struct OpenEditor {
     pub preview: bool,
     /// The `$model<N>` id the text model gets, so the extension host sees a new editor per opened model.
     pub model_id: u32,
-    /// Cursor line and char column, 0-based.
-    pub cursor: (usize, usize),
+    pub selection: Selection,
+    /// Visible columns a vertical move could not place, kept while moving up and down (`leftoverVisibleColumns`).
+    leftover: isize,
+    /// `getVersionId`: 1 when opened, one more per content change.
+    pub version_id: u32,
+    history: History,
     /// The indent guide level of each line.
     pub guides: Vec<usize>,
     /// Occurrences of the word at the cursor, by line and char range.
@@ -288,21 +316,9 @@ impl OpenEditor {
     fn new(document: TextDocument, preview: bool, model_id: u32) -> Self {
         let indentation = document.indentation;
         let guides = indent_guides(&document.lines, indentation.tab_size, indentation.tab_size, document.off_side);
-        let mut editor = OpenEditor { document, preview, model_id, cursor: (0, 0), guides, highlights: Vec::new() };
-        editor.set_cursor(0, 0);
+        let mut editor = OpenEditor { document, preview, model_id, selection: Selection::default(), leftover: 0, version_id: 1, history: History::default(), guides, highlights: Vec::new() };
+        editor.refresh_highlights();
         editor
-    }
-
-    /// Moves the cursor, clamped to the document, and highlights the word under it.
-    pub fn set_cursor(&mut self, line: usize, column: usize) {
-        let line = line.min(self.document.lines.len() - 1);
-        let text = &self.document.lines[line];
-        let column = column.min(text.chars().count());
-        self.cursor = (line, column);
-        self.highlights = match word_at(text, column) {
-            Some(range) => word_occurrences(&self.document.lines, &text.chars().skip(range.start).take(range.len()).collect::<String>()),
-            None => Vec::new(),
-        };
     }
 }
 
@@ -381,6 +397,23 @@ mod tests {
     }
 
     #[test]
+    fn opened_files_take_the_configured_indentation() {
+        let dir = std::env::temp_dir().join(format!("code-gpui-indentation-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("User")).unwrap();
+        let file = dir.join("a.txt");
+        std::fs::write(&file, "a\n    b\n        c\n").unwrap();
+        let read = |user_settings: &str| {
+            std::fs::write(dir.join("User/settings.json"), user_settings).unwrap();
+            let settings = Settings::load(config::registry::Registry::core(), dir.join("User"), None);
+            TextDocument::read(&file, &Languages::new(&[]), &settings).unwrap().indentation
+        };
+        assert_eq!(read("{}"), Indentation { tab_size: 4, insert_spaces: true });
+        assert_eq!(read(r#"{ "editor.tabSize": 2, "editor.detectIndentation": false }"#), Indentation { tab_size: 2, insert_spaces: true });
+        assert_eq!(read(r#"{ "editor.insertSpaces": false, "editor.detectIndentation": false }"#), Indentation { tab_size: 4, insert_spaces: false });
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn splits_lines_and_picks_the_eol_of_most_breaks() {
         assert_eq!(split_lines("a\nb\n"), (vec!["a".into(), "b".into(), "".into()], "\n"));
         assert_eq!(split_lines("a\r\nb\r\nc\n"), (vec!["a".into(), "b".into(), "c".into(), "".into()], "\r\n"));
@@ -441,6 +474,7 @@ mod tests {
             language_id: "plaintext".into(),
             indentation: DEFAULT_INDENTATION,
             off_side: false,
+            tokens: Tokenization::default(),
         };
         let names = |group: &EditorGroup| group.editors.iter().map(|editor| editor.document.name()).collect::<Vec<_>>();
         let mut group = EditorGroup::default();
@@ -466,15 +500,18 @@ mod tests {
             language_id: "plaintext".into(),
             indentation: DEFAULT_INDENTATION,
             off_side: false,
+            tokens: Tokenization::default(),
         };
         group.open(document, false);
         let editor = group.active_mut().unwrap();
         assert_eq!(editor.highlights, [(0, 0..4), (1, 5..9)]);
-        editor.set_cursor(5, 99);
-        assert_eq!(editor.cursor, (1, 9));
-        editor.set_cursor(0, 4);
+        editor.move_to(Position::new(0, 4), false);
         assert_eq!(editor.highlights.len(), 2);
-        editor.set_cursor(1, 4);
+        editor.move_to(Position::new(1, 4), false);
         assert_eq!(editor.highlights, [(1, 0..4)]);
+        editor.move_to(Position::new(1, 4), true);
+        editor.selection.anchor = Position::new(0, 0);
+        editor.refresh_highlights();
+        assert!(editor.highlights.is_empty());
     }
 }

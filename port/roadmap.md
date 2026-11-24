@@ -2,7 +2,9 @@
 
 Milestones from today to a shippable port, each with its scope, its done-when check and the ledger rows it moves. `port/ledger.md` stays the source of truth for status and evidence; this file only says in which milestone a row moves. Every `todo`, `stub` and `ported` row of the ledger is named exactly once below (checked by the command at the end).
 
-Ledger today: 7 verified, 10 ported, 76 stub, 448 todo, 51 removed (of 592 rows).
+Rule for every milestone (Artur): a feature ships end to end and 1:1 with VS Code 1.147.0: UI, keyboard and mouse, the main-thread side the extension host calls, persistence, same look and behavior, upstream logic and tests ported, checked against the reference. Fewer complete features beat more partial ones; a `shortcut:` is only for a missing platform capability or a product decision.
+
+Ledger today: 62 verified, 33 ported, 74 stub, 372 todo, 51 removed (of 592 rows).
 
 ## Done
 
@@ -12,18 +14,19 @@ Ledger today: 7 verified, 10 ported, 76 stub, 448 todo, 51 removed (of 592 rows)
 | 2 empty workbench | title bar, activity bar, letterpress, status bar in 3 themes | `port/results/pixels.md` milestone 2 |
 | 3 open a folder | Explorer tree, folder in init data and `$initializeWorkspace` | `port/results/pixels.md` milestone 3 |
 | 4 open a file | tabs, breadcrumbs, gutter, guides, word highlight, overview ruler, host sees documents | `port/results/pixels.md` milestone 4 |
+| 5 edit and save | one cursor with selection, core moves and deletes, typing and IME, undo/redo, clipboard, save, dirty tabs, host sync with tab operations | `port/notes.md` milestone 5, `cargo test -p app` and its ignored `live_host` test |
 
-## 5. Edit and save (in progress, uncommitted in the working tree)
+## 5. Edit and save (done)
 
-Scope: one cursor with selection, the `coreCommands.ts` cursor and delete commands, typing with IME through GPUI's input handler, undo/redo with `editStack.ts` stops, clipboard, save and dirty state; the host hears `$acceptModelChanged`, `$acceptDirtyStateChanged`, `$acceptModelSaved` and selection changes. Written so far: `editor/cursor.rs`, `editor/edit.rs`, `workbench/text_input.rs`, `host_sync.rs` content changes.
+Scope: one cursor with selection, the `coreCommands.ts` cursor and delete commands, typing with IME through GPUI's input handler, undo/redo with `editStack.ts` stops, clipboard, save and dirty state; the host hears `$acceptModelChanged`, `$acceptDirtyStateChanged`, `$acceptModelSaved` and selection changes. Written in `editor/cursor.rs`, `editor/edit.rs`, `workbench/text_input.rs`, `host_sync.rs`.
 
 Done when: `cargo test -p app` passes with the cursor, edit and host sync tests (including `live_host_takes_edits_and_typescript_sees_the_new_text`); typing in `notes.txt` then Cmd+S writes the file and the tab loses its dirty dot; pixel-check of the three earlier windows unchanged.
 
-Notes shortcuts closed here: no editing and no keyboard; cursor does not blink.
+Notes shortcuts closed here: no editing and no keyboard. The cursor still does not blink. Rows this milestone left `todo` or `stub` moved to milestone 8.
 
-Rows: `mainthread/MainThreadDocuments` `mainthread/MainThreadTextEditors` `mainthread/MainThreadClipboard` `mainthread/MainThreadEditorTabs` `editor/common` `editor/contrib/clipboard` `editor/contrib/cursorUndo` `editor/contrib/wordOperations` `editor/contrib/wordPartOperations` `editor/contrib/caretOperations` `editor/contrib/lineSelection` `editor/contrib/indentation` `editor/contrib/insertFinalNewLine` `editor/contrib/toggleTabFocusMode` `editor/contrib/editorState` `editor/contrib/readOnlyMessage` `editor/contrib/unusualLineTerminators` `platform/undoRedo` `platform/clipboard` `platform/editor` `workbench/services/clipboard` `workbench/services/textfile` `workbench/services/workingCopy` `workbench/services/untitled` `workbench/services/textmodelResolver` `workbench/services/model` `workbench/services/textresourceProperties` `workbench/services/filesConfiguration`
+Rows: `editor/contrib/clipboard` `editor/contrib/wordOperations`
 
-## 6. API test harness
+## 6. API test harness (done)
 
 Scope: run `extensions/vscode-api-tests` against the port, so every later milestone reports a pass count against the reference baseline (`port/results/api-tests-reference.md`: folder 356/46/0, workspace 4/0/0). Needs `--extensionDevelopmentPath` / `--extensionTestsPath` in `code-gpui`, the test runner's exit code reaching the parent, host errors and console forwarded to the port's log, and a `port/tools/api-tests` script on the Studio.
 
@@ -31,7 +34,7 @@ Done when: `port/tools/api-tests` prints passing/pending/failing per suite for t
 
 Rows: `extension/vscode-api-tests` `mainthread/MainThreadExtensionService` `mainthread/MainThreadErrors` `mainthread/MainThreadConsole` `mainthread/MainThreadLogger` `platform/log` `workbench/services/log` `workbench/services/driver` `base/test` `editor/test` `platform/test`
 
-## 7. Syntax colors and themes
+## 7. Syntax colors and themes (done)
 
 Scope: TextMate grammars from `contributes.grammars` (vscode-textmate's algorithm, Oniguruma regexes), token colors from the theme's `tokenColors` and `semanticTokenColors`, bracket pair colorization and matching, every built-in color theme including High Contrast Light, `firstLine` language detection.
 
@@ -49,7 +52,7 @@ Done when: api-tests `editor.test`, `window.test` (text editor parts) and `docum
 
 Notes shortcuts closed here: no minimap; `visibleRanges` covers the whole document; High Contrast dotted borders drawn dashed (needs a dotted border in GPUI or a custom path).
 
-Rows: `editor/browser` `workbench/parts/editor` `workbench/contrib/codeEditor` `editor/contrib/folding` `workbench/contrib/folding` `editor/contrib/stickyScroll` `editor/contrib/longLinesHelper` `editor/contrib/middleScroll` `editor/contrib/fontZoom` `editor/contrib/multicursor` `editor/contrib/find` `editor/contrib/comment` `editor/contrib/linesOperations` `editor/contrib/smartSelect` `editor/contrib/inPlaceReplace` `editor/contrib/anchorSelect` `editor/contrib/unicodeHighlighter` `editor/contrib/sectionHeaders` `editor/contrib/placeholderText` `editor/contrib/contextmenu` `editor/contrib/message` `editor/contrib/floatingMenu` `editor/contrib/dnd`
+Rows: `editor/browser` `workbench/parts/editor` `workbench/contrib/codeEditor` `editor/contrib/folding` `workbench/contrib/folding` `editor/contrib/stickyScroll` `editor/contrib/longLinesHelper` `editor/contrib/middleScroll` `editor/contrib/fontZoom` `editor/contrib/multicursor` `editor/contrib/find` `editor/contrib/comment` `editor/contrib/linesOperations` `editor/contrib/smartSelect` `editor/contrib/inPlaceReplace` `editor/contrib/anchorSelect` `editor/contrib/unicodeHighlighter` `editor/contrib/sectionHeaders` `editor/contrib/placeholderText` `editor/contrib/contextmenu` `editor/contrib/message` `editor/contrib/floatingMenu` `editor/contrib/dnd` `mainthread/MainThreadDocuments` `mainthread/MainThreadTextEditors` `mainthread/MainThreadClipboard` `mainthread/MainThreadEditorTabs` `editor/common` `editor/contrib/cursorUndo` `editor/contrib/wordPartOperations` `editor/contrib/caretOperations` `editor/contrib/lineSelection` `editor/contrib/indentation` `editor/contrib/insertFinalNewLine` `editor/contrib/toggleTabFocusMode` `editor/contrib/editorState` `editor/contrib/readOnlyMessage` `editor/contrib/unusualLineTerminators` `platform/undoRedo` `platform/clipboard` `platform/editor` `workbench/services/clipboard` `workbench/services/textfile` `workbench/services/workingCopy` `workbench/services/untitled` `workbench/services/textmodelResolver` `workbench/services/model` `workbench/services/textresourceProperties` `workbench/services/filesConfiguration`
 
 ## 9. Commands, keybindings, menus, quick input
 

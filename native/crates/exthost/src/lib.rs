@@ -1,11 +1,17 @@
 //! Parent side of the extension host connection: starts the host process on Bun or Node,
 //! speaks `PersistentProtocol` over a Unix socket, and runs the Ready / init data / Initialized handshake.
 
+pub mod console;
+pub mod extension_development;
 pub mod frame;
+pub mod main_thread_configuration;
+pub mod main_thread_secret_state;
+pub mod main_thread_storage;
 pub mod proxy_ids;
 pub mod rpc;
 pub mod scan;
 pub mod session;
+pub mod utc;
 
 use std::io::{Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};

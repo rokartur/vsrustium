@@ -10,7 +10,7 @@ import { join } from 'node:path';
 const outDir = process.argv[2] ?? 'port/results/screenshots/reference';
 const ref = process.env.REF ?? join(process.env.HOME!, 'Developer/vscode-ref');
 const electron = join(ref, '.build/electron/Code - OSS.app/Contents/MacOS/Code - OSS');
-const themes: Record<string, string> = { dark: 'Default Dark Modern', light: 'Default Light Modern', hc: 'Default High Contrast' };
+const themes: Record<string, string> = { dark: 'Default Dark Modern', light: 'Default Light Modern', hc: 'Default High Contrast', hclight: 'Default High Contrast Light' };
 const selected = process.argv.length > 3 ? process.argv.slice(3) : Object.keys(themes);
 const width = 1024;
 const height = 768;
@@ -54,7 +54,8 @@ async function capture(theme: string) {
 	storage.close();
 	// vscode-api-tests adds the "Hello" status item; product builds exclude it (build/lib/extensions.ts excludedExtensions).
 	const paths = [process.env.FOLDER, process.env.FILE].filter(path => path);
-	const app = Bun.spawn([electron, ref, ...paths, '--user-data-dir', userData, '--remote-debugging-port=' + port, '--disable-extension', 'GitHub.copilot-chat', '--disable-extension', 'vscode.vscode-api-tests'], {
+	// The port renders sRGB; without this Chromium converts to the main display's profile (a screen sharing display shifts #0F4A85 to #224981).
+	const app = Bun.spawn([electron, ref, ...paths, '--force-color-profile=srgb', '--user-data-dir', userData, '--remote-debugging-port=' + port, '--disable-extension', 'GitHub.copilot-chat', '--disable-extension', 'vscode.vscode-api-tests'], {
 		env: { ...process.env, VSCODE_DEV: '1', NODE_ENV: 'development' },
 		stdout: 'ignore',
 		stderr: 'ignore',
@@ -65,7 +66,9 @@ async function capture(theme: string) {
 		await until(async () => (await cdp('Runtime.evaluate', { expression: `!!document.querySelector('.monaco-workbench .part.statusbar')`, returnByValue: true })).result.value === true);
 		// Extensions settle their status bar items after the workbench appears.
 		await Bun.sleep(5000);
-		// The title bar dims when the window is not key, which depends on what else is frontmost on the Studio.
+		// The title bar dims when the window is not key. Page.bringToFront does not activate the app over
+		// another frontmost one (Spotify); `open -a` on the running bundle does, without Accessibility permission.
+		Bun.spawnSync(['open', '-a', join(ref, '.build/electron/Code - OSS.app')]);
 		await cdp('Page.bringToFront');
 		await until(async () => (await cdp('Runtime.evaluate', { expression: `!document.querySelector('.part.titlebar.inactive')`, returnByValue: true })).result.value === true, 10000);
 		// The editor's scrollbars show at open; park the pointer on the empty status bar and let them fade.
