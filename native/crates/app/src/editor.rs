@@ -15,6 +15,7 @@ mod cursor;
 mod edit;
 pub mod folding;
 mod folding_controller;
+pub mod minimap;
 mod multicursor;
 mod snippet;
 mod view;
