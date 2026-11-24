@@ -940,7 +940,8 @@ impl Workbench {
         let encoding = if document.encoding == "utf8bom" { "UTF-8 with BOM" } else { "UTF-8" };
         let eol = if document.eol == "\r\n" { "CRLF" } else { "LF" };
         let labels = [selection_label(editor), indentation, encoding.into(), eol.into(), self.languages.name(&document.language_id).to_string()];
-        let items = labels.into_iter().map(|label| div().h_full().mx(px(3.)).px(px(5.)).flex().items_center().whitespace_nowrap().child(label));
+        // Each has a command upstream (gotoLine, changeEditorIndentation, changeEncoding, changeEOL, changeLanguageMode).
+        let items = labels.into_iter().map(|label| div().h_full().mx(px(3.)).px(px(5.)).flex().items_center().whitespace_nowrap().cursor_pointer().child(label));
         Some(div().h_full().flex().text_color(foreground).children(items))
     }
 }
