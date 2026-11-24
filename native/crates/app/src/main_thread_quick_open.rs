@@ -104,7 +104,7 @@ impl Workbench {
         let (sender, receiver) = oneshot::channel();
         let mut input = QuickInput::new(0, Kind::InputBox);
         input.title = options["title"].as_str().map(str::to_owned);
-        input.value = options["value"].as_str().unwrap_or_default().to_owned();
+        input.input_box.value = options["value"].as_str().unwrap_or_default().to_owned();
         input.value_selection = selection_range(&options["valueSelection"]);
         input.prompt = options["prompt"].as_str().map(str::to_owned);
         input.placeholder = options["placeHolder"].as_str().map(str::to_owned);
@@ -113,7 +113,7 @@ impl Workbench {
         let id = self.quick_inputs.add(input, Owner::Input { req, reply: Some(sender), validate, validated: None });
         self.show_quick_input(id, window, cx);
         if validate {
-            let value = self.quick_inputs.get(id).map(|input| input.value.clone()).unwrap_or_default();
+            let value = self.quick_inputs.get(id).map(|input| input.input_box.value.clone()).unwrap_or_default();
             self.validate_input(id, value, false, window, cx);
         }
         self.flush_quick_input_events(window, cx);
@@ -240,7 +240,7 @@ impl Workbench {
         match event {
             Event::ChangeValue(value) if validate => self.validate_input(id, value, false, window, cx),
             Event::Accept(_) => {
-                let value = self.quick_inputs.get(id).map(|input| input.value.clone()).unwrap_or_default();
+                let value = self.quick_inputs.get(id).map(|input| input.input_box.value.clone()).unwrap_or_default();
                 match validated {
                     _ if !validate => self.finish_input(id, value, &Value::Null, window, cx),
                     Some((validated_value, result)) if validated_value == value => self.finish_input(id, value, &result, window, cx),
@@ -262,7 +262,7 @@ impl Workbench {
         let delay = if accept { Duration::ZERO } else { Duration::from_millis(100) };
         cx.spawn_in(window, async move |workbench, cx| {
             cx.background_executor().timer(delay).await;
-            let current = |workbench: &mut Workbench| workbench.quick_inputs.get(id).is_some_and(|input| input.value == value);
+            let current = |workbench: &mut Workbench| workbench.quick_inputs.get(id).is_some_and(|input| input.input_box.value == value);
             let Ok(Some(answer)) = workbench.update(cx, |workbench, _| current(workbench).then(|| workbench.host.call("ExtHostQuickOpen", "$validateInput", vec![json!(value)]))) else { return };
             let result = answer.await.ok().and_then(Result::ok).unwrap_or(Value::Null);
             let _ = workbench.update_in(cx, |workbench, window, cx| {

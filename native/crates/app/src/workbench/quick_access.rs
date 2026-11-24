@@ -119,7 +119,7 @@ impl Workbench {
         let visible = self.quick_inputs.current().filter(|input| matches!(self.quick_inputs.owner(input.id), Some(Owner::QuickAccess(_)))).map(|input| input.id);
         if let Some(id) = visible {
             let input = self.quick_inputs.get_mut(id).expect("the visible input");
-            if Provider::for_value(&input.value) == provider {
+            if Provider::for_value(&input.input_box.value) == provider {
                 if value != provider.prefix() && !preserve_value {
                     input.set_value(value);
                 }
@@ -128,13 +128,13 @@ impl Workbench {
                 return;
             }
             // Another provider's filter carries over under the new prefix.
-            let filter = &input.value[Provider::for_value(&input.value).prefix().len()..];
+            let filter = &input.input_box.value[Provider::for_value(&input.input_box.value).prefix().len()..];
             if !preserve_value && !filter.is_empty() {
                 value = format!("{}{filter}", provider.prefix());
             }
         }
         let mut input = QuickInput::new(0, Kind::QuickPick);
-        input.value = value;
+        input.input_box.value = value;
         adjust_value_selection(&mut input, provider, preserve_value);
         input.placeholder = provider.placeholder();
         // pickerQuickAccess.ts: the provider filters and sorts, the list does not.
@@ -152,8 +152,8 @@ impl Workbench {
     /// `updatePickerItems`: the provider of the value fills the picker.
     pub(super) fn update_quick_access_picks(&mut self, id: i64, window: &Window, cx: &mut Context<Self>) {
         let Some(input) = self.quick_inputs.get(id) else { return };
-        let provider = Provider::for_value(&input.value);
-        let filter = input.value[provider.prefix().len()..].trim().to_owned();
+        let provider = Provider::for_value(&input.input_box.value);
+        let filter = input.input_box.value[provider.prefix().len()..].trim().to_owned();
         let picks = match provider {
             Provider::Commands => {
                 let (entries, accepts) = self.command_picks(&filter, window);
@@ -308,7 +308,7 @@ pub fn is_files_picker(value: &str) -> bool {
 
 /// `adjustValueSelection`: the caret at the end when the value is kept, else everything after the prefix selected.
 fn adjust_value_selection(input: &mut QuickInput, provider: Provider, preserve_value: bool) {
-    let end = input.value.chars().count();
+    let end = input.input_box.value.chars().count();
     let start = if preserve_value { end } else { provider.prefix().chars().count() };
     input.set_value_selection(Some((start, end)));
 }

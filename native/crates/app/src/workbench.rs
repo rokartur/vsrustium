@@ -5,6 +5,8 @@
 mod actions;
 mod editor_commands;
 mod editor_view;
+mod explorer_actions;
+mod input_box_view;
 mod keyboard;
 pub mod quick_access;
 mod quick_open;
@@ -23,12 +25,13 @@ use config::service::Settings;
 use config::workspace::Workspace;
 use storage::Storage;
 
-use gpui::{ClickEvent, Context, Div, FocusHandle, FontFeatures, FontWeight, Rgba, Task, UniformListScrollHandle, Window, div, prelude::*, px, rgb, svg, transparent_black};
+use gpui::{ClickEvent, Context, Div, DragMoveEvent, FocusHandle, FontFeatures, FontWeight, Rgba, Task, UniformListScrollHandle, Window, div, prelude::*, px, rgb, svg, transparent_black};
 use serde_json::Value;
 
 use crate::commands::Commands;
 use crate::editor::{EditorGroup, TextDocument};
 use crate::explorer::FileTree;
+use explorer_actions::DraggedItems;
 use crate::file_icons::FileIconTheme;
 use crate::host_sync::HostSync;
 use crate::languages::Languages;
@@ -69,6 +72,7 @@ pub struct Workbench {
     selecting_text: bool,
     pub quick_inputs: quick_input_view::QuickInputs,
     pub quick_access: quick_access::QuickAccess,
+    pub explorer: explorer_actions::ExplorerState,
     /// The application storage (StorageScope.PROFILE and APPLICATION in the default profile), shared with the
     /// extension host's MainThreadStorage.
     profile_storage: Arc<Mutex<Storage>>,
@@ -100,7 +104,7 @@ impl Render for Workbench {
                     .px(px(4.))
                     .pb(px(4.))
                     // The side bar meets the activity bar flush; the bar draws the seam (floatingPanels.css).
-                    .child(div().flex().child(self.activity_bar()).when(self.folder.is_some(), |row| row.child(self.side_bar(cx))))
+                    .child(div().flex().child(self.activity_bar()).when(self.folder.is_some(), |row| row.child(self.side_bar(window, cx))))
                     .child(if self.editors.active().is_some() { self.text_editor_part(window, cx) } else { self.editor_part() }),
             )
             .child(self.status_bar());
@@ -144,6 +148,7 @@ impl Workbench {
             selecting_text: false,
             quick_inputs: quick_input_view::QuickInputs::new(cx),
             quick_access: quick_access::QuickAccess::default(),
+            explorer: explorer_actions::ExplorerState::new(cx),
             profile_storage: Arc::new(Mutex::new(Storage::in_memory())),
             workspace_storage: Arc::new(Mutex::new(Storage::in_memory())),
         };
@@ -154,6 +159,7 @@ impl Workbench {
         workbench.register_quick_input_commands();
         workbench.register_quick_access_commands();
         workbench.register_theme_commands();
+        workbench.register_explorer_actions();
         // Keybindings resolve before the focused element sees the key, and with nothing focused too.
         let entity = cx.entity().downgrade();
         cx.intercept_keystrokes(move |event, window, cx| {
@@ -194,7 +200,7 @@ impl Workbench {
         self.marked_text = None;
         match pinned && self.editors.active().is_some() {
             true => window.focus(&self.editor_focus, cx),
-            false => window.blur(cx),
+            false => window.focus(&self.explorer.focus, cx),
         }
         self.editors_changed(cx);
     }
@@ -296,7 +302,7 @@ impl Workbench {
     }
 
     /// The Explorer: title, the folder section with its tree, and the collapsed Outline and Timeline sections.
-    fn side_bar(&self, cx: &mut Context<Self>) -> Div {
+    fn side_bar(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         let tree = self.folder.as_ref().expect("side bar is drawn only with a folder");
         let foreground = self.foreground_or("sideBar.foreground");
         let title = div()
@@ -313,11 +319,20 @@ impl Workbench {
             .child(self.icon("ellipsis", 22., 16., foreground).cursor_pointer());
         // explorerviewlet.css: in high contrast an explorer item has a 20px line from the row top, 1px above center.
         let label_line = if self.theme.kind.is_high_contrast() { 20. } else { 22. };
-        // The tree is not focused once the editor has focus, so the selection takes the inactive colors.
-        let selection = self.color("list.inactiveSelectionBackground");
+        let edit_focused = self.explorer.input_focus.is_focused(window);
+        let tree_focused = self.explorer.focus.is_focused(window);
+        // listWidget.ts: the focused tree draws the active selection colors and outlines its focused row.
+        let (selection, selection_foreground) = match tree_focused {
+            true => (self.color("list.activeSelectionBackground"), self.theme.color("list.activeSelectionForeground")),
+            false => (self.color("list.inactiveSelectionBackground"), self.theme.color("list.inactiveSelectionForeground")),
+        };
+        let focus_outline = self.theme.color("list.focusOutline").or(self.theme.color("focusBorder")).filter(|_| tree_focused);
+        let edited = self.explorer.edit.as_ref().map(|edit| edit.renamed.clone());
+        // listWidget.ts: the drop target folder and the rows below it take list.dropBackground.
+        let drop_target = self.explorer.drop_target.as_ref().filter(|_| cx.has_active_drag());
+        let drop_background = self.color("list.dropBackground");
         // listWidget.ts: a selected row gets a 1px dotted listSelectionOutline (activeContrastBorder) inside it.
         let selection_outline = self.theme.color("contrastActiveBorder");
-        let selected = tree.selected.clone();
         let folder_name = tree.workspace.label();
         let rows = tree.rows().into_iter().enumerate().map(|(index, row)| {
             let twistie = match (row.is_dir, row.expanded) {
@@ -327,11 +342,27 @@ impl Workbench {
             };
             let path = row.path;
             let is_dir = row.is_dir;
-            let name = row.name;
+            let is_edited = edited.as_ref().is_some_and(|renamed| match renamed {
+                Some(renamed) => *renamed == path,
+                None => row.is_new,
+            });
+            let name = match is_edited {
+                true => self.explorer_input_box(label_line, edit_focused, cx).into_any_element(),
+                false => row.name.into_any_element(),
+            };
+            let is_selected = !row.is_new && tree.selected.contains(&path);
+            let is_focused = !row.is_new && tree.focused.as_ref() == Some(&path);
+            let is_cut = tree.is_cut(&path);
+            let is_drop_target = !row.is_new && drop_target.is_some_and(|target| path.starts_with(target));
+            let drag = self.explorer_drag(&path).filter(|_| !is_edited);
             // views.css align-icons-and-twisties: with file icons and no folder icons a file's empty twistie collapses
             // to its 8px indent and the icon takes its place, so file and folder names line up.
+            let icon_path = match row.is_new {
+                true => PathBuf::from(&self.explorer.edit.as_ref().map(|edit| edit.input.value.clone()).unwrap_or_default()),
+                false => path.clone(),
+            };
             let file_icon = self.file_icons.as_ref().filter(|_| !is_dir).and_then(|icons| {
-                icons.file_icon(&path, self.languages.language_of(&path, ""), self.theme.kind, 13., label_line, foreground)
+                icons.file_icon(&icon_path, self.languages.language_of(&icon_path, ""), self.theme.kind, 13., label_line, foreground)
             });
             let indent = 8. * (row.depth - 1) as f32;
             div()
@@ -344,7 +375,7 @@ impl Workbench {
                 .items_center()
                 .rounded(px(4.))
                 .map(|row| match file_icon {
-                    Some(icon) => row.pl(px(8. + indent)).child(icon.self_start()).child(div().self_start().ml(px(6.)).line_height(px(label_line)).child(name)),
+                    Some(icon) => row.pl(px(8. + indent)).child(icon.self_start()).child(div().self_start().flex_1().ml(px(6.)).line_height(px(label_line)).child(name)),
                     // monaco-tl-twistie: 3px row inset, 8px base indent plus 8px per level, a 16px icon, 6px before the label.
                     None => row
                         .pl(px(11. + indent))
@@ -352,22 +383,52 @@ impl Workbench {
                             Some(chevron) => self.icon(chevron, 16., 16., foreground),
                             None => div().size(px(16.)).flex_none(),
                         })
-                        .child(div().self_start().ml(px(3.)).line_height(px(label_line)).child(name)),
+                        .child(div().self_start().flex_1().ml(px(3.)).line_height(px(label_line)).child(name)),
                 })
-                .when(selected.as_ref() == Some(&path), |row| {
+                // explorerviewlet.css: .explorer-item.cut is at half opacity; while a name is edited the other rows are at 0.3.
+                .when(is_cut, |row| row.opacity(0.5))
+                .when(edited.is_some() && !is_edited, |row| row.opacity(0.3))
+                .when(is_selected && !is_edited, |row| {
                     // shortcut: dashed, GPUI has no dotted border.
                     // An overlay, since a border on the row would push its content 1px like a CSS border, not an outline.
                     let outline = selection_outline.map(|color| div().absolute().inset_0().rounded(px(4.)).border_1().border_dashed().border_color(color));
-                    row.relative().bg(selection).children(outline)
+                    row.relative().bg(selection).when_some(selection_foreground, |row, color| row.text_color(color)).children(outline)
                 })
-                .on_click(cx.listener(move |workbench, event: &ClickEvent, window, cx| {
-                    if is_dir {
-                        workbench.folder.as_mut().expect("rows exist only with a folder").toggle(&path);
+                .when(is_drop_target, |row| row.bg(drop_background))
+                .when_some(focus_outline.filter(|_| is_focused && !is_edited), |row, color| {
+                    row.relative().child(div().absolute().inset_0().rounded(px(4.)).border_1().border_color(color))
+                })
+                .when_some(drag, |row, drag| row.on_drag(drag, |drag, _, _, cx| cx.new(|_| drag.clone())))
+                .when(!row.is_new, |row| {
+                    let over = path.clone();
+                    row.on_drag_move(cx.listener(move |workbench, event: &DragMoveEvent<DraggedItems>, window, cx| {
+                        if event.bounds.contains(&event.event.position) {
+                            let items = event.drag(cx).clone();
+                            workbench.explorer_drag_over(&over, &items, window, cx);
+                        }
+                    }))
+                    .on_drop(cx.listener(|workbench, items: &DraggedItems, window, cx| {
+                        cx.stop_propagation();
+                        workbench.explorer_drop(items, window, cx);
+                    }))
+                })
+                .when(!is_edited, |row| {
+                    row.on_click(cx.listener(move |workbench, event: &ClickEvent, window, cx| {
+                        let modifiers = event.modifiers();
+                        window.focus(&workbench.explorer.focus.clone(), cx);
+                        let tree = workbench.folder.as_mut().expect("rows exist only with a folder");
+                        tree.click_select(&path, modifiers.platform, modifiers.shift);
                         cx.notify();
-                    } else {
-                        workbench.open_file(path.clone(), event.click_count() == 2, window, cx);
-                    }
-                }))
+                        if modifiers.platform || modifiers.shift {
+                            return;
+                        }
+                        if is_dir {
+                            tree.toggle(&path);
+                        } else {
+                            workbench.open_file(path.clone(), event.click_count() == 2, window, cx);
+                        }
+                    }))
+                })
         });
         div()
             .w(px(256.))
@@ -383,7 +444,7 @@ impl Workbench {
             .border_color(self.color("surface.border"))
             .text_color(foreground)
             .child(title)
-            .child(div().flex_1().overflow_hidden().flex().flex_col().child(self.section_header(&folder_name, true, false)).children(rows))
+            .child(div().flex_1().overflow_hidden().flex().flex_col().child(self.section_header(&folder_name, true, false)).child(div().id("explorer-tree").track_focus(&self.explorer.focus).flex().flex_col().children(rows)))
             .child(self.section_header("Outline", false, true))
             .child(self.section_header("Timeline", false, true))
             // The pane view is laid out 5px shorter than the side bar content.

@@ -67,3 +67,14 @@ Same `MOCHA_GREP` and setup as the multi-root section, on the Studio, the workin
 | api-workspace | 4 | 0 | 0 | 0 | exit 0 after 1s |
 
 `workspace events` passes 6/10: onWillCreate/onDidCreate, onWillDelete/onDidDelete and its three "make changes" cases, onWillRename/onDidRename. The 4 failing ones open or edit text documents (`openTextDocument`, text edits from participants), milestone 8. New passes in `workspace`: applyEdit should fail when renaming deleted resource, rename & ignoreIfExists, delete & ignoreIfNotExists, #111867 1/3, 2/3 (fake-fs provider) and 3/3, creating binary files, #42667. "applyEdit should fail when editing deleted/renamed from resource" pass because any text edit fails today, not because of the version check. The other applyEdit tests need text documents.
+
+## M12 Explorer file operations
+
+Same `MOCHA_GREP` and setup as the bulk file edits section, on the Studio, the working tree of the Explorer file operations commit. Baseline: the bulk file edits section.
+
+| suite | passing | pending | failing | not reached | run |
+|-------|---------|---------|---------|-------------|-----|
+| api-folder | 74 | 2 | 62 | 264 | exit 1 after 8s |
+| api-workspace | 4 | 0 | 0 | 0 | exit 0 after 0s |
+
+Unchanged, as expected: the Explorer operations add no extension API.

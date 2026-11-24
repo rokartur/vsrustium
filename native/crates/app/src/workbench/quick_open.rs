@@ -291,10 +291,6 @@ impl Workbench {
         self.host.send_selection(editor, "code.navigation");
         self.editor_scroll.scroll_to_item(editor.selection.anchor.line, ScrollStrategy::Center);
     }
-
-    fn setting(&self, key: &str) -> Value {
-        self.settings.lock().unwrap().get_value(Some(key), &Overrides::default()).unwrap_or(Value::Null)
-    }
 }
 
 #[cfg(test)]

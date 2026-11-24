@@ -193,3 +193,19 @@ impl FileSystem for Disk {
         copy_entry(from, to)
     }
 }
+
+/// The working copy file service with no participants and the setting defaults, for operations that run
+/// without an extension host.
+impl crate::operations::WorkingCopyFiles for Disk {
+    fn participate(&mut self, _: crate::operations::FileOperation, _: &[crate::operations::SourceTarget], _: crate::operations::UndoInfo) {}
+
+    fn did_run(&mut self, _: crate::operations::FileOperation, _: &[crate::operations::SourceTarget]) {}
+
+    fn enable_trash(&mut self) -> bool {
+        true
+    }
+
+    fn empty_file(&mut self, _: &Resource) -> Vec<u8> {
+        Vec::new()
+    }
+}

@@ -17,7 +17,22 @@ const EXCLUDED_NAMES: [&str; 6] = [".git", ".svn", ".hg", ".jj", ".DS_Store", "T
 pub struct FileTree {
     pub workspace: Workspace,
     expanded: HashSet<PathBuf>,
-    pub selected: Option<PathBuf>,
+    /// The list's focused row, its selection, and where a Shift range starts.
+    pub focused: Option<PathBuf>,
+    pub selected: Vec<PathBuf>,
+    anchor: Option<PathBuf>,
+    /// `IExplorerService.setToCopy`: the items copied or cut, and whether a paste moves them.
+    /// shortcut: kept in the window, where desktop writes the OS clipboard (`writeResources`); another window cannot paste them.
+    pub clipboard: Vec<PathBuf>,
+    pub cut: bool,
+    /// `NewExplorerItem`: the row of the name being typed for a new file or folder, under `parent`.
+    pub new_item: Option<NewItem>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct NewItem {
+    pub parent: PathBuf,
+    pub is_dir: bool,
 }
 
 #[derive(Debug, PartialEq)]
@@ -28,6 +43,8 @@ pub struct Row {
     pub depth: usize,
     pub is_dir: bool,
     pub expanded: bool,
+    /// The new item's row: no name yet, `path` is its parent.
+    pub is_new: bool,
 }
 
 impl FileTree {
@@ -38,7 +55,7 @@ impl FileTree {
         if workspace.file.is_some() {
             expanded.extend(workspace.folders.iter().take(5).map(|folder| folder.path.clone()));
         }
-        Self { workspace, expanded, selected: None }
+        Self { workspace, expanded, focused: None, selected: Vec::new(), anchor: None, clipboard: Vec::new(), cut: false, new_item: None }
     }
 
     /// The tree shows the folders as rows, as for any WorkbenchState but FOLDER.
@@ -55,7 +72,74 @@ impl FileTree {
         if self.shows_roots() && path != root {
             self.expanded.insert(root);
         }
-        self.selected = Some(path.to_path_buf());
+        self.set_selection(path);
+    }
+
+    /// A plain click: the row alone is selected and focused.
+    pub fn set_selection(&mut self, path: &Path) {
+        self.focused = Some(path.to_path_buf());
+        self.selected = vec![path.to_path_buf()];
+        self.anchor = Some(path.to_path_buf());
+    }
+
+    /// listWidget.ts `MouseController`: Cmd+click toggles the row in the selection, Shift+click selects the
+    /// visible rows from the anchor to it.
+    pub fn click_select(&mut self, path: &Path, toggle: bool, range: bool) {
+        let rows: Vec<PathBuf> = self.rows().into_iter().map(|row| row.path).collect();
+        let index = |path: &Path| rows.iter().position(|row| row == path);
+        match (range, self.anchor.as_deref().and_then(index), index(path)) {
+            (true, Some(anchor), Some(clicked)) => {
+                self.selected = rows[anchor.min(clicked)..=anchor.max(clicked)].to_vec();
+                self.focused = Some(path.to_path_buf());
+            }
+            _ if toggle => {
+                match self.selected.iter().position(|selected| selected == path) {
+                    Some(position) => {
+                        self.selected.remove(position);
+                    }
+                    None => self.selected.push(path.to_path_buf()),
+                }
+                self.focused = Some(path.to_path_buf());
+                self.anchor = Some(path.to_path_buf());
+            }
+            _ => self.set_selection(path),
+        }
+    }
+
+    /// `ExplorerService.getContext`: the selection when it holds the focused row and `respect_multi_selection`,
+    /// else the focused row.
+    pub fn context(&self, respect_multi_selection: bool) -> Vec<PathBuf> {
+        let Some(focused) = &self.focused else { return Vec::new() };
+        match respect_multi_selection && self.selected.contains(focused) {
+            true => self.selected.clone(),
+            false => vec![focused.clone()],
+        }
+    }
+
+    /// A workspace folder: the tree's root, a row only in a workspace.
+    pub fn is_root(&self, path: &Path) -> bool {
+        self.workspace.folders.iter().any(|folder| folder.path == path)
+    }
+
+    /// Where a new or pasted item goes for the item it was invoked on: the folder itself, else its parent.
+    pub fn folder_for(&self, path: &Path) -> PathBuf {
+        match path.is_dir() {
+            true => path.to_path_buf(),
+            false => path.parent().expect("an Explorer item has a parent").to_path_buf(),
+        }
+    }
+
+    pub fn expand(&mut self, folder: &Path) {
+        self.expanded.insert(folder.to_path_buf());
+    }
+
+    /// `ExplorerService.isCut`.
+    pub fn is_expanded(&self, folder: &Path) -> bool {
+        self.expanded.contains(folder)
+    }
+
+    pub fn is_cut(&self, path: &Path) -> bool {
+        self.cut && self.clipboard.iter().any(|cut| cut == path)
     }
 
     pub fn toggle(&mut self, folder: &Path) {
@@ -73,7 +157,7 @@ impl FileTree {
         }
         for folder in &self.workspace.folders {
             let expanded = self.expanded.contains(&folder.path);
-            rows.push(Row { path: folder.path.clone(), name: folder.name.clone(), depth: 1, is_dir: true, expanded });
+            rows.push(Row { path: folder.path.clone(), name: folder.name.clone(), depth: 1, is_dir: true, expanded, is_new: false });
             if expanded {
                 self.push_children(&folder.path, 2, &mut rows);
             }
@@ -81,13 +165,26 @@ impl FileTree {
         rows
     }
 
+    /// The new item has an empty name, so `FileSorter` puts it first among the folders or the files.
     fn push_children(&self, folder: &Path, depth: usize, rows: &mut Vec<Row>) {
+        let new_item = self.new_item.as_ref().filter(|item| item.parent == folder);
+        let new_row = |is_dir| Row { path: folder.to_path_buf(), name: String::new(), depth, is_dir, expanded: false, is_new: true };
+        if new_item.is_some_and(|item| item.is_dir) {
+            rows.push(new_row(true));
+        }
+        let mut new_file = new_item.filter(|item| !item.is_dir);
         for (path, name, is_dir) in sorted_children(folder) {
+            if !is_dir && new_file.take().is_some() {
+                rows.push(new_row(false));
+            }
             let expanded = is_dir && self.expanded.contains(&path);
-            rows.push(Row { path: path.clone(), name, depth, is_dir, expanded });
+            rows.push(Row { path: path.clone(), name, depth, is_dir, expanded, is_new: false });
             if expanded {
                 self.push_children(&path, depth + 1, rows);
             }
+        }
+        if new_file.is_some() {
+            rows.push(new_row(false));
         }
     }
 }
@@ -145,12 +242,28 @@ mod tests {
         assert_eq!(names(&tree), [row("Docs", 1), row("src", 1), row("main.ts", 2), row("notes.txt", 1), row("README.md", 1)]);
         assert!(tree.rows()[1].expanded);
 
+        tree.new_item = Some(NewItem { parent: root.join("src"), is_dir: false });
+        let new_row = tree.rows().into_iter().position(|row| row.is_new);
+        assert_eq!(new_row, Some(2), "a new file goes first among the files");
+        tree.new_item = Some(NewItem { parent: root.clone(), is_dir: true });
+        assert_eq!(names(&tree)[0], row("", 1), "a new folder goes first among the folders");
+        tree.new_item = None;
+
         tree.toggle(&root.join("src"));
         assert_eq!(names(&tree).len(), 4);
 
         tree.reveal(&root.join("src/main.ts"));
         assert_eq!(names(&tree).len(), 5);
-        assert_eq!(tree.selected, Some(root.join("src/main.ts")));
+        assert_eq!(tree.selected, [root.join("src/main.ts")]);
+
+        tree.click_select(&root.join("Docs"), false, true);
+        assert_eq!(tree.selected.len(), 3, "Shift selects from the anchor");
+        tree.click_select(&root.join("src"), true, false);
+        assert_eq!(tree.selected, [root.join("Docs"), root.join("src/main.ts")], "Cmd toggles a row");
+        assert_eq!(tree.context(true), [root.join("src")], "the focused row outside the selection is the context");
+        tree.click_select(&root.join("Docs"), true, false);
+        tree.click_select(&root.join("Docs"), true, false);
+        assert_eq!(tree.context(true), [root.join("src/main.ts"), root.join("Docs")]);
         std::fs::remove_dir_all(root).unwrap();
     }
 

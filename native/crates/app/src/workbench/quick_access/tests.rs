@@ -54,7 +54,7 @@ fn command_palette_runs_an_extension_command_and_remembers_it(cx: &mut TestAppCo
     cx.simulate_keystrokes("shift-cmd-p");
     let (value, placeholder) = workbench.read_with(cx, |workbench, _| {
         let input = workbench.quick_inputs.current().unwrap();
-        (input.value.clone(), input.placeholder.clone())
+        (input.input_box.value.clone(), input.placeholder.clone())
     });
     assert_eq!(value, ">");
     assert_eq!(placeholder.as_deref(), Some("Type the name of a command to run."));

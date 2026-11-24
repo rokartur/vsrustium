@@ -10,10 +10,12 @@ mod contextkey;
 mod editor;
 mod editor_history;
 mod explorer;
+mod file_actions;
 mod file_icons;
 mod filters;
 mod fuzzy_scorer;
 mod host_sync;
+mod input_box;
 mod keybindings;
 mod languages;
 mod main_thread_commands;
@@ -22,6 +24,7 @@ mod quick_input;
 mod syntax;
 mod tf_idf;
 mod theme;
+mod undo_redo;
 mod workbench;
 
 use std::path::PathBuf;
@@ -249,6 +252,10 @@ fn run_extension_host(
     let mut waiting = Vec::new();
     loop {
         for message in workbench_messages.try_iter() {
+            if let Some(work) = message.files {
+                work.run(&mut exthost::main_thread_files::Providers { session: &mut session });
+                continue;
+            }
             let req = session.notify(message.proxy, message.method, message.args);
             if let Some(reply) = message.reply {
                 waiting.push((req, reply));
@@ -312,7 +319,7 @@ fn settings_file_icons(extensions: &[ScannedExtension], settings: &Settings) -> 
 
 #[cfg(test)]
 fn default_settings() -> Arc<Mutex<Settings>> {
-    Arc::new(Mutex::new(Settings::load(Registry::core(), PathBuf::from("/nonexistent/User"), None)))
+    Arc::new(Mutex::new(Settings::load(Registry::with_extensions(&[]), PathBuf::from("/nonexistent/User"), None)))
 }
 
 #[test]

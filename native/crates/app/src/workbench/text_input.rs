@@ -61,8 +61,8 @@ impl Workbench {
 /// (`bounds_for_range`) are not supported; the candidate window opens at the system's default spot.
 impl EntityInputHandler for Workbench {
     fn text_for_range(&mut self, range: Range<usize>, adjusted_range: &mut Option<Range<usize>>, window: &mut Window, _: &mut Context<Self>) -> Option<String> {
-        if self.quick_inputs.focus.is_focused(window) {
-            return self.quick_input_text_for_range(range, adjusted_range);
+        if let Some(id) = self.focused_input(window) {
+            return self.input_text_for_range(id, range, adjusted_range);
         }
         let editor = self.editors.active()?;
         let units: Vec<u16> = editor.document.lines[editor.selection.head.line].encode_utf16().collect();
@@ -72,8 +72,8 @@ impl EntityInputHandler for Workbench {
     }
 
     fn selected_text_range(&mut self, _: bool, window: &mut Window, _: &mut Context<Self>) -> Option<UTF16Selection> {
-        if self.quick_inputs.focus.is_focused(window) {
-            return self.quick_input_selected_range();
+        if let Some(id) = self.focused_input(window) {
+            return self.input_selected_range(id);
         }
         let editor = self.editors.active()?;
         let selection = editor.selection;
@@ -84,23 +84,23 @@ impl EntityInputHandler for Workbench {
     }
 
     fn marked_text_range(&self, window: &mut Window, _: &mut Context<Self>) -> Option<Range<usize>> {
-        if self.quick_inputs.focus.is_focused(window) {
-            return self.quick_inputs.marked.clone();
+        if let Some(id) = self.focused_input(window) {
+            return self.input_view(id).marked.clone();
         }
         self.marked_text.clone()
     }
 
     fn unmark_text(&mut self, window: &mut Window, _: &mut Context<Self>) {
-        if self.quick_inputs.focus.is_focused(window) {
-            self.quick_inputs.marked = None;
+        if let Some(id) = self.focused_input(window) {
+            self.input_view_mut(id).marked = None;
             return;
         }
         self.marked_text = None;
     }
 
     fn replace_text_in_range(&mut self, range: Option<Range<usize>>, text: &str, window: &mut Window, cx: &mut Context<Self>) {
-        if self.quick_inputs.focus.is_focused(window) {
-            return self.quick_input_replace(range, text, false, window, cx);
+        if let Some(id) = self.focused_input(window) {
+            return self.input_replace(id, range, text, false, window, cx);
         }
         let range = range.or(self.marked_text.take()).map(|range| self.input_range(range));
         let editor = self.editors.active_mut().expect("input goes to the active editor");
@@ -114,8 +114,8 @@ impl EntityInputHandler for Workbench {
     /// IME composition: the marked text replaces the previous one and stays marked.
     /// shortcut: the caret goes to the end of the marked text, whatever selection the IME asks for.
     fn replace_and_mark_text_in_range(&mut self, range: Option<Range<usize>>, new_text: &str, _: Option<Range<usize>>, window: &mut Window, cx: &mut Context<Self>) {
-        if self.quick_inputs.focus.is_focused(window) {
-            return self.quick_input_replace(range, new_text, true, window, cx);
+        if let Some(id) = self.focused_input(window) {
+            return self.input_replace(id, range, new_text, true, window, cx);
         }
         let range = range.or(self.marked_text.clone());
         let editor = self.editors.active().expect("input goes to the active editor");
