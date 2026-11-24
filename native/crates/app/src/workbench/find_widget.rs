@@ -40,6 +40,8 @@ const REPLACE_AREA_HEIGHT: f32 = 62.;
 const SLIDE: Duration = Duration::from_millis(200);
 /// `--vscode-shadow-lg` (style.css) blurs 12px; CSS takes sigma as half the blur, GPUI's blur_radius is sigma.
 const SHADOW_BLUR: f32 = 6.;
+/// `workbench.sash.hoverDelay` default.
+const SASH_HOVER_DELAY: Duration = Duration::from_millis(300);
 const BUTTON_IDS: [&str; 7] = ["find-replace-toggle", "find-previous", "find-next", "find-selection", "find-close", "replace", "replace-all"];
 
 /// A find match's overview ruler mark, also drawn in the minimap unless past 1000 matches.
@@ -65,8 +67,11 @@ pub struct FindWidget {
     resized_width: Option<f32>,
     /// The widget width and pointer x when a sash drag started.
     sash_drag: Option<(f32, f32)>,
+    /// The pointer over the sash, shown as hovered once `workbench.sash.hoverDelay` passed.
+    sash_hover: Option<Task<()>>,
+    sash_hovered: bool,
     /// When the widget last showed or hid, for its slide.
-    toggled: Option<Instant>,
+    pub(super) toggled: Option<Instant>,
     /// The widget's left edge as last drawn, from where the text's column 0 is.
     widget_left: Cell<f32>,
     /// The match Go to Match draws as a range highlight while its input is open (`addDecorations`).
@@ -92,6 +97,8 @@ impl FindWidget {
             model_id: None,
             resized_width: None,
             sash_drag: None,
+            sash_hover: None,
+            sash_hovered: false,
             toggled: None,
             widget_left: Cell::new(f32::MAX),
             go_to_match_highlight: None,
@@ -724,6 +731,7 @@ impl Workbench {
         Some(
             div()
                 .id("find-widget")
+                .debug_selector(|| "find-widget".into())
                 .absolute()
                 .left(px(left))
                 .top(px(top))
@@ -743,6 +751,21 @@ impl Workbench {
                 .border_color(self.color("widget.border"))
                 .rounded(px(8.))
                 .shadow(vec![BoxShadow { color: gpui::rgba(0x00000024).into(), offset: point(px(0.), px(0.)), blur_radius: px(SHADOW_BLUR), spread_radius: px(0.), inset: false }])
+                // A mouse down no focusable child took (no default prevented) leaves the focus on the document body;
+                // wordHighlighter.ts `onDidBlurEditorWidget` stops the highlights without a focused code editor.
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|workbench, _, window, cx| {
+                        if window.default_prevented() {
+                            return;
+                        }
+                        window.blur(cx);
+                        if let Some(editor) = workbench.editors.active_mut() {
+                            editor.highlights.clear();
+                        }
+                        cx.notify();
+                    }),
+                )
                 .child(self.replace_toggle(replace, height, cx))
                 .child(find_part)
                 .children(replace_part)
@@ -915,6 +938,10 @@ impl Workbench {
     fn find_sash(&self, width: f32, height: f32, max_width: f32, color: Rgba, cx: &mut Context<Self>) -> Stateful<Div> {
         let workbench = cx.entity();
         let dragging = self.find.sash_drag.is_some();
+        // sash.css `::before`: 4px of `sash.hoverBorder` centered on the 2px sash, its left pixel and the ends in
+        // the 8px corners clipped by the widget (GPUI clips to the rectangle).
+        let hover_border = self.theme.color("sash.hoverBorder").unwrap_or(self.color("focusBorder"));
+        let highlight = div().absolute().left_0().top(px(3.)).w(px(3.)).h(px(height - 8.)).bg(hover_border);
         div()
             .id("find-sash")
             .absolute()
@@ -924,6 +951,20 @@ impl Workbench {
             .h(px(height - 2.))
             .bg(color)
             .cursor_col_resize()
+            .when(dragging || self.find.sash_hovered, |sash| sash.child(highlight))
+            .on_hover(cx.listener(|workbench, hovered: &bool, window, cx| {
+                workbench.find.sash_hovered = false;
+                workbench.find.sash_hover = hovered.then(|| {
+                    cx.spawn_in(window, async move |workbench, cx| {
+                        cx.background_executor().timer(SASH_HOVER_DELAY).await;
+                        let _ = workbench.update(cx, |workbench, cx| {
+                            workbench.find.sash_hovered = true;
+                            cx.notify();
+                        });
+                    })
+                });
+                cx.notify();
+            }))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |workbench, event: &MouseDownEvent, _, cx| {

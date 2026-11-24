@@ -880,6 +880,19 @@ mod tests {
         workbench.update_in(cx, |workbench, window, cx| window.focus(&workbench.find.button_focus["find-next"].clone(), cx));
         cx.simulate_keystrokes("enter");
         assert_eq!(position(cx), before + 1);
+
+        // A click on the widget's background, between the sash and the replace toggle, blurs and stops the highlights.
+        workbench.update(cx, |workbench, cx| {
+            // The slide in runs on the wall clock.
+            workbench.find.toggled = None;
+            workbench.editors.active_mut().unwrap().highlights = vec![(0, 0..1)];
+            cx.notify();
+        });
+        cx.run_until_parked();
+        let widget = cx.debug_bounds("find-widget").unwrap();
+        cx.simulate_click(widget.origin + point(px(3.5), px(16.)), Modifiers::none());
+        let blurred = workbench.update_in(cx, |workbench, window, cx| (window.focused(cx).is_none(), workbench.editors.active().unwrap().highlights.is_empty()));
+        assert_eq!(blurred, (true, true));
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
