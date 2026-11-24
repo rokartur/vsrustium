@@ -267,6 +267,7 @@ impl Workbench {
         // Disabled codicon actions take disabledForeground (actionbar.css .disabled .action-label:not(.icon)).
         let disabled = self.color("disabledForeground");
         let command_center = div()
+            .id("command-center-center")
             .flex()
             .items_center()
             // .command-center-center is 38vw wide plus its border (titlebarpart.css).
@@ -280,10 +281,17 @@ impl Workbench {
             .bg(self.color("commandCenter.background"))
             .border_color(self.color("commandCenter.border"))
             .text_color(self.color("commandCenter.foreground"))
+            .hover(|center| center.bg(self.color("commandCenter.activeBackground")).border_color(self.color("commandCenter.activeBorder")).text_color(self.color("commandCenter.activeForeground")))
             .text_size(px(12.))
             .child(self.workspace().map_or("Search".into(), Workspace::label))
             .child(self.hover_target("command-center", HoverContent::Text(self.command_center_tooltip()), HoverOptions::instant()))
-            .on_mouse_down(MouseButton::Right, cx.listener(show_command_center_context_menu));
+            .on_mouse_down(MouseButton::Right, cx.listener(show_command_center_context_menu))
+            // A Cmd+click belongs to the title's menu, which upstream takes in the capture phase.
+            .on_click(cx.listener(|workbench, event: &ClickEvent, window, cx| {
+                if !event.modifiers().platform {
+                    workbench.execute_command("workbench.action.quickOpenWithModes", Vec::new(), window, cx);
+                }
+            }));
         let title = div().id("window-title").flex().items_center().map(|title| match command_center_visible {
             true => title
                 .when(contextkey::truthy(Some(&self.setting("workbench.navigationControl.enabled"))), |title| {

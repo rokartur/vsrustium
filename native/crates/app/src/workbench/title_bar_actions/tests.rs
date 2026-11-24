@@ -70,6 +70,18 @@ fn the_title_bar_menus_toggle_the_command_center_and_the_layout_controls(cx: &mu
     cx.simulate_keystrokes("escape");
     assert!(workbench.update_in(cx, |workbench, window, _| workbench.editor_focus.is_focused(window)), "focus goes back to the editor");
 
+    // A click on the command center shows Quick Open with the help picks above the history.
+    cx.simulate_click(title, Modifiers::default());
+    let picker = workbench.read_with(cx, |workbench, _| {
+        let input = workbench.quick_inputs.current().expect("Quick Open");
+        let rows = input.order.iter().map(|row| &input.rows[*row]);
+        (input.input_box.value.clone(), rows.map(|row| format!("{}|{}|{:?}", row.item.label, row.item.description.clone().unwrap_or_default(), row.item.keybinding)).collect::<Vec<_>>())
+    });
+    assert_eq!(picker, (String::new(), vec![r#"Go to File||[["⌘", "P"]]"#.to_string(), r#"Show and Run Commands|>|[["⇧", "⌘", "P"]]"#.into(), format!("notes.txt|{}|[]", dir.display())]));
+    cx.simulate_keystrokes("down enter");
+    assert_eq!(workbench.read_with(cx, |workbench, _| workbench.quick_inputs.current().unwrap().input_box.value.clone()), ">");
+    cx.simulate_keystrokes("escape");
+
     // The command center's own toolbar menu: its Configure Keybinding, then the bar's toggles.
     right_click(title, cx);
     assert_eq!(menu_titles(&workbench, cx), ["Configure Keybinding", "---", "Command Center [x]", "Navigation Controls [x]", "Layout Controls [x]"]);
@@ -77,8 +89,8 @@ fn the_title_bar_menus_toggle_the_command_center_and_the_layout_controls(cx: &mu
 
     // Cmd+click over the title shows the title's menu, which leads with the file's path, from the file up to `/`.
     let cmd = Modifiers { platform: true, ..Modifiers::default() };
-    cx.simulate_event(MouseDownEvent { button: MouseButton::Left, position: title, modifiers: cmd, click_count: 1, first_mouse: false });
-    cx.run_until_parked();
+    cx.simulate_click(title, cmd);
+    assert!(workbench.read_with(cx, |workbench, _| workbench.quick_inputs.current().is_none()), "the title's menu, not Quick Open");
     let titles = menu_titles(&workbench, cx);
     let path_items = titles.iter().position(|title| title == "---").unwrap();
     assert_eq!(titles[0], "notes.txt");
