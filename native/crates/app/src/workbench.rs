@@ -194,6 +194,7 @@ impl Workbench {
             .items_center()
             // .command-center-center is 38vw wide plus its border (titlebarpart.css).
             .w(px(viewport_width * 0.38 + 2.))
+            .cursor_pointer()
             .h(px(24.))
             .pl(px(8.))
             .border_1()
@@ -223,7 +224,7 @@ impl Workbench {
             .right(px(12.))
             .flex()
             .gap(px(4.))
-            .children(layout_actions.map(|name| self.icon(name, 22., 16., foreground)));
+            .children(layout_actions.map(|name| self.icon(name, 22., 16., foreground).cursor_pointer()));
         div().relative().h(px(35.)).flex_none().child(center).child(right)
     }
 
@@ -243,8 +244,8 @@ impl Workbench {
             .when(self.folder.is_none(), |bar| bar.rounded(px(8.)))
             .bg(self.color("activityBar.background"))
             .border_color(self.color("surface.border"))
-            .child(div().flex().flex_col().gap(px(8.)).child(explorer).children(views.map(|name| self.icon(name, 36., 24., inactive))))
-            .child(self.icon("settings-gear", 36., 24., inactive))
+            .child(div().flex().flex_col().gap(px(8.)).child(explorer.cursor_pointer()).children(views.map(|name| self.icon(name, 36., 24., inactive).cursor_pointer())))
+            .child(self.icon("settings-gear", 36., 24., inactive).cursor_pointer())
     }
 
     /// The checked view: a 32px rounded indicator behind the icon (activityaction.css); High Contrast
@@ -273,7 +274,7 @@ impl Workbench {
             .when_some(self.theme.color("sideBarTitle.border"), |title, border| title.border_b_1().border_color(border))
             // The h2 keeps its 32px line under the HC border-bottom, so it is laid out from the top, not centered.
             .child(div().self_start().pl(px(8.)).line_height(px(32.)).text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).text_color(self.foreground_or("sideBarTitle.foreground")).child("Explorer"))
-            .child(self.icon("ellipsis", 22., 16., foreground));
+            .child(self.icon("ellipsis", 22., 16., foreground).cursor_pointer());
         // explorerviewlet.css: in high contrast an explorer item has a 20px line from the row top, 1px above center.
         let label_line = if self.theme.kind.is_high_contrast() { 20. } else { 22. };
         // The tree is not focused once the editor has focus, so the selection takes the inactive colors.
@@ -389,8 +390,10 @@ impl Workbench {
             Some(_) => (self.color("statusBar.foreground"), self.color("statusBar.background")),
             None => (self.color("statusBar.noFolderForeground"), self.color("statusBar.noFolderBackground")),
         };
+        // statusbarpart.css: pointer only on items with a command; status.message has none.
         let problems = div()
             .h_full()
+            .cursor_pointer()
             .ml(px(3.))
             .px(px(5.))
             .flex()
@@ -411,8 +414,8 @@ impl Workbench {
             .text_size(px(12.))
             // statusbarpart.css: font-variant-numeric: tabular-nums.
             .font_features(FontFeatures(Arc::new(vec![("tnum".into(), 1)])))
-            .child(div().h(px(24.)).flex().child(self.icon("remote", 28., 16., foreground).h_full()).child(problems).children(self.status_bar_message()))
-            .child(div().h(px(24.)).flex().children(self.editor_status_items(foreground)).child(self.icon("bell", 28., 16., foreground).h_full()))
+            .child(div().h(px(24.)).flex().child(self.icon("remote", 28., 16., foreground).h_full().cursor_pointer()).child(problems).children(self.status_bar_message()))
+            .child(div().h(px(24.)).flex().children(self.editor_status_items(foreground)).child(self.icon("bell", 28., 16., foreground).h_full().cursor_pointer()))
     }
 
     /// The `status.message` entry: multi-chord mode, else the latest status message (notificationsStatus.ts).

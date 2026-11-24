@@ -570,6 +570,7 @@ impl Workbench {
         };
         element
             .id(("quick-input-button", handle as u64))
+            .cursor_pointer()
             .rounded(px(5.))
             .when(toggle == Some(true), |button| {
                 button.bg(self.color("inputOption.activeBackground")).border_1().border_color(self.color("inputOption.activeBorder"))
@@ -602,6 +603,7 @@ impl Workbench {
                 header.child(
                     self.checkbox(all_checked, checked > 0 && !all_checked)
                         .id("quick-input-check-all")
+                        .cursor_pointer()
                         .mt(px(4.))
                         .on_click(cx.listener(|workbench, _: &ClickEvent, window, cx| {
                             workbench.with_current_quick_input(window, cx, QuickInput::toggle_all);
@@ -614,6 +616,7 @@ impl Workbench {
                 header.child(
                     div()
                         .id("quick-input-ok")
+                        .cursor_pointer()
                         .ml(px(6.))
                         .h(px(26.))
                         .px(px(10.))
@@ -658,6 +661,7 @@ impl Workbench {
         });
         div()
             .flex_1()
+            .cursor_text()
             // 1px borders, 4px padding and the 15px normal line height of 13px text, measured on 1.147.
             .h(px(25.))
             .flex()
@@ -886,6 +890,7 @@ impl Workbench {
                     self.checkbox(row.checked, false)
                         .id(("quick-input-row-check", row_index))
                         .mt(px(2.))
+                        .when(row.item.pickable, |checkbox| checkbox.cursor_pointer())
                         .when(!row.item.pickable, |checkbox| checkbox.opacity(0.4)),
                 )
             })
@@ -912,6 +917,7 @@ impl Workbench {
         div()
             .id(("quick-input-row", row_index))
             .h(px(row_height(row)))
+            .cursor_pointer()
             .rounded(px(3.))
             .when_some(background, |row, background| row.bg(background))
             .when_some(foreground, |row, color| row.text_color(color))
