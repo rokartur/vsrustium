@@ -28,6 +28,8 @@ const TITLE_BAR_HEIGHT: f32 = 35.;
 const ROW_HEIGHT: f32 = 22.;
 const DETAIL_ROW_HEIGHT: f32 = 44.;
 const RADIUS: f32 = 8.;
+/// quickInputController.ts, in StorageScope.APPLICATION.
+const VIEWSTATE_STORAGE_KEY: &str = "workbench.quickInput.viewState";
 
 pub struct QuickInputs {
     inputs: Vec<(QuickInput, Owner)>,
@@ -57,8 +59,7 @@ pub struct QuickInputs {
     /// The shaped input text, its window x, and the scroll that keeps the caret visible.
     text: Rc<RefCell<InputText>>,
     /// `QuickInputViewState`: the dragged position, top and center as fractions of the window.
-    // shortcut: kept for the session, upstream stores workbench.quickInput.viewState; storage comes with Milestone 10.
-    view_state: Option<(f32, f32)>,
+    view_state: Option<(Option<f32>, Option<f32>)>,
     /// The pointer's offset from the widget's top left while the title or header is dragged.
     drag: Option<Point<Pixels>>,
     /// The widget's padding box as last painted.
@@ -488,7 +489,7 @@ impl Workbench {
         let viewport = window.viewport_size();
         let width = (f32::from(viewport.width) * 0.62).min(MAX_WIDTH);
         let (top, left) = match self.quick_inputs.view_state {
-            Some((top, left)) => ((f32::from(viewport.height) * top).round(), (f32::from(viewport.width) * left - width / 2.).round()),
+            Some((top, left)) => (top.map_or(TOP, |top| (f32::from(viewport.height) * top).round()), (f32::from(viewport.width) * left.unwrap_or(0.5) - width / 2.).round()),
             None => (TOP, ((f32::from(viewport.width) - width) / 2.).round()),
         };
         let has_title = !input.title_text().is_empty() || !input.buttons.iter().all(|button| button.location.is_some_and(|location| location > 1));
@@ -571,6 +572,7 @@ impl Workbench {
                     if phase == DispatchPhase::Bubble {
                         workbench.update(cx, |workbench, cx| {
                             workbench.quick_inputs.drag = None;
+                            workbench.save_quick_input_view_state();
                             cx.notify();
                         });
                     }
@@ -581,11 +583,41 @@ impl Workbench {
         .inset_0()
     }
 
+    /// `loadViewState`: the position stored by the last drag, if any.
+    pub(super) fn load_quick_input_view_state(&mut self) {
+        let storage = self.profile_storage.lock().unwrap();
+        let data: Value = storage.get(VIEWSTATE_STORAGE_KEY).and_then(|raw| serde_json::from_str(raw).ok()).unwrap_or_default();
+        self.quick_inputs.view_state = match (data["top"].as_f64(), data["left"].as_f64()) {
+            (None, None) => None,
+            (top, left) => Some((top.map(|top| top as f32), left.map(|left| left as f32))),
+        };
+    }
+
+    /// `saveViewState` in StorageScope.APPLICATION; the default position removes the key.
+    fn save_quick_input_view_state(&self) {
+        let mut storage = self.profile_storage.lock().unwrap();
+        match self.quick_inputs.view_state {
+            Some((top, left)) => {
+                // JSON.stringify leaves out an undefined side.
+                let mut state = serde_json::Map::new();
+                if let Some(top) = top {
+                    state.insert("top".into(), top.into());
+                }
+                if let Some(left) = left {
+                    state.insert("left".into(), left.into());
+                }
+                storage.set(VIEWSTATE_STORAGE_KEY, Value::Object(state).to_string());
+            }
+            None => storage.delete(VIEWSTATE_STORAGE_KEY),
+        }
+    }
+
     /// A press on the title or header starts a drag; a double click puts the widget back at the top center.
     fn quick_input_drag_start(&mut self, event: &MouseDownEvent, _: &mut Window, cx: &mut Context<Self>) {
         if event.click_count == 2 {
             self.quick_inputs.view_state = None;
             self.quick_inputs.drag = None;
+            self.save_quick_input_view_state();
             cx.notify();
             return;
         }
@@ -601,7 +633,8 @@ impl Workbench {
         let top_left = position - offset;
         let window_size = (f32::from(viewport.width), f32::from(viewport.height));
         let widget_size = (f32::from(widget.width), f32::from(widget.height));
-        self.quick_inputs.view_state = Some(drag_layout(f32::from(top_left.y), f32::from(top_left.x), window_size, widget_size, TITLE_BAR_HEIGHT, TOP));
+        let (top, left) = drag_layout(f32::from(top_left.y), f32::from(top_left.x), window_size, widget_size, TITLE_BAR_HEIGHT, TOP);
+        self.quick_inputs.view_state = Some((Some(top), Some(left)));
         cx.notify();
     }
 
@@ -619,13 +652,13 @@ impl Workbench {
             .cursor_grab()
             .on_mouse_down(MouseButton::Left, cx.listener(Self::quick_input_drag_start))
             // The action bars are not drag areas (excludeNodes).
-            .child(div().absolute().left(px(4.)).occlude().flex().children(left.into_iter().map(|button| self.quick_input_button(button, cx))))
+            .child(div().absolute().left(px(4.)).occlude().flex().children(left.into_iter().map(|button| self.quick_input_button(button, 20., cx))))
             .child(div().flex_1().py(px(3.)).text_center().child(if title.is_empty() { "\u{a0}".to_owned() } else { title }))
-            .child(div().absolute().right(px(4.)).occlude().flex().gap(px(4.)).children(right.into_iter().map(|button| self.quick_input_button(button, cx))))
+            .child(div().absolute().right(px(4.)).occlude().flex().gap(px(4.)).children(right.into_iter().map(|button| self.quick_input_button(button, 20., cx))))
     }
 
-    /// A title, inline or input button: a 16px codicon with 2px padding, or the toggle's checked look.
-    fn quick_input_button(&self, button: &Button, cx: &mut Context<Self>) -> AnyElement {
+    /// A title, inline or input button: a 16px codicon in a `size` box, or the toggle's checked look.
+    fn quick_input_button(&self, button: &Button, size: f32, cx: &mut Context<Self>) -> AnyElement {
         let codicon = match (&button.codicon, button.handle) {
             (Some(codicon), _) => codicon.clone(),
             (None, -1) => "arrow-left".to_owned(),
@@ -640,9 +673,9 @@ impl Workbench {
         let element = match &button.icon_path {
             Some(icon) if button.codicon.is_none() => {
                 let path = if self.theme.kind.is_light() { &icon.light } else { &icon.dark };
-                div().size(px(20.)).flex().items_center().justify_center().child(gpui::img(path.clone()).size(px(16.)))
+                div().size(px(size)).flex().items_center().justify_center().child(gpui::img(path.clone()).size(px(16.)))
             }
-            _ => self.icon(&codicon, 20., 16., foreground),
+            _ => self.icon(&codicon, size, 16., foreground),
         };
         element
             .id(("quick-input-button", handle as u64))
@@ -691,7 +724,8 @@ impl Workbench {
                 )
             })
             .when(!input.hide_input, |header| header.child(self.quick_input_box(input, interactive, window, cx).occlude()))
-            .children(inline.into_iter().map(|button| div().ml(px(4.)).mt(px(3.)).occlude().child(self.quick_input_button(button, cx))))
+            // quickInput.css: 5px before the first inline action, 4px between, 2px from the top; actionbar.css pads the label 3px.
+            .children(inline.into_iter().enumerate().map(|(i, button)| div().ml(px(if i == 0 { 5. } else { 4. })).mt(px(2.)).occlude().child(self.quick_input_button(button, 22., cx))))
             .when(input.can_select_many, |header| {
                 header.child(
                     div()
@@ -757,7 +791,7 @@ impl Workbench {
             .when(input.can_select_many, |input_box| input_box.ml(px(5.)))
             .child(self.quick_input_text(input, focused, cx))
             .children(count)
-            .children(input_buttons.into_iter().map(|button| div().mr(px(2.)).child(self.quick_input_button(button, cx))))
+            .children(input_buttons.into_iter().map(|button| div().mr(px(2.)).child(self.quick_input_button(button, 20., cx))))
     }
 
     /// The input element: the value (or placeholder) with its selection, marked text and caret.
@@ -949,15 +983,16 @@ impl Workbench {
                     })
                     .child(self.highlighted_label(&row.item.label, &row.label_highlights, highlight, 16., icon_color))
                     .children(row.item.description.as_ref().filter(|description| !description.is_empty()).map(|description| {
-                        // monaco-icon-label: .label-description at 0.9em, 0.7 opacity, 0.5em after the name.
-                        div().ml(px(6.5)).text_size(px(11.7)).opacity(if focused { 1. } else { 0.7 }).child(self.highlighted_label(description, &row.description_highlights, highlight, 14., icon_color))
+                        // monaco-icon-label: .label-description at 0.9em, 0.7 opacity, 0.5em of its own 11.7px after the name.
+                        div().ml(px(5.85)).text_size(px(11.7)).opacity(if focused { 1. } else { 0.7 }).child(self.highlighted_label(description, &row.description_highlights, highlight, 14., icon_color))
                     })),
             )
             .children(row.item.detail.as_ref().filter(|detail| !detail.is_empty()).map(|detail| {
                 div().h(px(ROW_HEIGHT)).flex().items_center().whitespace_nowrap().opacity(if focused { 1. } else { 0.7 }).child(self.highlighted_label(detail, &row.detail_highlights, highlight, 14., icon_color))
             }));
         let separator = row.separator.clone().filter(|label| !label.is_empty());
-        let separator_color = if focused { foreground.unwrap_or(self.foreground_or("quickInput.foreground")) } else { self.theme.color("pickerGroup.foreground").unwrap_or(self.color("descriptionForeground")) };
+        // quickInput.css: `.quick-input-list-entry .quick-input-list-separator` outranks the controller's pickerGroup.foreground rule.
+        let separator_color = if focused { foreground.unwrap_or(self.foreground_or("quickInput.foreground")) } else { self.color("descriptionForeground") };
         let buttons_shown = focused || hovered;
         let handle = row.item.handle;
         let entry = div()
@@ -979,7 +1014,8 @@ impl Workbench {
             })
             .child(label_box)
             .when(!row.item.keybinding.is_empty(), |entry| entry.child(self.keybinding_label(&row.item.keybinding, focused || hovered)))
-            .children(separator.map(|label| div().flex().items_center().ml(px(4.)).text_size(px(11.)).text_color(separator_color).child(label)))
+            // The entry's right padding is 4px on 1.147, so the separator label ends 4px from the row edge.
+            .children(separator.map(|label| div().flex().items_center().ml(px(4.)).mr(px(2.)).text_size(px(11.)).text_color(separator_color).child(label)))
             .when(buttons_shown && !row.item.buttons.is_empty(), |entry| {
                 entry.child(div().flex().items_center().mt(px(1.)).children(row.item.buttons.iter().enumerate().map(|(index, button)| {
                     let toggle = button.toggle;

@@ -360,7 +360,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/preferences | workbench service | todo |  |
 | workbench/services/process | workbench service | todo |  |
 | workbench/services/progress | workbench service | todo |  |
-| workbench/services/quickinput | workbench service | ported | quick_input_view.rs with header drag (cargo test -p app dragging); api-tests quick input 11/11; view state kept in memory until milestone 10 storage |
+| workbench/services/quickinput | workbench service | ported | quick_input_view.rs with header drag (cargo test -p app dragging); api-tests quick input 11/11; view state in application storage (cargo test -p app dragging) |
 | workbench/services/remote | workbench service | todo |  |
 | workbench/services/request | workbench service | todo |  |
 | workbench/services/search | workbench service | ported | native/crates/search: QueryBuilder, ripgrep file search and text search with upstream ripgrepTextSearchEngineUtils and TextSearchResult tests: cargo test -p search 23 passed; no symlink loop rerun, no results from unsaved editors |
@@ -376,7 +376,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/textfile | workbench service | stub | Cmd+S writes UTF-8 and clears dirty state (cargo test -p app keys_and_typed_text_edit_the_focused_editor_and_reach_the_host); no save participants, conflict check or encodings |
 | workbench/services/textmodelResolver | workbench service | todo |  |
 | workbench/services/textresourceProperties | workbench service | todo |  |
-| workbench/services/themes | workbench service | ported | all 19 built-in color themes incl. hc-light, tokenColors (theme.rs, syntax.rs); cargo test -p app theme::tests; no semanticTokenColors (needs semantic tokens), no icon themes |
+| workbench/services/themes | workbench service | ported | all 19 built-in color themes incl. hc-light, tokenColors (theme.rs, syntax.rs); cargo test -p app theme::tests; `setColorTheme` from the theme picker (preview, write, `$onColorThemeChange`), not on a settings.json edit; no semanticTokenColors (needs semantic tokens), no icon themes |
 | workbench/services/timer | workbench service | todo |  |
 | workbench/services/title | workbench service | todo |  |
 | workbench/services/treeSitter | workbench service | todo |  |
@@ -456,7 +456,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/policyExport | workbench contribution | todo |  |
 | workbench/contrib/preferences | workbench contribution | todo |  |
 | workbench/contrib/processExplorer | workbench contribution | todo |  |
-| workbench/contrib/quickaccess | workbench contribution | ported | commandsQuickAccess.ts as quick_access.rs and command_palette.rs; cargo test -p app quick_access command_palette tf_idf; viewQuickAccess.ts not ported |
+| workbench/contrib/quickaccess | workbench contribution | ported | commandsQuickAccess.ts as quick_access.rs and command_palette.rs; cargo test -p app quick_access command_palette tf_idf, history in profile storage; viewQuickAccess.ts not ported |
 | workbench/contrib/relauncher | workbench contribution | todo |  |
 | workbench/contrib/remote | workbench contribution | todo |  |
 | workbench/contrib/remoteCodingAgents | workbench contribution | removed | no sign-in/AI by decision (port/notes.md); not ported |
@@ -481,7 +481,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/terminal | workbench contribution | todo |  |
 | workbench/contrib/terminalContrib | workbench contribution | todo |  |
 | workbench/contrib/testing | workbench contribution | todo |  |
-| workbench/contrib/themes | workbench contribution | todo |  |
+| workbench/contrib/themes | workbench contribution | ported | Color Theme picker (`workbench.action.selectTheme`, Cmd+K Cmd+T): rows, order and descriptions as the reference, 200ms preview, Escape restores, accept writes `workbench.colorTheme` (cargo test -p app themes); no file icon or product icon theme pickers, no Marketplace browsing, no `window.autoDetectColorScheme` |
 | workbench/contrib/timeline | workbench contribution | todo |  |
 | workbench/contrib/typeHierarchy | workbench contribution | todo |  |
 | workbench/contrib/update | workbench contribution | todo |  |

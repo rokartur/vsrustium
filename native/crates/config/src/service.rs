@@ -128,6 +128,37 @@ impl Settings {
         Ok(self.reload_after_write(editable))
     }
 
+    /// `updateValue(key, value)` without a target, as the workbench calls it: written where the key is already
+    /// set (`deriveConfigurationTargets`), else into user settings, where the default value removes the key.
+    pub fn update_value_derived(&mut self, key: &str, value: Option<&Value>) -> Result<Change, String> {
+        let inspected = self.configuration.inspect(key, &Overrides::default());
+        if value.cloned() == inspected.value {
+            return Ok(Change::default());
+        }
+        let mut targets = Vec::new();
+        if inspected.workspace_folder.value.is_some() {
+            targets.push(Target::WorkspaceFolder);
+        }
+        if inspected.workspace.value.is_some() {
+            targets.push(Target::Workspace);
+        }
+        if inspected.user_local.value.is_some() {
+            targets.push(Target::UserLocal);
+        }
+        if value.is_some() {
+            targets = vec![targets.first().copied().unwrap_or(Target::User)];
+        }
+        let value = match targets[..] {
+            [Target::User | Target::UserLocal] if value.cloned() == inspected.default_value => None,
+            _ => value,
+        };
+        let mut changes = Vec::new();
+        for target in targets {
+            changes.push(self.update_value(key, value, target, None, &[])?);
+        }
+        Ok(merge_changes(&changes))
+    }
+
     fn reload_after_write(&mut self, editable: Editable) -> Change {
         for (path, last) in &mut self.stamps {
             *last = stamp(path);
@@ -572,6 +603,24 @@ mod tests {
         assert_eq!(change.overrides, [("markdown".to_string(), vec!["configurationEditing.service.languageSetting".to_string()])]);
         let markdown = Overrides { resource: None, override_identifier: Some("markdown") };
         assert_eq!(get(&fixture.settings, &markdown), Some(json!("markdown")), "a user language value beats a workspace value");
+    }
+
+    #[test]
+    fn a_write_without_target_goes_where_the_key_is_set() {
+        let key = "configurationEditing.service.windowSetting";
+        let mut fixture = Fixture::new("derived", true);
+        fixture.settings.update_value_derived(key, Some(&json!("user"))).unwrap();
+        assert_eq!(parsed(&fixture.user("settings.json"))[key], "user");
+        let change = fixture.settings.update_value_derived(key, Some(&json!("isSet"))).unwrap();
+        assert_eq!(change.keys, [key]);
+        assert_eq!(parsed(&fixture.user("settings.json")), json!({}), "the default value removes the user key");
+
+        write_file(&fixture.folder("settings.json"), &json!({ key: "folder" }).to_string());
+        fixture.settings.reload_changed_files();
+        fixture.settings.update_value_derived(key, Some(&json!("workspace"))).unwrap();
+        assert_eq!(parsed(&fixture.folder("settings.json"))[key], "workspace");
+        assert_eq!(parsed(&fixture.user("settings.json")), json!({}), "a key set in the folder is written there");
+        assert!(fixture.settings.update_value_derived(key, Some(&json!("workspace"))).unwrap().keys.is_empty(), "an unchanged value writes nothing");
     }
 
     #[test]

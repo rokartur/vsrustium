@@ -5,6 +5,7 @@
 
 use std::io::Read;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
 use serde_json::{Value, json};
@@ -15,8 +16,9 @@ use crate::session::{SessionPaths, workspace_id};
 use crate::utc::utc_string;
 
 pub struct MainThreadStorage {
-    /// StorageScope.PROFILE, which is the application storage in the default profile.
-    profile: Storage,
+    /// StorageScope.PROFILE, which is the application storage in the default profile; the workbench keeps its
+    /// own keys (the command history, the quick input position) in it too.
+    pub profile: Arc<Mutex<Storage>>,
     workspace: Storage,
 }
 
@@ -30,11 +32,11 @@ impl MainThreadStorage {
             Some(folder) => Storage::open(&workspace_storage(paths.user_data, folder)?),
             None => Storage::in_memory(),
         };
-        Ok(MainThreadStorage { profile: Storage::open(&global.join("state.vscdb")), workspace })
+        Ok(MainThreadStorage { profile: Arc::new(Mutex::new(Storage::open(&global.join("state.vscdb")))), workspace })
     }
 
     pub fn in_memory() -> Self {
-        MainThreadStorage { profile: Storage::in_memory(), workspace: Storage::in_memory() }
+        MainThreadStorage { profile: Arc::new(Mutex::new(Storage::in_memory())), workspace: Storage::in_memory() }
     }
 
     /// `telemetryInfo` as the browser workbench builds it (workbenchCommonProperties.ts): machine id and first
@@ -54,11 +56,12 @@ impl MainThreadStorage {
     }
 
     fn get_or_store(&mut self, key: &str, create: impl FnOnce() -> String) -> String {
-        if let Some(value) = self.profile.get(key) {
+        let mut profile = self.profile.lock().unwrap();
+        if let Some(value) = profile.get(key) {
             return value.to_owned();
         }
         let value = create();
-        self.profile.set(key, value.clone());
+        profile.set(key, value.clone());
         value
     }
 
@@ -68,7 +71,8 @@ impl MainThreadStorage {
             _ => &Value::Null,
         };
         let shared = arg(0).as_bool() == Some(true);
-        let storage = if shared { &mut self.profile } else { &mut self.workspace };
+        let mut profile = self.profile.lock().unwrap();
+        let storage = if shared { &mut *profile } else { &mut self.workspace };
         match method {
             "$initializeExtensionStorage" => {
                 let extension_id = arg(1).as_str().expect("an extension id");
@@ -86,7 +90,7 @@ impl MainThreadStorage {
                 let extension = arg(0);
                 let id = extension["id"].as_str().expect("an extension id").to_lowercase();
                 let key = format!("extensionKeys/{id}@{}", extension["version"].as_str().unwrap_or_default());
-                self.profile.set(&key, arg(1).to_string());
+                profile.set(&key, arg(1).to_string());
                 Reply::Empty
             }
             _ => Reply::Empty,

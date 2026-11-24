@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 use exthost::scan::scan_extension;
 use gpui::{Modifiers, MouseButton, MouseDownEvent, TestAppContext, point, px};
@@ -7,6 +8,7 @@ use crate::host_sync::HostSync;
 use crate::languages::Languages;
 use crate::theme::load_theme;
 use crate::workbench::Workbench;
+use storage::Storage;
 
 #[gpui::test]
 fn dragging_the_header_moves_the_quick_input_and_a_double_click_puts_it_back(cx: &mut TestAppContext) {
@@ -15,9 +17,12 @@ fn dragging_the_header_moves_the_quick_input_and_a_double_click_puts_it_back(cx:
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
     let dir = std::env::temp_dir().join(format!("code-gpui-drag-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
+    let storage = Arc::new(Mutex::new(Storage::in_memory()));
+    let profile = storage.clone();
     let (workbench, cx) = cx.add_window_view(|_, cx| {
         let mut workbench = Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), crate::default_settings(), HostSync::new(std::sync::mpsc::channel().0), cx);
         workbench.load_keybindings(crate::keybindings::default_keybindings(&[]), dir.join("keybindings.json"), cx);
+        workbench.restore_profile_state(profile);
         workbench
     });
     cx.run_until_parked();
@@ -38,7 +43,10 @@ fn dragging_the_header_moves_the_quick_input_and_a_double_click_puts_it_back(cx:
     cx.simulate_mouse_up(grab + point(px(-100.), px(100.)), MouseButton::Left, Modifiers::none());
     let moved = bounds(cx);
     assert_eq!(moved.origin - start.origin, point(px(-100.), px(100.)));
-    assert!(workbench.read_with(cx, |workbench, _| workbench.quick_inputs.view_state.is_some()));
+    let view_state = workbench.read_with(cx, |workbench, _| workbench.quick_inputs.view_state);
+    assert!(view_state.is_some());
+    let stored = storage.lock().unwrap().get("workbench.quickInput.viewState").map(str::to_owned).expect("the drag end stores the position");
+    assert!(stored.starts_with(r#"{"top":"#) && stored.contains(r#","left":"#), "{stored}");
 
     // Released: moving the pointer leaves it in place.
     cx.simulate_mouse_move(grab, None, Modifiers::none());
@@ -48,5 +56,11 @@ fn dragging_the_header_moves_the_quick_input_and_a_double_click_puts_it_back(cx:
     cx.simulate_event(MouseDownEvent { position: header, modifiers: Modifiers::none(), button: MouseButton::Left, click_count: 2, first_mouse: false });
     cx.simulate_mouse_up(header, MouseButton::Left, Modifiers::none());
     assert_eq!(bounds(cx).origin, start.origin);
+    assert_eq!(storage.lock().unwrap().get("workbench.quickInput.viewState"), None, "the reset removes the key");
+
+    // The next window reads the stored position.
+    storage.lock().unwrap().set("workbench.quickInput.viewState", stored);
+    workbench.update(cx, |workbench, _| workbench.load_quick_input_view_state());
+    assert_eq!(workbench.read_with(cx, |workbench, _| workbench.quick_inputs.view_state), view_state);
     std::fs::remove_dir_all(dir).unwrap();
 }

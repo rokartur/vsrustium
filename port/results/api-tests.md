@@ -31,6 +31,8 @@ Run with `MOCHA_GREP` on the Mac Studio at f598f3a9 (the full folder suite does 
 
 Failing: `editorCommand with extra args`, `api-command: vscode.diff`, `api-command: vscode.open`, `vscode.open with untitled supports associated resource (#138925)`; they need milestone 8 editor groups and a diff editor (port/notes.md).
 
+After the command history, quick input position and theme picker commits, one run with `vscode API - quick input|vscode API - commands|showInputBox|#7013|vscode API - configuration`: 24 passing, 0 pending, the same 4 failing.
+
 ## M12
 
 `MOCHA_GREP="vscode API - workspace-fs|vscode API - workspace events|vscode API - workspace " SUITE_TIMEOUT=600 port/tools/api-tests` at 9f6772f3 on the Studio, same setup. Not reached counts the reference tests the pattern filters out.

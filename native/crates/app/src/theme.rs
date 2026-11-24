@@ -2,7 +2,7 @@
 //! color registry default for every key the theme leaves out (src/vs/platform/theme/common/colorUtils.ts).
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
 use exthost::scan::ScannedExtension;
@@ -31,20 +31,43 @@ impl ThemeKind {
 
 pub struct Theme {
     pub kind: ThemeKind,
+    /// `IWorkbenchColorTheme.settingsId`, the `workbench.colorTheme` value.
+    pub settings_id: String,
     colors: HashMap<String, Rgba>,
     /// The TextMate theme of the token colors (`ColorThemeData.tokenColors`).
     pub tokens: textmate::Theme,
 }
 
-/// Finds the theme whose settings id (`id`, else `label`, as in `ColorThemeData.fromExtensionTheme`) is `settings_id`.
-pub fn load_theme(extensions: &[ScannedExtension], settings_id: &str) -> anyhow::Result<Theme> {
+/// A contributed color theme before its file is read (`ColorThemeData.fromExtensionTheme`).
+#[derive(Clone, Debug)]
+pub struct ColorThemeEntry {
+    pub settings_id: String,
+    pub label: String,
+    pub description: Option<String>,
+    pub kind: ThemeKind,
+    pub extension_id: String,
+    path: PathBuf,
+}
+
+impl ColorThemeEntry {
+    pub fn load(&self) -> anyhow::Result<Theme> {
+        let (mut colors, mut token_colors) = (HashMap::new(), Vec::new());
+        read_colors(&self.path, &mut colors, &mut token_colors)?;
+        let mut theme = Theme { kind: self.kind, settings_id: self.settings_id.clone(), colors, tokens: textmate::Theme::new(&[]) };
+        theme.tokens = crate::syntax::token_theme(&theme, &token_colors);
+        Ok(theme)
+    }
+}
+
+/// `contributes.themes` of every extension (`ThemeRegistry.onExtensionsRead`); a contribution without a path is skipped.
+pub fn color_themes(extensions: &[ScannedExtension]) -> anyhow::Result<Vec<ColorThemeEntry>> {
+    let mut entries = Vec::new();
     for extension in extensions {
         let Some(themes) = extension.description["contributes"]["themes"].as_array() else { continue };
         for theme in themes {
-            let id = theme["id"].as_str().or(theme["label"].as_str());
-            if id != Some(settings_id) {
-                continue;
-            }
+            let Some(path) = theme["path"].as_str() else { continue };
+            let label = theme["label"].as_str().map_or_else(|| file_name(path), str::to_owned);
+            let settings_id = theme["id"].as_str().map_or_else(|| label.clone(), str::to_owned);
             let kind = match theme["uiTheme"].as_str().unwrap_or("vs-dark") {
                 "vs" => ThemeKind::Light,
                 "vs-dark" => ThemeKind::Dark,
@@ -52,15 +75,22 @@ pub fn load_theme(extensions: &[ScannedExtension], settings_id: &str) -> anyhow:
                 "hc-light" => ThemeKind::HighContrastLight,
                 other => bail!("theme {settings_id}: unknown ui theme {other}"),
             };
-            let path = theme["path"].as_str().context("theme without path")?;
-            let (mut colors, mut token_colors) = (HashMap::new(), Vec::new());
-            read_colors(&extension.location.join(path), &mut colors, &mut token_colors)?;
-            let mut theme = Theme { kind, colors, tokens: textmate::Theme::new(&[]) };
-            theme.tokens = crate::syntax::token_theme(&theme, &token_colors);
-            return Ok(theme);
+            let description = theme["description"].as_str().map(str::to_owned);
+            entries.push(ColorThemeEntry { settings_id, label, description, kind, extension_id: extension.id.clone(), path: extension.location.join(path) });
         }
     }
-    bail!("no extension contributes the color theme {settings_id}")
+    Ok(entries)
+}
+
+fn file_name(path: &str) -> String {
+    Path::new(path).file_name().map_or_else(|| path.to_owned(), |name| name.to_string_lossy().into_owned())
+}
+
+/// Finds the theme whose settings id (`id`, else `label`, as in `ColorThemeData.fromExtensionTheme`) is `settings_id`.
+pub fn load_theme(extensions: &[ScannedExtension], settings_id: &str) -> anyhow::Result<Theme> {
+    let themes = color_themes(extensions)?;
+    let entry = themes.iter().find(|entry| entry.settings_id == settings_id).with_context(|| format!("no extension contributes the color theme {settings_id}"))?;
+    entry.load()
 }
 
 /// Merges the included file first, so the including theme wins, as `_loadColorTheme` does.

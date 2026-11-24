@@ -7,6 +7,7 @@ mod editor_commands;
 mod editor_view;
 mod keyboard;
 pub mod quick_access;
+pub mod themes;
 mod quick_input_view;
 mod text_input;
 
@@ -18,6 +19,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use config::service::Settings;
+use storage::Storage;
 
 use gpui::{ClickEvent, Context, Div, FocusHandle, FontFeatures, FontWeight, Rgba, Task, UniformListScrollHandle, Window, div, prelude::*, px, rgb, svg, transparent_black};
 use serde_json::Value;
@@ -28,10 +30,12 @@ use crate::explorer::FileTree;
 use crate::file_icons::FileIconTheme;
 use crate::host_sync::HostSync;
 use crate::languages::Languages;
-use crate::theme::{Theme, ThemeKind};
+use crate::theme::{ColorThemeEntry, Theme, ThemeKind};
 
 pub struct Workbench {
     pub theme: Theme,
+    /// The contributed color themes the theme picker offers.
+    pub color_themes: Vec<ColorThemeEntry>,
     /// The repo root: codicon SVGs and the letterpress are read from upstream's own files under it.
     pub app_root: PathBuf,
     /// The opened folder; `None` is the empty window.
@@ -63,6 +67,9 @@ pub struct Workbench {
     selecting_text: bool,
     pub quick_inputs: quick_input_view::QuickInputs,
     pub quick_access: quick_access::QuickAccess,
+    /// The application storage (StorageScope.PROFILE and APPLICATION in the default profile), shared with the
+    /// extension host's MainThreadStorage.
+    profile_storage: Arc<Mutex<Storage>>,
 }
 
 impl Render for Workbench {
@@ -112,6 +119,7 @@ impl Workbench {
     pub fn new(theme: Theme, app_root: PathBuf, folder: Option<FileTree>, languages: Languages, settings: Arc<Mutex<Settings>>, host: HostSync, cx: &mut Context<Self>) -> Self {
         let mut workbench = Workbench {
             theme,
+            color_themes: Vec::new(),
             app_root,
             folder,
             languages,
@@ -132,6 +140,7 @@ impl Workbench {
             selecting_text: false,
             quick_inputs: quick_input_view::QuickInputs::new(cx),
             quick_access: quick_access::QuickAccess::default(),
+            profile_storage: Arc::new(Mutex::new(Storage::in_memory())),
         };
         crate::main_thread_commands::register_commands_documentation(&mut workbench);
         workbench.register_workbench_actions();
@@ -139,6 +148,7 @@ impl Workbench {
         workbench.register_context_commands();
         workbench.register_quick_input_commands();
         workbench.register_quick_access_commands();
+        workbench.register_theme_commands();
         // Keybindings resolve before the focused element sees the key, and with nothing focused too.
         let entity = cx.entity().downgrade();
         cx.intercept_keystrokes(move |event, window, cx| {
@@ -146,6 +156,13 @@ impl Workbench {
         })
         .detach();
         workbench
+    }
+
+    /// Switches to the app's profile storage and reads the command history and the quick input position from it.
+    pub fn restore_profile_state(&mut self, storage: Arc<Mutex<Storage>>) {
+        self.profile_storage = storage;
+        self.load_command_history();
+        self.load_quick_input_view_state();
     }
 
     /// The opened folder, which quick pick items show their resource paths relative to.

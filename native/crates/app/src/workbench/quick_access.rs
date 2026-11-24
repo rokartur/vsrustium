@@ -1,6 +1,7 @@
 //! Quick access (platform/quickinput/browser/quickAccess.ts): one quick pick whose value prefix picks the
 //! provider. `>` is the Command Palette (commandsQuickAccess.ts over pickerQuickAccess.ts).
 
+use config::configuration::Overrides;
 use gpui::{Context, PromptLevel, Window};
 use serde_json::Value;
 
@@ -11,12 +12,14 @@ use crate::main_thread_quick_open::Owner;
 use crate::quick_input::{Button, Entry, Event, Item, Kind, QuickInput};
 
 const COMMANDS_PREFIX: &str = ">";
+/// `CommandsHistory.PREF_KEY_CACHE` and `PREF_KEY_COUNTER`, in StorageScope.PROFILE.
+const HISTORY_CACHE_KEY: &str = "commandPalette.mru.cache";
+const HISTORY_COUNTER_KEY: &str = "commandPalette.mru.counter";
 
 /// The providers' state that outlives a picker.
 pub struct QuickAccess {
     /// `MenuId.CommandPalette` of the workbench and the extensions.
     pub menu: Vec<MenuItem>,
-    /// shortcut: kept for the session, upstream stores it under `workbench.commandPalette.history`; the port has no storage service until Milestone 10.
     history: CommandsHistory,
 }
 
@@ -69,8 +72,33 @@ impl Workbench {
         self.commands.register("workbench.action.clearCommandHistory", |workbench, _, window, cx| workbench.clear_command_history(window, cx));
     }
 
+    /// `CommandsHistory.load` from the profile storage.
+    pub(super) fn load_command_history(&mut self) {
+        let limit = self.configured_command_history_length();
+        let storage = self.profile_storage.lock().unwrap();
+        self.quick_access.history = CommandsHistory::load(storage.get(HISTORY_CACHE_KEY), storage.get(HISTORY_COUNTER_KEY), limit);
+    }
+
+    /// `CommandsHistory.saveState`. Upstream saves on shutdown only; the port saves on each change, since its
+    /// storage writes synchronously and the app can exit without a shutdown phase.
+    fn save_command_history(&self) {
+        let (cache, counter) = self.quick_access.history.serialize();
+        let mut storage = self.profile_storage.lock().unwrap();
+        storage.set(HISTORY_CACHE_KEY, cache);
+        storage.set(HISTORY_COUNTER_KEY, counter);
+    }
+
+    /// `getConfiguredCommandHistoryLength`: `workbench.commandPalette.history`, 0 keeps no history.
+    fn configured_command_history_length(&self) -> usize {
+        let value = self.settings.lock().unwrap().get_value(Some("workbench.commandPalette.history"), &Overrides::default());
+        value.and_then(|value| value.as_u64()).map_or(command_palette::DEFAULT_HISTORY_LENGTH, |length| length as usize)
+    }
+
     /// `QuickAccessController.show`: reuses a visible picker of the same provider, else fills a new one.
     fn show_quick_access(&mut self, value: &str, preserve_value: bool, window: &mut Window, cx: &mut Context<Self>) {
+        // `updateConfiguration`: the configured length applies from the next pick list on.
+        let limit = self.configured_command_history_length();
+        self.quick_access.history.set_limit(limit);
         let provider = Provider::for_value(value);
         let mut value = value.to_owned();
         let visible = self.quick_inputs.current().filter(|input| matches!(self.quick_inputs.owner(input.id), Some(Owner::QuickAccess(_)))).map(|input| input.id);
@@ -188,6 +216,7 @@ impl Workbench {
                     return;
                 }
                 self.quick_access.history.remove(&command);
+                self.save_command_history();
                 if let Some(input) = self.quick_inputs.get_mut(id) {
                     input.remove_item(handle);
                 }
@@ -201,6 +230,7 @@ impl Workbench {
     fn accept_quick_access_pick(&mut self, accept: Accept, window: &mut Window, cx: &mut Context<Self>) {
         let Accept::Command { id, label } = accept else { return };
         self.quick_access.history.push(&id);
+        self.save_command_history();
         let outcome = self.execute_command(&id, Vec::new(), window, cx);
         show_failure(label, outcome, window, cx);
     }
@@ -216,7 +246,10 @@ impl Workbench {
         );
         cx.spawn_in(window, async move |workbench, cx| {
             if answer.await == Ok(0) {
-                let _ = workbench.update(cx, |workbench, _| workbench.quick_access.history.clear());
+                let _ = workbench.update(cx, |workbench, _| {
+                    workbench.quick_access.history.clear();
+                    workbench.save_command_history();
+                });
             }
         })
         .detach();
@@ -232,7 +265,7 @@ fn adjust_value_selection(input: &mut QuickInput, provider: Provider, preserve_v
 }
 
 /// Shows the error the command ends with, now or once it finishes.
-fn show_failure(label: String, outcome: Outcome, window: &mut Window, cx: &mut Context<Workbench>) {
+pub(super) fn show_failure(label: String, outcome: Outcome, window: &mut Window, cx: &mut Context<Workbench>) {
     let pending = match outcome {
         Outcome::Ready(Ok(_)) => return,
         Outcome::Ready(Err(error)) => {

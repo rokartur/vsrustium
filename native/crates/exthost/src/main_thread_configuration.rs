@@ -30,10 +30,7 @@ impl MainThreadConfiguration {
 
     /// `_getConfigurationData`: the argument of `$initializeConfiguration` and `$acceptConfigurationChanged`.
     pub fn configuration_data(&self) -> Value {
-        let settings = self.settings.lock().unwrap();
-        let mut data = settings.configuration.to_data();
-        data["configurationScopes"] = if self.send_scopes { settings.registry.scopes() } else { json!([]) };
-        data
+        configuration_data(&self.settings.lock().unwrap(), self.send_scopes)
     }
 
     /// The `$acceptConfigurationChanged` arguments when a settings file changed on disk since the last check.
@@ -109,8 +106,19 @@ impl MainThreadConfiguration {
     }
 
     fn change_args(&self, change: &Change) -> Vec<Value> {
-        vec![self.configuration_data(), change.to_json()]
+        changed_args(&self.settings.lock().unwrap(), self.send_scopes, change)
     }
+}
+
+fn configuration_data(settings: &Settings, send_scopes: bool) -> Value {
+    let mut data = settings.configuration.to_data();
+    data["configurationScopes"] = if send_scopes { settings.registry.scopes() } else { json!([]) };
+    data
+}
+
+/// The `$acceptConfigurationChanged` arguments for a change the workbench wrote.
+pub fn changed_args(settings: &Settings, send_scopes: bool, change: &Change) -> Vec<Value> {
+    vec![configuration_data(settings, send_scopes), change.to_json()]
 }
 
 /// The file path of a `file:` `UriComponents`; other schemes are in no folder.

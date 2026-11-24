@@ -76,6 +76,53 @@ impl CommandsHistory {
     pub fn clear(&mut self) {
         *self = CommandsHistory::new(self.limit);
     }
+
+    /// The LRU's `limit` setter: the oldest entries past the new limit go.
+    pub fn set_limit(&mut self, limit: usize) {
+        self.limit = limit;
+        if self.entries.len() > limit {
+            self.entries.drain(..self.entries.len() - limit);
+        }
+    }
+
+    /// `CommandsHistory.load`: the `commandPalette.mru.cache` and `commandPalette.mru.counter` storage values.
+    /// A cache written before `usesLRU` lists its entries in any order, so they are sorted by counter.
+    pub fn load(cache: Option<&str>, counter: Option<&str>, limit: usize) -> CommandsHistory {
+        let mut history = CommandsHistory::new(limit);
+        let serialized = cache.and_then(|raw| match serde_json::from_str::<Value>(raw) {
+            Ok(value) => Some(value),
+            Err(error) => {
+                eprintln!("[CommandsHistory] invalid data: {error}");
+                None
+            }
+        });
+        if let Some(serialized) = serialized {
+            let mut entries: Vec<(String, u64)> = serialized["entries"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|entry| Some((entry["key"].as_str()?.to_owned(), entry["value"].as_u64()?)))
+                .collect();
+            if serialized["usesLRU"] != true {
+                entries.sort_by_key(|(_, counter)| *counter);
+            }
+            for (id, counter) in entries {
+                history.entries.retain(|(entry, _)| *entry != id);
+                history.entries.push((id, counter));
+            }
+            history.set_limit(limit);
+        }
+        if let Some(counter) = counter.and_then(|raw| raw.parse().ok()) {
+            history.counter = counter;
+        }
+        history
+    }
+
+    /// `CommandsHistory.saveState`: the cache and the counter as `load` reads them.
+    pub fn serialize(&self) -> (String, String) {
+        let entries: Vec<Value> = self.entries.iter().map(|(key, value)| serde_json::json!({ "key": key, "value": value })).collect();
+        (serde_json::json!({ "usesLRU": true, "entries": entries }).to_string(), self.counter.to_string())
+    }
 }
 
 struct Candidate<'a> {
@@ -143,8 +190,8 @@ pub struct MenuItem {
 
 /// The workbench's palette items of the commands this port runs, with upstream's titles and categories:
 /// `f1: true` actions and `appendToCommandPalette` (fileActions.contribution.ts), undo/redo/select all
-/// (editorExtensions.ts), clipboard.ts, commandsQuickAccess.ts, preferences.contribution.ts.
-const WORKBENCH_ITEMS: [(&str, &str, Option<&str>, Option<&str>); 13] = [
+/// (editorExtensions.ts), clipboard.ts, commandsQuickAccess.ts, preferences.contribution.ts, themes.contribution.ts.
+const WORKBENCH_ITEMS: [(&str, &str, Option<&str>, Option<&str>); 14] = [
     ("workbench.action.showCommands", "Show All Commands", None, None),
     ("workbench.action.clearCommandHistory", "Clear Command History", None, None),
     ("workbench.action.files.save", "Save", Some("File"), None),
@@ -152,6 +199,7 @@ const WORKBENCH_ITEMS: [(&str, &str, Option<&str>, Option<&str>); 13] = [
     ("workbench.action.files.revert", "Revert File", Some("File"), Some("!isSessionsWindow")),
     ("workbench.action.closeAllEditors", "Close All Editors", Some("View"), None),
     ("workbench.action.openGlobalKeybindingsFile", "Open Keyboard Shortcuts (JSON)", Some("Preferences"), None),
+    ("workbench.action.selectTheme", "Color Theme", Some("Preferences"), None),
     ("undo", "Undo", None, None),
     ("redo", "Redo", None, None),
     ("editor.action.selectAll", "Select All", None, None),

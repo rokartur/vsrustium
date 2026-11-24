@@ -9,6 +9,9 @@ use std::sync::mpsc::Sender;
 
 use futures::channel::oneshot;
 
+use config::model::Change;
+use config::service::Settings;
+use exthost::main_thread_configuration::changed_args;
 use exthost::scan::file_uri;
 use serde_json::{Value, json};
 
@@ -33,6 +36,8 @@ pub struct HostSync {
     /// The tabs of group 0 the host has; session.rs starts it with an empty group.
     tabs: Vec<Value>,
     activation_events: HashSet<String>,
+    /// `configurationScopes` go to the host in a development build only (`MainThreadConfiguration.send_scopes`).
+    pub configuration_scopes: bool,
 }
 
 /// `TabModelOperationKind`.
@@ -46,7 +51,7 @@ const CODE_EDITOR_ID: &str = "vs.editor.ICodeEditor:1";
 
 impl HostSync {
     pub fn new(sender: Sender<HostMessage>) -> Self {
-        HostSync { sender, documents: Vec::new(), editor: None, tabs: Vec::new(), activation_events: HashSet::new() }
+        HostSync { sender, documents: Vec::new(), editor: None, tabs: Vec::new(), activation_events: HashSet::new(), configuration_scopes: false }
     }
 
     /// Sends what changed in `group` since the last call: activation for new languages, the document
@@ -189,7 +194,12 @@ impl HostSync {
         self.send("ExtHostEditors", "$acceptEditorPropertiesChanged", vec![json!(snapshot_id(editor)), json!({ "options": null, "selections": selections, "visibleRanges": null })]);
     }
 
-    /// mainThreadTheming.ts: the theme type behind `window.activeColorTheme.kind`, sent once at startup.
+    /// A setting the workbench wrote: mainThreadConfiguration.ts sends every configuration change.
+    pub fn send_configuration_change(&self, settings: &Settings, change: &Change) {
+        self.send("ExtHostConfiguration", "$acceptConfigurationChanged", changed_args(settings, self.configuration_scopes, change));
+    }
+
+    /// mainThreadTheming.ts: the theme type behind `window.activeColorTheme.kind`, sent at startup and on each theme change.
     pub fn send_color_theme(&self, kind: ThemeKind) {
         let scheme = match kind {
             ThemeKind::Dark => "dark",

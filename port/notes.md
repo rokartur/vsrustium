@@ -159,7 +159,7 @@ Done when: api-tests `configuration.test` and `state.test` pass as in the refere
 
 ## Milestone 9: commands, keybindings, quick input
 
-Scope as in port/roadmap.md. Done in this milestone: the command registry, context keys and `when` clauses, keybinding resolution, the quick input widget and MainThreadQuickOpen, and the Command Palette. Not done: Quick Open (files, symbols), the theme picker, the native menu bar, context menus and hovers (see the last items).
+Scope as in port/roadmap.md. Done in this milestone: the command registry, context keys and `when` clauses, keybinding resolution, the quick input widget and MainThreadQuickOpen, and the Command Palette. Not done: Quick Open (files, symbols), the native menu bar, context menus and hovers (see the last items).
 
 - `contextkey.rs` ports the scanner, parser, evaluation and the `And`/`Or` normal forms of `contextkey.ts`; `contextkey/tests.rs` holds the scanner and parser cases of `contextkey.test.ts` and `scanner.test.ts`.
 - `commands.rs` is the one registry of the workbench and `vscode.commands`: workbench handlers, extension commands registered through MainThreadCommands (`main_thread_commands.rs`), `onCommand:` activation before a run. `Commands::register_all` takes a whole table in one call for milestone 8's `editor/commands.rs`.
@@ -173,13 +173,15 @@ Scope as in port/roadmap.md. Done in this milestone: the command registry, conte
 - Disabled quick input arrows keep the default cursor; sashes (milestone 11), the Explorer (milestone 12) and editor status items (milestone 8) get theirs with those milestones.
 - `compare_file_names` sorts by code point where upstream uses `Intl.Collator` with numeric order; `locale_compare` mimics a few ICU root rules for English labels.
 - api-tests `api-command: vscode.open`, `vscode.open with untitled supports associated resource`, `api-command: vscode.diff` and `editorCommand with extra args` fail: they need milestone 8 editor groups, tab groups and text editor arguments, and a diff editor (milestone 14).
-- shortcut: the palette history and the quick input position are kept for the session; upstream stores `workbench.commandPalette.history` and `workbench.quickInput.viewState`, which need milestone 10 storage.
+- The palette history (`commandPalette.mru.cache` and `.counter`, limited by `workbench.commandPalette.history`) and the quick input position (`workbench.quickInput.viewState`) live in the global `state.vscdb`, the same `Storage` the extension host's MainThreadStorage serves (`restore_profile_state`). Upstream writes the history on shutdown only; the port writes it on each change, since its storage is synchronous and the app has no shutdown phase.
+- The Color Theme picker (`workbench/themes.rs`) follows `InstalledThemesPicker`: light, dark and high contrast groups with the default theme pinned, a preview 200ms after the focus rests, Escape or any hide without accept restores the theme it opened with. Accepting writes `workbench.colorTheme` through `Settings::update_value_derived` (`updateValue` without a target: the layer that already sets the key, else user settings, where the default value removes the key) and sends `$acceptConfigurationChanged` and `$onColorThemeChange` to the extension host. The Manage Extension and color mode buttons run `workbench.extensions.search` and `workbench.action.openSettings`, which fail with an error dialog until the Extensions view and the Settings editor are ported. Without a Marketplace (product.json has no gallery) upstream shows no install entry either.
+- Quick input separators use `descriptionForeground`, not `pickerGroup.foreground`: the CSS rule of quickInput.css outranks the controller's style rule (measured on 1.147).
 - shortcut: the palette's gear button opens `keybindings.json`; upstream opens the Keybindings editor at the command, which the port does not have.
 - shortcut: `keybindings.json` is polled once a second; the port has no file watcher.
 - shortcut: a command that fails from a keybinding is logged to stderr; the port has no notification toasts.
 - shortcut: Revert File is a whole-text edit plus a save until milestone 8 has a model revert.
 - shortcut: the quick input fades in and out without the 0.97/0.99 scale of upstream's animation; GPUI has no element transforms.
-- Not done, left for a next session: Quick Open (`anythingQuickAccess.ts` needs a port of `fuzzyScorer.ts`, 953 lines with 1452 lines of tests, file search with the exclude settings, editor history and `:line`), the theme picker (`workbench.action.selectTheme`, which also writes `workbench.colorTheme`, a milestone 10 setting), the native menu bar from `MenuId.MenubarMainMenu`, context menus and hovers. pixel-check has no quick input window; the palette was compared by an ad-hoc capture (port/results/pixels.md).
+- Not done, left for a next session: Quick Open (`anythingQuickAccess.ts` needs a port of `fuzzyScorer.ts`, 953 lines with 1452 lines of tests, file search with the exclude settings, editor history and `:line`), the native menu bar from `MenuId.MenubarMainMenu`, context menus and hovers. pixel-check has no quick input window; the palette was compared by an ad-hoc capture (port/results/pixels.md).
 
 ## Milestone 12: files, explorer, search, workspace (in progress)
 
