@@ -201,7 +201,7 @@ impl HostSync {
 
     /// Tells the host where the cursor of the visible editor moved.
     pub fn send_selection(&self, editor: &OpenEditor, source: &str) {
-        let selections = json!({ "selections": [selection(editor)], "source": source });
+        let selections = json!({ "selections": selections(editor), "source": source });
         self.send("ExtHostEditors", "$acceptEditorPropertiesChanged", vec![json!(snapshot_id(editor)), json!({ "options": null, "selections": selections, "visibleRanges": null })]);
     }
 
@@ -246,7 +246,7 @@ fn text_editor_add_data(editor: &OpenEditor, visible_lines: Range<usize>) -> Val
         "id": snapshot_id(editor),
         "documentUri": document.uri(),
         "options": options(editor),
-        "selections": [selection(editor)],
+        "selections": selections(editor),
         "visibleRanges": visible_ranges(editor, visible_lines),
         "editorPosition": 0,
     })
@@ -271,12 +271,14 @@ fn visible_ranges(editor: &OpenEditor, lines: Range<usize>) -> Value {
     json!([{ "startLineNumber": lines.start + 1, "startColumn": 1, "endLineNumber": last + 1, "endColumn": utf16_len(&editor.document.lines[last]) + 1 }])
 }
 
-/// `ISelection`, 1-based with UTF-16 columns as the text model counts them.
-fn selection(editor: &OpenEditor) -> Value {
+/// The cursors' `ISelection`s, primary first, 1-based with UTF-16 columns as the text model counts them.
+fn selections(editor: &OpenEditor) -> Value {
     let lines = &editor.document.lines;
     let column = |position: Position| utf16_len(&lines[position.line].chars().take(position.column).collect::<String>()) + 1;
-    let Selection { anchor, head } = editor.selection;
-    json!({ "selectionStartLineNumber": anchor.line + 1, "selectionStartColumn": column(anchor), "positionLineNumber": head.line + 1, "positionColumn": column(head) })
+    let selection = |&Selection { anchor, head }: &Selection| {
+        json!({ "selectionStartLineNumber": anchor.line + 1, "selectionStartColumn": column(anchor), "positionLineNumber": head.line + 1, "positionColumn": column(head) })
+    };
+    Value::Array(editor.selections.iter().map(selection).collect())
 }
 
 /// `TextModelEditSource.metadata` (textModelEditSource.ts).

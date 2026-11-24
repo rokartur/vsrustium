@@ -9,13 +9,16 @@ use std::time::{Duration, Instant};
 use crate::languages::Languages;
 use crate::syntax::Tokenization;
 
+pub mod commands;
 mod cursor;
 mod edit;
+mod multicursor;
 mod snippet;
 mod view;
 
 pub use cursor::{Position, Selection};
-pub use edit::{ContentChanged, EditReason, History, char_column, end_of, text_between, utf16_column};
+pub use edit::{ContentChanged, Copied, CursorEdit, EditReason, History, Replace, char_column, end_of, selections_after, text_between, utf16_column};
+pub use multicursor::{ColumnSelectData, Reveal};
 pub use snippet::expand as expand_snippet;
 pub use view::{HORIZONTAL_SCROLLBAR_HEIGHT, LINE_HEIGHT, Scrollbar, VERTICAL_SCROLLBAR_WIDTH, VerticalReveal, Viewport};
 
@@ -326,9 +329,15 @@ pub struct OpenEditor {
     pub preview: bool,
     /// The `$model<N>` id the text model gets, so the extension host sees a new editor per opened model.
     pub model_id: u32,
-    pub selection: Selection,
-    /// Visible columns a vertical move could not place, kept while moving up and down (`leftoverVisibleColumns`).
-    leftover: isize,
+    /// The cursors' selections, the primary one first (`CursorCollection`).
+    pub selections: Vec<Selection>,
+    /// The cursor added last, which wins a merge of its direction (`lastAddedCursorIndex`).
+    last_added: usize,
+    /// Per cursor, visible columns a vertical move could not place at the anchor and the head, kept while
+    /// moving up and down (`selectionStartLeftoverVisibleColumns`, `leftoverVisibleColumns`).
+    leftovers: Vec<(isize, isize)>,
+    /// The last column selection and the selections it made: it goes on while they are unchanged (`_columnSelectData`).
+    column_select: Option<(ColumnSelectData, Vec<Selection>)>,
     /// `getVersionId`: 1 when opened, one more per content change.
     pub version_id: u32,
     history: History,
@@ -358,7 +367,7 @@ impl OpenEditor {
     fn new(document: TextDocument, preview: bool, model_id: u32) -> Self {
         let indentation = document.indentation;
         let guides = indent_guides(&document.lines, indentation.tab_size, indentation.tab_size, document.off_side);
-        let mut editor = OpenEditor { document, preview, model_id, selection: Selection::default(), leftover: 0, version_id: 1, history: History::default(), guides, highlights: Vec::new(), scroll: Scroll::default(), max_line_width: 0., host_reference: None };
+        let mut editor = OpenEditor { document, preview, model_id, selections: vec![Selection::default()], last_added: 0, leftovers: Vec::new(), column_select: None, version_id: 1, history: History::default(), guides, highlights: Vec::new(), scroll: Scroll::default(), max_line_width: 0., host_reference: None };
         editor.refresh_highlights();
         editor
     }
@@ -579,7 +588,7 @@ mod tests {
         editor.move_to(Position::new(1, 4), false);
         assert_eq!(editor.highlights, [(1, 0..4)]);
         editor.move_to(Position::new(1, 4), true);
-        editor.selection.anchor = Position::new(0, 0);
+        editor.selections[0].anchor = Position::new(0, 0);
         editor.refresh_highlights();
         assert!(editor.highlights.is_empty());
     }

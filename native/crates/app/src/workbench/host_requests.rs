@@ -10,7 +10,8 @@ use serde_json::{Value, json};
 
 use super::Workbench;
 use crate::editor::{
-    EditReason, OpenEditor, Position, Selection, TextDocument, VerticalReveal, char_column, end_of, expand_snippet, guess_indentation, indent_guides, text_between, uri_string, word_at,
+    CursorEdit, EditReason, OpenEditor, Position, Replace, Selection, TextDocument, VerticalReveal, char_column, end_of, expand_snippet, guess_indentation, indent_guides,
+    selections_after, text_between, uri_string, word_at,
 };
 use crate::host_sync::snapshot_id;
 
@@ -170,15 +171,22 @@ impl Workbench {
         Ok(json!(snapshot_id(self.editors.active().expect("just shown"))))
     }
 
-    /// `setSelections`: the host's primary selection becomes the cursor; nothing scrolls.
-    // shortcut: one cursor, so selections after the first are dropped until multi-cursor lands in this milestone.
+    /// `setSelections`: one cursor per selection, the first the primary one; nothing scrolls.
     fn set_host_selections(&mut self, selections: &Value, cx: &mut Context<Self>) -> HostResult {
-        let Some(selection) = selections.get(0) else { return Ok(Value::Null) };
         let editor = self.editors.active_mut().expect("checked by host_request");
-        let anchor = position(editor, &selection["selectionStartLineNumber"], &selection["selectionStartColumn"]);
-        let head = position(editor, &selection["positionLineNumber"], &selection["positionColumn"]);
-        editor.move_to(anchor, false);
-        editor.move_to(head, true);
+        let selections: Vec<Selection> = selections
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|selection| Selection {
+                anchor: position(editor, &selection["selectionStartLineNumber"], &selection["selectionStartColumn"]),
+                head: position(editor, &selection["positionLineNumber"], &selection["positionColumn"]),
+            })
+            .collect();
+        if selections.is_empty() {
+            return Ok(Value::Null);
+        }
+        editor.set_selections(selections);
         self.host.send_selection(self.editors.active().expect("checked by host_request"), "api");
         cx.notify();
         Ok(Value::Null)
@@ -257,7 +265,7 @@ impl Workbench {
         Ok(json!(true))
     }
 
-    /// mainThreadEditor.ts `insertSnippet`: the snippet replaces the range, and its first tab stop is selected.
+    /// mainThreadEditor.ts `insertSnippet`: the snippet replaces every range, and each copy's first tab stop is selected.
     fn insert_host_snippet(&mut self, version: &Value, template: &Value, ranges: &Value, options: &Value, window: &mut Window, cx: &mut Context<Self>) -> HostResult {
         let clipboard = cx.read_from_clipboard().and_then(|item| item.text());
         let editor = self.editors.active_mut().expect("checked by host_request");
@@ -265,23 +273,28 @@ impl Workbench {
             return Ok(json!(false));
         }
         window.focus(&self.editor_focus, cx);
-        // shortcut: one cursor, so ranges after the first are dropped until multi-cursor lands in this milestone.
-        let (start, end) = match ranges.get(0) {
-            Some(first) => range(editor, first),
-            None => (editor.selection.start(), editor.selection.end()),
-        };
-        let line = &editor.document.lines[start.line];
-        let line_indent: String = line.chars().take(start.column).take_while(|c| *c == ' ' || *c == '\t').collect();
+        let mut ranges: Vec<(Position, Position)> = ranges.as_array().into_iter().flatten().map(|value| range(editor, value)).collect();
+        if ranges.is_empty() {
+            ranges = editor.selections.iter().map(|selection| (selection.start(), selection.end())).collect();
+        }
         let adjust_indentation = options["keepWhitespace"] != json!(true);
-        let snippet = expand_snippet(template.as_str().unwrap_or_default(), &line_indent, adjust_indentation, editor.document.indentation, |name| {
-            snippet_variable(name, editor, start, end, clipboard.as_deref())
-        });
-        let prefix = |chars: usize| snippet.text.chars().take(chars).collect::<String>();
-        let selection = Selection { anchor: end_of(start, &prefix(snippet.selection.start)), head: end_of(start, &prefix(snippet.selection.end)) };
+        let mut cursor_edits = Vec::new();
+        for &(start, end) in &ranges {
+            let line_indent: String = editor.document.lines[start.line].chars().take(start.column).take_while(|c| *c == ' ' || *c == '\t').collect();
+            let snippet = expand_snippet(template.as_str().unwrap_or_default(), &line_indent, adjust_indentation, editor.document.indentation, |name| {
+                snippet_variable(name, editor, start, end, clipboard.as_deref())
+            });
+            let prefix = |chars: usize| snippet.text.chars().take(chars).collect::<String>();
+            let selection = Selection { anchor: end_of(start, &prefix(snippet.selection.start)), head: end_of(start, &prefix(snippet.selection.end)) };
+            cursor_edits.push(CursorEdit::new(vec![Replace::new(start, end, snippet.text.clone())], selection));
+        }
+        let before: Vec<Selection> = ranges.iter().map(|&(start, end)| Selection { anchor: start, head: end }).collect();
+        let selections = selections_after(&cursor_edits, &before);
+        let edits = cursor_edits.into_iter().flat_map(|edit| edit.replaces).map(|replace| (replace.start, replace.end, replace.text, false)).collect();
         if options["undoStopBefore"] == json!(true) {
             editor.push_undo_stop();
         }
-        let change = editor.execute_edits(vec![(start, end, snippet.text.clone(), false)], Some(selection), EditReason::Unknown("snippet"));
+        let change = editor.execute_edits(edits, Some(selections), EditReason::Unknown("snippet"));
         if options["undoStopAfter"] == json!(true) {
             editor.push_undo_stop();
         }

@@ -12,9 +12,10 @@ use gpui::{
 };
 
 use super::Workbench;
+use crate::brackets::BracketRange;
 use crate::editor::{
-    HORIZONTAL_SCROLLBAR_HEIGHT, LINE_HEIGHT, OpenEditor, Position, Scrollbar, Selection, VERTICAL_SCROLLBAR_WIDTH, Viewport, column_at_visible, expand_tabs, visible_column,
-    word_at,
+    HORIZONTAL_SCROLLBAR_HEIGHT, LINE_HEIGHT, OpenEditor, Position, Reveal, Scrollbar, Selection, VERTICAL_SCROLLBAR_WIDTH, Viewport, column_at_visible, commands,
+    expand_tabs, visible_column, word_at,
 };
 use crate::theme::ThemeKind;
 
@@ -429,10 +430,12 @@ impl Workbench {
     fn editor_lines(&self, editor: &OpenEditor, range: Range<usize>, metrics: EditorMetrics, window: &mut Window, cx: &mut Context<Self>) -> Vec<Div> {
         let focused = self.editor_focus.is_focused(window);
         let scroll_left = editor.scroll.left;
-        let selection = editor.selection;
+        let selections = &editor.selections;
         let tab_size = editor.document.indentation.tab_size;
-        let Position { line: cursor_line, column: cursor_column } = editor.selection.head;
-        let bracket_match = editor.document.tokens.bracket_match(&self.theme, &self.languages, &editor.document.lines, (cursor_line, cursor_column));
+        let primary_line = editor.selection().head.line;
+        // currentLineHighlight.ts: every cursor's line, drawn only while all selections are empty.
+        let all_empty = selections.iter().all(|selection| selection.is_empty());
+        let bracket_matches = self.bracket_matches(editor);
         let bracket_box = (self.theme.color("editorBracketMatch.background"), self.theme.color("editorBracketMatch.border"));
         let colors = LineColors {
             number: self.color("editorLineNumber.foreground"),
@@ -443,6 +446,8 @@ impl Workbench {
             word_border: self.theme.color("editor.wordHighlightTextBorder"),
             guide: self.color("editorIndentGuide.background1"),
             cursor: self.color("editorCursor.foreground"),
+            primary_cursor: self.color("editorMultiCursor.primary.foreground"),
+            secondary_cursor: self.color("editorMultiCursor.secondary.foreground"),
             selection: self.color(if focused { "editor.selectionBackground" } else { "editor.inactiveSelectionBackground" }),
         };
         // currentLineHighlight.css: high contrast draws the exact border 1px wide.
@@ -451,21 +456,21 @@ impl Workbench {
         range
             .map(|index| {
                 let text = &editor.document.lines[index];
-                let is_cursor_line = index == cursor_line;
+                // lineNumbers.ts marks only the primary cursor's line active.
                 let number = div()
                     .w(px(metrics.line_numbers_width))
                     .flex_none()
                     .text_right()
-                    .text_color(if is_cursor_line { colors.active_number } else { colors.number })
+                    .text_color(if index == primary_line { colors.active_number } else { colors.number })
                     .child((index + 1).to_string());
                 let mut current_line = div().absolute().inset_0();
-                // currentLineHighlight.ts draws the current line only while the selection is empty.
-                if is_cursor_line && selection.is_empty() {
+                if all_empty && selections.iter().any(|selection| selection.head.line == index) {
                     current_line = current_line.border(px(line_border_width)).border_color(colors.line_border);
                 }
                 // The text scrolls left under the fixed margin and current line border.
                 let mut content = div().absolute().top_0().bottom_0().right_0().left(px(-scroll_left));
-                if let Some((start, end, line_break)) = selected_columns(selection, index, text) {
+                for selection in selections {
+                    let Some((start, end, line_break)) = selected_columns(*selection, index, text) else { continue };
                     // A selected line break is one typicalHalfwidthCharacterWidth wide (viewLines.ts linesVisibleRangesForRange).
                     // shortcut: square corners, where roundedSelection rounds the outer ones by 3px.
                     let left = visible_column(text, start, tab_size) as f32 * char_width;
@@ -490,7 +495,7 @@ impl Workbench {
                     content = content.child(highlight);
                 }
                 // bracketMatching.css .bracket-match: background and a 1px border inside the bracket's box.
-                for (_, bytes) in bracket_match.iter().flat_map(|(pair, _)| pair).filter(|(line, _)| *line == index) {
+                for (_, bytes) in bracket_matches.iter().flat_map(|(pair, _)| pair).filter(|(line, _)| *line == index) {
                     let start = visible_column(text, text[..bytes.start].chars().count(), tab_size) as f32 * char_width;
                     let end = visible_column(text, text[..bytes.end].chars().count(), tab_size) as f32 * char_width;
                     let mut bracket = div().absolute().top_0().h_full().left(px(start)).w(px(end - start));
@@ -505,10 +510,15 @@ impl Workbench {
                 let highlights = editor.document.tokens.highlights(&self.theme, &self.languages, &editor.document.lines, index, tab_size);
                 let text_runs = StyledText::new(expand_tabs(text, tab_size)).with_highlights(highlights);
                 content = content.child(div().absolute().top_0().left_0().whitespace_nowrap().child(text_runs));
-                if is_cursor_line && focused {
+                for (cursor_index, selection) in selections.iter().enumerate().filter(|(_, selection)| focused && selection.head.line == index) {
                     // shortcut: the cursor does not blink (editor.cursorBlinking "blink" hides it every 500ms).
-                    let x = visible_column(text, cursor_column, tab_size) as f32 * char_width;
-                    content = content.child(div().absolute().top_0().left(px(x)).w(px(2.)).h_full().bg(colors.cursor));
+                    let color = match (selections.len(), cursor_index) {
+                        (1, _) => colors.cursor,
+                        (_, 0) => colors.primary_cursor,
+                        _ => colors.secondary_cursor,
+                    };
+                    let x = visible_column(text, selection.head.column, tab_size) as f32 * char_width;
+                    content = content.child(div().absolute().top_0().left(px(x)).w(px(2.)).h_full().bg(color));
                 }
                 let visible_at = move |workbench: &Workbench, x: gpui::Pixels| (f32::from(x) - workbench.text_area_left.get() - metrics.content_left() + scroll_left) / char_width;
                 let content = div()
@@ -522,11 +532,19 @@ impl Workbench {
                     .on_mouse_down(MouseButton::Left, cx.listener(move |workbench, event: &MouseDownEvent, window, cx| {
                         window.focus(&workbench.editor_focus, cx);
                         workbench.selecting_text = true;
-                        workbench.click_text(index, visible_at(workbench, event.position.x), event.modifiers.shift, event.click_count, cx);
+                        let modifiers = event.modifiers;
+                        workbench.click_text(index, visible_at(workbench, event.position.x), modifiers, modifiers.shift, event.click_count, cx);
+                    }))
+                    .on_mouse_down(MouseButton::Middle, cx.listener(move |workbench, event: &MouseDownEvent, window, cx| {
+                        window.focus(&workbench.editor_focus, cx);
+                        workbench.selecting_text = true;
+                        workbench.column_select_text(index, visible_at(workbench, event.position.x), event.modifiers.shift, cx);
                     }))
                     .on_mouse_move(cx.listener(move |workbench, event: &MouseMoveEvent, _, cx| {
-                        if workbench.selecting_text && event.pressed_button == Some(MouseButton::Left) {
-                            workbench.click_text(index, visible_at(workbench, event.position.x), true, 1, cx);
+                        match event.pressed_button {
+                            Some(MouseButton::Left) if workbench.selecting_text => workbench.click_text(index, visible_at(workbench, event.position.x), event.modifiers, true, 1, cx),
+                            Some(MouseButton::Middle) if workbench.selecting_text => workbench.column_select_text(index, visible_at(workbench, event.position.x), true, cx),
+                            _ => {}
                         }
                     }));
                 div()
@@ -541,14 +559,57 @@ impl Workbench {
             .collect()
     }
 
-    /// A click places the cursor, Shift or a drag extends the selection, a double click selects the word
-    /// and a triple click the line.
+    /// bracketMatching.ts `_recomputeBrackets`: the brackets matched at each empty cursor, none past 100 selections.
+    fn bracket_matches(&self, editor: &OpenEditor) -> Vec<([BracketRange; 2], bool)> {
+        if editor.selections.len() > 100 {
+            return Vec::new();
+        }
+        let lines = &editor.document.lines;
+        let mut matches = Vec::new();
+        for selection in editor.selections.iter().filter(|selection| selection.is_empty()) {
+            matches.extend(editor.document.tokens.bracket_match(&self.theme, &self.languages, lines, (selection.head.line, selection.head.column)));
+        }
+        matches
+    }
+
+    /// viewController.ts `dispatchMouse` on the text: a click places the cursor, Shift or a drag extends the
+    /// selection, a double click selects the word and a triple click the line. With Alt (`multiCursorModifier`)
+    /// a click adds or removes a cursor, a drag extends the cursor added last, a double or triple click
+    /// selects its word or line, and with Shift too it selects a column.
     /// shortcut: a drag selects only while the pointer is over the lines, and by chars, not by the words or lines it started with.
-    fn click_text(&mut self, line: usize, visible: f32, select: bool, click_count: usize, cx: &mut Context<Self>) {
+    fn click_text(&mut self, line: usize, visible: f32, modifiers: gpui::Modifiers, select: bool, click_count: usize, cx: &mut Context<Self>) {
         let editor = self.editors.active_mut().expect("text is clickable only with an editor open");
         let text = &editor.document.lines[line];
         let column = column_at_visible(text, visible, editor.document.indentation.tab_size);
-        let before = editor.selection;
+        let position = Position::new(line, column);
+        let before = editor.selections.clone();
+        if modifiers.alt && click_count < 4 {
+            if modifiers.platform || modifiers.control {
+                return;
+            }
+            // Only the column selection reveals; the other `_lastCursor*` commands and `createCursor` do not.
+            let reveal = match click_count {
+                2 => {
+                    editor.last_cursor_select_word(position);
+                    Reveal::Nothing
+                }
+                3 => {
+                    editor.last_cursor_select_line(line);
+                    Reveal::Nothing
+                }
+                _ if modifiers.shift => editor.column_select_to_pointer(line, mouse_column(visible), true),
+                _ if select => {
+                    editor.last_cursor_select_to(position);
+                    Reveal::Nothing
+                }
+                _ => {
+                    editor.toggle_cursor(position);
+                    Reveal::Nothing
+                }
+            };
+            self.cursors_changed(before, reveal, "mouse", cx);
+            return;
+        }
         match click_count {
             2 => {
                 let word = word_at(text, column).unwrap_or(column..column);
@@ -562,23 +623,77 @@ impl Workbench {
             }
             _ => editor.move_to(Position::new(line, column), select),
         }
-        let moved = editor.selection != before;
+        let moved = editor.selections != before;
         self.editor_edited(None, moved, "mouse", cx);
+    }
+
+    /// The middle button selects a column (`editor.scrollOnMiddleClick` off): from the pointer, or with
+    /// Shift or while dragging from where the last column selection started.
+    fn column_select_text(&mut self, line: usize, visible: f32, extend: bool, cx: &mut Context<Self>) {
+        let editor = self.editors.active_mut().expect("text is clickable only with an editor open");
+        let before = editor.selections.clone();
+        let reveal = editor.column_select_to_pointer(line, mouse_column(visible), extend);
+        self.cursors_changed(before, reveal, "mouse", cx);
+    }
+
+    /// Runs an editor command; false when its precondition does not hold.
+    pub(super) fn run_editor_command(&mut self, command: &str, source: &str, cx: &mut Context<Self>) -> bool {
+        let viewport = self.editors.viewport;
+        let editor = self.editors.active_mut().expect("editor commands run on the active editor");
+        let before = editor.selections.clone();
+        let Some(reveal) = commands::run(editor, command, viewport) else {
+            return false;
+        };
+        self.cursors_changed(before, reveal, source, cx);
+        true
+    }
+
+    /// After a command that moves cursors only: scrolls to what it reveals and tells the host.
+    fn cursors_changed(&mut self, before: Vec<Selection>, reveal: Reveal, source: &str, cx: &mut Context<Self>) {
+        let viewport = self.editors.viewport;
+        let editor = self.editors.active_mut().expect("cursors change in the active editor");
+        let scroll = editor.scroll;
+        match reveal {
+            Reveal::Nothing => {}
+            Reveal::All => editor.reveal_cursors(source, viewport),
+            Reveal::Position(position) => editor.reveal_position(position, source, viewport),
+        }
+        let (moved, scrolled) = (editor.selections != before, editor.scroll != scroll);
+        if moved {
+            self.host.send_selection(self.editors.active().expect("still open"), source);
+        }
+        if scrolled {
+            self.editor_scrolled(cx);
+        }
+        cx.notify();
     }
 
     /// decorationsOverviewRuler.ts `_render`, in device pixels: word highlights, then matched brackets in the center lane, the cursor
     /// across all lanes, then the 1px border on the left and top edges.
     fn overview_ruler(&self, editor: &OpenEditor) -> gpui::Canvas<()> {
         let line_count = editor.document.lines.len();
-        let cursor_line = editor.selection.head.line;
         let highlight_lines: Vec<usize> = editor.highlights.iter().map(|(line, _)| *line).collect();
         let highlight = self.color("editorOverviewRuler.wordHighlightTextForeground");
-        let bracket_lines: Vec<usize> = match editor.document.tokens.bracket_match(&self.theme, &self.languages, &editor.document.lines, (cursor_line, editor.selection.head.column)) {
-            Some(([open, close], true)) => vec![open.0, close.0],
-            _ => Vec::new(),
-        };
+        let mut bracket_lines = Vec::new();
+        for ([open, close], in_ruler) in self.bracket_matches(editor) {
+            if in_ruler {
+                bracket_lines.extend([open.0, close.0]);
+            }
+        }
         let bracket_color = self.color("editorOverviewRuler.bracketMatchForeground");
-        let cursor = self.theme.color("editorCursor.foreground").map(|color| Rgba { a: color.a * 0.7, ..color });
+        // decorationsOverviewRuler.ts onCursorStateChanged: the cursor colors, each at 70% opacity.
+        let ruler_color = |key: &str| self.theme.color(key).map(|color| Rgba { a: color.a * 0.7, ..color });
+        let mut cursors = Vec::new();
+        for (index, selection) in editor.selections.iter().enumerate() {
+            let key = match (editor.selections.len(), index) {
+                (1, _) => "editorCursor.foreground",
+                (_, 0) => "editorMultiCursor.primary.foreground",
+                _ => "editorMultiCursor.secondary.foreground",
+            };
+            cursors.push((selection.head.line, ruler_color(key)));
+        }
+        cursors.sort_by_key(|(line, _)| *line);
+        bracket_lines.sort();
         let border = self.theme.color("editorOverviewRuler.border");
         canvas(
             |_, _, _| {},
@@ -620,11 +735,24 @@ impl Workbench {
                         paint(window, lanes.center_x, start, lanes.center_width, end - start, color);
                     }
                 }
-                if let Some(cursor) = cursor {
-                    let height = (2. * scale).floor();
-                    let half = (height / 2.).floor();
-                    let center = (cursor_line as f32 * LINE_HEIGHT * ratio).floor().clamp(half, canvas_height - half);
-                    paint(window, lanes.full_x, center - half, lanes.full_width, height, cursor);
+                // Cursors sorted by line; touching marks of one color paint as one.
+                let height = (2. * scale).floor();
+                let half = (height / 2.).floor();
+                let mut previous: Option<(f32, f32, Rgba)> = None;
+                for (line, color) in cursors.iter().filter_map(|(line, color)| Some((*line, (*color)?))) {
+                    let y1 = (line as f32 * LINE_HEIGHT * ratio).floor().clamp(half, canvas_height - half) - half;
+                    let y2 = y1 + height;
+                    previous = match previous {
+                        Some((start, end, previous_color)) if y1 <= end + 1. && previous_color == color => Some((start, end.max(y2), color)),
+                        Some((start, end, previous_color)) => {
+                            paint(window, lanes.full_x, start, lanes.full_width, end - start, previous_color);
+                            Some((y1, y2, color))
+                        }
+                        None => Some((y1, y2, color)),
+                    };
+                }
+                if let Some((start, end, color)) = previous {
+                    paint(window, lanes.full_x, start, lanes.full_width, end - start, color);
                 }
                 // A 1px canvas stroke along x = 0 and y = 0 covers half of the first device column and row.
                 if let Some(border) = border {
@@ -642,15 +770,13 @@ impl Workbench {
     pub(super) fn editor_status_items(&self, foreground: Rgba) -> Option<Div> {
         let editor = self.editors.active()?;
         let document = &editor.document;
-        let Position { line, column } = editor.selection.head;
-        let visible = visible_column(&document.lines[line], column, document.indentation.tab_size);
         let indentation = match document.indentation.insert_spaces {
             true => format!("Spaces: {}", document.indentation.tab_size),
             false => format!("Tab Size: {}", document.indentation.tab_size),
         };
         let encoding = if document.encoding == "utf8bom" { "UTF-8 with BOM" } else { "UTF-8" };
         let eol = if document.eol == "\r\n" { "CRLF" } else { "LF" };
-        let labels = [format!("Ln {}, Col {}", line + 1, visible + 1), indentation, encoding.into(), eol.into(), self.languages.name(&document.language_id).to_string()];
+        let labels = [selection_label(editor), indentation, encoding.into(), eol.into(), self.languages.name(&document.language_id).to_string()];
         let items = labels.into_iter().map(|label| div().h_full().mx(px(3.)).px(px(5.)).flex().items_center().whitespace_nowrap().child(label));
         Some(div().h_full().flex().text_color(foreground).children(items))
     }
@@ -689,7 +815,37 @@ struct LineColors {
     word_border: Option<Rgba>,
     guide: Rgba,
     cursor: Rgba,
+    primary_cursor: Rgba,
+    secondary_cursor: Rgba,
     selection: Rgba,
+}
+
+/// editorStatus.ts `getSelectionLabel`: the primary cursor's line and visible column for one cursor, the
+/// count for several, and the chars selected (`getCharacterCountInRange`: code points, a line break as the EOL's length).
+fn selection_label(editor: &OpenEditor) -> String {
+    let document = &editor.document;
+    let mut selected = 0;
+    for selection in &editor.selections {
+        let (start, end) = (selection.start(), selection.end());
+        for line in start.line..=end.line {
+            let first = if line == start.line { start.column } else { 0 };
+            let last = if line == end.line { end.column } else { document.lines[line].chars().count() };
+            selected += last - first;
+        }
+        selected += document.eol.len() * (end.line - start.line);
+    }
+    if let [selection] = editor.selections.as_slice() {
+        let Position { line, column } = selection.head;
+        let visible = visible_column(&document.lines[line], column, document.indentation.tab_size);
+        return match selected {
+            0 => format!("Ln {}, Col {}", line + 1, visible + 1),
+            _ => format!("Ln {}, Col {} ({selected} selected)", line + 1, visible + 1),
+        };
+    }
+    match selected {
+        0 => format!("{} selections", editor.selections.len()),
+        _ => format!("{} selections ({selected} characters selected)", editor.selections.len()),
+    }
 }
 
 /// The selected chars of a line and whether its line break is selected too.
@@ -701,6 +857,11 @@ fn selected_columns(selection: Selection, line: usize, text: &str) -> Option<(us
     let first = if line == start.line { start.column } else { 0 };
     let last = if line == end.line { end.column } else { text.chars().count() };
     Some((first, last, line < end.line))
+}
+
+/// mouseTarget.ts `mouseColumn` less one: the visible column nearest the pointer, past the line end too.
+fn mouse_column(visible: f32) -> usize {
+    visible.round().max(0.) as usize
 }
 
 /// `_initLanes` with three lanes: one device pixel for the border, then three thirds, the center taking the rest.

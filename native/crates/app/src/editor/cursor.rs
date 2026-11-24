@@ -48,6 +48,53 @@ impl Selection {
     }
 }
 
+/// `CursorCollection.normalize` with `multiCursorMergeOverlapping`: touching cursors merge when one is
+/// empty, selections only when they overlap. The older cursor wins and keeps its direction, unless the
+/// loser is the last added one. Index 0 is the primary cursor. Returns the indices removed, in order.
+pub fn normalize(selections: &mut Vec<Selection>, last_added: &mut usize) -> Vec<usize> {
+    let mut removed = Vec::new();
+    let mut sorted: Vec<usize> = (0..selections.len()).collect();
+    sorted.sort_by_key(|&index| (selections[index].start(), selections[index].end()));
+    let mut at = 0;
+    while at + 1 < sorted.len() {
+        let (current, next) = (selections[sorted[at]], selections[sorted[at + 1]]);
+        let merge = match current.is_empty() || next.is_empty() {
+            true => next.start() <= current.end(),
+            false => next.start() < current.end(),
+        };
+        if !merge {
+            at += 1;
+            continue;
+        }
+        let (winner_at, loser_at) = if sorted[at] < sorted[at + 1] { (at, at + 1) } else { (at + 1, at) };
+        let (winner, loser) = (sorted[winner_at], sorted[loser_at]);
+        let (winner_selection, loser_selection) = (selections[winner], selections[loser]);
+        if winner_selection != loser_selection {
+            let start = winner_selection.start().min(loser_selection.start());
+            let end = winner_selection.end().max(loser_selection.end());
+            let left_to_right = if loser == *last_added {
+                *last_added = winner;
+                loser_selection.anchor <= loser_selection.head
+            } else {
+                winner_selection.anchor <= winner_selection.head
+            };
+            selections[winner] = if left_to_right { Selection { anchor: start, head: end } } else { Selection { anchor: end, head: start } };
+        }
+        selections.remove(loser);
+        removed.push(loser);
+        sorted.remove(loser_at);
+        for index in &mut sorted {
+            if *index > loser {
+                *index -= 1;
+            }
+        }
+        if *last_added >= loser {
+            *last_added -= 1;
+        }
+    }
+    removed
+}
+
 pub fn line_len(lines: &[String], line: usize) -> usize {
     lines[line].chars().count()
 }
@@ -97,6 +144,17 @@ pub fn vertical(lines: &[String], position: Position, leftover: isize, down: boo
     };
     let leftover = if was_at_edge { 0 } else { visible - visible_of(moved) };
     (moved, leftover)
+}
+
+/// `MoveOperations.translateUp`/`translateDown` for one position: `vertical`, but on the first or last
+/// line the position stays (`allowMoveOnEdgeLine` false).
+pub fn translate(lines: &[String], position: Position, leftover: isize, down: bool, tab_size: usize) -> (Position, isize) {
+    let on_edge_line = if down { position.line + 1 == lines.len() } else { position.line == 0 };
+    if !on_edge_line {
+        return vertical(lines, position, leftover, down, tab_size);
+    }
+    let was_at_edge = if down { position == last_position(lines) } else { position == Position::default() };
+    (position, if was_at_edge { 0 } else { leftover })
 }
 
 /// `CursorColumns.columnFromVisibleColumn`: the column nearest to `visible`, the left one on a tie.
@@ -386,6 +444,26 @@ mod tests {
     }
 
     const SPACES_4: Indentation = Indentation { tab_size: 4, insert_spaces: true };
+
+    #[test]
+    fn normalize_merges_overlapping_cursors_into_the_older_one() {
+        let range = |anchor: (usize, usize), head: (usize, usize)| Selection { anchor: at(anchor.0, anchor.1), head: at(head.0, head.1) };
+        // Touching selections stay apart; a cursor touching a selection merges into it.
+        let mut selections = vec![range((0, 0), (0, 2)), range((0, 2), (0, 4)), Selection::caret(at(0, 4)), Selection::caret(at(1, 0))];
+        let mut last_added = 3;
+        normalize(&mut selections, &mut last_added);
+        assert_eq!(selections, [range((0, 0), (0, 2)), range((0, 2), (0, 4)), Selection::caret(at(1, 0))]);
+        assert_eq!(last_added, 2);
+        // The older cursor keeps its direction, unless the merged one was added last.
+        let mut selections = vec![range((0, 3), (0, 0)), range((0, 2), (0, 5))];
+        let mut last_added = 0;
+        normalize(&mut selections, &mut last_added);
+        assert_eq!(selections, [range((0, 5), (0, 0))]);
+        let mut selections = vec![range((0, 3), (0, 0)), range((0, 2), (0, 5))];
+        let mut last_added = 1;
+        normalize(&mut selections, &mut last_added);
+        assert_eq!((selections, last_added), (vec![range((0, 0), (0, 5))], 0));
+    }
 
     #[test]
     fn moves_by_char_across_line_breaks() {

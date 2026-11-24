@@ -31,6 +31,13 @@ pub struct Viewport {
     pub char_width: f32,
 }
 
+impl Viewport {
+    /// `CursorConfiguration.pageSize`: the lines a page move goes, two less than fit.
+    pub fn page_size(&self) -> usize {
+        ((self.height / LINE_HEIGHT).floor() as usize).saturating_sub(2).max(1)
+    }
+}
+
 /// The `VerticalRevealType`s that `TextEditorRevealType` maps onto (mainThreadEditor.ts `revealRange`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum VerticalReveal {
@@ -120,17 +127,24 @@ impl OpenEditor {
         Scrollbar::new(VERTICAL_SCROLLBAR_WIDTH, viewport.width, self.scroll_width(viewport), self.scroll.left)
     }
 
-    /// `revealAll` of the cursor after a command or a click (cursor.ts): its selection's lines, then its
-    /// columns when the selection is on one line. A mouse source skips the sticky scroll padding.
-    pub fn reveal_selection(&mut self, source: &str, viewport: Viewport) {
-        let (start, end) = (self.selection.start(), self.selection.end());
-        let box_lines = (start.line as f32 * LINE_HEIGHT, (end.line + 1) as f32 * LINE_HEIGHT);
-        let Some(top) = scroll_top_to_reveal(self.scroll.top, viewport.height, box_lines, VerticalReveal::Simple, source == "mouse", false) else {
+    /// `revealAll` after a command or a click (cursor.ts): one cursor reveals its head; several reveal the
+    /// lines of all their selections, unless they do not fit, then their columns when every selection is
+    /// on one line. A mouse source skips the sticky scroll padding.
+    pub fn reveal_cursors(&mut self, source: &str, viewport: Viewport) {
+        let single = self.selections.len() == 1;
+        let ranges: Vec<(Position, Position)> = match single {
+            true => vec![(self.selection().head, self.selection().head)],
+            false => self.selections.iter().map(|selection| (selection.start(), selection.end())).collect(),
+        };
+        let first = ranges.iter().map(|range| range.0.line).min().expect("an editor has a cursor");
+        let last = ranges.iter().map(|range| range.1.line).max().expect("an editor has a cursor");
+        let box_lines = (first as f32 * LINE_HEIGHT, (last + 1) as f32 * LINE_HEIGHT);
+        let Some(top) = scroll_top_to_reveal(self.scroll.top, viewport.height, box_lines, VerticalReveal::Simple, source == "mouse", single) else {
             return;
         };
         self.set_scroll(top, self.scroll.left, viewport);
-        if start.line == end.line {
-            self.reveal_columns(start.line, start.column, end.column, true, viewport);
+        if ranges.iter().all(|(start, end)| start.line == end.line) {
+            self.reveal_columns(&ranges, !single, viewport);
         }
     }
 
@@ -146,16 +160,26 @@ impl OpenEditor {
             self.set_scroll(self.scroll.top, 0., viewport);
             return;
         }
-        self.reveal_columns(start.line, start.column, end.column, false, viewport);
+        self.reveal_columns(&[(start, end)], false, viewport);
     }
 
-    /// `_computeScrollLeftToReveal`: 30px of room before the box and 15px after it.
-    fn reveal_columns(&mut self, line: usize, start: usize, end: usize, selections: bool, viewport: Viewport) {
-        let text = &self.document.lines[line];
+    /// `revealTopMostCursor`/`revealBottomMostCursor`: one cursor position, vertically and horizontally.
+    pub fn reveal_position(&mut self, position: Position, source: &str, viewport: Viewport) {
+        let box_lines = (position.line as f32 * LINE_HEIGHT, (position.line + 1) as f32 * LINE_HEIGHT);
+        if let Some(top) = scroll_top_to_reveal(self.scroll.top, viewport.height, box_lines, VerticalReveal::Simple, source == "mouse", true) {
+            self.set_scroll(top, self.scroll.left, viewport);
+        }
+        self.reveal_columns(&[(position, position)], false, viewport);
+    }
+
+    /// `_computeScrollLeftToReveal` over one-line ranges: 30px of room before the box and 15px after it.
+    fn reveal_columns(&mut self, ranges: &[(Position, Position)], selections: bool, viewport: Viewport) {
         let tab_size = self.document.indentation.tab_size;
-        let x = |column| (super::visible_column(text, column, tab_size) as f32 * viewport.char_width).round();
-        let box_start = (x(start) - HORIZONTAL_EXTRA_PX).max(0.);
-        let box_end = x(end) + REVEAL_HORIZONTAL_RIGHT_PADDING;
+        let x = |position: Position| (super::visible_column(&self.document.lines[position.line], position.column, tab_size) as f32 * viewport.char_width).round();
+        let box_start = ranges.iter().map(|range| x(range.0)).fold(f32::MAX, f32::min);
+        let box_end = ranges.iter().map(|range| x(range.1)).fold(0., f32::max);
+        let box_start = (box_start - HORIZONTAL_EXTRA_PX).max(0.);
+        let box_end = box_end + REVEAL_HORIZONTAL_RIGHT_PADDING;
         if selections && box_end - box_start > viewport.width {
             return;
         }
@@ -312,19 +336,19 @@ mod tests {
     fn keyboard_reveal_keeps_the_sticky_scroll_lines_and_one_more_below() {
         let mut editor = editor_with(&"x\n".repeat(99));
         // 20 lines fit: the context is min(20 / 2, 5) = 5 lines above, and 4 + 1 below.
-        editor.selection = Selection::caret(Position::new(20, 0));
-        editor.reveal_selection("keyboard", VIEWPORT);
+        editor.selections = vec![Selection::caret(Position::new(20, 0))];
+        editor.reveal_cursors("keyboard", VIEWPORT);
         assert_eq!(editor.scroll.top, (21. + 5.) * 18. - 360.);
-        editor.selection = Selection::caret(Position::new(10, 0));
-        editor.reveal_selection("keyboard", VIEWPORT);
+        editor.selections = vec![Selection::caret(Position::new(10, 0))];
+        editor.reveal_cursors("keyboard", VIEWPORT);
         assert_eq!(editor.scroll.top, 5. * 18.);
         // Visible with its padding: no scroll.
-        editor.selection = Selection::caret(Position::new(12, 0));
-        editor.reveal_selection("keyboard", VIEWPORT);
+        editor.selections = vec![Selection::caret(Position::new(12, 0))];
+        editor.reveal_cursors("keyboard", VIEWPORT);
         assert_eq!(editor.scroll.top, 5. * 18.);
         // A click reveals one line above and one below.
-        editor.selection = Selection::caret(Position::new(30, 0));
-        editor.reveal_selection("mouse", VIEWPORT);
+        editor.selections = vec![Selection::caret(Position::new(30, 0))];
+        editor.reveal_cursors("mouse", VIEWPORT);
         assert_eq!(editor.scroll.top, 32. * 18. - 360.);
     }
 
@@ -338,9 +362,9 @@ mod tests {
         assert_eq!(editor.scroll.top, 50. * 18. - 180.);
         editor.reveal_range(Position::new(30, 0), Position::new(30, 0), VerticalReveal::Top, VIEWPORT);
         assert_eq!(editor.scroll.top, 25. * 18.);
-        // A selection taller than the viewport keeps the scroll.
-        editor.selection = Selection { anchor: Position::new(0, 0), head: Position::new(60, 0) };
-        editor.reveal_selection("keyboard", VIEWPORT);
+        // Cursors further apart than the viewport keep the scroll.
+        editor.selections = vec![Selection::caret(Position::new(0, 0)), Selection::caret(Position::new(60, 0))];
+        editor.reveal_cursors("keyboard", VIEWPORT);
         assert_eq!(editor.scroll.top, 25. * 18.);
     }
 
@@ -348,11 +372,11 @@ mod tests {
     fn horizontal_reveal_leaves_30px_before_and_15px_after_the_cursor() {
         let mut editor = editor_with(&"y".repeat(200));
         editor.saw_line_width(200. * 7.2);
-        editor.selection = Selection::caret(Position::new(0, 100));
-        editor.reveal_selection("keyboard", VIEWPORT);
+        editor.selections = vec![Selection::caret(Position::new(0, 100))];
+        editor.reveal_cursors("keyboard", VIEWPORT);
         assert_eq!(editor.scroll.left, 720. + 15. - (400. - 14.));
-        editor.selection = Selection::caret(Position::new(0, 10));
-        editor.reveal_selection("keyboard", VIEWPORT);
+        editor.selections = vec![Selection::caret(Position::new(0, 10))];
+        editor.reveal_cursors("keyboard", VIEWPORT);
         assert_eq!(editor.scroll.left, 72. - 30.);
     }
 }
