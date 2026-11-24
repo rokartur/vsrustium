@@ -4,7 +4,7 @@ Milestones from today to a shippable port, each with its scope, its done-when ch
 
 Rule for every milestone (Artur): a feature ships end to end and 1:1 with VS Code 1.147.0: UI, keyboard and mouse, the main-thread side the extension host calls, persistence, same look and behavior, upstream logic and tests ported, checked against the reference. Fewer complete features beat more partial ones; a `shortcut:` is only for a missing platform capability or a product decision.
 
-Ledger today: 7 verified, 12 ported, 79 stub, 443 todo, 51 removed (of 592 rows).
+Ledger today: 58 verified, 27 ported, 77 stub, 379 todo, 51 removed (of 592 rows).
 
 ## Done
 
@@ -26,7 +26,7 @@ Notes shortcuts closed here: no editing and no keyboard. The cursor still does n
 
 Rows: `editor/contrib/clipboard` `editor/contrib/wordOperations`
 
-## 6. API test harness
+## 6. API test harness (done)
 
 Scope: run `extensions/vscode-api-tests` against the port, so every later milestone reports a pass count against the reference baseline (`port/results/api-tests-reference.md`: folder 356/46/0, workspace 4/0/0). Needs `--extensionDevelopmentPath` / `--extensionTestsPath` in `code-gpui`, the test runner's exit code reaching the parent, host errors and console forwarded to the port's log, and a `port/tools/api-tests` script on the Studio.
 
@@ -34,7 +34,7 @@ Done when: `port/tools/api-tests` prints passing/pending/failing per suite for t
 
 Rows: `extension/vscode-api-tests` `mainthread/MainThreadExtensionService` `mainthread/MainThreadErrors` `mainthread/MainThreadConsole` `mainthread/MainThreadLogger` `platform/log` `workbench/services/log` `workbench/services/driver` `base/test` `editor/test` `platform/test`
 
-## 7. Syntax colors and themes
+## 7. Syntax colors and themes (done)
 
 Scope: TextMate grammars from `contributes.grammars` (vscode-textmate's algorithm, Oniguruma regexes), token colors from the theme's `tokenColors` and `semanticTokenColors`, bracket pair colorization and matching, every built-in color theme including High Contrast Light, `firstLine` language detection.
 
