@@ -39,9 +39,8 @@ async function capture(theme: string) {
 		'update.mode': 'none',
 		// The port ships without AI and sign-in (port/notes.md); this is the reference look of that product.
 		'chat.disableAIFeatures': true,
-		// Not ported: the trust dialog and the Seti file icon theme (port/notes.md, milestone 3).
+		// Not ported: the trust dialog (port/notes.md, milestone 3).
 		'security.workspace.trust.enabled': false,
-		'workbench.iconTheme': null,
 		// With AI off the secondary side bar only hosts chat, so the product without AI has none.
 		'workbench.secondarySideBar.defaultVisibility': 'hidden',
 		// Not ported: the minimap (port/notes.md, milestone 4).

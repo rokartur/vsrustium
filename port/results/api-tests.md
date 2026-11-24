@@ -30,3 +30,14 @@ Run with `MOCHA_GREP` on the Mac Studio at f598f3a9 (the full folder suite does 
 | `vscode API - commands\|showInputBox\|#7013` | 10 | 0 | 4 |
 
 Failing: `editorCommand with extra args`, `api-command: vscode.diff`, `api-command: vscode.open`, `vscode.open with untitled supports associated resource (#138925)`; they need milestone 8 editor groups and a diff editor (port/notes.md).
+
+## M12
+
+`MOCHA_GREP="vscode API - workspace-fs|vscode API - workspace events|vscode API - workspace " SUITE_TIMEOUT=600 port/tools/api-tests` at 9f6772f3 on the Studio, same setup. Not reached counts the reference tests the pattern filters out.
+
+| suite | passing | pending | failing | not reached | run |
+|-------|---------|---------|---------|-------------|-----|
+| api-folder | 33 | 2 | 73 | 294 | exit 1 after 182s |
+| api-workspace | 0 | 0 | 4 | 0 | exit 1 after 1s |
+
+Passing: all 12 of `workspace-fs`; in `workspace`, findFiles, findFiles2 and findTextInFiles with their exclude and cancellation tests (11). `workspace events` fails 0/10 (no bulk edits); api-workspace needs multi-root.

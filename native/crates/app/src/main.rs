@@ -8,6 +8,7 @@ mod commands;
 mod contextkey;
 mod editor;
 mod explorer;
+mod file_icons;
 mod filters;
 mod host_sync;
 mod keybindings;
@@ -30,8 +31,10 @@ use config::registry::Registry;
 use config::service::Settings;
 use exthost::extension_development::ExtensionDevelopment;
 use exthost::main_thread_configuration::MainThreadConfiguration;
+use exthost::main_thread_files::MainThreadFiles;
 use exthost::main_thread_secret_state::MainThreadSecretState;
 use exthost::main_thread_storage::MainThreadStorage;
+use exthost::main_thread_workspace::MainThreadWorkspace;
 use exthost::rpc::Arg;
 use exthost::scan::{ScannedExtension, scan_builtin_extensions};
 use exthost::session::{ForwardedRequest, Session, SessionPaths, init_data, workspace_data};
@@ -77,6 +80,7 @@ fn main() -> anyhow::Result<()> {
         Some(theme_id) => load_theme(&extensions, &theme_id)?,
         None => settings_theme(&extensions, &settings)?,
     };
+    let file_icons = settings_file_icons(&extensions, &settings)?;
     let settings = Arc::new(Mutex::new(settings));
     let keybindings_file = user_data.join("User/keybindings.json");
 
@@ -101,6 +105,7 @@ fn main() -> anyhow::Result<()> {
                 workbench.skip_dialogs = development.as_ref().is_some_and(|development| development.tests_path.is_some());
                 workbench.load_keybindings(keybindings::default_keybindings(&extensions), keybindings_file.clone(), cx);
                 workbench.quick_access.menu = command_palette::menu(&extensions);
+                workbench.file_icons = file_icons;
                 if let Some(file) = file {
                     workbench.open_file(file, true, window, cx);
                 }
@@ -196,6 +201,10 @@ fn run_extension_host(
     let host = ExtensionHost::start(HostOptions { runtime, entry: &entry, extra_env: vec![], extra_args: vec![] }, &init)?;
     let _ = status.unbounded_send(format!("handshake done, pid {}", host.child.id()));
     let mut session = Session::new(host);
+    let watcher_excludes = settings.lock().unwrap().get_value(Some("files.watcherExclude"), &Overrides { resource: folder.as_deref(), ..Overrides::default() });
+    let watcher_excludes: Vec<String> = watcher_excludes.as_ref().and_then(|excludes| excludes.as_object()).into_iter().flatten().filter(|(_, on)| **on == true).map(|(pattern, _)| pattern.clone()).collect();
+    session.files = Some(MainThreadFiles::new(folder.as_deref(), &watcher_excludes, &extensions)?);
+    session.workspace = Some(MainThreadWorkspace::new(folder.iter().cloned().collect(), settings.clone(), &app_root));
     session.configuration = Some(MainThreadConfiguration::new(settings, development.is_some()));
     session.storage = Some(storage);
     // secrets.ts: without encryption the secret storage falls back to memory.
@@ -270,9 +279,37 @@ fn settings_theme(extensions: &[ScannedExtension], settings: &Settings) -> anyho
     load_theme(extensions, default.as_str().expect("the default theme is a settings id"))
 }
 
+/// workbenchThemeService.ts `initializeFileIconTheme`: `null` is the built-in "no icons" theme, an unknown id the default.
+fn settings_file_icons(extensions: &[ScannedExtension], settings: &Settings) -> anyhow::Result<Option<file_icons::FileIconTheme>> {
+    let id = settings.get_value(Some("workbench.iconTheme"), &Overrides::default());
+    let id = match id {
+        Some(serde_json::Value::Null) => return Ok(None),
+        Some(serde_json::Value::String(id)) => id,
+        _ => file_icons::DEFAULT_ICON_THEME.to_string(),
+    };
+    let theme = file_icons::FileIconTheme::load(extensions, &id).or_else(|_| file_icons::FileIconTheme::load(extensions, file_icons::DEFAULT_ICON_THEME))?;
+    Ok(Some(theme))
+}
+
 #[cfg(test)]
 fn default_settings() -> Arc<Mutex<Settings>> {
     Arc::new(Mutex::new(Settings::load(Registry::core(), PathBuf::from("/nonexistent/User"), None)))
+}
+
+#[test]
+fn icon_theme_follows_workbench_icon_theme() {
+    let extensions = scan_builtin_extensions(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../extensions")).unwrap();
+    let user_home = std::env::temp_dir().join(format!("code-gpui-icon-theme-{}", std::process::id()));
+    std::fs::create_dir_all(&user_home).unwrap();
+    let icons_with = |settings_json: &str| {
+        std::fs::write(user_home.join("settings.json"), settings_json).unwrap();
+        let settings = Settings::load(Registry::with_extensions(&[]), user_home.clone(), None);
+        settings_file_icons(&extensions, &settings).unwrap().is_some()
+    };
+    assert!(icons_with("{}"));
+    assert!(!icons_with(r#"{ "workbench.iconTheme": null }"#));
+    assert!(icons_with(r#"{ "workbench.iconTheme": "no-such-theme" }"#));
+    std::fs::remove_dir_all(&user_home).unwrap();
 }
 
 fn default_user_data() -> anyhow::Result<PathBuf> {

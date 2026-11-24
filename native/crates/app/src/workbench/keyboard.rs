@@ -189,10 +189,10 @@ impl Workbench {
         Outcome::done()
     }
 
-    /// The `setContext` command: `createKey(String(key), value)`.
+    /// The `_setContext` command (extensions call it as `setContext`): `createKey(String(key), value)`.
     pub(super) fn register_context_commands(&mut self) {
         self.commands.register("workbench.action.openGlobalKeybindingsFile", |workbench, _, window, cx| workbench.open_keybindings_file(window, cx));
-        self.commands.register("setContext", |workbench, args, _, _| {
+        self.commands.register("_setContext", |workbench, args, _, _| {
             let mut args = args.into_iter();
             let key = match args.next() {
                 Some(Value::String(key)) => key,
@@ -202,6 +202,14 @@ impl Workbench {
             workbench.context_keys.insert(key, args.next().unwrap_or(Value::Null));
             Outcome::done()
         });
+        // mainThreadLogService.ts; the level starts at Info, the init data's logLevel 3.
+        self.commands.register("_extensionTests.setLogLevel", |workbench, args, _, _| {
+            if let Some(Value::String(level)) = args.first() {
+                workbench.log_level = level.clone();
+            }
+            Outcome::done()
+        });
+        self.commands.register("_extensionTests.getLogLevel", |workbench, _, _, _| Outcome::Ready(Ok(Value::from(workbench.log_level.clone()))));
     }
 }
 

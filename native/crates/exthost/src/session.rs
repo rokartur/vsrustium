@@ -11,6 +11,8 @@ use serde_json::{Value, json};
 
 use crate::console::format_console_entry;
 use crate::main_thread_configuration::MainThreadConfiguration;
+use crate::main_thread_files::MainThreadFiles;
+use crate::main_thread_workspace::{MainThreadWorkspace, Outgoing};
 use crate::main_thread_secret_state::MainThreadSecretState;
 use crate::main_thread_storage::MainThreadStorage;
 use crate::rpc::{self, Arg, Message, Reply};
@@ -136,6 +138,10 @@ pub struct Session {
     pub storage: Option<MainThreadStorage>,
     /// Extension secrets; without it every MainThreadSecretState call answers `undefined`.
     pub secrets: Option<MainThreadSecretState>,
+    /// The disk and its watchers; without it file calls answer `undefined` and no file events reach the host.
+    pub files: Option<MainThreadFiles>,
+    /// Workspace search; without it `findFiles` and `findTextInFiles` answer `undefined`.
+    pub workspace: Option<MainThreadWorkspace>,
     forward: Option<Forward>,
 }
 
@@ -156,7 +162,7 @@ struct Forward {
 
 impl Session {
     pub fn new(host: ExtensionHost) -> Self {
-        Session { host, next_req: 0, results: HashMap::new(), log: SessionLog::default(), extensions: HashMap::new(), extension_tests_req: None, configuration: None, storage: None, secrets: None, forward: None }
+        Session { host, next_req: 0, results: HashMap::new(), log: SessionLog::default(), extensions: HashMap::new(), extension_tests_req: None, configuration: None, storage: None, secrets: None, files: None, workspace: None, forward: None }
     }
 
     /// The calls the workbench makes once the handshake is done (MainThreadConfiguration,
@@ -170,6 +176,9 @@ impl Session {
         self.notify("ExtHostTelemetry", "$initializeTelemetryLevel", vec![json!(0), json!(false), json!({ "usage": false, "error": false })]);
         // MainThreadEditorTabs sends the model on construction; an empty window has one active group with no tabs.
         self.notify("ExtHostEditorTabs", "$acceptEditorTabModel", vec![json!([{ "isActive": true, "viewColumn": 0, "groupId": 0, "tabs": [] }])]);
+        if self.files.is_some() {
+            self.notify("ExtHostFileSystemInfo", "$acceptProviderInfos", vec![json!({ "$mid": 1, "scheme": "file", "path": "/dummy" }), json!(files::disk::CAPABILITIES)]);
+        }
         let delta = json!({
             "versionId": 1, "toRemove": [], "toAdd": [], "addActivationEvents": {}, "myToRemove": [], "myToAdd": [],
         });
@@ -243,14 +252,19 @@ impl Session {
 
     /// Sends a request and serves host requests until its reply arrives.
     pub fn call(&mut self, proxy: &str, method: &str, args: Vec<Arg>, timeout: Duration) -> anyhow::Result<Reply> {
+        match self.request(proxy, method, args, timeout)? {
+            CallResult::Ok(reply) => Ok(reply),
+            CallResult::Err(error) => anyhow::bail!("{proxy}.{method} failed: {}", error.unwrap_or(Value::Null)),
+        }
+    }
+
+    /// `call` that hands back the host's error object instead of failing with it.
+    pub fn request(&mut self, proxy: &str, method: &str, args: Vec<Arg>, timeout: Duration) -> anyhow::Result<CallResult> {
         let req = self.send_request(proxy, method, args);
         let deadline = Instant::now() + timeout;
         loop {
             if let Some(result) = self.results.remove(&req) {
-                return match result {
-                    CallResult::Ok(reply) => Ok(reply),
-                    CallResult::Err(error) => anyhow::bail!("{proxy}.{method} failed: {}", error.unwrap_or(Value::Null)),
-                };
+                return Ok(result);
             }
             let left = deadline.checked_duration_since(Instant::now()).ok_or_else(|| anyhow::anyhow!("{proxy}.{method} timed out"))?;
             if !self.pump(left)? {
@@ -263,6 +277,15 @@ impl Session {
     pub fn pump(&mut self, mut timeout: Duration) -> anyhow::Result<bool> {
         if let Some(args) = self.configuration.as_mut().and_then(MainThreadConfiguration::check_files) {
             self.notify("ExtHostConfiguration", "$acceptConfigurationChanged", args);
+        }
+        for event in self.files.as_mut().map(MainThreadFiles::take_events).unwrap_or_default() {
+            self.notify("ExtHostFileSystemEventService", "$onFileEvent", vec![event]);
+        }
+        for outgoing in self.workspace.as_mut().map(MainThreadWorkspace::take_outgoing).unwrap_or_default() {
+            match outgoing {
+                Outgoing::TextSearchResult(args) => _ = self.notify("ExtHostWorkspace", "$handleTextSearchResult", args),
+                Outgoing::Reply(reply) => self.host.send(rpc::encode(&reply)),
+            }
         }
         if let Some(forward) = &self.forward {
             let answered: Vec<_> = forward.replies.try_iter().collect();
@@ -298,6 +321,21 @@ impl Session {
                 }
                 self.host.send(rpc::encode(&reply));
             }
+            Message::Request { req, rpc_id, method, args, .. }
+                if matches!(proxy_name(rpc_id), "MainThreadFileSystem" | "MainThreadFileSystemEventService") && self.files.is_some() =>
+            {
+                self.host.send(rpc::encode(&Message::Acknowledged { req }));
+                *self.log.host_calls.entry(format!("{}.{method}", proxy_name(rpc_id))).or_default() += 1;
+                let reply = crate::main_thread_files::serve(self, req, &method, &args);
+                self.host.send(rpc::encode(&reply));
+            }
+            Message::Request { req, rpc_id, method, args, .. }
+                if proxy_name(rpc_id) == "MainThreadWorkspace" && MainThreadWorkspace::serves(&method) && self.workspace.is_some() =>
+            {
+                self.host.send(rpc::encode(&Message::Acknowledged { req }));
+                *self.log.host_calls.entry(format!("MainThreadWorkspace.{method}")).or_default() += 1;
+                self.workspace.as_mut().expect("checked by the match guard").start(req, &method, &args);
+            }
             Message::Request { req, rpc_id, method, args, .. } => {
                 self.host.send(rpc::encode(&Message::Acknowledged { req }));
                 if let Some(forward) = self.forward.as_mut().filter(|forward| forward.proxies.contains(&proxy_name(rpc_id))) {
@@ -315,8 +353,11 @@ impl Session {
             Message::ReplyErr { req, error } => {
                 self.results.insert(req, CallResult::Err(error));
             }
-            // The forwarded request's cancellation token fired: it comes again as `$cancel`, with no proxy.
+            // A cancelled search or forwarded request; each side ignores a req it does not own.
             Message::Cancel { req } => {
+                if let Some(workspace) = &self.workspace {
+                    workspace.cancel(req);
+                }
                 if let Some(forward) = self.forward.as_mut() {
                     (forward.send)(ForwardedRequest { req, proxy: "", method: "$cancel".into(), args: Vec::new() });
                 }

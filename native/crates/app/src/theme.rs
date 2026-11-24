@@ -394,7 +394,7 @@ fn quick_input_default_hc_light(key: &str) -> ColorValue {
 }
 
 /// `#RGB`, `#RGBA`, `#RRGGBB` or `#RRGGBBAA`, as `Color.Format.CSS.parseHex` accepts.
-fn parse_hex(text: &str) -> Option<Rgba> {
+pub fn parse_hex(text: &str) -> Option<Rgba> {
     let digits = text.strip_prefix('#')?;
     let expanded: String = match digits.len() {
         3 | 4 => digits.chars().flat_map(|c| [c, c]).collect(),

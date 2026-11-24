@@ -69,11 +69,11 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | mainthread/MainThreadUriOpeners | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadChatOutputRenderer | MainThread* shape (Rust side) | removed | no sign-in/AI by decision (port/notes.md); API stays inert: session.rs answers undefined, list getters []; exthost-probe 30/30 on Bun and Node |
 | mainthread/MainThreadProfileContentHandlers | MainThread* shape (Rust side) | stub | session.rs answers undefined |
-| mainthread/MainThreadWorkspace | MainThread* shape (Rust side) | stub | session.rs answers undefined |
-| mainthread/MainThreadFileSystem | MainThread* shape (Rust side) | stub | session.rs answers undefined |
-| mainthread/MainThreadFileSystemEventService | MainThread* shape (Rust side) | stub | session.rs answers undefined |
+| mainthread/MainThreadWorkspace | MainThread* shape (Rust side) | ported | main_thread_workspace.rs serves $startFileSearch and $startTextSearch through ripgrep: api-tests workspace.test findFiles, findFiles2, findTextInFiles and their cancellation tests pass (11/11); multi-root, $updateWorkspaceFolders, $save, trust and $checkExists answer undefined |
+| mainthread/MainThreadFileSystem | MainThread* shape (Rust side) | verified | api-tests workspace.fs.test 12/12 passing (main_thread_files.rs over files::disk and extension providers) |
+| mainthread/MainThreadFileSystemEventService | MainThread* shape (Rust side) | ported | FSEvents watcher of the folder, extension watchers and provider changes reach $onFileEvent (cargo test -p files); no file operation participants, so workspace.event.test 0/10 (needs bulk edits) |
 | mainthread/MainThreadLabelService | MainThread* shape (Rust side) | stub | session.rs answers undefined |
-| mainthread/MainThreadSearch | MainThread* shape (Rust side) | stub | session.rs answers undefined |
+| mainthread/MainThreadSearch | MainThread* shape (Rust side) | stub | session.rs answers undefined; extension search providers are not registered, workspace search runs in workbench/services/search |
 | mainthread/MainThreadShare | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadTask | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadExtensionService | MainThread* shape (Rust side) | ported | session.rs: `$getExtension`, `$asBrowserUri`, activation and runtime errors to the port log (no notification until milestone 11); `$extensionTestsExecute` result is code-gpui's exit code (api-workspace exits 1 with 4 failing, 0 with no test matched) |
@@ -146,7 +146,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/extensions | src/vs/platform | todo |  |
 | platform/externalServices | src/vs/platform | todo |  |
 | platform/externalTerminal | src/vs/platform | todo |  |
-| platform/files | src/vs/platform | todo |  |
+| platform/files | src/vs/platform | ported | native/crates/files: disk provider, Trash, FSEvents watcher with upstream coalescing, provider errors, glob port with upstream glob tests: cargo test -p files 44 passed; api-tests workspace.fs.test 12/12 |
 | platform/git | src/vs/platform | todo |  |
 | platform/github | src/vs/platform | todo |  |
 | platform/globalKeybindings | src/vs/platform | todo |  |
@@ -363,7 +363,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/quickinput | workbench service | ported | quick_input_view.rs with header drag (cargo test -p app dragging); api-tests quick input 11/11; view state kept in memory until milestone 10 storage |
 | workbench/services/remote | workbench service | todo |  |
 | workbench/services/request | workbench service | todo |  |
-| workbench/services/search | workbench service | todo |  |
+| workbench/services/search | workbench service | ported | native/crates/search: QueryBuilder, ripgrep file search and text search with upstream ripgrepTextSearchEngineUtils and TextSearchResult tests: cargo test -p search 23 passed; no symlink loop rerun, no results from unsaved editors |
 | workbench/services/secrets | workbench service | ported | port/tools/settings-check secrets |
 | workbench/services/sessions | workbench service | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/services/sharedProcess | workbench service | todo |  |
@@ -419,7 +419,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/extensions | workbench contribution | todo |  |
 | workbench/contrib/externalTerminal | workbench contribution | todo |  |
 | workbench/contrib/externalUriOpener | workbench contribution | todo |  |
-| workbench/contrib/files | workbench contribution | stub | Explorer tree read from disk (explorer.rs): folders first, default excludes, click to expand, click opens a file as preview, double click pins, selection follows the active editor; no file icons, watcher or file operations (port/notes.md milestones 3, 4) |
+| workbench/contrib/files | workbench contribution | stub | Explorer tree read from disk (explorer.rs): folders first, default excludes, click to expand, click opens a file as preview, double click pins, selection follows the active editor; Seti file icons and compareFileNamesDefault sort (cargo test -p app); no file operations (port/notes.md milestones 3, 4, 12) |
 | workbench/contrib/folding | workbench contribution | todo |  |
 | workbench/contrib/format | workbench contribution | todo |  |
 | workbench/contrib/git | workbench contribution | todo |  |
@@ -579,7 +579,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | extension/theme-monokai-dimmed | built-in extension | ported | loads with token colors: cargo test -p app theme::tests::every_builtin_theme_loads_with_token_colors; no reference colorize results for it |
 | extension/theme-quietlight | built-in extension | ported | loads with token colors: cargo test -p app theme::tests::every_builtin_theme_loads_with_token_colors; no reference colorize results for it |
 | extension/theme-red | built-in extension | ported | loads with token colors: cargo test -p app theme::tests::every_builtin_theme_loads_with_token_colors; no reference colorize results for it |
-| extension/theme-seti | built-in extension | todo |  |
+| extension/theme-seti | built-in extension | ported | file_icons.rs reads the Seti icon theme from workbench.iconTheme (cargo test -p app icon_theme_follows_workbench_icon_theme); no pixel-check numbers yet |
 | extension/theme-solarized-dark | built-in extension | ported | loads with token colors: cargo test -p app theme::tests::every_builtin_theme_loads_with_token_colors; no reference colorize results for it |
 | extension/theme-solarized-light | built-in extension | ported | loads with token colors: cargo test -p app theme::tests::every_builtin_theme_loads_with_token_colors; no reference colorize results for it |
 | extension/theme-tomorrow-night-blue | built-in extension | ported | loads with token colors: cargo test -p app theme::tests::every_builtin_theme_loads_with_token_colors; no reference colorize results for it |

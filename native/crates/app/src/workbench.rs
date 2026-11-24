@@ -25,6 +25,7 @@ use serde_json::Value;
 use crate::commands::Commands;
 use crate::editor::{EditorGroup, TextDocument};
 use crate::explorer::FileTree;
+use crate::file_icons::FileIconTheme;
 use crate::host_sync::HostSync;
 use crate::languages::Languages;
 use crate::theme::{Theme, ThemeKind};
@@ -36,6 +37,8 @@ pub struct Workbench {
     /// The opened folder; `None` is the empty window.
     pub folder: Option<FileTree>,
     pub languages: Languages,
+    /// `None` draws files without icons, as `workbench.iconTheme: null` does.
+    pub file_icons: Option<FileIconTheme>,
     pub editors: EditorGroup,
     /// The window's settings, shared with the extension host thread that reloads them on file changes.
     pub settings: Arc<Mutex<Settings>>,
@@ -46,6 +49,8 @@ pub struct Workbench {
     pub keybindings: keyboard::Keybindings,
     /// Context keys set with the `setContext` command.
     context_keys: HashMap<String, Value>,
+    /// The level extension tests set with `_extensionTests.setLogLevel`; stderr logging does not filter by it.
+    log_level: String,
     /// The status bar message and the task that hides it.
     status_message: Option<(String, Task<()>)>,
     editor_scroll: UniformListScrollHandle,
@@ -110,6 +115,7 @@ impl Workbench {
             app_root,
             folder,
             languages,
+            file_icons: None,
             editors: EditorGroup::default(),
             settings,
             host,
@@ -117,6 +123,7 @@ impl Workbench {
             skip_dialogs: false,
             keybindings: keyboard::Keybindings::default(),
             context_keys: HashMap::new(),
+            log_level: "info".into(),
             status_message: None,
             editor_scroll: UniformListScrollHandle::new(),
             text_area_left: Rc::default(),
@@ -279,6 +286,7 @@ impl Workbench {
             .when_some(self.theme.color("sideBarTitle.border"), |title, border| title.border_b_1().border_color(border))
             // The h2 keeps its 32px line under the HC border-bottom, so it is laid out from the top, not centered.
             .child(div().self_start().pl(px(8.)).line_height(px(32.)).text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).text_color(self.foreground_or("sideBarTitle.foreground")).child("Explorer"))
+            // actionbar.css: .monaco-action-bar .action-item is cursor: pointer.
             .child(self.icon("ellipsis", 22., 16., foreground).cursor_pointer());
         // explorerviewlet.css: in high contrast an explorer item has a 20px line from the row top, 1px above center.
         let label_line = if self.theme.kind.is_high_contrast() { 20. } else { 22. };
@@ -296,20 +304,33 @@ impl Workbench {
             };
             let path = row.path;
             let is_dir = row.is_dir;
+            let name = row.name;
+            // views.css align-icons-and-twisties: with file icons and no folder icons a file's empty twistie collapses
+            // to its 8px indent and the icon takes its place, so file and folder names line up.
+            let file_icon = self.file_icons.as_ref().filter(|_| !is_dir).and_then(|icons| {
+                icons.file_icon(&path, self.languages.language_of(&path, ""), self.theme.kind, 13., label_line, foreground)
+            });
+            let indent = 8. * (row.depth - 1) as f32;
             div()
                 .id(index)
+                // list.css: .monaco-list.mouse-support .monaco-list-row is cursor: pointer.
+                .cursor_pointer()
                 .h(px(22.))
                 .mx(px(4.))
                 .flex()
                 .items_center()
                 .rounded(px(4.))
-                // monaco-tl-twistie: 3px row inset, 8px base indent plus 8px per level, a 16px icon, 6px before the label.
-                .pl(px(11. + 8. * (row.depth - 1) as f32))
-                .child(match twistie {
-                    Some(name) => self.icon(name, 16., 16., foreground),
-                    None => div().size(px(16.)).flex_none(),
+                .map(|row| match file_icon {
+                    Some(icon) => row.pl(px(8. + indent)).child(icon.self_start()).child(div().self_start().ml(px(6.)).line_height(px(label_line)).child(name)),
+                    // monaco-tl-twistie: 3px row inset, 8px base indent plus 8px per level, a 16px icon, 6px before the label.
+                    None => row
+                        .pl(px(11. + indent))
+                        .child(match twistie {
+                            Some(chevron) => self.icon(chevron, 16., 16., foreground),
+                            None => div().size(px(16.)).flex_none(),
+                        })
+                        .child(div().self_start().ml(px(3.)).line_height(px(label_line)).child(name)),
                 })
-                .child(div().self_start().ml(px(3.)).line_height(px(label_line)).child(row.name))
                 .when(selected.as_ref() == Some(&path), |row| {
                     // shortcut: dashed, GPUI has no dotted border.
                     // An overlay, since a border on the row would push its content 1px like a CSS border, not an outline.
@@ -353,6 +374,8 @@ impl Workbench {
         div()
             .relative()
             .h(px(28.))
+            // paneview.css: .pane-header is cursor: pointer; these panes are all collapsible.
+            .cursor_pointer()
             .flex_none()
             .mx(px(4.))
             .pl(px(4.))
@@ -544,7 +567,7 @@ mod tests {
         assert_eq!(column(cx), 0, "the user removed the default End binding");
         cx.simulate_keystrokes("cmd-k cmd-e");
         assert_eq!(column(cx), 0, "the chord's when clause needs the `mine` context key");
-        workbench.update_in(cx, |workbench, window, cx| workbench.execute_command("setContext", vec!["mine".into(), true.into()], window, cx));
+        workbench.update_in(cx, |workbench, window, cx| workbench.execute_command("_setContext", vec!["mine".into(), true.into()], window, cx));
         cx.simulate_keystrokes("cmd-k");
         assert_eq!(status(cx).as_deref(), Some("(⌘K) was pressed. Waiting for second key of chord..."));
         cx.simulate_keystrokes("cmd-e");

@@ -15,6 +15,20 @@ No new window: pixel-check has no quick input. All 16 port frames are byte-ident
 
 - empty light (3612, was 3600) and main hclight (5059, was 6626) moved with the reference capture only: its md5 changed, the port's did not; main hclight is the overview ruler artifact of milestone 7.
 - Ad-hoc, not a pixel-check result, measured at the palette commit before the drag: the Command Palette over the empty window (Dark Modern, 2x), the widget crop against the reference's, 2803.8 pixels (0.28%) differ at 2% fuzz (`magick compare -fuzz 2% -metric AE`); the rows and the selection highlight sit at the reference's y positions.
+
+## Milestone 12
+
+Measured at the merge of milestones 9, 10 and 12 (`port/tools/pixel-check` in the integrate worktree). The reference capture changed between runs (folder dark md5 `bdd99333` here, `e56bf35b` an hour later), so the milestone 7 numbers are not comparable; against the same reference frames the port before milestone 12 (f8114f55) gives folder 10105/6891/3787/3696 and main 18447/13868/10935/10687, so Seti icons, tab icons and numeric sort lower every count.
+
+| window | dark | light | hc | hclight |
+|---|---|---|---|---|
+| empty | 3567 | 3600 | 398 | 401 |
+| folder | 7238 | 4067 | 960 | 874 |
+| file | 11158 | 6675 | 4695 | 4160 |
+| main | 12681 | 8133 | 7383 | 7132 |
+
+Why the reference capture moves between runs is not found yet; milestone 8 also hit hung captures (a8512a97 on port-m8-viewport).
+
 ## Milestone 7: syntax colors and themes
 
 New window `main`: `port/fixtures/workspace/src/main.ts` open in the fixture folder, TypeScript grammar colors and bracket pair colors. New theme `hclight` (Default High Contrast Light) for every window. The reference now runs with `--force-color-profile=srgb` (port/notes.md); with it the empty, folder and file windows give the milestone 2, 3 and 4 numbers unchanged. Reference md5 (main): dark `c1172c60`, hc `1cf27616`, hclight `fc82315e`, light `2eba5cf1`.

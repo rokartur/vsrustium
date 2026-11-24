@@ -12,7 +12,10 @@ path = "src/main.rs"
 anyhow.workspace = true
 config = { path = "../config" }
 exthost = { path = "../exthost" }
+flate2 = "1"
 futures = "0.3"
+icu_collator = "2"
+ttf-parser = "0.25"
 gpui.workspace = true
 gpui_platform = { workspace = true, features = ["font-kit"] }
 icu_normalizer = { version = "2.4", default-features = false, features = ["compiled_data"] }
