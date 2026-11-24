@@ -25,6 +25,7 @@ const MAX_WIDTH: f32 = 600.;
 const TOP: f32 = 6.;
 const ROW_HEIGHT: f32 = 22.;
 const DETAIL_ROW_HEIGHT: f32 = 44.;
+const RADIUS: f32 = 8.;
 
 pub struct QuickInputs {
     inputs: Vec<(QuickInput, Owner)>,
@@ -466,6 +467,11 @@ impl Workbench {
             (None, Some((input, _))) => (input.clone(), false),
             (None, None) => return None,
         };
+        // Modern UI frosted glass (frostedGlass.css), on outside high contrast themes, drops the widget's animations.
+        let frosted = !self.theme.kind.is_high_contrast();
+        if frosted && !interactive {
+            return None;
+        }
         let viewport = window.viewport_size();
         let width = (f32::from(viewport.width) * 0.62).min(MAX_WIDTH);
         let left = ((f32::from(viewport.width) - width) / 2.).round();
@@ -475,11 +481,14 @@ impl Workbench {
             .absolute()
             .top(px(TOP))
             .left(px(left))
-            .w(px(width))
+            // The width is the content box; the 1px border goes outside it.
+            .w(px(width + if self.theme.color("widget.border").is_some() { 2. } else { 0. }))
             .flex()
             .flex_col()
-            .rounded(px(12.))
-            .bg(self.color("quickInput.background"))
+            // cornerRadius.large under Modern UI (roundedCorners.css).
+            .rounded(px(RADIUS))
+            .when(!frosted, |widget| widget.bg(self.color("quickInput.background")))
+            .when(frosted, |widget| widget.child(self.frosted_glass("quickInput.background")))
             .text_color(self.foreground_or("quickInput.foreground"))
             .when_some(self.theme.color("widget.border"), |widget, border| widget.border_1().border_color(border))
             // --vscode-shadow-xl.
@@ -493,6 +502,9 @@ impl Workbench {
             .children(input.message().map(|message| self.quick_input_message(&input, message)))
             .child(self.quick_input_progress(&input))
             .when(input.kind == Kind::QuickPick, |widget| widget.child(self.quick_input_list(&input, interactive, window, cx)));
+        if frosted {
+            return Some(widget.into_any_element());
+        }
         // shortcut: GPUI has no element transforms, so the open (250ms) and close (150ms) animations fade without their 0.97/0.99 scale.
         let ease = |t: f32| 1. - (1. - t).powi(4);
         let element = if interactive {
@@ -503,6 +515,23 @@ impl Workbench {
         Some(element)
     }
 
+    /// The `::before` layer of frostedGlass.css: the surface color at 92% over a 12px blur of what is behind it.
+    fn frosted_glass(&self, surface: &str) -> impl IntoElement {
+        let mut color = self.color(surface);
+        color.a *= 0.92;
+        canvas(
+            |_, _, _| (),
+            move |bounds, _, window, _| {
+                // Inside the 1px border, so the corners follow the padding box.
+                let radii = gpui::Corners::all(px(RADIUS - 1.));
+                window.paint_backdrop_blur(bounds, radii, px(12.));
+                window.paint_quad(fill(bounds, color).corner_radii(radii));
+            },
+        )
+        .absolute()
+        .inset_0()
+    }
+
     /// `.quick-input-titlebar`: the back button, the title, and the title buttons.
     fn quick_input_title(&self, input: &QuickInput, cx: &mut Context<Self>) -> Div {
         let (left, right): (Vec<&Button>, Vec<&Button>) = input.buttons.iter().filter(|button| button.location.is_none_or(|location| location <= 1)).partition(|button| button.handle == -1);
@@ -511,7 +540,8 @@ impl Workbench {
             .relative()
             .flex()
             .items_center()
-            .rounded_t(px(12.))
+            .rounded_t(px(RADIUS))
+            .pt(px(2.))
             .bg(self.color("quickInputTitle.background"))
             .child(div().absolute().left(px(4.)).flex().children(left.into_iter().map(|button| self.quick_input_button(button, cx))))
             .child(div().flex_1().py(px(3.)).text_center().child(if title.is_empty() { "\u{a0}".to_owned() } else { title }))
@@ -783,9 +813,10 @@ impl Workbench {
         let content: f32 = input.order.iter().map(|row| row_height(&input.rows[*row])).sum();
         let height = content.min(self.quick_input_list_max_height(window)).min(20. * ROW_HEIGHT);
         let rows = list(self.quick_inputs.list.clone(), cx.processor(move |workbench: &mut Workbench, position: usize, window, cx| workbench.quick_input_row(position, interactive, window, cx)))
-            .h(px(height))
-            .px(px(6.));
-        div().when(input.hide_input, |list| list.mt(px(4.))).pb(px(if input.hide_input { 4. } else { 7. })).child(rows)
+            .size_full();
+        // .monaco-list: 7px bottom padding the rows scroll under; .monaco-scrollable-element: 6px on the sides.
+        let rows = div().h(px(height + 7.)).px(px(6.)).child(rows);
+        div().when(input.hide_input, |list| list.mt(px(4.)).pb(px(4.))).child(rows)
     }
 
     /// A `.quick-input-list-entry`.
@@ -845,7 +876,7 @@ impl Workbench {
             .relative()
             .size_full()
             .flex()
-            .px(px(6.))
+            .px(px(4.))
             .when(row.separator.is_some() && position > 0, |entry| entry.border_t_1().border_color(self.color("pickerGroup.border")))
             .when(can_select_many, |entry| {
                 entry.child(
@@ -856,8 +887,8 @@ impl Workbench {
                 )
             })
             .child(label_box)
-            .when(!row.item.keybinding.is_empty(), |entry| entry.child(self.keybinding_label(&row.item.keybinding, focused || hovered).mr(px(8.))))
-            .children(separator.map(|label| div().flex().items_center().mr(px(4.)).text_size(px(11.)).text_color(separator_color).child(label)))
+            .when(!row.item.keybinding.is_empty(), |entry| entry.child(self.keybinding_label(&row.item.keybinding, focused || hovered)))
+            .children(separator.map(|label| div().flex().items_center().ml(px(4.)).text_size(px(11.)).text_color(separator_color).child(label)))
             .when(buttons_shown && !row.item.buttons.is_empty(), |entry| {
                 entry.child(div().flex().items_center().mt(px(1.)).mr(px(4.)).children(row.item.buttons.iter().enumerate().map(|(index, button)| {
                     let toggle = button.toggle;
