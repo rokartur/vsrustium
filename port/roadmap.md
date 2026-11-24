@@ -4,7 +4,7 @@ Milestones from today to a shippable port, each with its scope, its done-when ch
 
 Rule for every milestone (Artur): a feature ships end to end and 1:1 with VS Code 1.147.0: UI, keyboard and mouse, the main-thread side the extension host calls, persistence, same look and behavior, upstream logic and tests ported, checked against the reference. Fewer complete features beat more partial ones; a `shortcut:` is only for a missing platform capability or a product decision.
 
-Ledger today: 58 verified, 27 ported, 77 stub, 379 todo, 51 removed (of 592 rows).
+Ledger today: 62 verified, 33 ported, 74 stub, 372 todo, 51 removed (of 592 rows).
 
 ## Done
 
