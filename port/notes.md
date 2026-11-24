@@ -135,6 +135,30 @@ Done when: the colorize-tests fixtures give the reference's scopes and colors; p
 - shortcut: the theme type reaches the extension host after the eager extensions activate; upstream sends it before `$startExtensionHost`.
 - shortcut: no Go to Bracket, Select to Bracket or Force Retokenize commands until keybindings and the command palette land.
 
+## Milestone 9: commands, keybindings, quick input
+
+Scope as in port/roadmap.md. Done in this milestone: the command registry, context keys and `when` clauses, keybinding resolution, the quick input widget and MainThreadQuickOpen, and the Command Palette. Not done: Quick Open (files, symbols), the theme picker, the native menu bar, context menus and hovers (see the last items).
+
+- `contextkey.rs` ports the scanner, parser, evaluation and the `And`/`Or` normal forms of `contextkey.ts`; `contextkey/tests.rs` holds the scanner and parser cases of `contextkey.test.ts` and `scanner.test.ts`.
+- `commands.rs` is the one registry of the workbench and `vscode.commands`: workbench handlers, extension commands registered through MainThreadCommands (`main_thread_commands.rs`), `onCommand:` activation before a run. `Commands::register_all` takes a whole table in one call for milestone 8's `editor/commands.rs`.
+- The extension host forwards requests of chosen proxies to the app (`Session::forward`); replies are read inside `Session::pump`, because an extension whose `activate` awaits a forwarded request deadlocked `session.start` when `main.rs` read them.
+- `keybindings.rs` ports `KeybindingResolver` (chords, removals with `-command`, `when` on removal) with the cases of `keybindingResolver.test.ts`. The macOS defaults (`keybindings/default-macos.json`, 1220 rows) are the reference's own export (Developer: Keyboard Shortcuts Export without extension rows); extension rows come from `contributes.keybindings`; `keybindings.json` overrides both. Keys resolve in `cx.intercept_keystrokes`, before the focused element, as upstream's window-level listener does. The milestone 5 editor keys run through the registry under upstream ids (`workbench/editor_commands.rs`).
+- Keybinding aliases (`keybindings.json` `args` of the AI sessions window) are not read: no AI by decision.
+- `quick_input.rs` is the quick pick and input box model (filtering with `filters.rs`, a port of `filters.ts` with `korean.ts`; selection, buttons, validation with its 100 ms debounce); `quick_input_view.rs` draws it with the Modern UI frosted glass. Extension pickers and input boxes run through `main_thread_quick_open.rs`.
+- The Command Palette follows `commandsQuickAccess.ts`: TF-IDF similar commands (`tf_idf.rs`, threshold 0.5, at most 5), "recently used" with a 50-entry LRU, Developer category last, duplicate labels with their id, extension commands from `contributes.commands` with `enablement` as precondition and `menus.commandPalette` `when`.
+- The header drag follows `QuickInputDragAndDropController`: grab cursor on the title and the header padding, snap to the top line, the 25% line and the center within 20px, clear of the traffic lights, double click resets.
+- Mouse cursors follow the reference CSS: pointer on activity bar items, title bar actions, status bar items with a command, quick input rows, buttons and checkboxes; text on the quick input box; grab on the quick input header.
+- Disabled quick input arrows keep the default cursor; sashes (milestone 11), the Explorer (milestone 12) and editor status items (milestone 8) get theirs with those milestones.
+- `compare_file_names` sorts by code point where upstream uses `Intl.Collator` with numeric order; `locale_compare` mimics a few ICU root rules for English labels.
+- api-tests `api-command: vscode.open`, `vscode.open with untitled supports associated resource`, `api-command: vscode.diff` and `editorCommand with extra args` fail: they need milestone 8 editor groups, tab groups and text editor arguments, and a diff editor (milestone 14).
+- shortcut: the palette history and the quick input position are kept for the session; upstream stores `workbench.commandPalette.history` and `workbench.quickInput.viewState`, which need milestone 10 storage.
+- shortcut: the palette's gear button opens `keybindings.json`; upstream opens the Keybindings editor at the command, which the port does not have.
+- shortcut: `keybindings.json` is polled once a second; the port has no file watcher.
+- shortcut: a command that fails from a keybinding is logged to stderr; the port has no notification toasts.
+- shortcut: Revert File is a whole-text edit plus a save until milestone 8 has a model revert.
+- shortcut: the quick input fades in and out without the 0.97/0.99 scale of upstream's animation; GPUI has no element transforms.
+- Not done, left for a next session: Quick Open (`anythingQuickAccess.ts` needs a port of `fuzzyScorer.ts`, 953 lines with 1452 lines of tests, file search with the exclude settings, editor history and `:line`), the theme picker (`workbench.action.selectTheme`, which also writes `workbench.colorTheme`, a milestone 10 setting), the native menu bar from `MenuId.MenubarMainMenu`, context menus and hovers. pixel-check has no quick input window; the palette was compared by an ad-hoc capture (port/results/pixels.md).
+
 ## Benchmarks
 
 - `port/tools/bench`: Wu's `script/memory-benchmark` method generalized to N apps (`APPS="name=cmd;..."`), plus an extension host line per app.
