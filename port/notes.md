@@ -137,7 +137,7 @@ Done when: the colorize-tests fixtures give the reference's scopes and colors; p
 
 ## Milestone 8: editor viewport and editing commands
 
-Scope (roadmap section 8): scrolling with real visible ranges and the MainThreadTextEditors and MainThreadDocuments requests, then multi-cursor and editing commands, find/replace, folding, minimap, sticky scroll. Shipped: scrolling and the MainThread requests, then multi-cursor; the rest is open (last line of this section).
+Scope (roadmap section 8): scrolling with real visible ranges and the MainThreadTextEditors and MainThreadDocuments requests, then multi-cursor and editing commands, find/replace, folding, minimap, sticky scroll. Shipped: scrolling and the MainThread requests, then multi-cursor, then folding; the rest is open (last line of this section).
 
 Done when (first item): api-tests `vscode API - editors` passes as in the reference; the text editor tests of `vscode API - window` that need one editor group only pass; pixel-check file and main windows unchanged.
 
@@ -158,7 +158,14 @@ Done when (first item): api-tests `vscode API - editors` passes as in the refere
 - shortcut: `$trySetOptions` applies `tabSize`, `indentSize` and `insertSpaces`; `cursorStyle` and `lineNumbers` wait for their render options. `setEndOfLine` in `$tryApplyEdits` is not applied.
 - shortcut: `TextDocumentContentProvider` documents (`bikes:` in window.test) and untitled documents (`$tryCreateDocument`) do not open; they come with their MainThread rows.
 - shortcut: the workbench's own save (Cmd+S) of a file system provider document fails; only `$trySaveDocument` writes through the provider, until the file service row.
-- Open from the milestone: find/replace (with the multi-cursor find commands), folding, minimap, sticky scroll, and the other editing commands of `editor/commands.rs` (line operations, comments, smart select).
+- Folding (`editor/folding.rs`, `editor/folding_controller.rs`): `foldingRanges.ts`, `foldingModel.ts`, `hiddenRangeModel.ts` and `indentRangeProvider.ts` with their unit tests (`cargo test -p app editor::folding`). Regions come from indentation and the language's `folding.markers`; manual ranges from selections survive provider updates (`sanitizeAndMerge`). Hidden lines are dropped from drawing, cursor moves skip them, an edit or cursor on a hidden line unfolds its region (`revealCursor`), and the folding actions reveal the cursor centered if outside the viewport.
+- Gutter: the folding lane after the line numbers shows `codicon-folding-expanded`/`-collapsed` on hover (fade as `folding.css`), always for collapsed regions; a click toggles, Alt the regions around, Shift or middle button the regions inside. A folded line ends in the `⋯` placeholder with `editor.foldBackground`; clicking after the line end unfolds.
+- Keys: Cmd+Alt+[ fold, Cmd+Alt+] unfold; the other folding commands run by id. Their Cmd+K chords wait on milestone 9's chord dispatch, per-file fold state (`getMemento`/`applyMemento`, ported and tested) on milestone 10's storage: both wired at the M9/M10 merge.
+- shortcut: extension `FoldingRangeProvider`s (`syntaxRangeProvider.ts`, `$registerFoldingSupport`) come with `mainthread/MainThreadLanguageFeatures`; until then every language folds by indentation and markers, as upstream does without a provider. `editor.defaultFoldingRangeProvider` (`workbench/contrib/folding`) waits on the same row.
+- The scroll position truncates to whole pixels like the editor's `Scrollable` (`forceIntegerValues`), so a centered reveal in an odd height does not land on a half pixel.
+- Mouse cursors follow the reference CSS: text over `.view-lines` (`monaco-mouse-cursor-text`), default over line numbers, glyph margin, overview ruler, scrollbar sliders and the scroll shadow; pointer over folding icons, the `⋯` placeholder (`folding.css`), the title with tabs, close buttons and breadcrumbs (`editortabscontrol.css`, `breadcrumbsWidget.css`) and the editor actions (`actionbar.css`, the container default).
+- Gap: an edit that unfolds a region sends no new `visibleRanges` to the host until the next scroll (the edit path is milestone 9's `text_input.rs`); fixed at the M8/M9 merge.
+- Open from the milestone: find/replace (with the multi-cursor find commands), minimap, sticky scroll, and the other editing commands of `editor/commands.rs` (line operations, comments, smart select).
 
 ## Benchmarks
 

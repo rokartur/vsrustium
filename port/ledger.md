@@ -240,7 +240,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | editor/contrib/editorState | src/vs/editor/contrib | todo |  |
 | editor/contrib/find | src/vs/editor/contrib | todo |  |
 | editor/contrib/floatingMenu | src/vs/editor/contrib | todo |  |
-| editor/contrib/folding | src/vs/editor/contrib | todo |  |
+| editor/contrib/folding | src/vs/editor/contrib | stub | folding model, ranges, hidden ranges, indent and marker provider, gutter controls, fold/unfold keys and every folding command by id (editor/folding.rs, editor/folding_controller.rs): cargo test -p app editor::folding, pixel-check folded; extension providers with MainThreadLanguageFeatures, Cmd+K chords and per-file state at the M9/M10 merge (port/notes.md milestone 8) |
 | editor/contrib/fontZoom | src/vs/editor/contrib | todo |  |
 | editor/contrib/format | src/vs/editor/contrib | todo |  |
 | editor/contrib/gotoError | src/vs/editor/contrib | todo |  |

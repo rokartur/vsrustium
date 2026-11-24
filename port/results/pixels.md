@@ -13,6 +13,16 @@ After multi-cursor (ea71708c), one cursor in both captures: `WINDOWS="file main"
 | file | 10859 | 6376 | 4396 | 3853 |
 | main | 12177 | 7627 | 5335 | 6626 |
 
+After folding: full run with the new `folded` window, `port/fixtures/folding/long.py` with keys `cmd-down up alt-cmd-[ up×12 alt-cmd-[` (lines 76-87 and 100 hidden). empty, folder and file give the milestone 7 numbers; main hclight 5059. In that run the port's folded capture failed with an empty log (likely the 120s `timeout`); the folded row is from a `WINDOWS=folded` run after it. `folded` went from 235332 (dark) to 44105 once the folding actions revealed centered if outside the viewport, and to 23034 once the scroll position truncated to whole pixels (`forceIntegerValues`). What remains is the reference's sticky scroll line (`#region Serialization` pinned over line 57), which comes with sticky scroll.
+
+| window | dark | light | hc | hclight |
+|---|---|---|---|---|
+| empty | 3567 | 3600 | 398 | 401 |
+| folder | 7053 | 3882 | 775 | 689 |
+| file | 10859 | 6376 | 4396 | 3853 |
+| main | 12177 | 7627 | 5335 | 5059 |
+| folded | 23034 | 29087 | 9736 | 8806 |
+
 ## Milestone 7: syntax colors and themes
 
 New window `main`: `port/fixtures/workspace/src/main.ts` open in the fixture folder, TypeScript grammar colors and bracket pair colors. New theme `hclight` (Default High Contrast Light) for every window. The reference now runs with `--force-color-profile=srgb` (port/notes.md); with it the empty, folder and file windows give the milestone 2, 3 and 4 numbers unchanged. Reference md5 (main): dark `c1172c60`, hc `1cf27616`, hclight `fc82315e`, light `2eba5cf1`.

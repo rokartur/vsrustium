@@ -22,4 +22,5 @@ Not reached: tests of the reference run (402 folder, 4 workspace) the port did n
 - editors: every test of editor.test.ts passes, as in the reference.
 - window: the text editor tests that need one editor group pass (active text editor, opened via resource, #49125, #134786, #5362, selection change kind). The ViewColumn, tab and `bikes:` content provider tests fail on the missing editor groups and content providers; the input box, quick pick and status bar failures belong to other rows (port/notes.md milestone 8).
 - After multi-cursor (ea71708c): the same three runs give the same counts, editors 13/0/0, window 20/0/20, workspace 18/2/76.
+- After folding, with the scroll position truncated to whole pixels: editors 13/0/0.
 - workspace: openTextDocument, eol, the open/change/save events and openTextDocument with selection pass; the failures are untitled documents, content providers, WorkspaceEdit and file events, none in milestone 8 scope.
