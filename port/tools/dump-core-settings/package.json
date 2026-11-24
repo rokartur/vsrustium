@@ -1,0 +1,7 @@
+{
+  "name": "dump-core-settings",
+  "publisher": "vscode-gpui",
+  "version": "0.0.1",
+  "engines": { "vscode": "^1.100.0" },
+  "main": "./run.js"
+}
