@@ -237,7 +237,8 @@ impl Workbench {
             .when_some(self.theme.color("sideBarTitle.border"), |title, border| title.border_b_1().border_color(border))
             // The h2 keeps its 32px line under the HC border-bottom, so it is laid out from the top, not centered.
             .child(div().self_start().pl(px(8.)).line_height(px(32.)).text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).text_color(self.foreground_or("sideBarTitle.foreground")).child("Explorer"))
-            .child(self.icon("ellipsis", 22., 16., foreground));
+            // actionbar.css: .monaco-action-bar .action-item is cursor: pointer.
+            .child(self.icon("ellipsis", 22., 16., foreground).cursor_pointer());
         // explorerviewlet.css: in high contrast an explorer item has a 20px line from the row top, 1px above center.
         let label_line = if self.theme.kind.is_high_contrast() { 20. } else { 22. };
         // The tree is not focused once the editor has focus, so the selection takes the inactive colors.
@@ -263,6 +264,8 @@ impl Workbench {
             let indent = 8. * (row.depth - 1) as f32;
             div()
                 .id(index)
+                // list.css: .monaco-list.mouse-support .monaco-list-row is cursor: pointer.
+                .cursor_pointer()
                 .h(px(22.))
                 .mx(px(4.))
                 .flex()
@@ -322,6 +325,8 @@ impl Workbench {
         div()
             .relative()
             .h(px(28.))
+            // paneview.css: .pane-header is cursor: pointer; these panes are all collapsible.
+            .cursor_pointer()
             .flex_none()
             .mx(px(4.))
             .pl(px(4.))
