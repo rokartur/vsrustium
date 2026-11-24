@@ -41,6 +41,23 @@ impl Workbench {
             Outcome::done()
         });
         self.commands.register("workbench.action.closeAllEditors", |workbench, _, window, cx| workbench.close_all_editors(window, cx));
+        // shortcut: dirty editors ask to save as with `files.hotExit: off`, since the port has no backups to restore
+        // them from; quit without asking once hot exit lands.
+        self.commands.register("workbench.action.quit", |workbench, _, window, cx| {
+            let closed = workbench.close_all_editors(window, cx);
+            cx.spawn(async move |workbench, cx| {
+                if let Outcome::Pending(pending) = closed {
+                    let _ = pending.await;
+                }
+                let _ = workbench.update(cx, |workbench, cx| {
+                    if workbench.editors.editors.is_empty() {
+                        cx.quit();
+                    }
+                });
+            })
+            .detach();
+            Outcome::done()
+        });
     }
 
     fn dirty_editors(&self) -> Vec<usize> {

@@ -87,6 +87,8 @@ impl Workbench {
         context.insert("foldersViewVisible".into(), json!(true));
         context.insert("filesExplorerFocus".into(), json!(focused));
         context.insert("explorerViewletFocus".into(), json!(focused));
+        // The Explorer is the only view of the side bar.
+        context.insert("sideBarFocus".into(), json!(focused));
         context.insert("listFocus".into(), json!(focused));
         if input_focused {
             context.insert("inputFocus".into(), json!(true));

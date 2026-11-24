@@ -83,6 +83,14 @@ impl Chord {
         self.with_modifiers(["ctrl", "shift", "alt", "cmd"], "+", &key)
     }
 
+    /// The source `gpui::KeyBinding` parses, `shift-cmd-s`; `None` where Electron has no accelerator either.
+    pub fn gpui_keystroke(&self) -> Option<String> {
+        if self.is_modifier_key() {
+            return None;
+        }
+        Some(self.with_modifiers(["ctrl", "shift", "alt", "cmd"], "-", &KEY_CODES[self.key].1.to_lowercase()))
+    }
+
     /// `_simpleAsString`.
     fn with_modifiers(&self, labels: [&str; 4], separator: &str, key: &str) -> String {
         let pressed = [self.ctrl, self.shift, self.alt, self.meta];
