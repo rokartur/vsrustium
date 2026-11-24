@@ -183,7 +183,8 @@ Scope as in port/roadmap.md. Done in this milestone: the command registry, conte
 - shortcut: a command that fails from a keybinding is logged to stderr; the port has no notification toasts.
 - shortcut: Revert File is a whole-text edit plus a save until milestone 8 has a model revert.
 - shortcut: the quick input fades in and out without the 0.97/0.99 scale of upstream's animation; GPUI has no element transforms.
-- Not done, left for a next session: Quick Open (`anythingQuickAccess.ts` needs a port of `fuzzyScorer.ts`, 953 lines with 1452 lines of tests, file search with the exclude settings, editor history and `:line`), the native menu bar from `MenuId.MenubarMainMenu`, context menus and hovers. pixel-check has no quick input window; the palette was compared by an ad-hoc capture (port/results/pixels.md).
+- `fuzzy_scorer.rs` ports `fuzzyScorer.ts` (scoreFuzzy, scoreFuzzy2, scoreItemFuzzy with its cache, compareItemsByFuzzyScore, prepareQuery) on top of `filters::fuzzy_score`, the `fuzzyScore` DP of `filters.ts`. Tests: `fuzzy_scorer/tests.rs` (68 cases of `fuzzyScorer.test.ts`) and `filters/fuzzy_score_tests.rs` (28 `fuzzyScore` cases of `filters.test.ts`). Left out: the Windows path branches (macOS only), lone UTF-16 surrogates (not representable in a Rust `str`), and the `fuzzyScoreGraceful` and `anyScore` assertions, which have no caller in the port yet. Match offsets count chars where upstream counts UTF-16 units; the same for every text outside the BMP the port draws.
+- Not done, left for a next session: Quick Open file picks (`anythingQuickAccess.ts`: file search with the exclude settings, editor history and `:line`), the native menu bar from `MenuId.MenubarMainMenu`, context menus and hovers. pixel-check has no quick input window; the palette was compared by an ad-hoc capture (port/results/pixels.md).
 
 ## Milestone 12: files, explorer, search, workspace (in progress)
 
