@@ -7,4 +7,6 @@ license.workspace = true
 [dependencies]
 anyhow.workspace = true
 config = { path = "../config" }
+md5 = { package = "md-5", version = "0.10" }
 serde_json.workspace = true
+storage = { path = "../storage" }

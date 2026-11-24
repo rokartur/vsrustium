@@ -41,6 +41,9 @@ impl ExtensionDevelopment {
         if let Some(tests_path) = &self.tests_path {
             environment["extensionTestsLocationURI"] = file_uri(tests_path);
         }
+        // localProcessExtensionHost.ts: an extension development host forwards native console output, tests from the CLI forward nothing.
+        let tests_from_cli = self.tests_path.is_some();
+        init["consoleForward"] = json!({ "includeStack": !tests_from_cli, "logNative": !tests_from_cli });
     }
 }
 

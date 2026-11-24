@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use config::configuration::Configuration;
 use config::registry::Registry;
@@ -11,8 +11,10 @@ use serde_json::{Value, json};
 
 use crate::console::format_console_entry;
 use crate::main_thread_configuration::MainThreadConfiguration;
+use crate::main_thread_storage::MainThreadStorage;
 use crate::rpc::{self, Arg, Message, Reply};
 use crate::scan::{ScannedExtension, extension_identifier, file_uri};
+use crate::utc::logs_folder_name;
 use crate::{ExtensionHost, Incoming, proxy_id, proxy_name};
 
 pub struct SessionPaths<'a> {
@@ -67,11 +69,13 @@ pub fn init_data(paths: &SessionPaths, extensions: &[ScannedExtension], version:
         },
         "logLevel": 3,
         "loggers": [],
-        "logsLocation": file_uri(&paths.user_data.join("logs/exthost")),
+        // environmentService.extHostLogsPath: <userData>/logs/<session start>/window1/exthost.
+        "logsLocation": file_uri(&paths.user_data.join("logs").join(logs_folder_name(SystemTime::now())).join("window1/exthost")),
         // The local host starts EagerManualStart: the main side sends $startExtensionHost.
         "autoStart": false,
         "remote": { "isRemote": false, "authority": null, "connectionData": null },
-        "consoleForward": { "includeStack": false, "logNative": false },
+        // A product without quality is not 'stable', so upstream forwards console stacks; extension tests turn both off.
+        "consoleForward": { "includeStack": true, "logNative": false },
         "uiKind": 1,
     })
 }
@@ -82,11 +86,14 @@ pub fn workspace_data(init: &Value, folder: &Path) -> Value {
     json!({ "id": init["workspace"]["id"], "name": name, "folders": [{ "uri": file_uri(folder), "name": name, "index": 0 }] })
 }
 
-fn workspace_id(folder: &Path) -> String {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    folder.hash(&mut hasher);
-    format!("{:016x}", hasher.finish())
+/// `getSingleFolderWorkspaceIdentifier` on macOS: MD5 of the path and the folder's birth time in milliseconds,
+/// so a folder created again gets new workspace storage.
+pub fn workspace_id(folder: &Path) -> String {
+    use md5::Digest;
+    let birth_time = std::fs::metadata(folder).and_then(|metadata| metadata.created()).ok();
+    let millis = birth_time.and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok()).map(|age| age.as_millis().to_string());
+    let digest = md5::Md5::new().chain_update(folder.to_string_lossy().as_bytes()).chain_update(millis.unwrap_or_default()).finalize();
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 /// `IConfigurationInitData` of a session without settings files: the registered defaults and their scopes.
@@ -124,11 +131,13 @@ pub struct Session {
     extension_tests_req: Option<u32>,
     /// The window's settings; without it the host gets the registered defaults and writes are ignored.
     pub configuration: Option<MainThreadConfiguration>,
+    /// Extension state on disk; without it `globalState` and `workspaceState` start empty and are not kept.
+    pub storage: Option<MainThreadStorage>,
 }
 
 impl Session {
     pub fn new(host: ExtensionHost) -> Self {
-        Session { host, next_req: 0, results: HashMap::new(), log: SessionLog::default(), extensions: HashMap::new(), extension_tests_req: None, configuration: None }
+        Session { host, next_req: 0, results: HashMap::new(), log: SessionLog::default(), extensions: HashMap::new(), extension_tests_req: None, configuration: None, storage: None }
     }
 
     /// The calls the workbench makes once the handshake is done (MainThreadConfiguration,
@@ -290,6 +299,7 @@ impl Session {
                 eprintln!("[exthost] activating {id} failed: {message}");
                 self.log.activation_errors.insert(id, message);
             }
+            ("MainThreadStorage", _) if self.storage.is_some() => return self.storage.as_mut().expect("checked by the match guard").serve(method, args),
             ("MainThreadWindow", "$getInitialState") => return Reply::Json(json!({ "isFocused": true, "isActive": true })),
             // No sign-in and no AI in the port: these APIs stay callable and report nothing.
             ("MainThreadLanguageModelTools", "$getTools")

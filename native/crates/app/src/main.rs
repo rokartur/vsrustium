@@ -21,6 +21,7 @@ use config::registry::Registry;
 use config::service::Settings;
 use exthost::extension_development::ExtensionDevelopment;
 use exthost::main_thread_configuration::MainThreadConfiguration;
+use exthost::main_thread_storage::MainThreadStorage;
 use exthost::rpc::Arg;
 use exthost::scan::{ScannedExtension, scan_builtin_extensions};
 use exthost::session::{Session, SessionPaths, init_data, workspace_data};
@@ -139,7 +140,11 @@ fn run_extension_host(
     status: &UnboundedSender<String>,
 ) -> anyhow::Result<()> {
     let paths = SessionPaths { app_root: &app_root, user_data: &user_data, workspace_folder: folder.as_deref() };
+    // storageMainService.ts: no storage during extension tests, so each test run starts empty.
+    let extension_tests = development.as_ref().is_some_and(|development| development.tests_path.is_some());
+    let mut storage = if extension_tests { MainThreadStorage::in_memory() } else { MainThreadStorage::open(&paths)? };
     let mut init = init_data(&paths, &extensions, "1.147.0");
+    init["telemetryInfo"] = storage.telemetry_info();
     if let Some(development) = &development {
         development.add_to_init_data(&mut init);
     }
@@ -149,6 +154,7 @@ fn run_extension_host(
     let _ = status.unbounded_send(format!("handshake done, pid {}", host.child.id()));
     let mut session = Session::new(host);
     session.configuration = Some(MainThreadConfiguration::new(settings, development.is_some()));
+    session.storage = Some(storage);
     session.start(&extensions, folder.as_deref().map(|folder| workspace_data(&init, folder)))?;
     let reply = session.call("ExtHostExtensionService", "$test_latency", vec![Arg::Json(json!(7))], Duration::from_secs(10))?;
     let _ = status.unbounded_send(format!("main -> host: $test_latency(7) = {reply:?}"));
