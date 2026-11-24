@@ -3,19 +3,21 @@
 //! editor's top right corner. The controller (editor/find/controller.rs) owns what it searches for.
 
 use std::cell::Cell;
+use std::ops::Range;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    BoxShadow, Context, Div, FocusHandle, Keystroke, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Rgba, Stateful, Window, canvas, div, point, prelude::*, px,
+    BoxShadow, Context, Div, FocusHandle, HighlightStyle, Keystroke, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Rgba, Stateful, Window, canvas, div, point, prelude::*, px,
 };
 use serde_json::Value;
 
 use super::Workbench;
+use super::editor_view::selected_columns;
 use super::input_box_view::{InputId, InputLook, InputView};
 use crate::commands::Outcome;
 use crate::editor::find::controller::{AutoFindInSelection, FindController, FindOptions, FocusAction, QueryOptions, SeedFromSelection};
 use crate::editor::find::state::{MATCHES_LIMIT, NewFindState};
-use crate::editor::{ContentChanged, OpenEditor, Position, Selection, VERTICAL_SCROLLBAR_WIDTH, VerticalReveal, Viewport, visible_column};
+use crate::editor::{ContentChanged, OpenEditor, Position, Selection, VERTICAL_SCROLLBAR_WIDTH, VerticalReveal, Viewport, expand_tabs, visible_column};
 use crate::input_box::InputBox;
 use crate::theme::ThemeKind;
 
@@ -296,6 +298,61 @@ impl Workbench {
         let Some(range) = self.find.controller.state.current_match.clone() else { return };
         let Some(editor) = self.editors.active_mut() else { return };
         editor.reveal_range(range.start, range.end, VerticalReveal::CenterIfOutsideViewport, viewport);
+    }
+
+    /// findDecorations.ts on one line: the find scopes and the range highlight across the line, then the matches,
+    /// the current one on top. Returns the boxes and the text colors of the matches (`findMatchInline`).
+    pub(super) fn find_line_decorations(&self, editor: &OpenEditor, index: usize, char_width: f32, scroll_left: f32) -> (Vec<Div>, Vec<(Range<usize>, HighlightStyle)>) {
+        let (mut boxes, mut text_colors) = (Vec::new(), Vec::new());
+        let Some(model) = self.find.controller.model.as_ref().filter(|_| self.find.model_id == Some(editor.model_id)) else {
+            return (boxes, text_colors);
+        };
+        let high_contrast = self.theme.kind.is_high_contrast();
+        let on_line = |range: &Range<Position>| range.start.line <= index && index <= range.end.line;
+        // shortcut: GPUI has no dotted border; high contrast dotted borders are dashed.
+        let bordered = |mut decoration: Div, background: Option<Rgba>, border: Option<Rgba>, width: f32| {
+            if let Some(background) = background {
+                decoration = decoration.bg(background);
+            }
+            if let Some(border) = border {
+                decoration = decoration.border(px(width)).border_color(border).when(high_contrast && width == 1., |decoration| decoration.border_dashed());
+            }
+            decoration
+        };
+        let whole_line = || div().absolute().inset_0().left(px(scroll_left));
+        for _ in model.find_scopes(editor).unwrap_or_default().iter().filter(|scope| on_line(scope)) {
+            boxes.push(bordered(whole_line(), self.theme.color("editor.findRangeHighlightBackground"), self.theme.color("editor.findRangeHighlightBorder"), 1.));
+        }
+        if model.range_highlight.as_ref().is_some_and(on_line) {
+            boxes.push(bordered(whole_line(), self.theme.color("editor.rangeHighlightBackground"), self.theme.color("editor.rangeHighlightBorder"), 1.));
+        }
+
+        let text = &editor.document.lines[index];
+        let tab_size = editor.document.indentation.tab_size;
+        let x = |column: usize| visible_column(text, column, tab_size) as f32 * char_width;
+        let byte = |column: usize| expand_tabs(&text.chars().take(column).collect::<String>(), tab_size).len();
+        let first = model.matches.partition_point(|range| range.end.line < index);
+        let mut current = None;
+        for (match_index, range) in model.matches.iter().enumerate().skip(first).take_while(|(_, range)| range.start.line <= index) {
+            let Some((start, end, line_break)) = selected_columns(Selection { anchor: range.start, head: range.end }, index, text) else { continue };
+            let is_current = model.highlighted == Some(match_index);
+            // `linesVisibleRangesForRange` includes the line break for `findMatch` only.
+            let right = x(end) + if line_break && !is_current { char_width } else { 0. };
+            let decoration = div().absolute().top_0().h_full().left(px(x(start))).w(px(right - x(start)));
+            let (decoration, foreground) = match is_current {
+                true => (bordered(decoration, self.theme.color("editor.findMatchBackground"), self.theme.color("editor.findMatchBorder"), 2.), "editor.findMatchForeground"),
+                false => (bordered(decoration, self.theme.color("editor.findMatchHighlightBackground"), self.theme.color("editor.findMatchHighlightBorder"), 1.), "editor.findMatchHighlightForeground"),
+            };
+            if let Some(color) = self.theme.color(foreground) {
+                text_colors.push((byte(start)..byte(end), HighlightStyle::from(color)));
+            }
+            match is_current {
+                true => current = Some(decoration),
+                false => boxes.push(decoration),
+            }
+        }
+        boxes.extend(current);
+        (boxes, text_colors)
     }
 
     /// The widget over the text area's top right corner (overlayWidgets.ts TOP_RIGHT_CORNER), `area_width` wide.

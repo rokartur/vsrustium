@@ -569,6 +569,8 @@ impl Workbench {
                     }
                     content = content.child(highlight);
                 }
+                let (find_decorations, find_colors) = self.find_line_decorations(editor, index, char_width, scroll_left);
+                content = content.children(find_decorations);
                 // bracketMatching.css .bracket-match: background and a 1px border inside the bracket's box.
                 for (_, bytes) in bracket_matches.iter().flat_map(|(pair, _)| pair).filter(|(line, _)| *line == index) {
                     let start = visible_column(text, text[..bytes.start].chars().count(), tab_size) as f32 * char_width;
@@ -583,7 +585,7 @@ impl Workbench {
                     content = content.child(bracket);
                 }
                 let highlights = editor.document.tokens.highlights(&self.theme, &self.languages, &editor.document.lines, index, tab_size);
-                let text_runs = StyledText::new(expand_tabs(text, tab_size)).with_highlights(highlights);
+                let text_runs = StyledText::new(expand_tabs(text, tab_size)).with_highlights(gpui::combine_highlights(highlights, find_colors));
                 content = content.child(div().absolute().top_0().left_0().whitespace_nowrap().child(text_runs));
                 // folding.css .inline-folded:after: an ellipsis 0.2em after the line's last char.
                 if collapsed == Some(true) {
@@ -1003,7 +1005,7 @@ fn selection_label(editor: &OpenEditor) -> String {
 }
 
 /// The selected chars of a line and whether its line break is selected too.
-fn selected_columns(selection: Selection, line: usize, text: &str) -> Option<(usize, usize, bool)> {
+pub(super) fn selected_columns(selection: Selection, line: usize, text: &str) -> Option<(usize, usize, bool)> {
     let (start, end) = (selection.start(), selection.end());
     if selection.is_empty() || line < start.line || line > end.line {
         return None;
