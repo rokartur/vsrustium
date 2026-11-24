@@ -6,8 +6,10 @@ mod actions;
 mod editor_commands;
 mod editor_view;
 mod explorer_actions;
+pub(crate) mod host_requests;
 mod input_box_view;
 mod keyboard;
+mod minimap_view;
 pub mod quick_access;
 mod quick_open;
 pub mod themes;
@@ -25,7 +27,7 @@ use config::service::Settings;
 use config::workspace::Workspace;
 use storage::Storage;
 
-use gpui::{ClickEvent, Context, Div, DragMoveEvent, FocusHandle, FontFeatures, FontWeight, Rgba, Task, UniformListScrollHandle, Window, div, prelude::*, px, rgb, svg, transparent_black};
+use gpui::{ClickEvent, Context, Div, DragMoveEvent, FocusHandle, FontFeatures, FontWeight, Rgba, Task, Window, div, prelude::*, px, rgb, svg, transparent_black};
 use serde_json::Value;
 
 use crate::commands::Commands;
@@ -62,7 +64,11 @@ pub struct Workbench {
     log_level: String,
     /// The status bar message and the task that hides it.
     status_message: Option<(String, Task<()>)>,
-    editor_scroll: UniformListScrollHandle,
+    scrollbars: editor_view::Scrollbars,
+    fold_controls: editor_view::FoldControls,
+    minimap: minimap_view::Minimap,
+    /// The line and whether on its folding control a press may toggle a fold (folding.ts `mouseDownInfo`).
+    fold_mouse_down: Option<(usize, bool)>,
     /// Window x of the text area, recorded at paint, to turn a click into a column.
     text_area_left: Rc<Cell<f32>>,
     pub editor_focus: FocusHandle,
@@ -141,7 +147,10 @@ impl Workbench {
             context_keys: HashMap::new(),
             log_level: "info".into(),
             status_message: None,
-            editor_scroll: UniformListScrollHandle::new(),
+            scrollbars: Default::default(),
+            fold_controls: Default::default(),
+            minimap: Default::default(),
+            fold_mouse_down: None,
             text_area_left: Rc::default(),
             editor_focus: cx.focus_handle(),
             marked_text: None,
@@ -205,12 +214,11 @@ impl Workbench {
         self.editors_changed(cx);
     }
 
-    /// Keeps the Explorer selection, the scroll position and the extension host in step with the group.
+    /// Keeps the Explorer selection and the extension host in step with the group.
     fn editors_changed(&mut self, cx: &mut Context<Self>) {
         if let (Some(tree), Some(editor)) = (self.folder.as_mut(), self.editors.active()) {
             tree.reveal(&editor.document.path);
         }
-        self.editor_scroll = UniformListScrollHandle::new();
         self.record_editor_history();
         self.host.send_changes(&self.editors);
         cx.notify();
@@ -645,7 +653,7 @@ mod tests {
             workbench
         });
         cx.run_until_parked();
-        let column = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().selection.head.column);
+        let column = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().selection().head.column);
         let status = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.chord_status());
 
         cx.simulate_keystrokes("end");
@@ -661,6 +669,54 @@ mod tests {
         cx.simulate_keystrokes("cmd-k x");
         let message = workbench.read_with(cx, |workbench, _| workbench.status_message.as_ref().map(|(message, _)| message.clone()));
         assert_eq!(message.as_deref(), Some("The key combination (⌘K, X) is not a command."));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[gpui::test]
+    fn folding_and_cursor_keys_run_through_the_keybindings(cx: &mut TestAppContext) {
+        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
+        let theme = load_theme(&[themes], "Dark Modern").unwrap();
+        let dir = std::env::temp_dir().join(format!("code-gpui-folding-keys-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("a.txt");
+        std::fs::write(&file, "a\n  b\n    c\n  d\ne\n  f").unwrap();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let (workbench, cx) = cx.add_window_view(|window, cx| {
+            let mut workbench = Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), crate::default_settings(), HostSync::new(sender), cx);
+            workbench.load_keybindings(crate::keybindings::default_keybindings(&[]), dir.join("keybindings.json"), cx);
+            workbench.open_file(file.clone(), true, window, cx);
+            workbench
+        });
+        cx.run_until_parked();
+        let hidden = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().folding.hidden().to_vec());
+        let cursors = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().selections.len());
+
+        cx.simulate_keystrokes("cmd-k cmd-0");
+        assert_eq!(hidden(cx), [1..4, 5..6], "editor.foldAll");
+        cx.simulate_keystrokes("cmd-k cmd-j");
+        assert!(hidden(cx).is_empty(), "editor.unfoldAll");
+        cx.simulate_keystrokes("alt-cmd-[");
+        assert_eq!(hidden(cx), [1..4], "editor.fold");
+        cx.simulate_keystrokes("alt-cmd-]");
+        assert!(hidden(cx).is_empty(), "editor.unfold");
+        cx.simulate_keystrokes("down cmd-k cmd-[");
+        assert_eq!(hidden(cx), [2..3], "editor.foldRecursively");
+        cx.simulate_keystrokes("cmd-k cmd-]");
+        assert!(hidden(cx).is_empty(), "editor.unfoldRecursively");
+
+        cx.simulate_keystrokes("alt-cmd-down");
+        assert_eq!(cursors(cx), 2, "editor.action.insertCursorBelow");
+        cx.simulate_keystrokes("escape");
+        assert_eq!(cursors(cx), 1, "removeSecondaryCursors wins over cancelSelection with several cursors");
+
+        // An edit that drops the folded lines changes the visible lines: the host hears the new visibleRanges.
+        cx.simulate_keystrokes("up alt-cmd-[");
+        receiver.try_iter().count();
+        cx.simulate_keystrokes("cmd-a");
+        cx.simulate_input("x");
+        let visible_ranges: Vec<_> = receiver.try_iter().filter(|message| message.method == "$acceptEditorPropertiesChanged" && !message.args[1]["visibleRanges"].is_null()).collect();
+        assert_eq!(visible_ranges.len(), 1, "{visible_ranges:?}");
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

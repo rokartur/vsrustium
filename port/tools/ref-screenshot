@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
 // Captures the reference VS Code workbench through CDP (Page.captureScreenshot), so no Screen Recording permission is needed.
 // Usage: port/tools/ref-screenshot <out-dir> [dark|light|hc ...]   (env REF = reference checkout, default ~/Developer/vscode-ref;
-// env FOLDER = folder to open, default none; env FILE = file to open in that window, default none)
+// env FOLDER = folder to open, default none; env FILE = file to open in that window, default none;
+// env KEYS = keystrokes to type into it first, GPUI style: "cmd-down up alt-cmd-[")
 import { Database } from 'bun:sqlite';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -43,8 +44,6 @@ async function capture(theme: string) {
 		'security.workspace.trust.enabled': false,
 		// With AI off the secondary side bar only hosts chat, so the product without AI has none.
 		'workbench.secondarySideBar.defaultVisibility': 'hidden',
-		// Not ported: the minimap (port/notes.md, milestone 4).
-		'editor.minimap.enabled': false,
 	}));
 	// Same product as the port: no accounts icon (profile storage key of globalCompositeBar.ts isAccountsActionVisible).
 	mkdirSync(join(userData, 'User/globalStorage'));
@@ -73,6 +72,9 @@ async function capture(theme: string) {
 		await until(async () => (await cdp('Runtime.evaluate', { expression: `!document.querySelector('.part.titlebar.inactive')`, returnByValue: true })).result.value === true, 10000);
 		// The editor's scrollbars show at open; park the pointer on the empty status bar and let them fade.
 		// Only with a file: with the move and wait the side bar sash shows grip dots the other windows' references lack.
+		for (const keystroke of (process.env.KEYS ?? '').split(' ').filter(key => key)) {
+			await press(cdp, keystroke);
+		}
 		if (process.env.FILE) {
 			await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 500, y: 754 });
 			await Bun.sleep(1500);
@@ -84,6 +86,22 @@ async function capture(theme: string) {
 		await app.exited;
 		rmSync(userData, { recursive: true, force: true });
 	}
+}
+
+// CDP key events for a GPUI keystroke: modifiers bits alt 1, ctrl 2, meta 4, shift 8.
+async function press(cdp: (method: string, params?: object) => Promise<any>, keystroke: string) {
+	const parts = keystroke.split('-');
+	const key = parts.pop()!;
+	const bits: Record<string, number> = { alt: 1, ctrl: 2, cmd: 4, shift: 8 };
+	const modifiers = parts.reduce((sum, part) => sum + bits[part], 0);
+	const keys: Record<string, [string, string, number]> = {
+		up: ['ArrowUp', 'ArrowUp', 38], down: ['ArrowDown', 'ArrowDown', 40], left: ['ArrowLeft', 'ArrowLeft', 37], right: ['ArrowRight', 'ArrowRight', 39],
+		'[': ['[', 'BracketLeft', 219], ']': [']', 'BracketRight', 221],
+	};
+	const [name, code, windowsVirtualKeyCode] = keys[key];
+	await cdp('Input.dispatchKeyEvent', { type: 'rawKeyDown', modifiers, key: name, code, windowsVirtualKeyCode });
+	await cdp('Input.dispatchKeyEvent', { type: 'keyUp', modifiers, key: name, code, windowsVirtualKeyCode });
+	await Bun.sleep(100);
 }
 
 async function connect() {

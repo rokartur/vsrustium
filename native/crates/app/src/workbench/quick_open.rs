@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use config::configuration::Overrides;
-use gpui::{AppContext, Context, ScrollStrategy, Task, Window};
+use gpui::{AppContext, Context, Task, Window};
 use search::ripgrep::Cancellation;
 use serde_json::Value;
 use storage::Storage;
@@ -14,7 +14,7 @@ use storage::Storage;
 use super::Workbench;
 use super::quick_access::Accept;
 use crate::anything_quick_access::{self, FileEntry, FilePick, TextRange};
-use crate::editor::{Position, Selection};
+use crate::editor::{Position, Selection, VerticalReveal};
 use crate::editor_history::{EditorHistory, HISTORY_STORAGE_KEY};
 use crate::fuzzy_scorer::{self, FuzzyScorerCache};
 use crate::quick_input::{Button, Entry, Item};
@@ -271,7 +271,7 @@ impl Workbench {
         let range = self.quick_access.files.as_ref().and_then(|state| state.last_range);
         self.open_file(path.clone(), pinned, window, cx);
         if let Some(range) = range {
-            self.select_range(&path, range);
+            self.select_range(&path, range, cx);
         }
         match in_background {
             true => window.focus(&self.quick_inputs.focus, cx),
@@ -280,16 +280,19 @@ impl Workbench {
     }
 
     /// `applyTextEditorOptions`: the selection, validated against the text, then revealed in the center.
-    fn select_range(&mut self, path: &Path, range: TextRange) {
+    fn select_range(&mut self, path: &Path, range: TextRange, cx: &mut Context<Self>) {
+        let viewport = self.editors.viewport;
         let Some(editor) = self.editors.active_mut().filter(|editor| editor.document.path == path) else { return };
         let lines = &editor.document.lines;
         let validate = |line: usize, column: usize| {
             let line = line.clamp(1, lines.len()) - 1;
             Position::new(line, column.clamp(1, lines[line].chars().count() + 1) - 1)
         };
-        editor.selection = Selection { anchor: validate(range.start_line_number, range.start_column), head: validate(range.end_line_number, range.end_column) };
+        let selection = Selection { anchor: validate(range.start_line_number, range.start_column), head: validate(range.end_line_number, range.end_column) };
+        editor.set_selections(vec![selection]);
+        editor.reveal_range(selection.start(), selection.end(), VerticalReveal::Center, viewport);
         self.host.send_selection(editor, "code.navigation");
-        self.editor_scroll.scroll_to_item(editor.selection.anchor.line, ScrollStrategy::Center);
+        self.editor_scrolled(cx);
     }
 }
 

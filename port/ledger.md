@@ -14,8 +14,8 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | seam/node-control | extension host seam | verified | exthost-probe --runtime node: 30/30, same set as Bun |
 | seam/vscode-module-bun | extension host seam | ported | exthost-probe: CJS extensions and ESM github, markdown-language-features, mermaid-markdown-features activate on Bun; ESM added after startup not covered |
 | mainthread/MainThreadGitExtension | MainThread* shape (Rust side) | stub | session.rs answers undefined |
-| mainthread/MainThreadClipboard | MainThread* shape (Rust side) | stub | session.rs answers undefined |
-| mainthread/MainThreadCommands | MainThread* shape (Rust side) | ported | api-tests MOCHA_GREP="vscode API - commands\|showInputBox\|#7013": 10 passing, 4 failing (vscode.open twice, vscode.diff, editorCommand with extra args: wait for milestone 8 editor groups and the diff editor) |
+| mainthread/MainThreadClipboard | MainThread* shape (Rust side) | verified | host_requests.rs answers $readText and $writeText with the system clipboard: api-tests MOCHA_GREP="vscode API - editors" (insert snippet with clipboard variables passes) |
+| mainthread/MainThreadCommands | MainThread* shape (Rust side) | ported | api-tests MOCHA_GREP="vscode API - commands\|showInputBox\|#7013": 11 passing, 3 failing after the milestone 8 merge (vscode.open twice and vscode.diff: wait for editor groups and the diff editor) |
 | mainthread/MainThreadComments | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadAuthentication | MainThread* shape (Rust side) | removed | no sign-in/AI by decision (port/notes.md); API stays inert: session.rs answers undefined, list getters []; exthost-probe 30/30 on Bun and Node |
 | mainthread/MainThreadSecretState | MainThread* shape (Rust side) | verified | port/tools/settings-check secrets same as the reference; cargo test -p exthost main_thread_secret_state (on a throwaway keychain) |
@@ -24,9 +24,9 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | mainthread/MainThreadDiaglogs | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadDecorations | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadDocumentContentProviders | MainThread* shape (Rust side) | stub | session.rs answers undefined |
-| mainthread/MainThreadDocuments | MainThread* shape (Rust side) | stub | host_sync.rs sends model opened, changed, dirty and saved: cargo test -p app -- --ignored live_host (TypeScript diagnostics after an edit); $tryCreateDocument, $tryOpenDocument, $trySaveDocument answer undefined |
-| mainthread/MainThreadBulkEdits | MainThread* shape (Rust side) | ported | file edits of workspace.applyEdit (api-tests: rename & ignoreIfExists, delete & ignoreIfNotExists, #111867 1/3 to 3/3, binary files pass); text and cell edits fail until milestone 8 |
-| mainthread/MainThreadTextEditors | MainThread* shape (Rust side) | stub | session.rs answers undefined |
+| mainthread/MainThreadDocuments | MainThread* shape (Rust side) | ported | host_sync.rs sends model opened, changed, dirty and saved; host_requests.rs answers $tryOpenDocument (file and extension file system provider URIs) and $trySaveDocument, models kept 3 minutes after the host lets go: api-tests MOCHA_GREP="vscode API - editors" 13/0/0; $tryCreateDocument (untitled) still answers undefined |
+| mainthread/MainThreadBulkEdits | MainThread* shape (Rust side) | ported | file edits of workspace.applyEdit (api-tests: rename & ignoreIfExists, delete & ignoreIfNotExists, #111867 1/3 to 3/3, binary files pass); after the milestone 8 merge `onWillCreate/onDidCreate, make changes, edit new file fails` passes too; cell edits and the other text edit tests fail |
+| mainthread/MainThreadTextEditors | MainThread* shape (Rust side) | ported | host_requests.rs answers $tryShowTextDocument, $trySetSelections, $tryRevealRange, $trySetOptions, $tryApplyEdits, $tryInsertSnippet; visible ranges and options reach the host: api-tests MOCHA_GREP="vscode API - editors" 13/0/0, window text editor tests without view columns pass; every selection and snippet range applies; one editor group (port/notes.md milestone 8) |
 | mainthread/MainThreadTreeViews | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadDownloadService | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadErrors | MainThread* shape (Rust side) | ported | session.rs writes `$onUnexpectedError` stacks to the port log (code-gpui stderr); seen in port/tools/api-tests api-folder.log |
@@ -219,8 +219,8 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/windows | src/vs/platform | todo |  |
 | platform/workspace | src/vs/platform | ported | config/src/workspace.rs: folders, getFolder, toWorkspaceFolders, workspace label; cargo test -p config workspace (workspace.test.ts cases); api-workspace 4/4 |
 | platform/workspaces | src/vs/platform | ported | getWorkspaceIdentifier and getSingleFolderWorkspaceIdentifier (session.rs, workspaces.test.ts stable id case, cargo test -p exthost); no untitled workspaces or recent list |
-| editor/browser | src/vs/editor | todo |  |
-| editor/common | src/vs/editor | stub | one cursor, core moves and deletes, typing, edit stack stops, alternative version id dirty state: cargo test -p app (editor::cursor::tests, editor::edit::tests); no multi-cursor, onEnter or indentation rules, grapheme clusters (port/notes.md milestone 5) |
+| editor/browser | src/vs/editor | ported | scrolling: wheel, scrollbars with drag, track press and fade, scroll shadow, reveal on cursor moves and from the API, per-editor scroll position (editor/view.rs, workbench/editor_view.rs): cargo test -p app editor::view::tests; folding (editor/folding.rs): cargo test -p app editor::folding; minimap with slider, decorations and section headers (editor/minimap.rs, editor/section_headers.rs, workbench/minimap_view.rs): cargo test -p app minimap, cargo test -p app section_headers; no sticky scroll or smooth scrolling (port/notes.md milestone 8) |
+| editor/common | src/vs/editor | stub | cursors (CursorCollection normalize, per-cursor edits, loser edits, paste distribution), core moves and deletes, typing, edit stack stops, alternative version id dirty state: cargo test -p app (editor::cursor::tests, editor::edit::tests); no onEnter or indentation rules, grapheme clusters (port/notes.md milestones 5 and 8) |
 | editor/standalone | src/vs/editor | todo |  |
 | editor/test | src/vs/editor | n/a | upstream test infrastructure; the port tests with cargo test and port/tools |
 | editor/contrib/anchorSelect | src/vs/editor/contrib | todo |  |
@@ -240,7 +240,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | editor/contrib/editorState | src/vs/editor/contrib | todo |  |
 | editor/contrib/find | src/vs/editor/contrib | todo |  |
 | editor/contrib/floatingMenu | src/vs/editor/contrib | todo |  |
-| editor/contrib/folding | src/vs/editor/contrib | todo |  |
+| editor/contrib/folding | src/vs/editor/contrib | stub | folding model, ranges, hidden ranges, indent and marker provider, gutter controls, fold/unfold keys and every folding command by id (editor/folding.rs, editor/folding_controller.rs): cargo test -p app editor::folding, pixel-check folded; extension providers with MainThreadLanguageFeatures, Cmd+K chords and per-file state at the M9/M10 merge (port/notes.md milestone 8) |
 | editor/contrib/fontZoom | src/vs/editor/contrib | todo |  |
 | editor/contrib/format | src/vs/editor/contrib | todo |  |
 | editor/contrib/gotoError | src/vs/editor/contrib | todo |  |
@@ -260,7 +260,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | editor/contrib/longLinesHelper | src/vs/editor/contrib | todo |  |
 | editor/contrib/message | src/vs/editor/contrib | todo |  |
 | editor/contrib/middleScroll | src/vs/editor/contrib | todo |  |
-| editor/contrib/multicursor | src/vs/editor/contrib | todo |  |
+| editor/contrib/multicursor | src/vs/editor/contrib | stub | insertCursorAbove/Below, insertCursorAtEndOfEachLineSelected, addCursorsToTop/Bottom, column selection, Alt+click and drag (editor/multicursor.rs): cargo test -p app editor::multicursor::tests; no Cmd+D, selectHighlights or changeAll until find (port/notes.md milestone 8) |
 | editor/contrib/parameterHints | src/vs/editor/contrib | todo |  |
 | editor/contrib/peekView | src/vs/editor/contrib | todo |  |
 | editor/contrib/placeholderText | src/vs/editor/contrib | todo |  |
@@ -288,7 +288,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/parts/banner | workbench part | todo |  |
 | workbench/parts/chat | workbench part | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/parts/dialogs | workbench part | todo |  |
-| workbench/parts/editor | workbench part | ported | one group: connected tab strip (preview/pinned, close, split and more actions drawn), breadcrumbs, text editor with gutter, current line, indent guides, word highlight, overview ruler, click, drag and keyboard selection, typing, undo, clipboard, save and dirty tabs (port/notes.md milestone 5); no splits, minimap or scrolling sync; cargo test -p app (editor::tests, workbench keys_and_typed_text_edit_the_focused_editor_and_reach_the_host); pixel-check file window (port/results/pixels.md milestone 4, unchanged at milestone 5) |
+| workbench/parts/editor | workbench part | ported | one group: connected tab strip (preview/pinned, close, split and more actions drawn), breadcrumbs, text editor with gutter, current line, indent guides, word highlight, overview ruler, click, drag and keyboard selection, typing, undo, clipboard, save and dirty tabs (port/notes.md milestone 5); no splits or scrolling sync; minimap since milestone 8; cargo test -p app (editor::tests, workbench keys_and_typed_text_edit_the_focused_editor_and_reach_the_host); pixel-check file window (port/results/pixels.md milestone 4, unchanged at milestone 5) |
 | workbench/parts/notifications | workbench part | todo |  |
 | workbench/parts/panel | workbench part | todo |  |
 | workbench/parts/partGrid | workbench part | stub | fixed floating layout drawn with flex (workbench.rs), no grid, sashes or hidden parts; pixel-check (port/results/pixels.md): part bounds match at 1024x768 |

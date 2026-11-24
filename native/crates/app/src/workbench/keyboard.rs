@@ -164,10 +164,13 @@ impl Workbench {
         if let Some(editor) = self.editors.active() {
             context.insert("activeEditor".into(), json!("workbench.editor.files"));
             context.insert("editorReadonly".into(), json!(false));
-            context.insert("editorHasSelection".into(), json!(!editor.selection.is_empty()));
+            context.insert("editorHasSelection".into(), json!(editor.selections.iter().any(|selection| !selection.is_empty())));
+            context.insert("editorHasMultipleSelections".into(), json!(editor.selections.len() > 1));
+            context.insert("editorColumnSelection".into(), self.setting("editor.columnSelection"));
+            context.insert("foldingEnabled".into(), self.setting("editor.folding"));
             context.insert("editorLangId".into(), json!(editor.document.language_id));
             context.insert("resourceLangId".into(), json!(editor.document.language_id));
-            context.insert("resourceScheme".into(), json!("file"));
+            context.insert("resourceScheme".into(), json!(editor.document.scheme));
             let path = &editor.document.path;
             context.insert("resourceFilename".into(), json!(path.file_name().map(|name| name.to_string_lossy()).unwrap_or_default()));
             context.insert("resourceExtname".into(), json!(path.extension().map(|ext| format!(".{}", ext.to_string_lossy())).unwrap_or_default()));
