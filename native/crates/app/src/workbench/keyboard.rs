@@ -182,6 +182,10 @@ impl Workbench {
             context.insert("replaceInputFocussed".into(), json!(replace_focused));
             if find_focused || replace_focused {
                 context.insert("inputFocus".into(), json!(true));
+                // contextScopedHistoryWidget.ts: the inputs are history widgets, navigable both ways.
+                context.insert("historyNavigationWidgetFocus".into(), json!(true));
+                context.insert("historyNavigationForwardsEnabled".into(), json!(true));
+                context.insert("historyNavigationBackwardsEnabled".into(), json!(true));
             }
             context.insert("resourceScheme".into(), json!(editor.document.scheme));
             let path = &editor.document.path;

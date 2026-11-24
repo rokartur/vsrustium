@@ -804,6 +804,24 @@ mod tests {
             (state.search_string.clone(), state.is_regex, state.is_replace_revealed, state.matches_count)
         });
         assert_eq!(state, ("a".to_string(), true, false, 5));
+
+        // saveQueryState and the history delayer write the workspace storage.
+        cx.executor().advance_clock(std::time::Duration::from_millis(500));
+        cx.run_until_parked();
+        let stored = |key: &str, cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.workspace_storage.lock().unwrap().get(key).map(str::to_owned));
+        assert_eq!(stored("editor.isRegex", cx).as_deref(), Some("true"));
+        assert_eq!(stored("workbench.find.history", cx).as_deref(), Some(r#"["a"]"#));
+        cx.simulate_input("b");
+        cx.simulate_keystrokes("up");
+        assert_eq!(workbench.read_with(cx, |workbench, _| workbench.find.controller.state.search_string.clone()), "a");
+        assert_eq!(workbench.read_with(cx, |workbench, _| workbench.find.find_history.elements().len()), 2);
+        // loadQueryState and the history's load on the next start.
+        let restored = workbench.update(cx, |workbench, _| {
+            workbench.find.find_history.clear();
+            workbench.restore_workspace_state(workbench.workspace_storage.clone());
+            (workbench.find.controller.state.is_regex, workbench.find.find_history.elements().len())
+        });
+        assert_eq!(restored, (true, 2));
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

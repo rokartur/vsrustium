@@ -7,7 +7,7 @@ use std::ops::Range;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    BoxShadow, Context, Div, FocusHandle, HighlightStyle, Keystroke, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Rgba, Stateful, Window, canvas, div, point, prelude::*, px,
+    BoxShadow, Context, Div, FocusHandle, HighlightStyle, Keystroke, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Rgba, Stateful, Task, Window, canvas, div, point, prelude::*, px,
 };
 use serde_json::Value;
 
@@ -18,12 +18,19 @@ use crate::commands::Outcome;
 use crate::editor::find::controller::{AutoFindInSelection, FindController, FindOptions, FocusAction, QueryOptions, SeedFromSelection};
 use crate::editor::find::state::{MATCHES_LIMIT, NewFindState};
 use crate::editor::{ContentChanged, OpenEditor, Position, Selection, VERTICAL_SCROLLBAR_WIDTH, VerticalReveal, Viewport, expand_tabs, visible_column};
+use crate::history::HistoryNavigator;
 use crate::input_box::InputBox;
 use crate::main_thread_quick_open::Owner;
 use crate::quick_input::{Event, Kind, QuickInput};
 use crate::theme::ThemeKind;
 
 const FIND_WIDGET_INITIAL_WIDTH: f32 = 419.;
+/// `new HistoryNavigator<string>(options.history, 100)` of `HistoryInputBox`.
+const HISTORY_LIMIT: usize = 100;
+const FIND_HISTORY_KEY: &str = "workbench.find.history";
+const REPLACE_HISTORY_KEY: &str = "workbench.replace.history";
+/// The workspace storage keys of `saveQueryState`, in `QueryOptions` field order.
+const QUERY_STATE_KEYS: [&str; 4] = ["editor.matchCase", "editor.wholeWord", "editor.isRegex", "editor.preserveCase"];
 const MAX_MATCHES_COUNT_WIDTH: f32 = 69.;
 /// `_getHeight`: 4 + the input's 23 + its 2px border + 4, plus 4 + 25 with the replace input.
 const FIND_INPUT_AREA_HEIGHT: f32 = 33.;
@@ -53,6 +60,11 @@ pub struct FindWidget {
     widget_left: Cell<f32>,
     /// The match Go to Match draws as a range highlight while its input is open (`addDecorations`).
     pub go_to_match_highlight: Option<Range<Position>>,
+    /// The inputs' histories (`FindWidgetSearchHistory`, `ReplaceWidgetHistory`), stored per workspace.
+    pub find_history: HistoryNavigator,
+    pub replace_history: HistoryNavigator,
+    /// `_updateHistoryDelayer`: the histories take the inputs' values 500 ms after the last state change.
+    history_update: Option<Task<()>>,
 }
 
 impl FindWidget {
@@ -71,6 +83,9 @@ impl FindWidget {
             toggled: None,
             widget_left: Cell::new(f32::MAX),
             go_to_match_highlight: None,
+            find_history: HistoryNavigator::new(Vec::new(), HISTORY_LIMIT),
+            replace_history: HistoryNavigator::new(Vec::new(), HISTORY_LIMIT),
+            history_update: None,
         }
     }
 }
@@ -131,6 +146,8 @@ impl Workbench {
             Outcome::done()
         });
         self.commands.register("editor.action.goToMatchFindAction", |workbench, _, window, cx| workbench.show_go_to_match(window, cx));
+        self.commands.register("history.showPrevious", |workbench, _, window, cx| workbench.show_history_value(true, window, cx));
+        self.commands.register("history.showNext", |workbench, _, window, cx| workbench.show_history_value(false, window, cx));
     }
 
     /// `GoToMatchFindAction.run`: an input box that takes the match number, 1-based or negative from the end.
@@ -191,6 +208,7 @@ impl Workbench {
         let Some(editor) = self.editors.active_mut() else { return };
         let find = &mut self.find;
         let (selections, scroll, revealed) = (editor.selections.clone(), editor.scroll, find.controller.state.is_revealed);
+        let query = find.controller.query_options();
         let (focus, change) = action(&mut find.controller, editor, viewport);
         let adjust_scroll = !self.find.controller.state.is_revealed || revealed || !self.selection_under_find_widget(selections[0]);
         self.layout_find_zone(adjust_scroll);
@@ -229,7 +247,96 @@ impl Workbench {
             FocusAction::FocusFindInput => self.focus_find_input(InputId::Find, window, cx),
             FocusAction::FocusReplaceInput => self.focus_find_input(InputId::Replace, window, cx),
         }
+        self.save_query_state(query);
+        self.schedule_find_history(window, cx);
         cx.notify();
+    }
+
+    /// `saveQueryState`: the options that changed, as workspace storage booleans.
+    fn save_query_state(&self, before: QueryOptions) {
+        let after = self.find.controller.query_options();
+        let pairs = [(before.match_case, after.match_case), (before.whole_word, after.whole_word), (before.is_regex, after.is_regex), (before.preserve_case, after.preserve_case)];
+        let mut storage = self.workspace_storage.lock().unwrap();
+        for (key, (before, after)) in QUERY_STATE_KEYS.into_iter().zip(pairs) {
+            if before != after {
+                storage.set(key, after.to_string());
+            }
+        }
+    }
+
+    /// The options in workspace storage, each defaulting to `fallback`'s.
+    fn stored_query_options(&self, fallback: QueryOptions) -> QueryOptions {
+        let storage = self.workspace_storage.lock().unwrap();
+        let stored = |key: &str, fallback: bool| storage.get(key).map_or(fallback, |value| value == "true");
+        QueryOptions {
+            match_case: stored(QUERY_STATE_KEYS[0], fallback.match_case),
+            whole_word: stored(QUERY_STATE_KEYS[1], fallback.whole_word),
+            is_regex: stored(QUERY_STATE_KEYS[2], fallback.is_regex),
+            preserve_case: stored(QUERY_STATE_KEYS[3], fallback.preserve_case),
+        }
+    }
+
+    /// The workspace's storage arrived: `loadQueryState` and the histories' `load` with `editor.find.history` and
+    /// `editor.find.replaceHistory` at "workspace".
+    pub(super) fn restore_find_state(&mut self) {
+        let query = self.stored_query_options(self.find.controller.query_options());
+        self.find.controller = FindController::new(self.find.controller.options, query);
+        self.find.model_id = None;
+        let stored_history = |workbench: &Self, setting: &str, key: &str| {
+            let elements = match workbench.setting(setting).as_str() == Some("workspace") {
+                true => workbench.workspace_storage.lock().unwrap().get(key).and_then(|raw| serde_json::from_str(raw).ok()),
+                false => None,
+            };
+            HistoryNavigator::new(elements.unwrap_or_default(), HISTORY_LIMIT)
+        };
+        self.find.find_history = stored_history(self, "editor.find.history", FIND_HISTORY_KEY);
+        self.find.replace_history = stored_history(self, "editor.find.replaceHistory", REPLACE_HISTORY_KEY);
+    }
+
+    fn schedule_find_history(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.find.history_update = Some(cx.spawn_in(window, async move |workbench, cx| {
+            cx.background_executor().timer(Duration::from_millis(500)).await;
+            let _ = workbench.update(cx, |workbench, _| workbench.update_find_history());
+        }));
+    }
+
+    /// `_updateHistory`: the inputs' values join their histories, saved for the workspace (`FindWidgetSearchHistory.save`).
+    fn update_find_history(&mut self) {
+        let find = &mut self.find;
+        if !find.controller.state.search_string.is_empty() {
+            find.find_history.add_to_history(&find.find_input.value, false);
+        }
+        if !find.controller.state.replace_string.is_empty() {
+            find.replace_history.add_to_history(&find.replace_input.value, false);
+        }
+        self.save_find_histories();
+    }
+
+    fn save_find_histories(&self) {
+        let mut storage = self.workspace_storage.lock().unwrap();
+        for (setting, key, history) in [("editor.find.history", FIND_HISTORY_KEY, &self.find.find_history), ("editor.find.replaceHistory", REPLACE_HISTORY_KEY, &self.find.replace_history)] {
+            if self.setting(setting).as_str() == Some("workspace") {
+                storage.set(key, serde_json::to_string(history.elements()).expect("strings serialize"));
+            }
+        }
+    }
+
+    /// `history.showPrevious` and `history.showNext` on the focused find or replace input.
+    fn show_history_value(&mut self, previous: bool, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
+        let Some(id) = self.focused_input(window).filter(|id| matches!(id, InputId::Find | InputId::Replace)) else { return Outcome::done() };
+        let (input, history) = match id {
+            InputId::Find => (&self.find.find_input, &mut self.find.find_history),
+            _ => (&self.find.replace_input, &mut self.find.replace_history),
+        };
+        let value = match previous {
+            true => history.show_previous_value(&input.value),
+            false => Some(history.show_next_value(&input.value)),
+        };
+        self.save_find_histories();
+        if let Some(value) = value {
+            self.edit_find_input(id, |input| input.set_value(value), window, cx);
+        }
+        Outcome::done()
     }
 
     /// `focusFindInput` / `focusReplaceInput`: the value is selected.
@@ -304,6 +411,7 @@ impl Workbench {
     /// A newly active model rebinds the controller: a visible find searches it (`onDidChangeModel`).
     pub(super) fn find_editor_changed(&mut self) {
         let viewport = self.editors.viewport;
+        let query = self.stored_query_options(QueryOptions::default());
         let Some(editor) = self.editors.active_mut() else {
             self.find.controller.model = None;
             self.find.model_id = None;
@@ -313,7 +421,7 @@ impl Workbench {
             return;
         }
         self.find.model_id = Some(editor.model_id);
-        self.find.controller.editor_changed(editor, viewport, self.find.controller.query_options());
+        self.find.controller.editor_changed(editor, viewport, query);
     }
 
     /// An edit the find did not make: its matches follow the text, and the next search starts at the cursor.
@@ -621,6 +729,12 @@ impl Workbench {
         let focused = self.input_focus(id).is_focused(window);
         let border = if focused { self.color("focusBorder") } else { self.color("input.border") };
         let controls_width = if id == InputId::Find { 66. } else { 22. };
+        let history = if id == InputId::Find { &self.find.find_history } else { &self.find.replace_history };
+        // HistoryInputBox `addSuffix`: a focused input with a history names the Up and Down keys.
+        let placeholder = match focused && !history.elements().is_empty() {
+            true => format!("{placeholder} (\u{21C5} for history)"),
+            false => placeholder.to_string(),
+        };
         div()
             .relative()
             .flex_none()
@@ -631,7 +745,7 @@ impl Workbench {
             .border_1()
             .border_color(border)
             .rounded(px(4.))
-            .child(div().flex_1().h_full().ml(px(6.)).mr(px(controls_width)).flex().child(self.input_text(id, InputLook { password: false, placeholder: Some(placeholder.into()), focused }, cx)))
+            .child(div().flex_1().h_full().ml(px(6.)).mr(px(controls_width)).flex().child(self.input_text(id, InputLook { password: false, placeholder: Some(placeholder), focused }, cx)))
     }
 
     /// A find input option (toggle.css `.monaco-custom-toggle`); a click puts the focus back in its input
