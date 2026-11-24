@@ -157,6 +157,28 @@ Done when: api-tests `configuration.test` and `state.test` pass as in the refere
 - Not shipped: JSON settings validation. Diagnostics come from json-language-features through `MainThreadDiagnostics` and are drawn as squiggles, both milestone 13; the schema needs `vscode://schemas/settings/*` content (`MainThreadDocumentContentProviders`, milestone 12).
 - Not shipped: profiles. Switching, creating and exporting go through quick picks and the Settings editor (milestone 9 and above); storage and settings already take their paths from one place, so a profile is a different `User/profiles/<id>` folder once that UI exists.
 
+## Milestone 12: files, explorer, search, workspace (in progress)
+
+Scope shipped so far: `workspace.fs` and file events, Seti file icons and numeric name sorting in the Explorer, `workspace.findFiles`, `findFiles2` and `findTextInFiles` through ripgrep. Done when (roadmap section 12) is not met yet, see the last items.
+
+- `native/crates/files` is the file service: a `FileSystem` trait, the `Disk` provider (capabilities as `diskFileSystemProviderClient`, no PathCaseSensitive on macOS), delete to Trash through the `trash` crate (NSFileManager, as Electron `shell.trashItem`), and upstream's error names with `_handleError` renames. Other schemes go to the extension providers registered with `$registerFileSystemProvider`.
+- `files::watcher` watches through FSEvents (notify), batches events for 75 ms and coalesces them as `watcher.ts` `EventCoalescer`. `files.watcherExclude` patterns are matched by `files::glob`, a port of `glob.ts` with `!` exceptions and its upstream tests, case insensitive as `parseWatcherPatterns`.
+- `MainThreadFileSystem` and `MainThreadFileSystemEventService` live in `exthost/src/main_thread_files.rs`; correlated extension watchers each get their own watcher so their events carry the session.
+- `native/crates/search` ports `queryBuilder.ts`, `fileSearch.ts` and `ripgrepFileSearch.ts`, and `ripgrepTextSearchEngine.ts` with `textSearchManager.ts`, against the `@vscode/ripgrep-universal` binary in `node_modules`. Excludes with `!` exceptions run ripgrep twice and dedupe, as upstream. `MainThreadWorkspace` (`exthost/src/main_thread_workspace.rs`) runs each search on its own thread, sends `$handleTextSearchResult` before the reply, and kills ripgrep on the host's `Cancel`.
+- The icon theme follows `workbench.iconTheme` as `initializeFileIconTheme`: null draws no icons, an unknown id falls back to `vs-seti`. Names sort as `compareFileNamesDefault` (numeric, `file9` before `file10`).
+- Explorer rows, section headers and actions use the pointer cursor (list.css, paneview.css, actionbar.css); twisties inherit it from the row, as tree.css sets none.
+- shortcut: an extension provider call fails after 300 s; upstream waits forever (`main_thread_files.rs`).
+- shortcut: no second ripgrep run without `--follow` when symbolic links loop (`RipgrepSymlinkLoopDetector`), in file and text search.
+- shortcut: workspace search skips folders of schemes other than `file`; the port registers no extension search providers (`MainThreadSearch`).
+- shortcut: Seti keys with a parent folder (`dir/name`) never match; Seti has none.
+- shortcut: an unreadable folder shows no children; the reference shows the error in the tree.
+- Text search does not include results from unsaved editors, as the search service's local results would; the port's documents are milestone 8's.
+- Not done: multi-root `.code-workspace`. The api-workspace suite opens `testworkspace.code-workspace` and fails 0/4; it needs the workspace id, workspace data with several folders, workspace-file settings and a multi-root Explorer.
+- Not done: bulk edits (`MainThreadBulkEdits`) and file operation participants. `workspace.event.test` (`onWillCreate`, `onWillDelete`, `onWillRename`) fails 0/10 and the `applyEdit` tests of `workspace.test` fail with them.
+- Not done: the rest of `workspace.test`. Most failures are `openTextDocument` and document events, which need `MainThreadDocuments` (milestone 8).
+- Not done: pixel-check of the folder window with Seti icons. The reference capture timed out twice on the Studio (port/results/pixels.md).
+- Not done: Explorer file operations (new, rename, delete, drag and drop, copy and paste), workspace trust, recent workspaces, the search view and search editor, local history, opener and URL handling.
+
 ## Benchmarks
 
 - `port/tools/bench`: Wu's `script/memory-benchmark` method generalized to N apps (`APPS="name=cmd;..."`), plus an extension host line per app.

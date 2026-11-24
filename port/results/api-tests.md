@@ -19,3 +19,14 @@ Not reached: tests of the reference run (402 folder, 4 workspace) the port did n
 | api-workspace | 0 | 0 | 0 | 4 | exit 0 after 0s |
 
 Passing: configuration, language defaults; configuration, defaults; configuration, name vs property; and the two `globalState / workspaceState` tests.
+
+## M12
+
+`MOCHA_GREP="vscode API - workspace-fs|vscode API - workspace events|vscode API - workspace " SUITE_TIMEOUT=600 port/tools/api-tests` at 9f6772f3 on the Studio, same setup. Not reached counts the reference tests the pattern filters out.
+
+| suite | passing | pending | failing | not reached | run |
+|-------|---------|---------|---------|-------------|-----|
+| api-folder | 33 | 2 | 73 | 294 | exit 1 after 182s |
+| api-workspace | 0 | 0 | 4 | 0 | exit 1 after 1s |
+
+Passing: all 12 of `workspace-fs`; in `workspace`, findFiles, findFiles2 and findTextInFiles with their exclude and cancellation tests (11). `workspace events` fails 0/10 (no bulk edits); api-workspace needs multi-root.
