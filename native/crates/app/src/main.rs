@@ -180,7 +180,7 @@ fn run_extension_host(
     let mut session = Session::new(host);
     session.forward(&["MainThreadCommands", "MainThreadQuickOpen"], move |request| {
         let _ = workbench_requests.unbounded_send(request);
-    });
+    }, workbench_replies);
     session.start(&extensions, folder.as_deref().map(|folder| workspace_data(&init, folder)))?;
     let reply = session.call("ExtHostExtensionService", "$test_latency", vec![Arg::Json(json!(7))], Duration::from_secs(10))?;
     let _ = status.unbounded_send(format!("main -> host: $test_latency(7) = {reply:?}"));
@@ -197,9 +197,6 @@ fn run_extension_host(
             if let Some(reply) = message.reply {
                 waiting.push((req, reply));
             }
-        }
-        for (req, result) in workbench_replies.try_iter() {
-            session.reply(req, result);
         }
         let mut still_waiting = Vec::new();
         for (req, reply) in waiting.drain(..) {

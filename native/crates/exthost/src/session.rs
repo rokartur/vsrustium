@@ -190,6 +190,7 @@ pub struct ForwardedRequest {
 struct Forward {
     proxies: &'static [&'static str],
     send: Box<dyn FnMut(ForwardedRequest) + Send>,
+    replies: std::sync::mpsc::Receiver<(u32, Result<Value, Value>)>,
 }
 
 impl Session {
@@ -241,9 +242,9 @@ impl Session {
         })
     }
 
-    /// Hands requests to `proxies` to `send` instead of answering them here.
-    pub fn forward(&mut self, proxies: &'static [&'static str], send: impl FnMut(ForwardedRequest) + Send + 'static) {
-        self.forward = Some(Forward { proxies, send: Box::new(send) });
+    /// Hands requests to `proxies` to `send` instead of answering them here; `pump` sends the answers that arrive on `replies`.
+    pub fn forward(&mut self, proxies: &'static [&'static str], send: impl FnMut(ForwardedRequest) + Send + 'static, replies: std::sync::mpsc::Receiver<(u32, Result<Value, Value>)>) {
+        self.forward = Some(Forward { proxies, send: Box::new(send), replies });
     }
 
     /// Answers a forwarded request; an error is a `SerializedError`.
@@ -297,7 +298,15 @@ impl Session {
     }
 
     /// Handles one incoming message, waiting up to `timeout`. Returns false once the host is gone or the extension tests are done.
-    pub fn pump(&mut self, timeout: Duration) -> anyhow::Result<bool> {
+    pub fn pump(&mut self, mut timeout: Duration) -> anyhow::Result<bool> {
+        if let Some(forward) = &self.forward {
+            let answered: Vec<_> = forward.replies.try_iter().collect();
+            for (req, result) in answered {
+                self.reply(req, result);
+            }
+            // An answer can come while a `call` waits (an extension's activate awaiting a forwarded request).
+            timeout = timeout.min(Duration::from_millis(20));
+        }
         let Some(incoming) = self.host.recv_timeout(timeout) else { return Ok(true) };
         let bytes = match incoming {
             Incoming::Message(bytes) => bytes,
