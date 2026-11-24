@@ -3,6 +3,7 @@
 
 mod editor;
 mod explorer;
+mod file_icons;
 mod host_sync;
 mod languages;
 mod theme;
@@ -46,6 +47,7 @@ fn main() -> anyhow::Result<()> {
     let extensions_dir = std::env::var_os("VSCODE_GPUI_EXTENSIONS").map(PathBuf::from).unwrap_or_else(|| app_root.join("extensions"));
     let extensions = scan_builtin_extensions(&extensions_dir)?;
     let theme = load_theme(&extensions, &theme_id)?;
+    let file_icons = file_icons::FileIconTheme::load(&extensions, file_icons::DEFAULT_ICON_THEME)?;
 
     application().run(move |cx: &mut App| {
         // Same size as the reference capture in port/tools/ref-screenshot, so pixel diffs line up.
@@ -59,6 +61,7 @@ fn main() -> anyhow::Result<()> {
                 let (host_sender, host_receiver) = channel();
                 let languages = Languages::new(&extensions);
                 let mut workbench = Workbench::new(theme, app_root.clone(), folder.clone().map(FileTree::new), languages, HostSync::new(host_sender));
+                workbench.file_icons = Some(file_icons);
                 if let Some(file) = file {
                     workbench.open_file(file, true, cx);
                 }

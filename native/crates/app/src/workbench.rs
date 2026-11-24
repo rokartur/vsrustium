@@ -13,6 +13,7 @@ use gpui::{ClickEvent, Context, Div, FontFeatures, FontWeight, Rgba, UniformList
 
 use crate::editor::{EditorGroup, TextDocument};
 use crate::explorer::FileTree;
+use crate::file_icons::FileIconTheme;
 use crate::host_sync::HostSync;
 use crate::languages::Languages;
 use crate::theme::{Theme, ThemeKind};
@@ -24,6 +25,8 @@ pub struct Workbench {
     /// The opened folder; `None` is the empty window.
     pub folder: Option<FileTree>,
     pub languages: Languages,
+    /// `None` draws files without icons, as `workbench.iconTheme: null` does.
+    pub file_icons: Option<FileIconTheme>,
     pub editors: EditorGroup,
     host: HostSync,
     editor_scroll: UniformListScrollHandle,
@@ -79,6 +82,7 @@ impl Workbench {
             app_root,
             folder,
             languages,
+            file_icons: None,
             editors: EditorGroup::default(),
             host,
             editor_scroll: UniformListScrollHandle::new(),
@@ -229,6 +233,13 @@ impl Workbench {
             };
             let path = row.path;
             let is_dir = row.is_dir;
+            let name = row.name;
+            // views.css align-icons-and-twisties: with file icons and no folder icons a file's empty twistie collapses
+            // to its 8px indent and the icon takes its place, so file and folder names line up.
+            let file_icon = self.file_icons.as_ref().filter(|_| !is_dir).and_then(|icons| {
+                icons.file_icon(&path, self.languages.language_of(&path), self.theme.kind, 13., label_line, foreground)
+            });
+            let indent = 8. * (row.depth - 1) as f32;
             div()
                 .id(index)
                 .h(px(22.))
@@ -236,13 +247,17 @@ impl Workbench {
                 .flex()
                 .items_center()
                 .rounded(px(4.))
-                // monaco-tl-twistie: 3px row inset, 8px base indent plus 8px per level, a 16px icon, 6px before the label.
-                .pl(px(11. + 8. * (row.depth - 1) as f32))
-                .child(match twistie {
-                    Some(name) => self.icon(name, 16., 16., foreground),
-                    None => div().size(px(16.)).flex_none(),
+                .map(|row| match file_icon {
+                    Some(icon) => row.pl(px(8. + indent)).child(icon.self_start()).child(div().self_start().ml(px(6.)).line_height(px(label_line)).child(name)),
+                    // monaco-tl-twistie: 3px row inset, 8px base indent plus 8px per level, a 16px icon, 6px before the label.
+                    None => row
+                        .pl(px(11. + indent))
+                        .child(match twistie {
+                            Some(chevron) => self.icon(chevron, 16., 16., foreground),
+                            None => div().size(px(16.)).flex_none(),
+                        })
+                        .child(div().self_start().ml(px(3.)).line_height(px(label_line)).child(name)),
                 })
-                .child(div().self_start().ml(px(3.)).line_height(px(label_line)).child(row.name))
                 .when(selected.as_ref() == Some(&path), |row| {
                     // shortcut: dashed, GPUI has no dotted border.
                     // An overlay, since a border on the row would push its content 1px like a CSS border, not an outline.

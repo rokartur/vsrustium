@@ -1,8 +1,14 @@
 //! The Explorer's file tree: which folders are expanded, and the visible rows read from disk in the
 //! order the reference explorer sorts them (explorerViewer.ts `FileSorter`, `explorer.sortOrder: default`).
 
+use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
+
+use icu_collator::options::CollatorOptions;
+use icu_collator::preferences::CollationNumericOrdering;
+use icu_collator::{Collator, CollatorBorrowed, CollatorPreferences};
 
 /// The `files.exclude` default (files.contribution.ts), matched by name at any depth.
 const EXCLUDED_NAMES: [&str; 6] = [".git", ".svn", ".hg", ".jj", ".DS_Store", "Thumbs.db"];
@@ -63,8 +69,7 @@ impl FileTree {
     }
 }
 
-/// Folders first, then names compared case-insensitively.
-/// shortcut: no numeric collation ("file10" sorts before "file9"), port compareFileNamesDefault when it matters.
+/// Folders first, then names in `compareFileNamesDefault` order.
 fn sorted_children(folder: &Path) -> Vec<(PathBuf, String, bool)> {
     // shortcut: an unreadable folder shows no children; the reference shows the error in the tree.
     let Ok(entries) = std::fs::read_dir(folder) else { return Vec::new() };
@@ -77,8 +82,19 @@ fn sorted_children(folder: &Path) -> Vec<(PathBuf, String, bool)> {
         let is_dir = entry.path().is_dir();
         children.push((entry.path(), name, is_dir));
     }
-    children.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.1.to_lowercase().cmp(&b.1.to_lowercase())).then_with(|| a.1.cmp(&b.1)));
+    children.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| compare_file_names(&a.1, &b.1)));
     children
+}
+
+/// comparers.ts `compareFileNamesDefault`: `Intl.Collator(undefined, { numeric: true })`, then the shorter name
+/// first, since numeric collation makes `foo1` and `foo01` equal.
+pub fn compare_file_names(one: &str, other: &str) -> Ordering {
+    static COLLATOR: LazyLock<CollatorBorrowed<'static>> = LazyLock::new(|| {
+        let mut preferences = CollatorPreferences::default();
+        preferences.numeric_ordering = Some(CollationNumericOrdering::True);
+        Collator::try_new(preferences, CollatorOptions::default()).expect("the root collation is compiled in")
+    });
+    COLLATOR.compare(one, other).then_with(|| one.len().cmp(&other.len()))
 }
 
 #[cfg(test)]
@@ -113,5 +129,29 @@ mod tests {
         assert_eq!(names(&tree).len(), 5);
         assert_eq!(tree.selected, Some(root.join("src/main.ts")));
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Cases from src/vs/base/test/browser/comparers.test.ts `compareFileNamesDefault`.
+    #[test]
+    fn sorts_names_like_compare_file_names_default() {
+        let sorted = |names: &[&'static str]| {
+            let mut names = names.to_vec();
+            names.sort_by(|a, b| compare_file_names(a, b));
+            names
+        };
+        assert_eq!(sorted(&["file10", "file9", "file1"]), ["file1", "file9", "file10"]);
+        assert_eq!(sorted(&["a10.txt", "A2.txt", "A100.txt", "a20.txt"]), ["A2.txt", "a10.txt", "a20.txt", "A100.txt"]);
+        assert_eq!(compare_file_names("abc02.txt", "abc010.txt"), Ordering::Less);
+        assert_eq!(compare_file_names("abc1.10.txt", "abc1.2.txt"), Ordering::Greater);
+        assert_eq!(compare_file_names("abc02.txt", "abc002.txt"), Ordering::Less);
+        assert_eq!(compare_file_names("z", "A"), Ordering::Greater);
+        assert_eq!(compare_file_names("Z", "a"), Ordering::Greater);
+        assert_eq!(compare_file_names("a", "A"), Ordering::Less);
+        assert_eq!(compare_file_names("aggregate.go", "aggregate_repo.go"), Ordering::Greater);
+        assert_eq!(compare_file_names(".env", ".aaa.env"), Ordering::Greater);
+        assert_eq!(compare_file_names(".aaa_env", ".aaa.env"), Ordering::Less);
+        assert_eq!(compare_file_names(".env", "aaa"), Ordering::Less);
+        assert_eq!(compare_file_names(".MD", "a.md"), Ordering::Less);
+        assert_eq!(sorted(&["Émail", "émail", "Email", "email"]), ["email", "Email", "émail", "Émail"]);
     }
 }

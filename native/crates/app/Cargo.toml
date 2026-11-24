@@ -11,7 +11,10 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 exthost = { path = "../exthost" }
+flate2 = "1"
 futures = "0.3"
+icu_collator = "2"
+ttf-parser = "0.25"
 gpui.workspace = true
 gpui_platform = { workspace = true, features = ["font-kit"] }
 serde_json.workspace = true

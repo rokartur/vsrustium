@@ -103,6 +103,7 @@ impl Workbench {
             .whitespace_nowrap()
             .when(editor.preview, |label| label.italic())
             .child(editor.document.name());
+        let file_icon = self.document_icon(editor, 24., foreground);
         let close = self.icon("close-small", 20., 16., foreground).id(("close", index)).rounded(px(4.)).on_click(cx.listener(move |workbench, _, _, cx| {
             cx.stop_propagation();
             workbench.editors.close(index);
@@ -114,10 +115,12 @@ impl Workbench {
             .h_full()
             .flex_none()
             .flex()
-            .pl(px(8.))
             .pr(px(30.5))
             .text_color(foreground)
-            .child(label)
+            .map(|tab| match file_icon {
+                Some(icon) => tab.pl(px(6.)).child(icon.mt(px(3.5))).child(label.ml(px(6.))),
+                None => tab.pl(px(8.)).child(label),
+            })
             .on_click(cx.listener(move |workbench, event: &gpui::ClickEvent, _, cx| {
                 workbench.editors.activate(index);
                 if event.click_count() == 2 {
@@ -147,6 +150,11 @@ impl Workbench {
             .child(tab)
     }
 
+    fn document_icon(&self, editor: &OpenEditor, line_height: f32, foreground: Rgba) -> Option<Div> {
+        let document = &editor.document;
+        self.file_icons.as_ref()?.file_icon(&document.path, &document.language_id, self.theme.kind, 13., line_height, foreground)
+    }
+
     /// The file's path below the workspace folder, one item per segment (breadcrumbs.filePath relative).
     fn breadcrumbs(&self, editor: &OpenEditor) -> Div {
         let path = &editor.document.path;
@@ -155,13 +163,15 @@ impl Workbench {
         let foreground = self.color("breadcrumb.foreground");
         let last = segments.len() - 1;
         let items = segments.into_iter().enumerate().map(|(index, segment)| {
-            // shortcut: no file icon theme, so the 16px icon slot stays empty; draw the icon once Seti is ported.
+            // The 16px before each item is the item's own ::before; folders have no icon in Seti, the file does.
+            let file_icon = if index == last { self.document_icon(editor, BREADCRUMBS_HEIGHT, foreground) } else { None };
             div()
                 .flex()
                 .items_center()
                 .pl(px(16.))
                 .pr(px(8.))
                 .whitespace_nowrap()
+                .when_some(file_icon, |item, icon| item.child(icon.mr(px(6.))))
                 .child(segment)
                 .when(index < last, |item| item.child(self.icon("chevron-right", 16., 16., foreground).ml(px(8.))))
         });
