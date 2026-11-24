@@ -570,28 +570,56 @@ impl OpenEditor {
     /// `codeEditorWidget.executeEdits`: each edit is a range, its text, and `forceMoveMarkers`. Without
     /// `end_selections` every selection follows the edits as the cursor's tracked range does.
     pub fn execute_edits(&mut self, edits: Vec<(Position, Position, String, bool)>, end_selections: Option<Vec<Selection>>, reason: EditReason) -> Option<ContentChanged> {
+        // Cursor selections are tracked with `AlwaysGrowsWhenTypingAtEdges`: the start sticks to the character before it, the end does not.
+        let end = match end_selections {
+            Some(selections) => EndSelections::Given(selections),
+            None => EndSelections::Tracked { selections: self.selections.iter().map(|&selection| (selection, [true, false])).collect(), collapse_grown_carets: true },
+        };
+        self.execute_tracked(edits, end, reason)
+    }
+
+    /// `executeCommand` of a command whose cursor state is `trackSelection` of the primary selection
+    /// (replaceAllCommand.ts): the primary cursor alone stays. An empty selection keeps to the text
+    /// before it at the end of its line (`GrowsOnlyWhenTypingBefore`), else to the text after it.
+    pub fn execute_edits_tracking_primary(&mut self, edits: Vec<(Position, Position, String)>, reason: EditReason) -> Option<ContentChanged> {
+        let primary = self.selection();
+        let sticks = match primary.is_empty() {
+            true => [primary.head.column == cursor::line_len(&self.document.lines, primary.head.line); 2],
+            false => [true, false],
+        };
+        let edits = edits.into_iter().map(|(start, end, text)| (start, end, text, false)).collect();
+        self.execute_tracked(edits, EndSelections::Tracked { selections: vec![(primary, sticks)], collapse_grown_carets: false }, reason)
+    }
+
+    fn execute_tracked(&mut self, edits: Vec<(Position, Position, String, bool)>, end: EndSelections, reason: EditReason) -> Option<ContentChanged> {
         let mut edits: Vec<_> = edits.into_iter().filter(|(start, end, text, _)| start != end || !text.is_empty()).collect();
         edits.sort_by_key(|edit| std::cmp::Reverse(edit.0));
         let eol_len = self.document.eol.len();
-        let before = self.selections.clone();
         let lines = &self.document.lines;
-        let markers: Vec<[usize; 2]> = before.iter().map(|selection| [document_offset(lines, eol_len, selection.start()), document_offset(lines, eol_len, selection.end())]).collect();
+        let tracked: &[(Selection, [bool; 2])] = match &end {
+            EndSelections::Given(_) => &[],
+            EndSelections::Tracked { selections, .. } => selections,
+        };
+        let markers: Vec<[usize; 2]> = tracked.iter().map(|(selection, _)| [document_offset(lines, eol_len, selection.start()), document_offset(lines, eol_len, selection.end())]).collect();
         let force_moves: Vec<bool> = edits.iter().map(|edit| edit.3).collect();
         let replaces = edits.into_iter().map(|(start, end, text, _)| Replace { start, end, text: normalize_line_breaks(&text) }).collect();
-        let change = self.apply(replaces, before.clone(), reason)?;
-        let selections = match end_selections {
-            Some(selections) => selections,
-            None => before
+        let change = self.apply(replaces, self.selections.clone(), reason)?;
+        let selections = match end {
+            EndSelections::Given(selections) => selections,
+            EndSelections::Tracked { selections: tracked, collapse_grown_carets } => tracked
                 .iter()
                 .zip(markers)
-                .map(|(selection, [mut start, mut end])| {
-                    // Cursor selections are tracked with `AlwaysGrowsWhenTypingAtEdges`: the start sticks to the character before it, the end does not.
+                .map(|(&(selection, [start_sticks, end_sticks]), [mut start, mut end])| {
                     for (change, &force_move) in change.changes.iter().zip(&force_moves) {
                         let (from, to, inserted) = (change.range_offset, change.range_offset + change.range_length, change.text.encode_utf16().count());
-                        start = accept_edit(start, true, from, to, inserted, force_move);
-                        end = accept_edit(end, false, from, to, inserted, force_move);
+                        start = accept_edit(start, start_sticks, from, to, inserted, force_move);
+                        end = accept_edit(end, end_sticks, from, to, inserted, force_move);
                     }
-                    let (start, end) = (document_position(&self.document.lines, eol_len, start), document_position(&self.document.lines, eol_len, end));
+                    let (mut start, end) = (document_position(&self.document.lines, eol_len, start), document_position(&self.document.lines, eol_len, end));
+                    // `readSelectionFromMarkers`: a caret whose range grew does not select the text.
+                    if collapse_grown_carets && selection.is_empty() {
+                        start = end;
+                    }
                     if selection.head < selection.anchor { Selection { anchor: end, head: start } } else { Selection { anchor: start, head: end } }
                 })
                 .collect(),
@@ -784,6 +812,23 @@ fn shifted(position: Position, replace: &Replace) -> Position {
     Position::new(position.line + new_end.line - replace.end.line, position.column)
 }
 
+/// A decoration's model offsets through a change, with the default `AlwaysGrowsWhenTypingAtEdges`.
+pub(super) fn track_decoration([mut start, mut end]: [usize; 2], change: &ContentChanged) -> [usize; 2] {
+    for change in &change.changes {
+        let (from, to, inserted) = (change.range_offset, change.range_offset + change.range_length, change.text.encode_utf16().count());
+        start = accept_edit(start, true, from, to, inserted, false);
+        end = accept_edit(end, false, from, to, inserted, false);
+    }
+    [start, end]
+}
+
+/// The selections after `execute_tracked`: given, or each one tracked through the edits with whether its
+/// start and end stick to the character before them.
+enum EndSelections {
+    Given(Vec<Selection>),
+    Tracked { selections: Vec<(Selection, [bool; 2])>, collapse_grown_carets: bool },
+}
+
 /// intervalTree.ts `nodeAcceptEdit` for one marker: where an offset goes when `start..end` becomes `inserted` code units.
 fn accept_edit(marker: usize, stick_to_previous: bool, start: usize, end: usize, inserted: usize, force_move: bool) -> usize {
     #[derive(PartialEq)]
@@ -817,11 +862,11 @@ fn accept_edit(marker: usize, stick_to_previous: bool, start: usize, end: usize,
 }
 
 /// The model offset of a position: UTF-16 code units, each line break counted as the document's EOL.
-fn document_offset(lines: &[String], eol_len: usize, position: Position) -> usize {
+pub(super) fn document_offset(lines: &[String], eol_len: usize, position: Position) -> usize {
     lines[..position.line].iter().map(|line| line.encode_utf16().count() + eol_len).sum::<usize>() + utf16_column(&lines[position.line], position.column)
 }
 
-fn document_position(lines: &[String], eol_len: usize, mut offset: usize) -> Position {
+pub(super) fn document_position(lines: &[String], eol_len: usize, mut offset: usize) -> Position {
     for (index, line) in lines.iter().enumerate() {
         let length = line.encode_utf16().count();
         if offset <= length || index == lines.len() - 1 {
@@ -889,11 +934,11 @@ pub(super) mod tests {
         let mut inserted = editor("", "\n");
         inserted.execute_edits(vec![(Position::new(0, 0), Position::new(0, 0), "Hello".into(), true)], None, api);
         assert_eq!(inserted.selection(), Selection::caret(Position::new(0, 5)));
-        // A replace at the caret grows the empty selection over the new text.
+        // A replace at the caret grows its tracked range over the new text; `readSelectionFromMarkers` collapses it to the end.
         let mut replaced = editor("ab\ncd", "\r\n");
         replaced.move_to(Position::new(1, 1), false);
         replaced.execute_edits(vec![(Position::new(1, 1), Position::new(1, 1), "x\ny".into(), false)], None, api);
-        assert_eq!(replaced.selection(), Selection { anchor: Position::new(1, 1), head: Position::new(2, 1) });
+        assert_eq!(replaced.selection(), Selection::caret(Position::new(2, 1)));
         // Text deleted around the selection collapses it to the deletion's start; edits after it leave it alone.
         let mut deleted = editor("one two three", "\n");
         deleted.move_to(Position::new(0, 5), false);

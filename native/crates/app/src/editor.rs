@@ -16,6 +16,7 @@ use crate::syntax::Tokenization;
 pub mod commands;
 mod cursor;
 mod edit;
+pub mod find;
 pub mod folding;
 mod folding_controller;
 pub mod minimap;
