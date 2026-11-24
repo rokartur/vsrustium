@@ -3,6 +3,7 @@
 //!   [--extensionDevelopmentPath=<dir> [--extensionTestsPath=<path>]]: the app exits with the test runner's code.
 
 mod brackets;
+mod command_palette;
 mod commands;
 mod contextkey;
 mod editor;
@@ -15,6 +16,7 @@ mod main_thread_commands;
 mod main_thread_quick_open;
 mod quick_input;
 mod syntax;
+mod tf_idf;
 mod theme;
 mod workbench;
 
