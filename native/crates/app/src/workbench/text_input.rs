@@ -28,6 +28,7 @@ impl Workbench {
         let scroll = editor.scroll;
         editor.reveal_cursors(source, viewport);
         let scrolled = editor.scroll != scroll;
+        self.find_editor_edited(change.as_ref());
         match &change {
             Some(change) => self.host.send_content_change(&self.editors, self.editors.active_index().expect("only the active editor is edited"), change),
             None if moved => self.host.send_selection(self.editors.active().expect("still open"), source),

@@ -293,6 +293,7 @@ impl Workbench {
             .when(editor.scroll.top > 0., |area| area.child(div().absolute().top_0().left_0().right(px(VERTICAL_SCROLLBAR_WIDTH)).h(px(SCROLL_SHADOW_HEIGHT)).cursor_default().child(self.scroll_shadow().size_full())))
             .children(self.minimap(editor, cx))
             .children(self.sticky_scroll_widget(editor, metrics, window, cx))
+            .children(self.find_widget(self.editors.viewport.width + metrics.content_left() + minimap_width, minimap_width, window, cx))
     }
 
     /// The text area got its size: the group's viewport follows it, which can clamp the scroll position and
@@ -810,6 +811,7 @@ impl Workbench {
         }
         let (moved, scrolled) = (editor.selections != before, editor.scroll != scroll);
         if moved {
+            self.find_editor_edited(None);
             self.host.send_selection(self.editors.active().expect("still open"), source);
         }
         if scrolled {

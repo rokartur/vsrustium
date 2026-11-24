@@ -6,6 +6,7 @@ mod actions;
 mod editor_commands;
 mod editor_view;
 mod explorer_actions;
+mod find_widget;
 pub(crate) mod host_requests;
 mod input_box_view;
 mod keyboard;
@@ -69,6 +70,7 @@ pub struct Workbench {
     fold_controls: editor_view::FoldControls,
     sticky_scroll: editor_view::sticky_scroll_view::StickyScroll,
     minimap: minimap_view::Minimap,
+    find: find_widget::FindWidget,
     /// The line and whether on its folding control a press may toggle a fold (folding.ts `mouseDownInfo`).
     fold_mouse_down: Option<(usize, bool)>,
     /// Window x of the text area, recorded at paint, to turn a click into a column.
@@ -158,6 +160,7 @@ impl Workbench {
             fold_controls: Default::default(),
             sticky_scroll: editor_view::sticky_scroll_view::StickyScroll::new(cx),
             minimap: Default::default(),
+            find: find_widget::FindWidget::new(cx),
             fold_mouse_down: None,
             text_area_left: Rc::default(),
             editor_focus: cx.focus_handle(),
@@ -174,6 +177,7 @@ impl Workbench {
         crate::main_thread_commands::register_commands_documentation(&mut workbench);
         workbench.register_workbench_actions();
         workbench.register_editor_commands();
+        workbench.register_find_commands();
         workbench.register_sticky_scroll_commands();
         workbench.register_context_commands();
         workbench.register_quick_input_commands();
@@ -231,6 +235,7 @@ impl Workbench {
             tree.reveal(&editor.document.path);
         }
         self.record_editor_history();
+        self.find_editor_changed();
         self.host.send_changes(&self.editors);
         cx.notify();
     }
@@ -728,6 +733,53 @@ mod tests {
         cx.simulate_input("x");
         let visible_ranges: Vec<_> = receiver.try_iter().filter(|message| message.method == "$acceptEditorPropertiesChanged" && !message.args[1]["visibleRanges"].is_null()).collect();
         assert_eq!(visible_ranges.len(), 1, "{visible_ranges:?}");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[gpui::test]
+    fn the_find_widget_searches_what_its_inputs_hold(cx: &mut TestAppContext) {
+        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
+        let theme = load_theme(&[themes], "Dark Modern").unwrap();
+        let dir = std::env::temp_dir().join(format!("code-gpui-find-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("a.txt");
+        std::fs::write(&file, "the cat\nand the dog\nthe end").unwrap();
+        let (workbench, cx) = cx.add_window_view(|window, cx| {
+            let mut workbench = Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), crate::default_settings(), HostSync::new(std::sync::mpsc::channel().0), cx);
+            workbench.open_file(file.clone(), true, window, cx);
+            workbench
+        });
+        cx.run_until_parked();
+        let run = |command: &str, cx: &mut gpui::VisualTestContext| workbench.update_in(cx, |workbench, window, cx| workbench.execute_command(command, vec![], window, cx));
+        let found = |cx: &mut gpui::VisualTestContext| {
+            workbench.read_with(cx, |workbench, _| {
+                let state = &workbench.find.controller.state;
+                let selection = workbench.editors.active().unwrap().selection();
+                (state.matches_position, state.matches_count, (selection.anchor.line, selection.anchor.column))
+            })
+        };
+
+        run("actions.find", cx);
+        cx.run_until_parked();
+        cx.simulate_input("the");
+        assert_eq!(found(cx), (1, 3, (0, 0)));
+        run("editor.action.nextMatchFindAction", cx);
+        assert_eq!(found(cx), (2, 3, (1, 4)));
+        cx.simulate_keystrokes("backspace backspace");
+        assert_eq!(workbench.read_with(cx, |workbench, _| workbench.find.controller.state.search_string.clone()), "t");
+
+        // The find input has the focus, so the replace input takes it.
+        run("editor.action.startFindReplaceAction", cx);
+        cx.simulate_input("a");
+        cx.simulate_keystrokes("shift-tab");
+        cx.simulate_input("the");
+        run("editor.action.replaceAll", cx);
+        let text = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document.lines.join("\n"));
+        assert_eq!(text, "a cat\nand a dog\na end");
+
+        run("closeFindWidget", cx);
+        assert!(workbench.read_with(cx, |workbench, _| !workbench.find.controller.state.is_revealed));
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

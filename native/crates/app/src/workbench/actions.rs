@@ -121,6 +121,9 @@ impl Workbench {
         let end = Position::new(lines.len() - 1, lines[lines.len() - 1].chars().count());
         let change = editor.execute_edits(vec![(Position::new(0, 0), end, disk.lines.join("\n"), false)], None, EditReason::Unknown("revert"));
         if let Some(change) = change {
+            if self.editors.active_index() == Some(index) {
+                self.find_editor_edited(Some(&change));
+            }
             self.host.send_content_change(&self.editors, index, &change);
         }
         self.save_editor(index, cx);
