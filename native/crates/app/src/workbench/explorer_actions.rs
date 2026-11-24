@@ -10,12 +10,13 @@ use std::time::Duration;
 use config::configuration::Overrides;
 use files::Resource;
 use files::operations::{FileEdit, FileEditOptions, FileUndo};
-use gpui::{AsyncWindowContext, Context, Div, FocusHandle, PromptLevel, Rgba, Subscription, Task, WeakEntity, Window, div, prelude::*, px};
+use gpui::{AsyncWindowContext, Context, Div, FocusHandle, FontWeight, HighlightStyle, PromptLevel, Rgba, StyledText, Subscription, Task, WeakEntity, Window, deferred, div, prelude::*, px};
 use serde_json::{Value, json};
 
 use super::Workbench;
 use super::input_box_view::{InputId, InputLook, InputView};
 use crate::commands::Outcome;
+use crate::dialog;
 use crate::explorer::NewItem;
 use crate::file_actions::{self, Deleted, IncrementalNaming, Severity};
 use crate::host_sync::FileJob;
@@ -103,6 +104,16 @@ impl Workbench {
         context.insert("explorerResourceCut".into(), json!(tree.cut && !tree.clipboard.is_empty()));
     }
 
+    /// `configurationService.updateValue(key, value)`: written where the key is set, else in user settings.
+    pub(super) fn update_setting(&mut self, key: &str, value: Value) {
+        let mut settings = self.settings.lock().unwrap();
+        match settings.update_value_derived(key, Some(&value)) {
+            Ok(change) if !change.is_empty() => self.host.send_configuration_change(&settings, &change),
+            Ok(_) => {}
+            Err(error) => eprintln!("writing {key}: {error}"),
+        }
+    }
+
     pub(super) fn setting(&self, key: &str) -> Value {
         self.settings.lock().unwrap().get_value(Some(key), &Overrides::default()).unwrap_or(Value::Null)
     }
@@ -143,6 +154,10 @@ impl Workbench {
     fn start_explorer_edit(&mut self, renamed: Option<PathBuf>, input: InputBox, window: &mut Window, cx: &mut Context<Self>) {
         let focus = self.explorer.input_focus.clone();
         let blur = cx.on_blur(&focus, window, |workbench, window, cx| {
+            // `InlineEditInputBox`: the window losing focus keeps the edit while the input still has the focus.
+            if workbench.explorer.input_focus.is_focused(window) {
+                return;
+            }
             let valid = workbench.explorer_edit_message().is_none_or(|(_, severity)| severity != Severity::Error);
             workbench.finish_explorer_edit(valid, window, cx);
         });
@@ -168,29 +183,39 @@ impl Workbench {
         file_actions::validate_file_name(&parent, name.as_deref(), &self.explorer.edit.as_ref()?.input.value)
     }
 
-    /// explorerviewlet.css `.explorer-item .monaco-inputbox`: a 20px input inside a 1px focusBorder outline,
+    /// explorerviewlet.css `.explorer-item .monaco-inputbox`: a 20px input inside a 1px focusBorder outline
+    /// (the message's border while it has one),
     /// and below it the validation message (inputBox.css `.monaco-inputbox-message`).
     pub(super) fn explorer_input_box(&self, label_line: f32, focused: bool, cx: &mut Context<Self>) -> Div {
-        let message = self.explorer_edit_message().map(|(message, severity)| {
+        let message = self.explorer_edit_message();
+        let border = match message.as_ref().map(|(_, severity)| *severity) {
+            Some(Severity::Error) => "inputValidation.errorBorder",
+            Some(Severity::Warning) => "inputValidation.warningBorder",
+            Some(_) => "inputValidation.infoBorder",
+            None => "focusBorder",
+        };
+        let message = message.map(|(message, severity)| {
             let (background, foreground, border) = match severity {
                 Severity::Error => ("inputValidation.errorBackground", "inputValidation.errorForeground", "inputValidation.errorBorder"),
                 Severity::Warning => ("inputValidation.warningBackground", "inputValidation.warningForeground", "inputValidation.warningBorder"),
                 _ => ("inputValidation.infoBackground", "inputValidation.infoForeground", "inputValidation.infoBorder"),
             };
-            // shortcut: the message's **bold** markdown shows as plain text.
-            div()
-                .absolute()
-                .top(px(21.))
-                .left_0()
-                .right_0()
-                .p(px(4.8))
-                .text_size(px(12.))
-                .line_height(px(17.))
-                .bg(self.color(background))
-                .text_color(self.foreground_or(foreground))
-                .border_1()
-                .border_color(self.color(border))
-                .child(message.replace("**", ""))
+            // Deferred, so it paints over the rows below the edited one as the reference's context view does.
+            deferred(
+                div()
+                    .absolute()
+                    .top(px(21.))
+                    .left_0()
+                    .right_0()
+                    .p(px(4.8))
+                    .text_size(px(12.))
+                    .line_height(px(17.))
+                    .bg(self.color(background))
+                    .text_color(self.foreground_or(foreground))
+                    .border_1()
+                    .border_color(self.color(border))
+                    .child(markdown_bold(&message)),
+            )
         });
         div()
             .relative()
@@ -202,7 +227,8 @@ impl Workbench {
                     .w_full()
                     .h(px(20.))
                     .border_1()
-                    .border_color(self.color("focusBorder"))
+                    .rounded(px(4.))
+                    .border_color(self.color(border))
                     .bg(self.color("input.background"))
                     .text_color(self.foreground_or("input.foreground"))
                     .flex()
@@ -560,8 +586,7 @@ impl Workbench {
                     [source] => (format!("Are you sure you want to move '{}' into '{target_name}'?", file_name(source)), None),
                     _ => (format!("Are you sure you want to move the following {} files into '{target_name}'?", sources.len()), Some(file_actions::file_names_message(&sources.iter().map(|source| file_name(source)).collect::<Vec<_>>()))),
                 };
-                // shortcut: no "Do not ask me again" checkbox, GPUI prompts have none; `explorer.confirmDragAndDrop` still applies.
-                if !confirm(&workbench, cx, PromptLevel::Info, message, detail, "Move").await {
+                if !confirm_or_stop_asking(&workbench, cx, PromptLevel::Info, message, detail, "Move", "explorer.confirmDragAndDrop").await {
                     return;
                 }
             }
@@ -639,6 +664,19 @@ fn label_suffix(items: &[PathBuf]) -> String {
     }
 }
 
+/// A validation message's markdown: its only markup is `**bold**` (`renderMarkdown` draws it as `<strong>`).
+fn markdown_bold(message: &str) -> StyledText {
+    let mut text = String::new();
+    let mut bold = Vec::new();
+    for (index, part) in message.split("**").enumerate() {
+        if index % 2 == 1 {
+            bold.push((text.len()..text.len() + part.len(), HighlightStyle { font_weight: Some(FontWeight::BOLD), ..Default::default() }));
+        }
+        text.push_str(part);
+    }
+    StyledText::new(text).with_highlights(bold)
+}
+
 /// `getFileOverwriteConfirm`.
 fn overwrite_message(name: &str) -> String {
     format!("A file or folder with the name '{name}' already exists in the destination folder. Do you want to replace it?")
@@ -672,9 +710,11 @@ async fn delete_files(workbench: WeakEntity<Workbench>, cx: &mut AsyncWindowCont
         }
         if !skip_confirm && confirm_delete {
             let (message, detail) = file_actions::delete_confirmation(&deleted, use_trash);
-            // shortcut: no "Do not ask me again" checkbox, GPUI prompts have none; `explorer.confirmDelete` still applies.
-            let level = if use_trash { PromptLevel::Info } else { PromptLevel::Warning };
-            if !confirm(&workbench, cx, level, message, Some(detail), primary).await {
+            let confirmed = match use_trash {
+                true => confirm_or_stop_asking(&workbench, cx, PromptLevel::Info, message, Some(detail), primary, "explorer.confirmDelete").await,
+                false => confirm(&workbench, cx, PromptLevel::Warning, message, Some(detail), primary).await,
+            };
+            if !confirmed {
                 return;
             }
         }
@@ -733,6 +773,27 @@ async fn confirm(workbench: &WeakEntity<Workbench>, cx: &mut AsyncWindowContext,
         Ok(None) => true,
         Err(_) => false,
     }
+}
+
+/// `dialogService.confirm` with the "Do not ask me again" checkbox; a confirmation with the box checked
+/// turns `setting` off. With dialogs skipped, confirmed.
+async fn confirm_or_stop_asking(workbench: &WeakEntity<Workbench>, cx: &mut AsyncWindowContext, level: PromptLevel, message: String, detail: Option<String>, primary: &str, setting: &str) -> bool {
+    let answer = workbench.update_in(cx, |workbench, window, cx| match workbench.skip_dialogs {
+        true => None,
+        false => Some(dialog::show_message_box(window, level, &message, detail.as_deref(), &[primary, "Cancel"], "Do not ask me again", cx)),
+    });
+    let checked = match answer {
+        Ok(Some(answer)) => match answer.await {
+            Ok((0, checked)) => checked,
+            _ => return false,
+        },
+        Ok(None) => return true,
+        Err(_) => return false,
+    };
+    if checked {
+        let _ = workbench.update(cx, |workbench, _| workbench.update_setting(setting, json!(false)));
+    }
+    true
 }
 
 /// `notificationService.error`.

@@ -109,9 +109,16 @@ fn rename_copy_paste_cut_delete_and_undo(cx: &mut TestAppContext) {
     let (dir, workbench, cx) = explorer("explorer-ops", cx);
     select(&workbench, &dir.join("a.txt"), cx);
 
-    // Enter renames with the name before the extension selected.
+    // Enter renames with the name before the extension selected; Cmd+A in the name editor selects all of it.
+    // The window losing focus (Cmd+Tab away and back) keeps the name editor.
+    cx.update(|window, _| window.activate_window());
     cx.simulate_keystrokes("enter");
-    cx.simulate_input("c");
+    cx.deactivate_window();
+    cx.run_until_parked();
+    cx.update(|window, _| window.activate_window());
+    cx.run_until_parked();
+    cx.simulate_keystrokes("cmd-a");
+    cx.simulate_input("c.txt");
     cx.simulate_keystrokes("enter");
     cx.run_until_parked();
     assert_eq!(names(&dir), ["c.txt", "sub"]);
