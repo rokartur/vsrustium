@@ -2,6 +2,15 @@
 
 `port/tools/pixel-check` on the Mac Studio: the reference workbench captured through CDP (`port/tools/ref-screenshot`, 1024x768 at 2x, frozen: solid cursor, reduced motion, no startup editor, `chat.disableAIFeatures`) against the port's frame read back from Metal (`code-gpui --theme <id> --screenshot`, built with `--features screenshot`). Neither capture needs Screen Recording permission. Diff: `native/crates/pixeldiff`, threshold 0, anti-aliased pixels counted apart.
 
+## Milestone 8: editor viewport
+
+Scrollbars, scroll shadow and visible ranges added; the frozen captures show the top of each file, so nothing may move. `WINDOWS="file main"`: both unchanged from milestone 7. The first main hc run gave 16065 against a reference capture with different breadcrumbs and the cursor on line 4; the retry gave 5335.
+
+| window | dark | light | hc | hclight |
+|---|---|---|---|---|
+| file | 10859 | 6376 | 4396 | 3853 |
+| main | 12177 | 7627 | 5335 | 6626 |
+
 ## Milestone 7: syntax colors and themes
 
 New window `main`: `port/fixtures/workspace/src/main.ts` open in the fixture folder, TypeScript grammar colors and bracket pair colors. New theme `hclight` (Default High Contrast Light) for every window. The reference now runs with `--force-color-profile=srgb` (port/notes.md); with it the empty, folder and file windows give the milestone 2, 3 and 4 numbers unchanged. Reference md5 (main): dark `c1172c60`, hc `1cf27616`, hclight `fc82315e`, light `2eba5cf1`.

@@ -135,6 +135,28 @@ Done when: the colorize-tests fixtures give the reference's scopes and colors; p
 - shortcut: the theme type reaches the extension host after the eager extensions activate; upstream sends it before `$startExtensionHost`.
 - shortcut: no Go to Bracket, Select to Bracket or Force Retokenize commands until keybindings and the command palette land.
 
+## Milestone 8: editor viewport and editing commands
+
+Scope (roadmap section 8): scrolling with real visible ranges and the MainThreadTextEditors and MainThreadDocuments requests, then multi-cursor and editing commands, find/replace, folding, minimap, sticky scroll. This round ships the first item only; the rest is open (last line of this section).
+
+Done when (first item): api-tests `vscode API - editors` passes as in the reference; the text editor tests of `vscode API - window` that need one editor group only pass; pixel-check file and main windows unchanged.
+
+- `editor/view.rs` ports the scroll math of `linesLayout.ts`, `viewLayout.ts` and `scrollbarState.ts`: `scrollBeyondLastLine` leaves one viewport less one line below the last line, the wheel moves 50 px per delta line (`mouseWheelScrollSensitivity` 1, `fastScrollSensitivity` 5 with Alt), sliders are at least 20 px. Reveal follows `viewModelImpl.revealRange`: a keyboard move keeps `cursorSurroundingLines` and the sticky scroll lines in view; the API's `TextEditorRevealType` centers or tops the range.
+- Scrollbars fade like `scrollbarVisibilityController.ts`: shown on scroll or hover, hidden 500 ms after, fade out 800 ms. The scroll shadow is `scrollbar.shadow` under the top edge once scrolled.
+- Each editor keeps its own scroll position; switching tabs restores it. Visible ranges reach the host with `$acceptEditorPropertiesChanged` on every scroll.
+- MainThread requests: `exthost/src/main_thread.rs` lets the workbench answer a request; the session thread waits on a channel while the GPUI thread runs `workbench/host_requests.rs`. Requests the host sends meanwhile queue and run after it.
+- Documents are keyed by URI string, so `fake-fs:` documents of the test extension's file system provider open: the session thread reads them with `ExtHostFileSystem.$readFile` and saves with `$writeFile`, as `mainThreadFileSystem.ts` does through `IFileService`.
+- Models the host opens without an editor stay 3 minutes after the last reference, as `BoundModelReferenceCollection`.
+- `$tryApplyEdits` runs `codeEditorWidget.executeEdits`: edits apply as one undo step and the selection follows them as a tracked range (`AlwaysGrowsWhenTypingAtEdges`, intervalTree `nodeAcceptEdit`).
+- `$tryInsertSnippet` parses with the `snippetParser.ts` grammar (tab stops, placeholders, choices, variables, escapes), adjusts indentation like `SnippetSession.adjustWhitespace` and selects the first tab stop.
+- shortcut: no snippet session: Tab does not move through tab stops, placeholders are not linked, choices are not offered. It belongs to the `editor/contrib/snippet` row.
+- shortcut: one editor group, so `ViewColumn` other than One, `onDidChangeTextEditorViewColumn` and the tab API tests fail; they come with the editor groups row.
+- shortcut: one cursor, so `$trySetSelections` and `$tryInsertSnippet` keep the first range only until multi-cursor lands.
+- shortcut: `$trySetOptions` applies `tabSize`, `indentSize` and `insertSpaces`; `cursorStyle` and `lineNumbers` wait for their render options. `setEndOfLine` in `$tryApplyEdits` is not applied.
+- shortcut: `TextDocumentContentProvider` documents (`bikes:` in window.test) and untitled documents (`$tryCreateDocument`) do not open; they come with their MainThread rows.
+- shortcut: the workbench's own save (Cmd+S) of a file system provider document fails; only `$trySaveDocument` writes through the provider, until the file service row.
+- Open from the milestone: multi-cursor and the editing command table (`editor/commands.rs` for M9), find/replace, folding, minimap, sticky scroll. Multi-cursor changes the cursor model every later item builds on, so it starts the next round.
+
 ## Benchmarks
 
 - `port/tools/bench`: Wu's `script/memory-benchmark` method generalized to N apps (`APPS="name=cmd;..."`), plus an extension host line per app.

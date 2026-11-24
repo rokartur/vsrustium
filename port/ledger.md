@@ -14,7 +14,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | seam/node-control | extension host seam | verified | exthost-probe --runtime node: 30/30, same set as Bun |
 | seam/vscode-module-bun | extension host seam | ported | exthost-probe: CJS extensions and ESM github, markdown-language-features, mermaid-markdown-features activate on Bun; ESM added after startup not covered |
 | mainthread/MainThreadGitExtension | MainThread* shape (Rust side) | stub | session.rs answers undefined |
-| mainthread/MainThreadClipboard | MainThread* shape (Rust side) | stub | session.rs answers undefined |
+| mainthread/MainThreadClipboard | MainThread* shape (Rust side) | verified | host_requests.rs answers $readText and $writeText with the system clipboard: api-tests MOCHA_GREP="vscode API - editors" (insert snippet with clipboard variables passes) |
 | mainthread/MainThreadCommands | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadComments | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadAuthentication | MainThread* shape (Rust side) | removed | no sign-in/AI by decision (port/notes.md); API stays inert: session.rs answers undefined, list getters []; exthost-probe 30/30 on Bun and Node |
@@ -24,9 +24,9 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | mainthread/MainThreadDiaglogs | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadDecorations | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadDocumentContentProviders | MainThread* shape (Rust side) | stub | session.rs answers undefined |
-| mainthread/MainThreadDocuments | MainThread* shape (Rust side) | stub | host_sync.rs sends model opened, changed, dirty and saved: cargo test -p app -- --ignored live_host (TypeScript diagnostics after an edit); $tryCreateDocument, $tryOpenDocument, $trySaveDocument answer undefined |
+| mainthread/MainThreadDocuments | MainThread* shape (Rust side) | ported | host_sync.rs sends model opened, changed, dirty and saved; host_requests.rs answers $tryOpenDocument (file and extension file system provider URIs) and $trySaveDocument, models kept 3 minutes after the host lets go: api-tests MOCHA_GREP="vscode API - editors" 13/0/0; $tryCreateDocument (untitled) still answers undefined |
 | mainthread/MainThreadBulkEdits | MainThread* shape (Rust side) | stub | session.rs answers undefined |
-| mainthread/MainThreadTextEditors | MainThread* shape (Rust side) | stub | session.rs answers undefined |
+| mainthread/MainThreadTextEditors | MainThread* shape (Rust side) | ported | host_requests.rs answers $tryShowTextDocument, $trySetSelections, $tryRevealRange, $trySetOptions, $tryApplyEdits, $tryInsertSnippet; visible ranges and options reach the host: api-tests MOCHA_GREP="vscode API - editors" 13/0/0, window text editor tests without view columns pass; one editor group, first selection only (port/notes.md milestone 8) |
 | mainthread/MainThreadTreeViews | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadDownloadService | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadErrors | MainThread* shape (Rust side) | ported | session.rs writes `$onUnexpectedError` stacks to the port log (code-gpui stderr); seen in port/tools/api-tests api-folder.log |
@@ -219,7 +219,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/windows | src/vs/platform | todo |  |
 | platform/workspace | src/vs/platform | todo |  |
 | platform/workspaces | src/vs/platform | todo |  |
-| editor/browser | src/vs/editor | todo |  |
+| editor/browser | src/vs/editor | ported | scrolling: wheel, scrollbars with drag, track press and fade, scroll shadow, reveal on cursor moves and from the API, per-editor scroll position (editor/view.rs, workbench/editor_view.rs): cargo test -p app editor::view::tests; no minimap, sticky scroll, folding or smooth scrolling (port/notes.md milestone 8) |
 | editor/common | src/vs/editor | stub | one cursor, core moves and deletes, typing, edit stack stops, alternative version id dirty state: cargo test -p app (editor::cursor::tests, editor::edit::tests); no multi-cursor, onEnter or indentation rules, grapheme clusters (port/notes.md milestone 5) |
 | editor/standalone | src/vs/editor | todo |  |
 | editor/test | src/vs/editor | todo |  |
