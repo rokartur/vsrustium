@@ -14,11 +14,12 @@ mod text_input;
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::ops::Range;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use config::service::Settings;
+use config::workspace::Workspace;
 use storage::Storage;
 
 use gpui::{ClickEvent, Context, Div, FocusHandle, FontFeatures, FontWeight, Rgba, Task, UniformListScrollHandle, Window, div, prelude::*, px, rgb, svg, transparent_black};
@@ -165,9 +166,9 @@ impl Workbench {
         self.load_quick_input_view_state();
     }
 
-    /// The opened folder, which quick pick items show their resource paths relative to.
-    pub fn workspace_path(&self) -> Option<&Path> {
-        self.folder.as_ref().map(|folder| folder.root.as_path())
+    /// The opened folders, which quick pick items show their resource paths relative to.
+    pub fn workspace(&self) -> Option<&Workspace> {
+        self.folder.as_ref().map(|tree| &tree.workspace)
     }
 
     /// A single click opens a preview editor and keeps the focus in the Explorer, a double click opens a pinned
@@ -232,7 +233,7 @@ impl Workbench {
             .border_color(self.color("commandCenter.border"))
             .text_color(self.color("commandCenter.foreground"))
             .text_size(px(12.))
-            .child(self.folder.as_ref().map_or("Search".into(), |folder| folder.root.file_name().unwrap_or_default().to_string_lossy().into_owned()));
+            .child(self.workspace().map_or("Search".into(), Workspace::label));
         let center = div()
             .absolute()
             .top(px(6.5))
@@ -312,7 +313,7 @@ impl Workbench {
         // listWidget.ts: a selected row gets a 1px dotted listSelectionOutline (activeContrastBorder) inside it.
         let selection_outline = self.theme.color("contrastActiveBorder");
         let selected = tree.selected.clone();
-        let folder_name = tree.root.file_name().unwrap_or_default().to_string_lossy().into_owned();
+        let folder_name = tree.workspace.label();
         let rows = tree.rows().into_iter().enumerate().map(|(index, row)| {
             let twistie = match (row.is_dir, row.expanded) {
                 (true, true) => Some("chevron-down"),
@@ -487,6 +488,7 @@ impl Workbench {
 mod tests {
     use std::path::Path;
 
+    use config::workspace::Workspace;
     use exthost::scan::scan_extension;
     use gpui::{Modifiers, TestAppContext, point, px};
 
@@ -505,7 +507,7 @@ mod tests {
         let docs = folder.join("docs");
         let languages = Languages::new(&[]);
         let host = HostSync::new(std::sync::mpsc::channel().0);
-        let (workbench, cx) = cx.add_window_view(|_, cx| Workbench::new(theme, app_root.clone(), Some(FileTree::new(folder)), languages, crate::default_settings(), host, cx));
+        let (workbench, cx) = cx.add_window_view(|_, cx| Workbench::new(theme, app_root.clone(), Some(FileTree::new(Workspace::folder(folder))), languages, crate::default_settings(), host, cx));
         cx.run_until_parked();
 
         // The first tree row (docs) spans y 96..118 under the side bar's "workspace" header (reference DOM dump).

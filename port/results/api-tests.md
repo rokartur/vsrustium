@@ -43,3 +43,14 @@ After the command history, quick input position and theme picker commits, one ru
 | api-workspace | 0 | 0 | 4 | 0 | exit 1 after 1s |
 
 Passing: all 12 of `workspace-fs`; in `workspace`, findFiles, findFiles2 and findTextInFiles with their exclude and cancellation tests (11). `workspace events` fails 0/10 (no bulk edits); api-workspace needs multi-root.
+
+## M12 multi-root
+
+`MOCHA_GREP="vscode API - quick input|vscode API - commands|showInputBox|#7013|vscode API - configuration|vscode API - globalState|vscode API - workspace-fs|vscode API - workspace events|vscode API - workspace " SUITE_TIMEOUT=900 port/tools/api-tests` on the Studio, same setup, the working tree of the multi-root commit. Baseline at 0ff1a06a with the same pattern: api-folder 59/2/77, api-workspace 0/0/4.
+
+| suite | passing | pending | failing | not reached | run |
+|-------|---------|---------|---------|-------------|-----|
+| api-folder | 59 | 2 | 77 | 264 | exit 1 after 188s |
+| api-workspace | 4 | 0 | 0 | 0 | exit 0 after 0s |
+
+api-workspace matches the reference (4/0/0): rootPath, workspaceFile, workspaceFolders, getWorkspaceFolder. api-folder is unchanged.

@@ -265,14 +265,14 @@ fn api_create_quick_pick_hide_show_hide_fires_two_hides() {
 
 #[test]
 fn api_match_item_by_label_derived_from_resource_uri() {
-    let workspace = Path::new("/work");
+    let workspace = Workspace::folder(PathBuf::from("/work"));
     let transfer = [
         json_item(0, Some("a1"), "/work/test1.txt"),
         json_item(1, None, "/work/test2.txt"),
         json_item(2, Some("a3"), "/work/test3.txt"),
     ];
     let mut input = QuickInput::new(1, Kind::QuickPick);
-    input.set_items(transfer.iter().map(|item| entry_from_transfer(item, Some(workspace))).collect());
+    input.set_items(transfer.iter().map(|item| entry_from_transfer(item, Some(&workspace))).collect());
     input.set_value("test2.txt".into());
     input.show();
     input.accept_from_ui();
@@ -282,14 +282,14 @@ fn api_match_item_by_label_derived_from_resource_uri() {
 
 #[test]
 fn api_match_item_by_description_derived_from_resource_uri() {
-    let workspace = Path::new("/work");
+    let workspace = Workspace::folder(PathBuf::from("/work"));
     let transfer = [
         json_item(0, Some("a1"), "/work/test1.txt"),
         json_item(1, Some("a2"), "/work/test2.txt"),
         json_item(2, Some("a3"), "/work/test3.txt"),
     ];
     let mut input = QuickInput::new(1, Kind::QuickPick);
-    input.set_items(transfer.iter().map(|item| entry_from_transfer(item, Some(workspace))).collect());
+    input.set_items(transfer.iter().map(|item| entry_from_transfer(item, Some(&workspace))).collect());
     input.match_on_description = true;
     input.set_value("test2.txt".into());
     input.show();
@@ -334,4 +334,19 @@ fn drag_layout_snaps_clamps_and_clears_window_controls() {
     assert_eq!(drag_layout(900., 900., window, widget, 35., 6.), (500. / 800., 700. / 1000.));
     // Over the title bar at the left edge: moved right of the traffic lights.
     assert_eq!(drag_layout(30., 0., window, widget, 35., 6.), (30. / 800., 380. / 1000.));
+}
+
+/// label.test.ts 'labels of files in multiroot workspaces are the foldername followed by offset from the folder'.
+#[test]
+fn path_labels_in_a_multi_root_workspace_start_with_the_folder_name() {
+    use config::workspace::WorkspaceFolder;
+    let folder = |path: &str, name: &str| WorkspaceFolder { path: PathBuf::from(path), name: name.into() };
+    let folders = vec![folder("/folder1/src", "Sources"), folder("/folder1/test", "Tests"), folder("/folder2", "folder2")];
+    let workspace = Workspace { file: Some(PathBuf::from("/test.code-workspace")), folders, transient: false };
+    let label = |path: &str| path_label(Path::new(path), Some(&workspace));
+    assert_eq!(label("/folder1/src/file"), "Sources \u{2022} file");
+    assert_eq!(label("/folder1/src/folder/file"), "Sources \u{2022} folder/file");
+    assert_eq!(label("/folder1/src"), "Sources");
+    assert_eq!(label("/folder1/other"), "/folder1/other");
+    assert_eq!(label("/folder2/other"), "folder2 \u{2022} other");
 }

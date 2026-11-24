@@ -121,3 +121,13 @@ No difference is a layout or color mismatch.
 | high contrast | 3120455 (99.2%) | 25259 | 3145728 |
 
 The port drew a status window with no themes, diffed against every theme. Control: the reference dark capture against itself gives 0 different.
+
+## Milestone 12 multi-root
+
+New window `multiroot`: `multi.code-workspace` with the fixture folder and a copy of its `docs` folder named "Second Folder". The other 16 frames give the milestone 12 table's counts except main hc 5841 and hclight 5565 (were 7383, 7132), with the reference capture moving as noted above.
+
+| window | dark | light | hc | hclight |
+|---|---|---|---|---|
+| multiroot | 7371 | 4143 | 1110 | 951 |
+
+The Explorer rows (header `multi (Workspace)`, both roots expanded, root children at depth 2) sit at the reference's positions; the counts are the folder window's plus the second root's rows.

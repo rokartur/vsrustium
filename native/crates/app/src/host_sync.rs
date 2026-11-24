@@ -456,12 +456,13 @@ mod tests {
         let extensions_dir = std::env::var_os("VSCODE_GPUI_EXTENSIONS").map(PathBuf::from).unwrap_or_else(|| app_root.join("extensions"));
         let extensions = scan_builtin_extensions(&extensions_dir).unwrap();
         let user_data = folder.join(".user-data");
-        let paths = SessionPaths { app_root: &app_root, user_data: &user_data, workspace_folder: Some(&folder) };
+        let workspace = config::workspace::Workspace::folder(folder.clone());
+        let paths = SessionPaths { app_root: &app_root, user_data: &user_data, workspace: Some(&workspace) };
         let init = init_data(&paths, &extensions, "1.147.0");
         let entry = app_root.join("out-exthost/bootstrap-exthost.js");
         let host = ExtensionHost::start(HostOptions { runtime: Runtime::Bun, entry: &entry, extra_env: vec![], extra_args: vec![] }, &init).unwrap();
         let mut session = Session::new(host);
-        session.start(&extensions, Some(workspace_data(&init, &folder))).unwrap();
+        session.start(&extensions, Some(workspace_data(&init, &workspace))).unwrap();
 
         let (sender, receiver) = channel();
         let mut sync = HostSync::new(sender);

@@ -69,7 +69,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | mainthread/MainThreadUriOpeners | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadChatOutputRenderer | MainThread* shape (Rust side) | removed | no sign-in/AI by decision (port/notes.md); API stays inert: session.rs answers undefined, list getters []; exthost-probe 30/30 on Bun and Node |
 | mainthread/MainThreadProfileContentHandlers | MainThread* shape (Rust side) | stub | session.rs answers undefined |
-| mainthread/MainThreadWorkspace | MainThread* shape (Rust side) | ported | main_thread_workspace.rs serves $startFileSearch and $startTextSearch through ripgrep: api-tests workspace.test findFiles, findFiles2, findTextInFiles and their cancellation tests pass (11/11); multi-root, $updateWorkspaceFolders, $save, trust and $checkExists answer undefined |
+| mainthread/MainThreadWorkspace | MainThread* shape (Rust side) | ported | main_thread_workspace.rs serves $startFileSearch and $startTextSearch through ripgrep over every workspace folder: api-tests workspace.test findFiles, findFiles2, findTextInFiles and their cancellation tests pass (11/11); multi-root workspace data: api-workspace 4/4; $updateWorkspaceFolders, $save, trust and $checkExists answer undefined |
 | mainthread/MainThreadFileSystem | MainThread* shape (Rust side) | verified | api-tests workspace.fs.test 12/12 passing (main_thread_files.rs over files::disk and extension providers) |
 | mainthread/MainThreadFileSystemEventService | MainThread* shape (Rust side) | ported | FSEvents watcher of the folder, extension watchers and provider changes reach $onFileEvent (cargo test -p files); no file operation participants, so workspace.event.test 0/10 (needs bulk edits) |
 | mainthread/MainThreadLabelService | MainThread* shape (Rust side) | stub | session.rs answers undefined |
@@ -217,8 +217,8 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/webview | src/vs/platform | todo |  |
 | platform/window | src/vs/platform | todo |  |
 | platform/windows | src/vs/platform | todo |  |
-| platform/workspace | src/vs/platform | todo |  |
-| platform/workspaces | src/vs/platform | todo |  |
+| platform/workspace | src/vs/platform | ported | config/src/workspace.rs: folders, getFolder, toWorkspaceFolders, workspace label; cargo test -p config workspace (workspace.test.ts cases); api-workspace 4/4 |
+| platform/workspaces | src/vs/platform | ported | getWorkspaceIdentifier and getSingleFolderWorkspaceIdentifier (session.rs, workspaces.test.ts stable id case, cargo test -p exthost); no untitled workspaces or recent list |
 | editor/browser | src/vs/editor | todo |  |
 | editor/common | src/vs/editor | stub | one cursor, core moves and deletes, typing, edit stack stops, alternative version id dirty state: cargo test -p app (editor::cursor::tests, editor::edit::tests); no multi-cursor, onEnter or indentation rules, grapheme clusters (port/notes.md milestone 5) |
 | editor/standalone | src/vs/editor | todo |  |
@@ -315,7 +315,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/checksum | workbench service | todo |  |
 | workbench/services/clipboard | workbench service | todo |  |
 | workbench/services/commands | workbench service | ported | commands.rs: onCommand activation before execute; api-tests commands suite |
-| workbench/services/configuration | workbench service | ported | cargo test -p config service (configurationEditing.test.ts write cases); port/tools/settings-check configuration |
+| workbench/services/configuration | workbench service | ported | cargo test -p config service (configurationEditing.test.ts write cases, workspace file layer and folder scopes); port/tools/settings-check configuration |
 | workbench/services/configurationResolver | workbench service | todo |  |
 | workbench/services/contextmenu | workbench service | todo |  |
 | workbench/services/dataChannel | workbench service | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
@@ -419,7 +419,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/extensions | workbench contribution | todo |  |
 | workbench/contrib/externalTerminal | workbench contribution | todo |  |
 | workbench/contrib/externalUriOpener | workbench contribution | todo |  |
-| workbench/contrib/files | workbench contribution | stub | Explorer tree read from disk (explorer.rs): folders first, default excludes, click to expand, click opens a file as preview, double click pins, selection follows the active editor; Seti file icons and compareFileNamesDefault sort (cargo test -p app); no file operations (port/notes.md milestones 3, 4, 12) |
+| workbench/contrib/files | workbench contribution | stub | Explorer tree read from disk (explorer.rs): folders first, default excludes, click to expand, click opens a file as preview, double click pins, selection follows the active editor; Seti file icons and compareFileNamesDefault sort; workspace folders as roots, first five expanded (cargo test -p app); no file operations (port/notes.md milestones 3, 4, 12) |
 | workbench/contrib/folding | workbench contribution | todo |  |
 | workbench/contrib/format | workbench contribution | todo |  |
 | workbench/contrib/git | workbench contribution | todo |  |
@@ -587,7 +587,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | extension/typescript-basics | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/typescript-language-features | built-in extension | todo |  |
 | extension/vb | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
-| extension/vscode-api-tests | built-in extension | ported | port/tools/api-tests: folder 35/41/133 with 193 not reached in 1800 s, workspace 0/0/4 (port/results/api-tests.md); reference 356/46/0 and 4/0/0 |
+| extension/vscode-api-tests | built-in extension | ported | port/tools/api-tests: folder 35/41/133 with 193 not reached in 1800 s, workspace 4/0/0 (port/results/api-tests.md); reference 356/46/0 and 4/0/0 |
 | extension/vscode-colorize-perf-tests | built-in extension | todo |  |
 | extension/vscode-colorize-tests | built-in extension | verified | cargo test -p app syntax::tests::colorize_fixtures_match_the_reference: 109 fixtures, every token's text, scopes and color in 10 themes |
 | extension/vscode-test-resolver | built-in extension | removed | no remote or tunnels by decision (port/notes.md); one local extension host |

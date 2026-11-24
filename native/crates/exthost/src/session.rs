@@ -7,6 +7,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use config::configuration::Configuration;
 use config::registry::Registry;
+use config::workspace::Workspace;
 use serde_json::{Value, json};
 
 use crate::console::format_console_entry;
@@ -23,7 +24,7 @@ use crate::{ExtensionHost, Incoming, proxy_id, proxy_name};
 pub struct SessionPaths<'a> {
     pub app_root: &'a Path,
     pub user_data: &'a Path,
-    pub workspace_folder: Option<&'a Path>,
+    pub workspace: Option<&'a Workspace>,
 }
 
 /// `IExtensionHostInitData` for a desktop window. Telemetry identifiers are placeholders the app replaces with
@@ -37,8 +38,9 @@ pub fn init_data(paths: &SessionPaths, extensions: &[ScannedExtension], version:
         .into_iter()
         .map(|(id, events)| (id, if events.is_array() { events.clone() } else { json!([]) }))
         .collect();
-    let workspace = paths.workspace_folder.map(|folder| {
-        json!({ "id": workspace_id(folder), "name": folder.file_name().map(|n| n.to_string_lossy()).unwrap_or_default(), "transient": false, "configuration": null, "isUntitled": false })
+    let workspace = paths.workspace.map(|workspace| {
+        let configuration = workspace.file.as_deref().map(file_uri);
+        json!({ "id": workspace_id(workspace), "name": workspace.label(), "transient": workspace.transient, "configuration": configuration, "isUntitled": false })
     });
     json!({
         "version": version,
@@ -83,16 +85,24 @@ pub fn init_data(paths: &SessionPaths, extensions: &[ScannedExtension], version:
     })
 }
 
-/// The `IWorkspaceData` of a single-folder workspace for `$initializeWorkspace`, with the id and name `init_data` gave it.
-pub fn workspace_data(init: &Value, folder: &Path) -> Value {
-    let name = &init["workspace"]["name"];
-    json!({ "id": init["workspace"]["id"], "name": name, "folders": [{ "uri": file_uri(folder), "name": name, "index": 0 }] })
+/// `MainThreadWorkspace.getWorkspaceData` for `$initializeWorkspace`, with the fields `init_data` gave the workspace.
+pub fn workspace_data(init: &Value, workspace: &Workspace) -> Value {
+    let mut data = init["workspace"].clone();
+    let folders: Vec<Value> = workspace.folders.iter().enumerate().map(|(index, folder)| json!({ "uri": file_uri(&folder.path), "name": folder.name, "index": index })).collect();
+    data["folders"] = json!(folders);
+    data
 }
 
-/// `getSingleFolderWorkspaceIdentifier` on macOS: MD5 of the path and the folder's birth time in milliseconds,
-/// so a folder created again gets new workspace storage.
-pub fn workspace_id(folder: &Path) -> String {
+/// `getWorkspaceIdentifier` for a workspace file: MD5 of the lowercased path (macOS is not Linux).
+/// `getSingleFolderWorkspaceIdentifier` for a folder: MD5 of the path and the folder's birth time in
+/// milliseconds, so a folder created again gets new workspace storage.
+pub fn workspace_id(workspace: &Workspace) -> String {
     use md5::Digest;
+    if let Some(file) = &workspace.file {
+        let digest = md5::Md5::new().chain_update(file.to_string_lossy().to_lowercase().as_bytes()).finalize();
+        return digest.iter().map(|byte| format!("{byte:02x}")).collect();
+    }
+    let folder = &workspace.folders[0].path;
     let birth_time = std::fs::metadata(folder).and_then(|metadata| metadata.created()).ok();
     let millis = birth_time.and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok()).map(|age| age.as_millis().to_string());
     let digest = md5::Md5::new().chain_update(folder.to_string_lossy().as_bytes()).chain_update(millis.unwrap_or_default()).finalize();
@@ -451,5 +461,38 @@ fn log_level_name(level: &Value) -> &'static str {
         Some(3) => "info",
         Some(4) => "warning",
         _ => "error",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::*;
+
+    /// workspaces.test.ts 'workspace identifiers are stable' (the local workspace file).
+    #[test]
+    fn workspace_file_identifiers_are_stable() {
+        let workspace = Workspace { file: Some(PathBuf::from("/hello/test")), folders: Vec::new(), transient: false };
+        assert_eq!(workspace_id(&workspace), "e36736311be12ff6d695feefe415b3e8");
+        let upper = Workspace { file: Some(PathBuf::from("/Hello/Test")), ..workspace };
+        assert_eq!(workspace_id(&upper), "e36736311be12ff6d695feefe415b3e8", "macOS paths are compared ignoring case");
+    }
+
+    #[test]
+    fn workspace_data_lists_every_folder() {
+        let file = std::env::temp_dir().join(format!("session-test-{}.code-workspace", std::process::id()));
+        std::fs::write(&file, r#"{ "folders": [{ "path": "a" }, { "path": "b", "name": "Second" }] }"#).unwrap();
+        let workspace = Workspace::from_file(file.clone());
+        let paths = SessionPaths { app_root: Path::new("/app"), user_data: Path::new("/user"), workspace: Some(&workspace) };
+        let init = init_data(&paths, &[], "1.147.0");
+        let name = format!("session-test-{} (Workspace)", std::process::id());
+        assert_eq!(init["workspace"]["name"], name);
+        assert_eq!(init["workspace"]["configuration"], file_uri(&file));
+        let data = workspace_data(&init, &workspace);
+        assert_eq!(data["folders"][1]["name"], "Second");
+        assert_eq!(data["folders"][1]["index"], 1);
+        assert_eq!(data["folders"][0]["uri"], file_uri(&file.parent().unwrap().join("a")));
+        std::fs::remove_file(file).unwrap();
     }
 }

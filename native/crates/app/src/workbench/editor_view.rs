@@ -3,6 +3,7 @@
 //! decorationsOverviewRuler.ts). Sizes are the reference's CSS pixels with editor.fontSize 12 and lineHeight 18.
 
 use std::ops::Range;
+use std::path::PathBuf;
 
 use gpui::{
     Bounds, Context, Div, ElementInputHandler, MouseButton, MouseDownEvent, MouseMoveEvent, Rgba, StyledText, Window, canvas, div, fill, font,
@@ -157,11 +158,20 @@ impl Workbench {
         self.file_icons.as_ref()?.file_icon(&document.path, &document.language_id, self.theme.kind, 13., line_height, foreground)
     }
 
-    /// The file's path below the workspace folder, one item per segment (breadcrumbs.filePath relative).
+    /// The file's path below its workspace folder, one item per segment (breadcrumbs.filePath relative), after the
+    /// folder's name in a workspace (`BreadcrumbsModel._initFilePathInfo`).
     fn breadcrumbs(&self, editor: &OpenEditor) -> Div {
         let path = &editor.document.path;
-        let relative = self.folder.as_ref().and_then(|tree| path.strip_prefix(&tree.root).ok()).unwrap_or(path);
-        let segments: Vec<String> = relative.iter().map(|segment| segment.to_string_lossy().into_owned()).collect();
+        let workspace = self.workspace();
+        let folder = workspace.and_then(|workspace| workspace.folder_of(path));
+        let relative: PathBuf = match folder {
+            Some(folder) => path.iter().skip(folder.path.iter().count()).collect(),
+            None => path.clone(),
+        };
+        let mut segments: Vec<String> = relative.iter().map(|segment| segment.to_string_lossy().into_owned()).collect();
+        if let Some(folder) = folder.filter(|_| workspace.is_some_and(|workspace| workspace.file.is_some())) {
+            segments.insert(0, folder.name.clone());
+        }
         let foreground = self.color("breadcrumb.foreground");
         let last = segments.len() - 1;
         let items = segments.into_iter().enumerate().map(|(index, segment)| {
