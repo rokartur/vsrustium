@@ -281,6 +281,30 @@ pub fn enabled_commands(menu: &[MenuItem], context: &dyn Context) -> Vec<Command
     picks
 }
 
+/// The `EditorAction`s of the active editor this port runs, by id, label and precondition (findController.ts).
+const EDITOR_ACTIONS: [(&str, &str, Option<&str>); 9] = [
+    ("actions.find", "Find", Some("editorFocus || editorIsOpen")),
+    ("editor.actions.findWithArgs", "Find with Arguments", None),
+    ("actions.findWithSelection", "Find with Selection", None),
+    ("editor.action.nextMatchFindAction", "Find Next", None),
+    ("editor.action.previousMatchFindAction", "Find Previous", None),
+    ("editor.action.goToMatchFindAction", "Go to Match...", Some("findWidgetVisible")),
+    ("editor.action.nextSelectionMatchFindAction", "Find Next Selection", None),
+    ("editor.action.previousSelectionMatchFindAction", "Find Previous Selection", None),
+    ("editor.action.startFindReplaceAction", "Replace", Some("editorFocus || editorIsOpen")),
+];
+
+/// `getCodeEditorCommandPicks`: the active editor's supported actions, those whose precondition holds.
+pub fn editor_action_picks(context: &dyn Context) -> Vec<CommandPick> {
+    let mut picks = Vec::new();
+    for (id, label, precondition) in EDITOR_ACTIONS {
+        if precondition.and_then(Expr::deserialize).is_none_or(|expr| expr.evaluate(context)) {
+            picks.push(CommandPick { id: id.to_string(), label: label.to_string(), category: None });
+        }
+    }
+    picks
+}
+
 /// `stripIcons`: replaces each `(\s)?(\\)?$(name~modifier)(\s)?` by the whitespace before it, else the one
 /// after it; an escaped `\$(name)` stays.
 pub fn strip_icons(label: &str) -> String {

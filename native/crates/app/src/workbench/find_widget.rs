@@ -19,6 +19,8 @@ use crate::editor::find::controller::{AutoFindInSelection, FindController, FindO
 use crate::editor::find::state::{MATCHES_LIMIT, NewFindState};
 use crate::editor::{ContentChanged, OpenEditor, Position, Selection, VERTICAL_SCROLLBAR_WIDTH, VerticalReveal, Viewport, expand_tabs, visible_column};
 use crate::input_box::InputBox;
+use crate::main_thread_quick_open::Owner;
+use crate::quick_input::{Event, Kind, QuickInput};
 use crate::theme::ThemeKind;
 
 const FIND_WIDGET_INITIAL_WIDTH: f32 = 419.;
@@ -49,6 +51,8 @@ pub struct FindWidget {
     toggled: Option<Instant>,
     /// The widget's left edge as last drawn, from where the text's column 0 is.
     widget_left: Cell<f32>,
+    /// The match Go to Match draws as a range highlight while its input is open (`addDecorations`).
+    pub go_to_match_highlight: Option<Range<Position>>,
 }
 
 impl FindWidget {
@@ -66,6 +70,7 @@ impl FindWidget {
             sash_drag: None,
             toggled: None,
             widget_left: Cell::new(f32::MAX),
+            go_to_match_highlight: None,
         }
     }
 }
@@ -104,6 +109,75 @@ impl Workbench {
                 Outcome::done()
             });
         }
+        self.commands.register("editor.actions.findWithArgs", |workbench, args, window, cx| {
+            let args = args.into_iter().next().filter(Value::is_object);
+            let text = |key: &str| args.as_ref().and_then(|args| args[key].as_str().map(str::to_string));
+            let flag = |key: &str| args.as_ref().and_then(|args| args[key].as_bool());
+            let new = match &args {
+                None => NewFindState::default(),
+                Some(_) => NewFindState {
+                    search_string: text("searchString"),
+                    replace_string: text("replaceString"),
+                    is_replace_revealed: Some(text("replaceString").is_some()),
+                    is_regex: flag("isRegex"),
+                    whole_word: flag("matchWholeWord"),
+                    match_case: flag("isCaseSensitive"),
+                    preserve_case: flag("preserveCase"),
+                    ..NewFindState::default()
+                },
+            };
+            let find_in_selection = flag("findInSelection").unwrap_or(false);
+            workbench.run_find(window, cx, |find, editor, viewport| (find.start_find_with_args(editor, viewport, new, find_in_selection), None));
+            Outcome::done()
+        });
+        self.commands.register("editor.action.goToMatchFindAction", |workbench, _, window, cx| workbench.show_go_to_match(window, cx));
+    }
+
+    /// `GoToMatchFindAction.run`: an input box that takes the match number, 1-based or negative from the end.
+    fn show_go_to_match(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
+        let matches_count = self.find.controller.state.matches_count;
+        if matches_count < 1 {
+            // shortcut: a logged warning, since the port has no notification toasts.
+            eprintln!("No matches. Try searching for something else.");
+            return Outcome::done();
+        }
+        let mut input = QuickInput::new(0, Kind::InputBox);
+        input.placeholder = Some(format!("Type a number to go to a specific match (between 1 and {matches_count})"));
+        let id = self.quick_inputs.add(input, Owner::GoToMatch);
+        self.show_quick_input(id, window, cx);
+        self.flush_quick_input_events(window, cx);
+        Outcome::done()
+    }
+
+    pub(crate) fn go_to_match_event(&mut self, id: i64, event: Event, window: &mut Window, cx: &mut Context<Self>) {
+        let matches_count = self.find.controller.state.matches_count;
+        let invalid = format!("Please type a number between 1 and {matches_count}");
+        match event {
+            Event::ChangeValue(value) => {
+                let index = find_match_index(&value, matches_count);
+                if let Some(index) = index {
+                    self.run_find(window, cx, |find, editor, viewport| { find.go_to_match(editor, viewport, index); (FocusAction::NoFocusChange, None) });
+                }
+                self.find.go_to_match_highlight = index.and_then(|_| self.find.controller.state.current_match.clone());
+                let Some(input) = self.quick_inputs.get_mut(id) else { return };
+                input.validation_message = index.is_none().then_some(invalid);
+            }
+            Event::Accept(_) => {
+                let Some(input) = self.quick_inputs.get_mut(id) else { return };
+                let Some(index) = find_match_index(&input.input_box.value, matches_count) else {
+                    input.validation_message = Some(invalid);
+                    return;
+                };
+                self.run_find(window, cx, |find, editor, viewport| { find.go_to_match(editor, viewport, index); (FocusAction::NoFocusChange, None) });
+                self.hide_quick_input_by_id(id, window, cx);
+            }
+            Event::Hide => {
+                self.find.go_to_match_highlight = None;
+                self.quick_inputs.remove(id);
+            }
+            _ => {}
+        }
+        cx.notify();
     }
 
     /// Runs a controller action on the active editor, then tells the host what moved or changed, shows or hides
@@ -323,8 +397,10 @@ impl Workbench {
         for _ in model.find_scopes(editor).unwrap_or_default().iter().filter(|scope| on_line(scope)) {
             boxes.push(bordered(whole_line(), self.theme.color("editor.findRangeHighlightBackground"), self.theme.color("editor.findRangeHighlightBorder"), 1.));
         }
-        if model.range_highlight.as_ref().is_some_and(on_line) {
-            boxes.push(bordered(whole_line(), self.theme.color("editor.rangeHighlightBackground"), self.theme.color("editor.rangeHighlightBorder"), 1.));
+        for range_highlight in [&model.range_highlight, &self.find.go_to_match_highlight] {
+            if range_highlight.as_ref().is_some_and(on_line) {
+                boxes.push(bordered(whole_line(), self.theme.color("editor.rangeHighlightBackground"), self.theme.color("editor.rangeHighlightBorder"), 1.));
+            }
         }
 
         let text = &editor.document.lines[index];
@@ -719,4 +795,33 @@ impl Workbench {
             cx.notify();
         }
     }
+}
+
+/// `toFindMatchIndex`: `parseInt` of the value, 1 to the count or minus the count to -1, as a 0-based index.
+fn find_match_index(value: &str, matches_count: usize) -> Option<usize> {
+    let value = value.trim_start();
+    let (negative, digits) = match value.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, value.strip_prefix('+').unwrap_or(value)),
+    };
+    let end = digits.find(|c: char| !c.is_ascii_digit()).unwrap_or(digits.len());
+    let number: usize = digits[..end].parse().ok()?;
+    match negative {
+        false if (1..=matches_count).contains(&number) => Some(number - 1),
+        true if (1..=matches_count).contains(&number) => Some(matches_count - number),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn go_to_match_parses_like_parse_int() {
+    assert_eq!(find_match_index("2", 4), Some(1));
+    assert_eq!(find_match_index(" 3abc", 4), Some(2));
+    assert_eq!(find_match_index("-1", 4), Some(3));
+    assert_eq!(find_match_index("-4", 4), Some(0));
+    assert_eq!(find_match_index("5", 4), None);
+    assert_eq!(find_match_index("0", 4), None);
+    assert_eq!(find_match_index("-0", 4), None);
+    assert_eq!(find_match_index("x", 4), None);
 }

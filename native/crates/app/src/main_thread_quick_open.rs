@@ -28,6 +28,8 @@ pub enum Owner {
     QuickAccess(Vec<crate::workbench::quick_access::Accept>),
     /// The `workbench.action.selectTheme` picker.
     ColorThemes(crate::workbench::themes::ColorThemePicker),
+    /// The `editor.action.goToMatchFindAction` input box.
+    GoToMatch,
 }
 
 impl Workbench {
@@ -196,6 +198,7 @@ impl Workbench {
             Owner::Input { .. } => self.input_event(id, event, window, cx),
             Owner::QuickAccess(_) => self.quick_access_event(id, event, window, cx),
             Owner::ColorThemes(_) => self.color_theme_picker_event(id, event, window, cx),
+            Owner::GoToMatch => self.go_to_match_event(id, event, window, cx),
         }
     }
 

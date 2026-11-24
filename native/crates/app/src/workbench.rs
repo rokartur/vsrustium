@@ -747,6 +747,7 @@ mod tests {
         std::fs::write(&file, "the cat\nand the dog\nthe end").unwrap();
         let (workbench, cx) = cx.add_window_view(|window, cx| {
             let mut workbench = Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), crate::default_settings(), HostSync::new(std::sync::mpsc::channel().0), cx);
+            workbench.load_keybindings(crate::keybindings::default_keybindings(&[]), dir.join("keybindings.json"), cx);
             workbench.open_file(file.clone(), true, window, cx);
             workbench
         });
@@ -766,8 +767,19 @@ mod tests {
         assert_eq!(found(cx), (1, 3, (0, 0)));
         let zone = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| (workbench.editors.viewport.top_whitespace, workbench.editors.active().unwrap().scroll.top));
         assert_eq!(zone(cx), (33., 0.), "the match on line 1 stays revealed below the zone");
-        run("editor.action.nextMatchFindAction", cx);
+        // findInputFocussed binds Enter to Find Next.
+        cx.simulate_keystrokes("enter");
         assert_eq!(found(cx), (2, 3, (1, 4)));
+        run("editor.action.goToMatchFindAction", cx);
+        cx.simulate_input("-1");
+        assert_eq!(found(cx), (3, 3, (2, 0)));
+        assert!(workbench.read_with(cx, |workbench, _| workbench.find.go_to_match_highlight.is_some()));
+        cx.simulate_input("9");
+        let message = workbench.read_with(cx, |workbench, _| workbench.quick_inputs.current().unwrap().validation_message.clone());
+        assert_eq!(message.as_deref(), Some("Please type a number between 1 and 3"));
+        cx.simulate_keystrokes("backspace backspace backspace 2 enter");
+        assert_eq!(found(cx), (2, 3, (1, 4)));
+        assert!(workbench.read_with(cx, |workbench, _| workbench.quick_inputs.current().is_none() && workbench.find.go_to_match_highlight.is_none()));
         cx.simulate_keystrokes("backspace backspace");
         assert_eq!(workbench.read_with(cx, |workbench, _| workbench.find.controller.state.search_string.clone()), "t");
 
@@ -776,14 +788,22 @@ mod tests {
         cx.simulate_input("a");
         cx.simulate_keystrokes("shift-tab");
         cx.simulate_input("the");
-        run("editor.action.replaceAll", cx);
+        cx.simulate_keystrokes("alt-cmd-enter");
         assert_eq!(zone(cx).0, 62.);
         let text = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document.lines.join("\n"));
         assert_eq!(text, "a cat\nand a dog\na end");
 
-        run("closeFindWidget", cx);
+        cx.simulate_keystrokes("escape");
         assert!(workbench.read_with(cx, |workbench, _| !workbench.find.controller.state.is_revealed));
         assert_eq!(zone(cx), (0., 0.));
+
+        let args = serde_json::json!({ "searchString": "a", "isRegex": true });
+        workbench.update_in(cx, |workbench, window, cx| workbench.execute_command("editor.actions.findWithArgs", vec![args], window, cx));
+        let state = workbench.read_with(cx, |workbench, _| {
+            let state = &workbench.find.controller.state;
+            (state.search_string.clone(), state.is_regex, state.is_replace_revealed, state.matches_count)
+        });
+        assert_eq!(state, ("a".to_string(), true, false, 5));
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

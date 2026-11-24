@@ -157,8 +157,9 @@ impl Workbench {
     pub fn key_context(&self, window: &Window) -> HashMap<String, Value> {
         let mut context = self.context_keys.clone();
         let editor_focused = self.editor_focus.is_focused(window);
-        // The sticky lines are part of the editor's DOM, so their focus is the editor's but not its text's.
-        context.insert("editorFocus".into(), json!(editor_focused || self.sticky_scroll.is_focused(window)));
+        // The sticky lines and the find widget are part of the editor's DOM, so their focus is the editor's but not its text's.
+        let (find_focused, replace_focused) = (self.find.find_focus.is_focused(window), self.find.replace_focus.is_focused(window));
+        context.insert("editorFocus".into(), json!(editor_focused || self.sticky_scroll.is_focused(window) || find_focused || replace_focused));
         context.insert("editorTextFocus".into(), json!(editor_focused));
         context.insert("textInputFocus".into(), json!(editor_focused));
         context.insert("editorIsOpen".into(), json!(self.editors.active().is_some()));
@@ -175,6 +176,13 @@ impl Workbench {
             context.insert("editorLangId".into(), json!(editor.document.language_id));
             context.insert("resourceLangId".into(), json!(editor.document.language_id));
             self.sticky_scroll_context(window, &mut context);
+            // findModel.ts CONTEXT_FIND_WIDGET_VISIBLE, CONTEXT_FIND_INPUT_FOCUSED, CONTEXT_REPLACE_INPUT_FOCUSED.
+            context.insert("findWidgetVisible".into(), json!(self.find.controller.state.is_revealed));
+            context.insert("findInputFocussed".into(), json!(find_focused));
+            context.insert("replaceInputFocussed".into(), json!(replace_focused));
+            if find_focused || replace_focused {
+                context.insert("inputFocus".into(), json!(true));
+            }
             context.insert("resourceScheme".into(), json!(editor.document.scheme));
             let path = &editor.document.path;
             context.insert("resourceFilename".into(), json!(path.file_name().map(|name| name.to_string_lossy()).unwrap_or_default()));
