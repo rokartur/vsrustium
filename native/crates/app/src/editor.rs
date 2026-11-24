@@ -4,17 +4,23 @@
 
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use crate::languages::Languages;
 use crate::syntax::Tokenization;
 
 mod cursor;
 mod edit;
+mod view;
 
 pub use cursor::{Position, Selection};
 pub use edit::{ContentChanged, EditReason, History, utf16_column};
+pub use view::{HORIZONTAL_SCROLLBAR_HEIGHT, LINE_HEIGHT, Scrollbar, VERTICAL_SCROLLBAR_WIDTH, VerticalReveal, Viewport};
 
 pub struct TextDocument {
+    /// The URI scheme: "file", "untitled", or the scheme of an extension's file system provider.
+    pub scheme: String,
+    /// The file path, or the URI path for other schemes.
     pub path: PathBuf,
     pub lines: Vec<String>,
     pub eol: &'static str,
@@ -39,6 +45,11 @@ const DEFAULT_INDENTATION: Indentation = Indentation { tab_size: 4, insert_space
 impl TextDocument {
     pub fn read(path: &Path, languages: &Languages) -> std::io::Result<Self> {
         let bytes = std::fs::read(path)?;
+        Ok(Self::from_bytes("file", path, &bytes, languages))
+    }
+
+    /// A document of any scheme from its bytes, as the text file model decodes them.
+    pub fn from_bytes(scheme: &str, path: &Path, bytes: &[u8], languages: &Languages) -> Self {
         let (encoding, content) = match bytes.strip_prefix(b"\xEF\xBB\xBF") {
             Some(rest) => ("utf8bom", rest),
             None => ("utf8", &bytes[..]),
@@ -50,7 +61,31 @@ impl TextDocument {
         let off_side = languages.off_side(&language_id);
         let indentation = guess_indentation(&lines, DEFAULT_INDENTATION);
         let tokens = Tokenization::new(languages.grammars.grammar(&language_id));
-        Ok(TextDocument { path: path.to_path_buf(), lines, eol, encoding, language_id, indentation, off_side, tokens })
+        TextDocument { scheme: scheme.to_string(), path: path.to_path_buf(), lines, eol, encoding, language_id, indentation, off_side, tokens }
+    }
+
+    /// `URI.toString()`: `file:///a%20b` for a file, `scheme:/path` for a URI without authority.
+    pub fn uri_string(&self) -> String {
+        let mut uri = match self.scheme.as_str() {
+            "file" => String::from("file://"),
+            scheme => format!("{scheme}:"),
+        };
+        for byte in self.path.to_string_lossy().bytes() {
+            match byte {
+                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => uri.push(byte as char),
+                _ => uri.push_str(&format!("%{byte:02X}")),
+            }
+        }
+        uri
+    }
+
+    /// `UriComponents` as the extension host revives them.
+    pub fn uri(&self) -> serde_json::Value {
+        serde_json::json!({ "$mid": 1, "scheme": self.scheme, "authority": "", "path": self.path.to_string_lossy(), "query": "", "fragment": "" })
+    }
+
+    pub fn is(&self, scheme: &str, path: &Path) -> bool {
+        self.scheme == scheme && self.path == path
     }
 
     pub fn name(&self) -> String {
@@ -295,13 +330,29 @@ pub struct OpenEditor {
     pub guides: Vec<usize>,
     /// Occurrences of the word at the cursor, by line and char range.
     pub highlights: Vec<(usize, Range<usize>)>,
+    /// The editor's scroll position in pixels, kept with the editor like its view state.
+    pub scroll: Scroll,
+    /// The widest line drawn so far, in pixels: the content width grows with it and never shrinks.
+    max_line_width: f32,
+    /// When the extension host last opened this model (`$tryOpenDocument`): it stays open without an editor
+    /// for `BoundModelReferenceCollection`'s 3 minutes after that.
+    pub host_reference: Option<Instant>,
 }
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Scroll {
+    pub top: f32,
+    pub left: f32,
+}
+
+/// `BoundModelReferenceCollection` maxAge.
+pub const HOST_REFERENCE_AGE: Duration = Duration::from_secs(3 * 60);
 
 impl OpenEditor {
     fn new(document: TextDocument, preview: bool, model_id: u32) -> Self {
         let indentation = document.indentation;
         let guides = indent_guides(&document.lines, indentation.tab_size, indentation.tab_size, document.off_side);
-        let mut editor = OpenEditor { document, preview, model_id, selection: Selection::default(), leftover: 0, version_id: 1, history: History::default(), guides, highlights: Vec::new() };
+        let mut editor = OpenEditor { document, preview, model_id, selection: Selection::default(), leftover: 0, version_id: 1, history: History::default(), guides, highlights: Vec::new(), scroll: Scroll::default(), max_line_width: 0., host_reference: None };
         editor.refresh_highlights();
         editor
     }
@@ -310,9 +361,13 @@ impl OpenEditor {
 #[derive(Default)]
 pub struct EditorGroup {
     pub editors: Vec<OpenEditor>,
+    /// Text models open without an editor: documents the extension host opened, and closed editors it still holds.
+    pub models: Vec<OpenEditor>,
     /// Model ids, most recently active first: closing the active editor activates the next one (`focusRecentEditorAfterClose`).
     recent: Vec<u32>,
     next_model_id: u32,
+    /// The size of the group's one code editor, as last laid out; every editor of the group shows in it.
+    pub viewport: Viewport,
 }
 
 impl EditorGroup {
@@ -333,19 +388,54 @@ impl EditorGroup {
 
     /// The open editor of `path`, if any.
     pub fn find(&self, path: &Path) -> Option<usize> {
-        self.editors.iter().position(|editor| editor.document.path == path)
+        self.editors.iter().position(|editor| editor.document.is("file", path))
     }
 
     /// Opens a document right of the active editor, or in place of the preview editor when this open is a preview too.
     pub fn open(&mut self, document: TextDocument, preview: bool) {
         self.next_model_id += 1;
         let editor = OpenEditor::new(document, preview, self.next_model_id);
+        self.insert(editor, preview);
+    }
+
+    /// Creates a text model with no editor, as `$tryOpenDocument` does; returns its index in `models`.
+    pub fn open_model(&mut self, document: TextDocument) -> usize {
+        self.next_model_id += 1;
+        self.models.push(OpenEditor::new(document, false, self.next_model_id));
+        self.models.len() - 1
+    }
+
+    /// The model of `scheme`/`path`, in an editor or not.
+    pub fn model(&self, scheme: &str, path: &Path) -> Option<&OpenEditor> {
+        self.editors.iter().chain(&self.models).find(|editor| editor.document.is(scheme, path))
+    }
+
+    pub fn model_mut(&mut self, scheme: &str, path: &Path) -> Option<&mut OpenEditor> {
+        self.editors.iter_mut().chain(&mut self.models).find(|editor| editor.document.is(scheme, path))
+    }
+
+    /// Shows the model at `index` of `models` in a new editor.
+    pub fn show_model(&mut self, index: usize, preview: bool) {
+        let mut editor = self.models.remove(index);
+        editor.preview = preview;
+        self.insert(editor, preview);
+    }
+
+    /// Drops the models without an editor whose host reference ran out.
+    pub fn release_models(&mut self, now: Instant) {
+        self.models.retain(|model| model.host_reference.is_some_and(|opened| now.duration_since(opened) < HOST_REFERENCE_AGE));
+    }
+
+    fn insert(&mut self, editor: OpenEditor, preview: bool) {
         let preview_index = self.editors.iter().position(|editor| editor.preview).filter(|_| preview);
         let index = match preview_index {
             Some(index) => {
-                let replaced = self.editors[index].model_id;
-                self.recent.retain(|id| *id != replaced);
-                self.editors[index] = editor;
+                let replaced_id = self.editors[index].model_id;
+                self.recent.retain(|id| *id != replaced_id);
+                let replaced = std::mem::replace(&mut self.editors[index], editor);
+                if replaced.host_reference.is_some() {
+                    self.models.push(replaced);
+                }
                 index
             }
             None => {
@@ -370,6 +460,9 @@ impl EditorGroup {
     pub fn close(&mut self, index: usize) {
         let closed = self.editors.remove(index);
         self.recent.retain(|id| *id != closed.model_id);
+        if closed.host_reference.is_some() {
+            self.models.push(closed);
+        }
     }
 }
 
@@ -435,6 +528,7 @@ mod tests {
     #[test]
     fn previews_replace_each_other_and_closing_activates_the_recent_editor() {
         let document = |name: &str| TextDocument {
+            scheme: "file".into(),
             path: PathBuf::from(name),
             lines: vec![String::new()],
             eol: "\n",
@@ -461,6 +555,7 @@ mod tests {
     fn the_cursor_highlights_its_word_and_clamps_to_the_text() {
         let mut group = EditorGroup::default();
         let document = TextDocument {
+            scheme: "file".into(),
             path: PathBuf::from("/w/a.txt"),
             lines: lines("Port notes\nport Port"),
             eol: "\n",

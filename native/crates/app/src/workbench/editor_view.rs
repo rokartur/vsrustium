@@ -4,16 +4,20 @@
 
 use std::ops::Range;
 
+use std::time::{Duration, Instant};
+
 use gpui::{
-    Bounds, Context, Div, ElementInputHandler, MouseButton, MouseDownEvent, MouseMoveEvent, Rgba, StyledText, Window, canvas, div, fill, font,
-    point, prelude::*, px, size, uniform_list,
+    Axis, Bounds, Context, DispatchPhase, Div, ElementInputHandler, Hitbox, HitboxBehavior, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
+    Rgba, ScrollDelta, ScrollWheelEvent, Stateful, StyledText, Task, Window, canvas, div, fill, font, point, prelude::*, px, size,
 };
 
 use super::Workbench;
-use crate::editor::{OpenEditor, Position, Selection, column_at_visible, expand_tabs, visible_column, word_at};
+use crate::editor::{
+    HORIZONTAL_SCROLLBAR_HEIGHT, LINE_HEIGHT, OpenEditor, Position, Scrollbar, Selection, VERTICAL_SCROLLBAR_WIDTH, Viewport, column_at_visible, expand_tabs, visible_column,
+    word_at,
+};
 use crate::theme::ThemeKind;
 
-const LINE_HEIGHT: f32 = 18.;
 const EDITOR_FONT: &str = "Menlo";
 const EDITOR_FONT_SIZE: f32 = 12.;
 /// The glyph margin, then lineDecorationsWidth 10 plus 16 for the folding controls (editorOptions.ts layout).
@@ -24,6 +28,11 @@ const LINE_NUMBERS_MIN_CHARS: usize = 3;
 const OVERVIEW_RULER_WIDTH: f32 = 14.;
 const TAB_STRIP_HEIGHT: f32 = 32.;
 const BREADCRUMBS_HEIGHT: f32 = 22.;
+/// scrollableElement.ts `HIDE_TIMEOUT`; scrollbars.css fades in over 100ms and out over 800ms.
+const SCROLLBAR_HIDE_TIMEOUT: Duration = Duration::from_millis(500);
+const SCROLLBAR_FADE_IN: Duration = Duration::from_millis(100);
+const SCROLLBAR_FADE_OUT: Duration = Duration::from_millis(800);
+const SCROLL_SHADOW_HEIGHT: f32 = 6.;
 
 impl Workbench {
     pub(super) fn text_editor_part(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
@@ -180,15 +189,21 @@ impl Workbench {
             .when_some(title_border, |crumbs, color| crumbs.child(div().absolute().bottom_0().left_0().right_0().h(px(1.)).bg(color)))
     }
 
-    fn text_area(&self, editor: &OpenEditor, window: &mut Window, cx: &mut Context<Self>) -> Div {
+    fn text_area(&self, editor: &OpenEditor, window: &mut Window, cx: &mut Context<Self>) -> Stateful<Div> {
         let metrics = EditorMetrics::measure(window, editor.document.lines.len());
         let area_left = self.text_area_left.clone();
         let focus = self.editor_focus.clone();
         let workbench = cx.entity();
-        let list = uniform_list("editor-lines", editor.document.lines.len(), cx.processor(move |workbench, range: Range<usize>, window, cx| workbench.editor_lines(range, metrics, window, cx)))
-            .track_scroll(&self.editor_scroll)
-            .size_full();
+        let laid_out = cx.entity();
+        let viewport = self.editors.viewport;
+        let lines = editor.visible_lines(viewport);
+        let lines_top = lines.start as f32 * LINE_HEIGHT - editor.scroll.top;
+        let rows = self.editor_lines(editor, lines, metrics, window, cx);
+        if self.scrollbars.in_transition(Instant::now()) {
+            window.request_animation_frame();
+        }
         div()
+            .id("text-area")
             .flex_1()
             .relative()
             .overflow_hidden()
@@ -197,23 +212,223 @@ impl Workbench {
             .line_height(px(LINE_HEIGHT))
             .track_focus(&self.editor_focus)
             .on_key_down(cx.listener(Self::editor_key_down))
+            .on_scroll_wheel(cx.listener(Self::editor_wheel))
+            .on_hover(cx.listener(|workbench, hovered: &bool, _, cx| {
+                workbench.scrollbars.mouse_over = *hovered;
+                match hovered {
+                    true => workbench.reveal_scrollbars(cx),
+                    false => workbench.hide_scrollbars(cx),
+                }
+            }))
             .on_mouse_up(MouseButton::Left, cx.listener(|workbench, _, _, _| workbench.selecting_text = false))
             .on_mouse_up_out(MouseButton::Left, cx.listener(|workbench, _, _, _| workbench.selecting_text = false))
             .child(
                 canvas(
-                    move |bounds, _, _| area_left.set(f32::from(bounds.left())),
+                    move |bounds, _, cx| {
+                        area_left.set(f32::from(bounds.left()));
+                        let viewport = Viewport { width: f32::from(bounds.size.width) - metrics.content_left(), height: f32::from(bounds.size.height), char_width: metrics.char_width };
+                        laid_out.update(cx, |workbench, cx| workbench.editor_laid_out(viewport, cx));
+                    },
                     move |bounds, _, window, cx| window.handle_input(&focus, ElementInputHandler::new(bounds, workbench), cx),
                 )
                 .absolute()
                 .inset_0(),
             )
-            .child(list)
+            .child(div().absolute().left_0().right_0().top(px(lines_top)).children(rows))
             .child(self.overview_ruler(editor).absolute().top_0().right_0().h_full())
+            .child(self.scrollbars_canvas(editor, metrics, cx).absolute().inset_0())
+            .when(editor.scroll.top > 0., |area| area.child(self.scroll_shadow().absolute().top_0().left_0().right(px(VERTICAL_SCROLLBAR_WIDTH)).h(px(SCROLL_SHADOW_HEIGHT))))
     }
 
-    fn editor_lines(&mut self, range: Range<usize>, metrics: EditorMetrics, window: &mut Window, cx: &mut Context<Self>) -> Vec<Div> {
+    /// The text area got its size: the group's viewport follows it, which can clamp the scroll position and
+    /// change the visible lines; the lines drawn widen the scrollable content (`ViewLines._ensureMaxLineWidth`).
+    fn editor_laid_out(&mut self, viewport: Viewport, cx: &mut Context<Self>) {
+        let resized = self.editors.viewport != viewport;
+        self.editors.viewport = viewport;
+        let editor = self.editors.active_mut().expect("laid out only with an editor open");
+        let scroll_width = editor.scroll_width(viewport);
+        for line in editor.visible_lines(viewport) {
+            let text = &editor.document.lines[line];
+            editor.saw_line_width(visible_column(text, text.chars().count(), editor.document.indentation.tab_size) as f32 * viewport.char_width);
+        }
+        let moved = editor.set_scroll(editor.scroll.top, editor.scroll.left, viewport);
+        let widened = editor.scroll_width(viewport) != scroll_width;
+        if resized || moved {
+            self.host.send_visible_ranges(&self.editors);
+        }
+        if resized || moved || widened {
+            cx.notify();
+        }
+    }
+
+    /// The wheel scrolls the editor in `StandardWheelEvent` units: 40 browser pixels or one line per notch.
+    fn editor_wheel(&mut self, event: &ScrollWheelEvent, _: &mut Window, cx: &mut Context<Self>) {
+        let (x, y) = match event.delta {
+            ScrollDelta::Pixels(delta) => (f32::from(delta.x) / 40., f32::from(delta.y) / 40.),
+            ScrollDelta::Lines(delta) => (delta.x, delta.y),
+        };
+        let viewport = self.editors.viewport;
+        let editor = self.editors.active_mut().expect("the text area scrolls only with an editor open");
+        if editor.scroll_by_wheel(x, y, event.modifiers.alt, viewport) {
+            cx.stop_propagation();
+            self.editor_scrolled(cx);
+        }
+    }
+
+    /// scrollableElement.ts `_onDidScroll`: the scrollbars show, and the host hears of new visible lines.
+    pub(super) fn editor_scrolled(&mut self, cx: &mut Context<Self>) {
+        self.host.send_visible_ranges(&self.editors);
+        self.reveal_scrollbars(cx);
+        cx.notify();
+    }
+
+    /// `_reveal`: the scrollbars fade in, and fade out 500ms later unless the pointer is over the editor.
+    fn reveal_scrollbars(&mut self, cx: &mut Context<Self>) {
+        self.scrollbars.set_shown(true, Instant::now());
+        self.scrollbars.hide_timer = None;
+        if !self.scrollbars.mouse_over && self.scrollbars.drag.is_none() {
+            self.scrollbars.hide_timer = Some(cx.spawn(async move |workbench, cx| {
+                cx.background_executor().timer(SCROLLBAR_HIDE_TIMEOUT).await;
+                workbench.update(cx, |workbench, cx| workbench.hide_scrollbars(cx)).ok();
+            }));
+        }
+        cx.notify();
+    }
+
+    /// `_hide`: kept while the pointer is over the editor or drags a slider.
+    fn hide_scrollbars(&mut self, cx: &mut Context<Self>) {
+        if !self.scrollbars.mouse_over && self.scrollbars.drag.is_none() {
+            self.scrollbars.set_shown(false, Instant::now());
+            cx.notify();
+        }
+    }
+
+    /// The sliders over the overview ruler and along the bottom (scrollbars.css, abstractScrollbar.ts): a press
+    /// on a track centers the slider on the pointer, then the slider follows the pointer until release.
+    fn scrollbars_canvas(&self, editor: &OpenEditor, metrics: EditorMetrics, cx: &mut Context<Self>) -> gpui::Canvas<Vec<(Hitbox, Bounds<Pixels>, Axis)>> {
+        let viewport = self.editors.viewport;
+        let bars = [(Axis::Vertical, editor.vertical_scrollbar(viewport)), (Axis::Horizontal, editor.horizontal_scrollbar(viewport))];
+        let opacity = self.scrollbars.opacity(Instant::now());
+        let shown = self.scrollbars.shown;
+        let drag = self.scrollbars.drag;
+        let faded = |key: &str| {
+            let color = self.color(key);
+            Rgba { a: color.a * opacity, ..color }
+        };
+        let colors = [faded("scrollbarSlider.background"), faded("scrollbarSlider.hoverBackground"), faded("scrollbarSlider.activeBackground")];
+        let workbench = cx.entity();
+        canvas(
+            move |bounds, window, _| {
+                let mut tracks = Vec::new();
+                for (axis, bar) in bars {
+                    let track = match axis {
+                        Axis::Vertical => Bounds::new(point(bounds.right() - px(VERTICAL_SCROLLBAR_WIDTH), bounds.top()), size(px(VERTICAL_SCROLLBAR_WIDTH), px(bar.track))),
+                        Axis::Horizontal => Bounds::new(point(bounds.left() + px(metrics.content_left()), bounds.bottom() - px(HORIZONTAL_SCROLLBAR_HEIGHT)), size(px(bar.track), px(HORIZONTAL_SCROLLBAR_HEIGHT))),
+                    };
+                    // An invisible scrollbar takes no pointer events (.invisible { pointer-events: none }).
+                    if bar.needed && shown {
+                        tracks.push((window.insert_hitbox(track, HitboxBehavior::BlockMouse), track, axis));
+                    }
+                }
+                tracks
+            },
+            move |_, tracks, window, _| {
+                let mut sliders = Vec::new();
+                for (axis, bar) in bars {
+                    let Some((_, track, _)) = tracks.iter().find(|(_, _, track_axis)| *track_axis == axis) else { continue };
+                    let slider = slider_bounds(*track, axis, bar);
+                    let color = match drag {
+                        Some(drag) if drag.axis == axis => colors[2],
+                        _ if slider.contains(&window.mouse_position()) => colors[1],
+                        _ => colors[0],
+                    };
+                    window.paint_quad(fill(slider, color));
+                    sliders.push(slider);
+                }
+                let hovered_slider = move |window: &Window| sliders.iter().any(|slider| slider.contains(&window.mouse_position()));
+                let painted_hover = hovered_slider(window);
+                let workbench_moved = workbench.clone();
+                window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
+                    if phase != DispatchPhase::Bubble {
+                        return;
+                    }
+                    if let Some(drag) = drag {
+                        let along = if drag.axis == Axis::Vertical { event.position.y } else { event.position.x };
+                        workbench_moved.update(cx, |workbench, cx| workbench.drag_slider(drag, f32::from(along), cx));
+                    } else if hovered_slider(window) != painted_hover {
+                        window.refresh();
+                    }
+                });
+                let workbench_released = workbench.clone();
+                window.on_mouse_event(move |event: &MouseUpEvent, phase, _, cx| {
+                    if phase == DispatchPhase::Bubble && event.button == MouseButton::Left && drag.is_some() {
+                        workbench_released.update(cx, |workbench, cx| {
+                            workbench.scrollbars.drag = None;
+                            workbench.hide_scrollbars(cx);
+                        });
+                    }
+                });
+                let workbench = workbench.clone();
+                window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
+                    if phase != DispatchPhase::Bubble || event.button != MouseButton::Left {
+                        return;
+                    }
+                    let Some((_, track, axis)) = tracks.iter().find(|(hitbox, _, _)| hitbox.is_hovered(window)) else { return };
+                    let (track, axis) = (*track, *axis);
+                    let along = |position: Point<Pixels>| f32::from(if axis == Axis::Vertical { position.y - track.top() } else { position.x - track.left() });
+                    let offset = along(event.position);
+                    cx.stop_propagation();
+                    workbench.update(cx, |workbench, cx| workbench.press_scrollbar(axis, offset, f32::from(if axis == Axis::Vertical { event.position.y } else { event.position.x }), cx));
+                });
+            },
+        )
+    }
+
+    /// A press on a track: outside the slider it jumps to center the slider there, then a drag starts.
+    fn press_scrollbar(&mut self, axis: Axis, offset: f32, pointer: f32, cx: &mut Context<Self>) {
+        let viewport = self.editors.viewport;
+        let editor = self.editors.active_mut().expect("scrollbars show only with an editor open");
+        let bar = scrollbar(editor, axis, viewport);
+        let on_slider = (bar.slider_position..bar.slider_position + bar.slider_size).contains(&offset);
+        if !on_slider {
+            set_axis_scroll(editor, axis, bar.position_at(offset), viewport);
+        }
+        let state = scrollbar(editor, axis, viewport);
+        self.scrollbars.drag = Some(SliderDrag { axis, pointer, state });
+        self.editor_scrolled(cx);
+    }
+
+    fn drag_slider(&mut self, drag: SliderDrag, pointer: f32, cx: &mut Context<Self>) {
+        let viewport = self.editors.viewport;
+        let editor = self.editors.active_mut().expect("scrollbars show only with an editor open");
+        if set_axis_scroll(editor, drag.axis, drag.state.position_dragged(pointer - drag.pointer), viewport) {
+            self.editor_scrolled(cx);
+        }
+    }
+
+    /// scrollDecoration.css: `box-shadow: var(--vscode-scrollbar-shadow) 0 6px 6px -6px inset` over a 6px strip,
+    /// which leaves the blurred top edge only: alpha falls off as a Gaussian with sigma 3px, half strength at the edge.
+    fn scroll_shadow(&self) -> gpui::Canvas<()> {
+        let shadow = self.theme.color("scrollbar.shadow");
+        canvas(
+            |_, _, _| {},
+            move |bounds, _, window, _| {
+                let Some(shadow) = shadow else { return };
+                let scale = window.scale_factor();
+                let rows = (SCROLL_SHADOW_HEIGHT * scale) as usize;
+                for row in 0..rows {
+                    let y = (row as f32 + 0.5) / scale;
+                    let alpha = shadow.a * 0.5 * erfc(y / (3. * std::f32::consts::SQRT_2));
+                    let origin = bounds.origin + point(px(0.), px(row as f32 / scale));
+                    window.paint_quad(fill(Bounds::new(origin, size(bounds.size.width, px(1. / scale))), Rgba { a: alpha, ..shadow }));
+                }
+            },
+        )
+    }
+
+    fn editor_lines(&self, editor: &OpenEditor, range: Range<usize>, metrics: EditorMetrics, window: &mut Window, cx: &mut Context<Self>) -> Vec<Div> {
         let focused = self.editor_focus.is_focused(window);
-        let editor = self.editors.active().expect("lines are drawn only with an editor open");
+        let scroll_left = editor.scroll.left;
         let selection = editor.selection;
         let tab_size = editor.document.indentation.tab_size;
         let Position { line: cursor_line, column: cursor_column } = editor.selection.head;
@@ -243,11 +458,13 @@ impl Workbench {
                     .text_right()
                     .text_color(if is_cursor_line { colors.active_number } else { colors.number })
                     .child((index + 1).to_string());
-                let mut content = div().relative().flex_1().h_full().text_color(colors.text);
+                let mut current_line = div().absolute().inset_0();
                 // currentLineHighlight.ts draws the current line only while the selection is empty.
                 if is_cursor_line && selection.is_empty() {
-                    content = content.child(div().absolute().inset_0().border(px(line_border_width)).border_color(colors.line_border));
+                    current_line = current_line.border(px(line_border_width)).border_color(colors.line_border);
                 }
+                // The text scrolls left under the fixed margin and current line border.
+                let mut content = div().absolute().top_0().bottom_0().right_0().left(px(-scroll_left));
                 if let Some((start, end, line_break)) = selected_columns(selection, index, text) {
                     // A selected line break is one typicalHalfwidthCharacterWidth wide (viewLines.ts linesVisibleRangesForRange).
                     // shortcut: square corners, where roundedSelection rounds the outer ones by 3px.
@@ -293,8 +510,15 @@ impl Workbench {
                     let x = visible_column(text, cursor_column, tab_size) as f32 * char_width;
                     content = content.child(div().absolute().top_0().left(px(x)).w(px(2.)).h_full().bg(colors.cursor));
                 }
-                let visible_at = move |workbench: &Workbench, x: gpui::Pixels| (f32::from(x) - workbench.text_area_left.get() - metrics.content_left()) / char_width;
-                let content = content
+                let visible_at = move |workbench: &Workbench, x: gpui::Pixels| (f32::from(x) - workbench.text_area_left.get() - metrics.content_left() + scroll_left) / char_width;
+                let content = div()
+                    .relative()
+                    .flex_1()
+                    .h_full()
+                    .overflow_hidden()
+                    .text_color(colors.text)
+                    .child(current_line)
+                    .child(content)
                     .on_mouse_down(MouseButton::Left, cx.listener(move |workbench, event: &MouseDownEvent, window, cx| {
                         window.focus(&workbench.editor_focus, cx);
                         workbench.selecting_text = true;
@@ -496,3 +720,74 @@ impl RulerLanes {
 }
 
 
+
+/// scrollbarVisibilityController.ts for both scrollbars, with the CSS opacity transition between its states.
+#[derive(Default)]
+pub(super) struct Scrollbars {
+    pub mouse_over: bool,
+    shown: bool,
+    /// When `shown` last flipped, and the opacity the transition started from.
+    changed: Option<(Instant, f32)>,
+    hide_timer: Option<Task<()>>,
+    drag: Option<SliderDrag>,
+}
+
+impl Scrollbars {
+    fn set_shown(&mut self, shown: bool, now: Instant) {
+        if self.shown != shown {
+            let from = self.opacity(now);
+            self.shown = shown;
+            self.changed = Some((now, from));
+        }
+    }
+
+    /// Linear from where the last change started: 100ms to visible, 800ms to invisible.
+    fn opacity(&self, now: Instant) -> f32 {
+        let target = if self.shown { 1. } else { 0. };
+        let Some((at, from)) = self.changed else { return target };
+        let duration = if self.shown { SCROLLBAR_FADE_IN } else { SCROLLBAR_FADE_OUT };
+        let progress = (now.duration_since(at).as_secs_f32() / duration.as_secs_f32()).min(1.);
+        from + (target - from) * progress
+    }
+
+    fn in_transition(&self, now: Instant) -> bool {
+        self.opacity(now) != if self.shown { 1. } else { 0. }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct SliderDrag {
+    axis: Axis,
+    /// The pointer's window coordinate along the axis at the press, and the scrollbar then.
+    pointer: f32,
+    state: Scrollbar,
+}
+
+fn scrollbar(editor: &OpenEditor, axis: Axis, viewport: Viewport) -> Scrollbar {
+    match axis {
+        Axis::Vertical => editor.vertical_scrollbar(viewport),
+        Axis::Horizontal => editor.horizontal_scrollbar(viewport),
+    }
+}
+
+fn set_axis_scroll(editor: &mut OpenEditor, axis: Axis, position: f32, viewport: Viewport) -> bool {
+    match axis {
+        Axis::Vertical => editor.set_scroll(position, editor.scroll.left, viewport),
+        Axis::Horizontal => editor.set_scroll(editor.scroll.top, position, viewport),
+    }
+}
+
+/// The slider spans the scrollbar's thickness (`verticalSliderSize` and `horizontalSliderSize` default to it).
+fn slider_bounds(track: Bounds<Pixels>, axis: Axis, bar: Scrollbar) -> Bounds<Pixels> {
+    match axis {
+        Axis::Vertical => Bounds::new(track.origin + point(px(0.), px(bar.slider_position)), size(track.size.width, px(bar.slider_size))),
+        Axis::Horizontal => Bounds::new(track.origin + point(px(bar.slider_position), px(0.)), size(px(bar.slider_size), track.size.height)),
+    }
+}
+
+/// The complementary error function (Abramowitz and Stegun 7.1.26, error below 1.5e-7).
+fn erfc(x: f32) -> f32 {
+    let t = 1. / (1. + 0.327_591_1 * x);
+    let poly = t * (0.254_829_6 + t * (-0.284_496_74 + t * (1.421_413_7 + t * (-1.453_152_1 + t * 1.061_405_4))));
+    poly * (-x * x).exp()
+}

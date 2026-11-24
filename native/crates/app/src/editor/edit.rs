@@ -531,13 +531,14 @@ fn normalize_line_breaks(text: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use crate::editor::{EditorGroup, Indentation, TextDocument};
     use std::path::PathBuf;
 
-    fn editor(text: &str, eol: &'static str) -> OpenEditor {
+    pub(in crate::editor) fn editor(text: &str, eol: &'static str) -> OpenEditor {
         let document = TextDocument {
+            scheme: "file".into(),
             path: PathBuf::from("/w/a.ts"),
             lines: text.split('\n').map(String::from).collect(),
             eol,

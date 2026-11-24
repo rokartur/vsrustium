@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use gpui::{ClickEvent, Context, Div, FocusHandle, FontFeatures, FontWeight, Rgba, UniformListScrollHandle, Window, div, prelude::*, px, rgb, svg, transparent_black};
+use gpui::{ClickEvent, Context, Div, FocusHandle, FontFeatures, FontWeight, Rgba, Window, div, prelude::*, px, rgb, svg, transparent_black};
 
 use crate::editor::{EditorGroup, TextDocument};
 use crate::explorer::FileTree;
@@ -28,7 +28,7 @@ pub struct Workbench {
     pub languages: Languages,
     pub editors: EditorGroup,
     host: HostSync,
-    editor_scroll: UniformListScrollHandle,
+    scrollbars: editor_view::Scrollbars,
     /// Window x of the text area, recorded at paint, to turn a click into a column.
     text_area_left: Rc<Cell<f32>>,
     pub editor_focus: FocusHandle,
@@ -88,7 +88,7 @@ impl Workbench {
             languages,
             editors: EditorGroup::default(),
             host,
-            editor_scroll: UniformListScrollHandle::new(),
+            scrollbars: Default::default(),
             text_area_left: Rc::default(),
             editor_focus: cx.focus_handle(),
             marked_text: None,
@@ -120,12 +120,11 @@ impl Workbench {
         self.editors_changed(cx);
     }
 
-    /// Keeps the Explorer selection, the scroll position and the extension host in step with the group.
+    /// Keeps the Explorer selection and the extension host in step with the group.
     fn editors_changed(&mut self, cx: &mut Context<Self>) {
         if let (Some(tree), Some(editor)) = (self.folder.as_mut(), self.editors.active()) {
             tree.reveal(&editor.document.path);
         }
-        self.editor_scroll = UniformListScrollHandle::new();
         self.host.send_changes(&self.editors);
         cx.notify();
     }

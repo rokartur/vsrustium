@@ -4,10 +4,9 @@
 //! `onLanguage` activation languageService.ts sends when a model of a new language is created.
 
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::ops::Range;
 use std::sync::mpsc::Sender;
 
-use exthost::scan::file_uri;
 use serde_json::{Value, json};
 
 use crate::editor::{ContentChanged, EditReason, EditorGroup, OpenEditor, Position, Selection};
@@ -22,10 +21,12 @@ pub struct HostMessage {
 
 pub struct HostSync {
     sender: Sender<HostMessage>,
-    /// The documents the host has, in the order they were added.
-    documents: Vec<PathBuf>,
+    /// The documents the host has, in the order they were added: their URI string and `UriComponents`.
+    documents: Vec<(String, Value)>,
     /// The snapshot id of the visible editor the host has.
     editor: Option<String>,
+    /// The lines of the visible editor the host has as its `visibleRanges`.
+    visible_lines: Option<Range<usize>>,
     /// The tabs of group 0 the host has; session.rs starts it with an empty group.
     tabs: Vec<Value>,
     activation_events: HashSet<String>,
@@ -42,15 +43,16 @@ const CODE_EDITOR_ID: &str = "vs.editor.ICodeEditor:1";
 
 impl HostSync {
     pub fn new(sender: Sender<HostMessage>) -> Self {
-        HostSync { sender, documents: Vec::new(), editor: None, tabs: Vec::new(), activation_events: HashSet::new() }
+        HostSync { sender, documents: Vec::new(), editor: None, visible_lines: None, tabs: Vec::new(), activation_events: HashSet::new() }
     }
 
     /// Sends what changed in `group` since the last call: activation for new languages, the document
     /// and editor delta, then the tab model.
     pub fn send_changes(&mut self, group: &EditorGroup) {
-        let open: Vec<&OpenEditor> = group.editors.iter().collect();
-        let added: Vec<&OpenEditor> = open.iter().copied().filter(|editor| !self.documents.contains(&editor.document.path)).collect();
-        let removed: Vec<PathBuf> = self.documents.iter().filter(|path| group.find(path).is_none()).cloned().collect();
+        let open: Vec<&OpenEditor> = group.editors.iter().chain(&group.models).collect();
+        let added: Vec<&OpenEditor> = open.iter().copied().filter(|editor| !self.documents.iter().any(|(uri, _)| *uri == editor.document.uri_string())).collect();
+        let removed: Vec<(String, Value)> =
+            self.documents.iter().filter(|(uri, _)| !open.iter().any(|editor| editor.document.uri_string() == *uri)).cloned().collect();
         for editor in &added {
             for event in [format!("onLanguage:{}", editor.document.language_id), "onLanguage".to_string()] {
                 if self.activation_events.insert(event.clone()) {
@@ -62,7 +64,7 @@ impl HostSync {
 
         let mut delta = serde_json::Map::new();
         if !removed.is_empty() {
-            delta.insert("removedDocuments".into(), removed.iter().map(|path| file_uri(path)).collect());
+            delta.insert("removedDocuments".into(), removed.iter().map(|(_, uri)| uri.clone()).collect());
         }
         if !added.is_empty() {
             delta.insert("addedDocuments".into(), added.iter().map(|editor| model_added_data(editor)).collect());
@@ -74,15 +76,17 @@ impl HostSync {
                 delta.insert("removedEditors".into(), json!([previous]));
             }
             if let Some(editor) = active {
-                delta.insert("addedEditors".into(), json!([text_editor_add_data(editor)]));
+                let visible_lines = editor.completely_visible_lines(group.viewport);
+                delta.insert("addedEditors".into(), json!([text_editor_add_data(editor, visible_lines.clone())]));
+                self.visible_lines = Some(visible_lines);
             }
             delta.insert("newActiveEditor".into(), json!(active_id));
         }
         if !delta.is_empty() {
             self.send("ExtHostDocumentsAndEditors", "$acceptDocumentsAndEditorsDelta", vec![Value::Object(delta)]);
         }
-        self.documents.retain(|path| !removed.contains(path));
-        self.documents.extend(added.iter().map(|editor| editor.document.path.clone()));
+        self.documents.retain(|document| !removed.contains(document));
+        self.documents.extend(added.iter().map(|editor| (editor.document.uri_string(), editor.document.uri())));
         self.editor = active_id;
         self.send_tabs(group);
     }
@@ -136,7 +140,7 @@ impl HostSync {
     pub fn send_content_change(&mut self, group: &EditorGroup, change: &ContentChanged) {
         let editor = group.active().expect("only the active editor is edited");
         let document = &editor.document;
-        let uri = file_uri(&document.path);
+        let uri = document.uri();
         let changes: Vec<Value> = change
             .changes
             .iter()
@@ -171,12 +175,24 @@ impl HostSync {
     /// The active editor was written to disk while `was_dirty`.
     pub fn send_saved(&mut self, group: &EditorGroup, was_dirty: bool) {
         let editor = group.active().expect("only the active editor is saved");
-        let uri = file_uri(&editor.document.path);
+        let uri = editor.document.uri();
         if was_dirty {
             self.send("ExtHostDocuments", "$acceptDirtyStateChanged", vec![uri.clone(), json!(false)]);
             self.send_tabs(group);
         }
         self.send("ExtHostDocuments", "$acceptModelSaved", vec![uri]);
+    }
+
+    /// mainThreadEditor.ts `_updatePropertiesNow` on a scroll or layout: the visible lines, when they changed.
+    pub fn send_visible_ranges(&mut self, group: &EditorGroup) {
+        let Some(editor) = group.active() else { return };
+        let lines = editor.completely_visible_lines(group.viewport);
+        if self.visible_lines.as_ref() == Some(&lines) {
+            return;
+        }
+        let ranges = visible_ranges(editor, lines.clone());
+        self.visible_lines = Some(lines);
+        self.send("ExtHostEditors", "$acceptEditorPropertiesChanged", vec![json!(snapshot_id(editor)), json!({ "options": null, "selections": null, "visibleRanges": ranges })]);
     }
 
     /// Tells the host where the cursor of the visible editor moved.
@@ -210,7 +226,7 @@ fn snapshot_id(editor: &OpenEditor) -> String {
 fn model_added_data(editor: &OpenEditor) -> Value {
     let document = &editor.document;
     json!({
-        "uri": file_uri(&document.path),
+        "uri": document.uri(),
         "versionId": editor.version_id,
         "lines": document.lines,
         "EOL": document.eol,
@@ -220,13 +236,12 @@ fn model_added_data(editor: &OpenEditor) -> Value {
     })
 }
 
-fn text_editor_add_data(editor: &OpenEditor) -> Value {
+fn text_editor_add_data(editor: &OpenEditor, visible_lines: Range<usize>) -> Value {
     let document = &editor.document;
     let indentation = document.indentation;
-    let last_line = document.lines.len();
     json!({
         "id": snapshot_id(editor),
-        "documentUri": file_uri(&document.path),
+        "documentUri": document.uri(),
         // TextEditorCursorStyle.Line, RenderLineNumbersType.On; indentSize follows tabSize by default.
         "options": {
             "tabSize": indentation.tab_size,
@@ -237,10 +252,15 @@ fn text_editor_add_data(editor: &OpenEditor) -> Value {
             "lineNumbers": 1,
         },
         "selections": [selection(editor)],
-        // shortcut: reports the whole document as visible; send the scrolled range once the host reads visibleRanges for something.
-        "visibleRanges": [{ "startLineNumber": 1, "startColumn": 1, "endLineNumber": last_line, "endColumn": utf16_len(&document.lines[last_line - 1]) + 1 }],
+        "visibleRanges": visible_ranges(editor, visible_lines),
         "editorPosition": 0,
     })
+}
+
+/// `getVisibleRanges` without folding: one range over whole lines.
+fn visible_ranges(editor: &OpenEditor, lines: Range<usize>) -> Value {
+    let last = lines.end - 1;
+    json!([{ "startLineNumber": lines.start + 1, "startColumn": 1, "endLineNumber": last + 1, "endColumn": utf16_len(&editor.document.lines[last]) + 1 }])
 }
 
 /// `ISelection`, 1-based with UTF-16 columns as the text model counts them.
@@ -265,9 +285,11 @@ fn utf16_len(text: &str) -> usize {
 }
 
 fn tab_dto(editor: &OpenEditor, active: bool) -> Value {
-    let uri = file_uri(&editor.document.path);
+    let uri = editor.document.uri();
+    // Every scheme the file service reads opens as a file editor input; untitled text has its own.
+    let type_id = if editor.document.scheme == "untitled" { "workbench.editors.untitledEditorInput" } else { "workbench.editors.files.fileEditorInput" };
     json!({
-        "id": format!("0~default-workbench.editors.files.fileEditorInput-{} ", uri_string(&editor.document.path)),
+        "id": format!("0~default-{type_id}-{} ", editor.document.uri_string()),
         "label": editor.document.name(),
         // TabInputKind.TextInput
         "input": { "kind": 1, "uri": uri },
@@ -279,27 +301,18 @@ fn tab_dto(editor: &OpenEditor, active: bool) -> Value {
     })
 }
 
-/// `URI.file(path).toString()`: the path percent-encoded except for unreserved characters and `/`.
-fn uri_string(path: &Path) -> String {
-    let mut uri = String::from("file://");
-    for byte in path.to_string_lossy().bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => uri.push(byte as char),
-            _ => uri.push_str(&format!("%{byte:02X}")),
-        }
-    }
-    uri
-}
 
 #[cfg(test)]
 mod tests {
+    use std::path::{Path, PathBuf};
     use std::sync::mpsc::{Receiver, channel};
 
     use super::*;
-    use crate::editor::{Indentation, TextDocument};
+    use crate::editor::{Indentation, TextDocument, Viewport};
 
     fn document(path: &str, language_id: &str) -> TextDocument {
         TextDocument {
+            scheme: "file".into(),
             path: PathBuf::from(path),
             lines: vec!["héllo".into(), String::new()],
             eol: "\n",
@@ -320,6 +333,7 @@ mod tests {
         let (sender, receiver) = channel();
         let mut sync = HostSync::new(sender);
         let mut group = EditorGroup::default();
+        group.viewport = Viewport { width: 400., height: 360., char_width: 7.2 };
 
         group.open(document("/w/a b.txt", "plaintext"), false);
         sync.send_changes(&group);

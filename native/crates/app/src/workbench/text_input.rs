@@ -5,7 +5,7 @@
 use std::ops::Range;
 
 use gpui::{
-    Bounds, ClipboardEntry, ClipboardItem, Context, EntityInputHandler, KeyDownEvent, Pixels, ScrollStrategy, UTF16Selection, Window,
+    Bounds, ClipboardEntry, ClipboardItem, Context, EntityInputHandler, KeyDownEvent, Pixels, UTF16Selection, Window,
 };
 
 use super::Workbench;
@@ -87,16 +87,21 @@ impl Workbench {
         self.editor_edited(change, moved, "keyboard", cx);
     }
 
-    /// Tells the host about a content change or a cursor move, and scrolls the cursor's line into view.
+    /// Tells the host about a content change or a cursor move, and reveals the cursor (cursor.ts `revealAll`).
     pub(super) fn editor_edited(&mut self, change: Option<ContentChanged>, moved: bool, source: &str, cx: &mut Context<Self>) {
-        let editor = self.editors.active().expect("only the active editor is edited");
+        let viewport = self.editors.viewport;
+        let editor = self.editors.active_mut().expect("only the active editor is edited");
+        let scroll = editor.scroll;
+        editor.reveal_selection(source, viewport);
+        let scrolled = editor.scroll != scroll;
         match &change {
             Some(change) => self.host.send_content_change(&self.editors, change),
-            None if moved => self.host.send_selection(editor, source),
+            None if moved => self.host.send_selection(self.editors.active().expect("still open"), source),
             None => {}
         }
-        // shortcut: only the cursor's line scrolls into view vertically; the text area has no horizontal scrolling.
-        self.editor_scroll.scroll_to_item(editor.selection.head.line, ScrollStrategy::Nearest);
+        if scrolled {
+            self.editor_scrolled(cx);
+        }
         cx.notify();
     }
 
