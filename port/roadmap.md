@@ -4,6 +4,8 @@ Milestones from today to a shippable port, each with its scope, its done-when ch
 
 Rule for every milestone (Artur): a feature ships end to end and 1:1 with VS Code 1.147.0: UI, keyboard and mouse, the main-thread side the extension host calls, persistence, same look and behavior, upstream logic and tests ported, checked against the reference. Fewer complete features beat more partial ones; a `shortcut:` is only for a missing platform capability or a product decision.
 
+Mouse cursors are part of the look (Artur): every element gets the cursor the reference CSS gives it (`rg 'cursor:' src/vs --glob '*.css'`): `pointer` on clickable items (activity bar, tabs, list rows, status bar items with a command, buttons, links), `text` over editor text and input fields, the resize cursors on sashes, `default` elsewhere. GPUI: `.cursor_pointer()`, `.cursor_text()`, `.cursor_ew_resize()` and the like on the element, never a window-wide cursor.
+
 Ledger today: 62 verified, 33 ported, 74 stub, 372 todo, 51 removed (of 592 rows).
 
 ## Done
