@@ -2,6 +2,8 @@
 
 Milestones from today to a shippable port, each with its scope, its done-when check and the ledger rows it moves. `port/ledger.md` stays the source of truth for status and evidence; this file only says in which milestone a row moves. Every `todo`, `stub` and `ported` row of the ledger is named exactly once below (checked by the command at the end).
 
+Rule for every milestone (Artur): a feature ships end to end and 1:1 with VS Code 1.147.0: UI, keyboard and mouse, the main-thread side the extension host calls, persistence, same look and behavior, upstream logic and tests ported, checked against the reference. Fewer complete features beat more partial ones; a `shortcut:` is only for a missing platform capability or a product decision.
+
 Ledger today: 7 verified, 12 ported, 79 stub, 443 todo, 51 removed (of 592 rows).
 
 ## Done

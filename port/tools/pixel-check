@@ -4,10 +4,11 @@
 # and "file" (the folder with notes.txt open). WINDOWS="file" checks only the listed windows.
 # Prints "window theme different anti_aliased total"; images land in $OUT/<window>.
 set -uo pipefail
-OUT=${OUT:-/tmp/pixel-check}
+OUT=${OUT:-/tmp/pixel-check-$(basename "$PWD")}
 mkdir -p "$OUT"
 rm -rf "$OUT/workspace" && cp -R port/fixtures/workspace "$OUT/workspace"
 (cd native && cargo build --release -q -p app --features screenshot && cargo build --release -q -p pixeldiff) || exit 1
+source port/tools/gui-lock.sh
 for window in ${WINDOWS:-empty folder file}; do
   folder=$([[ $window != empty ]] && echo "$OUT/workspace")
   file=$([[ $window == file ]] && echo "$OUT/workspace/notes.txt")

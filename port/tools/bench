@@ -7,6 +7,7 @@
 #   Each command gets --user-data-dir <dir> appended. RUNS and SETTLE_SECONDS override the defaults.
 set -euo pipefail
 
+source "$(dirname "$0")/gui-lock.sh"
 RUNS=${RUNS:-3}
 SETTLE_SECONDS=${SETTLE_SECONDS:-20}
 IFS=';' read -r -a apps <<< "${APPS:?set APPS=\"name=command;...\"}"
