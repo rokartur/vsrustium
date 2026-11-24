@@ -1,7 +1,7 @@
 //! The MainThread* requests the workbench answers itself: mainThreadDocuments.ts, mainThreadEditors.ts with
 //! mainThreadEditor.ts, and mainThreadClipboard.ts. They arrive from the session thread through `main_thread.rs`.
 
-use std::path::Path;
+use std::path::PathBuf;
 use std::time::Instant;
 
 use exthost::main_thread::serialized_error;
@@ -9,6 +9,7 @@ use gpui::{ClipboardItem, Context, Window};
 use serde_json::{Value, json};
 
 use super::Workbench;
+use super::bulk_text_edits::document_end;
 use crate::editor::{
     CursorEdit, EditReason, OpenEditor, Position, Replace, Selection, TextDocument, VerticalReveal, char_column, end_of, expand_snippet, guess_indentation, indent_guides,
     selections_after, text_between, uri_string, word_at,
@@ -21,6 +22,8 @@ pub const HOST_REQUESTS: &[(&str, &str)] = &[
     ("MainThreadClipboard", "$writeText"),
     ("MainThreadDocuments", "$tryOpenDocument"),
     ("MainThreadDocuments", "$trySaveDocument"),
+    ("MainThreadDocuments", "$tryCreateDocument"),
+    ("MainThreadDocumentContentProviders", "$onVirtualDocumentChange"),
     ("MainThreadTextEditors", "$tryShowTextDocument"),
     ("MainThreadTextEditors", "$trySetSelections"),
     ("MainThreadTextEditors", "$tryRevealRange"),
@@ -45,6 +48,10 @@ impl Workbench {
             }
             ("MainThreadDocuments", "$tryOpenDocument") => self.try_open_document(arg(0), arg(2), cx),
             ("MainThreadDocuments", "$trySaveDocument") => self.try_save_document(arg(0), cx),
+            ("MainThreadDocuments", "$tryCreateDocument") => self.try_create_document(arg(0), cx),
+            ("workbench", "isDirty") => uri_parts(arg(0)).map(|(scheme, path)| json!(self.editors.model(scheme, &path).is_some_and(|model| model.is_dirty()))),
+            ("workbench", "hasModel") => uri_parts(arg(0)).map(|(scheme, path)| json!(self.editors.model(scheme, &path).is_some())),
+            ("MainThreadDocumentContentProviders", "$onVirtualDocumentChange") => self.virtual_document_change(arg(0), arg(1), cx),
             ("workbench", "providerSaveText") => self.provider_save_bytes(arg(0)),
             ("workbench", "providerSaved") => self.provider_saved(arg(0), cx),
             ("MainThreadTextEditors", "$tryShowTextDocument") => self.try_show_text_document(arg(0), arg(1), window, cx),
@@ -79,7 +86,7 @@ impl Workbench {
     /// `$tryOpenDocument`: the model of a file, or of `provider_bytes` an extension's file system provider read,
     /// opened without an editor and kept while the host references it.
     fn try_open_document(&mut self, uri: &Value, provider_bytes: &Value, cx: &mut Context<Self>) -> HostResult {
-        let (scheme, path) = uri_parts(uri)?;
+        let (scheme, ref path) = uri_parts(uri)?;
         if let Some(model) = self.editors.model_mut(scheme, path) {
             model.host_reference = Some(Instant::now());
             return Ok(uri.clone());
@@ -91,19 +98,72 @@ impl Workbench {
             }
             ("file", _) => TextDocument::read(path, &self.languages, &self.settings.lock().unwrap())
                 .map_err(|error| serialized_error(&format!("cannot open {}. Detail: Unable to read file '{}' ({error})", uri_string("file", path), path.display())))?,
-            // shortcut: untitled documents are not opened; they come with the untitled ledger row.
+            // mainThreadDocuments.ts `_handleUntitledScheme`: an untitled model for the path, never over an existing file.
+            ("untitled", _) if path.exists() => return Err(serialized_error(&format!("cannot open {}. Detail: file already exists", uri_string(scheme, path)))),
+            ("untitled", _) => TextDocument::untitled(path, "", None, &self.languages, &self.settings.lock().unwrap()),
             _ => return Err(serialized_error(&format!("cannot open {scheme}:{}. Detail: Unable to resolve resource {scheme}:{}", path.display(), path.display()))),
         };
         let index = self.editors.open_model(document);
+        let model = &mut self.editors.models[index];
+        model.host_reference = Some(Instant::now());
+        model.associated_file = scheme == "untitled";
+        self.editors_changed(cx);
+        // `_handleUntitledScheme` ends in `_doCreateUntitled`, which marks the host's document dirty.
+        if scheme == "untitled" {
+            self.host.send("ExtHostDocuments", "$acceptDirtyStateChanged", vec![uri.clone(), json!(true)]);
+        }
+        Ok(uri.clone())
+    }
+
+    /// `$tryCreateDocument`: a new untitled model named `Untitled-<n>` with the first free n.
+    // shortcut: `files.defaultLanguage` is not read; an untitled model without a language is plain text.
+    fn try_create_document(&mut self, options: &Value, cx: &mut Context<Self>) -> HostResult {
+        let path = (1..).map(|n| PathBuf::from(format!("Untitled-{n}"))).find(|path| self.editors.model("untitled", path).is_none()).expect("a free name");
+        let content = options["content"].as_str().unwrap_or_default();
+        let document = TextDocument::untitled(&path, content, options["language"].as_str(), &self.languages, &self.settings.lock().unwrap());
+        let uri = document.uri();
+        let index = self.editors.open_model(document);
         self.editors.models[index].host_reference = Some(Instant::now());
         self.editors_changed(cx);
-        Ok(uri.clone())
+        // mainThreadDocuments.ts `_doCreateUntitled` tells the host the new document is dirty, whatever the model says.
+        self.host.send("ExtHostDocuments", "$acceptDirtyStateChanged", vec![uri.clone(), json!(true)]);
+        Ok(uri)
+    }
+
+    /// `$onVirtualDocumentChange`: a content provider's new text replaces the model's, outside the undo stack.
+    // shortcut: one edit over the whole model where upstream applies computeMoreMinimalEdits; port the diff worker when an extension needs the smaller events.
+    fn virtual_document_change(&mut self, uri: &Value, value: &Value, cx: &mut Context<Self>) -> HostResult {
+        let (scheme, ref path) = uri_parts(uri)?;
+        let Some(model) = self.editors.model_mut(scheme, path) else { return Ok(Value::Null) };
+        let end = document_end(&model.document.lines);
+        let text = value.as_str().unwrap_or_default().to_string();
+        let change = model.execute_edits(vec![(Position::new(0, 0), end, text, false)], None, EditReason::ApplyEdits);
+        // A virtual document is no text file model, so textFileService.isDirty never holds for it.
+        model.mark_saved();
+        if let Some(change) = change {
+            self.send_model_edit(scheme, path, &change);
+            cx.notify();
+        }
+        Ok(Value::Null)
     }
 
     /// `$trySaveDocument`: `textFileService.save`, true once the model is saved; a clean model is not written.
     fn try_save_document(&mut self, uri: &Value, cx: &mut Context<Self>) -> HostResult {
-        let (scheme, path) = uri_parts(uri)?;
+        let (scheme, ref path) = uri_parts(uri)?;
         let Some(model) = self.editors.model_mut(scheme, path) else { return Ok(json!(false)) };
+        // textFileService.ts `saveAs`: an untitled model with a path becomes the model of that file.
+        // shortcut: no Save As dialog asks for the path of an untitled model without one; its save answers false.
+        if scheme == "untitled" {
+            if !model.associated_file {
+                return Ok(json!(false));
+            }
+            std::fs::write(path, model.saved_bytes()).map_err(|error| serialized_error(&format!("Unable to write file '{}' ({error})", path.display())))?;
+            model.document.scheme = "file".into();
+            model.associated_file = false;
+            model.mark_saved();
+            self.editors_changed(cx);
+            return Ok(json!(true));
+        }
         if !model.is_dirty() {
             return Ok(json!(true));
         }
@@ -116,7 +176,7 @@ impl Workbench {
 
     /// First half of `$trySaveDocument` through a provider: false without a model, true when clean, else the bytes to write.
     fn provider_save_bytes(&self, uri: &Value) -> HostResult {
-        let (scheme, path) = uri_parts(uri)?;
+        let (scheme, ref path) = uri_parts(uri)?;
         Ok(match self.editors.model(scheme, path) {
             None => json!(false),
             Some(model) if !model.is_dirty() => json!(true),
@@ -126,7 +186,7 @@ impl Workbench {
 
     /// Second half: the provider wrote the bytes, so the model is clean.
     fn provider_saved(&mut self, uri: &Value, cx: &mut Context<Self>) -> HostResult {
-        let (scheme, path) = uri_parts(uri)?;
+        let (scheme, ref path) = uri_parts(uri)?;
         let Some(model) = self.editors.model_mut(scheme, path) else { return Ok(json!(false)) };
         model.mark_saved();
         let model = self.editors.model(scheme, path).expect("just saved");
@@ -137,7 +197,7 @@ impl Workbench {
 
     /// `$tryShowTextDocument`: opens the model in the group, preview unless pinned, and returns the editor's id.
     fn try_show_text_document(&mut self, uri: &Value, options: &Value, window: &mut Window, cx: &mut Context<Self>) -> HostResult {
-        let (scheme, path) = uri_parts(uri)?;
+        let (scheme, ref path) = uri_parts(uri)?;
         let pinned = options["pinned"] == json!(true);
         if let Some(index) = self.editors.editors.iter().position(|editor| editor.document.is(scheme, path)) {
             self.editors.activate(index);
@@ -332,10 +392,16 @@ fn snippet_variable(name: &str, editor: &OpenEditor, start: Position, end: Posit
     }
 }
 
-pub(super) fn uri_parts(uri: &Value) -> Result<(&str, &Path), Value> {
-    match (uri["scheme"].as_str(), uri["path"].as_str()) {
-        (Some(scheme), Some(path)) if !scheme.is_empty() && !path.is_empty() => Ok((scheme, Path::new(path))),
-        _ => Err(serialized_error("Invalid uri. Scheme and authority or path must be set.")),
+/// The scheme and path a model is keyed by; the authority of a non-file URI leads its path as `//authority`,
+/// which `TextDocument::uri` splits off again.
+pub(super) fn uri_parts(uri: &Value) -> Result<(&str, PathBuf), Value> {
+    let part = |key: &str| uri[key].as_str().unwrap_or_default();
+    let (scheme, authority, path) = (part("scheme"), part("authority"), part("path"));
+    match (scheme, authority) {
+        ("", _) => Err(serialized_error("Invalid uri. Scheme and authority or path must be set.")),
+        ("file", _) | (_, "") if path.is_empty() => Err(serialized_error("Invalid uri. Scheme and authority or path must be set.")),
+        ("file", _) | (_, "") => Ok((scheme, PathBuf::from(path))),
+        _ => Ok((scheme, PathBuf::from(format!("//{authority}{path}")))),
     }
 }
 

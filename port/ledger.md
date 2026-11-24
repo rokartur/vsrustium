@@ -23,9 +23,9 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | mainthread/MainThreadDiagnostics | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadDiaglogs | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadDecorations | MainThread* shape (Rust side) | stub | session.rs answers undefined |
-| mainthread/MainThreadDocumentContentProviders | MainThread* shape (Rust side) | stub | session.rs answers undefined |
-| mainthread/MainThreadDocuments | MainThread* shape (Rust side) | ported | host_sync.rs sends model opened, changed, dirty and saved; host_requests.rs answers $tryOpenDocument (file and extension file system provider URIs) and $trySaveDocument, models kept 3 minutes after the host lets go: api-tests MOCHA_GREP="vscode API - editors" 13/0/0; $tryCreateDocument (untitled) still answers undefined |
-| mainthread/MainThreadBulkEdits | MainThread* shape (Rust side) | ported | file edits of workspace.applyEdit (api-tests: rename & ignoreIfExists, delete & ignoreIfNotExists, #111867 1/3 to 3/3, binary files pass); after the milestone 8 merge `onWillCreate/onDidCreate, make changes, edit new file fails` passes too; cell edits and the other text edit tests fail |
+| mainthread/MainThreadDocumentContentProviders | MainThread* shape (Rust side) | ported | main_thread.rs keeps the registrations and opens provider URIs through $provideTextDocumentContent; host_requests.rs applies $onVirtualDocumentChange as one edit (no minimal edits): api-tests MOCHA_GREP="vscode API - workspace" 94/2/13, all 8 content provider tests pass |
+| mainthread/MainThreadDocuments | MainThread* shape (Rust side) | ported | host_sync.rs sends model opened, changed, dirty and saved; host_requests.rs answers $tryOpenDocument (file and extension file system provider URIs) and $trySaveDocument, models kept 3 minutes after the host lets go: api-tests MOCHA_GREP="vscode API - editors" 13/0/0; $tryCreateDocument and untitled URIs with a path, save participants before $trySaveDocument: api-tests MOCHA_GREP="vscode API - workspace" 94/2/13; encodings ($decode, $encode) and saves to extension file system providers not done |
+| mainthread/MainThreadBulkEdits | MainThread* shape (Rust side) | ported | file edits of workspace.applyEdit (api-tests: rename & ignoreIfExists, delete & ignoreIfNotExists, #111867 1/3 to 3/3, binary files pass); text edits and EOL changes through workbench/bulk_text_edits.rs, api-tests MOCHA_GREP="vscode API - workspace" 94/2/13 with every applyEdit test passing; cell edits fail until milestone 13 |
 | mainthread/MainThreadTextEditors | MainThread* shape (Rust side) | ported | host_requests.rs answers $tryShowTextDocument, $trySetSelections, $tryRevealRange, $trySetOptions, $tryApplyEdits, $tryInsertSnippet; visible ranges and options reach the host: api-tests MOCHA_GREP="vscode API - editors" 13/0/0, window text editor tests without view columns pass; every selection and snippet range applies; one editor group (port/notes.md milestone 8) |
 | mainthread/MainThreadTreeViews | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadDownloadService | MainThread* shape (Rust side) | stub | session.rs answers undefined |
@@ -374,14 +374,14 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/terminal | workbench service | todo |  |
 | workbench/services/textMate | workbench service | verified | textmate crate (vscode-textmate 9.3.2, onig); cargo test -p textmate; colorize test 109/109 fixtures; pixel-check main window |
 | workbench/services/textfile | workbench service | stub | Cmd+S writes UTF-8 and clears dirty state (cargo test -p app keys_and_typed_text_edit_the_focused_editor_and_reach_the_host); no save participants, conflict check or encodings |
-| workbench/services/textmodelResolver | workbench service | todo |  |
+| workbench/services/textmodelResolver | workbench service | partial | content provider registrations newest first and provider-backed models (main_thread.rs) |
 | workbench/services/textresourceProperties | workbench service | todo |  |
 | workbench/services/themes | workbench service | ported | all 19 built-in color themes incl. hc-light, tokenColors (theme.rs, syntax.rs); cargo test -p app theme::tests; `setColorTheme` from the theme picker (preview, write, `$onColorThemeChange`), not on a settings.json edit; no semanticTokenColors (needs semantic tokens), no icon themes |
 | workbench/services/timer | workbench service | todo |  |
 | workbench/services/title | workbench service | todo |  |
 | workbench/services/treeSitter | workbench service | todo |  |
 | workbench/services/tunnel | workbench service | removed | no remote or tunnels by decision (port/notes.md); one local extension host |
-| workbench/services/untitled | workbench service | todo |  |
+| workbench/services/untitled | workbench service | partial | Untitled-<n> models and untitled models with an associated file (host_requests.rs, editor/edit.rs is_dirty); no Save As |
 | workbench/services/update | workbench service | todo |  |
 | workbench/services/url | workbench service | todo |  |
 | workbench/services/userActivity | workbench service | todo |  |
@@ -399,7 +399,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/authentication | workbench contribution | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/contrib/bracketPairColorizer2Telemetry | workbench contribution | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | workbench/contrib/browserView | workbench contribution | todo |  |
-| workbench/contrib/bulkEdit | workbench contribution | ported | BulkFileEdits with grouping, options and undo edits (cargo test -p files operations); no text edits, preview or undo stack yet |
+| workbench/contrib/bulkEdit | workbench contribution | ported | BulkFileEdits with grouping, options and undo edits (cargo test -p files operations); text edits in workbench/bulk_text_edits.rs; no preview or undo stack for text edits yet |
 | workbench/contrib/callHierarchy | workbench contribution | todo |  |
 | workbench/contrib/canvases | workbench contribution | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | workbench/contrib/chat | workbench contribution | removed | no sign-in/AI by decision (port/notes.md); not ported |

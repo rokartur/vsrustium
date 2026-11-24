@@ -157,6 +157,10 @@ impl CursorEdit {
 
 impl OpenEditor {
     pub fn is_dirty(&self) -> bool {
+        // untitledTextEditorModel.ts: dirty with an associated file path or any text.
+        if self.document.scheme == "untitled" {
+            return self.associated_file || self.document.lines != [""];
+        }
         self.history.alternative_version_id != self.history.saved_alternative_version_id
     }
 

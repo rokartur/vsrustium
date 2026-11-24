@@ -120,7 +120,7 @@ fn main() -> anyhow::Result<()> {
                 let (request_sender, mut requests) = unbounded::<ForwardedRequest>();
                 let (reply_sender, replies) = channel::<(u32, Result<serde_json::Value, serde_json::Value>)>();
                 let (main_thread_sender, mut main_thread_requests) = unbounded::<HostRequest>();
-                let main_thread = WorkbenchMainThread { requests: main_thread_sender, messages: host_receiver, waiting: Vec::new() };
+                let main_thread = WorkbenchMainThread { requests: main_thread_sender, messages: host_receiver, waiting: Vec::new(), content_providers: Vec::new() };
                 let languages = Languages::new(&extensions);
                 let mut host = HostSync::new(host_sender);
                 host.configuration_scopes = development.is_some();

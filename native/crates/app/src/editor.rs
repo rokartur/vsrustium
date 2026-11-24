@@ -76,8 +76,17 @@ impl TextDocument {
         };
         // shortcut: no encoding guessing or binary detection; non-UTF-8 bytes decode as U+FFFD. Port encoding.ts when a file needs it.
         let text = String::from_utf8_lossy(content);
-        let (lines, eol) = split_lines(&text);
-        let language_id = languages.language_of(path, lines[0].as_str()).to_string();
+        Self::from_text(scheme, path, &text, encoding, None, languages, settings)
+    }
+
+    /// An untitled model (untitledTextEditorModel.ts): `language_id` or the language of its name and first line.
+    pub fn untitled(path: &Path, text: &str, language_id: Option<&str>, languages: &Languages, settings: &Settings) -> Self {
+        Self::from_text("untitled", path, text, "utf8", language_id, languages, settings)
+    }
+
+    fn from_text(scheme: &str, path: &Path, text: &str, encoding: &'static str, language_id: Option<&str>, languages: &Languages, settings: &Settings) -> Self {
+        let (lines, eol) = split_lines(text);
+        let language_id = language_id.unwrap_or_else(|| languages.language_of(path, lines[0].as_str())).to_string();
         let off_side = languages.off_side(&language_id);
         let folding_markers = languages.folding_markers(&language_id);
         let block_comment = languages.block_comment(&language_id).map(|(start, end)| (start.to_string(), end.to_string()));
@@ -92,7 +101,13 @@ impl TextDocument {
 
     /// `UriComponents` as the extension host revives them.
     pub fn uri(&self) -> serde_json::Value {
-        serde_json::json!({ "$mid": 1, "scheme": self.scheme, "authority": "", "path": self.path.to_string_lossy(), "query": "", "fragment": "" })
+        let path = self.path.to_string_lossy();
+        // host_requests.rs `uri_parts` keys a non-file URI's authority as the `//authority` start of its path.
+        let (authority, path) = match path.strip_prefix("//").filter(|_| self.scheme != "file") {
+            Some(rest) => rest.split_at(rest.find('/').unwrap_or(rest.len())),
+            None => ("", &*path),
+        };
+        serde_json::json!({ "$mid": 1, "scheme": self.scheme, "authority": authority, "path": path, "query": "", "fragment": "" })
     }
 
     pub fn is(&self, scheme: &str, path: &Path) -> bool {
@@ -384,6 +399,8 @@ pub struct OpenEditor {
     /// When the extension host last opened this model (`$tryOpenDocument`): it stays open without an editor
     /// for `BoundModelReferenceCollection`'s 3 minutes after that.
     pub host_reference: Option<Instant>,
+    /// An untitled model the host opened for a path (`hasAssociatedFilePath`): dirty from the start, saved to that file.
+    pub associated_file: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -399,7 +416,7 @@ impl OpenEditor {
     fn new(document: TextDocument, preview: bool, model_id: u32) -> Self {
         let indentation = document.indentation;
         let guides = indent_guides(&document.lines, indentation.tab_size, indentation.tab_size, document.off_side);
-        let mut editor = OpenEditor { document, preview, model_id, selections: vec![Selection::default()], last_added: 0, leftovers: Vec::new(), column_select: None, version_id: 1, history: History::default(), guides, highlights: Vec::new(), folding: FoldingModel::default(), sticky_model: Default::default(), scroll: Scroll::default(), max_line_width: 0., host_reference: None };
+        let mut editor = OpenEditor { document, preview, model_id, selections: vec![Selection::default()], last_added: 0, leftovers: Vec::new(), column_select: None, version_id: 1, history: History::default(), guides, highlights: Vec::new(), folding: FoldingModel::default(), sticky_model: Default::default(), scroll: Scroll::default(), max_line_width: 0., host_reference: None, associated_file: false };
         editor.refresh_highlights();
         editor.refresh_folding_ranges();
         editor
@@ -545,6 +562,18 @@ mod tests {
         assert_eq!(split_lines("a\r\nb\r\nc\n"), (vec!["a".into(), "b".into(), "c".into(), "".into()], "\r\n"));
         assert_eq!(split_lines("a\rb"), (vec!["a".into(), "b".into()], "\r\n"));
         assert_eq!(split_lines("one line"), (vec!["one line".into()], "\n"));
+    }
+
+    #[test]
+    fn a_non_file_uri_keeps_its_authority() {
+        let settings = Settings::load(config::registry::Registry::core(), std::env::temp_dir().join("code-gpui-no-user"), None);
+        let uri = |scheme: &str, path: &str| {
+            let document = TextDocument::from_bytes(scheme, Path::new(path), b"", &Languages::new(&[]), &settings);
+            (document.uri()["authority"].clone(), document.uri()["path"].clone(), document.uri_string())
+        };
+        assert_eq!(uri("foo", "//testing/virtual.js"), (serde_json::json!("testing"), serde_json::json!("/virtual.js"), "foo://testing/virtual.js".to_string()));
+        assert_eq!(uri("sc", "//auth"), (serde_json::json!("auth"), serde_json::json!(""), "sc://auth".to_string()));
+        assert_eq!(uri("file", "//w/a.ts"), (serde_json::json!(""), serde_json::json!("//w/a.ts"), "file:////w/a.ts".to_string()));
     }
 
     #[test]

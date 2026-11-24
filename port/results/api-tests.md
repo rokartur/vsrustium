@@ -118,6 +118,17 @@ Same `MOCHA_GREP` and setup as the bulk file edits section, on the Studio, the w
 
 Unchanged: the changes are UI only.
 
+## M12 workspace documents
+
+`MOCHA_GREP='vscode API - workspace' SUITE_TIMEOUT=900 port/tools/api-tests` at 923a8923-dirty (text edits, untitled documents, content providers, save participants). Baseline before this work with the same grep: api-folder 54/2/53.
+
+| suite | passing | pending | failing | not reached | run |
+|-------|---------|---------|---------|-------------|-----|
+| api-folder | 94 | 2 | 13 | 293 | exit 1 after 10s |
+| api-workspace | 4 | 0 | 0 | 0 | exit 0 after 1s |
+
+Left: 8 encoding tests, 3 saves of `fake-fs` documents, `openTextDocument, actual casing first`, `createFileSystemWatcher`.
+
 ## M12 participant confirmation
 
 Same `MOCHA_GREP` and setup as the bulk file edits section, on the Studio, the working tree of the participant confirmation commit.

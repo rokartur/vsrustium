@@ -1,7 +1,7 @@
 //! The workbench's part of `workspace.applyEdit` (contrib/bulkEdit/browser/bulkTextEdits.ts), and what
 //! TextFileEditorModelManager does to the text models when a file operation ran.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use exthost::main_thread::serialized_error;
 use gpui::Context;
@@ -15,7 +15,7 @@ impl Workbench {
     /// `BulkTextEdits.apply`: each resource's edits are one model change, made through the active editor when it shows
     /// the model; nothing applies when a model moved past the version the host edited.
     pub fn apply_workspace_text_edits(&mut self, edits: &Value, provider_files: &Value, cx: &mut Context<Self>) -> Result<Value, Value> {
-        let mut resources: Vec<(&str, &Path, Vec<&Value>)> = Vec::new();
+        let mut resources: Vec<(&str, PathBuf, Vec<&Value>)> = Vec::new();
         for edit in edits.as_array().into_iter().flatten() {
             let (scheme, path) = uri_parts(&edit["resource"])?;
             match resources.iter_mut().find(|(known_scheme, known_path, _)| *known_scheme == scheme && *known_path == path) {
@@ -24,7 +24,7 @@ impl Workbench {
             }
         }
         let mut opened = false;
-        for &(scheme, path, _) in &resources {
+        for (scheme, path, _) in &resources {
             if self.editors.model(scheme, path).is_none() {
                 let document = self.resolve_document(scheme, path, provider_files)?;
                 self.editors.open_model(document);
@@ -41,7 +41,7 @@ impl Workbench {
             }
         }
         let clipboard = cx.read_from_clipboard().and_then(|item| item.text());
-        for (scheme, path, group) in resources {
+        for (scheme, ref path, group) in resources {
             let in_active_editor = self.editors.active().is_some_and(|editor| editor.document.is(scheme, path));
             let model = self.editors.model_mut(scheme, path).expect("resolved above");
             let mut eol = None;
@@ -92,10 +92,13 @@ impl Workbench {
     /// `ITextModelService.createModelReference`: a file from disk, or what the session read from an extension's provider.
     fn resolve_document(&self, scheme: &str, path: &Path, provider_files: &Value) -> Result<TextDocument, Value> {
         let settings = self.settings.lock().unwrap();
+        if scheme == "untitled" {
+            return Ok(TextDocument::untitled(path, "", None, &self.languages, &settings));
+        }
         if scheme == "file" {
             return TextDocument::read(path, &self.languages, &settings).map_err(|error| serialized_error(&format!("Unable to read file '{}' ({error})", path.display())));
         }
-        let file = provider_files.as_array().into_iter().flatten().find(|file| uri_parts(&file["uri"]).is_ok_and(|parts| parts == (scheme, path)));
+        let file = provider_files.as_array().into_iter().flatten().find(|file| uri_parts(&file["uri"]).is_ok_and(|(file_scheme, file_path)| file_scheme == scheme && file_path == path));
         let Some(file) = file else {
             return Err(serialized_error(&format!("Unable to resolve resource {}", uri_string(scheme, path))));
         };
@@ -110,7 +113,7 @@ impl Workbench {
     pub fn models_after_file_operation(&mut self, operation: u64, pairs: &Value, cx: &mut Context<Self>) {
         let mut changed = false;
         for pair in pairs.as_array().into_iter().flatten() {
-            let Ok((scheme, target)) = uri_parts(&pair["target"]) else { continue };
+            let Ok((scheme, ref target)) = uri_parts(&pair["target"]) else { continue };
             match operation {
                 // FileOperation.Create
                 0 => {
@@ -120,7 +123,7 @@ impl Workbench {
                 }
                 // FileOperation.Move
                 2 => {
-                    if let Ok((source_scheme, source)) = uri_parts(&pair["source"]) {
+                    if let Ok((source_scheme, ref source)) = uri_parts(&pair["source"]) {
                         changed |= self.move_models(source_scheme, source, scheme, target);
                     }
                 }
@@ -160,7 +163,7 @@ impl Workbench {
     }
 
     /// The change of a model edited without the keyboard: with the cursor when the active editor shows it.
-    fn send_model_edit(&mut self, scheme: &str, path: &Path, change: &ContentChanged) {
+    pub(super) fn send_model_edit(&mut self, scheme: &str, path: &Path, change: &ContentChanged) {
         match self.editors.active_index().filter(|&index| self.editors.editors[index].document.is(scheme, path)) {
             Some(index) => self.host.send_content_change(&self.editors, index, change),
             None => self.host.send_model_change(&self.editors, self.editors.model(scheme, path).expect("just edited"), change),
@@ -168,7 +171,7 @@ impl Workbench {
     }
 }
 
-fn document_end(lines: &[String]) -> Position {
+pub(super) fn document_end(lines: &[String]) -> Position {
     let last = lines.len() - 1;
     Position::new(last, lines[last].chars().count())
 }
