@@ -81,6 +81,23 @@ Done when: `port/tools/pixel-check` diffs the empty, folder and file windows (`n
 - shortcut: the breadcrumb icon slot is empty until the file icon theme is ported.
 - shortcut: files are read as UTF-8 (with or without BOM), no encoding guessing or binary detection; a read error is logged, not shown as the editor's error placeholder.
 
+## Milestone 6: API test harness
+
+Scope: `code-gpui <folder> --extensionDevelopmentPath=<dir> --extensionTestsPath=<path>` runs an extension's tests as upstream's extension development host does, and `port/tools/api-tests` runs `extensions/vscode-api-tests` suites api-folder and api-workspace with it.
+
+Done when: `port/tools/api-tests` prints passing/pending/failing per suite and writes them to `port/results/api-tests.md`; the run finishes (failures allowed) without a hang.
+
+- `exthost/src/extension_development.rs`: the extension under development is scanned with `isBuiltin: false`, `isUnderDevelopment: true` and replaces a built-in with the same id (the reference's `extensions/` holds `vscode-api-tests` too); init data gets `extensionDevelopmentLocationURI` and `extensionTestsLocationURI`. Only the `--flag=value` form is read, as `scripts/test-integration.sh` passes it.
+- After eager activation the session sends `$extensionTestsExecute`; its reply (0 or 1), 1 if the runner threw, or the host's own code if it died first, becomes code-gpui's exit code, like `_onExtensionHostExit`. A session error before that also exits 1, so a test run never leaves the window open.
+- The port log is code-gpui's stderr. Host console entries are formatted like Node's `util.format` (`console.rs`), so mocha's spec reporter reads as in the reference log; `$onUnexpectedError`, activation and runtime errors and `MainThreadLogger.$log` lines go there too.
+- The test extension, its compiled tests, `testrunner.js` and mocha come from the reference checkout (same 1.147.0 sources; the port tree has no compiled `out/`), copied to `/tmp` so the tests' file writes leave the reference clean. `rootPath` assertions compare against `__dirname`, so the workspace must be the copy's `testWorkspace`.
+- api-tests opens a window, so it takes the Studio GUI lock after the build. `MOCHA_GREP=<pattern>` (read by `testrunner.js`) runs one area, e.g. `MOCHA_GREP='vscode API - workspace'`; later milestones should use it, since the full folder suite does not get past the terminal tests within the timeout.
+- Mocha keeps upstream's 60 s per-test timeout. Tests that wait for a main-thread event the stubs never send (quick input, terminal, shell integration) each cost 60 to 120 s, so the folder suite hits its 1800 s `SUITE_TIMEOUT` after 30 of its suites; the table counts the reached tests and lists the rest as not reached.
+- One early run ended at 990 s with exit 0 and no mocha summary; the next full run went past the same point and hit the timeout, so the cause is not found. The script marks any run without mocha's summary as `incomplete: exit <code>` (or `timed out`), so such a run cannot pass as complete.
+- Finding: the folder suite holds chat, lm, browser-tools and run_in_terminal tests for AI features the port removes by decision; they can never pass, so the parity target of milestone 20 (356/46/0) needs those tests subtracted. Decision for Artur.
+- Rows `base/test`, `editor/test`, `platform/test` (upstream unit tests of the TypeScript layers) and `workbench/services/driver` (the smoke-test DOM driver) stay `todo`: the port has no TypeScript workbench to run them on, and the api-tests harness is its end-to-end check. Proposal: the `n/a` status of the roadmap's decision 1.
+- shortcut: a `.code-workspace` argument is opened as a single folder (the file), so the api-workspace suite fails its 4 tests; multi-root workspaces are milestone 12.
+
 ## Benchmarks
 
 - `port/tools/bench`: Wu's `script/memory-benchmark` method generalized to N apps (`APPS="name=cmd;..."`), plus an extension host line per app.

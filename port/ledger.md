@@ -29,8 +29,8 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | mainthread/MainThreadTextEditors | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadTreeViews | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadDownloadService | MainThread* shape (Rust side) | stub | session.rs answers undefined |
-| mainthread/MainThreadErrors | MainThread* shape (Rust side) | stub | session.rs answers undefined |
-| mainthread/MainThreadConsole | MainThread* shape (Rust side) | stub | session.rs answers undefined |
+| mainthread/MainThreadErrors | MainThread* shape (Rust side) | ported | session.rs writes `$onUnexpectedError` stacks to the port log (code-gpui stderr); seen in port/tools/api-tests api-folder.log |
+| mainthread/MainThreadConsole | MainThread* shape (Rust side) | ported | console.rs formats `$logExtensionHostMessage` like util.format to the port log; cargo test -p exthost console tests; mocha spec output in port/tools/api-tests logs |
 | mainthread/MainThreadLanguageFeatures | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadLanguages | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadMessageService | MainThread* shape (Rust side) | stub | session.rs answers undefined |
@@ -76,7 +76,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | mainthread/MainThreadSearch | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadShare | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadTask | MainThread* shape (Rust side) | stub | session.rs answers undefined |
-| mainthread/MainThreadExtensionService | MainThread* shape (Rust side) | stub | session.rs answers undefined |
+| mainthread/MainThreadExtensionService | MainThread* shape (Rust side) | ported | session.rs: `$getExtension`, `$asBrowserUri`, activation and runtime errors to the port log (no notification until milestone 11); `$extensionTestsExecute` result is code-gpui's exit code (api-workspace exits 1 with 4 failing, 0 with no test matched) |
 | mainthread/MainThreadSCM | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadQuickDiff | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadAgentEditorComments | MainThread* shape (Rust side) | removed | no sign-in/AI by decision (port/notes.md); API stays inert: session.rs answers undefined, list getters []; exthost-probe 30/30 on Bun and Node |
@@ -92,7 +92,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | mainthread/MainThreadMeteredConnection | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadGitHub | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadPower | MainThread* shape (Rust side) | stub | session.rs answers undefined |
-| mainthread/MainThreadLogger | MainThread* shape (Rust side) | stub | session.rs answers undefined |
+| mainthread/MainThreadLogger | MainThread* shape (Rust side) | stub | `$log` lines go to the port log; no logger registry, visibility or log files (desktop file loggers are written by the host itself) |
 | mainthread/MainThreadTheming | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadLocalization | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadMcp | MainThread* shape (Rust side) | removed | no sign-in/AI by decision (port/notes.md); API stays inert: session.rs answers undefined, list getters []; exthost-probe 30/30 on Bun and Node |
@@ -166,7 +166,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/lifecycle | src/vs/platform | todo |  |
 | platform/list | src/vs/platform | todo |  |
 | platform/localTranscription | src/vs/platform | todo |  |
-| platform/log | src/vs/platform | todo |  |
+| platform/log | src/vs/platform | stub | the port log is code-gpui stderr: host console, errors, `$log` lines; no log levels, files or rotation |
 | platform/markdown | src/vs/platform | todo |  |
 | platform/markers | src/vs/platform | todo |  |
 | platform/mcp | src/vs/platform | removed | no sign-in/AI by decision (port/notes.md); not ported |
@@ -345,7 +345,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/lifecycle | workbench service | todo |  |
 | workbench/services/localTranscription | workbench service | todo |  |
 | workbench/services/localization | workbench service | todo |  |
-| workbench/services/log | workbench service | todo |  |
+| workbench/services/log | workbench service | stub | same port log as platform/log; no Output view of logs (milestone 15) |
 | workbench/services/mcp | workbench service | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/services/menubar | workbench service | todo |  |
 | workbench/services/model | workbench service | todo |  |
@@ -587,7 +587,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | extension/typescript-basics | built-in extension | todo |  |
 | extension/typescript-language-features | built-in extension | todo |  |
 | extension/vb | built-in extension | todo |  |
-| extension/vscode-api-tests | built-in extension | todo | reference baseline: port/results/api-tests-reference.md (folder 350/46/6, workspace 4/0/0) |
+| extension/vscode-api-tests | built-in extension | ported | port/tools/api-tests: folder 35/41/133 with 193 not reached in 1800 s, workspace 0/0/4 (port/results/api-tests.md); reference 356/46/0 and 4/0/0 |
 | extension/vscode-colorize-perf-tests | built-in extension | todo |  |
 | extension/vscode-colorize-tests | built-in extension | todo |  |
 | extension/vscode-test-resolver | built-in extension | todo |  |
