@@ -160,7 +160,7 @@ fn run_extension_host(
     let mut session = Session::new(host);
     let watcher_excludes = settings.lock().unwrap().get_value(Some("files.watcherExclude"), &Overrides { resource: folder.as_deref(), ..Overrides::default() });
     let watcher_excludes: Vec<String> = watcher_excludes.as_ref().and_then(|excludes| excludes.as_object()).into_iter().flatten().filter(|(_, on)| **on == true).map(|(pattern, _)| pattern.clone()).collect();
-    session.files = Some(MainThreadFiles::new(folder.as_deref(), &watcher_excludes)?);
+    session.files = Some(MainThreadFiles::new(folder.as_deref(), &watcher_excludes, &extensions)?);
     session.configuration = Some(MainThreadConfiguration::new(settings, development.is_some()));
     session.storage = Some(storage);
     // secrets.ts: without encryption the secret storage falls back to memory.
