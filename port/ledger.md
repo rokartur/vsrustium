@@ -93,7 +93,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | mainthread/MainThreadGitHub | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadPower | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadLogger | MainThread* shape (Rust side) | stub | `$log` lines go to the port log; no logger registry, visibility or log files (desktop file loggers are written by the host itself) |
-| mainthread/MainThreadTheming | MainThread* shape (Rust side) | stub | session.rs answers undefined |
+| mainthread/MainThreadTheming | MainThread* shape (Rust side) | ported | host_sync.rs sends $onColorThemeChange at startup; no runtime theme switch yet |
 | mainthread/MainThreadLocalization | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadMcp | MainThread* shape (Rust side) | removed | no sign-in/AI by decision (port/notes.md); API stays inert: session.rs answers undefined, list getters []; exthost-probe 30/30 on Bun and Node |
 | mainthread/MainThreadDataChannels | MainThread* shape (Rust side) | stub | session.rs answers undefined |
@@ -201,7 +201,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/telemetry | src/vs/platform | todo |  |
 | platform/terminal | src/vs/platform | todo |  |
 | platform/test | src/vs/platform | todo |  |
-| platform/theme | src/vs/platform | todo |  |
+| platform/theme | src/vs/platform | ported | registry defaults for dark, light, hcDark, hcLight (theme.rs); cargo test -p app theme::tests |
 | platform/tunnel | src/vs/platform | todo |  |
 | platform/undoRedo | src/vs/platform | stub | per-editor undo/redo history only, no cross-resource elements: cargo test -p app (editor::cursor::tests, editor::edit::tests) |
 | platform/update | src/vs/platform | todo |  |
@@ -224,7 +224,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | editor/standalone | src/vs/editor | todo |  |
 | editor/test | src/vs/editor | todo |  |
 | editor/contrib/anchorSelect | src/vs/editor/contrib | todo |  |
-| editor/contrib/bracketMatching | src/vs/editor/contrib | todo |  |
+| editor/contrib/bracketMatching | src/vs/editor/contrib | ported | bracket pair colors and match boxes with overview ruler lane (brackets.rs); cargo test -p app brackets::tests; no Go to Bracket / Select to Bracket commands until keybindings |
 | editor/contrib/caretOperations | src/vs/editor/contrib | todo |  |
 | editor/contrib/clipboard | src/vs/editor/contrib | ported | Cmd+C/X/V with whole-line copy metadata: cargo test -p app keys_and_typed_text_edit_the_focused_editor_and_reach_the_host |
 | editor/contrib/codeAction | src/vs/editor/contrib | todo |  |
@@ -338,7 +338,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/integrity | workbench service | todo |  |
 | workbench/services/keybinding | workbench service | todo |  |
 | workbench/services/label | workbench service | todo |  |
-| workbench/services/language | workbench service | ported | languages from contributes.languages matched like getAssociationByPath (languages.rs); no firstLine detection; cargo test -p app (languages::tests) |
+| workbench/services/language | workbench service | verified | getAssociationByPath plus firstLine detection (languages.rs); cargo test -p app languages::tests |
 | workbench/services/languageDetection | workbench service | todo |  |
 | workbench/services/languageStatus | workbench service | todo |  |
 | workbench/services/layout | workbench service | todo |  |
@@ -372,11 +372,11 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/suggest | workbench service | todo |  |
 | workbench/services/telemetry | workbench service | todo |  |
 | workbench/services/terminal | workbench service | todo |  |
-| workbench/services/textMate | workbench service | todo |  |
+| workbench/services/textMate | workbench service | verified | textmate crate (vscode-textmate 9.3.2, onig); cargo test -p textmate; colorize test 109/109 fixtures; pixel-check main window |
 | workbench/services/textfile | workbench service | stub | Cmd+S writes UTF-8 and clears dirty state (cargo test -p app keys_and_typed_text_edit_the_focused_editor_and_reach_the_host); no save participants, conflict check or encodings |
 | workbench/services/textmodelResolver | workbench service | todo |  |
 | workbench/services/textresourceProperties | workbench service | todo |  |
-| workbench/services/themes | workbench service | ported | built-in color themes by settings id, include chain, registry defaults for shell keys (theme.rs); cargo test -p app (2 tests); no token colors, icon themes or hc-light |
+| workbench/services/themes | workbench service | ported | all 19 built-in color themes incl. hc-light, tokenColors (theme.rs, syntax.rs); cargo test -p app theme::tests; no semanticTokenColors (needs semantic tokens), no icon themes |
 | workbench/services/timer | workbench service | todo |  |
 | workbench/services/title | workbench service | todo |  |
 | workbench/services/treeSitter | workbench service | todo |  |
@@ -498,50 +498,50 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/welcomeWalkthrough | workbench contribution | todo |  |
 | workbench/contrib/workspace | workbench contribution | todo |  |
 | workbench/contrib/workspaces | workbench contribution | todo |  |
-| extension/bat | built-in extension | todo |  |
-| extension/clojure | built-in extension | todo |  |
-| extension/coffeescript | built-in extension | todo |  |
+| extension/bat | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/clojure | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/coffeescript | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/configuration-editing | built-in extension | todo |  |
 | extension/copilot | built-in extension | removed | scan.rs REMOVED_BUILTINS; cargo test -p exthost skips_removed_builtins |
-| extension/cpp | built-in extension | todo |  |
-| extension/csharp | built-in extension | todo |  |
-| extension/css | built-in extension | todo |  |
+| extension/cpp | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/csharp | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/css | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/css-language-features | built-in extension | todo |  |
-| extension/dart | built-in extension | todo |  |
+| extension/dart | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/debug-auto-launch | built-in extension | todo |  |
 | extension/debug-server-ready | built-in extension | todo |  |
-| extension/diff | built-in extension | todo |  |
-| extension/docker | built-in extension | todo |  |
-| extension/dotenv | built-in extension | todo |  |
+| extension/diff | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/docker | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/dotenv | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/emmet | built-in extension | todo |  |
 | extension/extension-editing | built-in extension | todo |  |
-| extension/fsharp | built-in extension | todo |  |
+| extension/fsharp | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/git | built-in extension | todo |  |
 | extension/git-base | built-in extension | todo |  |
 | extension/github | built-in extension | todo |  |
 | extension/github-authentication | built-in extension | removed | scan.rs REMOVED_BUILTINS; cargo test -p exthost skips_removed_builtins |
-| extension/go | built-in extension | todo |  |
-| extension/groovy | built-in extension | todo |  |
+| extension/go | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/groovy | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/grunt | built-in extension | todo |  |
 | extension/gulp | built-in extension | todo |  |
-| extension/handlebars | built-in extension | todo |  |
-| extension/hlsl | built-in extension | todo |  |
-| extension/html | built-in extension | todo |  |
+| extension/handlebars | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/hlsl | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/html | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/html-language-features | built-in extension | todo |  |
-| extension/ini | built-in extension | todo |  |
+| extension/ini | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/ipynb | built-in extension | todo |  |
 | extension/jake | built-in extension | todo |  |
-| extension/java | built-in extension | todo |  |
-| extension/javascript | built-in extension | todo |  |
-| extension/json | built-in extension | todo |  |
+| extension/java | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/javascript | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/json | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/json-language-features | built-in extension | todo |  |
-| extension/julia | built-in extension | todo |  |
-| extension/latex | built-in extension | todo |  |
-| extension/less | built-in extension | todo |  |
-| extension/log | built-in extension | todo |  |
-| extension/lua | built-in extension | todo |  |
-| extension/make | built-in extension | todo |  |
-| extension/markdown-basics | built-in extension | todo |  |
+| extension/julia | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/latex | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/less | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/log | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/lua | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/make | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/markdown-basics | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/markdown-language-features | built-in extension | todo |  |
 | extension/markdown-math | built-in extension | todo |  |
 | extension/merge-conflict | built-in extension | todo |  |
@@ -549,50 +549,50 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | extension/microsoft-authentication | built-in extension | removed | scan.rs REMOVED_BUILTINS; cargo test -p exthost skips_removed_builtins |
 | extension/notebook-renderers | built-in extension | todo |  |
 | extension/npm | built-in extension | todo |  |
-| extension/objective-c | built-in extension | todo |  |
-| extension/perl | built-in extension | todo |  |
-| extension/php | built-in extension | todo |  |
+| extension/objective-c | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/perl | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/php | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/php-language-features | built-in extension | todo |  |
-| extension/powershell | built-in extension | todo |  |
+| extension/powershell | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/prompt-basics | built-in extension | removed | scan.rs REMOVED_BUILTINS; cargo test -p exthost skips_removed_builtins |
-| extension/pug | built-in extension | todo |  |
-| extension/python | built-in extension | todo |  |
-| extension/r | built-in extension | todo |  |
-| extension/razor | built-in extension | todo |  |
+| extension/pug | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/python | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/r | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/razor | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/references-view | built-in extension | todo |  |
-| extension/restructuredtext | built-in extension | todo |  |
-| extension/ruby | built-in extension | todo |  |
-| extension/rust | built-in extension | todo |  |
-| extension/scss | built-in extension | todo |  |
+| extension/restructuredtext | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/ruby | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/rust | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/scss | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/search-result | built-in extension | todo |  |
-| extension/shaderlab | built-in extension | todo |  |
-| extension/shellscript | built-in extension | todo |  |
+| extension/shaderlab | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/shellscript | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/simple-browser | built-in extension | todo |  |
-| extension/sql | built-in extension | todo |  |
-| extension/swift | built-in extension | todo |  |
+| extension/sql | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/swift | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/terminal-suggest | built-in extension | todo |  |
-| extension/theme-abyss | built-in extension | todo |  |
-| extension/theme-defaults | built-in extension | todo |  |
-| extension/theme-kimbie-dark | built-in extension | todo |  |
+| extension/theme-abyss | built-in extension | ported | loads with token colors: cargo test -p app theme::tests::every_builtin_theme_loads_with_token_colors; no reference colorize results for it |
+| extension/theme-defaults | built-in extension | verified | cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (all 10 default themes incl. hc_light) and theme::tests; pixel-check dark, light, hc, hclight |
+| extension/theme-kimbie-dark | built-in extension | ported | loads with token colors: cargo test -p app theme::tests::every_builtin_theme_loads_with_token_colors; no reference colorize results for it |
 | extension/theme-modern-icons | built-in extension | todo |  |
-| extension/theme-monokai | built-in extension | todo |  |
-| extension/theme-monokai-dimmed | built-in extension | todo |  |
-| extension/theme-quietlight | built-in extension | todo |  |
-| extension/theme-red | built-in extension | todo |  |
+| extension/theme-monokai | built-in extension | ported | loads with token colors: cargo test -p app theme::tests::every_builtin_theme_loads_with_token_colors; no reference colorize results for it |
+| extension/theme-monokai-dimmed | built-in extension | ported | loads with token colors: cargo test -p app theme::tests::every_builtin_theme_loads_with_token_colors; no reference colorize results for it |
+| extension/theme-quietlight | built-in extension | ported | loads with token colors: cargo test -p app theme::tests::every_builtin_theme_loads_with_token_colors; no reference colorize results for it |
+| extension/theme-red | built-in extension | ported | loads with token colors: cargo test -p app theme::tests::every_builtin_theme_loads_with_token_colors; no reference colorize results for it |
 | extension/theme-seti | built-in extension | todo |  |
-| extension/theme-solarized-dark | built-in extension | todo |  |
-| extension/theme-solarized-light | built-in extension | todo |  |
-| extension/theme-tomorrow-night-blue | built-in extension | todo |  |
+| extension/theme-solarized-dark | built-in extension | ported | loads with token colors: cargo test -p app theme::tests::every_builtin_theme_loads_with_token_colors; no reference colorize results for it |
+| extension/theme-solarized-light | built-in extension | ported | loads with token colors: cargo test -p app theme::tests::every_builtin_theme_loads_with_token_colors; no reference colorize results for it |
+| extension/theme-tomorrow-night-blue | built-in extension | ported | loads with token colors: cargo test -p app theme::tests::every_builtin_theme_loads_with_token_colors; no reference colorize results for it |
 | extension/tunnel-forwarding | built-in extension | removed | scan.rs REMOVED_BUILTINS; cargo test -p exthost skips_removed_builtins |
-| extension/typescript-basics | built-in extension | todo |  |
+| extension/typescript-basics | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/typescript-language-features | built-in extension | todo |  |
-| extension/vb | built-in extension | todo |  |
+| extension/vb | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/vscode-api-tests | built-in extension | ported | port/tools/api-tests: folder 35/41/133 with 193 not reached in 1800 s, workspace 0/0/4 (port/results/api-tests.md); reference 356/46/0 and 4/0/0 |
 | extension/vscode-colorize-perf-tests | built-in extension | todo |  |
-| extension/vscode-colorize-tests | built-in extension | todo |  |
+| extension/vscode-colorize-tests | built-in extension | verified | cargo test -p app syntax::tests::colorize_fixtures_match_the_reference: 109 fixtures, every token's text, scopes and color in 10 themes |
 | extension/vscode-test-resolver | built-in extension | todo |  |
-| extension/xml | built-in extension | todo |  |
-| extension/yaml | built-in extension | todo |  |
+| extension/xml | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
+| extension/yaml | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | telemetry/source-search | cross-cutting check | todo |  |
 | telemetry/network-capture | cross-cutting check | todo |  |
 | gallery/open-vsx | cross-cutting check | todo |  |

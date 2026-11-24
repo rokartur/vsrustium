@@ -7,6 +7,7 @@ use std::path::Path;
 use exthost::scan::ScannedExtension;
 use serde_json::Value;
 
+use crate::brackets::LanguageBrackets;
 use crate::theme::strip_jsonc;
 
 pub const PLAINTEXT: &str = "plaintext";
@@ -23,11 +24,16 @@ pub struct Languages {
     associations: Vec<Association>,
     names: HashMap<String, String>,
     off_side: HashMap<String, bool>,
+    /// `firstLine` patterns in registration order, anchored at the line start (languagesRegistry.ts).
+    first_lines: Vec<(String, onig::Regex)>,
+    pub grammars: textmate::Registry,
+    pub brackets: HashMap<String, LanguageBrackets>,
 }
 
 impl Languages {
     pub fn new(extensions: &[ScannedExtension]) -> Self {
-        let mut languages = Languages { associations: Vec::new(), names: HashMap::new(), off_side: HashMap::new() };
+        let grammars = textmate::Registry::new(extensions.iter().map(|extension| (extension.location.as_path(), &extension.description)));
+        let mut languages = Languages { associations: Vec::new(), names: HashMap::new(), off_side: HashMap::new(), first_lines: Vec::new(), grammars, brackets: HashMap::new() };
         languages.register(&serde_json::json!({ "id": PLAINTEXT, "extensions": [".txt"], "aliases": ["Plain Text", "text"] }), None);
         for extension in extensions {
             for language in extension.description["contributes"]["languages"].as_array().into_iter().flatten() {
@@ -59,19 +65,26 @@ impl Languages {
                 self.names.entry(id.into()).or_insert_with(|| id.into());
             }
         }
+        if let Some(first_line) = language["firstLine"].as_str().filter(|pattern| !pattern.is_empty()) {
+            let anchored = if first_line.starts_with('^') { first_line.to_string() } else { format!("^{first_line}") };
+            match onig::Regex::new(&anchored) {
+                Ok(regex) => self.first_lines.push((id.into(), regex)),
+                Err(error) => eprintln!("[{id}]: Invalid regular expression `{anchored}`: {error}"),
+            }
+        }
         if let (Some(location), Some(configuration)) = (location, language["configuration"].as_str()) {
-            let off_side = std::fs::read_to_string(location.join(configuration))
+            let config = std::fs::read_to_string(location.join(configuration))
                 .ok()
                 .and_then(|text| serde_json::from_str::<Value>(&strip_jsonc(&text)).ok())
-                .is_some_and(|config| config["folding"]["offSide"].as_bool() == Some(true));
-            self.off_side.insert(id.into(), off_side);
+                .unwrap_or_default();
+            self.off_side.insert(id.into(), config["folding"]["offSide"].as_bool() == Some(true));
+            self.brackets.insert(id.into(), LanguageBrackets::new(id, &config));
         }
     }
 
-    /// The language of a file by its path. No association falls back to plaintext, as the text file
-    /// model does with "unknown".
-    /// shortcut: no `firstLine` (shebang) detection, add it with a regex crate when a script needs it.
-    pub fn language_of(&self, path: &Path) -> &str {
+    /// The language of a file by its path, else by the `firstLine` pattern its first line matches. No
+    /// association falls back to plaintext, as the text file model does with "unknown".
+    pub fn language_of<'a>(&'a self, path: &Path, first_line: &str) -> &'a str {
         let path = path.to_string_lossy().to_lowercase();
         let filename = path.rsplit('/').next().unwrap_or(&path);
         let mut pattern_match: Option<&Association> = None;
@@ -95,7 +108,13 @@ impl Languages {
                 }
             }
         }
-        pattern_match.or(extension_match).map_or(PLAINTEXT, |association| association.id.as_str())
+        if let Some(association) = pattern_match.or(extension_match) {
+            return &association.id;
+        }
+        // getAssociationByFirstline: the last registered pattern wins, over the first 1000 chars (FIRST_LINE_DETECTION_LENGTH_LIMIT).
+        let first_line: String = first_line.chars().take(1000).collect();
+        let first_line = first_line.strip_prefix('\u{FEFF}').unwrap_or(&first_line);
+        self.first_lines.iter().rev().find(|(_, regex)| !first_line.is_empty() && regex.find(first_line).is_some()).map_or(PLAINTEXT, |(id, _)| id.as_str())
     }
 
     pub fn name<'a>(&'a self, id: &'a str) -> &'a str {
@@ -150,7 +169,20 @@ mod tests {
             ("/w/no-extension", "plaintext"),
         ];
         for (path, id) in cases {
-            assert_eq!(languages.language_of(Path::new(path)), id, "{path}");
+            assert_eq!(languages.language_of(Path::new(path), ""), id, "{path}");
+        }
+        let first_lines = [
+            ("/w/run", "#!/usr/bin/env python3", "python"),
+            ("/w/run", "#!/bin/bash -e", "shellscript"),
+            ("/w/run", "#!/usr/bin/env node", "javascript"),
+            ("/w/run", "#!/usr/bin/env -S deno run", "typescript"),
+            ("/w/run", "\u{FEFF}<?xml version=\"1.0\"?>", "xml"),
+            ("/w/run", "my class Foo {}", "raku"),
+            ("/w/run", "hello", "plaintext"),
+            ("/w/notes.txt", "#!/bin/bash", "plaintext"),
+        ];
+        for (path, first_line, id) in first_lines {
+            assert_eq!(languages.language_of(Path::new(path), first_line), id, "{first_line}");
         }
         assert_eq!(languages.name("plaintext"), "Plain Text");
         assert_eq!(languages.name("typescript"), "TypeScript");

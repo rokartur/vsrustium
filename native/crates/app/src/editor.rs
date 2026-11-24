@@ -6,6 +6,7 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 use crate::languages::Languages;
+use crate::syntax::Tokenization;
 
 mod cursor;
 mod edit;
@@ -23,6 +24,7 @@ pub struct TextDocument {
     pub indentation: Indentation,
     /// `foldingRules.offSide` of the language, used by the indent guides of blank lines.
     pub off_side: bool,
+    pub tokens: Tokenization,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -44,10 +46,11 @@ impl TextDocument {
         // shortcut: no encoding guessing or binary detection; non-UTF-8 bytes decode as U+FFFD. Port encoding.ts when a file needs it.
         let text = String::from_utf8_lossy(content);
         let (lines, eol) = split_lines(&text);
-        let language_id = languages.language_of(path).to_string();
+        let language_id = languages.language_of(path, lines[0].as_str()).to_string();
         let off_side = languages.off_side(&language_id);
         let indentation = guess_indentation(&lines, DEFAULT_INDENTATION);
-        Ok(TextDocument { path: path.to_path_buf(), lines, eol, encoding, language_id, indentation, off_side })
+        let tokens = Tokenization::new(languages.grammars.grammar(&language_id));
+        Ok(TextDocument { path: path.to_path_buf(), lines, eol, encoding, language_id, indentation, off_side, tokens })
     }
 
     pub fn name(&self) -> String {
@@ -439,6 +442,7 @@ mod tests {
             language_id: "plaintext".into(),
             indentation: DEFAULT_INDENTATION,
             off_side: false,
+            tokens: Tokenization::default(),
         };
         let names = |group: &EditorGroup| group.editors.iter().map(|editor| editor.document.name()).collect::<Vec<_>>();
         let mut group = EditorGroup::default();
@@ -464,6 +468,7 @@ mod tests {
             language_id: "plaintext".into(),
             indentation: DEFAULT_INDENTATION,
             off_side: false,
+            tokens: Tokenization::default(),
         };
         group.open(document, false);
         let editor = group.active_mut().unwrap();

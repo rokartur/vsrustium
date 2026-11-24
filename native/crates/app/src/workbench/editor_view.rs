@@ -5,8 +5,8 @@
 use std::ops::Range;
 
 use gpui::{
-    Bounds, Context, Div, ElementInputHandler, MouseButton, MouseDownEvent, MouseMoveEvent, Rgba, Window, canvas, div, fill, font, point,
-    prelude::*, px, size, uniform_list,
+    Bounds, Context, Div, ElementInputHandler, MouseButton, MouseDownEvent, MouseMoveEvent, Rgba, StyledText, Window, canvas, div, fill, font,
+    point, prelude::*, px, size, uniform_list,
 };
 
 use super::Workbench;
@@ -84,7 +84,7 @@ impl Workbench {
     /// `--modern-ui-connected-tab-border`: the header's tabs border; in high contrast the focus border of the active group.
     fn connected_tab_border(&self) -> Rgba {
         match self.theme.kind {
-            ThemeKind::HighContrastDark => self.color("focusBorder"),
+            ThemeKind::HighContrastDark | ThemeKind::HighContrastLight => self.color("focusBorder"),
             _ => ["editorGroupHeader.tabsBorder", "tab.border", "editor.background"]
                 .into_iter()
                 .find_map(|key| self.theme.color(key))
@@ -217,6 +217,8 @@ impl Workbench {
         let selection = editor.selection;
         let tab_size = editor.document.indentation.tab_size;
         let Position { line: cursor_line, column: cursor_column } = editor.selection.head;
+        let bracket_match = editor.document.tokens.bracket_match(&self.theme, &self.languages, &editor.document.lines, (cursor_line, cursor_column));
+        let bracket_box = (self.theme.color("editorBracketMatch.background"), self.theme.color("editorBracketMatch.border"));
         let colors = LineColors {
             number: self.color("editorLineNumber.foreground"),
             active_number: self.color("editorLineNumber.activeForeground"),
@@ -229,7 +231,7 @@ impl Workbench {
             selection: self.color(if focused { "editor.selectionBackground" } else { "editor.inactiveSelectionBackground" }),
         };
         // currentLineHighlight.css: high contrast draws the exact border 1px wide.
-        let line_border_width = if self.theme.kind == ThemeKind::HighContrastDark { 1. } else { 2. };
+        let line_border_width = if self.theme.kind.is_high_contrast() { 1. } else { 2. };
         let char_width = metrics.char_width;
         range
             .map(|index| {
@@ -270,7 +272,22 @@ impl Workbench {
                     }
                     content = content.child(highlight);
                 }
-                content = content.child(div().absolute().top_0().left_0().whitespace_nowrap().child(expand_tabs(text, tab_size)));
+                // bracketMatching.css .bracket-match: background and a 1px border inside the bracket's box.
+                for (_, bytes) in bracket_match.iter().flat_map(|(pair, _)| pair).filter(|(line, _)| *line == index) {
+                    let start = visible_column(text, text[..bytes.start].chars().count(), tab_size) as f32 * char_width;
+                    let end = visible_column(text, text[..bytes.end].chars().count(), tab_size) as f32 * char_width;
+                    let mut bracket = div().absolute().top_0().h_full().left(px(start)).w(px(end - start));
+                    if let Some(background) = bracket_box.0 {
+                        bracket = bracket.bg(background);
+                    }
+                    if let Some(border) = bracket_box.1 {
+                        bracket = bracket.border_1().border_color(border);
+                    }
+                    content = content.child(bracket);
+                }
+                let highlights = editor.document.tokens.highlights(&self.theme, &self.languages, &editor.document.lines, index, tab_size);
+                let text_runs = StyledText::new(expand_tabs(text, tab_size)).with_highlights(highlights);
+                content = content.child(div().absolute().top_0().left_0().whitespace_nowrap().child(text_runs));
                 if is_cursor_line && focused {
                     // shortcut: the cursor does not blink (editor.cursorBlinking "blink" hides it every 500ms).
                     let x = visible_column(text, cursor_column, tab_size) as f32 * char_width;
@@ -325,13 +342,18 @@ impl Workbench {
         self.editor_edited(None, moved, "mouse", cx);
     }
 
-    /// decorationsOverviewRuler.ts `_render`, in device pixels: word highlights in the center lane, the cursor
+    /// decorationsOverviewRuler.ts `_render`, in device pixels: word highlights, then matched brackets in the center lane, the cursor
     /// across all lanes, then the 1px border on the left and top edges.
     fn overview_ruler(&self, editor: &OpenEditor) -> gpui::Canvas<()> {
         let line_count = editor.document.lines.len();
         let cursor_line = editor.selection.head.line;
         let highlight_lines: Vec<usize> = editor.highlights.iter().map(|(line, _)| *line).collect();
         let highlight = self.color("editorOverviewRuler.wordHighlightTextForeground");
+        let bracket_lines: Vec<usize> = match editor.document.tokens.bracket_match(&self.theme, &self.languages, &editor.document.lines, (cursor_line, editor.selection.head.column)) {
+            Some(([open, close], true)) => vec![open.0, close.0],
+            _ => Vec::new(),
+        };
+        let bracket_color = self.color("editorOverviewRuler.bracketMatchForeground");
         let cursor = self.theme.color("editorCursor.foreground").map(|color| Rgba { a: color.a * 0.7, ..color });
         let border = self.theme.color("editorOverviewRuler.border");
         canvas(
@@ -351,26 +373,28 @@ impl Workbench {
                 let ratio = canvas_height / scroll_height;
                 let lanes = RulerLanes::new(canvas_width);
                 let min_height = (6. * scale).floor();
-                let mut previous: Option<(f32, f32)> = None;
-                for line in &highlight_lines {
-                    let mut y1 = (*line as f32 * LINE_HEIGHT * ratio).floor();
-                    let mut y2 = ((*line as f32 * LINE_HEIGHT + LINE_HEIGHT) * ratio).floor();
-                    if y2 - y1 < min_height {
-                        let half = (min_height / 2.).floor();
-                        let center = ((y1 + y2) / 2.).floor().clamp(half, canvas_height - half);
-                        (y1, y2) = (center - half, center + half);
-                    }
-                    previous = match previous {
-                        Some((start, end)) if y1 <= end + 1. => Some((start, end.max(y2))),
-                        Some((start, end)) => {
-                            paint(window, lanes.center_x, start, lanes.center_width, end - start, highlight);
-                            Some((y1, y2))
+                for (lines, color) in [(&highlight_lines, highlight), (&bracket_lines, bracket_color)] {
+                    let mut previous: Option<(f32, f32)> = None;
+                    for line in lines {
+                        let mut y1 = (*line as f32 * LINE_HEIGHT * ratio).floor();
+                        let mut y2 = ((*line as f32 * LINE_HEIGHT + LINE_HEIGHT) * ratio).floor();
+                        if y2 - y1 < min_height {
+                            let half = (min_height / 2.).floor();
+                            let center = ((y1 + y2) / 2.).floor().clamp(half, canvas_height - half);
+                            (y1, y2) = (center - half, center + half);
                         }
-                        None => Some((y1, y2)),
-                    };
-                }
-                if let Some((start, end)) = previous {
-                    paint(window, lanes.center_x, start, lanes.center_width, end - start, highlight);
+                        previous = match previous {
+                            Some((start, end)) if y1 <= end + 1. => Some((start, end.max(y2))),
+                            Some((start, end)) => {
+                                paint(window, lanes.center_x, start, lanes.center_width, end - start, color);
+                                Some((y1, y2))
+                            }
+                            None => Some((y1, y2)),
+                        };
+                    }
+                    if let Some((start, end)) = previous {
+                        paint(window, lanes.center_x, start, lanes.center_width, end - start, color);
+                    }
                 }
                 if let Some(cursor) = cursor {
                     let height = (2. * scale).floor();

@@ -493,6 +493,7 @@ impl OpenEditor {
         let suffix: String = lines[end.line].chars().skip(end.column).collect();
         let joined = prefix + text + &suffix;
         lines.splice(start.line..=end.line, joined.split('\n').map(String::from));
+        self.document.tokens.invalidate_from(start.line);
         change
     }
 }
@@ -544,6 +545,7 @@ mod tests {
             language_id: "typescript".into(),
             indentation: Indentation { tab_size: 4, insert_spaces: true },
             off_side: false,
+            tokens: Default::default(),
         };
         let mut group = EditorGroup::default();
         group.open(document, true);
