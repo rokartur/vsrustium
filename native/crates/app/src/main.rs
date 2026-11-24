@@ -22,6 +22,7 @@ use config::registry::Registry;
 use config::service::Settings;
 use exthost::extension_development::ExtensionDevelopment;
 use exthost::main_thread_configuration::MainThreadConfiguration;
+use exthost::main_thread_files::MainThreadFiles;
 use exthost::main_thread_secret_state::MainThreadSecretState;
 use exthost::main_thread_storage::MainThreadStorage;
 use exthost::rpc::Arg;
@@ -157,6 +158,9 @@ fn run_extension_host(
     let host = ExtensionHost::start(HostOptions { runtime, entry: &entry, extra_env: vec![], extra_args: vec![] }, &init)?;
     let _ = status.unbounded_send(format!("handshake done, pid {}", host.child.id()));
     let mut session = Session::new(host);
+    let watcher_excludes = settings.lock().unwrap().get_value(Some("files.watcherExclude"), &Overrides { resource: folder.as_deref(), ..Overrides::default() });
+    let watcher_excludes: Vec<String> = watcher_excludes.as_ref().and_then(|excludes| excludes.as_object()).into_iter().flatten().filter(|(_, on)| **on == true).map(|(pattern, _)| pattern.clone()).collect();
+    session.files = Some(MainThreadFiles::new(folder.as_deref(), &watcher_excludes)?);
     session.configuration = Some(MainThreadConfiguration::new(settings, development.is_some()));
     session.storage = Some(storage);
     // secrets.ts: without encryption the secret storage falls back to memory.

@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 
 use crate::console::format_console_entry;
 use crate::main_thread_configuration::MainThreadConfiguration;
+use crate::main_thread_files::{DISK_CAPABILITIES, MainThreadFiles};
 use crate::main_thread_secret_state::MainThreadSecretState;
 use crate::main_thread_storage::MainThreadStorage;
 use crate::rpc::{self, Arg, Message, Reply};
@@ -136,11 +137,13 @@ pub struct Session {
     pub storage: Option<MainThreadStorage>,
     /// Extension secrets; without it every MainThreadSecretState call answers `undefined`.
     pub secrets: Option<MainThreadSecretState>,
+    /// The disk and its watchers; without it file calls answer `undefined` and no file events reach the host.
+    pub files: Option<MainThreadFiles>,
 }
 
 impl Session {
     pub fn new(host: ExtensionHost) -> Self {
-        Session { host, next_req: 0, results: HashMap::new(), log: SessionLog::default(), extensions: HashMap::new(), extension_tests_req: None, configuration: None, storage: None, secrets: None }
+        Session { host, next_req: 0, results: HashMap::new(), log: SessionLog::default(), extensions: HashMap::new(), extension_tests_req: None, configuration: None, storage: None, secrets: None, files: None }
     }
 
     /// The calls the workbench makes once the handshake is done (MainThreadConfiguration,
@@ -154,6 +157,9 @@ impl Session {
         self.notify("ExtHostTelemetry", "$initializeTelemetryLevel", vec![json!(0), json!(false), json!({ "usage": false, "error": false })]);
         // MainThreadEditorTabs sends the model on construction; an empty window has one active group with no tabs.
         self.notify("ExtHostEditorTabs", "$acceptEditorTabModel", vec![json!([{ "isActive": true, "viewColumn": 0, "groupId": 0, "tabs": [] }])]);
+        if self.files.is_some() {
+            self.notify("ExtHostFileSystemInfo", "$acceptProviderInfos", vec![json!({ "$mid": 1, "scheme": "file", "path": "/dummy" }), json!(DISK_CAPABILITIES)]);
+        }
         let delta = json!({
             "versionId": 1, "toRemove": [], "toAdd": [], "addActivationEvents": {}, "myToRemove": [], "myToAdd": [],
         });
@@ -224,6 +230,9 @@ impl Session {
         if let Some(args) = self.configuration.as_mut().and_then(MainThreadConfiguration::check_files) {
             self.notify("ExtHostConfiguration", "$acceptConfigurationChanged", args);
         }
+        for event in self.files.as_mut().map(MainThreadFiles::take_events).unwrap_or_default() {
+            self.notify("ExtHostFileSystemEventService", "$onFileEvent", vec![event]);
+        }
         let Some(incoming) = self.host.recv_timeout(timeout) else { return Ok(true) };
         let bytes = match incoming {
             Incoming::Message(bytes) => bytes,
@@ -248,6 +257,14 @@ impl Session {
                 if let Some(key) = change {
                     self.notify("ExtHostSecretState", "$onDidChangePassword", vec![key]);
                 }
+                self.host.send(rpc::encode(&reply));
+            }
+            Message::Request { req, rpc_id, method, args, .. }
+                if matches!(proxy_name(rpc_id), "MainThreadFileSystem" | "MainThreadFileSystemEventService") && self.files.is_some() =>
+            {
+                self.host.send(rpc::encode(&Message::Acknowledged { req }));
+                *self.log.host_calls.entry(format!("{}.{method}", proxy_name(rpc_id))).or_default() += 1;
+                let reply = self.files.as_mut().expect("checked by the match guard").serve(req, &method, &args);
                 self.host.send(rpc::encode(&reply));
             }
             Message::Request { req, rpc_id, method, args, .. } => {
