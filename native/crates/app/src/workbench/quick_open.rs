@@ -50,6 +50,7 @@ impl Workbench {
         let stored = self.workspace_storage.lock().unwrap().get(HISTORY_STORAGE_KEY).map(str::to_owned);
         let excluded = self.history_exclude_matcher();
         self.quick_access.editor_history = EditorHistory::load(stored.as_deref(), |path| !excluded(path));
+        self.restore_find_state();
     }
 
     /// `handleActiveEditorChangeInHistory`. Upstream saves on shutdown only; the port saves on each change, as its

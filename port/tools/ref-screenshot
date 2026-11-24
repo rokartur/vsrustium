@@ -72,6 +72,16 @@ async function press(cdp: (method: string, params?: object) => Promise<any>, key
 		up: ['ArrowUp', 'ArrowUp', 38], down: ['ArrowDown', 'ArrowDown', 40], left: ['ArrowLeft', 'ArrowLeft', 37], right: ['ArrowRight', 'ArrowRight', 39],
 		'[': ['[', 'BracketLeft', 219], ']': [']', 'BracketRight', 221],
 	};
+	const letter = /^[a-z]$/.test(key);
+	// A letter without modifiers types its text; key events only run keybindings.
+	if (letter && modifiers === 0) {
+		await cdp('Input.insertText', { text: key });
+		await Bun.sleep(100);
+		return;
+	}
+	if (letter) {
+		keys[key] = [key, `Key${key.toUpperCase()}`, key.toUpperCase().charCodeAt(0)];
+	}
 	const [name, code, windowsVirtualKeyCode] = keys[key];
 	await cdp('Input.dispatchKeyEvent', { type: 'rawKeyDown', modifiers, key: name, code, windowsVirtualKeyCode });
 	await cdp('Input.dispatchKeyEvent', { type: 'keyUp', modifiers, key: name, code, windowsVirtualKeyCode });

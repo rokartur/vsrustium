@@ -1,6 +1,6 @@
 //! The input element of `InputBox` as the workbench draws it: the value with its selection, IME marked text
 //! and blinking caret, its caret keys, mouse selection, text commands and the platform input handler. The quick
-//! input and the Explorer's inline editor each own an `InputBox` and an `InputView`.
+//! input, the Explorer's inline editor and the editor find widget's two inputs each own an `InputBox` and an `InputView`.
 
 use std::cell::RefCell;
 use std::ops::Range;
@@ -16,11 +16,13 @@ use super::Workbench;
 use crate::commands::Outcome;
 use crate::input_box::{InputBox, Motion};
 
-/// Which input element: the quick input's, or the Explorer's inline editor.
+/// Which input element: the quick input's, the Explorer's inline editor, or the find widget's.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum InputId {
     QuickInput,
     Explorer,
+    Find,
+    Replace,
 }
 
 /// The view state of one input element.
@@ -69,6 +71,8 @@ impl Workbench {
         match id {
             InputId::QuickInput => &self.quick_inputs.input,
             InputId::Explorer => &self.explorer.input,
+            InputId::Find => &self.find.find_view,
+            InputId::Replace => &self.find.replace_view,
         }
     }
 
@@ -76,6 +80,8 @@ impl Workbench {
         match id {
             InputId::QuickInput => &mut self.quick_inputs.input,
             InputId::Explorer => &mut self.explorer.input,
+            InputId::Find => &mut self.find.find_view,
+            InputId::Replace => &mut self.find.replace_view,
         }
     }
 
@@ -83,6 +89,8 @@ impl Workbench {
         match id {
             InputId::QuickInput => &self.quick_inputs.focus,
             InputId::Explorer => &self.explorer.input_focus,
+            InputId::Find => &self.find.find_focus,
+            InputId::Replace => &self.find.replace_focus,
         }
     }
 
@@ -90,17 +98,19 @@ impl Workbench {
         match id {
             InputId::QuickInput => self.quick_inputs.current().map(|input| &input.input_box),
             InputId::Explorer => self.explorer.edit.as_ref().map(|edit| &edit.input),
+            InputId::Find => Some(&self.find.find_input),
+            InputId::Replace => Some(&self.find.replace_input),
         }
     }
 
     /// The input element with the keyboard focus.
     pub(super) fn focused_input(&self, window: &Window) -> Option<InputId> {
-        [InputId::QuickInput, InputId::Explorer].into_iter().find(|id| self.input_focus(*id).is_focused(window))
+        [InputId::QuickInput, InputId::Explorer, InputId::Find, InputId::Replace].into_iter().find(|id| self.input_focus(*id).is_focused(window))
     }
 
     /// Any input element in an IME composition: the IME owns the keys.
     pub(super) fn input_composing(&self) -> bool {
-        self.quick_inputs.input.marked.is_some() || self.explorer.input.marked.is_some()
+        [InputId::QuickInput, InputId::Explorer, InputId::Find, InputId::Replace].into_iter().any(|id| self.input_view(id).marked.is_some())
     }
 
     /// Runs `edit` on the element's value and restarts the caret blink.
@@ -110,6 +120,10 @@ impl Workbench {
             InputId::QuickInput => self.with_current_quick_input(window, cx, |input| input.edit_input(edit)),
             InputId::Explorer => {
                 self.edit_explorer_input(edit, cx);
+                Outcome::done()
+            }
+            InputId::Find | InputId::Replace => {
+                self.edit_find_input(id, edit, window, cx);
                 Outcome::done()
             }
         }
@@ -168,6 +182,10 @@ impl Workbench {
             (false, false, false) => Motion::Right,
         };
         if id == InputId::Explorer && self.explorer_input_key(&keystroke.key, window, cx) {
+            cx.stop_propagation();
+            return;
+        }
+        if matches!(id, InputId::Find | InputId::Replace) && self.find_input_key(id, keystroke, window, cx) {
             cx.stop_propagation();
             return;
         }
@@ -265,6 +283,8 @@ impl Workbench {
             .id(match id {
                 InputId::QuickInput => "quick-input-text",
                 InputId::Explorer => "explorer-input-text",
+                InputId::Find => "find-input-text",
+                InputId::Replace => "replace-input-text",
             })
             .flex_1()
             .h_full()

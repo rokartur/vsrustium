@@ -282,6 +282,64 @@ pub fn enabled_commands(menu: &[MenuItem], context: &dyn Context) -> Vec<Command
     picks
 }
 
+/// The `EditorAction`s of the active editor this port runs, by id, label and precondition (findController.ts,
+/// folding.ts, multicursor.ts, linesOperations.ts).
+const EDITOR_ACTIONS: &[(&str, &str, Option<&str>)] = &[
+    ("editor.unfold", "Unfold", Some("foldingEnabled")),
+    ("editor.unfoldRecursively", "Unfold Recursively", Some("foldingEnabled")),
+    ("editor.fold", "Fold", Some("foldingEnabled")),
+    ("editor.toggleFold", "Toggle Fold", Some("foldingEnabled")),
+    ("editor.foldRecursively", "Fold Recursively", Some("foldingEnabled")),
+    ("editor.toggleFoldRecursively", "Toggle Fold Recursively", Some("foldingEnabled")),
+    ("editor.foldAllBlockComments", "Fold All Block Comments", Some("foldingEnabled")),
+    ("editor.foldAllMarkerRegions", "Fold All Regions", Some("foldingEnabled")),
+    ("editor.unfoldAllMarkerRegions", "Unfold All Regions", Some("foldingEnabled")),
+    ("editor.foldAllExcept", "Fold All Except Selected", Some("foldingEnabled")),
+    ("editor.unfoldAllExcept", "Unfold All Except Selected", Some("foldingEnabled")),
+    ("editor.foldAll", "Fold All", Some("foldingEnabled")),
+    ("editor.unfoldAll", "Unfold All", Some("foldingEnabled")),
+    ("editor.gotoParentFold", "Go to Parent Fold", Some("foldingEnabled")),
+    ("editor.gotoPreviousFold", "Go to Previous Folding Range", Some("foldingEnabled")),
+    ("editor.gotoNextFold", "Go to Next Folding Range", Some("foldingEnabled")),
+    ("editor.createFoldingRangeFromSelection", "Create Folding Range from Selection", Some("foldingEnabled")),
+    ("editor.removeManualFoldingRanges", "Remove Manual Folding Ranges", Some("foldingEnabled")),
+    ("editor.toggleImportFold", "Toggle Import Fold", Some("foldingEnabled")),
+    ("editor.foldLevel1", "Fold Level 1", Some("foldingEnabled")),
+    ("editor.foldLevel2", "Fold Level 2", Some("foldingEnabled")),
+    ("editor.foldLevel3", "Fold Level 3", Some("foldingEnabled")),
+    ("editor.foldLevel4", "Fold Level 4", Some("foldingEnabled")),
+    ("editor.foldLevel5", "Fold Level 5", Some("foldingEnabled")),
+    ("editor.foldLevel6", "Fold Level 6", Some("foldingEnabled")),
+    ("editor.foldLevel7", "Fold Level 7", Some("foldingEnabled")),
+    ("editor.action.insertCursorAbove", "Add Cursor Above", None),
+    ("editor.action.insertCursorBelow", "Add Cursor Below", None),
+    ("editor.action.insertCursorAtEndOfEachLineSelected", "Add Cursors to Line Ends", None),
+    ("editor.action.addCursorsToBottom", "Add Cursors to Bottom", None),
+    ("editor.action.addCursorsToTop", "Add Cursors to Top", None),
+    ("deleteAllLeft", "Delete All Left", Some("!editorReadonly")),
+    ("deleteAllRight", "Delete All Right", Some("!editorReadonly")),
+    ("actions.find", "Find", Some("editorFocus || editorIsOpen")),
+    ("editor.actions.findWithArgs", "Find with Arguments", None),
+    ("actions.findWithSelection", "Find with Selection", None),
+    ("editor.action.nextMatchFindAction", "Find Next", None),
+    ("editor.action.previousMatchFindAction", "Find Previous", None),
+    ("editor.action.goToMatchFindAction", "Go to Match...", Some("findWidgetVisible")),
+    ("editor.action.nextSelectionMatchFindAction", "Find Next Selection", None),
+    ("editor.action.previousSelectionMatchFindAction", "Find Previous Selection", None),
+    ("editor.action.startFindReplaceAction", "Replace", Some("editorFocus || editorIsOpen")),
+];
+
+/// `getCodeEditorCommandPicks`: the active editor's supported actions, those whose precondition holds.
+pub fn editor_action_picks(context: &dyn Context) -> Vec<CommandPick> {
+    let mut picks = Vec::new();
+    for (id, label, precondition) in EDITOR_ACTIONS {
+        if precondition.and_then(Expr::deserialize).is_none_or(|expr| expr.evaluate(context)) {
+            picks.push(CommandPick { id: id.to_string(), label: label.to_string(), category: None });
+        }
+    }
+    picks
+}
+
 /// `stripIcons`: replaces each `(\s)?(\\)?$(name~modifier)(\s)?` by the whitespace before it, else the one
 /// after it; an escaped `\$(name)` stays.
 pub fn strip_icons(label: &str) -> String {

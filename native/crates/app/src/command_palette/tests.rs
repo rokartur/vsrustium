@@ -170,3 +170,19 @@ fn menu_lists_contributed_commands_and_honours_command_palette_when() {
     assert!(picks.iter().any(|pick| pick.label == "File: Save All Files" && pick.category.as_deref() == Some("File")));
     assert!(!menu.iter().any(|item| item.id == "ext.unknown"));
 }
+
+#[test]
+fn editor_actions_show_when_their_precondition_holds() {
+    let labels = |context: &std::collections::HashMap<String, Value>| editor_action_picks(context).into_iter().map(|pick| pick.label).collect::<Vec<_>>();
+    let open = std::collections::HashMap::from([("editorIsOpen".to_string(), Value::Bool(true))]);
+    assert!(!labels(&std::collections::HashMap::new()).contains(&"Find".to_string()));
+    assert!(labels(&open).contains(&"Find".to_string()));
+    assert!(!labels(&open).contains(&"Go to Match...".to_string()));
+    let visible = std::collections::HashMap::from([("findWidgetVisible".to_string(), Value::Bool(true))]);
+    assert!(labels(&visible).contains(&"Go to Match...".to_string()));
+    assert!(!labels(&open).contains(&"Fold Level 2".to_string()));
+    let folding = std::collections::HashMap::from([("foldingEnabled".to_string(), Value::Bool(true))]);
+    assert!(labels(&folding).contains(&"Fold Level 2".to_string()));
+    let readonly = std::collections::HashMap::from([("editorReadonly".to_string(), Value::Bool(true))]);
+    assert!(labels(&open).contains(&"Delete All Left".to_string()) && !labels(&readonly).contains(&"Delete All Left".to_string()));
+}

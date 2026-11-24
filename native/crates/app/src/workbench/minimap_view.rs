@@ -276,7 +276,8 @@ impl Workbench {
     }
 
     /// `renderDecorations`: the selections in `minimap.selectionHighlight`, then the word highlights in
-    /// `minimap.selectionOccurrenceHighlight` and the collapsed folds' whole lines in `editor.foldBackground`.
+    /// `minimap.selectionOccurrenceHighlight`, the collapsed folds' whole lines in `editor.foldBackground` and the find
+    /// matches in `minimap.findMatchHighlight`.
     fn minimap_decorations(&self, editor: &OpenEditor, info: &MinimapLayoutInfo, layout: &MinimapLayout) -> Vec<crate::editor::minimap::Fill> {
         // convertModelPositionToViewPosition: a hidden position shows at the end of its fold line.
         let view = |line: usize, column: usize| {
@@ -301,6 +302,12 @@ impl Workbench {
             }
         }
         decorations.sort_by_key(|(range, _)| range.start);
+        // Find matches after the z-index 0 decorations above, the current match last (findDecorations.ts zIndex 10, 13).
+        if let Some(color) = self.theme.color("minimap.findMatchHighlight") {
+            for mark in self.find_marks(editor, self.editors.viewport.height).into_iter().filter(|mark| mark.in_minimap) {
+                decorations.push((MinimapRange { start: view(mark.range.start.line, mark.range.start.column), end: view(mark.range.end.line, mark.range.end.column) }, color));
+            }
+        }
         let tab_size = editor.document.indentation.tab_size;
         decoration_fills(info, layout, self.theme.color("minimap.selectionHighlight"), &selections, &decorations, tab_size, |view_line| editor.document.lines[editor.model_line(view_line - 1)].as_str())
     }

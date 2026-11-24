@@ -23,8 +23,10 @@ pub struct SearchParams<'a> {
 pub struct SearchData {
     regex: onig::Regex,
     /// The regex source, the search string escaped when it is not a regex.
+    #[cfg_attr(not(test), expect(dead_code, reason = "the parseSearchRequest tests read it"))]
     pub source: String,
     pub multiline: bool,
+    #[cfg_attr(not(test), expect(dead_code, reason = "the parseSearchRequest tests read it"))]
     pub ignore_case: bool,
     pub word_separators: Option<String>,
     /// The search string when a plain substring search finds the same matches.

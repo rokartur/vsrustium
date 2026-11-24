@@ -253,6 +253,16 @@ impl FindController {
         opts.should_focus
     }
 
+    /// `StartFindWithArgsAction`: the arguments' state, seeded from the selection only without a search string.
+    pub fn start_find_with_args(&mut self, editor: &mut OpenEditor, viewport: Viewport, new: NewFindState, find_in_selection: bool) -> FocusAction {
+        let mut opts = StartOptions { should_focus: FocusAction::FocusFindInput, update_search_scope: find_in_selection, ..self.seeded_start(true) };
+        if new.search_string.is_some() {
+            opts.seed_search_string_from_selection = Seed::None;
+        }
+        self.start(editor, viewport, opts, new);
+        opts.should_focus
+    }
+
     /// `StartFindReplaceAction` (Alt+Cmd+F): the replace input gets focus when the find input has a
     /// search string from it or from the selection.
     pub fn start_find_replace(&mut self, editor: &mut OpenEditor, viewport: Viewport) -> FocusAction {

@@ -10,6 +10,7 @@ mod editor_menus;
 mod editor_view;
 mod explorer_actions;
 mod file_participants;
+mod find_widget;
 pub(crate) mod host_requests;
 mod input_box_view;
 mod keyboard;
@@ -73,6 +74,7 @@ pub struct Workbench {
     fold_controls: editor_view::FoldControls,
     sticky_scroll: editor_view::sticky_scroll_view::StickyScroll,
     minimap: minimap_view::Minimap,
+    find: find_widget::FindWidget,
     /// The line and whether on its folding control a press may toggle a fold (folding.ts `mouseDownInfo`).
     fold_mouse_down: Option<(usize, bool)>,
     /// Window x of the text area, recorded at paint, to turn a click into a column.
@@ -166,6 +168,7 @@ impl Workbench {
             fold_controls: Default::default(),
             sticky_scroll: editor_view::sticky_scroll_view::StickyScroll::new(cx),
             minimap: Default::default(),
+            find: find_widget::FindWidget::new(cx),
             fold_mouse_down: None,
             text_area_left: Rc::default(),
             editor_focus: cx.focus_handle(),
@@ -184,6 +187,7 @@ impl Workbench {
         crate::main_thread_commands::register_commands_documentation(&mut workbench);
         workbench.register_workbench_actions();
         workbench.register_editor_commands();
+        workbench.register_find_commands();
         workbench.register_sticky_scroll_commands();
         workbench.register_context_commands();
         workbench.register_quick_input_commands();
@@ -242,6 +246,7 @@ impl Workbench {
             tree.reveal(&editor.document.path);
         }
         self.record_editor_history();
+        self.find_editor_changed();
         self.host.send_changes(&self.editors);
         cx.notify();
     }
@@ -757,6 +762,112 @@ mod tests {
         cx.simulate_input("x");
         let visible_ranges: Vec<_> = receiver.try_iter().filter(|message| message.method == "$acceptEditorPropertiesChanged" && !message.args[1]["visibleRanges"].is_null()).collect();
         assert_eq!(visible_ranges.len(), 1, "{visible_ranges:?}");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[gpui::test]
+    fn the_find_widget_searches_what_its_inputs_hold(cx: &mut TestAppContext) {
+        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
+        let theme = load_theme(&[themes], "Dark Modern").unwrap();
+        let dir = std::env::temp_dir().join(format!("code-gpui-find-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("a.txt");
+        std::fs::write(&file, "the cat\nand the dog\nthe end").unwrap();
+        let (workbench, cx) = cx.add_window_view(|window, cx| {
+            let mut workbench = Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), crate::default_settings(), HostSync::new(std::sync::mpsc::channel().0), cx);
+            workbench.load_keybindings(crate::keybindings::default_keybindings(&[]), dir.join("keybindings.json"), cx);
+            workbench.open_file(file.clone(), true, window, cx);
+            workbench
+        });
+        cx.run_until_parked();
+        let run = |command: &str, cx: &mut gpui::VisualTestContext| workbench.update_in(cx, |workbench, window, cx| workbench.execute_command(command, vec![], window, cx));
+        let found = |cx: &mut gpui::VisualTestContext| {
+            workbench.read_with(cx, |workbench, _| {
+                let state = &workbench.find.controller.state;
+                let selection = workbench.editors.active().unwrap().selection();
+                (state.matches_position, state.matches_count, (selection.anchor.line, selection.anchor.column))
+            })
+        };
+
+        run("actions.find", cx);
+        cx.run_until_parked();
+        cx.simulate_input("the");
+        assert_eq!(found(cx), (1, 3, (0, 0)));
+        let zone = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| (workbench.editors.viewport.top_whitespace, workbench.editors.active().unwrap().scroll.top));
+        assert_eq!(zone(cx), (33., 0.), "the match on line 1 stays revealed below the zone");
+        // findInputFocussed binds Enter to Find Next.
+        cx.simulate_keystrokes("enter");
+        assert_eq!(found(cx), (2, 3, (1, 4)));
+        // findDecorations.ts: the ruler and minimap marks, the current match last.
+        let marks = workbench.read_with(cx, |workbench, _| {
+            let marks = workbench.find_marks(workbench.editors.active().unwrap(), 400.);
+            marks.iter().map(|mark| (mark.range.start.line, mark.in_minimap, mark.current)).collect::<Vec<_>>()
+        });
+        assert_eq!(marks, [(0, true, false), (2, true, false), (1, true, true)]);
+        run("editor.action.goToMatchFindAction", cx);
+        cx.simulate_input("-1");
+        assert_eq!(found(cx), (3, 3, (2, 0)));
+        assert!(workbench.read_with(cx, |workbench, _| workbench.find.go_to_match_highlight.is_some()));
+        cx.simulate_input("9");
+        let message = workbench.read_with(cx, |workbench, _| workbench.quick_inputs.current().unwrap().validation_message.clone());
+        assert_eq!(message.as_deref(), Some("Please type a number between 1 and 3"));
+        cx.simulate_keystrokes("backspace backspace backspace 2 enter");
+        assert_eq!(found(cx), (2, 3, (1, 4)));
+        assert!(workbench.read_with(cx, |workbench, _| workbench.quick_inputs.current().is_none() && workbench.find.go_to_match_highlight.is_none()));
+        cx.simulate_keystrokes("backspace backspace");
+        assert_eq!(workbench.read_with(cx, |workbench, _| workbench.find.controller.state.search_string.clone()), "t");
+
+        // The find input has the focus, so the replace input takes it.
+        run("editor.action.startFindReplaceAction", cx);
+        cx.simulate_input("a");
+        cx.simulate_keystrokes("shift-tab");
+        cx.simulate_input("the");
+        cx.simulate_keystrokes("alt-cmd-enter");
+        assert_eq!(zone(cx).0, 62.);
+        let text = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document.lines.join("\n"));
+        assert_eq!(text, "a cat\nand a dog\na end");
+
+        cx.simulate_keystrokes("escape");
+        assert!(workbench.read_with(cx, |workbench, _| !workbench.find.controller.state.is_revealed));
+        assert_eq!(zone(cx), (0., 0.));
+
+        let args = serde_json::json!({ "searchString": "a", "isRegex": true });
+        workbench.update_in(cx, |workbench, window, cx| workbench.execute_command("editor.actions.findWithArgs", vec![args], window, cx));
+        let state = workbench.read_with(cx, |workbench, _| {
+            let state = &workbench.find.controller.state;
+            (state.search_string.clone(), state.is_regex, state.is_replace_revealed, state.matches_count)
+        });
+        assert_eq!(state, ("a".to_string(), true, false, 5));
+
+        // saveQueryState and the history delayer write the workspace storage.
+        cx.executor().advance_clock(std::time::Duration::from_millis(500));
+        cx.run_until_parked();
+        let stored = |key: &str, cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.workspace_storage.lock().unwrap().get(key).map(str::to_owned));
+        assert_eq!(stored("editor.isRegex", cx).as_deref(), Some("true"));
+        assert_eq!(stored("workbench.find.history", cx).as_deref(), Some(r#"["a"]"#));
+        cx.simulate_input("b");
+        cx.simulate_keystrokes("up");
+        assert_eq!(workbench.read_with(cx, |workbench, _| workbench.find.controller.state.search_string.clone()), "a");
+        assert_eq!(workbench.read_with(cx, |workbench, _| workbench.find.find_history.elements().len()), 2);
+        // loadQueryState and the history's load on the next start.
+        let restored = workbench.update(cx, |workbench, _| {
+            workbench.find.find_history.clear();
+            workbench.restore_workspace_state(workbench.workspace_storage.clone());
+            (workbench.find.controller.state.is_regex, workbench.find.find_history.elements().len())
+        });
+        assert_eq!(restored, (true, 2));
+
+        use crate::editor::{Position, Selection};
+        // wordHighlighter.ts: a match found from the find input keeps the editor's highlighted word.
+        workbench.update(cx, |workbench, _| workbench.editors.active_mut().unwrap().set_selections(vec![Selection::caret(Position::new(0, 3))]));
+        cx.simulate_input("n");
+        cx.simulate_keystrokes("enter");
+        let highlights = workbench.read_with(cx, |workbench, _| {
+            let editor = workbench.editors.active().unwrap();
+            (workbench.find.controller.state.search_string.clone(), editor.selection().head, editor.highlights.clone())
+        });
+        assert_eq!(highlights, ("an".to_string(), Position::new(1, 2), vec![(0, 2..5)]));
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

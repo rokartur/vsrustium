@@ -175,7 +175,11 @@ impl Workbench {
     /// `AbstractCommandsQuickAccessProvider._getPicks` and `toCommandPick`, with "No matching commands" for an empty result.
     fn command_picks(&self, filter: &str, window: &Window) -> (Vec<Entry>, Vec<Accept>) {
         let context = self.key_context(window);
-        let commands = command_palette::enabled_commands(&self.quick_access.menu, &context);
+        let mut commands = match self.editors.active() {
+            Some(_) => command_palette::editor_action_picks(&context),
+            None => Vec::new(),
+        };
+        commands.extend(command_palette::enabled_commands(&self.quick_access.menu, &context));
         let mut entries = Vec::new();
         let mut accepts = Vec::new();
         for entry in command_palette::command_picks(&commands, filter, &self.quick_access.history) {

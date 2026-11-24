@@ -27,6 +27,14 @@ The reference frames moved since milestone 8's run (1750 to 4642 pixels between 
 | main | 11927 | 8685 | 5842 | 6873 |
 | folded | 14070 | 27529 | 6987 | 9021 |
 
+## Milestone 8: find widget
+
+`WINDOWS=find port/tools/pixel-check`: notes.txt with `cmd-f t h e` typed (`ref-screenshot` now types bare letters through `Input.insertText`, 100 ms apart, so the reference's find input receives them). The port first left the word highlight on "the" instead of "Port": `wordHighlighter.ts` `_run` ignores selections made while the editor has no text focus, so the port now keeps the highlighted word when a find action moves the selection. The widget shadow was twice as wide: GPUI's `blur_radius` is the Gaussian sigma, CSS's blur is twice the sigma, so the 12 px of `--vscode-shadow-lg` is now 6 (light 66221 to 25512, hclight 62722 to 17703; dark rose 34648 to 45168 because the line 1 range highlight under the old, wider shadow happened to land 1 level darker, as the reference's). Left: the status bar text "Ln 1, Col 19 (3 selected)" sits 3 px right of the reference's (about 3000 pixels in every theme), the find input's caret blink phase, glyph anti-aliasing. The quick input (`blur_radius` 20) and sticky scroll shadows use the same CSS numbers and are likely twice as wide too; not chased here.
+
+| window | dark | light | hc | hclight |
+|---|---|---|---|---|
+| find | 45168 | 25512 | 9562 | 17703 |
+
 ## Milestone 9: commands, keybindings, quick input
 
 No new window: pixel-check has no quick input. All 16 port frames are byte-identical to the milestone 7 run (md5 of `port-<theme>.png` per window).
