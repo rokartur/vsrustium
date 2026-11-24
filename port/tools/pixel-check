@@ -4,7 +4,7 @@
 # "file" (the folder with notes.txt open), "main" (the folder with src/main.ts open, for token colors), "multiroot"
 # (a .code-workspace file with the folder and a copy of its docs folder as roots) and "folded"
 # (port/fixtures/folding with long.py open, scrolled to the end and two regions folded by typing KEYS) and "find"
-# (notes.txt with the find widget open on "the").
+# (notes.txt with the find widget open on "the") and "quickopen" (notes.txt with Quick Open's file list).
 # WINDOWS="file" checks only the listed windows, THEMES="dark hclight" only the listed themes.
 # Prints "window theme different anti_aliased total"; images land in $OUT/<window>.
 set -uo pipefail
@@ -25,12 +25,13 @@ capture() {
   sample $pid 3 -file "$sample" >/dev/null 2>&1
   kill $pid; wait $pid; return 124
 }
-for window in ${WINDOWS:-empty folder file main multiroot folded find}; do
+for window in ${WINDOWS:-empty folder file main multiroot folded find quickopen}; do
   case $window in empty) folder= ;; multiroot) folder=$OUT/multi.code-workspace ;; *) folder=$OUT/workspace ;; esac
   keys=
   case $window in
     file) file=$OUT/workspace/notes.txt ;;
     find) file=$OUT/workspace/notes.txt keys="cmd-f t h e" ;;
+    quickopen) file=$OUT/workspace/notes.txt keys="cmd-p" ;;
     main) file=$OUT/workspace/src/main.ts ;;
     folded) folder=$OUT/folding file=$OUT/folding/long.py keys="cmd-down up alt-cmd-[ up up up up up up up up up up up up alt-cmd-[" ;;
     *) file= ;;

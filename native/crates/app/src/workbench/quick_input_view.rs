@@ -369,8 +369,8 @@ impl Workbench {
             .when(interactive, |widget| widget.child(self.quick_input_drag_tracker(cx)))
             .text_color(self.foreground_or("quickInput.foreground"))
             .when_some(self.theme.color("widget.border"), |widget, border| widget.border_1().border_color(border))
-            // --vscode-shadow-xl.
-            .shadow(vec![BoxShadow { color: rgba(0x00000026).into(), offset: point(px(0.), px(0.)), blur_radius: px(20.), spread_radius: px(0.), inset: false }])
+            // --vscode-shadow-xl blurs 20px; GPUI's blur_radius is the sigma, half the CSS blur.
+            .shadow(vec![BoxShadow { color: rgba(0x00000026).into(), offset: point(px(0.), px(0.)), blur_radius: px(10.), spread_radius: px(0.), inset: false }])
             .when(interactive, |widget| widget.on_mouse_down_out(cx.listener(|workbench, _, window, cx| workbench.quick_input_focus_lost(window, cx))))
             .when(has_title, |widget| widget.child(self.quick_input_title(&input, cx)))
             .when(input.description.as_ref().is_some_and(|description| !description.is_empty()), |widget| {

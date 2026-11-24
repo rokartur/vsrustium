@@ -186,8 +186,8 @@ impl Workbench {
             // Modern UI frosted glass outside high contrast; high contrast menus have no shadow.
             .when(high_contrast, |panel| panel.bg(self.color("menu.background")))
             .when(!high_contrast, |panel| {
-                // --vscode-shadow-lg.
-                panel.child(self.frosted_glass("menu.background")).shadow(vec![BoxShadow { color: rgba(0x00000024).into(), offset: point(px(0.), px(0.)), blur_radius: px(12.), spread_radius: px(0.), inset: false }])
+                // --vscode-shadow-lg blurs 12px; GPUI's blur_radius is the sigma, half the CSS blur.
+                panel.child(self.frosted_glass("menu.background")).shadow(vec![BoxShadow { color: rgba(0x00000024).into(), offset: point(px(0.), px(0.)), blur_radius: px(6.), spread_radius: px(0.), inset: false }])
             })
             .on_modifiers_changed(cx.listener(|workbench, event: &ModifiersChangedEvent, _, cx| {
                 if let Some(menu) = workbench.context_menu.as_mut() {
