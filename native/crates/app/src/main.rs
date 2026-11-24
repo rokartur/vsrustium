@@ -21,6 +21,7 @@ use config::registry::Registry;
 use config::service::Settings;
 use exthost::extension_development::ExtensionDevelopment;
 use exthost::main_thread_configuration::MainThreadConfiguration;
+use exthost::main_thread_secret_state::MainThreadSecretState;
 use exthost::main_thread_storage::MainThreadStorage;
 use exthost::rpc::Arg;
 use exthost::scan::{ScannedExtension, scan_builtin_extensions};
@@ -155,6 +156,14 @@ fn run_extension_host(
     let mut session = Session::new(host);
     session.configuration = Some(MainThreadConfiguration::new(settings, development.is_some()));
     session.storage = Some(storage);
+    // secrets.ts: without encryption the secret storage falls back to memory.
+    session.secrets = Some(match extension_tests {
+        true => MainThreadSecretState::in_memory(),
+        false => MainThreadSecretState::keychain().unwrap_or_else(|error| {
+            eprintln!("[secrets] the Keychain is unavailable, secrets stay in memory: {error}");
+            MainThreadSecretState::in_memory()
+        }),
+    });
     session.start(&extensions, folder.as_deref().map(|folder| workspace_data(&init, folder)))?;
     let reply = session.call("ExtHostExtensionService", "$test_latency", vec![Arg::Json(json!(7))], Duration::from_secs(10))?;
     let _ = status.unbounded_send(format!("main -> host: $test_latency(7) = {reply:?}"));

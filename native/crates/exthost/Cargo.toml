@@ -8,5 +8,6 @@ license.workspace = true
 anyhow.workspace = true
 config = { path = "../config" }
 md5 = { package = "md-5", version = "0.10" }
+security-framework = "3"
 serde_json.workspace = true
 storage = { path = "../storage" }

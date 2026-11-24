@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 
 use crate::console::format_console_entry;
 use crate::main_thread_configuration::MainThreadConfiguration;
+use crate::main_thread_secret_state::MainThreadSecretState;
 use crate::main_thread_storage::MainThreadStorage;
 use crate::rpc::{self, Arg, Message, Reply};
 use crate::scan::{ScannedExtension, extension_identifier, file_uri};
@@ -133,11 +134,13 @@ pub struct Session {
     pub configuration: Option<MainThreadConfiguration>,
     /// Extension state on disk; without it `globalState` and `workspaceState` start empty and are not kept.
     pub storage: Option<MainThreadStorage>,
+    /// Extension secrets; without it every MainThreadSecretState call answers `undefined`.
+    pub secrets: Option<MainThreadSecretState>,
 }
 
 impl Session {
     pub fn new(host: ExtensionHost) -> Self {
-        Session { host, next_req: 0, results: HashMap::new(), log: SessionLog::default(), extensions: HashMap::new(), extension_tests_req: None, configuration: None, storage: None }
+        Session { host, next_req: 0, results: HashMap::new(), log: SessionLog::default(), extensions: HashMap::new(), extension_tests_req: None, configuration: None, storage: None, secrets: None }
     }
 
     /// The calls the workbench makes once the handshake is done (MainThreadConfiguration,
@@ -234,6 +237,16 @@ impl Session {
                 // The change reaches the host before the reply, as upstream's change event fires before the update resolves.
                 if let Some(args) = change {
                     self.notify("ExtHostConfiguration", "$acceptConfigurationChanged", args);
+                }
+                self.host.send(rpc::encode(&reply));
+            }
+            Message::Request { req, rpc_id, method, args, .. } if proxy_name(rpc_id) == "MainThreadSecretState" && self.secrets.is_some() => {
+                self.host.send(rpc::encode(&Message::Acknowledged { req }));
+                *self.log.host_calls.entry(format!("MainThreadSecretState.{method}")).or_default() += 1;
+                let (change, reply) = self.secrets.as_mut().expect("checked by the match guard").serve(req, &method, &args);
+                // secretStorageService fires onDidChangeSecret while the write is still pending.
+                if let Some(key) = change {
+                    self.notify("ExtHostSecretState", "$onDidChangePassword", vec![key]);
                 }
                 self.host.send(rpc::encode(&reply));
             }
