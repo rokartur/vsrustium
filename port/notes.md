@@ -163,7 +163,7 @@ Done when: api-tests `configuration.test` and `state.test` pass as in the refere
 
 ## Milestone 9: commands, keybindings, quick input
 
-Scope as in port/roadmap.md. Done in this milestone: the command registry, context keys and `when` clauses, keybinding resolution, the quick input widget and MainThreadQuickOpen, the Command Palette, and Quick Open's file picks. Not done: Quick Open symbols (`@`, `#`), the native menu bar, context menus and hovers (see the last items).
+Scope as in port/roadmap.md. Done in this milestone: the command registry, context keys and `when` clauses, keybinding resolution, the quick input widget and MainThreadQuickOpen, the Command Palette, and Quick Open's file picks. Not done: Quick Open symbols (`@`, `#`), context menus and hovers (see the last items).
 
 - `contextkey.rs` ports the scanner, parser, evaluation and the `And`/`Or` normal forms of `contextkey.ts`; `contextkey/tests.rs` holds the scanner and parser cases of `contextkey.test.ts` and `scanner.test.ts`.
 - `commands.rs` is the one registry of the workbench and `vscode.commands`: workbench handlers, extension commands registered through MainThreadCommands (`main_thread_commands.rs`), `onCommand:` activation before a run. `Commands::register_all` takes a whole table in one call for milestone 8's `editor/commands.rs`.
@@ -189,7 +189,14 @@ Scope as in port/roadmap.md. Done in this milestone: the command registry, conte
 - shortcut: Revert File is a whole-text edit plus a save until milestone 8 has a model revert.
 - shortcut: the quick input fades in and out without the 0.97/0.99 scale of upstream's animation; GPUI has no element transforms.
 - `fuzzy_scorer.rs` ports `fuzzyScorer.ts` (scoreFuzzy, scoreFuzzy2, scoreItemFuzzy with its cache, compareItemsByFuzzyScore, prepareQuery) on top of `filters::fuzzy_score`, the `fuzzyScore` DP of `filters.ts`. Tests: `fuzzy_scorer/tests.rs` (68 cases of `fuzzyScorer.test.ts`) and `filters/fuzzy_score_tests.rs` (28 `fuzzyScore` cases of `filters.test.ts`). Left out: the Windows path branches (macOS only), lone UTF-16 surrogates (not representable in a Rust `str`), and the `fuzzyScoreGraceful` and `anyScore` assertions, which have no caller in the port yet. Match offsets count chars where upstream counts UTF-16 units; the same for every text outside the BMP the port draws.
-- Not done, left for a next session: Quick Open file picks (`anythingQuickAccess.ts`: file search with the exclude settings, editor history and `:line`), the native menu bar from `MenuId.MenubarMainMenu`, context menus and hovers. pixel-check has no quick input window; the palette was compared by an ad-hoc capture (port/results/pixels.md).
+- pixel-check has no quick input window; the palette was compared by an ad-hoc capture (port/results/pixels.md).
+- `menus.rs` is the MenuRegistry: rows of upstream's `MenuRegistry.appendMenuItem` calls (menu, group, order, `when`, precondition, toggled, submenu) for the commands the port has; items for missing features are left out, not shown disabled. `menu_actions` sorts and separates as `menuService.ts` and `getFlatContextMenuActions` do, with the `menuService.test.ts` sorting cases.
+- The native menu bar (`workbench/menubar.rs`) is `MenuId.MenubarMainMenu` as `menubarControl.ts` sends it, built into AppKit menus as `menubar.ts` does: the app menu with Preferences, Services, Hide, Quit; the Window menu before Help. It is rebuilt when an item's `when`, enablement, check or keybinding changes. A one-chord keybinding is the item's key equivalent; a chord sequence goes into the label (`Color Theme [⌘K ⌘T]`), as `getMenubarKeybinding`'s `isNative: false`. Keys still resolve in the workbench first: the key equivalents are bound in a key context no element sets. A click runs the command with `{ from: 'menu' }` as `vscode:runAction` does.
+- `fix_up_app_kit_menus` sets on the AppKit menus what GPUI cannot: the Window menu's `performMiniaturize:`, `performZoom:` and `arrangeInFront:` items (AppKit adds Move & Resize after them), and the Preferences title, which AppKit retitles to "Settings…" a run-loop turn after `setMainMenu` unless set again.
+- Labels draw "..." as "…" as Electron's Cocoa menus do. The bold app menu title is the process name (`code-gpui`) until the port is bundled as an app.
+- shortcut: no About, Always on Top or Switch Window… in the menu bar; the port has no about dialog, always-on-top windows or window switching.
+- shortcut: Quit closes the editors (asking for dirty ones) and quits; the port has no hot exit backups.
+- Not done, left for a next session: context menus and hovers.
 
 ## Milestone 12: files, explorer, search, workspace (in progress)
 
