@@ -374,14 +374,14 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/terminal | workbench service | todo |  |
 | workbench/services/textMate | workbench service | verified | textmate crate (vscode-textmate 9.3.2, onig); cargo test -p textmate; colorize test 109/109 fixtures; pixel-check main window |
 | workbench/services/textfile | workbench service | stub | Cmd+S writes the model's encoding (files::encoding, port of encoding.ts with iconv-lite DOS code pages; cargo test -p files encoding) and clears dirty state (cargo test -p app keys_and_typed_text_edit_the_focused_editor_and_reach_the_host); save participants for extension saves; no conflict check, no files.autoGuessEncoding (jschardet) |
-| workbench/services/textmodelResolver | workbench service | partial | content provider registrations newest first and provider-backed models (main_thread.rs) |
+| workbench/services/textmodelResolver | workbench service | stub | content provider registrations newest first and provider-backed models (main_thread.rs) |
 | workbench/services/textresourceProperties | workbench service | todo |  |
 | workbench/services/themes | workbench service | ported | all 19 built-in color themes incl. hc-light, tokenColors (theme.rs, syntax.rs); cargo test -p app theme::tests; `setColorTheme` from the theme picker (preview, write, `$onColorThemeChange`), not on a settings.json edit; no semanticTokenColors (needs semantic tokens), no icon themes |
 | workbench/services/timer | workbench service | todo |  |
 | workbench/services/title | workbench service | todo |  |
 | workbench/services/treeSitter | workbench service | todo |  |
 | workbench/services/tunnel | workbench service | removed | no remote or tunnels by decision (port/notes.md); one local extension host |
-| workbench/services/untitled | workbench service | partial | Untitled-<n> models and untitled models with an associated file (host_requests.rs, editor/edit.rs is_dirty); no Save As |
+| workbench/services/untitled | workbench service | stub | Untitled-<n> models and untitled models with an associated file (host_requests.rs, editor/edit.rs is_dirty); no Save As |
 | workbench/services/update | workbench service | todo |  |
 | workbench/services/url | workbench service | todo |  |
 | workbench/services/userActivity | workbench service | todo |  |
