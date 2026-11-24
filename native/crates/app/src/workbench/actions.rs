@@ -41,6 +41,35 @@ impl Workbench {
             Outcome::done()
         });
         self.commands.register("workbench.action.closeAllEditors", |workbench, _, window, cx| workbench.close_all_editors(window, cx));
+        // The port has one editor group, so closing the group's editors closes them all.
+        self.commands.register("workbench.action.closeEditorsInGroup", |workbench, _, window, cx| workbench.close_all_editors(window, cx));
+        // editorCommands.ts: these act on the editor a tab's context menu passes, else the active one.
+        self.commands.register("workbench.action.closeActiveEditor", |workbench, args, window, cx| {
+            let Some(index) = workbench.context_editor(&args) else { return Outcome::done() };
+            workbench.close_editors(vec![index], window, cx)
+        });
+        self.commands.register("workbench.action.closeOtherEditors", |workbench, args, window, cx| {
+            let Some(index) = workbench.context_editor(&args) else { return Outcome::done() };
+            let others = (0..workbench.editors.editors.len()).filter(|other| *other != index).collect();
+            workbench.close_editors(others, window, cx)
+        });
+        self.commands.register("workbench.action.closeEditorsToTheRight", |workbench, args, window, cx| {
+            let Some(index) = workbench.context_editor(&args) else { return Outcome::done() };
+            let right = (index + 1..workbench.editors.editors.len()).collect();
+            workbench.close_editors(right, window, cx)
+        });
+        // `closeEditors({ savedOnly: true })`: dirty editors stay, so nothing asks.
+        self.commands.register("workbench.action.closeUnmodifiedEditors", |workbench, _, window, cx| {
+            let saved = (0..workbench.editors.editors.len()).filter(|index| !workbench.editors.editors[*index].is_dirty()).collect();
+            workbench.close_editors(saved, window, cx)
+        });
+        self.commands.register("workbench.action.keepEditor", |workbench, args, _, cx| {
+            if let Some(index) = workbench.context_editor(&args) {
+                workbench.editors.pin(index);
+                workbench.editors_changed(cx);
+            }
+            Outcome::done()
+        });
         // shortcut: dirty editors ask to save as with `files.hotExit: off`, since the port has no backups to restore
         // them from; quit without asking once hot exit lands.
         self.commands.register("workbench.action.quit", |workbench, _, window, cx| {
@@ -64,12 +93,17 @@ impl Workbench {
         (0..self.editors.editors.len()).filter(|index| self.editors.editors[*index].is_dirty()).collect()
     }
 
-    /// `AbstractCloseAllAction.run`: dirty editors ask to save first; Cancel keeps every editor open.
     fn close_all_editors(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
-        let dirty = self.dirty_editors();
+        self.close_editors((0..self.editors.editors.len()).collect(), window, cx)
+    }
+
+    /// `AbstractCloseAllAction.run` and `handleDirtyClosing`: dirty editors among `indices` ask to save first;
+    /// Cancel keeps every editor open.
+    fn close_editors(&mut self, indices: Vec<usize>, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
+        let dirty: Vec<usize> = indices.iter().copied().filter(|index| self.editors.editors[*index].is_dirty()).collect();
         // showSaveConfirm answers Don't Save without a dialog while extension tests run.
         if dirty.is_empty() || self.skip_dialogs {
-            self.discard_and_close_all(&dirty, cx);
+            self.discard_and_close(&dirty, &indices, cx);
             return Outcome::done();
         }
         let names: Vec<String> = dirty.iter().map(|index| self.editors.editors[*index].document.name()).collect();
@@ -84,9 +118,9 @@ impl Workbench {
                     for index in &dirty {
                         workbench.save_editor(*index, cx);
                     }
-                    workbench.discard_and_close_all(&[], cx);
+                    workbench.discard_and_close(&[], &indices, cx);
                 }
-                Ok(1) => workbench.discard_and_close_all(&dirty, cx),
+                Ok(1) => workbench.discard_and_close(&dirty, &indices, cx),
                 _ => {}
             });
             let _ = sender.send(Ok(Value::Null));
@@ -95,13 +129,15 @@ impl Workbench {
         Outcome::Pending(receiver)
     }
 
-    /// Reverts `dirty` (ConfirmResult.DONT_SAVE), then closes every editor.
-    fn discard_and_close_all(&mut self, dirty: &[usize], cx: &mut Context<Self>) {
+    /// Reverts `dirty` (ConfirmResult.DONT_SAVE), then closes the editors at `indices`.
+    fn discard_and_close(&mut self, dirty: &[usize], indices: &[usize], cx: &mut Context<Self>) {
         for index in dirty {
             self.revert_editor(*index, cx);
         }
-        while !self.editors.editors.is_empty() {
-            self.editors.close(self.editors.editors.len() - 1);
+        let mut indices = indices.to_vec();
+        indices.sort_unstable();
+        for index in indices.into_iter().rev() {
+            self.editors.close(index);
         }
         self.editors_changed(cx);
     }

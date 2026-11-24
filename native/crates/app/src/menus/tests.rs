@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use super::*;
 
 fn command(id: &str, title: &str, group: &str, order: f64) -> MenuItem {
-    let entry = Entry::Command { id: id.into(), precondition: None, toggled: None };
+    let entry = Entry::Command { id: id.into(), precondition: None, toggled: None, alt: None };
     MenuItem { menu: MenuId::Test, entry, title: title.into(), group: group.into(), order, when: None }
 }
 
@@ -53,10 +53,10 @@ fn when_hides_precondition_disables_and_toggled_checks() {
     let mut hidden = command("hidden", "Hidden", "1", 0.);
     hidden.when = Expr::deserialize("shown");
     let mut disabled = command("disabled", "Disabled", "1", 1.);
-    disabled.entry = Entry::Command { id: "disabled".into(), precondition: Expr::deserialize("enabled"), toggled: Expr::deserialize("!enabled") };
+    disabled.entry = Entry::Command { id: "disabled".into(), precondition: Expr::deserialize("enabled"), toggled: Expr::deserialize("!enabled"), alt: None };
     let context = HashMap::from([("shown".to_string(), json!(false)), ("enabled".to_string(), json!(false))]);
     let actions = menu_actions(&[hidden, disabled], MenuId::Test, &context);
-    assert_eq!(actions, [MenuAction::Command { id: "disabled".into(), title: "Disabled".into(), enabled: false, checked: true }]);
+    assert_eq!(actions, [MenuAction::Command { id: "disabled".into(), title: "Disabled".into(), enabled: false, checked: true, alt: None }]);
 }
 
 #[test]
@@ -66,7 +66,7 @@ fn submenus_without_actions_are_left_out() {
     theme.menu = MenuId::ThemesSubMenu;
     let empty = MenuItem { entry: Entry::Submenu(MenuId::MenubarHelpMenu), ..submenu("Empty", "2") };
     let actions = menu_actions(&[submenu("Themes", "1"), empty, theme], MenuId::Test, &no_context());
-    assert_eq!(actions, [MenuAction::Submenu { title: "Themes".into(), actions: vec![MenuAction::Command { id: "theme".into(), title: "Color Theme".into(), enabled: true, checked: false }] }]);
+    assert_eq!(actions, [MenuAction::Submenu { title: "Themes".into(), actions: vec![MenuAction::Command { id: "theme".into(), title: "Color Theme".into(), enabled: true, checked: false, alt: None }] }]);
 }
 
 #[test]

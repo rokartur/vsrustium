@@ -7,6 +7,7 @@ use gpui::{Modifiers, MouseButton, TestAppContext, VisualTestContext, point, px}
 use crate::explorer::FileTree;
 use crate::host_sync::HostSync;
 use crate::languages::Languages;
+use crate::menus::MenuAction;
 use crate::theme::load_theme;
 use crate::workbench::Workbench;
 
@@ -155,5 +156,68 @@ fn rename_copy_paste_cut_delete_and_undo(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("cmd-z");
     cx.run_until_parked();
     assert_eq!(names(&dir), ["c copy.txt", "c.txt", "sub"], "undo restores the deleted file");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+fn menu_titles(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<String> {
+    workbench.read_with(cx, |workbench, _| {
+        let menu = workbench.context_menu.as_ref().expect("a context menu shows");
+        menu.actions
+            .iter()
+            .map(|action| match action {
+                MenuAction::Command { title, enabled: true, .. } => title.clone(),
+                MenuAction::Command { title, .. } => format!("({title})"),
+                _ => "---".into(),
+            })
+            .collect()
+    })
+}
+
+#[gpui::test]
+fn the_context_menu_selects_the_row_and_runs_its_items_with_keys_and_clicks(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = explorer("explorer-context-menu", cx);
+    let file_row = point(px(120.), px(129.));
+    cx.simulate_mouse_down(file_row, MouseButton::Right, Modifiers::none());
+    cx.simulate_mouse_up(file_row, MouseButton::Right, Modifiers::none());
+    cx.run_until_parked();
+    assert_eq!(menu_titles(&workbench, cx), ["Cut", "Copy", "---", "Rename...", "Delete"]);
+    assert_eq!(workbench.read_with(cx, |workbench, _| workbench.folder.as_ref().unwrap().selected.clone()), [dir.join("a.txt")]);
+
+    // The pointer focuses the item under it; Down goes on from there and skips the separator; Enter runs it.
+    let focused = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.context_menu.as_ref().unwrap().focused);
+    cx.simulate_mouse_move(point(px(150.), px(148.)), None, Modifiers::none());
+    assert_eq!(focused(cx), Some(0));
+    cx.simulate_mouse_move(point(px(150.), px(400.)), None, Modifiers::none());
+    assert_eq!(focused(cx), None);
+    cx.simulate_mouse_move(point(px(150.), px(148.)), None, Modifiers::none());
+    cx.simulate_keystrokes("pagedown");
+    assert_eq!(focused(cx), Some(4));
+    cx.simulate_keystrokes("pageup down down");
+    assert_eq!(focused(cx), Some(3));
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert!(workbench.read_with(cx, |workbench, _| workbench.context_menu.is_none() && workbench.explorer.edit.as_ref().is_some_and(|edit| edit.renamed.is_some())));
+    cx.simulate_keystrokes("escape");
+
+    // Below the rows: the folder's items; Escape hides the menu and gives the tree its focus back.
+    let empty = point(px(120.), px(300.));
+    cx.simulate_mouse_down(empty, MouseButton::Right, Modifiers::none());
+    cx.run_until_parked();
+    assert_eq!(menu_titles(&workbench, cx), ["New File...", "New Folder...", "---", "(Paste)"]);
+    cx.simulate_keystrokes("escape");
+    assert!(workbench.update_in(cx, |workbench, window, _| workbench.context_menu.is_none() && workbench.explorer.focus.is_focused(window)));
+
+    // A click runs the item only 100ms after the menu showed; with Alt, Delete is Delete Permanently.
+    // Items are 24px from y 136 (the 2px pointer, the border and the 4px padding), the separator 11px.
+    cx.simulate_mouse_down(file_row, MouseButton::Right, Modifiers::none());
+    let delete = point(px(150.), px(136. + 24. * 2. + 11. + 24. + 12.));
+    cx.simulate_mouse_down(delete, MouseButton::Left, Modifiers::alt());
+    cx.simulate_mouse_up(delete, MouseButton::Left, Modifiers::alt());
+    assert!(workbench.read_with(cx, |workbench, _| workbench.context_menu.is_some()), "too early");
+    cx.executor().advance_clock(std::time::Duration::from_millis(100));
+    cx.simulate_mouse_down(delete, MouseButton::Left, Modifiers::alt());
+    cx.simulate_mouse_up(delete, MouseButton::Left, Modifiers::alt());
+    cx.run_until_parked();
+    assert_eq!(names(&dir), ["sub"]);
     std::fs::remove_dir_all(&dir).unwrap();
 }

@@ -394,7 +394,7 @@ impl Workbench {
     }
 
     /// The `::before` layer of frostedGlass.css: the surface color at 92% over a 12px blur of what is behind it.
-    fn frosted_glass(&self, surface: &str) -> impl IntoElement {
+    pub(super) fn frosted_glass(&self, surface: &str) -> impl IntoElement {
         let mut color = self.color(surface);
         color.a *= 0.92;
         canvas(

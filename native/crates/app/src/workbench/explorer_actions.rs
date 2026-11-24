@@ -21,6 +21,7 @@ use crate::explorer::NewItem;
 use crate::file_actions::{self, Deleted, IncrementalNaming, Severity};
 use crate::host_sync::FileJob;
 use crate::input_box::InputBox;
+use crate::menus::MenuId;
 use crate::undo_redo::{Direction, UndoRedo};
 
 #[cfg(test)]
@@ -104,6 +105,24 @@ impl Workbench {
         context.insert("explorerResourceParentReadOnly".into(), json!(false));
         context.insert("explorerResourceMoveableToTrash".into(), json!(tree.focused.is_some() && self.setting("files.enableTrash") == json!(true)));
         context.insert("explorerResourceCut".into(), json!(tree.cut && !tree.clipboard.is_empty()));
+        context.insert("fileCopied".into(), json!(!tree.clipboard.is_empty()));
+    }
+
+    /// explorerView.ts `onContextMenu`: the ExplorerContext menu for the right-clicked row, or for the space
+    /// below the rows. Its commands get the row (else the sole folder) and the selection holding the row.
+    pub(super) fn show_explorer_context_menu(&mut self, stat: Option<&Path>, position: gpui::Point<gpui::Pixels>, window: &mut Window, cx: &mut Context<Self>) {
+        let tree = self.folder.as_mut().expect("the Explorer shows with a folder");
+        tree.context_menu_select(stat);
+        let uri = |path: &Path| json!({ "scheme": "file", "path": path.to_string_lossy() });
+        let (arg, selection) = match stat {
+            Some(stat) => (uri(stat), tree.selected.iter().map(|path| uri(path)).collect()),
+            None if tree.workspace.folders.len() == 1 => (uri(&tree.workspace.folders[0].path), Vec::new()),
+            None => (json!({}), Vec::new()),
+        };
+        window.focus(&self.explorer.focus.clone(), cx);
+        let anchor = gpui::Bounds { origin: position, size: gpui::Size::default() };
+        let context = self.key_context(window);
+        self.show_context_menu(MenuId::ExplorerContext, &context, anchor, vec![arg, Value::Array(selection)], window, cx);
     }
 
     /// `configurationService.updateValue(key, value)`: written where the key is set, else in user settings.

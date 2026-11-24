@@ -1,6 +1,6 @@
 //! The native app: the workbench, themed from the built-in theme files, over the running extension host.
 //! Usage: code-gpui [folder or .code-workspace file [file]] [--theme <settings id>] [--user-data-dir <dir>] [--screenshot <png>]
-//! [--screenshot-keys "<keystroke> ..."] [--node]
+//! [--screenshot-keys "<keystroke> ..."] [--screenshot-input <steps>] [--node]
 //!   [--extensionDevelopmentPath=<dir> [--extensionTestsPath=<path>]]: the app exits with the test runner's code.
 
 mod anything_quick_access;
@@ -73,9 +73,10 @@ fn main() -> anyhow::Result<()> {
         None => default_user_data()?,
     };
     let screenshot = flag_value("--screenshot").map(PathBuf::from);
+    let screenshot_input = flag_value("--screenshot-input").unwrap_or_default();
     // Typed before the capture, as port/tools/ref-screenshot types KEYS into the reference.
     let screenshot_keys: Vec<Keystroke> = flag_value("--screenshot-keys").unwrap_or_default().split_whitespace().map(Keystroke::parse).collect::<Result<_, _>>()?;
-    let value_flags = ["--user-data-dir", "--screenshot", "--screenshot-keys", "--theme"];
+    let value_flags = ["--user-data-dir", "--screenshot", "--screenshot-keys", "--screenshot-input", "--theme"];
     let positional: Vec<&String> = args.iter().enumerate().skip(1).filter(|(i, arg)| !arg.starts_with("--") && !value_flags.contains(&args[i - 1].as_str())).map(|(_, arg)| arg).collect();
     let canonical = |path: &String| std::fs::canonicalize(path).with_context(|| format!("opening {path}"));
     let workspace = positional.first().map(|path| canonical(path)).transpose()?.map(Workspace::open);
@@ -194,6 +195,15 @@ fn main() -> anyhow::Result<()> {
                             })
                             .ok();
                         }
+                        for step in screenshot_input.split(';').filter(|step| !step.trim().is_empty()) {
+                            let input = screenshot_step(step).with_context(|| format!("--screenshot-input step {step:?}"));
+                            let dispatched = input.and_then(|input| cx.update(|window, cx| window.dispatch_event(input, cx)));
+                            if let Err(error) = dispatched {
+                                eprintln!("{error:#}");
+                                std::process::exit(1);
+                            }
+                            cx.background_executor().timer(Duration::from_millis(300)).await;
+                        }
                         // The editor's scrollbars show at open and after a scroll, hide 500ms later and fade out
                         // over 800ms; ref-screenshot waits the same.
                         cx.background_executor().timer(Duration::from_millis(1500)).await;
@@ -293,6 +303,19 @@ fn run_extension_host(
 }
 
 const ACTIVATED_PREFIX: &str = "eager extensions activated: ";
+
+/// A step of `--screenshot-input`: `right X Y` (a right click), `move X Y` or `key KEYSTROKE`, in window points.
+fn screenshot_step(step: &str) -> anyhow::Result<gpui::PlatformInput> {
+    let parts: Vec<&str> = step.split_whitespace().collect();
+    let position = || -> anyhow::Result<gpui::Point<gpui::Pixels>> { Ok(point(px(parts.get(1).context("no x")?.parse()?), px(parts.get(2).context("no y")?.parse()?))) };
+    let modifiers = gpui::Modifiers::default();
+    Ok(match parts[0] {
+        "right" => gpui::PlatformInput::MouseDown(gpui::MouseDownEvent { button: gpui::MouseButton::Right, position: position()?, modifiers, click_count: 1, first_mouse: false }),
+        "move" => gpui::PlatformInput::MouseMove(gpui::MouseMoveEvent { position: position()?, pressed_button: None, modifiers }),
+        "key" => gpui::PlatformInput::KeyDown(gpui::KeyDownEvent { keystroke: gpui::Keystroke::parse(parts.get(1).context("no key")?)?, is_held: false, prefer_character_input: false }),
+        other => anyhow::bail!("unknown step {other}"),
+    })
+}
 
 /// Reads the last rendered frame back from Metal, so capture needs no Screen Recording permission.
 #[cfg(feature = "screenshot")]

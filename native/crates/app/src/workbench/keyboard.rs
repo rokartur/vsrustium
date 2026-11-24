@@ -66,6 +66,11 @@ impl Workbench {
         if self.marked_text.is_some() || self.input_composing() {
             return;
         }
+        // The menu's own key handlers run before the window's keybindings.
+        if self.context_menu_key(keystroke, window, cx) {
+            cx.stop_propagation();
+            return;
+        }
         let chord = Chord::from_keystroke(keystroke);
         if chord.is_modifier_key() {
             return;

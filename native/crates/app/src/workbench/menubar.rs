@@ -157,7 +157,7 @@ fn native_items(actions: &[MenuAction], menubar: &Menubar, key_equivalents: &mut
     let mut items = Vec::new();
     for action in actions {
         items.push(match action {
-            MenuAction::Command { id, title, enabled, checked } => native_command(id, title, *enabled, *checked, menubar, key_equivalents),
+            MenuAction::Command { id, title, enabled, checked, .. } => native_command(id, title, *enabled, *checked, menubar, key_equivalents),
             MenuAction::Submenu { title, actions } => MenuItem::submenu(Menu::new(native_label(title)).items(native_items(actions, menubar, key_equivalents))),
             MenuAction::Separator => MenuItem::separator(),
         });

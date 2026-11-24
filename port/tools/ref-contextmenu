@@ -1,0 +1,188 @@
+#!/usr/bin/env bun
+// Opens the reference's custom context menu on Explorer rows through CDP and dumps what it shows: items, keybindings,
+// enablement, separators, the menu's box and computed styles, plus screenshots closed, open, hovered and keyboard-focused.
+// Usage: port/tools/ref-contextmenu <out-dir> <row label>...   ("" right-clicks the empty area below the rows;
+// "editor" the editor text, "tab" the first tab, "titlebar" the empty title bar). Env REF, FOLDER, FILE as port/tools/ref-screenshot, THEME (default dark).
+import { Database } from 'bun:sqlite';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+const outDir = process.argv[2] ?? '/tmp/ref-contextmenu';
+const targets = process.argv.slice(3);
+const ref = process.env.REF ?? join(process.env.HOME!, 'Developer/vscode-ref');
+const electron = join(ref, '.build/electron/Code - OSS.app/Contents/MacOS/Code - OSS');
+const themes: Record<string, string> = { dark: 'Default Dark Modern', light: 'Default Light Modern', hc: 'Default High Contrast', hclight: 'Default High Contrast Light' };
+const port = 9336;
+
+mkdirSync(outDir, { recursive: true });
+const userData = mkdtempSync(join(tmpdir(), 'ref-contextmenu-'));
+mkdirSync(join(userData, 'User'));
+// Same product settings as port/tools/ref-screenshot.
+writeFileSync(join(userData, 'User/settings.json'), JSON.stringify({
+	'workbench.colorTheme': themes[process.env.THEME ?? 'dark'],
+	'workbench.startupEditor': 'none',
+	'workbench.reduceMotion': 'on',
+	'editor.cursorBlinking': 'solid',
+	'window.restoreWindows': 'none',
+	'workbench.tips.enabled': false,
+	'update.mode': 'none',
+	'chat.disableAIFeatures': true,
+	'security.workspace.trust.enabled': false,
+	'workbench.secondarySideBar.defaultVisibility': 'hidden',
+	'editor.minimap.enabled': false,
+}));
+mkdirSync(join(userData, 'User/globalStorage'));
+const storage = new Database(join(userData, 'User/globalStorage/state.vscdb'));
+storage.run('CREATE TABLE ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)');
+storage.run(`INSERT INTO ItemTable VALUES ('workbench.activity.showAccounts', 'false')`);
+storage.close();
+const paths = [process.env.FOLDER, process.env.FILE].filter(path => path) as string[];
+const app = Bun.spawn([electron, ref, ...paths, '--force-color-profile=srgb', '--user-data-dir', userData, '--remote-debugging-port=' + port, '--disable-extension', 'GitHub.copilot-chat', '--disable-extension', 'vscode.vscode-api-tests'], {
+	env: { ...process.env, VSCODE_DEV: '1', NODE_ENV: 'development' },
+	stdout: 'ignore',
+	stderr: 'ignore',
+});
+try {
+	const cdp = await connect();
+	await cdp('Emulation.setDeviceMetricsOverride', { width: 1024, height: 768, deviceScaleFactor: 2, mobile: false });
+	await until(async () => (await evaluate(cdp, `!!document.querySelector('.monaco-workbench .part.statusbar')`)) === true);
+	await Bun.sleep(5000);
+	Bun.spawnSync(['open', '-a', join(ref, '.build/electron/Code - OSS.app')]);
+	await cdp('Page.bringToFront');
+	// The editor's context view lives in a shadow root (`editor.useShadowDOM`).
+	await evaluate(cdp, `window.menuRoot = () => [...document.querySelectorAll('.shadow-root-host')].map(host => host.shadowRoot).find(root => root?.querySelector('.context-view .monaco-menu')) ?? document`);
+	for (const [index, target] of targets.entries()) {
+		const name = `${index}-${target.replace(/[^\w.-]+/g, '_') || 'empty'}`;
+		await key(cdp, 'Escape');
+		await Bun.sleep(300);
+		const point = await evaluate(cdp, `(() => {
+			const target = ${JSON.stringify(target)};
+			let element;
+			if (target === 'editor') {
+				element = document.querySelector('.monaco-editor .view-lines');
+			} else if (target === 'tab') {
+				element = document.querySelector('.tabs-container .tab');
+			} else if (target === 'titlebar') {
+				const bar = document.querySelector('.part.titlebar').getBoundingClientRect();
+				return { x: bar.left + bar.width * 0.75, y: bar.top + bar.height / 2 };
+			} else if (target === '') {
+				const rows = [...document.querySelectorAll('.explorer-folders-view .monaco-list-row')];
+				const last = rows[rows.length - 1].getBoundingClientRect();
+				return { x: last.left + 40, y: last.bottom + 30 };
+			} else {
+				element = [...document.querySelectorAll('.explorer-folders-view .monaco-list-row')].find(row => row.querySelector('.label-name')?.textContent === target);
+			}
+			const box = element.getBoundingClientRect();
+			return { x: box.left + 40, y: box.top + box.height / 2 };
+		})()`);
+		await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: point.x, y: point.y });
+		await cdp('Input.dispatchMouseEvent', { type: 'mousePressed', x: point.x, y: point.y, button: 'right', buttons: 2, clickCount: 1 });
+		await cdp('Input.dispatchMouseEvent', { type: 'mouseReleased', x: point.x, y: point.y, button: 'right', buttons: 0, clickCount: 1 });
+		await until(async () => evaluate(cdp, `!!menuRoot().querySelector('.context-view .monaco-menu')`), 10000).catch(async error => {
+			await shot(cdp, join(outDir, `${name}-no-menu.png`));
+			throw new Error(`${name}: no menu at ${JSON.stringify(point)}: ${error.message}`);
+		});
+		await Bun.sleep(400);
+		const dump = await evaluate(cdp, `(() => {
+			const menu = menuRoot().querySelector('.context-view .monaco-menu');
+			const box = element => { const r = element.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; };
+			const style = (element, keys) => { const s = getComputedStyle(element); return Object.fromEntries(keys.map(key => [key, s.getPropertyValue(key)])); };
+			const items = [...menu.querySelectorAll('.actions-container > .action-item')].map(item => {
+				const label = item.querySelector('.action-label');
+				if (label?.classList.contains('separator')) {
+					return { separator: true, box: box(label), style: style(label, ['margin-top', 'margin-bottom', 'margin-left', 'margin-right', 'border-bottom-color', 'border-bottom-width']) };
+				}
+				const entry = item.querySelector('.action-menu-item');
+				const keybinding = item.querySelector('.keybinding');
+				return {
+					label: label?.textContent, keybinding: keybinding?.textContent || undefined,
+					disabled: item.classList.contains('disabled'), submenu: !!item.querySelector('.submenu-indicator'),
+					box: box(entry), labelBox: box(label), keybindingBox: keybinding && box(keybinding),
+					style: style(entry, ['cursor', 'height', 'margin-left', 'margin-right', 'border-radius', 'color', 'background-color']),
+					labelStyle: style(label, ['font-family', 'font-size', 'padding-left', 'padding-right', 'color']),
+					keybindingStyle: keybinding && style(keybinding, ['font-size', 'padding-left', 'padding-right', 'opacity', 'color']),
+				};
+			});
+			const container = menuRoot().querySelector('.context-view');
+			return {
+				context: box(container), menu: box(menu), container: style(container, ['box-shadow', 'border-radius', 'background-color', 'class']), className: container.className,
+				menuStyle: style(menu, ['font-family', 'font-size', 'border-radius', 'border-top-width', 'border-top-color', 'background-color', 'color', 'min-width']),
+				bar: style(menu.querySelector('.monaco-action-bar'), ['padding-top', 'padding-bottom']), items,
+			};
+		})()`);
+		writeFileSync(join(outDir, `${name}.json`), JSON.stringify({ target, point, ...dump }, null, 1));
+		await shot(cdp, join(outDir, `${name}-open.png`));
+		const second = dump.items.find((item: any) => !item.separator && !item.disabled);
+		if (second) {
+			await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: second.box.x + 20, y: second.box.y + second.box.h / 2 });
+			await Bun.sleep(300);
+			await shot(cdp, join(outDir, `${name}-hover.png`));
+			const hovered = await evaluate(cdp, `(() => { const e = menuRoot().querySelector('.context-view .action-item.focused .action-menu-item'); if (!e) return null; const s = getComputedStyle(e); return { label: e.textContent, background: s.backgroundColor, color: s.color, outline: s.outline }; })()`);
+			writeFileSync(join(outDir, `${name}-hover.json`), JSON.stringify(hovered, null, 1));
+		}
+		await key(cdp, 'ArrowDown');
+		await Bun.sleep(200);
+		await shot(cdp, join(outDir, `${name}-key.png`));
+		console.log(`${name}: ${dump.items.filter((item: any) => !item.separator).map((item: any) => item.label).join(', ')}`);
+	}
+} finally {
+	app.kill('SIGKILL');
+	await app.exited;
+	rmSync(userData, { recursive: true, force: true });
+}
+process.exit(0);
+
+async function shot(cdp: Cdp, path: string) {
+	const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
+	writeFileSync(path, Buffer.from(data, 'base64'));
+}
+
+async function key(cdp: Cdp, name: string) {
+	const codes: Record<string, number> = { Escape: 27, ArrowDown: 40 };
+	await cdp('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: name, code: name, windowsVirtualKeyCode: codes[name] });
+	await cdp('Input.dispatchKeyEvent', { type: 'keyUp', key: name, code: name, windowsVirtualKeyCode: codes[name] });
+}
+
+async function evaluate(cdp: Cdp, expression: string) {
+	const { result, exceptionDetails } = await cdp('Runtime.evaluate', { expression, returnByValue: true });
+	if (exceptionDetails) {
+		throw new Error(exceptionDetails.exception?.description ?? exceptionDetails.text);
+	}
+	return result.value;
+}
+
+type Cdp = (method: string, params?: object) => Promise<any>;
+
+async function connect(): Promise<Cdp> {
+	const target = await until(async () => {
+		const targets: { type: string; url: string; webSocketDebuggerUrl: string }[] = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
+		return targets.find(t => t.type === 'page' && t.url.includes('workbench'));
+	});
+	const socket = new WebSocket(target.webSocketDebuggerUrl);
+	await new Promise(resolve => socket.addEventListener('open', resolve, { once: true }));
+	let nextId = 1;
+	const pending = new Map<number, (message: any) => void>();
+	socket.addEventListener('message', event => {
+		const message = JSON.parse(String(event.data));
+		pending.get(message.id)?.(message);
+		pending.delete(message.id);
+	});
+	return (method, params = {}) => new Promise<any>((resolve, reject) => {
+		const id = nextId++;
+		pending.set(id, message => message.error ? reject(new Error(`${method}: ${message.error.message}`)) : resolve(message.result));
+		socket.send(JSON.stringify({ id, method, params }));
+	});
+}
+
+async function until<T>(probe: () => Promise<T>, timeoutMs = 60000): Promise<NonNullable<T>> {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		const value = await probe().catch(() => undefined);
+		if (value) {
+			return value;
+		}
+		await Bun.sleep(250);
+	}
+	throw new Error('timed out');
+}
