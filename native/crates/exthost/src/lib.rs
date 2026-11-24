@@ -4,6 +4,7 @@
 pub mod console;
 pub mod extension_development;
 pub mod frame;
+pub mod main_thread_configuration;
 pub mod proxy_ids;
 pub mod rpc;
 pub mod scan;
