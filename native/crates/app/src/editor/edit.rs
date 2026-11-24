@@ -562,11 +562,10 @@ impl OpenEditor {
         Ok(())
     }
 
-    /// The document as saving writes it: its EOL, with the BOM it was read with.
+    /// The document as saving writes it: its EOL, in its encoding, with the BOM that encoding takes.
     pub fn saved_bytes(&self) -> Vec<u8> {
         let document = &self.document;
-        let bom = if document.encoding == "utf8bom" { "\u{FEFF}" } else { "" };
-        format!("{bom}{}", document.lines.join(document.eol)).into_bytes()
+        files::encoding::encode(&document.lines.join(document.eol), &document.encoding, files::encoding::has_bom(&document.encoding))
     }
 
     /// `pushEOL`: the model takes the line ending of `EndOfLineSequence` (0 is LF) and is dirty.
@@ -949,7 +948,7 @@ pub(super) mod tests {
             path: PathBuf::from("/w/a.ts"),
             lines: text.split('\n').map(String::from).collect(),
             eol,
-            encoding: "utf8",
+            encoding: "utf8".into(),
             language_id: "typescript".into(),
             indentation: Indentation { tab_size: 4, insert_spaces: true },
             off_side: false,
@@ -1031,7 +1030,7 @@ pub(super) mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let mut editor = editor("a", "\r\n");
         editor.document.path = dir.join("a.txt");
-        editor.document.encoding = "utf8bom";
+        editor.document.encoding = "utf8bom".into();
         editor.move_to(at(0, 1), false);
         editor.enter();
         editor.save().unwrap();

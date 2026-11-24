@@ -1,6 +1,7 @@
 //! MainThreadWorkspace search (workbench/api/browser/mainThreadWorkspace.ts `$startFileSearch`, `$startTextSearch`):
 //! `workspace.findFiles` and `workspace.findTextInFiles` over ripgrep, as the local search service runs them.
-//! Each search runs on its own thread so the host keeps being served and a `Cancel` can stop it.
+//! Each search runs on its own thread so the host keeps being served and a `Cancel` can stop it. The encoding
+//! requests (`$resolveDecoding`, `$validateDetectedEncoding`, `$resolveEncoding`) answer right away.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -9,6 +10,7 @@ use std::sync::{Arc, Mutex};
 
 use config::configuration::Overrides;
 use config::service::Settings;
+use files::encoding;
 use search::ripgrep::Cancellation;
 use serde_json::{Value, json};
 
@@ -40,7 +42,7 @@ impl MainThreadWorkspace {
 
     /// The methods this module answers; other MainThreadWorkspace calls keep their default reply.
     pub fn serves(method: &str) -> bool {
-        matches!(method, "$startFileSearch" | "$startTextSearch")
+        matches!(method, "$startFileSearch" | "$startTextSearch" | "$resolveDecoding" | "$validateDetectedEncoding" | "$resolveEncoding")
     }
 
     /// Starts request `req`; its reply comes later from `take_outgoing`.
@@ -49,6 +51,11 @@ impl MainThreadWorkspace {
             Some(Arg::Json(value)) => value.clone(),
             _ => Value::Null,
         };
+        if !method.starts_with("$start") {
+            let value = self.encoding(method, &json(0), &json(1), &json(2));
+            let _ = self.sender.send((req, Outgoing::Reply(Message::ReplyOk { req, value: Reply::Json(value) })));
+            return;
+        }
         let cancellation = Arc::new(Cancellation::default());
         self.searches.insert(req, cancellation.clone());
         let sender = self.sender.clone();
@@ -90,6 +97,27 @@ impl MainThreadWorkspace {
             outgoing.push(message);
         }
         outgoing
+    }
+
+    /// The encodings textFileService.ts resolves for `workspace.decode` and `workspace.encode`; the extension host
+    /// decodes and encodes with them.
+    fn encoding(&self, method: &str, resource: &Value, second: &Value, third: &Value) -> Value {
+        let path = (resource["scheme"] == "file").then(|| PathBuf::from(resource["path"].as_str().unwrap_or_default()));
+        let path = path.as_deref();
+        let settings = self.settings.lock().unwrap();
+        let setting = |key| settings.get_value(Some(key), &Overrides { resource: path, ..Overrides::default() }).unwrap_or(Value::Null);
+        match method {
+            "$resolveDecoding" => json!({
+                "preferredEncoding": encoding::read_encoding(&settings, path, second["encoding"].as_str(), None),
+                "guessEncoding": setting("files.autoGuessEncoding"),
+                "candidateGuessEncodings": setting("files.candidateGuessEncodings"),
+            }),
+            "$validateDetectedEncoding" => json!(encoding::read_encoding(&settings, path, third["encoding"].as_str(), second.as_str())),
+            _ => {
+                let (encoding, add_bom) = encoding::write_encoding(&settings, path, second["encoding"].as_str());
+                json!({ "encoding": encoding, "addBOM": add_bom })
+            }
+        }
     }
 
     /// The folder the extension named, else every workspace folder.

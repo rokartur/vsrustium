@@ -76,7 +76,7 @@ impl MainThread for WorkbenchMainThread {
                 match self.provide_text_content(session, &args[0]) {
                     Ok(text) => {
                         args.resize(2, Value::Null);
-                        args.push(json!(text.into_bytes()));
+                        args.push(json!(text));
                         self.ask(proxy, method, args)
                     }
                     Err(detail) => Err(serialized_error(&format!("cannot open {}. Detail: {detail}", uri_text(&args[0])))),

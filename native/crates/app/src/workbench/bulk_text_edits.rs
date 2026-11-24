@@ -103,7 +103,7 @@ impl Workbench {
             return Err(serialized_error(&format!("Unable to resolve resource {}", uri_string(scheme, path))));
         };
         let bytes: Vec<u8> = serde_json::from_value(file["bytes"].clone()).expect("bytes from main_thread_bulk_edits.rs");
-        Ok(TextDocument::from_bytes(scheme, path, &bytes, &self.languages, &settings))
+        Ok(TextDocument::from_bytes(scheme, path, &bytes, None, &self.languages, &settings))
     }
 
     /// `onDidRunWorkingCopyFileOperation` of TextFileEditorModelManager: the models of a moved resource and its children
@@ -149,7 +149,7 @@ impl Workbench {
 
     /// `TextFileEditorModel.revert`: the model takes the text of `bytes` and is clean.
     fn revert_model(&mut self, scheme: &str, path: &Path, bytes: &[u8]) -> bool {
-        let document = TextDocument::from_bytes(scheme, path, bytes, &self.languages, &self.settings.lock().unwrap());
+        let document = TextDocument::from_bytes(scheme, path, bytes, None, &self.languages, &self.settings.lock().unwrap());
         let Some(model) = self.editors.model_mut(scheme, path) else { return false };
         let end = document_end(&model.document.lines);
         model.push_undo_stop();

@@ -404,7 +404,7 @@ mod tests {
             path: PathBuf::from(path),
             lines: vec!["héllo".into(), String::new()],
             eol: "\n",
-            encoding: "utf8",
+            encoding: "utf8".into(),
             language_id: language_id.into(),
             indentation: Indentation { tab_size: 4, insert_spaces: true },
             off_side: false,

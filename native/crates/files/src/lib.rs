@@ -3,6 +3,7 @@
 //! layer; `handle_error` renames them as `MainThreadFileSystem._handleError` does before they reach the host.
 
 pub mod disk;
+pub mod encoding;
 pub mod glob;
 pub mod operations;
 pub mod watcher;

@@ -1,10 +1,11 @@
 //! The MainThread* requests the workbench answers itself: mainThreadDocuments.ts, mainThreadEditors.ts with
 //! mainThreadEditor.ts, and mainThreadClipboard.ts. They arrive from the session thread through `main_thread.rs`.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use exthost::main_thread::serialized_error;
+use files::encoding;
 use gpui::{ClipboardItem, Context, Window};
 use serde_json::{Value, json};
 
@@ -46,7 +47,7 @@ impl Workbench {
                 cx.write_to_clipboard(ClipboardItem::new_string(arg(0).as_str().unwrap_or_default().to_string()));
                 Ok(null)
             }
-            ("MainThreadDocuments", "$tryOpenDocument") => self.try_open_document(arg(0), arg(2), cx),
+            ("MainThreadDocuments", "$tryOpenDocument") => self.try_open_document(arg(0), arg(1), arg(2), cx),
             ("MainThreadDocuments", "$trySaveDocument") => self.try_save_document(arg(0), cx),
             ("MainThreadDocuments", "$tryCreateDocument") => self.try_create_document(arg(0), cx),
             ("workbench", "isDirty") => uri_parts(arg(0)).map(|(scheme, path)| json!(self.editors.model(scheme, &path).is_some_and(|model| model.is_dirty()))),
@@ -83,24 +84,38 @@ impl Workbench {
         }
     }
 
-    /// `$tryOpenDocument`: the model of a file, or of `provider_bytes` an extension's file system provider read,
-    /// opened without an editor and kept while the host references it.
-    fn try_open_document(&mut self, uri: &Value, provider_bytes: &Value, cx: &mut Context<Self>) -> HostResult {
+    /// `$tryOpenDocument`: the model of a file, of the bytes an extension's file system provider read
+    /// (`provider_content` an array) or of a content provider's text (a string), opened without an editor and kept
+    /// while the host references it. `options.encoding` decodes a new model, or a clean open one again.
+    fn try_open_document(&mut self, uri: &Value, options: &Value, provider_content: &Value, cx: &mut Context<Self>) -> HostResult {
         let (scheme, ref path) = uri_parts(uri)?;
+        let requested = options["encoding"].as_str();
         if let Some(model) = self.editors.model_mut(scheme, path) {
             model.host_reference = Some(Instant::now());
+            if let Some(requested) = requested {
+                self.set_model_encoding(uri, scheme, path, requested, cx)
+                    .map_err(|detail| serialized_error(&format!("cannot open {}. Detail: {detail}", uri_string(scheme, path))))?;
+            }
             return Ok(uri.clone());
         }
-        let document = match (scheme, provider_bytes) {
+        let document = match (scheme, provider_content) {
             (_, Value::Array(_)) => {
-                let bytes: Vec<u8> = serde_json::from_value(provider_bytes.clone()).expect("bytes from main_thread.rs");
-                TextDocument::from_bytes(scheme, path, &bytes, &self.languages, &self.settings.lock().unwrap())
+                let bytes: Vec<u8> = serde_json::from_value(provider_content.clone()).expect("bytes from main_thread.rs");
+                TextDocument::from_bytes(scheme, path, &bytes, requested, &self.languages, &self.settings.lock().unwrap())
             }
-            ("file", _) => TextDocument::read(path, &self.languages, &self.settings.lock().unwrap())
-                .map_err(|error| serialized_error(&format!("cannot open {}. Detail: Unable to read file '{}' ({error})", uri_string("file", path), path.display())))?,
+            (_, Value::String(text)) => TextDocument::from_text(scheme, path, text, encoding::UTF8.into(), None, &self.languages, &self.settings.lock().unwrap()),
+            ("file", _) => {
+                let bytes = std::fs::read(path)
+                    .map_err(|error| serialized_error(&format!("cannot open {}. Detail: Unable to read file '{}' ({error})", uri_string("file", path), path.display())))?;
+                TextDocument::from_bytes(scheme, path, &bytes, requested, &self.languages, &self.settings.lock().unwrap())
+            }
             // mainThreadDocuments.ts `_handleUntitledScheme`: an untitled model for the path, never over an existing file.
             ("untitled", _) if path.exists() => return Err(serialized_error(&format!("cannot open {}. Detail: file already exists", uri_string(scheme, path)))),
-            ("untitled", _) => TextDocument::untitled(path, "", None, &self.languages, &self.settings.lock().unwrap()),
+            ("untitled", _) => {
+                let mut document = TextDocument::untitled(path, "", None, &self.languages, &self.settings.lock().unwrap());
+                document.encoding = requested.map_or(document.encoding, str::to_string);
+                document
+            }
             _ => return Err(serialized_error(&format!("cannot open {scheme}:{}. Detail: Unable to resolve resource {scheme}:{}", path.display(), path.display()))),
         };
         let index = self.editors.open_model(document);
@@ -115,12 +130,45 @@ impl Workbench {
         Ok(uri.clone())
     }
 
+    /// `setEncoding(encoding, EncodingMode.Decode)` of an open model: an untitled model takes the encoding, a clean
+    /// file model is read again in it (`forceResolveFromFile`) and takes the encoding the read settled on.
+    fn set_model_encoding(&mut self, uri: &Value, scheme: &str, path: &Path, requested: &str, cx: &mut Context<Self>) -> Result<(), String> {
+        let model = self.editors.model_mut(scheme, path).expect("the caller found the model");
+        if model.document.encoding == requested {
+            return Ok(());
+        }
+        if scheme == "untitled" {
+            model.document.encoding = requested.to_string();
+            self.host.send("ExtHostDocuments", "$acceptEncodingChanged", vec![uri.clone(), json!(requested)]);
+            return Ok(());
+        }
+        if model.is_dirty() {
+            return Err("Cannot re-open a dirty text document with different encoding. Save it first.".into());
+        }
+        // shortcut: a model of an extension's file system provider keeps its text, as the GPUI thread cannot read through the provider; it takes the encoding.
+        let bytes = match scheme {
+            "file" => Some(std::fs::read(path).map_err(|error| format!("Unable to read file '{}' ({error})", path.display()))?),
+            _ => None,
+        };
+        let detected = bytes.as_deref().and_then(|bytes| encoding::detect(bytes).encoding);
+        let resolved = encoding::read_encoding(&self.settings.lock().unwrap(), (scheme == "file").then_some(path), Some(requested), detected);
+        if model.document.encoding != resolved {
+            model.document.encoding = resolved.clone();
+            self.host.send("ExtHostDocuments", "$acceptEncodingChanged", vec![uri.clone(), json!(resolved)]);
+        }
+        if let Some(bytes) = bytes {
+            self.replace_clean_model_text(scheme, path, encoding::decode(&bytes, &resolved), cx);
+        }
+        Ok(())
+    }
+
     /// `$tryCreateDocument`: a new untitled model named `Untitled-<n>` with the first free n.
     // shortcut: `files.defaultLanguage` is not read; an untitled model without a language is plain text.
     fn try_create_document(&mut self, options: &Value, cx: &mut Context<Self>) -> HostResult {
         let path = (1..).map(|n| PathBuf::from(format!("Untitled-{n}"))).find(|path| self.editors.model("untitled", path).is_none()).expect("a free name");
         let content = options["content"].as_str().unwrap_or_default();
-        let document = TextDocument::untitled(&path, content, options["language"].as_str(), &self.languages, &self.settings.lock().unwrap());
+        let mut document = TextDocument::untitled(&path, content, options["language"].as_str(), &self.languages, &self.settings.lock().unwrap());
+        document.encoding = options["encoding"].as_str().map_or(document.encoding, str::to_string);
         let uri = document.uri();
         let index = self.editors.open_model(document);
         self.editors.models[index].host_reference = Some(Instant::now());
@@ -130,21 +178,27 @@ impl Workbench {
         Ok(uri)
     }
 
-    /// `$onVirtualDocumentChange`: a content provider's new text replaces the model's, outside the undo stack.
-    // shortcut: one edit over the whole model where upstream applies computeMoreMinimalEdits; port the diff worker when an extension needs the smaller events.
+    /// `$onVirtualDocumentChange`: a content provider's new text replaces the model's.
     fn virtual_document_change(&mut self, uri: &Value, value: &Value, cx: &mut Context<Self>) -> HostResult {
         let (scheme, ref path) = uri_parts(uri)?;
-        let Some(model) = self.editors.model_mut(scheme, path) else { return Ok(Value::Null) };
+        if self.editors.model(scheme, path).is_some() {
+            self.replace_clean_model_text(scheme, path, value.as_str().unwrap_or_default().to_string(), cx);
+        }
+        Ok(Value::Null)
+    }
+
+    /// New text for a model in one edit, after which the model is clean: a content provider's model is no text file
+    /// model, and a file read again matches the disk.
+    // shortcut: one edit over the whole model where upstream applies computeMoreMinimalEdits; port the diff worker when an extension needs the smaller events.
+    fn replace_clean_model_text(&mut self, scheme: &str, path: &Path, text: String, cx: &mut Context<Self>) {
+        let model = self.editors.model_mut(scheme, path).expect("the caller found the model");
         let end = document_end(&model.document.lines);
-        let text = value.as_str().unwrap_or_default().to_string();
         let change = model.execute_edits(vec![(Position::new(0, 0), end, text, false)], None, EditReason::ApplyEdits);
-        // A virtual document is no text file model, so textFileService.isDirty never holds for it.
         model.mark_saved();
         if let Some(change) = change {
             self.send_model_edit(scheme, path, &change);
             cx.notify();
         }
-        Ok(Value::Null)
     }
 
     /// `$trySaveDocument`: `textFileService.save`, true once the model is saved; a clean model is not written.

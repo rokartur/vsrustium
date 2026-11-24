@@ -129,6 +129,15 @@ Unchanged: the changes are UI only.
 
 Left: 8 encoding tests, 3 saves of `fake-fs` documents, `openTextDocument, actual casing first`, `createFileSystemWatcher`.
 
+After the encoding port (`files::encoding`, `$resolveDecoding`, `$validateDetectedEncoding`, `$resolveEncoding`, `options.encoding` of `$tryOpenDocument`), same grep:
+
+| suite | passing | pending | failing | not reached | run |
+|-------|---------|---------|---------|-------------|-----|
+| api-folder | 102 | 2 | 5 | 293 | exit 1 after 13s |
+| api-workspace | 4 | 0 | 0 | 0 | exit 0 after 1s |
+
+Left: 3 saves of `fake-fs` documents, `openTextDocument, actual casing first`, `createFileSystemWatcher`.
+
 ## M12 participant confirmation
 
 Same `MOCHA_GREP` and setup as the bulk file edits section, on the Studio, the working tree of the participant confirmation commit.

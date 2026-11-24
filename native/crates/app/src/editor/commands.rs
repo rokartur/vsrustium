@@ -76,7 +76,7 @@ mod tests {
     #[test]
     fn run_knows_every_registered_id() {
         let languages = crate::languages::Languages::new(&[]);
-        let document = TextDocument::from_bytes("file", std::path::Path::new("/a.txt"), b"a\n  b\nc", &languages, &crate::default_settings().lock().unwrap());
+        let document = TextDocument::from_bytes("file", std::path::Path::new("/a.txt"), b"a\n  b\nc", None, &languages, &crate::default_settings().lock().unwrap());
         let mut group = EditorGroup::default();
         group.open(document, false);
         let viewport = group.viewport;

@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 use config::indentation::creation_options;
 use config::service::Settings;
+use files::encoding;
 
 use crate::languages::Languages;
 use crate::syntax::Tokenization;
@@ -39,8 +40,8 @@ pub struct TextDocument {
     pub path: PathBuf,
     pub lines: Vec<String>,
     pub eol: &'static str,
-    /// The `textFileService` encoding id: "utf8" or "utf8bom".
-    pub encoding: &'static str,
+    /// The `textFileService` encoding id, such as "utf8", "utf8bom" or "windows1252".
+    pub encoding: String,
     pub language_id: String,
     pub indentation: Indentation,
     /// `foldingRules.offSide` of the language, used by the indent guides of blank lines.
@@ -65,26 +66,26 @@ const DEFAULT_INDENTATION: Indentation = Indentation { tab_size: 4, insert_space
 impl TextDocument {
     pub fn read(path: &Path, languages: &Languages, settings: &Settings) -> std::io::Result<Self> {
         let bytes = std::fs::read(path)?;
-        Ok(Self::from_bytes("file", path, &bytes, languages, settings))
+        Ok(Self::from_bytes("file", path, &bytes, None, languages, settings))
     }
 
-    /// A document of any scheme from its bytes, as the text file model decodes them.
-    pub fn from_bytes(scheme: &str, path: &Path, bytes: &[u8], languages: &Languages, settings: &Settings) -> Self {
-        let (encoding, content) = match bytes.strip_prefix(b"\xEF\xBB\xBF") {
-            Some(rest) => ("utf8bom", rest),
-            None => ("utf8", &bytes[..]),
-        };
-        // shortcut: no encoding guessing or binary detection; non-UTF-8 bytes decode as U+FFFD. Port encoding.ts when a file needs it.
-        let text = String::from_utf8_lossy(content);
+    /// A document of any scheme from its bytes, decoded as `TextFileService.readStream` does: in the `requested`
+    /// encoding, else the one its BOM or zero bytes show, else `files.encoding`.
+    // shortcut: binary files open as text; upstream refuses them (FILE_IS_BINARY) and shows the binary editor.
+    pub fn from_bytes(scheme: &str, path: &Path, bytes: &[u8], requested: Option<&str>, languages: &Languages, settings: &Settings) -> Self {
+        let detected = encoding::detect(bytes).encoding;
+        let encoding = encoding::read_encoding(settings, (scheme == "file").then_some(path), requested, detected);
+        let text = encoding::decode(bytes, &encoding);
         Self::from_text(scheme, path, &text, encoding, None, languages, settings)
     }
 
     /// An untitled model (untitledTextEditorModel.ts): `language_id` or the language of its name and first line.
     pub fn untitled(path: &Path, text: &str, language_id: Option<&str>, languages: &Languages, settings: &Settings) -> Self {
-        Self::from_text("untitled", path, text, "utf8", language_id, languages, settings)
+        let (encoding, _) = encoding::write_encoding(settings, None, None);
+        Self::from_text("untitled", path, text, encoding, language_id, languages, settings)
     }
 
-    fn from_text(scheme: &str, path: &Path, text: &str, encoding: &'static str, language_id: Option<&str>, languages: &Languages, settings: &Settings) -> Self {
+    pub fn from_text(scheme: &str, path: &Path, text: &str, encoding: String, language_id: Option<&str>, languages: &Languages, settings: &Settings) -> Self {
         let (lines, eol) = split_lines(text);
         let language_id = language_id.unwrap_or_else(|| languages.language_of(path, lines[0].as_str())).to_string();
         let off_side = languages.off_side(&language_id);
@@ -568,7 +569,7 @@ mod tests {
     fn a_non_file_uri_keeps_its_authority() {
         let settings = Settings::load(config::registry::Registry::core(), std::env::temp_dir().join("code-gpui-no-user"), None);
         let uri = |scheme: &str, path: &str| {
-            let document = TextDocument::from_bytes(scheme, Path::new(path), b"", &Languages::new(&[]), &settings);
+            let document = TextDocument::from_bytes(scheme, Path::new(path), b"", None, &Languages::new(&[]), &settings);
             (document.uri()["authority"].clone(), document.uri()["path"].clone(), document.uri_string())
         };
         assert_eq!(uri("foo", "//testing/virtual.js"), (serde_json::json!("testing"), serde_json::json!("/virtual.js"), "foo://testing/virtual.js".to_string()));
@@ -626,7 +627,7 @@ mod tests {
             path: PathBuf::from(name),
             lines: vec![String::new()],
             eol: "\n",
-            encoding: "utf8",
+            encoding: "utf8".into(),
             language_id: "plaintext".into(),
             indentation: DEFAULT_INDENTATION,
             off_side: false,
@@ -655,7 +656,7 @@ mod tests {
             path: PathBuf::from("/w/a.txt"),
             lines: lines("Port notes\nport Port"),
             eol: "\n",
-            encoding: "utf8",
+            encoding: "utf8".into(),
             language_id: "plaintext".into(),
             indentation: DEFAULT_INDENTATION,
             off_side: false,
