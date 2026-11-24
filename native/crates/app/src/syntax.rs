@@ -137,6 +137,11 @@ impl Tokenization {
         self.brackets = OnceCell::new();
     }
 
+    /// The bracket pairs hold token styles of the theme they were paired under.
+    pub fn theme_changed(&mut self) {
+        self.brackets = OnceCell::new();
+    }
+
     // shortcut: the whole document is tokenized on the first draw, where upstream tokenizes in the
     // background and pairs brackets without tokens meanwhile; upgrade when large files stall the first frame.
     fn brackets(&self, theme: &Theme, languages: &Languages, lines: &[String]) -> &DocumentBrackets {

@@ -190,8 +190,8 @@ pub struct MenuItem {
 
 /// The workbench's palette items of the commands this port runs, with upstream's titles and categories:
 /// `f1: true` actions and `appendToCommandPalette` (fileActions.contribution.ts), undo/redo/select all
-/// (editorExtensions.ts), clipboard.ts, commandsQuickAccess.ts, preferences.contribution.ts.
-const WORKBENCH_ITEMS: [(&str, &str, Option<&str>, Option<&str>); 13] = [
+/// (editorExtensions.ts), clipboard.ts, commandsQuickAccess.ts, preferences.contribution.ts, themes.contribution.ts.
+const WORKBENCH_ITEMS: [(&str, &str, Option<&str>, Option<&str>); 14] = [
     ("workbench.action.showCommands", "Show All Commands", None, None),
     ("workbench.action.clearCommandHistory", "Clear Command History", None, None),
     ("workbench.action.files.save", "Save", Some("File"), None),
@@ -199,6 +199,7 @@ const WORKBENCH_ITEMS: [(&str, &str, Option<&str>, Option<&str>); 13] = [
     ("workbench.action.files.revert", "Revert File", Some("File"), Some("!isSessionsWindow")),
     ("workbench.action.closeAllEditors", "Close All Editors", Some("View"), None),
     ("workbench.action.openGlobalKeybindingsFile", "Open Keyboard Shortcuts (JSON)", Some("Preferences"), None),
+    ("workbench.action.selectTheme", "Color Theme", Some("Preferences"), None),
     ("undo", "Undo", None, None),
     ("redo", "Redo", None, None),
     ("editor.action.selectAll", "Select All", None, None),

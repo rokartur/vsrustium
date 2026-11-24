@@ -265,7 +265,7 @@ fn adjust_value_selection(input: &mut QuickInput, provider: Provider, preserve_v
 }
 
 /// Shows the error the command ends with, now or once it finishes.
-fn show_failure(label: String, outcome: Outcome, window: &mut Window, cx: &mut Context<Workbench>) {
+pub(super) fn show_failure(label: String, outcome: Outcome, window: &mut Window, cx: &mut Context<Workbench>) {
     let pending = match outcome {
         Outcome::Ready(Ok(_)) => return,
         Outcome::Ready(Err(error)) => {

@@ -13,6 +13,8 @@ No new window: pixel-check has no quick input. All 16 port frames are byte-ident
 | file | 10859 | 6376 | 4396 | 3853 |
 | main | 12177 | 7627 | 5335 | 5059 |
 
+- Rerun after the command history, quick input position and theme picker: empty light 3600, every other number as in the table.
+- Ad-hoc, theme picker (Cmd+K Cmd+T over the fixture folder, Dark Modern, 2x), the widget crop against the reference's: 2085.9 pixels (0.25%) differ at 10% fuzz; the rest is text antialiasing and the input's focus border.
 - empty light (3612, was 3600) and main hclight (5059, was 6626) moved with the reference capture only: its md5 changed, the port's did not; main hclight is the overview ruler artifact of milestone 7.
 - Ad-hoc, not a pixel-check result, measured at the palette commit before the drag: the Command Palette over the empty window (Dark Modern, 2x), the widget crop against the reference's, 2803.8 pixels (0.28%) differ at 2% fuzz (`magick compare -fuzz 2% -metric AE`); the rows and the selection highlight sit at the reference's y positions.
 ## Milestone 7: syntax colors and themes

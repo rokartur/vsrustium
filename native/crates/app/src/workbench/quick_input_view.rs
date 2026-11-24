@@ -652,13 +652,13 @@ impl Workbench {
             .cursor_grab()
             .on_mouse_down(MouseButton::Left, cx.listener(Self::quick_input_drag_start))
             // The action bars are not drag areas (excludeNodes).
-            .child(div().absolute().left(px(4.)).occlude().flex().children(left.into_iter().map(|button| self.quick_input_button(button, cx))))
+            .child(div().absolute().left(px(4.)).occlude().flex().children(left.into_iter().map(|button| self.quick_input_button(button, 20., cx))))
             .child(div().flex_1().py(px(3.)).text_center().child(if title.is_empty() { "\u{a0}".to_owned() } else { title }))
-            .child(div().absolute().right(px(4.)).occlude().flex().gap(px(4.)).children(right.into_iter().map(|button| self.quick_input_button(button, cx))))
+            .child(div().absolute().right(px(4.)).occlude().flex().gap(px(4.)).children(right.into_iter().map(|button| self.quick_input_button(button, 20., cx))))
     }
 
-    /// A title, inline or input button: a 16px codicon with 2px padding, or the toggle's checked look.
-    fn quick_input_button(&self, button: &Button, cx: &mut Context<Self>) -> AnyElement {
+    /// A title, inline or input button: a 16px codicon in a `size` box, or the toggle's checked look.
+    fn quick_input_button(&self, button: &Button, size: f32, cx: &mut Context<Self>) -> AnyElement {
         let codicon = match (&button.codicon, button.handle) {
             (Some(codicon), _) => codicon.clone(),
             (None, -1) => "arrow-left".to_owned(),
@@ -673,9 +673,9 @@ impl Workbench {
         let element = match &button.icon_path {
             Some(icon) if button.codicon.is_none() => {
                 let path = if self.theme.kind.is_light() { &icon.light } else { &icon.dark };
-                div().size(px(20.)).flex().items_center().justify_center().child(gpui::img(path.clone()).size(px(16.)))
+                div().size(px(size)).flex().items_center().justify_center().child(gpui::img(path.clone()).size(px(16.)))
             }
-            _ => self.icon(&codicon, 20., 16., foreground),
+            _ => self.icon(&codicon, size, 16., foreground),
         };
         element
             .id(("quick-input-button", handle as u64))
@@ -724,7 +724,8 @@ impl Workbench {
                 )
             })
             .when(!input.hide_input, |header| header.child(self.quick_input_box(input, interactive, window, cx).occlude()))
-            .children(inline.into_iter().map(|button| div().ml(px(4.)).mt(px(3.)).occlude().child(self.quick_input_button(button, cx))))
+            // quickInput.css: 5px before the first inline action, 4px between, 2px from the top; actionbar.css pads the label 3px.
+            .children(inline.into_iter().enumerate().map(|(i, button)| div().ml(px(if i == 0 { 5. } else { 4. })).mt(px(2.)).occlude().child(self.quick_input_button(button, 22., cx))))
             .when(input.can_select_many, |header| {
                 header.child(
                     div()
@@ -790,7 +791,7 @@ impl Workbench {
             .when(input.can_select_many, |input_box| input_box.ml(px(5.)))
             .child(self.quick_input_text(input, focused, cx))
             .children(count)
-            .children(input_buttons.into_iter().map(|button| div().mr(px(2.)).child(self.quick_input_button(button, cx))))
+            .children(input_buttons.into_iter().map(|button| div().mr(px(2.)).child(self.quick_input_button(button, 20., cx))))
     }
 
     /// The input element: the value (or placeholder) with its selection, marked text and caret.
@@ -982,15 +983,16 @@ impl Workbench {
                     })
                     .child(self.highlighted_label(&row.item.label, &row.label_highlights, highlight, 16., icon_color))
                     .children(row.item.description.as_ref().filter(|description| !description.is_empty()).map(|description| {
-                        // monaco-icon-label: .label-description at 0.9em, 0.7 opacity, 0.5em after the name.
-                        div().ml(px(6.5)).text_size(px(11.7)).opacity(if focused { 1. } else { 0.7 }).child(self.highlighted_label(description, &row.description_highlights, highlight, 14., icon_color))
+                        // monaco-icon-label: .label-description at 0.9em, 0.7 opacity, 0.5em of its own 11.7px after the name.
+                        div().ml(px(5.85)).text_size(px(11.7)).opacity(if focused { 1. } else { 0.7 }).child(self.highlighted_label(description, &row.description_highlights, highlight, 14., icon_color))
                     })),
             )
             .children(row.item.detail.as_ref().filter(|detail| !detail.is_empty()).map(|detail| {
                 div().h(px(ROW_HEIGHT)).flex().items_center().whitespace_nowrap().opacity(if focused { 1. } else { 0.7 }).child(self.highlighted_label(detail, &row.detail_highlights, highlight, 14., icon_color))
             }));
         let separator = row.separator.clone().filter(|label| !label.is_empty());
-        let separator_color = if focused { foreground.unwrap_or(self.foreground_or("quickInput.foreground")) } else { self.theme.color("pickerGroup.foreground").unwrap_or(self.color("descriptionForeground")) };
+        // quickInput.css: `.quick-input-list-entry .quick-input-list-separator` outranks the controller's pickerGroup.foreground rule.
+        let separator_color = if focused { foreground.unwrap_or(self.foreground_or("quickInput.foreground")) } else { self.color("descriptionForeground") };
         let buttons_shown = focused || hovered;
         let handle = row.item.handle;
         let entry = div()
@@ -1012,7 +1014,8 @@ impl Workbench {
             })
             .child(label_box)
             .when(!row.item.keybinding.is_empty(), |entry| entry.child(self.keybinding_label(&row.item.keybinding, focused || hovered)))
-            .children(separator.map(|label| div().flex().items_center().ml(px(4.)).text_size(px(11.)).text_color(separator_color).child(label)))
+            // The entry's right padding is 4px on 1.147, so the separator label ends 4px from the row edge.
+            .children(separator.map(|label| div().flex().items_center().ml(px(4.)).mr(px(2.)).text_size(px(11.)).text_color(separator_color).child(label)))
             .when(buttons_shown && !row.item.buttons.is_empty(), |entry| {
                 entry.child(div().flex().items_center().mt(px(1.)).children(row.item.buttons.iter().enumerate().map(|(index, button)| {
                     let toggle = button.toggle;

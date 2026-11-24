@@ -7,6 +7,7 @@ mod editor_commands;
 mod editor_view;
 mod keyboard;
 pub mod quick_access;
+pub mod themes;
 mod quick_input_view;
 mod text_input;
 
@@ -28,10 +29,12 @@ use crate::editor::{EditorGroup, TextDocument};
 use crate::explorer::FileTree;
 use crate::host_sync::HostSync;
 use crate::languages::Languages;
-use crate::theme::{Theme, ThemeKind};
+use crate::theme::{ColorThemeEntry, Theme, ThemeKind};
 
 pub struct Workbench {
     pub theme: Theme,
+    /// The contributed color themes the theme picker offers.
+    pub color_themes: Vec<ColorThemeEntry>,
     /// The repo root: codicon SVGs and the letterpress are read from upstream's own files under it.
     pub app_root: PathBuf,
     /// The opened folder; `None` is the empty window.
@@ -111,6 +114,7 @@ impl Workbench {
     pub fn new(theme: Theme, app_root: PathBuf, folder: Option<FileTree>, languages: Languages, settings: Arc<Mutex<Settings>>, host: HostSync, cx: &mut Context<Self>) -> Self {
         let mut workbench = Workbench {
             theme,
+            color_themes: Vec::new(),
             app_root,
             folder,
             languages,
@@ -137,6 +141,7 @@ impl Workbench {
         workbench.register_context_commands();
         workbench.register_quick_input_commands();
         workbench.register_quick_access_commands();
+        workbench.register_theme_commands();
         // Keybindings resolve before the focused element sees the key, and with nothing focused too.
         let entity = cx.entity().downgrade();
         cx.intercept_keystrokes(move |event, window, cx| {

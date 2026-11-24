@@ -26,6 +26,8 @@ pub enum Owner {
     Input { req: u32, reply: Reply, validate: bool, validated: Option<(String, Value)> },
     /// The workbench's quick access picker, with what accepting each item does.
     QuickAccess(Vec<crate::workbench::quick_access::Accept>),
+    /// The `workbench.action.selectTheme` picker.
+    ColorThemes(crate::workbench::themes::ColorThemePicker),
 }
 
 impl Workbench {
@@ -193,6 +195,7 @@ impl Workbench {
             Owner::Pick { .. } => self.pick_event(id, event, window, cx),
             Owner::Input { .. } => self.input_event(id, event, window, cx),
             Owner::QuickAccess(_) => self.quick_access_event(id, event, window, cx),
+            Owner::ColorThemes(_) => self.color_theme_picker_event(id, event, window, cx),
         }
     }
 

@@ -376,7 +376,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/textfile | workbench service | stub | Cmd+S writes UTF-8 and clears dirty state (cargo test -p app keys_and_typed_text_edit_the_focused_editor_and_reach_the_host); no save participants, conflict check or encodings |
 | workbench/services/textmodelResolver | workbench service | todo |  |
 | workbench/services/textresourceProperties | workbench service | todo |  |
-| workbench/services/themes | workbench service | ported | all 19 built-in color themes incl. hc-light, tokenColors (theme.rs, syntax.rs); cargo test -p app theme::tests; no semanticTokenColors (needs semantic tokens), no icon themes |
+| workbench/services/themes | workbench service | ported | all 19 built-in color themes incl. hc-light, tokenColors (theme.rs, syntax.rs); cargo test -p app theme::tests; `setColorTheme` from the theme picker (preview, write, `$onColorThemeChange`), not on a settings.json edit; no semanticTokenColors (needs semantic tokens), no icon themes |
 | workbench/services/timer | workbench service | todo |  |
 | workbench/services/title | workbench service | todo |  |
 | workbench/services/treeSitter | workbench service | todo |  |
@@ -481,7 +481,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/terminal | workbench contribution | todo |  |
 | workbench/contrib/terminalContrib | workbench contribution | todo |  |
 | workbench/contrib/testing | workbench contribution | todo |  |
-| workbench/contrib/themes | workbench contribution | todo |  |
+| workbench/contrib/themes | workbench contribution | ported | Color Theme picker (`workbench.action.selectTheme`, Cmd+K Cmd+T): rows, order and descriptions as the reference, 200ms preview, Escape restores, accept writes `workbench.colorTheme` (cargo test -p app themes); no file icon or product icon theme pickers, no Marketplace browsing, no `window.autoDetectColorScheme` |
 | workbench/contrib/timeline | workbench contribution | todo |  |
 | workbench/contrib/typeHierarchy | workbench contribution | todo |  |
 | workbench/contrib/update | workbench contribution | todo |  |
