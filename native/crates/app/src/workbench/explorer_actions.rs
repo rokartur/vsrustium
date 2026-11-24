@@ -118,10 +118,10 @@ impl Workbench {
             None if tree.workspace.folders.len() == 1 => (uri(&tree.workspace.folders[0].path), Vec::new()),
             None => (json!({}), Vec::new()),
         };
-        let focus = self.explorer.focus.clone();
-        window.focus(&focus, cx);
+        window.focus(&self.explorer.focus.clone(), cx);
         let anchor = gpui::Bounds { origin: position, size: gpui::Size::default() };
-        self.show_context_menu(MenuId::ExplorerContext, anchor, vec![arg, Value::Array(selection)], focus, window, cx);
+        let context = self.key_context(window);
+        self.show_context_menu(MenuId::ExplorerContext, &context, anchor, vec![arg, Value::Array(selection)], window, cx);
     }
 
     pub(super) fn setting(&self, key: &str) -> Value {

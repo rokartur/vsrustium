@@ -150,6 +150,7 @@ impl Workbench {
                 }
                 workbench.editors_changed(cx);
             }))
+            .on_mouse_down(MouseButton::Right, cx.listener(move |workbench, event: &MouseDownEvent, window, cx| workbench.show_tab_context_menu(index, event.position, window, cx)))
             .when(active || editor.is_dirty(), |tab| tab.child(div().absolute().top(px(5.5)).right(px(6.5)).child(close)));
         if !active {
             return div().h_full().flex_none().child(tab).mr(px(8.));
@@ -275,7 +276,14 @@ impl Workbench {
             )
             // .view-lines is monaco-mouse-cursor-text; the line numbers, glyph margin and the overview ruler over the
             // vertical scrollbar keep the default cursor.
-            .child(div().absolute().top_0().bottom_0().left(px(metrics.content_left())).right(px(OVERVIEW_RULER_WIDTH)).cursor_text())
+            .child(div().absolute().top_0().bottom_0().left(px(metrics.content_left())).right(px(OVERVIEW_RULER_WIDTH)).cursor_text().on_mouse_down(
+                MouseButton::Right,
+                // Below the last line (MouseTargetType.CONTENT_EMPTY): the position is the end of the last line.
+                cx.listener(|workbench, event: &MouseDownEvent, window, cx| {
+                    let last = workbench.editors.active().expect("the text area shows an editor").document.lines.len() - 1;
+                    workbench.show_editor_context_menu(last, f32::MAX, event.position, window, cx);
+                }),
+            ))
             // editorScrollbar.ts clips the lines at contentWidth: the column right of the minimap stays empty.
             .child(div().absolute().left_0().right(px(minimap_width)).top_0().bottom_0().overflow_hidden().child(div().absolute().left_0().right_0().top(px(lines_top)).children(rows)))
             .child(
@@ -609,6 +617,9 @@ impl Workbench {
                         let visible = visible_at(workbench, event.position.x);
                         workbench.fold_mouse_down = workbench.at_line_end(index, visible).then_some((index, false));
                         workbench.click_text(index, visible, modifiers, modifiers.shift, event.click_count, cx);
+                    }))
+                    .on_mouse_down(MouseButton::Right, cx.listener(move |workbench, event: &MouseDownEvent, window, cx| {
+                        workbench.show_editor_context_menu(index, visible_at(workbench, event.position.x), event.position, window, cx);
                     }))
                     .on_mouse_down(MouseButton::Middle, cx.listener(move |workbench, event: &MouseDownEvent, window, cx| {
                         window.focus(&workbench.editor_focus, cx);

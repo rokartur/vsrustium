@@ -5,6 +5,7 @@
 mod actions;
 mod context_menu;
 mod editor_commands;
+mod editor_menus;
 mod editor_view;
 mod explorer_actions;
 pub(crate) mod host_requests;

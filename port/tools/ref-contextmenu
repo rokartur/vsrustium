@@ -2,7 +2,7 @@
 // Opens the reference's custom context menu on Explorer rows through CDP and dumps what it shows: items, keybindings,
 // enablement, separators, the menu's box and computed styles, plus screenshots closed, open, hovered and keyboard-focused.
 // Usage: port/tools/ref-contextmenu <out-dir> <row label>...   ("" right-clicks the empty area below the rows;
-// "editor" right-clicks the editor text). Env REF, FOLDER, FILE as port/tools/ref-screenshot, THEME (default dark).
+// "editor" the editor text, "tab" the first tab, "titlebar" the empty title bar). Env REF, FOLDER, FILE as port/tools/ref-screenshot, THEME (default dark).
 import { Database } from 'bun:sqlite';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -50,6 +50,8 @@ try {
 	await Bun.sleep(5000);
 	Bun.spawnSync(['open', '-a', join(ref, '.build/electron/Code - OSS.app')]);
 	await cdp('Page.bringToFront');
+	// The editor's context view lives in a shadow root (`editor.useShadowDOM`).
+	await evaluate(cdp, `window.menuRoot = () => [...document.querySelectorAll('.shadow-root-host')].map(host => host.shadowRoot).find(root => root?.querySelector('.context-view .monaco-menu')) ?? document`);
 	for (const [index, target] of targets.entries()) {
 		const name = `${index}-${target.replace(/[^\w.-]+/g, '_') || 'empty'}`;
 		await key(cdp, 'Escape');
@@ -59,6 +61,11 @@ try {
 			let element;
 			if (target === 'editor') {
 				element = document.querySelector('.monaco-editor .view-lines');
+			} else if (target === 'tab') {
+				element = document.querySelector('.tabs-container .tab');
+			} else if (target === 'titlebar') {
+				const bar = document.querySelector('.part.titlebar').getBoundingClientRect();
+				return { x: bar.left + bar.width * 0.75, y: bar.top + bar.height / 2 };
 			} else if (target === '') {
 				const rows = [...document.querySelectorAll('.explorer-folders-view .monaco-list-row')];
 				const last = rows[rows.length - 1].getBoundingClientRect();
@@ -72,10 +79,13 @@ try {
 		await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: point.x, y: point.y });
 		await cdp('Input.dispatchMouseEvent', { type: 'mousePressed', x: point.x, y: point.y, button: 'right', buttons: 2, clickCount: 1 });
 		await cdp('Input.dispatchMouseEvent', { type: 'mouseReleased', x: point.x, y: point.y, button: 'right', buttons: 0, clickCount: 1 });
-		await until(async () => evaluate(cdp, `!!document.querySelector('.context-view .monaco-menu')`));
+		await until(async () => evaluate(cdp, `!!menuRoot().querySelector('.context-view .monaco-menu')`), 10000).catch(async error => {
+			await shot(cdp, join(outDir, `${name}-no-menu.png`));
+			throw new Error(`${name}: no menu at ${JSON.stringify(point)}: ${error.message}`);
+		});
 		await Bun.sleep(400);
 		const dump = await evaluate(cdp, `(() => {
-			const menu = document.querySelector('.context-view .monaco-menu');
+			const menu = menuRoot().querySelector('.context-view .monaco-menu');
 			const box = element => { const r = element.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; };
 			const style = (element, keys) => { const s = getComputedStyle(element); return Object.fromEntries(keys.map(key => [key, s.getPropertyValue(key)])); };
 			const items = [...menu.querySelectorAll('.actions-container > .action-item')].map(item => {
@@ -94,7 +104,7 @@ try {
 					keybindingStyle: keybinding && style(keybinding, ['font-size', 'padding-left', 'padding-right', 'opacity', 'color']),
 				};
 			});
-			const container = document.querySelector('.context-view');
+			const container = menuRoot().querySelector('.context-view');
 			return {
 				context: box(container), menu: box(menu), container: style(container, ['box-shadow', 'border-radius', 'background-color', 'class']), className: container.className,
 				menuStyle: style(menu, ['font-family', 'font-size', 'border-radius', 'border-top-width', 'border-top-color', 'background-color', 'color', 'min-width']),
@@ -108,7 +118,7 @@ try {
 			await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: second.box.x + 20, y: second.box.y + second.box.h / 2 });
 			await Bun.sleep(300);
 			await shot(cdp, join(outDir, `${name}-hover.png`));
-			const hovered = await evaluate(cdp, `(() => { const e = document.querySelector('.context-view .action-item.focused .action-menu-item'); if (!e) return null; const s = getComputedStyle(e); return { label: e.textContent, background: s.backgroundColor, color: s.color, outline: s.outline }; })()`);
+			const hovered = await evaluate(cdp, `(() => { const e = menuRoot().querySelector('.context-view .action-item.focused .action-menu-item'); if (!e) return null; const s = getComputedStyle(e); return { label: e.textContent, background: s.backgroundColor, color: s.color, outline: s.outline }; })()`);
 			writeFileSync(join(outDir, `${name}-hover.json`), JSON.stringify(hovered, null, 1));
 		}
 		await key(cdp, 'ArrowDown');

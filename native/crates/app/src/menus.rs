@@ -26,6 +26,8 @@ pub enum MenuId {
     MenubarPreferencesMenu,
     ThemesSubMenu,
     ExplorerContext,
+    EditorContext,
+    EditorTitleContext,
     #[cfg(test)]
     Test,
 }
@@ -60,7 +62,7 @@ pub enum MenuAction {
 /// The workbench's registrations of the features the port has: menu, submenu or command id, title, group, order,
 /// `when`, and the command's precondition.
 type Row = (MenuId, Option<MenuId>, &'static str, &'static str, &'static str, f64, Option<&'static str>, Option<&'static str>);
-const WORKBENCH_MENUS: [Row; 28] = [
+const WORKBENCH_MENUS: [Row; 38] = [
     // menubar.contribution.ts
     (MenuId::MenubarMainMenu, Some(MenuId::MenubarFileMenu), "", "&&File", "", 1., None, None),
     (MenuId::MenubarMainMenu, Some(MenuId::MenubarEditMenu), "", "&&Edit", "", 2., None, None),
@@ -95,6 +97,18 @@ const WORKBENCH_MENUS: [Row; 28] = [
     (MenuId::MenubarHelpMenu, None, "workbench.action.showCommands", "Show All Commands", "1_welcome", 2., None, None),
     // themes.contribution.ts
     (MenuId::MenubarPreferencesMenu, Some(MenuId::ThemesSubMenu), "", "&&Themes", "2_configuration", 7., None, None),
+    // clipboard.ts and quickAccess.contribution.ts: the EditorContext items of the commands the port has.
+    (MenuId::EditorContext, None, "editor.action.clipboardCutAction", "Cut", "9_cutcopypaste", 1., Some("!editorReadonly"), None),
+    (MenuId::EditorContext, None, "editor.action.clipboardCopyAction", "Copy", "9_cutcopypaste", 2., None, None),
+    (MenuId::EditorContext, None, "editor.action.clipboardPasteAction", "Paste", "9_cutcopypaste", 4., Some("!editorReadonly"), None),
+    (MenuId::EditorContext, None, "workbench.action.showCommands", "Command Palette...", "z_commands", 1., Some("!editorSimpleInput"), None),
+    // editor.contribution.ts: the EditorTitleContext items of the commands the port has.
+    (MenuId::EditorTitleContext, None, "workbench.action.closeActiveEditor", "Close", "1_close", 10., Some("!activeEditorCannotClose"), None),
+    (MenuId::EditorTitleContext, None, "workbench.action.closeOtherEditors", "Close Others", "1_close", 20., None, Some("groupEditorsCount != '1'")),
+    (MenuId::EditorTitleContext, None, "workbench.action.closeEditorsToTheRight", "Close to the Right", "1_close", 30., Some("editorTabsVisible"), Some("!activeEditorIsLastInGroup && !multipleEditorsSelectedInGroup")),
+    (MenuId::EditorTitleContext, None, "workbench.action.closeUnmodifiedEditors", "Close Saved", "1_close", 40., None, None),
+    (MenuId::EditorTitleContext, None, "workbench.action.closeEditorsInGroup", "Close All", "1_close", 50., None, None),
+    (MenuId::EditorTitleContext, None, "workbench.action.keepEditor", "Keep Open", "3_preview", 10., Some("config.workbench.editor.enablePreview"), Some("!activeEditorIsNotPreview")),
     // fileActions.contribution.ts, the ExplorerContext items of the commands the port has.
     (MenuId::ExplorerContext, None, "explorer.newFile", "New File...", "navigation", 4., Some("explorerResourceIsFolder"), Some("!explorerResourceReadonly")),
     (MenuId::ExplorerContext, None, "explorer.newFolder", "New Folder...", "navigation", 6., Some("explorerResourceIsFolder"), Some("!explorerResourceReadonly")),

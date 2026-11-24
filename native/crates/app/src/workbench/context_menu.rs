@@ -56,10 +56,9 @@ pub struct ContextMenu {
 
 impl Workbench {
     /// `showContextMenu`: the menu's items whose `when` holds in the current context, anchored below `anchor`.
-    /// Focus returns to `focus_to_return` when the menu hides.
-    pub(super) fn show_context_menu(&mut self, menu: MenuId, anchor: Bounds<Pixels>, args: Vec<Value>, focus_to_return: FocusHandle, window: &mut Window, cx: &mut Context<Self>) {
-        let context = self.key_context(window);
-        let actions = menu_actions(&self.menus, menu, &context);
+    /// Focus returns to the element focused before, when the menu hides.
+    pub(super) fn show_context_menu(&mut self, menu: MenuId, context: &HashMap<String, Value>, anchor: Bounds<Pixels>, args: Vec<Value>, window: &mut Window, cx: &mut Context<Self>) {
+        let actions = menu_actions(&self.menus, menu, context);
         if actions.is_empty() {
             return;
         }
@@ -67,7 +66,7 @@ impl Workbench {
         for action in &actions {
             let MenuAction::Command { id, alt, .. } = action else { continue };
             for id in std::iter::once(id).chain(alt.as_ref().map(|(id, _)| id)) {
-                if let Some(item) = self.keybindings.resolver.lookup_primary_keybinding(id, &context) {
+                if let Some(item) = self.keybindings.resolver.lookup_primary_keybinding(id, context) {
                     keybindings.insert(id.clone(), keybindings::label(&item.keybinding));
                 }
             }
@@ -75,6 +74,7 @@ impl Workbench {
         let width = menu_width(&actions, &keybindings, window);
         let viewport = window.viewport_size();
         let origin = layout2d(Size { width: f32::from(viewport.width), height: f32::from(viewport.height) }, Size { width, height: menu_height(&actions) }, anchor_rect(anchor));
+        let focus_to_return = window.focused(cx).expect("the menu's owner takes focus before showing it");
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
         let enable_mouse_up = cx.spawn_in(window, async |workbench, cx| {
