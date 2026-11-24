@@ -37,8 +37,8 @@ const FIND_INPUT_AREA_HEIGHT: f32 = 33.;
 const REPLACE_AREA_HEIGHT: f32 = 62.;
 /// findWidget.css `transition: transform 200ms linear`.
 const SLIDE: Duration = Duration::from_millis(200);
-/// `--vscode-shadow-lg` (style.css).
-const SHADOW_BLUR: f32 = 12.;
+/// `--vscode-shadow-lg` (style.css) blurs 12px; CSS takes sigma as half the blur, GPUI's blur_radius is sigma.
+const SHADOW_BLUR: f32 = 6.;
 
 /// A find match's overview ruler mark, also drawn in the minimap unless past 1000 matches.
 pub(super) struct FindMark {
