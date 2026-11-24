@@ -10,7 +10,7 @@ import { join } from 'node:path';
 const outDir = process.argv[2] ?? 'port/results/screenshots/reference';
 const ref = process.env.REF ?? join(process.env.HOME!, 'Developer/vscode-ref');
 const electron = join(ref, '.build/electron/Code - OSS.app/Contents/MacOS/Code - OSS');
-const themes: Record<string, string> = { dark: 'Default Dark Modern', light: 'Default Light Modern', hc: 'Default High Contrast' };
+const themes: Record<string, string> = { dark: 'Default Dark Modern', light: 'Default Light Modern', hc: 'Default High Contrast', hclight: 'Default High Contrast Light' };
 const selected = process.argv.length > 3 ? process.argv.slice(3) : Object.keys(themes);
 const width = 1024;
 const height = 768;
@@ -55,7 +55,8 @@ async function capture(theme: string) {
 	storage.close();
 	// vscode-api-tests adds the "Hello" status item; product builds exclude it (build/lib/extensions.ts excludedExtensions).
 	const paths = [process.env.FOLDER, process.env.FILE].filter(path => path);
-	const app = Bun.spawn([electron, ref, ...paths, '--user-data-dir', userData, '--remote-debugging-port=' + port, '--disable-extension', 'GitHub.copilot-chat', '--disable-extension', 'vscode.vscode-api-tests'], {
+	// The port renders sRGB; without this Chromium converts to the main display's profile (a screen sharing display shifts #0F4A85 to #224981).
+	const app = Bun.spawn([electron, ref, ...paths, '--force-color-profile=srgb', '--user-data-dir', userData, '--remote-debugging-port=' + port, '--disable-extension', 'GitHub.copilot-chat', '--disable-extension', 'vscode.vscode-api-tests'], {
 		env: { ...process.env, VSCODE_DEV: '1', NODE_ENV: 'development' },
 		stdout: 'ignore',
 		stderr: 'ignore',
