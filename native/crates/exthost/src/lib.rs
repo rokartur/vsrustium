@@ -13,6 +13,7 @@ pub mod main_thread_workspace;
 pub mod proxy_ids;
 pub mod rpc;
 pub mod scan;
+pub mod main_thread;
 pub mod session;
 pub mod utc;
 

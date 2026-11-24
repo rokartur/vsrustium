@@ -236,7 +236,7 @@ fn watch(fs: &mut Providers, watch_session: u64, uri: &Value, options: &Value, c
     }
 }
 
-pub(crate) fn resource(uri: &Value) -> Resource {
+pub fn resource(uri: &Value) -> Resource {
     let part = |key: &str| uri[key].as_str().unwrap_or_default().to_owned();
     Resource { scheme: part("scheme"), authority: part("authority"), path: part("path") }
 }

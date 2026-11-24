@@ -6,7 +6,7 @@ use serde_json::Value;
 
 use super::Workbench;
 use crate::commands::Outcome;
-use crate::editor::TextDocument;
+use crate::editor::{EditReason, Position, TextDocument};
 
 /// `MAX_CONFIRM_FILES` of platform/dialogs/common/dialogs.ts.
 const MAX_CONFIRM_FILES: usize = 10;
@@ -107,7 +107,7 @@ impl Workbench {
     }
 
     /// The text goes back to the file's content and the editor is clean again.
-    /// shortcut: one whole-text edit plus a save of the same bytes, since `editor/` (M8) has no revert yet; move to an `OpenEditor::revert` that flushes the model like `setValue` once it does.
+    /// shortcut: one whole-text edit plus a save of the same bytes, since `editor/` has no revert yet; move to an `OpenEditor::revert` that flushes the model like `setValue` once it does.
     fn revert_editor(&mut self, index: usize, cx: &mut Context<Self>) {
         let editor = &mut self.editors.editors[index];
         let disk = match TextDocument::read(&editor.document.path, &self.languages, &self.settings.lock().unwrap()) {
@@ -117,9 +117,9 @@ impl Workbench {
                 return;
             }
         };
-        editor.select_all();
-        let (start, end) = (editor.selection.start(), editor.selection.end());
-        let change = editor.type_in_range(start, end, &disk.lines.join("\n"), "revert");
+        let lines = &editor.document.lines;
+        let end = Position::new(lines.len() - 1, lines[lines.len() - 1].chars().count());
+        let change = editor.execute_edits(vec![(Position::new(0, 0), end, disk.lines.join("\n"), false)], None, EditReason::Unknown("revert"));
         if let Some(change) = change {
             self.host.send_content_change(&self.editors, index, &change);
         }

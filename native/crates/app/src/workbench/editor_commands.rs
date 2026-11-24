@@ -1,12 +1,13 @@
-//! The M5 editor commands in the command registry under their upstream ids (coreCommands.ts,
-//! linesOperations.ts, clipboard.ts), so keybindings and `vscode.commands.executeCommand` run them.
+//! The editor commands in the command registry under their upstream ids (coreCommands.ts,
+//! linesOperations.ts, clipboard.ts, multicursor.ts, folding.ts), so keybindings and
+//! `vscode.commands.executeCommand` run them.
 
 use gpui::{ClipboardEntry, ClipboardItem, Context, Window};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use super::Workbench;
 use crate::commands::Outcome;
-use crate::editor::{ContentChanged, OpenEditor};
+use crate::editor::{ContentChanged, Copied, OpenEditor, commands};
 
 type EditorCommand = fn(&mut OpenEditor) -> Option<ContentChanged>;
 
@@ -72,6 +73,14 @@ impl Workbench {
                 _ => workbench.run_on_active_editor(move |editor: &mut OpenEditor| editor.type_text(&text), cx),
             }
         });
+        for &id in commands::IDS {
+            self.commands.register(id, move |workbench, _, _, cx| {
+                if workbench.editors.active().is_some() {
+                    workbench.run_editor_command(id, "keyboard", cx);
+                }
+                Outcome::done()
+            });
+        }
         self.commands.register("editor.action.clipboardCopyAction", |workbench, _, window, cx| workbench.copy_to_clipboard(false, window, cx));
         self.commands.register("editor.action.clipboardCutAction", |workbench, _, window, cx| workbench.copy_to_clipboard(true, window, cx));
         self.commands.register("editor.action.clipboardPasteAction", |workbench, _, window, cx| {
@@ -79,8 +88,10 @@ impl Workbench {
                 return workbench.input_text_command("editor.action.clipboardPasteAction", window, cx).unwrap_or(Outcome::done());
             }
             let Some(ClipboardEntry::String(clipboard)) = cx.read_from_clipboard().and_then(|item| item.entries().first().cloned()) else { return Outcome::done() };
-            let whole_line = clipboard.metadata_json::<bool>().unwrap_or(false);
-            workbench.run_on_active_editor(|editor: &mut OpenEditor| editor.paste(clipboard.text(), whole_line), cx)
+            let metadata = clipboard.metadata_json::<Value>().unwrap_or_default();
+            let multicursor_text: Option<Vec<String>> = serde_json::from_value(metadata["multicursorText"].clone()).ok();
+            let from_empty_selection = metadata["isFromEmptySelection"] == json!(true);
+            workbench.run_on_active_editor(|editor: &mut OpenEditor| editor.paste(clipboard.text(), from_empty_selection, multicursor_text.as_deref()), cx)
         });
     }
 
@@ -89,8 +100,7 @@ impl Workbench {
             let command = if cut { "editor.action.clipboardCutAction" } else { "editor.action.clipboardCopyAction" };
             return self.input_text_command(command, window, cx).unwrap_or(Outcome::done());
         };
-        let (text, whole_line) = editor.copy_text();
-        cx.write_to_clipboard(ClipboardItem::new_string_with_json_metadata(text, whole_line));
+        cx.write_to_clipboard(clipboard_item(editor.copy_text()));
         match cut {
             true => self.run_on_active_editor(OpenEditor::cut, cx),
             false => Outcome::done(),
@@ -100,11 +110,17 @@ impl Workbench {
     /// Runs an editor command, then tells the host and scrolls the cursor into view as a key press does.
     fn run_on_active_editor(&mut self, command: impl FnOnce(&mut OpenEditor) -> Option<ContentChanged>, cx: &mut Context<Self>) -> Outcome {
         let Some(editor) = self.editors.active_mut() else { return Outcome::done() };
-        let selection_before = editor.selection;
+        let selections_before = editor.selections.clone();
         let change = command(editor);
-        let moved = editor.selection != selection_before;
+        let moved = editor.selections != selections_before;
         self.marked_text = None;
         self.editor_edited(change, moved, "keyboard", cx);
         Outcome::Ready(Ok(Value::Null))
     }
+}
+
+/// The copied text with the `ClipboardStoredMetadata` paste reads back.
+fn clipboard_item(copied: Copied) -> ClipboardItem {
+    let metadata = json!({ "isFromEmptySelection": copied.from_empty_selection, "multicursorText": copied.multicursor_text });
+    ClipboardItem::new_string_with_json_metadata(copied.text, metadata)
 }

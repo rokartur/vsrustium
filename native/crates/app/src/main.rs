@@ -1,5 +1,6 @@
 //! The native app: the workbench, themed from the built-in theme files, over the running extension host.
-//! Usage: code-gpui [folder or .code-workspace file [file]] [--theme <settings id>] [--user-data-dir <dir>] [--screenshot <png> [--screenshot-input <steps>]] [--node]
+//! Usage: code-gpui [folder or .code-workspace file [file]] [--theme <settings id>] [--user-data-dir <dir>] [--screenshot <png>]
+//! [--screenshot-keys "<keystroke> ..."] [--screenshot-input <steps>] [--node]
 //!   [--extensionDevelopmentPath=<dir> [--extensionTestsPath=<path>]]: the app exits with the test runner's code.
 
 mod anything_quick_access;
@@ -18,6 +19,7 @@ mod host_sync;
 mod input_box;
 mod keybindings;
 mod languages;
+mod main_thread;
 mod main_thread_commands;
 mod main_thread_quick_open;
 mod menus;
@@ -49,14 +51,15 @@ use exthost::session::{ForwardedRequest, Session, SessionPaths, init_data, works
 use exthost::{ExtensionHost, HostOptions, Runtime};
 use futures::StreamExt;
 use futures::channel::mpsc::{UnboundedSender, unbounded};
-use gpui::{App, Bounds, TitlebarOptions, Window, WindowBounds, WindowOptions, point, prelude::*, px, size};
+use gpui::{App, Bounds, Keystroke, TitlebarOptions, Window, WindowBounds, WindowOptions, point, prelude::*, px, size};
 use gpui_platform::application;
 use serde_json::json;
 use anyhow::Context as _;
 use explorer::FileTree;
 use commands::Outcome;
-use host_sync::{HostMessage, HostSync};
+use host_sync::HostSync;
 use languages::Languages;
+use main_thread::{HostRequest, WorkbenchMainThread};
 use theme::load_theme;
 use workbench::Workbench;
 
@@ -70,7 +73,9 @@ fn main() -> anyhow::Result<()> {
     };
     let screenshot = flag_value("--screenshot").map(PathBuf::from);
     let screenshot_input = flag_value("--screenshot-input").unwrap_or_default();
-    let value_flags = ["--user-data-dir", "--screenshot", "--screenshot-input", "--theme"];
+    // Typed before the capture, as port/tools/ref-screenshot types KEYS into the reference.
+    let screenshot_keys: Vec<Keystroke> = flag_value("--screenshot-keys").unwrap_or_default().split_whitespace().map(Keystroke::parse).collect::<Result<_, _>>()?;
+    let value_flags = ["--user-data-dir", "--screenshot", "--screenshot-keys", "--screenshot-input", "--theme"];
     let positional: Vec<&String> = args.iter().enumerate().skip(1).filter(|(i, arg)| !arg.starts_with("--") && !value_flags.contains(&args[i - 1].as_str())).map(|(_, arg)| arg).collect();
     let canonical = |path: &String| std::fs::canonicalize(path).with_context(|| format!("opening {path}"));
     let workspace = positional.first().map(|path| canonical(path)).transpose()?.map(Workspace::open);
@@ -114,6 +119,8 @@ fn main() -> anyhow::Result<()> {
                 let (host_sender, host_receiver) = channel();
                 let (request_sender, mut requests) = unbounded::<ForwardedRequest>();
                 let (reply_sender, replies) = channel::<(u32, Result<serde_json::Value, serde_json::Value>)>();
+                let (main_thread_sender, mut main_thread_requests) = unbounded::<HostRequest>();
+                let main_thread = WorkbenchMainThread { requests: main_thread_sender, messages: host_receiver, waiting: Vec::new() };
                 let languages = Languages::new(&extensions);
                 let mut host = HostSync::new(host_sender);
                 host.configuration_scopes = development.is_some();
@@ -133,7 +140,7 @@ fn main() -> anyhow::Result<()> {
                     .name("exthost-session".into())
                     .spawn(move || {
                         let runs_tests = development.as_ref().is_some_and(|development| development.tests_path.is_some());
-                        if let Err(error) = run_extension_host(runtime, app_root, extensions, settings, storage, user_data, workspace, development, host_receiver, request_sender, replies, &sender) {
+                        if let Err(error) = run_extension_host(runtime, app_root, extensions, settings, storage, user_data, workspace, development, main_thread, request_sender, replies, &sender) {
                             if runs_tests {
                                 eprintln!("extension host failed: {error:#}");
                                 std::process::exit(1);
@@ -166,12 +173,27 @@ fn main() -> anyhow::Result<()> {
                     }
                 })
                 .detach();
+                cx.spawn_in(window, async move |workbench, cx| {
+                    while let Some(request) = main_thread_requests.next().await {
+                        let result = workbench.update_in(cx, |workbench, window, cx| workbench.host_request(&request.proxy, &request.method, &request.args, window, cx));
+                        let _ = request.reply.send(result.unwrap_or_else(|_| Err(exthost::main_thread::serialized_error("Canceled"))));
+                    }
+                })
+                .detach();
                 cx.spawn_in(window, async move |_, cx| {
                     while let Some(line) = receiver.next().await {
                         eprintln!("{line}");
                         let (true, Some(path)) = (line.starts_with(ACTIVATED_PREFIX), screenshot.as_ref()) else { continue };
                         // Captured once eager extensions are up, so the frame shows the workbench as the host left it.
                         cx.background_executor().timer(Duration::from_millis(500)).await;
+                        if !screenshot_keys.is_empty() {
+                            cx.update(|window, cx| {
+                                for keystroke in &screenshot_keys {
+                                    window.dispatch_keystroke(keystroke.clone(), cx);
+                                }
+                            })
+                            .ok();
+                        }
                         for step in screenshot_input.split(';').filter(|step| !step.trim().is_empty()) {
                             let input = screenshot_step(step).with_context(|| format!("--screenshot-input step {step:?}"));
                             let dispatched = input.and_then(|input| cx.update(|window, cx| window.dispatch_event(input, cx)));
@@ -181,6 +203,9 @@ fn main() -> anyhow::Result<()> {
                             }
                             cx.background_executor().timer(Duration::from_millis(300)).await;
                         }
+                        // The editor's scrollbars show at open and after a scroll, hide 500ms later and fade out
+                        // over 800ms; ref-screenshot waits the same.
+                        cx.background_executor().timer(Duration::from_millis(1500)).await;
                         let saved = cx.update(|window, _| save_screenshot(window, path)).and_then(|result| result);
                         if let Err(error) = saved {
                             eprintln!("screenshot failed: {error:#}");
@@ -213,7 +238,7 @@ fn run_extension_host(
     user_data: PathBuf,
     workspace: Option<Workspace>,
     development: Option<ExtensionDevelopment>,
-    workbench_messages: Receiver<HostMessage>,
+    main_thread: WorkbenchMainThread,
     workbench_requests: UnboundedSender<ForwardedRequest>,
     workbench_replies: Receiver<(u32, Result<serde_json::Value, serde_json::Value>)>,
     status: &UnboundedSender<String>,
@@ -252,6 +277,7 @@ fn run_extension_host(
     session.forward(&["MainThreadCommands", "MainThreadQuickOpen"], move |request| {
         let _ = workbench_requests.unbounded_send(request);
     }, workbench_replies);
+    session.main_thread = Some(Box::new(main_thread));
     session.start(&extensions, workspace.as_ref().map(|workspace| workspace_data(&init, workspace)))?;
     let reply = session.call("ExtHostExtensionService", "$test_latency", vec![Arg::Json(json!(7))], Duration::from_secs(10))?;
     let _ = status.unbounded_send(format!("main -> host: $test_latency(7) = {reply:?}"));
@@ -261,26 +287,8 @@ fn run_extension_host(
         session.execute_extension_tests();
     }
     // The short pump timeout bounds how long a workbench change waits before the host hears of it.
-    let mut waiting = Vec::new();
     loop {
-        for message in workbench_messages.try_iter() {
-            if let Some(work) = message.files {
-                work.run(&mut exthost::main_thread_files::Providers { session: &mut session });
-                continue;
-            }
-            let req = session.notify(message.proxy, message.method, message.args);
-            if let Some(reply) = message.reply {
-                waiting.push((req, reply));
-            }
-        }
-        let mut still_waiting = Vec::new();
-        for (req, reply) in waiting.drain(..) {
-            match session.take_result(req) {
-                Some(result) => drop(reply.send(result)),
-                None => still_waiting.push((req, reply)),
-            }
-        }
-        waiting = still_waiting;
+        session.flush_main_thread();
         if !session.pump(Duration::from_millis(20))? {
             break;
         }

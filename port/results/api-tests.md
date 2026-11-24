@@ -78,3 +78,32 @@ Same `MOCHA_GREP` and setup as the bulk file edits section, on the Studio, the w
 | api-workspace | 4 | 0 | 0 | 0 | exit 0 after 0s |
 
 Unchanged, as expected: the Explorer operations add no extension API.
+
+## Merge of milestone 8 into the integrate branch
+
+`port/tools/api-tests` on the Studio, the working tree of the merge, same setup. Baseline: the M12 Explorer file operations section (api-folder 74/2/62, api-workspace 4/0/0) and the milestone 8 runs below.
+
+| MOCHA_GREP | passing | pending | failing |
+|------------|---------|---------|---------|
+| the M12 pattern (`vscode API - quick input\|vscode API - commands\|showInputBox\|#7013\|vscode API - configuration\|vscode API - globalState\|vscode API - workspace-fs\|vscode API - workspace events\|vscode API - workspace `), api-folder | 81 | 2 | 55 |
+| the same, api-workspace | 4 | 0 | 0 |
+| `vscode API - editors` | 13 | 0 | 0 |
+| `vscode API - window` | 26 | 0 | 14 |
+
+New passes against the M12 run, none lost: editorCommand with extra args; encoding: openTextDocument - invalid encoding falls back to default; eol, read; events: onDidOpenTextDocument, onDidChangeTextDocument, onDidSaveTextDocument; onWillCreate/onDidCreate, make changes, edit new file fails; openTextDocument; openTextDocument, with selection. `vscode API - window` went from 20/0/20 on milestone 8 to 26/0/14 with milestone 9's quick input. One api-workspace run gave 0/0/0 with `extension host failed: Address already in use (os error 48)`; two reruns gave 4/0/0.
+
+## Milestone 8: editor viewport
+
+`MOCHA_GREP=<suite> SUITE_TIMEOUT=900 port/tools/api-tests` at c681711e on 2026-11-24, one suite per run. There is no `vscode API - documents` suite in 1.147.0; the document tests live in `vscode API - workspace`.
+
+| MOCHA_GREP | passing | pending | failing | before MainThread requests (5fb18b09) |
+|------------|---------|---------|---------|---------------------------------------|
+| `vscode API - editors` | 13 | 0 | 0 | 0 / 1 / 12 |
+| `vscode API - window` (pattern `workspace$` or `window`; only window matched) | 20 | 0 | 20 | |
+| `vscode API - workspace ` | 18 | 2 | 76 | |
+
+- editors: every test of editor.test.ts passes, as in the reference.
+- window: the text editor tests that need one editor group pass (active text editor, opened via resource, #49125, #134786, #5362, selection change kind). The ViewColumn, tab and `bikes:` content provider tests fail on the missing editor groups and content providers; the input box, quick pick and status bar failures belong to other rows (port/notes.md milestone 8).
+- After multi-cursor (ea71708c): the same three runs give the same counts, editors 13/0/0, window 20/0/20, workspace 18/2/76.
+- After folding, with the scroll position truncated to whole pixels: editors 13/0/0.
+- workspace: openTextDocument, eol, the open/change/save events and openTextDocument with selection pass; the failures are untitled documents, content providers, WorkspaceEdit and file events, none in milestone 8 scope.

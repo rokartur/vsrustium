@@ -2,6 +2,21 @@
 
 `port/tools/pixel-check` on the Mac Studio: the reference workbench captured through CDP (`port/tools/ref-screenshot`, 1024x768 at 2x, frozen: solid cursor, reduced motion, no startup editor, `chat.disableAIFeatures`) against the port's frame read back from Metal (`code-gpui --theme <id> --screenshot`, built with `--features screenshot`). Neither capture needs Screen Recording permission. Diff: `native/crates/pixeldiff`, threshold 0, anti-aliased pixels counted apart.
 
+## Merge of milestone 8 into the integrate branch
+
+Full `port/tools/pixel-check` in the integrate worktree on the merge's working tree.
+
+| window | dark | light | hc | hclight |
+|---|---|---|---|---|
+| empty | 3567 | 3600 | 398 | 401 |
+| folder | 7238 | 4067 | 972 | 886 |
+| file | 10342 | 7164 | 4696 | 5468 |
+| main | 11927 | 8685 | 5842 | 7141 |
+| multiroot | 7371 | 4143 | 1110 | 951 |
+| folded | 21969 | 28077 | 9754 | 11552 |
+
+The reference frames moved since milestone 8's run (1750 to 4642 pixels between the two reference captures of file, main and folded). Against this run's reference frames, milestone 8's own port frames give file 13772/10561/5985/6726, main 14864/11634/6605/7912 and folded 25614/31678/11297/13062, so the merge is closer in all 12. Against the milestone 12 table, file light and hclight rose by 489 and 1308, the same amounts milestone 8's minimap added (6376 to 6865, 3853 to 5161). folder hc and hclight are 12 above the milestone 12 table; not chased.
+
 ## Milestone 9: commands, keybindings, quick input
 
 No new window: pixel-check has no quick input. All 16 port frames are byte-identical to the milestone 7 run (md5 of `port-<theme>.png` per window).
@@ -32,6 +47,39 @@ Measured at the merge of milestones 9, 10 and 12 (`port/tools/pixel-check` in th
 | main | 12681 | 8133 | 7383 | 7132 |
 
 Why the reference capture moves between runs is not found yet; milestone 8 also hit hung captures (a8512a97 on port-m8-viewport).
+
+## Milestone 8: editor viewport
+
+Scrollbars, scroll shadow and visible ranges added; the frozen captures show the top of each file, so nothing may move. `WINDOWS="file main"`: both unchanged from milestone 7. The first main hc run gave 16065 against a reference capture with different breadcrumbs and the cursor on line 4; the retry gave 5335.
+
+After multi-cursor (ea71708c), one cursor in both captures: `WINDOWS="file main"` gives the same eight numbers.
+
+| window | dark | light | hc | hclight |
+|---|---|---|---|---|
+| file | 10859 | 6376 | 4396 | 3853 |
+| main | 12177 | 7627 | 5335 | 6626 |
+
+After folding: full run with the new `folded` window, `port/fixtures/folding/long.py` with keys `cmd-down up alt-cmd-[ up×12 alt-cmd-[` (lines 76-87 and 100 hidden). empty, folder and file give the milestone 7 numbers; main hclight 5059. In that run the port's folded capture failed with an empty log (likely the 120s `timeout`); the folded row is from a `WINDOWS=folded` run after it. `folded` went from 235332 (dark) to 44105 once the folding actions revealed centered if outside the viewport, and to 23034 once the scroll position truncated to whole pixels (`forceIntegerValues`). What remains is the reference's sticky scroll line (`#region Serialization` pinned over line 57), which comes with sticky scroll.
+
+| window | dark | light | hc | hclight |
+|---|---|---|---|---|
+| empty | 3567 | 3600 | 398 | 401 |
+| folder | 7053 | 3882 | 775 | 689 |
+| file | 10859 | 6376 | 4396 | 3853 |
+| main | 12177 | 7627 | 5335 | 5059 |
+| folded | 23034 | 29087 | 9736 | 8806 |
+
+`port/tools/pixel-check` now runs each port capture through `capture()`: one still alive after 120 s gets `sample` stacks in `<window>/port-<theme>.sample`, then exits 124, so a hang leaves evidence instead of an empty log. Then two full runs back to back (`port/tools/pixel-check && port/tools/pixel-check`): all 20 windows gave numbers in both, each equal to the table above. The empty-log failure did not recur; its cause is unproven.
+
+After the minimap: the reference draws its minimap now (`ref-screenshot` no longer sets `editor.minimap.enabled: false`), and the port's capture waits 1.5 s after activation even without keys, as the reference does with a file, so the scrollbars shown at open fade. The lines clip at the content width like `editorScrollbar.ts`, so the current line border stays out of the column right of the minimap. empty and folder unchanged; `WINDOWS="file main folded"` gives the rows below. In one full run folded dark gave 45702 with the port's minimap slider still shown; the rerun gave the table's number and the cause is unproven. File and main stay above the milestone 7 numbers; one difference is the overview ruler: in the reference its cursor mark is gray (198,199,197 in hclight), in the port `editorCursor.foreground` at 70% as `decorationsOverviewRuler.ts` reads it; not chased in this milestone.
+
+| window | dark | light | hc | hclight |
+|---|---|---|---|---|
+| empty | 3567 | 3600 | 398 | 401 |
+| folder | 7053 | 3882 | 775 | 689 |
+| file | 10043 | 6865 | 4397 | 5161 |
+| main | 11423 | 8179 | 5336 | 6367 |
+| folded | 21817 | 27924 | 9601 | 11399 |
 
 ## Milestone 7: syntax colors and themes
 

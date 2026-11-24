@@ -29,10 +29,10 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSAp
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSString"] }
 search = { path = "../search" }
 textmate = { path = "../textmate" }
-image = { version = "0.25", default-features = false, features = ["png"], optional = true }
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
 
 [features]
-screenshot = ["gpui/test-support", "gpui_platform/test-support", "dep:image"]
+screenshot = ["gpui/test-support", "gpui_platform/test-support"]
