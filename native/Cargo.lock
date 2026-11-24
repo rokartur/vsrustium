@@ -182,6 +182,7 @@ name = "app"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "config",
  "exthost",
  "futures",
  "gpui",
@@ -938,6 +939,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "config"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "console_error_panic_hook"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1462,6 +1471,7 @@ name = "exthost"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "config",
  "serde_json",
 ]
 

@@ -13,9 +13,14 @@ mod workbench;
 
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, channel};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use config::configuration::Overrides;
+use config::registry::Registry;
+use config::service::Settings;
 use exthost::extension_development::ExtensionDevelopment;
+use exthost::main_thread_configuration::MainThreadConfiguration;
 use exthost::rpc::Arg;
 use exthost::scan::{ScannedExtension, scan_builtin_extensions};
 use exthost::session::{Session, SessionPaths, init_data, workspace_data};
@@ -36,10 +41,11 @@ fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let runtime = if args.iter().any(|arg| arg == "--node") { Runtime::Node } else { Runtime::Bun };
     let flag_value = |flag: &str| args.iter().position(|arg| arg == flag).and_then(|i| args.get(i + 1)).cloned();
-    let user_data = flag_value("--user-data-dir").map(PathBuf::from);
+    let user_data = match flag_value("--user-data-dir") {
+        Some(dir) => PathBuf::from(dir),
+        None => default_user_data()?,
+    };
     let screenshot = flag_value("--screenshot").map(PathBuf::from);
-    // Settings id of workbench.colorTheme; the reference default theme is not ported yet, so Dark Modern is.
-    let theme_id = flag_value("--theme").unwrap_or_else(|| "Dark Modern".into());
     let value_flags = ["--user-data-dir", "--screenshot", "--theme"];
     let positional: Vec<&String> = args.iter().enumerate().skip(1).filter(|(i, arg)| !arg.starts_with("--") && !value_flags.contains(&args[i - 1].as_str())).map(|(_, arg)| arg).collect();
     let canonical = |path: &String| std::fs::canonicalize(path).with_context(|| format!("opening {path}"));
@@ -53,7 +59,13 @@ fn main() -> anyhow::Result<()> {
     if let Some(development) = &development {
         development.add_extension(&mut extensions)?;
     }
-    let theme = load_theme(&extensions, &theme_id)?;
+    let described: Vec<(&str, &serde_json::Value)> = extensions.iter().map(|extension| (extension.id.as_str(), &extension.description)).collect();
+    let settings = Settings::load(Registry::with_extensions(&described), user_data.join("User"), folder.clone());
+    let theme = match flag_value("--theme") {
+        Some(theme_id) => load_theme(&extensions, &theme_id)?,
+        None => settings_theme(&extensions, &settings)?,
+    };
+    let settings = Arc::new(Mutex::new(settings));
 
     application().run(move |cx: &mut App| {
         // Same size as the reference capture in port/tools/ref-screenshot, so pixel diffs line up.
@@ -70,7 +82,7 @@ fn main() -> anyhow::Result<()> {
                 let languages = Languages::new(&extensions);
                 let host = HostSync::new(host_sender);
                 host.send_color_theme(theme.kind);
-                let mut workbench = Workbench::new(theme, app_root.clone(), folder.clone().map(FileTree::new), languages, host, cx);
+                let mut workbench = Workbench::new(theme, app_root.clone(), folder.clone().map(FileTree::new), languages, settings.clone(), host, cx);
                 if let Some(file) = file {
                     workbench.open_file(file, true, window, cx);
                 }
@@ -78,7 +90,7 @@ fn main() -> anyhow::Result<()> {
                     .name("exthost-session".into())
                     .spawn(move || {
                         let runs_tests = development.as_ref().is_some_and(|development| development.tests_path.is_some());
-                        if let Err(error) = run_extension_host(runtime, app_root, extensions, user_data, folder, development, host_receiver, &sender) {
+                        if let Err(error) = run_extension_host(runtime, app_root, extensions, settings, user_data, folder, development, host_receiver, &sender) {
                             if runs_tests {
                                 eprintln!("extension host failed: {error:#}");
                                 std::process::exit(1);
@@ -119,16 +131,13 @@ fn run_extension_host(
     runtime: Runtime,
     app_root: PathBuf,
     extensions: Vec<ScannedExtension>,
-    user_data: Option<PathBuf>,
+    settings: Arc<Mutex<Settings>>,
+    user_data: PathBuf,
     folder: Option<PathBuf>,
     development: Option<ExtensionDevelopment>,
     workbench_messages: Receiver<HostMessage>,
     status: &UnboundedSender<String>,
 ) -> anyhow::Result<()> {
-    let user_data = match user_data {
-        Some(dir) => dir,
-        None => default_user_data()?,
-    };
     let paths = SessionPaths { app_root: &app_root, user_data: &user_data, workspace_folder: folder.as_deref() };
     let mut init = init_data(&paths, &extensions, "1.147.0");
     if let Some(development) = &development {
@@ -139,6 +148,7 @@ fn run_extension_host(
     let host = ExtensionHost::start(HostOptions { runtime, entry: &entry, extra_env: vec![], extra_args: vec![] }, &init)?;
     let _ = status.unbounded_send(format!("handshake done, pid {}", host.child.id()));
     let mut session = Session::new(host);
+    session.configuration = Some(MainThreadConfiguration::new(settings, development.is_some()));
     session.start(&extensions, folder.as_deref().map(|folder| workspace_data(&init, folder)))?;
     let reply = session.call("ExtHostExtensionService", "$test_latency", vec![Arg::Json(json!(7))], Duration::from_secs(10))?;
     let _ = status.unbounded_send(format!("main -> host: $test_latency(7) = {reply:?}"));
@@ -176,6 +186,21 @@ fn save_screenshot(window: &Window, path: &std::path::Path) -> anyhow::Result<()
 #[cfg(not(feature = "screenshot"))]
 fn save_screenshot(_window: &Window, _path: &std::path::Path) -> anyhow::Result<()> {
     anyhow::bail!("built without the screenshot feature: cargo build --features screenshot")
+}
+
+/// `workbench.colorTheme`; a theme no extension contributes falls back to the default, as ThemeService does.
+fn settings_theme(extensions: &[ScannedExtension], settings: &Settings) -> anyhow::Result<theme::Theme> {
+    let id = settings.get_value(Some("workbench.colorTheme"), &Overrides::default());
+    if let Some(theme) = id.as_ref().and_then(|id| id.as_str()).and_then(|id| load_theme(extensions, id).ok()) {
+        return Ok(theme);
+    }
+    let default = &settings.registry.property("workbench.colorTheme").expect("workbench.colorTheme is registered").default;
+    load_theme(extensions, default.as_str().expect("the default theme is a settings id"))
+}
+
+#[cfg(test)]
+fn default_settings() -> Arc<Mutex<Settings>> {
+    Arc::new(Mutex::new(Settings::load(Registry::core(), PathBuf::from("/nonexistent/User"), None)))
 }
 
 fn default_user_data() -> anyhow::Result<PathBuf> {

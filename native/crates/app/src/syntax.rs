@@ -358,7 +358,7 @@ mod tests {
         let theme = load_theme(&extensions, "Dark Modern").unwrap();
         let path = std::env::temp_dir().join(format!("code-gpui-tokens-{}.ts", std::process::id()));
         std::fs::write(&path, "let a = (1);\nlet b = 2;\n").unwrap();
-        let document = crate::editor::TextDocument::read(&path, &languages).unwrap();
+        let document = crate::editor::TextDocument::read(&path, &languages, &crate::default_settings().lock().unwrap()).unwrap();
         std::fs::remove_file(&path).unwrap();
         let mut group = crate::editor::EditorGroup::default();
         group.open(document, false);

@@ -9,7 +9,9 @@ use std::cell::Cell;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+
+use config::service::Settings;
 
 use gpui::{ClickEvent, Context, Div, FocusHandle, FontFeatures, FontWeight, Rgba, UniformListScrollHandle, Window, div, prelude::*, px, rgb, svg, transparent_black};
 
@@ -27,6 +29,8 @@ pub struct Workbench {
     pub folder: Option<FileTree>,
     pub languages: Languages,
     pub editors: EditorGroup,
+    /// The window's settings, shared with the extension host thread that reloads them on file changes.
+    pub settings: Arc<Mutex<Settings>>,
     host: HostSync,
     editor_scroll: UniformListScrollHandle,
     /// Window x of the text area, recorded at paint, to turn a click into a column.
@@ -80,13 +84,14 @@ impl Render for Workbench {
 }
 
 impl Workbench {
-    pub fn new(theme: Theme, app_root: PathBuf, folder: Option<FileTree>, languages: Languages, host: HostSync, cx: &mut Context<Self>) -> Self {
+    pub fn new(theme: Theme, app_root: PathBuf, folder: Option<FileTree>, languages: Languages, settings: Arc<Mutex<Settings>>, host: HostSync, cx: &mut Context<Self>) -> Self {
         Workbench {
             theme,
             app_root,
             folder,
             languages,
             editors: EditorGroup::default(),
+            settings,
             host,
             editor_scroll: UniformListScrollHandle::new(),
             text_area_left: Rc::default(),
@@ -106,7 +111,7 @@ impl Workbench {
                     self.editors.pin(index);
                 }
             }
-            None => match TextDocument::read(&path, &self.languages) {
+            None => match TextDocument::read(&path, &self.languages, &self.settings.lock().unwrap()) {
                 Ok(document) => self.editors.open(document, !pinned),
                 // shortcut: a read error is logged, not shown as the reference's editor error placeholder.
                 Err(error) => eprintln!("opening {}: {error}", path.display()),
@@ -406,7 +411,7 @@ mod tests {
         let docs = folder.join("docs");
         let languages = Languages::new(&[]);
         let host = HostSync::new(std::sync::mpsc::channel().0);
-        let (workbench, cx) = cx.add_window_view(|_, cx| Workbench::new(theme, app_root.clone(), Some(FileTree::new(folder)), languages, host, cx));
+        let (workbench, cx) = cx.add_window_view(|_, cx| Workbench::new(theme, app_root.clone(), Some(FileTree::new(folder)), languages, crate::default_settings(), host, cx));
         cx.run_until_parked();
 
         // The first tree row (docs) spans y 96..118 under the side bar's "workspace" header (reference DOM dump).
@@ -431,7 +436,7 @@ mod tests {
         std::fs::write(&file, "ab\ncd").unwrap();
         let (sender, receiver) = std::sync::mpsc::channel();
         let (workbench, cx) = cx.add_window_view(|window, cx| {
-            let mut workbench = Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), HostSync::new(sender), cx);
+            let mut workbench = Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), crate::default_settings(), HostSync::new(sender), cx);
             workbench.open_file(file.clone(), true, window, cx);
             workbench
         });
