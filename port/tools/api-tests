@@ -1,0 +1,56 @@
+#!/bin/bash
+# Runs extensions/vscode-api-tests against code-gpui the way scripts/test-integration.sh runs suites api-folder and
+# api-workspace against the reference, prints passing/pending/failing per suite and writes port/results/api-tests.md.
+# Run from the repo root on the Studio (port/tools/studio port/tools/api-tests), then copy the results file back.
+# The test extension, its compiled tests and mocha come from the untouched 1.147.0 reference checkout, copied so the
+# tests' file writes stay out of it. Each suite ends after SUITE_TIMEOUT seconds; counts are then the partial ones.
+# MOCHA_GREP=<pattern> runs only the matching tests (test/integration/electron/testrunner.js reads it).
+set -uo pipefail
+REF=${REF:-$HOME/Developer/vscode-ref}
+OUT=${OUT:-/tmp/api-tests-$(basename "$PWD")}
+SUITE_TIMEOUT=${SUITE_TIMEOUT:-1800}
+results=port/results/api-tests.md
+
+rm -rf "$OUT" && mkdir -p "$OUT/tree/extensions" "$OUT/tree/test/integration/electron"
+cp -cR "$REF/extensions/vscode-api-tests" "$OUT/tree/extensions/"
+cp "$REF/test/integration/electron/testrunner.js" "$OUT/tree/test/integration/electron/"
+ln -s "$REF/node_modules" "$OUT/tree/node_modules"
+tests=$OUT/tree/extensions/vscode-api-tests
+(cd native && cargo build --release -q -p app) || exit 1
+source port/tools/gui-lock.sh
+
+rows=()
+run_suite() { # <suite> <folder or workspace file> <tests folder> <tests in the reference run>
+  local log=$OUT/$1.log started=$SECONDS
+  SHELL=/bin/bash VSCODE_GPUI_EXTENSIONS=$REF/extensions timeout "$SUITE_TIMEOUT" native/target/release/code-gpui "$2" \
+    --user-data-dir "$(mktemp -d)" --extensionDevelopmentPath="$tests" --extensionTestsPath="$tests/out/$3" >"$log" 2>&1
+  local code=$? seconds=$((SECONDS - started)) text run passing pending failing
+  text=$(sed $'s/\x1b\\[[0-9;]*m//g' "$log")
+  count() { grep -Eo "^ *[0-9]+ $1" <<<"$text" | grep -Eo '[0-9]+' || echo 0; }
+  # mocha's spec reporter prints the summary only when the run ends; without it, count the per-test lines.
+  if grep -Eq '^ *[0-9]+ passing' <<<"$text"; then
+    passing=$(count passing) pending=$(count pending) failing=$(count failing)
+    run="exit $code after ${seconds}s"
+  else
+    passing=$(grep -c '^ *✔' <<<"$text") pending=$(grep -Ec '^ +- ' <<<"$text") failing=$(grep -Ec '^ +[0-9]+\) ' <<<"$text")
+    run=$([[ $code == 124 ]] && echo "timed out after ${seconds}s" || echo "incomplete: exit $code after ${seconds}s")
+  fi
+  local not_reached=$(($4 - passing - pending - failing))
+  echo "$1 passing $passing pending $pending failing $failing not-reached $not_reached ($run, log $log)"
+  rows+=("| $1 | $passing | $pending | $failing | $not_reached | $run |")
+}
+
+run_suite api-folder "$tests/testWorkspace" singlefolder-tests 402
+run_suite api-workspace "$tests/testworkspace.code-workspace" workspace-tests 4
+
+{
+  echo "# vscode-api-tests on the port"
+  echo
+  echo "Written by \`port/tools/api-tests\` at $(git describe --always --dirty) on $(date -u +%Y-%m-%d), \`SHELL=/bin/bash\`, Bun host, built-in extensions and test extension from the reference checkout. Reference: \`port/results/api-tests-reference.md\` (folder 356/46/0, workspace 4/0/0)."
+  echo
+  echo "Not reached: tests of the reference run (402 folder, 4 workspace) the port did not get to before the suite ended."
+  echo
+  echo "| suite | passing | pending | failing | not reached | run |"
+  echo "|-------|---------|---------|---------|-------------|-----|"
+  printf '%s\n' "${rows[@]}"
+} >"$results"

@@ -1,5 +1,6 @@
 //! The native app: the workbench, themed from the built-in theme files, over the running extension host.
 //! Usage: code-gpui [folder [file]] [--theme <settings id>] [--user-data-dir <dir>] [--screenshot <png>] [--node]
+//!   [--extensionDevelopmentPath=<dir> [--extensionTestsPath=<path>]]: the app exits with the test runner's code.
 
 mod editor;
 mod explorer;
@@ -12,6 +13,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, channel};
 use std::time::Duration;
 
+use exthost::extension_development::ExtensionDevelopment;
 use exthost::rpc::Arg;
 use exthost::scan::{ScannedExtension, scan_builtin_extensions};
 use exthost::session::{Session, SessionPaths, init_data, workspace_data};
@@ -41,10 +43,14 @@ fn main() -> anyhow::Result<()> {
     let canonical = |path: &String| std::fs::canonicalize(path).with_context(|| format!("opening {path}"));
     let folder = positional.first().map(|path| canonical(path)).transpose()?;
     let file = positional.get(1).map(|path| canonical(path)).transpose()?;
+    let development = ExtensionDevelopment::from_args(&args)?;
 
     let app_root = std::env::current_dir()?;
     let extensions_dir = std::env::var_os("VSCODE_GPUI_EXTENSIONS").map(PathBuf::from).unwrap_or_else(|| app_root.join("extensions"));
-    let extensions = scan_builtin_extensions(&extensions_dir)?;
+    let mut extensions = scan_builtin_extensions(&extensions_dir)?;
+    if let Some(development) = &development {
+        development.add_extension(&mut extensions)?;
+    }
     let theme = load_theme(&extensions, &theme_id)?;
 
     application().run(move |cx: &mut App| {
@@ -65,7 +71,12 @@ fn main() -> anyhow::Result<()> {
                 std::thread::Builder::new()
                     .name("exthost-session".into())
                     .spawn(move || {
-                        if let Err(error) = run_extension_host(runtime, app_root, extensions, user_data, folder, host_receiver, &sender) {
+                        let runs_tests = development.as_ref().is_some_and(|development| development.tests_path.is_some());
+                        if let Err(error) = run_extension_host(runtime, app_root, extensions, user_data, folder, development, host_receiver, &sender) {
+                            if runs_tests {
+                                eprintln!("extension host failed: {error:#}");
+                                std::process::exit(1);
+                            }
                             let _ = sender.unbounded_send(format!("extension host failed: {error:#}"));
                         }
                     })
@@ -96,12 +107,15 @@ fn main() -> anyhow::Result<()> {
 
 /// Owns the session for the life of the app: handshake, one call each way, then serves host requests and
 /// forwards what the workbench tells the host.
+// It takes what main parsed for the session thread; a struct for one call site would only rename the list.
+#[allow(clippy::too_many_arguments)]
 fn run_extension_host(
     runtime: Runtime,
     app_root: PathBuf,
     extensions: Vec<ScannedExtension>,
     user_data: Option<PathBuf>,
     folder: Option<PathBuf>,
+    development: Option<ExtensionDevelopment>,
     workbench_messages: Receiver<HostMessage>,
     status: &UnboundedSender<String>,
 ) -> anyhow::Result<()> {
@@ -110,7 +124,10 @@ fn run_extension_host(
         None => default_user_data()?,
     };
     let paths = SessionPaths { app_root: &app_root, user_data: &user_data, workspace_folder: folder.as_deref() };
-    let init = init_data(&paths, &extensions, "1.147.0");
+    let mut init = init_data(&paths, &extensions, "1.147.0");
+    if let Some(development) = &development {
+        development.add_to_init_data(&mut init);
+    }
     let entry = app_root.join("out-exthost/bootstrap-exthost.js");
 
     let host = ExtensionHost::start(HostOptions { runtime, entry: &entry, extra_env: vec![], extra_args: vec![] }, &init)?;
@@ -121,6 +138,9 @@ fn run_extension_host(
     let _ = status.unbounded_send(format!("main -> host: $test_latency(7) = {reply:?}"));
     let _ = status.unbounded_send(format!("host -> main: {} requests so far", session.log.host_calls.values().sum::<u32>()));
     let _ = status.unbounded_send(format!("{ACTIVATED_PREFIX}{}", session.log.activated.join(", ")));
+    if development.is_some_and(|development| development.tests_path.is_some()) {
+        session.execute_extension_tests();
+    }
     // The short pump timeout bounds how long a workbench change waits before the host hears of it.
     loop {
         for message in workbench_messages.try_iter() {
@@ -129,6 +149,10 @@ fn run_extension_host(
         if !session.pump(Duration::from_millis(20))? {
             break;
         }
+    }
+    if let Some(code) = session.extension_tests_exit_code() {
+        drop(session);
+        std::process::exit(code);
     }
     let _ = status.unbounded_send("extension host exited".into());
     Ok(())
