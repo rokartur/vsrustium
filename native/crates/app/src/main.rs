@@ -10,6 +10,7 @@ mod editor;
 mod explorer;
 mod file_icons;
 mod filters;
+mod fuzzy_scorer;
 mod host_sync;
 mod keybindings;
 mod languages;

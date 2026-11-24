@@ -429,5 +429,253 @@ fn is_camel_case_pattern(word: &[char]) -> bool {
     if (upper == 0 || lower == 0) && whitespace == 0 { word.len() <= 30 } else { upper <= 5 }
 }
 
+/// `FuzzyScore`: the score, the word offset matching started at, and the matched columns from the
+/// last to the first, relative to that offset.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FuzzyScore {
+    pub score: i32,
+    pub word_start: usize,
+    pub positions: Vec<usize>,
+}
+
+#[derive(Clone, Copy)]
+pub struct FuzzyScoreOptions {
+    pub first_match_can_be_weak: bool,
+    pub boost_full_match: bool,
+}
+
+impl Default for FuzzyScoreOptions {
+    fn default() -> Self {
+        Self { first_match_can_be_weak: false, boost_full_match: true }
+    }
+}
+
+pub fn create_matches(score: Option<&FuzzyScore>) -> Matches {
+    let Some(score) = score else {
+        return vec![];
+    };
+    let mut matches: Matches = vec![];
+    for position in score.positions.iter().rev() {
+        let pos = position + score.word_start;
+        match matches.last_mut() {
+            Some(last) if last.end == pos => last.end = pos + 1,
+            _ => matches.push(pos..pos + 1),
+        }
+    }
+    matches
+}
+
+const FUZZY_MAX_LEN: usize = 128;
+const ARROW_DIAG: u8 = 1;
+const ARROW_LEFT: u8 = 2;
+const ARROW_LEFT_LEFT: u8 = 3;
+
+/// `fuzzyScore` of filters.ts: the matrix of pattern rows by word columns, at most 128 of each.
+pub fn fuzzy_score(pattern: &str, pattern_low: &str, pattern_start: usize, word: &str, word_low: &str, word_start: usize, options: FuzzyScoreOptions) -> Option<FuzzyScore> {
+    let pattern: Vec<char> = pattern.chars().collect();
+    let pattern_low: Vec<char> = pattern_low.chars().collect();
+    let word: Vec<char> = word.chars().collect();
+    let word_low: Vec<char> = word_low.chars().collect();
+    let pattern_len = pattern.len().min(FUZZY_MAX_LEN);
+    let word_len = word.len().min(FUZZY_MAX_LEN);
+
+    if pattern_start >= pattern_len || word_start >= word_len || pattern_len - pattern_start > word_len - word_start {
+        return None;
+    }
+
+    let mut min_word_match_pos = vec![0usize; pattern_len];
+    if !is_pattern_in_word(&pattern_low, pattern_start, pattern_len, &word_low, word_start, word_len, &mut min_word_match_pos) {
+        return None;
+    }
+    let mut max_word_match_pos = vec![0usize; pattern_len];
+    let mut pattern_pos = pattern_len;
+    let mut word_pos = word_len;
+    while pattern_pos > pattern_start && word_pos > word_start {
+        if pattern_low[pattern_pos - 1] == word_low[word_pos - 1] {
+            max_word_match_pos[pattern_pos - 1] = word_pos - 1;
+            pattern_pos -= 1;
+        }
+        word_pos -= 1;
+    }
+
+    let columns = word_len - word_start + 1;
+    let rows = pattern_len - pattern_start + 1;
+    let mut table = vec![vec![0i32; columns]; rows];
+    let mut diag = vec![vec![0i32; columns]; rows];
+    let mut arrows = vec![vec![0u8; columns]; rows];
+    let mut has_strong_first_match = false;
+
+    for (row, pattern_pos) in (pattern_start..pattern_len).enumerate().map(|(index, pos)| (index + 1, pos)) {
+        let min_pos = min_word_match_pos[pattern_pos];
+        let max_pos = max_word_match_pos[pattern_pos];
+        let next_max_pos = if pattern_pos + 1 < pattern_len { max_word_match_pos[pattern_pos + 1] } else { word_len };
+
+        for word_pos in min_pos..next_max_pos {
+            let column = word_pos - word_start + 1;
+            let score = (word_pos <= max_pos)
+                .then(|| fuzzy_char_score(&pattern, &pattern_low, pattern_pos, pattern_start, &word, &word_low, word_pos, word_len, word_start, diag[row - 1][column - 1] == 0, &mut has_strong_first_match))
+                .flatten();
+
+            let diag_score = score.map(|score| score + table[row - 1][column - 1]);
+            let can_come_left = word_pos > min_pos;
+            let left_score = if can_come_left { table[row][column - 1] + if diag[row][column - 1] > 0 { -5 } else { 0 } } else { 0 };
+            let can_come_left_left = word_pos > min_pos + 1 && diag[row][column - 1] > 0;
+            let left_left_score = if can_come_left_left { table[row][column - 2] + if diag[row][column - 2] > 0 { -5 } else { 0 } } else { 0 };
+
+            if can_come_left_left && (!can_come_left || left_left_score >= left_score) && diag_score.is_none_or(|diag_score| left_left_score >= diag_score) {
+                table[row][column] = left_left_score;
+                arrows[row][column] = ARROW_LEFT_LEFT;
+                diag[row][column] = 0;
+            } else if can_come_left && diag_score.is_none_or(|diag_score| left_score >= diag_score) {
+                table[row][column] = left_score;
+                arrows[row][column] = ARROW_LEFT;
+                diag[row][column] = 0;
+            } else {
+                table[row][column] = diag_score.expect("fuzzy_score: no path into a reachable cell");
+                arrows[row][column] = ARROW_DIAG;
+                diag[row][column] = diag[row - 1][column - 1] + 1;
+            }
+        }
+    }
+
+    if !has_strong_first_match && !options.first_match_can_be_weak {
+        return None;
+    }
+
+    let mut row = rows - 1;
+    let mut column = columns as isize - 1;
+    let mut result = FuzzyScore { score: table[row][column as usize], word_start, positions: vec![] };
+    let mut backwards_diag_length = 0;
+    let mut max_match_column = 0;
+
+    while row >= 1 {
+        let mut diag_column = column;
+        loop {
+            match arrows[row][diag_column as usize] {
+                ARROW_LEFT_LEFT => diag_column -= 2,
+                ARROW_LEFT => diag_column -= 1,
+                _ => break,
+            }
+            if diag_column < 1 {
+                break;
+            }
+        }
+
+        if backwards_diag_length > 1
+            && pattern_low[pattern_start + row - 1] == word_low[word_start + column as usize - 1]
+            && !is_upper_case_at(&word, &word_low, diag_column + word_start as isize - 1)
+            && backwards_diag_length + 1 > diag[row][diag_column as usize]
+        {
+            diag_column = column;
+        }
+
+        backwards_diag_length = if diag_column == column { backwards_diag_length + 1 } else { 1 };
+        if max_match_column == 0 {
+            max_match_column = diag_column;
+        }
+        row -= 1;
+        column = diag_column - 1;
+        result.positions.push(column as usize);
+    }
+
+    if word_len - word_start == pattern_len && options.boost_full_match {
+        result.score += 2;
+    }
+    result.score -= (max_match_column - pattern_len as isize) as i32;
+    Some(result)
+}
+
+fn is_pattern_in_word(pattern_low: &[char], mut pattern_pos: usize, pattern_len: usize, word_low: &[char], mut word_pos: usize, word_len: usize, min_word_match_pos: &mut [usize]) -> bool {
+    while pattern_pos < pattern_len && word_pos < word_len {
+        if pattern_low[pattern_pos] == word_low[word_pos] {
+            min_word_match_pos[pattern_pos] = word_pos;
+            pattern_pos += 1;
+        }
+        word_pos += 1;
+    }
+    pattern_pos == pattern_len
+}
+
+#[allow(clippy::too_many_arguments)]
+fn fuzzy_char_score(pattern: &[char], pattern_low: &[char], pattern_pos: usize, pattern_start: usize, word: &[char], word_low: &[char], word_pos: usize, word_len: usize, word_start: usize, new_match_start: bool, first_match_strong: &mut bool) -> Option<i32> {
+    if pattern_low[pattern_pos] != word_low[word_pos] {
+        return None;
+    }
+    let at = word_pos as isize;
+    let same_case_score = if pattern[pattern_pos] == word[word_pos] { 7 } else { 5 };
+    let mut score = 1;
+    let mut is_gap_location = false;
+    if word_pos == pattern_pos - pattern_start {
+        score = same_case_score;
+    } else if is_upper_case_at(word, word_low, at) && (word_pos == 0 || !is_upper_case_at(word, word_low, at - 1)) {
+        score = same_case_score;
+        is_gap_location = true;
+    } else if is_fuzzy_separator_at(word_low, at) && (word_pos == 0 || !is_fuzzy_separator_at(word_low, at - 1)) {
+        score = 5;
+    } else if is_fuzzy_separator_at(word_low, at - 1) || is_whitespace_at(word_low, at - 1) {
+        score = 5;
+        is_gap_location = true;
+    }
+
+    if score > 1 && pattern_pos == pattern_start {
+        *first_match_strong = true;
+    }
+    if !is_gap_location {
+        is_gap_location = is_upper_case_at(word, word_low, at) || is_fuzzy_separator_at(word_low, at - 1) || is_whitespace_at(word_low, at - 1);
+    }
+
+    if pattern_pos == pattern_start {
+        if word_pos > word_start {
+            score -= if is_gap_location { 3 } else { 5 };
+        }
+    } else if new_match_start {
+        score += if is_gap_location { 2 } else { 0 };
+    } else {
+        score += if is_gap_location { 0 } else { 1 };
+    }
+
+    if word_pos + 1 == word_len {
+        score -= if is_gap_location { 3 } else { 5 };
+    }
+    Some(score)
+}
+
+/// `word[pos] !== wordLow[pos]`; out of range compares `undefined` with itself.
+fn is_upper_case_at(word: &[char], word_low: &[char], pos: isize) -> bool {
+    pos >= 0 && word.get(pos as usize) != word_low.get(pos as usize)
+}
+
+fn is_fuzzy_separator_at(value: &[char], index: isize) -> bool {
+    if index < 0 {
+        return false;
+    }
+    let Some(&c) = value.get(index as usize) else {
+        return false;
+    };
+    matches!(c, '_' | '-' | '.' | ' ' | '/' | '\\' | '\'' | '"' | ':' | '$' | '<' | '>' | '(' | ')' | '[' | ']' | '{' | '}') || is_emoji_imprecise(c as u32)
+}
+
+fn is_whitespace_at(value: &[char], index: isize) -> bool {
+    index >= 0 && matches!(value.get(index as usize), Some(' ' | '\t'))
+}
+
+/// strings.ts `isEmojiImprecise`.
+fn is_emoji_imprecise(x: u32) -> bool {
+    (0x1F1E6..=0x1F1FF).contains(&x)
+        || x == 8986
+        || x == 8987
+        || x == 9200
+        || x == 9203
+        || (9728..=10175).contains(&x)
+        || x == 11088
+        || x == 11093
+        || (127744..=128591).contains(&x)
+        || (128640..=128764).contains(&x)
+        || (128992..=129008).contains(&x)
+        || (129280..=129535).contains(&x)
+        || (129648..=129782).contains(&x)
+}
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod fuzzy_score_tests;
