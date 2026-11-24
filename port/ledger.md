@@ -366,7 +366,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/search | workbench service | ported | native/crates/search: QueryBuilder, ripgrep file search and text search with upstream ripgrepTextSearchEngineUtils and TextSearchResult tests: cargo test -p search 23 passed; no symlink loop rerun, no results from unsaved editors |
 | workbench/services/secrets | workbench service | ported | port/tools/settings-check secrets |
 | workbench/services/sessions | workbench service | removed | no sign-in/AI by decision (port/notes.md); not ported |
-| workbench/services/sharedProcess | workbench service | n/a | Electron process, IPC or DOM layer; replaced by the single-process Rust/GPUI architecture (port/notes.md) |
+| workbench/services/sharedProcess | workbench service | todo |  |
 | workbench/services/statusbar | workbench service | todo |  |
 | workbench/services/storage | workbench service | ported | port/tools/settings-check state; no application scope or flush on shutdown, writes are synchronous |
 | workbench/services/suggest | workbench service | todo |  |
@@ -389,7 +389,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/userData | workbench service | todo |  |
 | workbench/services/userDataProfile | workbench service | todo |  |
 | workbench/services/userDataSync | workbench service | removed | no sign-in/AI by decision (port/notes.md); not ported |
-| workbench/services/utilityProcess | workbench service | n/a | Electron process, IPC or DOM layer; replaced by the single-process Rust/GPUI architecture (port/notes.md) |
+| workbench/services/utilityProcess | workbench service | todo |  |
 | workbench/services/views | workbench service | todo |  |
 | workbench/services/workingCopy | workbench service | ported | WorkingCopyFileService create, move, copy, delete with participants (cargo test -p files operations); no working copies (milestone 8) |
 | workbench/services/workspaces | workbench service | todo |  |
