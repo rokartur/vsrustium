@@ -79,7 +79,16 @@ fn command_palette_runs_an_extension_command_and_remembers_it(cx: &mut TestAppCo
     assert_eq!(reopened[0], "--recently used--Port: Say Hello");
     assert!(reopened[1].starts_with("--other commands--"), "{reopened:?}");
 
-    cx.simulate_input("zzzz");
+    cx.simulate_input("color theme");
+    let row = workbench.read_with(cx, |workbench, _| {
+        let input = workbench.quick_inputs.current().unwrap();
+        let item = &input.rows[input.order[0]].item;
+        (item.label.clone(), item.keybinding.clone())
+    });
+    assert_eq!(row, ("Preferences: Color Theme".to_string(), vec![vec!["⌘".to_string(), "K".to_string()], vec!["⌘".to_string(), "T".to_string()]]));
+
+    cx.simulate_keystrokes("cmd-a backspace");
+    cx.simulate_input(">zzzz");
     assert_eq!(workbench.read_with(cx, labels), ["No matching commands"]);
     cx.simulate_keystrokes("enter");
     assert!(workbench.read_with(cx, |workbench, _| workbench.quick_inputs.current().is_some()), "no matching commands keeps the picker");

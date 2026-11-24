@@ -2,7 +2,8 @@
 // Captures the reference VS Code workbench through CDP (Page.captureScreenshot), so no Screen Recording permission is needed.
 // Usage: port/tools/ref-screenshot <out-dir> [dark|light|hc ...]   (env REF = reference checkout, default ~/Developer/vscode-ref;
 // env FOLDER = folder to open, default none; env FILE = file to open in that window, default none;
-// env KEYS = keystrokes to type into it first, GPUI style: "cmd-down up alt-cmd-[")
+// env KEYS = keystrokes to type into it first, GPUI style: "cmd-down up alt-cmd-["; env SETTINGS = a JSON object of
+// extra user settings)
 import { Database } from 'bun:sqlite';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -44,6 +45,7 @@ async function capture(theme: string) {
 		'security.workspace.trust.enabled': false,
 		// With AI off the secondary side bar only hosts chat, so the product without AI has none.
 		'workbench.secondarySideBar.defaultVisibility': 'hidden',
+		...JSON.parse(process.env.SETTINGS || '{}'),
 	}));
 	// Same product as the port: no accounts icon (profile storage key of globalCompositeBar.ts isAccountsActionVisible).
 	mkdirSync(join(userData, 'User/globalStorage'));
@@ -96,7 +98,7 @@ async function press(cdp: (method: string, params?: object) => Promise<any>, key
 	const modifiers = parts.reduce((sum, part) => sum + bits[part], 0);
 	const keys: Record<string, [string, string, number]> = {
 		up: ['ArrowUp', 'ArrowUp', 38], down: ['ArrowDown', 'ArrowDown', 40], left: ['ArrowLeft', 'ArrowLeft', 37], right: ['ArrowRight', 'ArrowRight', 39],
-		'[': ['[', 'BracketLeft', 219], ']': [']', 'BracketRight', 221],
+		'[': ['[', 'BracketLeft', 219], ']': [']', 'BracketRight', 221], k: ['k', 'KeyK', 75],
 	};
 	const [name, code, windowsVirtualKeyCode] = keys[key];
 	await cdp('Input.dispatchKeyEvent', { type: 'rawKeyDown', modifiers, key: name, code, windowsVirtualKeyCode });

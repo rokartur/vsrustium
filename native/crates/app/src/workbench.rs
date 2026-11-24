@@ -587,7 +587,7 @@ impl Workbench {
             .relative()
             .h_full()
             .cursor_pointer()
-            .ml(px(3.))
+            .mx(px(3.))
             .px(px(5.))
             .flex()
             .items_center()
@@ -744,6 +744,8 @@ mod tests {
         cx.simulate_keystrokes("cmd-k x");
         let message = workbench.read_with(cx, |workbench, _| workbench.status_message.as_ref().map(|(message, _)| message.clone()));
         assert_eq!(message.as_deref(), Some("The key combination (⌘K, X) is not a command."));
+        cx.simulate_keystrokes("cmd-k cmd-w");
+        assert!(workbench.read_with(cx, |workbench, _| workbench.editors.editors.is_empty()), "workbench.action.closeAllEditors");
         std::fs::remove_dir_all(dir).unwrap();
     }
 

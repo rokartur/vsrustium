@@ -336,7 +336,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/imageResize | workbench service | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | workbench/services/inlineCompletions | workbench service | todo |  |
 | workbench/services/integrity | workbench service | todo |  |
-| workbench/services/keybinding | workbench service | ported | keyboard.rs: default-macos.json, contributes.keybindings, keybindings.json reload; cargo test -p app keybindings |
+| workbench/services/keybinding | workbench service | ported | keyboard.rs: default-macos.json, contributes.keybindings, keybindings.json reload, chords with the status bar message; cargo test -p app keybindings user_keybindings; pixel-check chord |
 | workbench/services/label | workbench service | todo |  |
 | workbench/services/language | workbench service | verified | getAssociationByPath plus firstLine detection (languages.rs); cargo test -p app languages::tests |
 | workbench/services/languageDetection | workbench service | todo |  |
