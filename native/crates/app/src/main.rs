@@ -114,9 +114,10 @@ fn main() -> anyhow::Result<()> {
                                 }
                             })
                             .ok();
-                            // The scrolled editor's scrollbars hide 500ms later and fade out over 800ms.
-                            cx.background_executor().timer(Duration::from_millis(1500)).await;
                         }
+                        // The editor's scrollbars show at open and after a scroll, hide 500ms later and fade out
+                        // over 800ms; ref-screenshot waits the same.
+                        cx.background_executor().timer(Duration::from_millis(1500)).await;
                         let saved = cx.update(|window, _| save_screenshot(window, path)).and_then(|result| result);
                         if let Err(error) = saved {
                             eprintln!("screenshot failed: {error:#}");

@@ -25,6 +25,16 @@ After folding: full run with the new `folded` window, `port/fixtures/folding/lon
 
 `port/tools/pixel-check` now runs each port capture through `capture()`: one still alive after 120 s gets `sample` stacks in `<window>/port-<theme>.sample`, then exits 124, so a hang leaves evidence instead of an empty log. Then two full runs back to back (`port/tools/pixel-check && port/tools/pixel-check`): all 20 windows gave numbers in both, each equal to the table above. The empty-log failure did not recur; its cause is unproven.
 
+After the minimap: the reference draws its minimap now (`ref-screenshot` no longer sets `editor.minimap.enabled: false`), and the port's capture waits 1.5 s after activation even without keys, as the reference does with a file, so the scrollbars shown at open fade. The lines clip at the content width like `editorScrollbar.ts`, so the current line border stays out of the column right of the minimap. empty and folder unchanged; `WINDOWS="file main folded"` gives the rows below. In one full run folded dark gave 45702 with the port's minimap slider still shown; the rerun gave the table's number and the cause is unproven. File and main stay above the milestone 7 numbers; one difference is the overview ruler: in the reference its cursor mark is gray (198,199,197 in hclight), in the port `editorCursor.foreground` at 70% as `decorationsOverviewRuler.ts` reads it; not chased in this milestone.
+
+| window | dark | light | hc | hclight |
+|---|---|---|---|---|
+| empty | 3567 | 3600 | 398 | 401 |
+| folder | 7053 | 3882 | 775 | 689 |
+| file | 10043 | 6865 | 4397 | 5161 |
+| main | 11423 | 8179 | 5336 | 6367 |
+| folded | 21817 | 27924 | 9601 | 11399 |
+
 ## Milestone 7: syntax colors and themes
 
 New window `main`: `port/fixtures/workspace/src/main.ts` open in the fixture folder, TypeScript grammar colors and bracket pair colors. New theme `hclight` (Default High Contrast Light) for every window. The reference now runs with `--force-color-profile=srgb` (port/notes.md); with it the empty, folder and file windows give the milestone 2, 3 and 4 numbers unchanged. Reference md5 (main): dark `c1172c60`, hc `1cf27616`, hclight `fc82315e`, light `2eba5cf1`.

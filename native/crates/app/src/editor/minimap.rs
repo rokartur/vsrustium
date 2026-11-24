@@ -2,6 +2,8 @@
 //! its text, drawn a few pixels per character (minimapCharRenderer.ts with the minimapPreBaked.ts tables). Sizes are
 //! CSS pixels; "canvas" sizes are device pixels.
 
+use gpui::Rgba;
+
 /// editorOptions.ts `MINIMAP_GUTTER_WIDTH`, in CSS pixels in the layout and canvas pixels when drawing.
 pub const MINIMAP_GUTTER_WIDTH: f64 = 8.;
 /// minimapCharSheet.ts `Constants`.
@@ -20,6 +22,8 @@ pub enum MinimapSize {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum MinimapSide {
+    // Only the tests lay it out until `editor.minimap.side` is read.
+    #[cfg_attr(not(test), allow(dead_code))]
     Left,
     Right,
 }
@@ -488,6 +492,134 @@ pub fn x_offset_for_column(text: &str, column: usize, tab_size: usize, char_widt
         return canvas_inner_width;
     }
     x
+}
+
+/// What `MinimapOptions` reads from the theme for the text canvas.
+pub struct LinesColors {
+    /// `minimap.background`, else the editor background.
+    pub background: [u8; 4],
+    /// The editor background (`ColorId.DefaultBackground`).
+    pub default_background: [u8; 3],
+    /// The alpha of `minimap.foregroundOpacity`.
+    pub foreground_alpha: u8,
+    /// `MinimapTokensColorTracker.backgroundIsLight`: the editor background's relative luminance is 0.5 or more.
+    pub use_lighter_font: bool,
+}
+
+/// `InnerMinimap.renderLines` drawn whole, without reusing the rows of the last frame: the lines of `layout`, 1-based
+/// view lines, below `top_padding_line_count` empty rows. `line` gives a line's text and its color runs.
+pub fn render_lines<'a>(info: &MinimapLayoutInfo, layout: &MinimapLayout, renderer: &CharRenderer, colors: &LinesColors, tab_size: usize, line: impl Fn(usize) -> (&'a str, Vec<(usize, [u8; 3])>)) -> MinimapImage {
+    let mut image = MinimapImage::new(info.canvas_inner_width as usize, info.canvas_inner_height as usize, colors.background);
+    let base_char_height = if info.render_characters { BASE_CHAR_HEIGHT } else { BASE_CHAR_HEIGHT + 1 };
+    let render_line_height = (base_char_height * info.scale) as f64;
+    let inner_line_padding = if info.line_height > render_line_height { ((info.line_height - render_line_height) / 2.).floor() as usize } else { 0 };
+    let alpha = colors.background[3] as f64 / 255.;
+    let render_background = [0, 1, 2].map(|channel| {
+        let default = colors.default_background[channel] as f64;
+        ((colors.background[channel] as f64 - default) * alpha + default).round() as u8
+    });
+    let style = LineStyle {
+        renderer,
+        render_characters: info.render_characters,
+        background: render_background,
+        background_alpha: colors.background[3],
+        foreground_alpha: colors.foreground_alpha,
+        use_lighter_font: colors.use_lighter_font,
+        font_scale: info.scale,
+        char_width: BASE_CHAR_WIDTH * info.scale,
+        minimap_line_height: info.line_height,
+        tab_size,
+    };
+    let line_height = info.line_height as usize;
+    let mut dy = layout.top_padding_line_count * line_height;
+    for line_number in layout.start_line_number..=layout.end_line_number {
+        let (text, runs) = line(line_number);
+        render_line(&mut image, &style, dy + inner_line_padding, text, &runs);
+        dy += line_height;
+    }
+    image
+}
+
+/// A range of view lines (1-based) and char columns (0-based), start before end.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MinimapRange {
+    pub start: (usize, usize),
+    pub end: (usize, usize),
+}
+
+/// A `fillRect` on the decorations canvas, in canvas pixels.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Fill {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+    pub color: Rgba,
+}
+
+/// `InnerMinimap.renderDecorations` for `MinimapPosition.Inline` decorations: one half-transparent line highlight
+/// per line, the selection's first, then the selections and decorations over their columns. `selections` sort by
+/// start, `decorations` by z-index; `line` gives a view line's text.
+#[allow(clippy::too_many_arguments)]
+pub fn decoration_fills<'a>(info: &MinimapLayoutInfo, layout: &MinimapLayout, selection_color: Option<Rgba>, selections: &[MinimapRange], decorations: &[(MinimapRange, Rgba)], tab_size: usize, line: impl Fn(usize) -> &'a str) -> Vec<Fill> {
+    let selection_color = selection_color.filter(|color| color.a > 0.);
+    let line_height = info.line_height;
+    let canvas_width = info.canvas_inner_width;
+    let half = |color: Rgba| Rgba { a: color.a * 0.5, ..color };
+    let mut fills = Vec::new();
+    let mut highlighted = Vec::new();
+    // `_renderSelectionLineHighlights`: from the first line's top to the last line's top, merged when they touch.
+    if let Some(color) = selection_color {
+        let (mut y1, mut y2) = (0., 0.);
+        for selection in selections {
+            let Some((start, end)) = layout.intersect_with_viewport(selection.start.0, selection.end.0) else { continue };
+            highlighted.extend(start..=end);
+            let (yy1, yy2) = (layout.y_for_line_number(start, line_height), layout.y_for_line_number(end, line_height));
+            if y2 >= yy1 {
+                y2 = yy2;
+                continue;
+            }
+            if y2 > y1 {
+                fills.push(Fill { x: MINIMAP_GUTTER_WIDTH, y: y1, width: canvas_width, height: y2 - y1, color: half(color) });
+            }
+            (y1, y2) = (yy1, yy2);
+        }
+        if y2 > y1 {
+            fills.push(Fill { x: MINIMAP_GUTTER_WIDTH, y: y1, width: canvas_width, height: y2 - y1, color: half(color) });
+        }
+    }
+    // `_renderDecorationsLineHighlights`: backwards, so the decoration with the higher z-index colors the line.
+    for (range, color) in decorations.iter().rev().filter(|(_, color)| color.a > 0.) {
+        let Some((start, end)) = layout.intersect_with_viewport(range.start.0, range.end.0) else { continue };
+        for line_number in start..=end {
+            if highlighted.contains(&line_number) {
+                continue;
+            }
+            highlighted.push(line_number);
+            fills.push(Fill { x: MINIMAP_GUTTER_WIDTH, y: layout.y_for_line_number(line_number, line_height), width: canvas_width, height: line_height, color: half(*color) });
+        }
+    }
+    let on_line = |fills: &mut Vec<Fill>, range: &MinimapRange, color: Rgba, line_number: usize| {
+        let y = layout.y_for_line_number(line_number, line_height);
+        if y + line_height < 0. || y > info.canvas_inner_height {
+            return;
+        }
+        let text = line(line_number);
+        let start_column = if range.start.0 == line_number { range.start.1 } else { 0 };
+        let end_column = if range.end.0 == line_number { range.end.1 } else { text.chars().count() };
+        let char_width = (BASE_CHAR_WIDTH * info.scale) as f64;
+        let x1 = x_offset_for_column(text, start_column, tab_size, char_width, canvas_width);
+        let x2 = x_offset_for_column(text, end_column, tab_size, char_width, canvas_width);
+        fills.push(Fill { x: x1, y, width: x2 - x1, height: line_height, color });
+    };
+    let colored = selections.iter().filter_map(|range| selection_color.map(|color| (range, color))).chain(decorations.iter().filter(|(_, color)| color.a > 0.).map(|(range, color)| (range, *color)));
+    for (range, color) in colored {
+        let Some((start, end)) = layout.intersect_with_viewport(range.start.0, range.end.0) else { continue };
+        for line_number in start..=end {
+            on_line(&mut fills, range, color, line_number);
+        }
+    }
+    fills
 }
 
 const PREBAKED_SCALE_1: &str = "0000511D6300CF609C709645A78432005642574171487021003C451900274D35D762755E8B629C5BA856AF57BA649530C167D1512A272A3F6038604460398526BCA2A968DB6F8957C768BE5FBE2FB467CF5D8D5B795DC7625B5DFF50DE64C466DB2FC47CD860A65E9A2EB96CB54CE06DA763AB2EA26860524D3763536601005116008177A8705E53AB738E6A982F88BAA35B5F5B626D9C636B449B737E5B7B678598869A662F6B5B8542706C704C80736A607578685B70594A49715A4522E792";

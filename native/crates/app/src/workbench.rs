@@ -3,6 +3,7 @@
 //! Sizes are the reference's CSS pixels.
 
 mod editor_view;
+mod minimap_view;
 pub(crate) mod host_requests;
 mod text_input;
 
@@ -31,6 +32,7 @@ pub struct Workbench {
     host: HostSync,
     scrollbars: editor_view::Scrollbars,
     fold_controls: editor_view::FoldControls,
+    minimap: minimap_view::Minimap,
     /// The line and whether on its folding control a press may toggle a fold (folding.ts `mouseDownInfo`).
     fold_mouse_down: Option<(usize, bool)>,
     /// Window x of the text area, recorded at paint, to turn a click into a column.
@@ -94,6 +96,7 @@ impl Workbench {
             host,
             scrollbars: Default::default(),
             fold_controls: Default::default(),
+            minimap: Default::default(),
             fold_mouse_down: None,
             text_area_left: Rc::default(),
             editor_focus: cx.focus_handle(),

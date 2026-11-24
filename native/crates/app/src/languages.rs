@@ -27,7 +27,7 @@ pub struct Languages {
     names: HashMap<String, String>,
     off_side: HashMap<String, bool>,
     folding_markers: HashMap<String, Arc<FoldingMarkers>>,
-    block_comment_starts: HashMap<String, String>,
+    block_comments: HashMap<String, (String, String)>,
     /// `firstLine` patterns in registration order, anchored at the line start (languagesRegistry.ts).
     first_lines: Vec<(String, onig::Regex)>,
     pub grammars: textmate::Registry,
@@ -37,7 +37,7 @@ pub struct Languages {
 impl Languages {
     pub fn new(extensions: &[ScannedExtension]) -> Self {
         let grammars = textmate::Registry::new(extensions.iter().map(|extension| (extension.location.as_path(), &extension.description)));
-        let mut languages = Languages { associations: Vec::new(), names: HashMap::new(), off_side: HashMap::new(), folding_markers: HashMap::new(), block_comment_starts: HashMap::new(), first_lines: Vec::new(), grammars, brackets: HashMap::new() };
+        let mut languages = Languages { associations: Vec::new(), names: HashMap::new(), off_side: HashMap::new(), folding_markers: HashMap::new(), block_comments: HashMap::new(), first_lines: Vec::new(), grammars, brackets: HashMap::new() };
         languages.register(&serde_json::json!({ "id": PLAINTEXT, "extensions": [".txt"], "aliases": ["Plain Text", "text"] }), None);
         for extension in extensions {
             for language in extension.description["contributes"]["languages"].as_array().into_iter().flatten() {
@@ -82,8 +82,8 @@ impl Languages {
                 .and_then(|text| serde_json::from_str::<Value>(&strip_jsonc(&text)).ok())
                 .unwrap_or_default();
             self.off_side.insert(id.into(), config["folding"]["offSide"].as_bool() == Some(true));
-            if let Some(start) = config["comments"]["blockComment"][0].as_str() {
-                self.block_comment_starts.insert(id.into(), start.into());
+            if let (Some(start), Some(end)) = (config["comments"]["blockComment"][0].as_str(), config["comments"]["blockComment"][1].as_str()) {
+                self.block_comments.insert(id.into(), (start.into(), end.into()));
             }
             let markers = &config["folding"]["markers"];
             if let (Some(start), Some(end)) = (marker_pattern(&markers["start"]), marker_pattern(&markers["end"])) {
@@ -147,9 +147,9 @@ impl Languages {
         self.folding_markers.get(id).cloned()
     }
 
-    /// `comments.blockCommentStartToken` of the language configuration.
-    pub fn block_comment_start(&self, id: &str) -> Option<&str> {
-        self.block_comment_starts.get(id).map(String::as_str)
+    /// `comments.blockComment` start and end tokens of the language configuration.
+    pub fn block_comment(&self, id: &str) -> Option<(&str, &str)> {
+        self.block_comments.get(id).map(|(start, end)| (start.as_str(), end.as_str()))
     }
 }
 
@@ -227,7 +227,7 @@ mod tests {
         assert_eq!(css.classify("/* #region Colors */"), (true, false));
         assert_eq!(css.classify("  /* #endregion */"), (false, true));
         assert!(languages.folding_markers("plaintext").is_none());
-        assert_eq!(languages.block_comment_start("python"), Some("\"\"\""));
+        assert_eq!(languages.block_comment("python"), Some(("\"\"\"", "\"\"\"")));
     }
 
     #[test]

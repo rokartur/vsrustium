@@ -180,6 +180,8 @@ pub struct FoldingMarkers {
     lines: MarkerLines,
     /// The start pattern without its flags, as `foldAllMarkerRegions` compiles it (`new RegExp(markers.start)`).
     pub start: onig::Regex,
+    /// The start pattern with its flags, as `collectRegionHeaders` compiles it.
+    pub start_with_flags: onig::Regex,
 }
 
 enum MarkerLines {
@@ -195,7 +197,7 @@ impl FoldingMarkers {
         } else {
             MarkerLines::Separate { start: marker_regex(start, start_flags)?, end: marker_regex(end, end_flags)? }
         };
-        Ok(FoldingMarkers { lines, start: marker_regex(start, "")? })
+        Ok(FoldingMarkers { lines, start: marker_regex(start, "")?, start_with_flags: marker_regex(start, start_flags)? })
     }
 
     /// (is start, is end) for a line.

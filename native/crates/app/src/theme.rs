@@ -99,8 +99,76 @@ impl Theme {
                 let blend = |c: f32, b: f32| ((b + color.a * (c - b)) * 255.).round() / 255.;
                 Some(Rgba { r: blend(color.r, background.r), g: blend(color.g, background.g), b: blend(color.b, background.b), a: 1. })
             }
+            ColorValue::LessProminent(inner, background, factor, transparency) => {
+                let color = self.evaluate(inner)?;
+                let Some(background) = self.evaluate(background) else {
+                    return Some(Rgba { a: color.a * factor * transparency, ..color });
+                };
+                Some(less_prominent(color, background, *factor, *transparency))
+            }
         }
     }
+}
+
+/// `Color.getRelativeLuminance`, rounded to 4 decimals as upstream does.
+pub fn relative_luminance(color: Rgba) -> f64 {
+    let component = |value: f32| {
+        let c = (value as f64 * 255.).round() / 255.;
+        if c <= 0.03928 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+    };
+    let luminance = 0.2126 * component(color.r) + 0.7152 * component(color.g) + 0.0722 * component(color.b);
+    (luminance * 10_000.).round() / 10_000.
+}
+
+/// colorUtils.ts `lessProminent`: `Color.getLighterColor` or `getDarkerColor` relative to the background, then
+/// `transparent`, through `Color`'s HSLA with its rounding (hue to an integer, the rest to 3 decimals).
+fn less_prominent(color: Rgba, background: Rgba, factor: f32, transparency: f32) -> Rgba {
+    let round3 = |value: f64| (value.clamp(0., 1.) * 1000.).round() / 1000.;
+    let (r, g, b) = ((color.r as f64 * 255.).round() / 255., (color.g as f64 * 255.).round() / 255., (color.b as f64 * 255.).round() / 255.);
+    let (max, min) = (r.max(g).max(b), r.min(g).min(b));
+    let l = (min + max) / 2.;
+    let chroma = max - min;
+    let (mut h, mut s) = (0., 0.);
+    if chroma > 0. {
+        s = (if l <= 0.5 { chroma / (2. * l) } else { chroma / (2. - 2. * l) }).min(1.);
+        h = match max {
+            _ if max == r => (g - b) / chroma + if g < b { 6. } else { 0. },
+            _ if max == g => (b - r) / chroma + 2.,
+            _ => (r - g) / chroma + 4.,
+        };
+        h = (h * 60.).round();
+    }
+    let (s, l, a) = (round3(s), round3(l), round3(color.a as f64));
+    let (lum, background_lum) = (relative_luminance(color), relative_luminance(background));
+    let l = match lum < background_lum {
+        true => round3(l + l * factor as f64 * (background_lum - lum) / background_lum),
+        false => round3(l - l * factor as f64 * (lum - background_lum) / lum),
+    };
+    let hue = |p: f64, q: f64, mut t: f64| {
+        if t < 0. {
+            t += 1.;
+        }
+        if t > 1. {
+            t -= 1.;
+        }
+        match t {
+            _ if t < 1. / 6. => p + (q - p) * 6. * t,
+            _ if t < 1. / 2. => q,
+            _ if t < 2. / 3. => p + (q - p) * (2. / 3. - t) * 6.,
+            _ => p,
+        }
+    };
+    let h = h.clamp(0., 360.).trunc() / 360.;
+    let (r, g, b) = match s == 0. {
+        true => (l, l, l),
+        false => {
+            let q = if l < 0.5 { l * (1. + s) } else { l + s - l * s };
+            let p = 2. * l - q;
+            (hue(p, q, h + 1. / 3.), hue(p, q, h), hue(p, q, h - 1. / 3.))
+        }
+    };
+    let byte = |value: f64| (value * 255.).round() as f32 / 255.;
+    Rgba { r: byte(r), g: byte(g), b: byte(b), a: round3(a * transparency as f64) as f32 }
 }
 
 enum ColorValue {
@@ -109,10 +177,18 @@ enum ColorValue {
     Key(&'static str),
     Transparent(&'static ColorValue, f32),
     Opaque(&'static ColorValue, &'static ColorValue),
+    /// The color, the background, the factor and the transparency.
+    LessProminent(&'static ColorValue, &'static ColorValue, f32, f32),
 }
 
+const MINIMAP_SLIDER: ColorValue = ColorValue::Transparent(&ColorValue::Key("scrollbarSlider.background"), 0.5);
+const MINIMAP_SLIDER_HOVER: ColorValue = ColorValue::Transparent(&ColorValue::Key("scrollbarSlider.hoverBackground"), 0.5);
+const MINIMAP_SLIDER_ACTIVE: ColorValue = ColorValue::Transparent(&ColorValue::Key("scrollbarSlider.activeBackground"), 0.5);
+const MINIMAP_OCCURRENCE: ColorValue = ColorValue::Key("editor.selectionHighlightBackground");
+const MINIMAP_SELECTION: ColorValue = ColorValue::Key("editor.selectionBackground");
+
 /// Registry defaults of the keys the workbench shell paints, copied from their `registerColor` calls
-/// (theme.ts, baseColors.ts, editorColors.ts). Keys not listed resolve to no color.
+/// (theme.ts, baseColors.ts, editorColors.ts, miscColors.ts, minimapColors.ts). Keys not listed resolve to no color.
 fn registry_default(key: &str, kind: ThemeKind) -> ColorValue {
     use ColorValue::*;
     if kind == ThemeKind::HighContrastLight {
@@ -218,6 +294,20 @@ fn registry_default(key: &str, kind: ThemeKind) -> ColorValue {
         "editor.foldBackground" => (Transparent(&Key("editor.selectionBackground"), 0.3), Transparent(&Key("editor.selectionBackground"), 0.3), None),
         "editor.foldPlaceholderForeground" => (Hex("#808080"), Hex("#808080"), None),
         "editorGutter.foldingControlForeground" => (Key("icon.foreground"), Key("icon.foreground"), Key("icon.foreground")),
+        "editor.selectionHighlightBackground" => (
+            LessProminent(&Key("editor.selectionBackground"), &Key("editor.background"), 0.3, 0.6),
+            LessProminent(&Key("editor.selectionBackground"), &Key("editor.background"), 0.3, 0.6),
+            None,
+        ),
+        "scrollbarSlider.background" => (Transparent(&Hex("#797979"), 0.4), Transparent(&Hex("#646464"), 0.4), Transparent(&Key("contrastBorder"), 0.6)),
+        "scrollbarSlider.hoverBackground" => (Transparent(&Hex("#646464"), 0.7), Transparent(&Hex("#646464"), 0.7), Transparent(&Key("contrastBorder"), 0.8)),
+        "scrollbarSlider.activeBackground" => (Transparent(&Hex("#BFBFBF"), 0.4), Transparent(&Hex("#000000"), 0.6), Key("contrastBorder")),
+        "minimapSlider.background" => (MINIMAP_SLIDER, MINIMAP_SLIDER, MINIMAP_SLIDER),
+        "minimapSlider.hoverBackground" => (MINIMAP_SLIDER_HOVER, MINIMAP_SLIDER_HOVER, MINIMAP_SLIDER_HOVER),
+        "minimapSlider.activeBackground" => (MINIMAP_SLIDER_ACTIVE, MINIMAP_SLIDER_ACTIVE, MINIMAP_SLIDER_ACTIVE),
+        "minimap.selectionOccurrenceHighlight" => (MINIMAP_OCCURRENCE, MINIMAP_OCCURRENCE, MINIMAP_OCCURRENCE),
+        "minimap.selectionHighlight" => (MINIMAP_SELECTION, MINIMAP_SELECTION, MINIMAP_SELECTION),
+        "minimap.foregroundOpacity" => (Hex("#000f"), Hex("#000f"), Hex("#000f")),
         _ => (None, None, None),
     };
     match kind {
@@ -244,6 +334,18 @@ fn hc_light_default(key: &str) -> ColorValue {
         "titleBar.activeForeground" => Hex("#292929"),
         "commandCenter.foreground" => Key("titleBar.activeForeground"),
         "commandCenter.border" => Key("contrastBorder"),
+        "editor.selectionBackground" => Hex("#0F4A85"),
+        "editor.selectionForeground" => Hex("#FFFFFF"),
+        "editor.inactiveSelectionBackground" => Transparent(&Key("editor.selectionBackground"), 0.5),
+        "scrollbarSlider.background" => Transparent(&Key("contrastBorder"), 0.4),
+        "scrollbarSlider.hoverBackground" => Transparent(&Key("contrastBorder"), 0.8),
+        "scrollbarSlider.activeBackground" => Key("contrastBorder"),
+        "minimapSlider.background" => MINIMAP_SLIDER,
+        "minimapSlider.hoverBackground" => MINIMAP_SLIDER_HOVER,
+        "minimapSlider.activeBackground" => MINIMAP_SLIDER_ACTIVE,
+        "minimap.selectionOccurrenceHighlight" => MINIMAP_OCCURRENCE,
+        "minimap.selectionHighlight" => MINIMAP_SELECTION,
+        "minimap.foregroundOpacity" => Hex("#000f"),
         "activityBar.background" => Hex("#FFFFFF"),
         "activityBar.foreground" => Key("editor.foreground"),
         "activityBar.inactiveForeground" => Key("editor.foreground"),
@@ -369,6 +471,14 @@ mod tests {
         let text = "{ // c\n \"a\": \"//x,}\", /* b */ \"c\": [1, 2,], }";
         let value: Value = serde_json::from_str(&strip_jsonc(text)).unwrap();
         assert_eq!(value, serde_json::json!({ "a": "//x,}", "c": [1, 2] }));
+    }
+
+    // Expected values: upstream color.ts `lessProminent` run under Bun on the same inputs.
+    #[test]
+    fn less_prominent_matches_upstream_color_math() {
+        let color = |text| parse_hex(text).unwrap();
+        assert_eq!(hex(less_prominent(color("#84613daa"), color("#221a0f"), 0.3, 0.6)), "#60462c66");
+        assert_eq!(hex(less_prominent(color("#C9D0D9"), color("#F5F5F5"), 0.3, 0.6)), "#e0e4ea99");
     }
 
     // Expected values: the reference workbench's --vscode-* variables per theme (port/results/pixels.md method).

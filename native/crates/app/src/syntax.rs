@@ -115,6 +115,39 @@ impl Tokenization {
         overlay_colors(highlights, &colored)
     }
 
+    /// The minimap's view of line `index` (`getMinimapLinesRenderingData`): each token's end byte offset with
+    /// its foreground. Bracket pair colors are decorations upstream, so the minimap does not show them.
+    pub fn minimap_runs(&self, theme: &Theme, lines: &[String], index: usize) -> Vec<(usize, [u8; 3])> {
+        let color_map = theme.tokens.color_map();
+        let color = |id: usize| {
+            let color = Rgba::try_from(color_map[id].as_str()).expect("the token color map holds hex colors");
+            [color.r, color.g, color.b].map(|channel| (channel * 255.).round() as u8)
+        };
+        let text = &lines[index];
+        let default_run = vec![(text.len(), color(1))];
+        if self.grammar.is_none() {
+            return default_run;
+        }
+        self.tokenize_to(lines, index);
+        let tokenized = self.lines.borrow();
+        let tokens = &tokenized[index].0;
+        if tokens.is_empty() {
+            return default_run;
+        }
+        tokens.iter().map(|token| (token.end.min(text.len()), color(theme.tokens.style(&token.scopes).foreground))).collect()
+    }
+
+    /// `getStandardTokenType` of the token at byte `offset` of line `index` (`findTokenIndexAtOffset`).
+    pub fn token_type_at(&self, lines: &[String], index: usize, offset: usize) -> textmate::StandardTokenType {
+        if self.grammar.is_none() {
+            return textmate::StandardTokenType::Other;
+        }
+        self.tokenize_to(lines, index);
+        let tokenized = self.lines.borrow();
+        let tokens = &tokenized[index].0;
+        tokens.iter().find(|token| token.end > offset).or(tokens.last()).map_or(textmate::StandardTokenType::Other, |token| token.token_type)
+    }
+
     /// `BracketMatchingController` with `editor.matchBrackets` "always": the pair whose bracket touches
     /// the cursor (line, char column), shown in the overview ruler, else the pair around it, not shown there.
     pub fn bracket_match(&self, theme: &Theme, languages: &Languages, lines: &[String], cursor: (usize, usize)) -> Option<([BracketRange; 2], bool)> {

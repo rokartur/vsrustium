@@ -70,9 +70,9 @@ Done when: `port/tools/pixel-check` diffs the empty, folder and file windows (`n
 - The model (`editor.rs`) follows upstream: indentation from `indentationGuesser.ts`, guides from `guidesTextModelPart.ts`, word highlight from `textualHighlightProvider.ts` with `USUAL_WORD_SEPARATORS`, tab order from `EditorGroupModel` (new editors right of the active one, a preview replaces the preview, closing activates the most recent).
 - Languages (`languages.rs`) come from the scanned `contributes.languages`, matched like `getAssociationByPath`: filename, then the longest filename pattern, then the longest extension.
 - Tab, editor and model ids copy `mainThreadEditorTabs.ts` `_generateTabId`, `getId()` and `$model<n>`.
-- The reference runs with `editor.minimap.enabled: false`. With a file it parks the pointer on the status bar for 1.5 s so the editor scrollbars fade; the empty and folder windows skip that, since the wait also brings up the side bar sash's grip dots.
+- The reference ran with `editor.minimap.enabled: false` until milestone 8 drew the minimap. With a file it parks the pointer on the status bar for 1.5 s so the editor scrollbars fade; the empty and folder windows skip that, since the wait also brings up the side bar sash's grip dots.
 - Host check: `code-gpui <fixture> <fixture>/src/main.ts` with `EXTHOST_TRACE=1` activates `vscode.typescript-language-features` and `vscode.emmet` on top of the folder-only set (git-base, npm, github, git, debug-auto-launch, merge-conflict), with no `$onUnexpectedError` or activation error.
-- shortcut: no minimap; port it with scrolling past one screen.
+- shortcut: no minimap; port it with scrolling past one screen. Closed by milestone 8.
 - shortcut: no editing and no keyboard; a click sets the cursor. Closed by milestone 5.
 - shortcut: the cursor does not blink (the reference is captured with a solid cursor).
 - shortcut: `visibleRanges` sent to the host covers the whole document.
@@ -137,7 +137,7 @@ Done when: the colorize-tests fixtures give the reference's scopes and colors; p
 
 ## Milestone 8: editor viewport and editing commands
 
-Scope (roadmap section 8): scrolling with real visible ranges and the MainThreadTextEditors and MainThreadDocuments requests, then multi-cursor and editing commands, find/replace, folding, minimap, sticky scroll. Shipped: scrolling and the MainThread requests, then multi-cursor, then folding; the rest is open (last line of this section).
+Scope (roadmap section 8): scrolling with real visible ranges and the MainThreadTextEditors and MainThreadDocuments requests, then multi-cursor and editing commands, find/replace, folding, minimap, sticky scroll. Shipped: scrolling and the MainThread requests, then multi-cursor, then folding, then the minimap; the rest is open (last line of this section).
 
 Done when (first item): api-tests `vscode API - editors` passes as in the reference; the text editor tests of `vscode API - window` that need one editor group only pass; pixel-check file and main windows unchanged.
 
@@ -165,7 +165,12 @@ Done when (first item): api-tests `vscode API - editors` passes as in the refere
 - The scroll position truncates to whole pixels like the editor's `Scrollable` (`forceIntegerValues`), so a centered reveal in an odd height does not land on a half pixel.
 - Mouse cursors follow the reference CSS: text over `.view-lines` (`monaco-mouse-cursor-text`), default over line numbers, glyph margin, overview ruler, scrollbar sliders and the scroll shadow; pointer over folding icons, the `⋯` placeholder (`folding.css`), the title with tabs, close buttons and breadcrumbs (`editortabscontrol.css`, `breadcrumbsWidget.css`) and the editor actions (`actionbar.css`, the container default).
 - Gap: an edit that unfolds a region sends no new `visibleRanges` to the host until the next scroll (the edit path is milestone 9's `text_input.rs`); fixed at the M8/M9 merge.
-- Open from the milestone: find/replace (with the multi-cursor find commands), minimap, sticky scroll, and the other editing commands of `editor/commands.rs` (line operations, comments, smart select).
+- Minimap (`editor/minimap.rs`, `workbench/minimap_view.rs`): `editorLayoutProvider` minimap layout, `MinimapLayout.create` with its slider, `MinimapCharRenderer` and `renderLines` into one image, with the upstream unit tests (`cargo test -p app minimap`). The text area narrows by the minimap's width. Decorations as `renderDecorations`: selections in `minimap.selectionHighlight`, word highlights in `minimap.selectionOccurrenceHighlight`, collapsed folds in `editor.foldBackground`; a hidden line's decoration lands at the end of its fold line. The slider shows on hover and for 500 ms after a scroll, fades 100 ms, drags the editor; a press off the slider reveals that line centered. The shadow shows when the text is scrolled horizontally short of its end.
+- Section headers (`editor/section_headers.rs`): `findSectionHeaders.ts` with its tests: `#region` labels from the folding start marker's `label` group, `MARK:` comments (`markSectionHeaderRegex`) kept only on a comment token, with the block comment end stripped. Drawn as `_renderSectionHeaders`: `500 9px` system font, 1 canvas pixel between letters, a 70% minimap background, labels of nearby lines stacked, long labels split around an ellipsis.
+- shortcut: only the `editor.minimap.*` defaults draw (right side, proportional, slider on mouseover, characters); the other values come with the settings milestone. Section headers are found again on the UI thread for each model version, where upstream asks the editor worker 250 ms after the last edit.
+- The reference now draws the minimap (`port/tools/ref-screenshot` drops `editor.minimap.enabled: false`). The port's screenshot waits 1.5 s after activation even without keys, as the reference does with a file, so the scrollbars shown at open have faded.
+- Folding moves a hidden cursor to its fold line as an `api` cursor change, so the word highlight runs again for the new position (`wordHighlighter.ts` `_onPositionChanged`).
+- Open from the milestone: find/replace (with the multi-cursor find commands), sticky scroll, and the other editing commands of `editor/commands.rs` (line operations, comments, smart select).
 
 ## Benchmarks
 

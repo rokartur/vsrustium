@@ -194,6 +194,15 @@ impl OpenEditor {
         self.reveal_columns(&[(position, position)], false, viewport);
     }
 
+    /// minimap.ts `revealLineNumber`: a click on the minimap centers the view line (0-based), with the mouse's
+    /// padding and no horizontal scroll.
+    pub fn reveal_view_line_centered(&mut self, view_line: usize, viewport: Viewport) {
+        let box_lines = (view_line as f32 * LINE_HEIGHT, (view_line + 1) as f32 * LINE_HEIGHT);
+        if let Some(top) = scroll_top_to_reveal(self.scroll.top, viewport.height, box_lines, VerticalReveal::Center, true, true) {
+            self.set_scroll(top, self.scroll.left, viewport);
+        }
+    }
+
     /// `_computeScrollLeftToReveal` over one-line ranges: 30px of room before the box and 15px after it.
     fn reveal_columns(&mut self, ranges: &[(Position, Position)], selections: bool, viewport: Viewport) {
         let tab_size = self.document.indentation.tab_size;

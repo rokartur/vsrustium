@@ -219,7 +219,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/windows | src/vs/platform | todo |  |
 | platform/workspace | src/vs/platform | todo |  |
 | platform/workspaces | src/vs/platform | todo |  |
-| editor/browser | src/vs/editor | ported | scrolling: wheel, scrollbars with drag, track press and fade, scroll shadow, reveal on cursor moves and from the API, per-editor scroll position (editor/view.rs, workbench/editor_view.rs): cargo test -p app editor::view::tests; no minimap, sticky scroll, folding or smooth scrolling (port/notes.md milestone 8) |
+| editor/browser | src/vs/editor | ported | scrolling: wheel, scrollbars with drag, track press and fade, scroll shadow, reveal on cursor moves and from the API, per-editor scroll position (editor/view.rs, workbench/editor_view.rs): cargo test -p app editor::view::tests; folding (editor/folding.rs): cargo test -p app editor::folding; minimap with slider, decorations and section headers (editor/minimap.rs, editor/section_headers.rs, workbench/minimap_view.rs): cargo test -p app minimap, cargo test -p app section_headers; no sticky scroll or smooth scrolling (port/notes.md milestone 8) |
 | editor/common | src/vs/editor | stub | cursors (CursorCollection normalize, per-cursor edits, loser edits, paste distribution), core moves and deletes, typing, edit stack stops, alternative version id dirty state: cargo test -p app (editor::cursor::tests, editor::edit::tests); no onEnter or indentation rules, grapheme clusters (port/notes.md milestones 5 and 8) |
 | editor/standalone | src/vs/editor | todo |  |
 | editor/test | src/vs/editor | todo |  |
@@ -288,7 +288,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/parts/banner | workbench part | todo |  |
 | workbench/parts/chat | workbench part | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/parts/dialogs | workbench part | todo |  |
-| workbench/parts/editor | workbench part | ported | one group: connected tab strip (preview/pinned, close, split and more actions drawn), breadcrumbs, text editor with gutter, current line, indent guides, word highlight, overview ruler, click, drag and keyboard selection, typing, undo, clipboard, save and dirty tabs (port/notes.md milestone 5); no splits, minimap or scrolling sync; cargo test -p app (editor::tests, workbench keys_and_typed_text_edit_the_focused_editor_and_reach_the_host); pixel-check file window (port/results/pixels.md milestone 4, unchanged at milestone 5) |
+| workbench/parts/editor | workbench part | ported | one group: connected tab strip (preview/pinned, close, split and more actions drawn), breadcrumbs, text editor with gutter, current line, indent guides, word highlight, overview ruler, click, drag and keyboard selection, typing, undo, clipboard, save and dirty tabs (port/notes.md milestone 5); no splits or scrolling sync; minimap since milestone 8; cargo test -p app (editor::tests, workbench keys_and_typed_text_edit_the_focused_editor_and_reach_the_host); pixel-check file window (port/results/pixels.md milestone 4, unchanged at milestone 5) |
 | workbench/parts/notifications | workbench part | todo |  |
 | workbench/parts/panel | workbench part | todo |  |
 | workbench/parts/partGrid | workbench part | stub | fixed floating layout drawn with flex (workbench.rs), no grid, sashes or hidden parts; pixel-check (port/results/pixels.md): part bounds match at 1024x768 |

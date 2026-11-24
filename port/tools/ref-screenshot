@@ -45,8 +45,6 @@ async function capture(theme: string) {
 		'workbench.iconTheme': null,
 		// With AI off the secondary side bar only hosts chat, so the product without AI has none.
 		'workbench.secondarySideBar.defaultVisibility': 'hidden',
-		// Not ported: the minimap (port/notes.md, milestone 4).
-		'editor.minimap.enabled': false,
 	}));
 	// Same product as the port: no accounts icon (profile storage key of globalCompositeBar.ts isAccountsActionVisible).
 	mkdirSync(join(userData, 'User/globalStorage'));

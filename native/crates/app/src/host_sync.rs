@@ -330,7 +330,7 @@ mod tests {
             indentation: Indentation { tab_size: 4, insert_spaces: true },
             off_side: false,
             folding_markers: None,
-            block_comment_start: None,
+            block_comment: None,
             tokens: Default::default(),
         }
     }

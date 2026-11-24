@@ -13,7 +13,9 @@ use gpui::{
 };
 
 use super::Workbench;
+use super::minimap_view::minimap_info;
 use crate::brackets::BracketRange;
+use crate::editor::minimap::MinimapLayoutInfo;
 use crate::editor::{
     HORIZONTAL_SCROLLBAR_HEIGHT, LINE_HEIGHT, OpenEditor, Position, Reveal, Scrollbar, Selection, VERTICAL_SCROLLBAR_WIDTH, VerticalReveal, Viewport, column_at_visible, commands,
     expand_tabs, visible_column, word_at,
@@ -205,12 +207,14 @@ impl Workbench {
         let focus = self.editor_focus.clone();
         let workbench = cx.entity();
         let laid_out = cx.entity();
+        let view_line_count = editor.view_line_count();
         let viewport = self.editors.viewport;
         let lines = editor.visible_lines(viewport);
         let lines_top = lines.start as f32 * LINE_HEIGHT - editor.scroll.top;
         let rows = self.editor_lines(editor, lines, metrics, window, cx);
+        let minimap_width = self.minimap.info.as_ref().map_or(0., |(info, _)| info.width as f32);
         let now = Instant::now();
-        if self.scrollbars.in_transition(now) || self.fold_controls.in_transition(now) {
+        if self.scrollbars.in_transition(now) || self.fold_controls.in_transition(now) || self.minimap.in_transition(now) {
             window.request_animation_frame();
         }
         div()
@@ -235,10 +239,14 @@ impl Workbench {
             .on_mouse_up_out(MouseButton::Left, cx.listener(|workbench, _, _, _| workbench.selecting_text = false))
             .child(
                 canvas(
-                    move |bounds, _, cx| {
+                    move |bounds, window, cx| {
                         area_left.set(f32::from(bounds.left()));
-                        let viewport = Viewport { width: f32::from(bounds.size.width) - metrics.content_left(), height: f32::from(bounds.size.height), char_width: metrics.char_width };
-                        laid_out.update(cx, |workbench, cx| workbench.editor_laid_out(viewport, cx));
+                        let (width, height) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
+                        let pixel_ratio = window.scale_factor();
+                        let minimap = minimap_info(width, height, metrics.content_left(), metrics.char_width, view_line_count, pixel_ratio);
+                        // editorOptions.ts: contentWidth = remainingWidth - minimapWidth.
+                        let viewport = Viewport { width: width - metrics.content_left() - minimap.width as f32, height, char_width: metrics.char_width };
+                        laid_out.update(cx, |workbench, cx| workbench.editor_laid_out(viewport, (minimap, pixel_ratio as f64), cx));
                     },
                     move |bounds, _, window, cx| window.handle_input(&focus, ElementInputHandler::new(bounds, workbench), cx),
                 )
@@ -248,7 +256,8 @@ impl Workbench {
             // .view-lines is monaco-mouse-cursor-text; the line numbers, glyph margin and the overview ruler over the
             // vertical scrollbar keep the default cursor.
             .child(div().absolute().top_0().bottom_0().left(px(metrics.content_left())).right(px(OVERVIEW_RULER_WIDTH)).cursor_text())
-            .child(div().absolute().left_0().right_0().top(px(lines_top)).children(rows))
+            // editorScrollbar.ts clips the lines at contentWidth: the column right of the minimap stays empty.
+            .child(div().absolute().left_0().right(px(minimap_width)).top_0().bottom_0().overflow_hidden().child(div().absolute().left_0().right_0().top(px(lines_top)).children(rows)))
             .child(
                 div().id("margin").absolute().top_0().bottom_0().left_0().w(px(metrics.content_left())).on_hover(cx.listener(|workbench, hovered: &bool, _, cx| {
                     workbench.fold_controls.set_shown(*hovered, Instant::now());
@@ -258,13 +267,16 @@ impl Workbench {
             .child(self.overview_ruler(editor).absolute().top_0().right_0().h_full())
             .child(self.scrollbars_canvas(editor, metrics, cx).absolute().inset_0())
             .when(editor.scroll.top > 0., |area| area.child(div().absolute().top_0().left_0().right(px(VERTICAL_SCROLLBAR_WIDTH)).h(px(SCROLL_SHADOW_HEIGHT)).cursor_default().child(self.scroll_shadow().size_full())))
+            .children(self.minimap(editor, cx))
     }
 
     /// The text area got its size: the group's viewport follows it, which can clamp the scroll position and
     /// change the visible lines; the lines drawn widen the scrollable content (`ViewLines._ensureMaxLineWidth`).
-    fn editor_laid_out(&mut self, viewport: Viewport, cx: &mut Context<Self>) {
+    fn editor_laid_out(&mut self, viewport: Viewport, minimap: (MinimapLayoutInfo, f64), cx: &mut Context<Self>) {
         let resized = self.editors.viewport != viewport;
+        let minimap_changed = self.minimap.info != Some(minimap);
         self.editors.viewport = viewport;
+        self.minimap.info = Some(minimap);
         let editor = self.editors.active_mut().expect("laid out only with an editor open");
         let scroll_width = editor.scroll_width(viewport);
         for view_line in editor.visible_lines(viewport) {
@@ -276,7 +288,7 @@ impl Workbench {
         if resized || moved {
             self.host.send_visible_ranges(&self.editors);
         }
-        if resized || moved || widened {
+        if resized || moved || widened || minimap_changed {
             cx.notify();
         }
     }
@@ -299,6 +311,7 @@ impl Workbench {
     pub(super) fn editor_scrolled(&mut self, cx: &mut Context<Self>) {
         self.host.send_visible_ranges(&self.editors);
         self.reveal_scrollbars(cx);
+        self.minimap_scrolled(cx);
         cx.notify();
     }
 
@@ -1099,7 +1112,7 @@ fn slider_bounds(track: Bounds<Pixels>, axis: Axis, bar: Scrollbar) -> Bounds<Pi
 }
 
 /// The complementary error function (Abramowitz and Stegun 7.1.26, error below 1.5e-7).
-fn erfc(x: f32) -> f32 {
+pub(super) fn erfc(x: f32) -> f32 {
     let t = 1. / (1. + 0.327_591_1 * x);
     let poly = t * (0.254_829_6 + t * (-0.284_496_74 + t * (1.421_413_7 + t * (-1.453_152_1 + t * 1.061_405_4))));
     poly * (-x * x).exp()

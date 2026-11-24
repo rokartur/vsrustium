@@ -17,6 +17,7 @@ pub mod folding;
 mod folding_controller;
 pub mod minimap;
 mod multicursor;
+pub mod section_headers;
 mod snippet;
 mod view;
 
@@ -42,8 +43,8 @@ pub struct TextDocument {
     pub off_side: bool,
     /// `foldingRules.markers` of the language.
     pub folding_markers: Option<Arc<FoldingMarkers>>,
-    /// `comments.blockComment` start token of the language.
-    pub block_comment_start: Option<String>,
+    /// `comments.blockComment` start and end tokens of the language.
+    pub block_comment: Option<(String, String)>,
     pub tokens: Tokenization,
 }
 
@@ -74,10 +75,10 @@ impl TextDocument {
         let language_id = languages.language_of(path, lines[0].as_str()).to_string();
         let off_side = languages.off_side(&language_id);
         let folding_markers = languages.folding_markers(&language_id);
-        let block_comment_start = languages.block_comment_start(&language_id).map(str::to_string);
+        let block_comment = languages.block_comment(&language_id).map(|(start, end)| (start.to_string(), end.to_string()));
         let indentation = guess_indentation(&lines, DEFAULT_INDENTATION);
         let tokens = Tokenization::new(languages.grammars.grammar(&language_id));
-        TextDocument { scheme: scheme.to_string(), path: path.to_path_buf(), lines, eol, encoding, language_id, indentation, off_side, folding_markers, block_comment_start, tokens }
+        TextDocument { scheme: scheme.to_string(), path: path.to_path_buf(), lines, eol, encoding, language_id, indentation, off_side, folding_markers, block_comment, tokens }
     }
 
     pub fn uri_string(&self) -> String {
@@ -566,7 +567,7 @@ mod tests {
             indentation: DEFAULT_INDENTATION,
             off_side: false,
             folding_markers: None,
-            block_comment_start: None,
+            block_comment: None,
             tokens: Tokenization::default(),
         };
         let names = |group: &EditorGroup| group.editors.iter().map(|editor| editor.document.name()).collect::<Vec<_>>();
@@ -595,7 +596,7 @@ mod tests {
             indentation: DEFAULT_INDENTATION,
             off_side: false,
             folding_markers: None,
-            block_comment_start: None,
+            block_comment: None,
             tokens: Tokenization::default(),
         };
         group.open(document, false);

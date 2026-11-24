@@ -24,6 +24,8 @@ impl OpenEditor {
         if self.folding.adjust_selections(&self.document.lines, &mut selections) {
             self.selections = selections;
             cursor::normalize(&mut self.selections, &mut self.last_added);
+            // An `api` source cursor change: wordHighlighter.ts `_onPositionChanged` runs again.
+            self.refresh_highlights();
         }
     }
 
@@ -90,7 +92,7 @@ impl OpenEditor {
         if self.folding.regions.has_types() {
             return set_collapse_state_for_type(&mut self.folding, "comment", true);
         }
-        let Some(token) = &self.document.block_comment_start else { return };
+        let Some((token, _)) = &self.document.block_comment else { return };
         let regex = onig::Regex::new(&format!(r"^\s*{}", escape_regex(token))).expect("an escaped token is a valid pattern");
         set_collapse_state_for_matching_lines(&mut self.folding, &self.document.lines, &regex, true);
     }
@@ -181,4 +183,19 @@ fn escape_regex(text: &str) -> String {
         escaped.push(c);
     }
     escaped
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn folding_away_the_cursor_highlights_the_word_at_its_new_position() {
+        let mut editor = crate::editor::edit::tests::editor("function merge() {\n    second = 1;\n    second = 2;\n}", "\n");
+        editor.move_to(Position::new(1, 6), false);
+        assert_eq!(editor.highlights, [(1, 4..10), (2, 4..10)]);
+        editor.run_folding_command("editor.fold");
+        assert_eq!(editor.selection(), Selection::caret(Position::new(0, 18)));
+        assert!(editor.highlights.is_empty());
+    }
 }
