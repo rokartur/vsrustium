@@ -63,7 +63,7 @@ impl Workbench {
     /// `_doDispatch`: runs the command bound to the key and keeps the key from the focused element.
     pub(super) fn dispatch_key(&mut self, keystroke: &Keystroke, window: &mut Window, cx: &mut Context<Self>) {
         // isKeyInComposition: the IME owns the keys while it composes.
-        if self.marked_text.is_some() {
+        if self.marked_text.is_some() || self.quick_inputs.marked.is_some() {
             return;
         }
         let chord = Chord::from_keystroke(keystroke);
@@ -172,6 +172,7 @@ impl Workbench {
             context.insert("resourceFilename".into(), json!(path.file_name().map(|name| name.to_string_lossy()).unwrap_or_default()));
             context.insert("resourceExtname".into(), json!(path.extension().map(|ext| format!(".{}", ext.to_string_lossy())).unwrap_or_default()));
         }
+        self.quick_input_context(window, &mut context);
         context
     }
 

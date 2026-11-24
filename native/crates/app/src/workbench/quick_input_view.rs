@@ -1,0 +1,1008 @@
+//! The quick input widget: platform/quickinput/browser/quickInputController.ts with its list
+//! (quickInputList.ts), laid out and colored as media/quickInput.css draws it. The store keeps every quick
+//! input with its owner (main_thread_quick_open.rs); the widget shows one of them at a time.
+
+use std::cell::RefCell;
+use std::ops::Range;
+use std::rc::Rc;
+use std::time::{Duration, Instant};
+
+use gpui::{
+    Animation, AnimationExt, AnyElement, App, BoxShadow, ClickEvent, Context, Div, ElementInputHandler, FocusHandle, Font, FontWeight, HighlightStyle,
+    KeyDownEvent, ListAlignment, UTF16Selection, ListState, MouseButton, MouseDownEvent, MouseMoveEvent, Rgba, ShapedLine, StyledText, Subscription, Task, TextRun,
+    UnderlineStyle, Window, canvas, div, fill, list, point, prelude::*, px, rgba, size,
+};
+use serde_json::Value;
+
+use super::Workbench;
+use crate::commands::Outcome;
+use crate::main_thread_quick_open::Owner;
+use crate::quick_input::{Button, Event, Focus, Kind, Motion, QuickInput, Row, Severity};
+
+/// `QuickInputController.MAX_WIDTH`.
+const MAX_WIDTH: f32 = 600.;
+/// `quickPickTop` in layout.ts while the title bar shows the command center.
+const TOP: f32 = 6.;
+const ROW_HEIGHT: f32 = 22.;
+const DETAIL_ROW_HEIGHT: f32 = 44.;
+
+pub struct QuickInputs {
+    inputs: Vec<(QuickInput, Owner)>,
+    next_id: i64,
+    visible: Option<i64>,
+    pub focus: FocusHandle,
+    /// The element focused before the widget showed, focused again when it hides (`previousFocusElement`).
+    previous_focus: Option<FocusHandle>,
+    focus_out: Option<Subscription>,
+    list: ListState,
+    /// The input and the row order the list was last reset to, and the row it last revealed.
+    listed: (Option<i64>, Vec<usize>),
+    revealed: Option<usize>,
+    hovered: Option<usize>,
+    /// The hidden input, drawn while the close animation runs.
+    closing: Option<(QuickInput, Task<()>)>,
+    /// Counts the times the widget opened; a new count restarts the open animation.
+    opened: usize,
+    /// A busy input shows its progress bar after 800ms.
+    busy: Option<(i64, Task<()>)>,
+    busy_shown: bool,
+    /// The IME's marked text, a UTF-16 range of the value.
+    pub marked: Option<Range<usize>>,
+    selecting: bool,
+    caret_moved: Instant,
+    blink: Option<Task<()>>,
+    /// The shaped input text, its window x, and the scroll that keeps the caret visible.
+    text: Rc<RefCell<InputText>>,
+}
+
+#[derive(Default)]
+struct InputText {
+    line: Option<ShapedLine>,
+    left: f32,
+    scroll: f32,
+}
+
+impl QuickInputs {
+    pub fn new(cx: &mut App) -> Self {
+        QuickInputs {
+            inputs: Vec::new(),
+            next_id: 1,
+            visible: None,
+            focus: cx.focus_handle(),
+            previous_focus: None,
+            focus_out: None,
+            list: ListState::new(0, ListAlignment::Top, px(200.)),
+            listed: (None, Vec::new()),
+            revealed: None,
+            hovered: None,
+            closing: None,
+            opened: 0,
+            busy: None,
+            busy_shown: false,
+            marked: None,
+            selecting: false,
+            caret_moved: Instant::now(),
+            blink: None,
+            text: Rc::default(),
+        }
+    }
+
+    pub fn add(&mut self, mut input: QuickInput, owner: Owner) -> i64 {
+        let id = self.next_id;
+        self.next_id += 1;
+        input.id = id;
+        self.inputs.push((input, owner));
+        id
+    }
+
+    pub fn remove(&mut self, id: i64) {
+        self.inputs.retain(|(input, _)| input.id != id);
+    }
+
+    pub fn get(&self, id: i64) -> Option<&QuickInput> {
+        self.inputs.iter().find(|(input, _)| input.id == id).map(|(input, _)| input)
+    }
+
+    pub fn get_mut(&mut self, id: i64) -> Option<&mut QuickInput> {
+        self.inputs.iter_mut().find(|(input, _)| input.id == id).map(|(input, _)| input)
+    }
+
+    pub fn owner(&self, id: i64) -> Option<&Owner> {
+        self.inputs.iter().find(|(input, _)| input.id == id).map(|(_, owner)| owner)
+    }
+
+    pub fn owner_mut(&mut self, id: i64) -> Option<&mut Owner> {
+        self.inputs.iter_mut().find(|(input, _)| input.id == id).map(|(_, owner)| owner)
+    }
+
+    pub fn find_id(&self, matches: impl Fn(&Owner) -> bool) -> Option<i64> {
+        self.inputs.iter().find(|(_, owner)| matches(owner)).map(|(input, _)| input.id)
+    }
+
+    pub fn find_mut(&mut self, matches: impl Fn(&Owner) -> bool) -> Option<&mut QuickInput> {
+        self.inputs.iter_mut().find(|(_, owner)| matches(owner)).map(|(input, _)| input)
+    }
+
+    /// `currentQuickInput`: the shown input.
+    pub fn current(&self) -> Option<&QuickInput> {
+        self.get(self.visible?)
+    }
+
+    fn current_mut(&mut self) -> Option<&mut QuickInput> {
+        self.get_mut(self.visible?)
+    }
+}
+
+impl Workbench {
+    /// `QuickInputController.show`: the widget shows the input, hiding the one it showed before.
+    pub fn show_quick_input(&mut self, id: i64, window: &mut Window, cx: &mut Context<Self>) {
+        let inputs = &mut self.quick_inputs;
+        if inputs.visible == Some(id) {
+            return;
+        }
+        match inputs.visible.take() {
+            Some(previous) => {
+                if let Some(input) = inputs.get_mut(previous) {
+                    input.did_hide();
+                }
+            }
+            None => {
+                inputs.previous_focus = window.focused(cx).filter(|focused| *focused != inputs.focus);
+                inputs.closing = None;
+                inputs.opened += 1;
+            }
+        }
+        let Some(input) = inputs.get_mut(id) else { return };
+        input.show();
+        inputs.visible = Some(id);
+        inputs.marked = None;
+        inputs.hovered = None;
+        inputs.revealed = None;
+        inputs.caret_moved = Instant::now();
+        window.focus(&self.quick_inputs.focus, cx);
+        if self.quick_inputs.focus_out.is_none() {
+            let focus = self.quick_inputs.focus.clone();
+            self.quick_inputs.focus_out = Some(cx.on_focus_out(&focus, window, |workbench, _, window, cx| workbench.quick_input_focus_lost(window, cx)));
+        }
+        self.blink_caret(window, cx);
+        cx.notify();
+    }
+
+    pub fn hide_quick_input_by_id(&mut self, id: i64, window: &mut Window, cx: &mut Context<Self>) {
+        if self.quick_inputs.visible == Some(id) {
+            self.hide_quick_input(true, window, cx);
+        }
+    }
+
+    /// `QuickInputController.hide`: focus goes back where it was, unless the widget hid because it lost it.
+    fn hide_quick_input(&mut self, restore_focus: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(id) = self.quick_inputs.visible.take() else { return };
+        let Some(input) = self.quick_inputs.get_mut(id) else { return };
+        let closing = input.clone();
+        input.did_hide();
+        let close = cx.spawn(async move |workbench, cx| {
+            cx.background_executor().timer(Duration::from_millis(150)).await;
+            let _ = workbench.update(cx, |workbench, cx| {
+                workbench.quick_inputs.closing = None;
+                cx.notify();
+            });
+        });
+        self.quick_inputs.closing = Some((closing, close));
+        self.quick_inputs.marked = None;
+        self.quick_inputs.blink = None;
+        let previous = self.quick_inputs.previous_focus.take();
+        if restore_focus && self.quick_inputs.focus.is_focused(window) {
+            match previous {
+                Some(previous) => window.focus(&previous, cx),
+                None => window.blur(cx),
+            }
+        }
+        cx.notify();
+    }
+
+    /// `QuickInput.dispose`: hides it, tells its owner, and forgets it.
+    pub fn dispose_quick_input(&mut self, id: i64, window: &mut Window, cx: &mut Context<Self>) {
+        self.hide_quick_input_by_id(id, window, cx);
+        self.flush_quick_input_events(window, cx);
+        self.quick_inputs.remove(id);
+    }
+
+    /// Hands the events of every quick input to its owner, oldest first, until none is left.
+    pub fn flush_quick_input_events(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        while let Some((id, events)) = self.quick_inputs.inputs.iter_mut().find(|(input, _)| !input.events.is_empty()).map(|(input, _)| (input.id, std::mem::take(&mut input.events))) {
+            for event in events {
+                self.deliver_quick_input_event(id, event, window, cx);
+            }
+        }
+        let busy = self.quick_inputs.current().filter(|input| input.busy).map(|input| input.id);
+        if busy != self.quick_inputs.busy.as_ref().map(|(id, _)| *id) {
+            self.quick_inputs.busy_shown = false;
+            self.quick_inputs.busy = busy.map(|id| {
+                let show = cx.spawn(async move |workbench, cx| {
+                    cx.background_executor().timer(Duration::from_millis(800)).await;
+                    let _ = workbench.update(cx, |workbench, cx| {
+                        workbench.quick_inputs.busy_shown = true;
+                        cx.notify();
+                    });
+                });
+                (id, show)
+            });
+        }
+        cx.notify();
+    }
+
+    /// The `blur` of the widget: it hides unless it ignores focus out.
+    fn quick_input_focus_lost(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.quick_inputs.current().is_some_and(|input| !input.ignore_focus_out) {
+            self.hide_quick_input(false, window, cx);
+            self.flush_quick_input_events(window, cx);
+        }
+    }
+
+    /// Runs `change` on the shown input, then delivers what it fired.
+    fn with_current_quick_input(&mut self, window: &mut Window, cx: &mut Context<Self>, change: impl FnOnce(&mut QuickInput)) -> Outcome {
+        let Some(input) = self.quick_inputs.current_mut() else { return Outcome::done() };
+        change(input);
+        self.quick_inputs.caret_moved = Instant::now();
+        self.flush_quick_input_events(window, cx);
+        Outcome::done()
+    }
+
+    /// The context keys of quickInputController.ts and quickInputService.ts.
+    pub(super) fn quick_input_context(&self, window: &Window, context: &mut std::collections::HashMap<String, Value>) {
+        let Some(input) = self.quick_inputs.current() else { return };
+        context.insert("inQuickOpen".into(), true.into());
+        if !self.quick_inputs.focus.is_focused(window) {
+            return;
+        }
+        context.insert("inQuickInput".into(), true.into());
+        context.insert("inputFocus".into(), true.into());
+        let kind = match input.kind {
+            Kind::QuickPick => "quickPick",
+            Kind::InputBox => "inputBox",
+        };
+        context.insert("quickInputType".into(), kind.into());
+        context.insert("cursorAtEndOfQuickInputBox".into(), input.caret_at_end().into());
+    }
+
+    /// quickInputActions.ts and quickAccessActions.ts.
+    pub(super) fn register_quick_input_commands(&mut self) {
+        let focus_commands = [
+            ("quickInput.next", Focus::Next),
+            ("quickInput.previous", Focus::Previous),
+            ("quickInput.first", Focus::First),
+            ("quickInput.last", Focus::Last),
+            ("quickInput.pageNext", Focus::NextPage),
+            ("quickInput.pagePrevious", Focus::PreviousPage),
+            ("quickInput.nextSeparator", Focus::NextSeparator),
+            ("quickInput.previousSeparator", Focus::PreviousSeparator),
+            // The quick access fallback applies to quick navigation (Ctrl+Tab style pickers), which the port has none of.
+            ("quickInput.nextSeparatorWithQuickAccessFallback", Focus::NextSeparator),
+            ("quickInput.previousSeparatorWithQuickAccessFallback", Focus::PreviousSeparator),
+            ("workbench.action.quickOpenSelectNext", Focus::Next),
+            ("workbench.action.quickOpenSelectPrevious", Focus::Previous),
+            ("workbench.action.quickOpenNavigateNext", Focus::Next),
+            ("workbench.action.quickOpenNavigatePrevious", Focus::Previous),
+        ];
+        for (id, focus) in focus_commands {
+            self.commands.register(id, move |workbench, _, window, cx| {
+                let page = workbench.quick_input_page_size(window);
+                workbench.with_current_quick_input(window, cx, |input| input.focus(focus, page))
+            });
+        }
+        self.commands.register("quickInput.accept", |workbench, _, window, cx| workbench.with_current_quick_input(window, cx, |input| input.accept(false)));
+        self.commands.register("quickInput.acceptInBackground", |workbench, _, window, cx| workbench.with_current_quick_input(window, cx, |input| input.accept(true)));
+        for id in ["workbench.action.acceptSelectedQuickOpenItem", "workbench.action.alternativeAcceptSelectedQuickOpenItem"] {
+            self.commands.register(id, |workbench, _, window, cx| workbench.with_current_quick_input(window, cx, QuickInput::accept_from_ui));
+        }
+        for id in ["quickInput.toggleCheckbox", "workbench.action.quickPickManyToggle"] {
+            self.commands.register(id, |workbench, _, window, cx| workbench.with_current_quick_input(window, cx, QuickInput::toggle));
+        }
+        for id in ["quickInput.hide", "workbench.action.closeQuickOpen"] {
+            self.commands.register(id, |workbench, _, window, cx| {
+                workbench.hide_quick_input(true, window, cx);
+                workbench.flush_quick_input_events(window, cx);
+                Outcome::done()
+            });
+        }
+        self.commands.register("workbench.action.focusQuickOpen", |workbench, _, window, cx| {
+            if workbench.quick_inputs.current().is_some() {
+                window.focus(&workbench.quick_inputs.focus, cx);
+            }
+            Outcome::done()
+        });
+        self.commands.register("workbench.action.quickInputBack", |workbench, _, window, cx| {
+            workbench.with_current_quick_input(window, cx, |input| {
+                if input.buttons.iter().any(|button| button.handle == -1) {
+                    input.events.push(Event::TriggerButton(-1, None));
+                }
+            })
+        });
+    }
+
+    /// The text commands of the focused input element by their editor ids (`MultiCommand`s fall back to the native input).
+    pub(super) fn quick_input_text_command(&mut self, command: &str, window: &mut Window, cx: &mut Context<Self>) -> Option<Outcome> {
+        if !self.quick_inputs.focus.is_focused(window) {
+            return None;
+        }
+        let input = self.quick_inputs.current()?;
+        let selected = input.selected_text();
+        let password = input.password;
+        match command {
+            "editor.action.clipboardCopyAction" | "editor.action.clipboardCutAction" if selected.is_empty() || password => return Some(Outcome::done()),
+            "editor.action.clipboardCopyAction" | "editor.action.clipboardCutAction" => cx.write_to_clipboard(gpui::ClipboardItem::new_string(selected)),
+            _ => {}
+        }
+        let pasted = cx.read_from_clipboard().and_then(|item| item.text()).unwrap_or_default();
+        Some(self.with_current_quick_input(window, cx, |input| match command {
+            "undo" => input.undo(false),
+            "redo" => input.undo(true),
+            "editor.action.selectAll" => input.select_all(),
+            "editor.action.clipboardCutAction" => input.insert(None, ""),
+            // A single-line input drops the line breaks of what is pasted.
+            "editor.action.clipboardPasteAction" => input.insert(None, &pasted.replace(['\r', '\n'], "")),
+            _ => {}
+        }))
+    }
+
+    fn quick_input_page_size(&self, window: &Window) -> usize {
+        (self.quick_input_list_max_height(window) / ROW_HEIGHT).floor().max(1.) as usize
+    }
+
+    /// `QuickInputList.layout(height * 0.4)`: whole 44px rows plus 6px to show there is more.
+    fn quick_input_list_max_height(&self, window: &Window) -> f32 {
+        let height = f32::from(window.viewport_size().height) * 0.4;
+        (height / DETAIL_ROW_HEIGHT).floor() * DETAIL_ROW_HEIGHT + 6.
+    }
+
+    /// The caret blinks while the input has focus; a key restarts the blink.
+    fn blink_caret(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.quick_inputs.blink = Some(cx.spawn_in(window, async move |workbench, cx| {
+            loop {
+                cx.background_executor().timer(Duration::from_millis(500)).await;
+                if workbench.update(cx, |_, cx| cx.notify()).is_err() {
+                    return;
+                }
+            }
+        }));
+    }
+
+    /// Keys of the input element that no keybinding took: caret moves and deletes.
+    fn quick_input_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let keystroke = &event.keystroke;
+        let modifiers = keystroke.modifiers;
+        if modifiers.control || self.quick_inputs.marked.is_some() {
+            return;
+        }
+        let word = modifiers.alt;
+        let line = modifiers.platform;
+        let motion = |back: bool| match (back, line, word) {
+            (true, true, _) => Motion::Home,
+            (false, true, _) => Motion::End,
+            (true, false, true) => Motion::WordLeft,
+            (false, false, true) => Motion::WordRight,
+            (true, false, false) => Motion::Left,
+            (false, false, false) => Motion::Right,
+        };
+        let extend = modifiers.shift;
+        let handled = match keystroke.key.as_str() {
+            "left" => Some(Box::new(move |input: &mut QuickInput| input.move_caret(motion(true), extend)) as Box<dyn FnOnce(&mut QuickInput)>),
+            "right" => Some(Box::new(move |input: &mut QuickInput| input.move_caret(motion(false), extend)) as Box<dyn FnOnce(&mut QuickInput)>),
+            "home" | "up" if keystroke.key == "home" || line => Some(Box::new(move |input: &mut QuickInput| input.move_caret(Motion::Home, extend)) as Box<dyn FnOnce(&mut QuickInput)>),
+            "end" | "down" if keystroke.key == "end" || line => Some(Box::new(move |input: &mut QuickInput| input.move_caret(Motion::End, extend)) as Box<dyn FnOnce(&mut QuickInput)>),
+            "backspace" => Some(Box::new(move |input: &mut QuickInput| input.delete(motion(true))) as Box<dyn FnOnce(&mut QuickInput)>),
+            "delete" => Some(Box::new(move |input: &mut QuickInput| input.delete(motion(false))) as Box<dyn FnOnce(&mut QuickInput)>),
+            // Tab moves the focus between the widget's controls; the input is the only one the port draws focusable.
+            "tab" => Some(Box::new(|_: &mut QuickInput| {}) as Box<dyn FnOnce(&mut QuickInput)>),
+            _ => None,
+        };
+        let Some(change) = handled else { return };
+        cx.stop_propagation();
+        self.with_current_quick_input(window, cx, change);
+    }
+
+    /// A press in the input text puts the caret there; a double press selects the word, a triple one all.
+    fn quick_input_mouse_down(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus(&self.quick_inputs.focus, cx);
+        let index = self.quick_input_index_at(f32::from(event.position.x));
+        self.quick_inputs.selecting = true;
+        let extend = event.modifiers.shift;
+        let clicks = event.click_count;
+        self.with_current_quick_input(window, cx, |input| match clicks {
+            1 => input.selection = if extend { (input.selection.0, index) } else { (index, index) },
+            2 => {
+                input.selection = (index, index);
+                input.move_caret(Motion::WordLeft, false);
+                input.move_caret(Motion::WordRight, true);
+            }
+            _ => input.select_all(),
+        });
+    }
+
+    fn quick_input_mouse_move(&mut self, event: &MouseMoveEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.quick_inputs.selecting || event.pressed_button != Some(MouseButton::Left) {
+            return;
+        }
+        let index = self.quick_input_index_at(f32::from(event.position.x));
+        self.with_current_quick_input(window, cx, |input| input.selection.1 = index);
+    }
+
+    /// The char offset of the value closest to a window x.
+    fn quick_input_index_at(&self, x: f32) -> usize {
+        let text = self.quick_inputs.text.borrow();
+        let Some(line) = text.line.as_ref() else { return 0 };
+        let byte = line.closest_index_for_x(px(x - text.left + text.scroll));
+        line.text[..byte.min(line.text.len())].chars().count()
+    }
+
+    /// The input handler's view of the value: UTF-16 offsets.
+    pub(super) fn quick_input_text_for_range(&self, range: Range<usize>, adjusted_range: &mut Option<Range<usize>>) -> Option<String> {
+        let units: Vec<u16> = self.quick_inputs.current()?.value.encode_utf16().collect();
+        let range = range.start.min(units.len())..range.end.min(units.len());
+        *adjusted_range = Some(range.clone());
+        Some(String::from_utf16_lossy(&units[range]))
+    }
+
+    pub(super) fn quick_input_selected_range(&self) -> Option<UTF16Selection> {
+        let input = self.quick_inputs.current()?;
+        let (anchor, head) = (chars_to_utf16(&input.value, input.selection.0), chars_to_utf16(&input.value, input.selection.1));
+        Some(UTF16Selection { range: anchor.min(head)..anchor.max(head), reversed: head < anchor })
+    }
+
+    /// Typed text and IME composition; marked text replaces the previous marked text and stays marked.
+    pub(super) fn quick_input_replace(&mut self, range: Option<Range<usize>>, text: &str, mark: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(input) = self.quick_inputs.current() else { return };
+        let range = range.or(self.quick_inputs.marked.clone()).map(|range| utf16_to_chars(&input.value, range.start)..utf16_to_chars(&input.value, range.end));
+        let start = range.as_ref().map_or(input.selected_range().start, |range| range.start);
+        let start_utf16 = chars_to_utf16(&input.value, start);
+        self.quick_inputs.marked = (mark && !text.is_empty()).then(|| start_utf16..start_utf16 + text.encode_utf16().count());
+        self.with_current_quick_input(window, cx, |input| input.insert(range, text));
+    }
+
+    /// The widget, drawn over the workbench at the top center.
+    pub(super) fn quick_input_widget(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let (input, interactive) = match (self.quick_inputs.current(), self.quick_inputs.closing.as_ref()) {
+            (Some(input), _) => (input.clone(), true),
+            (None, Some((input, _))) => (input.clone(), false),
+            (None, None) => return None,
+        };
+        let viewport = window.viewport_size();
+        let width = (f32::from(viewport.width) * 0.62).min(MAX_WIDTH);
+        let left = ((f32::from(viewport.width) - width) / 2.).round();
+        let has_title = !input.title_text().is_empty() || !input.buttons.iter().all(|button| button.location.is_some_and(|location| location > 1));
+        let widget = div()
+            .id("quick-input-widget")
+            .absolute()
+            .top(px(TOP))
+            .left(px(left))
+            .w(px(width))
+            .flex()
+            .flex_col()
+            .rounded(px(12.))
+            .bg(self.color("quickInput.background"))
+            .text_color(self.foreground_or("quickInput.foreground"))
+            .when_some(self.theme.color("widget.border"), |widget, border| widget.border_1().border_color(border))
+            // --vscode-shadow-xl.
+            .shadow(vec![BoxShadow { color: rgba(0x00000026).into(), offset: point(px(0.), px(0.)), blur_radius: px(20.), spread_radius: px(0.), inset: false }])
+            .when(interactive, |widget| widget.on_mouse_down_out(cx.listener(|workbench, _, window, cx| workbench.quick_input_focus_lost(window, cx))))
+            .when(has_title, |widget| widget.child(self.quick_input_title(&input, cx)))
+            .when(input.description.as_ref().is_some_and(|description| !description.is_empty()), |widget| {
+                widget.child(div().mx(px(11.)).my(px(6.)).mr(px(6.)).child(input.description.clone().unwrap_or_default()))
+            })
+            .child(self.quick_input_header(&input, interactive, window, cx))
+            .children(input.message().map(|message| self.quick_input_message(&input, message)))
+            .child(self.quick_input_progress(&input))
+            .when(input.kind == Kind::QuickPick, |widget| widget.child(self.quick_input_list(&input, interactive, window, cx)));
+        // shortcut: GPUI has no element transforms, so the open (250ms) and close (150ms) animations fade without their 0.97/0.99 scale.
+        let ease = |t: f32| 1. - (1. - t).powi(4);
+        let element = if interactive {
+            widget.with_animation(("quick-input-open", self.quick_inputs.opened), Animation::new(Duration::from_millis(250)).with_easing(ease), |widget, delta| widget.opacity(delta)).into_any_element()
+        } else {
+            widget.with_animation(("quick-input-close", self.quick_inputs.opened), Animation::new(Duration::from_millis(150)).with_easing(ease), |widget, delta| widget.opacity(1. - delta)).into_any_element()
+        };
+        Some(element)
+    }
+
+    /// `.quick-input-titlebar`: the back button, the title, and the title buttons.
+    fn quick_input_title(&self, input: &QuickInput, cx: &mut Context<Self>) -> Div {
+        let (left, right): (Vec<&Button>, Vec<&Button>) = input.buttons.iter().filter(|button| button.location.is_none_or(|location| location <= 1)).partition(|button| button.handle == -1);
+        let title = input.title_text();
+        div()
+            .relative()
+            .flex()
+            .items_center()
+            .rounded_t(px(12.))
+            .bg(self.color("quickInputTitle.background"))
+            .child(div().absolute().left(px(4.)).flex().children(left.into_iter().map(|button| self.quick_input_button(button, cx))))
+            .child(div().flex_1().py(px(3.)).text_center().child(if title.is_empty() { "\u{a0}".to_owned() } else { title }))
+            .child(div().absolute().right(px(4.)).flex().gap(px(4.)).children(right.into_iter().map(|button| self.quick_input_button(button, cx))))
+    }
+
+    /// A title, inline or input button: a 16px codicon with 2px padding, or the toggle's checked look.
+    fn quick_input_button(&self, button: &Button, cx: &mut Context<Self>) -> AnyElement {
+        let codicon = match (&button.codicon, button.handle) {
+            (Some(codicon), _) => codicon.clone(),
+            (None, -1) => "arrow-left".to_owned(),
+            (None, _) => "blank".to_owned(),
+        };
+        let handle = button.handle;
+        let toggle = button.toggle;
+        let foreground = match toggle {
+            Some(true) => self.color("inputOption.activeForeground"),
+            _ => self.foreground_or("icon.foreground"),
+        };
+        let element = match &button.icon_path {
+            Some(icon) if button.codicon.is_none() => {
+                let path = if self.theme.kind.is_light() { &icon.light } else { &icon.dark };
+                div().size(px(20.)).flex().items_center().justify_center().child(gpui::img(path.clone()).size(px(16.)))
+            }
+            _ => self.icon(&codicon, 20., 16., foreground),
+        };
+        element
+            .id(("quick-input-button", handle as u64))
+            .rounded(px(5.))
+            .when(toggle == Some(true), |button| {
+                button.bg(self.color("inputOption.activeBackground")).border_1().border_color(self.color("inputOption.activeBorder"))
+            })
+            .hover(|button| button.bg(self.color("toolbar.hoverBackground")))
+            .on_click(cx.listener(move |workbench, _: &ClickEvent, window, cx| {
+                workbench.with_current_quick_input(window, cx, |input| {
+                    if let Some(button) = input.buttons.iter_mut().find(|button| button.handle == handle) {
+                        button.toggle = button.toggle.map(|checked| !checked);
+                        input.events.push(Event::TriggerButton(handle, button.toggle));
+                    }
+                });
+            }))
+            .into_any_element()
+    }
+
+    /// `.quick-input-header`: the check-all box, the input box with its count, inline buttons and OK.
+    fn quick_input_header(&self, input: &QuickInput, interactive: bool, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let checked = input.checked_count();
+        let pickable = input.rows.iter().filter(|row| row.item.pickable && !row.hidden).count();
+        let all_checked = pickable > 0 && input.order.iter().filter(|row| input.rows[**row].item.pickable).all(|row| input.rows[*row].checked);
+        let inline: Vec<&Button> = input.buttons.iter().filter(|button| button.location == Some(2)).collect();
+        div()
+            .flex()
+            .px(px(6.))
+            .pt(px(6.))
+            .pb(px(4.))
+            .when(input.hide_input, |header| header.p(px(0.)))
+            .when(input.can_select_many && !input.hide_input, |header| {
+                header.child(
+                    self.checkbox(all_checked, checked > 0 && !all_checked)
+                        .id("quick-input-check-all")
+                        .mt(px(4.))
+                        .on_click(cx.listener(|workbench, _: &ClickEvent, window, cx| {
+                            workbench.with_current_quick_input(window, cx, QuickInput::toggle_all);
+                        })),
+                )
+            })
+            .when(!input.hide_input, |header| header.child(self.quick_input_box(input, interactive, window, cx)))
+            .children(inline.into_iter().map(|button| div().ml(px(4.)).mt(px(3.)).child(self.quick_input_button(button, cx))))
+            .when(input.can_select_many, |header| {
+                header.child(
+                    div()
+                        .id("quick-input-ok")
+                        .ml(px(6.))
+                        .h(px(26.))
+                        .px(px(10.))
+                        .flex()
+                        .items_center()
+                        .rounded(px(4.))
+                        .bg(self.color("button.background"))
+                        .text_color(self.color("button.foreground"))
+                        .when_some(self.theme.color("button.border"), |button, border| button.border_1().border_color(border))
+                        .hover(|button| button.bg(self.color("button.hoverBackground")))
+                        .child("OK")
+                        .on_click(cx.listener(|workbench, _: &ClickEvent, window, cx| {
+                            workbench.with_current_quick_input(window, cx, QuickInput::accept_from_ui);
+                        })),
+                )
+            })
+    }
+
+    /// The `.monaco-inputbox`: 26px, `input.*` colors, the focus border, the validation border, the count badge.
+    fn quick_input_box(&self, input: &QuickInput, interactive: bool, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let focused = interactive && self.quick_inputs.focus.is_focused(window);
+        let validation = match input.severity {
+            Severity::Info => self.theme.color("inputValidation.infoBorder"),
+            Severity::Warning => self.theme.color("inputValidation.warningBorder"),
+            Severity::Error => self.theme.color("inputValidation.errorBorder"),
+            Severity::Ignore => None,
+        };
+        let border = validation.or(focused.then(|| self.theme.color("focusBorder")).flatten()).or(self.theme.color("input.border"));
+        let input_buttons: Vec<&Button> = input.buttons.iter().filter(|button| button.location == Some(3)).collect();
+        let count = input.can_select_many.then(|| {
+            div()
+                .flex_none()
+                .mr(px(4.))
+                .px(px(4.))
+                .py(px(2.))
+                .rounded(px(2.))
+                .text_size(px(11.))
+                .bg(self.color("badge.background"))
+                .text_color(self.color("badge.foreground"))
+                .when_some(self.theme.color("contrastBorder"), |badge, border| badge.border_1().border_color(border))
+                .child(input.checked_count().to_string())
+        });
+        div()
+            .flex_1()
+            .h(px(26.))
+            .flex()
+            .items_center()
+            .rounded(px(6.))
+            .border_1()
+            .border_color(border.unwrap_or(rgba(0x00000000)))
+            .bg(self.color("input.background"))
+            .text_color(self.foreground_or("input.foreground"))
+            .when(input.can_select_many, |input_box| input_box.ml(px(5.)))
+            .child(self.quick_input_text(input, focused, cx))
+            .children(count)
+            .children(input_buttons.into_iter().map(|button| div().mr(px(2.)).child(self.quick_input_button(button, cx))))
+    }
+
+    /// The input element: the value (or placeholder) with its selection, marked text and caret.
+    fn quick_input_text(&self, input: &QuickInput, focused: bool, cx: &mut Context<Self>) -> impl IntoElement {
+        let display: String = if input.password { input.value.chars().map(|_| '\u{2022}').collect() } else { input.value.clone() };
+        let byte_at = |chars: usize| display.char_indices().nth(chars).map_or(display.len(), |(byte, _)| byte);
+        let selection = byte_at(input.selected_range().start)..byte_at(input.selected_range().end);
+        let caret = byte_at(input.selection.1);
+        let marked = self.quick_inputs.marked.clone().map(|range| byte_at(utf16_to_chars(&input.value, range.start))..byte_at(utf16_to_chars(&input.value, range.end)));
+        let placeholder = input.value.is_empty().then(|| input.placeholder.clone()).flatten();
+        let text_color = self.foreground_or("input.foreground");
+        let placeholder_color = self.color("input.placeholderForeground");
+        let selection_color = self.color(if focused { "selection.background" } else { "editor.inactiveSelectionBackground" });
+        let selection_color = if self.theme.color("selection.background").is_some() { selection_color } else { self.color("editor.selectionBackground") };
+        // Native carets blink at a 1s period; edits and moves restart it.
+        let caret_on = focused && (self.quick_inputs.caret_moved.elapsed().as_millis() / 500) % 2 == 0;
+        let layout = self.quick_inputs.text.clone();
+        let focus = self.quick_inputs.focus.clone();
+        let workbench = cx.entity();
+        div()
+            .id("quick-input-text")
+            .flex_1()
+            .h_full()
+            .mx(px(6.))
+            .overflow_hidden()
+            .track_focus(&self.quick_inputs.focus)
+            .on_key_down(cx.listener(Self::quick_input_key_down))
+            .on_mouse_down(MouseButton::Left, cx.listener(Self::quick_input_mouse_down))
+            .on_mouse_move(cx.listener(Self::quick_input_mouse_move))
+            .on_mouse_up(MouseButton::Left, cx.listener(|workbench, _, _, _| workbench.quick_inputs.selecting = false))
+            .on_mouse_up_out(MouseButton::Left, cx.listener(|workbench, _, _, _| workbench.quick_inputs.selecting = false))
+            .child(
+                canvas(
+                    move |_, _, _| (),
+                    move |bounds, _, window, cx| {
+                        let font: Font = window.text_style().font();
+                        let font_size = window.text_style().font_size.to_pixels(window.rem_size());
+                        let line_height = px(18.);
+                        let origin_y = bounds.origin.y + (bounds.size.height - line_height) / 2.;
+                        if let Some(placeholder) = placeholder {
+                            let run = TextRun { len: placeholder.len(), font: font.clone(), color: placeholder_color.into(), background_color: None, underline: None, strikethrough: None };
+                            let line = window.text_system().shape_line(placeholder.into(), font_size, &[run], None);
+                            let _ = line.paint(point(bounds.origin.x, origin_y), line_height, gpui::TextAlign::Left, None, window, cx);
+                        }
+                        let mut runs = Vec::new();
+                        let plain = |len: usize| TextRun { len, font: font.clone(), color: text_color.into(), background_color: None, underline: None, strikethrough: None };
+                        match &marked {
+                            Some(marked) if !marked.is_empty() => {
+                                runs.push(plain(marked.start));
+                                let underline = UnderlineStyle { thickness: px(1.), color: Some(text_color.into()), wavy: false };
+                                runs.push(TextRun { underline: Some(underline), ..plain(marked.len()) });
+                                runs.push(plain(display.len() - marked.end));
+                            }
+                            _ => runs.push(plain(display.len())),
+                        }
+                        runs.retain(|run| run.len > 0);
+                        let line = window.text_system().shape_line(display.clone().into(), font_size, &runs, None);
+                        let caret_x = f32::from(line.x_for_index(caret));
+                        let width = f32::from(bounds.size.width);
+                        let mut text = layout.borrow_mut();
+                        let mut scroll = text.scroll;
+                        if caret_x - scroll > width - 1. {
+                            scroll = caret_x - width + 1.;
+                        }
+                        if caret_x < scroll {
+                            scroll = caret_x;
+                        }
+                        scroll = scroll.min((f32::from(line.width()) - width + 1.).max(0.)).max(0.);
+                        let left = f32::from(bounds.origin.x) - scroll;
+                        if !selection.is_empty() {
+                            let start = f32::from(line.x_for_index(selection.start));
+                            let end = f32::from(line.x_for_index(selection.end));
+                            window.paint_quad(fill(gpui::Bounds::new(point(px(left + start), origin_y), size(px(end - start), line_height)), selection_color));
+                        }
+                        let _ = line.paint(point(px(left), origin_y), line_height, gpui::TextAlign::Left, None, window, cx);
+                        if caret_on && selection.is_empty() {
+                            window.paint_quad(fill(gpui::Bounds::new(point(px(left + caret_x), origin_y), size(px(1.), line_height)), text_color));
+                        }
+                        *text = InputText { line: Some(line), left: f32::from(bounds.origin.x), scroll };
+                        drop(text);
+                        window.handle_input(&focus, ElementInputHandler::new(bounds, workbench), cx);
+                    },
+                )
+                .size_full(),
+            )
+    }
+
+    /// `.quick-input-message`: the prompt, or the validation message in its severity's colors.
+    fn quick_input_message(&self, input: &QuickInput, message: String) -> Div {
+        let colors = match input.severity {
+            Severity::Info => Some(("inputValidation.infoBackground", "inputValidation.infoForeground", "inputValidation.infoBorder")),
+            Severity::Warning => Some(("inputValidation.warningBackground", "inputValidation.warningForeground", "inputValidation.warningBorder")),
+            Severity::Error => Some(("inputValidation.errorBackground", "inputValidation.errorForeground", "inputValidation.errorBorder")),
+            Severity::Ignore => None,
+        };
+        let message_box = div().mx(px(6.)).mt(px(-1.)).p(px(5.)).child(message);
+        match colors {
+            Some((background, foreground, border)) => message_box
+                .mb(px(-2.))
+                .bg(self.color(background))
+                .when_some(self.theme.color(foreground), |message_box, color| message_box.text_color(color))
+                .when_some(self.theme.color(border), |message_box, border| message_box.border_1().border_color(border)),
+            None => message_box,
+        }
+    }
+
+    /// The 2px infinite progress bar (progressbar.css: a 2% bit crossing in 4s, scaling to 3x halfway).
+    fn quick_input_progress(&self, input: &QuickInput) -> AnyElement {
+        let shown = self.quick_inputs.busy_shown && self.quick_inputs.busy.as_ref().is_some_and(|(id, _)| *id == input.id);
+        let bar = div().relative().h(px(2.)).overflow_hidden();
+        if !shown {
+            return bar.into_any_element();
+        }
+        let color = self.color("progressBar.background");
+        bar.child(
+            div().absolute().top_0().h_full().w(gpui::relative(0.02)).bg(color).with_animation(
+                "quick-input-progress",
+                Animation::new(Duration::from_secs(4)).repeat(),
+                |bit, delta| {
+                    let (offset, scale) = if delta < 0.5 { (delta * 2. * 25., 1. + delta * 4.) } else { (25. + (delta - 0.5) * 2. * 24., 3. - (delta - 0.5) * 4.) };
+                    bit.left(gpui::relative(offset * 0.02)).w(gpui::relative(0.02 * scale))
+                },
+            ),
+        )
+        .into_any_element()
+    }
+
+    /// `.quick-input-list`: the visible rows, at most the layout's height, with 7px below them.
+    fn quick_input_list(&mut self, input: &QuickInput, interactive: bool, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let inputs = &mut self.quick_inputs;
+        if inputs.listed.0 != Some(input.id) || inputs.listed.1 != input.order {
+            inputs.list.reset(input.order.len());
+            inputs.listed = (Some(input.id), input.order.clone());
+            inputs.revealed = None;
+        }
+        let focused_position = input.focused.and_then(|row| input.order.iter().position(|shown| *shown == row));
+        if interactive && focused_position.is_some() && inputs.revealed != focused_position {
+            inputs.list.scroll_to_reveal_item(focused_position.unwrap_or_default());
+            inputs.revealed = focused_position;
+        }
+        let content: f32 = input.order.iter().map(|row| row_height(&input.rows[*row])).sum();
+        let height = content.min(self.quick_input_list_max_height(window)).min(20. * ROW_HEIGHT);
+        let rows = list(self.quick_inputs.list.clone(), cx.processor(move |workbench: &mut Workbench, position: usize, window, cx| workbench.quick_input_row(position, interactive, window, cx)))
+            .h(px(height))
+            .px(px(6.));
+        div().when(input.hide_input, |list| list.mt(px(4.))).pb(px(if input.hide_input { 4. } else { 7. })).child(rows)
+    }
+
+    /// A `.quick-input-list-entry`.
+    fn quick_input_row(&mut self, position: usize, interactive: bool, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let input = match (self.quick_inputs.current(), self.quick_inputs.closing.as_ref()) {
+            (Some(input), _) if interactive => input,
+            (_, Some((input, _))) => input,
+            _ => return div().into_any_element(),
+        };
+        let Some(&row_index) = input.order.get(position) else { return div().into_any_element() };
+        let row = &input.rows[row_index];
+        let focused = input.focused == Some(row_index);
+        let hovered = self.quick_inputs.hovered == Some(row_index);
+        let can_select_many = input.can_select_many;
+        let foreground = if focused { self.theme.color("quickInputList.focusForeground") } else { None };
+        let icon_color = if focused { self.theme.color("quickInputList.focusIconForeground") } else { None }.unwrap_or(self.foreground_or("icon.foreground"));
+        let highlight = self.color(if focused { "quickInputList.focusHighlightForeground" } else { "list.highlightForeground" });
+        let label_box = div()
+            .flex_1()
+            .min_w_0()
+            .ml(px(5.))
+            .flex()
+            .flex_col()
+            .justify_center()
+            .overflow_hidden()
+            .child(
+                div()
+                    .h(px(ROW_HEIGHT))
+                    .flex()
+                    .items_center()
+                    .whitespace_nowrap()
+                    .when(row.item.icon.is_some() || row.item.icon_path.is_some(), |line| {
+                        let icon = match (&row.item.icon, &row.item.icon_path) {
+                            (Some(codicon), _) => self.icon(codicon, 16., 16., icon_color),
+                            (None, Some(path)) => {
+                                let path = if self.theme.kind.is_light() { &path.light } else { &path.dark };
+                                div().size(px(16.)).flex_none().child(gpui::img(path.clone()).size(px(16.)))
+                            }
+                            (None, None) => div(),
+                        };
+                        line.child(icon.mr(px(6.)))
+                    })
+                    .child(self.highlighted_label(&row.item.label, &row.label_highlights, highlight, 16., icon_color))
+                    .children(row.item.description.as_ref().filter(|description| !description.is_empty()).map(|description| {
+                        // monaco-icon-label: .label-description at 0.9em, 0.7 opacity, 0.5em after the name.
+                        div().ml(px(6.5)).text_size(px(11.7)).opacity(if focused { 1. } else { 0.7 }).child(self.highlighted_label(description, &row.description_highlights, highlight, 14., icon_color))
+                    })),
+            )
+            .children(row.item.detail.as_ref().filter(|detail| !detail.is_empty()).map(|detail| {
+                div().h(px(ROW_HEIGHT)).flex().items_center().whitespace_nowrap().opacity(if focused { 1. } else { 0.7 }).child(self.highlighted_label(detail, &row.detail_highlights, highlight, 14., icon_color))
+            }));
+        let separator = row.separator.clone().filter(|label| !label.is_empty());
+        let separator_color = if focused { foreground.unwrap_or(self.foreground_or("quickInput.foreground")) } else { self.theme.color("pickerGroup.foreground").unwrap_or(self.color("descriptionForeground")) };
+        let buttons_shown = focused || hovered;
+        let handle = row.item.handle;
+        let entry = div()
+            .relative()
+            .size_full()
+            .flex()
+            .px(px(6.))
+            .when(row.separator.is_some() && position > 0, |entry| entry.border_t_1().border_color(self.color("pickerGroup.border")))
+            .when(can_select_many, |entry| {
+                entry.child(
+                    self.checkbox(row.checked, false)
+                        .id(("quick-input-row-check", row_index))
+                        .mt(px(2.))
+                        .when(!row.item.pickable, |checkbox| checkbox.opacity(0.4)),
+                )
+            })
+            .child(label_box)
+            .when(!row.item.keybinding.is_empty(), |entry| entry.child(self.keybinding_label(&row.item.keybinding, focused || hovered).mr(px(8.))))
+            .children(separator.map(|label| div().flex().items_center().mr(px(4.)).text_size(px(11.)).text_color(separator_color).child(label)))
+            .when(buttons_shown && !row.item.buttons.is_empty(), |entry| {
+                entry.child(div().flex().items_center().mt(px(1.)).mr(px(4.)).children(row.item.buttons.iter().enumerate().map(|(index, button)| {
+                    let toggle = button.toggle;
+                    self.icon(button.codicon.as_deref().unwrap_or("blank"), 20., 16., icon_color)
+                        .id(("quick-input-item-button", index))
+                        .mr(px(4.))
+                        .rounded(px(5.))
+                        .hover(|button| button.bg(self.color("toolbar.hoverBackground")))
+                        .on_click(cx.listener(move |workbench, _: &ClickEvent, window, cx| {
+                            cx.stop_propagation();
+                            workbench.with_current_quick_input(window, cx, |input| {
+                                input.events.push(Event::TriggerItemButton(handle, index as i64, toggle.map(|checked| !checked)));
+                            });
+                        }))
+                })))
+            });
+        let background = if focused { self.theme.color("quickInputList.focusBackground") } else if hovered { self.theme.color("list.hoverBackground") } else { None };
+        div()
+            .id(("quick-input-row", row_index))
+            .h(px(row_height(row)))
+            .rounded(px(3.))
+            .when_some(background, |row, background| row.bg(background))
+            .when_some(foreground, |row, color| row.text_color(color))
+            .child(entry)
+            .when(interactive, |row| {
+                row.on_hover(cx.listener(move |workbench, hovered: &bool, _, cx| {
+                    let inputs = &mut workbench.quick_inputs;
+                    if *hovered {
+                        inputs.hovered = Some(row_index);
+                    } else if inputs.hovered == Some(row_index) {
+                        inputs.hovered = None;
+                    }
+                    cx.notify();
+                }))
+                .on_click(cx.listener(move |workbench, _: &ClickEvent, window, cx| {
+                    workbench.with_current_quick_input(window, cx, |input| input.click_row(row_index));
+                }))
+            })
+            .into_any_element()
+    }
+
+    /// A `HighlightedLabel` with `supportIcons`: `$(name)` draws a codicon, matches are bold in the highlight color.
+    fn highlighted_label(&self, text: &str, highlights: &[Range<usize>], color: Rgba, icon_size: f32, icon_color: Rgba) -> Div {
+        let chars: Vec<char> = text.chars().collect();
+        let mut line = div().flex().items_center().min_w_0();
+        let mut segment = String::new();
+        let mut segment_highlights = Vec::new();
+        let mut index = 0;
+        let flush = |line: Div, segment: &mut String, segment_highlights: &mut Vec<(Range<usize>, HighlightStyle)>| {
+            if segment.is_empty() {
+                return line;
+            }
+            let styled = StyledText::new(std::mem::take(segment)).with_highlights(std::mem::take(segment_highlights));
+            line.child(styled)
+        };
+        while index < chars.len() {
+            if let Some((name, length)) = icon_at(&chars[index..]) {
+                line = flush(line, &mut segment, &mut segment_highlights);
+                line = line.child(self.icon(&name, icon_size, icon_size, icon_color));
+                index += length;
+                continue;
+            }
+            let start = segment.len();
+            segment.push(chars[index]);
+            if highlights.iter().any(|range| range.contains(&index)) {
+                segment_highlights.push((start..segment.len(), HighlightStyle { color: Some(color.into()), font_weight: Some(FontWeight::BOLD), ..Default::default() }));
+            }
+            index += 1;
+        }
+        flush(line, &mut segment, &mut segment_highlights)
+    }
+
+    /// The `.monaco-keybinding` of a row: a box per key, chords apart.
+    fn keybinding_label(&self, chords: &[Vec<String>], row_active: bool) -> Div {
+        let border = self.color("keybindingLabel.border");
+        let bottom = self.color("keybindingLabel.bottomBorder");
+        let shadow = self.color("keybindingLabel.shadow");
+        let key = |label: &String| {
+            div()
+                .mx(px(2.))
+                .px(px(5.))
+                .h(px(18.))
+                .min_w(px(24.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(3.))
+                .text_size(px(11.))
+                .border_1()
+                .border_color(border)
+                .border_b_1()
+                .when(!row_active, |key| key.bg(self.color("keybindingLabel.background")))
+                .text_color(self.foreground_or("keybindingLabel.foreground"))
+                .shadow(vec![BoxShadow { color: shadow.into(), offset: point(px(0.), px(-1.)), blur_radius: px(0.), spread_radius: px(0.), inset: true }])
+                .child(div().border_b_1().border_color(bottom))
+                .child(label.clone())
+        };
+        div().flex().items_center().children(chords.iter().enumerate().map(|(index, chord)| div().flex().when(index > 0, |chord| chord.ml(px(5.))).children(chord.iter().map(key))))
+    }
+
+    /// The 18px `.monaco-checkbox` of the list and the header: tri-state when `mixed`.
+    fn checkbox(&self, checked: bool, mixed: bool) -> Div {
+        let icon = if mixed { Some("dash") } else if checked { Some("check") } else { None };
+        div()
+            .size(px(18.))
+            .flex_none()
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(3.))
+            .border_1()
+            .border_color(self.color("checkbox.border"))
+            .bg(self.color("checkbox.background"))
+            .children(icon.map(|icon| self.icon(icon, 16., 16., self.color("checkbox.foreground"))))
+    }
+}
+
+fn row_height(row: &Row) -> f32 {
+    if row.item.detail.as_ref().is_some_and(|detail| !detail.is_empty()) { DETAIL_ROW_HEIGHT } else { ROW_HEIGHT }
+}
+
+/// `$(name)` or `$(name~spin)` at the start of `chars`: the codicon name and the chars it spans.
+fn icon_at(chars: &[char]) -> Option<(String, usize)> {
+    if chars.len() < 4 || chars[0] != '$' || chars[1] != '(' {
+        return None;
+    }
+    let close = chars.iter().position(|c| *c == ')')?;
+    let inner: String = chars[2..close].iter().collect();
+    let name = inner.split('~').next().unwrap_or_default();
+    let valid = !name.is_empty() && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+    valid.then(|| (name.to_owned(), close + 1))
+}
+
+/// The char offset of a UTF-16 offset into `text`; an offset inside a surrogate pair rounds up.
+pub fn utf16_to_chars(text: &str, offset: usize) -> usize {
+    let mut units = 0;
+    for (index, c) in text.chars().enumerate() {
+        if units >= offset {
+            return index;
+        }
+        units += c.len_utf16();
+    }
+    text.chars().count()
+}
+
+pub fn chars_to_utf16(text: &str, chars: usize) -> usize {
+    text.chars().take(chars).map(char::len_utf16).sum()
+}

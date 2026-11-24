@@ -43,7 +43,7 @@ const EDITOR_COMMANDS: [(&str, EditorCommand); 28] = [
 ];
 
 /// Commands of the editor with text focus only (`MultiCommand`s and `EditorHandlerCommand`s): elsewhere they
-/// belong to the focused input, which the port has none of yet.
+/// belong to the focused input element, the quick input's.
 const FOCUSED_EDITOR_COMMANDS: [(&str, EditorCommand); 3] = [
     ("undo", OpenEditor::undo),
     ("redo", OpenEditor::redo),
@@ -58,7 +58,7 @@ impl Workbench {
         for (id, command) in FOCUSED_EDITOR_COMMANDS {
             self.commands.register(id, move |workbench, _, window, cx| match workbench.editor_focus.is_focused(window) {
                 true => workbench.run_on_active_editor(command, cx),
-                false => Outcome::done(),
+                false => workbench.quick_input_text_command(id, window, cx).unwrap_or(Outcome::done()),
             });
         }
         self.commands.register("type", |workbench, args, window, cx| {
@@ -76,7 +76,7 @@ impl Workbench {
         self.commands.register("editor.action.clipboardCutAction", |workbench, _, window, cx| workbench.copy_to_clipboard(true, window, cx));
         self.commands.register("editor.action.clipboardPasteAction", |workbench, _, window, cx| {
             if !workbench.editor_focus.is_focused(window) {
-                return Outcome::done();
+                return workbench.quick_input_text_command("editor.action.clipboardPasteAction", window, cx).unwrap_or(Outcome::done());
             }
             let Some(ClipboardEntry::String(clipboard)) = cx.read_from_clipboard().and_then(|item| item.entries().first().cloned()) else { return Outcome::done() };
             let whole_line = clipboard.metadata_json::<bool>().unwrap_or(false);
@@ -85,7 +85,10 @@ impl Workbench {
     }
 
     fn copy_to_clipboard(&mut self, cut: bool, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
-        let Some(editor) = self.editors.active().filter(|_| self.editor_focus.is_focused(window)) else { return Outcome::done() };
+        let Some(editor) = self.editors.active().filter(|_| self.editor_focus.is_focused(window)) else {
+            let command = if cut { "editor.action.clipboardCutAction" } else { "editor.action.clipboardCopyAction" };
+            return self.quick_input_text_command(command, window, cx).unwrap_or(Outcome::done());
+        };
         let (text, whole_line) = editor.copy_text();
         cx.write_to_clipboard(ClipboardItem::new_string_with_json_metadata(text, whole_line));
         match cut {

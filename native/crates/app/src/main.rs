@@ -7,10 +7,13 @@ mod commands;
 mod contextkey;
 mod editor;
 mod explorer;
+mod filters;
 mod host_sync;
 mod keybindings;
 mod languages;
 mod main_thread_commands;
+mod main_thread_quick_open;
+mod quick_input;
 mod syntax;
 mod theme;
 mod workbench;
@@ -100,8 +103,11 @@ fn main() -> anyhow::Result<()> {
                 cx.spawn_in(window, async move |workbench, cx| {
                     while let Some(request) = requests.next().await {
                         let req = request.req;
+                        // A cancellation answers nothing itself; the request it cancels gets its answer.
+                        let cancel = request.method == "$cancel";
                         let Ok(outcome) = workbench.update_in(cx, |workbench, window, cx| workbench.handle_host_request(request, window, cx)) else { break };
                         let result = match outcome {
+                            _ if cancel => continue,
                             Outcome::Ready(result) => result,
                             // Requests from the host may overlap, so a pending answer is awaited off this loop.
                             Outcome::Pending(pending) => {

@@ -321,7 +321,13 @@ impl Session {
             Message::ReplyErr { req, error } => {
                 self.results.insert(req, CallResult::Err(error));
             }
-            Message::Acknowledged { .. } | Message::Cancel { .. } => {}
+            // The forwarded request's cancellation token fired: it comes again as `$cancel`, with no proxy.
+            Message::Cancel { req } => {
+                if let Some(forward) = self.forward.as_mut() {
+                    (forward.send)(ForwardedRequest { req, proxy: "", method: "$cancel".into(), args: Vec::new() });
+                }
+            }
+            Message::Acknowledged { .. } => {}
         }
         Ok(self.extension_tests_req.is_none_or(|req| !self.results.contains_key(&req)))
     }

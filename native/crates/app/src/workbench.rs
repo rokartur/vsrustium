@@ -6,12 +6,13 @@ mod actions;
 mod editor_commands;
 mod editor_view;
 mod keyboard;
+mod quick_input_view;
 mod text_input;
 
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::ops::Range;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -50,6 +51,7 @@ pub struct Workbench {
     marked_text: Option<Range<usize>>,
     /// A left button press in the text is held, so moves extend the selection.
     selecting_text: bool,
+    pub quick_inputs: quick_input_view::QuickInputs,
 }
 
 impl Render for Workbench {
@@ -80,6 +82,7 @@ impl Render for Workbench {
                     .child(if self.editors.active().is_some() { self.text_editor_part(window, cx) } else { self.editor_part() }),
             )
             .child(self.status_bar());
+        let quick_input = self.quick_input_widget(window, cx);
         div()
             .relative()
             .size_full()
@@ -88,6 +91,7 @@ impl Render for Workbench {
             .text_color(self.color("foreground"))
             .text_size(px(13.))
             .child(grid)
+            .children(quick_input)
             // shortcut: 16px is the macOS 26+ (Tahoe) corner radius (style.css .macos-tahoe); older macOS uses 10px, branch on the OS version if the port supports it.
             .when_some(window_border, |root, border| root.child(div().absolute().inset_0().border_1().rounded(px(16.)).border_color(border)))
     }
@@ -112,11 +116,13 @@ impl Workbench {
             editor_focus: cx.focus_handle(),
             marked_text: None,
             selecting_text: false,
+            quick_inputs: quick_input_view::QuickInputs::new(cx),
         };
         crate::main_thread_commands::register_commands_documentation(&mut workbench);
         workbench.register_workbench_actions();
         workbench.register_editor_commands();
         workbench.register_context_commands();
+        workbench.register_quick_input_commands();
         // Keybindings resolve before the focused element sees the key, and with nothing focused too.
         let entity = cx.entity().downgrade();
         cx.intercept_keystrokes(move |event, window, cx| {
@@ -124,6 +130,11 @@ impl Workbench {
         })
         .detach();
         workbench
+    }
+
+    /// The opened folder, which quick pick items show their resource paths relative to.
+    pub fn workspace_path(&self) -> Option<&Path> {
+        self.folder.as_ref().map(|folder| folder.root.as_path())
     }
 
     /// A single click opens a preview editor and keeps the focus in the Explorer, a double click opens a pinned

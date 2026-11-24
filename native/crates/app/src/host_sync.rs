@@ -200,7 +200,7 @@ impl HostSync {
         self.send("ExtHostTheming", "$onColorThemeChange", vec![json!(scheme)]);
     }
 
-    fn send(&self, proxy: &'static str, method: &'static str, args: Vec<Value>) {
+    pub(crate) fn send(&self, proxy: &'static str, method: &'static str, args: Vec<Value>) {
         // The session thread is gone once the host exits; the workbench keeps working without it.
         let _ = self.sender.send(HostMessage { proxy, method, args, reply: None });
     }
