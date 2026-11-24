@@ -1,97 +1,30 @@
-//! Keyboard and text input of the code editor: the macOS default keybindings of the cursor, edit and
-//! clipboard commands (coreCommands.ts, the editor contributions' `primary`/`mac` keys), and the
-//! platform text input (IME, dead keys) through GPUI's input handler.
+//! Keyboard and text input of the code editor: keys no keybinding took, and the platform text input
+//! (IME, dead keys) through GPUI's input handler. Keybindings run before this (workbench/keyboard.rs).
 
 use std::ops::Range;
 
-use gpui::{
-    Bounds, ClipboardEntry, ClipboardItem, Context, EntityInputHandler, KeyDownEvent, Pixels, ScrollStrategy, UTF16Selection, Window,
-};
+use gpui::{Bounds, Context, EntityInputHandler, KeyDownEvent, Pixels, ScrollStrategy, UTF16Selection, Window};
+use serde_json::json;
 
 use super::Workbench;
 use crate::editor::{ContentChanged, Position, utf16_column};
 
 impl Workbench {
-    /// Runs the command bound to the key; unbound keys go on to the input handler as text.
-    /// shortcut: Page Up/Down, Ctrl+Emacs keys and multi-cursor keys are not bound yet.
-    pub(super) fn editor_key_down(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
+    /// Enter reaches the editor as typed text, the line break the browser's textarea would insert.
+    pub(super) fn editor_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let modifiers = event.keystroke.modifiers;
-        if modifiers.control || modifiers.function {
+        if event.keystroke.key != "enter" || modifiers.platform || modifiers.control || modifiers.alt || self.marked_text.is_some() {
             return;
         }
-        let (cmd, alt, select) = (modifiers.platform, modifiers.alt, modifiers.shift);
-        let editor = self.editors.active_mut().expect("the text area has focus only with an editor open");
-        let selection_before = editor.selection;
-        let change = match (cmd, alt, event.keystroke.key.as_str()) {
-            (false, false, "left" | "right") => {
-                editor.move_horizontally(event.keystroke.key == "right", select);
-                None
-            }
-            (false, false, "up" | "down") => {
-                editor.move_vertically(event.keystroke.key == "down", select);
-                None
-            }
-            (false, true, "left" | "right") => {
-                editor.move_word(event.keystroke.key == "right", select);
-                None
-            }
-            (true, false, "left" | "right") | (false, false, "home" | "end") => {
-                editor.move_to_line_edge(matches!(event.keystroke.key.as_str(), "right" | "end"), select);
-                None
-            }
-            (true, false, "up" | "down") => {
-                editor.move_to_document_edge(event.keystroke.key == "down", select);
-                None
-            }
-            (true, false, "a") if !select => {
-                editor.select_all();
-                None
-            }
-            (false, false, "backspace") => editor.delete_left(),
-            (false, false, "delete") => editor.delete_right(),
-            (false, true, "backspace") => editor.delete_word_left(),
-            (false, true, "delete") => editor.delete_word_right(),
-            (true, false, "backspace") => editor.delete_all_left(),
-            (true, false, "delete") => editor.delete_all_right(),
-            (false, false, "enter") => editor.enter(),
-            (false, false, "tab") if select => editor.outdent(),
-            (false, false, "tab") => editor.tab(),
-            (true, false, "z") if select => editor.redo(),
-            (true, false, "z") => editor.undo(),
-            (true, false, "y") => editor.redo(),
-            (true, false, "c") if !select => {
-                let (text, whole_line) = editor.copy_text();
-                cx.write_to_clipboard(ClipboardItem::new_string_with_json_metadata(text, whole_line));
-                None
-            }
-            (true, false, "x") if !select => {
-                let (text, whole_line) = editor.copy_text();
-                cx.write_to_clipboard(ClipboardItem::new_string_with_json_metadata(text, whole_line));
-                editor.cut()
-            }
-            (true, false, "v") if !select => {
-                let Some(ClipboardEntry::String(clipboard)) = cx.read_from_clipboard().and_then(|item| item.entries().first().cloned()) else { return };
-                let whole_line = clipboard.metadata_json::<bool>().unwrap_or(false);
-                editor.paste(clipboard.text(), whole_line)
-            }
-            (true, false, "s") if !select => {
-                cx.stop_propagation();
-                self.save_active_editor(cx);
-                return;
-            }
-            _ => return,
-        };
         cx.stop_propagation();
-        self.marked_text = None;
-        let moved = self.editors.active().expect("still open").selection != selection_before;
-        self.editor_edited(change, moved, "keyboard", cx);
+        self.execute_command("type", vec![json!({ "text": "\n" })], window, cx);
     }
 
     /// Tells the host about a content change or a cursor move, and scrolls the cursor's line into view.
     pub(super) fn editor_edited(&mut self, change: Option<ContentChanged>, moved: bool, source: &str, cx: &mut Context<Self>) {
         let editor = self.editors.active().expect("only the active editor is edited");
         match &change {
-            Some(change) => self.host.send_content_change(&self.editors, change),
+            Some(change) => self.host.send_content_change(&self.editors, self.editors.active_index().expect("only the active editor is edited"), change),
             None if moved => self.host.send_selection(editor, source),
             None => {}
         }
@@ -102,15 +35,15 @@ impl Workbench {
 
     /// shortcut: save writes the text as it is; no save participants (`$participateInSave`), no format on save,
     /// no conflict check against the file on disk.
-    fn save_active_editor(&mut self, cx: &mut Context<Self>) {
-        let editor = self.editors.active_mut().expect("only the active editor is saved");
+    pub(super) fn save_editor(&mut self, index: usize, cx: &mut Context<Self>) {
+        let editor = &mut self.editors.editors[index];
         let was_dirty = editor.is_dirty();
         if let Err(error) = editor.save() {
             // shortcut: a save error is logged, not shown as the reference's notification.
             eprintln!("saving {}: {error}", editor.document.path.display());
             return;
         }
-        self.host.send_saved(&self.editors, was_dirty);
+        self.host.send_saved(&self.editors, index, was_dirty);
         cx.notify();
     }
 

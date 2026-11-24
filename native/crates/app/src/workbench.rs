@@ -2,17 +2,23 @@
 //! (src/vs/workbench/browser/media/floatingPanels.css), empty or with a folder in the Explorer.
 //! Sizes are the reference's CSS pixels.
 
+mod actions;
+mod editor_commands;
 mod editor_view;
+mod keyboard;
 mod text_input;
 
 use std::cell::Cell;
+use std::collections::HashMap;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use gpui::{ClickEvent, Context, Div, FocusHandle, FontFeatures, FontWeight, Rgba, UniformListScrollHandle, Window, div, prelude::*, px, rgb, svg, transparent_black};
+use gpui::{ClickEvent, Context, Div, FocusHandle, FontFeatures, FontWeight, Rgba, Task, UniformListScrollHandle, Window, div, prelude::*, px, rgb, svg, transparent_black};
+use serde_json::Value;
 
+use crate::commands::Commands;
 use crate::editor::{EditorGroup, TextDocument};
 use crate::explorer::FileTree;
 use crate::host_sync::HostSync;
@@ -27,7 +33,15 @@ pub struct Workbench {
     pub folder: Option<FileTree>,
     pub languages: Languages,
     pub editors: EditorGroup,
-    host: HostSync,
+    pub(crate) host: HostSync,
+    pub commands: Commands,
+    /// Extension tests run: dialogs answer their default without showing (abstractFileDialogService.ts skipDialogs).
+    pub skip_dialogs: bool,
+    pub keybindings: keyboard::Keybindings,
+    /// Context keys set with the `setContext` command.
+    context_keys: HashMap<String, Value>,
+    /// The status bar message and the task that hides it.
+    status_message: Option<(String, Task<()>)>,
     editor_scroll: UniformListScrollHandle,
     /// Window x of the text area, recorded at paint, to turn a click into a column.
     text_area_left: Rc<Cell<f32>>,
@@ -81,19 +95,35 @@ impl Render for Workbench {
 
 impl Workbench {
     pub fn new(theme: Theme, app_root: PathBuf, folder: Option<FileTree>, languages: Languages, host: HostSync, cx: &mut Context<Self>) -> Self {
-        Workbench {
+        let mut workbench = Workbench {
             theme,
             app_root,
             folder,
             languages,
             editors: EditorGroup::default(),
             host,
+            commands: Commands::default(),
+            skip_dialogs: false,
+            keybindings: keyboard::Keybindings::default(),
+            context_keys: HashMap::new(),
+            status_message: None,
             editor_scroll: UniformListScrollHandle::new(),
             text_area_left: Rc::default(),
             editor_focus: cx.focus_handle(),
             marked_text: None,
             selecting_text: false,
-        }
+        };
+        crate::main_thread_commands::register_commands_documentation(&mut workbench);
+        workbench.register_workbench_actions();
+        workbench.register_editor_commands();
+        workbench.register_context_commands();
+        // Keybindings resolve before the focused element sees the key, and with nothing focused too.
+        let entity = cx.entity().downgrade();
+        cx.intercept_keystrokes(move |event, window, cx| {
+            let _ = entity.update(cx, |workbench, cx| workbench.dispatch_key(&event.keystroke, window, cx));
+        })
+        .detach();
+        workbench
     }
 
     /// A single click opens a preview editor and keeps the focus in the Explorer, a double click opens a pinned
@@ -366,8 +396,14 @@ impl Workbench {
             .text_size(px(12.))
             // statusbarpart.css: font-variant-numeric: tabular-nums.
             .font_features(FontFeatures(Arc::new(vec![("tnum".into(), 1)])))
-            .child(div().h(px(24.)).flex().child(self.icon("remote", 28., 16., foreground).h_full()).child(problems))
+            .child(div().h(px(24.)).flex().child(self.icon("remote", 28., 16., foreground).h_full()).child(problems).children(self.status_bar_message()))
             .child(div().h(px(24.)).flex().children(self.editor_status_items(foreground)).child(self.icon("bell", 28., 16., foreground).h_full()))
+    }
+
+    /// The `status.message` entry: multi-chord mode, else the latest status message (notificationsStatus.ts).
+    fn status_bar_message(&self) -> Option<Div> {
+        let message = self.chord_status().or_else(|| self.status_message.as_ref().map(|(message, _)| message.clone()))?;
+        Some(div().h_full().ml(px(3.)).px(px(5.)).flex().items_center().child(message))
     }
 
     /// A codicon centered in a square box. Drawn from the icon's SVG: Wu's text system skips fonts
@@ -432,6 +468,7 @@ mod tests {
         let (sender, receiver) = std::sync::mpsc::channel();
         let (workbench, cx) = cx.add_window_view(|window, cx| {
             let mut workbench = Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), HostSync::new(sender), cx);
+            workbench.load_keybindings(crate::keybindings::default_keybindings(&[]), dir.join("keybindings.json"), cx);
             workbench.open_file(file.clone(), true, window, cx);
             workbench
         });
@@ -454,6 +491,45 @@ mod tests {
         let methods: Vec<_> = receiver.try_iter().map(|message| message.method).collect();
         assert_eq!(methods.iter().filter(|method| **method == "$acceptModelChanged").count(), 6);
         assert_eq!(methods.last(), Some(&"$acceptModelSaved"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[gpui::test]
+    fn user_keybindings_remove_defaults_and_bind_chords(cx: &mut TestAppContext) {
+        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
+        let theme = load_theme(&[themes], "Dark Modern").unwrap();
+        let dir = std::env::temp_dir().join(format!("code-gpui-keybindings-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("a.txt");
+        std::fs::write(&file, "abc").unwrap();
+        let user_file = dir.join("keybindings.json");
+        let rules = r#"// keybindings.json is JSONC
+            [{ "key": "end", "command": "-cursorEnd" }, { "key": "cmd+k cmd+e", "command": "cursorEnd", "when": "editorTextFocus && mine" }]"#;
+        std::fs::write(&user_file, rules).unwrap();
+        let (workbench, cx) = cx.add_window_view(|window, cx| {
+            let mut workbench = Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), HostSync::new(std::sync::mpsc::channel().0), cx);
+            workbench.load_keybindings(crate::keybindings::default_keybindings(&[]), user_file.clone(), cx);
+            workbench.open_file(file.clone(), true, window, cx);
+            workbench
+        });
+        cx.run_until_parked();
+        let column = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().selection.head.column);
+        let status = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.chord_status());
+
+        cx.simulate_keystrokes("end");
+        assert_eq!(column(cx), 0, "the user removed the default End binding");
+        cx.simulate_keystrokes("cmd-k cmd-e");
+        assert_eq!(column(cx), 0, "the chord's when clause needs the `mine` context key");
+        workbench.update_in(cx, |workbench, window, cx| workbench.execute_command("setContext", vec!["mine".into(), true.into()], window, cx));
+        cx.simulate_keystrokes("cmd-k");
+        assert_eq!(status(cx).as_deref(), Some("(⌘K) was pressed. Waiting for second key of chord..."));
+        cx.simulate_keystrokes("cmd-e");
+        assert_eq!(column(cx), 3);
+        assert_eq!(status(cx), None, "leaving chord mode drops its message");
+        cx.simulate_keystrokes("cmd-k x");
+        let message = workbench.read_with(cx, |workbench, _| workbench.status_message.as_ref().map(|(message, _)| message.clone()));
+        assert_eq!(message.as_deref(), Some("The key combination (⌘K, X) is not a command."));
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
