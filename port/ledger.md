@@ -25,7 +25,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | mainthread/MainThreadDecorations | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadDocumentContentProviders | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadDocuments | MainThread* shape (Rust side) | stub | host_sync.rs sends model opened, changed, dirty and saved: cargo test -p app -- --ignored live_host (TypeScript diagnostics after an edit); $tryCreateDocument, $tryOpenDocument, $trySaveDocument answer undefined |
-| mainthread/MainThreadBulkEdits | MainThread* shape (Rust side) | stub | session.rs answers undefined |
+| mainthread/MainThreadBulkEdits | MainThread* shape (Rust side) | ported | file edits of workspace.applyEdit (api-tests: rename & ignoreIfExists, delete & ignoreIfNotExists, #111867 1/3 to 3/3, binary files pass); text and cell edits fail until milestone 8 |
 | mainthread/MainThreadTextEditors | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadTreeViews | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadDownloadService | MainThread* shape (Rust side) | stub | session.rs answers undefined |
@@ -71,7 +71,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | mainthread/MainThreadProfileContentHandlers | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadWorkspace | MainThread* shape (Rust side) | ported | main_thread_workspace.rs serves $startFileSearch and $startTextSearch through ripgrep over every workspace folder: api-tests workspace.test findFiles, findFiles2, findTextInFiles and their cancellation tests pass (11/11); multi-root workspace data: api-workspace 4/4; $updateWorkspaceFolders, $save, trust and $checkExists answer undefined |
 | mainthread/MainThreadFileSystem | MainThread* shape (Rust side) | verified | api-tests workspace.fs.test 12/12 passing (main_thread_files.rs over files::disk and extension providers) |
-| mainthread/MainThreadFileSystemEventService | MainThread* shape (Rust side) | ported | FSEvents watcher of the folder, extension watchers and provider changes reach $onFileEvent (cargo test -p files); no file operation participants, so workspace.event.test 0/10 (needs bulk edits) |
+| mainthread/MainThreadFileSystemEventService | MainThread* shape (Rust side) | ported | FSEvents watcher of the folder, extension watchers and provider changes reach $onFileEvent (cargo test -p files); file operation participants with files.participants.timeout: workspace.event.test 6/10, the 4 others need text documents (milestone 8) |
 | mainthread/MainThreadLabelService | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadSearch | MainThread* shape (Rust side) | stub | session.rs answers undefined; extension search providers are not registered, workspace search runs in workbench/services/search |
 | mainthread/MainThreadShare | MainThread* shape (Rust side) | stub | session.rs answers undefined |
@@ -391,7 +391,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/userDataSync | workbench service | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/services/utilityProcess | workbench service | todo |  |
 | workbench/services/views | workbench service | todo |  |
-| workbench/services/workingCopy | workbench service | todo |  |
+| workbench/services/workingCopy | workbench service | ported | WorkingCopyFileService create, move, copy, delete with participants (cargo test -p files operations); no working copies (milestone 8) |
 | workbench/services/workspaces | workbench service | todo |  |
 | workbench/contrib/accessibility | workbench contribution | todo |  |
 | workbench/contrib/accessibilitySignals | workbench contribution | todo |  |
@@ -399,7 +399,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/authentication | workbench contribution | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/contrib/bracketPairColorizer2Telemetry | workbench contribution | todo |  |
 | workbench/contrib/browserView | workbench contribution | todo |  |
-| workbench/contrib/bulkEdit | workbench contribution | todo |  |
+| workbench/contrib/bulkEdit | workbench contribution | ported | BulkFileEdits with grouping, options and undo edits (cargo test -p files operations); no text edits, preview or undo stack yet |
 | workbench/contrib/callHierarchy | workbench contribution | todo |  |
 | workbench/contrib/canvases | workbench contribution | todo |  |
 | workbench/contrib/chat | workbench contribution | removed | no sign-in/AI by decision (port/notes.md); not ported |

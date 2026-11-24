@@ -52,3 +52,14 @@ Passing: all 12 of `workspace-fs`; in `workspace`, findFiles, findFiles2 and fin
 | api-workspace | 4 | 0 | 0 | 0 | exit 0 after 0s |
 
 api-workspace matches the reference (4/0/0): rootPath, workspaceFile, workspaceFolders, getWorkspaceFolder. api-folder is unchanged.
+
+## M12 bulk file edits
+
+Same `MOCHA_GREP` and setup as the multi-root section, on the Studio, the working tree of the bulk edits commit. Baseline: the multi-root section (api-folder 59/2/77).
+
+| suite | passing | pending | failing | not reached | run |
+|-------|---------|---------|---------|-------------|-----|
+| api-folder | 74 | 2 | 62 | 264 | exit 1 after 7s |
+| api-workspace | 4 | 0 | 0 | 0 | exit 0 after 1s |
+
+`workspace events` passes 6/10: onWillCreate/onDidCreate, onWillDelete/onDidDelete and its three "make changes" cases, onWillRename/onDidRename. The 4 failing ones open or edit text documents (`openTextDocument`, text edits from participants), milestone 8. New passes in `workspace`: applyEdit should fail when renaming deleted resource, rename & ignoreIfExists, delete & ignoreIfNotExists, #111867 1/3, 2/3 (fake-fs provider) and 3/3, creating binary files, #42667. "applyEdit should fail when editing deleted/renamed from resource" pass because any text edit fails today, not because of the version check. The other applyEdit tests need text documents.
