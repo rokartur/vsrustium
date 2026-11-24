@@ -246,8 +246,8 @@ fn uri(resource: &Resource) -> Value {
 }
 
 /// The file service's providers: the disk for `file`, `ExtHostFileSystem` for the schemes extensions registered.
-pub(crate) struct Providers<'a> {
-    pub(crate) session: &'a mut Session,
+pub struct Providers<'a> {
+    pub session: &'a mut Session,
 }
 
 impl Providers<'_> {

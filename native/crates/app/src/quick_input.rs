@@ -10,6 +10,7 @@ use config::workspace::Workspace;
 use serde_json::Value;
 
 use crate::filters::{self, Matches};
+use crate::input_box::InputBox;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Kind {
@@ -54,17 +55,6 @@ pub enum Focus {
     PreviousPage,
     NextSeparator,
     PreviousSeparator,
-}
-
-/// Caret moves of a single-line text input (macOS: Option+arrow by word, Cmd+arrow to the ends).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Motion {
-    Left,
-    Right,
-    WordLeft,
-    WordRight,
-    Home,
-    End,
 }
 
 /// `ItemActivation`: which item the list focuses when items are set.
@@ -151,11 +141,10 @@ pub struct QuickInput {
     pub password: bool,
     pub validation_message: Option<String>,
     pub severity: Severity,
-    pub value: String,
+    /// The value as the input element shows it, with its selection now.
+    pub input_box: InputBox,
     /// `valueSelection` as char offsets; `None` selects all of the value when the input shows.
     pub value_selection: Option<(usize, usize)>,
-    /// The input box's selection as it is now: anchor and caret, char offsets into `value`.
-    pub selection: (usize, usize),
     pub can_select_many: bool,
     pub can_accept_in_background: bool,
     pub match_on_label: bool,
@@ -182,10 +171,6 @@ pub struct QuickInput {
     selected_items_updated: bool,
     confirming_active: bool,
     confirming_selection: bool,
-    /// The input element's own undo: values and selections before each edit, a run of typing as one step.
-    undo_stack: Vec<(String, (usize, usize))>,
-    redo_stack: Vec<(String, (usize, usize))>,
-    typing: bool,
     pub events: Vec<Event>,
 }
 
@@ -207,9 +192,8 @@ impl QuickInput {
             password: false,
             validation_message: None,
             severity: Severity::Ignore,
-            value: String::new(),
+            input_box: InputBox::default(),
             value_selection: None,
-            selection: (0, 0),
             can_select_many: false,
             can_accept_in_background: false,
             match_on_label: true,
@@ -235,9 +219,6 @@ impl QuickInput {
             selected_items_updated: false,
             confirming_active: false,
             confirming_selection: false,
-            undo_stack: Vec::new(),
-            redo_stack: Vec::new(),
-            typing: false,
             events: Vec::new(),
         }
     }
@@ -285,30 +266,30 @@ impl QuickInput {
 
     /// `value = ...` from the API: filters and fires the change back.
     pub fn set_value(&mut self, value: String) {
-        self.set_value_from(value, false);
-    }
-
-    /// The user typed in the input box.
-    pub fn type_value(&mut self, value: String) {
-        self.set_value_from(value, true);
-    }
-
-    /// `doSetValue`.
-    fn set_value_from(&mut self, value: String, from_ui: bool) {
-        if self.value == value {
+        if self.input_box.value == value {
             return;
         }
-        self.value = value;
-        if !from_ui {
-            // Assigning an input element's value puts the caret at its end.
-            let end = self.value.chars().count();
-            self.selection = (end, end);
-            self.update();
+        self.input_box.set_value(value);
+        self.update();
+        self.value_changed();
+    }
+
+    /// An edit in the input element; one that changes the value sets it as `doSetValue` from the UI does.
+    pub fn edit_input(&mut self, edit: impl FnOnce(&mut InputBox)) {
+        let before = self.input_box.value.clone();
+        edit(&mut self.input_box);
+        if self.input_box.value != before {
+            self.value_changed();
         }
-        if self.visible && self.kind == Kind::QuickPick && self.filter(&self.value.clone()) {
+    }
+
+    /// The rest of `doSetValue`: a visible quick pick filters, and the change goes out.
+    fn value_changed(&mut self) {
+        let value = self.input_box.value.clone();
+        if self.visible && self.kind == Kind::QuickPick && self.filter(&value) {
             self.try_select_first();
         }
-        self.events.push(Event::ChangeValue(self.value.clone()));
+        self.events.push(Event::ChangeValue(value));
     }
 
     /// `show()`; the owner hides the input that was visible before.
@@ -321,8 +302,8 @@ impl QuickInput {
         self.rows.clear();
         self.order.clear();
         self.focused = None;
-        let end = self.value.chars().count();
-        self.selection = self.value_selection.map_or((0, end), |(start, stop)| (start.min(end), stop.min(end)));
+        let end = self.input_box.len();
+        self.input_box.select(self.value_selection.map_or(0, |(start, _)| start), self.value_selection.map_or(end, |(_, stop)| stop));
         self.update();
     }
 
@@ -330,60 +311,9 @@ impl QuickInput {
     pub fn set_value_selection(&mut self, selection: Option<(usize, usize)>) {
         self.value_selection = selection;
         if self.visible {
-            let end = self.value.chars().count();
-            self.selection = selection.map_or((0, end), |(start, stop)| (start.min(end), stop.min(end)));
+            let end = self.input_box.len();
+            self.input_box.select(selection.map_or(0, |(start, _)| start), selection.map_or(end, |(_, stop)| stop));
         }
-    }
-
-    pub fn selected_range(&self) -> std::ops::Range<usize> {
-        self.selection.0.min(self.selection.1)..self.selection.0.max(self.selection.1)
-    }
-
-    /// Typing or pasting: the text replaces the selection (or `range`, char offsets) and the caret goes after it.
-    pub fn insert(&mut self, range: Option<std::ops::Range<usize>>, text: &str) {
-        let range = range.unwrap_or_else(|| self.selected_range());
-        let typing = range.is_empty() && !text.is_empty();
-        if !(typing && self.typing) {
-            self.undo_stack.push((self.value.clone(), self.selection));
-        }
-        self.typing = typing;
-        self.redo_stack.clear();
-        let chars: Vec<char> = self.value.chars().collect();
-        let end = range.end.min(chars.len());
-        let start = range.start.min(end);
-        let value: String = chars[..start].iter().chain(text.chars().collect::<Vec<_>>().iter()).chain(chars[end..].iter()).collect();
-        let caret = start + text.chars().count();
-        self.selection = (caret, caret);
-        self.type_value(value);
-    }
-
-    /// Moves the caret, or with `extend` the selection's moving end.
-    pub fn move_caret(&mut self, motion: Motion, extend: bool) {
-        let range = self.selected_range();
-        let target = match motion {
-            // Without shift an arrow collapses a selection to the side it points to.
-            Motion::Left if !extend && !range.is_empty() => range.start,
-            Motion::Right if !extend && !range.is_empty() => range.end,
-            _ => self.motion_target(motion),
-        };
-        self.selection = if extend { (self.selection.0, target) } else { (target, target) };
-        self.typing = false;
-    }
-
-    /// Cmd+Z and Shift+Cmd+Z in the input element.
-    pub fn undo(&mut self, redo: bool) {
-        let (from, to) = if redo { (&mut self.redo_stack, &mut self.undo_stack) } else { (&mut self.undo_stack, &mut self.redo_stack) };
-        let Some((value, selection)) = from.pop() else { return };
-        to.push((self.value.clone(), self.selection));
-        self.typing = false;
-        self.selection = selection;
-        self.type_value(value);
-    }
-
-    /// `cursorAtEndOfQuickInputBox`.
-    pub fn caret_at_end(&self) -> bool {
-        let end = self.value.chars().count();
-        self.selection == (end, end)
     }
 
     /// The title bar text: `getTitle()`, the title with its step.
@@ -412,58 +342,6 @@ impl QuickInput {
                 Some(prompt) => format!("{prompt} (Press 'Enter' to confirm or 'Escape' to cancel)"),
                 None => "Press 'Enter' to confirm your input or 'Escape' to cancel".to_owned(),
             }),
-        }
-    }
-
-    /// Backspace and Delete with their word and line variants: the selection, else up to the motion's target.
-    pub fn delete(&mut self, motion: Motion) {
-        let range = self.selected_range();
-        if range.is_empty() {
-            let target = self.motion_target(motion);
-            self.insert(Some(target.min(range.start)..target.max(range.start)), "");
-        } else {
-            self.insert(Some(range), "");
-        }
-    }
-
-    pub fn select_all(&mut self) {
-        self.selection = (0, self.value.chars().count());
-    }
-
-    pub fn selected_text(&self) -> String {
-        let range = self.selected_range();
-        self.value.chars().skip(range.start).take(range.len()).collect()
-    }
-
-    fn motion_target(&self, motion: Motion) -> usize {
-        let chars: Vec<char> = self.value.chars().collect();
-        let caret = self.selection.1.min(chars.len());
-        let is_word = |c: char| c.is_alphanumeric() || c == '_';
-        match motion {
-            Motion::Left => caret.saturating_sub(1),
-            Motion::Right => (caret + 1).min(chars.len()),
-            Motion::Home => 0,
-            Motion::End => chars.len(),
-            Motion::WordLeft => {
-                let mut at = caret;
-                while at > 0 && !is_word(chars[at - 1]) {
-                    at -= 1;
-                }
-                while at > 0 && is_word(chars[at - 1]) {
-                    at -= 1;
-                }
-                at
-            }
-            Motion::WordRight => {
-                let mut at = caret;
-                while at < chars.len() && !is_word(chars[at]) {
-                    at += 1;
-                }
-                while at < chars.len() && is_word(chars[at]) {
-                    at += 1;
-                }
-                at
-            }
         }
     }
 
@@ -594,7 +472,7 @@ impl QuickInput {
             let had_focus = self.focused.is_some();
             self.set_elements();
             self.should_loop = !self.can_select_many;
-            self.filter(&self.value.clone());
+            self.filter(&self.input_box.value.clone());
             // The list buffers its focus events while it is filled and fires only the last one.
             match self.item_activation {
                 ItemActivation::None => {

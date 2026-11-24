@@ -313,7 +313,7 @@ fn input_box_accepts_its_value() {
     input.show();
     input.accept_from_ui();
     assert_eq!(drain(&mut input), ["value foo", "accept"]);
-    assert_eq!(input.value, "foo");
+    assert_eq!(input.input_box.value, "foo");
 }
 
 fn json_item(handle: i64, label: Option<&str>, path: &str) -> Value {

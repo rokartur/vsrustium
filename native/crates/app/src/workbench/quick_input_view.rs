@@ -2,22 +2,22 @@
 //! (quickInputList.ts), laid out and colored as media/quickInput.css draws it. The store keeps every quick
 //! input with its owner (main_thread_quick_open.rs); the widget shows one of them at a time.
 
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 use std::ops::Range;
 use std::rc::Rc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use gpui::{
-    Animation, AnimationExt, AnyElement, App, Bounds, BoxShadow, ClickEvent, DispatchPhase, Context, Div, ElementInputHandler, FocusHandle, Font, FontWeight, HighlightStyle,
-    KeyDownEvent, ListAlignment, UTF16Selection, ListState, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Rgba, ShapedLine, StyledText, Subscription, Task, TextRun,
-    UnderlineStyle, Window, canvas, div, fill, list, point, prelude::*, px, rgba, size,
+    Animation, AnimationExt, AnyElement, App, Bounds, BoxShadow, ClickEvent, DispatchPhase, Context, Div, FocusHandle, FontWeight, HighlightStyle, ListAlignment, ListState,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Rgba, StyledText, Subscription, Task, Window, canvas, div, fill, list, point, prelude::*, px, rgba,
 };
 use serde_json::Value;
 
 use super::Workbench;
+use super::input_box_view::{InputId, InputLook, InputView};
 use crate::commands::Outcome;
 use crate::main_thread_quick_open::Owner;
-use crate::quick_input::{Button, Event, Focus, Kind, Motion, QuickInput, Row, Severity, drag_layout};
+use crate::quick_input::{Button, Event, Focus, Kind, QuickInput, Row, Severity, drag_layout};
 
 /// `QuickInputController.MAX_WIDTH`.
 const MAX_WIDTH: f32 = 600.;
@@ -51,26 +51,13 @@ pub struct QuickInputs {
     /// A busy input shows its progress bar after 800ms.
     busy: Option<(i64, Task<()>)>,
     busy_shown: bool,
-    /// The IME's marked text, a UTF-16 range of the value.
-    pub marked: Option<Range<usize>>,
-    selecting: bool,
-    caret_moved: Instant,
-    blink: Option<Task<()>>,
-    /// The shaped input text, its window x, and the scroll that keeps the caret visible.
-    text: Rc<RefCell<InputText>>,
+    pub input: InputView,
     /// `QuickInputViewState`: the dragged position, top and center as fractions of the window.
     view_state: Option<(Option<f32>, Option<f32>)>,
     /// The pointer's offset from the widget's top left while the title or header is dragged.
     drag: Option<Point<Pixels>>,
     /// The widget's padding box as last painted.
     bounds: Rc<Cell<Bounds<Pixels>>>,
-}
-
-#[derive(Default)]
-struct InputText {
-    line: Option<ShapedLine>,
-    left: f32,
-    scroll: f32,
 }
 
 impl QuickInputs {
@@ -90,11 +77,7 @@ impl QuickInputs {
             opened: 0,
             busy: None,
             busy_shown: false,
-            marked: None,
-            selecting: false,
-            caret_moved: Instant::now(),
-            blink: None,
-            text: Rc::default(),
+            input: InputView::default(),
             view_state: None,
             drag: None,
             bounds: Rc::default(),
@@ -170,16 +153,15 @@ impl Workbench {
         let Some(input) = inputs.get_mut(id) else { return };
         input.show();
         inputs.visible = Some(id);
-        inputs.marked = None;
+        inputs.input.reset();
         inputs.hovered = None;
         inputs.revealed = None;
-        inputs.caret_moved = Instant::now();
         window.focus(&self.quick_inputs.focus, cx);
         if self.quick_inputs.focus_out.is_none() {
             let focus = self.quick_inputs.focus.clone();
             self.quick_inputs.focus_out = Some(cx.on_focus_out(&focus, window, |workbench, _, window, cx| workbench.quick_input_focus_lost(window, cx)));
         }
-        self.blink_caret(window, cx);
+        self.blink_caret(InputId::QuickInput, window, cx);
         cx.notify();
     }
 
@@ -203,8 +185,7 @@ impl Workbench {
             });
         });
         self.quick_inputs.closing = Some((closing, close));
-        self.quick_inputs.marked = None;
-        self.quick_inputs.blink = None;
+        self.quick_inputs.input.reset();
         let previous = self.quick_inputs.previous_focus.take();
         if restore_focus && self.quick_inputs.focus.is_focused(window) {
             match previous {
@@ -255,10 +236,9 @@ impl Workbench {
     }
 
     /// Runs `change` on the shown input, then delivers what it fired.
-    fn with_current_quick_input(&mut self, window: &mut Window, cx: &mut Context<Self>, change: impl FnOnce(&mut QuickInput)) -> Outcome {
+    pub(super) fn with_current_quick_input(&mut self, window: &mut Window, cx: &mut Context<Self>, change: impl FnOnce(&mut QuickInput)) -> Outcome {
         let Some(input) = self.quick_inputs.current_mut() else { return Outcome::done() };
         change(input);
-        self.quick_inputs.caret_moved = Instant::now();
         self.flush_quick_input_events(window, cx);
         Outcome::done()
     }
@@ -277,7 +257,7 @@ impl Workbench {
             Kind::InputBox => "inputBox",
         };
         context.insert("quickInputType".into(), kind.into());
-        context.insert("cursorAtEndOfQuickInputBox".into(), input.caret_at_end().into());
+        context.insert("cursorAtEndOfQuickInputBox".into(), input.input_box.caret_at_end().into());
     }
 
     /// quickInputActions.ts and quickAccessActions.ts.
@@ -335,31 +315,6 @@ impl Workbench {
         });
     }
 
-    /// The text commands of the focused input element by their editor ids (`MultiCommand`s fall back to the native input).
-    pub(super) fn quick_input_text_command(&mut self, command: &str, window: &mut Window, cx: &mut Context<Self>) -> Option<Outcome> {
-        if !self.quick_inputs.focus.is_focused(window) {
-            return None;
-        }
-        let input = self.quick_inputs.current()?;
-        let selected = input.selected_text();
-        let password = input.password;
-        match command {
-            "editor.action.clipboardCopyAction" | "editor.action.clipboardCutAction" if selected.is_empty() || password => return Some(Outcome::done()),
-            "editor.action.clipboardCopyAction" | "editor.action.clipboardCutAction" => cx.write_to_clipboard(gpui::ClipboardItem::new_string(selected)),
-            _ => {}
-        }
-        let pasted = cx.read_from_clipboard().and_then(|item| item.text()).unwrap_or_default();
-        Some(self.with_current_quick_input(window, cx, |input| match command {
-            "undo" => input.undo(false),
-            "redo" => input.undo(true),
-            "editor.action.selectAll" => input.select_all(),
-            "editor.action.clipboardCutAction" => input.insert(None, ""),
-            // A single-line input drops the line breaks of what is pasted.
-            "editor.action.clipboardPasteAction" => input.insert(None, &pasted.replace(['\r', '\n'], "")),
-            _ => {}
-        }))
-    }
-
     fn quick_input_page_size(&self, window: &Window) -> usize {
         (self.quick_input_list_max_height(window) / ROW_HEIGHT).floor().max(1.) as usize
     }
@@ -368,110 +323,6 @@ impl Workbench {
     fn quick_input_list_max_height(&self, window: &Window) -> f32 {
         let height = f32::from(window.viewport_size().height) * 0.4;
         (height / DETAIL_ROW_HEIGHT).floor() * DETAIL_ROW_HEIGHT + 6.
-    }
-
-    /// The caret blinks while the input has focus; a key restarts the blink.
-    fn blink_caret(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.quick_inputs.blink = Some(cx.spawn_in(window, async move |workbench, cx| {
-            loop {
-                cx.background_executor().timer(Duration::from_millis(500)).await;
-                if workbench.update(cx, |_, cx| cx.notify()).is_err() {
-                    return;
-                }
-            }
-        }));
-    }
-
-    /// Keys of the input element that no keybinding took: caret moves and deletes.
-    fn quick_input_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        let keystroke = &event.keystroke;
-        let modifiers = keystroke.modifiers;
-        if modifiers.control || self.quick_inputs.marked.is_some() {
-            return;
-        }
-        let word = modifiers.alt;
-        let line = modifiers.platform;
-        let motion = |back: bool| match (back, line, word) {
-            (true, true, _) => Motion::Home,
-            (false, true, _) => Motion::End,
-            (true, false, true) => Motion::WordLeft,
-            (false, false, true) => Motion::WordRight,
-            (true, false, false) => Motion::Left,
-            (false, false, false) => Motion::Right,
-        };
-        let extend = modifiers.shift;
-        let handled = match keystroke.key.as_str() {
-            "left" => Some(Box::new(move |input: &mut QuickInput| input.move_caret(motion(true), extend)) as Box<dyn FnOnce(&mut QuickInput)>),
-            "right" => Some(Box::new(move |input: &mut QuickInput| input.move_caret(motion(false), extend)) as Box<dyn FnOnce(&mut QuickInput)>),
-            "home" | "up" if keystroke.key == "home" || line => Some(Box::new(move |input: &mut QuickInput| input.move_caret(Motion::Home, extend)) as Box<dyn FnOnce(&mut QuickInput)>),
-            "end" | "down" if keystroke.key == "end" || line => Some(Box::new(move |input: &mut QuickInput| input.move_caret(Motion::End, extend)) as Box<dyn FnOnce(&mut QuickInput)>),
-            "backspace" => Some(Box::new(move |input: &mut QuickInput| input.delete(motion(true))) as Box<dyn FnOnce(&mut QuickInput)>),
-            "delete" => Some(Box::new(move |input: &mut QuickInput| input.delete(motion(false))) as Box<dyn FnOnce(&mut QuickInput)>),
-            // Tab moves the focus between the widget's controls; the input is the only one the port draws focusable.
-            "tab" => Some(Box::new(|_: &mut QuickInput| {}) as Box<dyn FnOnce(&mut QuickInput)>),
-            _ => None,
-        };
-        let Some(change) = handled else { return };
-        cx.stop_propagation();
-        self.with_current_quick_input(window, cx, change);
-    }
-
-    /// A press in the input text puts the caret there; a double press selects the word, a triple one all.
-    fn quick_input_mouse_down(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        window.focus(&self.quick_inputs.focus, cx);
-        let index = self.quick_input_index_at(f32::from(event.position.x));
-        self.quick_inputs.selecting = true;
-        let extend = event.modifiers.shift;
-        let clicks = event.click_count;
-        self.with_current_quick_input(window, cx, |input| match clicks {
-            1 => input.selection = if extend { (input.selection.0, index) } else { (index, index) },
-            2 => {
-                input.selection = (index, index);
-                input.move_caret(Motion::WordLeft, false);
-                input.move_caret(Motion::WordRight, true);
-            }
-            _ => input.select_all(),
-        });
-    }
-
-    fn quick_input_mouse_move(&mut self, event: &MouseMoveEvent, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.quick_inputs.selecting || event.pressed_button != Some(MouseButton::Left) {
-            return;
-        }
-        let index = self.quick_input_index_at(f32::from(event.position.x));
-        self.with_current_quick_input(window, cx, |input| input.selection.1 = index);
-    }
-
-    /// The char offset of the value closest to a window x.
-    fn quick_input_index_at(&self, x: f32) -> usize {
-        let text = self.quick_inputs.text.borrow();
-        let Some(line) = text.line.as_ref() else { return 0 };
-        let byte = line.closest_index_for_x(px(x - text.left + text.scroll));
-        line.text[..byte.min(line.text.len())].chars().count()
-    }
-
-    /// The input handler's view of the value: UTF-16 offsets.
-    pub(super) fn quick_input_text_for_range(&self, range: Range<usize>, adjusted_range: &mut Option<Range<usize>>) -> Option<String> {
-        let units: Vec<u16> = self.quick_inputs.current()?.value.encode_utf16().collect();
-        let range = range.start.min(units.len())..range.end.min(units.len());
-        *adjusted_range = Some(range.clone());
-        Some(String::from_utf16_lossy(&units[range]))
-    }
-
-    pub(super) fn quick_input_selected_range(&self) -> Option<UTF16Selection> {
-        let input = self.quick_inputs.current()?;
-        let (anchor, head) = (chars_to_utf16(&input.value, input.selection.0), chars_to_utf16(&input.value, input.selection.1));
-        Some(UTF16Selection { range: anchor.min(head)..anchor.max(head), reversed: head < anchor })
-    }
-
-    /// Typed text and IME composition; marked text replaces the previous marked text and stays marked.
-    pub(super) fn quick_input_replace(&mut self, range: Option<Range<usize>>, text: &str, mark: bool, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(input) = self.quick_inputs.current() else { return };
-        let range = range.or(self.quick_inputs.marked.clone()).map(|range| utf16_to_chars(&input.value, range.start)..utf16_to_chars(&input.value, range.end));
-        let start = range.as_ref().map_or(input.selected_range().start, |range| range.start);
-        let start_utf16 = chars_to_utf16(&input.value, start);
-        self.quick_inputs.marked = (mark && !text.is_empty()).then(|| start_utf16..start_utf16 + text.encode_utf16().count());
-        self.with_current_quick_input(window, cx, |input| input.insert(range, text));
     }
 
     /// The widget, drawn over the workbench at the top center or where it was dragged.
@@ -789,94 +640,9 @@ impl Workbench {
             .bg(self.color("input.background"))
             .text_color(self.foreground_or("input.foreground"))
             .when(input.can_select_many, |input_box| input_box.ml(px(5.)))
-            .child(self.quick_input_text(input, focused, cx))
+            .child(div().flex_1().h_full().mx(px(6.)).flex().child(self.input_text(InputId::QuickInput, InputLook { password: input.password, placeholder: input.placeholder.clone(), focused }, cx)))
             .children(count)
             .children(input_buttons.into_iter().map(|button| div().mr(px(2.)).child(self.quick_input_button(button, 20., cx))))
-    }
-
-    /// The input element: the value (or placeholder) with its selection, marked text and caret.
-    fn quick_input_text(&self, input: &QuickInput, focused: bool, cx: &mut Context<Self>) -> impl IntoElement {
-        let display: String = if input.password { input.value.chars().map(|_| '\u{2022}').collect() } else { input.value.clone() };
-        let byte_at = |chars: usize| display.char_indices().nth(chars).map_or(display.len(), |(byte, _)| byte);
-        let selection = byte_at(input.selected_range().start)..byte_at(input.selected_range().end);
-        let caret = byte_at(input.selection.1);
-        let marked = self.quick_inputs.marked.clone().map(|range| byte_at(utf16_to_chars(&input.value, range.start))..byte_at(utf16_to_chars(&input.value, range.end)));
-        let placeholder = input.value.is_empty().then(|| input.placeholder.clone()).flatten();
-        let text_color = self.foreground_or("input.foreground");
-        let placeholder_color = self.color("input.placeholderForeground");
-        let selection_color = self.color(if focused { "selection.background" } else { "editor.inactiveSelectionBackground" });
-        let selection_color = if self.theme.color("selection.background").is_some() { selection_color } else { self.color("editor.selectionBackground") };
-        // Native carets blink at a 1s period; edits and moves restart it.
-        let caret_on = focused && (self.quick_inputs.caret_moved.elapsed().as_millis() / 500) % 2 == 0;
-        let layout = self.quick_inputs.text.clone();
-        let focus = self.quick_inputs.focus.clone();
-        let workbench = cx.entity();
-        div()
-            .id("quick-input-text")
-            .flex_1()
-            .h_full()
-            .mx(px(6.))
-            .overflow_hidden()
-            .track_focus(&self.quick_inputs.focus)
-            .on_key_down(cx.listener(Self::quick_input_key_down))
-            .on_mouse_down(MouseButton::Left, cx.listener(Self::quick_input_mouse_down))
-            .on_mouse_move(cx.listener(Self::quick_input_mouse_move))
-            .on_mouse_up(MouseButton::Left, cx.listener(|workbench, _, _, _| workbench.quick_inputs.selecting = false))
-            .on_mouse_up_out(MouseButton::Left, cx.listener(|workbench, _, _, _| workbench.quick_inputs.selecting = false))
-            .child(
-                canvas(
-                    move |_, _, _| (),
-                    move |bounds, _, window, cx| {
-                        let font: Font = window.text_style().font();
-                        let font_size = window.text_style().font_size.to_pixels(window.rem_size());
-                        let line_height = px(18.);
-                        let origin_y = bounds.origin.y + (bounds.size.height - line_height) / 2.;
-                        if let Some(placeholder) = placeholder {
-                            let run = TextRun { len: placeholder.len(), font: font.clone(), color: placeholder_color.into(), background_color: None, underline: None, strikethrough: None };
-                            let line = window.text_system().shape_line(placeholder.into(), font_size, &[run], None);
-                            let _ = line.paint(point(bounds.origin.x, origin_y), line_height, gpui::TextAlign::Left, None, window, cx);
-                        }
-                        let mut runs = Vec::new();
-                        let plain = |len: usize| TextRun { len, font: font.clone(), color: text_color.into(), background_color: None, underline: None, strikethrough: None };
-                        match &marked {
-                            Some(marked) if !marked.is_empty() => {
-                                runs.push(plain(marked.start));
-                                let underline = UnderlineStyle { thickness: px(1.), color: Some(text_color.into()), wavy: false };
-                                runs.push(TextRun { underline: Some(underline), ..plain(marked.len()) });
-                                runs.push(plain(display.len() - marked.end));
-                            }
-                            _ => runs.push(plain(display.len())),
-                        }
-                        runs.retain(|run| run.len > 0);
-                        let line = window.text_system().shape_line(display.clone().into(), font_size, &runs, None);
-                        let caret_x = f32::from(line.x_for_index(caret));
-                        let width = f32::from(bounds.size.width);
-                        let mut text = layout.borrow_mut();
-                        let mut scroll = text.scroll;
-                        if caret_x - scroll > width - 1. {
-                            scroll = caret_x - width + 1.;
-                        }
-                        if caret_x < scroll {
-                            scroll = caret_x;
-                        }
-                        scroll = scroll.min((f32::from(line.width()) - width + 1.).max(0.)).max(0.);
-                        let left = f32::from(bounds.origin.x) - scroll;
-                        if !selection.is_empty() {
-                            let start = f32::from(line.x_for_index(selection.start));
-                            let end = f32::from(line.x_for_index(selection.end));
-                            window.paint_quad(fill(gpui::Bounds::new(point(px(left + start), origin_y), size(px(end - start), line_height)), selection_color));
-                        }
-                        let _ = line.paint(point(px(left), origin_y), line_height, gpui::TextAlign::Left, None, window, cx);
-                        if caret_on && selection.is_empty() {
-                            window.paint_quad(fill(gpui::Bounds::new(point(px(left + caret_x), origin_y), size(px(1.), line_height)), text_color));
-                        }
-                        *text = InputText { line: Some(line), left: f32::from(bounds.origin.x), scroll };
-                        drop(text);
-                        window.handle_input(&focus, ElementInputHandler::new(bounds, workbench), cx);
-                    },
-                )
-                .size_full(),
-            )
     }
 
     /// `.quick-input-message`: the prompt, or the validation message in its severity's colors.
@@ -1148,22 +914,6 @@ fn icon_at(chars: &[char]) -> Option<(String, usize)> {
     let name = inner.split('~').next().unwrap_or_default();
     let valid = !name.is_empty() && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
     valid.then(|| (name.to_owned(), close + 1))
-}
-
-/// The char offset of a UTF-16 offset into `text`; an offset inside a surrogate pair rounds up.
-pub fn utf16_to_chars(text: &str, offset: usize) -> usize {
-    let mut units = 0;
-    for (index, c) in text.chars().enumerate() {
-        if units >= offset {
-            return index;
-        }
-        units += c.len_utf16();
-    }
-    text.chars().count()
-}
-
-pub fn chars_to_utf16(text: &str, chars: usize) -> usize {
-    text.chars().take(chars).map(char::len_utf16).sum()
 }
 
 #[cfg(test)]

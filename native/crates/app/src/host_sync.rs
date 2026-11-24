@@ -13,6 +13,7 @@ use config::model::Change;
 use config::service::Settings;
 use exthost::main_thread_configuration::changed_args;
 use exthost::scan::file_uri;
+use files::operations::{self, FileEdit, FileUndo, WorkingCopyFiles};
 use serde_json::{Value, json};
 
 use crate::editor::{ContentChanged, EditReason, EditorGroup, OpenEditor, Position, Selection};
@@ -25,6 +26,36 @@ pub struct HostMessage {
     pub args: Vec<Value>,
     /// Where the host's answer goes, for `HostSync::call`.
     pub reply: Option<oneshot::Sender<Result<Value, Value>>>,
+    /// Working copy file operations, run on the host thread so they reach its file operation participants.
+    pub files: Option<FileWork>,
+}
+
+/// Explorer file edits (`IExplorerService.applyBulkEdit`) or the undo or redo of earlier ones.
+pub enum FileJob {
+    Apply(Vec<FileEdit>),
+    Reverse(FileUndo),
+}
+
+pub struct FileWork {
+    job: FileJob,
+    reply: oneshot::Sender<files::Result<FileUndo>>,
+}
+
+impl std::fmt::Debug for FileWork {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("FileWork")
+    }
+}
+
+impl FileWork {
+    /// Runs the job and answers with what reverses it.
+    pub fn run(self, fs: &mut impl WorkingCopyFiles) {
+        let result = match self.job {
+            FileJob::Apply(edits) => operations::apply(fs, edits, None),
+            FileJob::Reverse(mut undo) => undo.reverse(fs).map(|()| undo),
+        };
+        let _ = self.reply.send(result);
+    }
 }
 
 pub struct HostSync {
@@ -212,7 +243,17 @@ impl HostSync {
 
     pub(crate) fn send(&self, proxy: &'static str, method: &'static str, args: Vec<Value>) {
         // The session thread is gone once the host exits; the workbench keeps working without it.
-        let _ = self.sender.send(HostMessage { proxy, method, args, reply: None });
+        let _ = self.sender.send(HostMessage { proxy, method, args, reply: None, files: None });
+    }
+
+    /// Runs file edits on the host thread; with no host they run here on the disk, without participants.
+    pub fn run_files(&self, job: FileJob) -> oneshot::Receiver<files::Result<FileUndo>> {
+        let (reply, receiver) = oneshot::channel();
+        let message = HostMessage { proxy: "", method: "", args: Vec::new(), reply: None, files: Some(FileWork { job, reply }) };
+        if let Err(unsent) = self.sender.send(message) {
+            unsent.0.files.expect("the message carries file work").run(&mut files::disk::Disk);
+        }
+        receiver
     }
 
     /// `ExtensionHostManager.activateByEvent`: one request per event; a repeat resolves at once.
@@ -229,7 +270,7 @@ impl HostSync {
     /// Sends a request whose answer arrives on the receiver; a host that is gone drops the sender.
     pub fn call(&self, proxy: &'static str, method: &'static str, args: Vec<Value>) -> oneshot::Receiver<Result<Value, Value>> {
         let (reply, receiver) = oneshot::channel();
-        let _ = self.sender.send(HostMessage { proxy, method, args, reply: Some(reply) });
+        let _ = self.sender.send(HostMessage { proxy, method, args, reply: Some(reply), files: None });
         receiver
     }
 }
