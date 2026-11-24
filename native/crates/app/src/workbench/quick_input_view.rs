@@ -4,6 +4,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::ops::Range;
+use std::path::Path;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -267,6 +268,12 @@ impl Workbench {
     pub(super) fn quick_input_context(&self, window: &Window, context: &mut std::collections::HashMap<String, Value>) {
         let Some(input) = self.quick_inputs.current() else { return };
         context.insert("inQuickOpen".into(), true.into());
+        // `contextKey` of the quick access provider: Quick Open's is `inFilesPicker`.
+        if let Some(Owner::QuickAccess(_)) = self.quick_inputs.owner(input.id)
+            && super::quick_access::is_files_picker(&input.value)
+        {
+            context.insert("inFilesPicker".into(), true.into());
+        }
         if !self.quick_inputs.focus.is_focused(window) {
             return;
         }
@@ -298,6 +305,8 @@ impl Workbench {
             ("workbench.action.quickOpenSelectPrevious", Focus::Previous),
             ("workbench.action.quickOpenNavigateNext", Focus::Next),
             ("workbench.action.quickOpenNavigatePrevious", Focus::Previous),
+            ("workbench.action.quickOpenNavigateNextInFilePicker", Focus::Next),
+            ("workbench.action.quickOpenNavigatePreviousInFilePicker", Focus::Previous),
         ];
         for (id, focus) in focus_commands {
             self.commands.register(id, move |workbench, _, window, cx| {
@@ -981,6 +990,7 @@ impl Workbench {
                         };
                         line.child(icon.mr(px(6.)))
                     })
+                    .children(row.item.file_icon.as_ref().and_then(|path| self.quick_input_file_icon(path, icon_color)))
                     .child(self.highlighted_label(&row.item.label, &row.label_highlights, highlight, 16., icon_color))
                     .children(row.item.description.as_ref().filter(|description| !description.is_empty()).map(|description| {
                         // monaco-icon-label: .label-description at 0.9em, 0.7 opacity, 0.5em of its own 11.7px after the name.
@@ -1016,8 +1026,9 @@ impl Workbench {
             .when(!row.item.keybinding.is_empty(), |entry| entry.child(self.keybinding_label(&row.item.keybinding, focused || hovered)))
             // The entry's right padding is 4px on 1.147, so the separator label ends 4px from the row edge.
             .children(separator.map(|label| div().flex().items_center().ml(px(4.)).mr(px(2.)).text_size(px(11.)).text_color(separator_color).child(label)))
-            .when(buttons_shown && !row.item.buttons.is_empty(), |entry| {
-                entry.child(div().flex().items_center().mt(px(1.)).children(row.item.buttons.iter().enumerate().map(|(index, button)| {
+            .when(row.item.buttons.iter().any(|button| buttons_shown || button.always_visible), |entry| {
+                let buttons = row.item.buttons.iter().enumerate().filter(|(_, button)| buttons_shown || button.always_visible);
+                entry.child(div().flex().items_center().mt(px(1.)).children(buttons.map(|(index, button)| {
                     let toggle = button.toggle;
                     self.icon(button.codicon.as_deref().unwrap_or("blank"), 20., 16., icon_color)
                         .id(("quick-input-item-button", index))
@@ -1056,6 +1067,12 @@ impl Workbench {
                 }))
             })
             .into_any_element()
+    }
+
+    /// iconlabel.css `.monaco-icon-label::before`: 16px wide, 22px tall, 6px before the label.
+    fn quick_input_file_icon(&self, path: &Path, foreground: Rgba) -> Option<Div> {
+        let icon = self.file_icons.as_ref()?.file_icon(path, self.languages.language_of(path, ""), self.theme.kind, 13., ROW_HEIGHT, foreground)?;
+        Some(icon.mr(px(6.)))
     }
 
     /// A `HighlightedLabel` with `supportIcons`: `$(name)` draws a codicon, matches are bold in the highlight color.

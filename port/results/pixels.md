@@ -17,6 +17,8 @@ No new window: pixel-check has no quick input. All 16 port frames are byte-ident
 - Ad-hoc, theme picker (Cmd+K Cmd+T over the fixture folder, Dark Modern, 2x), the widget crop against the reference's: 2085.9 pixels (0.25%) differ at 10% fuzz; the rest is text antialiasing and the input's focus border.
 - empty light (3612, was 3600) and main hclight (5059, was 6626) moved with the reference capture only: its md5 changed, the port's did not; main hclight is the overview ruler artifact of milestone 7.
 - Ad-hoc, not a pixel-check result, measured at the palette commit before the drag: the Command Palette over the empty window (Dark Modern, 2x), the widget crop against the reference's, 2803.8 pixels (0.28%) differ at 2% fuzz (`magick compare -fuzz 2% -metric AE`); the rows and the selection highlight sit at the reference's y positions.
+- Rerun after Quick Open's file picks: 3567/3600/398/401, 7238/4067/960/874, 11158/6675/4695/4160, 12681/8133/5841/5565 (empty to main, dark to hclight), against the merged reference frames of the milestone 12 table; only main hclight moved (7132 there), the overview ruler artifact.
+- Ad-hoc, Quick Open (Cmd+P over port/fixtures/workspace with docs/guide.md, Dark Modern, 2x, `--screenshot` with the picker opened by a scratch extension) against the reference's CDP capture: the empty, `ts` and `util` pickers show the same rows, separators, file icons and highlights; the reference has one more row button, Open to the Side, which needs editor splits (port/notes.md).
 
 ## Milestone 12
 

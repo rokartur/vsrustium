@@ -192,7 +192,7 @@ fn folder_query_for_root(folder: &Path, options: &Value, setting: Setting, inclu
 }
 
 /// `getExcludes` (search/common/search.ts): `files.exclude` overlaid with `search.exclude`.
-fn excludes(folder: &Path, setting: Setting, include_search_excludes: bool) -> Option<Expression> {
+pub fn excludes(folder: &Path, setting: Setting, include_search_excludes: bool) -> Option<Expression> {
     let file_excludes = setting(folder, "files.exclude").as_object().cloned();
     let search_excludes = include_search_excludes.then(|| setting(folder, "search.exclude").as_object().cloned()).flatten();
     match (file_excludes, search_excludes) {

@@ -33,6 +33,8 @@ Failing: `editorCommand with extra args`, `api-command: vscode.diff`, `api-comma
 
 After the command history, quick input position and theme picker commits, one run with `vscode API - quick input|vscode API - commands|showInputBox|#7013|vscode API - configuration`: 24 passing, 0 pending, the same 4 failing.
 
+After Quick Open's file picks (`vscode API - quick input|vscode API - commands|showInputBox|#7013|vscode API - configuration|vscode API - globalState|vscode API - workspace-fs|vscode API - workspace events|vscode API - workspace `, SUITE_TIMEOUT=900): api-folder 59 passing, 2 pending, 77 failing, the same counts as before the change; api-workspace 0/0/4 as in M12 (multi-root).
+
 ## M12
 
 `MOCHA_GREP="vscode API - workspace-fs|vscode API - workspace events|vscode API - workspace " SUITE_TIMEOUT=600 port/tools/api-tests` at 9f6772f3 on the Studio, same setup. Not reached counts the reference tests the pattern filters out.

@@ -1,13 +1,16 @@
 //! Quick access (platform/quickinput/browser/quickAccess.ts): one quick pick whose value prefix picks the
-//! provider. `>` is the Command Palette (commandsQuickAccess.ts over pickerQuickAccess.ts).
+//! provider. `>` is the Command Palette (commandsQuickAccess.ts over pickerQuickAccess.ts), no prefix Quick Open
+//! (anythingQuickAccess.ts).
 
 use config::configuration::Overrides;
 use gpui::{Context, PromptLevel, Window};
 use serde_json::Value;
 
 use super::Workbench;
+use super::quick_open::{self, FilePickState};
 use crate::command_palette::{self, CommandsHistory, MenuItem, PaletteEntry};
 use crate::commands::Outcome;
+use crate::editor_history::EditorHistory;
 use crate::main_thread_quick_open::Owner;
 use crate::quick_input::{Button, Entry, Event, Item, Kind, QuickInput};
 
@@ -21,11 +24,14 @@ pub struct QuickAccess {
     /// `MenuId.CommandPalette` of the workbench and the extensions.
     pub menu: Vec<MenuItem>,
     history: CommandsHistory,
+    pub editor_history: EditorHistory,
+    /// The state of the shown Quick Open picker.
+    pub files: Option<FilePickState>,
 }
 
 impl Default for QuickAccess {
     fn default() -> Self {
-        QuickAccess { menu: command_palette::menu(&[]), history: CommandsHistory::new(command_palette::DEFAULT_HISTORY_LENGTH) }
+        QuickAccess { menu: command_palette::menu(&[]), history: CommandsHistory::new(command_palette::DEFAULT_HISTORY_LENGTH), editor_history: EditorHistory::default(), files: None }
     }
 }
 
@@ -33,32 +39,33 @@ impl Default for QuickAccess {
 #[derive(Clone, Debug)]
 pub enum Accept {
     Command { id: String, label: String },
+    File { path: std::path::PathBuf },
     Nothing,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Provider {
     Commands,
-    None,
+    Files,
 }
 
 impl Provider {
     /// `QuickAccessRegistry.getQuickAccessProvider`: the provider whose prefix starts the value.
     fn for_value(value: &str) -> Provider {
-        if value.starts_with(COMMANDS_PREFIX) { Provider::Commands } else { Provider::None }
+        if value.starts_with(COMMANDS_PREFIX) { Provider::Commands } else { Provider::Files }
     }
 
     fn prefix(self) -> &'static str {
         match self {
             Provider::Commands => COMMANDS_PREFIX,
-            Provider::None => "",
+            Provider::Files => "",
         }
     }
 
     fn placeholder(self) -> Option<String> {
         match self {
             Provider::Commands => Some("Type the name of a command to run.".into()),
-            Provider::None => None,
+            Provider::Files => Some(quick_open::PLACEHOLDER.into()),
         }
     }
 }
@@ -67,6 +74,14 @@ impl Workbench {
     pub(super) fn register_quick_access_commands(&mut self) {
         self.commands.register("workbench.action.showCommands", |workbench, _, window, cx| {
             workbench.show_quick_access(COMMANDS_PREFIX, false, window, cx);
+            Outcome::done()
+        });
+        // quickAccessActions.ts: a string argument is the value to show, kept as given.
+        self.commands.register("workbench.action.quickOpen", |workbench, args, window, cx| {
+            match args.first().and_then(Value::as_str) {
+                Some(prefix) => workbench.show_quick_access(&prefix.to_owned(), true, window, cx),
+                None => workbench.show_quick_access("", false, window, cx),
+            }
             Outcome::done()
         });
         self.commands.register("workbench.action.clearCommandHistory", |workbench, _, window, cx| workbench.clear_command_history(window, cx));
@@ -130,21 +145,27 @@ impl Workbench {
         // Showing it hides the visible picker, whose Hide event then drops it.
         let id = self.quick_inputs.add(input, Owner::QuickAccess(Vec::new()));
         self.show_quick_input(id, window, cx);
-        self.update_quick_access_picks(id, window);
+        self.update_quick_access_picks(id, window, cx);
         self.flush_quick_input_events(window, cx);
     }
 
     /// `updatePickerItems`: the provider of the value fills the picker.
-    fn update_quick_access_picks(&mut self, id: i64, window: &Window) {
+    pub(super) fn update_quick_access_picks(&mut self, id: i64, window: &Window, cx: &mut Context<Self>) {
         let Some(input) = self.quick_inputs.get(id) else { return };
         let provider = Provider::for_value(&input.value);
         let filter = input.value[provider.prefix().len()..].trim().to_owned();
-        let (entries, accepts) = match provider {
-            Provider::Commands => self.command_picks(&filter, window),
-            Provider::None => (Vec::new(), Vec::new()),
+        let picks = match provider {
+            Provider::Commands => {
+                let (entries, accepts) = self.command_picks(&filter, window);
+                Some((entries, accepts, false))
+            }
+            Provider::Files => self.file_picks(id, &filter, window, cx),
         };
         let input = self.quick_inputs.get_mut(id).expect("checked above");
         input.placeholder = provider.placeholder();
+        input.can_accept_in_background = provider == Provider::Files;
+        let Some((entries, accepts, busy)) = picks else { return };
+        input.busy = busy;
         input.set_items(entries);
         if let Some(Owner::QuickAccess(picks)) = self.quick_inputs.owner_mut(id) {
             *picks = accepts;
@@ -192,8 +213,8 @@ impl Workbench {
     /// The picker's listeners: the provider follows the value, accept runs the pick, the close button forgets it.
     pub fn quick_access_event(&mut self, id: i64, event: Event, window: &mut Window, cx: &mut Context<Self>) {
         match event {
-            Event::ChangeValue(_) => self.update_quick_access_picks(id, window),
-            Event::Accept => {
+            Event::ChangeValue(_) => self.update_quick_access_picks(id, window, cx),
+            Event::Accept(in_background) => {
                 let Some(input) = self.quick_inputs.get(id) else { return };
                 let Some(&handle) = input.selected_handles().first() else { return };
                 let Some(Owner::QuickAccess(picks)) = self.quick_inputs.owner(id) else { return };
@@ -202,12 +223,21 @@ impl Workbench {
                 if matches!(accept, Accept::Nothing) {
                     return;
                 }
-                self.hide_quick_input_by_id(id, window, cx);
-                self.accept_quick_access_pick(accept, window, cx);
+                if !in_background {
+                    self.hide_quick_input_by_id(id, window, cx);
+                }
+                self.accept_quick_access_pick(accept, in_background, window, cx);
+            }
+            Event::TriggerItemButton(handle, _, _) if matches!(self.quick_access_pick(id, handle), Some(Accept::File { .. })) => {
+                // `TriggerAction.REMOVE_ITEM` of "Remove from Recently Opened".
+                let Some(Accept::File { path, .. }) = self.quick_access_pick(id, handle) else { return };
+                self.remove_from_editor_history(&path);
+                if let Some(input) = self.quick_inputs.get_mut(id) {
+                    input.remove_item(handle);
+                }
             }
             Event::TriggerItemButton(handle, button, _) => {
-                let Some(Owner::QuickAccess(picks)) = self.quick_inputs.owner(id) else { return };
-                let Accept::Command { id: command, .. } = picks[handle as usize].clone() else { return };
+                let Some(Accept::Command { id: command, .. }) = self.quick_access_pick(id, handle) else { return };
                 if button == 0 {
                     // shortcut: opens keybindings.json where upstream opens the Keybindings editor at the command; the port has no Keybindings editor yet.
                     self.hide_quick_input_by_id(id, window, cx);
@@ -221,14 +251,28 @@ impl Workbench {
                     input.remove_item(handle);
                 }
             }
-            Event::Hide => self.quick_inputs.remove(id),
+            Event::Hide => {
+                self.quick_inputs.remove(id);
+                if self.quick_access.files.as_ref().is_some_and(|state| state.input == id) {
+                    self.quick_access.files = None;
+                }
+            }
             Event::ChangeActive(_) | Event::ChangeSelection(_) | Event::TriggerButton(..) => {}
         }
     }
 
+    fn quick_access_pick(&self, id: i64, handle: i64) -> Option<Accept> {
+        let Some(Owner::QuickAccess(picks)) = self.quick_inputs.owner(id) else { return None };
+        picks.get(handle as usize).cloned()
+    }
+
     /// The command pick's `accept`: remembered in the history, then run; an error shows in a dialog.
-    fn accept_quick_access_pick(&mut self, accept: Accept, window: &mut Window, cx: &mut Context<Self>) {
-        let Accept::Command { id, label } = accept else { return };
+    fn accept_quick_access_pick(&mut self, accept: Accept, in_background: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let (id, label) = match accept {
+            Accept::Command { id, label } => (id, label),
+            Accept::File { path, .. } => return self.open_file_pick(path, in_background, window, cx),
+            Accept::Nothing => return,
+        };
         self.quick_access.history.push(&id);
         self.save_command_history();
         let outcome = self.execute_command(&id, Vec::new(), window, cx);
@@ -255,6 +299,11 @@ impl Workbench {
         .detach();
         Outcome::done()
     }
+}
+
+/// The Quick Open picker's `contextKey`, `inFilesPicker`, holds while its provider fills it.
+pub fn is_files_picker(value: &str) -> bool {
+    Provider::for_value(value) == Provider::Files
 }
 
 /// `adjustValueSelection`: the caret at the end when the value is kept, else everything after the prefix selected.

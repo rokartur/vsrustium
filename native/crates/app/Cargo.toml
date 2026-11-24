@@ -12,6 +12,7 @@ path = "src/main.rs"
 anyhow.workspace = true
 config = { path = "../config" }
 exthost = { path = "../exthost" }
+files = { path = "../files" }
 flate2 = "1"
 futures = "0.3"
 icu_collator = "2"
@@ -22,6 +23,8 @@ icu_normalizer = { version = "2.4", default-features = false, features = ["compi
 serde_json.workspace = true
 storage = { path = "../storage" }
 onig = { version = "6.5", default-features = false }
+regex = "1"
+search = { path = "../search" }
 textmate = { path = "../textmate" }
 image = { version = "0.25", default-features = false, features = ["png"], optional = true }
 

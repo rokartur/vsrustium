@@ -163,7 +163,7 @@ Done when: api-tests `configuration.test` and `state.test` pass as in the refere
 
 ## Milestone 9: commands, keybindings, quick input
 
-Scope as in port/roadmap.md. Done in this milestone: the command registry, context keys and `when` clauses, keybinding resolution, the quick input widget and MainThreadQuickOpen, and the Command Palette. Not done: Quick Open (files, symbols), the native menu bar, context menus and hovers (see the last items).
+Scope as in port/roadmap.md. Done in this milestone: the command registry, context keys and `when` clauses, keybinding resolution, the quick input widget and MainThreadQuickOpen, the Command Palette, and Quick Open's file picks. Not done: Quick Open symbols (`@`, `#`), the native menu bar, context menus and hovers (see the last items).
 
 - `contextkey.rs` ports the scanner, parser, evaluation and the `And`/`Or` normal forms of `contextkey.ts`; `contextkey/tests.rs` holds the scanner and parser cases of `contextkey.test.ts` and `scanner.test.ts`.
 - `commands.rs` is the one registry of the workbench and `vscode.commands`: workbench handlers, extension commands registered through MainThreadCommands (`main_thread_commands.rs`), `onCommand:` activation before a run. `Commands::register_all` takes a whole table in one call for milestone 8's `editor/commands.rs`.
@@ -182,6 +182,9 @@ Scope as in port/roadmap.md. Done in this milestone: the command registry, conte
 - Quick input separators use `descriptionForeground`, not `pickerGroup.foreground`: the CSS rule of quickInput.css outranks the controller's style rule (measured on 1.147).
 - shortcut: the palette's gear button opens `keybindings.json`; upstream opens the Keybindings editor at the command, which the port does not have.
 - shortcut: `keybindings.json` is polled once a second; the port has no file watcher.
+- Quick Open (Cmd+P) ports the file picks of `anythingQuickAccess.ts` (`anything_quick_access.rs`, `workbench/quick_open.rs`) over the fuzzy scorer (`fuzzy_scorer.rs`, `fuzzyScorer.ts`): editor history first ("recently opened"), file results from one `search` crate file walk per picker, `:line:column` ranges, `~` and absolute paths, `No matching results`; picks sort and highlight like the reference for 21 queries over `port/fixtures/workspace` (`quick_open/tests.rs`, read from 1.147.0 through CDP).
+- The editor history (`editor_history.rs`, `historyService.ts`'s `history.entries`, 200 entries, `files.exclude` and `search.exclude` filtered) lives in the folder's workspace storage, shared with the extension host's MainThreadStorage; the port saves it on each change, as for the palette history.
+- The "Open to the Side" button and Alt+Enter to the side are absent: upstream shows them only when `supportsSplitting`, and the port has one editor group until milestone 11.
 - shortcut: a command that fails from a keybinding is logged to stderr; the port has no notification toasts.
 - shortcut: Revert File is a whole-text edit plus a save until milestone 8 has a model revert.
 - shortcut: the quick input fades in and out without the 0.97/0.99 scale of upstream's animation; GPUI has no element transforms.

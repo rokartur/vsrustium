@@ -2,11 +2,13 @@
 //! Usage: code-gpui [folder or .code-workspace file [file]] [--theme <settings id>] [--user-data-dir <dir>] [--screenshot <png>] [--node]
 //!   [--extensionDevelopmentPath=<dir> [--extensionTestsPath=<path>]]: the app exits with the test runner's code.
 
+mod anything_quick_access;
 mod brackets;
 mod command_palette;
 mod commands;
 mod contextkey;
 mod editor;
+mod editor_history;
 mod explorer;
 mod file_icons;
 mod filters;
@@ -118,6 +120,7 @@ fn main() -> anyhow::Result<()> {
                 workbench.file_icons = file_icons;
                 workbench.color_themes = color_themes;
                 workbench.restore_profile_state(storage.profile.clone());
+                workbench.restore_workspace_state(storage.workspace.clone());
                 if let Some(file) = file {
                     workbench.open_file(file, true, window, cx);
                 }

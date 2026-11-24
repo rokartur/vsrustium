@@ -20,7 +20,8 @@ pub struct MainThreadStorage {
     /// StorageScope.PROFILE, which is the application storage in the default profile; the workbench keeps its
     /// own keys (the command history, the quick input position) in it too.
     pub profile: Arc<Mutex<Storage>>,
-    workspace: Storage,
+    /// StorageScope.WORKSPACE; the workbench keeps the editor history (`history.entries`) in it too.
+    pub workspace: Arc<Mutex<Storage>>,
 }
 
 impl MainThreadStorage {
@@ -33,11 +34,12 @@ impl MainThreadStorage {
             Some(workspace) => Storage::open(&workspace_storage(paths.user_data, workspace)?),
             None => Storage::in_memory(),
         };
+        let workspace = Arc::new(Mutex::new(workspace));
         Ok(MainThreadStorage { profile: Arc::new(Mutex::new(Storage::open(&global.join("state.vscdb")))), workspace })
     }
 
     pub fn in_memory() -> Self {
-        MainThreadStorage { profile: Arc::new(Mutex::new(Storage::in_memory())), workspace: Storage::in_memory() }
+        MainThreadStorage { profile: Arc::new(Mutex::new(Storage::in_memory())), workspace: Arc::new(Mutex::new(Storage::in_memory())) }
     }
 
     /// `telemetryInfo` as the browser workbench builds it (workbenchCommonProperties.ts): machine id and first
@@ -73,7 +75,8 @@ impl MainThreadStorage {
         };
         let shared = arg(0).as_bool() == Some(true);
         let mut profile = self.profile.lock().unwrap();
-        let storage = if shared { &mut *profile } else { &mut self.workspace };
+        let mut workspace = self.workspace.lock().unwrap();
+        let storage = if shared { &mut *profile } else { &mut *workspace };
         match method {
             "$initializeExtensionStorage" => {
                 let extension_id = arg(1).as_str().expect("an extension id");
