@@ -163,7 +163,7 @@ Done when: api-tests `configuration.test` and `state.test` pass as in the refere
 
 ## Milestone 9: commands, keybindings, quick input
 
-Scope as in port/roadmap.md. Done in this milestone: the command registry, context keys and `when` clauses, keybinding resolution, the quick input widget and MainThreadQuickOpen, the Command Palette, and Quick Open's file picks. Not done: Quick Open symbols (`@`, `#`), context menus other than the Explorer's, and hovers (see the last items).
+Scope as in port/roadmap.md. Done in this milestone: the command registry, context keys and `when` clauses, keybinding resolution, the quick input widget and MainThreadQuickOpen, the Command Palette, and Quick Open's file picks. Not done: Quick Open symbols (`@`, `#`), the title bar context menu, and hovers (see the last items).
 
 - `contextkey.rs` ports the scanner, parser, evaluation and the `And`/`Or` normal forms of `contextkey.ts`; `contextkey/tests.rs` holds the scanner and parser cases of `contextkey.test.ts` and `scanner.test.ts`.
 - `commands.rs` is the one registry of the workbench and `vscode.commands`: workbench handlers, extension commands registered through MainThreadCommands (`main_thread_commands.rs`), `onCommand:` activation before a run. `Commands::register_all` takes a whole table in one call for milestone 8's `editor/commands.rs`.
@@ -200,7 +200,10 @@ Scope as in port/roadmap.md. Done in this milestone: the command registry, conte
 - The pointer leaving the menu is a mouse move on the click-blocking layer: GPUI's `on_hover` also reports "left" on every key press (`last_input_was_keyboard`), which unfocused the item ArrowDown had moved to.
 - The Explorer context menu (`MenuId.ExplorerContext`) has the rows of `fileActions.contribution.ts` whose commands the port has. Right click selects the row unless it is selected, as `explorerView.ts` `onContextMenu`; the list keeps its focus outline while the menu is open.
 - Submenus are not drawn yet: no menu the port shows as a context menu has one. They come with the first menu that does.
-- Not done, left for a next session: editor, title bar and tab context menus, and hovers.
+- The editor context menu (`MenuId.EditorContext`, `workbench/editor_menus.rs`) follows contextmenu.ts `_onContextMenu`: a right click on text or below the last line focuses the editor and moves the cursor unless a selection holds the position. The hook in `editor_view.rs` is two `on_mouse_down(MouseButton::Right)` handlers (line content, empty content area) and one on the tab; reconcile with milestone 8 at merge, which owns that file. It shows Cut, Copy, Paste and Command Palette...: Change All Occurrences and Refactor... wait for their commands. No scrollbar menu, no Shift+F10.
+- The tab context menu (`MenuId.EditorTitleContext`) has Close, Close Others, Close to the Right, Close Saved, Close All and Keep Open, with the editor-scoped context keys (`activeEditorIsPinned`, `activeEditorIsLastInGroup`, `groupEditorsCount`) of the right-clicked tab. The close commands take `[uri, { groupId, editorIndex }]` as editorCommands.ts `resolveCommandsContext`, else the active editor; dirty editors among the ones closed ask to save first. Left out: Copy Path, Copy Relative Path, Reopen Editor With..., Reveal in Finder, Reveal in Explorer View, Pin, Split Right, Split & Move, Move and Copy into New Window (no such commands yet).
+- The title bar context menu (`MenuId.TitleBarContext`: Command Center, Navigation Controls, Layout Controls toggles) is not done: the port's title bar does not read `window.commandCenter`, `workbench.navigationControl.enabled` or `workbench.layoutControl.enabled` yet, so the toggles would do nothing.
+- Not done, left for a next session: hovers.
 
 ## Milestone 12: files, explorer, search, workspace (in progress)
 

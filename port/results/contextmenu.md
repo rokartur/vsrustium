@@ -15,3 +15,12 @@ Port: release `code-gpui --screenshot-input "right X Y; move X Y; key down"` on 
 - Cursors: pointer on enabled items, default on disabled ones.
 - shortcut: frosted glass menus open without upstream's 0.97 scale animation; GPUI has no element transforms. High contrast menus fade in over 83ms as upstream.
 - `cargo test -p app`: 297 passed, 1 ignored. pixel-check (menu closed) unchanged: folder 7238/4067, multiroot 7371/4143 (dark/light).
+
+## Milestone 9: editor and tab context menus
+
+Reference: `port/tools/ref-contextmenu editor tab titlebar` on `port/fixtures/workspace` with `notes.txt` open, Dark Modern (`raw/contextmenu/ref/editor/`). Port: release `code-gpui workspace notes.txt --screenshot-input "right X Y; move X+30 Y+14; key down"` at the reference's points (editor 415,493, below the last line; tab 349,51).
+
+- Editor (`raw/contextmenu/editor-key.png`, port left, reference right): Cut [⌘X], Copy [⌘C], Paste [⌘V] | Command Palette... [⇧⌘P], at the same place, same item look; the cursor moves to the end of the last line (status bar Ln 10, Col 1 in both). The reference's first group, Change All Occurrences [⌘F2] and Refactor... [⌃⇧R], is missing: the port has neither command.
+- Tab (`raw/contextmenu/tab-key.png`): Close [⌘W], Close Others [⌥⌘T, disabled], Close to the Right [disabled], Close Saved [⌘K U], Close All [⌘K W] | Keep Open [⌘K Enter, disabled], at the same place with the same enablement. ArrowDown after the pointer focuses Close Saved in both. The reference's other groups (Copy Path to Copy into New Window) are missing: the port has none of those commands. The port's menu is narrower since its longest row is shorter.
+- Title bar: not done (port/notes.md).
+- `cargo test -p app`: 396 passed, 1 ignored (editor_menus: menu items, cursor move and selection kept, focus back on Escape, the close commands on a right-clicked tab, Close Saved keeping a dirty editor, Close All asking for it).
