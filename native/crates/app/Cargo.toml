@@ -14,6 +14,7 @@ exthost = { path = "../exthost" }
 futures = "0.3"
 gpui.workspace = true
 gpui_platform = { workspace = true, features = ["font-kit"] }
+icu_normalizer = { version = "2.4", default-features = false, features = ["compiled_data"] }
 serde_json.workspace = true
 onig = { version = "6.5", default-features = false }
 textmate = { path = "../textmate" }

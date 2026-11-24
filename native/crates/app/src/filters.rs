@@ -4,7 +4,13 @@
 //! the astral planes.
 
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::ops::Range;
+
+use icu_normalizer::DecomposingNormalizerBorrowed;
+
+mod korean;
+mod korean_tables;
 
 pub type Matches = Vec<Range<usize>>;
 
@@ -67,6 +73,113 @@ pub fn matches_fuzzy(word: &str, target: &str) -> Option<Matches> {
         return Some(vec![range]);
     }
     matches_prefix(word, target).or_else(|| matches_camel_case(word, target)).or_else(|| matches_contiguous_sub_string(word, target))
+}
+
+pub fn matches_base_contiguous_sub_string(word: &str, target: &str) -> Option<Matches> {
+    if word.is_empty() {
+        return Some(vec![0..0]);
+    }
+    if word.encode_utf16().count() > target.encode_utf16().count() {
+        return None;
+    }
+    let word: Vec<char> = try_normalize_to_base(word).chars().collect();
+    let target: Vec<char> = try_normalize_to_base(target).chars().collect();
+    find(&target, &word, 0).map(|index| vec![index..index + word.len()])
+}
+
+/// `matchesWords(word, target, false)`: the word's chars match starts of the target's words in order, like
+/// "gp" or "g p" in "Git: Pull"; any separator matches any other.
+pub fn matches_words(word: &str, target: &str) -> Option<Matches> {
+    if target.is_empty() {
+        return None;
+    }
+    let word: Vec<char> = try_normalize_to_base(word).chars().collect();
+    let target: Vec<char> = try_normalize_to_base(target).chars().collect();
+    // Memoized per (word index, target index): separators match each other, so the search can branch a lot (#309582).
+    let mut memo = HashMap::new();
+    let mut target_index = 0;
+    while target_index < target.len() {
+        if let Some(result) = matches_words_from(&word, &target, 0, target_index, &mut memo) {
+            return Some(result);
+        }
+        target_index = next_word(&target, target_index + 1);
+    }
+    None
+}
+
+/// `tryNormalizeToBase`: lowercase, without combining accents unless dropping them changes the length.
+pub fn try_normalize_to_base(text: &str) -> String {
+    let decomposed = DecomposingNormalizerBorrowed::new_nfd().normalize(text);
+    let without_accents: String = decomposed.chars().filter(|c| !('\u{300}'..='\u{36f}').contains(c)).collect();
+    let utf16_length = |text: &str| text.encode_utf16().count();
+    let base = if utf16_length(&without_accents) == utf16_length(text) { without_accents.as_str() } else { text };
+    base.to_lowercase()
+}
+
+fn matches_words_from(word: &[char], target: &[char], word_index: usize, target_index: usize, memo: &mut HashMap<(usize, usize), Option<Matches>>) -> Option<Matches> {
+    if word_index == word.len() {
+        return Some(vec![]);
+    }
+    if target_index == target.len() {
+        return None;
+    }
+    if let Some(cached) = memo.get(&(word_index, target_index)) {
+        return cached.clone();
+    }
+    let computed = matches_words_compute(word, target, word_index, target_index, memo);
+    memo.insert((word_index, target_index), computed.clone());
+    computed
+}
+
+fn matches_words_compute(word: &[char], target: &[char], word_index: usize, target_index: usize, memo: &mut HashMap<(usize, usize), Option<Matches>>) -> Option<Matches> {
+    let code = word[word_index];
+    let alternate: Option<Vec<char>> = korean::korean_alt_chars(code).map(|keys| keys.chars().collect());
+    let mut target_index_offset = 0;
+    if !characters_match(code, target[target_index]) {
+        let alternate = alternate.as_ref()?;
+        let all_match = alternate.iter().enumerate().all(|(k, alt)| target.get(target_index + k).is_some_and(|c| characters_match(*alt, *c)));
+        if !all_match {
+            return None;
+        }
+        target_index_offset += alternate.len() - 1;
+    }
+    let mut next_word_index = target_index + target_index_offset + 1;
+    let mut result = matches_words_from(word, target, word_index + 1, next_word_index, memo);
+    while result.is_none() {
+        next_word_index = next_word(target, next_word_index);
+        if next_word_index >= target.len() {
+            break;
+        }
+        result = matches_words_from(word, target, word_index + 1, next_word_index, memo);
+        next_word_index += 1;
+    }
+    let mut result = result?;
+    // Chars that differ matched as separators or Korean keys; separators stay out of the highlights.
+    if code != target[target_index] {
+        let Some(alternate) = &alternate else { return Some(result) };
+        if alternate.iter().enumerate().any(|(k, alt)| target.get(target_index + k) != Some(alt)) {
+            return Some(result);
+        }
+    }
+    let head = target_index..target_index + target_index_offset + 1;
+    match result.first_mut() {
+        Some(first) if first.start == head.end => first.start = head.start,
+        _ => result.insert(0, head),
+    }
+    Some(result)
+}
+
+/// `isWordSeparator`: whitespace and the punctuation of written text.
+fn is_word_separator(c: char) -> bool {
+    matches!(c, ' ' | '\t' | '\n' | '\r' | '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>' | '`' | '\'' | '"' | '-' | '/' | ';' | ':' | ',' | '.' | '?' | '!')
+}
+
+fn characters_match(a: char, b: char) -> bool {
+    a == b || (is_word_separator(a) && is_word_separator(b))
+}
+
+fn next_word(target: &[char], start: usize) -> usize {
+    (start..target.len()).find(|i| is_word_separator(target[*i]) || (*i > 0 && is_word_separator(target[*i - 1]))).unwrap_or(target.len())
 }
 
 /// A label without its `$(icon)` markers, and for each char left the length of the markers before it.
