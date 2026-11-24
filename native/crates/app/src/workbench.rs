@@ -6,6 +6,7 @@ mod actions;
 mod editor_commands;
 mod editor_view;
 mod keyboard;
+pub mod quick_access;
 mod quick_input_view;
 mod text_input;
 
@@ -52,6 +53,7 @@ pub struct Workbench {
     /// A left button press in the text is held, so moves extend the selection.
     selecting_text: bool,
     pub quick_inputs: quick_input_view::QuickInputs,
+    pub quick_access: quick_access::QuickAccess,
 }
 
 impl Render for Workbench {
@@ -117,12 +119,14 @@ impl Workbench {
             marked_text: None,
             selecting_text: false,
             quick_inputs: quick_input_view::QuickInputs::new(cx),
+            quick_access: quick_access::QuickAccess::default(),
         };
         crate::main_thread_commands::register_commands_documentation(&mut workbench);
         workbench.register_workbench_actions();
         workbench.register_editor_commands();
         workbench.register_context_commands();
         workbench.register_quick_input_commands();
+        workbench.register_quick_access_commands();
         // Keybindings resolve before the focused element sees the key, and with nothing focused too.
         let entity = cx.entity().downgrade();
         cx.intercept_keystrokes(move |event, window, cx| {

@@ -19,8 +19,8 @@ impl Workbench {
             }
             Outcome::done()
         });
-        // Upstream registers both: `saveAll` in fileCommands.ts (Alt+Cmd+S), the other in openEditorsView.ts.
-        for id in ["saveAll", "workbench.action.files.saveAll"] {
+        // `saveAll` in fileCommands.ts (Alt+Cmd+S), the next in openEditorsView.ts, `saveFiles` in fileCommands.ts.
+        for id in ["saveAll", "workbench.action.files.saveAll", "workbench.action.files.saveFiles"] {
             self.commands.register(id, |workbench, _, _, cx| {
                 for index in workbench.dirty_editors() {
                     workbench.save_editor(index, cx);
@@ -28,6 +28,12 @@ impl Workbench {
                 Outcome::done()
             });
         }
+        self.commands.register("workbench.action.files.revert", |workbench, _, _, cx| {
+            if let Some(index) = workbench.editors.active_index() {
+                workbench.revert_editor(index, cx);
+            }
+            Outcome::done()
+        });
         self.commands.register("_workbench.revertAllDirty", |workbench, _, _, cx| {
             for index in workbench.dirty_editors() {
                 workbench.revert_editor(index, cx);

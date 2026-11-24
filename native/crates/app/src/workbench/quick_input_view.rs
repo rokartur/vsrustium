@@ -658,7 +658,8 @@ impl Workbench {
         });
         div()
             .flex_1()
-            .h(px(26.))
+            // 1px borders, 4px padding and the 15px normal line height of 13px text, measured on 1.147.
+            .h(px(25.))
             .flex()
             .items_center()
             .rounded(px(6.))
@@ -876,7 +877,9 @@ impl Workbench {
             .relative()
             .size_full()
             .flex()
-            .px(px(4.))
+            // Measured on 1.147: keybinding caps and the gear end 4px from the row edge, labels start at 9px.
+            .pl(px(4.))
+            .pr(px(2.))
             .when(row.separator.is_some() && position > 0, |entry| entry.border_t_1().border_color(self.color("pickerGroup.border")))
             .when(can_select_many, |entry| {
                 entry.child(
@@ -890,11 +893,11 @@ impl Workbench {
             .when(!row.item.keybinding.is_empty(), |entry| entry.child(self.keybinding_label(&row.item.keybinding, focused || hovered)))
             .children(separator.map(|label| div().flex().items_center().ml(px(4.)).text_size(px(11.)).text_color(separator_color).child(label)))
             .when(buttons_shown && !row.item.buttons.is_empty(), |entry| {
-                entry.child(div().flex().items_center().mt(px(1.)).mr(px(4.)).children(row.item.buttons.iter().enumerate().map(|(index, button)| {
+                entry.child(div().flex().items_center().mt(px(1.)).children(row.item.buttons.iter().enumerate().map(|(index, button)| {
                     let toggle = button.toggle;
                     self.icon(button.codicon.as_deref().unwrap_or("blank"), 20., 16., icon_color)
                         .id(("quick-input-item-button", index))
-                        .mr(px(4.))
+                        .mr(px(2.))
                         .rounded(px(5.))
                         .hover(|button| button.bg(self.color("toolbar.hoverBackground")))
                         .on_click(cx.listener(move |workbench, _: &ClickEvent, window, cx| {

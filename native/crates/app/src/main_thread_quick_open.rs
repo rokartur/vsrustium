@@ -24,6 +24,8 @@ pub enum Owner {
     Pick { instance: i64, req: u32, reply: Reply },
     /// `showInputBox`: the `$input` request answered with the accepted value.
     Input { req: u32, reply: Reply, validate: bool, validated: Option<(String, Value)> },
+    /// The workbench's quick access picker, with what accepting each item does.
+    QuickAccess(Vec<crate::workbench::quick_access::Accept>),
 }
 
 impl Workbench {
@@ -190,6 +192,7 @@ impl Workbench {
             }
             Owner::Pick { .. } => self.pick_event(id, event, window, cx),
             Owner::Input { .. } => self.input_event(id, event, window, cx),
+            Owner::QuickAccess(_) => self.quick_access_event(id, event, window, cx),
         }
     }
 

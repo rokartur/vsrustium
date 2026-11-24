@@ -56,6 +56,21 @@ impl Chord {
         self.with_modifiers(["\u{2303}", "⇧", "⌥", "⌘"], "", key)
     }
 
+    /// The boxes `KeybindingLabel.renderChord` draws: one per modifier, then the key.
+    pub fn key_caps(&self) -> Vec<String> {
+        let mut caps = Vec::new();
+        for (symbol, pressed) in [("\u{2303}", self.ctrl), ("⇧", self.shift), ("⌥", self.alt), ("⌘", self.meta)] {
+            if pressed {
+                caps.push(symbol.to_string());
+            }
+        }
+        let key = Chord { ctrl: false, shift: false, alt: false, meta: false, key: self.key }.label();
+        if !key.is_empty() && !self.is_duplicate_modifier_case() {
+            caps.push(key);
+        }
+        caps
+    }
+
     pub fn aria_label(&self) -> String {
         let key = if self.is_duplicate_modifier_case() { "" } else { KEY_CODES[self.key].0 };
         self.with_modifiers(["Control", "Shift", "Option", "Command"], "+", key)

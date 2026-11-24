@@ -102,6 +102,9 @@ pub struct Item {
     pub buttons: Vec<Button>,
     /// The keybinding shown at the row's end (Command Palette): the key caps of each chord.
     pub keybinding: Vec<Vec<String>>,
+    /// `highlights`: matches a picker computed itself, kept while the list does not filter.
+    pub label_highlights: Matches,
+    pub description_highlights: Matches,
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -247,6 +250,15 @@ impl QuickInput {
         self.items = items;
         self.items_updated = true;
         self.update();
+    }
+
+    /// `TriggerAction.REMOVE_ITEM` of pickerQuickAccess.ts: the items without it, the other active items kept.
+    pub fn remove_item(&mut self, handle: i64) {
+        let active: Vec<i64> = self.active_handles().into_iter().filter(|active| *active != handle).collect();
+        self.items.retain(|entry| !matches!(entry, Entry::Item(item) if item.handle == handle));
+        self.items_updated = true;
+        self.update();
+        self.set_active_items(&active);
     }
 
     /// `activeItems = ...`: handles of the current items; unknown handles drop out.
@@ -663,8 +675,8 @@ impl QuickInput {
                     section_label: section_label.clone(),
                     separator: None,
                     hidden: false,
-                    label_highlights: vec![],
-                    description_highlights: vec![],
+                    label_highlights: item.label_highlights.clone(),
+                    description_highlights: item.description_highlights.clone(),
                     detail_highlights: vec![],
                     checked: false,
                 }),
@@ -850,7 +862,7 @@ pub fn entry_from_transfer(value: &Value, workspace: Option<&Path>) -> Entry {
         icon: value["iconPathDto"]["id"].as_str().map(str::to_owned),
         icon_path: icon_file(&value["iconPathDto"]),
         buttons: value["buttons"].as_array().into_iter().flatten().map(button_from_transfer).collect(),
-        keybinding: Vec::new(),
+        ..Item::default()
     };
     if let Some(path) = value["resourceUri"]["path"].as_str().filter(|_| value["resourceUri"]["scheme"] == "file") {
         let path = Path::new(path);

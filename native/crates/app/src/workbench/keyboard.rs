@@ -176,8 +176,22 @@ impl Workbench {
         context
     }
 
+    /// `openGlobalKeybindingSettings(textual: true)`: opens keybindings.json, created with upstream's header first.
+    pub(super) fn open_keybindings_file(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
+        let Some(file) = self.keybindings.user_file.clone() else { return Outcome::error("no keybindings.json") };
+        if !file.exists() {
+            let created = file.parent().map_or(Ok(()), std::fs::create_dir_all);
+            if let Err(error) = created.and_then(|_| std::fs::write(&file, "// Place your key bindings in this file to override the defaults\n[\n]")) {
+                return Outcome::error(format!("writing {}: {error}", file.display()));
+            }
+        }
+        self.open_file(file, true, window, cx);
+        Outcome::done()
+    }
+
     /// The `setContext` command: `createKey(String(key), value)`.
     pub(super) fn register_context_commands(&mut self) {
+        self.commands.register("workbench.action.openGlobalKeybindingsFile", |workbench, _, window, cx| workbench.open_keybindings_file(window, cx));
         self.commands.register("setContext", |workbench, args, _, _| {
             let mut args = args.into_iter();
             let key = match args.next() {
