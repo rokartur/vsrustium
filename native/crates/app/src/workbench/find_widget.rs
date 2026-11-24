@@ -504,16 +504,12 @@ impl Workbench {
         end.line > start.line || left(start) > widget_left || left(end) > widget_left
     }
 
-    /// findDecorations.ts on one line: the find scopes and the range highlight across the line, then the matches,
+    /// findDecorations.ts on one line, after Go to Line's range highlight: the find scopes and the range highlight across the line, then the matches,
     /// the current one on top. Returns the whole-line boxes, which decorations.ts draws under every other decoration,
     /// the match boxes (zIndex 10 and 13, over the zIndex 0 ones) and the text colors of the matches (`findMatchInline`).
     pub(super) fn find_line_decorations(&self, editor: &OpenEditor, index: usize, char_width: f32, scroll_left: f32) -> (Vec<Div>, Vec<Div>, Vec<(Range<usize>, HighlightStyle)>) {
         let (mut whole_lines, mut boxes, mut text_colors) = (Vec::new(), Vec::new(), Vec::new());
-        let Some(model) = self.find.controller.model.as_ref().filter(|_| self.find.model_id == Some(editor.model_id)) else {
-            return (whole_lines, boxes, text_colors);
-        };
         let high_contrast = self.theme.kind.is_high_contrast();
-        let on_line = |range: &Range<Position>| range.start.line <= index && index <= range.end.line;
         // shortcut: GPUI has no dotted border; high contrast dotted borders are dashed.
         let bordered = |mut decoration: Div, background: Option<Rgba>, border: Option<Rgba>, width: f32| {
             if let Some(background) = background {
@@ -525,12 +521,21 @@ impl Workbench {
             decoration
         };
         let whole_line = || div().absolute().inset_0().left(px(scroll_left));
+        let range_highlight = || bordered(whole_line(), self.theme.color("editor.rangeHighlightBackground"), self.theme.color("editor.rangeHighlightBorder"), 1.);
+        // editorNavigationQuickAccess.ts addDecorations: Go to Line's whole-line `rangeHighlight`.
+        if self.quick_access.goto_line.as_ref().and_then(|state| state.highlight(editor.model_id)).is_some_and(|position| position.line == index) {
+            whole_lines.push(range_highlight());
+        }
+        let Some(model) = self.find.controller.model.as_ref().filter(|_| self.find.model_id == Some(editor.model_id)) else {
+            return (whole_lines, boxes, text_colors);
+        };
+        let on_line = |range: &Range<Position>| range.start.line <= index && index <= range.end.line;
         for _ in model.find_scopes(editor).unwrap_or_default().iter().filter(|scope| on_line(scope)) {
             whole_lines.push(bordered(whole_line(), self.theme.color("editor.findRangeHighlightBackground"), self.theme.color("editor.findRangeHighlightBorder"), 1.));
         }
-        for range_highlight in [&model.range_highlight, &self.find.go_to_match_highlight] {
-            if range_highlight.as_ref().is_some_and(on_line) {
-                whole_lines.push(bordered(whole_line(), self.theme.color("editor.rangeHighlightBackground"), self.theme.color("editor.rangeHighlightBorder"), 1.));
+        for range in [&model.range_highlight, &self.find.go_to_match_highlight] {
+            if range.as_ref().is_some_and(on_line) {
+                whole_lines.push(range_highlight());
             }
         }
 

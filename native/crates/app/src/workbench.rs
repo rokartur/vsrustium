@@ -127,7 +127,7 @@ impl Render for Workbench {
                     .child(div().flex().child(self.activity_bar()).when(self.folder.is_some(), |row| row.child(self.side_bar(window, cx))))
                     .child(if self.editors.active().is_some() { self.text_editor_part(window, cx) } else { self.editor_part() }),
             )
-            .child(self.status_bar());
+            .child(self.status_bar(window, cx));
         let quick_input = self.quick_input_widget(window, cx);
         let context_menu = self.context_menu_widget(cx);
         self.update_menubar(window, cx);
@@ -550,7 +550,7 @@ impl Workbench {
             .child(watermark)
     }
 
-    fn status_bar(&self) -> Div {
+    fn status_bar(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         let (foreground, background) = match self.folder {
             Some(_) => (self.color("statusBar.foreground"), self.color("statusBar.background")),
             None => (self.color("statusBar.noFolderForeground"), self.color("statusBar.noFolderBackground")),
@@ -580,7 +580,7 @@ impl Workbench {
             // statusbarpart.css: font-variant-numeric: tabular-nums.
             .font_features(FontFeatures(Arc::new(vec![("tnum".into(), 1)])))
             .child(div().h(px(24.)).flex().child(self.icon("remote", 28., 16., foreground).h_full().cursor_pointer()).child(problems).children(self.status_bar_message()))
-            .child(div().h(px(24.)).flex().children(self.editor_status_items(foreground)).child(self.icon("bell", 28., 16., foreground).h_full().cursor_pointer()))
+            .child(div().h(px(24.)).flex().children(self.editor_status_items(foreground, window, cx)).child(self.icon("bell", 28., 16., foreground).h_full().cursor_pointer()))
     }
 
     /// The `status.message` entry: multi-chord mode, else the latest status message (notificationsStatus.ts).

@@ -264,7 +264,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | editor/contrib/parameterHints | src/vs/editor/contrib | todo |  |
 | editor/contrib/peekView | src/vs/editor/contrib | todo |  |
 | editor/contrib/placeholderText | src/vs/editor/contrib | todo |  |
-| editor/contrib/quickAccess | src/vs/editor/contrib | todo |  |
+| editor/contrib/quickAccess | src/vs/editor/contrib | ported | gotoLineQuickAccess and editorNavigationQuickAccess (`workbench/quick_access/goto_line.rs`); no open to the side, relative line numbers, aria status; gotoSymbol not ported |
 | editor/contrib/readOnlyMessage | src/vs/editor/contrib | todo |  |
 | editor/contrib/rename | src/vs/editor/contrib | todo |  |
 | editor/contrib/sectionHeaders | src/vs/editor/contrib | todo |  |
@@ -294,7 +294,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/parts/partGrid | workbench part | stub | fixed floating layout drawn with flex (workbench.rs), no grid, sashes or hidden parts; pixel-check (port/results/pixels.md): part bounds match at 1024x768 |
 | workbench/parts/sessions | workbench part | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/parts/sidebar | workbench part | ported | Explorer only (title, folder section, collapsed Outline and Timeline), shown when a folder is open; pixel-check (port/results/pixels.md, milestone 3): chevron and label edge pixels only |
-| workbench/parts/statusbar | workbench part | ported | no-folder and folder colors (remote, problems, bell), editor items Ln/Col, indentation, encoding, EOL, language with tabular-nums; entries from extensions not shown; pixel-check (port/results/pixels.md): text box widths round up to whole px |
+| workbench/parts/statusbar | workbench part | ported | no-folder and folder colors (remote, problems, bell), editor items Ln/Col, indentation, encoding, EOL, language with tabular-nums at their shaped widths; the selection item runs Go to Line, the other editor items run nothing yet; entries from extensions not shown |
 | workbench/parts/titlebar | workbench part | ported | active window only (command center with the folder name, nav and layout actions; no menus, no clicks); pixel-check (port/results/pixels.md): blending rounding and glyph edges only |
 | workbench/parts/views | workbench part | stub | pane headers drawn statically (workbench.rs section_header): no collapse, resize or view actions |
 | workbench/services/accessibility | workbench service | todo |  |
@@ -405,7 +405,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/chat | workbench contribution | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/contrib/chatWindow | workbench contribution | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/contrib/codeActions | workbench contribution | todo |  |
-| workbench/contrib/codeEditor | workbench contribution | todo |  |
+| workbench/contrib/codeEditor | workbench contribution | stub | quickaccess/gotoLineQuickAccess (Go to Line/Column, Go to Offset) ported; the rest todo |
 | workbench/contrib/commands | workbench contribution | todo |  |
 | workbench/contrib/comments | workbench contribution | todo |  |
 | workbench/contrib/customEditor | workbench contribution | todo |  |

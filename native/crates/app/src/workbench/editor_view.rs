@@ -5,11 +5,12 @@
 use std::collections::HashMap;
 use std::ops::Range;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use std::time::{Duration, Instant};
 
 use gpui::{
-    Axis, Bounds, Context, DispatchPhase, Div, ElementInputHandler, Hitbox, HitboxBehavior, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
+    Axis, Bounds, Context, DispatchPhase, Div, ElementInputHandler, FontFeatures, Hitbox, HitboxBehavior, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
     Rgba, ScrollDelta, ScrollWheelEvent, Stateful, StyledText, Task, Window, canvas, div, fill, font, point, prelude::*, px, size,
 };
 
@@ -862,6 +863,8 @@ impl Workbench {
         cursors.sort_by_key(|(line, _)| *line);
         bracket_lines.sort();
         let find_color = self.color("editorOverviewRuler.findMatchForeground");
+        let range_lines: Vec<(usize, usize)> = self.quick_access.goto_line.iter().filter_map(|state| state.highlight(editor.model_id)).map(|position| (position.line, position.line)).collect();
+        let range_color = self.color("editorOverviewRuler.rangeHighlightForeground");
         let (mut find_lines, mut current_find_lines) = (Vec::new(), Vec::new());
         for mark in self.find_marks(editor, self.editors.viewport.height) {
             let lines = if mark.current { &mut current_find_lines } else { &mut find_lines };
@@ -886,8 +889,15 @@ impl Workbench {
                 let ratio = canvas_height / scroll_height;
                 let lanes = RulerLanes::new(canvas_width);
                 let min_height = (6. * scale).floor();
-                // In z-index order: find matches at 10, the current match at 13.
-                for (lines, color) in [(&highlight_lines, highlight), (&bracket_lines, bracket_color), (&find_lines, find_color), (&current_find_lines, find_color)] {
+                // In z-index order: Go to Line's range in all lanes, find matches at 10, the current match at 13.
+                let center = (lanes.center_x, lanes.center_width);
+                for (lines, color, (x, width)) in [
+                    (&range_lines, range_color, (lanes.full_x, lanes.full_width)),
+                    (&highlight_lines, highlight, center),
+                    (&bracket_lines, bracket_color, center),
+                    (&find_lines, find_color, center),
+                    (&current_find_lines, find_color, center),
+                ] {
                     let mut previous: Option<(f32, f32)> = None;
                     for (start_line, end_line) in lines {
                         let mut y1 = ((top_whitespace + *start_line as f32 * LINE_HEIGHT) * ratio).floor();
@@ -900,14 +910,14 @@ impl Workbench {
                         previous = match previous {
                             Some((start, end)) if y1 <= end + 1. => Some((start, end.max(y2))),
                             Some((start, end)) => {
-                                paint(window, lanes.center_x, start, lanes.center_width, end - start, color);
+                                paint(window, x, start, width, end - start, color);
                                 Some((y1, y2))
                             }
                             None => Some((y1, y2)),
                         };
                     }
                     if let Some((start, end)) = previous {
-                        paint(window, lanes.center_x, start, lanes.center_width, end - start, color);
+                        paint(window, x, start, width, end - start, color);
                     }
                 }
                 // Cursors sorted by line; touching marks of one color paint as one.
@@ -942,7 +952,7 @@ impl Workbench {
 
     /// The selection, indentation, encoding, end of line and language items (editorStatus.ts), right to left
     /// before the notifications bell.
-    pub(super) fn editor_status_items(&self, foreground: Rgba) -> Option<Div> {
+    pub(super) fn editor_status_items(&self, foreground: Rgba, window: &Window, cx: &mut Context<Self>) -> Option<Div> {
         let editor = self.editors.active()?;
         let document = &editor.document;
         let indentation = match document.indentation.insert_spaces {
@@ -951,9 +961,39 @@ impl Workbench {
         };
         let encoding = if document.encoding == "utf8bom" { "UTF-8 with BOM" } else { "UTF-8" };
         let eol = if document.eol == "\r\n" { "CRLF" } else { "LF" };
-        let labels = [selection_label(editor), indentation, encoding.into(), eol.into(), self.languages.name(&document.language_id).to_string()];
-        // Each has a command upstream (gotoLine, changeEditorIndentation, changeEncoding, changeEOL, changeLanguageMode).
-        let items = labels.into_iter().map(|label| div().h_full().mx(px(3.)).px(px(5.)).flex().items_center().whitespace_nowrap().cursor_pointer().child(label));
+        // shortcut: the indentation, encoding, end of line and language commands are not ported yet, their items do nothing.
+        let items = [
+            (selection_label(editor), Some("workbench.action.gotoLine")),
+            (indentation, None),
+            (encoding.into(), None),
+            (eol.into(), None),
+            (self.languages.name(&document.language_id).to_string(), None),
+        ];
+        // GPUI rounds a text box up to a whole px, Chrome keeps the fraction: the shaped width keeps the items in place.
+        let mut style = window.text_style();
+        style.font_features = FontFeatures(Arc::new(vec![("tnum".into(), 1)]));
+        let text_width = |label: &str| window.text_system().shape_line(label.to_owned().into(), px(12.), &[style.to_run(label.len())], None).width;
+        let items = items.into_iter().enumerate().map(|(index, (label, command))| {
+            div()
+                .id(("editor-status", index))
+                .h_full()
+                .w(text_width(&label) + px(10.))
+                .flex_none()
+                .mx(px(3.))
+                .px(px(5.))
+                .flex()
+                .items_center()
+                .whitespace_nowrap()
+                .cursor_pointer()
+                .child(label)
+                // statusbarItem.ts executeCommand on click.
+                .when_some(command, |item, command| {
+                    item.on_click(cx.listener(move |workbench, _, window, cx| {
+                        let outcome = workbench.execute_command(command, Vec::new(), window, cx);
+                        super::quick_access::show_failure(command.to_owned(), outcome, window, cx);
+                    }))
+                })
+        });
         Some(div().h_full().flex().text_color(foreground).children(items))
     }
 }

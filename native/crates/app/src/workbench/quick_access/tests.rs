@@ -88,6 +88,50 @@ fn command_palette_runs_an_extension_command_and_remembers_it(cx: &mut TestAppCo
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+#[gpui::test]
+fn go_to_line_previews_the_line_and_restores_the_view_on_escape(cx: &mut TestAppContext) {
+    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
+    let theme = load_theme(&[themes], "Dark Modern").unwrap();
+    let dir = std::env::temp_dir().join(format!("code-gpui-goto-line-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("a.txt");
+    std::fs::write(&file, (1..=200).map(|line| format!("line {line}\n")).collect::<String>()).unwrap();
+    let (workbench, cx) = cx.add_window_view(|window, cx| {
+        let mut workbench = Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), crate::default_settings(), HostSync::new(std::sync::mpsc::channel().0), cx);
+        workbench.load_keybindings(crate::keybindings::default_keybindings(&[]), dir.join("keybindings.json"), cx);
+        workbench.open_file(file.clone(), true, window, cx);
+        workbench
+    });
+    cx.run_until_parked();
+    let editor = |cx: &mut gpui::VisualTestContext| {
+        workbench.read_with(cx, |workbench, _| {
+            let editor = workbench.editors.active().unwrap();
+            let highlight = workbench.quick_access.goto_line.as_ref().and_then(|state| state.highlight(editor.model_id)).map(|position| position.line);
+            (editor.selection().head.line, editor.selection().head.column, editor.scroll.top > 0., highlight)
+        })
+    };
+
+    cx.simulate_keystrokes("ctrl-g");
+    assert_eq!(workbench.read_with(cx, labels), ["Type a line number to go to (from 1 to 201)."]);
+    cx.simulate_input("150");
+    assert_eq!(workbench.read_with(cx, labels), ["Press 'Enter' to go to line 150 or enter colon : to add a column number."]);
+    assert_eq!(editor(cx), (0, 0, true, Some(149)), "the line is revealed and highlighted, the cursor stays");
+    cx.simulate_keystrokes("escape");
+    assert_eq!(editor(cx), (0, 0, false, None), "the view state comes back");
+
+    cx.simulate_keystrokes("ctrl-g");
+    cx.simulate_input(":5");
+    let buttons = workbench.read_with(cx, |workbench, _| workbench.quick_inputs.current().unwrap().buttons.len());
+    assert_eq!((workbench.read_with(cx, labels), buttons), (vec!["Press 'Enter' to go to line 1 at column 5.".to_string()], 1), "offset mode shows the toggle");
+    cx.simulate_keystrokes("backspace backspace");
+    cx.simulate_input("150:3");
+    cx.simulate_keystrokes("enter");
+    assert_eq!(editor(cx), (149, 2, true, None));
+    assert!(workbench.read_with(cx, |workbench, _| workbench.quick_inputs.current().is_none()));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 #[test]
 fn removing_a_recently_used_pick_keeps_the_others() {
     let mut input = crate::quick_input::QuickInput::new(1, crate::quick_input::Kind::QuickPick);
