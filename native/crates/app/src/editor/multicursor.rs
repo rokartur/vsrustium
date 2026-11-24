@@ -12,6 +12,8 @@ pub enum Reveal {
     Nothing,
     All,
     Position(Position),
+    /// `revealPositionInCenterIfOutsideViewport`, as the folding actions reveal.
+    CenterIfOutside(Position),
 }
 
 /// `IColumnSelectData`: the corner a column selection started from and the one it goes to, in visible columns.

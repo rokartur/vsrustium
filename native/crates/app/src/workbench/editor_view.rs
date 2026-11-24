@@ -15,7 +15,7 @@ use gpui::{
 use super::Workbench;
 use crate::brackets::BracketRange;
 use crate::editor::{
-    HORIZONTAL_SCROLLBAR_HEIGHT, LINE_HEIGHT, OpenEditor, Position, Reveal, Scrollbar, Selection, VERTICAL_SCROLLBAR_WIDTH, Viewport, column_at_visible, commands,
+    HORIZONTAL_SCROLLBAR_HEIGHT, LINE_HEIGHT, OpenEditor, Position, Reveal, Scrollbar, Selection, VERTICAL_SCROLLBAR_WIDTH, VerticalReveal, Viewport, column_at_visible, commands,
     expand_tabs, visible_column, word_at,
 };
 use crate::editor::folding::FoldDecoration;
@@ -643,7 +643,7 @@ impl Workbench {
         let editor = self.editors.active_mut().expect("folding controls show only with an editor open");
         let before = (editor.selections.clone(), editor.folding.hidden().to_vec());
         if editor.click_fold_control(line, icon, modifiers.alt, middle || modifiers.shift) {
-            self.cursors_changed(before.0, Reveal::Position(Position::new(line, 0)), "mouse", cx);
+            self.cursors_changed(before.0, Reveal::CenterIfOutside(Position::new(line, 0)), "mouse", cx);
             self.folds_changed(&before.1);
         }
     }
@@ -759,6 +759,7 @@ impl Workbench {
             Reveal::Nothing => {}
             Reveal::All => editor.reveal_cursors(source, viewport),
             Reveal::Position(position) => editor.reveal_position(position, source, viewport),
+            Reveal::CenterIfOutside(position) => editor.reveal_range(position, position, VerticalReveal::CenterIfOutsideViewport, viewport),
         }
         let (moved, scrolled) = (editor.selections != before, editor.scroll != scroll);
         if moved {

@@ -66,8 +66,9 @@ impl OpenEditor {
 
     /// Sets the scroll position, clamped like `Scrollable.validateScrollPosition`. Returns whether it moved.
     pub fn set_scroll(&mut self, top: f32, left: f32, viewport: Viewport) -> bool {
-        let top = top.min(self.scroll_height(viewport) - viewport.height).max(0.);
-        let left = left.min(self.scroll_width(viewport) - viewport.width).max(0.);
+        // viewLayout.ts makes its Scrollable with `forceIntegerValues`: every value truncates (`| 0`).
+        let top = top.trunc().min(self.scroll_height(viewport).trunc() - viewport.height.trunc()).max(0.);
+        let left = left.trunc().min(self.scroll_width(viewport).trunc() - viewport.width.trunc()).max(0.);
         let moved = (top, left) != (self.scroll.top, self.scroll.left);
         self.scroll.top = top;
         self.scroll.left = left;
@@ -387,6 +388,9 @@ mod tests {
         editor.selections = vec![Selection::caret(Position::new(0, 0)), Selection::caret(Position::new(60, 0))];
         editor.reveal_cursors("keyboard", VIEWPORT);
         assert_eq!(editor.scroll.top, 25. * 18.);
+        // Centering in an odd height lands on a half pixel, which the scroll position truncates.
+        editor.reveal_range(Position::new(50, 0), Position::new(50, 0), VerticalReveal::Center, Viewport { height: 361., ..VIEWPORT });
+        assert_eq!(editor.scroll.top, 50. * 18. - 181.);
     }
 
     #[test]

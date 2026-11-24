@@ -63,9 +63,9 @@ impl OpenEditor {
             "editor.foldAllBlockComments" => self.fold_block_comments(),
             "editor.foldAllMarkerRegions" => self.set_marker_regions_collapsed(true),
             "editor.unfoldAllMarkerRegions" => self.set_marker_regions_collapsed(false),
-            "editor.gotoParentFold" => return Some(self.go_to_fold_line(parent_fold_line)),
-            "editor.gotoPreviousFold" => return Some(self.go_to_fold_line(previous_fold_line)),
-            "editor.gotoNextFold" => return Some(self.go_to_fold_line(next_fold_line)),
+            "editor.gotoParentFold" => self.go_to_fold_line(parent_fold_line),
+            "editor.gotoPreviousFold" => self.go_to_fold_line(previous_fold_line),
+            "editor.gotoNextFold" => self.go_to_fold_line(next_fold_line),
             "editor.createFoldingRangeFromSelection" => self.fold_selections(),
             "editor.removeManualFoldingRanges" => {
                 let selections = self.selections.clone();
@@ -82,7 +82,7 @@ impl OpenEditor {
             }
         }
         self.adjust_selections_to_folds();
-        Some(Reveal::Position(self.selection().start()))
+        Some(Reveal::CenterIfOutside(self.selection().start()))
     }
 
     /// `FoldAllBlockCommentsAction`: comment regions, else the regions starting with the block comment token.
@@ -106,13 +106,10 @@ impl OpenEditor {
     }
 
     /// `GotoParentFoldAction` and its siblings: the cursor to the start of the fold line found from the primary selection.
-    fn go_to_fold_line(&mut self, find: fn(usize, &folding::FoldingModel) -> Option<usize>) -> Reveal {
-        let Some(line) = find(self.selection().start().line + 1, &self.folding) else {
-            return Reveal::Nothing;
-        };
-        let position = Position::new(line - 1, 0);
-        self.set_selections(vec![Selection::caret(position)]);
-        Reveal::Position(position)
+    fn go_to_fold_line(&mut self, find: fn(usize, &folding::FoldingModel) -> Option<usize>) {
+        if let Some(line) = find(self.selection().start().line + 1, &self.folding) {
+            self.set_selections(vec![Selection::caret(Position::new(line - 1, 0))]);
+        }
     }
 
     /// `FoldRangeFromSelectionAction`: each selection over several lines becomes a collapsed manual region.
