@@ -22,6 +22,7 @@ mod languages;
 mod main_thread;
 mod main_thread_commands;
 mod main_thread_quick_open;
+mod menus;
 mod quick_input;
 mod syntax;
 mod tf_idf;
@@ -111,7 +112,7 @@ fn main() -> anyhow::Result<()> {
         // The workbench draws its own title bar, as the reference does with window.titleBarStyle custom.
         let titlebar = TitlebarOptions { title: None, appears_transparent: true, traffic_light_position: Some(point(px(10.), px(10.))) };
         let options = WindowOptions { window_bounds: Some(WindowBounds::Windowed(bounds)), titlebar: Some(titlebar), ..Default::default() };
-        cx.open_window(options, |window, cx| {
+        let window = cx.open_window(options, |window, cx| {
             cx.new(|cx| {
                 let (sender, mut receiver) = unbounded::<String>();
                 let (host_sender, host_receiver) = channel();
@@ -208,6 +209,7 @@ fn main() -> anyhow::Result<()> {
             })
         })
         .unwrap();
+        workbench::menubar::install(window, cx);
         cx.activate(true);
     });
     Ok(())

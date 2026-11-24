@@ -1,0 +1,115 @@
+#!/usr/bin/env bun
+// Dumps the reference VS Code menu bar as the renderer sends it to the main process (IMenubarData: command ids,
+// labels, enablement, toggles and keybindings), plus the native application menu Electron draws from it.
+// Usage: port/tools/ref-menubar <out.json>   (env REF, FOLDER, FILE as port/tools/ref-screenshot). Run on the Studio.
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+const out = process.argv[2] ?? '/tmp/ref-menubar.json';
+const ref = process.env.REF ?? join(process.env.HOME!, 'Developer/vscode-ref');
+const electron = join(ref, '.build/electron/Code - OSS.app/Contents/MacOS/Code - OSS');
+const rendererPort = 9334;
+const mainPort = 9335;
+
+const userData = mkdtempSync(join(tmpdir(), 'ref-menubar-'));
+mkdirSync(join(userData, 'User'));
+// Same product settings as port/tools/ref-screenshot.
+writeFileSync(join(userData, 'User/settings.json'), JSON.stringify({
+	'workbench.startupEditor': 'none',
+	'window.restoreWindows': 'none',
+	'workbench.tips.enabled': false,
+	'update.mode': 'none',
+	'chat.disableAIFeatures': true,
+	'security.workspace.trust.enabled': false,
+	'workbench.secondarySideBar.defaultVisibility': 'hidden',
+}));
+const paths = [process.env.FOLDER, process.env.FILE].filter(path => path) as string[];
+const app = Bun.spawn([electron, ref, ...paths, `--inspect=${mainPort}`, '--user-data-dir', userData, `--remote-debugging-port=${rendererPort}`, '--disable-extension', 'GitHub.copilot-chat', '--disable-extension', 'vscode.vscode-api-tests'], {
+	env: { ...process.env, VSCODE_DEV: '1', NODE_ENV: 'development' },
+	stdout: 'ignore',
+	stderr: 'ignore',
+});
+try {
+	const renderer = await connect(rendererPort, targets => targets.find(t => t.type === 'page' && t.url.includes('workbench')));
+	await until(async () => (await renderer('Runtime.evaluate', { expression: `!!document.querySelector('.monaco-workbench .part.statusbar')`, returnByValue: true })).result.value === true);
+	await Bun.sleep(5000);
+	const main = await connect(mainPort, targets => targets[0]);
+	// Every IPC message is a serialized VSBuffer; `updateMenubar` carries IMenubarData as a JSON string.
+	await main('Runtime.evaluate', {
+		includeCommandLineAPI: true,
+		expression: `require('electron').ipcMain.on('vscode:message', (_event, buffer) => {
+			const text = Buffer.from(buffer.buffer ?? buffer).toString('utf8');
+			const start = text.indexOf('{"menus":');
+			if (start >= 0) { globalThis.__menubar = text.slice(start); }
+		}); true`,
+	});
+	await renderer('Page.reload');
+	const data = await until(async () => (await main('Runtime.evaluate', { expression: 'globalThis.__menubar', returnByValue: true })).result.value as string | undefined);
+	await Bun.sleep(5000);
+	const latest = (await main('Runtime.evaluate', { expression: 'globalThis.__menubar', returnByValue: true })).result.value as string;
+	const native = (await main('Runtime.evaluate', {
+		includeCommandLineAPI: true,
+		returnByValue: true,
+		expression: `(() => {
+			const dump = menu => menu.items.map(item => ({ label: item.label, type: item.type, role: item.role, accelerator: item.accelerator, enabled: item.enabled, visible: item.visible, checked: item.checked, submenu: item.submenu ? dump(item.submenu) : undefined }));
+			return dump(require('electron').Menu.getApplicationMenu());
+		})()`,
+	})).result.value;
+	writeFileSync(out, JSON.stringify({ menubar: firstJson(latest ?? data), native }, null, 1));
+	console.log(`wrote ${out}`);
+} finally {
+	app.kill('SIGKILL');
+	await app.exited;
+	rmSync(userData, { recursive: true, force: true });
+}
+process.exit(0);
+
+/** The JSON object at the start of `text`, which runs on with the rest of the IPC buffer. */
+function firstJson(text: string) {
+	let depth = 0;
+	let inString = false;
+	for (let i = 0; i < text.length; i++) {
+		const char = text[i];
+		if (inString) {
+			if (char === '\\') { i++; } else if (char === '"') { inString = false; }
+		} else if (char === '"') {
+			inString = true;
+		} else if (char === '{') {
+			depth++;
+		} else if (char === '}' && --depth === 0) {
+			return JSON.parse(text.slice(0, i + 1));
+		}
+	}
+	throw new Error('unterminated menubar JSON');
+}
+
+async function connect(port: number, pick: (targets: { type: string; url: string; webSocketDebuggerUrl: string }[]) => { webSocketDebuggerUrl: string } | undefined) {
+	const target = await until(async () => pick(await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()));
+	const socket = new WebSocket(target.webSocketDebuggerUrl);
+	await new Promise(resolve => socket.addEventListener('open', resolve, { once: true }));
+	let nextId = 1;
+	const pending = new Map<number, (message: any) => void>();
+	socket.addEventListener('message', event => {
+		const message = JSON.parse(String(event.data));
+		pending.get(message.id)?.(message);
+		pending.delete(message.id);
+	});
+	return (method: string, params: object = {}) => new Promise<any>((resolve, reject) => {
+		const id = nextId++;
+		pending.set(id, message => message.error ? reject(new Error(`${method}: ${message.error.message}`)) : resolve(message.result));
+		socket.send(JSON.stringify({ id, method, params }));
+	});
+}
+
+async function until<T>(probe: () => Promise<T>, timeoutMs = 60000): Promise<NonNullable<T>> {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		const value = await probe().catch(() => undefined);
+		if (value) {
+			return value;
+		}
+		await Bun.sleep(250);
+	}
+	throw new Error('timed out');
+}

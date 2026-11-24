@@ -9,6 +9,7 @@ mod explorer_actions;
 pub(crate) mod host_requests;
 mod input_box_view;
 mod keyboard;
+pub mod menubar;
 mod minimap_view;
 pub mod quick_access;
 mod quick_open;
@@ -79,6 +80,10 @@ pub struct Workbench {
     pub quick_inputs: quick_input_view::QuickInputs,
     pub quick_access: quick_access::QuickAccess,
     pub explorer: explorer_actions::ExplorerState,
+    /// `MenuRegistry`.
+    pub menus: Vec<crate::menus::MenuItem>,
+    /// What the application menu shows now.
+    installed_menubar: Option<menubar::Menubar>,
     /// The application storage (StorageScope.PROFILE and APPLICATION in the default profile), shared with the
     /// extension host's MainThreadStorage.
     profile_storage: Arc<Mutex<Storage>>,
@@ -115,6 +120,7 @@ impl Render for Workbench {
             )
             .child(self.status_bar());
         let quick_input = self.quick_input_widget(window, cx);
+        self.update_menubar(window, cx);
         div()
             .relative()
             .size_full()
@@ -158,6 +164,8 @@ impl Workbench {
             quick_inputs: quick_input_view::QuickInputs::new(cx),
             quick_access: quick_access::QuickAccess::default(),
             explorer: explorer_actions::ExplorerState::new(cx),
+            menus: crate::menus::workbench_menus(),
+            installed_menubar: None,
             profile_storage: Arc::new(Mutex::new(Storage::in_memory())),
             workspace_storage: Arc::new(Mutex::new(Storage::in_memory())),
         };

@@ -111,7 +111,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/accessibilitySignal | src/vs/platform | todo |  |
 | platform/action | src/vs/platform | todo |  |
 | platform/actionWidget | src/vs/platform | todo |  |
-| platform/actions | src/vs/platform | stub | command_palette.rs: CommandPalette menu only (f1 workbench actions, contributes.commands, menus.commandPalette when); no menu bar or context menus |
+| platform/actions | src/vs/platform | ported | menus.rs: MenuRegistry rows with group, order, when, precondition, toggled and submenus, sorted as menuService.ts; cargo test -p app menus (the menuService.test.ts sorting cases); command_palette.rs keeps the CommandPalette menu; no context menus yet |
 | platform/agentHost | src/vs/platform | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | platform/agentPlugins | src/vs/platform | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | platform/artifactIntegrations | src/vs/platform | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
@@ -170,7 +170,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/markdown | src/vs/platform | todo |  |
 | platform/markers | src/vs/platform | todo |  |
 | platform/mcp | src/vs/platform | removed | no sign-in/AI by decision (port/notes.md); not ported |
-| platform/menubar | src/vs/platform | todo |  |
+| platform/menubar | src/vs/platform | ported | workbench/menubar.rs: app, Window and Services menus of menubar.ts with key equivalents, chords in the label; AX tree of the port vs the reference (port/results/menubar.md); cargo test -p app menubar |
 | platform/meteredConnection | src/vs/platform | todo |  |
 | platform/native | src/vs/platform | todo |  |
 | platform/networkFilter | src/vs/platform | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
@@ -347,7 +347,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/localization | workbench service | todo |  |
 | workbench/services/log | workbench service | stub | same port log as platform/log; no Output view of logs (milestone 15) |
 | workbench/services/mcp | workbench service | removed | no sign-in/AI by decision (port/notes.md); not ported |
-| workbench/services/menubar | workbench service | todo |  |
+| workbench/services/menubar | workbench service | ported | menubar.rs Workbench::menubar: MenubarMainMenu as menubarControl.ts sends it, rebuilt when when/enablement change; enablement matches the reference in the empty, folder and file windows (port/results/menubar.md) |
 | workbench/services/model | workbench service | todo |  |
 | workbench/services/notebook | workbench service | todo |  |
 | workbench/services/notification | workbench service | todo |  |

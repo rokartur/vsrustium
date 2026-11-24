@@ -161,8 +161,11 @@ impl Workbench {
         context.insert("editorTextFocus".into(), json!(editor_focused));
         context.insert("textInputFocus".into(), json!(editor_focused));
         context.insert("editorIsOpen".into(), json!(self.editors.active().is_some()));
+        context.insert("dirtyWorkingCopies".into(), json!(self.editors.editors.iter().any(|editor| editor.is_dirty())));
         if let Some(editor) = self.editors.active() {
             context.insert("activeEditor".into(), json!("workbench.editor.files"));
+            // The port opens only files, never untitled editors (editorGroupView.ts).
+            context.insert("activeEditorCanRevert".into(), json!(true));
             context.insert("editorReadonly".into(), json!(false));
             context.insert("editorHasSelection".into(), json!(editor.selections.iter().any(|selection| !selection.is_empty())));
             context.insert("editorHasMultipleSelections".into(), json!(editor.selections.len() > 1));
@@ -219,7 +222,7 @@ impl Workbench {
 
 /// `notificationService.warn(err)` of a failed keybinding command.
 /// shortcut: logged, since the port has no notifications toasts.
-fn report_failure(command: String, outcome: Outcome, cx: &mut Context<Workbench>) {
+pub(super) fn report_failure(command: String, outcome: Outcome, cx: &mut Context<Workbench>) {
     let log = move |result: Result<Value, Value>| {
         if let Err(error) = result {
             eprintln!("keybinding command {command} failed: {}", error["message"].as_str().unwrap_or_default());
