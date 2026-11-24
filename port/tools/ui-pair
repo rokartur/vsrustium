@@ -3,7 +3,7 @@
 // for states a still pixel-check frame cannot reach (inline editors, dialogs, drags). Run on the Studio.
 // Usage: port/tools/ui-pair <out-dir> <steps.json> [dark|light|hc|hclight]   (env REF = reference checkout,
 // default ~/Developer/vscode-ref; env FOLDER = folder to open, default a copy of port/fixtures/workspace;
-// env ONLY = "reference" or "port" to run one of them; env ARGS = more arguments for both, space separated)
+// env FILE = file to open, relative to the folder; env ONLY = "reference" or "port" to run one of them; env ARGS = more arguments for both, space separated)
 // Steps, in window points (both windows are 1024x768):
 //   {"click": [x, y]}  {"click": [x, y], "modifier": ["cmd"]}  {"doubleClick": [x, y]}  {"key": "return"}
 //   {"hotkey": ["cmd", "c"]}  {"type": "text"}  {"wait": ms}  {"shot": "name"}
@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { referenceArgs, referenceUserData } from './ref-user-data.ts';
 
-type Step = { click?: number[]; doubleClick?: number[]; modifier?: string[]; key?: string; hotkey?: string[]; type?: string; wait?: number; shot?: string; dragShot?: number[] };
+type Step = { click?: number[]; doubleClick?: number[]; modifier?: string[]; key?: string; hotkey?: string[]; type?: string; wait?: number; shot?: string; dragShot?: number[]; foreground?: boolean };
 
 const [outDir, stepsFile, themeName = 'dark'] = process.argv.slice(2);
 const steps: Step[] = JSON.parse(readFileSync(stepsFile, 'utf8'));
@@ -36,7 +36,8 @@ for (const app of (process.env.ONLY ?? 'reference port').split(' ')) {
 	if (!process.env.FOLDER) {
 		cpSync('port/fixtures/workspace', folder, { recursive: true });
 	}
-	const child = app === 'reference' ? startReference(folder) : startPort(folder);
+	const paths = process.env.FILE ? [folder, join(folder, process.env.FILE)] : [folder];
+	const child = app === 'reference' ? startReference(paths) : startPort(paths);
 	try {
 		await run(app, child.pid);
 	} finally {
@@ -47,7 +48,7 @@ for (const app of (process.env.ONLY ?? 'reference port').split(' ')) {
 rmSync(scratch, { recursive: true, force: true });
 process.exit(0);
 
-function startReference(folder: string) {
+function startReference(paths: string[]) {
 	const userData = referenceUserData(referenceTheme);
 	// cua-driver reads the accessibility tree, which the reference takes for a screen reader (a notification
 	// and "Screen Reader Optimized"); the port has no screen reader mode yet.
@@ -56,16 +57,16 @@ function startReference(folder: string) {
 	// windowsStateHandler.ts: the first window takes the last active window's size (WindowMode.Normal is 1).
 	writeFileSync(join(userData, 'User/globalStorage/storage.json'), JSON.stringify({ windowsState: { lastActiveWindow: { uiState: { mode: 1, x: 100, y: 100, width: 1024, height: 768 } } } }));
 	const electron = join(ref, '.build/electron/Code - OSS.app/Contents/MacOS/Code - OSS');
-	return Bun.spawn([electron, ref, folder, ...referenceArgs, ...extraArgs, '--user-data-dir', userData], {
+	return Bun.spawn([electron, ref, ...paths, ...referenceArgs, ...extraArgs, '--user-data-dir', userData], {
 		env: { ...process.env, VSCODE_DEV: '1', NODE_ENV: 'development' },
 		stdout: 'ignore',
 		stderr: 'ignore',
 	});
 }
 
-function startPort(folder: string) {
+function startPort(paths: string[]) {
 	const userData = mkdtempSync(join(scratch, 'port-user-'));
-	return Bun.spawn(['native/target/release/code-gpui', folder, ...extraArgs, '--user-data-dir', userData, '--theme', portTheme], {
+	return Bun.spawn(['native/target/release/code-gpui', ...paths, ...extraArgs, '--user-data-dir', userData, '--theme', portTheme], {
 		env: { ...process.env, VSCODE_GPUI_EXTENSIONS: join(ref, 'extensions') },
 		stdout: 'ignore',
 		stderr: Bun.file(join(outDir, 'port.log')),
@@ -102,7 +103,8 @@ async function run(app: string, pid: number) {
 		} else if (step.dragShot) {
 			const [x1, y1, x2, y2] = step.dragShot;
 			// A background drag reaches only Electron's own drag and drop; GPUI needs the real pointer.
-			const delivery_mode = app === 'port' ? 'foreground' : 'background';
+			// `foreground: true` sends the reference's drag through the real pointer too (a sash, not a drag and drop).
+			const delivery_mode = app === 'port' || step.foreground ? 'foreground' : 'background';
 			const drag = cua('drag', { ...target, from_x: x1 * 2, from_y: y1 * 2, to_x: x2 * 2, to_y: y2 * 2, duration_ms: 4000, steps: 40, modifier: step.modifier, delivery_mode });
 			await Bun.sleep(3500);
 			await shot(app, pid, target.window_id, step.shot!);
