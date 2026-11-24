@@ -1477,6 +1477,7 @@ dependencies = [
  "config",
  "files",
  "md-5",
+ "search",
  "security-framework",
  "serde_json",
  "storage",

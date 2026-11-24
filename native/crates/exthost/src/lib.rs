@@ -8,6 +8,7 @@ pub mod main_thread_configuration;
 pub mod main_thread_files;
 pub mod main_thread_secret_state;
 pub mod main_thread_storage;
+pub mod main_thread_workspace;
 pub mod proxy_ids;
 pub mod rpc;
 pub mod scan;

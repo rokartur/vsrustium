@@ -566,7 +566,9 @@ impl RipgrepParser {
         }
         let Ok(message) = serde_json::from_str::<Value>(line) else { return Vec::new() };
         let data = &message["data"];
-        let relative_path = bytes_or_text(&data["path"]);
+        // `URI.joinPath(rootFolder, path)` drops the `./` ripgrep puts before each path when it searches `.`.
+        let path = bytes_or_text(&data["path"]);
+        let relative_path = path.strip_prefix("./").unwrap_or(&path).to_string();
         match message["type"].as_str() {
             Some("match") => vec![self.create_text_search_match(data, relative_path)],
             Some("context") => {
@@ -904,6 +906,11 @@ mod tests {
             parse(&[rg_match("file1.js", "foobar", 4, &[(3, 6)]), rg_match("app/file2.js", "foobar", 4, &[(3, 6)])]),
             [found("file1.js", "foobar", &[(range(0, 3, 0, 6), range(3, 3, 3, 6))]), found("app/file2.js", "foobar", &[(range(0, 3, 0, 6), range(3, 3, 3, 6))])]
         );
+    }
+
+    #[test]
+    fn parser_drops_the_dot_folder() {
+        assert_eq!(parse(&[rg_match("./sub/file1.js", "foobar", 4, &[(3, 6)])]), [found("sub/file1.js", "foobar", &[(range(0, 3, 0, 6), range(3, 3, 3, 6))])]);
     }
 
     #[test]

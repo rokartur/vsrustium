@@ -25,6 +25,7 @@ use exthost::main_thread_configuration::MainThreadConfiguration;
 use exthost::main_thread_files::MainThreadFiles;
 use exthost::main_thread_secret_state::MainThreadSecretState;
 use exthost::main_thread_storage::MainThreadStorage;
+use exthost::main_thread_workspace::MainThreadWorkspace;
 use exthost::rpc::Arg;
 use exthost::scan::{ScannedExtension, scan_builtin_extensions};
 use exthost::session::{Session, SessionPaths, init_data, workspace_data};
@@ -161,6 +162,7 @@ fn run_extension_host(
     let watcher_excludes = settings.lock().unwrap().get_value(Some("files.watcherExclude"), &Overrides { resource: folder.as_deref(), ..Overrides::default() });
     let watcher_excludes: Vec<String> = watcher_excludes.as_ref().and_then(|excludes| excludes.as_object()).into_iter().flatten().filter(|(_, on)| **on == true).map(|(pattern, _)| pattern.clone()).collect();
     session.files = Some(MainThreadFiles::new(folder.as_deref(), &watcher_excludes, &extensions)?);
+    session.workspace = Some(MainThreadWorkspace::new(folder.iter().cloned().collect(), settings.clone(), &app_root));
     session.configuration = Some(MainThreadConfiguration::new(settings, development.is_some()));
     session.storage = Some(storage);
     // secrets.ts: without encryption the secret storage falls back to memory.
