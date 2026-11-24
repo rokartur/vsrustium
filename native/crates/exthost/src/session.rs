@@ -201,6 +201,11 @@ impl Session {
         self.extension_tests_req = Some(self.send_request("ExtHostExtensionService", "$extensionTestsExecute", vec![]));
     }
 
+    /// `IEnvironmentService.extensionTestsLocationURI` is set: the run is an extension test run.
+    pub fn runs_extension_tests(&self) -> bool {
+        self.extension_tests_req.is_some()
+    }
+
     /// The exit code the app ends with after `execute_extension_tests`, as upstream's `_onExtensionHostExit`:
     /// the runner's result, 1 if it threw, or the host's own exit code if it died first.
     pub fn extension_tests_exit_code(&mut self) -> Option<i32> {
@@ -253,9 +258,13 @@ impl Session {
     }
 
     fn send_request(&mut self, proxy: &str, method: &str, args: Vec<Arg>) -> u32 {
+        self.send(proxy, method, args, false)
+    }
+
+    fn send(&mut self, proxy: &str, method: &str, args: Vec<Arg>, cancellable: bool) -> u32 {
         self.next_req += 1;
         let req = self.next_req;
-        let message = Message::Request { req, rpc_id: proxy_id(proxy), method: method.into(), args, cancellable: false };
+        let message = Message::Request { req, rpc_id: proxy_id(proxy), method: method.into(), args, cancellable };
         self.host.send(rpc::encode(&message));
         req
     }
@@ -279,6 +288,30 @@ impl Session {
             let left = deadline.checked_duration_since(Instant::now()).ok_or_else(|| anyhow::anyhow!("{proxy}.{method} timed out"))?;
             if !self.pump(left)? {
                 anyhow::bail!("extension host exited during {proxy}.{method}");
+            }
+        }
+    }
+
+    /// A request whose host method takes a `CancellationToken`, cancelled after `timeout` (`raceCancellation`):
+    /// `None` once cancelled or when the host is gone.
+    pub fn request_cancellable(&mut self, proxy: &str, method: &str, args: Vec<Value>, timeout: Duration) -> Option<CallResult> {
+        let req = self.send(proxy, method, args.into_iter().map(Arg::Json).collect(), true);
+        let deadline = Instant::now() + timeout;
+        loop {
+            if let Some(result) = self.results.remove(&req) {
+                return Some(result);
+            }
+            let Some(left) = deadline.checked_duration_since(Instant::now()) else {
+                self.host.send(rpc::encode(&Message::Cancel { req }));
+                return None;
+            };
+            match self.pump(left) {
+                Ok(true) => {}
+                Ok(false) => return None,
+                Err(error) => {
+                    eprintln!("[exthost] {proxy}.{method}: {error:#}");
+                    return None;
+                }
             }
         }
     }
@@ -337,6 +370,12 @@ impl Session {
                 self.host.send(rpc::encode(&Message::Acknowledged { req }));
                 *self.log.host_calls.entry(format!("{}.{method}", proxy_name(rpc_id))).or_default() += 1;
                 let reply = crate::main_thread_files::serve(self, req, &method, &args);
+                self.host.send(rpc::encode(&reply));
+            }
+            Message::Request { req, rpc_id, method, args, .. } if proxy_name(rpc_id) == "MainThreadBulkEdits" && self.files.is_some() => {
+                self.host.send(rpc::encode(&Message::Acknowledged { req }));
+                *self.log.host_calls.entry(format!("MainThreadBulkEdits.{method}")).or_default() += 1;
+                let reply = crate::main_thread_bulk_edits::serve(self, req, &args);
                 self.host.send(rpc::encode(&reply));
             }
             Message::Request { req, rpc_id, method, args, .. }
