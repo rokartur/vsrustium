@@ -19,3 +19,14 @@ Not reached: tests of the reference run (402 folder, 4 workspace) the port did n
 | api-workspace | 0 | 0 | 0 | 4 | exit 0 after 0s |
 
 Passing: configuration, language defaults; configuration, defaults; configuration, name vs property; and the two `globalState / workspaceState` tests.
+
+## Milestone 9: commands and quick input
+
+Run with `MOCHA_GREP` on the Mac Studio at f598f3a9 (the full folder suite does not finish within its timeout, milestone 6). Baseline at 27feb270 with `vscode API - (commands|quick input)`: 3 passing, 15 failing.
+
+| MOCHA_GREP | passing | pending | failing |
+|------------|---------|---------|---------|
+| `vscode API - quick input` | 11 | 0 | 0 |
+| `vscode API - commands\|showInputBox\|#7013` | 10 | 0 | 4 |
+
+Failing: `editorCommand with extra args`, `api-command: vscode.diff`, `api-command: vscode.open`, `vscode.open with untitled supports associated resource (#138925)`; they need milestone 8 editor groups and a diff editor (port/notes.md).

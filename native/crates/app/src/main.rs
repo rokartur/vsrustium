@@ -3,11 +3,20 @@
 //!   [--extensionDevelopmentPath=<dir> [--extensionTestsPath=<path>]]: the app exits with the test runner's code.
 
 mod brackets;
+mod command_palette;
+mod commands;
+mod contextkey;
 mod editor;
 mod explorer;
+mod filters;
 mod host_sync;
+mod keybindings;
 mod languages;
+mod main_thread_commands;
+mod main_thread_quick_open;
+mod quick_input;
 mod syntax;
+mod tf_idf;
 mod theme;
 mod workbench;
 
@@ -25,7 +34,7 @@ use exthost::main_thread_secret_state::MainThreadSecretState;
 use exthost::main_thread_storage::MainThreadStorage;
 use exthost::rpc::Arg;
 use exthost::scan::{ScannedExtension, scan_builtin_extensions};
-use exthost::session::{Session, SessionPaths, init_data, workspace_data};
+use exthost::session::{ForwardedRequest, Session, SessionPaths, init_data, workspace_data};
 use exthost::{ExtensionHost, HostOptions, Runtime};
 use futures::StreamExt;
 use futures::channel::mpsc::{UnboundedSender, unbounded};
@@ -34,6 +43,7 @@ use gpui_platform::application;
 use serde_json::json;
 use anyhow::Context as _;
 use explorer::FileTree;
+use commands::Outcome;
 use host_sync::{HostMessage, HostSync};
 use languages::Languages;
 use theme::load_theme;
@@ -68,6 +78,7 @@ fn main() -> anyhow::Result<()> {
         None => settings_theme(&extensions, &settings)?,
     };
     let settings = Arc::new(Mutex::new(settings));
+    let keybindings_file = user_data.join("User/keybindings.json");
 
     application().run(move |cx: &mut App| {
         // Same size as the reference capture in port/tools/ref-screenshot, so pixel diffs line up.
@@ -81,10 +92,15 @@ fn main() -> anyhow::Result<()> {
             cx.new(|cx| {
                 let (sender, mut receiver) = unbounded::<String>();
                 let (host_sender, host_receiver) = channel();
+                let (request_sender, mut requests) = unbounded::<ForwardedRequest>();
+                let (reply_sender, replies) = channel::<(u32, Result<serde_json::Value, serde_json::Value>)>();
                 let languages = Languages::new(&extensions);
                 let host = HostSync::new(host_sender);
                 host.send_color_theme(theme.kind);
                 let mut workbench = Workbench::new(theme, app_root.clone(), folder.clone().map(FileTree::new), languages, settings.clone(), host, cx);
+                workbench.skip_dialogs = development.as_ref().is_some_and(|development| development.tests_path.is_some());
+                workbench.load_keybindings(keybindings::default_keybindings(&extensions), keybindings_file.clone(), cx);
+                workbench.quick_access.menu = command_palette::menu(&extensions);
                 if let Some(file) = file {
                     workbench.open_file(file, true, window, cx);
                 }
@@ -92,7 +108,7 @@ fn main() -> anyhow::Result<()> {
                     .name("exthost-session".into())
                     .spawn(move || {
                         let runs_tests = development.as_ref().is_some_and(|development| development.tests_path.is_some());
-                        if let Err(error) = run_extension_host(runtime, app_root, extensions, settings, user_data, folder, development, host_receiver, &sender) {
+                        if let Err(error) = run_extension_host(runtime, app_root, extensions, settings, user_data, folder, development, host_receiver, request_sender, replies, &sender) {
                             if runs_tests {
                                 eprintln!("extension host failed: {error:#}");
                                 std::process::exit(1);
@@ -101,6 +117,30 @@ fn main() -> anyhow::Result<()> {
                         }
                     })
                     .expect("spawn exthost session thread");
+                cx.spawn_in(window, async move |workbench, cx| {
+                    while let Some(request) = requests.next().await {
+                        let req = request.req;
+                        // A cancellation answers nothing itself; the request it cancels gets its answer.
+                        let cancel = request.method == "$cancel";
+                        let Ok(outcome) = workbench.update_in(cx, |workbench, window, cx| workbench.handle_host_request(request, window, cx)) else { break };
+                        let result = match outcome {
+                            _ if cancel => continue,
+                            Outcome::Ready(result) => result,
+                            // Requests from the host may overlap, so a pending answer is awaited off this loop.
+                            Outcome::Pending(pending) => {
+                                let reply_sender = reply_sender.clone();
+                                cx.background_executor()
+                                    .spawn(async move {
+                                        let _ = reply_sender.send((req, pending.await.unwrap_or(Ok(serde_json::Value::Null))));
+                                    })
+                                    .detach();
+                                continue;
+                            }
+                        };
+                        let _ = reply_sender.send((req, result));
+                    }
+                })
+                .detach();
                 cx.spawn_in(window, async move |_, cx| {
                     while let Some(line) = receiver.next().await {
                         eprintln!("{line}");
@@ -138,6 +178,8 @@ fn run_extension_host(
     folder: Option<PathBuf>,
     development: Option<ExtensionDevelopment>,
     workbench_messages: Receiver<HostMessage>,
+    workbench_requests: UnboundedSender<ForwardedRequest>,
+    workbench_replies: Receiver<(u32, Result<serde_json::Value, serde_json::Value>)>,
     status: &UnboundedSender<String>,
 ) -> anyhow::Result<()> {
     let paths = SessionPaths { app_root: &app_root, user_data: &user_data, workspace_folder: folder.as_deref() };
@@ -164,6 +206,9 @@ fn run_extension_host(
             MainThreadSecretState::in_memory()
         }),
     });
+    session.forward(&["MainThreadCommands", "MainThreadQuickOpen"], move |request| {
+        let _ = workbench_requests.unbounded_send(request);
+    }, workbench_replies);
     session.start(&extensions, folder.as_deref().map(|folder| workspace_data(&init, folder)))?;
     let reply = session.call("ExtHostExtensionService", "$test_latency", vec![Arg::Json(json!(7))], Duration::from_secs(10))?;
     let _ = status.unbounded_send(format!("main -> host: $test_latency(7) = {reply:?}"));
@@ -173,10 +218,22 @@ fn run_extension_host(
         session.execute_extension_tests();
     }
     // The short pump timeout bounds how long a workbench change waits before the host hears of it.
+    let mut waiting = Vec::new();
     loop {
         for message in workbench_messages.try_iter() {
-            session.notify(message.proxy, message.method, message.args);
+            let req = session.notify(message.proxy, message.method, message.args);
+            if let Some(reply) = message.reply {
+                waiting.push((req, reply));
+            }
         }
+        let mut still_waiting = Vec::new();
+        for (req, reply) in waiting.drain(..) {
+            match session.take_result(req) {
+                Some(result) => drop(reply.send(result)),
+                None => still_waiting.push((req, reply)),
+            }
+        }
+        waiting = still_waiting;
         if !session.pump(Duration::from_millis(20))? {
             break;
         }

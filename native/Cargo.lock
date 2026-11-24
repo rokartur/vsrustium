@@ -187,6 +187,7 @@ dependencies = [
  "futures",
  "gpui",
  "gpui_platform",
+ "icu_normalizer",
  "image",
  "onig",
  "serde_json",

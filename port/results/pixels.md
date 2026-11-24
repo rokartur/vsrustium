@@ -2,6 +2,19 @@
 
 `port/tools/pixel-check` on the Mac Studio: the reference workbench captured through CDP (`port/tools/ref-screenshot`, 1024x768 at 2x, frozen: solid cursor, reduced motion, no startup editor, `chat.disableAIFeatures`) against the port's frame read back from Metal (`code-gpui --theme <id> --screenshot`, built with `--features screenshot`). Neither capture needs Screen Recording permission. Diff: `native/crates/pixeldiff`, threshold 0, anti-aliased pixels counted apart.
 
+## Milestone 9: commands, keybindings, quick input
+
+No new window: pixel-check has no quick input. All 16 port frames are byte-identical to the milestone 7 run (md5 of `port-<theme>.png` per window).
+
+| window | dark | light | hc | hclight |
+|---|---|---|---|---|
+| empty | 3567 | 3612 | 398 | 401 |
+| folder | 7053 | 3882 | 775 | 689 |
+| file | 10859 | 6376 | 4396 | 3853 |
+| main | 12177 | 7627 | 5335 | 5059 |
+
+- empty light (3612, was 3600) and main hclight (5059, was 6626) moved with the reference capture only: its md5 changed, the port's did not; main hclight is the overview ruler artifact of milestone 7.
+- Ad-hoc, not a pixel-check result, measured at the palette commit before the drag: the Command Palette over the empty window (Dark Modern, 2x), the widget crop against the reference's, 2803.8 pixels (0.28%) differ at 2% fuzz (`magick compare -fuzz 2% -metric AE`); the rows and the selection highlight sit at the reference's y positions.
 ## Milestone 7: syntax colors and themes
 
 New window `main`: `port/fixtures/workspace/src/main.ts` open in the fixture folder, TypeScript grammar colors and bracket pair colors. New theme `hclight` (Default High Contrast Light) for every window. The reference now runs with `--force-color-profile=srgb` (port/notes.md); with it the empty, folder and file windows give the milestone 2, 3 and 4 numbers unchanged. Reference md5 (main): dark `c1172c60`, hc `1cf27616`, hclight `fc82315e`, light `2eba5cf1`.

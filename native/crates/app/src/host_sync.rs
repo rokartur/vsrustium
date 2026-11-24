@@ -7,6 +7,8 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 
+use futures::channel::oneshot;
+
 use exthost::scan::file_uri;
 use serde_json::{Value, json};
 
@@ -18,6 +20,8 @@ pub struct HostMessage {
     pub proxy: &'static str,
     pub method: &'static str,
     pub args: Vec<Value>,
+    /// Where the host's answer goes, for `HostSync::call`.
+    pub reply: Option<oneshot::Sender<Result<Value, Value>>>,
 }
 
 pub struct HostSync {
@@ -131,10 +135,10 @@ impl HostSync {
         self.send("ExtHostEditorTabs", "$acceptTabOperation", vec![operation]);
     }
 
-    /// Tells the host the active editor's text changed (mainThreadDocuments.ts ModelTracker), then the
+    /// Tells the host the text of the editor at `index` changed (mainThreadDocuments.ts ModelTracker), then the
     /// dirty state and tabs when it flipped, then where the cursor went.
-    pub fn send_content_change(&mut self, group: &EditorGroup, change: &ContentChanged) {
-        let editor = group.active().expect("only the active editor is edited");
+    pub fn send_content_change(&mut self, group: &EditorGroup, index: usize, change: &ContentChanged) {
+        let editor = &group.editors[index];
         let document = &editor.document;
         let uri = file_uri(&document.path);
         let changes: Vec<Value> = change
@@ -168,9 +172,9 @@ impl HostSync {
         self.send_selection(editor, "keyboard");
     }
 
-    /// The active editor was written to disk while `was_dirty`.
-    pub fn send_saved(&mut self, group: &EditorGroup, was_dirty: bool) {
-        let editor = group.active().expect("only the active editor is saved");
+    /// The editor at `index` was written to disk while `was_dirty`.
+    pub fn send_saved(&mut self, group: &EditorGroup, index: usize, was_dirty: bool) {
+        let editor = &group.editors[index];
         let uri = file_uri(&editor.document.path);
         if was_dirty {
             self.send("ExtHostDocuments", "$acceptDirtyStateChanged", vec![uri.clone(), json!(false)]);
@@ -196,9 +200,27 @@ impl HostSync {
         self.send("ExtHostTheming", "$onColorThemeChange", vec![json!(scheme)]);
     }
 
-    fn send(&self, proxy: &'static str, method: &'static str, args: Vec<Value>) {
+    pub(crate) fn send(&self, proxy: &'static str, method: &'static str, args: Vec<Value>) {
         // The session thread is gone once the host exits; the workbench keeps working without it.
-        let _ = self.sender.send(HostMessage { proxy, method, args });
+        let _ = self.sender.send(HostMessage { proxy, method, args, reply: None });
+    }
+
+    /// `ExtensionHostManager.activateByEvent`: one request per event; a repeat resolves at once.
+    pub fn activate_by_event(&mut self, event: &str) -> oneshot::Receiver<Result<Value, Value>> {
+        if !self.activation_events.insert(event.to_owned()) {
+            let (sender, receiver) = oneshot::channel();
+            let _ = sender.send(Ok(Value::Null));
+            return receiver;
+        }
+        // ActivationKind.Normal
+        self.call("ExtHostExtensionService", "$activateByEvent", vec![json!(event), json!(0)])
+    }
+
+    /// Sends a request whose answer arrives on the receiver; a host that is gone drops the sender.
+    pub fn call(&self, proxy: &'static str, method: &'static str, args: Vec<Value>) -> oneshot::Receiver<Result<Value, Value>> {
+        let (reply, receiver) = oneshot::channel();
+        let _ = self.sender.send(HostMessage { proxy, method, args, reply: Some(reply) });
+        receiver
     }
 }
 
@@ -380,7 +402,7 @@ mod tests {
         let editor = group.active_mut().unwrap();
         editor.move_to(Position::new(0, 5), false);
         let change = editor.type_text("!").unwrap();
-        sync.send_content_change(&group, &change);
+        sync.send_content_change(&group, group.active_index().unwrap(), &change);
         let sent = drain(&receiver);
         let methods: Vec<_> = sent.iter().map(|message| message.method).collect();
         assert_eq!(methods, ["$acceptModelChanged", "$acceptDirtyStateChanged", "$acceptTabOperation", "$acceptEditorPropertiesChanged"]);
@@ -395,11 +417,11 @@ mod tests {
 
         // Still dirty: no dirty state or tab update.
         let change = group.active_mut().unwrap().type_text("?").unwrap();
-        sync.send_content_change(&group, &change);
+        sync.send_content_change(&group, group.active_index().unwrap(), &change);
         assert_eq!(drain(&receiver).len(), 2);
 
         let change = group.active_mut().unwrap().undo().unwrap();
-        sync.send_content_change(&group, &change);
+        sync.send_content_change(&group, group.active_index().unwrap(), &change);
         let sent = drain(&receiver);
         assert_eq!((sent[0].args[1]["isUndoing"].clone(), sent[0].args[1]["detailedReason"].clone()), (json!(true), json!({ "source": "applyEdits" })));
         assert_eq!(sent[1].args[1], false);
@@ -461,14 +483,14 @@ mod tests {
         let editor = group.active_mut().unwrap();
         editor.move_to(Position::new(1, 0), false);
         let change = editor.type_text("const broken: number = 'text';\n").unwrap();
-        sync.send_content_change(&group, &change);
+        sync.send_content_change(&group, group.active_index().unwrap(), &change);
         forward(&mut session);
         pump_until(&mut session, 60, &|session| diagnostics(session) > before);
         assert!(diagnostics(&session) > before, "no diagnostics after the edit; console: {:#?}", session.log.console);
 
         let was_dirty = group.active().unwrap().is_dirty();
         group.active_mut().unwrap().save().unwrap();
-        sync.send_saved(&group, was_dirty);
+        sync.send_saved(&group, group.active_index().unwrap(), was_dirty);
         forward(&mut session);
         assert!(!session.log.console.iter().any(|line| line.starts_with("[unexpected]")), "{:#?}", session.log.console);
         std::fs::remove_dir_all(folder).unwrap();

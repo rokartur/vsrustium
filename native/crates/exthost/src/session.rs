@@ -136,11 +136,27 @@ pub struct Session {
     pub storage: Option<MainThreadStorage>,
     /// Extension secrets; without it every MainThreadSecretState call answers `undefined`.
     pub secrets: Option<MainThreadSecretState>,
+    forward: Option<Forward>,
+}
+
+/// A host request the app answers later with `Session::reply` (MainThread* shapes the workbench implements).
+#[derive(Debug)]
+pub struct ForwardedRequest {
+    pub req: u32,
+    pub proxy: &'static str,
+    pub method: String,
+    pub args: Vec<Value>,
+}
+
+struct Forward {
+    proxies: &'static [&'static str],
+    send: Box<dyn FnMut(ForwardedRequest) + Send>,
+    replies: std::sync::mpsc::Receiver<(u32, Result<Value, Value>)>,
 }
 
 impl Session {
     pub fn new(host: ExtensionHost) -> Self {
-        Session { host, next_req: 0, results: HashMap::new(), log: SessionLog::default(), extensions: HashMap::new(), extension_tests_req: None, configuration: None, storage: None, secrets: None }
+        Session { host, next_req: 0, results: HashMap::new(), log: SessionLog::default(), extensions: HashMap::new(), extension_tests_req: None, configuration: None, storage: None, secrets: None, forward: None }
     }
 
     /// The calls the workbench makes once the handshake is done (MainThreadConfiguration,
@@ -188,6 +204,30 @@ impl Session {
         })
     }
 
+    /// Hands requests to `proxies` to `send` instead of answering them here; `pump` sends the answers that arrive on `replies`.
+    pub fn forward(&mut self, proxies: &'static [&'static str], send: impl FnMut(ForwardedRequest) + Send + 'static, replies: std::sync::mpsc::Receiver<(u32, Result<Value, Value>)>) {
+        self.forward = Some(Forward { proxies, send: Box::new(send), replies });
+    }
+
+    /// Answers a forwarded request; an error is a `SerializedError`.
+    pub fn reply(&mut self, req: u32, result: Result<Value, Value>) {
+        let message = match result {
+            Ok(Value::Null) => Message::ReplyOk { req, value: Reply::Empty },
+            Ok(value) => Message::ReplyOk { req, value: Reply::Json(value) },
+            Err(error) => Message::ReplyErr { req, error: Some(error) },
+        };
+        self.host.send(rpc::encode(&message));
+    }
+
+    /// The host's answer to a `notify`, once it arrived.
+    pub fn take_result(&mut self, req: u32) -> Option<Result<Value, Value>> {
+        Some(match self.results.remove(&req)? {
+            CallResult::Ok(Reply::Json(value) | Reply::JsonWithBuffers { json: value, .. }) => Ok(value),
+            CallResult::Ok(_) => Ok(Value::Null),
+            CallResult::Err(error) => Err(error.unwrap_or(Value::Null)),
+        })
+    }
+
     /// Sends a request without waiting for its reply.
     pub fn notify(&mut self, proxy: &str, method: &str, args: Vec<Value>) -> u32 {
         self.send_request(proxy, method, args.into_iter().map(Arg::Json).collect())
@@ -220,9 +260,17 @@ impl Session {
     }
 
     /// Handles one incoming message, waiting up to `timeout`. Returns false once the host is gone or the extension tests are done.
-    pub fn pump(&mut self, timeout: Duration) -> anyhow::Result<bool> {
+    pub fn pump(&mut self, mut timeout: Duration) -> anyhow::Result<bool> {
         if let Some(args) = self.configuration.as_mut().and_then(MainThreadConfiguration::check_files) {
             self.notify("ExtHostConfiguration", "$acceptConfigurationChanged", args);
+        }
+        if let Some(forward) = &self.forward {
+            let answered: Vec<_> = forward.replies.try_iter().collect();
+            for (req, result) in answered {
+                self.reply(req, result);
+            }
+            // An answer can come while a `call` waits (an extension's activate awaiting a forwarded request).
+            timeout = timeout.min(Duration::from_millis(20));
         }
         let Some(incoming) = self.host.recv_timeout(timeout) else { return Ok(true) };
         let bytes = match incoming {
@@ -252,6 +300,12 @@ impl Session {
             }
             Message::Request { req, rpc_id, method, args, .. } => {
                 self.host.send(rpc::encode(&Message::Acknowledged { req }));
+                if let Some(forward) = self.forward.as_mut().filter(|forward| forward.proxies.contains(&proxy_name(rpc_id))) {
+                    *self.log.host_calls.entry(format!("{}.{method}", proxy_name(rpc_id))).or_default() += 1;
+                    let args = args.into_iter().map(arg_value).collect();
+                    (forward.send)(ForwardedRequest { req, proxy: proxy_name(rpc_id), method, args });
+                    return Ok(true);
+                }
                 let reply = self.handle_host_request(proxy_name(rpc_id), &method, &args);
                 self.host.send(rpc::encode(&Message::ReplyOk { req, value: reply }));
             }
@@ -261,7 +315,13 @@ impl Session {
             Message::ReplyErr { req, error } => {
                 self.results.insert(req, CallResult::Err(error));
             }
-            Message::Acknowledged { .. } | Message::Cancel { .. } => {}
+            // The forwarded request's cancellation token fired: it comes again as `$cancel`, with no proxy.
+            Message::Cancel { req } => {
+                if let Some(forward) = self.forward.as_mut() {
+                    (forward.send)(ForwardedRequest { req, proxy: "", method: "$cancel".into(), args: Vec::new() });
+                }
+            }
+            Message::Acknowledged { .. } => {}
         }
         Ok(self.extension_tests_req.is_none_or(|req| !self.results.contains_key(&req)))
     }
@@ -326,6 +386,13 @@ impl Session {
         }
         // shortcut: every other MainThread* method answers `undefined`; each shape gets a real implementation as its ledger row lands.
         Reply::Empty
+    }
+}
+
+fn arg_value(arg: Arg) -> Value {
+    match arg {
+        Arg::Json(value) | Arg::JsonWithBuffers { json: value, .. } => value,
+        Arg::Buffer(_) | Arg::Undefined => Value::Null,
     }
 }
 

@@ -15,7 +15,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | seam/vscode-module-bun | extension host seam | ported | exthost-probe: CJS extensions and ESM github, markdown-language-features, mermaid-markdown-features activate on Bun; ESM added after startup not covered |
 | mainthread/MainThreadGitExtension | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadClipboard | MainThread* shape (Rust side) | stub | session.rs answers undefined |
-| mainthread/MainThreadCommands | MainThread* shape (Rust side) | stub | session.rs answers undefined |
+| mainthread/MainThreadCommands | MainThread* shape (Rust side) | ported | api-tests MOCHA_GREP="vscode API - commands\|showInputBox\|#7013": 10 passing, 4 failing (vscode.open twice, vscode.diff, editorCommand with extra args: wait for milestone 8 editor groups and the diff editor) |
 | mainthread/MainThreadComments | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadAuthentication | MainThread* shape (Rust side) | removed | no sign-in/AI by decision (port/notes.md); API stays inert: session.rs answers undefined, list getters []; exthost-probe 30/30 on Bun and Node |
 | mainthread/MainThreadSecretState | MainThread* shape (Rust side) | verified | port/tools/settings-check secrets same as the reference; cargo test -p exthost main_thread_secret_state (on a throwaway keychain) |
@@ -38,7 +38,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | mainthread/MainThreadProgress | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadTerminalService | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadTerminalShellIntegration | MainThread* shape (Rust side) | stub | session.rs answers undefined |
-| mainthread/MainThreadQuickOpen | MainThread* shape (Rust side) | stub | session.rs answers undefined |
+| mainthread/MainThreadQuickOpen | MainThread* shape (Rust side) | verified | api-tests MOCHA_GREP="vscode API - quick input": 11 passing, 0 failing |
 | mainthread/MainThreadStatusBar | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadStorage | MainThread* shape (Rust side) | verified | api-tests globalState / workspaceState 2/2; port/tools/settings-check state (restart, state.vscdb rows) same as the reference |
 | mainthread/MainThreadTelemetry | MainThread* shape (Rust side) | stub | session.rs answers undefined |
@@ -111,7 +111,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/accessibilitySignal | src/vs/platform | todo |  |
 | platform/action | src/vs/platform | todo |  |
 | platform/actionWidget | src/vs/platform | todo |  |
-| platform/actions | src/vs/platform | todo |  |
+| platform/actions | src/vs/platform | stub | command_palette.rs: CommandPalette menu only (f1 workbench actions, contributes.commands, menus.commandPalette when); no menu bar or context menus |
 | platform/agentHost | src/vs/platform | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | platform/agentPlugins | src/vs/platform | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | platform/artifactIntegrations | src/vs/platform | todo |  |
@@ -122,9 +122,9 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/chat | src/vs/platform | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | platform/checksum | src/vs/platform | todo |  |
 | platform/clipboard | src/vs/platform | todo |  |
-| platform/commands | src/vs/platform | todo |  |
+| platform/commands | src/vs/platform | ported | commands.rs registry; api-tests commands suite (see MainThreadCommands) |
 | platform/configuration | src/vs/platform | ported | cargo test -p config (json, jsonEdit, configurationModels, configurationRegistry cases); policy, configurationService, configurations, configurationVariables tests not ported |
-| platform/contextkey | src/vs/platform | todo |  |
+| platform/contextkey | src/vs/platform | ported | cargo test -p app contextkey (scanner and parser cases of contextkey tests) |
 | platform/contextview | src/vs/platform | todo |  |
 | platform/cssDev | src/vs/platform | todo |  |
 | platform/customizationMarketplace | src/vs/platform | todo |  |
@@ -157,7 +157,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/instantiation | src/vs/platform | todo |  |
 | platform/ipc | src/vs/platform | todo |  |
 | platform/jsonschemas | src/vs/platform | todo |  |
-| platform/keybinding | src/vs/platform | todo |  |
+| platform/keybinding | src/vs/platform | ported | cargo test -p app keybindings (keybindingResolver and label tests) |
 | platform/keyboardLayout | src/vs/platform | todo |  |
 | platform/label | src/vs/platform | todo |  |
 | platform/languagePacks | src/vs/platform | todo |  |
@@ -186,7 +186,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/profiling | src/vs/platform | todo |  |
 | platform/progress | src/vs/platform | todo |  |
 | platform/protocol | src/vs/platform | todo |  |
-| platform/quickinput | src/vs/platform | todo |  |
+| platform/quickinput | src/vs/platform | ported | cargo test -p app quick_input, filters, tf_idf, command_palette; api-tests quick input 11/11; ad-hoc palette screenshot 0.28% pixels differ at 2% fuzz |
 | platform/registry | src/vs/platform | todo |  |
 | platform/remote | src/vs/platform | todo |  |
 | platform/remoteTunnel | src/vs/platform | removed | no sign-in/AI by decision (port/notes.md); not ported |
@@ -314,7 +314,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/chat | workbench service | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/services/checksum | workbench service | todo |  |
 | workbench/services/clipboard | workbench service | todo |  |
-| workbench/services/commands | workbench service | todo |  |
+| workbench/services/commands | workbench service | ported | commands.rs: onCommand activation before execute; api-tests commands suite |
 | workbench/services/configuration | workbench service | ported | cargo test -p config service (configurationEditing.test.ts write cases); port/tools/settings-check configuration |
 | workbench/services/configurationResolver | workbench service | todo |  |
 | workbench/services/contextmenu | workbench service | todo |  |
@@ -336,7 +336,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/imageResize | workbench service | todo |  |
 | workbench/services/inlineCompletions | workbench service | todo |  |
 | workbench/services/integrity | workbench service | todo |  |
-| workbench/services/keybinding | workbench service | todo |  |
+| workbench/services/keybinding | workbench service | ported | keyboard.rs: default-macos.json, contributes.keybindings, keybindings.json reload; cargo test -p app keybindings |
 | workbench/services/label | workbench service | todo |  |
 | workbench/services/language | workbench service | verified | getAssociationByPath plus firstLine detection (languages.rs); cargo test -p app languages::tests |
 | workbench/services/languageDetection | workbench service | todo |  |
@@ -360,7 +360,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/preferences | workbench service | todo |  |
 | workbench/services/process | workbench service | todo |  |
 | workbench/services/progress | workbench service | todo |  |
-| workbench/services/quickinput | workbench service | todo |  |
+| workbench/services/quickinput | workbench service | ported | quick_input_view.rs with header drag (cargo test -p app dragging); api-tests quick input 11/11; view state kept in memory until milestone 10 storage |
 | workbench/services/remote | workbench service | todo |  |
 | workbench/services/request | workbench service | todo |  |
 | workbench/services/search | workbench service | todo |  |
@@ -456,7 +456,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/policyExport | workbench contribution | todo |  |
 | workbench/contrib/preferences | workbench contribution | todo |  |
 | workbench/contrib/processExplorer | workbench contribution | todo |  |
-| workbench/contrib/quickaccess | workbench contribution | todo |  |
+| workbench/contrib/quickaccess | workbench contribution | ported | commandsQuickAccess.ts as quick_access.rs and command_palette.rs; cargo test -p app quick_access command_palette tf_idf; viewQuickAccess.ts not ported |
 | workbench/contrib/relauncher | workbench contribution | todo |  |
 | workbench/contrib/remote | workbench contribution | todo |  |
 | workbench/contrib/remoteCodingAgents | workbench contribution | removed | no sign-in/AI by decision (port/notes.md); not ported |

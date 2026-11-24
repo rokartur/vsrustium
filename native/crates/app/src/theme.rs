@@ -22,6 +22,11 @@ impl ThemeKind {
     pub fn is_high_contrast(self) -> bool {
         matches!(self, ThemeKind::HighContrastDark | ThemeKind::HighContrastLight)
     }
+
+    /// `isDark` negated: the light variant of an icon path applies.
+    pub fn is_light(self) -> bool {
+        matches!(self, ThemeKind::Light | ThemeKind::HighContrastLight)
+    }
 }
 
 pub struct Theme {
@@ -213,7 +218,7 @@ fn registry_default(key: &str, kind: ThemeKind) -> ColorValue {
         "editorBracketHighlight.foreground2" => (Hex("#DA70D6"), Hex("#319331FF"), Hex("#DA70D6")),
         "editorBracketHighlight.foreground3" => (Hex("#179FFF"), Hex("#7B3814FF"), Hex("#87CEFA")),
         "editorBracketHighlight.unexpectedBracket.foreground" => (Hex("#FF1212CC"), Hex("#FF1212CC"), Hex("#FF3232")),
-        _ => (None, None, None),
+        _ => quick_input_default(key),
     };
     match kind {
         ThemeKind::Dark => dark,
@@ -281,6 +286,109 @@ fn hc_light_default(key: &str) -> ColorValue {
         "breadcrumb.foreground" => Transparent(&Key("foreground"), 0.8),
         "breadcrumb.background" => Key("editor.background"),
         "tab.border" => Key("contrastBorder"),
+        _ => quick_input_default_hc_light(key),
+    }
+}
+
+/// The keys the quick input paints (quickpickColors.ts, inputColors.ts, listColors.ts, miscColors.ts),
+/// as `registry_default` columns: dark, light, high contrast.
+fn quick_input_default(key: &str) -> (ColorValue, ColorValue, ColorValue) {
+    use ColorValue::*;
+    match key {
+        "editorWidget.background" => (Hex("#252526"), Hex("#F3F3F3"), Hex("#0C141F")),
+        "editorWidget.foreground" => (Key("foreground"), Key("foreground"), Key("foreground")),
+        "quickInput.background" => (Key("editorWidget.background"), Key("editorWidget.background"), Key("editorWidget.background")),
+        "quickInput.foreground" => (Key("editorWidget.foreground"), Key("editorWidget.foreground"), Key("editorWidget.foreground")),
+        "quickInputTitle.background" => (Hex("#FFFFFF1B"), Hex("#0000000F"), Hex("#000000")),
+        "widget.border" => (None, None, Key("contrastBorder")),
+        "input.background" => (Hex("#3C3C3C"), Hex("#FFFFFF"), Hex("#000000")),
+        "input.foreground" => (Key("foreground"), Key("foreground"), Key("foreground")),
+        "input.border" => (None, None, Key("contrastBorder")),
+        "input.placeholderForeground" => (Transparent(&Key("foreground"), 0.5), Transparent(&Key("foreground"), 0.5), Transparent(&Key("foreground"), 0.7)),
+        "inputValidation.infoBackground" => (Hex("#063B49"), Hex("#D6ECF2"), Hex("#000000")),
+        "inputValidation.infoBorder" => (Hex("#007acc"), Hex("#007acc"), Key("contrastBorder")),
+        "inputValidation.warningBackground" => (Hex("#352A05"), Hex("#F6F5D2"), Hex("#000000")),
+        "inputValidation.warningBorder" => (Hex("#B89500"), Hex("#B89500"), Key("contrastBorder")),
+        "inputValidation.errorBackground" => (Hex("#5A1D1D"), Hex("#F2DEDE"), Hex("#000000")),
+        "inputValidation.errorBorder" => (Hex("#BE1100"), Hex("#BE1100"), Key("contrastBorder")),
+        "pickerGroup.foreground" => (Hex("#3794FF"), Hex("#0066BF"), Hex("#FFFFFF")),
+        "pickerGroup.border" => (Hex("#3F3F46"), Hex("#CCCEDB"), Hex("#FFFFFF")),
+        "descriptionForeground" => (Transparent(&Key("foreground"), 0.7), Hex("#717171"), Transparent(&Key("foreground"), 0.7)),
+        "list.activeSelectionBackground" => (Hex("#04395E"), Hex("#0060C0"), None),
+        "list.activeSelectionForeground" => (Hex("#FFFFFF"), Hex("#FFFFFF"), None),
+        "list.hoverBackground" => (Hex("#2A2D2E"), Hex("#F0F0F0"), Hex("#FFFFFF1A")),
+        "list.highlightForeground" => (Hex("#2AAAFF"), Hex("#0066BF"), Key("focusBorder")),
+        // light: ifDefinedThenElse(list.activeSelectionBackground, ...), and that key always resolves there.
+        "list.focusHighlightForeground" => (Key("list.highlightForeground"), Key("list.highlightForeground"), Key("list.highlightForeground")),
+        // oneOf(quickInput.list.focusBackground, list.activeSelectionBackground), and the first has no default.
+        "quickInputList.focusBackground" => (Key("list.activeSelectionBackground"), Key("list.activeSelectionBackground"), None),
+        "quickInputList.focusForeground" => (Key("list.activeSelectionForeground"), Key("list.activeSelectionForeground"), Key("list.activeSelectionForeground")),
+        "quickInputList.focusHighlightForeground" => (
+            Key("list.focusHighlightForeground"),
+            Key("list.focusHighlightForeground"),
+            Key("list.focusHighlightForeground"),
+        ),
+        "keybindingLabel.background" => (Hex("#8080802B"), Hex("#DDDDDD66"), Hex("#0000")),
+        "keybindingLabel.foreground" => (Hex("#CCCCCC"), Hex("#555555"), Hex("#FFFFFF")),
+        "keybindingLabel.border" => (Hex("#33333399"), Hex("#CCCCCC66"), Hex("#6FC3DF")),
+        "keybindingLabel.bottomBorder" => (Hex("#44444499"), Hex("#BBBBBB66"), Hex("#6FC3DF")),
+        "progressBar.background" => (Hex("#0E70C0"), Hex("#0E70C0"), Key("contrastBorder")),
+        "badge.background" => (Hex("#4D4D4D"), Hex("#C4C4C4"), Hex("#000000")),
+        "badge.foreground" => (Hex("#FFFFFF"), Hex("#333"), Hex("#FFFFFF")),
+        "button.background" => (Hex("#0E639C"), Hex("#007ACC"), Hex("#000000")),
+        "button.foreground" => (Hex("#FFFFFF"), Hex("#FFFFFF"), Hex("#FFFFFF")),
+        "button.border" => (Key("contrastBorder"), Key("contrastBorder"), Key("contrastBorder")),
+        "checkbox.background" => (Key("select.background"), Key("select.background"), Key("select.background")),
+        "checkbox.foreground" => (Key("select.foreground"), Key("select.foreground"), Key("select.foreground")),
+        "checkbox.border" => (Key("select.border"), Key("select.border"), Key("select.border")),
+        "select.background" => (Hex("#3C3C3C"), Hex("#FFFFFF"), Hex("#000000")),
+        "select.foreground" => (Hex("#F0F0F0"), Key("foreground"), Hex("#FFFFFF")),
+        "select.border" => (Hex("#3C3C3C"), Hex("#CECECE"), Key("contrastBorder")),
+        "toolbar.hoverBackground" => (Hex("#5a5d5e50"), Hex("#b8b8b850"), None),
+        _ => (None, None, None),
+    }
+}
+
+/// The `hcLight` column of the keys `quick_input_default` lists.
+fn quick_input_default_hc_light(key: &str) -> ColorValue {
+    use ColorValue::*;
+    match key {
+        "editorWidget.background" => Hex("#FFFFFF"),
+        "editorWidget.foreground" => Key("foreground"),
+        "quickInput.background" => Key("editorWidget.background"),
+        "quickInput.foreground" => Key("editorWidget.foreground"),
+        "quickInputTitle.background" => Hex("#FFFFFF"),
+        "widget.border" => Key("contrastBorder"),
+        "input.background" => Hex("#FFFFFF"),
+        "input.foreground" => Key("foreground"),
+        "input.border" => Key("contrastBorder"),
+        "input.placeholderForeground" => Transparent(&Key("foreground"), 0.7),
+        "inputValidation.infoBackground" | "inputValidation.warningBackground" | "inputValidation.errorBackground" => Hex("#FFFFFF"),
+        "inputValidation.infoBorder" | "inputValidation.warningBorder" | "inputValidation.errorBorder" => Key("contrastBorder"),
+        "inputValidation.infoForeground" | "inputValidation.warningForeground" | "inputValidation.errorForeground" => Key("foreground"),
+        "pickerGroup.foreground" | "pickerGroup.border" => Hex("#0F4A85"),
+        "descriptionForeground" => Transparent(&Key("foreground"), 0.7),
+        "list.activeSelectionBackground" => Hex("#0F4A851A"),
+        "list.hoverBackground" => Hex("#0F4A851A"),
+        "list.highlightForeground" => Key("focusBorder"),
+        "list.focusHighlightForeground" => Key("list.highlightForeground"),
+        "quickInputList.focusHighlightForeground" => Key("list.focusHighlightForeground"),
+        "keybindingLabel.background" => Hex("#0000"),
+        "keybindingLabel.foreground" => Key("foreground"),
+        "keybindingLabel.border" => Key("contrastBorder"),
+        "keybindingLabel.bottomBorder" => Key("foreground"),
+        "progressBar.background" => Key("contrastBorder"),
+        "badge.background" => Hex("#0F4A85"),
+        "badge.foreground" => Hex("#FFFFFF"),
+        "button.background" => Hex("#0F4A85"),
+        "button.foreground" => Hex("#FFFFFF"),
+        "button.border" => Key("contrastBorder"),
+        "checkbox.background" => Key("select.background"),
+        "checkbox.foreground" => Key("select.foreground"),
+        "checkbox.border" => Key("select.border"),
+        "select.background" => Hex("#FFFFFF"),
+        "select.foreground" => Key("foreground"),
+        "select.border" => Key("contrastBorder"),
         _ => None,
     }
 }

@@ -1,0 +1,337 @@
+//! The picks of the Command Palette (`AbstractCommandsQuickAccessProvider._getPicks` of
+//! platform/quickinput/browser/commandsQuickAccess.ts): commands whose label matches the filter by words, by
+//! accent-insensitive substring or by exact id, then "similar commands" by TF-IDF; recently used first.
+
+use std::cmp::Ordering;
+
+use exthost::scan::ScannedExtension;
+use serde_json::Value;
+
+use crate::contextkey::{Context, Expr};
+use crate::filters::{Matches, matches_base_contiguous_sub_string, matches_words, try_normalize_to_base};
+use crate::tf_idf::{Document, TfIdfCalculator, normalize_scores};
+
+const TFIDF_THRESHOLD: f64 = 0.5;
+const TFIDF_MAX_RESULTS: usize = 5;
+/// `CommandsHistory.DEFAULT_COMMANDS_HISTORY_LENGTH`.
+pub const DEFAULT_HISTORY_LENGTH: usize = 50;
+
+/// An enabled command of `MenuId.CommandPalette`. The alias (`title.original`) equals the label in English,
+/// the only language here, so it is left out.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CommandPick {
+    pub id: String,
+    /// "Category: Title", or the title alone.
+    pub label: String,
+    pub category: Option<String>,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum PaletteEntry {
+    Separator(&'static str),
+    Pick(Pick),
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Pick {
+    pub id: String,
+    pub label: String,
+    /// The command id, when another pick has the same label.
+    pub description: Option<String>,
+    pub label_highlights: Matches,
+    pub recently_used: bool,
+}
+
+/// `CommandsHistory`: an LRU of command ids, each with the counter value of its last run.
+pub struct CommandsHistory {
+    /// Least recently used first.
+    entries: Vec<(String, u64)>,
+    counter: u64,
+    limit: usize,
+}
+
+impl CommandsHistory {
+    pub fn new(limit: usize) -> CommandsHistory {
+        CommandsHistory { entries: Vec::new(), counter: 1, limit }
+    }
+
+    pub fn push(&mut self, id: &str) {
+        self.entries.retain(|(entry, _)| entry != id);
+        self.entries.push((id.to_owned(), self.counter));
+        self.counter += 1;
+        if self.entries.len() > self.limit {
+            self.entries.drain(..self.entries.len() - self.limit);
+        }
+    }
+
+    pub fn peek(&self, id: &str) -> Option<u64> {
+        self.entries.iter().find(|(entry, _)| entry == id).map(|(_, counter)| *counter)
+    }
+
+    pub fn remove(&mut self, id: &str) {
+        self.entries.retain(|(entry, _)| entry != id);
+    }
+
+    /// `CommandsHistory.clearHistory`.
+    pub fn clear(&mut self) {
+        *self = CommandsHistory::new(self.limit);
+    }
+}
+
+struct Candidate<'a> {
+    command: &'a CommandPick,
+    label_highlights: Matches,
+    tf_idf_score: Option<f64>,
+}
+
+pub fn command_picks(commands: &[CommandPick], filter: &str, history: &CommandsHistory) -> Vec<PaletteEntry> {
+    let mut tf_idf_scores = None;
+    let mut candidates = Vec::new();
+    for command in commands {
+        if let Some(label_highlights) = word_filter(filter, &command.label) {
+            candidates.push(Candidate { command, label_highlights, tf_idf_score: None });
+        } else if filter == command.id {
+            candidates.push(Candidate { command, label_highlights: Vec::new(), tf_idf_score: None });
+        } else if filter.encode_utf16().count() >= 3 {
+            let scores = tf_idf_scores.get_or_insert_with(|| tf_idf(commands, filter));
+            if let Some(score) = scores.iter().find(|score| score.key == command.id) {
+                candidates.push(Candidate { command, label_highlights: Vec::new(), tf_idf_score: Some(score.score) });
+            }
+        }
+    }
+    candidates.sort_by(|a, b| compare(a, b, history));
+
+    let mut entries = Vec::new();
+    let mut add_other_separator = false;
+    let mut add_suggested_separator = true;
+    for (index, candidate) in candidates.iter().enumerate() {
+        let recently_used = history.peek(&candidate.command.id).is_some();
+        if index == 0 && recently_used {
+            entries.push(PaletteEntry::Separator("recently used"));
+            add_other_separator = true;
+        }
+        if add_suggested_separator && candidate.tf_idf_score.is_some() {
+            entries.push(PaletteEntry::Separator("similar commands"));
+            add_suggested_separator = false;
+        }
+        if add_other_separator && candidate.tf_idf_score.is_none() && !recently_used {
+            entries.push(PaletteEntry::Separator("other commands"));
+            add_other_separator = false;
+        }
+        let label = &candidate.command.label;
+        let duplicate = candidates.iter().filter(|other| other.command.label == *label).count() > 1;
+        entries.push(PaletteEntry::Pick(Pick {
+            id: candidate.command.id.clone(),
+            label: label.clone(),
+            description: duplicate.then(|| candidate.command.id.clone()),
+            label_highlights: candidate.label_highlights.clone(),
+            recently_used,
+        }));
+    }
+    entries
+}
+
+/// An item of `MenuId.CommandPalette`: shown while `when` holds, enabled while `precondition` holds.
+#[derive(Clone, Debug)]
+pub struct MenuItem {
+    pub id: String,
+    pub title: String,
+    pub category: Option<String>,
+    pub when: Option<Expr>,
+    pub precondition: Option<Expr>,
+}
+
+/// The workbench's palette items of the commands this port runs, with upstream's titles and categories:
+/// `f1: true` actions and `appendToCommandPalette` (fileActions.contribution.ts), undo/redo/select all
+/// (editorExtensions.ts), clipboard.ts, commandsQuickAccess.ts, preferences.contribution.ts.
+const WORKBENCH_ITEMS: [(&str, &str, Option<&str>, Option<&str>); 13] = [
+    ("workbench.action.showCommands", "Show All Commands", None, None),
+    ("workbench.action.clearCommandHistory", "Clear Command History", None, None),
+    ("workbench.action.files.save", "Save", Some("File"), None),
+    ("workbench.action.files.saveFiles", "Save All Files", Some("File"), Some("!isSessionsWindow")),
+    ("workbench.action.files.revert", "Revert File", Some("File"), Some("!isSessionsWindow")),
+    ("workbench.action.closeAllEditors", "Close All Editors", Some("View"), None),
+    ("workbench.action.openGlobalKeybindingsFile", "Open Keyboard Shortcuts (JSON)", Some("Preferences"), None),
+    ("undo", "Undo", None, None),
+    ("redo", "Redo", None, None),
+    ("editor.action.selectAll", "Select All", None, None),
+    ("editor.action.clipboardCutAction", "Cut", None, None),
+    ("editor.action.clipboardCopyAction", "Copy", None, None),
+    ("editor.action.clipboardPasteAction", "Paste", None, None),
+];
+
+/// `MenuRegistry.getMenuItems(MenuId.CommandPalette)`: the workbench's items, the extensions'
+/// `contributes.menus.commandPalette` entries, then every other contributed command (`_appendImplicitItems`).
+pub fn menu(extensions: &[ScannedExtension]) -> Vec<MenuItem> {
+    let mut items: Vec<MenuItem> = WORKBENCH_ITEMS
+        .iter()
+        .map(|(id, title, category, when)| MenuItem {
+            id: id.to_string(),
+            title: title.to_string(),
+            category: category.map(str::to_string),
+            when: when.and_then(Expr::deserialize),
+            precondition: None,
+        })
+        .collect();
+    let commands: Vec<MenuItem> = extensions.iter().flat_map(|extension| contributed_commands(&extension.description)).collect();
+    for extension in extensions {
+        for entry in extension.description["contributes"]["menus"]["commandPalette"].as_array().into_iter().flatten() {
+            // menusExtensionPoint.ts skips entries of commands nobody contributes.
+            let Some(command) = entry["command"].as_str().and_then(|id| commands.iter().find(|command| command.id == id)) else { continue };
+            let when = entry["when"].as_str().and_then(Expr::deserialize);
+            items.push(MenuItem { when, ..command.clone() });
+        }
+    }
+    for command in commands {
+        if !items.iter().any(|item| item.id == command.id) {
+            items.push(command);
+        }
+    }
+    items
+}
+
+/// `contributes.commands` as `MenuRegistry.addCommand` gets them: the `enablement` is the precondition.
+fn contributed_commands(description: &Value) -> Vec<MenuItem> {
+    let commands = match &description["contributes"]["commands"] {
+        Value::Array(commands) => commands.iter().collect(),
+        command @ Value::Object(_) => vec![command],
+        _ => Vec::new(),
+    };
+    let localized = |value: &Value| value.as_str().or_else(|| value["value"].as_str()).map(str::to_string);
+    let mut items = Vec::new();
+    for command in commands {
+        let (Some(id), Some(title)) = (command["command"].as_str(), localized(&command["title"])) else { continue };
+        items.push(MenuItem {
+            id: id.to_string(),
+            title,
+            category: localized(&command["category"]),
+            when: None,
+            precondition: command["enablement"].as_str().and_then(Expr::deserialize),
+        });
+    }
+    items
+}
+
+/// `getGlobalCommandPicks`: the items whose `when` holds and that are enabled, labelled "Category: Title".
+pub fn enabled_commands(menu: &[MenuItem], context: &dyn Context) -> Vec<CommandPick> {
+    let holds = |expr: &Option<Expr>| expr.as_ref().is_none_or(|expr| expr.evaluate(context));
+    let mut picks = Vec::new();
+    for item in menu {
+        if !holds(&item.when) || !holds(&item.precondition) {
+            continue;
+        }
+        let label = match &item.category {
+            // Upstream tests the category for truthiness, so emmet's `"category": ""` shows the title alone.
+            Some(category) if !category.is_empty() => format!("{category}: {}", item.title),
+            _ => item.title.clone(),
+        };
+        picks.push(CommandPick { id: item.id.clone(), label: strip_icons(&label), category: item.category.clone() });
+    }
+    picks
+}
+
+/// `stripIcons`: replaces each `(\s)?(\\)?$(name~modifier)(\s)?` by the whitespace before it, else the one
+/// after it; an escaped `\$(name)` stays.
+pub fn strip_icons(label: &str) -> String {
+    let mut stripped = String::new();
+    let mut rest = label;
+    while let Some(start) = rest.find("$(") {
+        let Some(length) = icon_length(&rest[start..]) else {
+            stripped.push_str(&rest[..start + 2]);
+            rest = &rest[start + 2..];
+            continue;
+        };
+        if rest[..start].ends_with('\\') {
+            stripped.push_str(&rest[..start + length]);
+            rest = &rest[start + length..];
+            continue;
+        }
+        let before = rest[..start].chars().next_back().filter(|c| c.is_whitespace());
+        stripped.push_str(&rest[..start - before.map_or(0, char::len_utf8)]);
+        rest = &rest[start + length..];
+        let after = rest.chars().next().filter(|c| c.is_whitespace());
+        rest = &rest[after.map_or(0, char::len_utf8)..];
+        if let Some(whitespace) = before.or(after) {
+            stripped.push(whitespace);
+        }
+    }
+    stripped.push_str(rest);
+    stripped
+}
+
+/// Length of the `$([A-Za-z0-9-]+(~[A-Za-z]+)?)` at the start of `text`.
+fn icon_length(text: &str) -> Option<usize> {
+    let inner = &text[2..];
+    let end = inner.find(')')?;
+    let (name, modifier) = inner[..end].split_once('~').map_or((&inner[..end], None), |(name, modifier)| (name, Some(modifier)));
+    let name_ok = !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+    let modifier_ok = modifier.is_none_or(|modifier| !modifier.is_empty() && modifier.chars().all(|c| c.is_ascii_alphabetic()));
+    (name_ok && modifier_ok).then_some(2 + end + 1)
+}
+
+/// `or(matchesBaseContiguousSubString, matchesWords)`.
+fn word_filter(filter: &str, label: &str) -> Option<Matches> {
+    matches_base_contiguous_sub_string(filter, label).or_else(|| matches_words(filter, label))
+}
+
+fn tf_idf(commands: &[CommandPick], filter: &str) -> Vec<crate::tf_idf::Score> {
+    let mut calculator = TfIdfCalculator::default();
+    calculator.update_documents(commands.iter().map(|command| Document { key: command.id.clone(), text_chunks: vec![command.label.clone()] }).collect());
+    let mut scores = normalize_scores(calculator.calculate_scores(filter));
+    scores.retain(|score| score.score > TFIDF_THRESHOLD);
+    scores.truncate(TFIDF_MAX_RESULTS);
+    scores
+}
+
+/// TF-IDF matches last, then most recently used, then not Developer commands, then by label.
+fn compare(a: &Candidate, b: &Candidate, history: &CommandsHistory) -> Ordering {
+    match (a.tf_idf_score, b.tf_idf_score) {
+        (Some(a_score), Some(b_score)) if a_score == b_score => return locale_compare(&a.command.label, &b.command.label),
+        (Some(a_score), Some(b_score)) => return b_score.total_cmp(&a_score),
+        (Some(_), None) => return Ordering::Greater,
+        (None, Some(_)) => return Ordering::Less,
+        (None, None) => {}
+    }
+    match (history.peek(&a.command.id), history.peek(&b.command.id)) {
+        (Some(a_counter), Some(b_counter)) => return b_counter.cmp(&a_counter),
+        (Some(_), None) => return Ordering::Less,
+        (None, Some(_)) => return Ordering::Greater,
+        (None, None) => {}
+    }
+    let is_developer = |candidate: &Candidate| candidate.command.category.as_deref() == Some("Developer");
+    match (is_developer(a), is_developer(b)) {
+        (true, false) => Ordering::Greater,
+        (false, true) => Ordering::Less,
+        _ => locale_compare(&a.command.label, &b.command.label),
+    }
+}
+
+/// `String.prototype.localeCompare` in English: accents and case only break ties, lower case first, and
+/// whitespace, punctuation and symbols sort before digits and letters.
+/// shortcut: a few rules of the root collation of ICU, which Rust std lacks; labels here are English.
+pub fn locale_compare(a: &str, b: &str) -> Ordering {
+    let primary = |text: &str| -> Vec<(u8, char)> {
+        try_normalize_to_base(text)
+            .chars()
+            .map(|c| {
+                let class = if c.is_whitespace() {
+                    0
+                } else if c.is_ascii_punctuation() {
+                    1
+                } else if c.is_numeric() {
+                    3
+                } else if c.is_alphabetic() {
+                    4
+                } else {
+                    2
+                };
+                (class, c)
+            })
+            .collect()
+    };
+    let case = |text: &str| -> Vec<bool> { text.chars().map(char::is_uppercase).collect() };
+    primary(a).cmp(&primary(b)).then_with(|| case(a).cmp(&case(b))).then_with(|| a.cmp(b))
+}
+
+#[cfg(test)]
+mod tests;
