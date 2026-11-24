@@ -47,7 +47,7 @@ impl Workbench {
                 cx.write_to_clipboard(ClipboardItem::new_string(arg(0).as_str().unwrap_or_default().to_string()));
                 Ok(null)
             }
-            ("MainThreadDocuments", "$tryOpenDocument") => self.try_open_document(arg(0), arg(1), arg(2), cx),
+            ("MainThreadDocuments", "$tryOpenDocument") => self.try_open_document(arg(0), arg(1), arg(2), arg(3) == true, cx),
             ("MainThreadDocuments", "$trySaveDocument") => self.try_save_document(arg(0), cx),
             ("MainThreadDocuments", "$tryCreateDocument") => self.try_create_document(arg(0), cx),
             ("workbench", "isDirty") => uri_parts(arg(0)).map(|(scheme, path)| json!(self.editors.model(scheme, &path).is_some_and(|model| model.is_dirty()))),
@@ -87,8 +87,17 @@ impl Workbench {
     /// `$tryOpenDocument`: the model of a file, of the bytes an extension's file system provider read
     /// (`provider_content` an array) or of a content provider's text (a string), opened without an editor and kept
     /// while the host references it. `options.encoding` decodes a new model, or a clean open one again.
-    fn try_open_document(&mut self, uri: &Value, options: &Value, provider_content: &Value, cx: &mut Context<Self>) -> HostResult {
+    fn try_open_document(&mut self, uri: &Value, options: &Value, provider_content: &Value, ignore_path_case: bool, cx: &mut Context<Self>) -> HostResult {
         let (scheme, ref path) = uri_parts(uri)?;
+        // uriIdentityService.ts `asCanonicalUri`: where the provider ignores path case, the casing opened first wins.
+        if ignore_path_case {
+            let lowercase = path.to_string_lossy().to_lowercase();
+            let models = self.editors.editors.iter().chain(&self.editors.models);
+            let first_casing = models.map(|model| &model.document).find(|document| document.scheme == scheme && document.path != *path && document.path.to_string_lossy().to_lowercase() == lowercase);
+            if let Some(document) = first_casing {
+                return self.try_open_document(&document.uri(), options, provider_content, false, cx);
+            }
+        }
         let requested = options["encoding"].as_str();
         if let Some(model) = self.editors.model_mut(scheme, path) {
             model.host_reference = Some(Instant::now());

@@ -54,19 +54,24 @@ impl MainThread for WorkbenchMainThread {
             _ => {}
         }
         // mainThreadFileSystem.ts reads and writes through the extension host; the session thread can call it, the GPUI thread cannot.
-        let through_provider = matches!(method, "$tryOpenDocument" | "$trySaveDocument") && {
-            let scheme = args[0]["scheme"].as_str().unwrap_or_default();
-            scheme != "file" && (Providers { session: &mut *session }).capabilities(scheme).is_some()
+        let scheme = args[0]["scheme"].as_str().unwrap_or_default();
+        let capabilities = match method {
+            "$tryOpenDocument" | "$trySaveDocument" => (Providers { session: &mut *session }).capabilities(scheme),
+            _ => None,
         };
+        let through_provider = scheme != "file" && capabilities.is_some();
+        if method == "$tryOpenDocument" {
+            // host_requests.rs reads the provider's bytes at 2 and whether paths ignore case at 3.
+            args.resize(3, Value::Null);
+            args.push(json!(capabilities.is_some_and(|capabilities| capabilities & files::PATH_CASE_SENSITIVE == 0)));
+        }
         if method == "$trySaveDocument" && self.ask("workbench", "isDirty", vec![args[0].clone()]) == Ok(json!(true)) {
             participate_in_save(session, &args[0]);
         }
         let result = match (method, through_provider) {
             ("$tryOpenDocument", true) => match files::read_file(&mut Providers { session: &mut *session }, &resource(&args[0])) {
                 Ok(bytes) => {
-                    // host_requests.rs decodes the provider's bytes as it decodes a file.
-                    args.resize(2, Value::Null);
-                    args.push(json!(bytes));
+                    args[2] = json!(bytes);
                     self.ask(proxy, method, args)
                 }
                 Err(error) => Err(serialized_error(&format!("cannot open {}. Detail: {error}", uri_text(&args[0])))),
@@ -75,8 +80,7 @@ impl MainThread for WorkbenchMainThread {
             ("$tryOpenDocument", false) if self.has_content_provider(&args[0]) && self.ask("workbench", "hasModel", vec![args[0].clone()]) == Ok(json!(false)) => {
                 match self.provide_text_content(session, &args[0]) {
                     Ok(text) => {
-                        args.resize(2, Value::Null);
-                        args.push(json!(text));
+                        args[2] = json!(text);
                         self.ask(proxy, method, args)
                     }
                     Err(detail) => Err(serialized_error(&format!("cannot open {}. Detail: {detail}", uri_text(&args[0])))),
