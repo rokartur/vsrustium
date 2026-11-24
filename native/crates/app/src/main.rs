@@ -68,7 +68,7 @@ fn main() -> anyhow::Result<()> {
         Some(theme_id) => load_theme(&extensions, &theme_id)?,
         None => settings_theme(&extensions, &settings)?,
     };
-    let file_icons = file_icons::FileIconTheme::load(&extensions, file_icons::DEFAULT_ICON_THEME)?;
+    let file_icons = settings_file_icons(&extensions, &settings)?;
     let settings = Arc::new(Mutex::new(settings));
 
     application().run(move |cx: &mut App| {
@@ -87,7 +87,7 @@ fn main() -> anyhow::Result<()> {
                 let host = HostSync::new(host_sender);
                 host.send_color_theme(theme.kind);
                 let mut workbench = Workbench::new(theme, app_root.clone(), folder.clone().map(FileTree::new), languages, settings.clone(), host, cx);
-                workbench.file_icons = Some(file_icons);
+                workbench.file_icons = file_icons;
                 if let Some(file) = file {
                     workbench.open_file(file, true, window, cx);
                 }
@@ -216,9 +216,37 @@ fn settings_theme(extensions: &[ScannedExtension], settings: &Settings) -> anyho
     load_theme(extensions, default.as_str().expect("the default theme is a settings id"))
 }
 
+/// workbenchThemeService.ts `initializeFileIconTheme`: `null` is the built-in "no icons" theme, an unknown id the default.
+fn settings_file_icons(extensions: &[ScannedExtension], settings: &Settings) -> anyhow::Result<Option<file_icons::FileIconTheme>> {
+    let id = settings.get_value(Some("workbench.iconTheme"), &Overrides::default());
+    let id = match id {
+        Some(serde_json::Value::Null) => return Ok(None),
+        Some(serde_json::Value::String(id)) => id,
+        _ => file_icons::DEFAULT_ICON_THEME.to_string(),
+    };
+    let theme = file_icons::FileIconTheme::load(extensions, &id).or_else(|_| file_icons::FileIconTheme::load(extensions, file_icons::DEFAULT_ICON_THEME))?;
+    Ok(Some(theme))
+}
+
 #[cfg(test)]
 fn default_settings() -> Arc<Mutex<Settings>> {
     Arc::new(Mutex::new(Settings::load(Registry::core(), PathBuf::from("/nonexistent/User"), None)))
+}
+
+#[test]
+fn icon_theme_follows_workbench_icon_theme() {
+    let extensions = scan_builtin_extensions(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../extensions")).unwrap();
+    let user_home = std::env::temp_dir().join(format!("code-gpui-icon-theme-{}", std::process::id()));
+    std::fs::create_dir_all(&user_home).unwrap();
+    let icons_with = |settings_json: &str| {
+        std::fs::write(user_home.join("settings.json"), settings_json).unwrap();
+        let settings = Settings::load(Registry::with_extensions(&[]), user_home.clone(), None);
+        settings_file_icons(&extensions, &settings).unwrap().is_some()
+    };
+    assert!(icons_with("{}"));
+    assert!(!icons_with(r#"{ "workbench.iconTheme": null }"#));
+    assert!(icons_with(r#"{ "workbench.iconTheme": "no-such-theme" }"#));
+    std::fs::remove_dir_all(&user_home).unwrap();
 }
 
 fn default_user_data() -> anyhow::Result<PathBuf> {
