@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
+use crate::console::format_console_entry;
 use crate::rpc::{self, Arg, Message, Reply};
 use crate::scan::{ScannedExtension, extension_identifier, file_uri};
 use crate::{ExtensionHost, Incoming, proxy_id, proxy_name};
@@ -171,16 +172,20 @@ pub struct Session {
     next_req: u32,
     results: HashMap<u32, CallResult>,
     pub log: SessionLog,
+    /// `IExtensionDescription`s by lowercase id, for `$getExtension`.
+    extensions: HashMap<String, Value>,
+    extension_tests_req: Option<u32>,
 }
 
 impl Session {
     pub fn new(host: ExtensionHost) -> Self {
-        Session { host, next_req: 0, results: HashMap::new(), log: SessionLog::default() }
+        Session { host, next_req: 0, results: HashMap::new(), log: SessionLog::default(), extensions: HashMap::new(), extension_tests_req: None }
     }
 
     /// The calls the workbench makes once the handshake is done (MainThreadConfiguration,
     /// MainThreadWorkspace, MainThreadTelemetry constructors, then the extension service).
     pub fn start(&mut self, extensions: &[ScannedExtension], workspace: Option<Value>) -> anyhow::Result<()> {
+        self.extensions = extensions.iter().map(|e| (e.id.to_lowercase(), e.description.clone())).collect();
         self.notify("ExtHostConfiguration", "$initializeConfiguration", vec![configuration_init_data(extensions)]);
         self.notify("ExtHostWorkspace", "$initializeWorkspace", vec![workspace.unwrap_or(Value::Null), json!(true)]);
         // TelemetryLevel.NONE and supportsTelemetry = false: the port has no telemetry.
@@ -192,6 +197,33 @@ impl Session {
         });
         self.call("ExtHostExtensionService", "$startExtensionHost", vec![Arg::Json(delta)], Duration::from_secs(60))?;
         Ok(())
+    }
+
+    /// Starts the test runner named in init data (`extensionTestsLocationURI`); `pump` returns false once it is done.
+    pub fn execute_extension_tests(&mut self) {
+        self.extension_tests_req = Some(self.send_request("ExtHostExtensionService", "$extensionTestsExecute", vec![]));
+    }
+
+    /// The exit code the app ends with after `execute_extension_tests`, as upstream's `_onExtensionHostExit`:
+    /// the runner's result, 1 if it threw, or the host's own exit code if it died first.
+    pub fn extension_tests_exit_code(&mut self) -> Option<i32> {
+        let req = self.extension_tests_req?;
+        Some(match self.results.remove(&req) {
+            Some(CallResult::Ok(Reply::Json(code))) => code.as_i64().map_or(1, |code| code as i32),
+            Some(CallResult::Ok(reply)) => {
+                eprintln!("extension tests: unexpected result {reply:?}");
+                1
+            }
+            Some(CallResult::Err(error)) => {
+                eprintln!("extension tests failed: {}", error.map(|error| error_text(&error)).unwrap_or_default());
+                1
+            }
+            None => {
+                let status = self.host.child.wait().ok();
+                eprintln!("extension host exited before the tests finished: {status:?}");
+                status.and_then(|status| status.code()).filter(|code| *code != 0).unwrap_or(1)
+            }
+        })
     }
 
     /// Sends a request without waiting for its reply.
@@ -225,7 +257,7 @@ impl Session {
         }
     }
 
-    /// Handles one incoming message, waiting up to `timeout`. Returns false once the host is gone.
+    /// Handles one incoming message, waiting up to `timeout`. Returns false once the host is gone or the extension tests are done.
     pub fn pump(&mut self, timeout: Duration) -> anyhow::Result<bool> {
         let Some(incoming) = self.host.recv_timeout(timeout) else { return Ok(true) };
         let bytes = match incoming {
@@ -246,9 +278,10 @@ impl Session {
             }
             Message::Acknowledged { .. } | Message::Cancel { .. } => {}
         }
-        Ok(true)
+        Ok(self.extension_tests_req.is_none_or(|req| !self.results.contains_key(&req)))
     }
 
+    /// Host console, errors and logger lines go to stderr, the port's log.
     fn handle_host_request(&mut self, proxy: &str, method: &str, args: &[Arg]) -> Reply {
         *self.log.host_calls.entry(format!("{proxy}.{method}")).or_default() += 1;
         if std::env::var_os("EXTHOST_TRACE").is_some() {
@@ -261,18 +294,38 @@ impl Session {
         match (proxy, method) {
             ("MainThreadConsole", "$logExtensionHostMessage") => {
                 let message = arg(0);
-                self.log.console.push(format!("[{}] {}", message["severity"].as_str().unwrap_or("log"), message["arguments"].as_str().unwrap_or("")));
+                let text = format_console_entry(&message);
+                eprintln!("{text}");
+                self.log.console.push(format!("[{}] {text}", message["severity"].as_str().unwrap_or("log")));
             }
             ("MainThreadErrors", "$onUnexpectedError") => {
-                let error = arg(0);
-                self.log.console.push(format!("[unexpected] {}", error["stack"].as_str().or(error["message"].as_str()).unwrap_or("")));
+                let text = error_text(&arg(0));
+                eprintln!("[exthost] unexpected error: {text}");
+                self.log.console.push(format!("[unexpected] {text}"));
             }
+            ("MainThreadLogger", "$log") => {
+                let file = arg(0)["path"].as_str().unwrap_or_default().to_owned();
+                for entry in arg(1).as_array().into_iter().flatten() {
+                    eprintln!("[{file}] [{}] {}", log_level_name(&entry[0]), entry[1].as_str().unwrap_or_default());
+                }
+            }
+            ("MainThreadExtensionService", "$getExtension") => {
+                let id = arg(0).as_str().unwrap_or_default().to_lowercase();
+                return self.extensions.get(&id).cloned().map_or(Reply::Empty, Reply::Json);
+            }
+            // The port has no browser: a URI is already what the host can load.
+            ("MainThreadExtensionService", "$asBrowserUri") => return Reply::Json(arg(0)),
             ("MainThreadExtensionService", "$onDidActivateExtension") => {
                 self.log.activated.push(arg(0)["value"].as_str().unwrap_or_default().to_owned());
             }
+            ("MainThreadExtensionService", "$onExtensionRuntimeError") => {
+                eprintln!("[exthost] [{}] {}", arg(0)["value"].as_str().unwrap_or_default(), error_text(&arg(1)));
+            }
             ("MainThreadExtensionService", "$onExtensionActivationError") => {
                 let id = arg(0)["value"].as_str().unwrap_or_default().to_owned();
-                self.log.activation_errors.insert(id, arg(1)["message"].as_str().map(str::to_owned).unwrap_or_else(|| arg(1).to_string()));
+                let message = arg(1)["message"].as_str().map(str::to_owned).unwrap_or_else(|| arg(1).to_string());
+                eprintln!("[exthost] activating {id} failed: {message}");
+                self.log.activation_errors.insert(id, message);
             }
             ("MainThreadWindow", "$getInitialState") => return Reply::Json(json!({ "isFocused": true, "isActive": true })),
             // No sign-in and no AI in the port: these APIs stay callable and report nothing.
@@ -287,5 +340,22 @@ impl Session {
         }
         // shortcut: every other MainThread* method answers `undefined`; each shape gets a real implementation as its ledger row lands.
         Reply::Empty
+    }
+}
+
+/// A `SerializedError` (or any thrown value) as one string: its stack, else its message.
+fn error_text(error: &Value) -> String {
+    error["stack"].as_str().or(error["message"].as_str()).map_or_else(|| error.to_string(), str::to_owned)
+}
+
+/// `LogLevel` of platform/log/common/log.ts.
+fn log_level_name(level: &Value) -> &'static str {
+    match level.as_u64() {
+        Some(0) => "off",
+        Some(1) => "trace",
+        Some(2) => "debug",
+        Some(3) => "info",
+        Some(4) => "warning",
+        _ => "error",
     }
 }
