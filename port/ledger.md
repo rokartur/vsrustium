@@ -103,8 +103,8 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | mainthread/MainThreadChatInputNotification | MainThread* shape (Rust side) | removed | no sign-in/AI by decision (port/notes.md); API stays inert: session.rs answers undefined, list getters []; exthost-probe 30/30 on Bun and Node |
 | mainthread/MainThreadChatSessions | MainThread* shape (Rust side) | removed | no sign-in/AI by decision (port/notes.md); API stays inert: session.rs answers undefined, list getters []; exthost-probe 30/30 on Bun and Node |
 | base/browser | src/vs/base | n/a | Electron process, IPC or DOM layer; replaced by the single-process Rust/GPUI architecture (port/notes.md) |
-| base/common | src/vs/base | todo |  |
-| base/node | src/vs/base | todo |  |
+| base/common | src/vs/base | removed | Artur: internal infrastructure or developer tool with no 1:1 counterpart in the native port |
+| base/node | src/vs/base | removed | Artur: internal infrastructure or developer tool with no 1:1 counterpart in the native port |
 | base/parts | src/vs/base | n/a | Electron process, IPC or DOM layer; replaced by the single-process Rust/GPUI architecture (port/notes.md) |
 | base/test | src/vs/base | n/a | upstream test infrastructure; the port tests with cargo test and port/tools |
 | platform/accessibility | src/vs/platform | todo |  |
@@ -126,7 +126,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/configuration | src/vs/platform | ported | cargo test -p config (json, jsonEdit, configurationModels, configurationRegistry cases); policy, configurationService, configurations, configurationVariables tests not ported |
 | platform/contextkey | src/vs/platform | ported | cargo test -p app contextkey (scanner and parser cases of contextkey tests) |
 | platform/contextview | src/vs/platform | todo |  |
-| platform/cssDev | src/vs/platform | todo |  |
+| platform/cssDev | src/vs/platform | removed | Artur: internal infrastructure or developer tool with no 1:1 counterpart in the native port |
 | platform/customizationMarketplace | src/vs/platform | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | platform/dataChannel | src/vs/platform | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | platform/debug | src/vs/platform | todo |  |
@@ -150,11 +150,11 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/git | src/vs/platform | todo |  |
 | platform/github | src/vs/platform | todo |  |
 | platform/globalKeybindings | src/vs/platform | todo |  |
-| platform/gpu | src/vs/platform | todo |  |
+| platform/gpu | src/vs/platform | removed | Artur: internal infrastructure or developer tool with no 1:1 counterpart in the native port |
 | platform/history | src/vs/platform | todo |  |
 | platform/hover | src/vs/platform | todo |  |
 | platform/imageResize | src/vs/platform | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
-| platform/instantiation | src/vs/platform | todo |  |
+| platform/instantiation | src/vs/platform | removed | Artur: internal infrastructure or developer tool with no 1:1 counterpart in the native port |
 | platform/ipc | src/vs/platform | n/a | Electron process, IPC or DOM layer; replaced by the single-process Rust/GPUI architecture (port/notes.md) |
 | platform/jsonschemas | src/vs/platform | todo |  |
 | platform/keybinding | src/vs/platform | ported | cargo test -p app keybindings (keybindingResolver and label tests) |
@@ -175,7 +175,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/native | src/vs/platform | todo |  |
 | platform/networkFilter | src/vs/platform | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | platform/notification | src/vs/platform | todo |  |
-| platform/observable | src/vs/platform | todo |  |
+| platform/observable | src/vs/platform | removed | Artur: internal infrastructure or developer tool with no 1:1 counterpart in the native port |
 | platform/onboarding | src/vs/platform | todo |  |
 | platform/opener | src/vs/platform | todo |  |
 | platform/otel | src/vs/platform | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
@@ -213,7 +213,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/userInteraction | src/vs/platform | todo |  |
 | platform/utilityProcess | src/vs/platform | n/a | Electron process, IPC or DOM layer; replaced by the single-process Rust/GPUI architecture (port/notes.md) |
 | platform/webContentExtractor | src/vs/platform | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
-| platform/webWorker | src/vs/platform | todo |  |
+| platform/webWorker | src/vs/platform | removed | Artur: internal infrastructure or developer tool with no 1:1 counterpart in the native port |
 | platform/webview | src/vs/platform | todo |  |
 | platform/window | src/vs/platform | todo |  |
 | platform/windows | src/vs/platform | todo |  |
@@ -221,7 +221,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/workspaces | src/vs/platform | ported | getWorkspaceIdentifier and getSingleFolderWorkspaceIdentifier (session.rs, workspaces.test.ts stable id case, cargo test -p exthost); no untitled workspaces or recent list |
 | editor/browser | src/vs/editor | ported | scrolling: wheel, scrollbars with drag, track press and fade, scroll shadow, reveal on cursor moves and from the API, per-editor scroll position (editor/view.rs, workbench/editor_view.rs): cargo test -p app editor::view::tests; folding (editor/folding.rs): cargo test -p app editor::folding; minimap with slider, decorations and section headers (editor/minimap.rs, editor/section_headers.rs, workbench/minimap_view.rs): cargo test -p app minimap, cargo test -p app section_headers; sticky scroll (editor/contrib/stickyScroll row); no smooth scrolling (port/notes.md milestone 8) |
 | editor/common | src/vs/editor | stub | cursors (CursorCollection normalize, per-cursor edits, loser edits, paste distribution), core moves and deletes, typing, edit stack stops, alternative version id dirty state: cargo test -p app (editor::cursor::tests, editor::edit::tests); no onEnter or indentation rules, grapheme clusters (port/notes.md milestones 5 and 8) |
-| editor/standalone | src/vs/editor | todo |  |
+| editor/standalone | src/vs/editor | removed | Artur: internal infrastructure or developer tool with no 1:1 counterpart in the native port |
 | editor/test | src/vs/editor | n/a | upstream test infrastructure; the port tests with cargo test and port/tools |
 | editor/contrib/anchorSelect | src/vs/editor/contrib | todo |  |
 | editor/contrib/bracketMatching | src/vs/editor/contrib | ported | bracket pair colors and match boxes with overview ruler lane (brackets.rs); cargo test -p app brackets::tests; no Go to Bracket / Select to Bracket commands until keybindings |
@@ -245,7 +245,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | editor/contrib/format | src/vs/editor/contrib | todo |  |
 | editor/contrib/gotoError | src/vs/editor/contrib | todo |  |
 | editor/contrib/gotoSymbol | src/vs/editor/contrib | todo |  |
-| editor/contrib/gpu | src/vs/editor/contrib | todo |  |
+| editor/contrib/gpu | src/vs/editor/contrib | removed | Artur: internal infrastructure or developer tool with no 1:1 counterpart in the native port |
 | editor/contrib/hover | src/vs/editor/contrib | todo |  |
 | editor/contrib/inPlaceReplace | src/vs/editor/contrib | todo |  |
 | editor/contrib/indentation | src/vs/editor/contrib | todo |  |
@@ -464,7 +464,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/replNotebook | workbench contribution | todo |  |
 | workbench/contrib/sash | workbench contribution | todo |  |
 | workbench/contrib/scm | workbench contribution | todo |  |
-| workbench/contrib/screenshotTool | workbench contribution | todo |  |
+| workbench/contrib/screenshotTool | workbench contribution | removed | Artur: internal infrastructure or developer tool with no 1:1 counterpart in the native port |
 | workbench/contrib/scrollLocking | workbench contribution | todo |  |
 | workbench/contrib/search | workbench contribution | stub | anythingQuickAccess.ts file picks only (no symbol picks, search view in milestone 12): cargo test -p app anything_quick_access quick_open (21 reference queries via CDP, extractRange.test.ts cases); Cmd+P screenshot rows match the reference |
 | workbench/contrib/searchEditor | workbench contribution | todo |  |
