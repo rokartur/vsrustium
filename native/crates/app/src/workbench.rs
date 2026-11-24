@@ -770,6 +770,12 @@ mod tests {
         // findInputFocussed binds Enter to Find Next.
         cx.simulate_keystrokes("enter");
         assert_eq!(found(cx), (2, 3, (1, 4)));
+        // findDecorations.ts: the ruler and minimap marks, the current match last.
+        let marks = workbench.read_with(cx, |workbench, _| {
+            let marks = workbench.find_marks(workbench.editors.active().unwrap(), 400.);
+            marks.iter().map(|mark| (mark.range.start.line, mark.in_minimap, mark.current)).collect::<Vec<_>>()
+        });
+        assert_eq!(marks, [(0, true, false), (2, true, false), (1, true, true)]);
         run("editor.action.goToMatchFindAction", cx);
         cx.simulate_input("-1");
         assert_eq!(found(cx), (3, 3, (2, 0)));

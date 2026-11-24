@@ -823,16 +823,16 @@ impl Workbench {
         cx.notify();
     }
 
-    /// decorationsOverviewRuler.ts `_render`, in device pixels: word highlights, then matched brackets in the center lane, the cursor
+    /// decorationsOverviewRuler.ts `_render`, in device pixels: word highlights, matched brackets and find matches in the center lane, the cursor
     /// across all lanes, then the 1px border on the left and top edges.
     fn overview_ruler(&self, editor: &OpenEditor) -> gpui::Canvas<()> {
         let line_count = editor.document.lines.len();
-        let highlight_lines: Vec<usize> = editor.highlights.iter().map(|(line, _)| *line).collect();
+        let highlight_lines: Vec<(usize, usize)> = editor.highlights.iter().map(|(line, _)| (*line, *line)).collect();
         let highlight = self.color("editorOverviewRuler.wordHighlightTextForeground");
         let mut bracket_lines = Vec::new();
         for ([open, close], in_ruler) in self.bracket_matches(editor) {
             if in_ruler {
-                bracket_lines.extend([open.0, close.0]);
+                bracket_lines.extend([(open.0, open.0), (close.0, close.0)]);
             }
         }
         let bracket_color = self.color("editorOverviewRuler.bracketMatchForeground");
@@ -849,6 +849,12 @@ impl Workbench {
         }
         cursors.sort_by_key(|(line, _)| *line);
         bracket_lines.sort();
+        let find_color = self.color("editorOverviewRuler.findMatchForeground");
+        let (mut find_lines, mut current_find_lines) = (Vec::new(), Vec::new());
+        for mark in self.find_marks(editor, self.editors.viewport.height) {
+            let lines = if mark.current { &mut current_find_lines } else { &mut find_lines };
+            lines.push((mark.range.start.line, mark.range.end.line));
+        }
         let border = self.theme.color("editorOverviewRuler.border");
         let top_whitespace = self.editors.viewport.top_whitespace;
         canvas(
@@ -868,11 +874,12 @@ impl Workbench {
                 let ratio = canvas_height / scroll_height;
                 let lanes = RulerLanes::new(canvas_width);
                 let min_height = (6. * scale).floor();
-                for (lines, color) in [(&highlight_lines, highlight), (&bracket_lines, bracket_color)] {
+                // In z-index order: find matches at 10, the current match at 13.
+                for (lines, color) in [(&highlight_lines, highlight), (&bracket_lines, bracket_color), (&find_lines, find_color), (&current_find_lines, find_color)] {
                     let mut previous: Option<(f32, f32)> = None;
-                    for line in lines {
-                        let mut y1 = ((top_whitespace + *line as f32 * LINE_HEIGHT) * ratio).floor();
-                        let mut y2 = ((top_whitespace + *line as f32 * LINE_HEIGHT + LINE_HEIGHT) * ratio).floor();
+                    for (start_line, end_line) in lines {
+                        let mut y1 = ((top_whitespace + *start_line as f32 * LINE_HEIGHT) * ratio).floor();
+                        let mut y2 = ((top_whitespace + *end_line as f32 * LINE_HEIGHT + LINE_HEIGHT) * ratio).floor();
                         if y2 - y1 < min_height {
                             let half = (min_height / 2.).floor();
                             let center = ((y1 + y2) / 2.).floor().clamp(half, canvas_height - half);

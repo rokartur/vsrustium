@@ -216,6 +216,7 @@ enum ColorValue {
     LessProminent(&'static ColorValue, &'static ColorValue, f32, f32),
 }
 
+const MINIMAP_FIND_MATCH: ColorValue = ColorValue::Transparent(&ColorValue::Key("editorOverviewRuler.findMatchForeground"), 0.8);
 const MINIMAP_SLIDER: ColorValue = ColorValue::Transparent(&ColorValue::Key("scrollbarSlider.background"), 0.5);
 const MINIMAP_SLIDER_HOVER: ColorValue = ColorValue::Transparent(&ColorValue::Key("scrollbarSlider.hoverBackground"), 0.5);
 const MINIMAP_SLIDER_ACTIVE: ColorValue = ColorValue::Transparent(&ColorValue::Key("scrollbarSlider.activeBackground"), 0.5);
@@ -311,6 +312,8 @@ fn registry_default(key: &str, kind: ThemeKind) -> ColorValue {
         "editorIndentGuide.background1" => (Key("editorIndentGuide.background"), Key("editorIndentGuide.background"), Key("editorIndentGuide.background")),
         "editorOverviewRuler.border" => (Hex("#7f7f7f4d"), Hex("#7f7f7f4d"), Hex("#7f7f7f4d")),
         "editorOverviewRuler.selectionHighlightForeground" => (Hex("#A0A0A0CC"), Hex("#A0A0A0CC"), Hex("#A0A0A0CC")),
+        "editorOverviewRuler.findMatchForeground" => (Hex("#d186167e"), Hex("#d186167e"), Hex("#AB5A00")),
+        "minimap.findMatchHighlight" => (MINIMAP_FIND_MATCH, MINIMAP_FIND_MATCH, Key("editor.findMatchHighlightBorder")),
         "editorOverviewRuler.wordHighlightTextForeground" => (
             Key("editorOverviewRuler.selectionHighlightForeground"),
             Key("editorOverviewRuler.selectionHighlightForeground"),
@@ -441,6 +444,8 @@ fn hc_light_default(key: &str) -> ColorValue {
         "editorIndentGuide.background1" => Key("editorIndentGuide.background"),
         "editorOverviewRuler.border" => Hex("#666666"),
         "editorOverviewRuler.selectionHighlightForeground" => Hex("#A0A0A0CC"),
+        "editorOverviewRuler.findMatchForeground" => Hex("#AB5A00"),
+        "minimap.findMatchHighlight" => Key("editor.findMatchHighlightBorder"),
         "editorOverviewRuler.wordHighlightTextForeground" => Key("editorOverviewRuler.selectionHighlightForeground"),
         "breadcrumb.foreground" => Transparent(&Key("foreground"), 0.8),
         "breadcrumb.background" => Key("editor.background"),
@@ -688,6 +693,10 @@ mod tests {
             ("Default High Contrast", "editorOverviewRuler.border", "#7f7f7f4d"),
             ("Default High Contrast", "editorLineNumber.foreground", "#ffffffff"),
             ("Default High Contrast", "breadcrumb.foreground", "#ffffffcc"),
+            ("Dark Modern", "editorOverviewRuler.findMatchForeground", "#d186167e"),
+            ("Dark Modern", "minimap.findMatchHighlight", "#d1861665"),
+            ("Default High Contrast", "editorOverviewRuler.findMatchForeground", "#ab5a00ff"),
+            ("Default High Contrast", "minimap.findMatchHighlight", "#f38518ff"),
         ];
         for (theme, key, expected) in cases {
             assert_eq!(builtin_theme(theme).color(key).map(hex).as_deref(), Some(expected), "{theme} {key}");

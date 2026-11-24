@@ -40,6 +40,13 @@ const SLIDE: Duration = Duration::from_millis(200);
 /// `--vscode-shadow-lg` (style.css).
 const SHADOW_BLUR: f32 = 12.;
 
+/// A find match's overview ruler mark, also drawn in the minimap unless past 1000 matches.
+pub(super) struct FindMark {
+    pub range: Range<Position>,
+    pub in_minimap: bool,
+    pub current: bool,
+}
+
 pub struct FindWidget {
     pub controller: FindController,
     pub find_input: InputBox,
@@ -539,6 +546,27 @@ impl Workbench {
         (boxes, text_colors)
     }
 
+    /// findDecorations.ts's overview ruler and minimap marks in z-index order: the matches (10), or past 1000 matches
+    /// their line ranges merged for the ruler only (0), then the current match (13).
+    pub(super) fn find_marks(&self, editor: &OpenEditor, editor_height: f32) -> Vec<FindMark> {
+        let Some(model) = self.find.controller.model.as_ref().filter(|_| self.find.model_id == Some(editor.model_id)) else { return Vec::new() };
+        let mut marks = Vec::new();
+        if model.matches.len() > 1000 {
+            let approx_pixels_per_line = editor_height / editor.document.lines.len() as f32;
+            let merge_lines_delta = ((3. / approx_pixels_per_line).ceil() as usize).max(2);
+            for lines in merged_match_lines(&model.matches, merge_lines_delta) {
+                marks.push(FindMark { range: Position::new(lines.start, 0)..Position::new(lines.end, 0), in_minimap: false, current: false });
+            }
+        } else {
+            let others = model.matches.iter().enumerate().filter(|(index, _)| model.highlighted != Some(*index));
+            marks.extend(others.map(|(_, range)| FindMark { range: range.clone(), in_minimap: true, current: false }));
+        }
+        if let Some(current) = model.highlighted {
+            marks.push(FindMark { range: model.matches[current].clone(), in_minimap: true, current: true });
+        }
+        marks
+    }
+
     /// The widget over the text area's top right corner (overlayWidgets.ts TOP_RIGHT_CORNER), `area_width` wide.
     pub(super) fn find_widget(&self, area_width: f32, content_left: f32, minimap_width: f32, window: &mut Window, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         let state = &self.find.controller.state;
@@ -912,6 +940,24 @@ impl Workbench {
 }
 
 /// `toFindMatchIndex`: `parseInt` of the value, 1 to the count or minus the count to -1, as a 0-based index.
+/// The matches' line ranges, joined when at most `merge_lines_delta` lines apart; `end` is the last line.
+fn merged_match_lines(matches: &[Range<Position>], merge_lines_delta: usize) -> Vec<Range<usize>> {
+    let mut merged: Vec<Range<usize>> = Vec::new();
+    for range in matches {
+        match merged.last_mut() {
+            Some(lines) if lines.end + merge_lines_delta >= range.start.line => lines.end = lines.end.max(range.end.line),
+            _ => merged.push(range.start.line..range.end.line),
+        }
+    }
+    merged
+}
+
+#[test]
+fn merged_match_lines_join_matches_within_the_delta() {
+    let on = |start: usize, end: usize| Position::new(start, 0)..Position::new(end, 1);
+    assert_eq!(merged_match_lines(&[on(0, 0), on(2, 3), on(6, 6), on(9, 9)], 2), [0..3, 6..6, 9..9]);
+}
+
 fn find_match_index(value: &str, matches_count: usize) -> Option<usize> {
     let value = value.trim_start();
     let (negative, digits) = match value.strip_prefix('-') {
