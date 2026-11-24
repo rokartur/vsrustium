@@ -920,5 +920,32 @@ pub fn path_label(path: &Path, workspace: Option<&Path>) -> String {
     path.to_string_lossy().into_owned()
 }
 
+/// Where a dragged quick input lands (`QuickInputDragAndDropController._layout`): `top` and `left` of the widget
+/// kept inside the window and snapped within 20px to `top_snap`, the 25% line and the horizontal center.
+/// Returns the view state: top as a fraction of the window height, the widget's center as a fraction of its width.
+pub fn drag_layout(mut top: f32, mut left: f32, window: (f32, f32), widget: (f32, f32), title_bar_height: f32, top_snap: f32) -> (f32, f32) {
+    const SNAP: f32 = 20.;
+    let (window_width, window_height) = window;
+    let (widget_width, widget_height) = widget;
+    let center_y = (window_height * 0.25).round();
+    let center_x = (window_width / 2.).round() - (widget_width / 2.).round();
+    top = top.min(window_height - widget_height).max(0.);
+    // Custom window controls on macOS: keep clear of the traffic lights while over the title bar.
+    if top < title_bar_height {
+        left = left.max(80.);
+    }
+    if (top - top_snap).abs() < SNAP {
+        top = top_snap;
+    }
+    if (top - center_y).abs() < SNAP {
+        top = center_y;
+    }
+    left = left.min(window_width - widget_width).max(0.);
+    if (left - center_x).abs() < SNAP {
+        left = center_x;
+    }
+    (top / window_height, (left + widget_width / 2.) / window_width)
+}
+
 #[cfg(test)]
 mod tests;

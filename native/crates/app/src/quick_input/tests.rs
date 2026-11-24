@@ -319,3 +319,19 @@ fn input_box_accepts_its_value() {
 fn json_item(handle: i64, label: Option<&str>, path: &str) -> Value {
     serde_json::json!({ "handle": handle, "label": label, "resourceUri": { "scheme": "file", "path": path } })
 }
+
+#[test]
+fn drag_layout_snaps_clamps_and_clears_window_controls() {
+    let window = (1000., 800.);
+    let widget = (600., 300.);
+    // Near the title bar top and the horizontal center: both snap.
+    assert_eq!(drag_layout(15., 190., window, widget, 35., 6.), (6. / 800., 0.5));
+    // Near the 25% line.
+    assert_eq!(drag_layout(210., 190., window, widget, 35., 6.), (200. / 800., 0.5));
+    // Off every snap line: kept as dragged.
+    assert_eq!(drag_layout(400., 300., window, widget, 35., 6.), (400. / 800., 600. / 1000.));
+    // Past the bottom right corner: clamped inside the window.
+    assert_eq!(drag_layout(900., 900., window, widget, 35., 6.), (500. / 800., 700. / 1000.));
+    // Over the title bar at the left edge: moved right of the traffic lights.
+    assert_eq!(drag_layout(30., 0., window, widget, 35., 6.), (30. / 800., 380. / 1000.));
+}

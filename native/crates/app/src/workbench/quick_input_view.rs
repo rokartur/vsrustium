@@ -2,14 +2,14 @@
 //! (quickInputList.ts), laid out and colored as media/quickInput.css draws it. The store keeps every quick
 //! input with its owner (main_thread_quick_open.rs); the widget shows one of them at a time.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::ops::Range;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    Animation, AnimationExt, AnyElement, App, BoxShadow, ClickEvent, Context, Div, ElementInputHandler, FocusHandle, Font, FontWeight, HighlightStyle,
-    KeyDownEvent, ListAlignment, UTF16Selection, ListState, MouseButton, MouseDownEvent, MouseMoveEvent, Rgba, ShapedLine, StyledText, Subscription, Task, TextRun,
+    Animation, AnimationExt, AnyElement, App, Bounds, BoxShadow, ClickEvent, DispatchPhase, Context, Div, ElementInputHandler, FocusHandle, Font, FontWeight, HighlightStyle,
+    KeyDownEvent, ListAlignment, UTF16Selection, ListState, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Rgba, ShapedLine, StyledText, Subscription, Task, TextRun,
     UnderlineStyle, Window, canvas, div, fill, list, point, prelude::*, px, rgba, size,
 };
 use serde_json::Value;
@@ -17,12 +17,14 @@ use serde_json::Value;
 use super::Workbench;
 use crate::commands::Outcome;
 use crate::main_thread_quick_open::Owner;
-use crate::quick_input::{Button, Event, Focus, Kind, Motion, QuickInput, Row, Severity};
+use crate::quick_input::{Button, Event, Focus, Kind, Motion, QuickInput, Row, Severity, drag_layout};
 
 /// `QuickInputController.MAX_WIDTH`.
 const MAX_WIDTH: f32 = 600.;
 /// `quickPickTop` in layout.ts while the title bar shows the command center.
 const TOP: f32 = 6.;
+/// The title bar part's height, `activeContainerOffset.top` for the drag.
+const TITLE_BAR_HEIGHT: f32 = 35.;
 const ROW_HEIGHT: f32 = 22.;
 const DETAIL_ROW_HEIGHT: f32 = 44.;
 const RADIUS: f32 = 8.;
@@ -54,6 +56,13 @@ pub struct QuickInputs {
     blink: Option<Task<()>>,
     /// The shaped input text, its window x, and the scroll that keeps the caret visible.
     text: Rc<RefCell<InputText>>,
+    /// `QuickInputViewState`: the dragged position, top and center as fractions of the window.
+    // shortcut: kept for the session, upstream stores workbench.quickInput.viewState; storage comes with Milestone 10.
+    view_state: Option<(f32, f32)>,
+    /// The pointer's offset from the widget's top left while the title or header is dragged.
+    drag: Option<Point<Pixels>>,
+    /// The widget's padding box as last painted.
+    bounds: Rc<Cell<Bounds<Pixels>>>,
 }
 
 #[derive(Default)]
@@ -85,6 +94,9 @@ impl QuickInputs {
             caret_moved: Instant::now(),
             blink: None,
             text: Rc::default(),
+            view_state: None,
+            drag: None,
+            bounds: Rc::default(),
         }
     }
 
@@ -150,6 +162,7 @@ impl Workbench {
             None => {
                 inputs.previous_focus = window.focused(cx).filter(|focused| *focused != inputs.focus);
                 inputs.closing = None;
+                inputs.drag = None;
                 inputs.opened += 1;
             }
         }
@@ -460,7 +473,7 @@ impl Workbench {
         self.with_current_quick_input(window, cx, |input| input.insert(range, text));
     }
 
-    /// The widget, drawn over the workbench at the top center.
+    /// The widget, drawn over the workbench at the top center or where it was dragged.
     pub(super) fn quick_input_widget(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         let (input, interactive) = match (self.quick_inputs.current(), self.quick_inputs.closing.as_ref()) {
             (Some(input), _) => (input.clone(), true),
@@ -474,12 +487,15 @@ impl Workbench {
         }
         let viewport = window.viewport_size();
         let width = (f32::from(viewport.width) * 0.62).min(MAX_WIDTH);
-        let left = ((f32::from(viewport.width) - width) / 2.).round();
+        let (top, left) = match self.quick_inputs.view_state {
+            Some((top, left)) => ((f32::from(viewport.height) * top).round(), (f32::from(viewport.width) * left - width / 2.).round()),
+            None => (TOP, ((f32::from(viewport.width) - width) / 2.).round()),
+        };
         let has_title = !input.title_text().is_empty() || !input.buttons.iter().all(|button| button.location.is_some_and(|location| location > 1));
         let widget = div()
             .id("quick-input-widget")
             .absolute()
-            .top(px(TOP))
+            .top(px(top))
             .left(px(left))
             // The width is the content box; the 1px border goes outside it.
             .w(px(width + if self.theme.color("widget.border").is_some() { 2. } else { 0. }))
@@ -489,6 +505,7 @@ impl Workbench {
             .rounded(px(RADIUS))
             .when(!frosted, |widget| widget.bg(self.color("quickInput.background")))
             .when(frosted, |widget| widget.child(self.frosted_glass("quickInput.background")))
+            .when(interactive, |widget| widget.child(self.quick_input_drag_tracker(cx)))
             .text_color(self.foreground_or("quickInput.foreground"))
             .when_some(self.theme.color("widget.border"), |widget, border| widget.border_1().border_color(border))
             // --vscode-shadow-xl.
@@ -532,6 +549,62 @@ impl Workbench {
         .inset_0()
     }
 
+    /// Records the widget's bounds and, while it is dragged, follows the pointer anywhere in the window.
+    fn quick_input_drag_tracker(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let last_bounds = self.quick_inputs.bounds.clone();
+        let dragging = self.quick_inputs.drag.is_some();
+        let workbench = cx.entity();
+        canvas(
+            |_, _, _| (),
+            move |bounds, _, window, _| {
+                last_bounds.set(bounds);
+                if !dragging {
+                    return;
+                }
+                let moved = workbench.clone();
+                window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
+                    if phase == DispatchPhase::Bubble {
+                        moved.update(cx, |workbench, cx| workbench.quick_input_drag_to(event.position, window, cx));
+                    }
+                });
+                window.on_mouse_event(move |_: &MouseUpEvent, phase, _, cx| {
+                    if phase == DispatchPhase::Bubble {
+                        workbench.update(cx, |workbench, cx| {
+                            workbench.quick_inputs.drag = None;
+                            cx.notify();
+                        });
+                    }
+                });
+            },
+        )
+        .absolute()
+        .inset_0()
+    }
+
+    /// A press on the title or header starts a drag; a double click puts the widget back at the top center.
+    fn quick_input_drag_start(&mut self, event: &MouseDownEvent, _: &mut Window, cx: &mut Context<Self>) {
+        if event.click_count == 2 {
+            self.quick_inputs.view_state = None;
+            self.quick_inputs.drag = None;
+            cx.notify();
+            return;
+        }
+        let border = if self.theme.color("widget.border").is_some() { px(1.) } else { px(0.) };
+        self.quick_inputs.drag = Some(event.position - self.quick_inputs.bounds.get().origin + point(border, border));
+        cx.notify();
+    }
+
+    fn quick_input_drag_to(&mut self, position: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(offset) = self.quick_inputs.drag else { return };
+        let viewport = window.viewport_size();
+        let widget = self.quick_inputs.bounds.get().size;
+        let top_left = position - offset;
+        let window_size = (f32::from(viewport.width), f32::from(viewport.height));
+        let widget_size = (f32::from(widget.width), f32::from(widget.height));
+        self.quick_inputs.view_state = Some(drag_layout(f32::from(top_left.y), f32::from(top_left.x), window_size, widget_size, TITLE_BAR_HEIGHT, TOP));
+        cx.notify();
+    }
+
     /// `.quick-input-titlebar`: the back button, the title, and the title buttons.
     fn quick_input_title(&self, input: &QuickInput, cx: &mut Context<Self>) -> Div {
         let (left, right): (Vec<&Button>, Vec<&Button>) = input.buttons.iter().filter(|button| button.location.is_none_or(|location| location <= 1)).partition(|button| button.handle == -1);
@@ -543,9 +616,12 @@ impl Workbench {
             .rounded_t(px(RADIUS))
             .pt(px(2.))
             .bg(self.color("quickInputTitle.background"))
-            .child(div().absolute().left(px(4.)).flex().children(left.into_iter().map(|button| self.quick_input_button(button, cx))))
+            .cursor_grab()
+            .on_mouse_down(MouseButton::Left, cx.listener(Self::quick_input_drag_start))
+            // The action bars are not drag areas (excludeNodes).
+            .child(div().absolute().left(px(4.)).occlude().flex().children(left.into_iter().map(|button| self.quick_input_button(button, cx))))
             .child(div().flex_1().py(px(3.)).text_center().child(if title.is_empty() { "\u{a0}".to_owned() } else { title }))
-            .child(div().absolute().right(px(4.)).flex().gap(px(4.)).children(right.into_iter().map(|button| self.quick_input_button(button, cx))))
+            .child(div().absolute().right(px(4.)).occlude().flex().gap(px(4.)).children(right.into_iter().map(|button| self.quick_input_button(button, cx))))
     }
 
     /// A title, inline or input button: a 16px codicon with 2px padding, or the toggle's checked look.
@@ -599,10 +675,14 @@ impl Workbench {
             .pt(px(6.))
             .pb(px(4.))
             .when(input.hide_input, |header| header.p(px(0.)))
+            // Only the header itself is a drag area, so its children occlude it.
+            .cursor_grab()
+            .on_mouse_down(MouseButton::Left, cx.listener(Self::quick_input_drag_start))
             .when(input.can_select_many && !input.hide_input, |header| {
                 header.child(
                     self.checkbox(all_checked, checked > 0 && !all_checked)
                         .id("quick-input-check-all")
+                        .occlude()
                         .cursor_pointer()
                         .mt(px(4.))
                         .on_click(cx.listener(|workbench, _: &ClickEvent, window, cx| {
@@ -610,12 +690,13 @@ impl Workbench {
                         })),
                 )
             })
-            .when(!input.hide_input, |header| header.child(self.quick_input_box(input, interactive, window, cx)))
-            .children(inline.into_iter().map(|button| div().ml(px(4.)).mt(px(3.)).child(self.quick_input_button(button, cx))))
+            .when(!input.hide_input, |header| header.child(self.quick_input_box(input, interactive, window, cx).occlude()))
+            .children(inline.into_iter().map(|button| div().ml(px(4.)).mt(px(3.)).occlude().child(self.quick_input_button(button, cx))))
             .when(input.can_select_many, |header| {
                 header.child(
                     div()
                         .id("quick-input-ok")
+                        .occlude()
                         .cursor_pointer()
                         .ml(px(6.))
                         .h(px(26.))
@@ -649,6 +730,8 @@ impl Workbench {
         let count = input.can_select_many.then(|| {
             div()
                 .flex_none()
+                // .quick-input-count inherits the header's grab cursor.
+                .cursor_grab()
                 .mr(px(4.))
                 .px(px(4.))
                 .py(px(2.))
@@ -1046,3 +1129,6 @@ pub fn utf16_to_chars(text: &str, offset: usize) -> usize {
 pub fn chars_to_utf16(text: &str, chars: usize) -> usize {
     text.chars().take(chars).map(char::len_utf16).sum()
 }
+
+#[cfg(test)]
+mod tests;
