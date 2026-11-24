@@ -356,6 +356,8 @@ impl Workbench {
         let widget = div()
             .id("quick-input-widget")
             .absolute()
+            // quickInput.css `-webkit-app-region: no-drag`: the widget can lie over the title bar.
+            .occlude()
             .top(px(top))
             .left(px(left))
             // The width is the content box; the 1px border goes outside it.

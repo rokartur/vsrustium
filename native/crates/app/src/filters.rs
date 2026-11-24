@@ -90,6 +90,15 @@ pub fn matches_base_contiguous_sub_string(word: &str, target: &str) -> Option<Ma
 /// `matchesWords(word, target, false)`: the word's chars match starts of the target's words in order, like
 /// "gp" or "g p" in "Git: Pull"; any separator matches any other.
 pub fn matches_words(word: &str, target: &str) -> Option<Matches> {
+    matches_words_with(word, target, false)
+}
+
+/// `matchesWords(word, target, true)`: the word matches whole consecutive words of the target, "pul" in "Git: Pull".
+pub fn matches_contiguous_words(word: &str, target: &str) -> Option<Matches> {
+    matches_words_with(word, target, true)
+}
+
+fn matches_words_with(word: &str, target: &str, contiguous: bool) -> Option<Matches> {
     if target.is_empty() {
         return None;
     }
@@ -99,7 +108,7 @@ pub fn matches_words(word: &str, target: &str) -> Option<Matches> {
     let mut memo = HashMap::new();
     let mut target_index = 0;
     while target_index < target.len() {
-        if let Some(result) = matches_words_from(&word, &target, 0, target_index, &mut memo) {
+        if let Some(result) = matches_words_from(&word, &target, 0, target_index, contiguous, &mut memo) {
             return Some(result);
         }
         target_index = next_word(&target, target_index + 1);
@@ -116,7 +125,7 @@ pub fn try_normalize_to_base(text: &str) -> String {
     base.to_lowercase()
 }
 
-fn matches_words_from(word: &[char], target: &[char], word_index: usize, target_index: usize, memo: &mut HashMap<(usize, usize), Option<Matches>>) -> Option<Matches> {
+fn matches_words_from(word: &[char], target: &[char], word_index: usize, target_index: usize, contiguous: bool, memo: &mut HashMap<(usize, usize), Option<Matches>>) -> Option<Matches> {
     if word_index == word.len() {
         return Some(vec![]);
     }
@@ -126,12 +135,12 @@ fn matches_words_from(word: &[char], target: &[char], word_index: usize, target_
     if let Some(cached) = memo.get(&(word_index, target_index)) {
         return cached.clone();
     }
-    let computed = matches_words_compute(word, target, word_index, target_index, memo);
+    let computed = matches_words_compute(word, target, word_index, target_index, contiguous, memo);
     memo.insert((word_index, target_index), computed.clone());
     computed
 }
 
-fn matches_words_compute(word: &[char], target: &[char], word_index: usize, target_index: usize, memo: &mut HashMap<(usize, usize), Option<Matches>>) -> Option<Matches> {
+fn matches_words_compute(word: &[char], target: &[char], word_index: usize, target_index: usize, contiguous: bool, memo: &mut HashMap<(usize, usize), Option<Matches>>) -> Option<Matches> {
     let code = word[word_index];
     let alternate: Option<Vec<char>> = korean::korean_alt_chars(code).map(|keys| keys.chars().collect());
     let mut target_index_offset = 0;
@@ -144,13 +153,13 @@ fn matches_words_compute(word: &[char], target: &[char], word_index: usize, targ
         target_index_offset += alternate.len() - 1;
     }
     let mut next_word_index = target_index + target_index_offset + 1;
-    let mut result = matches_words_from(word, target, word_index + 1, next_word_index, memo);
-    while result.is_none() {
+    let mut result = matches_words_from(word, target, word_index + 1, next_word_index, contiguous, memo);
+    while result.is_none() && !contiguous {
         next_word_index = next_word(target, next_word_index);
         if next_word_index >= target.len() {
             break;
         }
-        result = matches_words_from(word, target, word_index + 1, next_word_index, memo);
+        result = matches_words_from(word, target, word_index + 1, next_word_index, contiguous, memo);
         next_word_index += 1;
     }
     let mut result = result?;

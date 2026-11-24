@@ -326,7 +326,6 @@ impl Expr {
         }
     }
 
-    #[cfg(test)]
     pub fn serialize(&self) -> String {
         match self {
             Expr::False => "false".into(),
@@ -605,7 +604,6 @@ fn number_string(number: f64) -> String {
     format!("{number}")
 }
 
-#[cfg(test)]
 fn scalar_string(value: &Scalar) -> String {
     match value {
         Scalar::Number(number) => number_string(*number),
