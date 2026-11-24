@@ -1,4 +1,4 @@
-//! Editing an open editor's text with one cursor: the cursor commands of coreCommands.ts and
+//! Editing an open editor's text at every cursor: the cursor commands of coreCommands.ts and
 //! cursorTypeOperations.ts, the undo stack of editStack.ts, and the content change events
 //! mainThreadDocuments.ts forwards to the extension host. Line breaks inside edit text are "\n";
 //! the host hears them in the document's EOL.
