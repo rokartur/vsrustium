@@ -764,6 +764,8 @@ mod tests {
         cx.run_until_parked();
         cx.simulate_input("the");
         assert_eq!(found(cx), (1, 3, (0, 0)));
+        let zone = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| (workbench.editors.viewport.top_whitespace, workbench.editors.active().unwrap().scroll.top));
+        assert_eq!(zone(cx), (33., 0.), "the match on line 1 stays revealed below the zone");
         run("editor.action.nextMatchFindAction", cx);
         assert_eq!(found(cx), (2, 3, (1, 4)));
         cx.simulate_keystrokes("backspace backspace");
@@ -775,11 +777,13 @@ mod tests {
         cx.simulate_keystrokes("shift-tab");
         cx.simulate_input("the");
         run("editor.action.replaceAll", cx);
+        assert_eq!(zone(cx).0, 62.);
         let text = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document.lines.join("\n"));
         assert_eq!(text, "a cat\nand a dog\na end");
 
         run("closeFindWidget", cx);
         assert!(workbench.read_with(cx, |workbench, _| !workbench.find.controller.state.is_revealed));
+        assert_eq!(zone(cx), (0., 0.));
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

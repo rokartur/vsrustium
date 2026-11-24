@@ -2,6 +2,7 @@
 //! and replace inputs with their option toggles, the match count, the buttons and the resize sash, drawn over the
 //! editor's top right corner. The controller (editor/find/controller.rs) owns what it searches for.
 
+use std::cell::Cell;
 use std::time::{Duration, Instant};
 
 use gpui::{
@@ -14,7 +15,7 @@ use super::input_box_view::{InputId, InputLook, InputView};
 use crate::commands::Outcome;
 use crate::editor::find::controller::{AutoFindInSelection, FindController, FindOptions, FocusAction, QueryOptions, SeedFromSelection};
 use crate::editor::find::state::{MATCHES_LIMIT, NewFindState};
-use crate::editor::{ContentChanged, OpenEditor, VERTICAL_SCROLLBAR_WIDTH, Viewport};
+use crate::editor::{ContentChanged, OpenEditor, Position, Selection, VERTICAL_SCROLLBAR_WIDTH, VerticalReveal, Viewport, visible_column};
 use crate::input_box::InputBox;
 use crate::theme::ThemeKind;
 
@@ -44,6 +45,8 @@ pub struct FindWidget {
     sash_drag: Option<(f32, f32)>,
     /// When the widget last showed or hid, for its slide.
     toggled: Option<Instant>,
+    /// The widget's left edge as last drawn, from where the text's column 0 is.
+    widget_left: Cell<f32>,
 }
 
 impl FindWidget {
@@ -60,6 +63,7 @@ impl FindWidget {
             resized_width: None,
             sash_drag: None,
             toggled: None,
+            widget_left: Cell::new(f32::MAX),
         }
     }
 }
@@ -106,18 +110,25 @@ impl Workbench {
         self.find.controller.options = self.find_options();
         self.find.controller.find_input_focused = self.find.find_focus.is_focused(window);
         self.find_editor_changed();
+        let top_whitespace = self.editors.viewport.top_whitespace;
         let viewport = self.editors.viewport;
         let Some(editor) = self.editors.active_mut() else { return };
         let find = &mut self.find;
         let (selections, scroll, revealed) = (editor.selections.clone(), editor.scroll, find.controller.state.is_revealed);
         let (focus, change) = action(&mut find.controller, editor, viewport);
-        let (moved, scrolled) = (editor.selections != selections, editor.scroll != scroll);
+        let adjust_scroll = !self.find.controller.state.is_revealed || revealed || !self.selection_under_find_widget(selections[0]);
+        self.layout_find_zone(adjust_scroll);
+        if self.find.controller.state.is_revealed && !revealed {
+            self.reveal_current_match();
+        }
+        let editor = self.editors.active().expect("checked above");
+        let (moved, scrolled) = (editor.selections != selections, editor.scroll != scroll || self.editors.viewport.top_whitespace != top_whitespace);
         match &change {
             Some(change) => {
                 self.host.send_content_change(&self.editors, self.editors.active_index().expect("checked above"), change);
                 self.host.send_visible_ranges(&self.editors);
             }
-            None if moved => self.host.send_selection(self.editors.active().expect("checked above"), "api"),
+            None if moved => self.host.send_selection(editor, "api"),
             None => {}
         }
         if scrolled {
@@ -239,8 +250,56 @@ impl Workbench {
         self.find.controller.cursor_moved(editor);
     }
 
+    /// `_showViewZone` and `_removeViewZone`: with `editor.find.addExtraSpaceOnTop`, whitespace as tall as the
+    /// widget sits above line 1; the scroll moves with it, so the text stays put, unless `adjust` is false on show.
+    fn layout_find_zone(&mut self, adjust: bool) {
+        let state = &self.find.controller.state;
+        let extra_space = self.setting("editor.find.addExtraSpaceOnTop").as_bool().unwrap_or(true);
+        let height = match (state.is_revealed && extra_space, state.is_replace_revealed) {
+            (false, _) => 0.,
+            (true, false) => FIND_INPUT_AREA_HEIGHT,
+            (true, true) => REPLACE_AREA_HEIGHT,
+        };
+        let delta = height - self.editors.viewport.top_whitespace;
+        if delta == 0. {
+            return;
+        }
+        self.editors.viewport.top_whitespace = height;
+        let viewport = self.editors.viewport;
+        let Some(editor) = self.editors.active_mut() else { return };
+        let top = if adjust || height == 0. { editor.scroll.top + delta } else { editor.scroll.top };
+        editor.set_scroll(top, editor.scroll.left, viewport);
+    }
+
+    /// `_reveal`'s `adjustEditorScrollTop`: a seeded selection in the zone's rows that spans lines or reaches the
+    /// widget's left edge keeps the scroll, so the zone pushes it down from under the widget.
+    fn selection_under_find_widget(&self, selection: Selection) -> bool {
+        let Some(editor) = self.editors.active() else { return false };
+        let seeding = self.find.controller.options.seed_search_string_from_selection != SeedFromSelection::Never;
+        if selection.is_empty() || !seeding {
+            return false;
+        }
+        let (start, end) = (selection.start(), selection.end());
+        let start_top = self.editors.viewport.line_top(editor.view_line(start.line)) - editor.scroll.top;
+        if start_top >= FIND_INPUT_AREA_HEIGHT {
+            return false;
+        }
+        let tab_size = editor.document.indentation.tab_size;
+        let left = |position: Position| visible_column(&editor.document.lines[position.line], position.column, tab_size) as f32 * self.editors.viewport.char_width - editor.scroll.left;
+        let widget_left = self.find.widget_left.get();
+        end.line > start.line || left(start) > widget_left || left(end) > widget_left
+    }
+
+    /// The research ran before the zone existed: its reveal of the current match runs again on the final layout.
+    fn reveal_current_match(&mut self) {
+        let viewport = self.editors.viewport;
+        let Some(range) = self.find.controller.state.current_match.clone() else { return };
+        let Some(editor) = self.editors.active_mut() else { return };
+        editor.reveal_range(range.start, range.end, VerticalReveal::CenterIfOutsideViewport, viewport);
+    }
+
     /// The widget over the text area's top right corner (overlayWidgets.ts TOP_RIGHT_CORNER), `area_width` wide.
-    pub(super) fn find_widget(&self, area_width: f32, minimap_width: f32, window: &mut Window, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+    pub(super) fn find_widget(&self, area_width: f32, content_left: f32, minimap_width: f32, window: &mut Window, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         let state = &self.find.controller.state;
         let elapsed = self.find.toggled.map_or(SLIDE, |toggled| toggled.elapsed());
         if !state.is_revealed && elapsed >= SLIDE {
@@ -382,6 +441,7 @@ impl Workbench {
         });
 
         let left = area_width - 2. * VERTICAL_SCROLLBAR_WIDTH - minimap_width - width;
+        self.find.widget_left.set(left - content_left);
         let sash_color = self.theme.color("editorWidget.resizeBorder").unwrap_or(self.color("editorWidget.border"));
         Some(
             div()

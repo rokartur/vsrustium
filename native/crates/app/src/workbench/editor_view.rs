@@ -231,9 +231,10 @@ impl Workbench {
         let laid_out = cx.entity();
         let view_line_count = editor.view_line_count();
         let sticky_scroll_lines = self.sticky_scroll_lines();
+        let top_whitespace = self.editors.viewport.top_whitespace;
         let viewport = self.editors.viewport;
         let lines = editor.visible_lines(viewport);
-        let lines_top = lines.start as f32 * LINE_HEIGHT - editor.scroll.top;
+        let lines_top = viewport.line_top(lines.start) - editor.scroll.top;
         let rows = self.editor_lines(editor, lines, metrics, window, cx);
         let minimap_width = self.minimap.info.as_ref().map_or(0., |(info, _)| info.width as f32);
         let now = Instant::now();
@@ -269,7 +270,7 @@ impl Workbench {
                         let pixel_ratio = window.scale_factor();
                         let minimap = minimap_info(width, height, metrics.content_left(), metrics.char_width, view_line_count, pixel_ratio);
                         // editorOptions.ts: contentWidth = remainingWidth - minimapWidth.
-                        let viewport = Viewport { width: width - metrics.content_left() - minimap.width as f32, height, char_width: metrics.char_width, sticky_scroll_lines };
+                        let viewport = Viewport { width: width - metrics.content_left() - minimap.width as f32, height, char_width: metrics.char_width, sticky_scroll_lines, top_whitespace };
                         laid_out.update(cx, |workbench, cx| workbench.editor_laid_out(viewport, (minimap, pixel_ratio as f64), cx));
                     },
                     move |bounds, _, window, cx| window.handle_input(&focus, ElementInputHandler::new(bounds, workbench), cx),
@@ -293,7 +294,7 @@ impl Workbench {
             .when(editor.scroll.top > 0., |area| area.child(div().absolute().top_0().left_0().right(px(VERTICAL_SCROLLBAR_WIDTH)).h(px(SCROLL_SHADOW_HEIGHT)).cursor_default().child(self.scroll_shadow().size_full())))
             .children(self.minimap(editor, cx))
             .children(self.sticky_scroll_widget(editor, metrics, window, cx))
-            .children(self.find_widget(self.editors.viewport.width + metrics.content_left() + minimap_width, minimap_width, window, cx))
+            .children(self.find_widget(self.editors.viewport.width + metrics.content_left() + minimap_width, metrics.content_left(), minimap_width, window, cx))
     }
 
     /// The text area got its size: the group's viewport follows it, which can clamp the scroll position and
@@ -847,6 +848,7 @@ impl Workbench {
         cursors.sort_by_key(|(line, _)| *line);
         bracket_lines.sort();
         let border = self.theme.color("editorOverviewRuler.border");
+        let top_whitespace = self.editors.viewport.top_whitespace;
         canvas(
             |_, _, _| {},
             move |bounds, _, window, _| {
@@ -860,15 +862,15 @@ impl Workbench {
                 let canvas_height = (f32::from(bounds.size.height) * scale).floor();
                 let viewport_height = f32::from(bounds.size.height);
                 // scrollBeyondLastLine: the last line can scroll to the top of the viewport.
-                let scroll_height = line_count as f32 * LINE_HEIGHT + viewport_height - LINE_HEIGHT;
+                let scroll_height = top_whitespace + line_count as f32 * LINE_HEIGHT + viewport_height - LINE_HEIGHT;
                 let ratio = canvas_height / scroll_height;
                 let lanes = RulerLanes::new(canvas_width);
                 let min_height = (6. * scale).floor();
                 for (lines, color) in [(&highlight_lines, highlight), (&bracket_lines, bracket_color)] {
                     let mut previous: Option<(f32, f32)> = None;
                     for line in lines {
-                        let mut y1 = (*line as f32 * LINE_HEIGHT * ratio).floor();
-                        let mut y2 = ((*line as f32 * LINE_HEIGHT + LINE_HEIGHT) * ratio).floor();
+                        let mut y1 = ((top_whitespace + *line as f32 * LINE_HEIGHT) * ratio).floor();
+                        let mut y2 = ((top_whitespace + *line as f32 * LINE_HEIGHT + LINE_HEIGHT) * ratio).floor();
                         if y2 - y1 < min_height {
                             let half = (min_height / 2.).floor();
                             let center = ((y1 + y2) / 2.).floor().clamp(half, canvas_height - half);
@@ -892,7 +894,7 @@ impl Workbench {
                 let half = (height / 2.).floor();
                 let mut previous: Option<(f32, f32, Rgba)> = None;
                 for (line, color) in cursors.iter().filter_map(|(line, color)| Some((*line, (*color)?))) {
-                    let y1 = (line as f32 * LINE_HEIGHT * ratio).floor().clamp(half, canvas_height - half) - half;
+                    let y1 = ((top_whitespace + line as f32 * LINE_HEIGHT) * ratio).floor().clamp(half, canvas_height - half) - half;
                     let y2 = y1 + height;
                     previous = match previous {
                         Some((start, end, previous_color)) if y1 <= end + 1. && previous_color == color => Some((start, end.max(y2), color)),
