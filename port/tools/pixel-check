@@ -11,6 +11,17 @@ mkdir -p "$OUT"
 rm -rf "$OUT/workspace" "$OUT/folding" && cp -R port/fixtures/workspace "$OUT/workspace" && cp -R port/fixtures/folding "$OUT/folding"
 (cd native && cargo build --release -q -p app --features screenshot && cargo build --release -q -p pixeldiff) || exit 1
 source port/tools/gui-lock.sh
+# Runs a capture; one still alive after 120 s gets its stacks sampled into $1, then is killed (exit 124).
+capture() {
+  local sample=$1; shift
+  "$@" & local pid=$!
+  for _ in $(seq 120); do
+    kill -0 $pid 2>/dev/null || { wait $pid; return; }
+    sleep 1
+  done
+  sample $pid 3 -file "$sample" >/dev/null 2>&1
+  kill $pid; wait $pid; return 124
+}
 for window in ${WINDOWS:-empty folder file main folded}; do
   folder=$([[ $window != empty ]] && echo "$OUT/workspace")
   keys=
@@ -26,7 +37,7 @@ for window in ${WINDOWS:-empty folder file main folded}; do
   for theme in ${THEMES:-dark light hc hclight}; do
     case $theme in dark) theme_id="Dark Modern" ;; light) theme_id="Light Modern" ;; hc) theme_id="Default High Contrast" ;; hclight) theme_id="Default High Contrast Light" ;; esac
     VSCODE_GPUI_EXTENSIONS=${VSCODE_GPUI_EXTENSIONS:-$HOME/Developer/vscode-ref/extensions} \
-      timeout 120 native/target/release/code-gpui $folder $file --user-data-dir "$(mktemp -d)" --theme "$theme_id" --screenshot "$dir/port-$theme.png" --screenshot-keys "$keys" 2>"$dir/port-$theme.log" || { echo "$window $theme: code-gpui failed, see $dir/port-$theme.log"; exit 1; }
+      capture "$dir/port-$theme.sample" native/target/release/code-gpui $folder $file --user-data-dir "$(mktemp -d)" --theme "$theme_id" --screenshot "$dir/port-$theme.png" --screenshot-keys "$keys" 2>"$dir/port-$theme.log" || { echo "$window $theme: code-gpui failed with exit $? (124: hung 120 s, stacks in $dir/port-$theme.sample), see $dir/port-$theme.log"; exit 1; }
     counts=$(native/target/release/pixeldiff "$dir/reference/$theme.png" "$dir/port-$theme.png" "$dir/diff-$theme.png")
     echo "$window $theme $counts"
   done

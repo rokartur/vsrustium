@@ -23,6 +23,8 @@ After folding: full run with the new `folded` window, `port/fixtures/folding/lon
 | main | 12177 | 7627 | 5335 | 5059 |
 | folded | 23034 | 29087 | 9736 | 8806 |
 
+`port/tools/pixel-check` now runs each port capture through `capture()`: one still alive after 120 s gets `sample` stacks in `<window>/port-<theme>.sample`, then exits 124, so a hang leaves evidence instead of an empty log. Then two full runs back to back (`port/tools/pixel-check && port/tools/pixel-check`): all 20 windows gave numbers in both, each equal to the table above. The empty-log failure did not recur; its cause is unproven.
+
 ## Milestone 7: syntax colors and themes
 
 New window `main`: `port/fixtures/workspace/src/main.ts` open in the fixture folder, TypeScript grammar colors and bracket pair colors. New theme `hclight` (Default High Contrast Light) for every window. The reference now runs with `--force-color-profile=srgb` (port/notes.md); with it the empty, folder and file windows give the milestone 2, 3 and 4 numbers unchanged. Reference md5 (main): dark `c1172c60`, hc `1cf27616`, hclight `fc82315e`, light `2eba5cf1`.
