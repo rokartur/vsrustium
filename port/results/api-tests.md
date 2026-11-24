@@ -89,3 +89,14 @@ Same `MOCHA_GREP` and setup as the bulk file edits section, on the Studio, the w
 | api-workspace | 4 | 0 | 0 | 0 | exit 0 after 0s |
 
 Unchanged: the changes are UI only.
+
+## M12 participant confirmation
+
+Same `MOCHA_GREP` and setup as the bulk file edits section, on the Studio, the working tree of the participant confirmation commit.
+
+| suite | passing | pending | failing | not reached | run |
+|-------|---------|---------|---------|-------------|-----|
+| api-folder | 74 | 2 | 62 | 264 | exit 1 after 7s |
+| api-workspace | 4 | 0 | 0 | 0 | exit 0 after 0s |
+
+Unchanged, as expected: extension test runs show no participant dialog.

@@ -82,6 +82,21 @@ impl FileTree {
         self.anchor = Some(path.to_path_buf());
     }
 
+    /// explorerService.ts `onDidRunOperation` for a move: the moved item and the items under it keep their
+    /// focus, selection and expansion, as upstream moves the model element itself.
+    pub fn move_item(&mut self, old: &Path, new: &Path) {
+        // Joining an empty rest would add a trailing slash.
+        let moved = |path: &PathBuf| path.strip_prefix(old).ok().map(|rest| if rest.as_os_str().is_empty() { new.to_path_buf() } else { new.join(rest) });
+        for path in self.focused.iter_mut().chain(self.anchor.iter_mut()).chain(self.selected.iter_mut()) {
+            if let Some(path_moved) = moved(path) {
+                *path = path_moved;
+            }
+        }
+        let expanded: Vec<PathBuf> = self.expanded.iter().filter_map(moved).collect();
+        self.expanded.retain(|path| !path.starts_with(old));
+        self.expanded.extend(expanded);
+    }
+
     /// listWidget.ts `MouseController`: Cmd+click toggles the row in the selection, Shift+click selects the
     /// visible rows from the anchor to it.
     pub fn click_select(&mut self, path: &Path, toggle: bool, range: bool) {
@@ -288,6 +303,19 @@ mod tests {
         tree.reveal(&root.join("folder1/a.txt"));
         assert!(tree.rows()[0].expanded, "revealing a file expands its root");
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_moved_folder_keeps_selection_and_expansion_of_its_items() {
+        let mut tree = FileTree::new(Workspace::folder(PathBuf::from("/w")));
+        tree.toggle(Path::new("/w/src"));
+        tree.toggle(Path::new("/w/src/lib"));
+        tree.click_select(Path::new("/w/src/lib/a.ts"), false, false);
+        tree.click_select(Path::new("/w/srcfile"), true, false);
+        tree.move_item(Path::new("/w/src"), Path::new("/w/out/src"));
+        assert_eq!(tree.selected, [PathBuf::from("/w/out/src/lib/a.ts"), PathBuf::from("/w/srcfile")], "a name that only starts with the folder's stays");
+        assert!(tree.expanded.contains(Path::new("/w/out/src")) && tree.expanded.contains(Path::new("/w/out/src/lib")));
+        assert!(!tree.expanded.iter().any(|path| path.starts_with("/w/src")));
     }
 
     /// Cases from src/vs/base/test/browser/comparers.test.ts `compareFileNamesDefault`.

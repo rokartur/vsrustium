@@ -122,8 +122,9 @@ fn rename_copy_paste_cut_delete_and_undo(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("enter");
     cx.run_until_parked();
     assert_eq!(names(&dir), ["c.txt", "sub"]);
+    // The renamed row keeps its selection (explorerService.ts renames the model element in place).
+    assert_eq!(workbench.read_with(cx, |workbench, _| workbench.folder.as_ref().unwrap().selected.clone()), [dir.join("c.txt")]);
 
-    select(&workbench, &dir.join("c.txt"), cx);
     cx.simulate_keystrokes("cmd-c cmd-v");
     cx.run_until_parked();
     assert_eq!(names(&dir), ["c copy.txt", "c.txt", "sub"]);

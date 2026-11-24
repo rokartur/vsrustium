@@ -333,6 +333,16 @@ impl Workbench {
         .detach();
     }
 
+    /// The moves an operation ran, read from the renames of the edits that reverse it (`new` back to `old`).
+    fn follow_explorer_moves(&mut self, undo: &FileUndo) {
+        let Some(tree) = self.folder.as_mut() else { return };
+        for edit in undo.operations.iter().flatten() {
+            if let FileEdit::Rename { old, new, .. } = edit {
+                tree.move_item(Path::new(&new.path), Path::new(&old.path));
+            }
+        }
+    }
+
     /// `explorerService.select(resource, true)`: revealed, selected and focused.
     fn select_explorer_item(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(tree) = self.folder.as_mut() {
@@ -473,6 +483,7 @@ impl Workbench {
                 cx.notify();
                 match result {
                     Ok(undo) => {
+                        workbench.follow_explorer_moves(&undo);
                         workbench.explorer.undo.finish(id, undo);
                         None
                     }
@@ -755,6 +766,7 @@ async fn apply_bulk_edit(workbench: &WeakEntity<Workbench>, cx: &mut AsyncWindow
     let undo = receiver.await.map_err(|_| "Canceled".to_string())?.map_err(|error| error.message)?;
     workbench
         .update(cx, |workbench, cx| {
+            workbench.follow_explorer_moves(&undo);
             let resources = undo.resources().iter().map(|resource| (resource.path.to_lowercase(), resource.path.clone())).collect();
             workbench.explorer.undo.push(label, resources, UNDO_SOURCE, confirm_before_undo, undo);
             cx.notify();
@@ -780,7 +792,7 @@ async fn confirm(workbench: &WeakEntity<Workbench>, cx: &mut AsyncWindowContext,
 async fn confirm_or_stop_asking(workbench: &WeakEntity<Workbench>, cx: &mut AsyncWindowContext, level: PromptLevel, message: String, detail: Option<String>, primary: &str, setting: &str) -> bool {
     let answer = workbench.update_in(cx, |workbench, window, cx| match workbench.skip_dialogs {
         true => None,
-        false => Some(dialog::show_message_box(window, level, &message, detail.as_deref(), &[primary, "Cancel"], "Do not ask me again", cx)),
+        false => Some(dialog::show_message_box(window, level, &message, detail.as_deref(), &[primary, "Cancel"], Some("Do not ask me again"), cx)),
     });
     let checked = match answer {
         Ok(Some(answer)) => match answer.await {

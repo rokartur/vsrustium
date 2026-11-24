@@ -6,6 +6,7 @@ mod actions;
 mod editor_commands;
 mod editor_view;
 mod explorer_actions;
+mod file_participants;
 mod input_box_view;
 mod keyboard;
 pub mod quick_access;
@@ -160,6 +161,7 @@ impl Workbench {
         workbench.register_quick_access_commands();
         workbench.register_theme_commands();
         workbench.register_explorer_actions();
+        workbench.register_file_participant_commands();
         // Keybindings resolve before the focused element sees the key, and with nothing focused too.
         let entity = cx.entity().downgrade();
         cx.intercept_keystrokes(move |event, window, cx| {
