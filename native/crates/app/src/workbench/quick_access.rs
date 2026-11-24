@@ -335,7 +335,8 @@ pub(super) fn show_failure(label: String, outcome: Outcome, window: &mut Window,
 fn show_command_error(label: &str, error: &Value, window: &mut Window, cx: &mut gpui::App) {
     let message = format!("Command '{label}' resulted in an error");
     let detail = error["message"].as_str().unwrap_or_default().to_owned();
-    let _ = window.prompt(PromptLevel::Critical, &message, Some(&detail), &["OK"], cx);
+    // The only button closes the dialog, so the answer is not needed.
+    drop(window.prompt(PromptLevel::Critical, &message, Some(&detail), &["OK"], cx));
 }
 
 #[cfg(test)]

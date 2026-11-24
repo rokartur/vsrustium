@@ -762,7 +762,8 @@ async fn notify_error(workbench: &WeakEntity<Workbench>, cx: &mut AsyncWindowCon
     eprintln!("explorer: {message}");
     let _ = workbench.update_in(cx, |workbench, window, cx| {
         if !workbench.skip_dialogs {
-            let _ = window.prompt(PromptLevel::Critical, &message, None, &["OK"], cx);
+            // The only button closes the dialog, so the answer is not needed.
+            drop(window.prompt(PromptLevel::Critical, &message, None, &["OK"], cx));
         }
     });
 }

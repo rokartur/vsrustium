@@ -125,6 +125,7 @@ fn score_separator_at_pos(c: char) -> i32 {
 /// `FuzzyScore2`: the score (None for no match) and the matches, used for symbols.
 pub type FuzzyScore2 = (Option<i32>, Matches);
 
+#[cfg_attr(not(test), expect(dead_code, reason = "Quick Open symbols (@, #) and milestone 13 completion"))]
 pub fn score_fuzzy2(target: &str, query: &PreparedQuery, pattern_start: usize, word_start: usize) -> FuzzyScore2 {
     match &query.values {
         Some(values) if values.len() > 1 => {
@@ -469,6 +470,7 @@ pub fn prepare_query(original: &str) -> PreparedQuery {
     PreparedQuery { piece, values, contains_path_separator }
 }
 
+#[cfg_attr(not(test), expect(dead_code, reason = "Quick Open symbols (@, #) and milestone 13 completion"))]
 pub fn piece_to_query(pieces: &[PreparedQueryPiece]) -> PreparedQuery {
     let originals: Vec<&str> = pieces.iter().map(|piece| piece.original.as_str()).collect();
     prepare_query(&originals.join(" "))
