@@ -6,7 +6,7 @@ Rule for every milestone (Artur): a feature ships end to end and 1:1 with VS Cod
 
 Mouse cursors are part of the look (Artur): every element gets the cursor the reference CSS gives it (`rg 'cursor:' src/vs --glob '*.css'`): `pointer` on clickable items (activity bar, tabs, list rows, status bar items with a command, buttons, links), `text` over editor text and input fields, the resize cursors on sashes, `default` elsewhere. GPUI: `.cursor_pointer()`, `.cursor_text()`, `.cursor_ew_resize()` and the like on the element, never a window-wide cursor.
 
-Ledger today: 64 verified, 48 ported, 70 stub, 359 todo, 51 removed (of 592 rows).
+Ledger today: 64 verified, 48 ported, 61 stub, 323 todo, 92 removed, 4 n/a (of 592 rows).
 
 ## Done
 
@@ -154,13 +154,15 @@ Rows: `telemetry/source-search` `telemetry/network-capture` `mainthread/MainThre
 
 Scope: nothing new; close the gaps the earlier milestones left.
 
-Done when: `port/tools/api-tests` gives 356/46/0 (folder) and 4/0/0 (workspace), the reference baseline; pixel-check of every window has no difference beyond anti-aliasing and the causes listed in `port/results/pixels.md`; every ledger row is `verified` or `removed`.
+Done when: `port/tools/api-tests` gives 337/31/0 (folder) and 4/0/0 (workspace): the reference baseline 356/46/0 less the suites of removed features (port/results/api-tests-reference.md); pixel-check of every window has no difference beyond anti-aliasing and the causes listed in `port/results/pixels.md`; every ledger row is `verified`, `removed` or `n/a`.
 
-## Decisions needed (Artur)
+## Decisions (Artur)
+
+Made: AI, Microsoft-service and telemetry parts and remote/tunnels are `removed` (41 rows); upstream test infrastructure (`base/test`, `editor/test`, `platform/test`, `workbench/services/driver`) is `n/a`; the api-tests suites of removed features leave the milestone 20 target.
+
+Open:
 
 1. Architecture rows: Electron, DOM and process-model layers the Rust/GPUI port replaces rather than ports. Proposal: a new ledger status `n/a` (replaced by the native architecture), so they stop counting as work. Rows: `base/browser` `base/common` `base/node` `base/parts` `platform/instantiation` `platform/ipc` `platform/observable` `platform/sharedProcess` `platform/utilityProcess` `platform/webWorker` `platform/sandbox` `platform/domWidget` `platform/gpu` `platform/cssDev` `platform/protocol` `editor/standalone` `editor/contrib/gpu` `workbench/services/sharedProcess` `workbench/services/utilityProcess` `workbench/contrib/screenshotTool`
-2. More removals under the no-AI / no-Microsoft-service decision. Proposal: `removed`, API inert like `vscode.lm`. Rows: `mainthread/MainThreadEmbeddings` `mainthread/MainThreadAiEmbeddingVector` `mainthread/MainThreadCodeMapper` `mainthread/MainThreadSpeech` `mainthread/MainThreadDataChannels` `mainthread/MainThreadShare` `workbench/services/aiEmbeddingVector` `workbench/services/localTranscription` `workbench/services/dataChannel` `workbench/services/imageResize` `workbench/services/assignment` `platform/localTranscription` `platform/dataChannel` `platform/imageResize` `platform/assignment` `platform/artifactIntegrations` `platform/customizationMarketplace` `platform/webContentExtractor` `platform/otel` `platform/externalServices` `platform/networkFilter` `workbench/contrib/speech` `workbench/contrib/sessionChanges` `workbench/contrib/canvases` `workbench/contrib/share` `workbench/contrib/surveys` `workbench/contrib/emergencyAlert` `workbench/contrib/issue` `workbench/contrib/editTelemetry` `workbench/contrib/bracketPairColorizer2Telemetry` `workbench/contrib/tags`
-3. Remote and tunnels (SSH, containers, port forwarding): no decision recorded. Proposal: `removed` for now, the seam keeps one local host. Rows: `mainthread/MainThreadTunnelService` `mainthread/MainThreadManagedSockets` `mainthread/MainThreadBrowserTunnelProxy` `platform/remote` `platform/tunnel` `platform/endpoint` `workbench/services/remote` `workbench/services/tunnel` `workbench/contrib/remote` `extension/vscode-test-resolver`
 
 ## Open findings outside the milestones
 

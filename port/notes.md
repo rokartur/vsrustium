@@ -32,6 +32,8 @@ Host changes, all gated on `process.versions.bun` so Node behaves as upstream:
 
 Decision (Artur): the port ships no sign-in and no AI features. Copilot Chat, chat views, inline chat, language models, MCP and agent parts are removed, and so are the accounts UI and Settings Sync sign-in. The extension API stays as an inert surface, like telemetry: `vscode.authentication`, `vscode.lm` and `vscode.chat` report no providers, so third-party extensions keep loading. Ledger rows for these parts become `removed` (by decision), not `todo`.
 
+Decision (Artur), later: also removed are the remaining AI parts (embeddings, code mapper, speech, transcription, canvases, session changes), Microsoft services (assignment/experiments, share, surveys, issue reporter, emergency alerts, marketplace customizations, data channels, OTel, external services), edit telemetry, and remote/tunnels (SSH, containers, port forwarding, managed sockets, the test resolver). The port keeps one local extension host; their APIs stay inert. Upstream test infrastructure rows are `n/a`.
+
 ## Milestone 2: empty workbench
 
 Scope: the window the reference opens with no folder (title bar with command center and layout actions, activity bar, editor part with the letterpress watermark, no-folder status bar) in the modern floating layout, drawn by GPUI from the built-in theme JSON, in Dark Modern, Light Modern and Default High Contrast.
