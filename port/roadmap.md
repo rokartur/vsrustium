@@ -6,7 +6,7 @@ Rule for every milestone (Artur): a feature ships end to end and 1:1 with VS Cod
 
 Mouse cursors are part of the look (Artur): every element gets the cursor the reference CSS gives it (`rg 'cursor:' src/vs --glob '*.css'`): `pointer` on clickable items (activity bar, tabs, list rows, status bar items with a command, buttons, links), `text` over editor text and input fields, the resize cursors on sashes, `default` elsewhere. GPUI: `.cursor_pointer()`, `.cursor_text()`, `.cursor_ew_resize()` and the like on the element, never a window-wide cursor.
 
-Ledger today: 64 verified, 48 ported, 61 stub, 323 todo, 92 removed, 4 n/a (of 592 rows).
+Ledger today: 64 verified, 50 ported, 61 stub, 311 todo, 92 removed, 14 n/a (of 592 rows).
 
 ## Done
 
@@ -158,11 +158,11 @@ Done when: `port/tools/api-tests` gives 337/31/0 (folder) and 4/0/0 (workspace):
 
 ## Decisions (Artur)
 
-Made: AI, Microsoft-service and telemetry parts and remote/tunnels are `removed` (41 rows); upstream test infrastructure (`base/test`, `editor/test`, `platform/test`, `workbench/services/driver`) is `n/a`; the api-tests suites of removed features leave the milestone 20 target.
+Made: AI, Microsoft-service and telemetry parts and remote/tunnels are `removed` (41 rows); upstream test infrastructure (`base/test`, `editor/test`, `platform/test`, `workbench/services/driver`) is `n/a`; the api-tests suites of removed features leave the milestone 20 target; Electron process, IPC and DOM layers (`base/browser` `base/parts` `platform/domWidget` `platform/ipc` `platform/protocol` `platform/sandbox` `platform/sharedProcess` `platform/utilityProcess` `workbench/services/sharedProcess` `workbench/services/utilityProcess`) are `n/a`, replaced by the native architecture.
 
 Open:
 
-1. Architecture rows: Electron, DOM and process-model layers the Rust/GPUI port replaces rather than ports. Proposal: a new ledger status `n/a` (replaced by the native architecture), so they stop counting as work. Rows: `base/browser` `base/common` `base/node` `base/parts` `platform/instantiation` `platform/ipc` `platform/observable` `platform/sharedProcess` `platform/utilityProcess` `platform/webWorker` `platform/sandbox` `platform/domWidget` `platform/gpu` `platform/cssDev` `platform/protocol` `editor/standalone` `editor/contrib/gpu` `workbench/services/sharedProcess` `workbench/services/utilityProcess` `workbench/contrib/screenshotTool`
+1. Architecture rows: Electron, DOM and process-model layers the Rust/GPUI port replaces rather than ports. Proposal: a new ledger status `n/a` (replaced by the native architecture), so they stop counting as work. Rows: `base/common` `base/node` `platform/instantiation` `platform/observable` `platform/webWorker` `platform/gpu` `platform/cssDev` `editor/standalone` `editor/contrib/gpu` `workbench/contrib/screenshotTool`
 
 ## Open findings outside the milestones
 
