@@ -31,11 +31,11 @@ fn layout2d_opens_below_right_of_the_pointer_and_flips_at_the_edges() {
     let menu = size(282., 353.);
     let pointer = |x: f32, y: f32| Bounds { origin: point(x, y), size: size(2., 2.) };
     // The reference's menu for a click at (93, 151) sits at (93, 153).
-    assert_eq!(layout2d(viewport, menu, pointer(93., 151.)), point(px(93.), px(153.)));
+    assert_eq!(layout2d(viewport, menu, pointer(93., 151.), LayoutAnchorPosition::Before), point(px(93.), px(153.)));
     // No room below: above the pointer, still aligned with it.
-    assert_eq!(layout2d(viewport, menu, pointer(93., 700.)), point(px(93.), px(347.)));
+    assert_eq!(layout2d(viewport, menu, pointer(93., 700.), LayoutAnchorPosition::Before), point(px(93.), px(347.)));
     // No room right: left of the pointer.
-    assert_eq!(layout2d(viewport, menu, pointer(900., 100.)), point(px(620.), px(102.)));
+    assert_eq!(layout2d(viewport, menu, pointer(900., 100.), LayoutAnchorPosition::Before), point(px(620.), px(102.)));
 }
 
 #[test]

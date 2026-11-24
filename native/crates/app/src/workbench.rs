@@ -11,6 +11,7 @@ mod editor_view;
 mod explorer_actions;
 mod file_participants;
 mod find_widget;
+mod hover;
 pub(crate) mod host_requests;
 mod input_box_view;
 mod keyboard;
@@ -21,6 +22,7 @@ mod quick_open;
 pub mod themes;
 mod quick_input_view;
 mod text_input;
+mod title_bar_actions;
 
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -37,9 +39,12 @@ use gpui::{ClickEvent, Context, Div, DragMoveEvent, FocusHandle, FontFeatures, F
 use serde_json::Value;
 
 use crate::commands::Commands;
+use crate::contextkey;
+use crate::menus::MenuId;
 use crate::editor::{EditorGroup, TextDocument};
 use crate::explorer::FileTree;
 use explorer_actions::DraggedItems;
+use hover::{HoverContent, HoverOptions, HoverPosition};
 use crate::file_icons::FileIconTheme;
 use crate::host_sync::HostSync;
 use crate::languages::Languages;
@@ -91,6 +96,7 @@ pub struct Workbench {
     pub menus: Vec<crate::menus::MenuItem>,
     pub(crate) context_menu: Option<context_menu::ContextMenu>,
     context_menus_shown: usize,
+    pub hovers: hover::Hovers,
     /// What the application menu shows now.
     installed_menubar: Option<menubar::Menubar>,
     /// The application storage (StorageScope.PROFILE and APPLICATION in the default profile), shared with the
@@ -114,7 +120,7 @@ impl Render for Workbench {
             .h(viewport.height)
             .flex()
             .flex_col()
-            .child(self.title_bar(f32::from(viewport.width)))
+            .child(self.title_bar(f32::from(viewport.width), cx))
             .child(
                 div()
                     .flex_1()
@@ -130,6 +136,7 @@ impl Render for Workbench {
             .child(self.status_bar());
         let quick_input = self.quick_input_widget(window, cx);
         let context_menu = self.context_menu_widget(cx);
+        let hover = self.hover_widget(window, cx);
         self.update_menubar(window, cx);
         div()
             .relative()
@@ -141,8 +148,9 @@ impl Render for Workbench {
             .child(grid)
             .children(quick_input)
             .children(context_menu)
-            // shortcut: 16px is the macOS 26+ (Tahoe) corner radius (style.css .macos-tahoe); older macOS uses 10px, branch on the OS version if the port supports it.
-            .when_some(window_border, |root, border| root.child(div().absolute().inset_0().border_1().rounded(px(16.)).border_color(border)))
+            .children(hover)
+            // style.css: .macos-tahoe windows round 16px, older macOS 10px.
+            .when_some(window_border, |root, border| root.child(div().absolute().inset_0().border_1().rounded(px(if is_tahoe_or_newer() { 16. } else { 10. })).border_color(border)))
     }
 }
 
@@ -180,6 +188,7 @@ impl Workbench {
             menus: crate::menus::workbench_menus(),
             context_menu: None,
             context_menus_shown: 0,
+            hovers: hover::Hovers::default(),
             installed_menubar: None,
             profile_storage: Arc::new(Mutex::new(Storage::in_memory())),
             workspace_storage: Arc::new(Mutex::new(Storage::in_memory())),
@@ -193,6 +202,7 @@ impl Workbench {
         workbench.register_quick_input_commands();
         workbench.register_quick_access_commands();
         workbench.register_theme_commands();
+        workbench.register_title_bar_actions();
         workbench.register_explorer_actions();
         workbench.register_file_participant_commands();
         // Keybindings resolve before the focused element sees the key, and with nothing focused too.
@@ -261,15 +271,19 @@ impl Workbench {
         self.theme.color(key).unwrap_or(self.color("foreground"))
     }
 
-    fn title_bar(&self, viewport_width: f32) -> Div {
+    fn title_bar(&self, viewport_width: f32, cx: &mut Context<Self>) -> Div {
         let foreground = self.color("titleBar.activeForeground");
+        let command_center_visible = self.setting("window.commandCenter") != Value::Bool(false);
+        let layout_control_enabled = self.setting("workbench.layoutControl.enabled") != Value::Bool(false);
         // Disabled codicon actions take disabledForeground (actionbar.css .disabled .action-label:not(.icon)).
         let disabled = self.color("disabledForeground");
         let command_center = div()
+            .id("command-center-center")
             .flex()
             .items_center()
             // .command-center-center is 38vw wide plus its border (titlebarpart.css).
             .w(px(viewport_width * 0.38 + 2.))
+            .relative()
             .cursor_pointer()
             .h(px(24.))
             .pl(px(8.))
@@ -278,34 +292,98 @@ impl Workbench {
             .bg(self.color("commandCenter.background"))
             .border_color(self.color("commandCenter.border"))
             .text_color(self.color("commandCenter.foreground"))
+            .hover(|center| center.bg(self.color("commandCenter.activeBackground")).border_color(self.color("commandCenter.activeBorder")).text_color(self.color("commandCenter.activeForeground")))
             .text_size(px(12.))
-            .child(self.workspace().map_or("Search".into(), Workspace::label));
-        let center = div()
-            .absolute()
-            .top(px(6.5))
-            .w_full()
-            .h(px(24.))
-            .flex()
-            .justify_center()
-            .items_center()
-            .child(self.icon("arrow-left", 22., 16., disabled))
-            .child(self.icon("arrow-right", 22., 16., disabled).ml(px(4.)))
-            .child(command_center.ml(px(10.)))
-            .child(div().w(px(6.)));
+            .child(self.workspace().map_or("Search".into(), Workspace::label))
+            .child(self.hover_target("command-center", HoverContent::Text(self.command_center_tooltip()), HoverOptions::instant()))
+            .on_mouse_down(MouseButton::Right, cx.listener(show_command_center_context_menu))
+            // A Cmd+click belongs to the title's menu, which upstream takes in the capture phase.
+            .on_click(cx.listener(|workbench, event: &ClickEvent, window, cx| {
+                if !event.modifiers().platform {
+                    workbench.execute_command("workbench.action.quickOpenWithModes", Vec::new(), window, cx);
+                }
+            }));
+        let title = div().id("window-title").flex().items_center().map(|title| match command_center_visible {
+            true => title
+                .when(contextkey::truthy(Some(&self.setting("workbench.navigationControl.enabled"))), |title| {
+                    title
+                        .child(self.icon("arrow-left", 22., 16., disabled).on_mouse_down(MouseButton::Right, cx.listener(show_command_center_context_menu)).child(self.action_hover("Go Back", "workbench.action.navigateBack", HoverOptions::instant())))
+                        .child(self.icon("arrow-right", 22., 16., disabled).ml(px(4.)).mr(px(10.)).on_mouse_down(MouseButton::Right, cx.listener(show_command_center_context_menu)).child(self.action_hover("Go Forward", "workbench.action.navigateForward", HoverOptions::instant())))
+                })
+                .child(command_center)
+                .child(div().w(px(6.))),
+            false => title.text_size(px(12.)).text_color(foreground).child(self.window_title()),
+        });
+        // On macOS a right-click or a Cmd+click on the title shows the title's own menu (titlebarPart.ts).
+        let title = title
+            .on_mouse_down(MouseButton::Right, cx.listener(|workbench, event: &MouseDownEvent, window, cx| {
+                cx.stop_propagation();
+                workbench.show_title_bar_context_menu(MenuId::TitleBarTitleContext, event.position, window, cx);
+            }))
+            .on_mouse_down(MouseButton::Left, cx.listener(|workbench, event: &MouseDownEvent, window, cx| {
+                if event.modifiers.platform {
+                    cx.stop_propagation();
+                    workbench.show_title_bar_context_menu(MenuId::TitleBarTitleContext, event.position, window, cx);
+                }
+            }));
+        let center = div().absolute().top(px(6.5)).w_full().h(px(24.)).flex().justify_center().items_center().child(title);
         let side_bar_toggle = if self.folder.is_some() { "layout-sidebar-left" } else { "layout-sidebar-left-off" };
-        let layout_actions = ["layout", side_bar_toggle, "layout-panel-off", "layout-sidebar-right-off"];
+        let layout_actions = [
+            ("layout", "Customize Layout...", "workbench.action.customizeLayout"),
+            (side_bar_toggle, "Toggle Primary Side Bar", "workbench.action.toggleSidebarVisibility"),
+            ("layout-panel-off", "Toggle Panel", "workbench.action.togglePanel"),
+            ("layout-sidebar-right-off", "Toggle Secondary Side Bar", "workbench.action.toggleAuxiliaryBar"),
+        ];
         let right = div()
             .absolute()
             .top(px(7.5))
             .right(px(12.))
             .flex()
             .gap(px(4.))
-            .children(layout_actions.map(|name| self.icon(name, 22., 16., foreground).cursor_pointer()));
-        div().relative().h(px(35.)).flex_none().child(center).child(right)
+            .when(layout_control_enabled, |right| right.children(layout_actions.map(|(name, title, command)| self.icon(name, 22., 16., foreground).cursor_pointer().child(self.action_hover(title, command, HoverOptions::instant())))));
+        // NativeTitlebarPart.minimumHeight: DEFAULT_CUSTOM_TITLEBAR_HEIGHT with the command center, else macTitlebarSize.
+        let height = match (command_center_visible, is_tahoe_or_newer()) {
+            (true, _) => 35.,
+            (false, true) => 32.,
+            (false, false) => 28.,
+        };
+        div()
+            .relative()
+            .h(px(height))
+            .flex_none()
+            .child(center)
+            .child(right)
+            .on_mouse_down(MouseButton::Right, cx.listener(|workbench, event: &MouseDownEvent, window, cx| workbench.show_title_bar_context_menu(MenuId::TitleBarContext, event.position, window, cx)))
+    }
+
+    /// windowTitle.ts `getFullWindowTitle` with the macOS `window.title` default
+    /// `${activeEditorShort}${separator}${rootName}${separator}${folderLocation}${separator}${profileName}`, the last two
+    /// empty here, or `nameLong` when it is empty.
+    fn window_title(&self) -> String {
+        let root_name = self.workspace().map(Workspace::label).unwrap_or_default();
+        let active_editor = self.editors.active().map(|editor| editor.document.name()).unwrap_or_default();
+        let parts: Vec<_> = [active_editor, root_name].into_iter().filter(|part| !part.is_empty()).collect();
+        match parts.is_empty() {
+            true => menubar::NAME_LONG.to_string(),
+            false => parts.join(" \u{2014} "),
+        }
+    }
+
+    /// commandCenterControl.ts `getTooltip`; its submenu has no keybinding, so "Search {0} \u{2014} {1}".
+    fn command_center_tooltip(&self) -> String {
+        let root_name = self.workspace().map(Workspace::label).unwrap_or_default();
+        format!("Search {root_name} \u{2014} {}", self.window_title())
     }
 
     fn activity_bar(&self) -> Div {
-        let views = ["search-large", "source-control", "debug-alt", "extensions"];
+        let views = [
+            ("search-large", "Search", "workbench.view.search"),
+            ("source-control", "Source Control", "workbench.view.scm"),
+            ("debug-alt", "Run and Debug", "workbench.view.debug"),
+            ("extensions", "Extensions", "workbench.view.extensions"),
+        ];
+        // The side bar is on the left, so the hovers go right of the bar (activitybarPart.ts).
+        let hover = HoverOptions::composite_bar(HoverPosition::Right);
         let inactive = self.color("activityBar.inactiveForeground");
         let explorer = if self.folder.is_some() { self.active_view_icon("files") } else { self.icon("files", 36., 24., inactive) };
         div()
@@ -320,8 +398,15 @@ impl Workbench {
             .when(self.folder.is_none(), |bar| bar.rounded(px(8.)))
             .bg(self.color("activityBar.background"))
             .border_color(self.color("surface.border"))
-            .child(div().flex().flex_col().gap(px(8.)).child(explorer.cursor_pointer()).children(views.map(|name| self.icon(name, 36., 24., inactive).cursor_pointer())))
-            .child(self.icon("settings-gear", 36., 24., inactive).cursor_pointer())
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .child(explorer.cursor_pointer().child(self.action_hover("Explorer", "workbench.view.explorer", hover)))
+                    .children(views.map(|(name, title, command)| self.icon(name, 36., 24., inactive).cursor_pointer().child(self.action_hover(title, command, hover)))),
+            )
+            .child(self.icon("settings-gear", 36., 24., inactive).cursor_pointer().child(self.hover_target("manage", HoverContent::Text("Manage".into()), hover)))
     }
 
     /// The checked view: a 32px rounded indicator behind the icon (activityaction.css); High Contrast
@@ -362,7 +447,7 @@ impl Workbench {
             false => (self.color("list.inactiveSelectionBackground"), self.theme.color("list.inactiveSelectionForeground")),
         };
         // `.context-menu-visible .monaco-list.last-focused`: the tree's context menu keeps the focused row outlined.
-        let outlined = tree_focused || self.context_menu.as_ref().is_some_and(|menu| menu.focus_to_return == self.explorer.focus);
+        let outlined = tree_focused || self.context_menu.as_ref().is_some_and(|menu| menu.focus_to_return.as_ref() == Some(&self.explorer.focus));
         let focus_outline = self.theme.color("list.focusOutline").or(self.theme.color("focusBorder")).filter(|_| outlined);
         let edited = self.explorer.edit.as_ref().map(|edit| edit.renamed.clone());
         // listWidget.ts: the drop target folder and the rows below it take list.dropBackground.
@@ -403,10 +488,13 @@ impl Workbench {
                 icons.file_icon(&icon_path, self.languages.language_of(&icon_path, ""), self.theme.kind, 13., label_line, foreground)
             });
             let indent = 8. * (row.depth - 1) as f32;
+            let hover = self.hover_target(("explorer-hover", index), HoverContent::Text(crate::quick_input::path_label(&path, None)), HoverOptions::mouse());
             div()
                 .id(index)
                 // list.css: .monaco-list.mouse-support .monaco-list-row is cursor: pointer.
                 .cursor_pointer()
+                .relative()
+                .when(!row.is_new && !is_edited, |row| row.child(hover))
                 .h(px(22.))
                 .mx(px(4.))
                 .flex()
@@ -557,16 +645,18 @@ impl Workbench {
         };
         // statusbarpart.css: pointer only on items with a command; status.message has none.
         let problems = div()
+            .relative()
             .h_full()
             .cursor_pointer()
-            .ml(px(3.))
+            .mx(px(3.))
             .px(px(5.))
             .flex()
             .items_center()
             .child(self.icon("error", 16., 16., foreground))
             .child(" 0 ")
             .child(self.icon("warning", 16., 16., foreground))
-            .child(" 0");
+            .child(" 0")
+            .child(self.hover_target("status.problems", HoverContent::Text("No Problems".into()), HoverOptions::status_bar()));
         div()
             .h(px(28.))
             .flex_none()
@@ -579,8 +669,8 @@ impl Workbench {
             .text_size(px(12.))
             // statusbarpart.css: font-variant-numeric: tabular-nums.
             .font_features(FontFeatures(Arc::new(vec![("tnum".into(), 1)])))
-            .child(div().h(px(24.)).flex().child(self.icon("remote", 28., 16., foreground).h_full().cursor_pointer()).child(problems).children(self.status_bar_message()))
-            .child(div().h(px(24.)).flex().children(self.editor_status_items(foreground)).child(self.icon("bell", 28., 16., foreground).h_full().cursor_pointer()))
+            .child(div().h(px(24.)).flex().child(self.icon("remote", 28., 16., foreground).h_full().cursor_pointer().child(self.hover_target("status.host", HoverContent::Text("Open a Remote Window".into()), HoverOptions::status_bar()))).child(problems).children(self.status_bar_message()))
+            .child(div().h(px(24.)).flex().children(self.editor_status_items(foreground)).child(self.icon("bell", 28., 16., foreground).h_full().cursor_pointer().child(self.hover_target("status.notifications", HoverContent::Text("No Notifications".into()), HoverOptions::status_bar()))))
     }
 
     /// The `status.message` entry: multi-chord mode, else the latest status message (notificationsStatus.ts).
@@ -594,6 +684,7 @@ impl Workbench {
     fn icon(&self, name: &str, box_size: f32, icon_size: f32, color: Rgba) -> Div {
         let path = self.app_root.join("node_modules/@vscode/codicons/src/icons").join(format!("{name}.svg"));
         div()
+            .relative()
             .size(px(box_size))
             .flex_none()
             .flex()
@@ -601,6 +692,17 @@ impl Workbench {
             .justify_center()
             .child(svg().external_path(path.to_string_lossy().into_owned()).size(px(icon_size)).text_color(color))
     }
+}
+
+fn show_command_center_context_menu(workbench: &mut Workbench, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Workbench>) {
+    cx.stop_propagation();
+    workbench.show_command_center_context_menu(event.position, window, cx);
+}
+
+/// platform.ts `isTahoeOrNewer`: Darwin 25 is macOS 26.
+fn is_tahoe_or_newer() -> bool {
+    static TAHOE: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| objc2_foundation::NSProcessInfo::processInfo().operatingSystemVersion().majorVersion >= 26);
+    *TAHOE
 }
 
 #[cfg(test)]
@@ -714,6 +816,8 @@ mod tests {
         cx.simulate_keystrokes("cmd-k x");
         let message = workbench.read_with(cx, |workbench, _| workbench.status_message.as_ref().map(|(message, _)| message.clone()));
         assert_eq!(message.as_deref(), Some("The key combination (⌘K, X) is not a command."));
+        cx.simulate_keystrokes("cmd-k cmd-w");
+        assert!(workbench.read_with(cx, |workbench, _| workbench.editors.editors.is_empty()), "workbench.action.closeAllEditors");
         std::fs::remove_dir_all(dir).unwrap();
     }
 

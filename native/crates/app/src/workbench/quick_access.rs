@@ -27,11 +27,13 @@ pub struct QuickAccess {
     pub editor_history: EditorHistory,
     /// The state of the shown Quick Open picker.
     pub files: Option<FilePickState>,
+    /// The picker opened with `includeHelp` (the command center's), whose empty filter lists the help picks.
+    help_input: Option<i64>,
 }
 
 impl Default for QuickAccess {
     fn default() -> Self {
-        QuickAccess { menu: command_palette::menu(&[]), history: CommandsHistory::new(command_palette::DEFAULT_HISTORY_LENGTH), editor_history: EditorHistory::default(), files: None }
+        QuickAccess { menu: command_palette::menu(&[]), history: CommandsHistory::new(command_palette::DEFAULT_HISTORY_LENGTH), editor_history: EditorHistory::default(), files: None, help_input: None }
     }
 }
 
@@ -40,8 +42,17 @@ impl Default for QuickAccess {
 pub enum Accept {
     Command { id: String, label: String },
     File { path: std::path::PathBuf },
+    /// A help pick: shows the provider of `prefix`.
+    Show { prefix: &'static str, include_help: bool },
     Nothing,
 }
+
+/// `getHelpPicks`: the help entries with a `commandCenterOrder`, by that order, of the providers the port has
+/// (Search for Text, Go to Symbol, Start Debugging, Run Task and More wait for theirs).
+const HELP_ENTRIES: [(&str, Provider, &str); 2] = [
+    ("Go to File", Provider::Files, "workbench.action.quickOpen"),
+    ("Show and Run Commands", Provider::Commands, "workbench.action.showCommands"),
+];
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Provider {
@@ -73,15 +84,20 @@ impl Provider {
 impl Workbench {
     pub(super) fn register_quick_access_commands(&mut self) {
         self.commands.register("workbench.action.showCommands", |workbench, _, window, cx| {
-            workbench.show_quick_access(COMMANDS_PREFIX, false, window, cx);
+            workbench.show_quick_access(COMMANDS_PREFIX, false, false, window, cx);
             Outcome::done()
         });
         // quickAccessActions.ts: a string argument is the value to show, kept as given.
         self.commands.register("workbench.action.quickOpen", |workbench, args, window, cx| {
             match args.first().and_then(Value::as_str) {
-                Some(prefix) => workbench.show_quick_access(&prefix.to_owned(), true, window, cx),
-                None => workbench.show_quick_access("", false, window, cx),
+                Some(prefix) => workbench.show_quick_access(prefix, true, false, window, cx),
+                None => workbench.show_quick_access("", false, false, window, cx),
             }
+            Outcome::done()
+        });
+        // `QuickAccessAction` with AI features off: Quick Open with the help picks, the command center's click.
+        self.commands.register("workbench.action.quickOpenWithModes", |workbench, _, window, cx| {
+            workbench.show_quick_access("", true, true, window, cx);
             Outcome::done()
         });
         self.commands.register("workbench.action.clearCommandHistory", |workbench, _, window, cx| workbench.clear_command_history(window, cx));
@@ -110,7 +126,7 @@ impl Workbench {
     }
 
     /// `QuickAccessController.show`: reuses a visible picker of the same provider, else fills a new one.
-    fn show_quick_access(&mut self, value: &str, preserve_value: bool, window: &mut Window, cx: &mut Context<Self>) {
+    fn show_quick_access(&mut self, value: &str, preserve_value: bool, include_help: bool, window: &mut Window, cx: &mut Context<Self>) {
         // `updateConfiguration`: the configured length applies from the next pick list on.
         let limit = self.configured_command_history_length();
         self.quick_access.history.set_limit(limit);
@@ -144,6 +160,7 @@ impl Workbench {
         input.sort_by_label = false;
         // Showing it hides the visible picker, whose Hide event then drops it.
         let id = self.quick_inputs.add(input, Owner::QuickAccess(Vec::new()));
+        self.quick_access.help_input = include_help.then_some(id);
         self.show_quick_input(id, window, cx);
         self.update_quick_access_picks(id, window, cx);
         self.flush_quick_input_events(window, cx);
@@ -169,6 +186,27 @@ impl Workbench {
         input.set_items(entries);
         if let Some(Owner::QuickAccess(picks)) = self.quick_inputs.owner_mut(id) {
             *picks = accepts;
+        }
+    }
+
+    /// `getHelpPicks` for the picker `id`: each entry with its command's keybinding; the Go to File pick shows Quick
+    /// Open without them.
+    pub(super) fn help_picks(&self, id: i64, entries: &mut Vec<Entry>, accepts: &mut Vec<Accept>, window: &Window) {
+        if self.quick_access.help_input != Some(id) {
+            return;
+        }
+        let context = self.key_context(window);
+        for (label, provider, command) in HELP_ENTRIES {
+            let keybinding = self.keybindings.resolver.lookup_primary_keybinding(command, &context);
+            entries.push(Entry::Item(Item {
+                handle: accepts.len() as i64,
+                label: label.into(),
+                description: Some(provider.prefix().into()).filter(|prefix: &String| !prefix.is_empty()),
+                pickable: true,
+                keybinding: keybinding.map(|item| item.keybinding.iter().map(|chord| chord.key_caps()).collect()).unwrap_or_default(),
+                ..Item::default()
+            }));
+            accepts.push(Accept::Show { prefix: provider.prefix(), include_help: provider != Provider::Files });
         }
     }
 
@@ -275,6 +313,7 @@ impl Workbench {
         let (id, label) = match accept {
             Accept::Command { id, label } => (id, label),
             Accept::File { path, .. } => return self.open_file_pick(path, in_background, window, cx),
+            Accept::Show { prefix, include_help } => return self.show_quick_access(prefix, true, include_help, window, cx),
             Accept::Nothing => return,
         };
         self.quick_access.history.push(&id);
@@ -339,7 +378,8 @@ pub(super) fn show_failure(label: String, outcome: Outcome, window: &mut Window,
 fn show_command_error(label: &str, error: &Value, window: &mut Window, cx: &mut gpui::App) {
     let message = format!("Command '{label}' resulted in an error");
     let detail = error["message"].as_str().unwrap_or_default().to_owned();
-    let _ = window.prompt(PromptLevel::Critical, &message, Some(&detail), &["OK"], cx);
+    // The only button closes the dialog, so the answer is not needed.
+    drop(window.prompt(PromptLevel::Critical, &message, Some(&detail), &["OK"], cx));
 }
 
 #[cfg(test)]

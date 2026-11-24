@@ -152,7 +152,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/globalKeybindings | src/vs/platform | todo |  |
 | platform/gpu | src/vs/platform | removed | Artur: internal infrastructure or developer tool with no 1:1 counterpart in the native port |
 | platform/history | src/vs/platform | todo |  |
-| platform/hover | src/vs/platform | todo |  |
+| platform/hover | src/vs/platform | ported | workbench/hover.rs: cargo test -p app hover (reference hover boxes, hoverService.test.ts pointer and side cases, delay, instant, leave, click and key hide); screenshot pairs vs ref-hover dumps (port/results/hover.md); markdown hovers wait for milestone 13 |
 | platform/imageResize | src/vs/platform | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | platform/instantiation | src/vs/platform | removed | Artur: internal infrastructure or developer tool with no 1:1 counterpart in the native port |
 | platform/ipc | src/vs/platform | n/a | Electron process, IPC or DOM layer; replaced by the single-process Rust/GPUI architecture (port/notes.md) |
@@ -295,7 +295,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/parts/sessions | workbench part | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/parts/sidebar | workbench part | ported | Explorer only (title, folder section, collapsed Outline and Timeline), shown when a folder is open; pixel-check (port/results/pixels.md, milestone 3): chevron and label edge pixels only |
 | workbench/parts/statusbar | workbench part | ported | no-folder and folder colors (remote, problems, bell), editor items Ln/Col, indentation, encoding, EOL, language with tabular-nums; entries from extensions not shown; pixel-check (port/results/pixels.md): text box widths round up to whole px |
-| workbench/parts/titlebar | workbench part | ported | active window only (command center with the folder name, nav and layout actions; no menus, no clicks); pixel-check (port/results/pixels.md): blending rounding and glyph edges only |
+| workbench/parts/titlebar | workbench part | ported | active window only (command center with the folder name, nav and layout actions; a click on the command center opens Quick Open with the Go to File and Show and Run Commands help picks, port/results/command-center.md); context menus of the bar, the title and the command center with the Command Center, Navigation Controls and Layout Controls toggles and the path items (cargo test -p app title_bar); pixel-check file and titlebar (port/results/pixels.md): blending rounding and glyph edges only |
 | workbench/parts/views | workbench part | stub | pane headers drawn statically (workbench.rs section_header): no collapse, resize or view actions |
 | workbench/services/accessibility | workbench service | todo |  |
 | workbench/services/accounts | workbench service | removed | no sign-in/AI by decision (port/notes.md); not ported |
@@ -317,7 +317,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/commands | workbench service | ported | commands.rs: onCommand activation before execute; api-tests commands suite |
 | workbench/services/configuration | workbench service | ported | cargo test -p config service (configurationEditing.test.ts write cases, workspace file layer and folder scopes); port/tools/settings-check configuration |
 | workbench/services/configurationResolver | workbench service | todo |  |
-| workbench/services/contextmenu | workbench service | ported | custom context menu (`window.menuStyle` inherit with the custom title bar): items, groups, keybindings, alt commands, focus by pointer and keys, Enter/Space, 100ms click guard, look compared with 1.147.0 (port/results/contextmenu.md, cargo test -p app explorer_actions); no submenus yet (no menu has one), no native menu style |
+| workbench/services/contextmenu | workbench service | ported | custom context menu (`window.menuStyle` inherit with the custom title bar): items, checks, groups, keybindings, alt commands, focus by pointer and keys, Enter/Space, 100ms click guard, look compared with 1.147.0 (port/results/contextmenu.md, cargo test -p app explorer_actions); no submenus yet (no menu has one), no native menu style |
 | workbench/services/dataChannel | workbench service | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | workbench/services/decorations | workbench service | todo |  |
 | workbench/services/dialogs | workbench service | todo |  |
@@ -336,7 +336,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/imageResize | workbench service | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | workbench/services/inlineCompletions | workbench service | todo |  |
 | workbench/services/integrity | workbench service | todo |  |
-| workbench/services/keybinding | workbench service | ported | keyboard.rs: default-macos.json, contributes.keybindings, keybindings.json reload; cargo test -p app keybindings |
+| workbench/services/keybinding | workbench service | ported | keyboard.rs: default-macos.json, contributes.keybindings, keybindings.json reload, chords with the status bar message; cargo test -p app keybindings user_keybindings; pixel-check chord |
 | workbench/services/label | workbench service | todo |  |
 | workbench/services/language | workbench service | verified | getAssociationByPath plus firstLine detection (languages.rs); cargo test -p app languages::tests |
 | workbench/services/languageDetection | workbench service | todo |  |

@@ -4,7 +4,9 @@
 # "file" (the folder with notes.txt open), "main" (the folder with src/main.ts open, for token colors), "multiroot"
 # (a .code-workspace file with the folder and a copy of its docs folder as roots) and "folded"
 # (port/fixtures/folding with long.py open, scrolled to the end and two regions folded by typing KEYS) and "find"
-# (notes.txt with the find widget open on "the").
+# (notes.txt with the find widget open on "the"). "chord" (the file window with Cmd+K pressed: the status bar's chord
+# message) and "titlebar" (the file window with `window.commandCenter` off: the window title instead, 32px high on
+# macOS 26) are not in the default list.
 # WINDOWS="file" checks only the listed windows, THEMES="dark hclight" only the listed themes.
 # Prints "window theme different anti_aliased total"; images land in $OUT/<window>.
 set -uo pipefail
@@ -27,21 +29,25 @@ capture() {
 }
 for window in ${WINDOWS:-empty folder file main multiroot folded find}; do
   case $window in empty) folder= ;; multiroot) folder=$OUT/multi.code-workspace ;; *) folder=$OUT/workspace ;; esac
-  keys=
+  keys= settings=
   case $window in
     file) file=$OUT/workspace/notes.txt ;;
     find) file=$OUT/workspace/notes.txt keys="cmd-f t h e" ;;
+    chord) file=$OUT/workspace/notes.txt keys="cmd-k" ;;
+    titlebar) file=$OUT/workspace/notes.txt settings='{ "window.commandCenter": false }' ;;
     main) file=$OUT/workspace/src/main.ts ;;
     folded) folder=$OUT/folding file=$OUT/folding/long.py keys="cmd-down up alt-cmd-[ up up up up up up up up up up up up alt-cmd-[" ;;
     *) file= ;;
   esac
   dir="$OUT/$window"
   mkdir -p "$dir"
-  FOLDER=$folder FILE=$file KEYS=$keys bun port/tools/ref-screenshot "$dir/reference" ${THEMES:-} >/dev/null || exit 1
+  FOLDER=$folder FILE=$file KEYS=$keys SETTINGS=$settings bun port/tools/ref-screenshot "$dir/reference" ${THEMES:-} >/dev/null || exit 1
   for theme in ${THEMES:-dark light hc hclight}; do
     case $theme in dark) theme_id="Dark Modern" ;; light) theme_id="Light Modern" ;; hc) theme_id="Default High Contrast" ;; hclight) theme_id="Default High Contrast Light" ;; esac
+    user_data=$(mktemp -d)
+    [[ -n $settings ]] && mkdir -p "$user_data/User" && echo "$settings" >"$user_data/User/settings.json"
     VSCODE_GPUI_EXTENSIONS=${VSCODE_GPUI_EXTENSIONS:-$HOME/Developer/vscode-ref/extensions} \
-      capture "$dir/port-$theme.sample" native/target/release/code-gpui $folder $file --user-data-dir "$(mktemp -d)" --theme "$theme_id" --screenshot "$dir/port-$theme.png" --screenshot-keys "$keys" 2>"$dir/port-$theme.log" || { echo "$window $theme: code-gpui failed with exit $? (124: hung 120 s, stacks in $dir/port-$theme.sample), see $dir/port-$theme.log"; exit 1; }
+      capture "$dir/port-$theme.sample" native/target/release/code-gpui $folder $file --user-data-dir "$user_data" --theme "$theme_id" --screenshot "$dir/port-$theme.png" --screenshot-keys "$keys" 2>"$dir/port-$theme.log" || { echo "$window $theme: code-gpui failed with exit $? (124: hung 120 s, stacks in $dir/port-$theme.sample), see $dir/port-$theme.log"; exit 1; }
     counts=$(native/target/release/pixeldiff "$dir/reference/$theme.png" "$dir/port-$theme.png" "$dir/diff-$theme.png")
     echo "$window $theme $counts"
   done

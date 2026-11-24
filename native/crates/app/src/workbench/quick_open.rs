@@ -144,6 +144,9 @@ impl Workbench {
 
         let mut entries = Vec::new();
         let mut accepts = Vec::new();
+        if query.piece.normalized.is_empty() {
+            self.help_picks(id, &mut entries, &mut accepts, window);
+        }
         if !history.is_empty() {
             entries.push(Entry::Separator(Some("recently opened".into())));
             for pick in &history {

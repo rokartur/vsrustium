@@ -52,6 +52,8 @@ No new window: pixel-check has no quick input. All 16 port frames are byte-ident
 - Ad-hoc, not a pixel-check result, measured at the palette commit before the drag: the Command Palette over the empty window (Dark Modern, 2x), the widget crop against the reference's, 2803.8 pixels (0.28%) differ at 2% fuzz (`magick compare -fuzz 2% -metric AE`); the rows and the selection highlight sit at the reference's y positions.
 - Rerun after Quick Open's file picks: 3567/3600/398/401, 7238/4067/960/874, 11158/6675/4695/4160, 12681/8133/5841/5565 (empty to main, dark to hclight), against the merged reference frames of the milestone 12 table; only main hclight moved (7132 there), the overview ruler artifact.
 - Ad-hoc, Quick Open (Cmd+P over port/fixtures/workspace with docs/guide.md, Dark Modern, 2x, `--screenshot` with the picker opened by a scratch extension) against the reference's CDP capture: the empty, `ts` and `util` pickers show the same rows, separators, file icons and highlights; the reference has one more row button, Open to the Side, which needs editor splits (port/notes.md).
+- chord window (file window after Cmd+K, the status bar's "(⌘K) was pressed. Waiting for second key of chord..."): dark 12215, light 9281, hclight 7585, against file's 10342/7164/5468 in the same run; hc 6557 from an earlier run. The Studio's pointer must be away from the window: over the minimap it gave file 38071 (the slider's hover state), so park it in a screen corner before the run.
+- titlebar window (`window.commandCenter` off, the window title in a 32px bar): dark 8751, light 5620, below file's 10342/7164 of the same run. At 30px high it gave 63067/58822/57378 (every part below the bar 2px off).
 
 ## Milestone 12
 

@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-export function referenceUserData(theme: string) {
+export function referenceUserData(theme: string, extraSettings: Record<string, unknown> = {}) {
 	const userData = mkdtempSync(join(tmpdir(), 'ref-shot-'));
 	mkdirSync(join(userData, 'User'));
 	// Frozen state: no blinking cursor, no animations, no startup editor, no update or tips noise.
@@ -22,6 +22,7 @@ export function referenceUserData(theme: string) {
 		'security.workspace.trust.enabled': false,
 		// With AI off the secondary side bar only hosts chat, so the product without AI has none.
 		'workbench.secondarySideBar.defaultVisibility': 'hidden',
+		...extraSettings,
 	}));
 	// Same product as the port: no accounts icon (profile storage key of globalCompositeBar.ts isAccountsActionVisible).
 	mkdirSync(join(userData, 'User/globalStorage'));

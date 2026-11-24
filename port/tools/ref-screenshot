@@ -2,7 +2,8 @@
 // Captures the reference VS Code workbench through CDP (Page.captureScreenshot), so no Screen Recording permission is needed.
 // Usage: port/tools/ref-screenshot <out-dir> [dark|light|hc ...]   (env REF = reference checkout, default ~/Developer/vscode-ref;
 // env FOLDER = folder to open, default none; env FILE = file to open in that window, default none;
-// env KEYS = keystrokes to type into it first, GPUI style: "cmd-down up alt-cmd-[")
+// env KEYS = keystrokes to type into it first, GPUI style: "cmd-down up alt-cmd-["; env SETTINGS = a JSON object of
+// extra user settings)
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { referenceArgs, referenceUserData } from './ref-user-data.ts';
@@ -26,7 +27,7 @@ for (const name of selected) {
 process.exit(0);
 
 async function capture(theme: string) {
-	const userData = referenceUserData(theme);
+	const userData = referenceUserData(theme, JSON.parse(process.env.SETTINGS || '{}'));
 	const paths = [process.env.FOLDER, process.env.FILE].filter(path => path);
 	const app = Bun.spawn([electron, ref, ...paths, ...referenceArgs, '--user-data-dir', userData, '--remote-debugging-port=' + port], {
 		env: { ...process.env, VSCODE_DEV: '1', NODE_ENV: 'development' },
@@ -70,7 +71,7 @@ async function press(cdp: (method: string, params?: object) => Promise<any>, key
 	const modifiers = parts.reduce((sum, part) => sum + bits[part], 0);
 	const keys: Record<string, [string, string, number]> = {
 		up: ['ArrowUp', 'ArrowUp', 38], down: ['ArrowDown', 'ArrowDown', 40], left: ['ArrowLeft', 'ArrowLeft', 37], right: ['ArrowRight', 'ArrowRight', 39],
-		'[': ['[', 'BracketLeft', 219], ']': [']', 'BracketRight', 221],
+		'[': ['[', 'BracketLeft', 219], ']': [']', 'BracketRight', 221], k: ['k', 'KeyK', 75],
 	};
 	const letter = /^[a-z]$/.test(key);
 	// A letter without modifiers types its text; key events only run keybindings.

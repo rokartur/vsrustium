@@ -1,0 +1,16 @@
+# Hovers
+
+## Milestone 9: workbench hover
+
+Reference: 1.147.0 dev build on the Studio, `port/tools/ref-hover` (CDP: rests the pointer on a target, waits for `.monaco-hover`, dumps its text, classes, boxes, pointer side, computed styles and the target's cursor, and screenshots it). Fixture `port/fixtures/workspace` with `notes.txt` open, Dark Modern, 1024x768 at 2x. Dumps in `raw/hover/ref/`.
+
+Port: release `code-gpui workspace notes.txt --screenshot-input "move 500 400; move X Y"` at the reference's points (`.scratch` script, not kept). Pairs in `raw/hover/<target>.png`, reference on top, port below.
+
+- Widget (`workbench/hover.rs`): hoverService `setupManagedHover` and hoverWidget.ts `HoverWidget` with its `layout` (side fallbacks, window-edge clamps, pointer placement, `.right-aligned` 1px shift) on top of the context view's `layout2d`. Compact look: 12px text, 19px lines, 2px 8px padding, `editorHoverWidget.*` colors, `--vscode-shadow-lg`, frosted glass; 3px corners with a pointer, 8px without. The editor hover (milestone 13) reuses it.
+- Timing: `workbench.hover.delay` (1500 ms; the reference showed at 1508-1536 ms). Instant hovers (title bar, status bar) show at once within 200 ms of the last hide, and the composite bar's group shows at once while one of its hovers is up. The pointer leaving hides the hover after the mouse tracker's 200 ms; coming back within them keeps it. A click on the target, or a key no keybinding takes, hides it until the pointer leaves.
+- Targets and text, same as the reference: activity bar "Explorer (⇧⌘E)", "Search (⇧⌘F)", "Source Control (⌃⇧G)", "Run and Debug (⇧⌘D)", "Extensions (⇧⌘X)", "Manage" (right, caret left); title bar "Go Back (⌃-)", "Go Forward (⌃⇧-)", "Search workspace — notes.txt — workspace", "Customize Layout...", "Toggle Primary Side Bar (⌘B)", "Toggle Panel (⌘J)", "Toggle Secondary Side Bar (⌥⌘B)" (below, caret top); status bar "Open a Remote Window", "No Problems", "Go to Line/Column", "Select Indentation", "Select Encoding", "Select End of Line Sequence", "Select Language Mode", "No Notifications" (above, caret bottom); tabs and Explorer rows the long path, 10px right of the pointer, no caret. A preview tab adds "(_preview_ ⚙)"; the gear runs `workbench.action.openSettings` for `workbench.editor.enablePreview`, and that hover stays while the pointer is on it.
+- Position: `hover/tests.rs` lays out the reference's own targets and hover sizes and gets the reference boxes (Search 47,87.5; Manage 47,700.5; Go Back 249.5,32.5; command center 405.5,32.5; Customize Layout 859; Toggle Primary 838; Toggle Panel 903; Toggle Secondary 809; No Problems 32.5,714; tab 374,67; Explorer row 126,140), plus the hoverService.test.ts cases for pointer centering and the RIGHT and LEFT side re-evaluation.
+- Difference: the port's tab and Explorer hovers show `/private/tmp/...` where the reference shows `/tmp/...`; the port opens the folder by its canonical path.
+- Difference: the hovered item's own hover state (activity bar foreground, `toolbar.hoverBackground`, `statusBarItem.hoverBackground`) is not drawn yet; visible in the pairs, not part of the hover widget.
+- Explorer rows: the whole row is the target; the reference's target is the label, which starts after the twistie.
+- `cargo test -p app`: 401 passed, 1 ignored.

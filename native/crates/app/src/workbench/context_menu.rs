@@ -46,7 +46,8 @@ pub struct ContextMenu {
     /// `menuActionOptions.arg` and `getActionsContext`, passed to the command that runs.
     args: Vec<Value>,
     focus: FocusHandle,
-    pub(super) focus_to_return: FocusHandle,
+    /// None when nothing had focus, as a title bar right-click in a window without editors.
+    pub(super) focus_to_return: Option<FocusHandle>,
     /// Counts the menus shown; a new count restarts the open animation.
     shown: usize,
     _enable_mouse_up: Task<()>,
@@ -59,6 +60,10 @@ impl Workbench {
     /// Focus returns to the element focused before, when the menu hides.
     pub(super) fn show_context_menu(&mut self, menu: MenuId, context: &HashMap<String, Value>, anchor: Bounds<Pixels>, args: Vec<Value>, window: &mut Window, cx: &mut Context<Self>) {
         let actions = menu_actions(&self.menus, menu, context);
+        self.show_context_menu_actions(actions, context, anchor, args, window, cx);
+    }
+
+    pub(super) fn show_context_menu_actions(&mut self, actions: Vec<MenuAction>, context: &HashMap<String, Value>, anchor: Bounds<Pixels>, args: Vec<Value>, window: &mut Window, cx: &mut Context<Self>) {
         if actions.is_empty() {
             return;
         }
@@ -73,8 +78,8 @@ impl Workbench {
         }
         let width = menu_width(&actions, &keybindings, window);
         let viewport = window.viewport_size();
-        let origin = layout2d(Size { width: f32::from(viewport.width), height: f32::from(viewport.height) }, Size { width, height: menu_height(&actions) }, anchor_rect(anchor));
-        let focus_to_return = window.focused(cx).expect("the menu's owner takes focus before showing it");
+        let origin = layout2d(Size { width: f32::from(viewport.width), height: f32::from(viewport.height) }, Size { width, height: menu_height(&actions) }, anchor_rect(anchor), LayoutAnchorPosition::Before);
+        let focus_to_return = window.focused(cx);
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
         let enable_mouse_up = cx.spawn_in(window, async |workbench, cx| {
@@ -116,7 +121,10 @@ impl Workbench {
     pub(super) fn hide_context_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(menu) = self.context_menu.take() else { return };
         if menu.focus.is_focused(window) {
-            window.focus(&menu.focus_to_return, cx);
+            match &menu.focus_to_return {
+                Some(focus) => window.focus(focus, cx),
+                None => window.blur(cx),
+            }
         }
         cx.notify();
     }
@@ -187,7 +195,7 @@ impl Workbench {
             .when(high_contrast, |panel| panel.bg(self.color("menu.background")))
             .when(!high_contrast, |panel| {
                 // --vscode-shadow-lg.
-                panel.child(self.frosted_glass("menu.background")).shadow(vec![BoxShadow { color: rgba(0x00000024).into(), offset: point(px(0.), px(0.)), blur_radius: px(12.), spread_radius: px(0.), inset: false }])
+                panel.child(self.frosted_glass("menu.background", RADIUS)).shadow(vec![BoxShadow { color: rgba(0x00000024).into(), offset: point(px(0.), px(0.)), blur_radius: px(12.), spread_radius: px(0.), inset: false }])
             })
             .on_modifiers_changed(cx.listener(|workbench, event: &ModifiersChangedEvent, _, cx| {
                 if let Some(menu) = workbench.context_menu.as_mut() {
@@ -219,7 +227,7 @@ impl Workbench {
     }
 
     fn context_menu_item(&self, menu: &ContextMenu, index: usize, action: &MenuAction, cx: &mut Context<Self>) -> AnyElement {
-        let MenuAction::Command { id, title, enabled, alt, .. } = action else {
+        let MenuAction::Command { id, title, enabled, checked, alt } = action else {
             // `.action-label.separator`: the bar's full width, 5px margins and a 1px bottom border.
             return div().my(px(5.)).border_b_1().border_color(self.color("menu.separatorBackground")).into_any_element();
         };
@@ -266,6 +274,14 @@ impl Workbench {
             // High contrast focused items have no background, only the outline.
             .when(selected && !high_contrast, |item| item.bg(self.color("list.hoverBackground")).when_some(self.theme.color("list.hoverForeground"), |item, color| item.text_color(color)))
             .children(outline)
+            // `.menu-item-check`: the `menu-selection` codicon centered in the label's left 2em padding.
+            .when(*checked, |item| {
+                let color = match selected {
+                    true => self.theme.color("list.hoverForeground"),
+                    false => None,
+                };
+                item.child(self.icon("check", LABEL_PADDING, FONT_SIZE, color.unwrap_or_else(|| self.foreground_or("menu.foreground"))).absolute().left_0().top_0().h_full())
+            })
             .child(
                 div()
                     .flex_1()
@@ -353,10 +369,8 @@ fn is_focusable(action: &MenuAction) -> bool {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-enum LayoutAnchorPosition {
+pub(super) enum LayoutAnchorPosition {
     Before,
-    /// Menus that open above their anchor; no port menu asks for it yet.
-    #[cfg(test)]
     After,
 }
 
@@ -383,18 +397,15 @@ fn layout(viewport_size: f32, view_size: f32, anchor: &LayoutAnchor) -> f32 {
         LayoutAnchorPosition::Before if view_size <= viewport_size - after_boundary => after_boundary,
         LayoutAnchorPosition::Before if view_size <= before_boundary => before_boundary - view_size,
         LayoutAnchorPosition::Before => (viewport_size - view_size).max(0.),
-        #[cfg(test)]
         LayoutAnchorPosition::After if view_size <= before_boundary => before_boundary - view_size,
-        #[cfg(test)]
         LayoutAnchorPosition::After if view_size <= viewport_size - after_boundary && before_boundary < view_size / 2. => after_boundary,
-        #[cfg(test)]
         LayoutAnchorPosition::After => 0.,
     }
 }
 
-/// layout.ts `layout2d` with the context menu's options: aligned left, below the anchor, on the vertical axis.
-fn layout2d(viewport: Size<f32>, view: Size<f32>, anchor: Bounds<f32>) -> Point<Pixels> {
-    let vertical = LayoutAnchor { offset: anchor.origin.y, size: anchor.size.height, mode: LayoutAnchorMode::Avoid, position: LayoutAnchorPosition::Before };
+/// layout.ts `layout2d` aligned left on the vertical axis: below the anchor (`Before`) or above it (`After`).
+pub(super) fn layout2d(viewport: Size<f32>, view: Size<f32>, anchor: Bounds<f32>, position: LayoutAnchorPosition) -> Point<Pixels> {
+    let vertical = LayoutAnchor { offset: anchor.origin.y, size: anchor.size.height, mode: LayoutAnchorMode::Avoid, position };
     let top = layout(viewport.height, view.height, &vertical);
     // A view over the anchor's rows moves aside instead of aligning with it.
     let overlaps = top < vertical.offset + vertical.size && vertical.offset < top + view.height;
