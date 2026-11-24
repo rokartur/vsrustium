@@ -203,7 +203,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/test | src/vs/platform | n/a | upstream test infrastructure; the port tests with cargo test and port/tools |
 | platform/theme | src/vs/platform | ported | registry defaults for dark, light, hcDark, hcLight (theme.rs); cargo test -p app theme::tests |
 | platform/tunnel | src/vs/platform | removed | no remote or tunnels by decision (port/notes.md); one local extension host |
-| platform/undoRedo | src/vs/platform | stub | per-editor undo/redo history only, no cross-resource elements: cargo test -p app (editor::cursor::tests, editor::edit::tests) |
+| platform/undoRedo | src/vs/platform | ported | workspace elements across resources with sources, confirmBeforeUndo and flush on conflict (undo_redo.rs): cargo test -p app undo_redo, explorer_actions; text editors keep their own history (editor::edit::tests); no resource elements or undo groups |
 | platform/update | src/vs/platform | todo |  |
 | platform/uriIdentity | src/vs/platform | todo |  |
 | platform/url | src/vs/platform | todo |  |
@@ -419,7 +419,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/extensions | workbench contribution | todo |  |
 | workbench/contrib/externalTerminal | workbench contribution | todo |  |
 | workbench/contrib/externalUriOpener | workbench contribution | todo |  |
-| workbench/contrib/files | workbench contribution | stub | Explorer tree read from disk (explorer.rs): folders first, default excludes, click to expand, click opens a file as preview, double click pins, selection follows the active editor; Seti file icons and compareFileNamesDefault sort; workspace folders as roots, first five expanded (cargo test -p app); no file operations (port/notes.md milestones 3, 4, 12) |
+| workbench/contrib/files | workbench contribution | stub | Explorer tree read from disk (explorer.rs): folders first, default excludes, click to expand, click opens a file as preview, double click pins, selection follows the active editor; Seti file icons and compareFileNamesDefault sort; workspace folders as roots, first five expanded (cargo test -p app); new file and folder, rename, delete, copy, cut, paste, drag and drop and undo through the working copy file operations (cargo test -p app explorer_actions, file_actions); no context menu, Finder drops, compressed folders or find (port/notes.md milestones 3, 4, 12) |
 | workbench/contrib/folding | workbench contribution | todo |  |
 | workbench/contrib/format | workbench contribution | todo |  |
 | workbench/contrib/git | workbench contribution | todo |  |

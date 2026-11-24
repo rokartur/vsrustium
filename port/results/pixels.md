@@ -131,3 +131,7 @@ New window `multiroot`: `multi.code-workspace` with the fixture folder and a cop
 | multiroot | 7371 | 4143 | 1110 | 951 |
 
 The Explorer rows (header `multi (Workspace)`, both roots expanded, root children at depth 2) sit at the reference's positions; the counts are the folder window's plus the second root's rows.
+
+## Milestone 12 Explorer file operations
+
+Rerun after the Explorer file operations, on the Studio. Every frame printed gives the multi-root section's counts (folder light/hc/hclight 4067/960/874, file 11158/6675/4695/4160, main 12681/8133/5841/5565, multiroot 7371/4143/1110/951): the captured windows show no focused tree, edited row or drag, so nothing they draw changed.
