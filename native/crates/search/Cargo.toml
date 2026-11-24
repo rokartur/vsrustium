@@ -1,0 +1,11 @@
+[package]
+name = "search"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+files = { path = "../files" }
+regex = "1"
+serde_json.workspace = true
+unicode-normalization = "0.1"

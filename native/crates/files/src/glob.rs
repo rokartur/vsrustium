@@ -584,9 +584,30 @@ pub struct Evaluation {
     pub is_visited: bool,
 }
 
+/// `IExcludeTreeEvaluator`: what `evaluate_exclude_tree_entry` asks of an exclude expression.
+pub trait ExcludeTreeEvaluator {
+    fn matches_exclude(&self, path: &str, basename: Option<&str>, has_sibling: Option<&dyn Fn(&str) -> bool>) -> bool;
+    fn is_excepted(&self, path: &str, basename: Option<&str>) -> bool;
+    fn could_exception_match_beneath(&self, folder_path: &str) -> bool;
+}
+
+impl ExcludeTreeEvaluator for ExcludeExpression {
+    fn matches_exclude(&self, path: &str, basename: Option<&str>, has_sibling: Option<&dyn Fn(&str) -> bool>) -> bool {
+        self.matches_exclude.matches(path, basename, has_sibling).is_some()
+    }
+
+    fn is_excepted(&self, path: &str, basename: Option<&str>) -> bool {
+        ExcludeExpression::is_excepted(self, path, basename)
+    }
+
+    fn could_exception_match_beneath(&self, folder_path: &str) -> bool {
+        ExcludeExpression::could_exception_match_beneath(self, folder_path)
+    }
+}
+
 /// `evaluateExcludeTreeEntry`: an excluded folder is still visited when an exception could match beneath it.
-pub fn evaluate_exclude_tree_entry(evaluator: &ExcludeExpression, entry: &ExcludeTreeEntry) -> Evaluation {
-    let is_matched = entry.is_parent_excluded || evaluator.matches_exclude.matches(entry.path, entry.basename, entry.has_sibling).is_some() || entry.is_hidden;
+pub fn evaluate_exclude_tree_entry(evaluator: &dyn ExcludeTreeEvaluator, entry: &ExcludeTreeEntry) -> Evaluation {
+    let is_matched = entry.is_parent_excluded || evaluator.matches_exclude(entry.path, entry.basename, entry.has_sibling) || entry.is_hidden;
     let is_excluded = is_matched && !evaluator.is_excepted(entry.path, entry.basename);
     Evaluation { is_excluded, is_visited: !is_excluded || (entry.is_directory && evaluator.could_exception_match_beneath(entry.path)) }
 }
