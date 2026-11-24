@@ -19,7 +19,14 @@ const port = 9333;
 
 mkdirSync(outDir, { recursive: true });
 for (const name of selected) {
-	const png = await capture(themes[name]);
+	// Another app taking the key window midway dims the title bar and drops the editor's word highlight: capture again.
+	let png = await capture(themes[name]);
+	for (let retry = 0; !png && retry < 2; retry++) {
+		png = await capture(themes[name]);
+	}
+	if (!png) {
+		throw new Error(`${name}: the reference window lost the focus in three captures`);
+	}
 	writeFileSync(join(outDir, `${name}.png`), png);
 	console.log(`${name}: ${png.length} bytes`);
 }
@@ -55,7 +62,8 @@ async function capture(theme: string) {
 			await Bun.sleep(1500);
 		}
 		const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
-		return Buffer.from(data, 'base64');
+		const active = (await cdp('Runtime.evaluate', { expression: `!document.querySelector('.part.titlebar.inactive')`, returnByValue: true })).result.value === true;
+		return active ? Buffer.from(data, 'base64') : undefined;
 	} finally {
 		app.kill('SIGKILL');
 		await app.exited;

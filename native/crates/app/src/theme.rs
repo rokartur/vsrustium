@@ -313,6 +313,7 @@ fn registry_default(key: &str, kind: ThemeKind) -> ColorValue {
         "editorOverviewRuler.border" => (Hex("#7f7f7f4d"), Hex("#7f7f7f4d"), Hex("#7f7f7f4d")),
         "editorOverviewRuler.selectionHighlightForeground" => (Hex("#A0A0A0CC"), Hex("#A0A0A0CC"), Hex("#A0A0A0CC")),
         "editorOverviewRuler.findMatchForeground" => (Hex("#d186167e"), Hex("#d186167e"), Hex("#AB5A00")),
+        "editorOverviewRuler.rangeHighlightForeground" => (Hex("#007acc99"), Hex("#007acc99"), Hex("#007acc99")),
         "minimap.findMatchHighlight" => (MINIMAP_FIND_MATCH, MINIMAP_FIND_MATCH, Key("editor.findMatchHighlightBorder")),
         "editorOverviewRuler.wordHighlightTextForeground" => (
             Key("editorOverviewRuler.selectionHighlightForeground"),

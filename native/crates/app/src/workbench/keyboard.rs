@@ -165,7 +165,8 @@ impl Workbench {
         let editor_focused = self.editor_focus.is_focused(window);
         // The sticky lines and the find widget are part of the editor's DOM, so their focus is the editor's but not its text's.
         let (find_focused, replace_focused) = (self.find.find_focus.is_focused(window), self.find.replace_focus.is_focused(window));
-        context.insert("editorFocus".into(), json!(editor_focused || self.sticky_scroll.is_focused(window) || find_focused || replace_focused));
+        let button_focused = self.find.button_focus.values().any(|focus| focus.is_focused(window));
+        context.insert("editorFocus".into(), json!(editor_focused || self.sticky_scroll.is_focused(window) || find_focused || replace_focused || button_focused));
         context.insert("editorTextFocus".into(), json!(editor_focused));
         context.insert("textInputFocus".into(), json!(editor_focused));
         context.insert("editorIsOpen".into(), json!(self.editors.active().is_some()));

@@ -1,6 +1,6 @@
 //! Quick access (platform/quickinput/browser/quickAccess.ts): one quick pick whose value prefix picks the
 //! provider. `>` is the Command Palette (commandsQuickAccess.ts over pickerQuickAccess.ts), no prefix Quick Open
-//! (anythingQuickAccess.ts).
+//! (anythingQuickAccess.ts), `:` and `::` Go to Line/Column and Go to Offset (gotoLineQuickAccess.ts).
 
 use config::configuration::Overrides;
 use gpui::{Context, PromptLevel, Window};
@@ -10,6 +10,7 @@ use super::Workbench;
 use super::quick_open::{self, FilePickState};
 use crate::command_palette::{self, CommandsHistory, MenuItem, PaletteEntry};
 use crate::commands::Outcome;
+use crate::editor::Position;
 use crate::editor_history::EditorHistory;
 use crate::main_thread_quick_open::Owner;
 use crate::quick_input::{Button, Entry, Event, Item, Kind, QuickInput};
@@ -29,11 +30,13 @@ pub struct QuickAccess {
     pub files: Option<FilePickState>,
     /// The picker opened with `includeHelp` (the command center's), whose empty filter lists the help picks.
     help_input: Option<i64>,
+    /// The editor the shown Go to Line picker previews in.
+    pub goto_line: Option<goto_line::GotoLineState>,
 }
 
 impl Default for QuickAccess {
     fn default() -> Self {
-        QuickAccess { menu: command_palette::menu(&[]), history: CommandsHistory::new(command_palette::DEFAULT_HISTORY_LENGTH), editor_history: EditorHistory::default(), files: None, help_input: None }
+        QuickAccess { menu: command_palette::menu(&[]), history: CommandsHistory::new(command_palette::DEFAULT_HISTORY_LENGTH), editor_history: EditorHistory::default(), files: None, help_input: None, goto_line: None }
     }
 }
 
@@ -44,6 +47,7 @@ pub enum Accept {
     File { path: std::path::PathBuf },
     /// A help pick: shows the provider of `prefix`.
     Show { prefix: &'static str, include_help: bool },
+    Position(Position),
     Nothing,
 }
 
@@ -58,18 +62,28 @@ const HELP_ENTRIES: [(&str, Provider, &str); 2] = [
 enum Provider {
     Commands,
     Files,
+    GotoLine,
+    GotoOffset,
 }
 
 impl Provider {
     /// `QuickAccessRegistry.getQuickAccessProvider`: the provider whose prefix starts the value.
     fn for_value(value: &str) -> Provider {
-        if value.starts_with(COMMANDS_PREFIX) { Provider::Commands } else { Provider::Files }
+        // The registry tries the longest prefix first.
+        match value {
+            _ if value.starts_with(goto_line::GO_TO_OFFSET_PREFIX) => Provider::GotoOffset,
+            _ if value.starts_with(goto_line::GO_TO_LINE_PREFIX) => Provider::GotoLine,
+            _ if value.starts_with(COMMANDS_PREFIX) => Provider::Commands,
+            _ => Provider::Files,
+        }
     }
 
     fn prefix(self) -> &'static str {
         match self {
             Provider::Commands => COMMANDS_PREFIX,
             Provider::Files => "",
+            Provider::GotoLine => goto_line::GO_TO_LINE_PREFIX,
+            Provider::GotoOffset => goto_line::GO_TO_OFFSET_PREFIX,
         }
     }
 
@@ -77,6 +91,7 @@ impl Provider {
         match self {
             Provider::Commands => Some("Type the name of a command to run.".into()),
             Provider::Files => Some(quick_open::PLACEHOLDER.into()),
+            Provider::GotoLine | Provider::GotoOffset => Some(goto_line::PLACEHOLDER.into()),
         }
     }
 }
@@ -98,6 +113,14 @@ impl Workbench {
         // `QuickAccessAction` with AI features off: Quick Open with the help picks, the command center's click.
         self.commands.register("workbench.action.quickOpenWithModes", |workbench, _, window, cx| {
             workbench.show_quick_access("", true, true, window, cx);
+            Outcome::done()
+        });
+        self.commands.register("workbench.action.gotoLine", |workbench, _, window, cx| {
+            workbench.show_quick_access(goto_line::GO_TO_LINE_PREFIX, false, false, window, cx);
+            Outcome::done()
+        });
+        self.commands.register("workbench.action.gotoOffset", |workbench, _, window, cx| {
+            workbench.show_quick_access(goto_line::GO_TO_OFFSET_PREFIX, false, false, window, cx);
             Outcome::done()
         });
         self.commands.register("workbench.action.clearCommandHistory", |workbench, _, window, cx| workbench.clear_command_history(window, cx));
@@ -169,21 +192,29 @@ impl Workbench {
     /// `updatePickerItems`: the provider of the value fills the picker.
     pub(super) fn update_quick_access_picks(&mut self, id: i64, window: &Window, cx: &mut Context<Self>) {
         let Some(input) = self.quick_inputs.get(id) else { return };
-        let provider = Provider::for_value(&input.input_box.value);
-        let filter = input.input_box.value[provider.prefix().len()..].trim().to_owned();
+        let value = input.input_box.value.clone();
+        let provider = Provider::for_value(&value);
+        let filter = value[provider.prefix().len()..].trim().to_owned();
+        if !matches!(provider, Provider::GotoLine | Provider::GotoOffset) {
+            self.dispose_goto_line(cx);
+        }
         let picks = match provider {
             Provider::Commands => {
                 let (entries, accepts) = self.command_picks(&filter, window);
                 Some((entries, accepts, false))
             }
             Provider::Files => self.file_picks(id, &filter, window, cx),
+            Provider::GotoLine | Provider::GotoOffset => Some((Vec::new(), self.goto_line_picks(id, &value, cx), false)),
         };
         let input = self.quick_inputs.get_mut(id).expect("checked above");
         input.placeholder = provider.placeholder();
-        input.can_accept_in_background = provider == Provider::Files;
+        input.can_accept_in_background = provider != Provider::Commands;
         let Some((entries, accepts, busy)) = picks else { return };
         input.busy = busy;
-        input.set_items(entries);
+        // The Go to Line provider sets its one pick and its buttons itself.
+        if !matches!(provider, Provider::GotoLine | Provider::GotoOffset) {
+            input.set_items(entries);
+        }
         if let Some(Owner::QuickAccess(picks)) = self.quick_inputs.owner_mut(id) {
             *picks = accepts;
         }
@@ -293,7 +324,12 @@ impl Workbench {
                     input.remove_item(handle);
                 }
             }
+            Event::TriggerButton(goto_line::OFFSET_BUTTON, checked) if matches!(self.quick_inputs.get(id).map(|input| Provider::for_value(&input.input_box.value)), Some(Provider::GotoLine | Provider::GotoOffset)) => {
+                self.toggle_zero_based_offset(checked);
+                self.update_quick_access_picks(id, window, cx);
+            }
             Event::Hide => {
+                self.dispose_goto_line(cx);
                 self.quick_inputs.remove(id);
                 if self.quick_access.files.as_ref().is_some_and(|state| state.input == id) {
                     self.quick_access.files = None;
@@ -314,6 +350,7 @@ impl Workbench {
             Accept::Command { id, label } => (id, label),
             Accept::File { path, .. } => return self.open_file_pick(path, in_background, window, cx),
             Accept::Show { prefix, include_help } => return self.show_quick_access(prefix, true, include_help, window, cx),
+            Accept::Position(position) => return self.go_to_position(position, in_background, window, cx),
             Accept::Nothing => return,
         };
         self.quick_access.history.push(&id);
@@ -381,6 +418,8 @@ fn show_command_error(label: &str, error: &Value, window: &mut Window, cx: &mut 
     // The only button closes the dialog, so the answer is not needed.
     drop(window.prompt(PromptLevel::Critical, &message, Some(&detail), &["OK"], cx));
 }
+
+mod goto_line;
 
 #[cfg(test)]
 mod tests;

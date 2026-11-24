@@ -27,7 +27,7 @@ mod snippet;
 pub mod sticky_scroll;
 mod view;
 
-pub use cursor::{Position, Selection};
+pub use cursor::{Position, Selection, column_from_visible};
 use folding::{FoldingMarkers, FoldingModel};
 pub use edit::{ContentChanged, Copied, CursorEdit, EditReason, History, Replace, char_column, end_of, selections_after, text_between, utf16_column};
 pub use multicursor::{ColumnSelectData, Reveal};

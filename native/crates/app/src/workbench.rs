@@ -133,7 +133,7 @@ impl Render for Workbench {
                     .child(div().flex().child(self.activity_bar()).when(self.folder.is_some(), |row| row.child(self.side_bar(window, cx))))
                     .child(if self.editors.active().is_some() { self.text_editor_part(window, cx) } else { self.editor_part() }),
             )
-            .child(self.status_bar());
+            .child(self.status_bar(window, cx));
         let quick_input = self.quick_input_widget(window, cx);
         let context_menu = self.context_menu_widget(cx);
         let hover = self.hover_widget(window, cx);
@@ -638,7 +638,7 @@ impl Workbench {
             .child(watermark)
     }
 
-    fn status_bar(&self) -> Div {
+    fn status_bar(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         let (foreground, background) = match self.folder {
             Some(_) => (self.color("statusBar.foreground"), self.color("statusBar.background")),
             None => (self.color("statusBar.noFolderForeground"), self.color("statusBar.noFolderBackground")),
@@ -670,7 +670,7 @@ impl Workbench {
             // statusbarpart.css: font-variant-numeric: tabular-nums.
             .font_features(FontFeatures(Arc::new(vec![("tnum".into(), 1)])))
             .child(div().h(px(24.)).flex().child(self.icon("remote", 28., 16., foreground).h_full().cursor_pointer().child(self.hover_target("status.host", HoverContent::Text("Open a Remote Window".into()), HoverOptions::status_bar()))).child(problems).children(self.status_bar_message()))
-            .child(div().h(px(24.)).flex().children(self.editor_status_items(foreground)).child(self.icon("bell", 28., 16., foreground).h_full().cursor_pointer().child(self.hover_target("status.notifications", HoverContent::Text("No Notifications".into()), HoverOptions::status_bar()))))
+            .child(div().h(px(24.)).flex().children(self.editor_status_items(foreground, window, cx)).child(self.icon("bell", 28., 16., foreground).h_full().cursor_pointer().child(self.hover_target("status.notifications", HoverContent::Text("No Notifications".into()), HoverOptions::status_bar()))))
     }
 
     /// The `status.message` entry: multi-chord mode, else the latest status message (notificationsStatus.ts).
@@ -972,6 +972,31 @@ mod tests {
             (workbench.find.controller.state.search_string.clone(), editor.selection().head, editor.highlights.clone())
         });
         assert_eq!(highlights, ("an".to_string(), Position::new(1, 2), vec![(0, 2..5)]));
+        // onDidFocusEditorText: closing the widget focuses the editor, whose selection's word is highlighted.
+        cx.simulate_keystrokes("escape");
+        assert_eq!(workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().highlights.clone()), vec![(1, 0..3)]);
+
+        // SimpleButton: a focused button triggers on Enter.
+        run("actions.find", cx);
+        cx.simulate_input("a");
+        let position = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.find.controller.state.matches_position);
+        let before = position(cx);
+        workbench.update_in(cx, |workbench, window, cx| window.focus(&workbench.find.button_focus["find-next"].clone(), cx));
+        cx.simulate_keystrokes("enter");
+        assert_eq!(position(cx), before + 1);
+
+        // A click on the widget's background, between the sash and the replace toggle, blurs and stops the highlights.
+        workbench.update(cx, |workbench, cx| {
+            // The slide in runs on the wall clock.
+            workbench.find.toggled = None;
+            workbench.editors.active_mut().unwrap().highlights = vec![(0, 0..1)];
+            cx.notify();
+        });
+        cx.run_until_parked();
+        let widget = cx.debug_bounds("find-widget").unwrap();
+        cx.simulate_click(widget.origin + point(px(3.5), px(16.)), Modifiers::none());
+        let blurred = workbench.update_in(cx, |workbench, window, cx| (window.focused(cx).is_none(), workbench.editors.active().unwrap().highlights.is_empty()));
+        assert_eq!(blurred, (true, true));
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

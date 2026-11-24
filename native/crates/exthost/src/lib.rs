@@ -96,6 +96,8 @@ impl ExtensionHost {
     /// Starts the host and completes the handshake with `init_data` (an `IExtensionHostInitData`).
     pub fn start(options: HostOptions, init_data: &serde_json::Value) -> anyhow::Result<Self> {
         let socket_path = std::env::temp_dir().join(format!("vscode-gpui-exthost-{}-{}.sock", std::process::id(), unique()));
+        // A killed earlier process with the same (reused) pid leaves its socket file; bind fails with EADDRINUSE.
+        let _ = std::fs::remove_file(&socket_path);
         let listener = UnixListener::bind(&socket_path)?;
 
         let mut command = Command::new(options.runtime.executable());

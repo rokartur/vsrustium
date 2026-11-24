@@ -3,6 +3,7 @@
 use super::*;
 use crate::editor::edit::tests::editor;
 use crate::editor::find::state::NewFindState;
+use crate::editor::LINE_HEIGHT;
 
 const VIEWPORT: Viewport = Viewport { width: 800., height: 600., char_width: 7.2, sticky_scroll_lines: 0, top_whitespace: 0. };
 
@@ -1178,4 +1179,22 @@ fn issue_288515_wrong_current_index_in_find_widget_if_matches_1000() {
     t.bind();
     assert_eq!(t.state.matches_count, 1001);
     assert_eq!(t.state.matches_position, 900);
+}
+
+/// Port: the replace reveals the moved cursor (cursor.ts `_executeEdit`) before the research reveals the next
+/// match, so a match inside the sticky scroll padding keeps the cursor's minimal scroll instead of centering.
+#[test]
+fn replace_reveals_the_cursor_before_the_next_match() {
+    let viewport = Viewport { sticky_scroll_lines: 5, ..VIEWPORT };
+    let mut t = Test::new();
+    t.change(NewFindState { search_string: Some("hello".into()), replace_string: Some("hi".into()), whole_word: Some(true), ..Default::default() }, false);
+    t.bind();
+    t.set_selection(7, 14, 7, 19);
+    t.editor.set_scroll(4. * LINE_HEIGHT, 0., viewport);
+
+    let Test { editor, state, model } = &mut t;
+    model.as_mut().expect("bound").replace(editor, state, viewport);
+
+    assert_eq!(t.line(7), "    cout << \"hi world again\" << endl;");
+    assert_eq!(t.editor.scroll.top, LINE_HEIGHT);
 }

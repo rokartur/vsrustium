@@ -35,6 +35,15 @@ The reference frames moved since milestone 8's run (1750 to 4642 pixels between 
 |---|---|---|---|---|
 | find | 45168 | 25512 | 9562 | 17703 |
 
+Status bar widths and quick input shadows, `WINDOWS="file find quickopen folded" port/tools/pixel-check`: each editor status item now takes the width of its `tnum`-shaped label plus padding, since GPUI rounds a text box up to a whole px where Chrome keeps the fraction, which moved "Ln 1, Col 19 (3 selected)" 3 px; file dropped in every theme (dark 10342 to 8776, light 7164 to 5630, hc 4696 to 3124, hclight 5468 to 3935), folded too (14070 to 12848, 27529 to 26290, 6987 to 5767, 9021 to 7782). The quick input shadow (`--vscode-shadow-xl` 20 px) is now `blur_radius` 10 and the context menu's 12 px is 6, as the find widget's; sticky scroll's `0 4px 2px -2px` was already sigma 1. The find light count swings between runs (25512, 59601, now 21507), not explained yet; a likely part is the find input caret, which blinks in the port while the reference's is frozen by `editor.cursorBlinking: solid`. New window quickopen (notes.txt open, Cmd+P): the port draws the input caret the reference hides at capture, keeps the "Port" word highlight the reference drops when the editor blurs (`onDidBlurEditorWidget`), and places the row's "recently opened" description and close button a few px apart from the reference's; not chased here.
+
+| window | dark | light | hc | hclight |
+|---|---|---|---|---|
+| file | 8776 | 5630 | 3124 | 3935 |
+| find | 41154 | 21507 | 7189 | 15385 |
+| quickopen | 44261 | 64254 | 36394 | 82041 |
+| folded | 12848 | 26290 | 5767 | 7782 |
+
 ## Milestone 9: commands, keybindings, quick input
 
 No new window: pixel-check has no quick input. All 16 port frames are byte-identical to the milestone 7 run (md5 of `port-<theme>.png` per window).

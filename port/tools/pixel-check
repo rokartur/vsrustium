@@ -4,9 +4,9 @@
 # "file" (the folder with notes.txt open), "main" (the folder with src/main.ts open, for token colors), "multiroot"
 # (a .code-workspace file with the folder and a copy of its docs folder as roots) and "folded"
 # (port/fixtures/folding with long.py open, scrolled to the end and two regions folded by typing KEYS) and "find"
-# (notes.txt with the find widget open on "the"). "chord" (the file window with Cmd+K pressed: the status bar's chord
-# message) and "titlebar" (the file window with `window.commandCenter` off: the window title instead, 32px high on
-# macOS 26) are not in the default list.
+# (notes.txt with the find widget open on "the") and "quickopen" (notes.txt with Quick Open's file list). "chord" (the
+# file window with Cmd+K pressed: the status bar's chord message) and "titlebar" (the file window with
+# `window.commandCenter` off: the window title instead, 32px high on macOS 26) are not in the default list.
 # WINDOWS="file" checks only the listed windows, THEMES="dark hclight" only the listed themes.
 # Prints "window theme different anti_aliased total"; images land in $OUT/<window>.
 set -uo pipefail
@@ -27,12 +27,13 @@ capture() {
   sample $pid 3 -file "$sample" >/dev/null 2>&1
   kill $pid; wait $pid; return 124
 }
-for window in ${WINDOWS:-empty folder file main multiroot folded find}; do
+for window in ${WINDOWS:-empty folder file main multiroot folded find quickopen}; do
   case $window in empty) folder= ;; multiroot) folder=$OUT/multi.code-workspace ;; *) folder=$OUT/workspace ;; esac
   keys= settings=
   case $window in
     file) file=$OUT/workspace/notes.txt ;;
     find) file=$OUT/workspace/notes.txt keys="cmd-f t h e" ;;
+    quickopen) file=$OUT/workspace/notes.txt keys="cmd-p" ;;
     chord) file=$OUT/workspace/notes.txt keys="cmd-k" ;;
     titlebar) file=$OUT/workspace/notes.txt settings='{ "window.commandCenter": false }' ;;
     main) file=$OUT/workspace/src/main.ts ;;
