@@ -112,7 +112,7 @@ Done when: `port/tools/api-tests` prints passing/pending/failing per suite and w
 - One early run ended at 990 s with exit 0 and no mocha summary; the next full run went past the same point and hit the timeout, so the cause is not found. The script marks any run without mocha's summary as `incomplete: exit <code>` (or `timed out`), so such a run cannot pass as complete.
 - Finding: the folder suite holds chat, lm, browser-tools and run_in_terminal tests for AI features the port removes by decision; they can never pass, so the parity target of milestone 20 (356/46/0) needs those tests subtracted. Decision for Artur.
 - Rows `base/test`, `editor/test`, `platform/test` (upstream unit tests of the TypeScript layers) and `workbench/services/driver` (the smoke-test DOM driver) stay `todo`: the port has no TypeScript workbench to run them on, and the api-tests harness is its end-to-end check. Proposal: the `n/a` status of the roadmap's decision 1.
-- shortcut: a `.code-workspace` argument is opened as a single folder (the file), so the api-workspace suite fails its 4 tests; multi-root workspaces are milestone 12.
+- A `.code-workspace` argument opens a multi-root workspace since milestone 12; the api-workspace suite passes 4/4.
 
 ## Milestone 7: syntax colors and themes
 
@@ -183,7 +183,7 @@ Scope as in port/roadmap.md. Done in this milestone: the command registry, conte
 
 ## Milestone 12: files, explorer, search, workspace (in progress)
 
-Scope shipped so far: `workspace.fs` and file events, Seti file icons and numeric name sorting in the Explorer, `workspace.findFiles`, `findFiles2` and `findTextInFiles` through ripgrep. Done when (roadmap section 12) is not met yet, see the last items.
+Scope shipped so far: `workspace.fs` and file events, Seti file icons and numeric name sorting in the Explorer, `workspace.findFiles`, `findFiles2` and `findTextInFiles` through ripgrep, multi-root `.code-workspace` windows. Done when (roadmap section 12) is not met yet, see the last items.
 
 - `native/crates/files` is the file service: a `FileSystem` trait, the `Disk` provider (capabilities as `diskFileSystemProviderClient`, no PathCaseSensitive on macOS), delete to Trash through the `trash` crate (NSFileManager, as Electron `shell.trashItem`), and upstream's error names with `_handleError` renames. Other schemes go to the extension providers registered with `$registerFileSystemProvider`.
 - `files::watcher` watches through FSEvents (notify), batches events for 75 ms and coalesces them as `watcher.ts` `EventCoalescer`. `files.watcherExclude` patterns are matched by `files::glob`, a port of `glob.ts` with `!` exceptions and its upstream tests, case insensitive as `parseWatcherPatterns`.
@@ -197,7 +197,12 @@ Scope shipped so far: `workspace.fs` and file events, Seti file icons and numeri
 - shortcut: Seti keys with a parent folder (`dir/name`) never match; Seti has none.
 - shortcut: an unreadable folder shows no children; the reference shows the error in the tree.
 - Text search does not include results from unsaved editors, as the search service's local results would; the port's documents are milestone 8's.
-- Not done: multi-root `.code-workspace`. The api-workspace suite opens `testworkspace.code-workspace` and fails 0/4; it needs the workspace id, workspace data with several folders, workspace-file settings and a multi-root Explorer.
+- `config::workspace` (`native/crates/config/src/workspace.rs`) is the workspace of a window: one folder, or the folders of a `.code-workspace` file resolved as `toWorkspaceFolders` (relative paths against the file's folder, `file:` URIs, duplicates dropped), `getFolder` ignoring case as on macOS, and `getWorkspaceLabel` (`<name> (Workspace)`). Its cases come from `workspace.test.ts`.
+- Settings of a workspace file: its `settings` key is the workspace layer with WORKSPACE_SCOPES, `launch` and `tasks` its standalone sections; each folder's `.vscode/settings.json` is read with FOLDER_SCOPES, so window settings in a folder of a workspace are ignored as upstream. Workspace-target writes go into the file under `settings` (or `tasks`, `launch`), folder-target writes into the folder the resource is in.
+- The workspace id of a workspace file is MD5 of its lowercased path (`getWorkspaceIdentifier`, the stable-id case of `workspaces.test.ts`); it names `User/workspaceStorage/<id>`. Init data and `$initializeWorkspace` carry `configuration` (the file), the label, `transient` and every folder with its name and index. The watcher watches each folder with its own `files.watcherExclude`; search covers every folder.
+- The Explorer of a workspace shows its folders as root rows, the first five expanded (`doSetTreeInput` without view state); revealing a file expands its root. Quick pick descriptions of several folders read `<folder> \u2022 <path>` (`label.test.ts` multi-root case) and breadcrumbs start with the folder name, as `BreadcrumbsModel` for WorkbenchState.WORKSPACE.
+- shortcut: a workspace folder with a `uri` of another scheme than `file` is skipped; it needs the extension file system providers in the Explorer and search.
+- Not done: adding or removing workspace folders (`$updateWorkspaceFolders`, `onDidChangeWorkspaceFolders`), untitled workspaces, and the Explorer view state kept in workspace storage.
 - Not done: bulk edits (`MainThreadBulkEdits`) and file operation participants. `workspace.event.test` (`onWillCreate`, `onWillDelete`, `onWillRename`) fails 0/10 and the `applyEdit` tests of `workspace.test` fail with them.
 - Not done: the rest of `workspace.test`. Most failures are `openTextDocument` and document events, which need `MainThreadDocuments` (milestone 8).
 - Not done: pixel-check of the folder window with Seti icons. The reference capture timed out twice on the Studio (port/results/pixels.md).
