@@ -50,7 +50,7 @@ pub enum VerticalReveal {
 impl OpenEditor {
     /// `_getContentHeight` with `scrollBeyondLastLine`, at least the viewport.
     pub fn scroll_height(&self, viewport: Viewport) -> f32 {
-        let lines = self.document.lines.len() as f32 * LINE_HEIGHT;
+        let lines = self.view_line_count() as f32 * LINE_HEIGHT;
         viewport.height.max(lines + (viewport.height - LINE_HEIGHT).max(0.))
     }
 
@@ -94,17 +94,31 @@ impl OpenEditor {
         self.set_scroll(self.scroll.top - step(delta_y), self.scroll.left - step(delta_x), viewport)
     }
 
-    /// The lines at least partly in the viewport (`getLinesViewportData` start and end).
+    /// The lines the view shows: the model lines without the ones folding hides.
+    pub fn view_line_count(&self) -> usize {
+        self.folding.view_line_count(self.document.lines.len())
+    }
+
+    /// The view line a model line shows on; a hidden line shows on the line it is folded into.
+    pub fn view_line(&self, line: usize) -> usize {
+        self.folding.view_line(line)
+    }
+
+    pub fn model_line(&self, view_line: usize) -> usize {
+        self.folding.model_line(view_line)
+    }
+
+    /// The view lines at least partly in the viewport (`getLinesViewportData` start and end).
     pub fn visible_lines(&self, viewport: Viewport) -> Range<usize> {
-        let last = self.document.lines.len() - 1;
+        let last = self.view_line_count() - 1;
         let start = ((self.scroll.top / LINE_HEIGHT).floor() as usize).min(last);
         let bottom = self.scroll.top + viewport.height;
         let end = (((bottom / LINE_HEIGHT).ceil() as usize).max(start + 1)).min(last + 1);
         start..end
     }
 
-    /// The lines wholly in the viewport (`getCompletelyVisibleViewRange`, what `TextEditor.visibleRanges` reports);
-    /// a partly shown first or last line counts only when it is the only line.
+    /// The view lines wholly in the viewport (`getCompletelyVisibleViewRange`); a partly shown first or last
+    /// line counts only when it is the only line.
     pub fn completely_visible_lines(&self, viewport: Viewport) -> Range<usize> {
         let lines = self.visible_lines(viewport);
         let (mut start, mut end) = (lines.start, lines.end - 1);
@@ -115,6 +129,13 @@ impl OpenEditor {
             end -= 1;
         }
         start..end + 1
+    }
+
+    /// `TextEditor.visibleRanges`: the completely visible view lines as model line ranges, split around folded
+    /// lines (`_toModelVisibleRanges`).
+    pub fn visible_model_ranges(&self, viewport: Viewport) -> Vec<(usize, usize)> {
+        let lines = self.completely_visible_lines(viewport);
+        self.folding.shown_ranges(self.model_line(lines.start), self.model_line(lines.end - 1))
     }
 
     /// The vertical scrollbar: the viewport height is its track, the horizontal scrollbar does not shorten it.
@@ -138,7 +159,7 @@ impl OpenEditor {
         };
         let first = ranges.iter().map(|range| range.0.line).min().expect("an editor has a cursor");
         let last = ranges.iter().map(|range| range.1.line).max().expect("an editor has a cursor");
-        let box_lines = (first as f32 * LINE_HEIGHT, (last + 1) as f32 * LINE_HEIGHT);
+        let box_lines = (self.view_line(first) as f32 * LINE_HEIGHT, (self.view_line(last) + 1) as f32 * LINE_HEIGHT);
         let Some(top) = scroll_top_to_reveal(self.scroll.top, viewport.height, box_lines, VerticalReveal::Simple, source == "mouse", single) else {
             return;
         };
@@ -151,7 +172,7 @@ impl OpenEditor {
     /// `revealRange` from the API (`TextEditor.revealRange`, source "api"): a range over several lines scrolls
     /// back to the left edge.
     pub fn reveal_range(&mut self, start: Position, end: Position, reveal: VerticalReveal, viewport: Viewport) {
-        let box_lines = (start.line as f32 * LINE_HEIGHT, (end.line + 1) as f32 * LINE_HEIGHT);
+        let box_lines = (self.view_line(start.line) as f32 * LINE_HEIGHT, (self.view_line(end.line) + 1) as f32 * LINE_HEIGHT);
         let Some(top) = scroll_top_to_reveal(self.scroll.top, viewport.height, box_lines, reveal, false, true) else {
             return;
         };
@@ -165,7 +186,7 @@ impl OpenEditor {
 
     /// `revealTopMostCursor`/`revealBottomMostCursor`: one cursor position, vertically and horizontally.
     pub fn reveal_position(&mut self, position: Position, source: &str, viewport: Viewport) {
-        let box_lines = (position.line as f32 * LINE_HEIGHT, (position.line + 1) as f32 * LINE_HEIGHT);
+        let box_lines = (self.view_line(position.line) as f32 * LINE_HEIGHT, (self.view_line(position.line) + 1) as f32 * LINE_HEIGHT);
         if let Some(top) = scroll_top_to_reveal(self.scroll.top, viewport.height, box_lines, VerticalReveal::Simple, source == "mouse", true) {
             self.set_scroll(top, self.scroll.left, viewport);
         }

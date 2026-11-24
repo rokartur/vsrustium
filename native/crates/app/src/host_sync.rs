@@ -4,7 +4,6 @@
 //! `onLanguage` activation languageService.ts sends when a model of a new language is created.
 
 use std::collections::HashSet;
-use std::ops::Range;
 use std::sync::mpsc::Sender;
 
 use serde_json::{Value, json};
@@ -26,7 +25,7 @@ pub struct HostSync {
     /// The snapshot id of the visible editor the host has.
     editor: Option<String>,
     /// The lines of the visible editor the host has as its `visibleRanges`.
-    visible_lines: Option<Range<usize>>,
+    visible_lines: Option<Vec<(usize, usize)>>,
     /// The tabs of group 0 the host has; session.rs starts it with an empty group.
     tabs: Vec<Value>,
     activation_events: HashSet<String>,
@@ -76,8 +75,8 @@ impl HostSync {
                 delta.insert("removedEditors".into(), json!([previous]));
             }
             if let Some(editor) = active {
-                let visible_lines = editor.completely_visible_lines(group.viewport);
-                delta.insert("addedEditors".into(), json!([text_editor_add_data(editor, visible_lines.clone())]));
+                let visible_lines = editor.visible_model_ranges(group.viewport);
+                delta.insert("addedEditors".into(), json!([text_editor_add_data(editor, &visible_lines)]));
                 self.visible_lines = Some(visible_lines);
             }
             delta.insert("newActiveEditor".into(), json!(active_id));
@@ -185,11 +184,11 @@ impl HostSync {
     /// mainThreadEditor.ts `_updatePropertiesNow` on a scroll or layout: the visible lines, when they changed.
     pub fn send_visible_ranges(&mut self, group: &EditorGroup) {
         let Some(editor) = group.active() else { return };
-        let lines = editor.completely_visible_lines(group.viewport);
+        let lines = editor.visible_model_ranges(group.viewport);
         if self.visible_lines.as_ref() == Some(&lines) {
             return;
         }
-        let ranges = visible_ranges(editor, lines.clone());
+        let ranges = visible_ranges(editor, &lines);
         self.visible_lines = Some(lines);
         self.send("ExtHostEditors", "$acceptEditorPropertiesChanged", vec![json!(snapshot_id(editor)), json!({ "options": null, "selections": null, "visibleRanges": ranges })]);
     }
@@ -240,7 +239,7 @@ fn model_added_data(editor: &OpenEditor) -> Value {
     })
 }
 
-fn text_editor_add_data(editor: &OpenEditor, visible_lines: Range<usize>) -> Value {
+fn text_editor_add_data(editor: &OpenEditor, visible_lines: &[(usize, usize)]) -> Value {
     let document = &editor.document;
     json!({
         "id": snapshot_id(editor),
@@ -266,9 +265,9 @@ fn options(editor: &OpenEditor) -> Value {
 }
 
 /// `getVisibleRanges` without folding: one range over whole lines.
-fn visible_ranges(editor: &OpenEditor, lines: Range<usize>) -> Value {
-    let last = lines.end - 1;
-    json!([{ "startLineNumber": lines.start + 1, "startColumn": 1, "endLineNumber": last + 1, "endColumn": utf16_len(&editor.document.lines[last]) + 1 }])
+fn visible_ranges(editor: &OpenEditor, lines: &[(usize, usize)]) -> Value {
+    let range = |&(first, last): &(usize, usize)| json!({ "startLineNumber": first + 1, "startColumn": 1, "endLineNumber": last + 1, "endColumn": utf16_len(&editor.document.lines[last]) + 1 });
+    Value::Array(lines.iter().map(range).collect())
 }
 
 /// The cursors' `ISelection`s, primary first, 1-based with UTF-16 columns as the text model counts them.
@@ -330,6 +329,8 @@ mod tests {
             language_id: language_id.into(),
             indentation: Indentation { tab_size: 4, insert_spaces: true },
             off_side: false,
+            folding_markers: None,
+            block_comment_start: None,
             tokens: Default::default(),
         }
     }

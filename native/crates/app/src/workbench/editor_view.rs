@@ -2,6 +2,7 @@
 //! and the code editor's view parts (margin, current line, word highlights, indent guides, text, cursor,
 //! decorationsOverviewRuler.ts). Sizes are the reference's CSS pixels with editor.fontSize 12 and lineHeight 18.
 
+use std::collections::HashMap;
 use std::ops::Range;
 
 use std::time::{Duration, Instant};
@@ -17,6 +18,7 @@ use crate::editor::{
     HORIZONTAL_SCROLLBAR_HEIGHT, LINE_HEIGHT, OpenEditor, Position, Reveal, Scrollbar, Selection, VERTICAL_SCROLLBAR_WIDTH, Viewport, column_at_visible, commands,
     expand_tabs, visible_column, word_at,
 };
+use crate::editor::folding::FoldDecoration;
 use crate::theme::ThemeKind;
 
 const EDITOR_FONT: &str = "Menlo";
@@ -34,6 +36,7 @@ const SCROLLBAR_HIDE_TIMEOUT: Duration = Duration::from_millis(500);
 const SCROLLBAR_FADE_IN: Duration = Duration::from_millis(100);
 const SCROLLBAR_FADE_OUT: Duration = Duration::from_millis(800);
 const SCROLL_SHADOW_HEIGHT: f32 = 6.;
+const FOLD_CONTROLS_FADE: Duration = Duration::from_millis(500);
 
 impl Workbench {
     pub(super) fn text_editor_part(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
@@ -200,7 +203,8 @@ impl Workbench {
         let lines = editor.visible_lines(viewport);
         let lines_top = lines.start as f32 * LINE_HEIGHT - editor.scroll.top;
         let rows = self.editor_lines(editor, lines, metrics, window, cx);
-        if self.scrollbars.in_transition(Instant::now()) {
+        let now = Instant::now();
+        if self.scrollbars.in_transition(now) || self.fold_controls.in_transition(now) {
             window.request_animation_frame();
         }
         div()
@@ -236,6 +240,12 @@ impl Workbench {
                 .inset_0(),
             )
             .child(div().absolute().left_0().right_0().top(px(lines_top)).children(rows))
+            .child(
+                div().id("margin").absolute().top_0().bottom_0().left_0().w(px(metrics.content_left())).on_hover(cx.listener(|workbench, hovered: &bool, _, cx| {
+                    workbench.fold_controls.set_shown(*hovered, Instant::now());
+                    cx.notify();
+                })),
+            )
             .child(self.overview_ruler(editor).absolute().top_0().right_0().h_full())
             .child(self.scrollbars_canvas(editor, metrics, cx).absolute().inset_0())
             .when(editor.scroll.top > 0., |area| area.child(self.scroll_shadow().absolute().top_0().left_0().right(px(VERTICAL_SCROLLBAR_WIDTH)).h(px(SCROLL_SHADOW_HEIGHT))))
@@ -248,8 +258,8 @@ impl Workbench {
         self.editors.viewport = viewport;
         let editor = self.editors.active_mut().expect("laid out only with an editor open");
         let scroll_width = editor.scroll_width(viewport);
-        for line in editor.visible_lines(viewport) {
-            let text = &editor.document.lines[line];
+        for view_line in editor.visible_lines(viewport) {
+            let text = &editor.document.lines[editor.model_line(view_line)];
             editor.saw_line_width(visible_column(text, text.chars().count(), editor.document.indentation.tab_size) as f32 * viewport.char_width);
         }
         let moved = editor.set_scroll(editor.scroll.top, editor.scroll.left, viewport);
@@ -453,9 +463,21 @@ impl Workbench {
         // currentLineHighlight.css: high contrast draws the exact border 1px wide.
         let line_border_width = if self.theme.kind.is_high_contrast() { 1. } else { 2. };
         let char_width = metrics.char_width;
+        let fold_controls = self.fold_controls.opacity(Instant::now());
+        let fold_control_color = self.color("editorGutter.foldingControlForeground");
+        let fold_background = self.color("editor.foldBackground");
+        let fold_placeholder = self.color("editor.foldPlaceholderForeground");
+        let mut fold_starts = HashMap::new();
+        for (range, decoration) in editor.folding.regions.ranges().iter().zip(editor.folding.decorations()) {
+            if decoration != FoldDecoration::Hidden {
+                fold_starts.insert(range.start - 1, decoration == FoldDecoration::Collapsed);
+            }
+        }
         range
-            .map(|index| {
+            .map(|view_line| {
+                let index = editor.model_line(view_line);
                 let text = &editor.document.lines[index];
+                let collapsed = fold_starts.get(&index).copied();
                 // lineNumbers.ts marks only the primary cursor's line active.
                 let number = div()
                     .w(px(metrics.line_numbers_width))
@@ -480,6 +502,10 @@ impl Workbench {
                 for level in 0..editor.guides[index] {
                     let x = (level * editor.document.indentation.tab_size) as f32 * char_width;
                     content = content.child(div().absolute().top_0().left(px(x)).w(px(1.)).h_full().bg(colors.guide));
+                }
+                // foldingDecorations.ts COLLAPSED_HIGHLIGHTED_VISUAL_DECORATION: .folded-background over the whole line.
+                if collapsed == Some(true) {
+                    content = content.child(div().absolute().inset_0().left(px(scroll_left)).bg(fold_background));
                 }
                 for (_, columns) in editor.highlights.iter().filter(|(line, _)| *line == index) {
                     let start = visible_column(text, columns.start, tab_size) as f32 * char_width;
@@ -510,6 +536,11 @@ impl Workbench {
                 let highlights = editor.document.tokens.highlights(&self.theme, &self.languages, &editor.document.lines, index, tab_size);
                 let text_runs = StyledText::new(expand_tabs(text, tab_size)).with_highlights(highlights);
                 content = content.child(div().absolute().top_0().left_0().whitespace_nowrap().child(text_runs));
+                // folding.css .inline-folded:after: an ellipsis 0.2em after the line's last char.
+                if collapsed == Some(true) {
+                    let end = visible_column(text, text.chars().count(), tab_size) as f32 * char_width + 0.2 * EDITOR_FONT_SIZE;
+                    content = content.child(div().absolute().top_0().left(px(end)).text_color(fold_placeholder).child("\u{22EF}"));
+                }
                 for (cursor_index, selection) in selections.iter().enumerate().filter(|(_, selection)| focused && selection.head.line == index) {
                     // shortcut: the cursor does not blink (editor.cursorBlinking "blink" hides it every 500ms).
                     let color = match (selections.len(), cursor_index) {
@@ -533,12 +564,26 @@ impl Workbench {
                         window.focus(&workbench.editor_focus, cx);
                         workbench.selecting_text = true;
                         let modifiers = event.modifiers;
-                        workbench.click_text(index, visible_at(workbench, event.position.x), modifiers, modifiers.shift, event.click_count, cx);
+                        let visible = visible_at(workbench, event.position.x);
+                        workbench.fold_mouse_down = workbench.at_line_end(index, visible).then_some((index, false));
+                        workbench.click_text(index, visible, modifiers, modifiers.shift, event.click_count, cx);
                     }))
                     .on_mouse_down(MouseButton::Middle, cx.listener(move |workbench, event: &MouseDownEvent, window, cx| {
                         window.focus(&workbench.editor_focus, cx);
                         workbench.selecting_text = true;
-                        workbench.column_select_text(index, visible_at(workbench, event.position.x), event.modifiers.shift, cx);
+                        let visible = visible_at(workbench, event.position.x);
+                        workbench.fold_mouse_down = workbench.at_line_end(index, visible).then_some((index, false));
+                        workbench.column_select_text(index, visible, event.modifiers.shift, cx);
+                    }))
+                    .on_mouse_up(MouseButton::Left, cx.listener(move |workbench, event: &MouseUpEvent, _, cx| {
+                        if workbench.at_line_end(index, visible_at(workbench, event.position.x)) {
+                            workbench.release_fold_click(index, false, event.modifiers, false, cx);
+                        }
+                    }))
+                    .on_mouse_up(MouseButton::Middle, cx.listener(move |workbench, event: &MouseUpEvent, _, cx| {
+                        if workbench.at_line_end(index, visible_at(workbench, event.position.x)) {
+                            workbench.release_fold_click(index, false, event.modifiers, true, cx);
+                        }
                     }))
                     .on_mouse_move(cx.listener(move |workbench, event: &MouseMoveEvent, _, cx| {
                         match event.pressed_button {
@@ -553,10 +598,65 @@ impl Workbench {
                     .flex()
                     .child(div().w(px(GLYPH_MARGIN_WIDTH)).flex_none())
                     .child(number)
-                    .child(div().w(px(DECORATIONS_WIDTH)).flex_none())
+                    .child(self.fold_control(index, collapsed, metrics, fold_control_color, fold_controls, cx))
                     .child(content)
             })
             .collect()
+    }
+
+    /// The line decorations lane with the folding control of a region starting on `index`, collapsed or not
+    /// (`folding-collapsed` stays visible, `folding-expanded` shows while the pointer is over the margin). A press
+    /// 4px or more into the lane and a release on the same line toggle the region (folding.ts `onEditorMouseDown`).
+    fn fold_control(&self, index: usize, collapsed: Option<bool>, metrics: EditorMetrics, color: Rgba, hover_opacity: f32, cx: &mut Context<Self>) -> Div {
+        let lane_x = move |workbench: &Workbench, x: Pixels| f32::from(x) - workbench.text_area_left.get() - GLYPH_MARGIN_WIDTH - metrics.line_numbers_width;
+        let press = move |workbench: &mut Workbench, event: &MouseDownEvent| {
+            workbench.fold_mouse_down = (lane_x(workbench, event.position.x) >= 4.).then_some((index, true));
+        };
+        let mut lane = div()
+            .w(px(DECORATIONS_WIDTH))
+            .flex_none()
+            .on_mouse_down(MouseButton::Left, cx.listener(move |workbench, event: &MouseDownEvent, _, _| press(workbench, event)))
+            .on_mouse_down(MouseButton::Middle, cx.listener(move |workbench, event: &MouseDownEvent, _, _| press(workbench, event)))
+            .on_mouse_up(MouseButton::Left, cx.listener(move |workbench, event: &MouseUpEvent, _, cx| workbench.release_fold_click(index, true, event.modifiers, false, cx)))
+            .on_mouse_up(MouseButton::Middle, cx.listener(move |workbench, event: &MouseUpEvent, _, cx| workbench.release_fold_click(index, true, event.modifiers, true, cx)));
+        let Some(collapsed) = collapsed else { return lane };
+        let (name, opacity) = if collapsed { ("chevron-right", 1.) } else { ("chevron-down", hover_opacity) };
+        // folding.css: the icon box is the lane's width, 2px right, the glyph at 140% of the editor font size.
+        let icon = self.icon(name, LINE_HEIGHT, 1.4 * EDITOR_FONT_SIZE, Rgba { a: color.a * opacity, ..color });
+        lane = lane.child(div().w(px(DECORATIONS_WIDTH)).ml(px(2.)).h(px(LINE_HEIGHT)).flex().justify_center().cursor_pointer().child(icon));
+        lane
+    }
+
+    /// Whether `visible` falls at or after the end of `line`, as a click on a collapsed region's ellipsis does.
+    fn at_line_end(&self, line: usize, visible: f32) -> bool {
+        let editor = self.editors.active().expect("text is clickable only with an editor open");
+        let text = &editor.document.lines[line];
+        editor.folding.has_hidden() && column_at_visible(text, visible, editor.document.indentation.tab_size) == text.chars().count()
+    }
+
+    /// folding.ts `onEditorMouseUp`: a release on the line pressed toggles its region, with Alt the regions around
+    /// it, with Shift or the middle button the ones inside it first; then the line's start is revealed.
+    fn release_fold_click(&mut self, line: usize, icon: bool, modifiers: gpui::Modifiers, middle: bool, cx: &mut Context<Self>) {
+        if self.fold_mouse_down.take() != Some((line, icon)) {
+            return;
+        }
+        let editor = self.editors.active_mut().expect("folding controls show only with an editor open");
+        let before = (editor.selections.clone(), editor.folding.hidden().to_vec());
+        if editor.click_fold_control(line, icon, modifiers.alt, middle || modifiers.shift) {
+            self.cursors_changed(before.0, Reveal::Position(Position::new(line, 0)), "mouse", cx);
+            self.folds_changed(&before.1);
+        }
+    }
+
+    /// The view lines changed with the folds: the host hears the new visible ranges (`onDidScrollChange` fires
+    /// for the new scroll height).
+    fn folds_changed(&mut self, hidden_before: &[Range<usize>]) {
+        let viewport = self.editors.viewport;
+        let editor = self.editors.active_mut().expect("folds change in the active editor");
+        if editor.folding.hidden() != hidden_before {
+            editor.set_scroll(editor.scroll.top, editor.scroll.left, viewport);
+            self.host.send_visible_ranges(&self.editors);
+        }
     }
 
     /// bracketMatching.ts `_recomputeBrackets`: the brackets matched at each empty cursor, none past 100 selections.
@@ -641,10 +741,12 @@ impl Workbench {
         let viewport = self.editors.viewport;
         let editor = self.editors.active_mut().expect("editor commands run on the active editor");
         let before = editor.selections.clone();
+        let hidden_before = editor.folding.hidden().to_vec();
         let Some(reveal) = commands::run(editor, command, viewport) else {
             return false;
         };
         self.cursors_changed(before, reveal, source, cx);
+        self.folds_changed(&hidden_before);
         true
     }
 
@@ -914,6 +1016,46 @@ impl Scrollbars {
     fn in_transition(&self, now: Instant) -> bool {
         self.opacity(now) != if self.shown { 1. } else { 0. }
     }
+}
+
+/// folding.css: the expanded folding controls fade with `transition: opacity 0.5s` (ease) as the pointer enters
+/// or leaves the margin.
+#[derive(Default)]
+pub(super) struct FoldControls {
+    shown: bool,
+    changed: Option<(Instant, f32)>,
+}
+
+impl FoldControls {
+    fn set_shown(&mut self, shown: bool, now: Instant) {
+        if self.shown != shown {
+            let from = self.opacity(now);
+            self.shown = shown;
+            self.changed = Some((now, from));
+        }
+    }
+
+    fn opacity(&self, now: Instant) -> f32 {
+        let target = if self.shown { 1. } else { 0. };
+        let Some((at, from)) = self.changed else { return target };
+        let progress = (now.duration_since(at).as_secs_f32() / FOLD_CONTROLS_FADE.as_secs_f32()).min(1.);
+        from + (target - from) * ease(progress)
+    }
+
+    fn in_transition(&self, now: Instant) -> bool {
+        self.opacity(now) != if self.shown { 1. } else { 0. }
+    }
+}
+
+/// CSS `ease`, cubic-bezier(0.25, 0.1, 0.25, 1): the curve's x solved by bisection, then its y.
+fn ease(x: f32) -> f32 {
+    let bezier = |p1: f32, p2: f32, t: f32| 3. * p1 * t * (1. - t).powi(2) + 3. * p2 * t * t * (1. - t) + t.powi(3);
+    let (mut low, mut high) = (0., 1.);
+    for _ in 0..24 {
+        let mid = (low + high) / 2.;
+        if bezier(0.25, 0.25, mid) < x { low = mid } else { high = mid }
+    }
+    bezier(0.1, 1., (low + high) / 2.)
 }
 
 #[derive(Clone, Copy)]

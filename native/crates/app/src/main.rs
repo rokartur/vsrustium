@@ -1,5 +1,6 @@
 //! The native app: the workbench, themed from the built-in theme files, over the running extension host.
-//! Usage: code-gpui [folder [file]] [--theme <settings id>] [--user-data-dir <dir>] [--screenshot <png>] [--node]
+//! Usage: code-gpui [folder [file]] [--theme <settings id>] [--user-data-dir <dir>] [--screenshot <png>]
+//! [--screenshot-keys "<keystroke> ..."] [--node]
 //!   [--extensionDevelopmentPath=<dir> [--extensionTestsPath=<path>]]: the app exits with the test runner's code.
 
 mod brackets;
@@ -23,7 +24,7 @@ use exthost::session::{Session, SessionPaths, init_data, workspace_data};
 use exthost::{ExtensionHost, HostOptions, Runtime};
 use futures::StreamExt;
 use futures::channel::mpsc::{UnboundedSender, unbounded};
-use gpui::{App, Bounds, TitlebarOptions, Window, WindowBounds, WindowOptions, point, prelude::*, px, size};
+use gpui::{App, Bounds, Keystroke, TitlebarOptions, Window, WindowBounds, WindowOptions, point, prelude::*, px, size};
 use gpui_platform::application;
 use serde_json::json;
 use anyhow::Context as _;
@@ -40,9 +41,11 @@ fn main() -> anyhow::Result<()> {
     let flag_value = |flag: &str| args.iter().position(|arg| arg == flag).and_then(|i| args.get(i + 1)).cloned();
     let user_data = flag_value("--user-data-dir").map(PathBuf::from);
     let screenshot = flag_value("--screenshot").map(PathBuf::from);
+    // Typed before the capture, as port/tools/ref-screenshot types KEYS into the reference.
+    let screenshot_keys: Vec<Keystroke> = flag_value("--screenshot-keys").unwrap_or_default().split_whitespace().map(Keystroke::parse).collect::<Result<_, _>>()?;
     // Settings id of workbench.colorTheme; the reference default theme is not ported yet, so Dark Modern is.
     let theme_id = flag_value("--theme").unwrap_or_else(|| "Dark Modern".into());
-    let value_flags = ["--user-data-dir", "--screenshot", "--theme"];
+    let value_flags = ["--user-data-dir", "--screenshot", "--screenshot-keys", "--theme"];
     let positional: Vec<&String> = args.iter().enumerate().skip(1).filter(|(i, arg)| !arg.starts_with("--") && !value_flags.contains(&args[i - 1].as_str())).map(|(_, arg)| arg).collect();
     let canonical = |path: &String| std::fs::canonicalize(path).with_context(|| format!("opening {path}"));
     let folder = positional.first().map(|path| canonical(path)).transpose()?;
@@ -104,6 +107,16 @@ fn main() -> anyhow::Result<()> {
                         let (true, Some(path)) = (line.starts_with(ACTIVATED_PREFIX), screenshot.as_ref()) else { continue };
                         // Captured once eager extensions are up, so the frame shows the workbench as the host left it.
                         cx.background_executor().timer(Duration::from_millis(500)).await;
+                        if !screenshot_keys.is_empty() {
+                            cx.update(|window, cx| {
+                                for keystroke in &screenshot_keys {
+                                    window.dispatch_keystroke(keystroke.clone(), cx);
+                                }
+                            })
+                            .ok();
+                            // The scrolled editor's scrollbars hide 500ms later and fade out over 800ms.
+                            cx.background_executor().timer(Duration::from_millis(1500)).await;
+                        }
                         let saved = cx.update(|window, _| save_screenshot(window, path)).and_then(|result| result);
                         if let Err(error) = saved {
                             eprintln!("screenshot failed: {error:#}");

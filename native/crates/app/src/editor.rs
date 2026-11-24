@@ -4,6 +4,7 @@
 
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::languages::Languages;
@@ -12,11 +13,14 @@ use crate::syntax::Tokenization;
 pub mod commands;
 mod cursor;
 mod edit;
+pub mod folding;
+mod folding_controller;
 mod multicursor;
 mod snippet;
 mod view;
 
 pub use cursor::{Position, Selection};
+use folding::{FoldingMarkers, FoldingModel};
 pub use edit::{ContentChanged, Copied, CursorEdit, EditReason, History, Replace, char_column, end_of, selections_after, text_between, utf16_column};
 pub use multicursor::{ColumnSelectData, Reveal};
 pub use snippet::expand as expand_snippet;
@@ -35,6 +39,10 @@ pub struct TextDocument {
     pub indentation: Indentation,
     /// `foldingRules.offSide` of the language, used by the indent guides of blank lines.
     pub off_side: bool,
+    /// `foldingRules.markers` of the language.
+    pub folding_markers: Option<Arc<FoldingMarkers>>,
+    /// `comments.blockComment` start token of the language.
+    pub block_comment_start: Option<String>,
     pub tokens: Tokenization,
 }
 
@@ -64,9 +72,11 @@ impl TextDocument {
         let (lines, eol) = split_lines(&text);
         let language_id = languages.language_of(path, lines[0].as_str()).to_string();
         let off_side = languages.off_side(&language_id);
+        let folding_markers = languages.folding_markers(&language_id);
+        let block_comment_start = languages.block_comment_start(&language_id).map(str::to_string);
         let indentation = guess_indentation(&lines, DEFAULT_INDENTATION);
         let tokens = Tokenization::new(languages.grammars.grammar(&language_id));
-        TextDocument { scheme: scheme.to_string(), path: path.to_path_buf(), lines, eol, encoding, language_id, indentation, off_side, tokens }
+        TextDocument { scheme: scheme.to_string(), path: path.to_path_buf(), lines, eol, encoding, language_id, indentation, off_side, folding_markers, block_comment_start, tokens }
     }
 
     pub fn uri_string(&self) -> String {
@@ -345,6 +355,8 @@ pub struct OpenEditor {
     pub guides: Vec<usize>,
     /// Occurrences of the word at the cursor, by line and char range.
     pub highlights: Vec<(usize, Range<usize>)>,
+    /// The folding regions, their collapse state and the lines it hides.
+    pub folding: FoldingModel,
     /// The editor's scroll position in pixels, kept with the editor like its view state.
     pub scroll: Scroll,
     /// The widest line drawn so far, in pixels: the content width grows with it and never shrinks.
@@ -367,8 +379,9 @@ impl OpenEditor {
     fn new(document: TextDocument, preview: bool, model_id: u32) -> Self {
         let indentation = document.indentation;
         let guides = indent_guides(&document.lines, indentation.tab_size, indentation.tab_size, document.off_side);
-        let mut editor = OpenEditor { document, preview, model_id, selections: vec![Selection::default()], last_added: 0, leftovers: Vec::new(), column_select: None, version_id: 1, history: History::default(), guides, highlights: Vec::new(), scroll: Scroll::default(), max_line_width: 0., host_reference: None };
+        let mut editor = OpenEditor { document, preview, model_id, selections: vec![Selection::default()], last_added: 0, leftovers: Vec::new(), column_select: None, version_id: 1, history: History::default(), guides, highlights: Vec::new(), folding: FoldingModel::default(), scroll: Scroll::default(), max_line_width: 0., host_reference: None };
         editor.refresh_highlights();
+        editor.refresh_folding_ranges();
         editor
     }
 }
@@ -551,6 +564,8 @@ mod tests {
             language_id: "plaintext".into(),
             indentation: DEFAULT_INDENTATION,
             off_side: false,
+            folding_markers: None,
+            block_comment_start: None,
             tokens: Tokenization::default(),
         };
         let names = |group: &EditorGroup| group.editors.iter().map(|editor| editor.document.name()).collect::<Vec<_>>();
@@ -578,6 +593,8 @@ mod tests {
             language_id: "plaintext".into(),
             indentation: DEFAULT_INDENTATION,
             off_side: false,
+            folding_markers: None,
+            block_comment_start: None,
             tokens: Tokenization::default(),
         };
         group.open(document, false);

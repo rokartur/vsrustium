@@ -19,6 +19,8 @@ pub const KEYBINDINGS: &[(&str, &str)] = &[
     ("alt-cmd-shift-down", "cursorColumnSelectDown"),
     ("alt-cmd-shift-pageup", "cursorColumnSelectPageUp"),
     ("alt-cmd-shift-pagedown", "cursorColumnSelectPageDown"),
+    ("alt-cmd-[", "editor.fold"),
+    ("alt-cmd-]", "editor.unfold"),
 ];
 
 /// The commands bound to `keystroke`, in the order they are tried.
@@ -44,7 +46,7 @@ pub fn run(editor: &mut OpenEditor, command: &str, viewport: Viewport) -> Option
         "cursorColumnSelectDown" => editor.column_select_vertically(true, 1),
         "cursorColumnSelectPageUp" => editor.column_select_vertically(false, page_size),
         "cursorColumnSelectPageDown" => editor.column_select_vertically(true, page_size),
-        _ => return None,
+        _ => return editor.run_folding_command(command),
     })
 }
 

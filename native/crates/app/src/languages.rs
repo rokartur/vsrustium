@@ -3,11 +3,13 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
 
 use exthost::scan::ScannedExtension;
 use serde_json::Value;
 
 use crate::brackets::LanguageBrackets;
+use crate::editor::folding::FoldingMarkers;
 use crate::theme::strip_jsonc;
 
 pub const PLAINTEXT: &str = "plaintext";
@@ -24,6 +26,8 @@ pub struct Languages {
     associations: Vec<Association>,
     names: HashMap<String, String>,
     off_side: HashMap<String, bool>,
+    folding_markers: HashMap<String, Arc<FoldingMarkers>>,
+    block_comment_starts: HashMap<String, String>,
     /// `firstLine` patterns in registration order, anchored at the line start (languagesRegistry.ts).
     first_lines: Vec<(String, onig::Regex)>,
     pub grammars: textmate::Registry,
@@ -33,7 +37,7 @@ pub struct Languages {
 impl Languages {
     pub fn new(extensions: &[ScannedExtension]) -> Self {
         let grammars = textmate::Registry::new(extensions.iter().map(|extension| (extension.location.as_path(), &extension.description)));
-        let mut languages = Languages { associations: Vec::new(), names: HashMap::new(), off_side: HashMap::new(), first_lines: Vec::new(), grammars, brackets: HashMap::new() };
+        let mut languages = Languages { associations: Vec::new(), names: HashMap::new(), off_side: HashMap::new(), folding_markers: HashMap::new(), block_comment_starts: HashMap::new(), first_lines: Vec::new(), grammars, brackets: HashMap::new() };
         languages.register(&serde_json::json!({ "id": PLAINTEXT, "extensions": [".txt"], "aliases": ["Plain Text", "text"] }), None);
         for extension in extensions {
             for language in extension.description["contributes"]["languages"].as_array().into_iter().flatten() {
@@ -78,6 +82,18 @@ impl Languages {
                 .and_then(|text| serde_json::from_str::<Value>(&strip_jsonc(&text)).ok())
                 .unwrap_or_default();
             self.off_side.insert(id.into(), config["folding"]["offSide"].as_bool() == Some(true));
+            if let Some(start) = config["comments"]["blockComment"][0].as_str() {
+                self.block_comment_starts.insert(id.into(), start.into());
+            }
+            let markers = &config["folding"]["markers"];
+            if let (Some(start), Some(end)) = (marker_pattern(&markers["start"]), marker_pattern(&markers["end"])) {
+                match FoldingMarkers::new(start, end) {
+                    Ok(markers) => {
+                        self.folding_markers.insert(id.into(), Arc::new(markers));
+                    }
+                    Err(error) => eprintln!("[{id}]: Invalid regular expression in `folding.markers`: {error}"),
+                }
+            }
             self.brackets.insert(id.into(), LanguageBrackets::new(id, &config));
         }
     }
@@ -124,6 +140,25 @@ impl Languages {
     /// `foldingRules.offSide` of the language configuration: blank lines take the indent of the block below.
     pub fn off_side(&self, id: &str) -> bool {
         self.off_side.get(id).copied().unwrap_or(false)
+    }
+
+    /// `foldingRules.markers` of the language configuration.
+    pub fn folding_markers(&self, id: &str) -> Option<Arc<FoldingMarkers>> {
+        self.folding_markers.get(id).cloned()
+    }
+
+    /// `comments.blockCommentStartToken` of the language configuration.
+    pub fn block_comment_start(&self, id: &str) -> Option<&str> {
+        self.block_comment_starts.get(id).map(String::as_str)
+    }
+}
+
+/// languageConfigurationExtensionPoint.ts `_parseRegex`: a pattern string, or `{ pattern, flags }`.
+fn marker_pattern(value: &Value) -> Option<(&str, &str)> {
+    match value {
+        Value::String(pattern) => Some((pattern, "")),
+        Value::Object(object) => Some((object.get("pattern")?.as_str()?, object.get("flags").and_then(Value::as_str).unwrap_or(""))),
+        _ => None,
     }
 }
 
@@ -188,6 +223,11 @@ mod tests {
         assert_eq!(languages.name("typescript"), "TypeScript");
         assert!(languages.off_side("python"));
         assert!(!languages.off_side("typescript"));
+        let css = languages.folding_markers("css").expect("css has #region markers");
+        assert_eq!(css.classify("/* #region Colors */"), (true, false));
+        assert_eq!(css.classify("  /* #endregion */"), (false, true));
+        assert!(languages.folding_markers("plaintext").is_none());
+        assert_eq!(languages.block_comment_start("python"), Some("\"\"\""));
     }
 
     #[test]

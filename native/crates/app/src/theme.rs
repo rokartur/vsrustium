@@ -215,6 +215,9 @@ fn registry_default(key: &str, kind: ThemeKind) -> ColorValue {
         "editorBracketHighlight.foreground2" => (Hex("#DA70D6"), Hex("#319331FF"), Hex("#DA70D6")),
         "editorBracketHighlight.foreground3" => (Hex("#179FFF"), Hex("#7B3814FF"), Hex("#87CEFA")),
         "editorBracketHighlight.unexpectedBracket.foreground" => (Hex("#FF1212CC"), Hex("#FF1212CC"), Hex("#FF3232")),
+        "editor.foldBackground" => (Transparent(&Key("editor.selectionBackground"), 0.3), Transparent(&Key("editor.selectionBackground"), 0.3), None),
+        "editor.foldPlaceholderForeground" => (Hex("#808080"), Hex("#808080"), None),
+        "editorGutter.foldingControlForeground" => (Key("icon.foreground"), Key("icon.foreground"), Key("icon.foreground")),
         _ => (None, None, None),
     };
     match kind {
@@ -233,6 +236,7 @@ fn hc_light_default(key: &str) -> ColorValue {
         "contrastBorder" => Hex("#0F4A85"),
         "disabledForeground" => Hex("#7F7F7F"),
         "icon.foreground" => Hex("#292929"),
+        "editorGutter.foldingControlForeground" => Key("icon.foreground"),
         "editor.background" => Hex("#ffffff"),
         "sideBar.background" => Hex("#FFFFFF"),
         "window.activeBorder" => Key("contrastBorder"),

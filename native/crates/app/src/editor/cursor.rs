@@ -4,7 +4,9 @@
 //! shortcut: columns step over chars, not grapheme clusters; a ZWJ emoji takes several steps. Port
 //! strings.getLeftDeleteOffset and the grapheme iterator when that matters.
 
-use super::{Indentation, WORD_SEPARATORS};
+use std::ops::Range;
+
+use super::{Indentation, WORD_SEPARATORS, folding};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Position {
@@ -126,21 +128,19 @@ pub fn right(lines: &[String], position: Position) -> Position {
     }
 }
 
-/// `MoveOperations.vertical`: keeps the visible column, plus what the line could not hold
+/// `MoveOperations.vertical` on view lines: keeps the visible column, plus what the line could not hold
 /// (`leftover`, negative after a jump to the end of the last line), and moves to the document's
-/// edge when there is no line to go to.
-pub fn vertical(lines: &[String], position: Position, leftover: isize, down: bool, tab_size: usize) -> (Position, isize) {
+/// edge when there is no line to go to. Lines in `hidden` are folded away and skipped.
+pub fn vertical(lines: &[String], hidden: &[Range<usize>], position: Position, leftover: isize, down: bool, tab_size: usize) -> (Position, isize) {
     let visible_of = |position: Position| super::visible_column(&lines[position.line], position.column, tab_size) as isize;
     let visible = visible_of(position) + leftover;
-    let last = last_position(lines);
+    let last_line = folding::last_shown_line(lines.len(), hidden);
+    let last = Position::new(last_line, line_len(lines, last_line));
     let was_at_edge = if down { position == last } else { position == Position::default() };
-    let moved = match down {
-        true if position.line + 1 == lines.len() => last,
-        false if position.line == 0 => Position::default(),
-        _ => {
-            let line = if down { position.line + 1 } else { position.line - 1 };
-            Position::new(line, column_from_visible(&lines[line], visible.max(0) as usize, tab_size))
-        }
+    let moved = match folding::shown_neighbour(lines.len(), hidden, position.line, down) {
+        None if down => last,
+        None => Position::default(),
+        Some(line) => Position::new(line, column_from_visible(&lines[line], visible.max(0) as usize, tab_size)),
     };
     let leftover = if was_at_edge { 0 } else { visible - visible_of(moved) };
     (moved, leftover)
@@ -148,12 +148,13 @@ pub fn vertical(lines: &[String], position: Position, leftover: isize, down: boo
 
 /// `MoveOperations.translateUp`/`translateDown` for one position: `vertical`, but on the first or last
 /// line the position stays (`allowMoveOnEdgeLine` false).
-pub fn translate(lines: &[String], position: Position, leftover: isize, down: bool, tab_size: usize) -> (Position, isize) {
-    let on_edge_line = if down { position.line + 1 == lines.len() } else { position.line == 0 };
+pub fn translate(lines: &[String], hidden: &[Range<usize>], position: Position, leftover: isize, down: bool, tab_size: usize) -> (Position, isize) {
+    let last_line = folding::last_shown_line(lines.len(), hidden);
+    let on_edge_line = if down { position.line == last_line } else { position.line == 0 };
     if !on_edge_line {
-        return vertical(lines, position, leftover, down, tab_size);
+        return vertical(lines, hidden, position, leftover, down, tab_size);
     }
-    let was_at_edge = if down { position == last_position(lines) } else { position == Position::default() };
+    let was_at_edge = if down { position == Position::new(last_line, line_len(lines, last_line)) } else { position == Position::default() };
     (position, if was_at_edge { 0 } else { leftover })
 }
 
@@ -477,17 +478,25 @@ mod tests {
     #[test]
     fn vertical_moves_keep_the_visible_column_through_short_lines_and_tabs() {
         let text = lines("abcdef\nab\n\tx\nabcdef");
-        let (position, leftover) = vertical(&text, at(0, 5), 0, true, 4);
+        let (position, leftover) = vertical(&text, &[], at(0, 5), 0, true, 4);
         assert_eq!((position, leftover), (at(1, 2), 3));
-        let (position, leftover) = vertical(&text, position, leftover, true, 4);
+        let (position, leftover) = vertical(&text, &[], position, leftover, true, 4);
         // Visible column 5 lies inside "x" after the tab (4..5), so the cursor lands after it.
         assert_eq!((position, leftover), (at(2, 2), 0));
-        assert_eq!(vertical(&text, at(3, 6), 0, true, 4), (at(3, 6), 0));
+        assert_eq!(vertical(&text, &[], at(3, 6), 0, true, 4), (at(3, 6), 0));
         // Past the first or last line the cursor goes to the edge and comes back to its column.
-        assert_eq!(vertical(&text, at(0, 3), 0, false, 4), (at(0, 0), 3));
-        assert_eq!(vertical(&text, at(0, 0), 3, true, 4), (at(1, 2), 1));
-        assert_eq!(vertical(&text, at(3, 2), 0, true, 4), (at(3, 6), -4));
-        assert_eq!(vertical(&text, at(3, 6), -4, false, 4).0, at(2, 0));
+        assert_eq!(vertical(&text, &[], at(0, 3), 0, false, 4), (at(0, 0), 3));
+        assert_eq!(vertical(&text, &[], at(0, 0), 3, true, 4), (at(1, 2), 1));
+        assert_eq!(vertical(&text, &[], at(3, 2), 0, true, 4), (at(3, 6), -4));
+        assert_eq!(vertical(&text, &[], at(3, 6), -4, false, 4).0, at(2, 0));
+    }
+
+    #[test]
+    fn vertical_moves_skip_folded_lines_and_stop_at_the_last_shown_line() {
+        let text = lines("abc\n  d\n  e\nfgh\n  i");
+        assert_eq!(vertical(&text, &[1..3], at(0, 2), 0, true, 4), (at(3, 2), 0));
+        assert_eq!(vertical(&text, &[1..3], at(3, 1), 0, false, 4), (at(0, 1), 0));
+        assert_eq!(vertical(&text, &[4..5], at(3, 1), 0, true, 4), (at(3, 3), -2));
     }
 
     #[test]

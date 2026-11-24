@@ -6,7 +6,7 @@
 use std::cmp::Reverse;
 
 use super::cursor::{self, Position, Selection};
-use super::{OpenEditor, indent_guides};
+use super::{OpenEditor, folding, indent_guides};
 
 /// `EditOperationType`: what the last edit was, which decides where undo stops go.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -189,6 +189,7 @@ impl OpenEditor {
             }
         }
         self.leftovers = leftovers;
+        self.unfold_at_hidden_cursors();
         self.refresh_highlights();
     }
 
@@ -211,6 +212,7 @@ impl OpenEditor {
         for (index, &selection) in self.selections.iter().enumerate() {
             let (anchor_leftover, head_leftover) = self.leftover(index);
             let (head, leftover) = step(&self.document.lines, selection, head_leftover);
+            let head = folding::shown_position(&self.document.lines, self.folding.hidden(), head, head > selection.head);
             selections.push(selection.moved(head, select));
             leftovers.push((if select { anchor_leftover } else { leftover }, leftover));
         }
@@ -238,13 +240,14 @@ impl OpenEditor {
     /// `cursorUp`/`cursorDown`: from a selection's start or end, keeping the visible column through short lines.
     pub fn move_vertically(&mut self, down: bool, select: bool) {
         let tab_size = self.document.indentation.tab_size;
+        let hidden = self.folding.hidden().to_vec();
         self.move_cursors(select, |lines, selection, leftover| {
             let from = match (select || selection.is_empty(), down) {
                 (true, _) => selection.head,
                 (false, false) => selection.start(),
                 (false, true) => selection.end(),
             };
-            cursor::vertical(lines, from, leftover, down, tab_size)
+            cursor::vertical(lines, &hidden, from, leftover, down, tab_size)
         });
     }
 
@@ -260,7 +263,7 @@ impl OpenEditor {
 
     /// `cursorTop`/`cursorBottom`: the primary cursor only.
     pub fn move_to_document_edge(&mut self, end: bool, select: bool) {
-        let head = if end { cursor::last_position(&self.document.lines) } else { Position::default() };
+        let head = if end { self.last_shown_position() } else { Position::default() };
         self.move_to(head, select);
     }
 
@@ -675,6 +678,7 @@ impl OpenEditor {
         self.highlights.clear();
         let indentation = self.document.indentation;
         self.guides = indent_guides(&self.document.lines, indentation.tab_size, indentation.tab_size, self.document.off_side);
+        self.refresh_folding_ranges();
     }
 
     /// Replaces `start..end` with `text` in the lines and describes it in the text before it.
@@ -691,6 +695,7 @@ impl OpenEditor {
             range_length: removed.replace('\n', eol).encode_utf16().count(),
             text: text.replace('\n', eol),
         };
+        self.folding.accept_replace(lines, start, end, text);
         let prefix: String = lines[start.line].chars().take(start.column).collect();
         let suffix: String = lines[end.line].chars().skip(end.column).collect();
         let joined = prefix + text + &suffix;
@@ -908,6 +913,8 @@ pub(super) mod tests {
             language_id: "typescript".into(),
             indentation: Indentation { tab_size: 4, insert_spaces: true },
             off_side: false,
+            folding_markers: None,
+            block_comment_start: None,
             tokens: Default::default(),
         };
         let mut group = EditorGroup::default();

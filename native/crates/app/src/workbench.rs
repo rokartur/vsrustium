@@ -30,6 +30,9 @@ pub struct Workbench {
     pub editors: EditorGroup,
     host: HostSync,
     scrollbars: editor_view::Scrollbars,
+    fold_controls: editor_view::FoldControls,
+    /// The line and whether on its folding control a press may toggle a fold (folding.ts `mouseDownInfo`).
+    fold_mouse_down: Option<(usize, bool)>,
     /// Window x of the text area, recorded at paint, to turn a click into a column.
     text_area_left: Rc<Cell<f32>>,
     pub editor_focus: FocusHandle,
@@ -90,6 +93,8 @@ impl Workbench {
             editors: EditorGroup::default(),
             host,
             scrollbars: Default::default(),
+            fold_controls: Default::default(),
+            fold_mouse_down: None,
             text_area_left: Rc::default(),
             editor_focus: cx.focus_handle(),
             marked_text: None,

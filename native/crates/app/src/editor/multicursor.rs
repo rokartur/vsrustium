@@ -33,8 +33,8 @@ impl OpenEditor {
         let mut leftovers = Vec::new();
         for (index, &selection) in self.selections.iter().enumerate() {
             let (anchor_leftover, head_leftover) = self.leftover(index);
-            let (anchor, anchor_leftover_after) = cursor::translate(lines, selection.anchor, anchor_leftover, down, tab_size);
-            let (head, head_leftover_after) = cursor::translate(lines, selection.head, head_leftover, down, tab_size);
+            let (anchor, anchor_leftover_after) = cursor::translate(lines, self.folding.hidden(), selection.anchor, anchor_leftover, down, tab_size);
+            let (head, head_leftover_after) = cursor::translate(lines, self.folding.hidden(), selection.head, head_leftover, down, tab_size);
             selections.extend([selection, Selection { anchor, head }]);
             leftovers.extend([(anchor_leftover, head_leftover), (anchor_leftover_after, head_leftover_after)]);
         }
