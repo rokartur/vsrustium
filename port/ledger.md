@@ -9,7 +9,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | seam/framing | extension host seam | verified | cargo test -p exthost (frame split/join tests); exthost-probe completes 34 activations over it |
 | seam/rpc | extension host seam | verified | cargo test -p exthost (layout check vs rpcProtocol.ts); exthost-probe $test_latency(7)=7 and host requests decoded on Bun and Node |
 | seam/handshake | extension host seam | verified | exthost-probe release: handshake Bun 226 ms, Node 644 ms; code-gpui spawns bun child (run-app-check) |
-| seam/init-data | extension host seam | ported | exthost-probe: host starts with session.rs init data; workspace, logLevel, loggers minimal |
+| seam/init-data | extension host seam | verified | port/tools/settings-check environment: vscode.env, storage, log and extension paths as the reference except appName (reference dev run), machineId format (uuid, upstream fallback) and isTelemetryEnabled (no telemetry); loggers [] |
 | seam/bun-runtime | extension host seam | verified | exthost-probe --runtime bun: 30/30 code extensions activate (copilot and sign-in extensions removed by decision) |
 | seam/node-control | extension host seam | verified | exthost-probe --runtime node: 30/30, same set as Bun |
 | seam/vscode-module-bun | extension host seam | ported | exthost-probe: CJS extensions and ESM github, markdown-language-features, mermaid-markdown-features activate on Bun; ESM added after startup not covered |
@@ -18,8 +18,8 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | mainthread/MainThreadCommands | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadComments | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadAuthentication | MainThread* shape (Rust side) | removed | no sign-in/AI by decision (port/notes.md); API stays inert: session.rs answers undefined, list getters []; exthost-probe 30/30 on Bun and Node |
-| mainthread/MainThreadSecretState | MainThread* shape (Rust side) | stub | session.rs answers undefined |
-| mainthread/MainThreadConfiguration | MainThread* shape (Rust side) | stub | session.rs answers undefined |
+| mainthread/MainThreadSecretState | MainThread* shape (Rust side) | verified | port/tools/settings-check secrets same as the reference; cargo test -p exthost main_thread_secret_state (on a throwaway keychain) |
+| mainthread/MainThreadConfiguration | MainThread* shape (Rust side) | verified | api-tests configuration 3/3; port/tools/settings-check configuration (reference fires extra empty events) |
 | mainthread/MainThreadDiagnostics | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadDiaglogs | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadDecorations | MainThread* shape (Rust side) | stub | session.rs answers undefined |
@@ -40,7 +40,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | mainthread/MainThreadTerminalShellIntegration | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadQuickOpen | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadStatusBar | MainThread* shape (Rust side) | stub | session.rs answers undefined |
-| mainthread/MainThreadStorage | MainThread* shape (Rust side) | stub | session.rs answers undefined |
+| mainthread/MainThreadStorage | MainThread* shape (Rust side) | verified | api-tests globalState / workspaceState 2/2; port/tools/settings-check state (restart, state.vscdb rows) same as the reference |
 | mainthread/MainThreadTelemetry | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadEditorInsets | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadEditorTabs | MainThread* shape (Rust side) | stub | host_sync.rs sends $acceptTabOperation per tab change (cargo test -p app host_sync); $moveTab, $closeTab, $closeGroup answer undefined |
@@ -123,7 +123,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/checksum | src/vs/platform | todo |  |
 | platform/clipboard | src/vs/platform | todo |  |
 | platform/commands | src/vs/platform | todo |  |
-| platform/configuration | src/vs/platform | todo |  |
+| platform/configuration | src/vs/platform | ported | cargo test -p config (json, jsonEdit, configurationModels, configurationRegistry cases); policy, configurationService, configurations, configurationVariables tests not ported |
 | platform/contextkey | src/vs/platform | todo |  |
 | platform/contextview | src/vs/platform | todo |  |
 | platform/cssDev | src/vs/platform | todo |  |
@@ -139,7 +139,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/editor | src/vs/platform | todo |  |
 | platform/encryption | src/vs/platform | todo |  |
 | platform/endpoint | src/vs/platform | todo |  |
-| platform/environment | src/vs/platform | todo |  |
+| platform/environment | src/vs/platform | ported | port/tools/settings-check environment; only the paths and values init data carries |
 | platform/extensionManagement | src/vs/platform | todo |  |
 | platform/extensionRecommendations | src/vs/platform | todo |  |
 | platform/extensionResourceLoader | src/vs/platform | todo |  |
@@ -192,12 +192,12 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/remoteTunnel | src/vs/platform | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | platform/request | src/vs/platform | todo |  |
 | platform/sandbox | src/vs/platform | todo |  |
-| platform/secrets | src/vs/platform | todo |  |
+| platform/secrets | src/vs/platform | ported | port/tools/settings-check secrets; Keychain items instead of safeStorage encryption, secrets.test not ported |
 | platform/sharedProcess | src/vs/platform | todo |  |
 | platform/shell | src/vs/platform | todo |  |
 | platform/sign | src/vs/platform | todo |  |
 | platform/state | src/vs/platform | todo |  |
-| platform/storage | src/vs/platform | todo |  |
+| platform/storage | src/vs/platform | ported | cargo test -p storage (storage.integrationTest.ts cases); profile and workspace scopes only, storageService tests not ported |
 | platform/telemetry | src/vs/platform | todo |  |
 | platform/terminal | src/vs/platform | todo |  |
 | platform/test | src/vs/platform | todo |  |
@@ -315,7 +315,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/checksum | workbench service | todo |  |
 | workbench/services/clipboard | workbench service | todo |  |
 | workbench/services/commands | workbench service | todo |  |
-| workbench/services/configuration | workbench service | todo |  |
+| workbench/services/configuration | workbench service | ported | cargo test -p config service (configurationEditing.test.ts write cases); port/tools/settings-check configuration |
 | workbench/services/configurationResolver | workbench service | todo |  |
 | workbench/services/contextmenu | workbench service | todo |  |
 | workbench/services/dataChannel | workbench service | todo |  |
@@ -364,11 +364,11 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/remote | workbench service | todo |  |
 | workbench/services/request | workbench service | todo |  |
 | workbench/services/search | workbench service | todo |  |
-| workbench/services/secrets | workbench service | todo |  |
+| workbench/services/secrets | workbench service | ported | port/tools/settings-check secrets |
 | workbench/services/sessions | workbench service | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/services/sharedProcess | workbench service | todo |  |
 | workbench/services/statusbar | workbench service | todo |  |
-| workbench/services/storage | workbench service | todo |  |
+| workbench/services/storage | workbench service | ported | port/tools/settings-check state; no application scope or flush on shutdown, writes are synchronous |
 | workbench/services/suggest | workbench service | todo |  |
 | workbench/services/telemetry | workbench service | todo |  |
 | workbench/services/terminal | workbench service | todo |  |

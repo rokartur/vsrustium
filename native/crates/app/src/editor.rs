@@ -5,6 +5,9 @@
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
+use config::indentation::creation_options;
+use config::service::Settings;
+
 use crate::languages::Languages;
 use crate::syntax::Tokenization;
 
@@ -33,11 +36,12 @@ pub struct Indentation {
     pub insert_spaces: bool,
 }
 
-/// `editor.tabSize` and `editor.insertSpaces` defaults, the base `guessIndentation` starts from.
+/// `editor.tabSize` and `editor.insertSpaces` defaults, for documents built without settings.
+#[cfg(test)]
 const DEFAULT_INDENTATION: Indentation = Indentation { tab_size: 4, insert_spaces: true };
 
 impl TextDocument {
-    pub fn read(path: &Path, languages: &Languages) -> std::io::Result<Self> {
+    pub fn read(path: &Path, languages: &Languages, settings: &Settings) -> std::io::Result<Self> {
         let bytes = std::fs::read(path)?;
         let (encoding, content) = match bytes.strip_prefix(b"\xEF\xBB\xBF") {
             Some(rest) => ("utf8bom", rest),
@@ -48,13 +52,24 @@ impl TextDocument {
         let (lines, eol) = split_lines(&text);
         let language_id = languages.language_of(path, lines[0].as_str()).to_string();
         let off_side = languages.off_side(&language_id);
-        let indentation = guess_indentation(&lines, DEFAULT_INDENTATION);
+        let indentation = creation_indentation(&lines, settings, path, &language_id);
         let tokens = Tokenization::new(languages.grammars.grammar(&language_id));
         Ok(TextDocument { path: path.to_path_buf(), lines, eol, encoding, language_id, indentation, off_side, tokens })
     }
 
     pub fn name(&self) -> String {
         self.path.file_name().unwrap_or_default().to_string_lossy().into_owned()
+    }
+}
+
+/// The indentation a model starts with (`TextModel.resolveOptions` from `getCreationOptions`): the language's
+/// `editor.tabSize` and `editor.insertSpaces`, guessed from the text when `editor.detectIndentation` is on.
+fn creation_indentation(lines: &[String], settings: &Settings, path: &Path, language_id: &str) -> Indentation {
+    let options = creation_options(&settings.configuration, path, language_id);
+    let configured = Indentation { tab_size: options.tab_size, insert_spaces: options.insert_spaces };
+    match options.detect_indentation {
+        true => guess_indentation(lines, configured),
+        false => configured,
     }
 }
 
@@ -379,6 +394,23 @@ mod tests {
 
     fn lines(text: &str) -> Vec<String> {
         split_lines(text).0
+    }
+
+    #[test]
+    fn opened_files_take_the_configured_indentation() {
+        let dir = std::env::temp_dir().join(format!("code-gpui-indentation-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("User")).unwrap();
+        let file = dir.join("a.txt");
+        std::fs::write(&file, "a\n    b\n        c\n").unwrap();
+        let read = |user_settings: &str| {
+            std::fs::write(dir.join("User/settings.json"), user_settings).unwrap();
+            let settings = Settings::load(config::registry::Registry::core(), dir.join("User"), None);
+            TextDocument::read(&file, &Languages::new(&[]), &settings).unwrap().indentation
+        };
+        assert_eq!(read("{}"), Indentation { tab_size: 4, insert_spaces: true });
+        assert_eq!(read(r#"{ "editor.tabSize": 2, "editor.detectIndentation": false }"#), Indentation { tab_size: 2, insert_spaces: true });
+        assert_eq!(read(r#"{ "editor.insertSpaces": false, "editor.detectIndentation": false }"#), Indentation { tab_size: 4, insert_spaces: false });
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

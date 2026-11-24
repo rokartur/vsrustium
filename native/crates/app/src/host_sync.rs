@@ -449,7 +449,7 @@ mod tests {
 
         let languages = crate::languages::Languages::new(&extensions);
         let mut group = EditorGroup::default();
-        group.open(TextDocument::read(&folder.join("src/main.ts"), &languages).unwrap(), false);
+        group.open(TextDocument::read(&folder.join("src/main.ts"), &languages, &crate::default_settings().lock().unwrap()).unwrap(), false);
         sync.send_changes(&group);
         forward(&mut session);
         pump_until(&mut session, 20, &|session| session.log.activated.iter().any(|id| id == "vscode.typescript-language-features"));

@@ -8,3 +8,14 @@ Not reached: tests of the reference run (402 folder, 4 workspace) the port did n
 |-------|---------|---------|---------|-------------|-----|
 | api-folder | 35 | 41 | 133 | 193 | timed out after 1800s |
 | api-workspace | 0 | 0 | 4 | 0 | exit 1 after 0s |
+
+## M10
+
+`MOCHA_GREP="vscode API - configuration|vscode API - globalState" SUITE_TIMEOUT=300 port/tools/api-tests` at 96df8471, same setup. The two suites have 5 tests; not reached counts the reference tests the pattern filters out.
+
+| suite | passing | pending | failing | not reached | run |
+|-------|---------|---------|---------|-------------|-----|
+| api-folder | 5 | 0 | 0 | 397 | exit 0 after 1s |
+| api-workspace | 0 | 0 | 0 | 4 | exit 0 after 0s |
+
+Passing: configuration, language defaults; configuration, defaults; configuration, name vs property; and the two `globalState / workspaceState` tests.

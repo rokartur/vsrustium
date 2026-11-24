@@ -1,0 +1,2 @@
+{ "name": "config-check", "publisher": "vscode-gpui", "version": "0.0.1", "engines": { "vscode": "^1.100.0" }, "main": "./run.js",
+  "contributes": { "configuration": { "properties": { "configCheck.app": { "type": "string", "default": "d", "scope": "application" } } } } }

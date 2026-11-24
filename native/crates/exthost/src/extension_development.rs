@@ -14,8 +14,9 @@ pub struct ExtensionDevelopment {
 
 impl ExtensionDevelopment {
     /// Reads `--extensionDevelopmentPath=<dir>` and `--extensionTestsPath=<path>` (the `=` form upstream's scripts pass).
+    /// Paths are made absolute without resolving symlinks, as environmentService's `path.resolve` does.
     pub fn from_args(args: &[String]) -> anyhow::Result<Option<Self>> {
-        let value = |flag: &str| args.iter().find_map(|arg| arg.strip_prefix(flag)?.strip_prefix('=')).map(std::fs::canonicalize).transpose();
+        let value = |flag: &str| args.iter().find_map(|arg| arg.strip_prefix(flag)?.strip_prefix('=')).map(std::path::absolute).transpose();
         let extension_path = value("--extensionDevelopmentPath")?;
         let tests_path = value("--extensionTestsPath")?;
         match (extension_path, tests_path) {
@@ -41,6 +42,9 @@ impl ExtensionDevelopment {
         if let Some(tests_path) = &self.tests_path {
             environment["extensionTestsLocationURI"] = file_uri(tests_path);
         }
+        // localProcessExtensionHost.ts: an extension development host forwards native console output, tests from the CLI forward nothing.
+        let tests_from_cli = self.tests_path.is_some();
+        init["consoleForward"] = json!({ "includeStack": !tests_from_cli, "logNative": !tests_from_cli });
     }
 }
 
@@ -51,12 +55,11 @@ mod tests {
     #[test]
     fn reads_equals_form_flags() {
         let dir = std::env::temp_dir();
-        let canonical = std::fs::canonicalize(&dir).unwrap();
         let args = |list: &[&str]| list.iter().map(|arg| arg.to_string()).collect::<Vec<_>>();
         let development = ExtensionDevelopment::from_args(&args(&["code-gpui", &format!("--extensionDevelopmentPath={}", dir.display()), &format!("--extensionTestsPath={}", dir.display())]))
             .unwrap()
             .unwrap();
-        assert_eq!((development.extension_path, development.tests_path), (canonical.clone(), Some(canonical)));
+        assert_eq!((development.extension_path, development.tests_path), (dir.clone(), Some(dir.clone())));
         assert!(ExtensionDevelopment::from_args(&args(&["code-gpui", "folder"])).unwrap().is_none());
         assert!(ExtensionDevelopment::from_args(&args(&["code-gpui", &format!("--extensionTestsPath={}", dir.display())])).is_err());
     }

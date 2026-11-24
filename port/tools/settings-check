@@ -1,0 +1,55 @@
+#!/bin/bash
+# Runs the extensions in port/tools/settings-checks against code-gpui and the reference and diffs what they print:
+# configuration (writes, language overrides, write errors, an external settings.json edit and its change events),
+# state (globalState and workspaceState across a restart, and the state.vscdb rows), secrets and environment.
+# Run from the repo root on the Studio after a release build: port/tools/studio port/tools/settings-check [check...].
+# Known differences: configuration fires extra empty change events before `editor.wordWrap` in the reference;
+# environment appName ("Code - OSS Dev" in a dev run), machineId (MAC hash vs uuid) and isTelemetryEnabled.
+set -uo pipefail
+REF=${REF:-$HOME/Developer/vscode-ref}
+OUT=${OUT:-/tmp/settings-check-$(basename "$PWD")}
+checks=("$@")
+[[ $# -eq 0 ]] && checks=(configuration state secrets environment)
+source port/tools/gui-lock.sh
+rm -rf "$OUT" && mkdir -p "$OUT"
+
+launch() { # <port|ref> <dir> [--extensionTestsPath=...]
+  if [[ $1 == port ]]; then
+    SHELL=/bin/bash VSCODE_GPUI_EXTENSIONS=$REF/extensions timeout -k 5 120 native/target/release/code-gpui "$2/folder" \
+      --user-data-dir "$2/udd" --extensionDevelopmentPath="$2/ext" "${@:3}"
+  else
+    VSCODE_DEV=1 NODE_ENV=development timeout -k 5 120 "$REF/.build/electron/Code - OSS.app/Contents/MacOS/Code - OSS" "$REF" "$2/folder" \
+      --user-data-dir "$2/udd" --disable-extensions --disable-workspace-trust --extensionDevelopmentPath="$2/ext" "${@:3}"
+  fi
+  # Electron leaves its helper processes behind when timeout ends it.
+  pkill -KILL -f "$2/udd" || true
+}
+
+run_check() { # <check> <port|ref>
+  local dir
+  dir=$(mktemp -d) && mkdir -p "$dir/udd" "$dir/folder" && cp -R "port/tools/settings-checks/$1" "$dir/ext"
+  export CHECK_DIR=$dir CHECK_USER_DIR=$dir/udd CHECK_OUT=$OUT/$1-$2.out CHECK_IDS=$OUT/$1-$2.ids
+  if [[ $1 == state ]]; then
+    # Two runs on one user data dir; the extension writes its state on activation, the window is closed by timeout.
+    for _ in 1 2; do launch "$2" "$dir" >>"$OUT/$1-$2.log" 2>&1 & sleep 25; pkill -KILL -f "$dir/udd"; wait; done
+    find "$dir/udd/User" -name state.vscdb | sort | while read -r db; do
+      echo "== ${db#$dir/udd/}" | sed -E 's/[0-9a-f]{32}/<id>/'
+      sqlite3 "$db" "select key, value from ItemTable where key like '%state-check%' or key like 'extensionKeys/%' order by key"
+    done >>"$CHECK_OUT"
+    awk '{ print ($1 == m ? "machineId kept" : "machineId new"), ($2 == s ? "sessionId kept" : "sessionId new"); m = $1; s = $2 }' "$CHECK_IDS" >>"$CHECK_OUT"
+  else
+    launch "$2" "$dir" --extensionTestsPath="$dir/ext/run.js" >"$OUT/$1-$2.log" 2>&1
+  fi
+  rm -rf "$dir"
+}
+
+for check in "${checks[@]}"; do
+  run_check "$check" port
+  run_check "$check" ref
+  if diff "$OUT/$check-port.out" "$OUT/$check-ref.out" >"$OUT/$check.diff"; then
+    echo "$check: same as the reference"
+  else
+    echo "$check: differs from the reference ($OUT/$check.diff)"
+    cat "$OUT/$check.diff"
+  fi
+done
