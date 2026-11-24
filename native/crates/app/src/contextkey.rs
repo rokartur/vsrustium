@@ -568,7 +568,7 @@ fn same_value_zero(a: &Value, b: &Value) -> bool {
 
 // JavaScript value semantics the expressions rely on.
 
-fn truthy(value: Option<&Value>) -> bool {
+pub fn truthy(value: Option<&Value>) -> bool {
     match value {
         None | Some(Value::Null) => false,
         Some(Value::Bool(value)) => *value,

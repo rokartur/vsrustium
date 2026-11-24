@@ -28,6 +28,8 @@ pub enum MenuId {
     ExplorerContext,
     EditorContext,
     EditorTitleContext,
+    TitleBarContext,
+    TitleBarTitleContext,
     #[cfg(test)]
     Test,
 }
@@ -123,6 +125,14 @@ const WORKBENCH_MENUS: [Row; 38] = [
 /// themes.contribution.ts: `ThemesSubMenu` items; the icon theme pickers are not ported.
 const THEMES_SUBMENU: [(&str, &str, f64); 1] = [("workbench.action.selectTheme", "Color Theme", 1.)];
 
+/// titlebarActions.ts `ToggleTitleBarConfigAction`s of the title bar parts the port draws: setting, title, order,
+/// `when`. Editor Actions, Notifications and Integrated Browser toggle parts the port has not.
+pub const TITLE_BAR_TOGGLES: [(&str, &str, f64, &str); 3] = [
+    ("window.commandCenter", "Command Center", 1., "!isCompactTitleBar"),
+    ("workbench.navigationControl.enabled", "Navigation Controls", 2., "!isCompactTitleBar && config.window.commandCenter"),
+    ("workbench.layoutControl.enabled", "Layout Controls", 4., ""),
+];
+
 /// `MenuRegistry` with the workbench's items.
 pub fn workbench_menus() -> Vec<MenuItem> {
     let mut items = Vec::new();
@@ -140,6 +150,13 @@ pub fn workbench_menus() -> Vec<MenuItem> {
     for (id, title, order) in THEMES_SUBMENU {
         let entry = Entry::Command { id: id.to_string(), precondition: None, toggled: None, alt: None };
         items.push(MenuItem { menu: MenuId::ThemesSubMenu, entry, title: title.to_string(), group: String::new(), order, when: None });
+    }
+    for (setting, title, order, when) in TITLE_BAR_TOGGLES {
+        for menu in [MenuId::TitleBarContext, MenuId::TitleBarTitleContext] {
+            let toggled = Some(Expr::has(&format!("config.{setting}")));
+            let entry = Entry::Command { id: format!("toggle.{setting}"), precondition: None, toggled, alt: None };
+            items.push(MenuItem { menu, entry, title: title.to_string(), group: "2_config".into(), order, when: Expr::deserialize(when) });
+        }
     }
     items
 }

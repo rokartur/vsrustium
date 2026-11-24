@@ -295,7 +295,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/parts/sessions | workbench part | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/parts/sidebar | workbench part | ported | Explorer only (title, folder section, collapsed Outline and Timeline), shown when a folder is open; pixel-check (port/results/pixels.md, milestone 3): chevron and label edge pixels only |
 | workbench/parts/statusbar | workbench part | ported | no-folder and folder colors (remote, problems, bell), editor items Ln/Col, indentation, encoding, EOL, language with tabular-nums; entries from extensions not shown; pixel-check (port/results/pixels.md): text box widths round up to whole px |
-| workbench/parts/titlebar | workbench part | ported | active window only (command center with the folder name, nav and layout actions; no menus, no clicks); pixel-check (port/results/pixels.md): blending rounding and glyph edges only |
+| workbench/parts/titlebar | workbench part | ported | active window only (command center with the folder name, nav and layout actions; no command center click yet); context menus of the bar, the title and the command center with the Command Center, Navigation Controls and Layout Controls toggles and the path items (cargo test -p app title_bar); pixel-check file and titlebar (port/results/pixels.md): blending rounding and glyph edges only |
 | workbench/parts/views | workbench part | stub | pane headers drawn statically (workbench.rs section_header): no collapse, resize or view actions |
 | workbench/services/accessibility | workbench service | todo |  |
 | workbench/services/accounts | workbench service | removed | no sign-in/AI by decision (port/notes.md); not ported |
@@ -317,7 +317,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/commands | workbench service | ported | commands.rs: onCommand activation before execute; api-tests commands suite |
 | workbench/services/configuration | workbench service | ported | cargo test -p config service (configurationEditing.test.ts write cases, workspace file layer and folder scopes); port/tools/settings-check configuration |
 | workbench/services/configurationResolver | workbench service | todo |  |
-| workbench/services/contextmenu | workbench service | ported | custom context menu (`window.menuStyle` inherit with the custom title bar): items, groups, keybindings, alt commands, focus by pointer and keys, Enter/Space, 100ms click guard, look compared with 1.147.0 (port/results/contextmenu.md, cargo test -p app explorer_actions); no submenus yet (no menu has one), no native menu style |
+| workbench/services/contextmenu | workbench service | ported | custom context menu (`window.menuStyle` inherit with the custom title bar): items, checks, groups, keybindings, alt commands, focus by pointer and keys, Enter/Space, 100ms click guard, look compared with 1.147.0 (port/results/contextmenu.md, cargo test -p app explorer_actions); no submenus yet (no menu has one), no native menu style |
 | workbench/services/dataChannel | workbench service | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | workbench/services/decorations | workbench service | todo |  |
 | workbench/services/dialogs | workbench service | todo |  |

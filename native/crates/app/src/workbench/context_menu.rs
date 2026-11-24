@@ -46,7 +46,8 @@ pub struct ContextMenu {
     /// `menuActionOptions.arg` and `getActionsContext`, passed to the command that runs.
     args: Vec<Value>,
     focus: FocusHandle,
-    pub(super) focus_to_return: FocusHandle,
+    /// None when nothing had focus, as a title bar right-click in a window without editors.
+    pub(super) focus_to_return: Option<FocusHandle>,
     /// Counts the menus shown; a new count restarts the open animation.
     shown: usize,
     _enable_mouse_up: Task<()>,
@@ -59,6 +60,10 @@ impl Workbench {
     /// Focus returns to the element focused before, when the menu hides.
     pub(super) fn show_context_menu(&mut self, menu: MenuId, context: &HashMap<String, Value>, anchor: Bounds<Pixels>, args: Vec<Value>, window: &mut Window, cx: &mut Context<Self>) {
         let actions = menu_actions(&self.menus, menu, context);
+        self.show_context_menu_actions(actions, context, anchor, args, window, cx);
+    }
+
+    pub(super) fn show_context_menu_actions(&mut self, actions: Vec<MenuAction>, context: &HashMap<String, Value>, anchor: Bounds<Pixels>, args: Vec<Value>, window: &mut Window, cx: &mut Context<Self>) {
         if actions.is_empty() {
             return;
         }
@@ -74,7 +79,7 @@ impl Workbench {
         let width = menu_width(&actions, &keybindings, window);
         let viewport = window.viewport_size();
         let origin = layout2d(Size { width: f32::from(viewport.width), height: f32::from(viewport.height) }, Size { width, height: menu_height(&actions) }, anchor_rect(anchor), LayoutAnchorPosition::Before);
-        let focus_to_return = window.focused(cx).expect("the menu's owner takes focus before showing it");
+        let focus_to_return = window.focused(cx);
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
         let enable_mouse_up = cx.spawn_in(window, async |workbench, cx| {
@@ -116,7 +121,10 @@ impl Workbench {
     pub(super) fn hide_context_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(menu) = self.context_menu.take() else { return };
         if menu.focus.is_focused(window) {
-            window.focus(&menu.focus_to_return, cx);
+            match &menu.focus_to_return {
+                Some(focus) => window.focus(focus, cx),
+                None => window.blur(cx),
+            }
         }
         cx.notify();
     }
@@ -219,7 +227,7 @@ impl Workbench {
     }
 
     fn context_menu_item(&self, menu: &ContextMenu, index: usize, action: &MenuAction, cx: &mut Context<Self>) -> AnyElement {
-        let MenuAction::Command { id, title, enabled, alt, .. } = action else {
+        let MenuAction::Command { id, title, enabled, checked, alt } = action else {
             // `.action-label.separator`: the bar's full width, 5px margins and a 1px bottom border.
             return div().my(px(5.)).border_b_1().border_color(self.color("menu.separatorBackground")).into_any_element();
         };
@@ -266,6 +274,14 @@ impl Workbench {
             // High contrast focused items have no background, only the outline.
             .when(selected && !high_contrast, |item| item.bg(self.color("list.hoverBackground")).when_some(self.theme.color("list.hoverForeground"), |item, color| item.text_color(color)))
             .children(outline)
+            // `.menu-item-check`: the `menu-selection` codicon centered in the label's left 2em padding.
+            .when(*checked, |item| {
+                let color = match selected {
+                    true => self.theme.color("list.hoverForeground"),
+                    false => None,
+                };
+                item.child(self.icon("check", LABEL_PADDING, FONT_SIZE, color.unwrap_or_else(|| self.foreground_or("menu.foreground"))).absolute().left_0().top_0().h_full())
+            })
             .child(
                 div()
                     .flex_1()

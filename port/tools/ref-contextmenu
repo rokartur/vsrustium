@@ -2,7 +2,7 @@
 // Opens the reference's custom context menu on Explorer rows through CDP and dumps what it shows: items, keybindings,
 // enablement, separators, the menu's box and computed styles, plus screenshots closed, open, hovered and keyboard-focused.
 // Usage: port/tools/ref-contextmenu <out-dir> <row label>...   ("" right-clicks the empty area below the rows;
-// "editor" the editor text, "tab" the first tab, "titlebar" the empty title bar). Env REF, FOLDER, FILE as port/tools/ref-screenshot, THEME (default dark).
+// "editor" the editor text, "tab" the first tab, "titlebar" the empty title bar, "title" the window title). Env REF, FOLDER, FILE, SETTINGS as port/tools/ref-screenshot, THEME (default dark).
 import { Database } from 'bun:sqlite';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -30,6 +30,7 @@ writeFileSync(join(userData, 'User/settings.json'), JSON.stringify({
 	'chat.disableAIFeatures': true,
 	'security.workspace.trust.enabled': false,
 	'workbench.secondarySideBar.defaultVisibility': 'hidden',
+	...JSON.parse(process.env.SETTINGS || '{}'),
 	'editor.minimap.enabled': false,
 }));
 mkdirSync(join(userData, 'User/globalStorage'));
@@ -66,6 +67,8 @@ try {
 			} else if (target === 'titlebar') {
 				const bar = document.querySelector('.part.titlebar').getBoundingClientRect();
 				return { x: bar.left + bar.width * 0.75, y: bar.top + bar.height / 2 };
+			} else if (target === 'title') {
+				element = document.querySelector('.titlebar-center .window-title');
 			} else if (target === '') {
 				const rows = [...document.querySelectorAll('.explorer-folders-view .monaco-list-row')];
 				const last = rows[rows.length - 1].getBoundingClientRect();
