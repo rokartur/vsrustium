@@ -156,6 +156,20 @@ pub fn find_matches(lines: &[String], params: &SearchParams, search_range: Range
     result
 }
 
+/// `TextModel.findMatches` over several ranges: sorted, overlapping ones merged, `limit` per range.
+pub fn find_matches_in_ranges(lines: &[String], params: &SearchParams, mut ranges: Vec<Range<Position>>, capture_matches: bool, limit: usize) -> Vec<FindMatch> {
+    ranges.sort_by_key(|range| range.start);
+    let mut merged: Vec<Range<Position>> = Vec::new();
+    for range in ranges {
+        match merged.last_mut() {
+            // `Range.areIntersecting`: ranges that only touch stay apart.
+            Some(last) if range.start < last.end => last.end = last.end.max(range.end),
+            _ => merged.push(range),
+        }
+    }
+    merged.into_iter().flat_map(|range| find_matches(lines, params, range, capture_matches, limit)).collect()
+}
+
 /// `_doFindMatchesMultiline`: matches in the range's text, lines joined by "\n".
 fn find_matches_multiline(lines: &[String], search_range: Range<Position>, data: &SearchData, capture_matches: bool, limit: usize, result: &mut Vec<FindMatch>) {
     let text = MultilineText::new(lines, search_range.start, search_range.end);
