@@ -9,6 +9,7 @@ use serde_json::Value;
 
 use crate::contextkey::{Context, Expr};
 use crate::filters::{Matches, matches_base_contiguous_sub_string, matches_words, try_normalize_to_base};
+use crate::keybindings::ExtensionSource;
 use crate::tf_idf::{Document, TfIdfCalculator, normalize_scores};
 
 const TFIDF_THRESHOLD: f64 = 0.5;
@@ -186,6 +187,8 @@ pub struct MenuItem {
     pub category: Option<String>,
     pub when: Option<Expr>,
     pub precondition: Option<Expr>,
+    /// The extension that contributed the command (`ICommandAction.source`).
+    pub source: Option<ExtensionSource>,
 }
 
 /// The workbench's palette items of the commands this port runs, with upstream's titles and categories:
@@ -225,9 +228,10 @@ pub fn menu(extensions: &[ScannedExtension]) -> Vec<MenuItem> {
             category: category.map(str::to_string),
             when: when.and_then(Expr::deserialize),
             precondition: precondition.and_then(Expr::deserialize),
+            source: None,
         })
         .collect();
-    let commands: Vec<MenuItem> = extensions.iter().flat_map(|extension| contributed_commands(&extension.description)).collect();
+    let commands: Vec<MenuItem> = extensions.iter().flat_map(contributed_commands).collect();
     for extension in extensions {
         for entry in extension.description["contributes"]["menus"]["commandPalette"].as_array().into_iter().flatten() {
             // menusExtensionPoint.ts skips entries of commands nobody contributes.
@@ -245,8 +249,8 @@ pub fn menu(extensions: &[ScannedExtension]) -> Vec<MenuItem> {
 }
 
 /// `contributes.commands` as `MenuRegistry.addCommand` gets them: the `enablement` is the precondition.
-fn contributed_commands(description: &Value) -> Vec<MenuItem> {
-    let commands = match &description["contributes"]["commands"] {
+fn contributed_commands(extension: &ScannedExtension) -> Vec<MenuItem> {
+    let commands = match &extension.description["contributes"]["commands"] {
         Value::Array(commands) => commands.iter().collect(),
         command @ Value::Object(_) => vec![command],
         _ => Vec::new(),
@@ -261,6 +265,7 @@ fn contributed_commands(description: &Value) -> Vec<MenuItem> {
             category: localized(&command["category"]),
             when: None,
             precondition: command["enablement"].as_str().and_then(Expr::deserialize),
+            source: Some(ExtensionSource::of(extension)),
         });
     }
     items
@@ -286,7 +291,7 @@ pub fn enabled_commands(menu: &[MenuItem], context: &dyn Context) -> Vec<Command
 
 /// The `EditorAction`s of the active editor this port runs, by id, label and precondition (findController.ts,
 /// folding.ts, multicursor.ts, linesOperations.ts).
-const EDITOR_ACTIONS: &[(&str, &str, Option<&str>)] = &[
+pub const EDITOR_ACTIONS: &[(&str, &str, Option<&str>)] = &[
     ("editor.unfold", "Unfold", Some("foldingEnabled")),
     ("editor.unfoldRecursively", "Unfold Recursively", Some("foldingEnabled")),
     ("editor.fold", "Fold", Some("foldingEnabled")),
@@ -382,7 +387,7 @@ fn icon_length(text: &str) -> Option<usize> {
 }
 
 /// `or(matchesBaseContiguousSubString, matchesWords)`.
-fn word_filter(filter: &str, label: &str) -> Option<Matches> {
+pub fn word_filter(filter: &str, label: &str) -> Option<Matches> {
     matches_base_contiguous_sub_string(filter, label).or_else(|| matches_words(filter, label))
 }
 

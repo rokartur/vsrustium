@@ -71,13 +71,16 @@ impl Chord {
         caps
     }
 
-    #[cfg(test)]
     pub fn aria_label(&self) -> String {
         let key = if self.is_duplicate_modifier_case() { "" } else { KEY_CODES[self.key].0 };
         self.with_modifiers(["Control", "Shift", "Option", "Command"], "+", key)
     }
 
-    #[cfg(test)]
+    /// `keyAriaLabel` of a `ResolvedChord`.
+    pub fn key_aria_label(&self) -> &'static str {
+        KEY_CODES[self.key].0
+    }
+
     pub fn user_settings_label(&self) -> String {
         let key = if self.is_duplicate_modifier_case() { String::new() } else { KEY_CODES[self.key].1.to_lowercase() };
         self.with_modifiers(["ctrl", "shift", "alt", "cmd"], "+", &key)
@@ -152,17 +155,14 @@ fn parse_chord(input: &str) -> (Option<Chord>, String) {
 }
 
 /// Labels of a whole keybinding, chords separated by a space (`ModifierLabelProvider.toLabel`).
-// The aria and user settings labels wait for accessibility and the Keybindings editor; upstream tests cover them now.
 pub fn label(chords: &[Chord]) -> String {
     chords.iter().map(Chord::label).collect::<Vec<_>>().join(" ")
 }
 
-#[cfg(test)]
 pub fn aria_label(chords: &[Chord]) -> String {
     chords.iter().map(Chord::aria_label).collect::<Vec<_>>().join(" ")
 }
 
-#[cfg(test)]
 pub fn user_settings_label(chords: &[Chord]) -> String {
     chords.iter().map(Chord::user_settings_label).collect::<Vec<_>>().join(" ")
 }
@@ -178,6 +178,21 @@ pub struct Item {
     pub args: Option<Value>,
     pub when: Option<Expr>,
     pub is_default: bool,
+    /// The extension that contributed a default keybinding (`extensionId`).
+    pub extension: Option<ExtensionSource>,
+}
+
+/// The source of an extension's keybinding: its identifier and the `displayName` the Keyboard Shortcuts editor shows.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ExtensionSource {
+    pub id: String,
+    pub display_name: Option<String>,
+}
+
+impl ExtensionSource {
+    pub fn of(extension: &ScannedExtension) -> ExtensionSource {
+        ExtensionSource { id: extension.id.clone(), display_name: extension.description["displayName"].as_str().map(str::to_string) }
+    }
 }
 
 impl Item {
@@ -185,7 +200,7 @@ impl Item {
         let bubble = command.starts_with('^');
         let command = command.strip_prefix('^').unwrap_or(command).to_string();
         let chords = if keybinding.iter().any(Chord::is_modifier_key) { Vec::new() } else { keybinding.clone() };
-        Item { keybinding, chords, bubble, command, args, when, is_default }
+        Item { keybinding, chords, bubble, command, args, when, is_default, extension: None }
     }
 }
 
@@ -375,6 +390,7 @@ fn extension_keybindings(extension: &ScannedExtension, enablements: &HashMap<&st
         _ => return Vec::new(),
     };
     let base = if extension.description["isBuiltin"] == true { 300 } else { 400 };
+    let source = ExtensionSource::of(extension);
     let mut items = Vec::new();
     for (index, rule) in rules.into_iter().enumerate() {
         let Some(key) = rule.get("mac").or_else(|| rule.get("key")).and_then(Value::as_str) else { continue };
@@ -384,7 +400,8 @@ fn extension_keybindings(extension: &ScannedExtension, enablements: &HashMap<&st
             (Some(when), Some(enablement)) => Expr::and(vec![Some(enablement), Some(when)]),
             (when, enablement) => when.or(enablement),
         };
-        items.push((base + index as u64 + 1, Item::new(parse_keybinding(key), command, rule.get("args").cloned(), when, true)));
+        let item = Item::new(parse_keybinding(key), command, rule.get("args").cloned(), when, true);
+        items.push((base + index as u64 + 1, Item { extension: Some(source.clone()), ..item }));
     }
     items
 }
