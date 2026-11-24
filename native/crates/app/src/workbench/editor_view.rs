@@ -16,12 +16,14 @@ use gpui::{
 
 pub(super) mod sticky_scroll_view;
 
+use files::encoding::SUPPORTED_ENCODINGS;
+
 use super::Workbench;
 use super::minimap_view::minimap_info;
 use crate::brackets::BracketRange;
 use crate::editor::minimap::MinimapLayoutInfo;
 use crate::editor::{
-    HORIZONTAL_SCROLLBAR_HEIGHT, LINE_HEIGHT, OpenEditor, Position, Reveal, Scrollbar, Selection, VERTICAL_SCROLLBAR_WIDTH, VerticalReveal, Viewport, column_at_visible, commands,
+    HORIZONTAL_SCROLLBAR_HEIGHT, Indentation, LINE_HEIGHT, OpenEditor, Position, Reveal, Scrollbar, Selection, VERTICAL_SCROLLBAR_WIDTH, VerticalReveal, Viewport, column_at_visible, commands,
     expand_tabs, visible_column, word_at,
 };
 use crate::editor::folding::FoldDecoration;
@@ -567,7 +569,7 @@ impl Workbench {
                     content = content.child(div().absolute().top_0().h_full().left(px(left)).w(px(right - left)).bg(colors.selection));
                 }
                 for level in 0..editor.guides[index] {
-                    let x = (level * editor.document.indentation.tab_size) as f32 * char_width;
+                    let x = (level * editor.document.indentation.indent_size()) as f32 * char_width;
                     content = content.child(div().absolute().top_0().left(px(x)).w(px(1.)).h_full().bg(colors.guide));
                 }
                 // foldingDecorations.ts COLLAPSED_HIGHLIGHTED_VISUAL_DECORATION: .folded-background over the whole line.
@@ -964,20 +966,22 @@ impl Workbench {
     pub(super) fn editor_status_items(&self, foreground: Rgba, window: &Window, cx: &mut Context<Self>) -> Option<Div> {
         let editor = self.editors.active()?;
         let document = &editor.document;
-        let indentation = match document.indentation.insert_spaces {
-            true => format!("Spaces: {}", document.indentation.tab_size),
-            false => format!("Tab Size: {}", document.indentation.tab_size),
+        let Indentation { tab_size, insert_spaces, .. } = document.indentation;
+        let indent_size = document.indentation.indent_size();
+        let indentation = match (insert_spaces, tab_size == indent_size) {
+            (true, true) => format!("Spaces: {indent_size}"),
+            (true, false) => format!("Spaces: {indent_size} (Tab Size: {tab_size})"),
+            (false, _) => format!("Tab Size: {tab_size}"),
         };
-        let encoding = if document.encoding == "utf8bom" { "UTF-8 with BOM" } else { "UTF-8" };
+        let encoding = SUPPORTED_ENCODINGS.iter().find(|supported| supported.id == document.encoding).map_or(document.encoding.as_str(), |supported| supported.label_short);
         let eol = if document.eol == "\r\n" { "CRLF" } else { "LF" };
-        // editorStatus.ts entries: tooltip and command.
-        // shortcut: the indentation, encoding, end of line and language commands are not ported yet, their items do nothing.
+        // editorStatus.ts entries: text, tooltip and command.
         let items = [
-            (selection_label(editor), "Go to Line/Column", Some("workbench.action.gotoLine")),
-            (indentation, "Select Indentation", None),
-            (encoding.into(), "Select Encoding", None),
-            (eol.into(), "Select End of Line Sequence", None),
-            (self.languages.name(&document.language_id).to_string(), "Select Language Mode", None),
+            (selection_label(editor), "Go to Line/Column", "workbench.action.gotoLine"),
+            (indentation, "Select Indentation", super::editor_status::CHANGE_INDENTATION),
+            (encoding.into(), "Select Encoding", "workbench.action.editor.changeEncoding"),
+            (eol.into(), "Select End of Line Sequence", "workbench.action.editor.changeEOL"),
+            (self.languages.name(&document.language_id).to_string(), "Select Language Mode", "workbench.action.editor.changeLanguageMode"),
         ];
         // GPUI rounds a text box up to a whole px, Chrome keeps the fraction: the shaped width keeps the items in place.
         let mut style = window.text_style();
@@ -1000,12 +1004,10 @@ impl Workbench {
                 .child(label)
                 .child(hover)
                 // statusbarItem.ts executeCommand on click.
-                .when_some(command, |item, command| {
-                    item.on_click(cx.listener(move |workbench, _, window, cx| {
-                        let outcome = workbench.execute_command(command, Vec::new(), window, cx);
-                        super::quick_access::show_failure(command.to_owned(), outcome, window, cx);
-                    }))
-                })
+                .on_click(cx.listener(move |workbench, _, window, cx| {
+                    let outcome = workbench.execute_command(command, Vec::new(), window, cx);
+                    super::quick_access::show_failure(command.to_owned(), outcome, window, cx);
+                }))
         });
         Some(div().h_full().flex().text_color(foreground).children(items))
     }

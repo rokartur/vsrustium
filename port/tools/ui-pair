@@ -5,7 +5,7 @@
 // default ~/Developer/vscode-ref; env FOLDER = folder to open, default a copy of port/fixtures/workspace;
 // env FILE = file to open, relative to the folder; env ONLY = "reference" or "port" to run one of them; env ARGS = more arguments for both, space separated)
 // Steps, in window points (both windows are 1024x768):
-//   {"click": [x, y]}  {"click": [x, y], "modifier": ["cmd"]}  {"doubleClick": [x, y]}  {"key": "return"}
+//   {"click": [x, y]}  {"click": [x, y], "modifier": ["cmd"]}  {"click": [x, y], "foreground": true}  {"doubleClick": [x, y]}  {"key": "return"}
 //   {"hotkey": ["cmd", "c"]}  {"type": "text"}  {"wait": ms}  {"shot": "name"}
 //   {"dragShot": [x1, y1, x2, y2], "shot": "name", "modifier": ["option"]}: a slow drag, captured while held
 // Shots land in <out-dir>/<reference|port>-<name>.png at 2x; a sheet on the window is captured as its own window.
@@ -86,7 +86,7 @@ async function run(app: string, pid: number) {
 	const at = (point: number[]) => ({ x: point[0] * 2, y: point[1] * 2 });
 	for (const step of steps) {
 		if (step.click) {
-			await cua('click', { ...target, ...at(step.click), modifier: step.modifier });
+			await cua('click', { ...target, ...at(step.click), modifier: step.modifier, delivery_mode: step.foreground ? 'foreground' : undefined });
 		} else if (step.doubleClick) {
 			await cua('double_click', { ...target, ...at(step.doubleClick) });
 		} else if (step.key) {

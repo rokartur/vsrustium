@@ -299,8 +299,7 @@ pub fn delete_left_range(lines: &[String], selection: Selection, indentation: In
     let indent_end = first_non_whitespace(&text.chars().collect::<Vec<_>>()).unwrap_or(text.chars().count());
     if position.column > 0 && position.column <= indent_end {
         let from = super::visible_column(text, position.column, indentation.tab_size);
-        // indentSize follows tabSize (editor.indentSize "tabSize").
-        let to = (from - 1) - (from - 1) % indentation.tab_size;
+        let to = (from - 1) - (from - 1) % indentation.indent_size();
         return (Position::new(position.line, column_from_visible(text, to, indentation.tab_size)), position);
     }
     (left(lines, position), position)
@@ -382,11 +381,12 @@ pub fn delete_all_right_range(lines: &[String], selection: Selection) -> (Positi
 
 /// `normalizeIndentation`: leading whitespace rewritten in the editor's indent unit.
 pub fn normalize_indentation(indent: &str, indentation: Indentation) -> String {
-    let width = super::visible_column(indent, indent.chars().count(), indentation.tab_size);
+    let size = indentation.indent_size();
+    let width = super::visible_column(indent, indent.chars().count(), size);
     if indentation.insert_spaces {
         return " ".repeat(width);
     }
-    "\t".repeat(width / indentation.tab_size) + &" ".repeat(width % indentation.tab_size)
+    "\t".repeat(width / size) + &" ".repeat(width % size)
 }
 
 /// `_replaceJumpToNextIndent`: spaces up to the next indent stop, or a tab.
@@ -395,14 +395,14 @@ pub fn tab_text(line: &str, column: usize, indentation: Indentation) -> String {
         return "\t".into();
     }
     let visible = super::visible_column(line, column, indentation.tab_size);
-    " ".repeat(indentation.tab_size - visible % indentation.tab_size)
+    " ".repeat(indentation.indent_size() - visible % indentation.indent_size())
 }
 
 /// `ShiftCommand.shiftIndent`/`unshiftIndent`: the indentation of a line whose content starts at
 /// visible column `visible`, moved one stop right or left.
 /// shortcut: the miss-aligned indent heuristic that asks the language's onEnter rules is not ported.
 pub fn shifted_indent(visible: usize, indentation: Indentation, unshift: bool) -> String {
-    let size = indentation.tab_size;
+    let size = if indentation.insert_spaces { indentation.indent_size() } else { indentation.tab_size };
     let stop = match unshift {
         true if visible == 0 => 0,
         true => (visible - 1) - (visible - 1) % size,
@@ -444,7 +444,7 @@ mod tests {
         Position::new(line, column)
     }
 
-    const SPACES_4: Indentation = Indentation { tab_size: 4, insert_spaces: true };
+    const SPACES_4: Indentation = Indentation { tab_size: 4, indent_size: None, insert_spaces: true };
 
     #[test]
     fn normalize_merges_overlapping_cursors_into_the_older_one() {
@@ -557,7 +557,7 @@ mod tests {
 
     #[test]
     fn shifts_indent_to_the_next_or_previous_stop() {
-        let tabs = Indentation { tab_size: 4, insert_spaces: false };
+        let tabs = Indentation { tab_size: 4, indent_size: None, insert_spaces: false };
         assert_eq!(shift_line_edit("  x", SPACES_4, false, false), Some((2, "    ".into())));
         assert_eq!(shift_line_edit("      x", SPACES_4, true, false), Some((6, "    ".into())));
         assert_eq!(shift_line_edit("x", SPACES_4, true, false), None);

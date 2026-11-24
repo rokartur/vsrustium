@@ -332,13 +332,13 @@ fn text_editor_add_data(editor: &OpenEditor, visible_lines: &[(usize, usize)]) -
     })
 }
 
-/// `IResolvedTextEditorConfiguration`: TextEditorCursorStyle.Line, RenderLineNumbersType.On; indentSize follows tabSize by default.
+/// `IResolvedTextEditorConfiguration`: TextEditorCursorStyle.Line, RenderLineNumbersType.On.
 fn options(editor: &OpenEditor) -> Value {
     let indentation = editor.document.indentation;
     json!({
         "tabSize": indentation.tab_size,
-        "indentSize": indentation.tab_size,
-        "originalIndentSize": "tabSize",
+        "indentSize": indentation.indent_size(),
+        "originalIndentSize": indentation.indent_size.map_or(json!("tabSize"), |size| json!(size)),
         "insertSpaces": indentation.insert_spaces,
         "cursorStyle": 1,
         "lineNumbers": 1,
@@ -409,7 +409,7 @@ mod tests {
             eol: "\n",
             encoding: "utf8".into(),
             language_id: language_id.into(),
-            indentation: Indentation { tab_size: 4, insert_spaces: true },
+            indentation: Indentation { tab_size: 4, indent_size: None, insert_spaces: true },
             off_side: false,
             folding_markers: None,
             block_comment: None,

@@ -191,8 +191,8 @@ pub struct MenuItem {
 /// The workbench's palette items of the commands this port runs, with upstream's titles and categories:
 /// `f1: true` actions and `appendToCommandPalette` (fileActions.contribution.ts), undo/redo/select all
 /// (editorExtensions.ts), clipboard.ts, commandsQuickAccess.ts, gotoLineQuickAccess.ts, preferences.contribution.ts, themes.contribution.ts,
-/// stickyScrollActions.ts, mainThreadFileSystemEventService.ts. Each is the id, title, category, `when` and `precondition`.
-const WORKBENCH_ITEMS: [(&str, &str, Option<&str>, Option<&str>, Option<&str>); 19] = [
+/// stickyScrollActions.ts, mainThreadFileSystemEventService.ts, editorStatus.ts. Each is the id, title, category, `when` and `precondition`.
+const WORKBENCH_ITEMS: [(&str, &str, Option<&str>, Option<&str>, Option<&str>); 22] = [
     ("workbench.action.showCommands", "Show All Commands", None, None, None),
     ("workbench.action.gotoLine", "Go to Line/Column...", None, None, None),
     ("workbench.action.gotoOffset", "Go to Offset...", None, None, None),
@@ -203,6 +203,9 @@ const WORKBENCH_ITEMS: [(&str, &str, Option<&str>, Option<&str>, Option<&str>); 
     ("workbench.action.closeAllEditors", "Close All Editors", Some("View"), None, None),
     ("workbench.action.openGlobalKeybindingsFile", "Open Keyboard Shortcuts (JSON)", Some("Preferences"), None, None),
     ("workbench.action.selectTheme", "Color Theme", Some("Preferences"), None, None),
+    ("workbench.action.editor.changeLanguageMode", "Change Language Mode", None, None, Some("!notebookEditorFocused")),
+    ("workbench.action.editor.changeEOL", "Change End of Line Sequence", None, None, None),
+    ("workbench.action.editor.changeEncoding", "Change File Encoding", None, None, None),
     ("files.participants.resetChoice", "Reset choice for 'File operation needs preview'", None, None, None),
     ("undo", "Undo", None, None, None),
     ("redo", "Redo", None, None, None),
@@ -285,7 +288,7 @@ pub fn enabled_commands(menu: &[MenuItem], context: &dyn Context) -> Vec<Command
 }
 
 /// The `EditorAction`s of the active editor this port runs, by id, label and precondition (findController.ts,
-/// folding.ts, multicursor.ts, linesOperations.ts).
+/// folding.ts, multicursor.ts, linesOperations.ts, indentation.ts).
 const EDITOR_ACTIONS: &[(&str, &str, Option<&str>)] = &[
     ("editor.unfold", "Unfold", Some("foldingEnabled")),
     ("editor.unfoldRecursively", "Unfold Recursively", Some("foldingEnabled")),
@@ -318,6 +321,13 @@ const EDITOR_ACTIONS: &[(&str, &str, Option<&str>)] = &[
     ("editor.action.insertCursorAtEndOfEachLineSelected", "Add Cursors to Line Ends", None),
     ("editor.action.addCursorsToBottom", "Add Cursors to Bottom", None),
     ("editor.action.addCursorsToTop", "Add Cursors to Top", None),
+    ("editor.action.indentationToSpaces", "Convert Indentation to Spaces", Some("!editorReadonly")),
+    ("editor.action.indentationToTabs", "Convert Indentation to Tabs", Some("!editorReadonly")),
+    ("editor.action.indentUsingTabs", "Indent Using Tabs", None),
+    ("editor.action.indentUsingSpaces", "Indent Using Spaces", None),
+    ("editor.action.changeTabDisplaySize", "Change Tab Display Size", None),
+    ("editor.action.detectIndentation", "Detect Indentation from Content", None),
+    ("editor.action.trimTrailingWhitespace", "Trim Trailing Whitespace", Some("!editorReadonly")),
     ("deleteAllLeft", "Delete All Left", Some("!editorReadonly")),
     ("deleteAllRight", "Delete All Right", Some("!editorReadonly")),
     ("actions.find", "Find", Some("editorFocus || editorIsOpen")),

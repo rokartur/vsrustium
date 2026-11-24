@@ -4,6 +4,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use config::indentation::creation_options;
 use exthost::main_thread::serialized_error;
 use files::encoding;
 use gpui::{ClipboardItem, Context, Window};
@@ -12,7 +13,7 @@ use serde_json::{Value, json};
 use super::Workbench;
 use super::bulk_text_edits::document_end;
 use crate::editor::{
-    CursorEdit, EditReason, OpenEditor, Position, Replace, Selection, TextDocument, VerticalReveal, char_column, end_of, expand_snippet, guess_indentation, indent_guides,
+    CursorEdit, EditReason, OpenEditor, Position, Replace, Selection, TextDocument, VerticalReveal, char_column, end_of, expand_snippet,
     selections_after, text_between, uri_string, word_at,
 };
 use crate::host_sync::snapshot_id;
@@ -25,6 +26,7 @@ pub const HOST_REQUESTS: &[(&str, &str)] = &[
     ("MainThreadDocuments", "$trySaveDocument"),
     ("MainThreadDocuments", "$tryCreateDocument"),
     ("MainThreadDocumentContentProviders", "$onVirtualDocumentChange"),
+    ("MainThreadLanguages", "$changeLanguage"),
     ("MainThreadTextEditors", "$tryShowTextDocument"),
     ("MainThreadTextEditors", "$trySetSelections"),
     ("MainThreadTextEditors", "$tryRevealRange"),
@@ -53,6 +55,7 @@ impl Workbench {
             ("workbench", "isDirty") => uri_parts(arg(0)).map(|(scheme, path)| json!(self.editors.model(scheme, &path).is_some_and(|model| model.is_dirty()))),
             ("workbench", "hasModel") => uri_parts(arg(0)).map(|(scheme, path)| json!(self.editors.model(scheme, &path).is_some())),
             ("MainThreadDocumentContentProviders", "$onVirtualDocumentChange") => self.virtual_document_change(arg(0), arg(1), cx),
+            ("MainThreadLanguages", "$changeLanguage") => self.change_host_language(arg(0), arg(1), cx),
             ("workbench", "providerSaveText") => self.provider_save_bytes(arg(0)),
             ("workbench", "providerSaved") => self.provider_saved(arg(0), cx),
             ("MainThreadTextEditors", "$tryShowTextDocument") => self.try_show_text_document(arg(0), arg(1), window, cx),
@@ -141,7 +144,7 @@ impl Workbench {
 
     /// `setEncoding(encoding, EncodingMode.Decode)` of an open model: an untitled model takes the encoding, a clean
     /// file model is read again in it (`forceResolveFromFile`) and takes the encoding the read settled on.
-    fn set_model_encoding(&mut self, uri: &Value, scheme: &str, path: &Path, requested: &str, cx: &mut Context<Self>) -> Result<(), String> {
+    pub(super) fn set_model_encoding(&mut self, uri: &Value, scheme: &str, path: &Path, requested: &str, cx: &mut Context<Self>) -> Result<(), String> {
         let model = self.editors.model_mut(scheme, path).expect("the caller found the model");
         if model.document.encoding == requested {
             return Ok(());
@@ -169,6 +172,20 @@ impl Workbench {
             self.replace_clean_model_text(scheme, path, encoding::decode(&bytes, &resolved), cx);
         }
         Ok(())
+    }
+
+    /// mainThreadLanguages.ts `$changeLanguage`: a registered language for the model, opened when needed.
+    fn change_host_language(&mut self, uri: &Value, language_id: &Value, cx: &mut Context<Self>) -> HostResult {
+        let language_id = language_id.as_str().unwrap_or_default();
+        if !self.languages.is_registered(language_id) {
+            return Err(serialized_error(&format!("Unknown language id: {language_id}")));
+        }
+        let (scheme, ref path) = uri_parts(uri)?;
+        if self.editors.model(scheme, path).is_none() {
+            self.try_open_document(uri, &Value::Null, &Value::Null, false, cx)?;
+        }
+        self.set_model_language(scheme, path, language_id, cx);
+        Ok(Value::Null)
     }
 
     /// `$tryCreateDocument`: a new untitled model named `Untitled-<n>` with the first free n.
@@ -334,28 +351,35 @@ impl Workbench {
         Ok(Value::Null)
     }
 
-    /// `_setIndentConfiguration`: tab size and spaces, or "auto" to detect them again from the text.
+    /// `_setIndentConfiguration`: tab size, indent size and spaces, or "auto" to detect them again from the text.
     // shortcut: cursorStyle and lineNumbers are not applied; the editor draws a line cursor and line numbers only.
     fn set_host_options(&mut self, options: &Value, cx: &mut Context<Self>) -> HostResult {
         let editor = self.editors.active_mut().expect("checked by host_request");
         let before = editor.document.indentation;
-        let mut indentation = before;
-        if let Some(insert_spaces) = options["insertSpaces"].as_bool() {
-            indentation.insert_spaces = insert_spaces;
-        }
-        if let Some(tab_size) = options["tabSize"].as_u64() {
-            indentation.tab_size = tab_size as usize;
-        }
         if options["tabSize"] == json!("auto") || options["insertSpaces"] == json!("auto") {
-            indentation = guess_indentation(&editor.document.lines, indentation);
+            let created = creation_options(&self.settings.lock().unwrap().configuration, &editor.document.path, &editor.document.language_id);
+            let insert_spaces = options["insertSpaces"].as_bool().unwrap_or(created.insert_spaces);
+            let tab_size = options["tabSize"].as_u64().map_or(created.tab_size, |size| size as usize);
+            editor.detect_indentation(insert_spaces, tab_size);
+        } else {
+            let mut indentation = before;
+            if let Some(insert_spaces) = options["insertSpaces"].as_bool() {
+                indentation.insert_spaces = insert_spaces;
+            }
+            if let Some(tab_size) = options["tabSize"].as_u64() {
+                indentation.tab_size = tab_size as usize;
+            }
+            match &options["indentSize"] {
+                Value::Number(size) => indentation.indent_size = size.as_u64().map(|size| size as usize),
+                Value::String(size) if size == "tabSize" => indentation.indent_size = None,
+                _ => {}
+            }
+            editor.set_indentation(indentation);
         }
-        if indentation == before {
-            return Ok(Value::Null);
+        if editor.document.indentation != before {
+            self.host.send_options(editor);
+            cx.notify();
         }
-        editor.document.indentation = indentation;
-        editor.guides = indent_guides(&editor.document.lines, indentation.tab_size, indentation.tab_size, editor.document.off_side);
-        self.host.send_options(self.editors.active().expect("checked by host_request"));
-        cx.notify();
         Ok(Value::Null)
     }
 

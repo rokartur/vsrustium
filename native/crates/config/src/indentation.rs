@@ -8,8 +8,11 @@ use std::path::Path;
 use crate::configuration::{Configuration, Overrides};
 
 /// The `editor.*` values of `getCreationOptions(language, resource)` that decide a model's indentation.
+#[derive(PartialEq)]
 pub struct CreationOptions {
     pub tab_size: usize,
+    /// `editor.indentSize`; `None` for "tabSize", where it follows the tab size.
+    pub indent_size: Option<usize>,
     pub insert_spaces: bool,
     pub detect_indentation: bool,
 }
@@ -21,6 +24,7 @@ pub fn creation_options(configuration: &Configuration, resource: &Path, language
     let editor = configuration.get_value(Some("editor"), &overrides).expect("editor.* settings are registered");
     CreationOptions {
         tab_size: editor["tabSize"].as_f64().map_or(4, |size| size.clamp(1., 100.) as usize),
+        indent_size: editor["indentSize"].as_f64().map(|size| size.clamp(1., 100.) as usize),
         insert_spaces: editor["insertSpaces"].as_bool().unwrap_or(true),
         detect_indentation: editor["detectIndentation"].as_bool().unwrap_or(true),
     }

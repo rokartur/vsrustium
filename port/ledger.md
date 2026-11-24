@@ -32,7 +32,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | mainthread/MainThreadErrors | MainThread* shape (Rust side) | ported | session.rs writes `$onUnexpectedError` stacks to the port log (code-gpui stderr); seen in port/tools/api-tests api-folder.log |
 | mainthread/MainThreadConsole | MainThread* shape (Rust side) | ported | console.rs formats `$logExtensionHostMessage` like util.format to the port log; cargo test -p exthost console tests; mocha spec output in port/tools/api-tests logs |
 | mainthread/MainThreadLanguageFeatures | MainThread* shape (Rust side) | stub | session.rs answers undefined |
-| mainthread/MainThreadLanguages | MainThread* shape (Rust side) | stub | session.rs answers undefined |
+| mainthread/MainThreadLanguages | MainThread* shape (Rust side) | stub | $changeLanguage answered by host_requests.rs (setTextDocumentLanguage); $tokensAtPosition and the language status items answer undefined |
 | mainthread/MainThreadMessageService | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadOutputService | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadProgress | MainThread* shape (Rust side) | stub | session.rs answers undefined |
@@ -248,7 +248,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | editor/contrib/gpu | src/vs/editor/contrib | removed | Artur: internal infrastructure or developer tool with no 1:1 counterpart in the native port |
 | editor/contrib/hover | src/vs/editor/contrib | todo |  |
 | editor/contrib/inPlaceReplace | src/vs/editor/contrib | todo |  |
-| editor/contrib/indentation | src/vs/editor/contrib | todo |  |
+| editor/contrib/indentation | src/vs/editor/contrib | ported | indentation.ts actions (indent using spaces/tabs, tab display size, detect, convert to spaces/tabs) and trimTrailingWhitespaceCommand.ts with their upstream tests: cargo test -p app indentation editor_status; no auto-indent on type/paste (`editor.autoIndent`), no Reindent Lines (need onEnter/indentation rules) |
 | editor/contrib/inlayHints | src/vs/editor/contrib | todo |  |
 | editor/contrib/inlineCompletions | src/vs/editor/contrib | todo |  |
 | editor/contrib/inlineProgress | src/vs/editor/contrib | todo |  |
@@ -294,7 +294,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/parts/partGrid | workbench part | stub | fixed floating layout drawn with flex (workbench.rs), no grid, sashes or hidden parts; pixel-check (port/results/pixels.md): part bounds match at 1024x768 |
 | workbench/parts/sessions | workbench part | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/parts/sidebar | workbench part | ported | Explorer only (title, folder section, collapsed Outline and Timeline), shown when a folder is open; pixel-check (port/results/pixels.md, milestone 3): chevron and label edge pixels only |
-| workbench/parts/statusbar | workbench part | ported | no-folder and folder colors (remote, problems, bell), editor items Ln/Col, indentation, encoding, EOL, language with tabular-nums at their shaped widths and their upstream hovers; the selection item runs Go to Line, the other editor items run nothing yet; entries from extensions not shown |
+| workbench/parts/statusbar | workbench part | ported | no-folder and folder colors (remote, problems, bell), editor items Ln/Col, indentation, encoding, EOL, language with tabular-nums at their shaped widths and their upstream hovers; each item runs its editorStatus.ts command (Go to Line, indentation, encoding, EOL and language pickers: cargo test -p app editor_status); entries from extensions not shown |
 | workbench/parts/titlebar | workbench part | ported | active window only (command center with the folder name, nav and layout actions; a click on the command center opens Quick Open with the Go to File and Show and Run Commands help picks, port/results/command-center.md); context menus of the bar, the title and the command center with the Command Center, Navigation Controls and Layout Controls toggles and the path items (cargo test -p app title_bar); pixel-check file and titlebar (port/results/pixels.md): blending rounding and glyph edges only |
 | workbench/parts/views | workbench part | stub | pane headers drawn statically (workbench.rs section_header): no collapse, resize or view actions |
 | workbench/services/accessibility | workbench service | todo |  |

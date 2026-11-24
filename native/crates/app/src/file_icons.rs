@@ -79,7 +79,16 @@ impl FileIconTheme {
     /// sitting on the baseline of a line of `font_size` text. `None` when the theme has no glyph for the file.
     pub fn file_icon(&self, path: &Path, language_id: &str, kind: ThemeKind, font_size: f32, line_height: f32, foreground: Rgba) -> Option<Div> {
         let name = path.file_name()?.to_string_lossy().to_lowercase();
-        let definition = self.definitions.get(self.definition_id(&name, language_id, kind)?)?;
+        self.icon(&name, language_id, kind, font_size, line_height, foreground)
+    }
+
+    /// `getIconClassesForLanguageId`: the icon of the language alone, no file name or extension.
+    pub fn language_icon(&self, language_id: &str, kind: ThemeKind, font_size: f32, line_height: f32, foreground: Rgba) -> Option<Div> {
+        self.icon("", language_id, kind, font_size, line_height, foreground)
+    }
+
+    fn icon(&self, name: &str, language_id: &str, kind: ThemeKind, font_size: f32, line_height: f32, foreground: Rgba) -> Option<Div> {
+        let definition = self.definitions.get(self.definition_id(name, language_id, kind)?)?;
         let (outline, units_per_em) = definition.outline.as_ref()?;
         let glyph_size = font_size * self.font_scale;
         // Chrome rounds the font's ascent (1em for icon fonts, no descent) to whole pixels and centers it in the line.

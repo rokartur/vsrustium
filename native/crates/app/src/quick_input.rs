@@ -95,6 +95,8 @@ pub struct Item {
     pub icon_path: Option<IconPath>,
     /// `iconClasses` of a file (`getIconClasses(resource)`): the file icon theme draws its icon.
     pub file_icon: Option<PathBuf>,
+    /// `iconClasses` of a language (`getIconClassesForLanguageId`).
+    pub language_icon: Option<String>,
     pub buttons: Vec<Button>,
     /// The keybinding shown at the row's end (Command Palette): the key caps of each chord.
     pub keybinding: Vec<Vec<String>>,

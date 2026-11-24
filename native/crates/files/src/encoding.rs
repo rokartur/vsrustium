@@ -20,6 +20,67 @@ const UTF16LE_BOM: [u8; 2] = [0xFF, 0xFE];
 /// Bytes looked at to tell binary from UTF-16 (`ZERO_BYTE_DETECTION_BUFFER_MAX_LEN`).
 const ZERO_BYTE_DETECTION_BUFFER_MAX_LEN: usize = 512;
 
+/// An entry of `SUPPORTED_ENCODINGS`; the table is in upstream's `order`.
+pub struct SupportedEncoding {
+    pub id: &'static str,
+    pub label_long: &'static str,
+    pub label_short: &'static str,
+    pub encode_only: bool,
+    pub alias: Option<&'static str>,
+}
+
+pub const SUPPORTED_ENCODINGS: [SupportedEncoding; 49] = [
+    SupportedEncoding { id: "utf8", label_long: "UTF-8", label_short: "UTF-8", encode_only: false, alias: Some("utf8bom") },
+    SupportedEncoding { id: "utf8bom", label_long: "UTF-8 with BOM", label_short: "UTF-8 with BOM", encode_only: true, alias: Some("utf8") },
+    SupportedEncoding { id: "utf16le", label_long: "UTF-16 LE", label_short: "UTF-16 LE", encode_only: false, alias: None },
+    SupportedEncoding { id: "utf16be", label_long: "UTF-16 BE", label_short: "UTF-16 BE", encode_only: false, alias: None },
+    SupportedEncoding { id: "windows1252", label_long: "Western (Windows 1252)", label_short: "Windows 1252", encode_only: false, alias: None },
+    SupportedEncoding { id: "iso88591", label_long: "Western (ISO 8859-1)", label_short: "ISO 8859-1", encode_only: false, alias: None },
+    SupportedEncoding { id: "iso88593", label_long: "Western (ISO 8859-3)", label_short: "ISO 8859-3", encode_only: false, alias: None },
+    SupportedEncoding { id: "iso885915", label_long: "Western (ISO 8859-15)", label_short: "ISO 8859-15", encode_only: false, alias: None },
+    SupportedEncoding { id: "macroman", label_long: "Western (Mac Roman)", label_short: "Mac Roman", encode_only: false, alias: None },
+    SupportedEncoding { id: "cp437", label_long: "DOS (CP 437)", label_short: "CP437", encode_only: false, alias: None },
+    SupportedEncoding { id: "windows1256", label_long: "Arabic (Windows 1256)", label_short: "Windows 1256", encode_only: false, alias: None },
+    SupportedEncoding { id: "iso88596", label_long: "Arabic (ISO 8859-6)", label_short: "ISO 8859-6", encode_only: false, alias: None },
+    SupportedEncoding { id: "windows1257", label_long: "Baltic (Windows 1257)", label_short: "Windows 1257", encode_only: false, alias: None },
+    SupportedEncoding { id: "iso88594", label_long: "Baltic (ISO 8859-4)", label_short: "ISO 8859-4", encode_only: false, alias: None },
+    SupportedEncoding { id: "iso885914", label_long: "Celtic (ISO 8859-14)", label_short: "ISO 8859-14", encode_only: false, alias: None },
+    SupportedEncoding { id: "windows1250", label_long: "Central European (Windows 1250)", label_short: "Windows 1250", encode_only: false, alias: None },
+    SupportedEncoding { id: "iso88592", label_long: "Central European (ISO 8859-2)", label_short: "ISO 8859-2", encode_only: false, alias: None },
+    SupportedEncoding { id: "cp852", label_long: "Central European (CP 852)", label_short: "CP 852", encode_only: false, alias: None },
+    SupportedEncoding { id: "windows1251", label_long: "Cyrillic (Windows 1251)", label_short: "Windows 1251", encode_only: false, alias: None },
+    SupportedEncoding { id: "cp866", label_long: "Cyrillic (CP 866)", label_short: "CP 866", encode_only: false, alias: None },
+    SupportedEncoding { id: "cp1125", label_long: "Cyrillic (CP 1125)", label_short: "CP 1125", encode_only: false, alias: None },
+    SupportedEncoding { id: "iso88595", label_long: "Cyrillic (ISO 8859-5)", label_short: "ISO 8859-5", encode_only: false, alias: None },
+    SupportedEncoding { id: "koi8r", label_long: "Cyrillic (KOI8-R)", label_short: "KOI8-R", encode_only: false, alias: None },
+    SupportedEncoding { id: "koi8u", label_long: "Cyrillic (KOI8-U)", label_short: "KOI8-U", encode_only: false, alias: None },
+    SupportedEncoding { id: "iso885913", label_long: "Estonian (ISO 8859-13)", label_short: "ISO 8859-13", encode_only: false, alias: None },
+    SupportedEncoding { id: "windows1253", label_long: "Greek (Windows 1253)", label_short: "Windows 1253", encode_only: false, alias: None },
+    SupportedEncoding { id: "iso88597", label_long: "Greek (ISO 8859-7)", label_short: "ISO 8859-7", encode_only: false, alias: None },
+    SupportedEncoding { id: "windows1255", label_long: "Hebrew (Windows 1255)", label_short: "Windows 1255", encode_only: false, alias: None },
+    SupportedEncoding { id: "iso88598", label_long: "Hebrew (ISO 8859-8)", label_short: "ISO 8859-8", encode_only: false, alias: None },
+    SupportedEncoding { id: "iso885910", label_long: "Nordic (ISO 8859-10)", label_short: "ISO 8859-10", encode_only: false, alias: None },
+    SupportedEncoding { id: "iso885916", label_long: "Romanian (ISO 8859-16)", label_short: "ISO 8859-16", encode_only: false, alias: None },
+    SupportedEncoding { id: "windows1254", label_long: "Turkish (Windows 1254)", label_short: "Windows 1254", encode_only: false, alias: None },
+    SupportedEncoding { id: "iso88599", label_long: "Turkish (ISO 8859-9)", label_short: "ISO 8859-9", encode_only: false, alias: None },
+    SupportedEncoding { id: "cp857", label_long: "Turkish (CP 857)", label_short: "CP 857", encode_only: false, alias: None },
+    SupportedEncoding { id: "windows1258", label_long: "Vietnamese (Windows 1258)", label_short: "Windows 1258", encode_only: false, alias: None },
+    SupportedEncoding { id: "gbk", label_long: "Simplified Chinese (GBK)", label_short: "GBK", encode_only: false, alias: None },
+    SupportedEncoding { id: "gb18030", label_long: "Simplified Chinese (GB18030)", label_short: "GB18030", encode_only: false, alias: None },
+    SupportedEncoding { id: "cp950", label_long: "Traditional Chinese (Big5)", label_short: "Big5", encode_only: false, alias: None },
+    SupportedEncoding { id: "big5hkscs", label_long: "Traditional Chinese (Big5-HKSCS)", label_short: "Big5-HKSCS", encode_only: false, alias: None },
+    SupportedEncoding { id: "shiftjis", label_long: "Japanese (Shift JIS)", label_short: "Shift JIS", encode_only: false, alias: None },
+    SupportedEncoding { id: "eucjp", label_long: "Japanese (EUC-JP)", label_short: "EUC-JP", encode_only: false, alias: None },
+    SupportedEncoding { id: "euckr", label_long: "Korean (EUC-KR)", label_short: "EUC-KR", encode_only: false, alias: None },
+    SupportedEncoding { id: "windows874", label_long: "Thai (Windows 874)", label_short: "Windows 874", encode_only: false, alias: None },
+    SupportedEncoding { id: "iso885911", label_long: "Latin/Thai (ISO 8859-11)", label_short: "ISO 8859-11", encode_only: false, alias: None },
+    SupportedEncoding { id: "koi8ru", label_long: "Cyrillic (KOI8-RU)", label_short: "KOI8-RU", encode_only: false, alias: None },
+    SupportedEncoding { id: "koi8t", label_long: "Tajik (KOI8-T)", label_short: "KOI8-T", encode_only: false, alias: None },
+    SupportedEncoding { id: "gb2312", label_long: "Simplified Chinese (GB 2312)", label_short: "GB 2312", encode_only: false, alias: None },
+    SupportedEncoding { id: "cp865", label_long: "Nordic DOS (CP 865)", label_short: "CP 865", encode_only: false, alias: None },
+    SupportedEncoding { id: "cp850", label_long: "Western European DOS (CP 850)", label_short: "CP 850", encode_only: false, alias: None },
+];
+
 /// The upper halves (bytes 0x80 to 0xFF) of the single-byte encodings of `SUPPORTED_ENCODINGS` WHATWG does not define,
 /// from iconv-lite 0.7.2 `sbcs-data-generated.js`.
 const DOS_TABLES: [(&str, &str); 8] = [
@@ -189,7 +250,7 @@ fn validated(settings: &Settings, path: Option<&Path>, preferred: Option<&str>) 
 }
 
 // shortcut: `files.encoding` of a language (`"[lang]": {...}`) is not read; textResourceConfigurationService resolves the resource's language first.
-fn configured(settings: &Settings, path: Option<&Path>) -> String {
+pub fn configured(settings: &Settings, path: Option<&Path>) -> String {
     let value = settings.get_value(Some("files.encoding"), &Overrides { resource: path, ..Overrides::default() });
     value.as_ref().and_then(|value| value.as_str()).unwrap_or_default().to_string()
 }
@@ -306,15 +367,8 @@ mod tests {
 
     #[test]
     fn every_supported_encoding_exists() {
-        let supported = [
-            "utf8", "utf16le", "utf16be", "windows1252", "iso88591", "iso88593", "iso885915", "macroman", "cp437", "windows1256", "iso88596",
-            "windows1257", "iso88594", "iso885914", "windows1250", "iso88592", "cp852", "windows1251", "cp866", "cp1125", "iso88595", "koi8r",
-            "koi8u", "iso885913", "windows1253", "iso88597", "windows1255", "iso88598", "iso885910", "iso885916", "windows1254", "iso88599",
-            "cp857", "windows1258", "gbk", "gb18030", "cp950", "big5hkscs", "shiftjis", "eucjp", "euckr", "windows874", "iso885911", "koi8ru",
-            "koi8t", "gb2312", "cp865", "cp850",
-        ];
-        for encoding in supported {
-            assert!(exists(encoding), "{encoding}");
+        for encoding in SUPPORTED_ENCODINGS {
+            assert!(exists(encoding.id), "{}", encoding.id);
         }
         assert!(exists("cp1252"));
         assert!(!exists("foobar123"));

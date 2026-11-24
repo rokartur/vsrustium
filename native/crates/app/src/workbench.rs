@@ -7,6 +7,7 @@ mod bulk_text_edits;
 mod context_menu;
 mod editor_commands;
 mod editor_menus;
+pub mod editor_status;
 mod editor_view;
 mod explorer_actions;
 mod file_participants;
@@ -202,6 +203,7 @@ impl Workbench {
         workbench.register_quick_input_commands();
         workbench.register_quick_access_commands();
         workbench.register_theme_commands();
+        workbench.register_editor_status_commands();
         workbench.register_title_bar_actions();
         workbench.register_explorer_actions();
         workbench.register_file_participant_commands();

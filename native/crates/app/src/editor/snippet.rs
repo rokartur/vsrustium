@@ -276,7 +276,7 @@ pub fn normalize_indentation(whitespace: &str, indentation: Indentation) -> Stri
 mod tests {
     use super::*;
 
-    const SPACES: Indentation = Indentation { tab_size: 4, insert_spaces: true };
+    const SPACES: Indentation = Indentation { tab_size: 4, indent_size: None, insert_spaces: true };
 
     fn plain(template: &str) -> SnippetText {
         expand(template, "", true, SPACES, |name| (name == "CLIPBOARD").then(|| "clip".to_string()))
@@ -308,7 +308,7 @@ mod tests {
         let template = "This is line 2\n  This is line 3";
         assert_eq!(expand(template, "  ", false, SPACES, |_| None).text, template);
         assert_eq!(expand(template, "  ", true, SPACES, |_| None).text, "This is line 2\n    This is line 3");
-        let tabs = Indentation { tab_size: 4, insert_spaces: false };
+        let tabs = Indentation { tab_size: 4, indent_size: None, insert_spaces: false };
         assert_eq!(expand("a\n\tb", "\t", true, tabs, |_| None).text, "a\n\t\tb");
     }
 }

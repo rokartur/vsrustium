@@ -24,6 +24,8 @@ struct Association {
 pub struct Languages {
     /// In registration order: the core plaintext language first (modesRegistry.ts), then the extensions.
     associations: Vec<Association>,
+    /// Language ids in the order they were first registered.
+    ids: Vec<String>,
     names: HashMap<String, String>,
     off_side: HashMap<String, bool>,
     folding_markers: HashMap<String, Arc<FoldingMarkers>>,
@@ -37,7 +39,7 @@ pub struct Languages {
 impl Languages {
     pub fn new(extensions: &[ScannedExtension]) -> Self {
         let grammars = textmate::Registry::new(extensions.iter().map(|extension| (extension.location.as_path(), &extension.description)));
-        let mut languages = Languages { associations: Vec::new(), names: HashMap::new(), off_side: HashMap::new(), folding_markers: HashMap::new(), block_comments: HashMap::new(), first_lines: Vec::new(), grammars, brackets: HashMap::new() };
+        let mut languages = Languages { associations: Vec::new(), ids: Vec::new(), names: HashMap::new(), off_side: HashMap::new(), folding_markers: HashMap::new(), block_comments: HashMap::new(), first_lines: Vec::new(), grammars, brackets: HashMap::new() };
         languages.register(&serde_json::json!({ "id": PLAINTEXT, "extensions": [".txt"], "aliases": ["Plain Text", "text"] }), None);
         for extension in extensions {
             for language in extension.description["contributes"]["languages"].as_array().into_iter().flatten() {
@@ -60,10 +62,16 @@ impl Languages {
         for pattern in strings("filenamePatterns") {
             self.associations.push(association(None, None, Some(pattern)));
         }
-        // The first alias names the language; a later contribution with aliases renames it, one without keeps the name.
-        match strings("aliases").first() {
-            Some(alias) => {
-                self.names.insert(id.into(), alias.clone());
+        if !self.ids.iter().any(|known| known == id) {
+            self.ids.push(id.into());
+        }
+        // The first alias names the language and a later contribution with aliases renames it; one without aliases
+        // keeps the name, and empty `aliases` leave the language without one.
+        match language["aliases"].as_array() {
+            Some(aliases) if aliases.is_empty() => {}
+            Some(aliases) => {
+                let name = aliases[0].as_str().filter(|alias| !alias.is_empty()).unwrap_or(id);
+                self.names.insert(id.into(), name.into());
             }
             None => {
                 self.names.entry(id.into()).or_insert_with(|| id.into());
@@ -101,6 +109,11 @@ impl Languages {
     /// The language of a file by its path, else by the `firstLine` pattern its first line matches. No
     /// association falls back to plaintext, as the text file model does with "unknown".
     pub fn language_of<'a>(&'a self, path: &Path, first_line: &str) -> &'a str {
+        self.guess_language(path, first_line).unwrap_or(PLAINTEXT)
+    }
+
+    /// `guessLanguageIdByFilepathOrFirstLine`: `None` when no association matches.
+    pub fn guess_language<'a>(&'a self, path: &Path, first_line: &str) -> Option<&'a str> {
         let path = path.to_string_lossy().to_lowercase();
         let filename = path.rsplit('/').next().unwrap_or(&path);
         let mut pattern_match: Option<&Association> = None;
@@ -108,7 +121,7 @@ impl Languages {
         // Later registrations win, so walk backwards; an exact filename ends the search.
         for association in self.associations.iter().rev() {
             if association.filename.as_ref().is_some_and(|name| name.to_lowercase() == filename) {
-                return &association.id;
+                return Some(&association.id);
             }
             if let Some(pattern) = &association.filepattern {
                 let longer = pattern_match.is_none_or(|best| pattern.len() > best.filepattern.as_ref().unwrap().len());
@@ -125,16 +138,49 @@ impl Languages {
             }
         }
         if let Some(association) = pattern_match.or(extension_match) {
-            return &association.id;
+            return Some(&association.id);
         }
         // getAssociationByFirstline: the last registered pattern wins, over the first 1000 chars (FIRST_LINE_DETECTION_LENGTH_LIMIT).
         let first_line: String = first_line.chars().take(1000).collect();
         let first_line = first_line.strip_prefix('\u{FEFF}').unwrap_or(&first_line);
-        self.first_lines.iter().rev().find(|(_, regex)| !first_line.is_empty() && regex.find(first_line).is_some()).map_or(PLAINTEXT, |(id, _)| id.as_str())
+        self.first_lines.iter().rev().find(|(_, regex)| !first_line.is_empty() && regex.find(first_line).is_some()).map(|(id, _)| id.as_str())
+    }
+
+    /// The `files.associations` language of a path (`userConfigured` associations): the longest pattern that
+    /// matches, against the whole path when the pattern has a `/`, else the file name, ignoring case.
+    pub fn configured_language(associations: &Value, path: &Path) -> Option<String> {
+        let path = path.to_string_lossy().to_lowercase();
+        let filename = path.rsplit('/').next().unwrap_or(&path);
+        let mut best: Option<(&str, &str)> = None;
+        for (pattern, id) in associations.as_object()? {
+            let Some(id) = id.as_str() else { continue };
+            let target = if pattern.contains('/') { path.as_str() } else { filename };
+            if best.is_none_or(|(longest, _)| pattern.len() > longest.len()) && glob_matches(&pattern.to_lowercase(), target) {
+                best = Some((pattern, id));
+            }
+        }
+        best.map(|(_, id)| id.to_string())
+    }
+
+    pub fn is_registered(&self, id: &str) -> bool {
+        self.ids.iter().any(|known| known == id)
     }
 
     pub fn name<'a>(&'a self, id: &'a str) -> &'a str {
         self.names.get(id).map_or(id, String::as_str)
+    }
+
+    /// `getSortedRegisteredLanguageNames`: each name with its language, the last language registered under a name,
+    /// sorted ignoring case.
+    pub fn sorted_names(&self) -> Vec<(&str, &str)> {
+        let mut by_name: Vec<(&str, &str)> = Vec::new();
+        for id in &self.ids {
+            let Some(name) = self.names.get(id) else { continue };
+            by_name.retain(|(known, _)| known != name);
+            by_name.push((name, id));
+        }
+        by_name.sort_by_key(|(name, _)| name.to_lowercase());
+        by_name
     }
 
     /// `foldingRules.offSide` of the language configuration: blank lines take the indent of the block below.

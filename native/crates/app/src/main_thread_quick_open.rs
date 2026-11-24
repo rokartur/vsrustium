@@ -30,6 +30,8 @@ pub enum Owner {
     ColorThemes(crate::workbench::themes::ColorThemePicker),
     /// The `editor.action.goToMatchFindAction` input box.
     GoToMatch,
+    /// A picker of the editor status bar entries, with what accepting each item does.
+    EditorStatus(Vec<crate::workbench::editor_status::StatusPick>),
 }
 
 impl Workbench {
@@ -199,6 +201,7 @@ impl Workbench {
             Owner::QuickAccess(_) => self.quick_access_event(id, event, window, cx),
             Owner::ColorThemes(_) => self.color_theme_picker_event(id, event, window, cx),
             Owner::GoToMatch => self.go_to_match_event(id, event, window, cx),
+            Owner::EditorStatus(_) => self.editor_status_event(id, event, window, cx),
         }
     }
 

@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use config::configuration::Overrides;
 use config::indentation::creation_options;
 use config::service::Settings;
 use files::encoding;
@@ -20,6 +21,7 @@ mod edit;
 pub mod find;
 pub mod folding;
 mod folding_controller;
+mod indentation;
 pub mod minimap;
 mod multicursor;
 pub mod section_headers;
@@ -57,12 +59,20 @@ pub struct TextDocument {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Indentation {
     pub tab_size: usize,
+    /// `indentSize`; `None` while it follows the tab size (`'tabSize'`).
+    pub indent_size: Option<usize>,
     pub insert_spaces: bool,
+}
+
+impl Indentation {
+    pub fn indent_size(&self) -> usize {
+        self.indent_size.unwrap_or(self.tab_size)
+    }
 }
 
 /// `editor.tabSize` and `editor.insertSpaces` defaults, for documents built without settings.
 #[cfg(test)]
-const DEFAULT_INDENTATION: Indentation = Indentation { tab_size: 4, insert_spaces: true };
+const DEFAULT_INDENTATION: Indentation = Indentation { tab_size: 4, indent_size: None, insert_spaces: true };
 
 impl TextDocument {
     pub fn read(path: &Path, languages: &Languages, settings: &Settings) -> std::io::Result<Self> {
@@ -88,7 +98,9 @@ impl TextDocument {
 
     pub fn from_text(scheme: &str, path: &Path, text: &str, encoding: String, language_id: Option<&str>, languages: &Languages, settings: &Settings) -> Self {
         let (lines, eol) = split_lines(text);
-        let language_id = language_id.unwrap_or_else(|| languages.language_of(path, lines[0].as_str())).to_string();
+        let associations = settings.get_value(Some("files.associations"), &Overrides::default()).unwrap_or_default();
+        let configured = Languages::configured_language(&associations, path);
+        let language_id = language_id.or(configured.as_deref()).unwrap_or_else(|| languages.language_of(path, lines[0].as_str())).to_string();
         let off_side = languages.off_side(&language_id);
         let folding_markers = languages.folding_markers(&language_id);
         let block_comment = languages.block_comment(&language_id).map(|(start, end)| (start.to_string(), end.to_string()));
@@ -125,9 +137,9 @@ impl TextDocument {
 /// `editor.tabSize` and `editor.insertSpaces`, guessed from the text when `editor.detectIndentation` is on.
 fn creation_indentation(lines: &[String], settings: &Settings, path: &Path, language_id: &str) -> Indentation {
     let options = creation_options(&settings.configuration, path, language_id);
-    let configured = Indentation { tab_size: options.tab_size, insert_spaces: options.insert_spaces };
+    let configured = Indentation { tab_size: options.tab_size, indent_size: options.indent_size, insert_spaces: options.insert_spaces };
     match options.detect_indentation {
-        true => guess_indentation(lines, configured),
+        true => guess_indentation(lines, Indentation { indent_size: None, ..configured }),
         false => configured,
     }
 }
@@ -219,7 +231,7 @@ pub fn guess_indentation(lines: &[String], default: Indentation) -> Indentation 
             tab_size = 2;
         }
     }
-    Indentation { tab_size, insert_spaces }
+    Indentation { tab_size, indent_size: None, insert_spaces }
 }
 
 struct SpacesDiff {
@@ -417,11 +429,31 @@ pub const HOST_REFERENCE_AGE: Duration = Duration::from_secs(3 * 60);
 impl OpenEditor {
     fn new(document: TextDocument, preview: bool, model_id: u32) -> Self {
         let indentation = document.indentation;
-        let guides = indent_guides(&document.lines, indentation.tab_size, indentation.tab_size, document.off_side);
+        let guides = indent_guides(&document.lines, indentation.tab_size, indentation.indent_size(), document.off_side);
         let mut editor = OpenEditor { document, preview, model_id, selections: vec![Selection::default()], last_added: 0, leftovers: Vec::new(), column_select: None, version_id: 1, history: History::default(), guides, highlights: Vec::new(), folding: FoldingModel::default(), sticky_model: Default::default(), scroll: Scroll::default(), max_line_width: 0., host_reference: None, associated_file: false };
         editor.refresh_highlights();
         editor.refresh_folding_ranges();
         editor
+    }
+
+    /// `TextModel.setLanguage` and `ModelService._onDidChangeLanguage`: the language's grammar and rules, and its
+    /// indentation options when they differ from the old language's (`_setModelOptionsForModel`).
+    pub fn set_language(&mut self, language_id: &str, languages: &Languages, settings: &Settings) {
+        let document = &mut self.document;
+        let old = creation_options(&settings.configuration, &document.path, &document.language_id);
+        let new = creation_options(&settings.configuration, &document.path, language_id);
+        document.language_id = language_id.to_string();
+        document.off_side = languages.off_side(language_id);
+        document.folding_markers = languages.folding_markers(language_id);
+        document.block_comment = languages.block_comment(language_id).map(|(start, end)| (start.to_string(), end.to_string()));
+        document.tokens = Tokenization::new(languages.grammars.grammar(language_id));
+        let indentation = match (old == new, new.detect_indentation) {
+            (true, _) => document.indentation,
+            (false, true) => guess_indentation(&document.lines, Indentation { tab_size: new.tab_size, indent_size: None, insert_spaces: new.insert_spaces }),
+            (false, false) => Indentation { tab_size: new.tab_size, indent_size: new.indent_size, insert_spaces: new.insert_spaces },
+        };
+        self.set_indentation(indentation);
+        self.refresh_folding_ranges();
     }
 }
 
@@ -552,9 +584,9 @@ mod tests {
             let settings = Settings::load(config::registry::Registry::core(), dir.join("User"), None);
             TextDocument::read(&file, &Languages::new(&[]), &settings).unwrap().indentation
         };
-        assert_eq!(read("{}"), Indentation { tab_size: 4, insert_spaces: true });
-        assert_eq!(read(r#"{ "editor.tabSize": 2, "editor.detectIndentation": false }"#), Indentation { tab_size: 2, insert_spaces: true });
-        assert_eq!(read(r#"{ "editor.insertSpaces": false, "editor.detectIndentation": false }"#), Indentation { tab_size: 4, insert_spaces: false });
+        assert_eq!(read("{}"), Indentation { tab_size: 4, indent_size: None, insert_spaces: true });
+        assert_eq!(read(r#"{ "editor.tabSize": 2, "editor.detectIndentation": false }"#), Indentation { tab_size: 2, indent_size: None, insert_spaces: true });
+        assert_eq!(read(r#"{ "editor.insertSpaces": false, "editor.detectIndentation": false }"#), Indentation { tab_size: 4, indent_size: None, insert_spaces: false });
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -581,8 +613,8 @@ mod tests {
     #[test]
     fn guesses_indentation_like_upstream() {
         let guess = |text: &str| guess_indentation(&lines(text), DEFAULT_INDENTATION);
-        let spaces = |tab_size| Indentation { tab_size, insert_spaces: true };
-        let tabs = Indentation { tab_size: 4, insert_spaces: false };
+        let spaces = |tab_size| Indentation { tab_size, indent_size: None, insert_spaces: true };
+        let tabs = Indentation { tab_size: 4, indent_size: None, insert_spaces: false };
         assert_eq!(guess("x\n  x\n    x\n  x\n"), spaces(2));
         assert_eq!(guess("x\n    x\n        x\n"), spaces(4));
         assert_eq!(guess("x\n\tx\n\t\tx\n"), tabs);

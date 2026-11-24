@@ -108,7 +108,7 @@ impl Workbench {
     }
 
     /// Runs an editor command, then tells the host and scrolls the cursor into view as a key press does.
-    fn run_on_active_editor(&mut self, command: impl FnOnce(&mut OpenEditor) -> Option<ContentChanged>, cx: &mut Context<Self>) -> Outcome {
+    pub(super) fn run_on_active_editor(&mut self, command: impl FnOnce(&mut OpenEditor) -> Option<ContentChanged>, cx: &mut Context<Self>) -> Outcome {
         let Some(editor) = self.editors.active_mut() else { return Outcome::done() };
         let selections_before = editor.selections.clone();
         let change = command(editor);

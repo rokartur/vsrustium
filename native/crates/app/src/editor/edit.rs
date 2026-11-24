@@ -57,7 +57,7 @@ pub enum EditReason {
 
 const TYPED: EditReason = EditReason::Cursor { kind: "type", detailed_source: "keyboard" };
 
-fn command(id: &'static str) -> EditReason {
+pub(super) fn command(id: &'static str) -> EditReason {
     EditReason::Cursor { kind: "executeCommands", detailed_source: id }
 }
 
@@ -736,7 +736,7 @@ impl OpenEditor {
         self.leftovers.clear();
         self.highlights.clear();
         let indentation = self.document.indentation;
-        self.guides = indent_guides(&self.document.lines, indentation.tab_size, indentation.tab_size, self.document.off_side);
+        self.guides = indent_guides(&self.document.lines, indentation.tab_size, indentation.indent_size(), self.document.off_side);
         self.refresh_folding_ranges();
     }
 
@@ -1004,7 +1004,7 @@ pub(super) mod tests {
             eol,
             encoding: "utf8".into(),
             language_id: "typescript".into(),
-            indentation: Indentation { tab_size: 4, insert_spaces: true },
+            indentation: Indentation { tab_size: 4, indent_size: None, insert_spaces: true },
             off_side: false,
             folding_markers: None,
             block_comment: None,

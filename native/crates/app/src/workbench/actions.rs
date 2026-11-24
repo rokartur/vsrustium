@@ -160,7 +160,7 @@ impl Workbench {
 
     /// The text goes back to the file's content and the editor is clean again.
     /// shortcut: one whole-text edit plus a save of the same bytes, since `editor/` has no revert yet; move to an `OpenEditor::revert` that flushes the model like `setValue` once it does.
-    fn revert_editor(&mut self, index: usize, cx: &mut Context<Self>) {
+    pub(super) fn revert_editor(&mut self, index: usize, cx: &mut Context<Self>) {
         let editor = &mut self.editors.editors[index];
         let disk = match TextDocument::read(&editor.document.path, &self.languages, &self.settings.lock().unwrap()) {
             Ok(document) => document,
