@@ -320,9 +320,12 @@ impl Workbench {
                 cx.stop_propagation();
                 workbench.show_title_bar_context_menu(MenuId::TitleBarTitleContext, event.position, window, cx);
             }))
-            .on_mouse_down(MouseButton::Left, cx.listener(|workbench, event: &MouseDownEvent, window, cx| {
-                if event.modifiers.platform {
+            .on_mouse_down(MouseButton::Left, cx.listener(move |workbench, event: &MouseDownEvent, window, cx| {
+                // The command center is `-webkit-app-region: no-drag`; the plain window title drags.
+                if command_center_visible || event.modifiers.platform {
                     cx.stop_propagation();
+                }
+                if event.modifiers.platform {
                     workbench.show_title_bar_context_menu(MenuId::TitleBarTitleContext, event.position, window, cx);
                 }
             }));
@@ -340,6 +343,7 @@ impl Workbench {
             .right(px(12.))
             .flex()
             .gap(px(4.))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .when(layout_control_enabled, |right| right.children(layout_actions.map(|(name, title, command)| self.icon(name, 22., 16., foreground).cursor_pointer().child(self.action_hover(title, command, HoverOptions::instant())))));
         // NativeTitlebarPart.minimumHeight: DEFAULT_CUSTOM_TITLEBAR_HEIGHT with the command center, else macTitlebarSize.
         let height = match (command_center_visible, is_tahoe_or_newer()) {
@@ -353,6 +357,12 @@ impl Workbench {
             .flex_none()
             .child(center)
             .child(right)
+            // titlebarpart.css `.titlebar-drag-region`: the bar drags the window and a double click runs the system's
+            // title bar action; the no-drag parts stop the press before it gets here.
+            .on_mouse_down(MouseButton::Left, |event, window, _| match event.click_count {
+                2 => window.titlebar_double_click(),
+                _ => window.start_window_move(),
+            })
             .on_mouse_down(MouseButton::Right, cx.listener(|workbench, event: &MouseDownEvent, window, cx| workbench.show_title_bar_context_menu(MenuId::TitleBarContext, event.position, window, cx)))
     }
 

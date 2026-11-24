@@ -68,6 +68,8 @@ fn the_title_bar_menus_toggle_the_command_center_and_the_layout_controls(cx: &mu
     right_click(bar, cx);
     assert_eq!(menu_titles(&workbench, cx), ["Command Center [x]", "Navigation Controls [x]", "Layout Controls [x]"]);
     cx.simulate_keystrokes("escape");
+    // No-drag parts (layout controls, command center, quick input): the test window panics on a window move.
+    cx.simulate_click(point(px(width - 20.), px(17.)), Modifiers::default());
     assert!(workbench.update_in(cx, |workbench, window, _| workbench.editor_focus.is_focused(window)), "focus goes back to the editor");
 
     // A click on the command center shows Quick Open with the help picks above the history.
@@ -78,6 +80,8 @@ fn the_title_bar_menus_toggle_the_command_center_and_the_layout_controls(cx: &mu
         (input.input_box.value.clone(), rows.map(|row| format!("{}|{}|{:?}", row.item.label, row.item.description.clone().unwrap_or_default(), row.item.keybinding)).collect::<Vec<_>>())
     });
     assert_eq!(picker, (String::new(), vec![r#"Go to File||[["⌘", "P"]]"#.to_string(), r#"Show and Run Commands|>|[["⇧", "⌘", "P"]]"#.into(), format!("notes.txt|{}|[]", dir.display())]));
+    cx.simulate_click(point(px(width / 2.), px(20.)), Modifiers::default());
+    assert!(workbench.read_with(cx, |workbench, _| workbench.quick_inputs.current().is_some()), "a press in the quick input over the bar keeps it");
     cx.simulate_keystrokes("down enter");
     assert_eq!(workbench.read_with(cx, |workbench, _| workbench.quick_inputs.current().unwrap().input_box.value.clone()), ">");
     cx.simulate_keystrokes("escape");
@@ -120,4 +124,18 @@ fn the_title_bar_menus_toggle_the_command_center_and_the_layout_controls(cx: &mu
     cx.simulate_keystrokes("down enter");
     assert_eq!(user_settings(), json!({ "workbench.layoutControl.enabled": false }));
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+// The test window's `start_window_move` is `unimplemented!()`, so reaching the drag region panics.
+#[gpui::test]
+#[should_panic(expected = "not implemented")]
+fn a_press_on_the_empty_title_bar_moves_the_window(cx: &mut TestAppContext) {
+    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
+    let theme = load_theme(&[themes], "Dark Modern").unwrap();
+    let settings = Arc::new(Mutex::new(Settings::load(Registry::with_extensions(&[]), std::env::temp_dir().join("code-gpui-title-bar-drag/User"), None)));
+    let (workbench, cx) = cx.add_window_view(|_, cx| Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), settings, HostSync::new(std::sync::mpsc::channel().0), cx));
+    cx.run_until_parked();
+    let width = workbench.update_in(cx, |_, window, _| f32::from(window.viewport_size().width));
+    cx.simulate_event(MouseDownEvent { button: MouseButton::Left, position: point(px(width - 150.), px(15.)), modifiers: Modifiers::default(), click_count: 1, first_mouse: false });
 }

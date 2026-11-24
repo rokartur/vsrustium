@@ -114,7 +114,7 @@ fn main() -> anyhow::Result<()> {
         bounds.origin = point(bounds.origin.x.round(), bounds.origin.y.round());
         // The workbench draws its own title bar, as the reference does with window.titleBarStyle custom.
         let titlebar = TitlebarOptions { title: None, appears_transparent: true, traffic_light_position: Some(point(px(10.), px(10.))) };
-        let options = WindowOptions { window_bounds: Some(WindowBounds::Windowed(bounds)), titlebar: Some(titlebar), ..Default::default() };
+        let options = WindowOptions { window_bounds: Some(WindowBounds::Windowed(bounds)), titlebar: Some(titlebar), app_owns_titlebar_drag: true, ..Default::default() };
         let window = cx.open_window(options, |window, cx| {
             cx.new(|cx| {
                 let (sender, mut receiver) = unbounded::<String>();
