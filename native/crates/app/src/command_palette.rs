@@ -191,8 +191,8 @@ pub struct MenuItem {
 /// The workbench's palette items of the commands this port runs, with upstream's titles and categories:
 /// `f1: true` actions and `appendToCommandPalette` (fileActions.contribution.ts), undo/redo/select all
 /// (editorExtensions.ts), clipboard.ts, commandsQuickAccess.ts, preferences.contribution.ts, themes.contribution.ts,
-/// stickyScrollActions.ts. Each is the id, title, category, `when` and `precondition`.
-const WORKBENCH_ITEMS: [(&str, &str, Option<&str>, Option<&str>, Option<&str>); 16] = [
+/// stickyScrollActions.ts, mainThreadFileSystemEventService.ts. Each is the id, title, category, `when` and `precondition`.
+const WORKBENCH_ITEMS: [(&str, &str, Option<&str>, Option<&str>, Option<&str>); 17] = [
     ("workbench.action.showCommands", "Show All Commands", None, None, None),
     ("workbench.action.clearCommandHistory", "Clear Command History", None, None, None),
     ("workbench.action.files.save", "Save", Some("File"), None, None),
@@ -201,6 +201,7 @@ const WORKBENCH_ITEMS: [(&str, &str, Option<&str>, Option<&str>, Option<&str>); 
     ("workbench.action.closeAllEditors", "Close All Editors", Some("View"), None, None),
     ("workbench.action.openGlobalKeybindingsFile", "Open Keyboard Shortcuts (JSON)", Some("Preferences"), None, None),
     ("workbench.action.selectTheme", "Color Theme", Some("Preferences"), None, None),
+    ("files.participants.resetChoice", "Reset choice for 'File operation needs preview'", None, None, None),
     ("undo", "Undo", None, None, None),
     ("redo", "Redo", None, None, None),
     ("editor.action.selectAll", "Select All", None, None, None),

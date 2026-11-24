@@ -3,7 +3,7 @@
 // for states a still pixel-check frame cannot reach (inline editors, dialogs, drags). Run on the Studio.
 // Usage: port/tools/ui-pair <out-dir> <steps.json> [dark|light|hc|hclight]   (env REF = reference checkout,
 // default ~/Developer/vscode-ref; env FOLDER = folder to open, default a copy of port/fixtures/workspace;
-// env ONLY = "reference" or "port" to run one of them)
+// env ONLY = "reference" or "port" to run one of them; env ARGS = more arguments for both, space separated)
 // Steps, in window points (both windows are 1024x768):
 //   {"click": [x, y]}  {"click": [x, y], "modifier": ["cmd"]}  {"doubleClick": [x, y]}  {"key": "return"}
 //   {"hotkey": ["cmd", "c"]}  {"type": "text"}  {"wait": ms}  {"shot": "name"}
@@ -26,6 +26,7 @@ const themes: Record<string, [string, string]> = {
 	hclight: ['Default High Contrast Light', 'Default High Contrast Light'],
 };
 const [referenceTheme, portTheme] = themes[themeName];
+const extraArgs = process.env.ARGS?.split(' ') ?? [];
 mkdirSync(outDir, { recursive: true });
 await takeGuiLock();
 
@@ -55,7 +56,7 @@ function startReference(folder: string) {
 	// windowsStateHandler.ts: the first window takes the last active window's size (WindowMode.Normal is 1).
 	writeFileSync(join(userData, 'User/globalStorage/storage.json'), JSON.stringify({ windowsState: { lastActiveWindow: { uiState: { mode: 1, x: 100, y: 100, width: 1024, height: 768 } } } }));
 	const electron = join(ref, '.build/electron/Code - OSS.app/Contents/MacOS/Code - OSS');
-	return Bun.spawn([electron, ref, folder, ...referenceArgs, '--user-data-dir', userData], {
+	return Bun.spawn([electron, ref, folder, ...referenceArgs, ...extraArgs, '--user-data-dir', userData], {
 		env: { ...process.env, VSCODE_DEV: '1', NODE_ENV: 'development' },
 		stdout: 'ignore',
 		stderr: 'ignore',
@@ -64,7 +65,7 @@ function startReference(folder: string) {
 
 function startPort(folder: string) {
 	const userData = mkdtempSync(join(scratch, 'port-user-'));
-	return Bun.spawn(['native/target/release/code-gpui', folder, '--user-data-dir', userData, '--theme', portTheme], {
+	return Bun.spawn(['native/target/release/code-gpui', folder, ...extraArgs, '--user-data-dir', userData, '--theme', portTheme], {
 		env: { ...process.env, VSCODE_GPUI_EXTENSIONS: join(ref, 'extensions') },
 		stdout: 'ignore',
 		stderr: Bun.file(join(outDir, 'port.log')),

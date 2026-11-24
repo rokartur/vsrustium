@@ -74,7 +74,7 @@ Rows: `seam/init-data` `mainthread/MainThreadConfiguration` `mainthread/MainThre
 
 ## 11. Workbench layout and chrome
 
-Scope: the part grid with sashes and hidden parts, panel and secondary side bar, view containers and collapsible views, tree views from extensions, editor groups and splits, notifications, dialogs (native open/save), progress, banner, status bar entries from extensions, decorations, window lifecycle (close, quit, hot exit backup), multiple windows, focus and inactive look.
+Scope: the part grid with sashes and hidden parts, panel and secondary side bar, view containers and collapsible views, tree views from extensions (with the Refactor Preview of workbench/contrib/bulkEdit, which file operation participants open), editor groups and splits, notifications, dialogs (native open/save), progress, banner, status bar entries from extensions, decorations, window lifecycle (close, quit, hot exit backup), multiple windows, focus and inactive look.
 
 Done when: api-tests `window.test` (messages, progress, tree views, status bar) pass as in the reference; pixel-check gains a window with panel and split editor; hot exit restores an unsaved buffer after quit.
 

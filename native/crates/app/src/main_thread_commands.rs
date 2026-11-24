@@ -41,6 +41,10 @@ impl Workbench {
                 }
                 self.execute_command(&id, args, window, cx)
             }
+            ("MainThreadFileSystemEventService", "$confirmParticipantEdits") => {
+                let names = arg(1).as_array().cloned().unwrap_or_default();
+                self.confirm_participant_edits(arg(0).as_u64().unwrap_or_default(), &names, arg(2) == true, window, cx)
+            }
             ("MainThreadCommands", "$getCommands") => Outcome::Ready(Ok(json!(self.commands.ids().collect::<Vec<_>>()))),
             _ => Outcome::done(),
         }

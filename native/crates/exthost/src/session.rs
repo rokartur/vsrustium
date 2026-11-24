@@ -172,6 +172,8 @@ struct Forward {
     proxies: &'static [&'static str],
     send: Box<dyn FnMut(ForwardedRequest) + Send>,
     replies: std::sync::mpsc::Receiver<(u32, Result<Value, Value>)>,
+    /// The ids of `ask_workbench` requests, counted down from `u32::MAX`, below which the host's ids never reach.
+    asks: Vec<u32>,
 }
 
 impl Session {
@@ -249,7 +251,26 @@ impl Session {
 
     /// Hands requests to `proxies` to `send` instead of answering them here; `pump` sends the answers that arrive on `replies`.
     pub fn forward(&mut self, proxies: &'static [&'static str], send: impl FnMut(ForwardedRequest) + Send + 'static, replies: std::sync::mpsc::Receiver<(u32, Result<Value, Value>)>) {
-        self.forward = Some(Forward { proxies, send: Box::new(send), replies });
+        self.forward = Some(Forward { proxies, send: Box::new(send), replies, asks: Vec::new() });
+    }
+
+    /// Asks the workbench from this side (`send` with a request no host sent) and waits for the answer while
+    /// serving the host; `None` without a workbench or once the host is gone.
+    pub fn ask_workbench(&mut self, proxy: &'static str, method: &str, args: Vec<Value>) -> Option<Result<Value, Value>> {
+        let forward = self.forward.as_mut()?;
+        let req = u32::MAX - forward.asks.len() as u32;
+        forward.asks.push(req);
+        (forward.send)(ForwardedRequest { req, proxy, method: method.into(), args });
+        let result = loop {
+            if let Some(result) = self.take_result(req) {
+                break Some(result);
+            }
+            if !matches!(self.pump(Duration::from_millis(20)), Ok(true)) {
+                break None;
+            }
+        };
+        self.forward.as_mut().expect("set above").asks.retain(|ask| *ask != req);
+        result
     }
 
     /// Answers a forwarded request; an error is a `SerializedError`.
@@ -351,8 +372,17 @@ impl Session {
         }
         if let Some(forward) = &self.forward {
             let answered: Vec<_> = forward.replies.try_iter().collect();
+            let asks = forward.asks.clone();
             for (req, result) in answered {
-                self.reply(req, result);
+                if !asks.contains(&req) {
+                    self.reply(req, result);
+                    continue;
+                }
+                let result = match result {
+                    Ok(value) => CallResult::Ok(Reply::Json(value)),
+                    Err(error) => CallResult::Err(Some(error)),
+                };
+                self.results.insert(req, result);
             }
             // An answer can come while a `call` waits (an extension's activate awaiting a forwarded request).
             timeout = timeout.min(Duration::from_millis(20));

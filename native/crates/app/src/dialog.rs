@@ -13,8 +13,8 @@ use objc2_foundation::NSString;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 /// The pressed button's index (buttons in `massageMessageBoxOptions` order: primary first, cancel last) and
-/// whether the checkbox was checked.
-pub fn show_message_box(window: &Window, level: PromptLevel, message: &str, detail: Option<&str>, buttons: &[&str], checkbox: &str, cx: &App) -> oneshot::Receiver<(usize, bool)> {
+/// whether the checkbox, if any, was checked.
+pub fn show_message_box(window: &Window, level: PromptLevel, message: &str, detail: Option<&str>, buttons: &[&str], checkbox: Option<&str>, cx: &App) -> oneshot::Receiver<(usize, bool)> {
     let (sender, receiver) = oneshot::channel();
     let mtm = MainThreadMarker::new().expect("dialogs open on the main thread");
     let alert = NSAlert::new(mtm);
@@ -34,13 +34,16 @@ pub fn show_message_box(window: &Window, level: PromptLevel, message: &str, deta
             button.setKeyEquivalent(&NSString::from_str("\u{1b}"));
         }
     }
-    alert.setShowsSuppressionButton(true);
-    let suppression = alert.suppressionButton().expect("an alert showing its suppression button has one");
-    suppression.setTitle(&NSString::from_str(checkbox));
+    let suppression = checkbox.map(|checkbox| {
+        alert.setShowsSuppressionButton(true);
+        let suppression = alert.suppressionButton().expect("an alert showing its suppression button has one");
+        suppression.setTitle(&NSString::from_str(checkbox));
+        suppression
+    });
     let count = buttons.len();
     let sender = Cell::new(Some(sender));
     let handler = RcBlock::new(move |response: NSModalResponse| {
-        let checked = suppression.state() == NSControlStateValueOn;
+        let checked = suppression.as_ref().is_some_and(|suppression| suppression.state() == NSControlStateValueOn);
         // A negative response (NSModalResponseAbort) is a sheet closed without a button: cancel.
         let index = usize::try_from(response).ok().filter(|index| *index < count).unwrap_or(count - 1);
         if let Some(sender) = sender.take() {

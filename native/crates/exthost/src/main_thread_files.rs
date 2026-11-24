@@ -387,14 +387,22 @@ impl WorkingCopyFiles for Providers<'_> {
             }
             _ => return,
         };
-        if data["edit"]["edits"].as_array().is_none_or(Vec::is_empty) {
-            return;
-        }
-        // Upstream asks first ("Extension '{0}' wants to make refactoring changes ...") unless extension tests run;
-        // the dialog and the refactor preview come with the text edits of milestone 8 (port/notes.md).
+        let Some(edits) = data["edit"]["edits"].as_array().filter(|edits| !edits.is_empty()) else { return };
+        let needs_confirmation = edits.iter().any(|edit| edit["metadata"]["needsConfirmation"] == true);
+        // Extension tests show no dialog and no preview.
         if !self.session.runs_extension_tests() {
-            eprintln!("[onWill-handler] skipping additional workspace edit from extensions {}", data["extensionNames"]);
-            return;
+            let args = vec![json!(operation as u8), data["extensionNames"].clone(), json!(needs_confirmation)];
+            // The workbench's answer: `showPreview`, or null when the changes are skipped.
+            let show_preview = match self.session.ask_workbench("MainThreadFileSystemEventService", "$confirmParticipantEdits", args) {
+                Some(Ok(Value::Bool(show_preview))) => show_preview,
+                _ => return,
+            };
+            // bulkEditService.ts: a preview, or an edit that needs confirmation, goes through the Refactor Preview.
+            // shortcut: the Refactor Preview is not ported (it lives in the panel, milestone 11), so these edits are skipped.
+            if show_preview || needs_confirmation {
+                eprintln!("[onWill-handler] skipping additional workspace edit from extensions {}: the Refactor Preview is not ported", data["extensionNames"]);
+                return;
+            }
         }
         eprintln!("[onWill-handler] applying additional workspace edit from extensions {}", data["extensionNames"]);
         if let Err(error) = crate::main_thread_bulk_edits::apply(self, &data["edit"], undo.undo_redo_group_id) {
