@@ -1,17 +1,19 @@
 #!/bin/bash
 # Pixel check: reference capture (CDP) against the port's Metal readback, per window and theme. Run from the repo root on the Studio.
 # Windows: "empty" (no folder), "folder" (port/fixtures/workspace, copied outside the repo so git sees no repository)
-# "file" (the folder with notes.txt open) and "main" (the folder with src/main.ts open, for token colors).
+# "file" (the folder with notes.txt open), "main" (the folder with src/main.ts open, for token colors) and "multiroot"
+# (a .code-workspace file with the folder and a copy of its docs folder as roots).
 # WINDOWS="file" checks only the listed windows, THEMES="dark hclight" only the listed themes.
 # Prints "window theme different anti_aliased total"; images land in $OUT/<window>.
 set -uo pipefail
 OUT=${OUT:-/tmp/pixel-check-$(basename "$PWD")}
 mkdir -p "$OUT"
-rm -rf "$OUT/workspace" && cp -R port/fixtures/workspace "$OUT/workspace"
+rm -rf "$OUT/workspace" "$OUT/workspace2" && cp -R port/fixtures/workspace "$OUT/workspace" && cp -R port/fixtures/workspace/docs "$OUT/workspace2"
+echo '{ "folders": [{ "path": "workspace" }, { "path": "workspace2", "name": "Second Folder" }] }' >"$OUT/multi.code-workspace"
 (cd native && cargo build --release -q -p app --features screenshot && cargo build --release -q -p pixeldiff) || exit 1
 source port/tools/gui-lock.sh
-for window in ${WINDOWS:-empty folder file main}; do
-  folder=$([[ $window != empty ]] && echo "$OUT/workspace")
+for window in ${WINDOWS:-empty folder file main multiroot}; do
+  case $window in empty) folder= ;; multiroot) folder=$OUT/multi.code-workspace ;; *) folder=$OUT/workspace ;; esac
   case $window in file) file=$OUT/workspace/notes.txt ;; main) file=$OUT/workspace/src/main.ts ;; *) file= ;; esac
   dir="$OUT/$window"
   mkdir -p "$dir"

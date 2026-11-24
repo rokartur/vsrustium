@@ -4,8 +4,9 @@
 //!
 //! Events go out in `events`, in the order upstream fires them; the owner drains them after each call.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+use config::workspace::Workspace;
 use serde_json::Value;
 
 use crate::filters::{self, Matches};
@@ -846,7 +847,7 @@ fn compare_entries(a: &Row, b: &Row, look_for: &str) -> std::cmp::Ordering {
 
 /// A `TransferQuickPickItemOrSeparator` as the main thread expands it (`expandItemProps`): an item with a
 /// `resourceUri` and no label shows the file name, with the folder relative to the workspace as description.
-pub fn entry_from_transfer(value: &Value, workspace: Option<&Path>) -> Entry {
+pub fn entry_from_transfer(value: &Value, workspace: Option<&Workspace>) -> Entry {
     if value["type"] == "separator" {
         return Entry::Separator(value["label"].as_str().map(str::to_owned));
     }
@@ -906,11 +907,18 @@ fn icon_file(icon: &Value) -> Option<IconPath> {
     }
 }
 
-/// `labelService.getUriLabel(uri, { relative: true })` for a file: relative to the workspace folder, else
-/// the absolute path with the home folder as `~`.
-pub fn path_label(path: &Path, workspace: Option<&Path>) -> String {
-    if let Some(relative) = workspace.and_then(|root| path.strip_prefix(root).ok()) {
-        return relative.to_string_lossy().into_owned();
+/// `labelService.getUriLabel(uri, { relative: true })` for a file: relative to its workspace folder, after the
+/// folder's name when there are several, else the absolute path with the home folder as `~`.
+pub fn path_label(path: &Path, workspace: Option<&Workspace>) -> String {
+    if let Some(workspace) = workspace
+        && let Some(folder) = workspace.folder_of(path)
+    {
+        let relative = path.iter().skip(folder.path.iter().count()).collect::<PathBuf>().to_string_lossy().into_owned();
+        return match (workspace.folders.len() > 1, relative.is_empty()) {
+            (false, _) => relative,
+            (true, true) => folder.name.clone(),
+            (true, false) => format!("{} \u{2022} {relative}", folder.name),
+        };
     }
     if let Some(home) = std::env::var_os("HOME") {
         if let Ok(relative) = path.strip_prefix(&home) {

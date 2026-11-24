@@ -1,5 +1,5 @@
 //! The native app: the workbench, themed from the built-in theme files, over the running extension host.
-//! Usage: code-gpui [folder [file]] [--theme <settings id>] [--user-data-dir <dir>] [--screenshot <png>] [--node]
+//! Usage: code-gpui [folder or .code-workspace file [file]] [--theme <settings id>] [--user-data-dir <dir>] [--screenshot <png>] [--node]
 //!   [--extensionDevelopmentPath=<dir> [--extensionTestsPath=<path>]]: the app exits with the test runner's code.
 
 mod brackets;
@@ -29,6 +29,7 @@ use std::time::Duration;
 use config::configuration::Overrides;
 use config::registry::Registry;
 use config::service::Settings;
+use config::workspace::Workspace;
 use exthost::extension_development::ExtensionDevelopment;
 use exthost::main_thread_configuration::MainThreadConfiguration;
 use exthost::main_thread_files::MainThreadFiles;
@@ -64,7 +65,7 @@ fn main() -> anyhow::Result<()> {
     let value_flags = ["--user-data-dir", "--screenshot", "--theme"];
     let positional: Vec<&String> = args.iter().enumerate().skip(1).filter(|(i, arg)| !arg.starts_with("--") && !value_flags.contains(&args[i - 1].as_str())).map(|(_, arg)| arg).collect();
     let canonical = |path: &String| std::fs::canonicalize(path).with_context(|| format!("opening {path}"));
-    let folder = positional.first().map(|path| canonical(path)).transpose()?;
+    let workspace = positional.first().map(|path| canonical(path)).transpose()?.map(Workspace::open);
     let file = positional.get(1).map(|path| canonical(path)).transpose()?;
     let development = ExtensionDevelopment::from_args(&args)?;
 
@@ -75,7 +76,7 @@ fn main() -> anyhow::Result<()> {
         development.add_extension(&mut extensions)?;
     }
     let described: Vec<(&str, &serde_json::Value)> = extensions.iter().map(|extension| (extension.id.as_str(), &extension.description)).collect();
-    let settings = Settings::load(Registry::with_extensions(&described), user_data.join("User"), folder.clone());
+    let settings = Settings::load(Registry::with_extensions(&described), user_data.join("User"), workspace.clone());
     let theme = match flag_value("--theme") {
         Some(theme_id) => load_theme(&extensions, &theme_id)?,
         None => settings_theme(&extensions, &settings)?,
@@ -101,7 +102,7 @@ fn main() -> anyhow::Result<()> {
                 let languages = Languages::new(&extensions);
                 let host = HostSync::new(host_sender);
                 host.send_color_theme(theme.kind);
-                let mut workbench = Workbench::new(theme, app_root.clone(), folder.clone().map(FileTree::new), languages, settings.clone(), host, cx);
+                let mut workbench = Workbench::new(theme, app_root.clone(), workspace.clone().map(FileTree::new), languages, settings.clone(), host, cx);
                 workbench.skip_dialogs = development.as_ref().is_some_and(|development| development.tests_path.is_some());
                 workbench.load_keybindings(keybindings::default_keybindings(&extensions), keybindings_file.clone(), cx);
                 workbench.quick_access.menu = command_palette::menu(&extensions);
@@ -113,7 +114,7 @@ fn main() -> anyhow::Result<()> {
                     .name("exthost-session".into())
                     .spawn(move || {
                         let runs_tests = development.as_ref().is_some_and(|development| development.tests_path.is_some());
-                        if let Err(error) = run_extension_host(runtime, app_root, extensions, settings, user_data, folder, development, host_receiver, request_sender, replies, &sender) {
+                        if let Err(error) = run_extension_host(runtime, app_root, extensions, settings, user_data, workspace, development, host_receiver, request_sender, replies, &sender) {
                             if runs_tests {
                                 eprintln!("extension host failed: {error:#}");
                                 std::process::exit(1);
@@ -180,14 +181,14 @@ fn run_extension_host(
     extensions: Vec<ScannedExtension>,
     settings: Arc<Mutex<Settings>>,
     user_data: PathBuf,
-    folder: Option<PathBuf>,
+    workspace: Option<Workspace>,
     development: Option<ExtensionDevelopment>,
     workbench_messages: Receiver<HostMessage>,
     workbench_requests: UnboundedSender<ForwardedRequest>,
     workbench_replies: Receiver<(u32, Result<serde_json::Value, serde_json::Value>)>,
     status: &UnboundedSender<String>,
 ) -> anyhow::Result<()> {
-    let paths = SessionPaths { app_root: &app_root, user_data: &user_data, workspace_folder: folder.as_deref() };
+    let paths = SessionPaths { app_root: &app_root, user_data: &user_data, workspace: workspace.as_ref() };
     // storageMainService.ts: no storage during extension tests, so each test run starts empty.
     let extension_tests = development.as_ref().is_some_and(|development| development.tests_path.is_some());
     let mut storage = if extension_tests { MainThreadStorage::in_memory() } else { MainThreadStorage::open(&paths)? };
@@ -201,10 +202,15 @@ fn run_extension_host(
     let host = ExtensionHost::start(HostOptions { runtime, entry: &entry, extra_env: vec![], extra_args: vec![] }, &init)?;
     let _ = status.unbounded_send(format!("handshake done, pid {}", host.child.id()));
     let mut session = Session::new(host);
-    let watcher_excludes = settings.lock().unwrap().get_value(Some("files.watcherExclude"), &Overrides { resource: folder.as_deref(), ..Overrides::default() });
-    let watcher_excludes: Vec<String> = watcher_excludes.as_ref().and_then(|excludes| excludes.as_object()).into_iter().flatten().filter(|(_, on)| **on == true).map(|(pattern, _)| pattern.clone()).collect();
-    session.files = Some(MainThreadFiles::new(folder.as_deref(), &watcher_excludes, &extensions)?);
-    session.workspace = Some(MainThreadWorkspace::new(folder.iter().cloned().collect(), settings.clone(), &app_root));
+    let folders: Vec<PathBuf> = workspace.iter().flat_map(|workspace| workspace.folders.iter().map(|folder| folder.path.clone())).collect();
+    let mut watched = Vec::new();
+    for folder in &folders {
+        let excludes = settings.lock().unwrap().get_value(Some("files.watcherExclude"), &Overrides { resource: Some(folder), ..Overrides::default() });
+        let excludes: Vec<String> = excludes.as_ref().and_then(|excludes| excludes.as_object()).into_iter().flatten().filter(|(_, on)| **on == true).map(|(pattern, _)| pattern.clone()).collect();
+        watched.push((folder.clone(), excludes));
+    }
+    session.files = Some(MainThreadFiles::new(&watched, &extensions)?);
+    session.workspace = Some(MainThreadWorkspace::new(folders, settings.clone(), &app_root));
     session.configuration = Some(MainThreadConfiguration::new(settings, development.is_some()));
     session.storage = Some(storage);
     // secrets.ts: without encryption the secret storage falls back to memory.
@@ -218,7 +224,7 @@ fn run_extension_host(
     session.forward(&["MainThreadCommands", "MainThreadQuickOpen"], move |request| {
         let _ = workbench_requests.unbounded_send(request);
     }, workbench_replies);
-    session.start(&extensions, folder.as_deref().map(|folder| workspace_data(&init, folder)))?;
+    session.start(&extensions, workspace.as_ref().map(|workspace| workspace_data(&init, workspace)))?;
     let reply = session.call("ExtHostExtensionService", "$test_latency", vec![Arg::Json(json!(7))], Duration::from_secs(10))?;
     let _ = status.unbounded_send(format!("main -> host: $test_latency(7) = {reply:?}"));
     let _ = status.unbounded_send(format!("host -> main: {} requests so far", session.log.host_calls.values().sum::<u32>()));

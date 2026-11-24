@@ -6,6 +6,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
+use config::workspace::Workspace;
 use icu_collator::options::CollatorOptions;
 use icu_collator::preferences::CollationNumericOrdering;
 use icu_collator::{Collator, CollatorBorrowed, CollatorPreferences};
@@ -14,7 +15,7 @@ use icu_collator::{Collator, CollatorBorrowed, CollatorPreferences};
 const EXCLUDED_NAMES: [&str; 6] = [".git", ".svn", ".hg", ".jj", ".DS_Store", "Thumbs.db"];
 
 pub struct FileTree {
-    pub root: PathBuf,
+    pub workspace: Workspace,
     expanded: HashSet<PathBuf>,
     pub selected: Option<PathBuf>,
 }
@@ -23,24 +24,36 @@ pub struct FileTree {
 pub struct Row {
     pub path: PathBuf,
     pub name: String,
-    /// 1 for the root folder's children, as the reference tree counts depth.
+    /// 1 for the top rows, as the reference tree counts depth: the folder's children, or a workspace's folders.
     pub depth: usize,
     pub is_dir: bool,
     pub expanded: bool,
 }
 
 impl FileTree {
-    pub fn new(root: PathBuf) -> Self {
-        Self { root, expanded: HashSet::new(), selected: None }
+    /// `ExplorerView.doSetTreeInput` without a stored view state: a workspace file shows its folders as roots,
+    /// the first five expanded.
+    pub fn new(workspace: Workspace) -> Self {
+        let mut expanded = HashSet::new();
+        if workspace.file.is_some() {
+            expanded.extend(workspace.folders.iter().take(5).map(|folder| folder.path.clone()));
+        }
+        Self { workspace, expanded, selected: None }
+    }
+
+    /// The tree shows the folders as rows, as for any WorkbenchState but FOLDER.
+    pub fn shows_roots(&self) -> bool {
+        self.workspace.file.is_some()
     }
 
     /// Expands the folders above `path` and selects it, as `explorer.autoReveal` does for the active editor.
     pub fn reveal(&mut self, path: &Path) {
-        if !path.starts_with(&self.root) {
-            return;
-        }
-        for folder in path.ancestors().skip(1).take_while(|folder| *folder != self.root) {
+        let Some(root) = self.workspace.folder_of(path).map(|folder| folder.path.clone()) else { return };
+        for folder in path.ancestors().skip(1).take_while(|folder| *folder != root) {
             self.expanded.insert(folder.to_path_buf());
+        }
+        if self.shows_roots() && path != root {
+            self.expanded.insert(root);
         }
         self.selected = Some(path.to_path_buf());
     }
@@ -54,7 +67,17 @@ impl FileTree {
     /// Read from disk on every call: no file watcher yet, so a redraw shows the folder as it is now.
     pub fn rows(&self) -> Vec<Row> {
         let mut rows = Vec::new();
-        self.push_children(&self.root, 1, &mut rows);
+        if !self.shows_roots() {
+            self.push_children(&self.workspace.folders[0].path, 1, &mut rows);
+            return rows;
+        }
+        for folder in &self.workspace.folders {
+            let expanded = self.expanded.contains(&folder.path);
+            rows.push(Row { path: folder.path.clone(), name: folder.name.clone(), depth: 1, is_dir: true, expanded });
+            if expanded {
+                self.push_children(&folder.path, 2, &mut rows);
+            }
+        }
         rows
     }
 
@@ -114,7 +137,7 @@ mod tests {
         for file in ["README.md", "notes.txt", "src/main.ts", ".DS_Store"] {
             std::fs::write(root.join(file), "").unwrap();
         }
-        let mut tree = FileTree::new(root.clone());
+        let mut tree = FileTree::new(Workspace::folder(root.clone()));
         let row = |name: &str, depth| (name.to_string(), depth);
         assert_eq!(names(&tree), [row("Docs", 1), row("src", 1), row("notes.txt", 1), row("README.md", 1)]);
 
@@ -128,6 +151,29 @@ mod tests {
         tree.reveal(&root.join("src/main.ts"));
         assert_eq!(names(&tree).len(), 5);
         assert_eq!(tree.selected, Some(root.join("src/main.ts")));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_workspace_shows_its_folders_as_roots() {
+        let root = std::env::temp_dir().join(format!("explorer-roots-test-{}", std::process::id()));
+        let folders: Vec<String> = (1..=6).map(|index| format!("folder{index}")).collect();
+        for folder in &folders {
+            std::fs::create_dir_all(root.join(folder)).unwrap();
+            std::fs::write(root.join(folder).join("a.txt"), "").unwrap();
+        }
+        let configured: Vec<String> = folders.iter().map(|folder| format!(r#"{{ "path": "{folder}" }}"#)).collect();
+        let file = root.join("test.code-workspace");
+        std::fs::write(&file, format!(r#"{{ "folders": [{}, {{ "path": "folder1/../folder1" }}] }}"#, configured.join(", "))).unwrap();
+        let mut tree = FileTree::new(Workspace::from_file(file));
+        let rows = names(&tree);
+        let row = |name: &str, depth| (name.to_string(), depth);
+        assert_eq!(rows[..3], [row("folder1", 1), row("a.txt", 2), row("folder2", 1)]);
+        assert_eq!(rows[rows.len() - 2..], [row("a.txt", 2), row("folder6", 1)], "only the first five roots are expanded");
+
+        tree.toggle(&root.join("folder1"));
+        tree.reveal(&root.join("folder1/a.txt"));
+        assert!(tree.rows()[0].expanded, "revealing a file expands its root");
         std::fs::remove_dir_all(root).unwrap();
     }
 

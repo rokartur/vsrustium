@@ -3,7 +3,7 @@
 //! and the changes of the workspace folder, of extension watchers and of extension providers (`$onFileEvent`).
 
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::Duration;
 
@@ -16,7 +16,8 @@ use crate::rpc::{Arg, Message, Reply};
 use crate::scan::{ScannedExtension, file_uri};
 use crate::session::{CallResult, Session};
 
-/// The id of the workspace folder's watch; extension sessions are numbered by the host from 0 up.
+/// The id of the first workspace folder's watch, the next folders count down; extension sessions are numbered by
+/// the host from 0 up.
 const WORKSPACE_WATCH: u64 = u64::MAX;
 
 /// shortcut: a provider call that takes longer fails instead of waiting forever, upstream has no limit; raise it if a
@@ -48,15 +49,15 @@ pub struct MainThreadFiles {
 }
 
 impl MainThreadFiles {
-    /// `WorkspaceWatcher.watchWorkspace`: the folder, recursively, minus `files.watcherExclude` patterns set to true.
-    pub fn new(folder: Option<&Path>, watcher_excludes: &[String], extensions: &[ScannedExtension]) -> anyhow::Result<Self> {
+    /// `WorkspaceWatcher.watchWorkspace`: each folder recursively, minus its `files.watcherExclude` patterns set to true.
+    pub fn new(folders: &[(PathBuf, Vec<String>)], extensions: &[ScannedExtension]) -> anyhow::Result<Self> {
         let (sender, receiver) = channel();
         let workspace_sender = sender.clone();
         let mut watcher = Watcher::new(move |changes| {
             let _ = workspace_sender.send((None, changes));
         })?;
-        if let Some(folder) = folder {
-            watcher.watch(WORKSPACE_WATCH, folder, true, watcher_excludes)?;
+        for (index, (folder, excludes)) in folders.iter().enumerate() {
+            watcher.watch(WORKSPACE_WATCH - index as u64, folder, true, excludes)?;
         }
         let mut activation_schemes = HashSet::new();
         for extension in extensions {

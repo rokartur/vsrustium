@@ -11,8 +11,9 @@ use crate::configuration::{Configuration, Overrides};
 use crate::indentation::{creation_options, model_indentation};
 use crate::json::{self, ParseOptions, Segment};
 use crate::json_edit::{FormattingOptions, set_property};
-use crate::model::{Change, ConfigurationModel, ParseFilter, is_override_key, key_from_override_identifiers, merge_changes, parse_content, to_values_tree};
+use crate::model::{Change, ConfigurationModel, ParseFilter, is_override_key, key_from_override_identifiers, merge_changes, parse_content, parse_raw, to_values_tree};
 use crate::registry::{APPLICATION_SCOPES, FOLDER_SCOPES, Registry, Scope, WORKSPACE_SCOPES};
+use crate::workspace::Workspace;
 
 /// `ConfigurationTarget` of platform/configuration/common/configuration.ts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,21 +60,22 @@ pub struct Settings {
     pub configuration: Configuration,
     /// `<user data>/User`, the default profile's home: settings.json, tasks.json, mcp.json.
     user_home: PathBuf,
+    /// The window's folders and workspace file; `None` is the empty window.
+    pub workspace: Option<Workspace>,
     /// Size and modification time of every file a layer reads, to notice edits made outside the port.
     stamps: Vec<(PathBuf, Option<(SystemTime, u64)>)>,
 }
 
 impl Settings {
-    /// `ConfigurationService.initialize` for an empty window (`folder` is `None`) or a folder window.
-    pub fn load(registry: Registry, user_home: PathBuf, folder: Option<PathBuf>) -> Settings {
+    /// `ConfigurationService.initialize` for an empty window (`workspace` is `None`), a folder or a workspace file.
+    pub fn load(registry: Registry, user_home: PathBuf, workspace: Option<Workspace>) -> Settings {
         let defaults = registry.default_model();
-        let mut settings = Settings { registry, configuration: Configuration { defaults, ..Configuration::default() }, user_home, stamps: Vec::new() };
+        let has_workspace = workspace.is_some();
+        let mut settings = Settings { registry, configuration: Configuration { defaults, has_workspace, ..Configuration::default() }, user_home, workspace, stamps: Vec::new() };
         settings.configuration.local_user = settings.load_user();
-        if let Some(folder) = folder {
-            let model = settings.load_folder(&folder);
-            settings.configuration.workspace = model.clone();
-            settings.configuration.folder = Some((folder, model));
-        }
+        let folders: Vec<PathBuf> = settings.workspace.iter().flat_map(|workspace| workspace.folders.iter().map(|folder| folder.path.clone())).collect();
+        settings.configuration.folders = folders.into_iter().map(|folder| (folder.clone(), settings.load_folder(&folder))).collect();
+        settings.configuration.workspace = settings.load_workspace();
         settings.stamps = settings.watched_files().into_iter().map(|path| (path.clone(), stamp(&path))).collect();
         settings
     }
@@ -86,27 +88,31 @@ impl Settings {
     /// Reloads the layers whose files changed on disk since they were read, as the file watchers of
     /// `UserConfiguration` and `FolderConfiguration` do. `None` when no setting changed.
     pub fn reload_changed_files(&mut self) -> Option<Change> {
-        let mut user_changed = false;
-        let mut folder_changed = false;
+        let mut changed_files = Vec::new();
         for (path, last) in &mut self.stamps {
             let now = stamp(path);
-            if now == *last {
-                continue;
-            }
-            *last = now;
-            match path.starts_with(&self.user_home) {
-                true => user_changed = true,
-                false => folder_changed = true,
+            if now != *last {
+                *last = now;
+                changed_files.push(path.clone());
             }
         }
         let mut changes = Vec::new();
-        if user_changed {
+        if changed_files.iter().any(|path| path.starts_with(&self.user_home)) {
             let user = self.load_user();
             changes.push(self.configuration.compare_and_update_local_user(user));
         }
-        if folder_changed && let Some((folder, _)) = &self.configuration.folder {
-            let model = self.load_folder(&folder.clone());
-            changes.push(self.configuration.compare_and_update_folder(model));
+        if self.workspace_file().is_some_and(|file| changed_files.iter().any(|path| path == file)) {
+            let workspace = self.load_workspace();
+            changes.push(self.configuration.compare_and_update_workspace(workspace));
+        }
+        let single_folder = self.workspace_file().is_none();
+        let folders: Vec<PathBuf> = self.configuration.folders.iter().map(|(folder, _)| folder.clone()).collect();
+        for folder in folders {
+            let directory = folder.join(".vscode");
+            if changed_files.iter().any(|path| path.parent() == Some(directory.as_path())) {
+                let model = self.load_folder(&folder);
+                changes.push(self.configuration.compare_and_update_folder(&folder, model, single_folder));
+            }
         }
         let change = merge_changes(&changes);
         (!change.keys.is_empty()).then_some(change)
@@ -132,22 +138,37 @@ impl Settings {
         for (path, last) in &mut self.stamps {
             *last = stamp(path);
         }
-        match (editable, &self.configuration.folder) {
-            (Editable::UserLocal, _) => {
-                let user = self.load_user();
-                self.configuration.compare_and_update_local_user(user)
-            }
-            (_, Some((folder, _))) => {
-                let model = self.load_folder(&folder.clone());
-                self.configuration.compare_and_update_folder(model)
-            }
-            (_, None) => Change::default(),
+        if editable == Editable::UserLocal {
+            let user = self.load_user();
+            return self.configuration.compare_and_update_local_user(user);
         }
+        let mut changes = Vec::new();
+        if self.workspace_file().is_some() {
+            let workspace = self.load_workspace();
+            changes.push(self.configuration.compare_and_update_workspace(workspace));
+        }
+        let single_folder = self.workspace_file().is_none();
+        let folders: Vec<PathBuf> = self.configuration.folders.iter().map(|(folder, _)| folder.clone()).collect();
+        for folder in folders {
+            let model = self.load_folder(&folder);
+            changes.push(self.configuration.compare_and_update_folder(&folder, model, single_folder));
+        }
+        merge_changes(&changes)
+    }
+
+    fn workspace_file(&self) -> Option<&Path> {
+        self.workspace.as_ref().and_then(|workspace| workspace.file.as_deref())
+    }
+
+    /// The folder of `resource`, as `IWorkspaceContextService.getWorkspaceFolder` finds it.
+    fn folder_of(&self, resource: Option<&Path>) -> Option<&Path> {
+        Some(self.workspace.as_ref()?.folder_of(resource?)?.path.as_path())
     }
 
     fn watched_files(&self) -> Vec<PathBuf> {
         let mut files: Vec<PathBuf> = ["settings.json", "tasks.json", "mcp.json"].iter().map(|name| self.user_home.join(name)).collect();
-        if let Some((folder, _)) = &self.configuration.folder {
+        files.extend(self.workspace_file().map(Path::to_path_buf));
+        for (folder, _) in &self.configuration.folders {
             files.extend(["settings.json", "tasks.json", "launch.json", "mcp.json"].iter().map(|name| folder.join(".vscode").join(name)));
         }
         files
@@ -160,13 +181,33 @@ impl Settings {
         settings.merge(&standalone.into_iter().flatten().collect::<Vec<_>>())
     }
 
-    /// `FolderConfiguration` of a folder window: `.vscode/settings.json` with WORKSPACE_SCOPES (the window is
-    /// trusted, as the reference runs with workspace trust off) plus tasks.json, launch.json and mcp.json.
+    /// `FolderConfiguration`: `.vscode/settings.json` with WORKSPACE_SCOPES in a folder window and FOLDER_SCOPES in a
+    /// workspace (the window is trusted, as the reference runs with workspace trust off), plus tasks.json,
+    /// launch.json and mcp.json.
     fn load_folder(&self, folder: &Path) -> ConfigurationModel {
         let directory = folder.join(".vscode");
-        let filter = ParseFilter { scopes: Some(WORKSPACE_SCOPES.to_vec()), ..ParseFilter::default() };
+        let scopes = if self.workspace_file().is_some() { FOLDER_SCOPES.to_vec() } else { WORKSPACE_SCOPES.to_vec() };
+        let filter = ParseFilter { scopes: Some(scopes), ..ParseFilter::default() };
         let settings = parse_content(&read_or_empty(&directory.join("settings.json")), Some(&self.registry), &filter).model;
         let standalone = ["tasks", "launch", "mcp"].map(|name| standalone_model(name, &directory.join(format!("{name}.json"))));
+        settings.merge(&standalone.into_iter().flatten().collect::<Vec<_>>())
+    }
+
+    /// The workspace layer: the folder's model in a folder window; in a workspace, the workspace file's `settings`
+    /// with WORKSPACE_SCOPES plus its `launch` and `tasks` (`WorkspaceConfigurationModelParser`).
+    fn load_workspace(&self) -> ConfigurationModel {
+        let Some(file) = self.workspace_file() else {
+            return self.configuration.folders.first().map(|(_, model)| model.clone()).unwrap_or_default();
+        };
+        let content = std::fs::read_to_string(file).unwrap_or_default();
+        let raw = match json::parse(&content, &mut Vec::new(), ParseOptions { allow_trailing_comma: true, allow_empty_content: true, ..ParseOptions::default() }) {
+            Some(Value::Object(raw)) => raw,
+            _ => Map::new(),
+        };
+        let filter = ParseFilter { scopes: Some(WORKSPACE_SCOPES.to_vec()), ..ParseFilter::default() };
+        let settings = raw.get("settings").and_then(Value::as_object).cloned().unwrap_or_default();
+        let (settings, _) = parse_raw(settings, Some(&self.registry), &filter);
+        let standalone = ["launch", "tasks"].map(|name| raw.get(name).and_then(Value::as_object).map(|section| standalone_section(name, section)));
         settings.merge(&standalone.into_iter().flatten().collect::<Vec<_>>())
     }
 
@@ -178,11 +219,17 @@ impl Settings {
         };
         for name in standalone {
             let path = self.file_for(editable, &format!("{name}.json"), resource);
+            // In the workspace file the standalone sections are top-level keys.
+            let section = match self.is_workspace_file(path.as_deref()) {
+                true => vec![Segment::Key(name.to_string())],
+                false => Vec::new(),
+            };
             if key == *name {
-                return Operation { key: key.to_owned(), json_path: Vec::new(), path, standalone: Some(name) };
+                return Operation { key: key.to_owned(), json_path: section, path, standalone: Some(name) };
             }
             if let Some(rest) = key.strip_prefix(&format!("{name}.")) {
-                return Operation { key: rest.to_owned(), json_path: vec![Segment::Key(rest.to_owned())], path, standalone: Some(name) };
+                let json_path = section.into_iter().chain([Segment::Key(rest.to_owned())]).collect();
+                return Operation { key: rest.to_owned(), json_path, path, standalone: Some(name) };
             }
         }
         let mut json_path = vec![Segment::Key(key.to_owned())];
@@ -193,17 +240,27 @@ impl Settings {
             Editable::UserLocal => Some(self.user_home.join("settings.json")),
             _ => self.file_for(editable, "settings.json", resource),
         };
+        if self.is_workspace_file(path.as_deref()) {
+            json_path.insert(0, Segment::Key("settings".into()));
+        }
         Operation { key: key.to_owned(), json_path, path, standalone: None }
     }
 
-    /// `getConfigurationFileResource`: the user file, or the file in the folder's `.vscode`.
+    /// `getConfigurationFileResource`: the user file, the workspace file, or the file in a folder's `.vscode`.
     fn file_for(&self, editable: Editable, name: &str, resource: Option<&Path>) -> Option<PathBuf> {
-        let folder = self.configuration.folder.as_ref().map(|(folder, _)| folder);
         match editable {
             Editable::UserLocal => Some(self.user_home.join(name)),
-            Editable::Workspace => folder.map(|folder| folder.join(".vscode").join(name)),
-            Editable::WorkspaceFolder => folder.filter(|folder| resource.is_some_and(|resource| resource.starts_with(folder))).map(|folder| folder.join(".vscode").join(name)),
+            Editable::Workspace => match self.workspace_file() {
+                Some(file) => Some(file.to_path_buf()),
+                None => self.configuration.folders.first().map(|(folder, _)| folder.join(".vscode").join(name)),
+            },
+            Editable::WorkspaceFolder => self.folder_of(resource).map(|folder| folder.join(".vscode").join(name)),
         }
+    }
+
+    /// `isWorkspaceConfigurationResource`.
+    fn is_workspace_file(&self, path: Option<&Path>) -> bool {
+        path.is_some() && path == self.workspace_file()
     }
 
     /// `ConfigurationEditing.validate`.
@@ -216,7 +273,7 @@ impl Settings {
         if operation.standalone.is_some_and(|name| name == "launch") && editable == Editable::UserLocal {
             return Err(self.error(Error::InvalidUserTarget, editable, key));
         }
-        if editable != Editable::UserLocal && self.configuration.folder.is_none() {
+        if editable != Editable::UserLocal && self.workspace.is_none() {
             return Err(self.error(Error::NoWorkspaceOpened, editable, key));
         }
         let plain_setting = operation.standalone.is_none() && !is_override_key(key);
@@ -299,7 +356,8 @@ impl Settings {
             (_, Editable::UserLocal) => "Unable to write into user settings. Please open the user settings to correct errors/warnings in it and try again.".into(),
             (_, Editable::Workspace) => "Unable to write into workspace settings. Please open the workspace settings to correct errors/warnings in the file and try again.".into(),
             (_, Editable::WorkspaceFolder) => {
-                let name = self.configuration.folder.as_ref().and_then(|(folder, _)| folder.file_name()).map_or("<<unknown>>".into(), |name| name.to_string_lossy());
+                let folder = operation.path.as_deref().and_then(|path| self.folder_of(Some(path)));
+                let name = folder.and_then(|folder| folder.file_name()).map_or("<<unknown>>".into(), |name| name.to_string_lossy());
                 format!("Unable to write into folder settings. Please open the '{name}' folder settings to correct errors/warnings in it and try again.")
             }
         }
@@ -346,10 +404,15 @@ fn standalone_model(name: &str, path: &Path) -> Option<ConfigurationModel> {
         Some(Value::Object(raw)) => raw,
         _ => Map::new(),
     };
+    Some(standalone_section(name, &raw))
+}
+
+/// A tasks, launch or mcp object as the `name` section.
+fn standalone_section(name: &str, raw: &Map<String, Value>) -> ConfigurationModel {
     let keys = raw.keys().map(|key| format!("{name}.{key}")).collect();
     let mut contents = Map::new();
-    contents.insert(name.to_owned(), Value::Object(to_values_tree(&raw, &mut |_| {})));
-    Some(ConfigurationModel::new(contents, keys, Vec::new()))
+    contents.insert(name.to_owned(), Value::Object(to_values_tree(raw, &mut |_| {})));
+    ConfigurationModel::new(contents, keys, Vec::new())
 }
 
 /// The text a settings file parses from: a missing or empty file reads as `{}`, as `UserSettings` and
@@ -414,6 +477,10 @@ mod tests {
 
     impl Fixture {
         fn new(name: &str, with_folder: bool) -> Fixture {
+            Fixture::with_workspace(name, |root| with_folder.then(|| Workspace::folder(root.join("folder"))))
+        }
+
+        fn with_workspace(name: &str, workspace: impl FnOnce(&Path) -> Option<Workspace>) -> Fixture {
             let root = std::env::temp_dir().join(format!("config-service-{name}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&root);
             std::fs::create_dir_all(root.join("folder")).unwrap();
@@ -428,8 +495,7 @@ mod tests {
             });
             registry.register_configuration("test", &json!({ "contributes": { "configuration": { "id": "_test", "properties": properties } } }));
             registry.finish();
-            let folder = with_folder.then(|| root.join("folder"));
-            let settings = Settings::load(registry, root.join("User"), folder);
+            let settings = Settings::load(registry, root.join("User"), workspace(&root));
             Fixture { root, settings }
         }
 
@@ -590,5 +656,41 @@ mod tests {
         let application = fixture.settings.get_value(Some("configurationEditing.service.applicationSetting"), &Overrides::default());
         assert_eq!(application, Some(json!("isSet")), "application settings are not read from a folder");
         assert!(fixture.settings.reload_changed_files().is_none());
+    }
+
+    #[test]
+    fn a_workspace_file_is_the_workspace_layer() {
+        let mut fixture = Fixture::with_workspace("multi-root", |root| {
+            let file = root.join("test.code-workspace");
+            let settings = r#""settings": { "configurationEditing.service.windowSetting": "workspace" }"#;
+            write_file(&file, &format!(r#"{{ "folders": [{{ "path": "folder" }}, {{ "path": "folder2" }}], {settings}, "launch": {{ "version": "0.2.0" }} }}"#));
+            Some(Workspace::from_file(file))
+        });
+        let window = Some("configurationEditing.service.windowSetting");
+        assert_eq!(fixture.settings.get_value(window, &Overrides::default()), Some(json!("workspace")));
+        assert_eq!(fixture.settings.get_value(Some("launch.version"), &Overrides::default()), Some(json!("0.2.0")));
+
+        let folder2 = fixture.root.join("folder2/.vscode/settings.json");
+        write_file(&folder2, r#"{ "configurationEditing.service.windowSetting": "folder", "configurationEditing.service.languageSetting": "folder2" }"#);
+        fixture.settings.reload_changed_files().expect("the second folder's file is noticed");
+        let in_folder2 = Overrides { resource: Some(&folder2), override_identifier: None };
+        assert_eq!(fixture.settings.get_value(window, &in_folder2), Some(json!("workspace")), "window settings are not read from a folder of a workspace");
+        let language = Some("configurationEditing.service.languageSetting");
+        assert_eq!(fixture.settings.get_value(language, &in_folder2), Some(json!("folder2")));
+        assert_eq!(fixture.settings.get_value(language, &Overrides::default()), Some(json!("isSet")));
+
+        fixture.write("configurationEditing.service.testSetting", Some(json!("value")), Target::Workspace).unwrap();
+        fixture.write("tasks.version", Some(json!("2.0.0")), Target::Workspace).unwrap();
+        let file = parsed(&fixture.root.join("test.code-workspace"));
+        assert_eq!(file["settings"]["configurationEditing.service.testSetting"], "value");
+        assert_eq!(file["tasks"]["version"], "2.0.0");
+        assert_eq!(file["folders"][1]["path"], "folder2");
+        assert_eq!(fixture.settings.get_value(Some("configurationEditing.service.testSetting"), &Overrides::default()), Some(json!("value")));
+
+        let resource = fixture.root.join("folder2/a.txt");
+        fixture.settings.update_value("configurationEditing.service.languageSetting", Some(&json!("two")), Target::WorkspaceFolder, Some(&resource), &[]).unwrap();
+        assert_eq!(parsed(&folder2)["configurationEditing.service.languageSetting"], "two");
+        let error = fixture.settings.update_value("configurationEditing.service.testSetting", Some(&json!("two")), Target::WorkspaceFolder, Some(&resource), &[]).unwrap_err();
+        assert_eq!(error, "Unable to write to Folder Settings because configurationEditing.service.testSetting does not support the folder resource scope.");
     }
 }

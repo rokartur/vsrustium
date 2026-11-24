@@ -5,6 +5,7 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use config::workspace::Workspace;
 use exthost::rpc::{Arg, Reply};
 use exthost::scan::{extension_identifier, scan_builtin_extensions};
 use exthost::session::{Session, SessionPaths, init_data, workspace_data};
@@ -15,7 +16,7 @@ fn main() -> anyhow::Result<()> {
     let mut runtime = Runtime::Bun;
     let mut entry = PathBuf::from("out-exthost/bootstrap-exthost.js");
     let mut extensions_dir = PathBuf::from("extensions");
-    let mut workspace: Option<PathBuf> = None;
+    let mut workspace: Option<Workspace> = None;
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
         let mut value = || args.next().ok_or_else(|| anyhow::anyhow!("{flag} needs a value"));
@@ -23,7 +24,7 @@ fn main() -> anyhow::Result<()> {
             "--runtime" => runtime = if value()? == "node" { Runtime::Node } else { Runtime::Bun },
             "--entry" => entry = value()?.into(),
             "--extensions" => extensions_dir = value()?.into(),
-            "--workspace" => workspace = Some(value()?.into()),
+            "--workspace" => workspace = Some(Workspace::open(value()?.into())),
             other => anyhow::bail!("unknown flag {other}"),
         }
     }
@@ -32,14 +33,14 @@ fn main() -> anyhow::Result<()> {
     std::fs::create_dir_all(&user_data)?;
 
     let extensions = scan_builtin_extensions(&extensions_dir)?;
-    let paths = SessionPaths { app_root: extensions_dir.parent().unwrap(), user_data: &user_data, workspace_folder: workspace.as_deref() };
+    let paths = SessionPaths { app_root: extensions_dir.parent().unwrap(), user_data: &user_data, workspace: workspace.as_ref() };
     let init = init_data(&paths, &extensions, "1.147.0");
 
     let started = Instant::now();
     let host = ExtensionHost::start(HostOptions { runtime, entry: &entry, extra_env: vec![], extra_args: vec![] }, &init)?;
     let handshake_ms = started.elapsed().as_secs_f64() * 1000.0;
     let mut session = Session::new(host);
-    session.start(&extensions, workspace.as_deref().map(|folder| workspace_data(&init, folder)))?;
+    session.start(&extensions, workspace.as_ref().map(|workspace| workspace_data(&init, workspace)))?;
     let started_ms = started.elapsed().as_secs_f64() * 1000.0;
 
     // Main -> host round trip.

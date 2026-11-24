@@ -35,7 +35,7 @@ impl Workbench {
             "$show" => return self.show_pick(arg(0).as_i64().unwrap_or_default(), &arg(1), request.req, window, cx),
             "$setItems" => {
                 let instance = arg(0).as_i64().unwrap_or_default();
-                let items: Vec<_> = arg(1).as_array().into_iter().flatten().map(|item| quick_input::entry_from_transfer(item, self.workspace_path())).collect();
+                let items: Vec<_> = arg(1).as_array().into_iter().flatten().map(|item| quick_input::entry_from_transfer(item, self.workspace())).collect();
                 if let Some(input) = self.quick_inputs.find_mut(|owner| matches!(owner, Owner::Pick { instance: pick, .. } if *pick == instance)) {
                     // pick(): the items arrive, the progress stops, and checked items start selected.
                     input.busy = false;
@@ -128,7 +128,7 @@ impl Workbench {
                 self.quick_inputs.add(QuickInput::new(0, kind), Owner::Session(session))
             }
         };
-        let workspace = self.workspace_path().map(|path| path.to_path_buf());
+        let workspace = self.workspace().cloned();
         let Value::Object(params) = params else { return };
         for (key, value) in params {
             let Some(input) = self.quick_inputs.get_mut(id) else { return };
@@ -139,7 +139,7 @@ impl Workbench {
                 "id" | "type" => {}
                 "visible" if flag() => self.show_quick_input(id, window, cx),
                 "visible" => self.hide_quick_input_by_id(id, window, cx),
-                "items" => input.set_items(value.as_array().into_iter().flatten().map(|item| quick_input::entry_from_transfer(item, workspace.as_deref())).collect()),
+                "items" => input.set_items(value.as_array().into_iter().flatten().map(|item| quick_input::entry_from_transfer(item, workspace.as_ref())).collect()),
                 "activeItems" => input.set_active_items(&handles()),
                 "selectedItems" => input.set_selected_items(&handles()),
                 "buttons" => input.buttons = value.as_array().into_iter().flatten().map(quick_input::button_from_transfer).collect(),

@@ -13,8 +13,10 @@ pub struct Configuration {
     pub defaults: ConfigurationModel,
     pub local_user: ConfigurationModel,
     pub workspace: ConfigurationModel,
-    /// The one folder of a folder window and its `.vscode` settings.
-    pub folder: Option<(PathBuf, ConfigurationModel)>,
+    /// Each workspace folder and its `.vscode` settings; a folder window has one.
+    pub folders: Vec<(PathBuf, ConfigurationModel)>,
+    /// `WorkbenchState` is not EMPTY: a folder or a workspace file is open, so the workspace layer counts.
+    pub has_workspace: bool,
 }
 
 /// `IConfigurationOverrides`: a file the value is read for, and a language.
@@ -62,7 +64,7 @@ impl Configuration {
             value: self.get_value(Some(key), overrides),
             default_value: layer(Some(&self.defaults)).value,
             user_local: layer(Some(&self.local_user)),
-            workspace: layer(self.folder.is_some().then_some(&self.workspace)),
+            workspace: layer(self.has_workspace.then_some(&self.workspace)),
             workspace_folder: layer(self.folder_model_for(overrides.resource)),
         }
     }
@@ -81,10 +83,10 @@ impl Configuration {
         }
     }
 
-    /// `getFolderConfigurationModelForResource`.
+    /// `getFolderConfigurationModelForResource`: the model of the folder closest to the resource.
     fn folder_model_for(&self, resource: Option<&Path>) -> Option<&ConfigurationModel> {
-        let (folder, model) = self.folder.as_ref()?;
-        resource.filter(|resource| resource.starts_with(folder)).map(|_| model)
+        let resource = resource?;
+        self.folders.iter().filter(|(folder, _)| resource.starts_with(folder)).max_by_key(|(folder, _)| folder.components().count()).map(|(_, model)| model)
     }
 
     /// `compareAndUpdateLocalUserConfiguration`.
@@ -96,24 +98,33 @@ impl Configuration {
         change
     }
 
-    /// `onWorkspaceFolderConfigurationChanged` of a folder window: the folder model is also the workspace model.
-    pub fn compare_and_update_folder(&mut self, folder_model: ConfigurationModel) -> Change {
-        let Some((_, current)) = &mut self.folder else { return Change::default() };
+    /// `compareAndUpdateFolderConfiguration`; in a folder window (`single_folder`) the folder model is also the
+    /// workspace model, as `onWorkspaceFolderConfigurationChanged` does for WorkbenchState.FOLDER.
+    pub fn compare_and_update_folder(&mut self, folder: &Path, folder_model: ConfigurationModel, single_folder: bool) -> Change {
+        let Some((_, current)) = self.folders.iter_mut().find(|(path, _)| path == folder) else { return Change::default() };
         let folder_change = compare(Some(current), Some(&folder_model));
         if !folder_change.keys.is_empty() {
             *current = folder_model.clone();
         }
-        let workspace_change = compare(Some(&self.workspace), Some(&folder_model));
-        if !workspace_change.keys.is_empty() {
-            self.workspace = folder_model;
+        if !single_folder {
+            return folder_change;
         }
-        merge_changes(&[folder_change, workspace_change])
+        merge_changes(&[folder_change, self.compare_and_update_workspace(folder_model)])
+    }
+
+    /// `compareAndUpdateWorkspaceConfiguration`.
+    pub fn compare_and_update_workspace(&mut self, workspace: ConfigurationModel) -> Change {
+        let change = compare(Some(&self.workspace), Some(&workspace));
+        if !change.keys.is_empty() {
+            self.workspace = workspace;
+        }
+        change
     }
 
     /// `toData()`: the `IConfigurationData` `$initializeConfiguration` and `$acceptConfigurationChanged` carry.
     pub fn to_data(&self) -> Value {
         let empty = ConfigurationModel::default().to_json();
-        let folders: Vec<Value> = self.folder.iter().map(|(folder, model)| json!([file_uri(folder), model.to_json()])).collect();
+        let folders: Vec<Value> = self.folders.iter().map(|(folder, model)| json!([file_uri(folder), model.to_json()])).collect();
         json!({
             "defaults": self.defaults.to_json(),
             "policy": empty,

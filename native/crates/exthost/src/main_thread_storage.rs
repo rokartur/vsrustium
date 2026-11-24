@@ -7,6 +7,7 @@ use std::io::Read;
 use std::path::Path;
 use std::time::SystemTime;
 
+use config::workspace::Workspace;
 use serde_json::{Value, json};
 use storage::Storage;
 
@@ -26,8 +27,8 @@ impl MainThreadStorage {
     pub fn open(paths: &SessionPaths) -> std::io::Result<Self> {
         let global = paths.user_data.join("User/globalStorage");
         std::fs::create_dir_all(&global)?;
-        let workspace = match paths.workspace_folder {
-            Some(folder) => Storage::open(&workspace_storage(paths.user_data, folder)?),
+        let workspace = match paths.workspace {
+            Some(workspace) => Storage::open(&workspace_storage(paths.user_data, workspace)?),
             None => Storage::in_memory(),
         };
         Ok(MainThreadStorage { profile: Storage::open(&global.join("state.vscdb")), workspace })
@@ -106,8 +107,8 @@ fn generate_uuid() -> String {
 
 /// Upstream also writes `workspace.json` next to the database for its cleanup of stale workspace storage,
 /// which the port does not have.
-fn workspace_storage(user_data: &Path, folder: &Path) -> std::io::Result<std::path::PathBuf> {
-    let dir = user_data.join("User/workspaceStorage").join(workspace_id(folder));
+fn workspace_storage(user_data: &Path, workspace: &Workspace) -> std::io::Result<std::path::PathBuf> {
+    let dir = user_data.join("User/workspaceStorage").join(workspace_id(workspace));
     std::fs::create_dir_all(&dir)?;
     Ok(dir.join("state.vscdb"))
 }

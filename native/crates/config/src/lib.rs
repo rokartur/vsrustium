@@ -9,3 +9,4 @@ pub mod json_edit;
 pub mod model;
 pub mod registry;
 pub mod service;
+pub mod workspace;
