@@ -17,6 +17,11 @@ flate2 = "1"
 futures = "0.3"
 icu_collator = "2"
 ttf-parser = "0.25"
+block2 = "0.6"
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSAlert", "NSApplication", "NSButton", "NSCell", "NSControl", "NSMenu", "NSMenuItem", "NSResponder", "NSView", "NSWindow", "block2"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSString"] }
+raw-window-handle = "0.6"
 gpui.workspace = true
 gpui_platform = { workspace = true, features = ["font-kit"] }
 icu_normalizer = { version = "2.4", default-features = false, features = ["compiled_data"] }
@@ -24,9 +29,6 @@ serde_json.workspace = true
 storage = { path = "../storage" }
 regex = "1"
 onig = { version = "6.5", default-features = false }
-objc2 = "0.6"
-objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSApplication", "NSMenu", "NSMenuItem", "NSResponder"] }
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSString"] }
 search = { path = "../search" }
 textmate = { path = "../textmate" }
 image = { version = "0.25", default-features = false, features = ["png"] }

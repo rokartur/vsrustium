@@ -182,6 +182,7 @@ name = "app"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "block2 0.6.2",
  "config",
  "exthost",
  "files",
@@ -196,6 +197,7 @@ dependencies = [
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
  "onig",
+ "raw-window-handle",
  "regex",
  "search",
  "serde_json",

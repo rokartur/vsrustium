@@ -376,9 +376,10 @@ impl Workbench {
             let drag = self.explorer_drag(&path).filter(|_| !is_edited);
             // views.css align-icons-and-twisties: with file icons and no folder icons a file's empty twistie collapses
             // to its 8px indent and the icon takes its place, so file and folder names line up.
-            let icon_path = match row.is_new {
-                true => PathBuf::from(&self.explorer.edit.as_ref().map(|edit| edit.input.value.clone()).unwrap_or_default()),
-                false => path.clone(),
+            // explorerViewer.ts renderInputBox: the icon follows the name while it is typed.
+            let icon_path = match self.explorer.edit.as_ref().filter(|_| is_edited) {
+                Some(edit) => PathBuf::from(&edit.input.value),
+                None => path.clone(),
             };
             let file_icon = self.file_icons.as_ref().filter(|_| !is_dir).and_then(|icons| {
                 icons.file_icon(&icon_path, self.languages.language_of(&icon_path, ""), self.theme.kind, 13., label_line, foreground)
@@ -404,13 +405,13 @@ impl Workbench {
                         })
                         .child(div().self_start().flex_1().ml(px(3.)).line_height(px(label_line)).child(name)),
                 })
-                // explorerviewlet.css: .explorer-item.cut is at half opacity; while a name is edited the other rows are at 0.3.
+                // explorerviewlet.css: .explorer-item.cut is at half opacity. Its 0.3 for the other rows while a name is
+                // edited needs `.explorer-folders-view` twice in the ancestry, which the reference DOM never has.
                 .when(is_cut, |row| row.opacity(0.5))
-                .when(edited.is_some() && !is_edited, |row| row.opacity(0.3))
-                .when(is_selected && !is_edited, |row| {
+                .when(is_selected, |row| {
                     // shortcut: dashed, GPUI has no dotted border.
                     // An overlay, since a border on the row would push its content 1px like a CSS border, not an outline.
-                    let outline = selection_outline.map(|color| div().absolute().inset_0().rounded(px(4.)).border_1().border_dashed().border_color(color));
+                    let outline = selection_outline.filter(|_| !is_edited).map(|color| div().absolute().inset_0().rounded(px(4.)).border_1().border_dashed().border_color(color));
                     row.relative().bg(selection).when_some(selection_foreground, |row, color| row.text_color(color)).children(outline)
                 })
                 .when(is_drop_target, |row| row.bg(drop_background))

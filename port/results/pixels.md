@@ -195,3 +195,7 @@ The Explorer rows (header `multi (Workspace)`, both roots expanded, root childre
 ## Milestone 12 Explorer file operations
 
 Rerun after the Explorer file operations, on the Studio. Every frame printed gives the multi-root section's counts (folder light/hc/hclight 4067/960/874, file 11158/6675/4695/4160, main 12681/8133/5841/5565, multiroot 7371/4143/1110/951): the captured windows show no focused tree, edited row or drag, so nothing they draw changed.
+
+## Milestone 12 Explorer checked against the reference
+
+Rerun after the Explorer fixes from the reference comparison (inline name row, NSAlert confirmations), on the Studio, `WINDOWS="folder multiroot"` plus a full run: every frame gives the multi-root section's counts (folder 7238/4067/960/874, multiroot 7371/4143/1110/951, empty, file and main unchanged). A first run gave folder 7967/4796/1689/21117 and multiroot 8628/5400/2367/22279: the Studio's pointer was left over the package.json row by `port/tools/ui-pair`, and the port draws the hover row (hc themes: dashed `contrastActiveBorder` outline). Move the pointer off the window before a pixel-check (`cua-driver call move_cursor '{"x": 3, "y": 400}'`).

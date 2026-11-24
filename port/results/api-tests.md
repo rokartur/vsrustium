@@ -107,3 +107,13 @@ New passes against the M12 run, none lost: editorCommand with extra args; encodi
 - After multi-cursor (ea71708c): the same three runs give the same counts, editors 13/0/0, window 20/0/20, workspace 18/2/76.
 - After folding, with the scroll position truncated to whole pixels: editors 13/0/0.
 - workspace: openTextDocument, eol, the open/change/save events and openTextDocument with selection pass; the failures are untitled documents, content providers, WorkspaceEdit and file events, none in milestone 8 scope.
+## M12 Explorer checked against the reference
+
+Same `MOCHA_GREP` and setup as the bulk file edits section, on the Studio, the working tree of the Explorer reference-comparison commit.
+
+| suite | passing | pending | failing | not reached | run |
+|-------|---------|---------|---------|-------------|-----|
+| api-folder | 74 | 2 | 62 | 264 | exit 1 after 7s |
+| api-workspace | 4 | 0 | 0 | 0 | exit 0 after 0s |
+
+Unchanged: the changes are UI only.

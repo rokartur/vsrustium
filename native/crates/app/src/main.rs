@@ -8,6 +8,7 @@ mod brackets;
 mod command_palette;
 mod commands;
 mod contextkey;
+mod dialog;
 mod editor;
 mod editor_history;
 mod explorer;

@@ -1,0 +1,174 @@
+#!/usr/bin/env bun
+// Drives the reference and the port through the same steps with cua-driver and saves window screenshots of both,
+// for states a still pixel-check frame cannot reach (inline editors, dialogs, drags). Run on the Studio.
+// Usage: port/tools/ui-pair <out-dir> <steps.json> [dark|light|hc|hclight]   (env REF = reference checkout,
+// default ~/Developer/vscode-ref; env FOLDER = folder to open, default a copy of port/fixtures/workspace;
+// env ONLY = "reference" or "port" to run one of them)
+// Steps, in window points (both windows are 1024x768):
+//   {"click": [x, y]}  {"click": [x, y], "modifier": ["cmd"]}  {"doubleClick": [x, y]}  {"key": "return"}
+//   {"hotkey": ["cmd", "c"]}  {"type": "text"}  {"wait": ms}  {"shot": "name"}
+//   {"dragShot": [x1, y1, x2, y2], "shot": "name", "modifier": ["option"]}: a slow drag, captured while held
+// Shots land in <out-dir>/<reference|port>-<name>.png at 2x; a sheet on the window is captured as its own window.
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { referenceArgs, referenceUserData } from './ref-user-data.ts';
+
+type Step = { click?: number[]; doubleClick?: number[]; modifier?: string[]; key?: string; hotkey?: string[]; type?: string; wait?: number; shot?: string; dragShot?: number[] };
+
+const [outDir, stepsFile, themeName = 'dark'] = process.argv.slice(2);
+const steps: Step[] = JSON.parse(readFileSync(stepsFile, 'utf8'));
+const ref = process.env.REF ?? join(process.env.HOME!, 'Developer/vscode-ref');
+const themes: Record<string, [string, string]> = {
+	dark: ['Default Dark Modern', 'Dark Modern'],
+	light: ['Default Light Modern', 'Light Modern'],
+	hc: ['Default High Contrast', 'Default High Contrast'],
+	hclight: ['Default High Contrast Light', 'Default High Contrast Light'],
+};
+const [referenceTheme, portTheme] = themes[themeName];
+mkdirSync(outDir, { recursive: true });
+await takeGuiLock();
+
+const scratch = mkdtempSync(join(tmpdir(), 'ui-pair-'));
+for (const app of (process.env.ONLY ?? 'reference port').split(' ')) {
+	const folder = process.env.FOLDER ?? join(scratch, app, 'workspace');
+	if (!process.env.FOLDER) {
+		cpSync('port/fixtures/workspace', folder, { recursive: true });
+	}
+	const child = app === 'reference' ? startReference(folder) : startPort(folder);
+	try {
+		await run(app, child.pid);
+	} finally {
+		child.kill('SIGKILL');
+		await child.exited;
+	}
+}
+rmSync(scratch, { recursive: true, force: true });
+process.exit(0);
+
+function startReference(folder: string) {
+	const userData = referenceUserData(referenceTheme);
+	// cua-driver reads the accessibility tree, which the reference takes for a screen reader (a notification
+	// and "Screen Reader Optimized"); the port has no screen reader mode yet.
+	const settingsFile = join(userData, 'User/settings.json');
+	writeFileSync(settingsFile, JSON.stringify({ ...JSON.parse(readFileSync(settingsFile, 'utf8')), 'editor.accessibilitySupport': 'off' }));
+	// windowsStateHandler.ts: the first window takes the last active window's size (WindowMode.Normal is 1).
+	writeFileSync(join(userData, 'User/globalStorage/storage.json'), JSON.stringify({ windowsState: { lastActiveWindow: { uiState: { mode: 1, x: 100, y: 100, width: 1024, height: 768 } } } }));
+	const electron = join(ref, '.build/electron/Code - OSS.app/Contents/MacOS/Code - OSS');
+	return Bun.spawn([electron, ref, folder, ...referenceArgs, '--user-data-dir', userData], {
+		env: { ...process.env, VSCODE_DEV: '1', NODE_ENV: 'development' },
+		stdout: 'ignore',
+		stderr: 'ignore',
+	});
+}
+
+function startPort(folder: string) {
+	const userData = mkdtempSync(join(scratch, 'port-user-'));
+	return Bun.spawn(['native/target/release/code-gpui', folder, '--user-data-dir', userData, '--theme', portTheme], {
+		env: { ...process.env, VSCODE_GPUI_EXTENSIONS: join(ref, 'extensions') },
+		stdout: 'ignore',
+		stderr: Bun.file(join(outDir, 'port.log')),
+	});
+}
+
+async function run(app: string, pid: number) {
+	const window = await until(async () => {
+		const { windows } = await cua('list_windows', { pid });
+		return windows.find((w: { bounds: { width: number }; is_on_screen: boolean }) => w.is_on_screen && w.bounds.width === 1024);
+	});
+	// The workbench and its extensions settle after the window appears.
+	await Bun.sleep(app === 'reference' ? 10000 : 6000);
+	const target = { pid, window_id: window.window_id };
+	// A first capture at 2x sets the screenshot pixel space the pixel actions use.
+	await cua('get_window_state', { ...target, include_accessibility_tree: false, max_image_dimension: 2048 });
+	const at = (point: number[]) => ({ x: point[0] * 2, y: point[1] * 2 });
+	for (const step of steps) {
+		if (step.click) {
+			await cua('click', { ...target, ...at(step.click), modifier: step.modifier });
+		} else if (step.doubleClick) {
+			await cua('double_click', { ...target, ...at(step.doubleClick) });
+		} else if (step.key) {
+			await cua('press_key', { ...target, key: step.key });
+		} else if (step.hotkey) {
+			await cua('hotkey', { ...target, keys: step.hotkey });
+		} else if (step.type) {
+			// Key by key: type_text refuses windows without an accessible text field, as GPUI's.
+			for (const key of step.type) {
+				await cua('press_key', { ...target, key });
+			}
+		} else if (step.wait) {
+			await Bun.sleep(step.wait);
+		} else if (step.dragShot) {
+			const [x1, y1, x2, y2] = step.dragShot;
+			// A background drag reaches only Electron's own drag and drop; GPUI needs the real pointer.
+			const delivery_mode = app === 'port' ? 'foreground' : 'background';
+			const drag = cua('drag', { ...target, from_x: x1 * 2, from_y: y1 * 2, to_x: x2 * 2, to_y: y2 * 2, duration_ms: 4000, steps: 40, modifier: step.modifier, delivery_mode });
+			await Bun.sleep(3500);
+			await shot(app, pid, target.window_id, step.shot!);
+			await drag;
+		} else if (step.shot) {
+			await shot(app, pid, target.window_id, step.shot);
+		}
+		await Bun.sleep(400);
+	}
+}
+
+/** The window, or the sheet over it when one is open. */
+async function shot(app: string, pid: number, windowId: number, name: string) {
+	const { windows } = await cua('list_windows', { pid });
+	const sheet = windows.find((w: { window_id: number; is_on_screen: boolean; bounds: { width: number } }) => w.is_on_screen && w.window_id !== windowId && w.bounds.width < 1024);
+	const file = resolve(outDir, `${app}-${name}.png`);
+	await cua('get_window_state', { pid, window_id: sheet?.window_id ?? windowId, include_accessibility_tree: false, max_image_dimension: 2048, screenshot_out_file: file });
+	console.log(`${app}-${name}.png${sheet ? ' (sheet)' : ''}`);
+}
+
+async function cua(tool: string, args: object) {
+	// One session for every call: the pixel actions use the screenshot space of the session's last read.
+	const child = Bun.spawn(['cua-driver', 'call', tool, JSON.stringify({ session: 'ui-pair', ...args })], { stderr: 'pipe' });
+	const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+	if (code !== 0) {
+		throw new Error(`cua-driver ${tool}: ${stderr}${stdout}`);
+	}
+	return JSON.parse(stdout);
+}
+
+/** gui-lock.sh's lock: windows of parallel sessions take turns. */
+async function takeGuiLock() {
+	const lock = '/tmp/port-gui.lock';
+	while (true) {
+		try {
+			mkdirSync(lock);
+			writeFileSync(join(lock, 'pid'), String(process.pid));
+			process.on('exit', () => rmSync(lock, { recursive: true, force: true }));
+			return;
+		} catch {
+			const owner = Number(await Bun.file(join(lock, 'pid')).text().catch(() => '0'));
+			if (owner && !isAlive(owner)) {
+				rmSync(lock, { recursive: true, force: true });
+				continue;
+			}
+			await Bun.sleep(5000);
+		}
+	}
+}
+
+function isAlive(pid: number) {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+async function until<T>(probe: () => Promise<T>, timeoutMs = 60000): Promise<NonNullable<T>> {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		const value = await probe().catch(() => undefined);
+		if (value) {
+			return value;
+		}
+		await Bun.sleep(250);
+	}
+	throw new Error('timed out');
+}

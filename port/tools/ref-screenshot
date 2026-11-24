@@ -3,10 +3,9 @@
 // Usage: port/tools/ref-screenshot <out-dir> [dark|light|hc ...]   (env REF = reference checkout, default ~/Developer/vscode-ref;
 // env FOLDER = folder to open, default none; env FILE = file to open in that window, default none;
 // env KEYS = keystrokes to type into it first, GPUI style: "cmd-down up alt-cmd-[")
-import { Database } from 'bun:sqlite';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { referenceArgs, referenceUserData } from './ref-user-data.ts';
 
 const outDir = process.argv[2] ?? 'port/results/screenshots/reference';
 const ref = process.env.REF ?? join(process.env.HOME!, 'Developer/vscode-ref');
@@ -27,34 +26,9 @@ for (const name of selected) {
 process.exit(0);
 
 async function capture(theme: string) {
-	const userData = mkdtempSync(join(tmpdir(), 'ref-shot-'));
-	mkdirSync(join(userData, 'User'));
-	// Frozen state: no blinking cursor, no animations, no startup editor, no update or tips noise.
-	writeFileSync(join(userData, 'User/settings.json'), JSON.stringify({
-		'workbench.colorTheme': theme,
-		'workbench.startupEditor': 'none',
-		'workbench.reduceMotion': 'on',
-		'editor.cursorBlinking': 'solid',
-		'window.restoreWindows': 'none',
-		'workbench.tips.enabled': false,
-		'update.mode': 'none',
-		// The port ships without AI and sign-in (port/notes.md); this is the reference look of that product.
-		'chat.disableAIFeatures': true,
-		// Not ported: the trust dialog (port/notes.md, milestone 3).
-		'security.workspace.trust.enabled': false,
-		// With AI off the secondary side bar only hosts chat, so the product without AI has none.
-		'workbench.secondarySideBar.defaultVisibility': 'hidden',
-	}));
-	// Same product as the port: no accounts icon (profile storage key of globalCompositeBar.ts isAccountsActionVisible).
-	mkdirSync(join(userData, 'User/globalStorage'));
-	const storage = new Database(join(userData, 'User/globalStorage/state.vscdb'));
-	storage.run('CREATE TABLE ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)');
-	storage.run(`INSERT INTO ItemTable VALUES ('workbench.activity.showAccounts', 'false')`);
-	storage.close();
-	// vscode-api-tests adds the "Hello" status item; product builds exclude it (build/lib/extensions.ts excludedExtensions).
+	const userData = referenceUserData(theme);
 	const paths = [process.env.FOLDER, process.env.FILE].filter(path => path);
-	// The port renders sRGB; without this Chromium converts to the main display's profile (a screen sharing display shifts #0F4A85 to #224981).
-	const app = Bun.spawn([electron, ref, ...paths, '--force-color-profile=srgb', '--user-data-dir', userData, '--remote-debugging-port=' + port, '--disable-extension', 'GitHub.copilot-chat', '--disable-extension', 'vscode.vscode-api-tests'], {
+	const app = Bun.spawn([electron, ref, ...paths, ...referenceArgs, '--user-data-dir', userData, '--remote-debugging-port=' + port], {
 		env: { ...process.env, VSCODE_DEV: '1', NODE_ENV: 'development' },
 		stdout: 'ignore',
 		stderr: 'ignore',
