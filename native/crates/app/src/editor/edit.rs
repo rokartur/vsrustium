@@ -51,6 +51,8 @@ pub enum EditReason {
     Unknown(&'static str),
     /// `EditSources.applyEdits`, which undo and redo report.
     ApplyEdits,
+    /// `EditSources.eolChange` of `setEOL`: the line ending changed, the text did not.
+    EolChange,
 }
 
 const TYPED: EditReason = EditReason::Cursor { kind: "type", detailed_source: "keyboard" };
@@ -563,6 +565,21 @@ impl OpenEditor {
         format!("{bom}{}", document.lines.join(document.eol)).into_bytes()
     }
 
+    /// `pushEOL`: the model takes the line ending of `EndOfLineSequence` (0 is LF) and is dirty.
+    // shortcut: the change is not on the undo stack, so undo skips it; add it when undo groups take non-text elements.
+    pub fn push_eol(&mut self, sequence: u64) -> Option<ContentChanged> {
+        let eol = if sequence == 1 { "\r\n" } else { "\n" };
+        if self.document.eol == eol {
+            return None;
+        }
+        let was_dirty = self.is_dirty();
+        self.document.eol = eol;
+        self.version_id += 1;
+        self.history.open = false;
+        self.history.alternative_version_id = self.version_id;
+        Some(ContentChanged { changes: Vec::new(), version_id: self.version_id, is_undoing: false, is_redoing: false, reason: EditReason::EolChange, was_dirty })
+    }
+
     pub fn mark_saved(&mut self) {
         self.history.saved_alternative_version_id = self.history.alternative_version_id;
     }
@@ -571,6 +588,8 @@ impl OpenEditor {
     /// `end_selections` every selection follows the edits as the cursor's tracked range does.
     pub fn execute_edits(&mut self, edits: Vec<(Position, Position, String, bool)>, end_selections: Option<Vec<Selection>>, reason: EditReason) -> Option<ContentChanged> {
         let mut edits: Vec<_> = edits.into_iter().filter(|(start, end, text, _)| start != end || !text.is_empty()).collect();
+        // Edits at one position apply last to first, so the first one's text ends up first (`_doApplyEdits` sorts ties by sortIndex).
+        edits.reverse();
         edits.sort_by_key(|edit| std::cmp::Reverse(edit.0));
         let eol_len = self.document.eol.len();
         let before = self.selections.clone();
@@ -901,6 +920,23 @@ pub(super) mod tests {
         let edits = vec![(Position::new(0, 4), Position::new(0, 8), String::new(), false), (Position::new(0, 8), Position::new(0, 13), "3".into(), false)];
         deleted.execute_edits(edits, None, api);
         assert_eq!((deleted.document.lines[0].as_str(), deleted.selection()), ("one 3", Selection::caret(Position::new(0, 4))));
+    }
+
+    #[test]
+    fn edits_at_one_position_insert_in_their_order() {
+        // workspace.test.ts #80688: two inserts at 0,0 in one edit read 'import1;import2;'.
+        let mut model = editor("", "\n");
+        let at_start = |text: &str| (Position::new(0, 0), Position::new(0, 0), text.to_string(), true);
+        model.execute_edits(vec![at_start("import1;"), at_start("import2;")], None, EditReason::ApplyEdits);
+        assert_eq!(model.document.lines, ["import1;import2;"]);
+    }
+
+    #[test]
+    fn push_eol_changes_the_line_ending_and_dirties_the_model() {
+        let mut model = editor("foo\nbar", "\n");
+        assert!(model.push_eol(0).is_none());
+        let change = model.push_eol(1).expect("LF to CRLF");
+        assert_eq!((change.version_id, change.changes.len(), model.document.eol, model.is_dirty()), (2, 0, "\r\n", true));
     }
 
     pub(in crate::editor) fn editor(text: &str, eol: &'static str) -> OpenEditor {

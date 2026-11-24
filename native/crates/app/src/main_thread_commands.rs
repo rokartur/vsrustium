@@ -45,6 +45,11 @@ impl Workbench {
                 let names = arg(1).as_array().cloned().unwrap_or_default();
                 self.confirm_participant_edits(arg(0).as_u64().unwrap_or_default(), &names, arg(2) == true, window, cx)
             }
+            ("workbench", "applyTextEdits") => Outcome::Ready(self.apply_workspace_text_edits(&arg(0), &arg(1), cx)),
+            ("workbench", "didRunFileOperation") => {
+                self.models_after_file_operation(arg(0).as_u64().unwrap_or_default(), &arg(1), cx);
+                Outcome::done()
+            }
             ("MainThreadCommands", "$getCommands") => Outcome::Ready(Ok(json!(self.commands.ids().collect::<Vec<_>>()))),
             _ => Outcome::done(),
         }

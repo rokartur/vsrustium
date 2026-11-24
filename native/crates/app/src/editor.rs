@@ -469,9 +469,9 @@ impl EditorGroup {
         self.insert(editor, preview);
     }
 
-    /// Drops the models without an editor whose host reference ran out.
+    /// Drops the clean models without an editor whose host reference ran out; a dirty model stays, as text file models do.
     pub fn release_models(&mut self, now: Instant) {
-        self.models.retain(|model| model.host_reference.is_some_and(|opened| now.duration_since(opened) < HOST_REFERENCE_AGE));
+        self.models.retain(|model| model.is_dirty() || model.host_reference.is_some_and(|opened| now.duration_since(opened) < HOST_REFERENCE_AGE));
     }
 
     fn insert(&mut self, editor: OpenEditor, preview: bool) {

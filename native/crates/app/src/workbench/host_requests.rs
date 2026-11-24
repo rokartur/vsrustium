@@ -237,12 +237,15 @@ impl Workbench {
     }
 
     /// mainThreadEditor.ts `applyEdits`: false when the model moved past the host's version.
-    // shortcut: `setEndOfLine` is not applied; the model keeps its line ending.
     fn apply_host_edits(&mut self, version: &Value, edits: &Value, options: &Value, cx: &mut Context<Self>) -> HostResult {
         let editor = self.editors.active_mut().expect("checked by host_request");
         if version.as_u64() != Some(editor.version_id.into()) {
             return Ok(json!(false));
         }
+        if let Some(eol_change) = options["setEndOfLine"].as_u64().and_then(|sequence| editor.push_eol(sequence)) {
+            self.host.send_model_change(&self.editors, self.editors.active().expect("checked by host_request"), &eol_change);
+        }
+        let editor = self.editors.active_mut().expect("checked by host_request");
         let edits = edits
             .as_array()
             .into_iter()
@@ -277,20 +280,10 @@ impl Workbench {
         if ranges.is_empty() {
             ranges = editor.selections.iter().map(|selection| (selection.start(), selection.end())).collect();
         }
-        let adjust_indentation = options["keepWhitespace"] != json!(true);
-        let mut cursor_edits = Vec::new();
-        for &(start, end) in &ranges {
-            let line_indent: String = editor.document.lines[start.line].chars().take(start.column).take_while(|c| *c == ' ' || *c == '\t').collect();
-            let snippet = expand_snippet(template.as_str().unwrap_or_default(), &line_indent, adjust_indentation, editor.document.indentation, |name| {
-                snippet_variable(name, editor, start, end, clipboard.as_deref())
-            });
-            let prefix = |chars: usize| snippet.text.chars().take(chars).collect::<String>();
-            let selection = Selection { anchor: end_of(start, &prefix(snippet.selection.start)), head: end_of(start, &prefix(snippet.selection.end)) };
-            cursor_edits.push(CursorEdit::new(vec![Replace::new(start, end, snippet.text.clone())], selection));
-        }
-        let before: Vec<Selection> = ranges.iter().map(|&(start, end)| Selection { anchor: start, head: end }).collect();
-        let selections = selections_after(&cursor_edits, &before);
-        let edits = cursor_edits.into_iter().flat_map(|edit| edit.replaces).map(|replace| (replace.start, replace.end, replace.text, false)).collect();
+        let template = template.as_str().unwrap_or_default();
+        let keep_whitespace = options["keepWhitespace"] == json!(true);
+        let snippets: Vec<_> = ranges.into_iter().map(|(start, end)| (start, end, template, keep_whitespace)).collect();
+        let (edits, selections) = snippet_edits(editor, &snippets, clipboard.as_deref());
         if options["undoStopBefore"] == json!(true) {
             editor.push_undo_stop();
         }
@@ -301,6 +294,23 @@ impl Workbench {
         self.editor_edited(change, true, "snippet", cx);
         Ok(json!(true))
     }
+}
+
+/// `SnippetSession`: each template, with whitespace adjusted unless kept, replaces its range; the selections are
+/// each copy's first tab stop.
+pub(super) fn snippet_edits(editor: &OpenEditor, snippets: &[(Position, Position, &str, bool)], clipboard: Option<&str>) -> (Vec<(Position, Position, String, bool)>, Vec<Selection>) {
+    let mut cursor_edits = Vec::new();
+    for &(start, end, template, keep_whitespace) in snippets {
+        let line_indent: String = editor.document.lines[start.line].chars().take(start.column).take_while(|c| *c == ' ' || *c == '\t').collect();
+        let snippet = expand_snippet(template, &line_indent, !keep_whitespace, editor.document.indentation, |name| snippet_variable(name, editor, start, end, clipboard));
+        let prefix = |chars: usize| snippet.text.chars().take(chars).collect::<String>();
+        let selection = Selection { anchor: end_of(start, &prefix(snippet.selection.start)), head: end_of(start, &prefix(snippet.selection.end)) };
+        cursor_edits.push(CursorEdit::new(vec![Replace::new(start, end, snippet.text.clone())], selection));
+    }
+    let before: Vec<Selection> = snippets.iter().map(|&(start, end, _, _)| Selection { anchor: start, head: end }).collect();
+    let selections = selections_after(&cursor_edits, &before);
+    let edits = cursor_edits.into_iter().flat_map(|edit| edit.replaces).map(|replace| (replace.start, replace.end, replace.text, false)).collect();
+    (edits, selections)
 }
 
 /// snippetVariables.ts: the selection, model and file variables; the rest insert their default.
@@ -322,7 +332,7 @@ fn snippet_variable(name: &str, editor: &OpenEditor, start: Position, end: Posit
     }
 }
 
-fn uri_parts(uri: &Value) -> Result<(&str, &Path), Value> {
+pub(super) fn uri_parts(uri: &Value) -> Result<(&str, &Path), Value> {
     match (uri["scheme"].as_str(), uri["path"].as_str()) {
         (Some(scheme), Some(path)) if !scheme.is_empty() && !path.is_empty() => Ok((scheme, Path::new(path))),
         _ => Err(serialized_error("Invalid uri. Scheme and authority or path must be set.")),
@@ -330,7 +340,7 @@ fn uri_parts(uri: &Value) -> Result<(&str, &Path), Value> {
 }
 
 /// `IRange`, 1-based with UTF-16 columns, validated against the model as `validateRange` does.
-fn range(editor: &OpenEditor, range: &Value) -> (Position, Position) {
+pub(super) fn range(editor: &OpenEditor, range: &Value) -> (Position, Position) {
     let start = position(editor, &range["startLineNumber"], &range["startColumn"]);
     let end = position(editor, &range["endLineNumber"], &range["endColumn"]);
     if end < start { (end, start) } else { (start, end) }

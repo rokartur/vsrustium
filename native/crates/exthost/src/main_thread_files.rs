@@ -411,6 +411,17 @@ impl WorkingCopyFiles for Providers<'_> {
     }
 
     fn did_run(&mut self, operation: FileOperation, files: &[SourceTarget]) {
+        // TextFileEditorModelManager listens first: a moved model continues at its target, a created file's model reverts to
+        // its new contents, which the session reads since the GPUI thread cannot call a provider.
+        let mut pairs = source_targets(files);
+        if operation == FileOperation::Create {
+            for (pair, file) in pairs.as_array_mut().expect("source_targets is an array").iter_mut().zip(files) {
+                if let Ok(bytes) = files::read_file(self, &file.target) {
+                    pair["bytes"] = json!(bytes);
+                }
+            }
+        }
+        _ = self.session.ask_workbench("workbench", "didRunFileOperation", vec![json!(operation as u8), pairs]);
         self.session.notify("ExtHostFileSystemEventService", "$onDidRunFileOperation", vec![json!(operation as u8), source_targets(files)]);
     }
 
