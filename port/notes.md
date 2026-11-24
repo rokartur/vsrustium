@@ -94,7 +94,7 @@ Done when: `cargo test -p app` passes with `editor::cursor::tests`, `editor::edi
 - shortcut: Enter copies the leading whitespace only; no `onEnter` rules or indentation rules, so `{` does not indent the next line. Tab on a blank line takes the nearest non-blank indent above.
 - shortcut: save has no participants (format on save, trim whitespace, final newline), no conflict check and no encoding other than UTF-8.
 - shortcut: drag selection only tracks the pointer over lines; IME candidate windows get no bounds (`bounds_for_range` returns None).
-- shortcut: one cursor; no multi-cursor, column selection or find.
+- shortcut: no find. (Multi-cursor and column selection came in milestone 8.)
 - shortcut: the cursor still does not blink.
 
 ## Milestone 6: API test harness
