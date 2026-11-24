@@ -67,7 +67,9 @@ async function capture(theme: string) {
 		await until(async () => (await cdp('Runtime.evaluate', { expression: `!!document.querySelector('.monaco-workbench .part.statusbar')`, returnByValue: true })).result.value === true);
 		// Extensions settle their status bar items after the workbench appears.
 		await Bun.sleep(5000);
-		// The title bar dims when the window is not key, which depends on what else is frontmost on the Studio.
+		// The title bar dims when the window is not key. Page.bringToFront does not activate the app over
+		// another frontmost one (Spotify); `open -a` on the running bundle does, without Accessibility permission.
+		Bun.spawnSync(['open', '-a', join(ref, '.build/electron/Code - OSS.app')]);
 		await cdp('Page.bringToFront');
 		await until(async () => (await cdp('Runtime.evaluate', { expression: `!document.querySelector('.part.titlebar.inactive')`, returnByValue: true })).result.value === true, 10000);
 		// The editor's scrollbars show at open; park the pointer on the empty status bar and let them fade.
