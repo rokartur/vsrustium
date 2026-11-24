@@ -1,25 +1,32 @@
 #!/bin/bash
 # Pixel check: reference capture (CDP) against the port's Metal readback, per window and theme. Run from the repo root on the Studio.
 # Windows: "empty" (no folder), "folder" (port/fixtures/workspace, copied outside the repo so git sees no repository)
-# "file" (the folder with notes.txt open) and "main" (the folder with src/main.ts open, for token colors).
+# "file" (the folder with notes.txt open), "main" (the folder with src/main.ts open, for token colors) and "folded"
+# (port/fixtures/folding with long.py open, scrolled to the end and two regions folded by typing KEYS).
 # WINDOWS="file" checks only the listed windows, THEMES="dark hclight" only the listed themes.
 # Prints "window theme different anti_aliased total"; images land in $OUT/<window>.
 set -uo pipefail
 OUT=${OUT:-/tmp/pixel-check-$(basename "$PWD")}
 mkdir -p "$OUT"
-rm -rf "$OUT/workspace" && cp -R port/fixtures/workspace "$OUT/workspace"
+rm -rf "$OUT/workspace" "$OUT/folding" && cp -R port/fixtures/workspace "$OUT/workspace" && cp -R port/fixtures/folding "$OUT/folding"
 (cd native && cargo build --release -q -p app --features screenshot && cargo build --release -q -p pixeldiff) || exit 1
 source port/tools/gui-lock.sh
-for window in ${WINDOWS:-empty folder file main}; do
+for window in ${WINDOWS:-empty folder file main folded}; do
   folder=$([[ $window != empty ]] && echo "$OUT/workspace")
-  case $window in file) file=$OUT/workspace/notes.txt ;; main) file=$OUT/workspace/src/main.ts ;; *) file= ;; esac
+  keys=
+  case $window in
+    file) file=$OUT/workspace/notes.txt ;;
+    main) file=$OUT/workspace/src/main.ts ;;
+    folded) folder=$OUT/folding file=$OUT/folding/long.py keys="cmd-down up alt-cmd-[ up up up up up up up up up up up up alt-cmd-[" ;;
+    *) file= ;;
+  esac
   dir="$OUT/$window"
   mkdir -p "$dir"
-  FOLDER=$folder FILE=$file bun port/tools/ref-screenshot "$dir/reference" ${THEMES:-} >/dev/null || exit 1
+  FOLDER=$folder FILE=$file KEYS=$keys bun port/tools/ref-screenshot "$dir/reference" ${THEMES:-} >/dev/null || exit 1
   for theme in ${THEMES:-dark light hc hclight}; do
     case $theme in dark) theme_id="Dark Modern" ;; light) theme_id="Light Modern" ;; hc) theme_id="Default High Contrast" ;; hclight) theme_id="Default High Contrast Light" ;; esac
     VSCODE_GPUI_EXTENSIONS=${VSCODE_GPUI_EXTENSIONS:-$HOME/Developer/vscode-ref/extensions} \
-      timeout 120 native/target/release/code-gpui $folder $file --user-data-dir "$(mktemp -d)" --theme "$theme_id" --screenshot "$dir/port-$theme.png" 2>"$dir/port-$theme.log" || { echo "$window $theme: code-gpui failed, see $dir/port-$theme.log"; exit 1; }
+      timeout 120 native/target/release/code-gpui $folder $file --user-data-dir "$(mktemp -d)" --theme "$theme_id" --screenshot "$dir/port-$theme.png" --screenshot-keys "$keys" 2>"$dir/port-$theme.log" || { echo "$window $theme: code-gpui failed, see $dir/port-$theme.log"; exit 1; }
     counts=$(native/target/release/pixeldiff "$dir/reference/$theme.png" "$dir/port-$theme.png" "$dir/diff-$theme.png")
     echo "$window $theme $counts"
   done
