@@ -62,22 +62,26 @@ impl Workbench {
     fn tab_strip(&self, cx: &mut Context<Self>) -> Div {
         let active = self.editors.active_index().expect("tab strip is drawn only with an editor open");
         let icon_color = self.color("icon.foreground");
+        // multieditortabscontrol.css: .editor-actions is cursor default, its action items pointer (actionbar.css).
         let actions = div()
             .ml_auto()
+            .cursor_default()
             // Centered above the strip's bottom border, as the tabs are.
             .h(px(TAB_STRIP_HEIGHT - 1.))
             .px(px(4.))
             .flex()
             .items_center()
             .gap(px(4.))
-            .child(self.icon("split-horizontal", 22., 16., icon_color))
-            .child(self.icon("ellipsis", 22., 16., icon_color));
+            .child(self.icon("split-horizontal", 22., 16., icon_color).cursor_pointer())
+            .child(self.icon("ellipsis", 22., 16., icon_color).cursor_pointer());
         // The line under the strip (tabs-border-bottom) runs below the shoulders; the active fill covers it.
         let bottom_line = div().absolute().bottom_0().left_0().right_0().h(px(1.)).bg(self.connected_tab_border());
+        // editortabscontrol.css: the whole title, tabs and their close buttons included, is cursor pointer.
         div()
             .relative()
             .h(px(TAB_STRIP_HEIGHT))
             .flex_none()
+            .cursor_pointer()
             .flex()
             .bg(self.tab_strip_background())
             .child(bottom_line)
@@ -186,6 +190,8 @@ impl Workbench {
             .relative()
             .h(px(BREADCRUMBS_HEIGHT))
             .flex_none()
+            // The breadcrumbs sit in the title (editortabscontrol.css) and each item is pointer (breadcrumbsWidget.css).
+            .cursor_pointer()
             .flex()
             .bg(self.color("breadcrumb.background"))
             .text_color(foreground)
@@ -239,6 +245,9 @@ impl Workbench {
                 .absolute()
                 .inset_0(),
             )
+            // .view-lines is monaco-mouse-cursor-text; the line numbers, glyph margin and the overview ruler over the
+            // vertical scrollbar keep the default cursor.
+            .child(div().absolute().top_0().bottom_0().left(px(metrics.content_left())).right(px(OVERVIEW_RULER_WIDTH)).cursor_text())
             .child(div().absolute().left_0().right_0().top(px(lines_top)).children(rows))
             .child(
                 div().id("margin").absolute().top_0().bottom_0().left_0().w(px(metrics.content_left())).on_hover(cx.listener(|workbench, hovered: &bool, _, cx| {
@@ -248,7 +257,7 @@ impl Workbench {
             )
             .child(self.overview_ruler(editor).absolute().top_0().right_0().h_full())
             .child(self.scrollbars_canvas(editor, metrics, cx).absolute().inset_0())
-            .when(editor.scroll.top > 0., |area| area.child(self.scroll_shadow().absolute().top_0().left_0().right(px(VERTICAL_SCROLLBAR_WIDTH)).h(px(SCROLL_SHADOW_HEIGHT))))
+            .when(editor.scroll.top > 0., |area| area.child(div().absolute().top_0().left_0().right(px(VERTICAL_SCROLLBAR_WIDTH)).h(px(SCROLL_SHADOW_HEIGHT)).cursor_default().child(self.scroll_shadow().size_full())))
     }
 
     /// The text area got its size: the group's viewport follows it, which can clamp the scroll position and
@@ -539,7 +548,7 @@ impl Workbench {
                 // folding.css .inline-folded:after: an ellipsis 0.2em after the line's last char.
                 if collapsed == Some(true) {
                     let end = visible_column(text, text.chars().count(), tab_size) as f32 * char_width + 0.2 * EDITOR_FONT_SIZE;
-                    content = content.child(div().absolute().top_0().left(px(end)).text_color(fold_placeholder).child("\u{22EF}"));
+                    content = content.child(div().absolute().top_0().left(px(end)).text_color(fold_placeholder).cursor_pointer().child("\u{22EF}"));
                 }
                 for (cursor_index, selection) in selections.iter().enumerate().filter(|(_, selection)| focused && selection.head.line == index) {
                     // shortcut: the cursor does not blink (editor.cursorBlinking "blink" hides it every 500ms).
