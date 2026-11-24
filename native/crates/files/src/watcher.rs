@@ -8,8 +8,9 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use notify::event::{EventKind, ModifyKind};
+
+use crate::glob::{self, Glob};
 use notify::{RecursiveMode, Watcher as _};
 
 /// `FileChangeType`.
@@ -73,7 +74,7 @@ struct Watch {
     root: PathBuf,
     real_root: PathBuf,
     recursive: bool,
-    excludes: GlobSet,
+    excludes: Vec<Glob>,
 }
 
 impl Watch {
@@ -83,7 +84,8 @@ impl Watch {
         if !self.recursive && relative.components().count() > 1 {
             return None;
         }
-        if !relative.as_os_str().is_empty() && self.excludes.is_match(relative) {
+        let relative_path = relative.to_string_lossy();
+        if !relative_path.is_empty() && self.excludes.iter().any(|exclude| exclude.is_match(&relative_path)) {
             return None;
         }
         Some(self.root.join(relative))
@@ -108,13 +110,8 @@ impl Watcher {
 
     /// `excludes` are glob patterns relative to `path` (`files.watcherExclude`, `IWatchOptions.excludes`).
     pub fn watch(&mut self, id: u64, path: &Path, recursive: bool, excludes: &[String]) -> notify::Result<()> {
-        let mut builder = GlobSetBuilder::new();
-        for pattern in excludes {
-            if let Ok(glob) = GlobBuilder::new(pattern).literal_separator(true).case_insensitive(true).build() {
-                builder.add(glob);
-            }
-        }
-        let excludes = builder.build().map_err(|err| notify::Error::generic(&err.to_string()))?;
+        // parseWatcherPatterns: relative to the watched path, ignoring case as macOS does.
+        let excludes = excludes.iter().map(|pattern| glob::parse(pattern, glob::Options { ignore_case: true, ..glob::Options::default() })).collect();
         let real_root = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
         let mode = if recursive { RecursiveMode::Recursive } else { RecursiveMode::NonRecursive };
         self.fs_events.watch(path, mode)?;
