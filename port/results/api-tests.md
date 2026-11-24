@@ -138,6 +138,8 @@ After the encoding port (`files::encoding`, `$resolveDecoding`, `$validateDetect
 
 Left: 3 saves of `fake-fs` documents, `openTextDocument, actual casing first`, `createFileSystemWatcher`.
 
+After saves through the extension host (`workbench.action.files.save`, `$save`, `$saveAll`), same grep: api-folder 105/2/2/293 (exit 1 after 10s), api-workspace 4/0/0. Left: `openTextDocument, actual casing first`, `createFileSystemWatcher`.
+
 ## M12 participant confirmation
 
 Same `MOCHA_GREP` and setup as the bulk file edits section, on the Studio, the working tree of the participant confirmation commit.

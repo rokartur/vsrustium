@@ -45,6 +45,8 @@ impl Workbench {
                 let names = arg(1).as_array().cloned().unwrap_or_default();
                 self.confirm_participant_edits(arg(0).as_u64().unwrap_or_default(), &names, arg(2) == true, window, cx)
             }
+            ("MainThreadWorkspace", "$save") => self.save_resource(&arg(0), cx),
+            ("MainThreadWorkspace", "$saveAll") => self.save_all(arg(0) == true, cx),
             ("workbench", "applyTextEdits") => Outcome::Ready(self.apply_workspace_text_edits(&arg(0), &arg(1), cx)),
             ("workbench", "didRunFileOperation") => {
                 self.models_after_file_operation(arg(0).as_u64().unwrap_or_default(), &arg(1), cx);

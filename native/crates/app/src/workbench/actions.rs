@@ -1,10 +1,12 @@
 //! Workbench actions in the command registry under their upstream ids: close, save and revert of the
 //! editor group (editorActions.ts, fileActions.ts, fileCommands.ts).
 
+use futures::channel::oneshot;
 use gpui::{Context, PromptLevel, Window};
 use serde_json::Value;
 
 use super::Workbench;
+use super::host_requests::uri_parts;
 use crate::commands::Outcome;
 use crate::editor::{EditReason, Position, TextDocument};
 
@@ -14,18 +16,14 @@ const MAX_CONFIRM_FILES: usize = 10;
 impl Workbench {
     pub(super) fn register_workbench_actions(&mut self) {
         self.commands.register("workbench.action.files.save", |workbench, _, _, cx| {
-            if let Some(index) = workbench.editors.active_index() {
-                workbench.save_editor(index, cx);
-            }
-            Outcome::done()
+            let saves = workbench.editors.active_index().map(|index| workbench.save_editor(index, cx));
+            when_saved(saves.into_iter().collect(), |_| Value::Null, cx)
         });
         // `saveAll` in fileCommands.ts (Alt+Cmd+S), the next in openEditorsView.ts, `saveFiles` in fileCommands.ts.
         for id in ["saveAll", "workbench.action.files.saveAll", "workbench.action.files.saveFiles"] {
             self.commands.register(id, |workbench, _, _, cx| {
-                for index in workbench.dirty_editors() {
-                    workbench.save_editor(index, cx);
-                }
-                Outcome::done()
+                let saves = workbench.dirty_editors().into_iter().map(|index| workbench.save_editor(index, cx)).collect();
+                when_saved(saves, |_| Value::Null, cx)
             });
         }
         self.commands.register("workbench.action.files.revert", |workbench, _, _, cx| {
@@ -60,6 +58,24 @@ impl Workbench {
         });
     }
 
+    /// mainThreadWorkspace.ts `$save`: the editors of `uri` saved even when clean (`force`); the URI once saved.
+    pub(crate) fn save_resource(&mut self, uri: &Value, cx: &mut Context<Self>) -> Outcome {
+        let Ok((scheme, path)) = uri_parts(uri) else { return Outcome::done() };
+        let indexes: Vec<usize> = (0..self.editors.editors.len()).filter(|index| self.editors.editors[*index].document.is(scheme, &path)).collect();
+        let saves: Vec<_> = indexes.into_iter().map(|index| self.save_editor(index, cx)).collect();
+        let uri = uri.clone();
+        let saved_any = !saves.is_empty();
+        when_saved(saves, move |all_saved| if all_saved && saved_any { uri } else { Value::Null }, cx)
+    }
+
+    /// mainThreadWorkspace.ts `$saveAll`: the dirty editors, untitled ones only with `include_untitled`; true once
+    /// every one is saved.
+    pub(crate) fn save_all(&mut self, include_untitled: bool, cx: &mut Context<Self>) -> Outcome {
+        let dirty: Vec<usize> = self.dirty_editors().into_iter().filter(|index| include_untitled || self.editors.editors[*index].document.scheme != "untitled").collect();
+        let saves = dirty.into_iter().map(|index| self.save_editor(index, cx)).collect();
+        when_saved(saves, Value::Bool, cx)
+    }
+
     fn dirty_editors(&self) -> Vec<usize> {
         (0..self.editors.editors.len()).filter(|index| self.editors.editors[*index].is_dirty()).collect()
     }
@@ -82,7 +98,7 @@ impl Workbench {
             let _ = workbench.update(cx, |workbench, cx| match answer {
                 Ok(0) => {
                     for index in &dirty {
-                        workbench.save_editor(*index, cx);
+                        drop(workbench.save_editor(*index, cx));
                     }
                     workbench.discard_and_close_all(&[], cx);
                 }
@@ -123,8 +139,20 @@ impl Workbench {
         if let Some(change) = change {
             self.host.send_content_change(&self.editors, index, &change);
         }
-        self.save_editor(index, cx);
+        drop(self.save_editor(index, cx));
     }
+}
+
+/// The command's answer once every save is done; `answer` gets whether all of them succeeded.
+fn when_saved(saves: Vec<oneshot::Receiver<bool>>, answer: impl FnOnce(bool) -> Value + Send + 'static, cx: &mut Context<Workbench>) -> Outcome {
+    let (sender, receiver) = oneshot::channel();
+    cx.background_executor()
+        .spawn(async move {
+            let results = futures::future::join_all(saves).await;
+            let _ = sender.send(Ok(answer(results.into_iter().all(|saved| saved == Ok(true)))));
+        })
+        .detach();
+    Outcome::Pending(receiver)
 }
 
 /// `doShowSaveConfirm` and `getFileNamesMessage`.

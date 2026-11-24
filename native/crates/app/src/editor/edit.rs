@@ -553,7 +553,7 @@ impl OpenEditor {
 
     /// The text as it was written; the saved version is the clean one from now on.
     pub fn save(&mut self) -> std::io::Result<()> {
-        // shortcut: documents of extension file system providers save only through `$trySaveDocument`; the workbench's own save of them waits for the file service row.
+        // A content provider's model has no file to write; models of extension file system providers save through the host.
         if self.document.scheme != "file" {
             return Err(std::io::Error::new(std::io::ErrorKind::Unsupported, format!("no file system provider for {}", self.document.scheme)));
         }
@@ -585,6 +585,15 @@ impl OpenEditor {
 
     pub fn mark_saved(&mut self) {
         self.history.saved_alternative_version_id = self.history.alternative_version_id;
+    }
+
+    /// The version a save marks clean once its write is done, so edits made while it writes stay dirty.
+    pub fn alternative_version_id(&self) -> u32 {
+        self.history.alternative_version_id
+    }
+
+    pub fn mark_saved_at(&mut self, alternative_version_id: u32) {
+        self.history.saved_alternative_version_id = alternative_version_id;
     }
 
     /// `codeEditorWidget.executeEdits`: each edit is a range, its text, and `forceMoveMarkers`. Without

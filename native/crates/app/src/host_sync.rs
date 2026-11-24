@@ -28,10 +28,12 @@ pub struct HostMessage {
     pub files: Option<FileWork>,
 }
 
-/// Explorer file edits (`IExplorerService.applyBulkEdit`) or the undo or redo of earlier ones.
+/// Explorer file edits (`IExplorerService.applyBulkEdit`), the undo or redo of earlier ones, or the write of a
+/// saved model of an extension's file system provider.
 pub enum FileJob {
     Apply(Vec<FileEdit>),
     Reverse(FileUndo),
+    Write(files::Resource, Vec<u8>),
 }
 
 pub struct FileWork {
@@ -51,6 +53,7 @@ impl FileWork {
         let result = match self.job {
             FileJob::Apply(edits) => operations::apply(fs, edits, None),
             FileJob::Reverse(mut undo) => undo.reverse(fs).map(|()| undo),
+            FileJob::Write(resource, bytes) => files::write_file(fs, &resource, &bytes).map(|()| FileUndo { operations: Vec::new() }),
         };
         let _ = self.reply.send(result);
     }
