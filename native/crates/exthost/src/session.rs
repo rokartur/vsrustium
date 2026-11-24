@@ -24,8 +24,8 @@ pub struct SessionPaths<'a> {
     pub workspace_folder: Option<&'a Path>,
 }
 
-/// `IExtensionHostInitData` for a desktop window. Telemetry identifiers are fixed placeholders:
-/// the port never sends them anywhere, and extensions reading `env.machineId` get the same value as upstream's web build.
+/// `IExtensionHostInitData` for a desktop window. Telemetry identifiers are placeholders the app replaces with
+/// `MainThreadStorage::telemetry_info`; exthost-probe keeps them.
 pub fn init_data(paths: &SessionPaths, extensions: &[ScannedExtension], version: &str) -> Value {
     let descriptions: Vec<&Value> = extensions.iter().map(|e| &e.description).collect();
     let ids: Vec<Value> = extensions.iter().map(|e| extension_identifier(&e.id)).collect();
