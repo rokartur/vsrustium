@@ -64,3 +64,35 @@ fn dragging_the_header_moves_the_quick_input_and_a_double_click_puts_it_back(cx:
     assert_eq!(workbench.read_with(cx, |workbench, _| workbench.quick_inputs.view_state), view_state);
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[gpui::test]
+fn the_quick_input_stays_open_while_the_window_is_inactive(cx: &mut TestAppContext) {
+    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
+    let theme = load_theme(&[themes], "Dark Modern").unwrap();
+    let dir = std::env::temp_dir().join(format!("code-gpui-deactivate-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let (workbench, cx) = cx.add_window_view(|_, cx| {
+        let mut workbench = Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), crate::default_settings(), HostSync::new(std::sync::mpsc::channel().0), cx);
+        workbench.load_keybindings(crate::keybindings::default_keybindings(&[]), dir.join("keybindings.json"), cx);
+        workbench
+    });
+    cx.update(|window, _| window.activate_window());
+    cx.run_until_parked();
+    cx.simulate_keystrokes("shift-cmd-p");
+    let shown = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.quick_inputs.visible.is_some());
+    assert!(shown(cx));
+
+    cx.deactivate_window();
+    assert!(shown(cx), "a window deactivation is no blur");
+    cx.update(|window, _| window.activate_window());
+    cx.run_until_parked();
+    cx.simulate_keystrokes("a");
+    let value = workbench.read_with(cx, |workbench, _| workbench.quick_inputs.current().map(|input| input.input_box.value.clone()));
+    assert_eq!(value.as_deref(), Some(">a"));
+
+    cx.update(|window, cx| window.blur(cx));
+    cx.run_until_parked();
+    assert!(!shown(cx), "a real focus out hides it");
+    std::fs::remove_dir_all(dir).unwrap();
+}

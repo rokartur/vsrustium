@@ -230,6 +230,10 @@ impl Workbench {
 
     /// The `blur` of the widget: it hides unless it ignores focus out.
     fn quick_input_focus_lost(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // GPUI reports a window deactivation as focus out; the DOM keeps the active element there (dom.ts trackFocus).
+        if self.quick_inputs.focus.contains_focused(window, cx) {
+            return;
+        }
         if self.quick_inputs.current().is_some_and(|input| !input.ignore_focus_out) {
             self.hide_quick_input(false, window, cx);
             self.flush_quick_input_events(window, cx);
