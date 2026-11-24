@@ -26,7 +26,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | mainthread/MainThreadDocumentContentProviders | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadDocuments | MainThread* shape (Rust side) | ported | host_sync.rs sends model opened, changed, dirty and saved; host_requests.rs answers $tryOpenDocument (file and extension file system provider URIs) and $trySaveDocument, models kept 3 minutes after the host lets go: api-tests MOCHA_GREP="vscode API - editors" 13/0/0; $tryCreateDocument (untitled) still answers undefined |
 | mainthread/MainThreadBulkEdits | MainThread* shape (Rust side) | stub | session.rs answers undefined |
-| mainthread/MainThreadTextEditors | MainThread* shape (Rust side) | ported | host_requests.rs answers $tryShowTextDocument, $trySetSelections, $tryRevealRange, $trySetOptions, $tryApplyEdits, $tryInsertSnippet; visible ranges and options reach the host: api-tests MOCHA_GREP="vscode API - editors" 13/0/0, window text editor tests without view columns pass; one editor group, first selection only (port/notes.md milestone 8) |
+| mainthread/MainThreadTextEditors | MainThread* shape (Rust side) | ported | host_requests.rs answers $tryShowTextDocument, $trySetSelections, $tryRevealRange, $trySetOptions, $tryApplyEdits, $tryInsertSnippet; visible ranges and options reach the host: api-tests MOCHA_GREP="vscode API - editors" 13/0/0, window text editor tests without view columns pass; every selection and snippet range applies; one editor group (port/notes.md milestone 8) |
 | mainthread/MainThreadTreeViews | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadDownloadService | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadErrors | MainThread* shape (Rust side) | ported | session.rs writes `$onUnexpectedError` stacks to the port log (code-gpui stderr); seen in port/tools/api-tests api-folder.log |
@@ -220,7 +220,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/workspace | src/vs/platform | todo |  |
 | platform/workspaces | src/vs/platform | todo |  |
 | editor/browser | src/vs/editor | ported | scrolling: wheel, scrollbars with drag, track press and fade, scroll shadow, reveal on cursor moves and from the API, per-editor scroll position (editor/view.rs, workbench/editor_view.rs): cargo test -p app editor::view::tests; no minimap, sticky scroll, folding or smooth scrolling (port/notes.md milestone 8) |
-| editor/common | src/vs/editor | stub | one cursor, core moves and deletes, typing, edit stack stops, alternative version id dirty state: cargo test -p app (editor::cursor::tests, editor::edit::tests); no multi-cursor, onEnter or indentation rules, grapheme clusters (port/notes.md milestone 5) |
+| editor/common | src/vs/editor | stub | cursors (CursorCollection normalize, per-cursor edits, loser edits, paste distribution), core moves and deletes, typing, edit stack stops, alternative version id dirty state: cargo test -p app (editor::cursor::tests, editor::edit::tests); no onEnter or indentation rules, grapheme clusters (port/notes.md milestones 5 and 8) |
 | editor/standalone | src/vs/editor | todo |  |
 | editor/test | src/vs/editor | todo |  |
 | editor/contrib/anchorSelect | src/vs/editor/contrib | todo |  |
@@ -260,7 +260,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | editor/contrib/longLinesHelper | src/vs/editor/contrib | todo |  |
 | editor/contrib/message | src/vs/editor/contrib | todo |  |
 | editor/contrib/middleScroll | src/vs/editor/contrib | todo |  |
-| editor/contrib/multicursor | src/vs/editor/contrib | todo |  |
+| editor/contrib/multicursor | src/vs/editor/contrib | stub | insertCursorAbove/Below, insertCursorAtEndOfEachLineSelected, addCursorsToTop/Bottom, column selection, Alt+click and drag (editor/multicursor.rs): cargo test -p app editor::multicursor::tests; no Cmd+D, selectHighlights or changeAll until find (port/notes.md milestone 8) |
 | editor/contrib/parameterHints | src/vs/editor/contrib | todo |  |
 | editor/contrib/peekView | src/vs/editor/contrib | todo |  |
 | editor/contrib/placeholderText | src/vs/editor/contrib | todo |  |

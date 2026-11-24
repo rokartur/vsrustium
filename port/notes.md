@@ -137,7 +137,7 @@ Done when: the colorize-tests fixtures give the reference's scopes and colors; p
 
 ## Milestone 8: editor viewport and editing commands
 
-Scope (roadmap section 8): scrolling with real visible ranges and the MainThreadTextEditors and MainThreadDocuments requests, then multi-cursor and editing commands, find/replace, folding, minimap, sticky scroll. This round ships the first item only; the rest is open (last line of this section).
+Scope (roadmap section 8): scrolling with real visible ranges and the MainThreadTextEditors and MainThreadDocuments requests, then multi-cursor and editing commands, find/replace, folding, minimap, sticky scroll. Shipped: scrolling and the MainThread requests, then multi-cursor; the rest is open (last line of this section).
 
 Done when (first item): api-tests `vscode API - editors` passes as in the reference; the text editor tests of `vscode API - window` that need one editor group only pass; pixel-check file and main windows unchanged.
 
@@ -151,11 +151,14 @@ Done when (first item): api-tests `vscode API - editors` passes as in the refere
 - `$tryInsertSnippet` parses with the `snippetParser.ts` grammar (tab stops, placeholders, choices, variables, escapes), adjusts indentation like `SnippetSession.adjustWhitespace` and selects the first tab stop.
 - shortcut: no snippet session: Tab does not move through tab stops, placeholders are not linked, choices are not offered. It belongs to the `editor/contrib/snippet` row.
 - shortcut: one editor group, so `ViewColumn` other than One, `onDidChangeTextEditorViewColumn` and the tab API tests fail; they come with the editor groups row.
-- shortcut: one cursor, so `$trySetSelections` and `$tryInsertSnippet` keep the first range only until multi-cursor lands.
+- Multi-cursor (`editor/multicursor.rs`, `editor/edit.rs`): the cursors are a `Vec<Selection>`, the primary first, merged by `CursorCollection.normalize` (`multiCursorMergeOverlapping`, the last added cursor keeps its direction). Every edit runs per cursor and applies as one undo step; edits of overlapping cursors drop as in `_getLoserCursorMap`. Copy joins the selections in document order and stores `multicursorText`; paste spreads lines or pieces over the cursors (`multiCursorPaste: spread`). `$trySetSelections` and `$tryInsertSnippet` take every range.
+- Drawing: every selection and cursor, primary and secondary cursor colors (`editorMultiCursor.*`), the current line only with all selections empty, brackets at empty cursors up to 100 selections, cursors in the overview ruler. The status bar follows `editorStatus.ts` (`N selections (M characters selected)`). Reveal follows `revealAll`.
+- Keys (`editor/commands.rs`, upstream id to function, macOS defaults): Cmd+Alt+Up/Down add a cursor above/below, Shift+Alt+I a cursor at each selected line end, Escape removes the secondary cursors then the selection, Cmd+Shift+Alt+arrows and PageUp/PageDown select a column (`cursorColumnSelection.ts`). `addCursorsToTop/Bottom` are in the table without a key. Mouse (`dispatchMouse`, `multiCursorModifier` alt): Alt+click adds or removes a cursor, Alt+drag extends the last added one, Alt+double/triple click selects its word/line, Shift+Alt+click or drag and the middle button select a column.
+- Open in multi-cursor: Cmd+D, Cmd+Shift+L, Cmd+K Cmd+D and Cmd+F2 search through the find model and come with find/replace. `cursorUndo` (Cmd+U) is its own row (`editor/contrib/cursorUndo`). Gutter clicks select no lines yet, so Alt+click on a line number adds no whole-line cursor.
 - shortcut: `$trySetOptions` applies `tabSize`, `indentSize` and `insertSpaces`; `cursorStyle` and `lineNumbers` wait for their render options. `setEndOfLine` in `$tryApplyEdits` is not applied.
 - shortcut: `TextDocumentContentProvider` documents (`bikes:` in window.test) and untitled documents (`$tryCreateDocument`) do not open; they come with their MainThread rows.
 - shortcut: the workbench's own save (Cmd+S) of a file system provider document fails; only `$trySaveDocument` writes through the provider, until the file service row.
-- Open from the milestone: multi-cursor and the editing command table (`editor/commands.rs` for M9), find/replace, folding, minimap, sticky scroll. Multi-cursor changes the cursor model every later item builds on, so it starts the next round.
+- Open from the milestone: find/replace (with the multi-cursor find commands), folding, minimap, sticky scroll, and the other editing commands of `editor/commands.rs` (line operations, comments, smart select).
 
 ## Benchmarks
 

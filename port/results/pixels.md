@@ -6,6 +6,8 @@
 
 Scrollbars, scroll shadow and visible ranges added; the frozen captures show the top of each file, so nothing may move. `WINDOWS="file main"`: both unchanged from milestone 7. The first main hc run gave 16065 against a reference capture with different breadcrumbs and the cursor on line 4; the retry gave 5335.
 
+After multi-cursor (ea71708c), one cursor in both captures: `WINDOWS="file main"` gives the same eight numbers.
+
 | window | dark | light | hc | hclight |
 |---|---|---|---|---|
 | file | 10859 | 6376 | 4396 | 3853 |
