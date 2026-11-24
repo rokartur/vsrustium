@@ -173,7 +173,7 @@ Scope as in port/roadmap.md. Done in this milestone: the command registry, conte
 - Disabled quick input arrows keep the default cursor; sashes (milestone 11), the Explorer (milestone 12) and editor status items (milestone 8) get theirs with those milestones.
 - `compare_file_names` sorts by code point where upstream uses `Intl.Collator` with numeric order; `locale_compare` mimics a few ICU root rules for English labels.
 - api-tests `api-command: vscode.open`, `vscode.open with untitled supports associated resource`, `api-command: vscode.diff` and `editorCommand with extra args` fail: they need milestone 8 editor groups, tab groups and text editor arguments, and a diff editor (milestone 14).
-- shortcut: the palette history and the quick input position are kept for the session; upstream stores `workbench.commandPalette.history` and `workbench.quickInput.viewState`, which need milestone 10 storage.
+- The palette history (`commandPalette.mru.cache` and `.counter`, limited by `workbench.commandPalette.history`) and the quick input position (`workbench.quickInput.viewState`) live in the global `state.vscdb`, the same `Storage` the extension host's MainThreadStorage serves (`restore_profile_state`). Upstream writes the history on shutdown only; the port writes it on each change, since its storage is synchronous and the app has no shutdown phase.
 - shortcut: the palette's gear button opens `keybindings.json`; upstream opens the Keybindings editor at the command, which the port does not have.
 - shortcut: `keybindings.json` is polled once a second; the port has no file watcher.
 - shortcut: a command that fails from a keybinding is logged to stderr; the port has no notification toasts.

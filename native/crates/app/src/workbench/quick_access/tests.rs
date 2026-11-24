@@ -1,6 +1,7 @@
 use std::cell::Cell;
 use std::path::Path;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 use exthost::scan::{ScannedExtension, scan_extension};
 use gpui::TestAppContext;
@@ -13,6 +14,7 @@ use crate::languages::Languages;
 use crate::quick_input::Entry;
 use crate::theme::load_theme;
 use crate::workbench::Workbench;
+use storage::Storage;
 
 fn labels(workbench: &Workbench, _: &gpui::App) -> Vec<String> {
     let input = workbench.quick_inputs.current().expect("a visible quick input");
@@ -32,10 +34,14 @@ fn command_palette_runs_an_extension_command_and_remembers_it(cx: &mut TestAppCo
         description: json!({ "contributes": { "commands": [{ "command": "port.hello", "title": "Say Hello", "category": "Port" }] } }),
     };
     let runs = Rc::new(Cell::new(0));
+    let storage = Arc::new(Mutex::new(Storage::in_memory()));
+    storage.lock().unwrap().set("commandPalette.mru.counter", "41".into());
+    let profile = storage.clone();
     let (workbench, cx) = cx.add_window_view(|_, cx| {
         let mut workbench = Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), crate::default_settings(), HostSync::new(std::sync::mpsc::channel().0), cx);
         workbench.load_keybindings(crate::keybindings::default_keybindings(&[]), dir.join("keybindings.json"), cx);
         workbench.quick_access.menu = command_palette::menu(&[extension]);
+        workbench.restore_profile_state(profile);
         let runs = runs.clone();
         workbench.commands.register("port.hello", move |_, _, _, _| {
             runs.set(runs.get() + 1);
@@ -63,6 +69,9 @@ fn command_palette_runs_an_extension_command_and_remembers_it(cx: &mut TestAppCo
 
     cx.simulate_keystrokes("enter");
     assert_eq!(runs.get(), 1);
+    let stored = |key: &str| storage.lock().unwrap().get(key).map(str::to_owned);
+    assert_eq!(stored("commandPalette.mru.cache").as_deref(), Some(r#"{"usesLRU":true,"entries":[{"key":"port.hello","value":41}]}"#));
+    assert_eq!(stored("commandPalette.mru.counter").as_deref(), Some("42"));
     assert!(workbench.read_with(cx, |workbench, _| workbench.quick_inputs.current().is_none()));
 
     cx.simulate_keystrokes("shift-cmd-p");

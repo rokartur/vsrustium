@@ -360,7 +360,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/preferences | workbench service | todo |  |
 | workbench/services/process | workbench service | todo |  |
 | workbench/services/progress | workbench service | todo |  |
-| workbench/services/quickinput | workbench service | ported | quick_input_view.rs with header drag (cargo test -p app dragging); api-tests quick input 11/11; view state kept in memory until milestone 10 storage |
+| workbench/services/quickinput | workbench service | ported | quick_input_view.rs with header drag (cargo test -p app dragging); api-tests quick input 11/11; view state in application storage (cargo test -p app dragging) |
 | workbench/services/remote | workbench service | todo |  |
 | workbench/services/request | workbench service | todo |  |
 | workbench/services/search | workbench service | todo |  |
@@ -456,7 +456,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/policyExport | workbench contribution | todo |  |
 | workbench/contrib/preferences | workbench contribution | todo |  |
 | workbench/contrib/processExplorer | workbench contribution | todo |  |
-| workbench/contrib/quickaccess | workbench contribution | ported | commandsQuickAccess.ts as quick_access.rs and command_palette.rs; cargo test -p app quick_access command_palette tf_idf; viewQuickAccess.ts not ported |
+| workbench/contrib/quickaccess | workbench contribution | ported | commandsQuickAccess.ts as quick_access.rs and command_palette.rs; cargo test -p app quick_access command_palette tf_idf, history in profile storage; viewQuickAccess.ts not ported |
 | workbench/contrib/relauncher | workbench contribution | todo |  |
 | workbench/contrib/remote | workbench contribution | todo |  |
 | workbench/contrib/remoteCodingAgents | workbench contribution | removed | no sign-in/AI by decision (port/notes.md); not ported |

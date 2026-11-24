@@ -18,6 +18,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use config::service::Settings;
+use storage::Storage;
 
 use gpui::{ClickEvent, Context, Div, FocusHandle, FontFeatures, FontWeight, Rgba, Task, UniformListScrollHandle, Window, div, prelude::*, px, rgb, svg, transparent_black};
 use serde_json::Value;
@@ -58,6 +59,9 @@ pub struct Workbench {
     selecting_text: bool,
     pub quick_inputs: quick_input_view::QuickInputs,
     pub quick_access: quick_access::QuickAccess,
+    /// The application storage (StorageScope.PROFILE and APPLICATION in the default profile), shared with the
+    /// extension host's MainThreadStorage.
+    profile_storage: Arc<Mutex<Storage>>,
 }
 
 impl Render for Workbench {
@@ -125,6 +129,7 @@ impl Workbench {
             selecting_text: false,
             quick_inputs: quick_input_view::QuickInputs::new(cx),
             quick_access: quick_access::QuickAccess::default(),
+            profile_storage: Arc::new(Mutex::new(Storage::in_memory())),
         };
         crate::main_thread_commands::register_commands_documentation(&mut workbench);
         workbench.register_workbench_actions();
@@ -139,6 +144,13 @@ impl Workbench {
         })
         .detach();
         workbench
+    }
+
+    /// Switches to the app's profile storage and reads the command history and the quick input position from it.
+    pub fn restore_profile_state(&mut self, storage: Arc<Mutex<Storage>>) {
+        self.profile_storage = storage;
+        self.load_command_history();
+        self.load_quick_input_view_state();
     }
 
     /// The opened folder, which quick pick items show their resource paths relative to.

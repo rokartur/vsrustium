@@ -26,6 +26,26 @@ fn labels(entries: &[PaletteEntry]) -> Vec<String> {
 }
 
 #[test]
+fn history_loads_old_caches_by_counter_and_keeps_the_newest_within_the_limit() {
+    let old = r#"{"entries":[{"key":"b","value":7},{"key":"a","value":3},{"key":"c","value":9}]}"#;
+    let history = CommandsHistory::load(Some(old), Some("10"), 2);
+    assert_eq!(history.serialize(), (r#"{"usesLRU":true,"entries":[{"key":"b","value":7},{"key":"c","value":9}]}"#.into(), "10".into()));
+
+    let lru = r#"{"usesLRU":true,"entries":[{"key":"c","value":9},{"key":"a","value":3}]}"#;
+    let mut history = CommandsHistory::load(Some(lru), None, 50);
+    assert_eq!(history.peek("a"), Some(3));
+    history.push("x");
+    assert_eq!(history.peek("x"), Some(1), "no stored counter starts at 1");
+    history.set_limit(1);
+    assert_eq!(history.serialize().0, r#"{"usesLRU":true,"entries":[{"key":"x","value":1}]}"#);
+
+    assert_eq!(CommandsHistory::load(Some("not json"), None, 50).serialize().0, r#"{"usesLRU":true,"entries":[]}"#);
+    history.set_limit(0);
+    history.push("y");
+    assert_eq!(history.peek("y"), None, "a limit of 0 keeps no history");
+}
+
+#[test]
 fn empty_filter_sorts_by_label_with_developer_commands_last() {
     let entries = command_picks(&commands(), "", &CommandsHistory::new(DEFAULT_HISTORY_LENGTH));
     assert_eq!(labels(&entries), ["Copy", "File: Save", "File: Save All Files", "Undo", "View: Close All Editors", "Developer: Reload Window"]);

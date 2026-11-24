@@ -28,6 +28,8 @@ const TITLE_BAR_HEIGHT: f32 = 35.;
 const ROW_HEIGHT: f32 = 22.;
 const DETAIL_ROW_HEIGHT: f32 = 44.;
 const RADIUS: f32 = 8.;
+/// quickInputController.ts, in StorageScope.APPLICATION.
+const VIEWSTATE_STORAGE_KEY: &str = "workbench.quickInput.viewState";
 
 pub struct QuickInputs {
     inputs: Vec<(QuickInput, Owner)>,
@@ -57,8 +59,7 @@ pub struct QuickInputs {
     /// The shaped input text, its window x, and the scroll that keeps the caret visible.
     text: Rc<RefCell<InputText>>,
     /// `QuickInputViewState`: the dragged position, top and center as fractions of the window.
-    // shortcut: kept for the session, upstream stores workbench.quickInput.viewState; storage comes with Milestone 10.
-    view_state: Option<(f32, f32)>,
+    view_state: Option<(Option<f32>, Option<f32>)>,
     /// The pointer's offset from the widget's top left while the title or header is dragged.
     drag: Option<Point<Pixels>>,
     /// The widget's padding box as last painted.
@@ -488,7 +489,7 @@ impl Workbench {
         let viewport = window.viewport_size();
         let width = (f32::from(viewport.width) * 0.62).min(MAX_WIDTH);
         let (top, left) = match self.quick_inputs.view_state {
-            Some((top, left)) => ((f32::from(viewport.height) * top).round(), (f32::from(viewport.width) * left - width / 2.).round()),
+            Some((top, left)) => (top.map_or(TOP, |top| (f32::from(viewport.height) * top).round()), (f32::from(viewport.width) * left.unwrap_or(0.5) - width / 2.).round()),
             None => (TOP, ((f32::from(viewport.width) - width) / 2.).round()),
         };
         let has_title = !input.title_text().is_empty() || !input.buttons.iter().all(|button| button.location.is_some_and(|location| location > 1));
@@ -571,6 +572,7 @@ impl Workbench {
                     if phase == DispatchPhase::Bubble {
                         workbench.update(cx, |workbench, cx| {
                             workbench.quick_inputs.drag = None;
+                            workbench.save_quick_input_view_state();
                             cx.notify();
                         });
                     }
@@ -581,11 +583,41 @@ impl Workbench {
         .inset_0()
     }
 
+    /// `loadViewState`: the position stored by the last drag, if any.
+    pub(super) fn load_quick_input_view_state(&mut self) {
+        let storage = self.profile_storage.lock().unwrap();
+        let data: Value = storage.get(VIEWSTATE_STORAGE_KEY).and_then(|raw| serde_json::from_str(raw).ok()).unwrap_or_default();
+        self.quick_inputs.view_state = match (data["top"].as_f64(), data["left"].as_f64()) {
+            (None, None) => None,
+            (top, left) => Some((top.map(|top| top as f32), left.map(|left| left as f32))),
+        };
+    }
+
+    /// `saveViewState` in StorageScope.APPLICATION; the default position removes the key.
+    fn save_quick_input_view_state(&self) {
+        let mut storage = self.profile_storage.lock().unwrap();
+        match self.quick_inputs.view_state {
+            Some((top, left)) => {
+                // JSON.stringify leaves out an undefined side.
+                let mut state = serde_json::Map::new();
+                if let Some(top) = top {
+                    state.insert("top".into(), top.into());
+                }
+                if let Some(left) = left {
+                    state.insert("left".into(), left.into());
+                }
+                storage.set(VIEWSTATE_STORAGE_KEY, Value::Object(state).to_string());
+            }
+            None => storage.delete(VIEWSTATE_STORAGE_KEY),
+        }
+    }
+
     /// A press on the title or header starts a drag; a double click puts the widget back at the top center.
     fn quick_input_drag_start(&mut self, event: &MouseDownEvent, _: &mut Window, cx: &mut Context<Self>) {
         if event.click_count == 2 {
             self.quick_inputs.view_state = None;
             self.quick_inputs.drag = None;
+            self.save_quick_input_view_state();
             cx.notify();
             return;
         }
@@ -601,7 +633,8 @@ impl Workbench {
         let top_left = position - offset;
         let window_size = (f32::from(viewport.width), f32::from(viewport.height));
         let widget_size = (f32::from(widget.width), f32::from(widget.height));
-        self.quick_inputs.view_state = Some(drag_layout(f32::from(top_left.y), f32::from(top_left.x), window_size, widget_size, TITLE_BAR_HEIGHT, TOP));
+        let (top, left) = drag_layout(f32::from(top_left.y), f32::from(top_left.x), window_size, widget_size, TITLE_BAR_HEIGHT, TOP);
+        self.quick_inputs.view_state = Some((Some(top), Some(left)));
         cx.notify();
     }
 

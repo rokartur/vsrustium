@@ -79,6 +79,12 @@ fn main() -> anyhow::Result<()> {
     };
     let settings = Arc::new(Mutex::new(settings));
     let keybindings_file = user_data.join("User/keybindings.json");
+    // storageMainService.ts: no storage during extension tests, so each test run starts empty.
+    let extension_tests = development.as_ref().is_some_and(|development| development.tests_path.is_some());
+    let storage = match extension_tests {
+        true => MainThreadStorage::in_memory(),
+        false => MainThreadStorage::open(&SessionPaths { app_root: &app_root, user_data: &user_data, workspace_folder: folder.as_deref() })?,
+    };
 
     application().run(move |cx: &mut App| {
         // Same size as the reference capture in port/tools/ref-screenshot, so pixel diffs line up.
@@ -101,6 +107,7 @@ fn main() -> anyhow::Result<()> {
                 workbench.skip_dialogs = development.as_ref().is_some_and(|development| development.tests_path.is_some());
                 workbench.load_keybindings(keybindings::default_keybindings(&extensions), keybindings_file.clone(), cx);
                 workbench.quick_access.menu = command_palette::menu(&extensions);
+                workbench.restore_profile_state(storage.profile.clone());
                 if let Some(file) = file {
                     workbench.open_file(file, true, window, cx);
                 }
@@ -108,7 +115,7 @@ fn main() -> anyhow::Result<()> {
                     .name("exthost-session".into())
                     .spawn(move || {
                         let runs_tests = development.as_ref().is_some_and(|development| development.tests_path.is_some());
-                        if let Err(error) = run_extension_host(runtime, app_root, extensions, settings, user_data, folder, development, host_receiver, request_sender, replies, &sender) {
+                        if let Err(error) = run_extension_host(runtime, app_root, extensions, settings, storage, user_data, folder, development, host_receiver, request_sender, replies, &sender) {
                             if runs_tests {
                                 eprintln!("extension host failed: {error:#}");
                                 std::process::exit(1);
@@ -174,6 +181,7 @@ fn run_extension_host(
     app_root: PathBuf,
     extensions: Vec<ScannedExtension>,
     settings: Arc<Mutex<Settings>>,
+    mut storage: MainThreadStorage,
     user_data: PathBuf,
     folder: Option<PathBuf>,
     development: Option<ExtensionDevelopment>,
@@ -183,9 +191,7 @@ fn run_extension_host(
     status: &UnboundedSender<String>,
 ) -> anyhow::Result<()> {
     let paths = SessionPaths { app_root: &app_root, user_data: &user_data, workspace_folder: folder.as_deref() };
-    // storageMainService.ts: no storage during extension tests, so each test run starts empty.
     let extension_tests = development.as_ref().is_some_and(|development| development.tests_path.is_some());
-    let mut storage = if extension_tests { MainThreadStorage::in_memory() } else { MainThreadStorage::open(&paths)? };
     let mut init = init_data(&paths, &extensions, "1.147.0");
     init["telemetryInfo"] = storage.telemetry_info();
     if let Some(development) = &development {
