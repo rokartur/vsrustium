@@ -7,6 +7,7 @@ mod editor_commands;
 mod editor_view;
 mod keyboard;
 pub mod quick_access;
+mod quick_open;
 pub mod themes;
 mod quick_input_view;
 mod text_input;
@@ -70,6 +71,8 @@ pub struct Workbench {
     /// The application storage (StorageScope.PROFILE and APPLICATION in the default profile), shared with the
     /// extension host's MainThreadStorage.
     profile_storage: Arc<Mutex<Storage>>,
+    /// StorageScope.WORKSPACE of the opened folder, shared with the extension host's MainThreadStorage.
+    workspace_storage: Arc<Mutex<Storage>>,
 }
 
 impl Render for Workbench {
@@ -141,6 +144,7 @@ impl Workbench {
             quick_inputs: quick_input_view::QuickInputs::new(cx),
             quick_access: quick_access::QuickAccess::default(),
             profile_storage: Arc::new(Mutex::new(Storage::in_memory())),
+            workspace_storage: Arc::new(Mutex::new(Storage::in_memory())),
         };
         crate::main_thread_commands::register_commands_documentation(&mut workbench);
         workbench.register_workbench_actions();
@@ -200,6 +204,7 @@ impl Workbench {
             tree.reveal(&editor.document.path);
         }
         self.editor_scroll = UniformListScrollHandle::new();
+        self.record_editor_history();
         self.host.send_changes(&self.editors);
         cx.notify();
     }

@@ -331,7 +331,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/files | workbench service | todo |  |
 | workbench/services/filesConfiguration | workbench service | todo |  |
 | workbench/services/github | workbench service | todo |  |
-| workbench/services/history | workbench service | todo |  |
+| workbench/services/history | workbench service | stub | editor history only (`history.entries` in workspace storage, exclude matcher, 200 entries) for Quick Open: cargo test -p app editor_history quick_open; no navigation stack (back/forward) or recently closed editors |
 | workbench/services/host | workbench service | todo |  |
 | workbench/services/imageResize | workbench service | todo |  |
 | workbench/services/inlineCompletions | workbench service | todo |  |
@@ -466,7 +466,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/scm | workbench contribution | todo |  |
 | workbench/contrib/screenshotTool | workbench contribution | todo |  |
 | workbench/contrib/scrollLocking | workbench contribution | todo |  |
-| workbench/contrib/search | workbench contribution | todo |  |
+| workbench/contrib/search | workbench contribution | stub | anythingQuickAccess.ts file picks only (no symbol picks, search view in milestone 12): cargo test -p app anything_quick_access quick_open (21 reference queries via CDP, extractRange.test.ts cases); Cmd+P screenshot rows match the reference |
 | workbench/contrib/searchEditor | workbench contribution | todo |  |
 | workbench/contrib/sessionChanges | workbench contribution | todo |  |
 | workbench/contrib/sessions | workbench contribution | removed | no sign-in/AI by decision (port/notes.md); not ported |

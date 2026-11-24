@@ -4,7 +4,7 @@
 //!
 //! Events go out in `events`, in the order upstream fires them; the owner drains them after each call.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
@@ -20,7 +20,8 @@ pub enum Kind {
 pub enum Event {
     ChangeActive(Vec<i64>),
     ChangeSelection(Vec<i64>),
-    Accept,
+    /// `onDidAccept`; true when accepted in the background, the picker staying open.
+    Accept(bool),
     ChangeValue(String),
     Hide,
     /// A title bar button by handle (-1 is the back button), with the new state of a toggle.
@@ -39,6 +40,8 @@ pub struct Button {
     pub toggle: Option<bool>,
     /// `QuickInputButtonLocation`: 2 next to the input box, 3 inside it, else the title bar.
     pub location: Option<u64>,
+    /// `alwaysVisible`: an item button shown on rows that are neither focused nor hovered too.
+    pub always_visible: bool,
 }
 
 /// `QuickPickFocus`.
@@ -99,6 +102,8 @@ pub struct Item {
     /// The codicon of `iconPathDto` when it is a theme icon (`expandIconPath`).
     pub icon: Option<String>,
     pub icon_path: Option<IconPath>,
+    /// `iconClasses` of a file (`getIconClasses(resource)`): the file icon theme draws its icon.
+    pub file_icon: Option<PathBuf>,
     pub buttons: Vec<Button>,
     /// The keybinding shown at the row's end (Command Palette): the key caps of each chord.
     pub keybinding: Vec<Vec<String>>,
@@ -488,13 +493,13 @@ impl QuickInput {
                 self.events.push(Event::ChangeSelection(self.handles(&self.selected_items)));
             }
         }
-        self.events.push(Event::Accept);
+        self.events.push(Event::Accept(false));
     }
 
     /// `accept(inBackground)` of the current input (`quickInput.accept`, `quickInput.acceptInBackground`).
     pub fn accept(&mut self, in_background: bool) {
         if self.kind == Kind::InputBox {
-            self.events.push(Event::Accept);
+            self.events.push(Event::Accept(in_background));
             return;
         }
         if in_background && !self.can_accept_in_background {
@@ -504,7 +509,7 @@ impl QuickInput {
             self.selected_items = vec![active];
             self.events.push(Event::ChangeSelection(self.handles(&self.selected_items)));
         }
-        self.events.push(Event::Accept);
+        self.events.push(Event::Accept(in_background));
     }
 
     /// `QuickPick.focus(focus)`: moves the list focus.
@@ -798,7 +803,7 @@ impl QuickInput {
         self.selected_items = selected;
         self.events.push(Event::ChangeSelection(self.handles(&self.selected_items)));
         if !self.selected_items.is_empty() {
-            self.events.push(Event::Accept);
+            self.events.push(Event::Accept(false));
         }
     }
 
@@ -887,6 +892,7 @@ pub fn button_from_transfer(value: &Value) -> Button {
         tooltip: value["tooltip"].as_str().map(str::to_owned),
         toggle: value["toggle"]["checked"].as_bool(),
         location: value["location"].as_u64(),
+        always_visible: false,
     }
 }
 

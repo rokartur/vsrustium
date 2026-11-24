@@ -84,7 +84,7 @@ impl Workbench {
                     picker.preview = Some(preview);
                 }
             }
-            Event::Accept => {
+            Event::Accept(_) => {
                 let Some(input) = self.quick_inputs.get(id) else { return };
                 let Some(&handle) = input.selected_handles().first() else { return };
                 let theme = picker.picks[handle as usize].clone();

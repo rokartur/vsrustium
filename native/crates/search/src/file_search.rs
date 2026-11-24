@@ -411,7 +411,7 @@ fn prepare_query_lowercase(original: &str) -> String {
 }
 
 /// `strings.fuzzyContains`: the query's characters appear in the target in order.
-fn fuzzy_contains(target: &str, query: &str) -> bool {
+pub fn fuzzy_contains(target: &str, query: &str) -> bool {
     if target.is_empty() || query.is_empty() {
         return false;
     }

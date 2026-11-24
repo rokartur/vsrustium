@@ -184,7 +184,7 @@ impl Workbench {
                 let (method, args) = match event {
                     Event::ChangeActive(handles) => ("$onDidChangeActive", vec![session, json!(handles)]),
                     Event::ChangeSelection(handles) => ("$onDidChangeSelection", vec![session, json!(handles)]),
-                    Event::Accept => ("$onDidAccept", vec![session]),
+                    Event::Accept(_) => ("$onDidAccept", vec![session]),
                     Event::ChangeValue(value) => ("$onDidChangeValue", vec![session, json!(value)]),
                     Event::Hide => ("$onDidHide", vec![session]),
                     Event::TriggerButton(handle, checked) => ("$onDidTriggerButton", vec![session, json!(handle), json!(checked)]),
@@ -204,8 +204,8 @@ impl Workbench {
         let Some(input) = self.quick_inputs.get(id) else { return };
         let can_select_many = input.can_select_many;
         let picked = match event {
-            Event::Accept if can_select_many => Some(json!(input.selected_handles())),
-            Event::Accept => input.active_handles().first().map(|handle| json!(handle)),
+            Event::Accept(_) if can_select_many => Some(json!(input.selected_handles())),
+            Event::Accept(_) => input.active_handles().first().map(|handle| json!(handle)),
             Event::ChangeSelection(handles) if !can_select_many => handles.first().map(|handle| json!(handle)),
             Event::ChangeActive(handles) => {
                 // onDidFocus
@@ -239,7 +239,7 @@ impl Workbench {
         let validated = validated.clone();
         match event {
             Event::ChangeValue(value) if validate => self.validate_input(id, value, false, window, cx),
-            Event::Accept => {
+            Event::Accept(_) => {
                 let value = self.quick_inputs.get(id).map(|input| input.value.clone()).unwrap_or_default();
                 match validated {
                     _ if !validate => self.finish_input(id, value, &Value::Null, window, cx),

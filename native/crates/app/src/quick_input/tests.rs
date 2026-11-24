@@ -41,7 +41,7 @@ fn drain(input: &mut QuickInput) -> Vec<String> {
         .map(|event| match event {
             Event::ChangeActive(handles) => format!("active {:?}", labels(input, &handles)),
             Event::ChangeSelection(handles) => format!("selection {:?}", labels(input, &handles)),
-            Event::Accept => "accept".into(),
+            Event::Accept(_) => "accept".into(),
             Event::ChangeValue(value) => format!("value {value}"),
             Event::Hide => "hide".into(),
             Event::TriggerButton(handle, checked) => format!("button {handle} {checked:?}"),
