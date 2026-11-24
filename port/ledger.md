@@ -125,7 +125,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/commands | src/vs/platform | ported | commands.rs registry; api-tests commands suite (see MainThreadCommands) |
 | platform/configuration | src/vs/platform | ported | cargo test -p config (json, jsonEdit, configurationModels, configurationRegistry cases); policy, configurationService, configurations, configurationVariables tests not ported |
 | platform/contextkey | src/vs/platform | ported | cargo test -p app contextkey (scanner and parser cases of contextkey tests) |
-| platform/contextview | src/vs/platform | todo |  |
+| platform/contextview | src/vs/platform | verified | workbench/context_menu.rs: anchor 2px below the pointer, `layout`/`layout2d` with the cases of layout.test.ts (cargo test -p app context_menu), the click-blocking layer; the Explorer context menu opens where the reference does (port/results/contextmenu.md) |
 | platform/cssDev | src/vs/platform | todo |  |
 | platform/customizationMarketplace | src/vs/platform | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | platform/dataChannel | src/vs/platform | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
@@ -317,7 +317,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/commands | workbench service | ported | commands.rs: onCommand activation before execute; api-tests commands suite |
 | workbench/services/configuration | workbench service | ported | cargo test -p config service (configurationEditing.test.ts write cases, workspace file layer and folder scopes); port/tools/settings-check configuration |
 | workbench/services/configurationResolver | workbench service | todo |  |
-| workbench/services/contextmenu | workbench service | todo |  |
+| workbench/services/contextmenu | workbench service | ported | custom context menu (`window.menuStyle` inherit with the custom title bar): items, groups, keybindings, alt commands, focus by pointer and keys, Enter/Space, 100ms click guard, look compared with 1.147.0 (port/results/contextmenu.md, cargo test -p app explorer_actions); no submenus yet (no menu has one), no native menu style |
 | workbench/services/dataChannel | workbench service | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | workbench/services/decorations | workbench service | todo |  |
 | workbench/services/dialogs | workbench service | todo |  |
@@ -419,7 +419,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/extensions | workbench contribution | todo |  |
 | workbench/contrib/externalTerminal | workbench contribution | todo |  |
 | workbench/contrib/externalUriOpener | workbench contribution | todo |  |
-| workbench/contrib/files | workbench contribution | stub | Explorer tree read from disk (explorer.rs): folders first, default excludes, click to expand, click opens a file as preview, double click pins, selection follows the active editor; Seti file icons and compareFileNamesDefault sort; workspace folders as roots, first five expanded (cargo test -p app); new file and folder, rename, delete, copy, cut, paste, drag and drop and undo through the working copy file operations (cargo test -p app explorer_actions, file_actions); no context menu, Finder drops, compressed folders or find (port/notes.md milestones 3, 4, 12) |
+| workbench/contrib/files | workbench contribution | stub | Explorer tree read from disk (explorer.rs): folders first, default excludes, click to expand, click opens a file as preview, double click pins, selection follows the active editor; Seti file icons and compareFileNamesDefault sort; workspace folders as roots, first five expanded (cargo test -p app); new file and folder, rename, delete, copy, cut, paste, drag and drop and undo through the working copy file operations (cargo test -p app explorer_actions, file_actions); the context menu with the items whose commands the port has (port/results/contextmenu.md); no Finder drops, compressed folders or find (port/notes.md milestones 3, 4, 12) |
 | workbench/contrib/folding | workbench contribution | todo |  |
 | workbench/contrib/format | workbench contribution | todo |  |
 | workbench/contrib/git | workbench contribution | todo |  |

@@ -163,7 +163,7 @@ Done when: api-tests `configuration.test` and `state.test` pass as in the refere
 
 ## Milestone 9: commands, keybindings, quick input
 
-Scope as in port/roadmap.md. Done in this milestone: the command registry, context keys and `when` clauses, keybinding resolution, the quick input widget and MainThreadQuickOpen, the Command Palette, and Quick Open's file picks. Not done: Quick Open symbols (`@`, `#`), context menus and hovers (see the last items).
+Scope as in port/roadmap.md. Done in this milestone: the command registry, context keys and `when` clauses, keybinding resolution, the quick input widget and MainThreadQuickOpen, the Command Palette, and Quick Open's file picks. Not done: Quick Open symbols (`@`, `#`), context menus other than the Explorer's, and hovers (see the last items).
 
 - `contextkey.rs` ports the scanner, parser, evaluation and the `And`/`Or` normal forms of `contextkey.ts`; `contextkey/tests.rs` holds the scanner and parser cases of `contextkey.test.ts` and `scanner.test.ts`.
 - `commands.rs` is the one registry of the workbench and `vscode.commands`: workbench handlers, extension commands registered through MainThreadCommands (`main_thread_commands.rs`), `onCommand:` activation before a run. `Commands::register_all` takes a whole table in one call for milestone 8's `editor/commands.rs`.
@@ -196,7 +196,11 @@ Scope as in port/roadmap.md. Done in this milestone: the command registry, conte
 - Labels draw "..." as "…" as Electron's Cocoa menus do. The bold app menu title is the process name (`code-gpui`) until the port is bundled as an app.
 - shortcut: no About, Always on Top or Switch Window… in the menu bar; the port has no about dialog, always-on-top windows or window switching.
 - shortcut: Quit closes the editors (asking for dirty ones) and quits; the port has no hot exit backups.
-- Not done, left for a next session: context menus and hovers.
+- Context menus (`workbench/context_menu.rs`) are the custom menu of `contextMenuHandler.ts` and `menu.ts`: the reference draws it too, since the port's custom title bar makes `window.menuStyle: inherit` custom. The context view's anchor and `layout2d` come from `contextview.ts` and `layout.ts`. Keys reach the menu in `dispatch_key` before keybindings resolve, as the menu's DOM listeners run before the window's. Compared with 1.147.0 by `port/tools/ref-contextmenu` and `code-gpui --screenshot-input` (port/results/contextmenu.md).
+- The pointer leaving the menu is a mouse move on the click-blocking layer: GPUI's `on_hover` also reports "left" on every key press (`last_input_was_keyboard`), which unfocused the item ArrowDown had moved to.
+- The Explorer context menu (`MenuId.ExplorerContext`) has the rows of `fileActions.contribution.ts` whose commands the port has. Right click selects the row unless it is selected, as `explorerView.ts` `onContextMenu`; the list keeps its focus outline while the menu is open.
+- Submenus are not drawn yet: no menu the port shows as a context menu has one. They come with the first menu that does.
+- Not done, left for a next session: editor, title bar and tab context menus, and hovers.
 
 ## Milestone 12: files, explorer, search, workspace (in progress)
 
