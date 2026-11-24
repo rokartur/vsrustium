@@ -137,6 +137,35 @@ impl Tokenization {
         tokens.iter().map(|token| (token.end.min(text.len()), color(theme.tokens.style(&token.scopes).foreground))).collect()
     }
 
+    /// The byte offsets where `renderViewLine` starts a span on line `index`: a token whose style differs from the
+    /// one before it (tokens of equal metadata are one), and each colorized bracket's start and end.
+    pub fn span_starts(&self, theme: &Theme, languages: &Languages, lines: &[String], index: usize) -> Vec<usize> {
+        let mut starts = vec![0];
+        if self.grammar.is_none() {
+            return starts;
+        }
+        let brackets = self.brackets(theme, languages, lines);
+        self.tokenize_to(lines, index);
+        let tokenized = self.lines.borrow();
+        let mut previous = None;
+        let mut start = 0;
+        for token in &tokenized[index].0 {
+            let style = (theme.tokens.style(&token.scopes), token.token_type);
+            if previous.is_some_and(|previous| previous != style) {
+                starts.push(start);
+            }
+            previous = Some(style);
+            start = token.end;
+        }
+        for bracket in &brackets.lines[index] {
+            starts.extend([bracket.range.start, bracket.range.end]);
+        }
+        starts.retain(|&start| start < lines[index].len() || start == 0);
+        starts.sort_unstable();
+        starts.dedup();
+        starts
+    }
+
     /// `getStandardTokenType` of the token at byte `offset` of line `index` (`findTokenIndexAtOffset`).
     pub fn token_type_at(&self, lines: &[String], index: usize, offset: usize) -> textmate::StandardTokenType {
         if self.grammar.is_none() {

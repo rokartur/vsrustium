@@ -13,8 +13,6 @@ pub const VERTICAL_SCROLLBAR_WIDTH: f32 = 14.;
 pub const HORIZONTAL_SCROLLBAR_HEIGHT: f32 = 12.;
 /// `editor.scrollBeyondLastColumn`, in typical halfwidth characters.
 const SCROLL_BEYOND_LAST_COLUMN: f32 = 4.;
-/// `editor.stickyScroll.maxLineCount`: with sticky scroll on, a reveal keeps this many lines above the cursor.
-const STICKY_SCROLL_MAX_LINE_COUNT: f32 = 5.;
 /// scrollableElement.ts `SCROLL_WHEEL_SENSITIVITY`, and `editor.fastScrollSensitivity` for Alt.
 const SCROLL_WHEEL_SENSITIVITY: f32 = 50.;
 const FAST_SCROLL_SENSITIVITY: f32 = 5.;
@@ -29,6 +27,8 @@ pub struct Viewport {
     pub height: f32,
     /// `typicalHalfwidthCharacterWidth` of the editor font.
     pub char_width: f32,
+    /// `editor.stickyScroll.maxLineCount` with sticky scroll on, else 0: a reveal keeps this many lines above the cursor.
+    pub sticky_scroll_lines: usize,
 }
 
 impl Viewport {
@@ -161,7 +161,7 @@ impl OpenEditor {
         let first = ranges.iter().map(|range| range.0.line).min().expect("an editor has a cursor");
         let last = ranges.iter().map(|range| range.1.line).max().expect("an editor has a cursor");
         let box_lines = (self.view_line(first) as f32 * LINE_HEIGHT, (self.view_line(last) + 1) as f32 * LINE_HEIGHT);
-        let Some(top) = scroll_top_to_reveal(self.scroll.top, viewport.height, box_lines, VerticalReveal::Simple, source == "mouse", single) else {
+        let Some(top) = scroll_top_to_reveal(self.scroll.top, viewport, box_lines, VerticalReveal::Simple, source == "mouse", single) else {
             return;
         };
         self.set_scroll(top, self.scroll.left, viewport);
@@ -174,7 +174,7 @@ impl OpenEditor {
     /// back to the left edge.
     pub fn reveal_range(&mut self, start: Position, end: Position, reveal: VerticalReveal, viewport: Viewport) {
         let box_lines = (self.view_line(start.line) as f32 * LINE_HEIGHT, (self.view_line(end.line) + 1) as f32 * LINE_HEIGHT);
-        let Some(top) = scroll_top_to_reveal(self.scroll.top, viewport.height, box_lines, reveal, false, true) else {
+        let Some(top) = scroll_top_to_reveal(self.scroll.top, viewport, box_lines, reveal, false, true) else {
             return;
         };
         self.set_scroll(top, self.scroll.left, viewport);
@@ -188,7 +188,7 @@ impl OpenEditor {
     /// `revealTopMostCursor`/`revealBottomMostCursor`: one cursor position, vertically and horizontally.
     pub fn reveal_position(&mut self, position: Position, source: &str, viewport: Viewport) {
         let box_lines = (self.view_line(position.line) as f32 * LINE_HEIGHT, (self.view_line(position.line) + 1) as f32 * LINE_HEIGHT);
-        if let Some(top) = scroll_top_to_reveal(self.scroll.top, viewport.height, box_lines, VerticalReveal::Simple, source == "mouse", true) {
+        if let Some(top) = scroll_top_to_reveal(self.scroll.top, viewport, box_lines, VerticalReveal::Simple, source == "mouse", true) {
             self.set_scroll(top, self.scroll.left, viewport);
         }
         self.reveal_columns(&[(position, position)], false, viewport);
@@ -198,7 +198,7 @@ impl OpenEditor {
     /// padding and no horizontal scroll.
     pub fn reveal_view_line_centered(&mut self, view_line: usize, viewport: Viewport) {
         let box_lines = (view_line as f32 * LINE_HEIGHT, (view_line + 1) as f32 * LINE_HEIGHT);
-        if let Some(top) = scroll_top_to_reveal(self.scroll.top, viewport.height, box_lines, VerticalReveal::Center, true, true) {
+        if let Some(top) = scroll_top_to_reveal(self.scroll.top, viewport, box_lines, VerticalReveal::Center, true, true) {
             self.set_scroll(top, self.scroll.left, viewport);
         }
     }
@@ -264,11 +264,12 @@ impl Scrollbar {
 
 /// viewLines.ts `_computeScrollTopToRevealRange` (not minimal, `cursorSurroundingLines` 0) for a box of whole lines;
 /// `None` keeps the scroll. A box of selections taller than the viewport does not scroll.
-fn scroll_top_to_reveal(viewport_top: f32, viewport_height: f32, (box_start, box_end): (f32, f32), reveal: VerticalReveal, ignore_scroll_off: bool, single_range: bool) -> Option<f32> {
+fn scroll_top_to_reveal(viewport_top: f32, viewport: Viewport, (box_start, box_end): (f32, f32), reveal: VerticalReveal, ignore_scroll_off: bool, single_range: bool) -> Option<f32> {
+    let viewport_height = viewport.height;
     let viewport_end = viewport_top + viewport_height;
     let (mut padding_top, mut padding_bottom) = (LINE_HEIGHT, 0.);
     if !ignore_scroll_off {
-        let context = (viewport_height / LINE_HEIGHT / 2.).min(STICKY_SCROLL_MAX_LINE_COUNT);
+        let context = (viewport_height / LINE_HEIGHT / 2.).min(viewport.sticky_scroll_lines as f32);
         padding_top = context * LINE_HEIGHT;
         padding_bottom = (context - 1.).max(0.) * LINE_HEIGHT;
     }
@@ -310,7 +311,7 @@ mod tests {
         editor(text, "\n")
     }
 
-    const VIEWPORT: Viewport = Viewport { width: 400., height: 360., char_width: 7.2 };
+    const VIEWPORT: Viewport = Viewport { width: 400., height: 360., char_width: 7.2, sticky_scroll_lines: 5 };
 
     #[test]
     fn scrolls_past_the_last_line_by_one_viewport_less_one_line() {
@@ -377,6 +378,11 @@ mod tests {
         editor.selections = vec![Selection::caret(Position::new(12, 0))];
         editor.reveal_cursors("keyboard", VIEWPORT);
         assert_eq!(editor.scroll.top, 5. * 18.);
+        // Sticky scroll off: no context, and the one line below the cursor.
+        editor.scroll.top = 0.;
+        editor.selections = vec![Selection::caret(Position::new(20, 0))];
+        editor.reveal_cursors("keyboard", Viewport { sticky_scroll_lines: 0, ..VIEWPORT });
+        assert_eq!(editor.scroll.top, (21. + 1.) * 18. - 360.);
         // A click reveals one line above and one below.
         editor.selections = vec![Selection::caret(Position::new(30, 0))];
         editor.reveal_cursors("mouse", VIEWPORT);

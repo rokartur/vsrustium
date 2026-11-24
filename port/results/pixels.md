@@ -17,6 +17,16 @@ Full `port/tools/pixel-check` in the integrate worktree on the merge's working t
 
 The reference frames moved since milestone 8's run (1750 to 4642 pixels between the two reference captures of file, main and folded). Against this run's reference frames, milestone 8's own port frames give file 13772/10561/5985/6726, main 14864/11634/6605/7912 and folded 25614/31678/11297/13062, so the merge is closer in all 12. Against the milestone 12 table, file light and hclight rose by 489 and 1308, the same amounts milestone 8's minimap added (6376 to 6865, 3853 to 5161). folder hc and hclight are 12 above the milestone 12 table; not chased.
 
+## Milestone 8: sticky scroll
+
+`WINDOWS="folded file main" port/tools/pixel-check` in the m8-viewport worktree with the sticky scroll widget. The port now pins `#region Serialization` (line 47) over line 58 like the reference; the two crops match by eye. file and main are the merge table's numbers except main hclight (6873, 268 lower). In folded light the sticky shadow rows differ by 1 per channel (228 against 229 at the shadow's top); the rest of the light difference was there before sticky scroll: the current line border on line 75, a full-height column left of the minimap, and the overview ruler cursor mark (milestone 8 item e).
+
+| window | dark | light | hc | hclight |
+|---|---|---|---|---|
+| file | 10342 | 7164 | 4696 | 5468 |
+| main | 11927 | 8685 | 5842 | 6873 |
+| folded | 14070 | 27529 | 6987 | 9021 |
+
 ## Milestone 9: commands, keybindings, quick input
 
 No new window: pixel-check has no quick input. All 16 port frames are byte-identical to the milestone 7 run (md5 of `port-<theme>.png` per window).

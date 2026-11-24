@@ -157,7 +157,8 @@ impl Workbench {
     pub fn key_context(&self, window: &Window) -> HashMap<String, Value> {
         let mut context = self.context_keys.clone();
         let editor_focused = self.editor_focus.is_focused(window);
-        context.insert("editorFocus".into(), json!(editor_focused));
+        // The sticky lines are part of the editor's DOM, so their focus is the editor's but not its text's.
+        context.insert("editorFocus".into(), json!(editor_focused || self.sticky_scroll.is_focused(window)));
         context.insert("editorTextFocus".into(), json!(editor_focused));
         context.insert("textInputFocus".into(), json!(editor_focused));
         context.insert("editorIsOpen".into(), json!(self.editors.active().is_some()));
@@ -173,6 +174,7 @@ impl Workbench {
             context.insert("foldingEnabled".into(), self.setting("editor.folding"));
             context.insert("editorLangId".into(), json!(editor.document.language_id));
             context.insert("resourceLangId".into(), json!(editor.document.language_id));
+            self.sticky_scroll_context(window, &mut context);
             context.insert("resourceScheme".into(), json!(editor.document.scheme));
             let path = &editor.document.path;
             context.insert("resourceFilename".into(), json!(path.file_name().map(|name| name.to_string_lossy()).unwrap_or_default()));

@@ -13,6 +13,7 @@ impl OpenEditor {
     pub fn refresh_folding_ranges(&mut self) {
         let document = &self.document;
         let regions = compute_ranges(&document.lines, document.indentation.tab_size, document.off_side, document.folding_markers.as_deref());
+        self.sticky_model = super::sticky_scroll::from_folding_regions(&regions);
         let lines = self.selection_start_lines();
         self.folding.update(regions, self.document.lines.len(), Some(&lines));
         self.adjust_selections_to_folds();

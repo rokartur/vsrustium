@@ -190,22 +190,25 @@ pub struct MenuItem {
 
 /// The workbench's palette items of the commands this port runs, with upstream's titles and categories:
 /// `f1: true` actions and `appendToCommandPalette` (fileActions.contribution.ts), undo/redo/select all
-/// (editorExtensions.ts), clipboard.ts, commandsQuickAccess.ts, preferences.contribution.ts, themes.contribution.ts.
-const WORKBENCH_ITEMS: [(&str, &str, Option<&str>, Option<&str>); 14] = [
-    ("workbench.action.showCommands", "Show All Commands", None, None),
-    ("workbench.action.clearCommandHistory", "Clear Command History", None, None),
-    ("workbench.action.files.save", "Save", Some("File"), None),
-    ("workbench.action.files.saveFiles", "Save All Files", Some("File"), Some("!isSessionsWindow")),
-    ("workbench.action.files.revert", "Revert File", Some("File"), Some("!isSessionsWindow")),
-    ("workbench.action.closeAllEditors", "Close All Editors", Some("View"), None),
-    ("workbench.action.openGlobalKeybindingsFile", "Open Keyboard Shortcuts (JSON)", Some("Preferences"), None),
-    ("workbench.action.selectTheme", "Color Theme", Some("Preferences"), None),
-    ("undo", "Undo", None, None),
-    ("redo", "Redo", None, None),
-    ("editor.action.selectAll", "Select All", None, None),
-    ("editor.action.clipboardCutAction", "Cut", None, None),
-    ("editor.action.clipboardCopyAction", "Copy", None, None),
-    ("editor.action.clipboardPasteAction", "Paste", None, None),
+/// (editorExtensions.ts), clipboard.ts, commandsQuickAccess.ts, preferences.contribution.ts, themes.contribution.ts,
+/// stickyScrollActions.ts. Each is the id, title, category, `when` and `precondition`.
+const WORKBENCH_ITEMS: [(&str, &str, Option<&str>, Option<&str>, Option<&str>); 16] = [
+    ("workbench.action.showCommands", "Show All Commands", None, None, None),
+    ("workbench.action.clearCommandHistory", "Clear Command History", None, None, None),
+    ("workbench.action.files.save", "Save", Some("File"), None, None),
+    ("workbench.action.files.saveFiles", "Save All Files", Some("File"), Some("!isSessionsWindow"), None),
+    ("workbench.action.files.revert", "Revert File", Some("File"), Some("!isSessionsWindow"), None),
+    ("workbench.action.closeAllEditors", "Close All Editors", Some("View"), None, None),
+    ("workbench.action.openGlobalKeybindingsFile", "Open Keyboard Shortcuts (JSON)", Some("Preferences"), None, None),
+    ("workbench.action.selectTheme", "Color Theme", Some("Preferences"), None, None),
+    ("undo", "Undo", None, None, None),
+    ("redo", "Redo", None, None, None),
+    ("editor.action.selectAll", "Select All", None, None, None),
+    ("editor.action.clipboardCutAction", "Cut", None, None, None),
+    ("editor.action.clipboardCopyAction", "Copy", None, None, None),
+    ("editor.action.clipboardPasteAction", "Paste", None, None, None),
+    ("editor.action.toggleStickyScroll", "Toggle Editor Sticky Scroll", Some("View"), None, None),
+    ("editor.action.focusStickyScroll", "Focus Editor Sticky Scroll", None, None, Some("config.editor.stickyScroll.enabled && stickyScrollVisible")),
 ];
 
 /// `MenuRegistry.getMenuItems(MenuId.CommandPalette)`: the workbench's items, the extensions'
@@ -213,12 +216,12 @@ const WORKBENCH_ITEMS: [(&str, &str, Option<&str>, Option<&str>); 14] = [
 pub fn menu(extensions: &[ScannedExtension]) -> Vec<MenuItem> {
     let mut items: Vec<MenuItem> = WORKBENCH_ITEMS
         .iter()
-        .map(|(id, title, category, when)| MenuItem {
+        .map(|(id, title, category, when, precondition)| MenuItem {
             id: id.to_string(),
             title: title.to_string(),
             category: category.map(str::to_string),
             when: when.and_then(Expr::deserialize),
-            precondition: None,
+            precondition: precondition.and_then(Expr::deserialize),
         })
         .collect();
     let commands: Vec<MenuItem> = extensions.iter().flat_map(|extension| contributed_commands(&extension.description)).collect();

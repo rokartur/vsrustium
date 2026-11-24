@@ -13,6 +13,8 @@ use gpui::{
     Rgba, ScrollDelta, ScrollWheelEvent, Stateful, StyledText, Task, Window, canvas, div, fill, font, point, prelude::*, px, size,
 };
 
+pub(super) mod sticky_scroll_view;
+
 use super::Workbench;
 use super::minimap_view::minimap_info;
 use crate::brackets::BracketRange;
@@ -228,6 +230,7 @@ impl Workbench {
         let workbench = cx.entity();
         let laid_out = cx.entity();
         let view_line_count = editor.view_line_count();
+        let sticky_scroll_lines = self.sticky_scroll_lines();
         let viewport = self.editors.viewport;
         let lines = editor.visible_lines(viewport);
         let lines_top = lines.start as f32 * LINE_HEIGHT - editor.scroll.top;
@@ -248,6 +251,7 @@ impl Workbench {
             .track_focus(&self.editor_focus)
             .on_key_down(cx.listener(Self::editor_key_down))
             .on_scroll_wheel(cx.listener(Self::editor_wheel))
+            .on_modifiers_changed(cx.listener(Self::sticky_modifiers_changed))
             .on_hover(cx.listener(|workbench, hovered: &bool, _, cx| {
                 workbench.scrollbars.mouse_over = *hovered;
                 match hovered {
@@ -265,7 +269,7 @@ impl Workbench {
                         let pixel_ratio = window.scale_factor();
                         let minimap = minimap_info(width, height, metrics.content_left(), metrics.char_width, view_line_count, pixel_ratio);
                         // editorOptions.ts: contentWidth = remainingWidth - minimapWidth.
-                        let viewport = Viewport { width: width - metrics.content_left() - minimap.width as f32, height, char_width: metrics.char_width };
+                        let viewport = Viewport { width: width - metrics.content_left() - minimap.width as f32, height, char_width: metrics.char_width, sticky_scroll_lines };
                         laid_out.update(cx, |workbench, cx| workbench.editor_laid_out(viewport, (minimap, pixel_ratio as f64), cx));
                     },
                     move |bounds, _, window, cx| window.handle_input(&focus, ElementInputHandler::new(bounds, workbench), cx),
@@ -288,6 +292,7 @@ impl Workbench {
             .child(self.scrollbars_canvas(editor, metrics, cx).absolute().inset_0())
             .when(editor.scroll.top > 0., |area| area.child(div().absolute().top_0().left_0().right(px(VERTICAL_SCROLLBAR_WIDTH)).h(px(SCROLL_SHADOW_HEIGHT)).cursor_default().child(self.scroll_shadow().size_full())))
             .children(self.minimap(editor, cx))
+            .children(self.sticky_scroll_widget(editor, metrics, window, cx))
     }
 
     /// The text area got its size: the group's viewport follows it, which can clamp the scroll position and

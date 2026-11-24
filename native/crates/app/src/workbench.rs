@@ -67,6 +67,7 @@ pub struct Workbench {
     status_message: Option<(String, Task<()>)>,
     scrollbars: editor_view::Scrollbars,
     fold_controls: editor_view::FoldControls,
+    sticky_scroll: editor_view::sticky_scroll_view::StickyScroll,
     minimap: minimap_view::Minimap,
     /// The line and whether on its folding control a press may toggle a fold (folding.ts `mouseDownInfo`).
     fold_mouse_down: Option<(usize, bool)>,
@@ -155,6 +156,7 @@ impl Workbench {
             status_message: None,
             scrollbars: Default::default(),
             fold_controls: Default::default(),
+            sticky_scroll: editor_view::sticky_scroll_view::StickyScroll::new(cx),
             minimap: Default::default(),
             fold_mouse_down: None,
             text_area_left: Rc::default(),
@@ -172,6 +174,7 @@ impl Workbench {
         crate::main_thread_commands::register_commands_documentation(&mut workbench);
         workbench.register_workbench_actions();
         workbench.register_editor_commands();
+        workbench.register_sticky_scroll_commands();
         workbench.register_context_commands();
         workbench.register_quick_input_commands();
         workbench.register_quick_access_commands();

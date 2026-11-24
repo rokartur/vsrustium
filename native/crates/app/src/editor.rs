@@ -22,6 +22,7 @@ pub mod minimap;
 mod multicursor;
 pub mod section_headers;
 mod snippet;
+pub mod sticky_scroll;
 mod view;
 
 pub use cursor::{Position, Selection};
@@ -374,6 +375,8 @@ pub struct OpenEditor {
     pub highlights: Vec<(usize, Range<usize>)>,
     /// The folding regions, their collapse state and the lines it hides.
     pub folding: FoldingModel,
+    /// The sticky scroll scopes of the indentation and marker regions, without the folding model's manual ones.
+    pub sticky_model: sticky_scroll::StickyElement,
     /// The editor's scroll position in pixels, kept with the editor like its view state.
     pub scroll: Scroll,
     /// The widest line drawn so far, in pixels: the content width grows with it and never shrinks.
@@ -396,7 +399,7 @@ impl OpenEditor {
     fn new(document: TextDocument, preview: bool, model_id: u32) -> Self {
         let indentation = document.indentation;
         let guides = indent_guides(&document.lines, indentation.tab_size, indentation.tab_size, document.off_side);
-        let mut editor = OpenEditor { document, preview, model_id, selections: vec![Selection::default()], last_added: 0, leftovers: Vec::new(), column_select: None, version_id: 1, history: History::default(), guides, highlights: Vec::new(), folding: FoldingModel::default(), scroll: Scroll::default(), max_line_width: 0., host_reference: None };
+        let mut editor = OpenEditor { document, preview, model_id, selections: vec![Selection::default()], last_added: 0, leftovers: Vec::new(), column_select: None, version_id: 1, history: History::default(), guides, highlights: Vec::new(), folding: FoldingModel::default(), sticky_model: Default::default(), scroll: Scroll::default(), max_line_width: 0., host_reference: None };
         editor.refresh_highlights();
         editor.refresh_folding_ranges();
         editor
