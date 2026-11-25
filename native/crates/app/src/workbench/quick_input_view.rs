@@ -725,7 +725,8 @@ impl Workbench {
         let hovered = self.quick_inputs.hovered == Some(row_index);
         let can_select_many = input.can_select_many;
         let foreground = if focused { self.theme.color("quickInputList.focusForeground") } else { None };
-        let icon_color = if focused { self.theme.color("quickInputList.focusIconForeground") } else { None }.unwrap_or(self.foreground_or("icon.foreground"));
+        // listWidget.ts: a focused row's `.codicon` takes quickInputList.focusIconForeground; unset by default, so it inherits the row color.
+        let icon_color = if focused { self.theme.color("quickInputList.focusIconForeground").or(foreground) } else { None }.unwrap_or(self.foreground_or("icon.foreground"));
         let highlight = self.color(if focused { "quickInputList.focusHighlightForeground" } else { "list.highlightForeground" });
         let label_box = div()
             .flex_1()
