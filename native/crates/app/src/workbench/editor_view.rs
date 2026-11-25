@@ -133,7 +133,11 @@ impl Workbench {
     /// A tab sized to its label (tab.sizing fit): 8px before the label, 30.5px after it for the close action.
     fn tab(&self, index: usize, active: bool, cx: &mut Context<Self>) -> Div {
         let editor = &self.editors.editors[index];
-        let foreground = if active { self.foreground_or("modernTab.activeForeground") } else { self.foreground_or("tab.inactiveForeground") };
+        let readonly = self.readonly(&editor.document.scheme, &editor.document.path).is_some();
+        let action_foreground = if active { self.foreground_or("modernEditorTab.activeForeground") } else { self.foreground_or("tab.inactiveForeground") };
+        // tabs.css colors `.tab-label:not(.monaco-decoration-itemColor)`: a decorated label (read-only, no color of its
+        // own) inherits the tab's color from multieditortabscontrol.css, `tab.activeForeground` when active.
+        let foreground = if active && readonly { self.foreground_or("tab.activeForeground") } else { action_foreground };
         let label = div()
             .mt(px(3.5))
             .h(px(24.))
@@ -144,10 +148,10 @@ impl Workbench {
         let file_icon = self.document_icon(editor, 24., foreground);
         // textFileService.ts decorations: a read-only file's label ends in the lockSmall badge at 0.75 opacity. The
         // iconlabel.css `::after` font-size 90% (11.7px) wins over the decoration rule's 16px, which loads first.
-        let lock = self.readonly(&editor.document.scheme, &editor.document.path).map(|_| self.icon("lock-small", 11.7, 11.7, foreground).mt(px(9.5)).ml(px(5.)).opacity(0.75));
+        let lock = readonly.then(|| self.icon("lock-small", 11.7, 11.7, foreground).mt(px(9.5)).ml(px(5.)).opacity(0.75));
         // A dirty tab shows a filled circle where the close action goes, also when inactive (tabstitlecontrol.css).
         let close_icon = if editor.is_dirty() { "circle-filled" } else { "close-small" };
-        let close = self.icon(close_icon, 20., 16., foreground).id(("close", index)).rounded(px(4.)).on_click(cx.listener(move |workbench, _, _, cx| {
+        let close = self.icon(close_icon, 20., 16., action_foreground).id(("close", index)).rounded(px(4.)).on_click(cx.listener(move |workbench, _, _, cx| {
             cx.stop_propagation();
             workbench.editors.close(index);
             workbench.editors_changed(cx);

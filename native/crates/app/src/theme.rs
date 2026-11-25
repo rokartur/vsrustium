@@ -297,6 +297,7 @@ fn registry_default(key: &str, kind: ThemeKind) -> ColorValue {
         "modernTab.activeBackground" => (Key("list.inactiveSelectionBackground"), Key("list.inactiveSelectionBackground"), Key("list.inactiveSelectionBackground")),
         // oneOf(list.inactiveSelectionForeground, foreground), and the first has no default.
         "modernTab.activeForeground" => (Key("foreground"), Key("foreground"), Key("foreground")),
+        "modernEditorTab.activeForeground" => (Key("modernTab.activeForeground"), Key("modernTab.activeForeground"), Key("modernTab.activeForeground")),
         "modernActivityBarItem.activeBackground" => (Key("modernTab.activeBackground"), Key("modernTab.activeBackground"), Key("modernTab.activeBackground")),
         "modernActivityBarItem.activeForeground" => (Key("modernTab.activeForeground"), Key("modernTab.activeForeground"), Key("modernTab.activeForeground")),
         "editor.foreground" => (Hex("#BBBBBB"), Hex("#333333"), Hex("#FFFFFF")),
@@ -350,6 +351,8 @@ fn registry_default(key: &str, kind: ThemeKind) -> ColorValue {
             Key("editorGroupHeader.tabsBackground"),
         ),
         "tab.border" => (Hex("#252526"), Hex("#F3F3F3"), Key("contrastBorder")),
+        "tab.activeForeground" => (Hex("#FFFFFF"), Hex("#333333"), Hex("#FFFFFF")),
+        "tab.inactiveForeground" => (Transparent(&Key("tab.activeForeground"), 0.5), Transparent(&Key("tab.activeForeground"), 0.7), Hex("#FFFFFF")),
         "editorBracketMatch.background" => (Hex("#0064001A"), Hex("#0064001A"), Hex("#0064001A")),
         "editorBracketMatch.border" => (Hex("#888"), Hex("#B9B9B9"), Key("contrastBorder")),
         "editorWarning.foreground" => (Hex("#CCA700"), Hex("#BF8803"), Hex("#FFD370")),
@@ -472,6 +475,7 @@ fn hc_light_default(key: &str) -> ColorValue {
         "list.inactiveSelectionBackground" => Hex("#0F4A851A"),
         "modernTab.activeBackground" => Key("list.inactiveSelectionBackground"),
         "modernTab.activeForeground" => Key("foreground"),
+        "modernEditorTab.activeForeground" => Key("modernTab.activeForeground"),
         "modernActivityBarItem.activeBackground" => Key("modernTab.activeBackground"),
         "modernActivityBarItem.activeForeground" => Key("modernTab.activeForeground"),
         "editor.foreground" => Key("foreground"),
@@ -497,6 +501,7 @@ fn hc_light_default(key: &str) -> ColorValue {
         "breadcrumb.foreground" => Transparent(&Key("foreground"), 0.8),
         "breadcrumb.background" => Key("editor.background"),
         "tab.border" => Key("contrastBorder"),
+        "tab.activeForeground" | "tab.inactiveForeground" => Hex("#292929"),
         "textLink.foreground" => Hex("#0F4A85"),
         "textLink.activeForeground" => Hex("#0F4A85"),
         "search.resultsInfoForeground" => Key("foreground"),
@@ -782,6 +787,10 @@ mod tests {
             ("Dark Modern", "minimap.findMatchHighlight", "#d1861665"),
             ("Default High Contrast", "editorOverviewRuler.findMatchForeground", "#ab5a00ff"),
             ("Default High Contrast", "minimap.findMatchHighlight", "#f38518ff"),
+            ("Dark Modern", "modernEditorTab.activeForeground", "#ccccccff"),
+            ("Dark Modern", "tab.activeForeground", "#ffffffff"),
+            ("Default High Contrast", "tab.inactiveForeground", "#ffffffff"),
+            ("Default High Contrast Light", "tab.activeForeground", "#292929ff"),
         ];
         for (theme, key, expected) in cases {
             assert_eq!(builtin_theme(theme).color(key).map(hex).as_deref(), Some(expected), "{theme} {key}");
