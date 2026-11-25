@@ -37,7 +37,7 @@ Reference: `FOLDER=port/fixtures/workspace port/tools/ref-contextmenu /tmp/ref-m
 `port/tools/ui-pair` on `port/fixtures/workspace` (copied to `~/m12-ws`), Dark Modern: click the `src` row, Alt+Cmd+C, Shift+Alt+Cmd+C (pasteboard read by the `clipboard` step), right click the row.
 
 - Pasteboard: `<folder>/src` and `src` in both.
-- Menu: New File..., New Folder..., Reveal in Finder [⌥⌘R] | Cut, Copy, Paste | Copy Path [⌥⌘C], Copy Relative Path [⇧⌥⌘C] | Rename..., Delete, at the reference's places. The reference also has Open in Images Preview, Open in Integrated Terminal, Find in Folder... and Open Timeline, which the port does not have, and shows Delete Permanently where the port shows Delete.
+- Menu: New File..., New Folder..., Reveal in Finder [⌥⌘R] | Cut, Copy, Paste | Copy Path [⌥⌘C], Copy Relative Path [⇧⌥⌘C] | Rename..., Delete, at the reference's places. The reference also has Open in Images Preview, Open in Integrated Terminal, Find in Folder... and Open Timeline, which the port does not have, and shows Delete Permanently where the port shows Delete. That is the menu's `alt` item (fileActions.contribution.ts: `moveFileToTrash` with `alt: deleteFile`): dom.ts `ModifierKeyEmitter` changes its Alt state only on key events, and the synthesized Alt+Cmd+C leaves it held. A recheck (`scratch/del-steps.json`: click `src`, right click; Alt+Cmd+C, right click; Shift, right click) gives Delete, Delete Permanently, Delete in the reference: one more key event resets it. `explorerResourceMoveableToTrash` is true in both apps (`files.enableTrash` and the disk provider's Trash capability), so the port keeps Delete; no code change.
 - `cargo test -p app`: 888 passed, 1 ignored.
 
 ## Milestone 12: compact folders
