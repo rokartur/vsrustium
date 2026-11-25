@@ -96,6 +96,8 @@ pub struct TerminalView {
     /// The link under the pointer and whether the link modifier is down.
     pub(super) hovered_link: Option<super::terminal_links::HoveredLink>,
     pub(super) link_modifier: bool,
+    /// The instances whose initial hint a key or a click dismissed for good.
+    pub(super) initial_hint_dismissed: std::collections::HashSet<u32>,
 }
 
 #[derive(Default)]
@@ -166,6 +168,7 @@ impl TerminalView {
             quick_fixes: Default::default(),
             hovered_link: None,
             link_modifier: false,
+            initial_hint_dismissed: Default::default(),
         }
     }
 
@@ -366,6 +369,7 @@ impl Workbench {
         self.register_terminal_contrib_actions();
         self.register_terminal_suggest_actions();
         self.register_terminal_quick_fix_actions();
+        self.register_terminal_initial_hint_actions();
         self.register_terminal_history_actions();
         self.register_terminal_sticky_scroll_actions();
         self.register_terminal_environment_actions();
@@ -913,6 +917,8 @@ impl Workbench {
             }
             KeyResult::Send(data) => {
                 instance.input(&data);
+                let id = instance.id;
+                self.terminal_view.initial_hint_dismissed.insert(id);
                 self.terminal_view.suggest.user_data(&data);
                 self.terminal_view.command_guide = None;
             }
@@ -1007,7 +1013,8 @@ impl Workbench {
         let mut panes = div().relative().flex_1().min_w_0().h_full().flex();
         if let Some(group) = view.groups.get(view.active_group) {
             for (index, &id) in group.instances.iter().enumerate() {
-                panes = panes.child(self.terminal_pane(id, index > 0, border, cx));
+                let focused = view.focus.is_focused(window) && view.active_instance_id() == Some(id);
+                panes = panes.child(self.terminal_pane(id, index > 0, border, focused, cx));
             }
         }
         if let Some(find) = self.terminal_find_widget(window, cx) {
@@ -1029,7 +1036,7 @@ impl Workbench {
             .when(self.terminal_tabs_shown(), |body| body.child(self.terminal_tabs_list(tabs_left, cx)))
     }
 
-    fn terminal_pane(&self, id: u32, border_left: bool, border: gpui::Rgba, cx: &mut Context<Self>) -> impl IntoElement {
+    fn terminal_pane(&self, id: u32, border_left: bool, border: gpui::Rgba, focused: bool, cx: &mut Context<Self>) -> impl IntoElement {
         let entity = cx.entity();
         div()
             .id(("terminal-pane", id as usize))
@@ -1044,6 +1051,7 @@ impl Workbench {
             .children(self.terminal_resize_overlay(id))
             .children(self.terminal_command_guide(id))
             .children(self.terminal_decorations(id, cx))
+            .children(self.terminal_initial_hint(id, focused, cx))
             .on_hover(cx.listener(move |workbench, hovered: &bool, _, cx| {
                 workbench.terminal_view.hovered = hovered.then_some(id);
                 if !hovered {

@@ -107,6 +107,7 @@ mod terminal_history;
 mod terminal_decorations;
 mod terminal_environment;
 mod terminal_notifications;
+mod terminal_initial_hint;
 mod terminal_quick_fix;
 mod terminal_resize_overlay;
 mod output_compound;

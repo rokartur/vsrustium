@@ -40,3 +40,24 @@ ui-pair on the Studio at 142fdae6aa3 (release build), fixture `port/fixtures/tas
 | Cmd+Shift+C starts `terminal.external.osxExec` (`open -a /tmp/Probe.app /tmp/m15-tr`) | probe file written |
 
 Difference: the first second-level fetch of a session can come back empty in the port ("No grunt tasks found. Go back"), where the reference lists the tasks; the next fetch has them (Configure Task listed `grunt: default` right after). See port/notes.md milestone 15 handoff.
+
+Fixed since: ui-pair `/tmp/m15-steps-grunt.json` (fresh profile, `/tmp/m15-tr`) lists `grunt: default` and `grunt: hello` on the first second-level pick; a log line in `provide_tasks` showed grunt's `$registerTaskProvider` reaching the workbench before `$provideTasks`.
+
+## OSC 99, decorations, overview ruler, Copy as HTML, Record Terminal Session
+
+ui-pair on the Studio, release build of the working tree after 8c5e44335d4, folder `/tmp/m15-tt` with three bash scripts (`osc`: `printf '\e]99;i=1:a=report;Hello\e\\'`, `fix`: prints `git push --set-upstream origin feat` and exits 1, `hi`: `echo hi`), sourced by name because `cua-driver` cannot type punctuation. Steps `/tmp/m15-steps-term.json`.
+
+| Check | Port |
+|---|---|
+| OSC 99 `Hello` toast with the info icon | as the reference |
+| gutter decorations: success, error, the running prompt's empty circle | as the reference |
+| overview ruler: blue marks left, the failed command's red mark right, the border | as the reference |
+| Terminal: Select All, then Copy as HTML: text, `<pre><div style=...>` rows padded to the columns | as the reference once the font fallbacks (`, monospace, AppleBraille`) were added |
+| Record Terminal Session: a new terminal, "Recording terminal session..." with a spinner in the status bar, JSON of resize, output and `promptInputChange` events on the clipboard | as the reference; the port's session ended (5 s idle) before the typed `source hi` arrived, the reference's after it: the shell start timing differs |
+| Focus Accessible Terminal View with a selection; quick fix for `source fix` (the command line is not `git push`) | nothing opens in either |
+
+Differences: the port kept the OSC 99 toast past the reference's purge (the reference had hidden it by the next shot); the reference showed the initial hint at a new terminal's empty prompt, the port did not; added since.
+
+## Initial hint
+
+ui-pair `/tmp/m15-steps-hint.json` (folder `/tmp/m15-tt`): Ctrl+` opens a bash terminal, then `e` is typed. Both show "Show suggestions" with the ⌃ and Space key caps and "Don't show this again" below it (the compact layout of a pane under 500px) one cell after the cursor, and both drop the hint at the first key.
