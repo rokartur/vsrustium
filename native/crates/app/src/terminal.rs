@@ -1,10 +1,12 @@
 //! The integrated terminal's model: one `TerminalInstance` per terminal (terminalInstance.ts), its shell in a
 //! PTY (terminalProcess.ts over node-pty) and its screen in alacritty_terminal standing in for xterm.js.
 
+pub mod auto_replies;
 pub mod colors;
 pub mod keys;
 pub mod mouse;
 pub mod profiles;
+pub mod prompt_input;
 pub mod environment_collection;
 pub mod injection;
 pub mod pty;
@@ -107,6 +109,9 @@ pub struct TerminalInstance {
     pub clipboard_loads: Vec<std::sync::Arc<dyn Fn(&str) -> String + Sync + Send>>,
     /// The bell rang since it was last read.
     pub bell: bool,
+    /// `terminal.integrated.autoReplies` as last read, and its responders.
+    auto_reply_setting: serde_json::Value,
+    auto_responders: Vec<auto_replies::AutoResponder>,
     launched: Instant,
     /// `ProcessState.KilledByUser`: the kill command ended the process.
     pub killed_by_user: bool,
@@ -156,6 +161,8 @@ impl TerminalInstance {
             clipboard_requests: Vec::new(),
             clipboard_loads: Vec::new(),
             bell: false,
+            auto_reply_setting: serde_json::Value::Null,
+            auto_responders: Vec::new(),
             launched: Instant::now(),
             killed_by_user: false,
             config,
@@ -312,6 +319,20 @@ impl TerminalInstance {
     pub fn exited(&mut self, code: Option<i32>) {
         self.exit_code = Some(code);
         self.pty = None;
+    }
+
+    /// `TerminalAutoResponder`: the process output answered by the replies of `setting`; a changed setting
+    /// starts new responders.
+    pub fn answer_auto_replies(&mut self, setting: &serde_json::Value, data: &str) {
+        if self.auto_reply_setting != *setting {
+            self.auto_responders = auto_replies::responders(setting);
+            self.auto_reply_setting = setting.clone();
+        }
+        let now = Instant::now();
+        let replies: Vec<String> = self.auto_responders.iter_mut().filter_map(|responder| responder.feed(data, now)).collect();
+        for reply in replies {
+            self.write_to_pty(reply.as_bytes());
+        }
     }
 
     /// `sendText` and typed input: the terminal follows the input (xterm.js `scrollOnUserInput`).

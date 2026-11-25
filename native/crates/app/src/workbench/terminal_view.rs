@@ -506,8 +506,10 @@ impl Workbench {
     /// Output of the process, a PTY's or an extension pty's: the screen, the clipboard and what the host listens to.
     pub(super) fn terminal_data(&mut self, id: u32, bytes: &[u8], cx: &mut Context<Self>) {
         let colors = TerminalColors::new(&self.theme);
+        let auto_replies = self.setting("terminal.integrated.autoReplies");
         let Some(instance) = self.terminal_view.instance_mut(id) else { return };
         let processed = instance.process(bytes, &colors);
+        instance.answer_auto_replies(&auto_replies, &processed.text);
         // xtermTerminal.ts loads ClipboardAddon: OSC 52 writes go to the clipboard and `?` reads it back.
         if let Some(text) = instance.clipboard_requests.drain(..).last() {
             cx.write_to_clipboard(ClipboardItem::new_string(text));
