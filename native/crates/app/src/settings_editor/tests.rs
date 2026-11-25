@@ -176,14 +176,12 @@ fn model(json: serde_json::Value) -> config::model::ConfigurationModel {
 
 #[test]
 fn inspect_setting_reads_the_selected_scope_and_lists_the_others() {
-    let configuration = config::configuration::Configuration {
-        defaults: model(json!({ "editor.tabSize": 4, "[makefile]": { "editor.tabSize": 8 } })),
-        local_user: model(json!({ "editor.tabSize": 2 })),
-        workspace: model(json!({ "editor.tabSize": 3, "[go]": { "editor.tabSize": 5 } })),
-        folders: Vec::new(),
-        has_workspace: true,
-        ..Default::default()
-    };
+    let mut configuration = config::configuration::Configuration::default();
+    configuration.defaults = model(json!({ "editor.tabSize": 4, "[makefile]": { "editor.tabSize": 8 } }));
+    configuration.local_user = model(json!({ "editor.tabSize": 2 }));
+    configuration.workspace = model(json!({ "editor.tabSize": 3, "[go]": { "editor.tabSize": 5 } }));
+    configuration.folders = Vec::new();
+    configuration.has_workspace = true;
     let user = inspect_setting(&configuration, "editor.tabSize", Target::UserLocal, None);
     assert_eq!(user.value, json!(2));
     assert!(user.is_configured);
@@ -200,12 +198,10 @@ fn inspect_setting_reads_the_selected_scope_and_lists_the_others() {
 
 #[test]
 fn a_policy_value_shows_instead_of_the_scope_value_and_is_not_configured() {
-    let configuration = config::configuration::Configuration {
-        defaults: model(json!({ "editor.tabSize": 4 })),
-        local_user: model(json!({ "editor.tabSize": 2 })),
-        policy: model(json!({ "editor.tabSize": 6 })),
-        ..Default::default()
-    };
+    let mut configuration = config::configuration::Configuration::default();
+    configuration.defaults = model(json!({ "editor.tabSize": 4 }));
+    configuration.local_user = model(json!({ "editor.tabSize": 2 }));
+    configuration.policy = model(json!({ "editor.tabSize": 6 }));
     let user = inspect_setting(&configuration, "editor.tabSize", Target::UserLocal, None);
     assert_eq!(user.value, json!(6));
     assert!(user.has_policy_value);
