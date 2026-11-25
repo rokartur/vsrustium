@@ -1,5 +1,6 @@
-//! listWidget.ts `TypeNavigationController` in the Explorer: typed characters move the focus to the next row
-//! whose label starts with them, for 800ms after the last one.
+//! listWidget.ts `TypeNavigationController` in the lists that give a `keyboardNavigationLabelProvider`: the Explorer
+//! and the Keyboard Shortcuts table. Typed characters move the focus to the next row whose label starts with them,
+//! for 800ms after the last one. The Search results tree gives none, so typing there does nothing.
 
 use std::time::Duration;
 
@@ -13,6 +14,7 @@ mod tests;
 
 const CLEAR_DELAY: Duration = Duration::from_millis(800);
 
+/// The word being typed; one for the workbench, since only the focused list takes keys.
 #[derive(Default)]
 pub struct TypeNavigation {
     /// The characters typed since the last pause; empty while idle.
@@ -23,10 +25,12 @@ pub struct TypeNavigation {
 }
 
 impl Workbench {
-    /// The `onChar` chain: an unmodified printable key while the tree has the focus, and while not typing yet only
-    /// one no keybinding takes (`createKeyboardNavigationEventFilter`). Returns whether it navigated.
-    pub(super) fn explorer_type_navigation(&mut self, keystroke: &Keystroke, unbound: bool, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        if !self.explorer.focus.is_focused(window) || self.folder.is_none() {
+    /// The `onChar` chain: an unmodified printable key while a list with type navigation has the focus, and while
+    /// not typing yet only one no keybinding takes (`createKeyboardNavigationEventFilter`). Returns whether it navigated.
+    pub(super) fn list_type_navigation(&mut self, keystroke: &Keystroke, unbound: bool, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let explorer = self.explorer.focus.is_focused(window) && self.folder.is_some();
+        let table = self.keybindings_editor.table_focus.is_focused(window);
+        if !explorer && !table {
             return false;
         }
         let modifiers = &keystroke.modifiers;
@@ -51,10 +55,18 @@ impl Workbench {
                 navigation.triggered = false;
             });
         }));
+        if table {
+            let (labels, focus) = self.keybindings_table_navigation_labels();
+            if let Some(index) = type_navigation_target(&labels, focus, &word, idle) {
+                self.focus_keybinding_entry(index, window, cx);
+            }
+            return true;
+        }
         let tree = self.folder.as_mut().expect("checked above");
         let rows = tree.rows();
         let focus = tree.focused.as_ref().and_then(|focused| rows.iter().position(|row| row.path == *focused));
-        if let Some(index) = type_navigation_target(&rows, focus, &word, idle) {
+        let labels: Vec<String> = rows.iter().map(explorer_label).collect();
+        if let Some(index) = type_navigation_target(&labels, focus, &word, idle) {
             tree.focused = Some(rows[index].path.clone());
             self.explorer.scroll.scroll_to_item(index);
             cx.notify();
@@ -74,20 +86,23 @@ impl Workbench {
     }
 }
 
+/// explorerView.ts `keyboardNavigationLabelProvider`: the name, a compact row's folders joined by `/`.
+fn explorer_label(row: &Row) -> String {
+    match row.compressed.is_empty() {
+        true => row.name.clone(),
+        false => row.compressed.iter().map(|(_, name)| name.as_str()).collect::<Vec<_>>().join("/"),
+    }
+}
+
 /// `onInput` without `typeNavigationEnabled`: from the focused row (the next one when a new word starts), the first
-/// row whose label starts with `word`, ignoring case. A compact row's label is its folders joined by `/`.
-fn type_navigation_target(rows: &[Row], focus: Option<usize>, word: &str, idle: bool) -> Option<usize> {
+/// row whose label starts with `word`, ignoring case.
+fn type_navigation_target(labels: &[String], focus: Option<usize>, word: &str, idle: bool) -> Option<usize> {
     let start = focus.unwrap_or(0);
     let delta = usize::from(idle);
     let word = word.to_lowercase();
-    for offset in 0..rows.len() {
-        let index = (start + offset + delta) % rows.len();
-        let row = &rows[index];
-        let label = match row.compressed.is_empty() {
-            true => row.name.clone(),
-            false => row.compressed.iter().map(|(_, name)| name.as_str()).collect::<Vec<_>>().join("/"),
-        };
-        if label.to_lowercase().starts_with(&word) {
+    for offset in 0..labels.len() {
+        let index = (start + offset + delta) % labels.len();
+        if labels[index].to_lowercase().starts_with(&word) {
             return Some(index);
         }
     }

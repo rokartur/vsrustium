@@ -37,6 +37,7 @@ mod keyboard_mapper;
 mod system_wide_keybindings;
 mod language_features;
 mod languages;
+mod list_tree;
 mod local_history;
 mod main_thread;
 mod main_thread_commands;

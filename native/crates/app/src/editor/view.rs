@@ -282,7 +282,7 @@ const MINIMUM_SLIDER_SIZE: f32 = 20.;
 
 impl Scrollbar {
     /// `_computeValues` with no arrows.
-    fn new(opposite_size: f32, visible: f32, scroll_size: f32, position: f32) -> Self {
+    pub fn new(opposite_size: f32, visible: f32, scroll_size: f32, position: f32) -> Self {
         let track = (visible - opposite_size).max(0.);
         if !(scroll_size > 0. && scroll_size > visible) {
             return Scrollbar { track: track.round(), needed: false, slider_size: track.round(), slider_position: 0., ratio: 0. };

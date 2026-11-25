@@ -1,5 +1,13 @@
 # Native menu bar
 
+## Milestone 9 list: the menu bar against a fresh reference dump
+
+`port/tools/ref-menubar` on the Studio, 1.147.0 dev build: the renderer's `IMenubarData` in an empty window and in `port/fixtures/workspace` with `notes.txt` open, saved as `native/crates/app/src/workbench/menubar/reference-empty.json` and `reference-file.json`. `cargo test -p app menubar` builds the port's `Workbench::menubar` in the same two windows and compares, menu by menu, every reference item whose command the port registers: label, command, separators, submenus, checked and enabled state.
+
+- Added from the dump: File > Close Editor (`activeEditor || foldersViewVisible && sideBarFocus`), Edit > Find, Replace (`editorFocus || editorIsOpen`), Find in Files, Replace in Files; View > Appearance (Primary and Secondary Side Bar, Panel, Activity Bar Position, Minimap, Sticky Scroll, Render Control Characters), Explorer, Search, Source Control, Extensions, Terminal; Go > Go to Line/Column, Next and Previous Problem; Preferences > Extensions.
+- Toggles read `config.<setting>` context keys (contextKeyService.ts `ConfigAwareContextValuesContainer`), so File > Auto Save is unchecked with `files.autoSave` off, as in the reference; before it showed checked.
+- Not in the port: reference items whose commands the port lacks (for example Terminal > New Terminal, Run, Help's documentation links), filtered out by the comparison, not hidden.
+
 ## Milestone 9: menu bar
 
 Reference: 1.147.0 dev build on the Studio, `port/tools/ref-menubar` (the renderer's `IMenubarData` and Electron's application menu) and the cua-driver AX tree of its menu bar. Port: release `code-gpui`, the same AX tree, in an empty window, `port/fixtures/workspace`, and the folder with `notes.txt` open.

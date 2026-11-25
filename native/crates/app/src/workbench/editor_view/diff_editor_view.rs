@@ -104,7 +104,12 @@ impl Workbench {
             }
             let result = workbench.update_in(cx, |workbench, window, cx| {
                 for (uri, content) in resolved {
-                    workbench.try_open_document(&uri, &Value::Null, &content?, false, cx)?;
+                    // textModelResolverService.ts shares one resolution per uri: a model a concurrent call opened
+                    // stands, even once the provider it came from is gone.
+                    let (scheme, path) = uri_parts(&uri)?;
+                    if workbench.editors.model(scheme, &path).is_none() {
+                        workbench.try_open_document(&uri, &Value::Null, &content?, false, cx)?;
+                    }
                 }
                 for (uri, side) in [(&original, &sides.0), (&modified, &sides.1)] {
                     if side.scheme == "file" && workbench.editors.model(&side.scheme, &side.path).is_none() {

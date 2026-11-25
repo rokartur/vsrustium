@@ -28,6 +28,8 @@ pub enum MenuId {
     MenubarGoMenu,
     MenubarHelpMenu,
     MenubarPreferencesMenu,
+    MenubarAppearanceMenu,
+    ActivityBarPositionMenu,
     ThemesSubMenu,
     GlobalActivity,
     MenubarCopy,
@@ -175,6 +177,24 @@ const WORKBENCH_MENUS: &[Row] = &[
     (MenuId::MenubarSelectionMenu, None, "editor.action.selectHighlights", "Select All &&Occurrences", "3_multi", 7., None, None),
     // quickAccess.contribution.ts
     (MenuId::MenubarViewMenu, None, "workbench.action.showCommands", "&&Command Palette...", "1_open", 1., None, None),
+    // layoutActions.ts, activitybarPart.ts and viewsService.ts `openCommandActionDescriptor` entries of the views the port has.
+    (MenuId::MenubarViewMenu, Some(MenuId::MenubarAppearanceMenu), "", "&&Appearance", "2_appearance", 1., Some("!isSessionsWindow"), None),
+    (MenuId::MenubarAppearanceMenu, Some(MenuId::ActivityBarPositionMenu), "", "Activity Bar Position", "3_workbench_layout_move", 2., Some("!isSessionsWindow"), None),
+    (MenuId::MenubarViewMenu, None, "workbench.view.explorer", "&&Explorer", "3_sidebar", 0., Some("viewContainer.workbench.view.explorer.enabled"), Some("viewContainer.workbench.view.explorer.enabled")),
+    (MenuId::MenubarViewMenu, None, "workbench.view.search", "&&Search", "3_sidebar", 1., Some("workbench.view.search.active"), Some("workbench.view.search.active")),
+    (MenuId::MenubarViewMenu, None, "workbench.view.scm", "Source &&Control", "3_sidebar", 2., Some("workbench.scm.active"), Some("workbench.scm.active")),
+    (MenuId::MenubarViewMenu, None, "workbench.view.extensions", "E&&xtensions", "3_sidebar", 4., Some("viewContainer.workbench.view.extensions.enabled"), Some("viewContainer.workbench.view.extensions.enabled")),
+    (MenuId::MenubarViewMenu, None, "workbench.action.terminal.toggleTerminal", "&&Terminal", "5_panel", 3., Some("terminal.active"), Some("terminal.active")),
+    (MenuId::MenubarPreferencesMenu, None, "workbench.view.extensions", "&&Extensions", "2_configuration", 3., Some("!isSessionsWindow"), Some("viewContainer.workbench.view.extensions.enabled")),
+    // fileActions.contribution.ts, findController.ts, searchActionsFind.ts, searchActionsNav.ts, quickAccess.contribution.ts and gotoError.ts
+    (MenuId::MenubarFileMenu, None, "workbench.action.closeActiveEditor", "&&Close Editor", "6_close", 2., None, Some("activeEditor || foldersViewVisible && sideBarFocus")),
+    (MenuId::MenubarEditMenu, None, "actions.find", "&&Find", "3_find", 1., None, Some("editorFocus || editorIsOpen")),
+    (MenuId::MenubarEditMenu, None, "editor.action.startFindReplaceAction", "&&Replace", "3_find", 2., None, Some("editorFocus || editorIsOpen")),
+    (MenuId::MenubarEditMenu, None, "workbench.action.findInFiles", "Find &&in Files", "4_find_global", 1., Some("!isSessionsWindow"), Some("!isSessionsWindow")),
+    (MenuId::MenubarEditMenu, None, "workbench.action.replaceInFiles", "Replace in Files", "4_find_global", 2., Some("!isSessionsWindow"), Some("!isSessionsWindow")),
+    (MenuId::MenubarGoMenu, None, "workbench.action.gotoLine", "Go to &&Line/Column...", "5_infile_nav", 1., None, None),
+    (MenuId::MenubarGoMenu, None, "editor.action.marker.nextInFiles", "Next &&Problem", "6_problem_nav", 1., None, None),
+    (MenuId::MenubarGoMenu, None, "editor.action.marker.prevInFiles", "Previous &&Problem", "6_problem_nav", 2., None, None),
     (MenuId::MenubarHelpMenu, None, "workbench.action.showCommands", "Show All Commands", "1_welcome", 2., None, None),
     // preferences.contribution.ts
     (MenuId::MenubarPreferencesMenu, None, "workbench.action.openGlobalKeybindings", "Keyboard Shortcuts", "2_configuration", 4., None, None),
@@ -239,6 +259,22 @@ const WORKBENCH_MENUS: &[Row] = &[
     (MenuId::SearchContext, None, "search.action.revealInSideBar", "Reveal in Explorer View", "search_3", 1., Some("fileMatchFocus && hasSearchResult"), None),
 ];
 
+/// layoutActions.ts, auxiliaryBarActions.ts, panelActions.ts, activitybarPart.ts, toggleMinimap.ts, stickyScrollActions.ts and
+/// toggleRenderControlCharacter.ts: the Appearance items the port has, checked by their `toggled`.
+type ToggleRow = (MenuId, &'static str, &'static str, &'static str, f64, &'static str, &'static str);
+const APPEARANCE_TOGGLES: [ToggleRow; 10] = [
+    (MenuId::MenubarAppearanceMenu, "workbench.action.toggleSidebarVisibility", "&&Primary Side Bar", "2_workbench_layout", 1., "!isSessionsWindow", "sideBarVisible"),
+    (MenuId::MenubarAppearanceMenu, "workbench.action.toggleAuxiliaryBar", "&&Secondary Side Bar", "2_workbench_layout", 2., "!isSessionsWindow", "secondarySideBarVisible"),
+    (MenuId::MenubarAppearanceMenu, "workbench.action.togglePanel", "&&Panel", "2_workbench_layout", 5., "", "panelVisible"),
+    (MenuId::ActivityBarPositionMenu, "workbench.action.activityBarLocation.default", "&&Default", "", 1., "", "config.workbench.activityBar.location == 'default'"),
+    (MenuId::ActivityBarPositionMenu, "workbench.action.activityBarLocation.top", "&&Top", "", 2., "", "config.workbench.activityBar.location == 'top'"),
+    (MenuId::ActivityBarPositionMenu, "workbench.action.activityBarLocation.bottom", "&&Bottom", "", 3., "", "config.workbench.activityBar.location == 'bottom'"),
+    (MenuId::ActivityBarPositionMenu, "workbench.action.activityBarLocation.hide", "&&Hidden", "", 4., "", "config.workbench.activityBar.location == 'hidden'"),
+    (MenuId::MenubarAppearanceMenu, "editor.action.toggleMinimap", "&&Minimap", "4_editor", 1., "", "config.editor.minimap.enabled"),
+    (MenuId::MenubarAppearanceMenu, "editor.action.toggleStickyScroll", "&&Sticky Scroll", "4_editor", 3., "", "config.editor.stickyScroll.enabled"),
+    (MenuId::MenubarAppearanceMenu, "editor.action.toggleRenderControlCharacter", "Render &&Control Characters", "4_editor", 5., "", "config.editor.renderControlCharacters"),
+];
+
 /// themes.contribution.ts: `ThemesSubMenu` items; the product icon theme picker is not ported.
 const THEMES_SUBMENU: [(&str, &str, f64); 2] = [("workbench.action.selectTheme", "Color Theme", 1.), ("workbench.action.selectIconTheme", "File Icon Theme", 2.)];
 
@@ -288,6 +324,11 @@ pub fn workbench_menus() -> Vec<MenuItem> {
         let entry = Entry::Command { id: "workbench.action.toggleMultiCursorModifier".into(), precondition: None, toggled: None, alt: None };
         let when = Expr::deserialize(&format!("multiCursorModifier == '{current}'"));
         items.push(MenuItem { menu: MenuId::MenubarSelectionMenu, entry, title: title.into(), group: "4_config".into(), order: 1., when });
+    }
+    // The Appearance items with their check: menu, command, title, group, order, `when`, `toggled`.
+    for (menu, id, title, group, order, when, toggled) in APPEARANCE_TOGGLES {
+        let entry = Entry::Command { id: id.into(), precondition: None, toggled: Toggled::when(Expr::deserialize(toggled)), alt: None };
+        items.push(MenuItem { menu, entry, title: title.into(), group: group.into(), order, when: Expr::deserialize(when) });
     }
     for (id, title, order) in THEMES_SUBMENU {
         let entry = Entry::Command { id: id.to_string(), precondition: None, toggled: None, alt: None };

@@ -11,7 +11,7 @@ use crate::commands::Outcome;
 const ROW_HEIGHT: Pixels = px(22.);
 
 /// The list commands the Explorer takes while it has focus; the Search view's results take the same ids.
-pub(super) const EXPLORER_LIST_COMMANDS: [&str; 20] = [
+pub(super) const EXPLORER_LIST_COMMANDS: [&str; 24] = [
     "list.focusDown",
     "list.focusUp",
     "list.focusAnyDown",
@@ -32,6 +32,10 @@ pub(super) const EXPLORER_LIST_COMMANDS: [&str; 20] = [
     "list.selectAll",
     "list.toggleSelection",
     "list.clear",
+    "list.focusParent",
+    "list.collapseAllToFocus",
+    "list.selectAndPreserveFocus",
+    "list.showHover",
 ];
 
 impl Workbench {
@@ -103,6 +107,18 @@ impl Workbench {
                 }
             }
             "list.select" => return self.select_explorer_focus(false, window, cx),
+            "list.selectAndPreserveFocus" => return self.select_explorer_focus(true, window, cx),
+            "list.focusParent" => {
+                let Some(parent) = focus.and_then(|index| crate::list_tree::parent(&rows.iter().map(|row| row.depth).collect::<Vec<_>>(), index)) else { return };
+                tree.focus(Some(paths[parent].clone()));
+            }
+            // abstractTree.ts `collapse(focus, true)`, then the focus becomes the selection and the anchor.
+            "list.collapseAllToFocus" => {
+                let Some(index) = focus else { return };
+                tree.collapse_recursive(&paths[index]);
+                tree.set_selection(&paths[index]);
+            }
+            "list.showHover" => return self.show_explorer_focus_hover(window, cx),
             "list.expandSelectionDown" | "list.expandSelectionUp" => {
                 let next = match (focus, id == "list.expandSelectionDown") {
                     (None, down) => if down { 0 } else { last },
@@ -160,6 +176,21 @@ impl Workbench {
         if !focused.is_dir() {
             self.open_file(focused, !preserve_focus, window, cx);
         }
+    }
+
+    /// listCommands.ts `list.showHover`: the focused row's path hover, placed by the row as it is drawn.
+    fn show_explorer_focus_hover(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(tree) = self.folder.as_ref() else { return };
+        let rows = tree.rows();
+        let Some(index) = tree.focused.as_ref().and_then(|focused| rows.iter().position(|row| row.path == *focused)) else { return };
+        let path = rows[index].path.clone();
+        let list = self.explorer.scroll.bounds();
+        let padding = if self.explorer.find.is_open() { px(30.) } else { px(0.) };
+        // The rows are 4px in from each side of the list.
+        let origin = gpui::point(list.left() + px(4.), list.top() + padding + ROW_HEIGHT * index as f32 + self.explorer.scroll.offset().y);
+        let bounds = gpui::Bounds::new(origin, gpui::size(list.size.width - px(8.), ROW_HEIGHT));
+        let content = super::hover::HoverContent::Text(crate::quick_input::path_label(&path, None));
+        self.show_managed_hover(("explorer-hover", index), content, super::hover::HoverOptions::mouse(), bounds, window, cx);
     }
 
     /// listWidget.ts `focusNextPage` and `focusPreviousPage`: the last (first) row of the page, else one page on.

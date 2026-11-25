@@ -119,6 +119,8 @@ pub struct KeybindingsEditor {
     entries: Vec<Entry>,
     /// The table's focused and selected row.
     selected: Option<usize>,
+    /// `list.toggleSelection` took the focused row out of the selection, until the focus moves.
+    unselected: bool,
     hovered: Option<usize>,
     sort_by_precedence: bool,
     /// Record Keys is checked: keys pressed in the search are typed as their user settings labels.
@@ -133,10 +135,10 @@ pub struct KeybindingsEditor {
     pub search_focus: FocusHandle,
     pub when_view: InputView,
     pub when_focus: FocusHandle,
-    table_focus: FocusHandle,
+    pub(super) table_focus: FocusHandle,
     define_focus: FocusHandle,
     modal_focus: FocusHandle,
-    list: ListState,
+    pub(super) list: ListState,
     /// The table's column headers, resized by their sashes and `list.resizeColumn`.
     columns: SplitView,
     /// The sash under the pointer, shown as hovered once `workbench.sash.hoverDelay` passed, and its timer.
@@ -175,6 +177,7 @@ impl KeybindingsEditor {
             model_generation: 0,
             entries: Vec::new(),
             selected: None,
+            unselected: false,
             hovered: None,
             sort_by_precedence: false,
             recording: false,
@@ -518,6 +521,7 @@ impl Workbench {
             return;
         }
         editor.selected = Some(index);
+        editor.unselected = false;
         if focus {
             window.focus(&editor.table_focus.clone(), cx);
         }
@@ -806,14 +810,47 @@ impl Workbench {
 
     /// The list commands on the table, named by their default key.
     /// listCommands.ts on the keybindings table: the key each list command stands for, when the table has focus.
+    /// The table is a list, not a tree: the tree commands do nothing on it, the `focusAny` moves are the focus moves.
     pub(super) fn keybindings_table_list_command(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        let keys = [("list.select", "enter"), ("list.focusDown", "down"), ("list.focusUp", "up"), ("list.focusPageDown", "pagedown"), ("list.focusPageUp", "pageup"), ("list.focusFirst", "home"), ("list.focusLast", "end")];
-        let Some((_, key)) = keys.into_iter().find(|(list_id, _)| *list_id == id) else { return false };
         if !self.keybindings_editor.table_focus.is_focused(window) {
             return false;
         }
-        self.keybindings_table_key(key, window, cx);
+        let keys = [
+            ("list.select", "enter"),
+            ("list.focusDown", "down"),
+            ("list.focusAnyDown", "down"),
+            ("list.focusUp", "up"),
+            ("list.focusAnyUp", "up"),
+            ("list.focusPageDown", "pagedown"),
+            ("list.focusPageUp", "pageup"),
+            ("list.focusFirst", "home"),
+            ("list.focusAnyFirst", "home"),
+            ("list.focusLast", "end"),
+            ("list.focusAnyLast", "end"),
+        ];
+        if let Some((_, key)) = keys.into_iter().find(|(list_id, _)| *list_id == id) {
+            self.keybindings_table_key(key, window, cx);
+        } else if id == "list.toggleSelection" {
+            let editor = &mut self.keybindings_editor;
+            editor.unselected = editor.selected.is_some() && !editor.unselected;
+            cx.notify();
+        } else if id == "list.selectAndPreserveFocus" {
+            self.keybindings_editor.unselected = false;
+            cx.notify();
+        }
         true
+    }
+
+    /// keybindingsEditor.ts `keyboardNavigationLabelProvider`: each row's command label, else its command id; and the
+    /// focused row.
+    pub(super) fn keybindings_table_navigation_labels(&self) -> (Vec<String>, Option<usize>) {
+        let editor = &self.keybindings_editor;
+        let labels = editor.entries.iter().map(|entry| if entry.row.command_label.is_empty() { entry.row.command.clone() } else { entry.row.command_label.clone() }).collect();
+        (labels, editor.selected)
+    }
+
+    pub(super) fn focus_keybinding_entry(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.select_keybinding_entry(index, true, window, cx);
     }
 
     fn keybindings_table_key(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
@@ -1116,7 +1153,7 @@ impl Workbench {
                 cx.notify();
             }))
             .child(header)
-            .child(div().flex_1().min_h_0().border_t_1().border_color(border).child(rows))
+            .child(div().relative().flex_1().min_h_0().border_t_1().border_color(border).child(rows).child(self.list_scroll_layer(super::list_scroll::ListId::KeybindingsTable, cx)))
             .children(sashes)
             .when(self.keybindings_editor.columns.dragged_sash().is_some(), |table| table.child(self.column_sash_drag(cx)))
     }
@@ -1219,7 +1256,8 @@ impl Workbench {
         let editor = &self.keybindings_editor;
         let Some(entry) = editor.entries.get(index) else { return div().into_any_element() };
         let table_focused = editor.table_focus.is_focused(window) || editor.when_focus.is_focused(window);
-        let selected = editor.selected == Some(index);
+        let focused = editor.selected == Some(index);
+        let selected = focused && !editor.unselected;
         let hovered = editor.hovered == Some(index);
         let (background, foreground) = match (selected, table_focused) {
             (true, true) => (Some(self.color("list.activeSelectionBackground")), self.foreground_or("list.activeSelectionForeground")),
@@ -1229,7 +1267,7 @@ impl Workbench {
             (false, _) if index % 2 == 1 => (Some(self.color("keybindingTable.rowsBackground")), self.color("foreground")),
             _ => (None, self.color("foreground")),
         };
-        let outline = self.theme.color("list.focusOutline").filter(|_| selected && table_focused);
+        let outline = self.theme.color("list.focusOutline").filter(|_| focused && table_focused);
         let row_active = selected && table_focused;
         let highlight = if row_active { foreground } else { self.color("list.highlightForeground") };
         let height = row_height(entry);
