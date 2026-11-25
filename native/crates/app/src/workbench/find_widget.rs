@@ -27,7 +27,7 @@ use crate::theme::ThemeKind;
 
 const FIND_WIDGET_INITIAL_WIDTH: f32 = 419.;
 /// `new HistoryNavigator<string>(options.history, 100)` of `HistoryInputBox`.
-const HISTORY_LIMIT: usize = 100;
+pub(super) const HISTORY_LIMIT: usize = 100;
 const FIND_HISTORY_KEY: &str = "workbench.find.history";
 const REPLACE_HISTORY_KEY: &str = "workbench.replace.history";
 /// The workspace storage keys of `saveQueryState`, in `QueryOptions` field order.
@@ -353,7 +353,14 @@ impl Workbench {
 
     /// `history.showPrevious` and `history.showNext` on the focused find or replace input.
     fn show_history_value(&mut self, previous: bool, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
-        let Some(id) = self.focused_input(window).filter(|id| matches!(id, InputId::Find | InputId::Replace)) else { return Outcome::done() };
+        let Some(id) = self.focused_input(window) else { return Outcome::done() };
+        if let InputId::Search(field) = id {
+            self.show_search_history_value(field, previous, window, cx);
+            return Outcome::done();
+        }
+        if !matches!(id, InputId::Find | InputId::Replace) {
+            return Outcome::done();
+        }
         let (input, history) = match id {
             InputId::Find => (&self.find.find_input, &mut self.find.find_history),
             _ => (&self.find.replace_input, &mut self.find.replace_history),

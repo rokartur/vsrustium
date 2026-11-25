@@ -268,3 +268,29 @@ fn only_open_editors_searches_the_open_files_under_their_roots() {
     assert!(query.folder_queries.is_empty());
     assert_eq!(query.exclude_pattern, expression(&["**/*"]));
 }
+
+fn resolve_includes(resource: &str, folders: &[WorkspaceFolder], single_folder: bool) -> Vec<String> {
+    let workspace = Workspace { folders, single_folder, home: None };
+    resolve_resources_for_search_includes(&[PathBuf::from(resource)], &workspace)
+}
+
+#[test]
+fn resolve_resources_for_search_includes_passes_through_paths_without_special_glob_characters() {
+    let folders = [WorkspaceFolder { path: Path::new("/testWorkspace"), name: "testWorkspace" }];
+    assert_eq!(resolve_includes("/testWorkspace/pages/blog", &folders, true), ["./pages/blog"]);
+}
+
+#[test]
+fn resolve_resources_for_search_includes_escapes_paths_with_special_characters() {
+    let folders = [WorkspaceFolder { path: Path::new("/testWorkspace"), name: "testWorkspace" }];
+    assert_eq!(resolve_includes("/testWorkspace/pages/blog/[postId]", &folders, true), ["./pages/blog/[[]postId[]]"]);
+}
+
+#[test]
+fn resolve_resources_for_search_includes_names_the_root_in_a_multi_root_workspace() {
+    let folders = [WorkspaceFolder { path: Path::new("/a/src"), name: "src" }, WorkspaceFolder { path: Path::new("/b/lib"), name: "lib" }];
+    assert_eq!(resolve_includes("/a/src/x", &folders, false), ["./src/x"]);
+    assert_eq!(resolve_includes("/b/lib", &folders, false), ["./lib"]);
+    let same_name = [WorkspaceFolder { path: Path::new("/a/src"), name: "src" }, WorkspaceFolder { path: Path::new("/b/src"), name: "src" }];
+    assert_eq!(resolve_includes("/b/src/y", &same_name, false), ["/b/src/y"]);
+}

@@ -5,7 +5,7 @@
 // default ~/Developer/vscode-ref; env FOLDER = folder to open, default a copy of port/fixtures/workspace;
 // env FILE = file to open, relative to the folder; env ONLY = "reference" or "port" to run one of them; env ARGS = more arguments for both, space separated)
 // Steps, in window points (both windows are 1024x768):
-//   {"click": [x, y]}  {"click": [x, y], "modifier": ["cmd"]}  {"click": [x, y], "foreground": true}  {"doubleClick": [x, y]}  {"key": "return"}
+//   {"click": [x, y]}  {"click": [x, y], "modifier": ["cmd"]}  {"click": [x, y], "foreground": true}  {"doubleClick": [x, y]}  {"rightClick": [x, y]}  {"key": "return"}
 //   {"hotkey": ["cmd", "c"]}  {"type": "text"}  {"wait": ms}  {"shot": "name"}
 //   {"dragShot": [x1, y1, x2, y2], "shot": "name", "modifier": ["option"]}: a slow drag, captured while held
 // Shots land in <out-dir>/<reference|port>-<name>.png at 2x; a sheet on the window is captured as its own window.
@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { referenceArgs, referenceUserData } from './ref-user-data.ts';
 
-type Step = { click?: number[]; doubleClick?: number[]; modifier?: string[]; key?: string; hotkey?: string[]; type?: string; wait?: number; shot?: string; dragShot?: number[]; foreground?: boolean };
+type Step = { click?: number[]; doubleClick?: number[]; rightClick?: number[]; modifier?: string[]; key?: string; hotkey?: string[]; type?: string; wait?: number; shot?: string; dragShot?: number[]; foreground?: boolean };
 
 const [outDir, stepsFile, themeName = 'dark'] = process.argv.slice(2);
 const steps: Step[] = JSON.parse(readFileSync(stepsFile, 'utf8'));
@@ -89,6 +89,8 @@ async function run(app: string, pid: number) {
 			await cua('click', { ...target, ...at(step.click), modifier: step.modifier, delivery_mode: step.foreground ? 'foreground' : undefined });
 		} else if (step.doubleClick) {
 			await cua('double_click', { ...target, ...at(step.doubleClick) });
+		} else if (step.rightClick) {
+			await cua('right_click', { ...target, ...at(step.rightClick) });
 		} else if (step.key) {
 			await cua('press_key', { ...target, key: step.key });
 		} else if (step.hotkey) {

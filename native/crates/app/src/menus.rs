@@ -26,6 +26,7 @@ pub enum MenuId {
     MenubarPreferencesMenu,
     ThemesSubMenu,
     ExplorerContext,
+    SearchContext,
     EditorContext,
     EditorTitleContext,
     TitleBarContext,
@@ -64,7 +65,7 @@ pub enum MenuAction {
 /// The workbench's registrations of the features the port has: menu, submenu or command id, title, group, order,
 /// `when`, and the command's precondition.
 type Row = (MenuId, Option<MenuId>, &'static str, &'static str, &'static str, f64, Option<&'static str>, Option<&'static str>);
-const WORKBENCH_MENUS: [Row; 38] = [
+const WORKBENCH_MENUS: [Row; 51] = [
     // menubar.contribution.ts
     (MenuId::MenubarMainMenu, Some(MenuId::MenubarFileMenu), "", "&&File", "", 1., None, None),
     (MenuId::MenubarMainMenu, Some(MenuId::MenubarEditMenu), "", "&&Edit", "", 2., None, None),
@@ -120,6 +121,20 @@ const WORKBENCH_MENUS: [Row; 38] = [
     (MenuId::ExplorerContext, None, "renameFile", "Rename...", "7_modification", 10., Some("!explorerResourceIsRoot"), Some("!explorerResourceReadonly")),
     (MenuId::ExplorerContext, None, "moveFileToTrash", "Delete", "7_modification", 20., Some("!explorerResourceIsRoot && explorerResourceMoveableToTrash"), None),
     (MenuId::ExplorerContext, None, "deleteFile", "Delete Permanently", "7_modification", 20., Some("!explorerResourceIsRoot && !explorerResourceMoveableToTrash"), None),
+    // searchActionsRemoveReplace.ts, searchActionsFind.ts and searchActionsCopy.ts: the SearchContext items.
+    (MenuId::SearchContext, None, "search.action.replace", "Replace", "search", 1., Some("replaceActive && matchFocus && isEditableItem"), None),
+    (MenuId::SearchContext, None, "search.action.replaceAllInFile", "Replace All", "search", 1., Some("replaceActive && fileMatchFocus && isEditableItem"), None),
+    (MenuId::SearchContext, None, "search.action.replaceAllInFolder", "Replace All", "search", 1., Some("replaceActive && folderMatchFocus && isEditableItem"), None),
+    (MenuId::SearchContext, None, "search.action.remove", "Dismiss", "search", 2., None, None),
+    (MenuId::SearchContext, None, "search.action.restrictSearchToFolder", "Restrict Search to Folder", "search", 3., Some("folderMatchWithResourceFocus"), None),
+    (MenuId::SearchContext, None, "search.action.expandRecursively", "Expand Recursively", "search", 4., Some("folderMatchFocus && hasSearchResult"), None),
+    (MenuId::SearchContext, None, "search.action.excludeFromSearch", "Exclude Folder from Search", "search", 4., Some("folderMatchWithResourceFocus"), None),
+    (MenuId::SearchContext, None, "search.action.excludeFileTypeFromSearch", "Exclude File Type from Search", "search", 5., Some("fileMatchFocus"), None),
+    (MenuId::SearchContext, None, "search.action.includeFileTypeInSearch", "Include File Type from Search", "search", 6., Some("fileMatchFocus"), None),
+    (MenuId::SearchContext, None, "search.action.copyMatch", "Copy", "search_2", 1., Some("fileMatchOrMatchFocus"), None),
+    (MenuId::SearchContext, None, "search.action.copyPath", "Copy Path", "search_2", 2., Some("fileMatchOrFolderMatchWithResourceFocus"), None),
+    (MenuId::SearchContext, None, "search.action.copyAll", "Copy All", "search_2", 3., Some("hasSearchResult"), None),
+    (MenuId::SearchContext, None, "search.action.revealInSideBar", "Reveal in Explorer View", "search_3", 1., Some("fileMatchFocus && hasSearchResult"), None),
 ];
 
 /// themes.contribution.ts: `ThemesSubMenu` items; the icon theme pickers are not ported.
