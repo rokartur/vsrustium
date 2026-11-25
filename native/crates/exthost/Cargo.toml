@@ -7,12 +7,16 @@ license.workspace = true
 [dependencies]
 anyhow.workspace = true
 base64 = "0.22"
+block2 = "0.6"
 config = { path = "../config" }
+ed25519-dalek = "2"
 files = { path = "../files" }
 flate2 = "1"
 md5 = { package = "md-5", version = "0.10" }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSData", "NSDate", "NSError", "NSString", "NSURL", "NSURLRequest", "NSURLResponse", "NSURLSession", "block2"] }
 search = { path = "../search" }
 security-framework = "3"
 semver = "1"
 serde_json.workspace = true
+sha2 = "0.10"
 storage = { path = "../storage" }

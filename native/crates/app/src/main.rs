@@ -321,7 +321,7 @@ fn run_extension_host(
             MainThreadSecretState::in_memory()
         }),
     });
-    session.forward(&["MainThreadCommands", "MainThreadDiagnostics", "MainThreadEditorTabs", "MainThreadLogger", "MainThreadMessageService", "MainThreadOutputService", "MainThreadProgress", "MainThreadQuickOpen", "MainThreadStatusBar", "MainThreadWebviewPanels", "MainThreadWebviews", "MainThreadWorkspace"], move |request| {
+    session.forward(&["MainThreadCommands", "MainThreadDiagnostics", "MainThreadDownloadService", "MainThreadEditorTabs", "MainThreadLogger", "MainThreadMessageService", "MainThreadOutputService", "MainThreadProgress", "MainThreadQuickOpen", "MainThreadStatusBar", "MainThreadWebviewPanels", "MainThreadWebviews", "MainThreadWorkspace"], move |request| {
         let _ = workbench_requests.unbounded_send(request);
     }, workbench_replies);
     session.main_thread = Some(Box::new(main_thread));

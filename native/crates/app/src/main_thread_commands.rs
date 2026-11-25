@@ -53,6 +53,7 @@ impl Workbench {
                 let names = arg(1).as_array().cloned().unwrap_or_default();
                 self.confirm_participant_edits(arg(0).as_u64().unwrap_or_default(), &names, arg(2) == true, window, cx)
             }
+            ("MainThreadDownloadService", "$download") => self.download_resource(&arg(0), &arg(1), cx),
             ("MainThreadWorkspace", "$save") => self.save_resource(&arg(0), cx),
             ("MainThreadWorkspace", "$saveAll") => self.save_all(arg(0) == true, cx),
             ("MainThreadEditorTabs", "$moveTab") => self.move_tab(arg(0).as_str().unwrap_or_default(), arg(1).as_i64().unwrap_or(-1), arg(2).as_i64().unwrap_or(-1), cx),
