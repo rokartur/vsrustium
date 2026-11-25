@@ -320,8 +320,6 @@ fn scroll_top_to_reveal(viewport_top: f32, viewport: Viewport, (box_start, box_e
         // A gap of 20% of the viewport above the box, at least 5 lines, unless that pushes the box out.
         VerticalReveal::NearTop => (box_start - (5. * LINE_HEIGHT).max(viewport_height * 0.2)).max(box_end - viewport_height),
         VerticalReveal::Center | VerticalReveal::CenterIfOutsideViewport => ((box_start + box_end) / 2. - viewport_height / 2.).max(0.),
-        // A gap of 20% of the viewport, at least 5 lines, above the box, which stays in the viewport.
-        VerticalReveal::NearTop => (box_start - (5. * LINE_HEIGHT).max(viewport_height * 0.2)).max(box_end - viewport_height),
         VerticalReveal::Simple | VerticalReveal::Top => minimum_scrolling(viewport_top, viewport_end, box_start, box_end, reveal == VerticalReveal::Top),
     })
 }
