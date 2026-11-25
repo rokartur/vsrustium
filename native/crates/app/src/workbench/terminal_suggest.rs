@@ -570,7 +570,9 @@ impl Workbench {
         let origin = grid::grid_origin(bounds, rows, &metrics);
         let cursor_left = f32::from(origin.x) + cursor.column.0 as f32 * metrics.cell_width;
         let cursor_top = f32::from(origin.y) + row as f32 * metrics.cell_height;
-        let item_height = metrics.cell_height.clamp(8., 1000.);
+        // `_getFontInfo`: the line height times the font size, at least `GOLDEN_LINE_HEIGHT_RATIO` (1.5 on macOS) of it.
+        let line_height = self.setting("terminal.integrated.lineHeight").as_f64().unwrap_or(1.) as f32;
+        let item_height = (line_height * metrics.font_size).round().max(1.5 * metrics.font_size).clamp(8., 1000.);
         let show_status_bar = self.setting("terminal.integrated.suggest.showStatusBar") == true;
         let state = suggest.state;
         let message = matches!(state, State::Loading | State::Empty);
@@ -684,7 +686,7 @@ impl Workbench {
             .overflow_hidden()
             .child(div().flex().items_center().mr(px(4.)).child(self.icon(codicon, 16., 16., icon_color)))
             .child(div().flex_none().child(StyledText::new(label).with_highlights(styles)))
-            .children(parameters.filter(|parameters| !parameters.is_empty()).map(|parameters| div().ml(px(4.)).overflow_hidden().text_ellipsis().opacity(0.7).child(parameters.replace(['\r', '\n'], ""))));
+            .children(parameters.filter(|parameters| !parameters.is_empty()).map(|parameters| div().overflow_hidden().text_ellipsis().opacity(0.7).child(parameters.replace(['\r', '\n'], ""))));
         let right = div()
             .flex()
             .flex_shrink(4.)
@@ -794,8 +796,9 @@ impl Workbench {
         }
         let index = suggest.focused?;
         let completion = suggest.model.as_ref()?.filtered_items().get(index)?.completion.clone();
-        let detail = completion.detail.filter(|detail| *detail != completion.label);
-        if detail.is_none() && completion.documentation.is_none() {
+        let detail = completion.detail.filter(|detail| !detail.trim().is_empty() && *detail != completion.label);
+        let documentation = completion.documentation.filter(|documentation| !documentation.trim().is_empty());
+        if detail.is_none() && documentation.is_none() {
             return None;
         }
         Some(
@@ -818,7 +821,7 @@ impl Workbench {
                         .pr(px(line_height + 4.))
                         .py(px(4.))
                         .children(detail.map(|detail| div().opacity(0.7).font_family(self.terminal_view.metrics.as_ref().map(|metrics| metrics.family.clone()).unwrap_or_default()).child(detail)))
-                        .children(completion.documentation.map(|documentation| div().child(documentation))),
+                        .children(documentation.map(|documentation| div().child(documentation))),
                 )
                 .child(
                     div()

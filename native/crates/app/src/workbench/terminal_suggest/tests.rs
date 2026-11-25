@@ -15,6 +15,23 @@ fn inline_completion_is_not_supported_for_other_shells() {
     assert!(!is_inline_completion_supported(None));
 }
 
+#[test]
+fn ctrl_space_toggles_details_while_a_suggestion_is_focused() {
+    use crate::keybindings::{Resolution, Resolver, default_keybindings, parse_keybinding};
+    let resolver = Resolver::new(default_keybindings(&[]), Vec::new());
+    let mut context: std::collections::HashMap<String, Value> = ["terminalFocus", "terminalHasBeenCreated", "terminalIsOpen", "terminalProcessSupported"].iter().map(|key| (key.to_string(), json!(true))).collect();
+    context.insert("config.terminal.integrated.suggest.enabled".into(), json!(true));
+    let ctrl_space = parse_keybinding("ctrl+space")[0];
+    let command = |context: &std::collections::HashMap<String, Value>| match resolver.resolve(context, &[], ctrl_space) {
+        Resolution::KbFound { command, .. } => command,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(command(&context), "workbench.action.terminal.triggerSuggest");
+    context.insert("terminalSuggestWidgetVisible".into(), json!(true));
+    context.insert("simpleSuggestWidgetHasFocusedSuggestion".into(), json!(true));
+    assert_eq!(command(&context), "workbench.action.terminal.suggestToggleDetails");
+}
+
 fn prompt(value: &str, cursor: usize) -> PromptState {
     PromptState { value: value.into(), prefix: value.chars().take(cursor).collect(), cursor, ghost: None }
 }
