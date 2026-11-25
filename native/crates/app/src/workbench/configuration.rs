@@ -65,6 +65,9 @@ impl Workbench {
         if affects(change, "editor.linkedEditing") || affects(change, "editor.renameOnType") {
             self.linked_editing_reinitialize(false, cx);
         }
+        if affects(change, "problems.visibility") || affects(change, "problems.decorations.enabled") {
+            self.update_markers_file_decorations();
+        }
         if affects(change, "editor.defaultFormatter") {
             self.refresh_language_status(cx);
         }
