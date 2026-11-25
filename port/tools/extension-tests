@@ -5,7 +5,8 @@
 # The extension and its compiled tests come from the untouched 1.147.0 reference checkout, copied next to the
 # reference's test runner as the tests' `../../../../test/integration/electron/testrunner` import expects; the
 # workspace is a new empty folder unless one is given (.vscode-test.js's `<label>out-<n>` temp folders).
-# MOCHA_GREP=<pattern> runs only the matching tests.
+# MOCHA_GREP=<pattern> runs only the matching tests. TESTS=<folder> picks the compiled tests (default out/test;
+# scripts/test-integration.sh runs typescript-language-features from out/test/unit).
 set -uo pipefail
 extension=$1
 REF=${REF:-$HOME/Developer/vscode-ref}
@@ -19,7 +20,7 @@ workspace=${2:-$OUT/workspace}
 (cd native && cargo build --release -q -p app) || exit 1
 source port/tools/gui-lock.sh
 SHELL=/bin/bash VSCODE_GPUI_EXTENSIONS=$REF/extensions timeout 600 native/target/release/vsrustium "$workspace" \
-  --user-data-dir "$OUT/user-data" --disable-workspace-trust --extensionDevelopmentPath="$tests" --extensionTestsPath="$tests/out/test" >"$OUT/log" 2>&1
+  --user-data-dir "$OUT/user-data" --disable-workspace-trust --extensionDevelopmentPath="$tests" --extensionTestsPath="$tests/${TESTS:-out/test}" >"$OUT/log" 2>&1
 code=$?
 sed $'s/\x1b\\[[0-9;]*m//g' "$OUT/log" | grep -E '^ *([0-9]+ (passing|pending|failing)|✔|[0-9]+\) )' | sed 's/^ *//' | sort -u
 echo "exit $code (log $OUT/log)"

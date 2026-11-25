@@ -188,6 +188,10 @@ On the Studio, the working tree of the `_workbench.open` commit. Combined grep o
 
 On the Studio, the working tree of the diagnostics and Next Problem commit. `MOCHA_GREP="vscode API - languages" SUITE_TIMEOUT=300 port/tools/api-tests`: api-folder 3 passing, 0 pending, 4 failing, 395 not reached (the pattern filters them). Passing: both `setTextDocumentLanguage` tests and `diagnostics, read & event`. Failing: link detector, diagnostics & CodeActionProvider, completions with document filters, folding command; they need `MainThreadLanguageFeatures`.
 
+## M13 language features
+
+On the Studio, the working tree of the `_executeFoldingRangeProvider` commit. `MOCHA_GREP="vscode API - languages" SUITE_TIMEOUT=300 port/tools/api-tests`: api-folder 7 passing, 0 pending, 0 failing, 395 not reached (exit 0); api-workspace 0/0/0. The four failing in M13 diagnostics pass: link detector, diagnostics & CodeActionProvider, completions with document filters, folding command.
+
 ## Milestone 17: webviews
 
 `MOCHA_GREP=<pattern> SUITE_TIMEOUT=900 port/tools/api-tests` on the Studio, the working tree of the webview panels commit 0af14672.

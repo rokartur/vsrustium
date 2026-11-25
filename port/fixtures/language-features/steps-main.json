@@ -1,0 +1,1 @@
+[{"wait": 12000}, {"click": [400, 116]}, {"key": "end"}, {"key": "return"}, {"type": "const x: string = 1;"}, {"key": "return"}, {"type": "mai"}, {"wait": 4000}, {"shot": "main"}]
