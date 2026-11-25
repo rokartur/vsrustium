@@ -183,6 +183,16 @@ impl Workbench {
         }
     }
 
+    /// `taskTypes`: with `task.autoDetect` on, every declared type whose `when` holds.
+    pub(super) fn task_types(&self, window: &Window) -> Vec<String> {
+        if self.setting("task.autoDetect") == "off" {
+            return Vec::new();
+        }
+        let context = self.key_context(window);
+        let enabled = |when: &Option<String>| when.as_deref().and_then(crate::contextkey::Expr::deserialize).is_none_or(|when| when.evaluate(&context));
+        self.tasks.definitions.iter().filter(|definition| enabled(&definition.when)).map(|definition| definition.task_type.clone()).collect()
+    }
+
     pub(super) fn task_context(&self, context: &mut HashMap<String, Value>) {
         for (key, supported) in ["customExecutionSupported", "shellExecutionSupported", "processExecutionSupported"].into_iter().zip(self.tasks.supported_executions) {
             if let Some(supported) = supported {

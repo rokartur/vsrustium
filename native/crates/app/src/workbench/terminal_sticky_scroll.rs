@@ -25,6 +25,16 @@ impl Workbench {
             cx.notify();
             Outcome::done()
         });
+        // terminal.contribution.ts `ScrollToPreviousCommand` and `ScrollToNextCommand` (markNavigationAddon.ts).
+        for (id, previous) in [("workbench.action.terminal.scrollToPreviousCommand", true), ("workbench.action.terminal.scrollToNextCommand", false)] {
+            self.commands.register(id, move |workbench, _, _, cx| {
+                if let Some(instance) = workbench.terminal_view.active_instance_mut() {
+                    if previous { instance.scroll_to_previous_mark() } else { instance.scroll_to_next_mark() }
+                    cx.notify();
+                }
+                Outcome::done()
+            });
+        }
     }
 
     /// The overlay of terminal `id`, `None` while it is hidden or the setting is off.

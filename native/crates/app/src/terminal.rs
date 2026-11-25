@@ -14,6 +14,7 @@ pub mod prompt_input;
 pub mod environment_collection;
 pub mod history;
 pub mod sticky_scroll;
+pub mod marks;
 pub mod injection;
 pub mod pty;
 pub mod search;

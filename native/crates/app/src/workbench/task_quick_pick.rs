@@ -123,7 +123,7 @@ impl Workbench {
         let mut input = QuickInput::new(0, Kind::QuickPick);
         input.placeholder = Some("Select the task to run".into());
         input.match_on_description = true;
-        let picker = self.top_level_entries(&mut input, configured);
+        let picker = self.top_level_entries(&mut input, configured, window);
         let id = self.quick_inputs.add(input, Owner::Tasks(picker));
         if let Some(name) = name {
             self.quick_inputs.get_mut(id).expect("just added").set_value(name);
@@ -133,7 +133,7 @@ impl Workbench {
     }
 
     /// `getTopLevelEntries`: recently used, configured (or Configure a Task), then the contributed types.
-    fn top_level_entries(&mut self, input: &mut QuickInput, configured: Vec<Task>) -> TaskPicker {
+    fn top_level_entries(&mut self, input: &mut QuickInput, configured: Vec<Task>, window: &Window) -> TaskPicker {
         let mut entries = Vec::new();
         let mut picks = Vec::new();
         let recent = self.recent_tasks(&configured);
@@ -150,12 +150,7 @@ impl Workbench {
             entries.push(Entry::Separator(Some("configured".into())));
             push_entry(&mut entries, &mut picks, Item { label: "$(plus) Configure a Task".into(), ..Item::default() }, TaskPick::Configure);
         }
-        let mut types: Vec<String> = Vec::new();
-        for (_, task_type) in &self.tasks.providers {
-            if !types.contains(task_type) {
-                types.push(task_type.clone());
-            }
-        }
+        let types = self.task_types(window);
         if !types.is_empty() {
             entries.push(Entry::Separator(Some("contributed".into())));
             for task_type in types {
@@ -226,7 +221,7 @@ impl Workbench {
                 input.set_value(String::new());
                 let configured = self.configured_tasks().into_iter().filter(|task| !task.hide).collect();
                 let mut input = std::mem::replace(self.quick_inputs.get_mut(id).expect("checked above"), QuickInput::new(0, Kind::QuickPick));
-                let picker = self.top_level_entries(&mut input, configured);
+                let picker = self.top_level_entries(&mut input, configured, window);
                 *self.quick_inputs.get_mut(id).expect("checked above") = input;
                 *self.quick_inputs.owner_mut(id).expect("checked above") = Owner::Tasks(picker);
                 cx.notify();
