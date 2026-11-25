@@ -44,7 +44,7 @@ pub struct ContextMenu {
     /// Item mouse ups run their action only 100ms after the menu showed (`runOnceToEnableMouseUp`).
     mouse_up_enabled: bool,
     /// `menuActionOptions.arg` and `getActionsContext`, passed to the command that runs.
-    args: Vec<Value>,
+    pub(super) args: Vec<Value>,
     focus: FocusHandle,
     /// None when nothing had focus, as a title bar right-click in a window without editors.
     pub(super) focus_to_return: Option<FocusHandle>,

@@ -224,7 +224,8 @@ impl Workbench {
     pub(super) fn show_explorer_context_menu(&mut self, stat: Option<&Path>, position: gpui::Point<gpui::Pixels>, window: &mut Window, cx: &mut Context<Self>) {
         let tree = self.folder.as_mut().expect("the Explorer shows with a folder");
         tree.context_menu_select(stat);
-        let uri = |path: &Path| json!({ "scheme": "file", "path": path.to_string_lossy() });
+        // `$mid` 1 makes the extension host revive a `vscode.Uri`; markdown.showPreview ignores plain objects.
+        let uri = |path: &Path| json!({ "$mid": 1, "scheme": "file", "authority": "", "path": path.to_string_lossy(), "query": "", "fragment": "" });
         let (arg, selection) = match stat {
             Some(stat) => {
                 // A compact row's menu acts on its current folder.

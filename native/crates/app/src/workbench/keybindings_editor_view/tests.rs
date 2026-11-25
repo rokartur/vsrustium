@@ -226,3 +226,16 @@ fn writes_wait_until_an_open_keybindings_json_is_saved(cx: &mut TestAppContext) 
     cx.run_until_parked();
     assert_eq!(std::fs::read_to_string(&file).unwrap(), content);
 }
+
+#[gpui::test]
+fn the_modal_blocks_the_command_palette_key_but_not_the_command(cx: &mut TestAppContext) {
+    let (workbench, cx, _) = keybindings_editor_window(cx, "palette", "");
+    cx.simulate_keystrokes("cmd-k cmd-s");
+    cx.simulate_keystrokes("cmd-shift-p");
+    assert!(workbench.read_with(cx, |workbench, _| workbench.quick_inputs.current().is_none()), "modalEditorPart.ts stops workbench.action.showCommands");
+
+    // The menu bar's View > Command Palette... runs the command itself; the quick input draws above the modal.
+    workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("workbench.action.showCommands", Vec::new(), window, cx)));
+    cx.run_until_parked();
+    assert!(workbench.read_with(cx, |workbench, _| workbench.quick_inputs.current().is_some() && workbench.keybindings_editor.open));
+}

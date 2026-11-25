@@ -53,7 +53,7 @@ impl Workbench {
 }
 
 fn document_uri(editor: &crate::editor::OpenEditor) -> Value {
-    json!({ "scheme": editor.document.scheme, "path": editor.document.path.to_string_lossy() })
+    editor.document.uri()
 }
 
 fn point_anchor(pointer: Point<Pixels>) -> Bounds<Pixels> {
