@@ -62,7 +62,7 @@ fn lenses_get_zones_above_their_lines_and_resolve_in_view(cx: &mut TestAppContex
     assert_eq!(reply(&receiver, "$provideCodeLenses", |_| lenses.clone(), cx), 1);
     workbench.read_with(cx, |workbench, _| {
         let editor = workbench.editors.active().unwrap();
-        let lines: Vec<usize> = workbench.code_lenses.groups.iter().map(|group| editor.view_zone(group.zone_id).unwrap().anchor.line).collect();
+        let lines: Vec<usize> = workbench.code_lenses.groups.iter().map(|group| editor.view_zone(group.zone_id).unwrap().anchor.unwrap().line).collect();
         assert_eq!(lines, [0, 1]);
         // The first group shows its lens with a command at once; the second waits for its resolve.
         assert_eq!(workbench.code_lenses.groups[0].shown.as_ref().map(Vec::len), Some(1));
