@@ -503,7 +503,7 @@ pub fn create_environment(base: impl Iterator<Item = (String, String)>, override
 }
 
 /// processes.ts `sanitizeProcessEnvironment`: the variables Electron, VS Code, Snap and GDK set for themselves.
-fn sanitized_away(key: &str) -> bool {
+pub(crate) fn sanitized_away(key: &str) -> bool {
     let kept_vscode = ["PORTABLE", "SHELL_LOGIN", "ENV_REPLACE", "ENV_APPEND", "ENV_PREPEND"];
     let has_rest = |prefix: &str| key.strip_prefix(prefix).is_some_and(|rest| !rest.is_empty());
     if has_rest("ELECTRON_") || has_rest("GDK_PIXBUF_") || key == "SNAP" || key.starts_with("SNAP_") {

@@ -38,6 +38,7 @@ mod output_view;
 mod preferences;
 pub(crate) mod terminal_view;
 mod terminal_host;
+mod external_terminal;
 pub(crate) mod task_service;
 pub mod quick_access;
 mod quick_open;

@@ -299,6 +299,7 @@ impl Workbench {
                 Outcome::done()
             });
         }
+        self.register_external_terminal_actions();
     }
 
     /// `isViewVisible(TERMINAL_VIEW_ID)`: the group shows the Terminal view's tab.
