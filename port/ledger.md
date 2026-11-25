@@ -121,7 +121,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/browserView | src/vs/platform | todo |  |
 | platform/chat | src/vs/platform | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | platform/checksum | src/vs/platform | todo |  |
-| platform/clipboard | src/vs/platform | todo |  |
+| platform/clipboard | src/vs/platform | ported | clipboard.rs: text through GPUI, `writeResources`/`readResources`/`hasResources` as `code/file-list` and `readFindText`/`writeFindText` on NSPasteboard; cargo test -p app clipboard; Explorer copy/paste and globalFindClipboard use it; readImage, triggerPaste not ported |
 | platform/commands | src/vs/platform | ported | commands.rs registry; api-tests commands suite (see MainThreadCommands) |
 | platform/configuration | src/vs/platform | ported | cargo test -p config (json, jsonEdit, configurationModels, configurationRegistry cases); policy, configurationService, configurations, configurationVariables tests not ported |
 | platform/contextkey | src/vs/platform | ported | cargo test -p app contextkey (scanner and parser cases of contextkey tests) |

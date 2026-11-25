@@ -28,19 +28,20 @@ pub enum AutoFindInSelection {
     Multiline,
 }
 
-/// `editor.find` options the controller reads. `globalFindClipboard` (the macOS find pasteboard) is
-/// not ported: it defaults to off.
+/// `editor.find` options the controller reads.
 #[derive(Clone, Copy, Debug)]
 pub struct FindOptions {
     pub seed_search_string_from_selection: SeedFromSelection,
     pub auto_find_in_selection: AutoFindInSelection,
     pub is_loop: bool,
     pub close_on_result: bool,
+    /// The search string is read from and written to the macOS find pasteboard.
+    pub global_find_clipboard: bool,
 }
 
 impl Default for FindOptions {
     fn default() -> Self {
-        FindOptions { seed_search_string_from_selection: SeedFromSelection::Always, auto_find_in_selection: AutoFindInSelection::Never, is_loop: true, close_on_result: false }
+        FindOptions { seed_search_string_from_selection: SeedFromSelection::Always, auto_find_in_selection: AutoFindInSelection::Never, is_loop: true, close_on_result: false, global_find_clipboard: false }
     }
 }
 
@@ -60,12 +61,13 @@ pub enum FocusAction {
     FocusReplaceInput,
 }
 
-/// `IFindStartOptions` without `shouldAnimate`, which only the widget reads, and the clipboard seed.
+/// `IFindStartOptions` without `shouldAnimate`, which only the widget reads.
 #[derive(Clone, Copy, Debug)]
 pub struct StartOptions {
     pub force_reveal_replace: bool,
     pub seed_search_string_from_selection: Seed,
     pub seed_search_string_from_non_empty_selection: bool,
+    pub seed_search_string_from_global_clipboard: bool,
     pub should_focus: FocusAction,
     pub update_search_scope: bool,
     pub is_loop: bool,
@@ -124,6 +126,9 @@ impl FindController {
     /// `state.change` and its listeners: the model researches, and a hidden widget drops the model.
     pub fn change(&mut self, editor: &mut OpenEditor, viewport: Viewport, new: NewFindState, move_cursor: bool) -> Option<FindStateChanged> {
         let changed = self.state.change(new, move_cursor, true)?;
+        if changed.search_string {
+            self.set_global_buffer_term(editor);
+        }
         if changed.is_revealed && !self.state.is_revealed {
             self.model = None;
         }
@@ -139,7 +144,7 @@ impl FindController {
         self.model = None;
         self.change(editor, viewport, NewFindState { search_scope: Some(None), ..query_change(query) }, false);
         if restart {
-            let opts = StartOptions { force_reveal_replace: false, seed_search_string_from_selection: Seed::None, seed_search_string_from_non_empty_selection: false, should_focus: FocusAction::NoFocusChange, update_search_scope: false, is_loop: self.options.is_loop };
+            let opts = StartOptions { seed_search_string_from_selection: Seed::None, seed_search_string_from_non_empty_selection: false, seed_search_string_from_global_clipboard: false, ..self.seeded_start(false) };
             self.start(editor, viewport, opts, NewFindState::default());
         }
     }
@@ -233,6 +238,12 @@ impl FindController {
             }
             _ => {}
         }
+        if opts.seed_search_string_from_global_clipboard && changes.search_string.as_deref().is_none_or(str::is_empty) {
+            let term = self.global_buffer_term(editor);
+            if !term.is_empty() {
+                changes.search_string = Some(term);
+            }
+        }
         if opts.force_reveal_replace || changes.is_replace_revealed == Some(true) {
             changes.is_replace_revealed = Some(true);
         } else if !self.state.is_revealed {
@@ -258,8 +269,10 @@ impl FindController {
         let mut opts = StartOptions { should_focus: FocusAction::FocusFindInput, update_search_scope: find_in_selection, ..self.seeded_start(true) };
         if new.search_string.is_some() {
             opts.seed_search_string_from_selection = Seed::None;
+            opts.seed_search_string_from_global_clipboard = false;
         }
         self.start(editor, viewport, opts, new);
+        self.set_global_buffer_term(editor);
         opts.should_focus
     }
 
@@ -272,6 +285,7 @@ impl FindController {
         let opts = StartOptions {
             force_reveal_replace: true,
             seed_search_string_from_selection: if seed { Seed::Single } else { Seed::None },
+            seed_search_string_from_global_clipboard: self.options.seed_search_string_from_selection != SeedFromSelection::Never,
             should_focus,
             ..self.seeded_start(false)
         };
@@ -281,8 +295,9 @@ impl FindController {
 
     /// `StartFindWithSelectionAction` (Cmd+E): the selection, multi-line too, becomes the search string.
     pub fn start_find_with_selection(&mut self, editor: &mut OpenEditor, viewport: Viewport) {
-        let opts = StartOptions { force_reveal_replace: false, seed_search_string_from_selection: Seed::Multiple, seed_search_string_from_non_empty_selection: false, should_focus: FocusAction::NoFocusChange, update_search_scope: false, is_loop: self.options.is_loop };
+        let opts = StartOptions { seed_search_string_from_selection: Seed::Multiple, seed_search_string_from_non_empty_selection: false, seed_search_string_from_global_clipboard: false, ..self.seeded_start(false) };
         self.start(editor, viewport, opts, NewFindState::default());
+        self.set_global_buffer_term(editor);
     }
 
     /// The start options of the find actions: seeding from the selection when `only_when_empty` finds no search string yet.
@@ -292,9 +307,25 @@ impl FindController {
             force_reveal_replace: false,
             seed_search_string_from_selection: if seed { Seed::Single } else { Seed::None },
             seed_search_string_from_non_empty_selection: self.options.seed_search_string_from_selection == SeedFromSelection::Selection,
+            seed_search_string_from_global_clipboard: true,
             should_focus: FocusAction::NoFocusChange,
             update_search_scope: false,
             is_loop: self.options.is_loop,
+        }
+    }
+
+    /// `getGlobalBufferTerm`: the macOS find pasteboard, when `editor.find.globalFindClipboard` is on.
+    fn global_buffer_term(&self, editor: &OpenEditor) -> String {
+        match self.options.global_find_clipboard && !too_large_for_syncing(editor) {
+            true => crate::clipboard::read_find_text(),
+            false => String::new(),
+        }
+    }
+
+    /// `setGlobalBufferTerm`: the search string goes to the macOS find pasteboard.
+    fn set_global_buffer_term(&self, editor: &OpenEditor) {
+        if self.options.global_find_clipboard && !too_large_for_syncing(editor) {
+            crate::clipboard::write_find_text(&self.state.search_string);
         }
     }
 
@@ -340,7 +371,7 @@ impl FindController {
         if self.move_to_match(editor, viewport, next) {
             return;
         }
-        let opts = StartOptions { seed_search_string_from_selection: Seed::None, seed_search_string_from_non_empty_selection: false, ..self.seeded_start(false) };
+        let opts = StartOptions { seed_search_string_from_selection: Seed::None, seed_search_string_from_non_empty_selection: false, seed_search_string_from_global_clipboard: false, ..self.seeded_start(false) };
         self.start(editor, viewport, opts, NewFindState::default());
         self.move_to_match(editor, viewport, next);
     }
@@ -370,6 +401,12 @@ impl FindController {
 
 fn query_change(query: QueryOptions) -> NewFindState {
     NewFindState { match_case: Some(query.match_case), whole_word: Some(query.whole_word), is_regex: Some(query.is_regex), preserve_case: Some(query.preserve_case), ..Default::default() }
+}
+
+/// `TextModel.isTooLargeForSyncing`: the text is over `_MODEL_SYNC_LIMIT`, 50 MB.
+fn too_large_for_syncing(editor: &OpenEditor) -> bool {
+    let length: usize = editor.document.lines.iter().map(|line| line.len() + 1).sum();
+    length > 50 * 1024 * 1024
 }
 
 #[cfg(test)]

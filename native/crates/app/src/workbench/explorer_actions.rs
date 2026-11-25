@@ -125,7 +125,7 @@ impl Workbench {
         context.insert("explorerResourceParentReadOnly".into(), json!(false));
         context.insert("explorerResourceMoveableToTrash".into(), json!(tree.focused.is_some() && self.setting("files.enableTrash") == json!(true)));
         context.insert("explorerResourceCut".into(), json!(tree.cut && !tree.clipboard.is_empty()));
-        context.insert("fileCopied".into(), json!(!tree.clipboard.is_empty()));
+        context.insert("fileCopied".into(), json!(tree.file_copied));
         if focused {
             self.explorer_resource_context(tree.focused.as_deref(), context);
         }
@@ -155,6 +155,7 @@ impl Workbench {
     pub(super) fn show_explorer_context_menu(&mut self, stat: Option<&Path>, position: gpui::Point<gpui::Pixels>, window: &mut Window, cx: &mut Context<Self>) {
         let tree = self.folder.as_mut().expect("the Explorer shows with a folder");
         tree.context_menu_select(stat);
+        tree.file_copied = crate::clipboard::has_resources();
         let uri = |path: &Path| json!({ "scheme": "file", "path": path.to_string_lossy() });
         let (arg, selection) = match stat {
             Some(stat) => (uri(stat), tree.selected.iter().map(|path| uri(path)).collect()),
@@ -434,22 +435,24 @@ impl Workbench {
         let Some(tree) = self.folder.as_mut() else { return Outcome::done() };
         let stats = tree.context(true);
         if !stats.is_empty() {
+            crate::clipboard::write_resources(&stats);
             tree.clipboard = stats;
             tree.cut = cut;
+            tree.file_copied = true;
             cx.notify();
         }
         Outcome::done()
     }
 
-    /// `pasteFileHandler` for items copied in the Explorer: each into the focused folder or the focused file's
-    /// folder under a free name, or moved there after a cut.
+    /// `pasteFileHandler` for the files on the clipboard (`readResources`): each into the focused folder or the
+    /// focused file's folder under a free name, or moved there after a cut.
     fn paste_explorer_items(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
         let Some(tree) = self.folder.as_ref() else { return Outcome::done() };
         if self.explorer.edit.is_some() {
             return Outcome::done();
         }
         let element = tree.context(false).into_iter().next().unwrap_or_else(|| tree.workspace.folders[0].path.clone());
-        let sources = tree.clipboard.clone();
+        let sources = crate::clipboard::distinct_parents(crate::clipboard::read_resources());
         let cut = tree.cut;
         let naming = self.incremental_naming();
         let mut pairs = Vec::new();
@@ -499,6 +502,8 @@ impl Workbench {
             let _ = workbench.update_in(cx, |workbench, window, cx| {
                 if cut && let Some(tree) = workbench.folder.as_mut() {
                     tree.clipboard.clear();
+                    tree.cut = false;
+                    tree.file_copied = false;
                 }
                 if result.is_ok() {
                     let target = targets[0].1.clone();

@@ -1,5 +1,4 @@
-//! find.test.ts and findController.test.ts. The clipboard tests and `StartFindWithArgsAction` are not
-//! ported (no `globalFindClipboard`). Upstream's suite shares one storage, so a test starts with the
+//! find.test.ts and findController.test.ts. Upstream's suite shares one storage, so a test starts with the
 //! query options the tests before it stored.
 
 use super::*;
@@ -39,7 +38,7 @@ fn start_find(controller: &mut FindController, editor: &mut OpenEditor) {
 }
 
 fn start_options(update_search_scope: bool) -> StartOptions {
-    StartOptions { force_reveal_replace: false, seed_search_string_from_selection: Seed::None, seed_search_string_from_non_empty_selection: false, should_focus: FocusAction::NoFocusChange, update_search_scope, is_loop: true }
+    StartOptions { force_reveal_replace: false, seed_search_string_from_selection: Seed::None, seed_search_string_from_non_empty_selection: false, seed_search_string_from_global_clipboard: false, should_focus: FocusAction::NoFocusChange, update_search_scope, is_loop: true }
 }
 
 fn new_controller(query: QueryOptions) -> FindController {
@@ -75,6 +74,54 @@ fn search_string_with_multiline_selection() {
     for selection in [[1, 1, 2, 1], [1, 1, 2, 4], [1, 7, 2, 4]] {
         select(&mut editor, selection);
         assert_eq!(selection_search_string(&editor, Seed::Single, false), None);
+    }
+}
+
+fn global_find_clipboard_controller() -> FindController {
+    FindController::new(FindOptions { global_find_clipboard: true, ..Default::default() }, QueryOptions::default())
+}
+
+/// reads from the global clipboard buffer on next find action if buffer exists
+#[test]
+fn reads_from_the_global_clipboard_buffer_on_next_find_action() {
+    let mut editor = editor("ABC\nABC\nXYZ\nABC", "\n");
+    crate::clipboard::write_find_text("ABC");
+    let mut controller = global_find_clipboard_controller();
+    controller.match_find_action(&mut editor, VIEWPORT, true);
+    assert_eq!(controller.state.search_string, "ABC");
+    assert_eq!(selections(&editor), [[1, 1, 1, 4]]);
+}
+
+/// writes to the global clipboard buffer when text changes
+#[test]
+fn writes_to_the_global_clipboard_buffer_when_text_changes() {
+    let mut editor = editor("ABC\nABC\nXYZ\nABC", "\n");
+    crate::clipboard::write_find_text("");
+    let mut controller = global_find_clipboard_controller();
+    controller.change(&mut editor, VIEWPORT, search("ABC"), true);
+    assert_eq!(crate::clipboard::read_find_text(), "ABC");
+    let mut controller = new_controller(QueryOptions::default());
+    controller.change(&mut editor, VIEWPORT, search("XYZ"), true);
+    assert_eq!(crate::clipboard::read_find_text(), "ABC", "globalFindClipboard is off by default");
+}
+
+/// issue #151311: findWithArgs respects searchString, and the clipboard one
+#[test]
+fn issue_151311_find_with_args_respects_search_string() {
+    for global_find_clipboard in [false, true] {
+        for search_string in [None, Some(""), Some("explicit")] {
+            let mut editor = editor("needle", "\n");
+            let options = FindOptions { global_find_clipboard, seed_search_string_from_selection: if global_find_clipboard { SeedFromSelection::Never } else { SeedFromSelection::Always }, ..Default::default() };
+            let mut controller = FindController::new(options, QueryOptions::default());
+            select(&mut editor, [1, 1, 1, 7]);
+            for _ in 0..3 {
+                crate::clipboard::write_find_text("clipboard");
+                let new = NewFindState { search_string: search_string.map(str::to_string), is_regex: Some(true), ..Default::default() };
+                controller.start_find_with_args(&mut editor, VIEWPORT, new, false);
+                let seed = if global_find_clipboard { "clipboard" } else { "needle" };
+                assert_eq!(controller.state.search_string, search_string.unwrap_or(seed));
+            }
+        }
     }
 }
 

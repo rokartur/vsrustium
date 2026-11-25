@@ -414,7 +414,8 @@ impl Workbench {
             _ => AutoFindInSelection::Never,
         };
         let is_loop = self.setting("editor.find.loop").as_bool().unwrap_or(true);
-        FindOptions { seed_search_string_from_selection: seed, auto_find_in_selection, is_loop, ..FindOptions::default() }
+        let global_find_clipboard = self.setting("editor.find.globalFindClipboard").as_bool().unwrap_or(false);
+        FindOptions { seed_search_string_from_selection: seed, auto_find_in_selection, is_loop, global_find_clipboard, ..FindOptions::default() }
     }
 
     /// Typing in an input changes the state: the search string moves the cursor to the nearest match.

@@ -7,6 +7,7 @@
 mod action_list;
 mod anything_quick_access;
 mod brackets;
+mod clipboard;
 mod command_palette;
 mod commands;
 mod contextkey;

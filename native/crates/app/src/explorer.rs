@@ -33,10 +33,12 @@ pub struct FileTree {
     pub focused: Option<PathBuf>,
     pub selected: Vec<PathBuf>,
     anchor: Option<PathBuf>,
-    /// `IExplorerService.setToCopy`: the items copied or cut, and whether a paste moves them.
-    /// shortcut: kept in the window, where desktop writes the OS clipboard (`writeResources`); another window cannot paste them.
+    /// `IExplorerService.setToCopy`: the items copied or cut, and whether a paste moves them (`pasteShouldMove`).
+    /// The clipboard holds their URIs (`writeResources`).
     pub clipboard: Vec<PathBuf>,
     pub cut: bool,
+    /// `fileCopied`: set by a copy or cut, and from `hasResources` when the context menu opens.
+    pub file_copied: bool,
     /// `NewExplorerItem`: the row of the name being typed for a new file or folder, under `parent`.
     pub new_item: Option<NewItem>,
 }
@@ -69,7 +71,7 @@ impl FileTree {
         if workspace.file.is_some() {
             expanded.extend(workspace.folders.iter().take(5).map(|folder| folder.path.clone()));
         }
-        Self { workspace, settings, expanded, collapsed_nests: HashSet::new(), focused: None, selected: Vec::new(), anchor: None, clipboard: Vec::new(), cut: false, new_item: None }
+        Self { workspace, settings, expanded, collapsed_nests: HashSet::new(), focused: None, selected: Vec::new(), anchor: None, clipboard: Vec::new(), cut: false, file_copied: false, new_item: None }
     }
 
     /// `AsyncDataTree.getViewState` with explorerModel.ts `getId` (`<root URI>::<resource URI>`), as

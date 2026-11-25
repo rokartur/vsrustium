@@ -56,7 +56,7 @@ impl EditorHistory {
 }
 
 /// `URI.file(path).toString()`: path characters other than unreserved ones and `/` percent-encoded.
-fn file_uri_string(path: &Path) -> String {
+pub fn file_uri_string(path: &Path) -> String {
     let mut uri = String::from("file://");
     for byte in path.to_string_lossy().bytes() {
         match byte {
