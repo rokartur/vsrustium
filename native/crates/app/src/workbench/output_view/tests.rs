@@ -204,3 +204,30 @@ fn title_actions_clear_scroll_lock_and_set_the_log_level(cx: &mut TestAppContext
     assert_eq!(sent, [vec![json!(1), exthost::scan::file_uri(&file)]]);
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+/// defaultLogLevels.ts `setDefaultLogLevel`: argv.json gets the level, and the loggers at the old default follow.
+#[gpui::test]
+fn set_default_log_level_writes_argv(cx: &mut TestAppContext) {
+    let (workbench, cx, receiver, dir) = open(cx);
+    let file = dir.join("git.log");
+    request(&workbench, cx, "MainThreadLogger", "$registerLogger", json!([{ "id": "git", "name": "Git", "extensionId": "vscode.git", "resource": { "scheme": "file", "path": file } }]));
+    let argv = dir.join("argv.json");
+    std::fs::write(&argv, "{\n\t\"enable-crash-reporter\": false\n}\n").unwrap();
+    workbench.update(cx, |workbench, _| workbench.output.argv_file = argv.clone());
+
+    let set_default = |args: Vec<Value>, workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext| {
+        let outcome = workbench.update_in(cx, |workbench, window, cx| workbench.execute_command("workbench.action.setDefaultLogLevel", args, window, cx));
+        assert!(matches!(outcome, Outcome::Ready(Ok(_))));
+    };
+    set_default(vec![json!(2)], &workbench, cx);
+    assert_eq!(std::fs::read_to_string(&argv).unwrap(), "{\n\t\"enable-crash-reporter\": false,\n\t\"log-level\": [\n\t\t\"debug\"\n\t]\n}\n");
+    assert_eq!(workbench.read_with(cx, |workbench, _| workbench.output.log_level), 2, "the global level was at the old default");
+    receiver.try_iter().for_each(drop);
+
+    set_default(vec![json!(5), json!("Vscode.Git")], &workbench, cx);
+    assert!(std::fs::read_to_string(&argv).unwrap().contains("\"vscode.git=error\""));
+    assert_eq!(workbench.read_with(cx, |workbench, _| workbench.output.channel_log_level("git")), Some(5));
+    let sent: Vec<Vec<Value>> = receiver.try_iter().filter(|message| message.method == "$setLogLevel").map(|message| message.args).collect();
+    assert_eq!(sent, [vec![json!(5), exthost::scan::file_uri(&file)]]);
+    std::fs::remove_dir_all(dir).unwrap();
+}

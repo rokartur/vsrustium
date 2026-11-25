@@ -402,6 +402,9 @@ Done when (first item): api-tests `vscode API - editors` passes as in the refere
 - The Output view's title row (channel dropdown, filter box, Clear, Toggle Auto Scrolling, gear, Open Output in Editor) sits where a text editor has its breadcrumbs, as the search editor's query widget does. Upstream draws these in the panel's title bar; they move there with the view.
 - shortcut: filtered-out lines are removed from the shown text, where upstream hides them with `setHiddenAreas`; the port's editor has no hidden areas. Appends are filtered as they arrive.
 - shortcut: Open Output in Editor and Open Log... open the channel's file, where upstream opens its `output:` resource in a second read-only editor; the port's editor group hosts one output-scheme editor, the Output view.
+- Log levels: `Output::log_level` is `LoggerService.logLevel`, a logger's own level is stored only when it differs (`logs_actions.rs`). The startup level is argv.json `log-level` (`<home>/.vscode-oss/argv.json`, product.json `dataFolderName`), which main.ts turns into `--log` arguments; Set As Default and the Set Log Level picker's button write it back with `json_edit::set_property`. shortcut: the `--log` and `--verbose` command line arguments are not read; the port's main.rs parses only the arguments it needs.
+- `logsDataCleaner.ts` runs in the window process ten seconds after startup (the port has no shared process): the session folders of `<userData>/logs` but the current one and the nine newest are removed.
+- shortcut: Open Logs Folder reveals the session folder when it has no `main.log`; the port has no main process writing one.
 
 ## Benchmarks
 

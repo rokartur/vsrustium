@@ -139,7 +139,10 @@ fn main() -> anyhow::Result<()> {
                 host.configuration_scopes = development.is_some();
                 host.send_color_theme(theme.kind);
                 let mut workbench = Workbench::new(theme, app_root.clone(), workspace.clone(), languages, settings.clone(), host, cx);
-                workbench.register_window_log(exthost::session::window_logs_path(&user_data).join("renderer.log"));
+                let window_logs = exthost::session::window_logs_path(&user_data);
+                workbench.register_window_log(window_logs.join("renderer.log"));
+                let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
+                workbench.start_logs(output::log_levels::argv_file(&home), window_logs.parent().expect("a session folder").to_path_buf(), cx);
                 workbench.skip_dialogs = development.as_ref().is_some_and(|development| development.tests_path.is_some());
                 workbench.load_keybindings(keybindings::default_keybindings(&extensions), keybindings_file.clone(), cx);
                 workbench.start_system_wide_keybindings(window, cx);

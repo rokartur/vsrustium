@@ -22,6 +22,7 @@ mod keyboard;
 pub mod menubar;
 mod middle_scroll;
 mod minimap_view;
+pub mod logs_actions;
 pub mod output_actions;
 mod output_view;
 pub mod quick_access;
@@ -88,8 +89,6 @@ pub struct Workbench {
     keybinding_marks: define_keybinding::KeybindingMarks,
     /// Context keys set with the `setContext` command.
     context_keys: HashMap<String, Value>,
-    /// The level extension tests set with `_extensionTests.setLogLevel`; stderr logging does not filter by it.
-    log_level: String,
     pub output: crate::output::Output,
     output_view: output_view::OutputView,
     /// The status bar message and the task that hides it.
@@ -214,7 +213,6 @@ impl Workbench {
             keybindings_editor: keybindings_editor_view::KeybindingsEditor::new(cx),
             keybinding_marks: Default::default(),
             context_keys: HashMap::new(),
-            log_level: "info".into(),
             output: Default::default(),
             output_view: output_view::OutputView::new(cx),
             status_message: None,
@@ -275,6 +273,7 @@ impl Workbench {
         workbench.register_editor_message_commands();
         workbench.register_define_keybinding_command();
         workbench.register_output_actions();
+        workbench.register_logs_actions();
         // Keybindings resolve before the focused element sees the key, and with nothing focused too.
         let entity = cx.entity().downgrade();
         cx.intercept_keystrokes(move |event, window, cx| {

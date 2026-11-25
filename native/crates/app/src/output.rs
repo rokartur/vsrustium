@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 pub mod filter;
+pub mod log_levels;
 #[cfg(test)]
 mod tests;
 
@@ -24,6 +25,11 @@ pub const WINDOW_LOG_ID: &str = "rendererLog";
 pub const DEFAULT_LOG_LEVEL: u8 = 3;
 /// log.ts `LogLevel` from `Off` (0) to `Error` (5), with `LogLevelToString` and `LogLevelToLocalizedString`.
 pub const LOG_LEVELS: [(u8, &str, &str); 6] = [(1, "trace", "Trace"), (2, "debug", "Debug"), (3, "info", "Info"), (4, "warn", "Warning"), (5, "error", "Error"), (0, "off", "Off")];
+
+/// log.ts `LogLevelToString`.
+pub fn log_level_name(level: u8) -> &'static str {
+    LOG_LEVELS.iter().find(|(known, _, _)| *known == level).expect("a log level").1
+}
 
 pub struct OutputChannel {
     pub id: String,
@@ -56,7 +62,6 @@ pub struct Logger {
     pub log_level: Option<u8>,
 }
 
-#[derive(Default)]
 pub struct Output {
     /// In registration order, as `getChannels` lists them.
     pub channels: Vec<OutputChannel>,
@@ -66,6 +71,27 @@ pub struct Output {
     extension_id_pool: HashMap<String, u32>,
     /// outputServices.ts `OutputViewFilters`, shared by every channel the view shows.
     pub filters: filter::Filters,
+    /// log.ts `AbstractLoggerService.logLevel`: the level of every logger without its own.
+    pub log_level: u8,
+    /// The default log levels of the environment: argv.json `log-level` as it was at startup.
+    pub startup_log_levels: log_levels::DefaultLogLevels,
+    /// environmentService.argvResource.
+    pub argv_file: PathBuf,
+}
+
+impl Default for Output {
+    fn default() -> Self {
+        Output {
+            channels: Vec::new(),
+            active: None,
+            loggers: Vec::new(),
+            extension_id_pool: HashMap::new(),
+            filters: filter::Filters::default(),
+            log_level: DEFAULT_LOG_LEVEL,
+            startup_log_levels: log_levels::DefaultLogLevels::default(),
+            argv_file: PathBuf::new(),
+        }
+    }
 }
 
 impl OutputChannel {
@@ -161,21 +187,31 @@ impl Output {
         self.loggers.iter().find(|logger| logger.file == channel.file)
     }
 
-    /// `OutputService.getLogLevel`: the level of the channel's logger, else the default level.
+    /// `OutputService.getLogLevel`: the level of the channel's logger, else the global level.
     pub fn channel_log_level(&self, id: &str) -> Option<u8> {
-        self.channel_logger(id).map(|logger| logger.log_level.unwrap_or(DEFAULT_LOG_LEVEL))
+        self.channel_logger(id).map(|logger| logger.log_level.unwrap_or(self.log_level))
     }
 
     /// `OutputService.setLogLevel` and `LoggerService.setLogLevel(resource, level)`: the logger's file when its level
-    /// changed; the default level is stored as none.
+    /// changed; the global level is stored as none.
     pub fn set_channel_log_level(&mut self, id: &str, level: u8) -> Option<PathBuf> {
         let file = self.channel_logger(id)?.file.clone();
+        let global = self.log_level;
         let logger = self.loggers.iter_mut().find(|logger| logger.file == file).expect("the channel's logger");
-        if logger.log_level.unwrap_or(DEFAULT_LOG_LEVEL) == level {
+        if logger.log_level == Some(level) {
             return None;
         }
-        logger.log_level = (level != DEFAULT_LOG_LEVEL).then_some(level);
+        logger.log_level = (level != global).then_some(level);
         Some(file)
+    }
+
+    /// defaultLogLevels.ts `defaultLogLevels`: argv.json's levels, the startup ones where it has none.
+    pub fn default_log_levels(&self) -> log_levels::DefaultLogLevels {
+        let argv = log_levels::read_argv(&self.argv_file);
+        if argv == log_levels::DefaultLogLevels::default() {
+            return self.startup_log_levels.clone();
+        }
+        log_levels::DefaultLogLevels { default: argv.default.or(self.startup_log_levels.default), extensions: argv.extensions }
     }
 
     /// `registerLogger` and `LogOutputChannels.onDidAddLoggers`: a visible logger is a log channel.
@@ -222,7 +258,7 @@ impl Output {
     /// logger's level lets `level` through.
     pub fn log_window(&self, level: u8, message: &str) {
         let Some(logger) = self.loggers.iter().find(|logger| logger.id == WINDOW_LOG_ID) else { return };
-        let logger_level = logger.log_level.unwrap_or(DEFAULT_LOG_LEVEL);
+        let logger_level = logger.log_level.unwrap_or(self.log_level);
         if logger_level == 0 || level < logger_level {
             return;
         }

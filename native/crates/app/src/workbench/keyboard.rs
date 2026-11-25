@@ -323,14 +323,14 @@ impl Workbench {
             workbench.context_keys.insert(key, args.next().unwrap_or(Value::Null));
             Outcome::done()
         });
-        // mainThreadLogService.ts; the level starts at Info, the init data's logLevel 3.
+        // mainThreadLogService.ts: `loggerService.setLogLevel(parseLogLevel(level))` and `logService.getLevel()`.
         self.commands.register("_extensionTests.setLogLevel", |workbench, args, _, _| {
-            if let Some(Value::String(level)) = args.first() {
-                workbench.log_level = level.clone();
+            if let Some(level) = args.first().and_then(Value::as_str).and_then(crate::output::log_levels::parse_log_level) {
+                workbench.set_log_level(level);
             }
             Outcome::done()
         });
-        self.commands.register("_extensionTests.getLogLevel", |workbench, _, _, _| Outcome::Ready(Ok(Value::from(workbench.log_level.clone()))));
+        self.commands.register("_extensionTests.getLogLevel", |workbench, _, _, _| Outcome::Ready(Ok(Value::from(crate::output::log_level_name(workbench.output.log_level)))));
     }
 }
 

@@ -166,7 +166,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/lifecycle | src/vs/platform | todo |  |
 | platform/list | src/vs/platform | ported | split_view.rs SplitView (proportional layout, distributeEmptySpace, sash drag with Alt for both sides, sash states) under the Keyboard Shortcuts table's column headers: sash cursors, 300ms hover border, double-click reset to the column weight, tree.tableColumnsBorder fading in on table hover (cargo test -p app split_view keybindings_editor_view; ui-pair drag and reset land on the reference's columns); listWidget and the other lists stay with their views |
 | platform/localTranscription | src/vs/platform | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
-| platform/log | src/vs/platform | stub | the port log is code-gpui stderr: host console, errors, `$log` lines; no log levels, files or rotation |
+| platform/log | src/vs/platform | stub | the Window logger writes `renderer.log` with levels (output.rs `log_window`), the logger registry and the global and per-logger levels follow `AbstractLoggerService` (cargo test -p app output); the rest of the port log is code-gpui stderr: host console, errors, `$log` lines; no rotation, no spdlog |
 | platform/markdown | src/vs/platform | todo |  |
 | platform/markers | src/vs/platform | todo |  |
 | platform/mcp | src/vs/platform | removed | no sign-in/AI by decision (port/notes.md); not ported |
@@ -345,7 +345,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/lifecycle | workbench service | todo |  |
 | workbench/services/localTranscription | workbench service | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | workbench/services/localization | workbench service | todo |  |
-| workbench/services/log | workbench service | stub | same port log as platform/log; no Output view of logs (milestone 15) |
+| workbench/services/log | workbench service | ported | output/log_levels.rs: defaultLogLevels.ts argv.json `log-level` read and write, `getDefaultLogLevel`, `parseLogLevel`; logs_actions.rs `setDefaultLogLevel` (cargo test -p app set_default_log_level_writes_argv, reads_and_writes_argv_log_levels); the Window log as logConstants.ts `windowLogId` |
 | workbench/services/mcp | workbench service | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/services/menubar | workbench service | ported | menubar.rs Workbench::menubar: MenubarMainMenu as menubarControl.ts sends it, rebuilt when when/enablement change; enablement matches the reference in the empty, folder and file windows (port/results/menubar.md) |
 | workbench/services/model | workbench service | todo |  |
@@ -438,7 +438,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/list | workbench contribution | ported | list.resizeColumn: TableColumnResizeQuickPick's column pick and percentage input with its validation (cargo test -p app keybindings_editor_view: resize_column_sets_the_picked_column_to_a_percentage_of_the_table, a_column_width_must_be_an_integer_percentage); the Keyboard Shortcuts table is the only table so far |
 | workbench/contrib/localHistory | workbench contribution | todo |  |
 | workbench/contrib/localization | workbench contribution | todo |  |
-| workbench/contrib/logs | workbench contribution | todo |  |
+| workbench/contrib/logs | workbench contribution | ported | logs_actions.rs: Set Log Level... (global and per channel, Set as Default Log Level button), `workbench.action.setDefaultLogLevel`, Show Window Log, Show Logs..., Open Log..., Open Logs Folder, Open Extension Logs Folder, logsDataCleaner.ts (cargo test -p app set_default_log_level_writes_argv, old_log_sessions_are_removed); Open Logs Folder reveals the session folder (port/notes.md milestone 15) |
 | workbench/contrib/markdown | workbench contribution | todo |  |
 | workbench/contrib/markers | workbench contribution | todo |  |
 | workbench/contrib/mcp | workbench contribution | removed | no sign-in/AI by decision (port/notes.md); not ported |

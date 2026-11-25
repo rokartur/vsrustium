@@ -13,7 +13,7 @@ use crate::input_box::InputBox;
 use crate::main_thread_quick_open::Owner;
 use crate::menus::MenuAction;
 use crate::output::filter::{Level, parse_log_entries};
-use crate::output::{DEFAULT_LOG_LEVEL, LOG_LEVELS, OUTPUT_SCHEME, OutputChannel, WINDOW_LOG_ID};
+use crate::output::{LOG_LEVELS, OUTPUT_SCHEME, OutputChannel, WINDOW_LOG_ID, log_level_name};
 use crate::quick_input::{Entry, Event, Item, Kind, QuickInput};
 
 /// What accepting an item of an output channel picker does.
@@ -23,6 +23,12 @@ pub enum OutputPick {
     Show(String),
     /// `editorService.openEditor({ resource: channel.uri, options: { pinned: true } })`.
     OpenFile(String),
+    /// Set Log Level...: the global level, with the Set as Default Log Level button.
+    Level(u8),
+    /// Set Log Level...: a log channel, whose levels the picker shows next.
+    LogChannel(String),
+    /// Set Log Level...: a log channel's level, with the Set as Default Log Level button.
+    ChannelLevel(String, u8),
 }
 
 /// The level toggles of the filter menu, with `LogLevelToString` and `LogLevelToLocalizedString`.
@@ -129,8 +135,9 @@ impl Workbench {
         context.insert("activeLogOutput.isLog".into(), json!(channel.log));
         let level = self.output.channel_log_level(&channel.id);
         context.insert("activeLogOutput.levelSettable".into(), json!(channel.log));
-        context.insert("activeLogOutput.level".into(), json!(level.map_or("", level_name)));
-        context.insert("activeLogOutput.levelIsDefault".into(), json!(level == Some(DEFAULT_LOG_LEVEL)));
+        context.insert("activeLogOutput.level".into(), json!(level.map_or("", log_level_name)));
+        let default = self.output.default_log_levels().level(channel.extension_id.as_deref());
+        context.insert("activeLogOutput.levelIsDefault".into(), json!(level == Some(default)));
     }
 
     /// The channel dropdown (`isSelection` submenu `workbench.output.menu.switchOutput`): extension channels, then
@@ -193,22 +200,25 @@ impl Workbench {
         self.show_context_menu_actions(actions, &context, anchor, Vec::new(), window, cx);
     }
 
-    /// The gear's submenu `workbench.output.menu.logLevel`: the levels, the active channel's checked.
-    // shortcut: no "Set As Default" item; default log levels (argv.json `log-level`) are milestone 15's logs item.
+    /// The gear's submenu `workbench.output.menu.logLevel`: the levels, the active channel's checked, then Set As
+    /// Default unless the level is the default.
     pub(super) fn show_output_log_level_menu(&mut self, anchor: Bounds<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
         let Some(id) = self.output.active.clone() else { return };
         let current = self.output.channel_log_level(&id);
-        let actions = LOG_LEVELS
+        let mut actions: Vec<MenuAction> = LOG_LEVELS
             .iter()
             .map(|&(level, _, title)| MenuAction::Command { id: format!("workbench.action.output.activeOutputLogLevel.{level}"), title: title.into(), enabled: true, checked: current == Some(level), alt: None })
             .collect();
         let context = self.key_context(window);
+        actions.push(MenuAction::Separator);
+        let is_default = context.get("activeLogOutput.levelIsDefault") == Some(&json!(true));
+        actions.push(MenuAction::Command { id: "workbench.action.output.activeOutputLogLevelDefault".into(), title: "Set As Default".into(), enabled: !is_default, checked: false, alt: None });
         self.show_context_menu_actions(actions, &context, anchor, Vec::new(), window, cx);
     }
 
     /// `OutputService.setLogLevel`: the logger's level changes and `MainThreadLogger` tells the host
     /// (`onDidChangeLogLevel`).
-    fn set_output_log_level(&mut self, id: &str, level: u8) {
+    pub(super) fn set_output_log_level(&mut self, id: &str, level: u8) {
         let Some(file) = self.output.set_channel_log_level(id, level) else { return };
         if id != WINDOW_LOG_ID {
             self.host.send("ExtHostLogLevelServiceShape", "$setLogLevel", vec![json!(level), exthost::scan::file_uri(&file)]);
@@ -218,31 +228,28 @@ impl Workbench {
     /// `registerShowOutputChannelsAction`.
     fn show_output_channels_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let (extension, core): (Vec<&OutputChannel>, Vec<&OutputChannel>) = self.output.channels.iter().partition(|channel| channel.extension_id.is_some());
-        let mut rows = Vec::new();
-        rows.extend(extension.iter().map(|channel| output_row(channel, OutputPick::Show)));
-        if !extension.is_empty() && !core.is_empty() {
-            rows.push(None);
+        let mut picks = OutputPicks::default();
+        for channel in &extension {
+            picks.push(Item { label: channel.label.clone(), ..Item::default() }, OutputPick::Show(channel.id.clone()));
         }
-        rows.extend(core.iter().map(|channel| output_row(channel, OutputPick::Show)));
-        self.show_output_picker("Select Output Channel", rows, window, cx);
+        if !extension.is_empty() && !core.is_empty() {
+            picks.entries.push(Entry::Separator(None));
+        }
+        for channel in &core {
+            picks.push(Item { label: channel.label.clone(), ..Item::default() }, OutputPick::Show(channel.id.clone()));
+        }
+        self.show_output_picker("Select Output Channel", picks, &[], window, cx);
     }
 
-    /// A quick pick of channels; `None` rows are unlabelled separators.
-    pub(super) fn show_output_picker(&mut self, placeholder: &str, rows: Vec<Option<(String, OutputPick)>>, window: &mut Window, cx: &mut Context<Self>) {
-        let mut entries = Vec::new();
-        let mut picks = Vec::new();
-        for row in rows {
-            let Some((label, pick)) = row else {
-                entries.push(Entry::Separator(None));
-                continue;
-            };
-            entries.push(Entry::Item(Item { handle: picks.len() as i64, label, pickable: true, ..Item::default() }));
-            picks.push(pick);
-        }
+    /// A quick pick whose items run an `OutputPick`; `active` are the handles of its active items.
+    pub(super) fn show_output_picker(&mut self, placeholder: &str, picks: OutputPicks, active: &[i64], window: &mut Window, cx: &mut Context<Self>) {
         let mut input = QuickInput::new(0, Kind::QuickPick);
         input.placeholder = Some(placeholder.into());
-        input.set_items(entries);
-        let id = self.quick_inputs.add(input, Owner::Output(picks));
+        input.set_items(picks.entries);
+        if !active.is_empty() {
+            input.set_active_items(active);
+        }
+        let id = self.quick_inputs.add(input, Owner::Output(picks.picks));
         self.show_quick_input(id, window, cx);
         self.flush_quick_input_events(window, cx);
     }
@@ -256,6 +263,20 @@ impl Workbench {
                 let pick = picks[handle as usize].clone();
                 self.hide_quick_input_by_id(id, window, cx);
                 self.accept_output_pick(pick, window, cx);
+            }
+            // logsActions.ts `onDidTriggerItemButton`: Set as Default Log Level.
+            Event::TriggerItemButton(handle, _, _) => {
+                let Some(Owner::Output(picks)) = self.quick_inputs.owner(id) else { return };
+                let pick = picks[handle as usize].clone();
+                self.hide_quick_input_by_id(id, window, cx);
+                let (level, extension_id) = match pick {
+                    OutputPick::Level(level) => (level, None),
+                    OutputPick::ChannelLevel(channel, level) => (level, self.output.channel(&channel).and_then(|channel| channel.extension_id.clone())),
+                    _ => return,
+                };
+                if let Err(error) = self.set_default_log_level(level, extension_id.as_deref()) {
+                    eprintln!("[logs] cannot write {}: {error}", self.output.argv_file.display());
+                }
             }
             Event::Hide => self.quick_inputs.remove(id),
             _ => {}
@@ -271,6 +292,9 @@ impl Workbench {
                 let Some(channel) = self.output.channel(&id) else { return };
                 self.open_file(channel.file.clone(), true, window, cx);
             }
+            OutputPick::Level(level) => self.set_log_level(level),
+            OutputPick::LogChannel(id) => self.show_channel_log_level_picker(&id, window, cx),
+            OutputPick::ChannelLevel(id, level) => self.set_output_log_level(&id, level),
         }
     }
 
@@ -304,11 +328,16 @@ impl Workbench {
     }
 }
 
-fn output_row(channel: &OutputChannel, pick: fn(String) -> OutputPick) -> Option<(String, OutputPick)> {
-    Some((channel.label.clone(), pick(channel.id.clone())))
+/// The entries of an output picker and what each item's handle picks.
+#[derive(Default)]
+pub(super) struct OutputPicks {
+    pub entries: Vec<Entry>,
+    pub picks: Vec<OutputPick>,
 }
 
-/// log.ts `LogLevelToString`.
-fn level_name(level: u8) -> &'static str {
-    LOG_LEVELS.iter().find(|(known, _, _)| *known == level).expect("a log level").1
+impl OutputPicks {
+    pub fn push(&mut self, item: Item, pick: OutputPick) {
+        self.entries.push(Entry::Item(Item { handle: self.picks.len() as i64, pickable: true, ..item }));
+        self.picks.push(pick);
+    }
 }
