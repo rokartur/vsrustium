@@ -13,6 +13,8 @@ pub mod filter;
 pub mod log_levels;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod upstream_tests;
 
 /// `Schemas.outputChannel`.
 pub const OUTPUT_SCHEME: &str = "output";
