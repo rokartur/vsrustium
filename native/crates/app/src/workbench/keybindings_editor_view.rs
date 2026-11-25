@@ -898,7 +898,8 @@ impl Workbench {
         let maximize_title = if self.keybindings_editor.maximized { "Restore Modal Editor" } else { "Maximize Modal Editor" };
         div()
             .id("modal-editor-header")
-            .h(px(MODAL_HEADER_HEIGHT))
+            // modalEditorPart.css: 32px plus the 1px bottom border (content-box).
+            .h(px(MODAL_HEADER_HEIGHT + 1.))
             .flex_none()
             .flex()
             .items_center()
@@ -955,9 +956,9 @@ impl Workbench {
         let has_value = !editor.search.value.is_empty();
         let foreground = self.foreground_or("icon.foreground");
         let toggle = |icon: &'static str, title: &'static str, command: &'static str, checked: bool| {
-            self.icon(icon, 20., 16., if checked { self.foreground_or("inputOption.activeForeground") } else { foreground })
+            // 22x22 in the reference, where toggle.css alone gives 20 wide.
+            self.icon(icon, 22., 16., if checked { self.foreground_or("inputOption.activeForeground") } else { foreground })
                 .id(command)
-                .h(px(22.))
                 .mr(px(4.))
                 .rounded(px(3.))
                 .border_1()
@@ -971,7 +972,8 @@ impl Workbench {
         let recording = editor.recording;
         let actions = div()
             .absolute()
-            .top(px(4.))
+            // margin-top 4px from the input's outer border; this box's children start inside its 1px border.
+            .top(px(3.))
             .right(px(10.))
             .flex()
             .items_center()
@@ -1020,10 +1022,12 @@ impl Workbench {
             .relative()
             .h(px(30.))
             .flex()
+            .rounded(px(4.))
             .bg(self.color("input.background"))
             .border_1()
             .border_color(border)
-            .child(div().flex_1().h_full().pl(px(10.)).mr(px(if recording { 190. } else { 84. })).flex().text_size(px(14.)).child(self.input_text(
+            // The ibwrapper has no height, so the input is 4px padding, a 17px line and 4px tall at the box's top.
+            .child(div().flex_1().h(px(25.)).pl(px(10.)).mr(px(if recording { 178. } else { 88. })).flex().text_size(px(14.)).child(self.input_text(
                 InputId::KeybindingsSearch,
                 InputLook { password: false, placeholder: Some(placeholder.into()), focused },
                 cx,
