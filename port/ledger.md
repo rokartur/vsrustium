@@ -313,7 +313,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/browserView | workbench service | todo |  |
 | workbench/services/chat | workbench service | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/services/checksum | workbench service | n/a | IPC client of platform/checksum, which only integrityService uses |
-| workbench/services/clipboard | workbench service | ported | electron-browser `NativeClipboardService` as clipboard.rs (platform/clipboard row): cargo test -p app clipboard; the browser service's navigator.clipboard fallback does not apply to a native app |
+| workbench/services/clipboard | workbench service | verified | electron-browser `NativeClipboardService` as clipboard.rs (platform/clipboard row): cargo test -p app clipboard; the browser service's navigator.clipboard fallback does not apply to a native app |
 | workbench/services/commands | workbench service | verified | commands.rs `execute_command` as CommandService.executeCommand: waits for `onCommand:<id>` unless it is done or the host is not up, forwards an activation error, runs synchronously once done: cargo test -p app commands:: (commandService.test.ts cases; the '*' race of #62457 does not apply, the port activates '*' before it serves a request) |
 | workbench/services/configuration | workbench service | ported | cargo test -p config service (configurationEditing.test.ts write cases, workspace file layer and folder scopes); port/tools/settings-check configuration; settings file changes reach the host, theme and models from workbench/configuration.rs (cargo test -p app configuration) |
 | workbench/services/configurationResolver | workbench service | todo |  |
