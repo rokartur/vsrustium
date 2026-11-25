@@ -20,7 +20,7 @@ use super::input_box_view::{InputId, InputLook, InputView};
 use crate::commands::Outcome;
 use crate::input_box::InputBox;
 use crate::keybinding_editing::{self, Change};
-use crate::keybindings::{self, Chord, Resolution, Resolver};
+use crate::keybindings::{self, Chord, Resolution};
 use crate::keybindings_editor::{ChordMatch, Entry, Model, Source};
 use crate::menus::MenuAction;
 use crate::theme::ThemeKind;
@@ -694,8 +694,7 @@ impl Workbench {
         if let Some(index) = open_editor {
             self.revert_editor(index, cx);
         }
-        self.keybindings.resolver = Resolver::new(self.keybindings.defaults.clone(), keybindings::user_keybindings(&file));
-        self.keybindings.generation += 1;
+        self.set_user_keybindings(keybindings::user_keybindings(&file));
         Ok(())
     }
 

@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime};
 
+use futures::StreamExt;
 use gpui::{Context, Keystroke, Task, Window};
 use serde_json::{Value, json};
 
@@ -14,6 +15,7 @@ use super::search_view::SideBarView;
 use crate::commands::Outcome;
 use crate::editor::TextDocument;
 use crate::keybindings::{self, Chord, Item, Resolution, Resolver};
+use crate::system_wide_keybindings::{HotKeys, SystemWide};
 
 /// The keybindings and the dispatch state of `AbstractKeybindingService`.
 pub struct Keybindings {
@@ -26,22 +28,21 @@ pub struct Keybindings {
     /// Chords pressed so far in multi-chord mode, with their labels.
     chords: Vec<(Chord, String)>,
     chord_checker: Option<Task<()>>,
+    system_wide: SystemWide,
 }
 
 impl Default for Keybindings {
     fn default() -> Self {
-        Keybindings { defaults: Vec::new(), user_file: None, resolver: Resolver::new(Vec::new(), Vec::new()), generation: 0, chords: Vec::new(), chord_checker: None }
+        Keybindings { defaults: Vec::new(), user_file: None, resolver: Resolver::new(Vec::new(), Vec::new()), generation: 0, chords: Vec::new(), chord_checker: None, system_wide: SystemWide::default() }
     }
 }
 
 impl Workbench {
     /// Sets the default and user keybindings, and reloads the user's file when it changes on disk.
     pub fn load_keybindings(&mut self, defaults: Vec<Item>, user_file: PathBuf, cx: &mut Context<Self>) {
-        let overrides = keybindings::user_keybindings(&user_file);
-        self.keybindings.resolver = Resolver::new(defaults.clone(), overrides);
         self.keybindings.defaults = defaults;
         self.keybindings.user_file = Some(user_file.clone());
-        self.keybindings.generation += 1;
+        self.set_user_keybindings(keybindings::user_keybindings(&user_file));
         // shortcut: the file is polled once a second where the reference has a file watcher; no watcher crate is in the port.
         cx.spawn(async move |workbench, cx| {
             let modified = |path: &PathBuf| std::fs::metadata(path).and_then(|metadata| metadata.modified()).ok();
@@ -55,11 +56,38 @@ impl Workbench {
                 seen = now;
                 let overrides = keybindings::user_keybindings(&user_file);
                 let updated = workbench.update(cx, |workbench, cx| {
-                    workbench.keybindings.resolver = Resolver::new(workbench.keybindings.defaults.clone(), overrides);
-                    workbench.keybindings.generation += 1;
+                    workbench.set_user_keybindings(overrides);
                     cx.notify();
                 });
                 if updated.is_err() {
+                    return;
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Rebuilds the resolver over the defaults and the user's keybindings, and syncs the system-wide ones.
+    pub(super) fn set_user_keybindings(&mut self, overrides: Vec<Item>) {
+        self.keybindings.system_wide.set_keybindings(&overrides);
+        self.keybindings.resolver = Resolver::new(self.keybindings.defaults.clone(), overrides);
+        self.keybindings.generation += 1;
+    }
+
+    /// Registers the system-wide keybindings with macOS and runs the command of each press, as the
+    /// `vscode:runAction` request of globalKeybindingsMainService.ts.
+    pub fn start_system_wide_keybindings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (sender, mut presses) = futures::channel::mpsc::unbounded();
+        self.keybindings.system_wide.start(HotKeys::new(sender));
+        cx.spawn_in(window, async move |workbench, cx| {
+            while let Some(id) = presses.next().await {
+                let ran = workbench.update_in(cx, |workbench, window, cx| {
+                    let Some(binding) = workbench.keybindings.system_wide.pressed(id) else { return };
+                    let (command, args) = (binding.command.clone(), binding.args.clone().into_iter().collect());
+                    let outcome = workbench.execute_command(&command, args, window, cx);
+                    report_failure(command, outcome, cx);
+                });
+                if ran.is_err() {
                     return;
                 }
             }

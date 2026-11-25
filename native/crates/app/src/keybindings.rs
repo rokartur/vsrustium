@@ -167,6 +167,29 @@ pub fn user_settings_label(chords: &[Chord]) -> String {
     chords.iter().map(Chord::user_settings_label).collect::<Vec<_>>().join(" ")
 }
 
+/// `getElectronAccelerator`: none for chords, a lone duplicate modifier or a numpad key (Electron draws those as
+/// the plain key), else `toElectronAccelerator`'s key name after the modifiers.
+pub fn electron_accelerator(chords: &[Chord]) -> Option<String> {
+    let [chord] = chords else { return None };
+    if chord.is_duplicate_modifier_case() || (NUMPAD_0..=NUMPAD_DIVIDE).contains(&chord.key) {
+        return None;
+    }
+    let (name, user_settings_name, _) = KEY_CODES[chord.key];
+    let key = match name {
+        "LeftArrow" | "UpArrow" | "RightArrow" | "DownArrow" | "Del" => user_settings_name,
+        name => name,
+    };
+    Some(chord.with_modifiers(["Ctrl", "Shift", "Alt", "Cmd"], "+", key))
+}
+
+const NUMPAD_0: usize = 98;
+const NUMPAD_DIVIDE: usize = 113;
+
+/// The scan code of the key's US position, as `SCAN_CODES` names it (`keya`, `arrowup`).
+pub fn us_scan_code(key: usize) -> Option<&'static str> {
+    SCAN_CODES.iter().find(|(_, scan_key)| *scan_key == key).map(|(name, _)| *name)
+}
+
 /// `ResolvedKeybindingItem`. An empty `command` unbinds the key; a leading `-` removes a default keybinding.
 #[derive(Clone, Debug)]
 pub struct Item {
@@ -180,6 +203,8 @@ pub struct Item {
     pub is_default: bool,
     /// The extension that contributed a default keybinding (`extensionId`).
     pub extension: Option<ExtensionSource>,
+    /// `"systemWide": true` of a keybindings.json entry.
+    pub system_wide: bool,
 }
 
 /// The source of an extension's keybinding: its identifier and the `displayName` the Keyboard Shortcuts editor shows.
@@ -200,7 +225,7 @@ impl Item {
         let bubble = command.starts_with('^');
         let command = command.strip_prefix('^').unwrap_or(command).to_string();
         let chords = if keybinding.iter().any(Chord::is_modifier_key) { Vec::new() } else { keybinding.clone() };
-        Item { keybinding, chords, bubble, command, args, when, is_default, extension: None }
+        Item { keybinding, chords, bubble, command, args, when, is_default, extension: None, system_wide: false }
     }
 }
 
@@ -350,7 +375,8 @@ impl Resolver {
 fn rule_item(rule: &Value, key: &str, is_default: bool) -> Option<Item> {
     let command = rule.get("command")?.as_str()?;
     let when = rule.get("when").and_then(Value::as_str).and_then(Expr::deserialize);
-    Some(Item::new(parse_keybinding(key), command, rule.get("args").cloned(), when, is_default))
+    let system_wide = rule.get("systemWide") == Some(&Value::Bool(true));
+    Some(Item { system_wide, ..Item::new(parse_keybinding(key), command, rule.get("args").cloned(), when, is_default) })
 }
 
 /// The macOS default keybindings of the workbench: the reference's own `--export-default-keybindings` output

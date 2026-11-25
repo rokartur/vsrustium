@@ -23,6 +23,7 @@ mod keybinding_editing;
 mod keybindings;
 mod keybindings_editor;
 mod keyboard_layout;
+mod system_wide_keybindings;
 mod languages;
 mod main_thread;
 mod main_thread_commands;
@@ -133,6 +134,7 @@ fn main() -> anyhow::Result<()> {
                 let mut workbench = Workbench::new(theme, app_root.clone(), workspace.clone(), languages, settings.clone(), host, cx);
                 workbench.skip_dialogs = development.as_ref().is_some_and(|development| development.tests_path.is_some());
                 workbench.load_keybindings(keybindings::default_keybindings(&extensions), keybindings_file.clone(), cx);
+                workbench.start_system_wide_keybindings(window, cx);
                 workbench.quick_access.menu = command_palette::menu(&extensions);
                 workbench.file_icons = file_icons;
                 workbench.color_themes = color_themes;

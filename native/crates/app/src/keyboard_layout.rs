@@ -29,6 +29,11 @@ const MAC_KEY_CODES: [(&str, u16); 119] = [
     ("ShiftLeft", 56), ("AltLeft", 58), ("MetaLeft", 55), ("ControlRight", 62), ("ShiftRight", 60), ("AltRight", 61), ("MetaRight", 54),
 ];
 
+/// The macOS virtual key code of a DOM code, compared case-insensitively.
+pub fn mac_key_code(dom_code: &str) -> Option<u16> {
+    MAC_KEY_CODES.iter().find(|(code, _)| code.eq_ignore_ascii_case(dom_code)).map(|(_, key_code)| *key_code)
+}
+
 /// UCKeyTranslate's modifier key state: Carbon's `shiftKey` (1 << 9) and `optionKey` (1 << 11), shifted right by 8.
 const SHIFT: u32 = 2;
 const OPTION: u32 = 8;

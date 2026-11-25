@@ -149,7 +149,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/files | src/vs/platform | ported | native/crates/files: disk provider, Trash, FSEvents watcher with upstream coalescing, provider errors, glob port with upstream glob tests: cargo test -p files 44 passed; api-tests workspace.fs.test 12/12 |
 | platform/git | src/vs/platform | todo |  |
 | platform/github | src/vs/platform | todo |  |
-| platform/globalKeybindings | src/vs/platform | todo |  |
+| platform/globalKeybindings | src/vs/platform | ported | system_wide_keybindings.rs GlobalShortcuts over Carbon RegisterEventHotKey (cargo test -p app system_wide; Studio run: ctrl+alt+cmd+f19 with "systemWide": true opens the Command Palette while Finder stays frontmost, not with false); one window, so the multi-window routing tests do not apply |
 | platform/gpu | src/vs/platform | removed | Artur: internal infrastructure or developer tool with no 1:1 counterpart in the native port |
 | platform/history | src/vs/platform | todo |  |
 | platform/hover | src/vs/platform | ported | workbench/hover.rs: cargo test -p app hover (reference hover boxes, hoverService.test.ts pointer and side cases, delay, instant, leave, click and key hide); screenshot pairs vs ref-hover dumps (port/results/hover.md); markdown hovers wait for milestone 13 |
@@ -430,7 +430,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/inlineCompletions | workbench contribution | todo |  |
 | workbench/contrib/interactive | workbench contribution | todo |  |
 | workbench/contrib/issue | workbench contribution | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
-| workbench/contrib/keybindings | workbench contribution | todo |  |
+| workbench/contrib/keybindings | workbench contribution | stub | systemWideKeybindings.ts selection and contribution warnings ported in system_wide_keybindings.rs (cargo test -p app system_wide); Toggle Keyboard Shortcuts Troubleshooting waits for the Window output channel (workbench/contrib/output) |
 | workbench/contrib/keybindingsExport | workbench contribution | todo |  |
 | workbench/contrib/languageDetection | workbench contribution | todo |  |
 | workbench/contrib/languageStatus | workbench contribution | todo |  |
