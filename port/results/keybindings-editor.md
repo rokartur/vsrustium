@@ -13,7 +13,12 @@ Reference: 1.147.0 dev build on the Studio; port: release `code-gpui`. Both driv
 
 - `columns-hover-drag.png` (click a row; then drag the Command/Keybinding sash 100 pt right, captured mid-drag) and `columns-dragged-reset.png` (released; then double-click the sash): both show the sash in `sash.hoverBorder` while dragging, the Keybinding column shrinking to its 120 px minimum and pushing When, the same column edges once released (508, 628, 800 pt), and the double-click resetting Command to its weight with the other columns at the reference's sizes. The mid-drag frames differ by the moment cua-driver samples the drag. Column borders show always in the reference (`workbench.reduceMotion: on` in its ui-pair settings) and on table hover in the port.
 
+- `define-file-widget.png` (open the user keybindings.json, Cmd+K Cmd+K): reference above, port below. Both show the define widget centered over the editor (400x110 content, 10 px padding, 30 px input with 4 px corners) and the Define Keybinding button at the bottom right of the editor. Fixed after the first pair: the port's widget was 106 px tall with a 26 px input. Recording keys and the inserted rule are checked in-process (`define_keybinding_inserts_a_rule_into_the_user_keybindings_json`); in ui-pair runs, cua-driver loses one of the chord's hotkeys on either side often enough that the recorded frames do not pair.
+- `define-file-marks.png` (paste `{ "key": "cmd+ux" }` and `{ "key": "cmd+shift+]" }` rules): reference left, port right. Both underline `"cmd+ux"` as an error and mark its line red in the overview ruler, and draw the info lane for `cmd+shift+]`. The port's breadcrumbs start with `/` where the reference starts at `var`: a breadcrumbs difference outside this item.
+
 Checks (Studio):
+
+- `cargo test -p app define_keybinding`: 4 passed; `cargo test -p app smart_snippet_inserter`: passed; `cargo test -p app`: 867 passed, 1 ignored.
 
 - `cargo test -p app split_view`: 5 passed. `cargo test -p app keybindings_editor_view`: 8 passed. `cargo test -p app`: 823 passed, 1 ignored.
 - `cargo test -p app keybindings_editor_view`: 6 passed.

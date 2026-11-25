@@ -33,6 +33,7 @@ mod main_thread_quick_open;
 mod menus;
 mod quick_input;
 mod search_model;
+mod smart_snippet_inserter;
 mod split_view;
 mod syntax;
 mod tf_idf;
@@ -138,7 +139,7 @@ fn main() -> anyhow::Result<()> {
                 workbench.skip_dialogs = development.as_ref().is_some_and(|development| development.tests_path.is_some());
                 workbench.load_keybindings(keybindings::default_keybindings(&extensions), keybindings_file.clone(), cx);
                 workbench.start_system_wide_keybindings(window, cx);
-                workbench.quick_access.menu = command_palette::menu(&extensions);
+                workbench.set_command_palette_menu(command_palette::menu(&extensions));
                 workbench.menus.extend(menus::extension_menus(&extensions));
                 workbench.file_icons = file_icons;
                 workbench.color_themes = color_themes;

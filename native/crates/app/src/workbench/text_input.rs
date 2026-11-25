@@ -45,6 +45,7 @@ impl Workbench {
             let document = &self.editors.active().expect("still open").document;
             let (scheme, path) = (document.scheme.clone(), document.path.clone());
             self.search_model_changed(&scheme, &path);
+            self.schedule_keybinding_marks(cx);
         }
         if scrolled {
             self.editor_scrolled(cx);

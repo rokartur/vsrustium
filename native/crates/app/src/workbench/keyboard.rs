@@ -12,6 +12,7 @@ use serde_json::{Value, json};
 
 use super::Workbench;
 use super::search_view::SideBarView;
+use crate::command_palette::MenuItem;
 use crate::commands::Outcome;
 use crate::editor::TextDocument;
 use crate::keybindings::{self, Chord, Item, Resolution, Resolver};
@@ -40,8 +41,11 @@ impl Default for Keybindings {
 impl Workbench {
     /// Sets the default and user keybindings, and reloads the user's file when it changes on disk.
     pub fn load_keybindings(&mut self, defaults: Vec<Item>, user_file: PathBuf, cx: &mut Context<Self>) {
-        self.keybindings.defaults = defaults;
+        let resource = crate::editor::uri_string("file", &user_file);
+        self.keybindings.defaults = defaults.into_iter().map(|item| Item { when: keybindings::with_keybindings_resource(item.when, &resource), ..item }).collect();
         self.keybindings.user_file = Some(user_file.clone());
+        let menu = std::mem::take(&mut self.quick_access.menu);
+        self.set_command_palette_menu(menu);
         self.set_user_keybindings(keybindings::user_keybindings(&user_file));
         // shortcut: the file is polled once a second where the reference has a file watcher; no watcher crate is in the port.
         cx.spawn(async move |workbench, cx| {
@@ -65,6 +69,18 @@ impl Workbench {
             }
         })
         .detach();
+    }
+
+    /// The Command Palette's items, whose `resource ==` clauses of the reference's profile name the port's
+    /// keybindings.json once it is known (`with_keybindings_resource`).
+    pub fn set_command_palette_menu(&mut self, menu: Vec<MenuItem>) {
+        let Some(file) = &self.keybindings.user_file else {
+            self.quick_access.menu = menu;
+            return;
+        };
+        let resource = crate::editor::uri_string("file", file);
+        let map = |when| keybindings::with_keybindings_resource(when, &resource);
+        self.quick_access.menu = menu.into_iter().map(|item| MenuItem { when: map(item.when), precondition: map(item.precondition), ..item }).collect();
     }
 
     /// Rebuilds the resolver over the defaults and the user's keybindings, and syncs the system-wide ones.
@@ -246,8 +262,9 @@ impl Workbench {
                 context.insert("historyNavigationForwardsEnabled".into(), json!(true));
                 context.insert("historyNavigationBackwardsEnabled".into(), json!(true));
             }
-            context.insert("resourceScheme".into(), json!(editor.document.scheme));
             let path = &editor.document.path;
+            context.insert("resource".into(), json!(crate::editor::uri_string(&editor.document.scheme, path)));
+            context.insert("resourceScheme".into(), json!(editor.document.scheme));
             context.insert("resourceFilename".into(), json!(path.file_name().map(|name| name.to_string_lossy()).unwrap_or_default()));
             context.insert("resourceExtname".into(), json!(path.extension().map(|ext| format!(".{}", ext.to_string_lossy())).unwrap_or_default()));
         }
