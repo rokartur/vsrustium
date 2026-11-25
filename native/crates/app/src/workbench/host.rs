@@ -55,6 +55,8 @@ impl Workbench {
     /// contextkeys.ts `IsMainWindowFullscreenContext`.
     pub(super) fn host_context(&self, window: &Window, context: &mut std::collections::HashMap<String, Value>) {
         context.insert("isFullscreen".into(), Value::Bool(window.is_fullscreen()));
+        let always_on_top = crate::dialog::app_kit_window(window).is_some_and(|ns_window| ns_window.level() == NSFloatingWindowLevel);
+        context.insert("isWindowAlwaysOnTop".into(), Value::Bool(always_on_top));
     }
 
     /// The window's extension host session ends once the workbench is released (its window closed); `ended` answers

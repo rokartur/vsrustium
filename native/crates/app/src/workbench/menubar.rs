@@ -56,6 +56,8 @@ pub struct Menubar {
     /// `getOpenRecentActions`: the labels and entries of the recent folders and workspaces, then of the files.
     pub recent: Vec<(String, Value)>,
     pub recent_workspaces: usize,
+    /// The Window menu's Always on Top check.
+    pub always_on_top: bool,
 }
 
 /// menubarControl.ts `MAX_MENU_RECENT_ENTRIES` and `MAX_MENU_RECENT_LABEL_LENGTH`.
@@ -129,7 +131,8 @@ impl Workbench {
         let mut recent = menu_entries(&self.recently_opened.workspaces);
         let recent_workspaces = recent.len();
         recent.extend(menu_entries(&self.recently_opened.files));
-        Menubar { menus, keybindings, recent, recent_workspaces }
+        let always_on_top = context.get("isWindowAlwaysOnTop") == Some(&Value::Bool(true));
+        Menubar { menus, keybindings, recent, recent_workspaces, always_on_top }
     }
 
     /// Sets the application menu when what it shows changed, as `updateMenubar` does on menu changes.
@@ -204,17 +207,24 @@ fn native_menus(menubar: &Menubar) -> (Vec<Menu>, Vec<KeyBinding>) {
         native_command("workbench.action.quit", &format!("Quit {NAME_LONG}"), true, false, menubar, &mut key_equivalents),
     ]);
     let mut menus = vec![Menu::new(NAME_LONG).items(app_items)];
-    let window_menu = || Menu::new("Window").window_menu(true);
+    // menubar.ts `setMacWindowMenu`: fix_up_app_kit_menus adds the AppKit role items around these.
+    let window_menu = |key_equivalents: &mut Vec<KeyBinding>| {
+        Menu::new("Window").window_menu(true).items([
+            native_command("workbench.action.toggleWindowAlwaysOnTop", "Always on Top", true, menubar.always_on_top, menubar, key_equivalents),
+            MenuItem::separator(),
+            native_command("workbench.action.switchWindow", "Switch &&Window...", true, false, menubar, key_equivalents),
+        ])
+    };
     for (title, actions) in &menubar.menus {
         match title.as_str() {
             "Preferences" => continue,
-            "Help" => menus.push(window_menu()),
+            "Help" => menus.push(window_menu(&mut key_equivalents)),
             _ => {}
         }
         menus.push(Menu::new(title.clone()).items(native_items(actions, menubar, &mut key_equivalents)));
     }
     if !menubar.menus.iter().any(|(title, _)| title == "Help") {
-        menus.push(window_menu());
+        menus.push(window_menu(&mut key_equivalents));
     }
     (menus, key_equivalents)
 }
@@ -312,9 +322,8 @@ fn fix_up_app_kit_menus() {
     let item = |title: &str, action, key: &str| unsafe {
         NSMenuItem::initWithTitle_action_keyEquivalent(mtm.alloc(), &NSString::from_str(title), Some(action), &NSString::from_str(key))
     };
-    window_menu.removeAllItems();
-    window_menu.addItem(&item("Minimize", sel!(performMiniaturize:), "m"));
-    window_menu.addItem(&item("Zoom", sel!(performZoom:), ""));
+    window_menu.insertItem_atIndex(&item("Minimize", sel!(performMiniaturize:), "m"), 0);
+    window_menu.insertItem_atIndex(&item("Zoom", sel!(performZoom:), ""), 1);
     window_menu.addItem(&NSMenuItem::separatorItem(mtm));
     window_menu.addItem(&item("Bring All to Front", sel!(arrangeInFront:), ""));
 }
