@@ -7,7 +7,8 @@
 # MOCHA_GREP=<pattern> runs only the matching tests (test/integration/electron/testrunner.js reads it).
 set -uo pipefail
 REF=${REF:-$HOME/Developer/vscode-ref}
-OUT=${OUT:-/tmp/api-tests-$(basename "$PWD")}
+# The tests compare workspace paths with their realpath'd __dirname, so the tree sits under /private/tmp, not /tmp.
+OUT=${OUT:-$(cd /tmp && pwd -P)/api-tests-$(basename "$PWD")}
 SUITE_TIMEOUT=${SUITE_TIMEOUT:-1800}
 results=port/results/api-tests.md
 
