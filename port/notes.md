@@ -480,6 +480,11 @@ Scope (roadmap section 18): extension management on disk with VSIX install and u
 - shortcut: the restart for the display language spawns the same binary with its arguments and working folder once this process exits; gpui's `App::restart` uses `open`, which loses the working folder of an unbundled binary. Milestone 19's `.app` can use it.
 - `port/tools/extensions-check` needs a fresh `out-exthost`: `port/tools/build-exthost` first (a stale bundle fails the ESM check with "Cannot find package 'vscode'").
 
+Handoff (branch `port-m18b-gallery`, after `docs(port): record milestone 18 extensions view and localization`):
+1. Trusted publishers (workbench/services/extensionManagement, still `ported`): extensionManagementService.ts `checkForTrustedPublishers` asks "Do you trust the publisher "X"?" (Learn More, Cancel, Trust Publisher & Install, publisher domain line, other publishers of the pack and dependencies) before a gallery install from a publisher not in `extensions.trustedPublishers` (application storage) or product.json `trustedExtensionPublishers`; extensions installed before startup are trusted on first run, and `workbench.extensions.action.manageTrustedPublishers` lists and removes them. The reference shows it in `port/fixtures/extensions/ui-display-language.json` step `dialog`. Then move workbench/services/extensionManagement to verified.
+2. mainthread/MainThreadLocalization is `ported`: `$fetchBuiltInBundleUri` and `$fetchBundleContents` are served (unit tests); an end-to-end check needs a built-in whose `vscode.l10n.t` text shows in the UI under `--locale de`.
+3. Workbench strings beyond the Command Palette, menu bar items, side bar titles and pane headers call `nls::localize` as each surface is touched.
+
 ## Milestone 17: webviews and notebooks (in progress)
 
 - Native child view (`webview.rs`): GPUI (Wu a3ced28) has no child-view API, so each webview is a `WKWebView` added as a subview of GPUI's content NSView (from `raw-window-handle`), framed from the editor body's canvas bounds every frame (`webview::place`, flipped coordinates handled). The view floats above GPUI's Metal layer: it is hidden while a quick input, the keybindings editor or a context menu is open (shortcut: Electron draws those over the iframe; GPUI cannot draw over a native view).
