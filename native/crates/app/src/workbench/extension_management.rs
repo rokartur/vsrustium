@@ -230,6 +230,7 @@ impl Workbench {
             Err(error) => eprintln!("[extensions] reading color themes: {error:#}"),
         }
         self.set_tree_views(&running);
+        self.host.set_running_extensions(&running);
         self.extensions = running;
         self.register_webview_view_commands();
         self.refresh_extensions_views(cx);

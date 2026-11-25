@@ -1594,6 +1594,41 @@ mod tests {
     }
 
     #[gpui::test]
+    fn folding_the_cursor_line_moves_the_cursor_to_the_fold_start(cx: &mut TestAppContext) {
+        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
+        let theme = load_theme(&[themes], "Dark Modern").unwrap();
+        let file = app_root.join("port/fixtures/folding/long.py");
+        // A host that is up, as in the app: no extension declares the `onCommand` events of the keys.
+        let (sender, host_receiver) = std::sync::mpsc::channel();
+        let mut host = HostSync::new(sender);
+        host.installed_extensions_registered = true;
+        let (workbench, cx) = cx.add_window_view(|window, cx| {
+            let mut workbench = Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), crate::default_settings(), host, cx);
+            workbench.load_keybindings(crate::keybindings::default_keybindings(&[]), std::env::temp_dir().join("code-gpui-fold-cursor-keybindings.json"), cx);
+            workbench.open_file(file.clone(), true, window, cx);
+            workbench
+        });
+        cx.run_until_parked();
+        // The keys of the pixel-check "folded" window, dispatched like `--screenshot-keys` in main.rs.
+        cx.update(|window, cx| {
+            for key in "cmd-down up alt-cmd-[ up up up up up up up up up up up up alt-cmd-[".split(' ') {
+                window.dispatch_keystroke(gpui::Keystroke::parse(key).unwrap(), cx);
+            }
+        });
+        // The host answers each event on its own turn, in the order it was asked.
+        for message in host_receiver.try_iter().filter(|message| message.method == "$activateByEvent") {
+            message.reply.unwrap().send(Ok(serde_json::Value::Null)).unwrap();
+            cx.run_until_parked();
+        }
+        let (hidden, head) = workbench.read_with(cx, |workbench, _| {
+            let editor = workbench.editors.active().unwrap();
+            (editor.folding.hidden().to_vec(), editor.selection().head)
+        });
+        assert_eq!((hidden, head.line, head.column), (vec![75..89, 99..101], 74, 25), "`def merge` and `if __name__` folded, cursor on line 75");
+    }
+
+    #[gpui::test]
     fn selection_anchor_keys_select_from_the_anchor(cx: &mut TestAppContext) {
         use crate::editor::{Position, Selection};
         let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();

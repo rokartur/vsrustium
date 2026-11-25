@@ -78,3 +78,43 @@ fn cursor_move_on_type_off_keeps_the_cursor_while_typing(cx: &mut TestAppContext
     assert_eq!((count, head.line, head.column), (1, 0, 0));
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[gpui::test]
+fn keys_typed_right_after_cmd_f_go_to_the_find_input(cx: &mut TestAppContext) {
+    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
+    let theme = load_theme(&[themes], "Dark Modern").unwrap();
+    let dir = std::env::temp_dir().join(format!("code-gpui-find-keys-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("User")).unwrap();
+    let file = dir.join("a.txt");
+    std::fs::write(&file, "Port notes\nthe cat and the dog").unwrap();
+    let settings = Arc::new(Mutex::new(Settings::load(Registry::with_extensions(&[]), dir.join("User"), None)));
+    // A host that is up, as in the app: no extension declares `onCommand:actions.find`.
+    let (sender, host_receiver) = std::sync::mpsc::channel();
+    let mut host = HostSync::new(sender);
+    host.installed_extensions_registered = true;
+    let (workbench, cx) = cx.add_window_view(|window, cx| {
+        let mut workbench = Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), settings.clone(), host, cx);
+        workbench.load_keybindings(crate::keybindings::default_keybindings(&[]), dir.join("keybindings.json"), cx);
+        workbench.open_file(file.clone(), true, window, cx);
+        workbench
+    });
+    cx.run_until_parked();
+    // The same dispatch as `--screenshot-keys` in main.rs: every key in one update, no frame in between.
+    cx.update(|window, cx| {
+        for key in ["cmd-f", "t", "h", "e"] {
+            window.dispatch_keystroke(gpui::Keystroke::parse(key).unwrap(), cx);
+        }
+    });
+    for message in host_receiver.try_iter().filter(|message| message.method == "$activateByEvent") {
+        message.reply.unwrap().send(Ok(serde_json::Value::Null)).unwrap();
+    }
+    cx.run_until_parked();
+    let (search, count, dirty) = workbench.read_with(cx, |workbench, _| {
+        let state = &workbench.find.controller.state;
+        (state.search_string.clone(), state.matches_count, workbench.editors.active().unwrap().is_dirty())
+    });
+    assert_eq!((search.as_str(), count, dirty), ("the", 2, false));
+    std::fs::remove_dir_all(&dir).unwrap();
+}

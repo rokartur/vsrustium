@@ -301,6 +301,7 @@ fn main() -> anyhow::Result<()> {
                 workbench.file_icons = file_icons;
                 workbench.color_themes = color_themes;
                 workbench.set_tree_views(&extensions);
+                workbench.host.set_running_extensions(&extensions);
                 workbench.extensions = extensions.clone();
                 workbench.register_webview_view_commands();
                 workbench.start_tasks();
