@@ -682,7 +682,7 @@ impl Workbench {
                 }
                 false => icons.file_icon(&icon_path, self.languages.language_of(&icon_path, ""), self.theme.kind, 13., label_line, foreground),
             });
-            let indent = 8. * (row.depth - 1) as f32;
+            let indent = self.tree_indent() * (row.depth - 1) as f32;
             let has_nests = row.has_nests;
             let (twistie_path, row_expanded) = (path.clone(), row.expanded);
             let twistie_element = |chevron| {

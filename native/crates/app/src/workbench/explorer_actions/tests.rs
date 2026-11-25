@@ -405,3 +405,10 @@ fn find_filters_the_tree_by_a_file_search_and_restores_it_on_close(cx: &mut Test
     assert_eq!(rows(&workbench, cx), ["sub", "needle.rs"]);
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn tree_indent_is_clamped_and_defaults_to_8() {
+    use serde_json::json;
+    let indents: Vec<f32> = [json!(null), json!("12"), json!(12), json!(100), json!(-3)].iter().map(super::tree_indent).collect();
+    assert_eq!(indents, [8., 8., 12., 40., 0.]);
+}

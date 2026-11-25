@@ -260,6 +260,11 @@ impl Workbench {
         self.settings.lock().unwrap().get_value(Some(key), &Overrides::default()).unwrap_or(Value::Null)
     }
 
+    /// `workbench.tree.indent`, clamped to 0..40 as abstractTree.ts `updateOptions` does; 8 without a number.
+    pub(super) fn tree_indent(&self) -> f32 {
+        tree_indent(&self.setting("workbench.tree.indent"))
+    }
+
     /// `openExplorerAndCreate`: the new item's row with the name editor, in the focused folder or the focused
     /// file's folder.
     fn new_explorer_item(&mut self, is_dir: bool, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
@@ -1185,4 +1190,9 @@ fn file_name(path: &Path) -> String {
 
 fn resource(path: &Path) -> Resource {
     Resource::file(path.to_string_lossy())
+}
+
+/// `workbench.tree.indent` per level: clamped to 0..40 as abstractTree.ts `updateOptions` does, 8 when not a number.
+fn tree_indent(value: &Value) -> f32 {
+    value.as_f64().map_or(8., |indent| indent.clamp(0., 40.)) as f32
 }
