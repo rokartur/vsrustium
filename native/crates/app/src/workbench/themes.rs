@@ -228,8 +228,8 @@ impl Workbench {
         drop(settings);
         self.theme.set_customizations(&colors, &token_colors);
         self.theme.set_semantic_customizations(&token_colors, &semantic_colors);
-        for editor in &mut self.editors.editors {
-            editor.document.tokens.theme_changed();
+        for editor in self.editors.all_editors() {
+            editor.model.borrow_mut().document.tokens.theme_changed();
         }
         self.restyle_webviews();
     }

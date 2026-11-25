@@ -94,7 +94,7 @@ impl Workbench {
 
     /// trustedDomainService.ts `trustedDomains`: the product has no default trusted domains.
     pub(super) fn trusted_domains(&self) -> Vec<String> {
-        let mut storage = self.profile_storage.lock().unwrap();
+        let mut storage = self.application_storage.lock().unwrap();
         storage.refresh();
         storage.get(trusted_domains::STORAGE_KEY).and_then(|domains| serde_json::from_str(domains).ok()).unwrap_or_default()
     }
@@ -347,7 +347,7 @@ async fn configure_trusted_domains(workbench: &WeakEntity<Workbench>, trusted: V
             let mut trusted = trusted;
             trusted.push(to_trust.clone());
             let _ = workbench.update(cx, |workbench, _| {
-                let mut storage = workbench.profile_storage.lock().unwrap();
+                let mut storage = workbench.application_storage.lock().unwrap();
                 storage.delete(trusted_domains::CONTENT_STORAGE_KEY);
                 storage.set(trusted_domains::STORAGE_KEY, serde_json::to_string(&trusted).expect("strings serialize"));
             });

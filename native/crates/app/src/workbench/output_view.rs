@@ -11,9 +11,10 @@ use gpui::{Bounds, Context, Div, FocusHandle, MouseButton, MouseDownEvent, Pixel
 use serde_json::{Value, json};
 
 use super::Workbench;
+use super::panel::PanelView;
 use super::bulk_text_edits::document_end;
 use super::input_box_view::{InputId, InputLook, InputView};
-use crate::editor::{EditReason, TextDocument};
+use crate::editor::{EditReason, OpenEditor, PANEL_GROUP, TextDocument};
 use crate::input_box::InputBox;
 use crate::output::{Content, OUTPUT_SCHEME};
 use crate::theme::ThemeKind;
@@ -69,14 +70,48 @@ impl OutputView {
 }
 
 impl Workbench {
-    /// The tab that hosts the Output view, if it is open.
-    pub(super) fn output_editor_index(&self) -> Option<usize> {
-        self.editors.editors.iter().position(|editor| editor.document.scheme == OUTPUT_SCHEME)
+    /// The Output view's code editor, in the panel's group, once a channel was shown.
+    pub(super) fn output_editor(&self) -> Option<&OpenEditor> {
+        let (editors, _) = self.editors.group_tabs(PANEL_GROUP);
+        let in_panel = self.editors.id == PANEL_GROUP || self.editors.group(PANEL_GROUP).is_some();
+        editors.first().filter(|editor| in_panel && editor.document().scheme == OUTPUT_SCHEME)
     }
 
-    /// `isViewVisible(OUTPUT_VIEW_ID)`: the group shows the Output view's tab.
+    /// `isViewVisible(OUTPUT_VIEW_ID)`: the panel shows the Output view.
     pub(crate) fn output_view_visible(&self) -> bool {
-        self.editors.active().is_some_and(|editor| editor.document.scheme == OUTPUT_SCHEME)
+        self.panel_view_visible(OUTPUT_VIEW_ID)
+    }
+
+    /// The Output view's editor has focus.
+    pub(super) fn output_focused(&self, window: &Window) -> bool {
+        self.output_view_visible() && self.editors.id == PANEL_GROUP && self.editor_focus.is_focused(window)
+    }
+
+    /// output.contribution.ts registers the Output view container in the panel.
+    pub(super) fn register_output_panel_view(&mut self) {
+        self.register_panel_view(PanelView {
+            id: OUTPUT_VIEW_ID,
+            title: "Output",
+            render: |workbench, window, cx| workbench.output_panel_body(window, cx).into_any_element(),
+            actions: |workbench, window, cx| workbench.output_title_actions(window, cx).into_any_element(),
+            visible: |_| true,
+            badge: |_| None,
+        });
+    }
+
+    /// `OutputViewPane`: the channel's read-only code editor; a press in it moves the focus from the editor groups.
+    fn output_panel_body(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        if self.output_editor().is_none() {
+            return div().flex_1();
+        }
+        let body = |workbench: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
+            let editor = workbench.editors.active().expect("the Output view's editor");
+            div().flex_1().min_h_0().flex().flex_col().child(workbench.text_area(editor, window, cx))
+        };
+        match self.editors.id == PANEL_GROUP {
+            true => body(self, window, cx),
+            false => self.swapped_group_body(PANEL_GROUP, body, window, cx),
+        }
     }
 
     /// `viewsService.openView(OUTPUT_VIEW_ID, focus)`: shows the active channel (`OutputViewPane.showChannel`).
@@ -95,15 +130,17 @@ impl Workbench {
         let document = TextDocument::from_text(OUTPUT_SCHEME, path, &shown, "utf8".into(), Some(&language), &self.languages, &self.settings.lock().unwrap());
         self.output_view.text = text;
         self.output.active = Some(id.to_owned());
-        match self.output_editor_index() {
-            Some(index) if self.editors.editors[index].document.path == path => self.editors.activate(index),
-            Some(index) => self.editors.replace(index, document),
-            None => self.editors.open(document, false),
-        }
+        self.editors.ensure_panel_group();
+        self.with_group(PANEL_GROUP, |workbench| match workbench.editors.editors.first() {
+            Some(editor) if editor.document().path == path => workbench.editors.activate(0),
+            Some(_) => workbench.editors.replace(0, document),
+            None => workbench.editors.open(document, false),
+        });
         self.reveal_output_end();
-        self.editors_changed(cx);
-        if !preserve_focus {
-            window.focus(&self.editor_focus, cx);
+        self.open_panel_view(OUTPUT_VIEW_ID, cx);
+        match preserve_focus {
+            true => self.editors_changed(cx),
+            false => self.focus_group(PANEL_GROUP, window, cx),
         }
         self.sync_visible_output_channel();
         self.start_output_poll(cx);
@@ -124,9 +161,7 @@ impl Workbench {
 
     /// `viewsService.closeView(OUTPUT_VIEW_ID)`.
     pub(crate) fn close_output_view(&mut self, cx: &mut Context<Self>) {
-        let Some(index) = self.output_editor_index() else { return };
-        self.editors.close(index);
-        self.editors_changed(cx);
+        self.close_panel_view(OUTPUT_VIEW_ID, cx);
         self.sync_visible_output_channel();
     }
 
@@ -134,8 +169,8 @@ impl Workbench {
     /// (outputServices.ts `onDidRemoveChannel`).
     pub(crate) fn output_channels_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sync_output_channel_commands();
-        let Some(index) = self.output_editor_index() else { return };
-        let shown = self.editors.editors[index].document.path.to_string_lossy().into_owned();
+        let Some(editor) = self.output_editor() else { return };
+        let shown = editor.document().path.to_string_lossy().into_owned();
         if self.output.channel(&shown).is_some() {
             return;
         }
@@ -166,7 +201,7 @@ impl Workbench {
     }
 
     fn output_editor_shows(&self, id: &str) -> bool {
-        self.output_editor_index().is_some_and(|index| self.editors.editors[index].document.path == Path::new(id))
+        self.output_editor().is_some_and(|editor| editor.document().path == Path::new(id))
     }
 
     fn apply_output_content(&mut self, id: &str, content: Content, cx: &mut Context<Self>) {
@@ -183,7 +218,7 @@ impl Workbench {
             Content::Append(text) => {
                 self.output_view.text.push_str(&text);
                 let model = self.editors.model_mut(OUTPUT_SCHEME, path).expect("the output editor shows the channel");
-                let end = document_end(&model.document.lines);
+                let end = document_end(&model.document().lines);
                 let change = model.execute_edits(vec![(end, end, text, false)], None, EditReason::ApplyEdits);
                 model.mark_saved();
                 if let Some(change) = change {
@@ -214,7 +249,7 @@ impl Workbench {
         }
     }
 
-    /// The view's title actions where a text editor has its breadcrumbs: the filter, the channel dropdown, Clear
+    /// The view's title actions in the panel title: the filter, the channel dropdown, Clear
     /// Output, Toggle Auto Scrolling and the log level gear (output.contribution.ts `MenuId.ViewTitle` items).
     // shortcut: no "..." menu; its Save Output As, Export Logs, Add Compound Log and Import Log are not ported.
     pub(super) fn output_title_actions(&self, window: &Window, cx: &mut Context<Self>) -> Div {
@@ -222,23 +257,15 @@ impl Workbench {
         let label = channel.map(|channel| channel.label.clone()).unwrap_or_default();
         let level_settable = channel.is_some_and(|channel| channel.log);
         let scroll_icon = if self.output_view.scroll_lock { "unlock" } else { "lock" };
-        let title_border = ["editorGroupHeader.border", "contrastBorder"].into_iter().find_map(|key| self.theme.color(key));
         div()
-            .relative()
-            .h(px(35.))
-            .flex_none()
             .flex()
             .items_center()
-            .justify_end()
-            .px(px(8.))
             .gap(px(4.))
-            .bg(self.color("breadcrumb.background"))
             .child(self.output_filter_box(window, cx))
             .child(self.output_select_box(label, cx))
             .child(self.search_action("clear-all", "workbench.output.action.clearOutput", true, cx))
             .child(self.search_action(scroll_icon, "workbench.output.action.toggleAutoScroll", true, cx))
             .when(level_settable, |actions| actions.child(self.output_dropdown_action("gear", self.output_view.level_menu_bounds.clone(), Workbench::show_output_log_level_menu, cx)))
-            .when_some(title_border, |actions, color| actions.child(div().absolute().bottom_0().left_0().right_0().h(px(1.)).bg(color)))
     }
 
     /// viewFilter.ts `FilterWidget` in a panel title (views.css): 150px to 200px, 400px while focused, 10px right
@@ -335,11 +362,15 @@ impl Workbench {
 
     /// `OutputViewPane.onDidChangeContent`: the view follows the end of the text.
     fn reveal_output_end(&mut self) {
-        let viewport = self.editors.viewport;
-        let Some(index) = self.output_editor_index() else { return };
-        let editor = &mut self.editors.editors[index];
-        let end = document_end(&editor.document.lines);
-        editor.reveal_range(end, end, crate::editor::VerticalReveal::Simple, viewport);
+        if self.output_editor().is_none() {
+            return;
+        }
+        self.with_group(PANEL_GROUP, |workbench| {
+            let viewport = workbench.editors.viewport;
+            let editor = &mut workbench.editors.editors[0];
+            let end = document_end(&editor.document().lines);
+            editor.reveal_range(end, end, crate::editor::VerticalReveal::Simple, viewport);
+        });
     }
 
     fn start_output_poll(&mut self, cx: &mut Context<Self>) {

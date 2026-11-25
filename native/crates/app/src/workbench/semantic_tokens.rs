@@ -157,8 +157,9 @@ impl Workbench {
     /// changed its tokens (`handleProviderDidChange`, the range providers' `onDidChange`).
     pub(crate) fn semantic_tokens_event(&mut self, event_handle: u64, cx: &mut Context<Self>) {
         let Some(editor) = self.editors.active() else { return };
-        let uri = editor.document.uri();
-        let candidate = Candidate { uri: &uri, language: &editor.document.language_id };
+        let uri = editor.document().uri();
+        let language = editor.document().language_id.clone();
+        let candidate = Candidate { uri: &uri, language: &language };
         let fired = |method: &str| self.language_features.ordered(method, &candidate).iter().any(|registration| registration.args.get(3) == Some(&json!(event_handle)));
         let (document, range) = (fired(DOCUMENT_REGISTER), fired(RANGE_REGISTER));
         if document && self.semantic_tokens.watching {
@@ -181,7 +182,7 @@ impl Workbench {
         }
         let tokens = &self.semantic_tokens.tokens;
         let first = tokens.partition_point(|token| token.line < index);
-        let text = &editor.document.lines[index];
+        let text = &editor.document().lines[index];
         let expanded = |utf16: u32| expand_tabs(&text.chars().take(char_column(text, utf16 as usize)).collect::<String>(), tab_size).len();
         let mut styles = Vec::new();
         for token in tokens[first..].iter().take_while(|token| token.line == index) {
@@ -248,8 +249,9 @@ impl Workbench {
             return;
         }
         let Some(editor) = self.editors.active().filter(|editor| Some(editor.model_id) == self.semantic_tokens.model_id) else { return };
-        let uri = editor.document.uri();
-        let candidate = Candidate { uri: &uri, language: &editor.document.language_id };
+        let uri = editor.document().uri();
+        let language = editor.document().language_id.clone();
+        let candidate = Candidate { uri: &uri, language: &language };
         let handles = highest_group(&self.language_features, DOCUMENT_REGISTER, &candidate);
         if handles.is_empty() {
             if self.semantic_tokens.response.is_some() {
@@ -266,7 +268,7 @@ impl Workbench {
                 (handle, self.host.call_cancellable("ExtHostLanguageFeatures", "$provideDocumentSemanticTokens", vec![json!(handle), uri.clone(), json!(previous_result_id)]))
             })
             .collect();
-        let line_count = editor.document.lines.len();
+        let line_count = editor.document().lines.len();
         self.semantic_tokens.pending_changes.clear();
         self.semantic_tokens.providers_changed_during_request = false;
         self.semantic_tokens.request = Some(cx.spawn(async move |workbench, cx| {
@@ -350,7 +352,7 @@ impl Workbench {
         };
         let theme = &self.theme.semantic;
         let style_of = |token_type: &str, modifiers: &[&str], language: &str| theme.get_token_style_metadata(token_type, modifiers, language);
-        let lines = to_multiline_tokens(data, styling, &editor.document.language_id, line_count, &style_of);
+        let lines = to_multiline_tokens(data, styling, &editor.document().language_id, line_count, &style_of);
         let mut tokens = Vec::new();
         for (line, ranges) in lines.into_iter().enumerate() {
             tokens.extend(ranges.into_iter().map(|range| Token { line, start: range.start, end: range.end, style: range.style }));
@@ -380,8 +382,9 @@ impl Workbench {
             return;
         }
         let Some(editor) = self.editors.active().filter(|editor| Some(editor.model_id) == self.semantic_tokens.model_id) else { return };
-        let uri = editor.document.uri();
-        let candidate = Candidate { uri: &uri, language: &editor.document.language_id };
+        let uri = editor.document().uri();
+        let language = editor.document().language_id.clone();
+        let candidate = Candidate { uri: &uri, language: &language };
         let handles = highest_group(&self.language_features, RANGE_REGISTER, &candidate);
         if !self.semantic_coloring_enabled(editor) || handles.is_empty() {
             if !self.semantic_tokens.tokens.is_empty() {
@@ -390,9 +393,9 @@ impl Workbench {
             }
             return;
         }
-        let (model_id, version_id, line_count) = (editor.model_id, editor.version_id, editor.document.lines.len());
+        let (model_id, version_id, line_count) = (editor.model_id, editor.text_model().version_id, editor.document().lines.len());
         for (first, last) in visible_ranges_plus_viewport_above_below(editor, self.editors.viewport) {
-            let range = json!({ "startLineNumber": first + 1, "startColumn": 1, "endLineNumber": last + 1, "endColumn": editor.document.lines[last].encode_utf16().count() + 1 });
+            let range = json!({ "startLineNumber": first + 1, "startColumn": 1, "endLineNumber": last + 1, "endColumn": editor.document().lines[last].encode_utf16().count() + 1 });
             let calls: Vec<Call> = handles
                 .iter()
                 .map(|&handle| (handle, self.host.call_cancellable("ExtHostLanguageFeatures", "$provideDocumentRangeSemanticTokens", vec![json!(handle), uri.clone(), range.clone()])))
@@ -413,7 +416,7 @@ impl Workbench {
     /// `_requestRange`'s answer: dropped when the model changed since, else `setPartialSemanticTokens`.
     fn range_semantic_tokens_answered(&mut self, model_id: u32, version_id: u32, line_count: usize, (first, last): (usize, usize), result: Option<(u64, Option<Vec<u32>>)>, cx: &mut Context<Self>) {
         let Some((handle, Some(data))) = result else { return };
-        let current = self.editors.active().is_some_and(|editor| (editor.model_id, editor.version_id) == (model_id, version_id));
+        let current = self.editors.active().is_some_and(|editor| (editor.model_id, editor.text_model().version_id) == (model_id, version_id));
         if !current || self.semantic_tokens.complete {
             return;
         }
@@ -434,8 +437,9 @@ impl Workbench {
             Ok(None) => return Outcome::Ready(Ok(Value::Null)),
             Err(error) => return Outcome::Ready(Err(error)),
         };
-        let uri = editor.document.uri();
-        let candidate = Candidate { uri: &uri, language: &editor.document.language_id };
+        let uri = editor.document().uri();
+        let language = editor.document().language_id.clone();
+        let candidate = Candidate { uri: &uri, language: &language };
         let Some(&handle) = highest_group(&self.language_features, DOCUMENT_REGISTER, &candidate).first() else {
             return self.provide_document_range_semantic_tokens_legend(&[uri], cx);
         };
@@ -450,12 +454,15 @@ impl Workbench {
             Ok(None) => return Outcome::Ready(Ok(Value::Null)),
             Err(error) => return Outcome::Ready(Err(error)),
         };
-        let uri = editor.document.uri();
-        let candidate = Candidate { uri: &uri, language: &editor.document.language_id };
+        let uri = editor.document().uri();
+        let language = editor.document().language_id.clone();
+        let candidate = Candidate { uri: &uri, language: &language };
         let handles = highest_group(&self.language_features, DOCUMENT_REGISTER, &candidate);
         if handles.is_empty() {
-            let lines = &editor.document.lines;
-            let full_range = json!({ "startLineNumber": 1, "startColumn": 1, "endLineNumber": lines.len(), "endColumn": lines[lines.len() - 1].encode_utf16().count() + 1 });
+            let full_range = {
+                let lines = &editor.document().lines;
+                json!({ "startLineNumber": 1, "startColumn": 1, "endLineNumber": lines.len(), "endColumn": lines[lines.len() - 1].encode_utf16().count() + 1 })
+            };
             return self.provide_document_range_semantic_tokens(&[uri, full_range], cx);
         }
         let calls: Vec<Call> = handles.into_iter().map(|handle| (handle, self.host.call_cancellable("ExtHostLanguageFeatures", "$provideDocumentSemanticTokens", vec![json!(handle), uri.clone(), json!(0)]))).collect();
@@ -485,8 +492,9 @@ impl Workbench {
             Ok(None) => return Outcome::Ready(Ok(Value::Null)),
             Err(error) => return Outcome::Ready(Err(error)),
         };
-        let uri = editor.document.uri();
-        let candidate = Candidate { uri: &uri, language: &editor.document.language_id };
+        let uri = editor.document().uri();
+        let language = editor.document().language_id.clone();
+        let candidate = Candidate { uri: &uri, language: &language };
         let handles = highest_group(&self.language_features, RANGE_REGISTER, &candidate);
         let range = args.get(1).filter(|range| is_range(range));
         let range = match (handles.len(), range) {
@@ -518,8 +526,9 @@ impl Workbench {
             return Outcome::Ready(Err(exthost::main_thread::serialized_error("Unexpected type")));
         };
         let Some(editor) = model else { return Outcome::Ready(Ok(Value::Null)) };
-        let uri = editor.document.uri();
-        let candidate = Candidate { uri: &uri, language: &editor.document.language_id };
+        let uri = editor.document().uri();
+        let language = editor.document().language_id.clone();
+        let candidate = Candidate { uri: &uri, language: &language };
         let handles = highest_group(&self.language_features, RANGE_REGISTER, &candidate);
         let calls: Vec<Call> = handles.into_iter().map(|handle| (handle, self.host.call_cancellable("ExtHostLanguageFeatures", "$provideDocumentRangeSemanticTokens", vec![json!(handle), uri.clone(), range.clone()]))).collect();
         let (sender, receiver) = oneshot::channel();

@@ -102,8 +102,8 @@ impl Workbench {
     }
 
     fn rename_handles(&self, editor: &OpenEditor) -> Vec<u64> {
-        let uri = editor.document.uri();
-        let candidate = Candidate { uri: &uri, language: &editor.document.language_id };
+        let uri = editor.document().uri();
+        let candidate = Candidate { uri: &uri, language: &editor.document().language_id };
         self.language_features.ordered(REGISTER, &candidate).iter().map(|registration| registration.handle).collect()
     }
 
@@ -121,7 +121,7 @@ impl Workbench {
             return;
         }
         let position = editor.selection().head;
-        let (model_id, version_id) = (editor.model_id, editor.version_id);
+        let (model_id, version_id) = (editor.model_id, editor.text_model().version_id);
         let resolve = self.resolve_rename_location(editor, &handles, position);
         self.rename.request = Some(cx.spawn_in(window, async move |workbench, cx| {
             let Ok((location, provider_index)) = resolve.await else { return };
@@ -129,7 +129,7 @@ impl Workbench {
                 workbench.rename.request = None;
                 let Some(editor) = workbench.editors.active() else { return };
                 // EditorStateCancellationTokenSource(Position | Value).
-                if (editor.model_id, editor.version_id) != (model_id, version_id) || editor.selection().head != position {
+                if (editor.model_id, editor.text_model().version_id) != (model_id, version_id) || editor.selection().head != position {
                     return;
                 }
                 if let Some(reason) = location.reject_reason {
@@ -143,8 +143,8 @@ impl Workbench {
     /// `RenameSkeleton.resolveRenameLocation`: the providers that can resolve in order, stopping at the first that
     /// cannot; none answering takes the word at the position. A failed call ends the run (`Err`).
     fn resolve_rename_location(&self, editor: &OpenEditor, handles: &[u64], position: Position) -> impl Future<Output = Result<(Location, usize), ()>> + use<> {
-        let uri = editor.document.uri();
-        let lines = editor.document.lines.clone();
+        let uri = editor.document().uri();
+        let lines = editor.document().lines.clone();
         let supports_resolve: Vec<bool> = handles.iter().map(|handle| self.language_features.registration(*handle).is_some_and(|registration| registration.args.get(2) == Some(&json!(true)))).collect();
         let call = self.host.caller();
         let handles = handles.to_vec();
@@ -197,7 +197,7 @@ impl Workbench {
         let scrolled = editor.scroll != scroll;
         self.rename.widget = Some(RenameWidget {
             model_id: editor.model_id,
-            version_id: editor.version_id,
+            version_id: editor.text_model().version_id,
             start: location.start,
             end: location.end,
             position,
@@ -231,7 +231,7 @@ impl Workbench {
         let Some(widget) = &self.rename.widget else { return };
         let holds = self.editors.active().is_some_and(|editor| {
             let head = editor.selection().head;
-            (editor.model_id, editor.version_id) == (widget.model_id, widget.version_id) && widget.start <= head && head <= widget.end
+            (editor.model_id, editor.text_model().version_id) == (widget.model_id, widget.version_id) && widget.start <= head && head <= widget.end
         });
         if !holds {
             self.cancel_rename_input(true, window, cx);
@@ -254,11 +254,11 @@ impl Workbench {
             return;
         }
         let Some(editor) = self.editors.active() else { return };
-        if (editor.model_id, editor.version_id) != (widget.model_id, widget.version_id) {
+        if (editor.model_id, editor.text_model().version_id) != (widget.model_id, widget.version_id) {
             return;
         }
-        let uri = editor.document.uri();
-        let position = position_value(&editor.document.lines, widget.position);
+        let uri = editor.document().uri();
+        let position = position_value(&editor.document().lines, widget.position);
         let calls: Vec<_> = widget.handles[widget.provider_index..]
             .iter()
             .map(|handle| (*handle, vec![json!(handle), uri.clone(), position.clone(), json!(new_name)]))
@@ -316,7 +316,7 @@ impl Workbench {
         let Some(new_name) = args.get(2).and_then(Value::as_str) else {
             return Outcome::Ready(Err(error_value("Illegal argument")));
         };
-        let uri = editor.document.uri();
+        let uri = editor.document().uri();
         let position = args.get(1).cloned().unwrap_or_default();
         let calls: Vec<_> = self
             .rename_handles(editor)
@@ -349,7 +349,7 @@ impl Workbench {
         let Some(editor) = super::host_requests::uri_parts(&args.first().cloned().unwrap_or_default()).ok().and_then(|(scheme, path)| self.editors.model(scheme, &path)) else {
             return Outcome::Ready(Err(error_value("Illegal argument")));
         };
-        let lines = &editor.document.lines;
+        let lines = &editor.document().lines;
         let position = args.get(1).cloned().unwrap_or_default();
         let position = position_at(lines, &position["lineNumber"], &position["column"]);
         let resolve = self.resolve_rename_location(editor, &self.rename_handles(editor), position);

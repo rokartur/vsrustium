@@ -15,7 +15,7 @@ fn selection(anchor: (usize, usize), head: (usize, usize)) -> Selection {
 
 /// `getValue`.
 fn value(editor: &OpenEditor) -> String {
-    editor.document.lines.join("\n")
+    editor.document().lines.join("\n")
 }
 
 const NO_AUTO_CLOSING: AutoClosing = AutoClosing { delete: "auto", brackets: "languageDefined", quotes: "languageDefined", pairs: &[], auto_closed: &[] };
@@ -69,7 +69,7 @@ fn with_pipes(text: &str, mut stops: Vec<Position>) -> String {
 /// `testRepeatedActionAndExtractPositions`; `from` past the end clamps to the end of the text.
 fn repeated(text: &str, from: Position, action: impl Fn(&mut OpenEditor), record: impl Fn(&OpenEditor) -> Position, stop: impl Fn(&OpenEditor) -> bool) -> Vec<Position> {
     let mut editor = editor(text, "\n");
-    let lines = &editor.document.lines;
+    let lines = editor.document().lines.clone();
     let line = from.line.min(lines.len() - 1);
     let start = at(line, from.column.min(lines[line].chars().count()));
     editor.set_selections(vec![Selection::caret(start)]);
@@ -296,7 +296,7 @@ fn delete_once(id: &'static str, selected: Selection, line: usize) -> (String, P
     let mut editor = editor(LINES, "\n");
     editor.set_selections(vec![selected]);
     run_delete(&mut editor, id);
-    (editor.document.lines[line].clone(), editor.selection().head)
+    (editor.document().lines[line].clone(), editor.selection().head)
 }
 
 #[test]
@@ -338,7 +338,7 @@ fn delete_word_left_issue_24947() {
         let mut editor = editor("{\n}", "\n");
         editor.set_selections(vec![Selection::caret(at(1, 0))]);
         run_delete(&mut editor, id);
-        assert_eq!(editor.document.lines[0], "{}", "{id}");
+        assert_eq!(editor.document().lines[0], "{}", "{id}");
     }
 }
 
@@ -354,7 +354,7 @@ fn delete_word_right_issue_3882() {
         let mut editor = editor("public void Add( int x,\n                 int y )", "\n");
         editor.set_selections(vec![Selection::caret(at(0, 23))]);
         run_delete(&mut editor, id);
-        assert_eq!(editor.document.lines[0], "public void Add( int x,int y )", "{id}");
+        assert_eq!(editor.document().lines[0], "public void Add( int x,int y )", "{id}");
     }
 }
 
@@ -375,7 +375,7 @@ fn delete_word_right_issue_3882_1_at_the_end_of_a_line() {
     let mut editor = editor("A line with text.\n   And another one", "\n");
     editor.set_selections(vec![Selection::caret(at(0, 17))]);
     run_delete(&mut editor, "deleteWordRight");
-    assert_eq!(editor.document.lines[0], "A line with text.And another one");
+    assert_eq!(editor.document().lines[0], "A line with text.And another one");
 }
 
 #[test]
@@ -383,7 +383,7 @@ fn delete_word_left_issue_3882_2_at_the_start_of_a_line() {
     let mut editor = editor("A line with text.\n   And another one", "\n");
     editor.set_selections(vec![Selection::caret(at(1, 0))]);
     run_delete(&mut editor, "deleteWordLeft");
-    assert_eq!(editor.document.lines[0], "A line with text.   And another one");
+    assert_eq!(editor.document().lines[0], "A line with text.   And another one");
 }
 
 #[test]
@@ -393,7 +393,7 @@ fn delete_word_left_issue_91855_deletes_a_matching_pair() {
     let mut editor = editor("a \"\"", "\n");
     editor.set_selections(vec![Selection::caret(at(0, 3))]);
     run_delete_with(&mut editor, "deleteWordLeft", &always);
-    assert_eq!(editor.document.lines[0], "a ");
+    assert_eq!(editor.document().lines[0], "a ");
 }
 
 /// Delete Word repeated from `column` of a one-line text; each value after a run.

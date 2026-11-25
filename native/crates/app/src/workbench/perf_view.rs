@@ -22,7 +22,7 @@ impl Workbench {
     fn show_perf_view(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
         let text = self.perf_markdown(window);
         let path = PathBuf::from(PERF_PATH);
-        match self.editors.models.iter().position(|model| model.document.is(PERF_SCHEME, &path)) {
+        match self.editors.models.iter().position(|model| model.document().is(PERF_SCHEME, &path)) {
             Some(index) => {
                 self.replace_model_text(PERF_SCHEME, &path, text, true, cx);
                 self.editors.show_model(index, true);

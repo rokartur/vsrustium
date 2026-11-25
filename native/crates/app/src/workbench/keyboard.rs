@@ -53,9 +53,17 @@ impl Workbench {
         // shortcut: the file is polled once a second where the reference has a file watcher; no watcher crate is in the port.
         cx.spawn(async move |workbench, cx| {
             let modified = |path: &PathBuf| std::fs::metadata(path).and_then(|metadata| metadata.modified()).ok();
-            let mut seen: Option<SystemTime> = modified(&user_file);
+            let mut watched = user_file;
+            let mut seen: Option<SystemTime> = modified(&watched);
             loop {
                 cx.background_executor().timer(Duration::from_secs(1)).await;
+                // A profile switch moves the file; its change was applied then.
+                let Ok(Some(user_file)) = workbench.read_with(cx, |workbench, _| workbench.keybindings.user_file.clone()) else { return };
+                if user_file != watched {
+                    seen = modified(&user_file);
+                    watched = user_file;
+                    continue;
+                }
                 let now = modified(&user_file);
                 if now == seen {
                     continue;
@@ -328,6 +336,8 @@ impl Workbench {
         context.insert("textInputFocus".into(), json!(editor_focused));
         self.notifications_context(window, &mut context);
         self.layout_context(&mut context);
+        self.editor_groups_context(&mut context);
+        self.history_context(&mut context);
         self.list_scroll_context(window, &mut context);
         context.insert("editorIsOpen".into(), json!(self.editors.active().is_some()));
         // viewDescriptorService.ts `<view id>.active`: the Changes view has no `when`, so it is always active.
@@ -337,6 +347,7 @@ impl Workbench {
         // toggleMultiCursorModifier.ts `MultiCursorModifierContextKeyController`.
         context.insert("multiCursorModifier".into(), json!(if self.multi_cursor_modifier_is_cmd() { "ctrlCmd" } else { "altKey" }));
         self.word_wrap_context(&mut context);
+        self.problems_context(&mut context);
         // contextkeys.ts WorkbenchContextKeysHandler: the desktop build supports every workspace kind.
         let workbench_state = match self.workspace() {
             None => "empty",
@@ -364,9 +375,12 @@ impl Workbench {
             let readonly = self.active_editor_readonly().is_some();
             context.insert("editorReadonly".into(), json!(readonly));
             context.insert("activeEditorIsReadonly".into(), json!(readonly));
-            context.insert("activeEditorCanToggleReadonly".into(), json!(editor.document.scheme != "untitled"));
+            context.insert("activeEditorCanToggleReadonly".into(), json!(editor.document().scheme != "untitled"));
             context.insert("messageVisible".into(), json!(self.editor_message_visible()));
             context.insert("markersNavigationVisible".into(), json!(self.markers_navigation_visible()));
+            self.goto_symbol_context(&mut context);
+            self.references_peek_context(window, &mut context);
+            self.hierarchy_peek_context(editor, window, &mut context);
             context.insert("editorHoverVisible".into(), json!(self.content_hover_visible()));
             self.suggest_context(&mut context);
             self.snippet_context(&mut context);
@@ -383,8 +397,8 @@ impl Workbench {
             context.insert("editorTabMovesFocus".into(), json!(self.tab_focus_mode()));
             context.insert("editorColumnSelection".into(), self.setting("editor.columnSelection"));
             context.insert("foldingEnabled".into(), self.setting("editor.folding"));
-            context.insert("editorLangId".into(), json!(editor.document.language_id));
-            context.insert("resourceLangId".into(), json!(editor.document.language_id));
+            context.insert("editorLangId".into(), json!(editor.document().language_id));
+            context.insert("resourceLangId".into(), json!(editor.document().language_id));
             self.sticky_scroll_context(window, &mut context);
             // findModel.ts CONTEXT_FIND_WIDGET_VISIBLE, CONTEXT_FIND_INPUT_FOCUSED, CONTEXT_REPLACE_INPUT_FOCUSED.
             context.insert("findWidgetVisible".into(), json!(self.find.controller.state.is_revealed));
@@ -397,10 +411,10 @@ impl Workbench {
                 context.insert("historyNavigationForwardsEnabled".into(), json!(true));
                 context.insert("historyNavigationBackwardsEnabled".into(), json!(true));
             }
-            context.insert("isFileSystemResource".into(), json!(editor.document.scheme == "file"));
-            let path = &editor.document.path;
-            context.insert("resource".into(), json!(crate::editor::uri_string(&editor.document.scheme, path)));
-            context.insert("resourceScheme".into(), json!(editor.document.scheme));
+            context.insert("isFileSystemResource".into(), json!(editor.document().scheme == "file"));
+            let path = &editor.document().path;
+            context.insert("resource".into(), json!(crate::editor::uri_string(&editor.document().scheme, path)));
+            context.insert("resourceScheme".into(), json!(editor.document().scheme));
             context.insert("resourceFilename".into(), json!(path.file_name().map(|name| name.to_string_lossy()).unwrap_or_default()));
             context.insert("resourceExtname".into(), json!(path.extension().map(|ext| format!(".{}", ext.to_string_lossy())).unwrap_or_default()));
         }

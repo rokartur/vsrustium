@@ -117,6 +117,10 @@ impl MainThread for WorkbenchMainThread {
                 let _ = reply.send(self.extensions.run(session, job).map_err(|error| format!("{error:#}")));
                 continue;
             }
+            if (message.proxy, message.method) == ("workbench", "stopExtensionHost") {
+                session.host.terminate();
+                continue;
+            }
             if (message.proxy, message.method) == ("workbench", "resolveTextContent") {
                 let content = self.resolve_text_content(session, &message.args[0]);
                 drop(message.reply.expect("resolveTextContent waits for its answer").send(content));

@@ -154,7 +154,7 @@ impl Cursor {
         let folder = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/editor/auto_indent/tests");
         let package = json!({ "contributes": { "grammars": [{ "language": "testLanguage", "scopeName": "source.indentation-test", "path": "grammar.json" }] } });
         let registry = textmate::Registry::new([(folder.as_path(), &package)]);
-        self.editor.document.tokens = Tokenization::new(registry.grammar("testLanguage"));
+        self.editor.document_mut().tokens = Tokenization::new(registry.grammar("testLanguage"));
         self
     }
 
@@ -382,7 +382,7 @@ mod visual_basic {
         let mut cursor = Cursor::new(visual_basic(), lines);
         cursor.move_to(line, column);
         cursor.type_text(ch);
-        assert_eq!(cursor.editor.document.lines, expected);
+        assert_eq!(cursor.editor.document().lines, expected);
     }
 
     /// Typing `text` without interceptors at (line, column) of `lines`, then Enter.
@@ -391,7 +391,7 @@ mod visual_basic {
         cursor.move_to(line, column);
         cursor.type_plain(text);
         cursor.type_text("\n");
-        assert_eq!(cursor.editor.document.lines, expected);
+        assert_eq!(cursor.editor.document().lines, expected);
     }
 
     #[test]

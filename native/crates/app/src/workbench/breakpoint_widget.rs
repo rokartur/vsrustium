@@ -171,7 +171,7 @@ impl Workbench {
     /// The glyph margin of one line: its breakpoint, the stack frame arrow, or the hint under the pointer.
     pub(super) fn breakpoint_glyph_margin(&self, editor: &OpenEditor, index: usize, width: f32, line_height: f32, cx: &mut Context<Self>) -> AnyElement {
         let line = index as u32 + 1;
-        let uri_string = editor.document.uri_string();
+        let uri_string = editor.document().uri_string();
         let model = &self.debug.model;
         let debug_active = matches!(self.debug.state(), crate::debug::session::State::Running | crate::debug::session::State::Stopped);
         let dirty = editor.is_dirty();
@@ -192,7 +192,7 @@ impl Workbench {
         if let Some(icon) = frame {
             cell = cell.child(div().absolute().inset_0().flex().items_center().justify_center().child(self.breakpoint_icon(icon, 16.)));
         }
-        let uri = editor.document.uri();
+        let uri = editor.document().uri();
         let hover_uri = uri_string.clone();
         let menu_uri = uri.clone();
         cell.cursor_pointer()
@@ -222,7 +222,7 @@ impl Workbench {
 
     /// callStackEditorContribution.ts: the top frame of each stopped thread in this file, and the focused frame.
     fn stack_frames_in(&self, editor: &OpenEditor) -> Vec<(u32, bool, bool)> {
-        let path = editor.document.path.to_string_lossy();
+        let path = editor.document().path.to_string_lossy().into_owned();
         let mut frames = Vec::new();
         for session in &self.debug.sessions {
             let session_focused = self.debug.focus.session.as_deref() == Some(session.id.as_str());
@@ -230,7 +230,7 @@ impl Workbench {
                 let Some(top) = thread.frames.first() else { continue };
                 let focused = thread.frames.iter().find(|frame| session_focused && Some(frame.id) == self.debug.focus.frame && frame.id != top.id);
                 for (frame, is_top) in focused.map(|frame| (frame, false)).into_iter().chain([(top, true)]) {
-                    if frame.path() == Some(&*path) && editor.document.scheme == "file" {
+                    if frame.path() == Some(&*path) && editor.document().scheme == "file" {
                         frames.push((frame.line, is_top, session_focused));
                     }
                 }
@@ -347,8 +347,8 @@ impl Workbench {
             WidgetContext::HitCount => hit_count.clone(),
             WidgetContext::LogMessage => log_message.clone(),
         });
-        let uri = editor.document.uri();
-        self.breakpoint_widget = Some(BreakpointWidget { model_uri: editor.document.uri_string(), uri, line, zone_id, breakpoint, context, input, condition, hit_count, log_message });
+        let uri = editor.document().uri();
+        self.breakpoint_widget = Some(BreakpointWidget { model_uri: editor.document().uri_string(), uri, line, zone_id, breakpoint, context, input, condition, hit_count, log_message });
         self.debug_view.widget_view.reset();
         window.focus(&self.debug_view.widget_focus, cx);
         cx.notify();
@@ -356,7 +356,7 @@ impl Workbench {
 
     pub(crate) fn close_breakpoint_widget(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(widget) = self.breakpoint_widget.take() else { return };
-        if let Some(editor) = self.editors.editors.iter_mut().find(|editor| editor.document.uri_string() == widget.model_uri) {
+        if let Some(editor) = self.editors.editors.iter_mut().find(|editor| editor.document().uri_string() == widget.model_uri) {
             editor.remove_view_zone(widget.zone_id);
         }
         window.focus(&self.editor_focus, cx);
@@ -413,7 +413,7 @@ impl Workbench {
     /// The widget over its zone: the context select box, then the input (breakpointWidget.css, zone frame in
     /// `editor.foreground`-less `peekView.border`-style top and bottom borders of `debugIcon.breakpointForeground`).
     pub(super) fn breakpoint_widget_element(&self, editor: &OpenEditor, content_left: f32, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let widget = self.breakpoint_widget.as_ref().filter(|widget| widget.model_uri == editor.document.uri_string())?;
+        let widget = self.breakpoint_widget.as_ref().filter(|widget| widget.model_uri == editor.document().uri_string())?;
         let viewport = self.editors.viewport;
         let top = editor.view_zone_top(widget.zone_id, viewport)? - editor.scroll.top;
         let border: Rgba = self.color("debugIcon.breakpointForeground");

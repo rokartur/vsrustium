@@ -19,8 +19,7 @@ use crate::default_settings::raw_default_settings;
 use crate::editor::{EditReason, Position, Selection, TextDocument, VerticalReveal};
 use crate::keybindings::{self, Item as KeybindingItem};
 use crate::keybindings_editor;
-use crate::main_thread_quick_open::Owner;
-use crate::quick_input::{Entry, Event, Item, Kind, QuickInput, path_label};
+use crate::quick_input::{Entry, Item, Kind, QuickInput, path_label};
 
 mod unsupported_settings;
 
@@ -53,10 +52,11 @@ impl OpenSettingsOptions {
 
 impl Workbench {
     pub(super) fn register_preferences_commands(&mut self) {
-        // The default profile is the only one, so the application settings are the user settings.
-        for id in ["workbench.action.openSettingsJson", "workbench.action.openApplicationSettingsJson"] {
-            self.commands.register(id, |workbench, args, window, cx| workbench.open_settings_json(Target::UserLocal, None, OpenSettingsOptions::sanitize(&args), window, cx));
-        }
+        self.commands.register("workbench.action.openSettingsJson", |workbench, args, window, cx| workbench.open_settings_json(Target::UserLocal, None, OpenSettingsOptions::sanitize(&args), window, cx));
+        // `openApplicationSettings`: the default profile's settings.json, the user settings in the default profile.
+        self.commands.register("workbench.action.openApplicationSettingsJson", |workbench, args, window, cx| {
+            workbench.open_settings_json(Target::Application, None, OpenSettingsOptions::sanitize(&args), window, cx)
+        });
         self.commands.register("workbench.action.openWorkspaceSettingsFile", |workbench, args, window, cx| {
             if workbench.settings.lock().unwrap().workspace.is_none() {
                 // shortcut: logged, since the port has no notification toasts.
@@ -66,8 +66,33 @@ impl Workbench {
             workbench.open_settings_json(Target::Workspace, None, OpenSettingsOptions::sanitize(&args), window, cx)
         });
         self.commands.register("workbench.action.openFolderSettingsFile", |workbench, _, window, cx| {
-            workbench.pick_workspace_folder(window, cx);
+            let Some(picked) = workbench.pick_workspace_folder(&Value::Null, window, cx) else { return Outcome::done() };
+            cx.spawn_in(window, async move |workbench, cx| {
+                let Some(index) = picked.await.ok().and_then(Result::ok).and_then(|picked| picked.as_u64()) else { return };
+                let _ = workbench.update_in(cx, |workbench, window, cx| {
+                    let workspace = workbench.settings.lock().unwrap().workspace.clone();
+                    let folder = workspace.and_then(|workspace| workspace.folders.get(index as usize).map(|folder| folder.path.clone()));
+                    let outcome = workbench.open_settings_json(Target::WorkspaceFolder, folder.as_deref(), OpenSettingsOptions::default(), window, cx);
+                    super::quick_access::show_failure("Preferences: Open Folder Settings (JSON)".into(), outcome, window, cx);
+                });
+            })
+            .detach();
             Outcome::done()
+        });
+        self.commands.register("_workbench.pickWorkspaceFolder", |workbench, args, window, cx| {
+            let options = args.into_iter().next().unwrap_or_default();
+            let Some(picked) = workbench.pick_workspace_folder(&options, window, cx) else { return Outcome::done() };
+            let folders = workbench.settings.lock().unwrap().workspace.as_ref().map(|workspace| workspace.folders.clone()).unwrap_or_default();
+            let (sender, receiver) = futures::channel::oneshot::channel();
+            cx.background_executor()
+                .spawn(async move {
+                    let index = picked.await.ok().and_then(Result::ok).and_then(|picked| picked.as_u64()).map(|index| index as usize);
+                    let folder = index.and_then(|index| Some((index, folders.get(index)?)));
+                    let folder = folder.map_or(Value::Null, |(index, folder)| json!({ "uri": crate::editor::uri_value("file", &folder.path), "name": folder.name, "index": index }));
+                    let _ = sender.send(Ok(folder));
+                })
+                .detach();
+            Outcome::Pending(receiver)
         });
         self.commands.register("workbench.action.openRawDefaultSettings", |workbench, _, window, cx| workbench.open_preferences_resource(RAW_DEFAULT_SETTINGS, window, cx));
         self.commands.register("workbench.action.openDefaultKeybindingsFile", |workbench, _, window, cx| workbench.open_preferences_resource(DEFAULT_KEYBINDINGS, window, cx));
@@ -76,10 +101,10 @@ impl Workbench {
     /// `openEditor` of a read-only `vscode://defaultsettings` resource: its open editor, its model, or a new model.
     fn open_preferences_resource(&mut self, resource: &str, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
         let path = PathBuf::from(resource);
-        if let Some(index) = self.editors.editors.iter().position(|editor| editor.document.is("vscode", &path)) {
+        if let Some(index) = self.editors.editors.iter().position(|editor| editor.document().is("vscode", &path)) {
             self.editors.activate(index);
         } else {
-            let index = match self.editors.models.iter().position(|model| model.document.is("vscode", &path)) {
+            let index = match self.editors.models.iter().position(|model| model.document().is("vscode", &path)) {
                 Some(index) => index,
                 None => {
                     let text = self.preferences_content(&path).expect("a defaultsettings resource");
@@ -180,27 +205,27 @@ impl Workbench {
             other => Some(default_of_type(other)),
         };
         let default_value = default_value.or_else(|| is_override.then(|| json!({})));
-        let in_workspace_file = settings.workspace.as_ref().and_then(|workspace| workspace.file.as_deref()) == self.editors.active().map(|editor| editor.document.path.as_path());
+        let in_workspace_file = settings.workspace.as_ref().and_then(|workspace| workspace.file.as_deref()) == self.editors.active().map(|editor| editor.document().path.clone()).as_deref();
         drop(settings);
         let Some(editor) = self.editors.active() else { return };
         let mut path = vec![Segment::Key(key.to_string())];
         if in_workspace_file {
             path.insert(0, Segment::Key("settings".into()));
         }
-        let mut setting = setting_ranges(&editor.document.lines, &path);
+        let mut setting = setting_ranges(&editor.document().lines, &path);
         if setting.is_none()
             && edit
             && let Some(value) = default_value
         {
-            let text = editor.document.lines.join("\n");
-            let indentation = editor.document.indentation;
-            let options = FormattingOptions { tab_size: indentation.tab_size, insert_spaces: indentation.insert_spaces, eol: editor.document.eol.to_string() };
+            let text = editor.document().lines.join("\n");
+            let indentation = editor.document().indentation;
+            let options = FormattingOptions { tab_size: indentation.tab_size, insert_spaces: indentation.insert_spaces, eol: editor.document().eol.to_string() };
             let edits: Vec<_> = set_property(&text, &path, Some(&value), &options)
                 .into_iter()
                 .map(|edit| (position_at(&text, edit.offset), position_at(&text, edit.offset + edit.length), edit.content.replace("\r\n", "\n"), false))
                 .collect();
             self.run_indenting(|editor, _| editor.execute_edits(edits, None, EditReason::Unknown("jsonEditing")).into_iter().collect(), cx);
-            setting = setting_ranges(&self.editors.active().expect("still active").document.lines, &path);
+            setting = setting_ranges(&self.editors.active().expect("still active").document().lines, &path);
         }
         let Some(setting) = setting else { return };
         let position = match edit {
@@ -208,14 +233,16 @@ impl Workbench {
                 let after_bracket = Position::new(setting.value_start.line, setting.value_start.column + 1);
                 self.set_active_position(after_bracket);
                 self.run_indenting(|editor, auto| editor.line_break_insert(auto).into_iter().collect(), cx);
-                let lines = &self.editors.active().expect("still active").document.lines;
+                let document = self.editors.active().expect("still active").document();
+                let lines = &document.lines;
                 let next = after_bracket.line + 1;
                 let first_non_whitespace = lines[next].chars().position(|c| !c.is_whitespace());
                 match first_non_whitespace {
                     Some(column) => {
+                        drop(document);
                         self.set_active_position(Position::new(next, column));
                         self.run_indenting(|editor, auto| editor.line_break_insert(auto).into_iter().collect(), cx);
-                        let lines = &self.editors.active().expect("still active").document.lines;
+                        let lines = &self.editors.active().expect("still active").document().lines;
                         Position::new(next, lines[next].chars().count())
                     }
                     None => Position::new(next, lines[next].chars().count()),
@@ -236,10 +263,11 @@ impl Workbench {
         self.editors.active_mut().expect("an active settings editor").set_selections(vec![Selection::caret(position)]);
     }
 
-    /// `_workbench.pickWorkspaceFolder`, then `openFolderSettings({ folderUri, jsonEditor: true })`.
-    fn pick_workspace_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// workspaceCommands.ts `_workbench.pickWorkspaceFolder`: the workspace folders in a quick pick with `options`
+    /// (`IPickOptions`); the receiver gets the picked folder's index, or null. None without folders.
+    fn pick_workspace_folder(&mut self, options: &Value, window: &mut Window, cx: &mut Context<Self>) -> Option<futures::channel::oneshot::Receiver<Result<Value, Value>>> {
         let workspace = self.settings.lock().unwrap().workspace.clone();
-        let Some(workspace) = workspace.filter(|workspace| !workspace.folders.is_empty()) else { return };
+        let workspace = workspace.filter(|workspace| !workspace.folders.is_empty())?;
         let items = workspace
             .folders
             .iter()
@@ -251,28 +279,12 @@ impl Workbench {
             })
             .collect();
         let mut input = QuickInput::new(0, Kind::QuickPick);
-        input.placeholder = Some("Select workspace folder".into());
-        input.match_on_description = true;
+        input.placeholder = Some(options["placeHolder"].as_str().unwrap_or("Select workspace folder").to_string());
+        input.match_on_description = options["matchOnDescription"].as_bool().unwrap_or(true);
+        input.match_on_detail = options["matchOnDetail"].as_bool().unwrap_or(false);
+        input.ignore_focus_out = options["ignoreFocusOut"].as_bool().unwrap_or(false);
         input.set_items(items);
-        let folders = workspace.folders.iter().map(|folder| folder.path.clone()).collect();
-        let id = self.quick_inputs.add(input, Owner::FolderSettings(folders));
-        self.show_quick_input(id, window, cx);
-        self.flush_quick_input_events(window, cx);
-    }
-
-    pub fn folder_settings_pick_event(&mut self, id: i64, event: Event, window: &mut Window, cx: &mut Context<Self>) {
-        match event {
-            Event::Accept(_) => {
-                let Some(handle) = self.quick_inputs.get(id).and_then(|input| input.selected_handles().first().copied()) else { return };
-                let Some(Owner::FolderSettings(folders)) = self.quick_inputs.owner(id) else { return };
-                let folder = folders[handle as usize].clone();
-                self.hide_quick_input_by_id(id, window, cx);
-                let outcome = self.open_settings_json(Target::WorkspaceFolder, Some(&folder), OpenSettingsOptions::default(), window, cx);
-                super::quick_access::show_failure("Preferences: Open Folder Settings (JSON)".into(), outcome, window, cx);
-            }
-            Event::Hide => self.quick_inputs.remove(id),
-            _ => {}
-        }
+        Some(self.choose(input, window, cx))
     }
 }
 

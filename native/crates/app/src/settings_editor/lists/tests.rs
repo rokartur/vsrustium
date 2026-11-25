@@ -14,6 +14,8 @@ fn setting(key: &str, schema: Value) -> Setting {
         restricted: false,
         extension_id: None,
         deprecation_message: None,
+        deprecation_is_info: false,
+        deprecation_show_in_settings: false,
         enum_values: None,
         enum_descriptions: None,
         overrides: Vec::new(),

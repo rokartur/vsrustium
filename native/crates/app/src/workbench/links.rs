@@ -104,10 +104,10 @@ impl Workbench {
         if !self.links_enabled(editor) {
             return None;
         }
-        let uri = editor.document.uri();
-        let candidate = Candidate { uri: &uri, language: &editor.document.language_id };
+        let uri = editor.document().uri();
+        let candidate = Candidate { uri: &uri, language: &editor.document().language_id };
         let handles: Vec<u64> = self.language_features.ordered(REGISTER, &candidate).iter().rev().map(|registration| registration.handle).collect();
-        let lines = editor.document.lines.clone();
+        let lines = editor.document().lines.clone();
         let calls = handles
             .into_iter()
             .map(|handle| match handle {
@@ -119,17 +119,17 @@ impl Workbench {
                 _ => (handle, self.host.call_cancellable("ExtHostLanguageFeatures", "$provideDocumentLinks", vec![json!(handle), uri.clone()])),
             })
             .collect();
-        Some((editor.model_id, editor.version_id, calls))
+        Some((editor.model_id, editor.text_model().version_id, calls))
     }
 
     fn links_enabled(&self, editor: &OpenEditor) -> bool {
-        let overrides = config::configuration::Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
+        let overrides = config::configuration::Overrides { resource: Some(&editor.document().path), override_identifier: Some(&editor.document().language_id) };
         self.settings.lock().unwrap().get_value(Some("editor.links"), &overrides) != Some(json!(false))
     }
 
     /// `LinksList`: each provider's links joined by `_union`, which drops a later list's links that touch earlier ones.
     fn links_answered(&mut self, model_id: u32, version_id: u32, lists: Vec<(u64, Value)>, cx: &mut Context<Self>) {
-        let current = self.editors.active().is_some_and(|editor| (editor.model_id, editor.version_id) == (model_id, version_id));
+        let current = self.editors.active().is_some_and(|editor| (editor.model_id, editor.text_model().version_id) == (model_id, version_id));
         if !current {
             for (handle, list) in &lists {
                 self.release_link_list(*handle, list);
@@ -168,7 +168,7 @@ impl Workbench {
     pub(super) fn links_mouse_moved(&mut self, target: Option<(usize, f32)>, modifiers: Modifiers, cx: &mut Context<Self>) {
         self.links.pointer = self.editors.active().zip(target).and_then(|(editor, (line, visible))| {
             let anchor = super::content_hover::anchor_at(editor, line, visible).filter(|anchor| anchor.start < anchor.end)?;
-            Some((line + 1, utf16_column(&editor.document.lines[line], anchor.start) + 1))
+            Some((line + 1, utf16_column(&editor.document().lines[line], anchor.start) + 1))
         });
         self.links.modifiers = modifiers;
         self.update_active_link(cx);
@@ -213,7 +213,7 @@ impl Workbench {
         };
         let Some(editor) = self.editors.active().filter(|_| triggered) else { return false };
         let Some(anchor) = super::content_hover::anchor_at(editor, line, visible).filter(|anchor| anchor.start < anchor.end) else { return false };
-        let at = (line + 1, utf16_column(&editor.document.lines[line], anchor.start) + 1);
+        let at = (line + 1, utf16_column(&editor.document().lines[line], anchor.start) + 1);
         let Some(index) = self.link_index_at(at) else { return false };
         self.open_link_occurrence(index, window, cx);
         true
@@ -224,7 +224,7 @@ impl Workbench {
         let Some(editor) = self.editors.active() else { return };
         let ends: Vec<(usize, usize)> = editor.selections.iter().map(|selection| {
             let end = selection.end();
-            (end.line + 1, utf16_column(&editor.document.lines[end.line], end.column) + 1)
+            (end.line + 1, utf16_column(&editor.document().lines[end.line], end.column) + 1)
         }).collect();
         for end in ends {
             if let Some(index) = self.link_index_at(end) {
@@ -242,7 +242,7 @@ impl Workbench {
             (Some(_), _) | (None, false) => None,
             (None, true) => Some(self.host.call("ExtHostLanguageFeatures", "$resolveDocumentLink", vec![json!(link.handle), link.dto["cacheId"].clone()])),
         };
-        let model_path = self.editors.active().filter(|editor| editor.document.scheme == "file").map(|editor| editor.document.path.clone());
+        let model_path = self.editors.active().filter(|editor| editor.document().scheme == "file").map(|editor| editor.document().path.clone());
         cx.spawn_in(window, async move |workbench, cx| {
             let url = match resolve {
                 None => link.dto.get("url").cloned().filter(|url| !url.is_null()),
@@ -267,7 +267,7 @@ impl Workbench {
         if self.links.model_id != Some(editor.model_id) {
             return Vec::new();
         }
-        let text = &editor.document.lines[index];
+        let text = &editor.document().lines[index];
         let line = index + 1;
         let active_color = self.theme.color("editorLink.activeForeground").map(Hsla::from);
         let expanded = |column: usize| expand_tabs(&text.chars().take(column).collect::<String>(), tab_size).len();
@@ -302,7 +302,7 @@ impl Workbench {
         if self.links.model_id != Some(editor.model_id) {
             return Vec::new();
         }
-        let text = &editor.document.lines[anchor.line];
+        let text = &editor.document().lines[anchor.line];
         let column = utf16_column(text, anchor.start) + 1;
         let use_meta_key = !self.multi_cursor_modifier_is_cmd();
         let kb = if use_meta_key { "cmd + click" } else { "option + click" };
@@ -312,8 +312,8 @@ impl Workbench {
             if !(link.start <= (line, column) && (line, column) <= link.end) {
                 continue;
             }
-            let start = Position::new(link.start.0 - 1, char_column(&editor.document.lines[link.start.0 - 1], link.start.1 - 1));
-            let end = Position::new(link.end.0 - 1, char_column(&editor.document.lines[link.end.0 - 1], link.end.1 - 1));
+            let start = Position::new(link.start.0 - 1, char_column(&editor.document().lines[link.start.0 - 1], link.start.1 - 1));
+            let end = Position::new(link.end.0 - 1, char_column(&editor.document().lines[link.end.0 - 1], link.end.1 - 1));
             let content = hover_message(&link.dto, kb);
             parts.push(Part { participant: Participant::Markdown, ordinal: 0, start, end, content: PartContent::Markdown(vec![content]) });
         }
@@ -326,9 +326,9 @@ impl Workbench {
             return Outcome::Ready(Ok(json!([])));
         };
         let resolve_count = args.get(1).and_then(Value::as_u64).unwrap_or(0) as usize;
-        let uri = editor.document.uri();
-        let candidate = Candidate { uri: &uri, language: &editor.document.language_id };
-        let lines = editor.document.lines.clone();
+        let uri = editor.document().uri();
+        let candidate = Candidate { uri: &uri, language: &editor.document().language_id };
+        let lines = editor.document().lines.clone();
         let registrations: Vec<(u64, bool)> = self.language_features.ordered(REGISTER, &candidate).iter().rev().map(|registration| (registration.handle, registration.args.get(2) == Some(&json!(true)))).collect();
         let call = self.host.caller();
         let (sender, receiver) = futures::channel::oneshot::channel();

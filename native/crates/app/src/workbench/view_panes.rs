@@ -11,7 +11,6 @@ use gpui::{
 use serde_json::{Value, json};
 
 use super::Workbench;
-use super::part_grid::SASH_HOVER_DELAY;
 use crate::split_view::{SashState, SplitView, View};
 
 /// `--vscode-workbench-paneHeaderHeight` of the modern layout.
@@ -170,6 +169,10 @@ pub(super) struct ExplorerPanes {
 pub(super) struct ExplorerPane {
     pub id: &'static str,
     pub title: String,
+    /// `ViewPane.titleDescription`, after the title.
+    pub description: Option<String>,
+    /// The `view/title` actions, shown while the expanded pane is hovered (paneview.css).
+    pub actions: Option<AnyElement>,
     pub body: AnyElement,
 }
 
@@ -208,17 +211,21 @@ impl Workbench {
         let compact = if self.compact_activity_bar_location().is_some() { 32. } else { 0. };
         let height = side_bar_height - 2. - 32. - compact - 5.;
         let first = if self.folder.is_some() { FILE_VIEW } else { EMPTY_VIEW };
-        for id in [first, OUTLINE_VIEW, TIMELINE_VIEW] {
+        let contributed = self.shown_tree_views();
+        let ids: Vec<&'static str> = [first, OUTLINE_VIEW, TIMELINE_VIEW].into_iter().chain(contributed.iter().copied()).collect();
+        for &id in &ids {
             self.explorer_panes.focus.entry(id).or_insert_with(|| cx.focus_handle());
         }
-        if self.explorer_panes.view.as_ref().is_some_and(|view| view.ids().contains(&first)) {
+        let laid_out = self.explorer_panes.view.as_ref().is_some_and(|view| view.ids().len() == ids.len() && ids.iter().all(|id| view.ids().contains(id)));
+        if laid_out {
             self.explorer_panes.view.as_mut().expect("checked above").layout(height);
             return;
         }
         let workspace_state = self.workspace_storage.lock().unwrap().get(STATE_KEY).and_then(|raw| serde_json::from_str::<Value>(raw).ok()).unwrap_or_default();
         let global_state = self.profile_storage.lock().unwrap().get(&format!("{STATE_KEY}.hidden")).and_then(|raw| serde_json::from_str::<Value>(raw).ok()).unwrap_or_default();
         let order = |id: &str| global_state.as_array().and_then(|views| views.iter().find(|view| view["id"] == id)).and_then(|view| view["order"].as_f64());
-        let mut descriptors = [(first, false), (OUTLINE_VIEW, true), (TIMELINE_VIEW, true)];
+        // viewsExtensionPoint.ts `showCollapsed`: an extension's view in the Explorer starts collapsed.
+        let mut descriptors: Vec<(&'static str, bool)> = [(first, false), (OUTLINE_VIEW, true), (TIMELINE_VIEW, true)].into_iter().chain(contributed.into_iter().map(|id| (id, true))).collect();
         descriptors.sort_by(|a, b| order(a.0).unwrap_or(f64::MAX).total_cmp(&order(b.0).unwrap_or(f64::MAX)));
         self.explorer_panes.stored_sizes.clear();
         let panes: Vec<_> = descriptors
@@ -252,6 +259,19 @@ impl Workbench {
         self.profile_storage.lock().unwrap().set(&format!("{STATE_KEY}.hidden"), Value::Array(global).to_string());
     }
 
+    pub(super) fn explorer_pane_expanded(&self, id: &str) -> bool {
+        let Some(view) = self.explorer_panes.view.as_ref() else { return false };
+        view.ids().iter().position(|&pane| pane == id).is_some_and(|index| view.is_expanded(index))
+    }
+
+    /// `viewsService.openView`: expands the view's pane once it is laid out.
+    pub(super) fn expand_explorer_pane(&mut self, id: &str, cx: &mut Context<Self>) {
+        let index = self.explorer_panes.view.as_ref().and_then(|view| view.ids().iter().position(|&pane| pane == id));
+        if let Some(index) = index {
+            self.set_pane_expanded(index, true, cx);
+        }
+    }
+
     fn set_pane_expanded(&mut self, index: usize, expanded: bool, cx: &mut Context<Self>) {
         let view = self.explorer_panes.view.as_mut().expect("panes are laid out before they draw");
         if view.set_expanded(index, expanded) {
@@ -274,13 +294,13 @@ impl Workbench {
     /// The pane view of the Explorer, laid out by `layout_explorer_panes`: `first` (the folder's or the empty
     /// window's view), then Outline and Timeline in their stored order.
     pub(super) fn explorer_pane_view(&self, first: ExplorerPane, window: &Window, cx: &mut Context<Self>) -> Div {
-        // outlinePane.css `.outline-message`, timelinePane.css `.message.timeline-subtle`.
-        // shortcut: no outline or timeline providers are ported, so both views always show their empty message.
+        // timelinePane.css `.message.timeline-subtle`.
+        // shortcut: no timeline providers are ported, so the view always shows its empty message.
         let message = |text: &'static str| div().pt(px(10.)).px(px(22.)).opacity(0.5).line_height(px(18.2)).child(text).into_any_element();
         let mut panes = vec![
             first,
-            ExplorerPane { id: OUTLINE_VIEW, title: "Outline".into(), body: message("The active editor cannot provide outline information.") },
-            ExplorerPane { id: TIMELINE_VIEW, title: "Timeline".into(), body: message("The active editor cannot provide timeline information.") },
+            ExplorerPane { id: OUTLINE_VIEW, title: "Outline".into(), description: None, actions: None, body: self.outline_pane_body(window, cx) },
+            ExplorerPane { id: TIMELINE_VIEW, title: "Timeline".into(), description: None, actions: None, body: message("The active editor cannot provide timeline information.") },
         ];
         let view = self.explorer_panes.view.as_ref().expect("panes are laid out before they draw");
         let (ids, sizes, sash_states) = (view.ids().to_vec(), view.sizes(), view.sash_states());
@@ -288,9 +308,11 @@ impl Workbench {
         let dragging_sash = view.dragged_sash().is_some();
         let mut elements = Vec::new();
         for (index, &id) in ids.iter().enumerate() {
-            let position = panes.iter().position(|pane| pane.id == id).expect("every laid out pane draws");
-            let pane = panes.remove(position);
-            let header = self.pane_header(index, id, &pane.title, expanded[index], ids.len(), window, cx);
+            let pane = match panes.iter().position(|pane| pane.id == id) {
+                Some(position) => panes.remove(position),
+                None => self.tree_view_pane(id, window, cx),
+            };
+            let header = self.pane_header(index, id, &pane.title, pane.description, pane.actions, expanded[index], ids.len(), window, cx);
             elements.push(self.pane(id, sizes[index], header, expanded[index].then_some(pane.body), cx));
         }
         let mut top = 0.;
@@ -317,6 +339,7 @@ impl Workbench {
         let outline = self.theme.color("contrastActiveBorder");
         div()
             .id(id)
+            .group(id)
             .relative()
             .h(px(size))
             .flex_none()
@@ -355,7 +378,7 @@ impl Workbench {
     /// `.pane-header`: a click, Enter or Space toggles, Left collapses, Right expands, Up and Down move to the
     /// neighbouring header; dragged onto another pane it moves this one.
     #[allow(clippy::too_many_arguments)]
-    fn pane_header(&self, index: usize, id: &'static str, title: &str, expanded: bool, count: usize, window: &Window, cx: &mut Context<Self>) -> Div {
+    fn pane_header(&self, index: usize, id: &'static str, title: &str, description: Option<String>, actions: Option<AnyElement>, expanded: bool, count: usize, window: &Window, cx: &mut Context<Self>) -> Div {
         let focus = &self.explorer_panes.focus[id];
         let focused = focus.is_focused(window);
         let foreground = self.foreground_or("sideBarSectionHeader.foreground");
@@ -390,6 +413,11 @@ impl Workbench {
                 .when_some(border, |header, border| header.child(div().absolute().top_0().left(px(4.)).right(px(4.)).h(px(1.)).bg(border)))
                 .child(self.icon(chevron, 16., 16., foreground).mx(px(2.)))
                 .child(div().text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).child(title.to_string()))
+                // paneviewlet.css `.pane-header .description`: 10px after the title, normal weight, only while expanded.
+                .children(description.filter(|_| expanded).map(|description| {
+                    div().ml(px(10.)).text_size(px(12.)).text_color(self.color("panelTitle.inactiveForeground")).overflow_hidden().whitespace_nowrap().child(description)
+                }))
+                .children(actions.filter(|_| expanded).map(|actions| div().ml_auto().mr(px(4.)).invisible().group_hover(id, |actions| actions.visible()).when(focused, |actions| actions.visible()).child(actions)))
                 .when(id == FILE_VIEW, |header| header.children(self.explorer_title_actions(window, cx)))
                 .when(focused, |header| header.child(div().absolute().inset_0().rounded(px(4.)).border_1().border_color(self.color("focusBorder"))))
                 .on_click(cx.listener(move |workbench, _, window, cx| {
@@ -452,8 +480,9 @@ impl Workbench {
                     return;
                 }
                 panes.hovered_sash = None;
-                panes.sash_hover = Some((index, cx.spawn_in(window, async move |workbench, cx| {
-                    cx.background_executor().timer(SASH_HOVER_DELAY).await;
+                let delay = workbench.sash_hover_delay();
+                workbench.explorer_panes.sash_hover = Some((index, cx.spawn_in(window, async move |workbench, cx| {
+                    cx.background_executor().timer(delay).await;
                     let _ = workbench.update(cx, |workbench, cx| {
                         workbench.explorer_panes.hovered_sash = Some(index);
                         cx.notify();

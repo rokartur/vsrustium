@@ -144,7 +144,7 @@ fn opening_a_result_selects_the_match_in_the_editor(cx: &mut TestAppContext) {
     cx.run_until_parked();
     let selection = workbench.read_with(cx, |workbench, _| {
         let editor = workbench.editors.active().unwrap();
-        (editor.document.path.clone(), editor.selection().start(), editor.selection().end())
+        (editor.document().path.clone(), editor.selection().start(), editor.selection().end())
     });
     assert_eq!(selection.0, dir.join("a.txt"));
     assert_eq!((selection.1.line, selection.1.column, selection.2.line, selection.2.column), (0, 6, 0, 10));
@@ -292,7 +292,7 @@ fn a_right_click_on_a_hovered_row_opens_the_menu_without_selecting_it(cx: &mut T
 fn active_editor(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext) -> (String, String, String) {
     workbench.read_with(cx, |workbench, _| {
         let editor = workbench.editors.active().unwrap();
-        (editor.document.scheme.clone(), workbench.editor_name(editor), editor.document.lines.join("\n"))
+        (editor.document().scheme.clone(), workbench.editor_name(editor), editor.document().lines.join("\n"))
     })
 }
 

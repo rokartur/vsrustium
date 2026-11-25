@@ -144,7 +144,7 @@ fn issue_1857_f3_find_next_acts_like_find_under_cursor() {
     editor.execute_edits(vec![(position(1, 1), position(1, 4), String::new(), false)], None, EditReason::Unknown("test"));
     editor.execute_edits(vec![(position(1, 1), position(1, 1), "XYZ".into(), false)], None, EditReason::Unknown("test"));
     editor.push_undo_stop();
-    assert_eq!(editor.document.lines[0], "XYZ");
+    assert_eq!(editor.document().lines[0], "XYZ");
     assert_eq!(selections(&editor), [[1, 4, 1, 4]]);
 
     controller.match_find_action(&mut editor, VIEWPORT, true);
@@ -251,7 +251,7 @@ fn issue_18111_regex_replace_with_single_space_replaces_with_no_space() {
     let (mut editor, mut controller) = replace_after_find("HRESULT OnAmbientPropertyChange(DISPID   dispid);", r"\b\s{3}\b", " ");
     assert_eq!(selections(&editor), [[1, 39, 1, 42]]);
     controller.replace(&mut editor, VIEWPORT);
-    assert_eq!(editor.document.lines.join("\n"), "HRESULT OnAmbientPropertyChange(DISPID dispid);");
+    assert_eq!(editor.document().lines.join("\n"), "HRESULT OnAmbientPropertyChange(DISPID dispid);");
 }
 
 /// issue #24714: Regular expression with ^ in search & replace
@@ -260,7 +260,7 @@ fn issue_24714_regular_expression_with_caret_in_search_and_replace() {
     let (mut editor, mut controller) = replace_after_find("\nline2\nline3", "^", "x");
     assert_eq!(selections(&editor), [[2, 1, 2, 1]]);
     controller.replace(&mut editor, VIEWPORT);
-    assert_eq!(editor.document.lines.join("\n"), "\nxline2\nline3");
+    assert_eq!(editor.document().lines.join("\n"), "\nxline2\nline3");
 }
 
 fn find_next_selection(open_widget: bool) {

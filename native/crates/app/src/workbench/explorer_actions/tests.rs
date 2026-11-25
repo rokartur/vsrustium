@@ -71,7 +71,7 @@ fn new_file_takes_a_validated_name_and_opens(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("enter");
     cx.run_until_parked();
     assert_eq!(names(&dir), ["a.txt", "b.txt", "sub"]);
-    let opened = workbench.read_with(cx, |workbench, _| workbench.editors.active().map(|editor| editor.document.path.clone()));
+    let opened = workbench.read_with(cx, |workbench, _| workbench.editors.active().map(|editor| editor.document().path.clone()));
     assert_eq!(opened, Some(dir.join("b.txt")));
 
     run(&workbench, "explorer.newFolder", cx);
@@ -124,7 +124,7 @@ fn files_dropped_from_finder_copy_into_the_folder_under_the_pointer(cx: &mut Tes
     drop(&["dropped.txt"], sub_row, cx);
     assert_eq!(names(&dir.join("sub")), ["dropped.txt"]);
     assert_eq!(names(&finder), ["a.txt", "dropped.txt", "folder"], "a drop copies");
-    let opened = workbench.read_with(cx, |workbench, _| workbench.editors.active().map(|editor| editor.document.path.clone()));
+    let opened = workbench.read_with(cx, |workbench, _| workbench.editors.active().map(|editor| editor.document().path.clone()));
     assert_eq!(opened, Some(dir.join("sub/dropped.txt")), "explorer.autoOpenDroppedFile");
 
     // A folder dropped into a workspace folder asks first; the skipped dialog picks Add, which the port lacks.
@@ -462,7 +462,7 @@ fn keys_move_the_focus_expand_collapse_select_and_open(cx: &mut TestAppContext) 
     assert_eq!(focused(&workbench, cx), Some(dir.join("sub")));
 
     cx.simulate_keystrokes("end space");
-    let active = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.editors.active().map(|editor| editor.document.path.clone()));
+    let active = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.editors.active().map(|editor| editor.document().path.clone()));
     assert_eq!(active(cx), Some(dir.join("a.txt")), "space opens a file");
     assert!(workbench.update_in(cx, |workbench, window, _| workbench.explorer.focus.is_focused(window)), "space keeps the focus");
     cx.simulate_keystrokes("up cmd-down");
@@ -564,7 +564,7 @@ fn new_file_creates_the_picked_file_next_to_the_last_active_file(cx: &mut TestAp
     });
     cx.run_until_parked();
     assert_eq!(std::fs::read_to_string(&created).unwrap(), "");
-    let active = workbench.read_with(cx, |workbench, _| workbench.editors.active().map(|editor| (editor.document.path.clone(), editor.preview)));
+    let active = workbench.read_with(cx, |workbench, _| workbench.editors.active().map(|editor| (editor.document().path.clone(), editor.preview)));
     assert_eq!(active, Some((created, false)), "the new file opens pinned");
     std::fs::remove_dir_all(&dir).unwrap();
 }

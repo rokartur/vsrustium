@@ -83,8 +83,8 @@ impl Workbench {
     }
 
     fn linked_editing_handles(&self, editor: &OpenEditor) -> Vec<u64> {
-        let uri = editor.document.uri();
-        let candidate = Candidate { uri: &uri, language: &editor.document.language_id };
+        let uri = editor.document().uri();
+        let candidate = Candidate { uri: &uri, language: &editor.document().language_id };
         self.language_features.ordered(REGISTER, &candidate).iter().map(|registration| registration.handle).collect()
     }
 
@@ -148,40 +148,10 @@ impl Workbench {
         if token != self.linked_editing.sync_token || self.linked_editing.ranges.is_empty() {
             return;
         }
-        let Some(editor) = self.editors.active() else { return };
-        let (reference_start, reference_end) = self.linked_editing.ranges[0];
-        if reference_start.0 != reference_end.0 {
+        let Some(edits) = self.linked_range_edits() else {
             self.clear_linked_ranges();
             return cx.notify();
-        }
-        let line = &editor.document.lines[reference_start.0 - 1];
-        let reference: String = utf16_slice(line, reference_start.1, reference_end.1);
-        let language_pattern = self.languages.rules(&editor.document.language_id).and_then(|rules| rules.word_pattern.as_ref());
-        let pattern = self.linked_editing.word_pattern.as_ref().or(language_pattern).unwrap_or(&DEFAULT_WORD_REGEXP);
-        let match_length = pattern.find(&reference).map_or(0, |(start, end)| end - start);
-        if match_length != reference.len() {
-            self.clear_linked_ranges();
-            return cx.notify();
-        }
-        let mut edits = Vec::new();
-        for &(start, end) in &self.linked_editing.ranges[1..] {
-            let start_position = Position::new(start.0 - 1, char_column(&editor.document.lines[start.0 - 1], start.1 - 1));
-            let end_position = Position::new(end.0 - 1, char_column(&editor.document.lines[end.0 - 1], end.1 - 1));
-            if start.0 != end.0 {
-                edits.push((start_position, end_position, reference.clone(), true));
-                continue;
-            }
-            let old: Vec<char> = editor.document.lines[start.0 - 1].chars().skip(start_position.column).take(end_position.column - start_position.column).collect();
-            let new: Vec<char> = reference.chars().collect();
-            let prefix = old.iter().zip(&new).take_while(|(a, b)| a == b).count();
-            let suffix = old[prefix..].iter().rev().zip(new[prefix..].iter().rev()).take_while(|(a, b)| a == b).count();
-            let replace_start = Position::new(start_position.line, start_position.column + prefix);
-            let replace_end = Position::new(end_position.line, end_position.column - suffix);
-            let text: String = new[prefix..new.len() - suffix].iter().collect();
-            if replace_start != replace_end || !text.is_empty() {
-                edits.push((replace_start, replace_end, text, true));
-            }
-        }
+        };
         if edits.is_empty() {
             return;
         }
@@ -192,6 +162,43 @@ impl Workbench {
             self.editor_edited(Some(change), false, "linkedEditing", cx);
         }
         self.linked_editing.ignore_change = false;
+    }
+
+    /// The mirror edits of `_syncRanges`, `None` when the reference spans lines or is not one word.
+    fn linked_range_edits(&self) -> Option<Vec<(Position, Position, String, bool)>> {
+        let document = self.editors.active()?.document();
+        let (reference_start, reference_end) = self.linked_editing.ranges[0];
+        if reference_start.0 != reference_end.0 {
+            return None;
+        }
+        let line = &document.lines[reference_start.0 - 1];
+        let reference: String = utf16_slice(line, reference_start.1, reference_end.1);
+        let language_pattern = self.languages.rules(&document.language_id).and_then(|rules| rules.word_pattern.as_ref());
+        let pattern = self.linked_editing.word_pattern.as_ref().or(language_pattern).unwrap_or(&DEFAULT_WORD_REGEXP);
+        let match_length = pattern.find(&reference).map_or(0, |(start, end)| end - start);
+        if match_length != reference.len() {
+            return None;
+        }
+        let mut edits = Vec::new();
+        for &(start, end) in &self.linked_editing.ranges[1..] {
+            let start_position = Position::new(start.0 - 1, char_column(&document.lines[start.0 - 1], start.1 - 1));
+            let end_position = Position::new(end.0 - 1, char_column(&document.lines[end.0 - 1], end.1 - 1));
+            if start.0 != end.0 {
+                edits.push((start_position, end_position, reference.clone(), true));
+                continue;
+            }
+            let old: Vec<char> = document.lines[start.0 - 1].chars().skip(start_position.column).take(end_position.column - start_position.column).collect();
+            let new: Vec<char> = reference.chars().collect();
+            let prefix = old.iter().zip(&new).take_while(|(a, b)| a == b).count();
+            let suffix = old[prefix..].iter().rev().zip(new[prefix..].iter().rev()).take_while(|(a, b)| a == b).count();
+            let replace_start = Position::new(start_position.line, start_position.column + prefix);
+            let replace_end = Position::new(end_position.line, end_position.column - suffix);
+            let text: String = new[prefix..new.len() - suffix].iter().collect();
+            if replace_start != replace_end || !text.is_empty() {
+                edits.push((replace_start, replace_end, text, true));
+            }
+        }
+        Some(edits)
     }
 
     /// `clearRanges`.
@@ -213,8 +220,8 @@ impl Workbench {
             self.clear_linked_ranges();
             return cx.notify();
         }
-        let version_id = editor.version_id;
-        let utf16_position = (position.line + 1, utf16_column(&editor.document.lines[position.line], position.column) + 1);
+        let version_id = editor.text_model().version_id;
+        let utf16_position = (position.line + 1, utf16_column(&editor.document().lines[position.line], position.column) + 1);
         let contains = |range: &((usize, usize), (usize, usize))| range.0 <= utf16_position && utf16_position <= range.1;
         if self.linked_editing.request_position.is_some() && self.linked_editing.request_version == Some(version_id) {
             if self.linked_editing.request_position == Some(position) {
@@ -230,7 +237,7 @@ impl Workbench {
         }
         let editor = self.editors.active().expect("checked above");
         let handles = self.linked_editing_handles(editor);
-        let uri = editor.document.uri();
+        let uri = editor.document().uri();
         let model_id = editor.model_id;
         self.linked_editing.request_position = Some(position);
         self.linked_editing.request_version = Some(version_id);
@@ -244,7 +251,7 @@ impl Workbench {
                 if workbench.linked_editing.request_id != request_id {
                     return;
                 }
-                let current = workbench.editors.active().is_some_and(|editor| (editor.model_id, editor.version_id) == (model_id, version_id));
+                let current = workbench.editors.active().is_some_and(|editor| (editor.model_id, editor.text_model().version_id) == (model_id, version_id));
                 if !current {
                     return;
                 }
@@ -270,7 +277,7 @@ impl Workbench {
             return Vec::new();
         }
         let Some(background) = self.theme.color("editor.linkedEditingBackground").map(Hsla::from) else { return Vec::new() };
-        let text = &editor.document.lines[index];
+        let text = &editor.document().lines[index];
         let line = index + 1;
         let expanded = |column: usize| expand_tabs(&text.chars().take(column).collect::<String>(), tab_size).len();
         let mut styles: Vec<(Range<usize>, HighlightStyle)> = Vec::new();
@@ -292,7 +299,7 @@ impl Workbench {
     fn execute_linked_editing_provider(&mut self, args: &[Value], cx: &mut Context<Self>) -> Outcome {
         let uri = args.first().cloned().unwrap_or(Value::Null);
         let position = args.get(1).cloned().unwrap_or(Value::Null);
-        let language = self.editors.editors.iter().find(|editor| editor.document.uri() == uri).map(|editor| editor.document.language_id.clone()).unwrap_or_default();
+        let language = self.editors.editors.iter().find(|editor| editor.document().uri() == uri).map(|editor| editor.document().language_id.clone()).unwrap_or_default();
         let candidate = Candidate { uri: &uri, language: &language };
         let handles: Vec<u64> = self.language_features.ordered(REGISTER, &candidate).iter().map(|registration| registration.handle).collect();
         let caller = self.host.caller();

@@ -131,7 +131,7 @@ fn answer(receiver: &Receiver<HostMessage>, method: &str, value: Value, cx: &mut
 }
 
 fn text(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext) -> String {
-    workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document.lines.join("\n"))
+    workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document().lines.join("\n"))
 }
 
 fn edit(line: u64, column: u64, end_column: u64, text: &str) -> Value {

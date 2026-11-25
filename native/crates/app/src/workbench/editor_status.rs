@@ -78,7 +78,7 @@ impl Workbench {
         });
         for (id, to_spaces) in [("editor.action.indentationToSpaces", true), ("editor.action.indentationToTabs", false)] {
             self.commands.register(id, move |workbench, _, _, cx| {
-                let before = workbench.editors.active().map(|editor| editor.document.indentation);
+                let before = workbench.editors.active().map(|editor| editor.document().indentation);
                 let outcome = workbench.run_on_active_editor(|editor| editor.convert_indentation(to_spaces), cx);
                 workbench.send_indentation_if_changed(before);
                 outcome
@@ -86,8 +86,10 @@ impl Workbench {
         }
         self.commands.register("editor.action.trimTrailingWhitespace", |workbench, _, _, cx| {
             let Some(editor) = workbench.editors.active() else { return Outcome::done() };
-            let overrides = Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
+            let document = editor.document();
+            let overrides = Overrides { resource: Some(&document.path), override_identifier: Some(&document.language_id) };
             let trim_in_regex_and_strings = workbench.settings.lock().unwrap().get_value(Some("files.trimTrailingWhitespaceInRegexAndStrings"), &overrides) != Some(json!(false));
+            drop(document);
             workbench.run_on_active_editor(|editor| editor.trim_trailing_whitespace(trim_in_regex_and_strings), cx)
         });
         self.commands.register("editor.action.toggleTabFocusMode", |workbench, _, _, cx| {
@@ -121,13 +123,13 @@ impl Workbench {
 
     fn active_creation_options(&self) -> config::indentation::CreationOptions {
         let editor = self.editors.active().expect("an indentation action needs an editor");
-        creation_options(&self.settings.lock().unwrap().configuration, &editor.document.path, &editor.document.language_id)
+        creation_options(&self.settings.lock().unwrap().configuration, &editor.document().path, &editor.document().language_id)
     }
 
     /// `model.updateOptions` on the active editor's model; the host hears the new options.
     fn update_active_indentation(&mut self, update: impl FnOnce(&mut OpenEditor), cx: &mut Context<Self>) {
         let Some(editor) = self.editors.active_mut() else { return };
-        let before = editor.document.indentation;
+        let before = editor.document().indentation;
         update(editor);
         self.send_indentation_if_changed(Some(before));
         cx.notify();
@@ -135,7 +137,7 @@ impl Workbench {
 
     fn send_indentation_if_changed(&self, before: Option<Indentation>) {
         let Some(editor) = self.editors.active() else { return };
-        if before.is_some_and(|before| before != editor.document.indentation) {
+        if before.is_some_and(|before| before != editor.document().indentation) {
             self.host.send_options(editor);
         }
     }
@@ -158,7 +160,7 @@ impl Workbench {
     /// `ChangeIndentationSizeAction.run`: sizes 1 to 8, the model's and the configured one described.
     fn show_tab_size_picker(&mut self, insert_spaces: bool, display_only: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some(editor) = self.editors.active() else { return };
-        let current = editor.document.indentation.tab_size;
+        let current = editor.document().indentation.tab_size;
         let configured = self.active_creation_options().tab_size;
         let rows = (1..=8)
             .map(|size| {
@@ -183,7 +185,7 @@ impl Workbench {
         let Some(editor) = self.editors.active() else {
             return self.show_no_editor_pick(window, cx);
         };
-        let selected = if editor.document.eol == "\n" { 0 } else { 1 };
+        let selected = if editor.document().eol == "\n" { 0 } else { 1 };
         let rows = vec![(Entry::Item(label_item("LF")), StatusPick::Eol(0)), (Entry::Item(label_item("CRLF")), StatusPick::Eol(1))];
         let mut input = QuickInput::new(0, Kind::QuickPick);
         input.placeholder = Some("Select End of Line Sequence".into());
@@ -196,7 +198,7 @@ impl Workbench {
         let Some(editor) = self.editors.active() else {
             return self.show_no_editor_pick(window, cx);
         };
-        let document = &editor.document;
+        let document = editor.document();
         let current_name = self.languages.name(&document.language_id);
         let mut rows = Vec::new();
         // Auto Detect only for a document with text.
@@ -204,7 +206,7 @@ impl Workbench {
             rows.push((Entry::Item(label_item("Auto Detect")), StatusPick::AutoDetectLanguage));
         }
         // An untitled document without an associated file has no settings to configure (e.g. "Untitled-1").
-        if document.scheme != "untitled" || editor.associated_file {
+        if document.scheme != "untitled" || editor.text_model().associated_file {
             rows.push((Entry::Item(label_item(&format!("Configure File Association for '{}'...", association_name(&document.path)))), StatusPick::ConfigureFileAssociation));
             rows.push((Entry::Item(label_item(&format!("Configure '{current_name}' language based settings..."))), StatusPick::ConfigureLanguageSettings));
         }
@@ -217,13 +219,14 @@ impl Workbench {
         let mut input = QuickInput::new(0, Kind::QuickPick);
         input.placeholder = Some("Select Language Mode".into());
         input.match_on_description = true;
+        drop(document);
         self.show_status_picker(input, rows, window, cx);
     }
 
     /// `configureFileAssociation`: the languages, the one the file name maps to described.
     fn show_file_association_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(editor) = self.editors.active() else { return };
-        let base = editor.document.path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+        let base = editor.document().path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
         let associations = self.settings.lock().unwrap().get_value(Some("files.associations"), &Overrides::default()).unwrap_or_default();
         let current = Languages::configured_language(&associations, Path::new(&base)).or_else(|| self.languages.guess_language(Path::new(&base), "").map(str::to_string));
         let rows = self
@@ -236,7 +239,7 @@ impl Workbench {
             })
             .collect();
         let mut input = QuickInput::new(0, Kind::QuickPick);
-        input.placeholder = Some(format!("Select Language Mode to Associate with '{}'", association_name(&editor.document.path)));
+        input.placeholder = Some(format!("Select Language Mode to Associate with '{}'", association_name(&editor.document().path)));
         self.show_status_picker(input, rows, window, cx);
     }
 
@@ -245,7 +248,7 @@ impl Workbench {
         let Some(editor) = self.editors.active() else {
             return self.show_no_editor_pick(window, cx);
         };
-        if editor.document.scheme == "untitled" {
+        if editor.document().scheme == "untitled" {
             return self.show_encoding_picker(false, window, cx);
         }
         let rows = vec![(Entry::Item(label_item("Reopen with Encoding")), StatusPick::EncodingAction { reopen: true }), (Entry::Item(label_item("Save with Encoding")), StatusPick::EncodingAction { reopen: false })];
@@ -258,7 +261,7 @@ impl Workbench {
     /// The encodings of `ChangeEncodingAction`: the configured one first, then by order, the guessed one on top.
     fn show_encoding_picker(&mut self, reopen: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some(editor) = self.editors.active() else { return };
-        let document = &editor.document;
+        let document = editor.document();
         let settings = self.settings.lock().unwrap();
         let resource = (document.scheme == "file").then_some(document.path.as_path());
         let configured = encoding::configured(&settings, resource);
@@ -287,6 +290,7 @@ impl Workbench {
         }
         let mut input = QuickInput::new(0, Kind::QuickPick);
         input.placeholder = Some(if reopen { "Select File Encoding to Reopen File" } else { "Select File Encoding to Save with" }.into());
+        drop(document);
         let id = self.show_status_picker(input, rows, window, cx);
         if let Some(active) = active {
             self.activate_status_pick(id, active, window, cx);
@@ -350,7 +354,7 @@ impl Workbench {
             StatusPick::ExtensionCommand(id, args) => self.run_code_lens_command(&id, args, window, cx),
             StatusPick::TabSize { size, insert_spaces, display_only } => self.update_active_indentation(
                 |editor| {
-                    let indentation = editor.document.indentation;
+                    let indentation = editor.document().indentation;
                     editor.set_indentation(match display_only {
                         true => Indentation { tab_size: size, ..indentation },
                         false => Indentation { tab_size: size, indent_size: Some(size), insert_spaces },
@@ -372,7 +376,7 @@ impl Workbench {
             StatusPick::AutoDetectLanguage => {
                 let Some(editor) = self.editors.active() else { return };
                 // shortcut: no languageDetection model (workbench/services/languageDetection is todo); a document no association matches keeps its language.
-                let Some(language_id) = self.languages.guess_language(&editor.document.path, &editor.document.lines[0]).map(str::to_string) else { return };
+                let Some(language_id) = self.languages.guess_language(&editor.document().path, &editor.document().lines[0]).map(str::to_string) else { return };
                 self.set_active_language(&language_id, cx);
             }
             StatusPick::Language(language_id) => self.set_active_language(&language_id, cx),
@@ -380,7 +384,7 @@ impl Workbench {
             StatusPick::ConfigureLanguageSettings => {
                 let Some(editor) = self.editors.active() else { return };
                 // `preferencesService.openUserSettings` runs as the command the preferences contribution registers.
-                let args = vec![json!({ "revealSetting": { "key": format!("[{}]", editor.document.language_id), "edit": true } })];
+                let args = vec![json!({ "revealSetting": { "key": format!("[{}]", editor.document().language_id), "edit": true } })];
                 let outcome = self.execute_command("workbench.action.openSettingsJson", args, window, cx);
                 show_failure("Preferences: Open User Settings (JSON)".into(), outcome, window, cx);
             }
@@ -404,7 +408,7 @@ impl Workbench {
     /// `setLanguageId` of the active editor's input.
     pub(super) fn set_active_language(&mut self, language_id: &str, cx: &mut Context<Self>) {
         let Some(editor) = self.editors.active() else { return };
-        let (scheme, path) = (editor.document.scheme.clone(), editor.document.path.clone());
+        let (scheme, path) = (editor.document().scheme.clone(), editor.document().path.clone());
         self.text_files.preferred_languages.insert((scheme.clone(), path.clone()));
         self.set_model_language(&scheme, &path, language_id, cx);
     }
@@ -412,13 +416,13 @@ impl Workbench {
     /// `TextModel.setLanguage`: the host hears the language and, for the visible editor, new indentation options.
     pub(super) fn set_model_language(&mut self, scheme: &str, path: &Path, language_id: &str, cx: &mut Context<Self>) {
         let model = self.editors.model_mut(scheme, path).expect("the caller found the model");
-        if model.document.language_id == language_id {
+        if model.document().language_id == language_id {
             return;
         }
-        let before = model.document.indentation;
+        let before = model.document().indentation;
         model.set_language(language_id, &self.languages, &self.settings.lock().unwrap());
-        self.host.send("ExtHostDocuments", "$acceptModelLanguageChanged", vec![model.document.uri(), json!(language_id)]);
-        let active = self.editors.active().is_some_and(|editor| editor.document.scheme == scheme && editor.document.path == path);
+        self.host.send("ExtHostDocuments", "$acceptModelLanguageChanged", vec![model.document().uri(), json!(language_id)]);
+        let active = self.editors.active().is_some_and(|editor| editor.document().scheme == scheme && editor.document().path == path);
         if active {
             self.send_indentation_if_changed(Some(before));
             self.refresh_language_status(cx);
@@ -431,7 +435,7 @@ impl Workbench {
     /// into workspace settings when they already associate that key, else user settings.
     fn write_file_association(&mut self, language_id: &str, cx: &mut Context<Self>) {
         let Some(editor) = self.editors.active() else { return };
-        let key = association_key(&editor.document.path);
+        let key = association_key(&editor.document().path);
         let mut settings = self.settings.lock().unwrap();
         let inspected = settings.configuration.inspect("files.associations", &Overrides::default());
         let in_workspace = inspected.workspace.value.as_ref().is_some_and(|value| value.get(&key).is_some_and(|value| !value.is_null() && value != false && value != ""));
@@ -471,19 +475,21 @@ impl Workbench {
 
     /// `setEncoding(encoding, EncodingMode.Decode)` reads the file again in the encoding; `Encode` saves with it.
     fn set_editor_encoding(&mut self, index: usize, encoding: &str, reopen: bool, window: &mut Window, cx: &mut Context<Self>) {
-        let document = &self.editors.editors[index].document;
+        let document = self.editors.editors[index].document();
         let (uri, scheme, path) = (document.uri(), document.scheme.clone(), document.path.clone());
         if reopen {
+            drop(document);
             if let Err(error) = self.set_model_encoding(&uri, &scheme, &path, encoding, cx) {
                 show_failure("Change File Encoding".into(), Outcome::error(error), window, cx);
             }
             return;
         }
+        drop(document);
         let editor = &mut self.editors.editors[index];
-        if editor.document.encoding == encoding {
+        if editor.document().encoding == encoding {
             return;
         }
-        editor.document.encoding = encoding.to_string();
+        editor.document_mut().encoding = encoding.to_string();
         self.host.send("ExtHostDocuments", "$acceptEncodingChanged", vec![uri, json!(encoding)]);
         cx.notify();
         if scheme != "untitled" {
@@ -598,7 +604,7 @@ mod tests {
         };
         let document = |cx: &mut gpui::VisualTestContext| {
             workbench.read_with(cx, |workbench, _| {
-                let document = &workbench.editors.active().unwrap().document;
+                let document = &workbench.editors.active().unwrap().document();
                 (document.lines.join("|"), document.indentation.insert_spaces, document.eol, document.language_id.clone(), document.encoding.clone())
             })
         };
@@ -625,7 +631,7 @@ mod tests {
         run("editor.action.indentUsingTabs", cx);
         assert_eq!(workbench.read_with(cx, |workbench, _| workbench.quick_inputs.current().unwrap().placeholder.clone()).as_deref(), Some("Select Tab Size for Current File"));
         pick("2", cx);
-        let indentation = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document.indentation);
+        let indentation = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document().indentation);
         assert_eq!((indentation.tab_size, indentation.indent_size(), indentation.insert_spaces), (2, 2, false));
 
         run("workbench.action.editor.changeEOL", cx);

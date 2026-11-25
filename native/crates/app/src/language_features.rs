@@ -51,8 +51,9 @@ impl LanguageFeatures {
         self.registrations.iter().find(|registration| registration.handle == handle)
     }
 
-    /// `allNoModel`: every registration of `method`.
-    pub fn all(&self, method: &str) -> impl Iterator<Item = &Registration> {
+    /// The providers registered with `method` in registration order, for registries without a selector
+    /// (`WorkspaceSymbolProviderRegistry`).
+    pub fn all<'a>(&'a self, method: &'a str) -> impl Iterator<Item = &'a Registration> {
         self.registrations.iter().filter(move |registration| registration.method == method)
     }
 

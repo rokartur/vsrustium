@@ -207,9 +207,9 @@ impl Workbench {
             Anchor::Position(position) => {
                 let editor = self.editors.active()?;
                 let viewport = self.editors.viewport;
-                let text = editor.document.lines.get(position.line)?;
+                let text = editor.document().lines.get(position.line)?.clone();
                 let bounds = self.text_area_bounds.get();
-                let x = visible_column(text, position.column, editor.document.indentation.tab_size) as f32 * viewport.char_width - editor.scroll.left + content_left;
+                let x = visible_column(&text, position.column, editor.document().indentation.tab_size) as f32 * viewport.char_width - editor.scroll.left + content_left;
                 let y = editor.line_top(editor.view_line(position.line), viewport) - editor.scroll.top + viewport.line_height;
                 point(bounds.origin.x + x, bounds.origin.y + y)
             }

@@ -125,8 +125,8 @@ impl Workbench {
     }
 
     fn ordered_formatters(&self, method: &str, editor: &OpenEditor) -> Vec<Formatter> {
-        let uri = editor.document.uri();
-        let candidate = Candidate { uri: &uri, language: &editor.document.language_id };
+        let uri = editor.document().uri();
+        let candidate = Candidate { uri: &uri, language: &editor.document().language_id };
         let handles: Vec<u64> = self.language_features.ordered(method, &candidate).iter().map(|registration| registration.handle).collect();
         handles.into_iter().filter_map(|handle| self.formatter(method, handle)).collect()
     }
@@ -150,7 +150,7 @@ impl Workbench {
 
     fn active_model_key(&self) -> Option<ModelKey> {
         let editor = self.editors.active()?;
-        Some(ModelKey { scheme: editor.document.scheme.clone(), path: editor.document.path.clone() })
+        Some(ModelKey { scheme: editor.document().scheme.clone(), path: editor.document().path.clone() })
     }
 
     /// `FormatDocumentAction.run`: the selected formatter for the document.
@@ -170,7 +170,7 @@ impl Workbench {
         }
         let Some(editor) = self.editors.active() else { return Outcome::done() };
         let ranges = editor.selections.iter().map(|selection| match selection.is_empty() {
-            true => (Position::new(selection.head.line, 0), Position::new(selection.head.line, editor.document.lines[selection.head.line].chars().count())),
+            true => (Position::new(selection.head.line, 0), Position::new(selection.head.line, editor.document().lines[selection.head.line].chars().count())),
             false => (selection.start(), selection.end()),
         });
         let ranges = ranges.collect();
@@ -198,7 +198,7 @@ impl Workbench {
     fn modified_ranges(&self, key: &ModelKey) -> Option<Option<Vec<(Position, Position)>>> {
         let editor = self.editors.model(&key.scheme, &key.path)?;
         let changes = self.quick_diff_line_changes(editor)?;
-        let lines = &editor.document.lines;
+        let lines = &editor.document().lines;
         let ranges = changes
             .iter()
             .map(|change| {
@@ -242,7 +242,7 @@ impl Workbench {
         let Some(editor) = self.editors.active() else { return Outcome::done() };
         let selection = editor.selection();
         let range = match selection.is_empty() {
-            true => (Position::new(selection.head.line, 0), Position::new(selection.head.line, editor.document.lines[selection.head.line].chars().count())),
+            true => (Position::new(selection.head.line, 0), Position::new(selection.head.line, editor.document().lines[selection.head.line].chars().count())),
             false => (selection.start(), selection.end()),
         };
         let formatters = self.range_formatters(editor);
@@ -269,7 +269,7 @@ impl Workbench {
         if count == 1 {
             return self.execute_command("editor.action.formatDocument", vec![], window, cx);
         }
-        let language = editor.document.language_id.clone();
+        let language = editor.document().language_id.clone();
         let message = format!("There is no formatter for '{language}' files installed.");
         let answer = dialog::show_message_box(window, PromptLevel::Info, &message, None, &["Install Formatter...", "Cancel"], None, cx);
         let workbench = cx.entity().downgrade();
@@ -344,9 +344,9 @@ impl Workbench {
     /// `_analyzeFormatter`: the formatter to use, or why none is picked.
     fn analyze_formatter(&self, formatters: &[Formatter], key: &ModelKey, kind: FormattingKind) -> Result<Formatter, String> {
         let editor = self.editors.model(&key.scheme, &key.path).expect("a formatted model");
-        let language = editor.document.language_id.as_str();
+        let language = editor.document().language_id.clone();
         let default_formatter = self.language_setting(editor, "editor.defaultFormatter");
-        let language_name = self.languages.name(language);
+        let language_name = self.languages.name(&language);
         match default_formatter.as_str().filter(|id| !id.is_empty()) {
             Some(id) => {
                 if let Some(formatter) = formatters.iter().find(|formatter| formatter.extension_id.eq_ignore_ascii_case(id)) {
@@ -368,7 +368,7 @@ impl Workbench {
 
     /// A setting for the model's resource and language.
     pub(super) fn language_setting(&self, editor: &OpenEditor, key: &str) -> Value {
-        let overrides = config::configuration::Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
+        let overrides = config::configuration::Overrides { resource: Some(&editor.document().path), override_identifier: Some(&editor.document().language_id) };
         self.settings.lock().unwrap().get_value(Some(key), &overrides).unwrap_or(Value::Null)
     }
 
@@ -412,12 +412,12 @@ impl Workbench {
     /// the cursor changed meanwhile.
     pub(super) fn format_document_with_provider(&mut self, formatter: Formatter, key: ModelKey, mode: Mode, cx: &mut Context<Self>) -> Task<bool> {
         let Some(editor) = self.editors.model(&key.scheme, &key.path) else { return Task::ready(false) };
-        let uri = editor.document.uri();
+        let uri = editor.document().uri();
         let options = formatting_options(editor);
         let call = match formatter.whole_document {
             false => self.host.call_cancellable("ExtHostLanguageFeatures", "$provideDocumentFormattingEdits", vec![json!(formatter.handle), uri, options]),
             true => {
-                let lines = &editor.document.lines;
+                let lines = &editor.document().lines;
                 let end = bulk_end(lines);
                 self.host.call_cancellable("ExtHostLanguageFeatures", "$provideDocumentRangeFormattingEdits", vec![json!(formatter.handle), uri, range_value(lines, Position::new(0, 0), end), options])
             }
@@ -434,8 +434,8 @@ impl Workbench {
     /// intersect.
     pub(super) fn format_ranges_with_provider(&mut self, formatter: Formatter, key: ModelKey, ranges: Vec<(Position, Position)>, cx: &mut Context<Self>) -> Task<bool> {
         let Some(editor) = self.editors.model(&key.scheme, &key.path) else { return Task::ready(false) };
-        let lines = editor.document.lines.clone();
-        let uri = editor.document.uri();
+        let lines = editor.document().lines.clone();
+        let uri = editor.document().uri();
         let options = formatting_options(editor);
         let ranges = merge_touching(ranges);
         let state = self.edit_state(&key);
@@ -483,8 +483,8 @@ impl Workbench {
     /// Position)` and `TextModelCancellationTokenSource` watch.
     fn edit_state(&self, key: &ModelKey) -> (u32, Option<Position>) {
         let editor = self.editors.model(&key.scheme, &key.path).expect("a formatted model");
-        let shown = self.editors.active().is_some_and(|active| active.document.is(&key.scheme, &key.path));
-        (editor.version_id, shown.then(|| editor.selection().head))
+        let shown = self.editors.active().is_some_and(|active| active.document().is(&key.scheme, &key.path));
+        (editor.text_model().version_id, shown.then(|| editor.selection().head))
     }
 
     /// `computeMoreMinimalEdits` of each list, then `FormattingEdit.execute` between undo stops (explicit) with the
@@ -510,7 +510,7 @@ impl Workbench {
                     Some((start, end, text.to_owned()))
                 })
                 .collect();
-            edits.extend(more_minimal_edits(&editor.document.lines, raw));
+            edits.extend(more_minimal_edits(&editor.document().lines, raw));
         }
         if edits.is_empty() && eol.is_none() {
             return false;
@@ -522,7 +522,7 @@ impl Workbench {
         let scroll = StableScroll::capture(editor, viewport);
         let eol_change = eol.and_then(|sequence| editor.push_eol(sequence));
         // `_isFullModelReplaceEdit`: one edit over the whole model keeps the markers (`replace`), others move them.
-        let whole = edits.len() == 1 && edits[0].0 == Position::new(0, 0) && edits[0].1 == bulk_end(&editor.document.lines);
+        let whole = edits.len() == 1 && edits[0].0 == Position::new(0, 0) && edits[0].1 == bulk_end(&editor.document().lines);
         let edits = edits.into_iter().map(|(start, end, text)| (start, end, text, !whole)).collect();
         let change = editor.execute_edits(edits, None, EditReason::Unknown("formatEditsCommand"));
         if explicit {
@@ -557,25 +557,25 @@ impl Workbench {
             return;
         }
         let Some(last) = typed.chars().last() else { return };
-        let uri = editor.document.uri();
-        let candidate = Candidate { uri: &uri, language: &editor.document.language_id };
+        let uri = editor.document().uri();
+        let candidate = Candidate { uri: &uri, language: &editor.document().language_id };
         let Some(support) = self.language_features.ordered(ON_TYPE, &candidate).first().map(|registration| (registration.handle, registration.args[2].clone())) else { return };
         let triggers: Vec<char> = support.1.as_array().into_iter().flatten().filter_map(|trigger| trigger.as_str()?.chars().next()).collect();
         if !triggers.contains(&last) || editor.selections.len() > 1 || !editor.selection().is_empty() {
             return;
         }
         let position = editor.selection().head;
-        let lines = &editor.document.lines;
+        let lines = &editor.document().lines;
         let position_value = json!({ "lineNumber": position.line + 1, "column": utf16_column(&lines[position.line], position.column) + 1 });
         let call = self.host.call_cancellable("ExtHostLanguageFeatures", "$provideOnTypeFormattingEdits", vec![json!(support.0), uri, position_value, json!(last.to_string()), formatting_options(editor)]);
         let key = self.active_model_key().expect("an active editor");
-        let (model_id, version_id) = (editor.model_id, editor.version_id);
+        let (model_id, version_id) = (editor.model_id, editor.text_model().version_id);
         let task = cx.spawn(async move |workbench, cx| {
             let Ok(Ok(edits)) = call.await else { return };
             let _ = workbench.update(cx, |workbench, cx| {
                 let Some(on_type) = workbench.formatting.on_type.take() else { return };
                 let Some(editor) = workbench.editors.active().filter(|editor| editor.model_id == on_type.model_id) else { return };
-                if editor.version_id != on_type.version_id || workbench.language_setting(editor, "editor.formatOnType") != json!(true) {
+                if editor.text_model().version_id != on_type.version_id || workbench.language_setting(editor, "editor.formatOnType") != json!(true) {
                     return;
                 }
                 let state = workbench.edit_state(&key);
@@ -601,9 +601,9 @@ impl Workbench {
         let Some(editor) = super::host_requests::uri_parts(&args.first().cloned().unwrap_or_default()).ok().and_then(|(scheme, path)| self.editors.model(scheme, &path)) else {
             return Outcome::Ready(Err(crate::commands::error_value("Illegal argument")));
         };
-        let uri = editor.document.uri();
+        let uri = editor.document().uri();
         let options = args.get(if range.is_some() { 2 } else { 1 }).cloned().unwrap_or_else(|| formatting_options(editor));
-        let whole = range_value(&editor.document.lines, Position::new(0, 0), bulk_end(&editor.document.lines));
+        let whole = range_value(&editor.document().lines, Position::new(0, 0), bulk_end(&editor.document().lines));
         let calls: Vec<(&'static str, Vec<Value>)> = match &range {
             None => self
                 .document_formatters(editor)
@@ -616,7 +616,7 @@ impl Workbench {
             Some(range) => self.range_formatters(editor).into_iter().map(|formatter| ("$provideDocumentRangeFormattingEdits", vec![json!(formatter.handle), uri.clone(), range.clone(), options.clone()])).collect(),
         };
         let call = self.host.caller();
-        let key = ModelKey { scheme: editor.document.scheme.clone(), path: editor.document.path.clone() };
+        let key = ModelKey { scheme: editor.document().scheme.clone(), path: editor.document().path.clone() };
         let (sender, receiver) = oneshot::channel();
         cx.spawn(async move |workbench, cx| {
             for (method, args) in calls {
@@ -638,14 +638,14 @@ impl Workbench {
         let Some(editor) = super::host_requests::uri_parts(&args.first().cloned().unwrap_or_default()).ok().and_then(|(scheme, path)| self.editors.model(scheme, &path)) else {
             return Outcome::Ready(Err(crate::commands::error_value("Illegal argument")));
         };
-        let uri = editor.document.uri();
-        let candidate = Candidate { uri: &uri, language: &editor.document.language_id };
+        let uri = editor.document().uri();
+        let candidate = Candidate { uri: &uri, language: &editor.document().language_id };
         let Some(handle) = self.language_features.ordered(ON_TYPE, &candidate).first().map(|registration| registration.handle) else {
             return Outcome::Ready(Ok(Value::Null));
         };
         let options = args.get(3).cloned().unwrap_or_else(|| formatting_options(editor));
         let call = self.host.call_cancellable("ExtHostLanguageFeatures", "$provideOnTypeFormattingEdits", vec![json!(handle), uri, args.get(1).cloned().unwrap_or_default(), args.get(2).cloned().unwrap_or_default(), options]);
-        let key = ModelKey { scheme: editor.document.scheme.clone(), path: editor.document.path.clone() };
+        let key = ModelKey { scheme: editor.document().scheme.clone(), path: editor.document().path.clone() };
         let (sender, receiver) = oneshot::channel();
         cx.spawn(async move |workbench, cx| {
             let edits = match call.await {
@@ -661,7 +661,7 @@ impl Workbench {
     /// `computeMoreMinimalEdits` as `TextEdit` values.
     fn minimal_edit_values(&self, key: &ModelKey, edits: &Value) -> Value {
         let Some(editor) = self.editors.model(&key.scheme, &key.path) else { return edits.clone() };
-        let lines = &editor.document.lines;
+        let lines = &editor.document().lines;
         let mut eol = None;
         let raw = edits
             .as_array()
@@ -733,7 +733,7 @@ async fn pick_and_persist_default_formatter(workbench: WeakEntity<Workbench>, wi
     let picked = window
         .update(cx, |_, window, cx| workbench.update(cx, |workbench, cx| {
             let editor = workbench.editors.model(&key.scheme, &key.path)?;
-            let language_name = workbench.languages.name(&editor.document.language_id).to_owned();
+            let language_name = workbench.languages.name(&editor.document().language_id).to_owned();
             let entries = formatters
                 .iter()
                 .enumerate()
@@ -757,7 +757,7 @@ async fn pick_and_persist_default_formatter(workbench: WeakEntity<Workbench>, wi
     workbench
         .update(cx, |workbench, _| {
             let editor = workbench.editors.model(&key.scheme, &key.path)?;
-            let language = editor.document.language_id.clone();
+            let language = editor.document().language_id.clone();
             let mut settings = workbench.settings.lock().unwrap();
             match settings.update_value("editor.defaultFormatter", Some(&json!(formatter.extension_id)), config::service::Target::User, Some(&key.path), &[language]) {
                 Ok(change) if !change.is_empty() => workbench.host.send_configuration_change(&settings, &change),
@@ -793,7 +793,7 @@ fn maybe_quotes(name: &str) -> String {
 
 /// `model.getFormattingOptions()`.
 fn formatting_options(editor: &OpenEditor) -> Value {
-    let indentation = editor.document.indentation;
+    let indentation = editor.document().indentation;
     json!({ "tabSize": indentation.tab_size, "indentSize": indentation.indent_size.unwrap_or(indentation.tab_size), "insertSpaces": indentation.insert_spaces })
 }
 

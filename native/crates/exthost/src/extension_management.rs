@@ -22,10 +22,23 @@ const DELETED_FOLDER_POSTFIX: &str = ".vsctmp";
 
 pub struct UserExtensions {
     pub folder: PathBuf,
+    /// The current profile's `extensions.json`: `<folder>/extensions.json` in the default profile.
+    pub extensions_file: PathBuf,
+    /// `User/profiles`, whose profiles' `extensions.json` keep an uninstalled extension's folder in use.
+    pub profiles_home: Option<PathBuf>,
     pub product_version: String,
 }
 
 impl UserExtensions {
+    /// The default profile's extensions in `folder`, with no other profiles.
+    pub fn new(folder: PathBuf, product_version: &str) -> UserExtensions {
+        UserExtensions { extensions_file: folder.join("extensions.json"), folder, profiles_home: None, product_version: product_version.into() }
+    }
+
+    pub fn clone_for_profile(&self) -> UserExtensions {
+        UserExtensions { folder: self.folder.clone(), extensions_file: self.extensions_file.clone(), profiles_home: self.profiles_home.clone(), product_version: self.product_version.clone() }
+    }
+
     /// `scanUserExtensions` without invalid extensions: the profile's entries, the latest version of each id.
     /// An extension that fails validation is left out with its reason on stderr, as the scanner logs it.
     pub fn scan(&self) -> anyhow::Result<Vec<ScannedExtension>> {
@@ -162,11 +175,12 @@ impl UserExtensions {
         Ok(())
     }
 
-    /// The profile's entries; without `extensions.json` the folder's extensions are added first
-    /// (`doInitializeDefaultProfileExtensions`).
+    /// The profile's entries; without `extensions.json` the default profile adds the folder's extensions first
+    /// (`doInitializeDefaultProfileExtensions`), another profile starts empty.
     fn profile(&self) -> anyhow::Result<Vec<Value>> {
-        let file = self.folder.join("extensions.json");
-        match std::fs::read_to_string(&file) {
+        let file = &self.extensions_file;
+        match std::fs::read_to_string(file) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound && *file != self.folder.join("extensions.json") => Ok(Vec::new()),
             Ok(text) if text.trim().is_empty() => Ok(Vec::new()),
             Ok(text) => match serde_json::from_str(&text)? {
                 Value::Array(entries) => Ok(entries),
@@ -208,7 +222,10 @@ impl UserExtensions {
 
     fn write_profile(&self, entries: &[Value]) -> anyhow::Result<()> {
         std::fs::create_dir_all(&self.folder)?;
-        Ok(std::fs::write(self.folder.join("extensions.json"), serde_json::to_string(entries)?)?)
+        if let Some(parent) = self.extensions_file.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        Ok(std::fs::write(&self.extensions_file, serde_json::to_string(entries)?)?)
     }
 
     fn entry_location(&self, entry: &Value) -> PathBuf {
@@ -286,15 +303,29 @@ impl UserExtensions {
         Ok(std::fs::write(file, serde_json::to_string(removed)?)?)
     }
 
+    /// ExtensionsWatcher `deleteExtensions`: only a folder no profile lists any more is marked.
     fn set_for_removal(&self, entries: &[Value]) -> anyhow::Result<()> {
         let mut removed = self.removed()?;
+        let in_use = self.locations_in_profiles();
         for entry in entries {
             let location = self.entry_location(entry);
-            if location.exists() {
+            if location.exists() && !in_use.contains(&location) {
                 removed.insert(format!("{}-{}", entry_id(entry).to_lowercase(), entry["version"].as_str().unwrap_or_default()), json!(true));
             }
         }
         self.write_removed(&removed)
+    }
+
+    fn locations_in_profiles(&self) -> Vec<PathBuf> {
+        let profiles = self.profiles_home.as_ref().and_then(|home| std::fs::read_dir(home).ok());
+        let profile_files = profiles.into_iter().flatten().flatten().map(|profile| profile.path().join("extensions.json"));
+        let mut locations = Vec::new();
+        for file in std::iter::once(self.folder.join("extensions.json")).chain(profile_files) {
+            let Ok(text) = std::fs::read_to_string(&file) else { continue };
+            let entries: Vec<Value> = serde_json::from_str(&text).unwrap_or_default();
+            locations.extend(entries.iter().map(|entry| self.entry_location(entry)));
+        }
+        locations
     }
 
     fn unset_for_removal(&self, key: &str) -> anyhow::Result<()> {

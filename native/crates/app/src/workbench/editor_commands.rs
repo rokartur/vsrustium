@@ -326,7 +326,9 @@ impl Workbench {
         self.commands.register("editor.action.forceRetokenize", |workbench, _, _, cx| {
             let Some(editor) = workbench.editors.active_mut() else { return Outcome::done() };
             let started = std::time::Instant::now();
-            editor.document.tokens.force_retokenize(&editor.document.lines);
+            let mut document = editor.document_mut();
+            let document = &mut *document;
+            document.tokens.force_retokenize(&document.lines);
             eprintln!("tokenization took {}", started.elapsed().as_secs_f64() * 1000.);
             cx.notify();
             Outcome::done()
@@ -359,7 +361,8 @@ impl Workbench {
                 multicursor_text: multicursor_text.as_deref(),
                 is_block: metadata["isBlock"] == json!(true),
             };
-            let overrides = Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
+            let (resource, language) = (editor.document().path.clone(), editor.document().language_id.clone());
+            let overrides = Overrides { resource: Some(&resource), override_identifier: Some(&language) };
             let settings = workbench.settings.lock().unwrap();
             let spread = settings.get_value(Some("editor.multiCursorPaste"), &overrides) != Some(json!("full"));
             let overtype = workbench.overtype && settings.get_value(Some("editor.overtypeOnPaste"), &overrides) != Some(json!(false));
@@ -426,21 +429,23 @@ impl Workbench {
     /// `ViewModel.getRichTextToCopy` for the active editor with the theme's token colors and the editor font.
     fn rich_text_to_copy(&self, empty_selection_clipboard: bool) -> Option<(String, String)> {
         let editor = self.editors.active()?;
-        let overrides = Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
+        let (resource, language) = (editor.document().path.clone(), editor.document().language_id.clone());
+        let overrides = Overrides { resource: Some(&resource), override_identifier: Some(&language) };
         let settings = self.settings.lock().unwrap();
         let setting = |key| settings.get_value(Some(key), &overrides);
         let font = clipboard::font_info(setting("editor.fontFamily"), setting("editor.fontWeight"), setting("editor.fontSize"), setting("editor.lineHeight"), 1. + f64::from(self.editor_zoom.level()) * 0.1);
         drop(settings);
         let mut color_map = vec!["#000000".to_string()];
         color_map.extend(self.theme.tokens.color_map().iter().skip(1).map(|color| color[..7].to_lowercase()));
-        let document = &editor.document;
+        let document = &editor.document();
         let line_tokens = |line| document.tokens.html_tokens(&self.theme, &document.lines, line);
         clipboard::rich_text_to_copy(&document.lines, &document.language_id, &editor.selections, empty_selection_clipboard, &font, &color_map, document.indentation.tab_size, line_tokens)
     }
 
     /// A boolean editor setting for the editor's resource and language that defaults to true.
     fn editor_bool_setting(&self, editor: &OpenEditor, key: &str) -> bool {
-        let overrides = Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
+        let (resource, language) = (editor.document().path.clone(), editor.document().language_id.clone());
+        let overrides = Overrides { resource: Some(&resource), override_identifier: Some(&language) };
         self.settings.lock().unwrap().get_value(Some(key), &overrides) != Some(json!(false))
     }
 
@@ -482,7 +487,8 @@ impl Workbench {
     /// `editor.wordSegmenterLocales`.
     fn word_classifier(&self, default_separators: bool) -> Option<WordClassifier> {
         let editor = self.editors.active()?;
-        let overrides = Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
+        let (resource, language) = (editor.document().path.clone(), editor.document().language_id.clone());
+        let overrides = Overrides { resource: Some(&resource), override_identifier: Some(&language) };
         let settings = self.settings.lock().unwrap();
         let configured = settings.get_value(Some("editor.wordSeparators"), &overrides);
         let separators = match configured.as_ref().and_then(Value::as_str) {
@@ -498,12 +504,14 @@ impl Workbench {
     fn run_word_delete(&mut self, word_delete: WordDelete, id: &'static str, cx: &mut Context<Self>) -> Outcome {
         let Some(classifier) = self.word_classifier(false) else { return Outcome::done() };
         let editor = self.editors.active().expect("word_classifier found it");
-        let overrides = Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
+        let (resource, language) = (editor.document().path.clone(), editor.document().language_id.clone());
+        let overrides = Overrides { resource: Some(&resource), override_identifier: Some(&language) };
         let settings = self.settings.lock().unwrap();
         let setting = |key| settings.get_value(Some(key), &overrides).and_then(|value| value.as_str().map(str::to_string)).unwrap_or_default();
         let (delete, brackets, quotes) = (setting("editor.autoClosingDelete"), setting("editor.autoClosingBrackets"), setting("editor.autoClosingQuotes"));
         drop(settings);
-        let pairs = self.languages.rules(&editor.document.language_id).map(|rules| rules.auto_closing_pairs.clone()).unwrap_or_default();
+        let language = editor.document().language_id.clone();
+        let pairs = self.languages.rules(&language).map(|rules| rules.auto_closing_pairs.clone()).unwrap_or_default();
         let auto_closing = AutoClosing { delete: &delete, brackets: &brackets, quotes: &quotes, pairs: &pairs, auto_closed: &[] };
         self.run_on_active_editor(|editor| editor.delete_word(&classifier, &auto_closing, word_delete, id), cx)
     }
@@ -520,9 +528,11 @@ impl Workbench {
     /// editor's language; each model change it makes reaches the host in turn.
     pub(super) fn run_indenting(&mut self, command: impl FnOnce(&mut OpenEditor, AutoIndent) -> Vec<ContentChanged>, cx: &mut Context<Self>) -> Outcome {
         let Some(editor) = self.editors.active_mut() else { return Outcome::done() };
-        let overrides = Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
+        let document = editor.document();
+        let overrides = Overrides { resource: Some(&document.path), override_identifier: Some(&document.language_id) };
         let strategy = Strategy::from_setting(self.settings.lock().unwrap().get_value(Some("editor.autoIndent"), &overrides).as_ref());
         let selections_before = editor.selections.clone();
+        drop(document);
         let changes = command(editor, AutoIndent { languages: &self.languages, strategy });
         self.editor_changes_ran(changes, selections_before, cx)
     }
@@ -561,12 +571,14 @@ impl Workbench {
     /// smartSelect.ts `GrowSelectionAction` and `ShrinkSelectionAction` with the `editor.smartSelect` options.
     fn run_smart_select(&mut self, forward: bool, cx: &mut Context<Self>) -> Outcome {
         let Some(editor) = self.editors.active_mut() else { return Outcome::done() };
-        let overrides = Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
+        let document = editor.document();
+        let overrides = Overrides { resource: Some(&document.path), override_identifier: Some(&document.language_id) };
         let settings = self.settings.lock().unwrap();
         let enabled = |key| settings.get_value(Some(key), &overrides) != Some(json!(false));
         let options = smart_select::Options { select_leading_and_trailing_whitespace: enabled("editor.smartSelect.selectLeadingAndTrailingWhitespace"), select_subwords: enabled("editor.smartSelect.selectSubwords") };
         drop(settings);
         let selections_before = editor.selections.clone();
+        drop(document);
         editor.smart_select(forward, &self.languages, options);
         self.editor_command_ran(None, selections_before, cx)
     }
@@ -576,9 +588,9 @@ impl Workbench {
         let Some(editor) = self.editors.active_mut() else { return Outcome::done() };
         let selections_before = editor.selections.clone();
         let Some((change, (line, range))) = editor.in_place_replace(up, &self.languages) else { return Outcome::done() };
-        let version = editor.version_id;
+        let version = editor.text_model().version_id;
         editor.value_set_replacement = Some((version, line, range));
-        let (scheme, path) = (editor.document.scheme.clone(), editor.document.path.clone());
+        let (scheme, path) = (editor.document().scheme.clone(), editor.document().path.clone());
         cx.spawn(async move |workbench, cx| {
             cx.background_executor().timer(Duration::from_millis(350)).await;
             let _ = workbench.update(cx, |workbench, cx| {
@@ -597,11 +609,13 @@ impl Workbench {
     /// language at each cursor.
     fn run_comment_action(&mut self, kind: Option<LineCommentKind>, cx: &mut Context<Self>) -> Outcome {
         let Some(editor) = self.editors.active_mut() else { return Outcome::done() };
-        let overrides = Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
+        let document = editor.document();
+        let overrides = Overrides { resource: Some(&document.path), override_identifier: Some(&document.language_id) };
         let settings = self.settings.lock().unwrap();
         let insert_space = settings.get_value(Some("editor.comments.insertSpace"), &overrides) != Some(json!(false));
         let ignore_empty_lines = settings.get_value(Some("editor.comments.ignoreEmptyLines"), &overrides) != Some(json!(false));
         drop(settings);
+        drop(document);
         let selections_before = editor.selections.clone();
         let change = match kind {
             Some(kind) => editor.comment_lines(kind, insert_space, ignore_empty_lines, &self.languages),

@@ -53,11 +53,11 @@ mod tests {
     /// `createModelReference` from the extension host at `opened`: a model without an editor.
     fn referenced(group: &mut EditorGroup, document: TextDocument, opened: Instant) {
         let index = group.open_model(document);
-        group.models[index].host_reference = Some(opened);
+        group.models[index].text_model_mut().host_reference = Some(opened);
     }
 
     fn text(group: &EditorGroup, scheme: &str, path: &str) -> Option<String> {
-        group.model(scheme, Path::new(path)).map(|model| model.document.lines.join("\n"))
+        group.model(scheme, Path::new(path)).map(|model| model.document().lines.join("\n"))
     }
 
     fn make_dirty(group: &mut EditorGroup, scheme: &str, path: &str) {
@@ -137,7 +137,7 @@ mod tests {
         group.release_models(released);
         assert!(group.model("file", Path::new("/path/file_resolver.txt")).is_some(), "not disposed because model still dirty");
         let model = group.model_mut("file", Path::new("/path/file_resolver.txt")).unwrap();
-        model.host_reference = Some(released);
+        model.text_model_mut().host_reference = Some(released);
         model.undo();
         group.release_models(released);
         assert!(group.model("file", Path::new("/path/file_resolver.txt")).is_some(), "not disposed because we got another ref meanwhile");
@@ -202,7 +202,7 @@ mod tests {
         let opened = Instant::now();
         let mut group = EditorGroup::default();
         group.open(document("inmemory", "/test/inMemoryRefcount", "Hello InMemory"), false);
-        group.editors[0].host_reference = Some(opened);
+        group.editors[0].text_model_mut().host_reference = Some(opened);
         group.close(0);
         assert!(group.model("inmemory", Path::new("/test/inMemoryRefcount")).is_some(), "should not dispose while ref2 is still alive");
         group.release_models(opened + HOST_REFERENCE_AGE);
@@ -216,7 +216,7 @@ mod tests {
         group.open(document("inmemory", "/test/inMemoryReuse", "Hello Reuse"), false);
         let model1 = group.editors[0].model_id;
         // The host acquires the model before the editor releases it.
-        group.editors[0].host_reference = Some(opened);
+        group.editors[0].text_model_mut().host_reference = Some(opened);
         group.close(0);
         group.show_model(0, false);
         assert_eq!(group.editors[0].model_id, model1, "should reuse the same model instance");

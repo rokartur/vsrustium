@@ -146,13 +146,13 @@ fn a_reopened_file_with_the_same_text_keeps_its_undo_stack() {
     let mut group = EditorGroup::default();
     group.open(file("text"), false);
     insert_one_and_save(&mut group);
-    assert_eq!(group.editors[0].document.lines, ["text1"]);
+    assert_eq!(group.editors[0].document().lines, ["text1"]);
     group.close(0);
     group.open(file("text1"), false);
     let editor = &mut group.editors[0];
     assert!(!editor.is_dirty());
     assert!(editor.undo().is_some());
-    assert_eq!(editor.document.lines, ["text"]);
+    assert_eq!(editor.document().lines, ["text"]);
     assert!(editor.is_dirty());
 }
 
@@ -161,10 +161,10 @@ fn a_reopened_file_with_the_same_text_keeps_its_version_id_and_alternative_versi
     let mut group = EditorGroup::default();
     group.open(file("text"), false);
     insert_one_and_save(&mut group);
-    let (version, alternative) = (group.editors[0].version_id, group.editors[0].alternative_version_id());
+    let (version, alternative) = (group.editors[0].text_model().version_id, group.editors[0].alternative_version_id());
     group.close(0);
     group.open(file("text1"), false);
-    assert_eq!((group.editors[0].version_id, group.editors[0].alternative_version_id()), (version, alternative));
+    assert_eq!((group.editors[0].text_model().version_id, group.editors[0].alternative_version_id()), (version, alternative));
 }
 
 #[test]
@@ -175,7 +175,7 @@ fn a_reopened_file_with_other_text_starts_a_new_undo_stack() {
     group.close(0);
     group.open(file("text2"), false);
     assert!(group.editors[0].undo().is_none());
-    assert_eq!(group.editors[0].document.lines, ["text2"]);
+    assert_eq!(group.editors[0].document().lines, ["text2"]);
     group.close(0);
     group.open(file("text1"), false);
     assert!(group.editors[0].undo().is_none(), "the entry went with the first create");

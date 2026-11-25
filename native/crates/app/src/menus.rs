@@ -26,11 +26,17 @@ pub enum MenuId {
     MenubarSelectionMenu,
     MenubarViewMenu,
     MenubarGoMenu,
+    MenubarLayoutMenu,
+    MenubarSwitchEditorMenu,
+    MenubarSwitchGroupMenu,
     MenubarHelpMenu,
     MenubarPreferencesMenu,
     MenubarAppearanceMenu,
     ActivityBarPositionMenu,
     ThemesSubMenu,
+    /// userDataProfile.ts `ProfilesMenu` and `OpenProfileMenu`.
+    ProfilesMenu,
+    OpenProfileMenu,
     GlobalActivity,
     MenubarCopy,
     MenubarShare,
@@ -40,6 +46,7 @@ pub enum MenuId {
     EditorContext,
     EditorContextCopy,
     EditorContextShare,
+    EditorContextPeek,
     EditorTitleContext,
     EditorLineNumberContext,
     EditorTitleContextShare,
@@ -52,8 +59,11 @@ pub enum MenuId {
     ScmInputBox,
     DiffEditorHunkToolbar,
     EditorTitle,
+    ViewTitle,
+    ViewItemContext,
     EditorContent,
     TerminalEditorInstanceContext,
+    TerminalInstanceContext,
     /// A `contributes.submenus` entry, `MenuId.for('api:<id>')`, by registration order.
     Api(usize),
     #[cfg(test)]
@@ -148,6 +158,45 @@ const WORKBENCH_MENUS: &[Row] = &[
         Some("activeEditorCanRevert || resourceScheme != 'untitled' && foldersViewVisible && sideBarFocus"),
     ),
     (MenuId::MenubarGoMenu, None, "workbench.action.quickOpen", "Go to &&File...", "3_global_nav", 1., None, None),
+    // searchActionsSymbol.ts and gotoSymbolQuickAccess.ts
+    (MenuId::MenubarGoMenu, None, "workbench.action.showAllSymbols", "Go to Symbol in &&Workspace...", "3_global_nav", 2., None, None),
+    (MenuId::MenubarGoMenu, None, "workbench.action.gotoSymbol", "Go to &&Symbol in Editor...", "4_symbol_nav", 1., None, None),
+    // editor.contribution.ts, editorActions.ts and openEditorsView.ts: the editor group items of the menu bar.
+    (MenuId::MenubarRecentMenu, None, "workbench.action.reopenClosedEditor", "&&Reopen Closed Editor", "1_editor", 1., None, Some("canReopenClosedEditor")),
+    (MenuId::MenubarViewMenu, Some(MenuId::MenubarLayoutMenu), "", "Editor &&Layout", "2_appearance", 2., Some("!isSessionsWindow"), None),
+    (MenuId::MenubarLayoutMenu, None, "workbench.action.splitEditorUp", "Split &&Up", "1_split", 1., None, None),
+    (MenuId::MenubarLayoutMenu, None, "workbench.action.splitEditorDown", "Split &&Down", "1_split", 2., None, None),
+    (MenuId::MenubarLayoutMenu, None, "workbench.action.splitEditorLeft", "Split &&Left", "1_split", 3., None, None),
+    (MenuId::MenubarLayoutMenu, None, "workbench.action.splitEditorRight", "Split &&Right", "1_split", 4., None, None),
+    (MenuId::MenubarLayoutMenu, None, "workbench.action.editorLayoutSingle", "&&Single", "4_layouts", 1., None, None),
+    (MenuId::MenubarLayoutMenu, None, "workbench.action.editorLayoutTwoColumns", "&&Two Columns", "4_layouts", 3., None, None),
+    (MenuId::MenubarLayoutMenu, None, "workbench.action.editorLayoutThreeColumns", "T&&hree Columns", "4_layouts", 4., None, None),
+    (MenuId::MenubarLayoutMenu, None, "workbench.action.editorLayoutTwoRows", "T&&wo Rows", "4_layouts", 5., None, None),
+    (MenuId::MenubarLayoutMenu, None, "workbench.action.editorLayoutThreeRows", "Three &&Rows", "4_layouts", 6., None, None),
+    (MenuId::MenubarLayoutMenu, None, "workbench.action.editorLayoutTwoByTwoGrid", "&&Grid (2x2)", "4_layouts", 7., None, None),
+    (MenuId::MenubarLayoutMenu, None, "workbench.action.editorLayoutTwoRowsRight", "Two R&&ows Right", "4_layouts", 8., None, None),
+    (MenuId::MenubarLayoutMenu, None, "workbench.action.editorLayoutTwoColumnsBottom", "Two &&Columns Bottom", "4_layouts", 9., None, None),
+    (MenuId::MenubarLayoutMenu, None, "workbench.action.toggleEditorGroupLayout", "Flip &&Layout", "5_flip", 1., None, None),
+    (MenuId::MenubarGoMenu, None, "workbench.action.navigateBack", "&&Back", "1_history_nav", 1., None, Some("canNavigateBack")),
+    (MenuId::MenubarGoMenu, None, "workbench.action.navigateForward", "&&Forward", "1_history_nav", 2., None, Some("canNavigateForward")),
+    (MenuId::MenubarGoMenu, None, "workbench.action.navigateToLastEditLocation", "&&Last Edit Location", "1_history_nav", 3., None, Some("canNavigateToLastEditLocation")),
+    (MenuId::MenubarGoMenu, Some(MenuId::MenubarSwitchEditorMenu), "", "Switch &&Editor", "2_editor_nav", 1., None, None),
+    (MenuId::MenubarSwitchEditorMenu, None, "workbench.action.openNextRecentlyUsedEditor", "&&Next Used Editor", "3_any_used", 1., None, None),
+    (MenuId::MenubarSwitchEditorMenu, None, "workbench.action.openPreviousRecentlyUsedEditor", "&&Previous Used Editor", "3_any_used", 2., None, None),
+    (MenuId::MenubarSwitchEditorMenu, None, "workbench.action.openNextRecentlyUsedEditorInGroup", "&&Next Used Editor in Group", "5_group_used", 1., None, None),
+    (MenuId::MenubarSwitchEditorMenu, None, "workbench.action.openPreviousRecentlyUsedEditorInGroup", "&&Previous Used Editor in Group", "5_group_used", 2., None, None),
+    (MenuId::MenubarGoMenu, Some(MenuId::MenubarSwitchGroupMenu), "", "Switch &&Group", "2_editor_nav", 2., None, None),
+    (MenuId::MenubarSwitchGroupMenu, None, "workbench.action.focusFirstEditorGroup", "Group &&1", "1_focus_index", 1., None, None),
+    (MenuId::MenubarSwitchGroupMenu, None, "workbench.action.focusSecondEditorGroup", "Group &&2", "1_focus_index", 2., None, None),
+    (MenuId::MenubarSwitchGroupMenu, None, "workbench.action.focusThirdEditorGroup", "Group &&3", "1_focus_index", 3., None, Some("multipleEditorGroups")),
+    (MenuId::MenubarSwitchGroupMenu, None, "workbench.action.focusFourthEditorGroup", "Group &&4", "1_focus_index", 4., None, Some("multipleEditorGroups")),
+    (MenuId::MenubarSwitchGroupMenu, None, "workbench.action.focusFifthEditorGroup", "Group &&5", "1_focus_index", 5., None, Some("multipleEditorGroups")),
+    (MenuId::MenubarSwitchGroupMenu, None, "workbench.action.focusNextGroup", "&&Next Group", "2_next_prev", 1., None, Some("multipleEditorGroups")),
+    (MenuId::MenubarSwitchGroupMenu, None, "workbench.action.focusPreviousGroup", "&&Previous Group", "2_next_prev", 2., None, Some("multipleEditorGroups")),
+    (MenuId::MenubarSwitchGroupMenu, None, "workbench.action.focusLeftGroup", "Group &&Left", "3_directional", 1., None, Some("multipleEditorGroups")),
+    (MenuId::MenubarSwitchGroupMenu, None, "workbench.action.focusRightGroup", "Group &&Right", "3_directional", 2., None, Some("multipleEditorGroups")),
+    (MenuId::MenubarSwitchGroupMenu, None, "workbench.action.focusAboveGroup", "Group &&Above", "3_directional", 3., None, Some("multipleEditorGroups")),
+    (MenuId::MenubarSwitchGroupMenu, None, "workbench.action.focusBelowGroup", "Group &&Below", "3_directional", 4., None, Some("multipleEditorGroups")),
     // bracketMatching.ts
     (MenuId::MenubarGoMenu, None, "editor.action.jumpToBracket", "Go to &&Bracket", "5_infile_nav", 2., None, None),
     // editorExtensions.ts and clipboard.ts
@@ -217,6 +266,26 @@ const WORKBENCH_MENUS: &[Row] = &[
     (MenuId::EditorContext, Some(MenuId::EditorContextShare), "", "Share", "11_share", -1., Some("resourceScheme != 'output' && editorTextFocus"), None),
     (MenuId::ExplorerContext, Some(MenuId::ExplorerContextShare), "", "Share", "11_share", -1., None, None),
     (MenuId::EditorTitleContext, Some(MenuId::EditorTitleContextShare), "", "Share", "11_share", -1., Some("!multipleEditorsSelectedInGroup"), None),
+    // goToCommands.ts
+    (MenuId::EditorContext, None, "editor.action.revealDefinition", "Go to Definition", "navigation", 1.1, None, Some("editorHasDefinitionProvider")),
+    (MenuId::EditorContext, None, "editor.action.revealDeclaration", "Go to Declaration", "navigation", 1.3, None, Some("editorHasDeclarationProvider && !isInEmbeddedEditor")),
+    (MenuId::EditorContext, None, "editor.action.goToTypeDefinition", "Go to Type Definition", "navigation", 1.4, None, Some("editorHasTypeDefinitionProvider")),
+    (MenuId::EditorContext, None, "editor.action.goToImplementation", "Go to Implementations", "navigation", 1.45, None, Some("editorHasImplementationProvider")),
+    (MenuId::EditorContext, None, "editor.action.goToReferences", "Go to References", "navigation", 1.45, None, Some("editorHasReferenceProvider && !inReferenceSearchEditor && !isInEmbeddedEditor")),
+    (MenuId::EditorContext, Some(MenuId::EditorContextPeek), "", "Peek", "navigation", 100., None, None),
+    (MenuId::EditorContextPeek, None, "editor.action.peekDefinition", "Peek Definition", "peek", 2., None, Some("editorHasDefinitionProvider && !inReferenceSearchEditor && !isInEmbeddedEditor")),
+    (MenuId::EditorContextPeek, None, "editor.action.peekDeclaration", "Peek Declaration", "peek", 3., None, Some("editorHasDeclarationProvider && !inReferenceSearchEditor && !isInEmbeddedEditor")),
+    (MenuId::EditorContextPeek, None, "editor.action.peekTypeDefinition", "Peek Type Definition", "peek", 4., None, Some("editorHasTypeDefinitionProvider && !inReferenceSearchEditor && !isInEmbeddedEditor")),
+    (MenuId::EditorContextPeek, None, "editor.action.peekImplementation", "Peek Implementations", "peek", 5., None, Some("editorHasImplementationProvider && !inReferenceSearchEditor && !isInEmbeddedEditor")),
+    (MenuId::EditorContextPeek, None, "editor.action.referenceSearch.trigger", "Peek References", "peek", 6., None, Some("editorHasReferenceProvider && !inReferenceSearchEditor && !isInEmbeddedEditor")),
+    // callHierarchy.contribution.ts and typeHierarchy.contribution.ts
+    (MenuId::EditorContextPeek, None, "editor.showCallHierarchy", "Peek Call Hierarchy", "navigation", 1000., None, Some("editorHasCallHierarchyProvider && !inReferenceSearchEditor && !isInEmbeddedEditor")),
+    (MenuId::EditorContextPeek, None, "editor.showTypeHierarchy", "Peek Type Hierarchy", "navigation", 1000., None, Some("editorHasTypeHierarchyProvider && !inReferenceSearchEditor && !isInEmbeddedEditor")),
+    (MenuId::MenubarGoMenu, None, "editor.action.revealDefinition", "Go to &&Definition", "4_symbol_nav", 2., None, None),
+    (MenuId::MenubarGoMenu, None, "editor.action.revealDeclaration", "Go to &&Declaration", "4_symbol_nav", 3., None, None),
+    (MenuId::MenubarGoMenu, None, "editor.action.goToTypeDefinition", "Go to &&Type Definition", "4_symbol_nav", 3., None, None),
+    (MenuId::MenubarGoMenu, None, "editor.action.goToImplementation", "Go to &&Implementations", "4_symbol_nav", 4., None, None),
+    (MenuId::MenubarGoMenu, None, "editor.action.goToReferences", "Go to &&References", "4_symbol_nav", 5., None, None),
     // rename.ts, multicursor.ts, clipboard.ts and quickAccess.contribution.ts: the EditorContext items of the commands the port has.
     (MenuId::EditorContext, None, "editor.action.rename", "Rename Symbol", "1_modification", 1.1, Some("!editorReadonly && editorHasRenameProvider"), Some("!editorReadonly && editorHasRenameProvider")),
     // formatActions.ts, formatActionsMultiple.ts
@@ -231,6 +300,8 @@ const WORKBENCH_MENUS: &[Row] = &[
     (MenuId::EditorContext, None, "workbench.action.showCommands", "Command Palette...", "z_commands", 1., Some("!editorSimpleInput"), None),
     // output.contribution.ts and viewsService.ts `openCommandActionDescriptor.mnemonicTitle`
     (MenuId::EditorContext, None, "workbench.output.action.clearOutput", "Clear Output", "", 0., Some("inOutput"), None),
+    // markers.contribution.ts: Problems before Output in the panel group.
+    (MenuId::MenubarViewMenu, None, "workbench.actions.view.problems", "&&Problems", "5_panel", 0., None, None),
     (MenuId::MenubarViewMenu, None, "workbench.action.output.toggleOutput", "&&Output", "5_panel", 1., Some("workbench.panel.output.active"), None),
     // terminalMenus.ts: the TerminalEditorInstanceContext items of the commands the port has.
     (MenuId::TerminalEditorInstanceContext, None, "workbench.action.terminal.split", "Split Terminal", "1_create", 0., None, None),
@@ -240,6 +311,12 @@ const WORKBENCH_MENUS: &[Row] = &[
     (MenuId::TerminalEditorInstanceContext, None, "workbench.action.terminal.paste", "Paste", "3_edit", 3., None, None),
     (MenuId::TerminalEditorInstanceContext, None, "workbench.action.terminal.clear", "Clear", "5_clear", 0., None, None),
     (MenuId::TerminalEditorInstanceContext, None, "workbench.action.terminal.selectAll", "Select All", "3_edit", 3., None, None),
+    // terminalMenus.ts: the TerminalInstanceContext items of the commands the port has, the menu of the panel's terminal.
+    (MenuId::TerminalInstanceContext, None, "workbench.action.terminal.killViewOrEditor", "Kill Terminal", "7_kill", 0., None, None),
+    (MenuId::TerminalInstanceContext, None, "workbench.action.terminal.copySelection", "Copy", "3_edit", 1., None, None),
+    (MenuId::TerminalInstanceContext, None, "workbench.action.terminal.paste", "Paste", "3_edit", 3., None, None),
+    (MenuId::TerminalInstanceContext, None, "workbench.action.terminal.clear", "Clear", "5_clear", 0., None, None),
+    (MenuId::TerminalInstanceContext, None, "workbench.action.terminal.selectAll", "Select All", "3_edit", 3., None, None),
     // editor.contribution.ts: the EditorTitleContext items of the commands the port has.
     (MenuId::EditorTitleContext, None, "workbench.action.closeActiveEditor", "Close", "1_close", 10., Some("!activeEditorCannotClose"), None),
     (MenuId::EditorTitleContext, None, "workbench.action.closeOtherEditors", "Close Others", "1_close", 20., None, Some("groupEditorsCount != '1'")),
@@ -367,7 +444,7 @@ pub fn workbench_menus() -> Vec<MenuItem> {
 
 /// menusExtensionPoint.ts `apiMenus`: the `contributes.menus` keys of the menus the port shows. `commandPalette`
 /// is read by `command_palette::menu`.
-const API_MENUS: [(&str, MenuId); 18] = [
+const API_MENUS: [(&str, MenuId); 20] = [
     ("file/newFile", MenuId::NewFile),
     ("editor/context", MenuId::EditorContext),
     ("explorer/context", MenuId::ExplorerContext),
@@ -379,6 +456,8 @@ const API_MENUS: [(&str, MenuId); 18] = [
     ("scm/inputBox", MenuId::ScmInputBox),
     ("diffEditor/gutter/hunk", MenuId::DiffEditorHunkToolbar),
     ("editor/title", MenuId::EditorTitle),
+    ("view/title", MenuId::ViewTitle),
+    ("view/item/context", MenuId::ViewItemContext),
     ("editor/context/copy", MenuId::EditorContextCopy),
     ("editor/context/share", MenuId::EditorContextShare),
     ("explorer/context/share", MenuId::ExplorerContextShare),

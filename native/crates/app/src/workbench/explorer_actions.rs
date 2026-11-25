@@ -123,7 +123,7 @@ impl Workbench {
             workbench.copy_paths_to_clipboard(true, resources, cx)
         });
         self.commands.register("workbench.action.files.copyPathOfActiveFile", |workbench, _, _, cx| {
-            let resources = workbench.editors.active().map(|editor| editor.document.path.clone()).into_iter().collect();
+            let resources = workbench.editors.active().map(|editor| editor.document().path.clone()).into_iter().collect();
             workbench.copy_paths_to_clipboard(false, resources, cx)
         });
         self.commands.register("revealFileInOS", |workbench, args, window, cx| {
@@ -131,7 +131,7 @@ impl Workbench {
             workbench.reveal_in_os(resources, cx)
         });
         self.commands.register("workbench.action.files.revealActiveFileInWindows", |workbench, _, _, cx| {
-            let resources = workbench.editors.active().map(|editor| editor.document.path.clone()).into_iter().collect();
+            let resources = workbench.editors.active().map(|editor| editor.document().path.clone()).into_iter().collect();
             workbench.reveal_in_os(resources, cx)
         });
         self.register_explorer_view_actions();
@@ -163,7 +163,7 @@ impl Workbench {
         });
         self.commands.register("workbench.files.action.focusFilesExplorer", |workbench, _, window, cx| workbench.execute_command("workbench.view.explorer", Vec::new(), window, cx));
         self.commands.register("workbench.files.action.showActiveFileInExplorer", |workbench, _, window, cx| {
-            let Some(path) = workbench.editors.active().map(|editor| editor.document.path.clone()) else { return Outcome::done() };
+            let Some(path) = workbench.editors.active().map(|editor| editor.document().path.clone()) else { return Outcome::done() };
             workbench.execute_command("revealInExplorer", vec![json!({ "scheme": "file", "path": path })], window, cx)
         });
         // fileCommands.ts `REVEAL_IN_EXPLORER_COMMAND_ID` over `getResourceForCommand`: the resource, else the focused
@@ -172,7 +172,7 @@ impl Workbench {
             let focused_row = workbench.folder.as_ref().filter(|_| workbench.explorer.focus.is_focused(window)).and_then(|tree| tree.focused.clone());
             let path = match args.first().and_then(|uri| uri["path"].as_str()) {
                 Some(path) => Some(PathBuf::from(path)),
-                None => focused_row.or_else(|| workbench.editors.active().map(|editor| editor.document.path.clone())),
+                None => focused_row.or_else(|| workbench.editors.active().map(|editor| editor.document().path.clone())),
             };
             let Some(path) = path.filter(|path| workbench.workspace().is_some_and(|workspace| workspace.folder_of(path).is_some())) else { return Outcome::done() };
             workbench.side_bar_view = SideBarView::Explorer;
@@ -231,7 +231,7 @@ impl Workbench {
         if let Some(path) = args.first().and_then(|uri| uri["path"].as_str()) {
             return vec![PathBuf::from(path)];
         }
-        self.editors.active().map(|editor| editor.document.path.clone()).into_iter().collect()
+        self.editors.active().map(|editor| editor.document().path.clone()).into_iter().collect()
     }
 
     /// fileCommands.ts `resourcesToClipboard`: one path per line, with `explorer.copyPathSeparator` or
@@ -374,7 +374,7 @@ impl Workbench {
     /// explorerView.ts `selectActiveFile` with `explorer.autoReveal`: selects the active file unless
     /// `explorer.autoRevealExclude` matches it, and with `true` scrolls a row out of view to the middle (`reveal(item, 0.5)`).
     pub(super) fn reveal_active_file(&mut self) {
-        let Some(path) = self.editors.active().map(|editor| editor.document.path.clone()) else { return };
+        let Some(path) = self.editors.active().map(|editor| editor.document().path.clone()) else { return };
         let auto_reveal = self.setting("explorer.autoReveal");
         if auto_reveal == json!(false) || self.auto_reveal_excluded(&path) {
             return;
@@ -1166,7 +1166,7 @@ async fn delete_files(workbench: WeakEntity<Workbench>, cx: &mut AsyncWindowCont
     loop {
         let primary = if use_trash { "Move to Trash" } else { "Delete" };
         let Ok((dirty, confirm_delete)) = workbench.update(cx, |workbench, _| {
-            let dirty = workbench.editors.editors.iter().filter(|editor| editor.is_dirty() && items.iter().any(|item| editor.document.path.starts_with(item))).count();
+            let dirty = workbench.editors.editors.iter().filter(|editor| editor.is_dirty() && items.iter().any(|item| editor.document().path.starts_with(item))).count();
             (dirty, workbench.setting("explorer.confirmDelete") != json!(false))
         }) else {
             return;

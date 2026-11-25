@@ -33,7 +33,7 @@ fn an_edit_of_settings_json_on_disk_reaches_the_host_the_theme_and_the_models(cx
         workbench
     });
     cx.run_until_parked();
-    let tab_size = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document.indentation.tab_size);
+    let tab_size = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document().indentation.tab_size);
     assert_eq!(tab_size(cx), 4);
     _ = messages.try_iter().count();
 

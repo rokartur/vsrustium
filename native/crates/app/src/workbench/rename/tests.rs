@@ -61,11 +61,11 @@ fn rename_edit(dir_uri: &Value) -> Value {
 }
 
 fn document_uri(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext) -> Value {
-    workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document.uri())
+    workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document().uri())
 }
 
 fn text(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext) -> String {
-    workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document.lines.join("\n"))
+    workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document().lines.join("\n"))
 }
 
 #[gpui::test]
@@ -146,7 +146,7 @@ fn an_edit_in_the_editor_cancels_the_input(cx: &mut TestAppContext) {
     run(&workbench, cx, "editor.action.rename");
     workbench.update_in(cx, |workbench, window, cx| {
         let editor = workbench.editors.active_mut().unwrap();
-        let end = editor.document.lines[1].chars().count();
+        let end = editor.document().lines[1].chars().count();
         let at = crate::editor::Position::new(1, end);
         editor.execute_edits(vec![(at, at, " ".into(), false)], None, crate::editor::EditReason::Unknown("test"));
         let _ = (window, cx);

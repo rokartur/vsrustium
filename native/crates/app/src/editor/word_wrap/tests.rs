@@ -309,7 +309,8 @@ fn editor(text: &str, column: usize) -> EditorGroup {
         break_before: BREAK_BEFORE.into(),
         break_after: BREAK_AFTER.into(),
     };
-    editor.word_wrap.configure(Some(options), &editor.document.lines.clone());
+    let lines = editor.document().lines.clone();
+    editor.word_wrap.configure(Some(options), &lines);
     group
 }
 

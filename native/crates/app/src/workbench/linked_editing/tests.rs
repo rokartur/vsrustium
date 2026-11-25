@@ -61,7 +61,7 @@ fn type_text(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext, te
 }
 
 fn text(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext) -> String {
-    workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document.lines[0].clone())
+    workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document().lines[0].clone())
 }
 
 #[gpui::test]

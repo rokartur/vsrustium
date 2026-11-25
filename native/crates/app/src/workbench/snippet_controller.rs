@@ -135,7 +135,7 @@ impl Workbench {
         if editor.selection().head != end && editor.selection().head != start {
             return Value::Null;
         }
-        let lines = &editor.document.lines;
+        let lines = &editor.document().lines;
         let word: String = lines[start.line].chars().skip(start.column).take(end.column.saturating_sub(start.column)).collect();
         let any_of_options = options.iter().any(|option| *option == word);
         let column = |position: Position| crate::editor::utf16_column(&lines[position.line], position.column) + 1;
@@ -167,8 +167,8 @@ impl Workbench {
     /// background and the 1px outline; an empty placeholder is 2px wide.
     pub(super) fn snippet_placeholder_highlights(&self, editor: &OpenEditor, index: usize, char_width: f32) -> Vec<Div> {
         let Some(session) = editor.snippet_session.as_ref() else { return Vec::new() };
-        let text = &editor.document.lines[index];
-        let tab_size = editor.document.indentation.tab_size;
+        let text = &editor.document().lines[index];
+        let tab_size = editor.document().indentation.tab_size;
         let mut highlights = Vec::new();
         for (placeholder, _) in session.placeholders().filter(|(placeholder, _)| placeholder.start.line <= index && placeholder.end.line >= index) {
             let from = if placeholder.start.line == index { placeholder.start.column } else { 0 };

@@ -13,7 +13,7 @@ use crate::json::{self, ParseOptions, Segment};
 use crate::json_edit::{FormattingOptions, set_property};
 use crate::policy::{PolicyValues, policy_model};
 use crate::model::{Change, ConfigurationModel, ParseFilter, compare, is_override_key, key_from_override_identifiers, merge_changes, parse_content, parse_raw, to_values_tree};
-use crate::registry::{APPLICATION_SCOPES, FOLDER_SCOPES, Registry, Scope, WORKSPACE_SCOPES};
+use crate::registry::{APPLICATION_SCOPES, FOLDER_SCOPES, PROFILE_SCOPES, Registry, Scope, WORKSPACE_SCOPES};
 use crate::workspace::Workspace;
 
 /// `ConfigurationTarget` of platform/configuration/common/configuration.ts.
@@ -65,11 +65,32 @@ pub fn folder_config_dir(folder: &Path) -> PathBuf {
 /// `TASKS_DEFAULT`: what configurationEditing.ts writes into a new tasks.json before editing it.
 const TASKS_DEFAULT: &str = "{\n\t\"version\": \"2.0.0\",\n\t\"tasks\": []\n}";
 
+/// `APPLY_ALL_PROFILES_SETTING`: the settings a profile with its own settings reads from the default profile.
+pub const APPLY_ALL_PROFILES_SETTING: &str = "workbench.settings.applyToAllProfiles";
+
+/// The current profile's user files (`userDataProfileService.currentProfile`). `default_settings` is the default
+/// profile's settings.json when the profile keeps its own settings, read as `ApplicationConfiguration`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct UserFiles {
+    pub settings: PathBuf,
+    pub tasks: PathBuf,
+    pub mcp: PathBuf,
+    pub default_settings: Option<PathBuf>,
+}
+
+impl UserFiles {
+    /// The default profile's files in `<user data>/User`.
+    pub fn default_profile(user_home: &Path) -> UserFiles {
+        UserFiles { settings: user_home.join("settings.json"), tasks: user_home.join("tasks.json"), mcp: user_home.join("mcp.json"), default_settings: None }
+    }
+}
+
 pub struct Settings {
     pub registry: Registry,
     pub configuration: Configuration,
-    /// `<user data>/User`, the default profile's home: settings.json, tasks.json, mcp.json.
+    /// `<user data>/User`, the default profile's home.
     user_home: PathBuf,
+    user_files: UserFiles,
     /// The window's folders and workspace file; `None` is the empty window.
     pub workspace: Option<Workspace>,
     /// Size and modification time of every file a layer reads, to notice edits made outside the port.
@@ -83,9 +104,17 @@ pub struct Settings {
 impl Settings {
     /// `ConfigurationService.initialize` for an empty window (`workspace` is `None`), a folder or a workspace file.
     pub fn load(registry: Registry, user_home: PathBuf, workspace: Option<Workspace>) -> Settings {
+        let user_files = UserFiles::default_profile(&user_home);
+        Settings::load_with_profile(registry, user_home, user_files, workspace)
+    }
+
+    /// `load` in a profile: its settings, tasks and mcp files.
+    pub fn load_with_profile(registry: Registry, user_home: PathBuf, user_files: UserFiles, workspace: Option<Workspace>) -> Settings {
         let defaults = registry.default_model();
         let has_workspace = workspace.is_some();
-        let mut settings = Settings { registry, configuration: Configuration { defaults, has_workspace, ..Configuration::default() }, user_home, workspace, stamps: Vec::new(), trusted: true, policy_values: PolicyValues::new() };
+        let configuration = Configuration { defaults, has_workspace, ..Configuration::default() };
+        let mut settings = Settings { registry, configuration, user_home, user_files, workspace, stamps: Vec::new(), trusted: true, policy_values: PolicyValues::new() };
+        settings.configuration.application = settings.load_application();
         settings.configuration.local_user = settings.load_user();
         let folders: Vec<PathBuf> = settings.workspace.iter().flat_map(|workspace| workspace.folders.iter().map(|folder| folder.path.clone())).collect();
         settings.configuration.folders = folders.into_iter().map(|folder| (folder.clone(), settings.load_folder(&folder))).collect();
@@ -103,7 +132,12 @@ impl Settings {
         self.configuration.layers_changed();
         self.registry = registry;
         let policy = policy_model(&self.registry, &self.policy_values);
-        merge_changes(&[change, self.configuration.compare_and_update_policy(policy)])
+        let mut changes = vec![change, self.configuration.compare_and_update_policy(policy)];
+        // The application and profile layers are parsed against the registry's scopes.
+        if self.user_files.default_settings.is_some() {
+            changes.push(self.reload_user_layers());
+        }
+        merge_changes(&changes)
     }
 
     /// `PolicyConfiguration.onDidChangePolicies`: the policy service's values, applied to the settings that
@@ -122,6 +156,37 @@ impl Settings {
         self.configuration.folders = folders.into_iter().map(|folder| (folder.clone(), self.load_folder(&folder))).collect();
         self.configuration.workspace = self.load_workspace();
         self.configuration.layers_changed();
+    }
+
+    /// `onDidChangeCurrentProfile`: the user layers of the new profile and what changed.
+    /// The change is `Configuration.compare`: the keys of either profile whose value differs.
+    pub fn set_profile(&mut self, user_files: UserFiles) -> Change {
+        let before = self.configuration.clone();
+        self.user_files = user_files;
+        self.stamps = self.watched_files().into_iter().map(|path| (path.clone(), stamp(&path))).collect();
+        let overrides = self.reload_user_layers().overrides;
+        let after = &self.configuration;
+        let candidates = before.application.keys.iter().chain(&before.local_user.keys).chain(&after.application.keys).chain(&after.local_user.keys);
+        let mut keys: Vec<String> = Vec::new();
+        for key in candidates {
+            if !keys.contains(key) && before.get_value(Some(key), &Overrides::default()) != after.get_value(Some(key), &Overrides::default()) {
+                keys.push(key.clone());
+            }
+        }
+        Change { keys, overrides }
+    }
+
+    pub fn user_files(&self) -> &UserFiles {
+        &self.user_files
+    }
+
+    /// `isSettingAppliedForAllProfiles`: application scoped, or listed in `workbench.settings.applyToAllProfiles`.
+    pub fn is_applied_for_all_profiles(&self, key: &str) -> bool {
+        if self.registry.property(key).is_some_and(|property| APPLICATION_SCOPES.contains(&property.scope)) {
+            return true;
+        }
+        let all_profiles = self.get_value(Some(APPLY_ALL_PROFILES_SETTING), &Overrides::default());
+        all_profiles.as_ref().and_then(Value::as_array).is_some_and(|keys| keys.iter().any(|listed| listed == key))
     }
 
     /// `<user data>/User`, `environmentService.userRoamingDataHome`.
@@ -146,9 +211,8 @@ impl Settings {
             }
         }
         let mut changes = Vec::new();
-        if changed_files.iter().any(|path| path.starts_with(&self.user_home)) {
-            let user = self.load_user();
-            changes.push(self.configuration.compare_and_update_local_user(user));
+        if changed_files.iter().any(|path| self.is_user_file(path)) {
+            changes.push(self.reload_user_layers());
         }
         if self.workspace_file().is_some_and(|file| changed_files.iter().any(|path| path == file)) {
             let workspace = self.load_workspace();
@@ -199,6 +263,9 @@ impl Settings {
         if inspected.user_local.value.is_some() {
             targets.push(Target::UserLocal);
         }
+        if inspected.application.value.is_some() {
+            targets.push(Target::Application);
+        }
         if value.is_some() {
             targets = vec![targets.first().copied().unwrap_or(Target::User)];
         }
@@ -221,7 +288,11 @@ impl Settings {
             Target::WorkspaceFolder => Editable::WorkspaceFolder,
             _ => Editable::UserLocal,
         };
-        let path = self.file_for(editable, "settings.json", resource)?;
+        // `openApplicationSettings`: the default profile's settings.json.
+        let path = match (target, &self.user_files.default_settings) {
+            (Target::Application, Some(default_settings)) => default_settings.clone(),
+            _ => self.file_for(editable, "settings.json", resource)?,
+        };
         if self.is_workspace_file(Some(&path)) {
             let content = std::fs::read_to_string(&path).unwrap_or_default();
             let parsed = json::parse(&content, &mut Vec::new(), ParseOptions { allow_trailing_comma: true, allow_empty_content: true, ..ParseOptions::default() });
@@ -247,8 +318,7 @@ impl Settings {
             *last = stamp(path);
         }
         if editable == Editable::UserLocal {
-            let user = self.load_user();
-            return self.configuration.compare_and_update_local_user(user);
+            return self.reload_user_layers();
         }
         let mut changes = Vec::new();
         if self.workspace_file().is_some() {
@@ -264,6 +334,40 @@ impl Settings {
         merge_changes(&changes)
     }
 
+    /// `onApplicationConfigurationChanged` then `onLocalUserConfigurationChanged`: of the application layer's changed
+    /// keys only the application scoped ones and those applied to all profiles count, plus the keys that joined or
+    /// left `workbench.settings.applyToAllProfiles`.
+    fn reload_user_layers(&mut self) -> Change {
+        let previous_all = string_list(self.configuration.application.get_value(Some(APPLY_ALL_PROFILES_SETTING)));
+        let application = self.load_application();
+        let mut application_change = self.configuration.compare_and_update_application(application);
+        let current_all = string_list(self.get_value(Some(APPLY_ALL_PROFILES_SETTING), &Overrides::default()));
+        let mut keys = Vec::new();
+        for key in application_change.keys {
+            if !self.registry.property(&key).is_some_and(|property| APPLICATION_SCOPES.contains(&property.scope)) {
+                if current_all.contains(&key) {
+                    keys.push(key);
+                }
+                continue;
+            }
+            if key == APPLY_ALL_PROFILES_SETTING {
+                keys.push(key);
+                keys.extend(previous_all.iter().filter(|setting| !current_all.contains(setting)).cloned());
+                keys.extend(current_all.iter().filter(|setting| !previous_all.contains(setting)).cloned());
+                continue;
+            }
+            keys.push(key);
+        }
+        application_change.keys = keys;
+        let user = self.load_user();
+        merge_changes(&[application_change, self.configuration.compare_and_update_local_user(user)])
+    }
+
+    fn is_user_file(&self, path: &Path) -> bool {
+        let files = &self.user_files;
+        [&files.settings, &files.tasks, &files.mcp].into_iter().chain(&files.default_settings).any(|file| file == path)
+    }
+
     fn workspace_file(&self) -> Option<&Path> {
         self.workspace.as_ref().and_then(|workspace| workspace.file.as_deref())
     }
@@ -274,7 +378,8 @@ impl Settings {
     }
 
     fn watched_files(&self) -> Vec<PathBuf> {
-        let mut files: Vec<PathBuf> = ["settings.json", "tasks.json", "mcp.json"].iter().map(|name| self.user_home.join(name)).collect();
+        let user_files = &self.user_files;
+        let mut files: Vec<PathBuf> = [&user_files.settings, &user_files.tasks, &user_files.mcp].into_iter().chain(&user_files.default_settings).cloned().collect();
         files.extend(self.workspace_file().map(Path::to_path_buf));
         for (folder, _) in &self.configuration.folders {
             for dir in FOLDER_CONFIG_DIRS {
@@ -284,10 +389,29 @@ impl Settings {
         files
     }
 
-    /// `UserConfiguration`: settings.json of the default profile with every scope, plus tasks.json and mcp.json.
+    /// `ApplicationConfiguration`: in a profile with its own settings, the default profile's application scoped
+    /// settings and those listed in `workbench.settings.applyToAllProfiles`; empty otherwise.
+    fn load_application(&self) -> ConfigurationModel {
+        let Some(default_settings) = &self.user_files.default_settings else { return ConfigurationModel::default() };
+        let content = read_or_empty(default_settings);
+        let filter = ParseFilter { scopes: Some(APPLICATION_SCOPES.to_vec()), skip_unregistered: true, ..ParseFilter::default() };
+        let model = parse_content(&content, Some(&self.registry), &filter).model;
+        let include = string_list(model.get_value(Some(APPLY_ALL_PROFILES_SETTING)));
+        match include.is_empty() {
+            true => model,
+            false => parse_content(&content, Some(&self.registry), &ParseFilter { include, ..filter }).model,
+        }
+    }
+
+    /// `UserConfiguration`: the profile's settings.json, every scope in the default profile and PROFILE_SCOPES less
+    /// the settings applied to all profiles in another, plus tasks.json and mcp.json.
     fn load_user(&self) -> ConfigurationModel {
-        let settings = parse_content(&read_or_empty(&self.user_home.join("settings.json")), Some(&self.registry), &ParseFilter::default()).model;
-        let standalone = ["tasks", "mcp"].map(|name| standalone_model(name, &self.user_home.join(format!("{name}.json"))));
+        let filter = match self.user_files.default_settings {
+            Some(_) => ParseFilter { scopes: Some(PROFILE_SCOPES.to_vec()), exclude: string_list(self.configuration.application.get_value(Some(APPLY_ALL_PROFILES_SETTING))), ..ParseFilter::default() },
+            None => ParseFilter::default(),
+        };
+        let settings = parse_content(&read_or_empty(&self.user_files.settings), Some(&self.registry), &filter).model;
+        let standalone = [("tasks", &self.user_files.tasks), ("mcp", &self.user_files.mcp)].map(|(name, path)| standalone_model(name, path));
         settings.merge(&standalone.into_iter().flatten().collect::<Vec<_>>())
     }
 
@@ -351,7 +475,10 @@ impl Settings {
             json_path.insert(0, Segment::Key(key_from_override_identifiers(override_identifiers)));
         }
         let path = match editable {
-            Editable::UserLocal => Some(self.user_home.join("settings.json")),
+            Editable::UserLocal => match &self.user_files.default_settings {
+                Some(default_settings) if self.is_applied_for_all_profiles(key) => Some(default_settings.clone()),
+                _ => Some(self.user_files.settings.clone()),
+            },
             _ => self.file_for(editable, "settings.json", resource),
         };
         if self.is_workspace_file(path.as_deref()) {
@@ -363,7 +490,11 @@ impl Settings {
     /// `getConfigurationFileResource`: the user file, the workspace file, or the file in a folder's `folder_config_dir`.
     fn file_for(&self, editable: Editable, name: &str, resource: Option<&Path>) -> Option<PathBuf> {
         match editable {
-            Editable::UserLocal => Some(self.user_home.join(name)),
+            Editable::UserLocal => Some(match name {
+                "tasks.json" => self.user_files.tasks.clone(),
+                "mcp.json" => self.user_files.mcp.clone(),
+                _ => self.user_files.settings.clone(),
+            }),
             Editable::Workspace => match self.workspace_file() {
                 Some(file) => Some(file.to_path_buf()),
                 None => self.configuration.folders.first().map(|(folder, _)| folder_config_dir(folder).join(name)),
@@ -545,6 +676,11 @@ fn standalone_section(name: &str, raw: &Map<String, Value>) -> ConfigurationMode
 
 /// The text a settings file parses from: a missing or empty file reads as `{}`, as `UserSettings` and
 /// `FileServiceBasedConfiguration.resolveContents` do.
+fn string_list(value: Option<Value>) -> Vec<String> {
+    let values = value.as_ref().and_then(Value::as_array).into_iter().flatten();
+    values.filter_map(|value| value.as_str().map(str::to_owned)).collect()
+}
+
 fn read_or_empty(path: &Path) -> String {
     std::fs::read_to_string(path).ok().filter(|content| !content.is_empty()).unwrap_or_else(|| "{}".into())
 }
@@ -601,8 +737,10 @@ fn stringify(value: &Value, options: &FormattingOptions) -> String {
 }
 
 /// The write cases of workbench/services/configuration/test/browser/configurationEditing.test.ts, on a real
-/// temporary directory. Left out: dirty-file, Save and Retry and profile cases (no text file model or profiles
-/// yet).
+/// temporary directory. Left out: dirty-file, Save and Retry cases (no text file model).
+#[cfg(test)]
+mod profile_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -889,6 +1027,52 @@ mod tests {
         let application = fixture.settings.get_value(Some("configurationEditing.service.applicationSetting"), &Overrides::default());
         assert_eq!(application, Some(json!("isSet")), "application settings are not read from a folder");
         assert!(fixture.settings.reload_changed_files().is_none());
+    }
+
+    /// platform/configuration's configurationService.test.ts cases that read one user settings file.
+    #[test]
+    fn platform_configuration_service_cases() {
+        let root = std::env::temp_dir().join(format!("config-service-platform-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let load = || {
+            let mut registry = Registry::core();
+            let properties = json!({
+                "configuration.service.testSetting": { "type": "string", "default": "isSet" },
+                "lookup.service.testNullSetting": { "type": "null" },
+            });
+            registry.register_configuration("test", &json!({ "contributes": { "configuration": { "id": "_test", "properties": properties } } }));
+            registry.finish();
+            Settings::load(registry, root.join("User"), None)
+        };
+        let settings_file = root.join("User/settings.json");
+        let value = |settings: &Settings, key: &str| settings.get_value(Some(key), &Overrides::default());
+
+        let mut settings = load();
+        assert_eq!(value(&settings, "configuration.service.testSetting"), Some(json!("isSet")), "missing file does not explode, model defaults");
+
+        write_file(&settings_file, r#"{ "foo": "bar", "testworkbench.editor.tabs": true }"#);
+        settings.reload_changed_files().expect("the created file fires a change");
+        assert_eq!(value(&settings, "foo"), Some(json!("bar")));
+        assert_eq!(value(&settings, "testworkbench"), Some(json!({ "editor": { "tabs": true } })), "config gets flattened");
+
+        write_file(&settings_file, ",,,,");
+        assert!(load().get_value(None, &Overrides::default()).is_some(), "error case does not explode");
+
+        let missing = settings.configuration.inspect("something.missing", &Overrides::default());
+        assert_eq!((missing.value, missing.default_value, missing.user_local.value), (None, None, None));
+
+        write_file(&settings_file, r#"{ "configuration.service.testSetting": "bar" }"#);
+        settings.reload_changed_files().unwrap();
+        let lookup = settings.configuration.inspect("configuration.service.testSetting", &Overrides::default());
+        assert_eq!((lookup.value, lookup.default_value, lookup.user_local.value), (Some(json!("bar")), Some(json!("isSet")), Some(json!("bar"))));
+
+        let null = settings.configuration.inspect("lookup.service.testNullSetting", &Overrides::default());
+        assert_eq!((null.value, null.default_value, null.user_local.value), (Some(Value::Null), Some(Value::Null), None));
+        write_file(&settings_file, r#"{ "lookup.service.testNullSetting": null }"#);
+        settings.reload_changed_files().unwrap();
+        let null = settings.configuration.inspect("lookup.service.testNullSetting", &Overrides::default());
+        assert_eq!((null.value, null.default_value, null.user_local.value), (Some(Value::Null), Some(Value::Null), Some(Value::Null)), "lookup with null");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

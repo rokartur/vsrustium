@@ -145,7 +145,7 @@ fn an_automatic_request_shows_the_light_bulb_and_cmd_period_applies_from_the_men
     cx.run_until_parked();
     workbench.read_with(cx, |workbench, _| {
         assert!(!workbench.action_widget_visible());
-        assert_eq!(workbench.editors.active().unwrap().document.lines[0], "blet x");
+        assert_eq!(workbench.editors.active().unwrap().document().lines[0], "blet x");
     });
     let released: Vec<Value> = receiver.try_iter().filter(|message| message.method == "$releaseCodeActions").map(|message| message.args[1].clone()).collect();
     assert!(released.contains(&json!(1)), "the replaced automatic list is released: {released:?}");
@@ -184,7 +184,7 @@ fn a_kind_command_applies_a_single_action_and_reports_none(cx: &mut TestAppConte
     assert_eq!(contexts, [json!({ "only": "source.organizeImports", "trigger": INVOKE })]);
     workbench.read_with(cx, |workbench, _| {
         assert!(!workbench.action_widget_visible());
-        assert_eq!(workbench.editors.active().unwrap().document.lines[0], "olet x");
+        assert_eq!(workbench.editors.active().unwrap().document().lines[0], "olet x");
     });
     workbench.update_in(cx, |workbench, window, cx| _ = workbench.execute_command("editor.action.fixAll", vec![], window, cx));
     cx.run_until_parked();

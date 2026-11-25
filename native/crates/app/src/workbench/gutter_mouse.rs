@@ -30,7 +30,7 @@ impl Workbench {
         };
         let editor = self.editors.active_mut().expect("the gutter is clickable only with an editor open");
         let before = editor.selections.clone();
-        let (start, end) = line_range(&editor.document.lines, line);
+        let (start, end) = line_range(&editor.document().lines, line);
         match (multi_cursor, modifiers.shift) {
             (true, true) => editor.last_cursor_select_line(line),
             (true, false) => {
@@ -54,7 +54,7 @@ impl Workbench {
         let Some((entering_start, entering_end)) = self.line_select_start else { return };
         let editor = self.editors.active_mut().expect("the gutter is clickable only with an editor open");
         let before = editor.selections.clone();
-        let (start, end) = line_range(&editor.document.lines, line);
+        let (start, end) = line_range(&editor.document().lines, line);
         let head = match line.cmp(&entering_start.line) {
             std::cmp::Ordering::Less => start,
             std::cmp::Ordering::Greater => end,

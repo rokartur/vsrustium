@@ -161,11 +161,16 @@ impl ExtensionHost {
     pub fn try_recv(&self) -> Option<Incoming> {
         self.incoming.try_recv().ok()
     }
+
+    /// `MessageType.Terminate`: the host deactivates its extensions (at most 5 s) and exits.
+    pub fn terminate(&self) {
+        self.send(vec![MESSAGE_TERMINATE]);
+    }
 }
 
 impl Drop for ExtensionHost {
     fn drop(&mut self) {
-        self.send(vec![MESSAGE_TERMINATE]);
+        self.terminate();
         let _ = self.child.kill();
         let _ = self.child.wait();
         let _ = std::fs::remove_file(&self.socket_path);

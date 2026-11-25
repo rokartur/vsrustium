@@ -126,7 +126,7 @@ impl Workbench {
         if method == "$unregisterSourceControl"
             && let Some(handle) = handle
             && let Some((scheme, path)) = self.scm.input_models.remove(&handle)
-            && let Some(index) = self.editors.models.iter().position(|model| model.document.is(&scheme, &path))
+            && let Some(index) = self.editors.models.iter().position(|model| model.document().is(&scheme, &path))
         {
             self.editors.models.remove(index);
             self.editors_changed(cx);
@@ -478,7 +478,7 @@ impl Workbench {
         let context = self.scm_context(provider, Some(group), Some(resource), window);
         let args = vec![Self::resource_arg(provider, group, resource)];
         let actions = self.inline_actions(MenuId::ScmResourceStateContext, &context, args.clone(), foreground, cx);
-        let decoration = self.scm_decoration(resource);
+        let decoration = self.scm_decoration(&path);
         let language = self.languages.language_of(&path, "").to_string();
         let icon = self.file_icons.as_ref().and_then(|icons| icons.file_icon(&path, &language, self.theme.kind, 13., ROW_HEIGHT, foreground)).unwrap_or_else(|| div().w(px(16.)));
         let key = (provider.handle, group.handle, Some(resource.handle));
@@ -515,27 +515,17 @@ impl Workbench {
             .children(decoration.map(|(letter, color)| div().w(px(16.)).ml(px(4.)).text_size(px(12.)).text_color(color).child(letter)))
     }
 
-    /// git's decoration of a resource: the letter and color its `IFileDecorationProvider` gives, read from the
-    /// tooltip (git's resource states) since the port has no decorations service yet.
-    fn scm_decoration(&self, resource: &Resource) -> Option<(String, Rgba)> {
-        let (letter, key) = match resource.tooltip.as_str() {
-            "Modified" | "Index Modified" => ("M", "gitDecoration.modifiedResourceForeground"),
-            "Added" | "Index Added" | "Intent to Add" => ("A", "gitDecoration.addedResourceForeground"),
-            "Deleted" | "Index Deleted" => ("D", "gitDecoration.deletedResourceForeground"),
-            "Renamed" | "Index Renamed" => ("R", "gitDecoration.renamedResourceForeground"),
-            "Untracked" => ("U", "gitDecoration.untrackedResourceForeground"),
-            "Ignored" => ("I", "gitDecoration.ignoredResourceForeground"),
-            "Conflict" | "Both Modified" | "Both Added" | "Both Deleted" | "Added By Us" | "Added By Them" | "Deleted By Us" | "Deleted By Them" => ("!", "gitDecoration.conflictingResourceForeground"),
-            "Type Changed" | "Index Type Changed" => ("T", "gitDecoration.modifiedResourceForeground"),
-            _ => return None,
-        };
-        Some((letter.to_string(), self.theme.color(key).unwrap_or(self.foreground_or("sideBar.foreground"))))
+    /// The letter and color the decorations service has for a resource (git's `IFileDecorationProvider`).
+    fn scm_decoration(&self, path: &std::path::Path) -> Option<(String, Rgba)> {
+        let decoration = self.file_decoration(path, false)?;
+        let color = decoration.color.as_deref().and_then(|color| self.theme.color(color)).unwrap_or(self.foreground_or("sideBar.foreground"));
+        Some((decoration.letter?, color))
     }
 
     /// The `inline` group of a menu as icon buttons (`createAndFillInActionBarActions` with `primaryGroup` inline or
     /// navigation): a command's icon, else its title.
-    fn inline_actions(&self, menu: MenuId, context: &HashMap<String, Value>, args: Vec<Value>, foreground: Rgba, cx: &mut Context<Self>) -> Div {
-        let primary = if menu == MenuId::ScmTitle { "navigation" } else { "inline" };
+    pub(in crate::workbench) fn inline_actions(&self, menu: MenuId, context: &HashMap<String, Value>, args: Vec<Value>, foreground: Rgba, cx: &mut Context<Self>) -> Div {
+        let primary = if matches!(menu, MenuId::ScmTitle | MenuId::ViewTitle) { "navigation" } else { "inline" };
         let mut items: Vec<&crate::menus::MenuItem> = self.menus.iter().filter(|item| item.menu == menu && item.group == primary && item.when.as_ref().is_none_or(|when| when.evaluate(context))).collect();
         items.sort_by(|a, b| a.order.total_cmp(&b.order).then_with(|| a.title.cmp(&b.title)));
         let mut bar = div().flex().items_center();

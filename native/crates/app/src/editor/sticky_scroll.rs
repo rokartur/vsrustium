@@ -129,7 +129,7 @@ impl OpenEditor {
         }
         let view_lines = self.visible_lines(viewport);
         let range = StickyRange { start: self.model_line(view_lines.start) + 1, end: self.model_line(view_lines.end - 1) + 1 };
-        let candidates = candidates_intersecting(&self.sticky_model, range, self.document.lines.len(), viewport.line_height, self.folding.hidden());
+        let candidates = candidates_intersecting(&self.sticky_model, range, self.document().lines.len(), viewport.line_height, self.folding.hidden());
         // `getBottomForLineNumber`: the bottom of the line's last view line, past its wrapped lines.
         let bottom = |line: usize| self.line_top(self.last_view_line(line - 1), viewport) + viewport.line_height;
         find_widget_state(&candidates, self.scroll.top, max_lines, |line| self.line_top(self.view_line(line - 1), viewport), bottom)

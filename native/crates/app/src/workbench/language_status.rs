@@ -149,11 +149,11 @@ impl Workbench {
     /// `getLanguageStatus` of the active editor's model: the matching statuses by severity, source and id, the
     /// selector score breaking ties.
     pub(super) fn language_statuses(&self) -> Vec<Status> {
-        let Some(editor) = self.editors.active().filter(|editor| !self.shows_webview(editor) && !matches!(editor.document.scheme.as_str(), super::terminal_view::TERMINAL_SCHEME | super::extension_editor::EXTENSION_EDITOR_SCHEME)) else {
+        let Some(editor) = self.editors.active().filter(|editor| !self.shows_webview(editor) && editor.document().scheme != super::extension_editor::EXTENSION_EDITOR_SCHEME) else {
             return Vec::new();
         };
-        let uri = editor.document.uri();
-        let candidate = Candidate { uri: &uri, language: &editor.document.language_id };
+        let uri = editor.document().uri();
+        let candidate = Candidate { uri: &uri, language: &editor.document().language_id };
         let mut statuses: Vec<Status> = self.language_status.registry.ordered(SET, &candidate).into_iter().map(|registration| Status::from_dto(&registration.args[2])).collect();
         statuses.sort_by(|a, b| b.severity.cmp(&a.severity).then_with(|| a.source.cmp(&b.source)).then_with(|| a.id.cmp(&b.id)));
         statuses

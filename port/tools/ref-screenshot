@@ -85,7 +85,7 @@ async function press(cdp: (method: string, params?: object) => Promise<any>, key
 	const modifiers = parts.reduce((sum, part) => sum + bits[part], 0);
 	const keys: Record<string, [string, string, number]> = {
 		up: ['ArrowUp', 'ArrowUp', 38], down: ['ArrowDown', 'ArrowDown', 40], left: ['ArrowLeft', 'ArrowLeft', 37], right: ['ArrowRight', 'ArrowRight', 39],
-		'[': ['[', 'BracketLeft', 219], ']': [']', 'BracketRight', 221], k: ['k', 'KeyK', 75],
+		'[': ['[', 'BracketLeft', 219], ']': [']', 'BracketRight', 221], '\\': ['\\', 'Backslash', 220], k: ['k', 'KeyK', 75],
 	};
 	const letter = /^[a-z]$/.test(key);
 	// A letter without modifiers types its text; key events only run keybindings.

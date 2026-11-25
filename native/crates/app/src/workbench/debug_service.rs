@@ -1237,7 +1237,7 @@ async fn create_session(this: &WeakEntity<Workbench>, cx: &mut AsyncWindowContex
 /// debugAdapterManager.ts `guessDebugger`: the debuggers interested in the active editor's language, picked when
 /// more than one; remembered per file in `chosenEnvironments`.
 async fn guess_debugger(this: &WeakEntity<Workbench>, cx: &mut AsyncWindowContext) -> Result<Option<String>, String> {
-    let (resource, language) = on_workbench(this, cx, |workbench, _, _| workbench.editors.active().map(|editor| (editor.document.uri_string(), editor.document.language_id.clone())).unzip())?;
+    let (resource, language) = on_workbench(this, cx, |workbench, _, _| workbench.editors.active().map(|editor| (editor.document().uri_string(), editor.document().language_id.clone())).unzip())?;
     if let Some(resource) = &resource
         && let Some(chosen) = on_workbench(this, cx, |workbench, _, _| workbench.debug.chosen_environments.get(resource).and_then(|chosen| chosen["type"].as_str()).map(str::to_owned))?
     {

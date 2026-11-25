@@ -68,10 +68,10 @@ impl OpenEditor {
     }
 
     fn selection_ranges(&self, languages: &Languages, options: Options) -> Vec<SelectionRanges> {
-        let lines = &self.document.lines;
-        let brackets = self.document.tokens.pairs(languages, lines, &self.document.language_id).brackets;
+        let lines = &self.document().lines;
+        let brackets = self.document().tokens.pairs(languages, lines, &self.document().language_id).brackets;
         let brackets = char_brackets(lines, &brackets);
-        let word_pattern = languages.rules(&self.document.language_id).and_then(|rules| rules.word_pattern.as_ref());
+        let word_pattern = languages.rules(&self.document().language_id).and_then(|rules| rules.word_pattern.as_ref());
         let one_based = |position: Position| Position::new(position.line, position.column + 1);
         let mut states = Vec::new();
         for selection in &self.selections {
