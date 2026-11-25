@@ -61,7 +61,10 @@ impl Workbench {
         let primary_left = editor.segment_visible_column(segment, anchor.start) as f32 * char_width;
         let secondary_left = editor.segment_visible_column(segment, secondary.max(segment.start)) as f32 * char_width;
         let measured = self.content_hover.widget_bounds.get().map(|bounds| bounds.size);
-        let size = measured.unwrap_or(Size { width: 0., height: 0. });
+        let mut size = measured.unwrap_or(Size { width: 0., height: 0. });
+        if measured.is_some() {
+            size.height = self.content_hover.content_height.get() + 2.;
+        }
         // contentWidgets.ts `_reduceAnchorCoordinates`: a full-width glyph is 1em of the editor font.
         let left = secondary_left.max(primary_left - size.width + EDITOR_FONT_SIZE);
         let editor_bounds = self.text_area_bounds.get();
@@ -158,12 +161,25 @@ impl Workbench {
         }
         let mut separator = self.color("editorHoverWidget.border");
         separator.a *= 0.5;
-        let mut column = div().id("content-hover-contents").relative().flex().flex_col().max_h(px(max_height)).overflow_y_scroll();
+        let content_height = self.content_hover.content_height.clone();
+        let measure = canvas(
+            move |bounds, window, _| {
+                let height = f32::from(bounds.size.height);
+                if content_height.get() != height {
+                    content_height.set(height);
+                    window.refresh();
+                }
+            },
+            |_, _, _, _| (),
+        )
+        .absolute()
+        .inset_0();
+        let mut column = div().relative().flex().flex_col().child(measure);
         for (index, row) in rows.into_iter().enumerate() {
             // hoverContribution.ts: `.hover-row:not(:first-child):not(:empty)` has a top border at half alpha.
             column = column.child(row.when(index > 0, |row| row.border_t_1().border_color(separator)));
         }
-        column
+        div().id("content-hover-contents").max_h(px(max_height)).overflow_y_scroll().child(column)
     }
 
     /// markerHoverParticipant.ts `_renderMarkerHover`: the severity icon, the message in the editor font, the source

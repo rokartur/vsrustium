@@ -30,6 +30,8 @@ pub(super) struct ContentHover {
     pub(super) row_target: Option<(usize, f32)>,
     /// The widget's window bounds, once painted.
     pub(super) widget_bounds: Rc<Cell<Option<Bounds<f32>>>>,
+    /// The rows' height before `max_height` clips them, which `_findPositionPreference` compares to the space.
+    pub(super) content_height: Rc<Cell<f32>>,
     serial: usize,
     /// Counts the shows from hidden, which replay the `fade-in` animation.
     pub(super) shows: usize,
