@@ -130,6 +130,7 @@ impl Workbench {
                 self.local_history_labels.get(&editor.document.path).cloned().unwrap_or_else(|| editor.document.name())
             }
             None if editor.document.scheme == super::extension_editor::EXTENSION_EDITOR_SCHEME => self.extension_editor_name(&editor.document.path),
+            None if editor.document.scheme == super::welcome_page::WALKTHROUGH_SCHEME => self.walkthrough_editor_name(&editor.document.path),
             None => super::preferences::editor_label(&editor.document)
                 .or_else(|| self.webview_title(&editor.document.path))
                 .or_else(|| self.diff_name(editor))

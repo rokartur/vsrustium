@@ -202,6 +202,10 @@ const WORKBENCH_MENUS: &[Row] = &[
     (MenuId::MenubarGoMenu, None, "editor.action.marker.nextInFiles", "Next &&Problem", "6_problem_nav", 1., None, None),
     (MenuId::MenubarGoMenu, None, "editor.action.marker.prevInFiles", "Previous &&Problem", "6_problem_nav", 2., None, None),
     (MenuId::MenubarHelpMenu, None, "workbench.action.showCommands", "Show All Commands", "1_welcome", 2., None, None),
+    // gettingStarted.contribution.ts and processExplorer.contribution.ts
+    (MenuId::MenubarHelpMenu, None, "workbench.action.openWalkthrough", "Welcome", "1_welcome", 1., None, None),
+    (MenuId::MenubarHelpMenu, None, "welcome.showAllWalkthroughs", "Open Walkthrough...", "1_welcome", 3., None, None),
+    (MenuId::MenubarHelpMenu, None, "workbench.action.openProcessExplorer", "Open &&Process Explorer", "5_tools", 2., None, None),
     // preferences.contribution.ts
     (MenuId::MenubarPreferencesMenu, None, "workbench.action.openGlobalKeybindings", "Keyboard Shortcuts", "2_configuration", 4., None, None),
     // themes.contribution.ts

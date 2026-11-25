@@ -10,6 +10,7 @@ use gpui::Rgba;
 use serde_json::Value;
 
 mod debug_colors;
+mod welcome_colors;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ThemeKind {
@@ -373,7 +374,7 @@ fn registry_default(key: &str, kind: ThemeKind) -> ColorValue {
             ThemeKind::HighContrastLight => hc_light,
         };
     }
-    if let Some([dark, light, hc, hc_light]) = debug_colors::debug_default(key) {
+    if let Some([dark, light, hc, hc_light]) = debug_colors::debug_default(key).or_else(|| welcome_colors::welcome_default(key)) {
         return match kind {
             ThemeKind::Dark => dark,
             ThemeKind::Light => light,

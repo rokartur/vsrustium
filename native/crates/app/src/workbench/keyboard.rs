@@ -344,6 +344,12 @@ impl Workbench {
             Some(_) => "folder",
         };
         context.insert("workbenchState".into(), json!(workbench_state));
+        context.insert("workspaceFolderCount".into(), json!(self.workspace().map_or(0, |workspace| workspace.folders.len())));
+        // RemoteNameContext of a local window.
+        context.insert("remoteName".into(), json!(""));
+        // workspace.contribution.ts WorkspaceTrustContextKeys.
+        context.insert("isWorkspaceTrustEnabled".into(), json!(self.workspace_trust.enabled));
+        context.insert("isWorkspaceTrusted".into(), json!(self.workspace_trust.is_trusted()));
         for key in ["openFolderWorkspaceSupport", "enterMultiRootWorkspaceSupport", "emptyWorkspaceSupport"] {
             context.insert(key.into(), json!(true));
         }
@@ -357,7 +363,8 @@ impl Workbench {
             context.insert("activeEditorIsLastInGroup".into(), json!(index == self.editors.editors.len() - 1));
         }
         if let Some(editor) = self.editors.active() {
-            context.insert("activeEditor".into(), json!("workbench.editor.files"));
+            let pane = if editor.document.scheme == super::welcome_page::WALKTHROUGH_SCHEME { "gettingStartedPage" } else { "workbench.editor.files" };
+            context.insert("activeEditor".into(), json!(pane));
             self.insert_diff_editor_context(&mut context);
             // The port opens only files, never untitled editors (editorGroupView.ts).
             context.insert("activeEditorCanRevert".into(), json!(true));

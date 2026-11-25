@@ -51,6 +51,9 @@ mod relauncher;
 mod update;
 mod perf_view;
 mod user_activity;
+mod process_explorer;
+mod views_welcome;
+mod welcome_page;
 mod hover;
 pub(crate) mod host_requests;
 mod input_box_view;
@@ -193,6 +196,7 @@ pub struct Workbench {
     metered: power::MeteredConnection,
     relauncher: relauncher::Relauncher,
     user_activity: user_activity::UserActivity,
+    welcome: welcome_page::WelcomePage,
     /// Context keys set with the `setContext` command.
     context_keys: HashMap<String, Value>,
     pub output: crate::output::Output,
@@ -329,6 +333,7 @@ impl Render for Workbench {
         self.accessibility_frame(window, cx);
         self.update_metered_connection(cx);
         self.check_relaunch_settings(window, cx);
+        self.welcome_page_frame(window, cx);
         let viewport = window.viewport_size();
         let window_border = self.theme.color("window.activeBorder");
         // The reference lays the grid out at the full window size and shifts it inside the 1px window border.
@@ -415,6 +420,7 @@ impl Workbench {
             metered: Default::default(),
             relauncher: Default::default(),
             user_activity: Default::default(),
+            welcome: Default::default(),
             context_keys: HashMap::new(),
             output: Default::default(),
             output_view: output_view::OutputView::new(cx),
@@ -571,6 +577,8 @@ impl Workbench {
         workbench.register_workspace_recommendations_commands();
         workbench.register_localization_commands();
         workbench.register_new_file_commands();
+        workbench.register_welcome_page_commands();
+        workbench.register_process_explorer_commands();
         workbench.register_debug_commands();
         workbench.register_debug_console_commands();
         workbench.register_breakpoint_widget_commands();
@@ -898,7 +906,7 @@ impl Workbench {
             // actionbar.css: .monaco-action-bar .action-item is cursor: pointer.
             .child(self.icon("ellipsis", 22., 16., foreground).cursor_pointer());
         let Some(tree) = self.folder.as_ref() else {
-            let empty = view_panes::ExplorerPane { id: view_panes::EMPTY_VIEW, title: "No Folder Opened".into(), body: self.empty_view(cx).into_any_element() };
+            let empty = view_panes::ExplorerPane { id: view_panes::EMPTY_VIEW, title: "No Folder Opened".into(), body: self.empty_view(window, cx).into_any_element() };
             return self.side_bar_frame().text_color(foreground).child(title).child(self.explorer_pane_view(empty, window, cx)).child(div().h(px(5.)).flex_none());
         };
         // explorerviewlet.css: in high contrast an explorer item has a 20px line from the row top, 1px above center.
