@@ -181,7 +181,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/otel | src/vs/platform | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | platform/path | src/vs/platform | todo |  |
 | platform/policy | src/vs/platform | todo |  |
-| platform/process | src/vs/platform | todo |  |
+| platform/process | src/vs/platform | n/a | `IProcessService` is the Electron main-process IPC service behind the process explorer (`processMainService.ts` delegates to diagnostics and base/node/ps.ts); the port has one process, its process explorer (section 19, `workbench/contrib/processExplorer`) lists processes directly |
 | platform/product | src/vs/platform | todo |  |
 | platform/profiling | src/vs/platform | todo |  |
 | platform/progress | src/vs/platform | ported | ProgressLocation values and the step shape, in main_thread_progress.rs |
@@ -358,7 +358,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/policies | workbench service | todo |  |
 | workbench/services/power | workbench service | todo |  |
 | workbench/services/preferences | workbench service | todo | preferencesService.ts JSON parts (openSettingsJson with revealSetting and @id: query, createSettingsIfNotExists, openDefaultKeybindingsFile, defaultSettings resources) and preferencesModels.ts DefaultSettings / DefaultRawSettingsEditorModel ported as workbench/preferences.rs and default_settings.rs (cargo test -p app preferences default_settings); keybindingsEditorModel.ts and keybindingsEditorInput.ts ported as keybindings_editor.rs with keybindingsEditorModel.test.ts (cargo test -p app keybindings_editor); openGlobalKeybindingSettings opens the Keyboard Shortcuts editor (cargo test -p app keybindings_editor_view); preferencesService.ts openSettings (UI), the rest of preferencesModels.ts and preferencesValidation.ts wait for the Settings editor (milestone 10) |
-| workbench/services/process | workbench service | todo |  |
+| workbench/services/process | workbench service | n/a | electron-browser/processService.ts is the 10-line IPC proxy to `platform/process` in the main process; the port has no main process (see platform/process) |
 | workbench/services/progress | workbench service | ported | progressService.ts withNotificationProgress and withWindowProgress (delays 150 ms and 800 ms); Explorer, Extensions, SCM and Dialog locations not used by the port yet |
 | workbench/services/quickinput | workbench service | ported | quick_input_view.rs with header drag (cargo test -p app dragging); api-tests quick input 11/11; view state in application storage (cargo test -p app dragging) |
 | workbench/services/remote | workbench service | removed | no remote or tunnels by decision (port/notes.md); one local extension host |
@@ -371,7 +371,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/storage | workbench service | ported | port/tools/settings-check state; no application scope or flush on shutdown, writes are synchronous |
 | workbench/services/suggest | workbench service | todo |  |
 | workbench/services/telemetry | workbench service | todo |  |
-| workbench/services/terminal | workbench service | todo |  |
+| workbench/services/terminal | workbench service | n/a | embedderTerminalService.ts only serves terminals a web embedder creates through `web.api.ts` (`IWorkbenchConstructionOptions`); the desktop workbench has no embedder |
 | workbench/services/textMate | workbench service | verified | textmate crate (vscode-textmate 9.3.2, onig); cargo test -p textmate; colorize test 109/109 fixtures; pixel-check main window |
 | workbench/services/textfile | workbench service | stub | Cmd+S writes the model's encoding (files::encoding, port of encoding.ts with iconv-lite DOS code pages; cargo test -p files encoding) and clears dirty state (cargo test -p app keys_and_typed_text_edit_the_focused_editor_and_reach_the_host); save participants: the extensions' for extension saves, trim trailing whitespace, insert final newline and trim final newlines for every save (cargo test -p app save_participants), an auto save sparing the cursor lines; auto save (editorAutoSave.ts): after delay, on focus change, on window change, a delay restarted by each edit, saves held back by error markers, a dirty tab with a short delay drawn clean (`isSaving`) (cargo test -p app auto_save); no Save As, no Save without Formatting, no conflict check, no files.autoGuessEncoding (jschardet) |
 | workbench/services/textmodelResolver | workbench service | stub | content provider registrations newest first and provider-backed models (main_thread.rs) |
@@ -476,7 +476,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/splash | workbench contribution | todo |  |
 | workbench/contrib/surveys | workbench contribution | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | workbench/contrib/tags | workbench contribution | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
-| workbench/contrib/tasks | workbench contribution | todo |  |
+| workbench/contrib/tasks | workbench contribution | ported | workbench/task_service.rs (tasks.json from `.vscode/` and `.vsrustium/`, providers, run in feature terminals, dependsOn, instanceLimit and instancePolicy, problem matchers to markers), workbench/task_quick_pick.rs (run, build, test, terminate, restart, rerun, show tasks, recently used, Configure Task templates), tasks/: cargo test -p app tasks:: and task_quick_pick; no `${...}` variables, Configure Default Build Task or task customization yet (port/notes.md milestone 15) |
 | workbench/contrib/telemetry | workbench contribution | todo |  |
 | workbench/contrib/terminal | workbench contribution | ported | workbench/terminal_view.rs: terminals, split, kill, rename, profiles, tabs list as an editor tab until the panel lands; ui-pair against the reference |
 | workbench/contrib/terminalContrib | workbench contribution | todo |  |
