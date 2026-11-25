@@ -15,6 +15,7 @@ use files::encoding;
 use crate::languages::Languages;
 use crate::syntax::Tokenization;
 
+mod anchor_select;
 pub mod auto_indent;
 mod caret_operations;
 pub mod commands;
@@ -440,6 +441,8 @@ pub struct OpenEditor {
     pub highlights: Vec<(usize, Range<usize>)>,
     /// inPlaceReplace.ts `valueSetReplacement`: the replaced value's line and char range, under the version that made it.
     pub value_set_replacement: Option<(u32, usize, Range<usize>)>,
+    /// anchorSelect.ts: the selection anchor, while the group's code editor shows this model.
+    pub selection_anchor: Option<Position>,
     /// The folding regions, their collapse state and the lines it hides.
     pub folding: FoldingModel,
     /// The sticky scroll scopes of the indentation and marker regions, without the folding model's manual ones.
@@ -468,7 +471,7 @@ impl OpenEditor {
     fn new(document: TextDocument, preview: bool, model_id: u32) -> Self {
         let indentation = document.indentation;
         let guides = indent_guides(&document.lines, indentation.tab_size, indentation.indent_size(), document.off_side);
-        let mut editor = OpenEditor { document, preview, model_id, selections: vec![Selection::default()], last_added: 0, leftovers: Vec::new(), column_select: None, smart_select: None, cursor_states: Default::default(), version_id: 1, history: History::default(), guides, highlights: Vec::new(), value_set_replacement: None, folding: FoldingModel::default(), sticky_model: Default::default(), scroll: Scroll::default(), max_line_width: 0., host_reference: None, associated_file: false };
+        let mut editor = OpenEditor { document, preview, model_id, selections: vec![Selection::default()], last_added: 0, leftovers: Vec::new(), column_select: None, smart_select: None, cursor_states: Default::default(), version_id: 1, history: History::default(), guides, highlights: Vec::new(), value_set_replacement: None, selection_anchor: None, folding: FoldingModel::default(), sticky_model: Default::default(), scroll: Scroll::default(), max_line_width: 0., host_reference: None, associated_file: false };
         editor.refresh_highlights();
         editor.refresh_folding_ranges();
         editor
@@ -600,6 +603,10 @@ impl EditorGroup {
             return;
         }
         self.unicode_banner_closed = false;
+        // codeEditorWidget.ts `_detachModel` removes the editor's decorations, the anchor too.
+        for editor in &mut self.editors {
+            editor.selection_anchor = None;
+        }
         if let Some(editor) = self.active_mut() {
             editor.clear_cursor_states();
         }

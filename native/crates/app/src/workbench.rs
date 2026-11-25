@@ -1012,6 +1012,42 @@ mod tests {
     }
 
     #[gpui::test]
+    fn selection_anchor_keys_select_from_the_anchor(cx: &mut TestAppContext) {
+        use crate::editor::{Position, Selection};
+        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
+        let theme = load_theme(&[themes], "Dark Modern").unwrap();
+        let dir = std::env::temp_dir().join(format!("code-gpui-anchor-keys-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("a.txt");
+        std::fs::write(&file, "hello\nworld").unwrap();
+        let (sender, _receiver) = std::sync::mpsc::channel();
+        let (workbench, cx) = cx.add_window_view(|window, cx| {
+            let mut workbench = Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), crate::default_settings(), HostSync::new(sender), cx);
+            workbench.load_keybindings(crate::keybindings::default_keybindings(&[]), dir.join("keybindings.json"), cx);
+            workbench.open_file(file.clone(), true, window, cx);
+            workbench
+        });
+        cx.run_until_parked();
+        let state = |cx: &mut gpui::VisualTestContext| {
+            workbench.read_with(cx, |workbench, _| {
+                let editor = workbench.editors.active().unwrap();
+                (editor.selection_anchor, editor.selections.clone())
+            })
+        };
+
+        cx.simulate_keystrokes("right cmd-k cmd-b");
+        assert_eq!(state(cx).0, Some(Position::new(0, 1)), "editor.action.setSelectionAnchor");
+        cx.simulate_input("ab");
+        assert_eq!(state(cx).0, Some(Position::new(0, 3)), "typing at the anchor pushes it");
+        cx.simulate_keystrokes("escape");
+        assert_eq!(state(cx).0, None, "editor.action.cancelSelectionAnchor");
+        cx.simulate_keystrokes("cmd-k cmd-b down cmd-k cmd-k");
+        assert_eq!(state(cx), (None, vec![Selection { anchor: Position::new(0, 3), head: Position::new(1, 3) }]), "editor.action.selectFromAnchorToCursor");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[gpui::test]
     fn comment_keys_toggle_the_comments_of_the_file_language(cx: &mut TestAppContext) {
         let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
         let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();

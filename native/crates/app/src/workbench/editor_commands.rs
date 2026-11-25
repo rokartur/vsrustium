@@ -177,6 +177,35 @@ impl Workbench {
                 false => workbench.run_in_place_replace(up, cx),
             });
         }
+        // shortcut: GPUI has no screen reader announcements, so "Anchor set at {0}:{1}" is not read out; add one with them.
+        self.commands.register("editor.action.setSelectionAnchor", |workbench, _, _, cx| {
+            if let Some(editor) = workbench.editors.active_mut() {
+                editor.set_selection_anchor();
+                cx.notify();
+            }
+            Outcome::done()
+        });
+        let anchor_moves: [(&str, fn(&mut OpenEditor)); 2] = [
+            ("editor.action.goToSelectionAnchor", OpenEditor::go_to_selection_anchor),
+            ("editor.action.selectFromAnchorToCursor", OpenEditor::select_from_anchor_to_cursor),
+        ];
+        for (id, command) in anchor_moves {
+            // `setPosition` and `setSelection` of the API: the host hears of it, the view does not reveal it.
+            self.commands.register(id, move |workbench, _, _, cx| {
+                let Some(editor) = workbench.editors.active_mut().filter(|editor| editor.selection_anchor.is_some()) else { return Outcome::done() };
+                command(editor);
+                workbench.host.send_selection(editor, "api");
+                cx.notify();
+                Outcome::done()
+            });
+        }
+        self.commands.register("editor.action.cancelSelectionAnchor", |workbench, _, _, cx| {
+            if let Some(editor) = workbench.editors.active_mut() {
+                editor.selection_anchor = None;
+                cx.notify();
+            }
+            Outcome::done()
+        });
         self.commands.register("cursorUndo", |workbench, _, _, cx| workbench.run_cursor_undo(false, cx));
         self.commands.register("cursorRedo", |workbench, _, _, cx| workbench.run_cursor_undo(true, cx));
         self.commands.register("editor.action.clipboardCopyAction", |workbench, _, window, cx| workbench.copy_to_clipboard(false, window, cx));

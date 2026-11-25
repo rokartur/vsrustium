@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use gpui::{
     Axis, Bounds, Context, DispatchPhase, Div, ElementInputHandler, FontFeatures, Hitbox, HitboxBehavior, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
-    Rgba, ScrollDelta, ScrollWheelEvent, Stateful, StyledText, Task, Window, canvas, div, fill, font, point, prelude::*, px, size,
+    Rgba, ScrollDelta, ScrollWheelEvent, Stateful, StyledText, Task, Window, canvas, div, fill, font, point, prelude::*, px, rgb, size,
 };
 
 pub(super) mod sticky_scroll_view;
@@ -740,6 +740,13 @@ impl Workbench {
                 }
                 let (find_whole_lines, find_matches, find_colors) = self.find_line_decorations(editor, index, char_width, scroll_left);
                 content = content.children(find_whole_lines);
+                // anchorSelect.css: `.selection-anchor` is a 2px #007ACC bar in every theme, under the word highlights.
+                if let Some(anchor) = editor.selection_anchor
+                    && anchor.line == index
+                {
+                    let left = visible_column(text, anchor.column, tab_size) as f32 * char_width;
+                    content = content.child(div().absolute().top_0().h_full().left(px(left)).w(px(2.)).bg(rgb(0x007ACC)));
+                }
                 for (_, columns) in editor.highlights.iter().filter(|(line, _)| *line == index) {
                     let start = visible_column(text, columns.start, tab_size) as f32 * char_width;
                     let end = visible_column(text, columns.end, tab_size) as f32 * char_width;
@@ -826,7 +833,9 @@ impl Workbench {
                         continue;
                     }
                     let x = visible_column(text, selection.head.column, tab_size) as f32 * char_width;
-                    content = content.child(div().absolute().top_0().left(px(x)).w(px(2.)).h_full().bg(color));
+                    // viewCursor.ts: a 2px cursor sits 1px left, between the chars.
+                    let left = if x >= 1. { x - 1. } else { x };
+                    content = content.child(div().absolute().top_0().left(px(left)).w(px(2.)).h_full().bg(color));
                 }
                 let visible_at = move |workbench: &Workbench, x: gpui::Pixels| (f32::from(x) - workbench.text_area_left.get() - metrics.content_left() + scroll_left) / char_width;
                 let content = div()

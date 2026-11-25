@@ -234,6 +234,7 @@ impl Workbench {
             context.insert("messageVisible".into(), json!(self.editor_message_visible()));
             context.insert("editorHasSelection".into(), json!(editor.selections.iter().any(|selection| !selection.is_empty())));
             context.insert("editorHasMultipleSelections".into(), json!(editor.selections.len() > 1));
+            context.insert("selectionAnchorSet".into(), json!(editor.selection_anchor.is_some()));
             context.insert("editorColumnSelection".into(), self.setting("editor.columnSelection"));
             context.insert("foldingEnabled".into(), self.setting("editor.folding"));
             context.insert("editorLangId".into(), json!(editor.document.language_id));

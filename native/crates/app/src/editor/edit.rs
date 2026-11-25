@@ -7,7 +7,7 @@ use std::cmp::Reverse;
 
 use super::auto_indent::{AutoIndent, Model};
 use super::cursor::{self, Position, Selection};
-use super::{OpenEditor, folding, indent_guides};
+use super::{OpenEditor, anchor_select, folding, indent_guides};
 
 /// `EditOperationType`: what the last edit was, which decides where undo stops go.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -916,6 +916,9 @@ impl OpenEditor {
             text: text.replace('\n', eol),
         };
         self.folding.accept_replace(lines, start, end, text);
+        if let Some(anchor) = self.selection_anchor {
+            self.selection_anchor = Some(anchor_select::anchor_after_edit(anchor, lines, start, end, text));
+        }
         let prefix: String = lines[start.line].chars().take(start.column).collect();
         let suffix: String = lines[end.line].chars().skip(end.column).collect();
         let joined = prefix + text + &suffix;
