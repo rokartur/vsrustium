@@ -449,7 +449,7 @@ impl Workbench {
         let marks: Vec<(usize, usize, usize, usize)> = preview.iter().flat_map(|(_, _, ranges)| ranges).map(|range| (range.start.0 - 1, range.start.1 - 1, range.end.0 - 1, range.end.1 - 1)).collect();
         // The preview only reveals the marks (`revealRangeInCenter`); its cursor stays on the first line.
         let cursor_line = 0;
-        let line_count = document.map_or(0, |document| document.lines.len());
+        let line_count = document.as_ref().map_or(0, |document| document.lines.len());
         self.peek_preview_lines("hierarchy-peek-preview", document.as_deref(), &marks, cursor_line, widget.preview_scroll, width, height, char_width, window)
             .on_scroll_wheel(cx.listener(move |workbench, event: &ScrollWheelEvent, _, cx| {
                 let delta = f32::from(event.delta.pixel_delta(px(LINE_HEIGHT)).y);
