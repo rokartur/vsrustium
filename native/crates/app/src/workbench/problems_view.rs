@@ -2,7 +2,7 @@
 //! tree, a resource row with its file icon, folder and count over its markers, each with its severity icon, message,
 //! source, code and position, its related information below. A click opens the marker's location. The filter box
 //! and its menu (markersViewActions.ts, markersFilterOptions.ts) pick what shows.
-// shortcut: no indent guides, filter history, Cmd+. or Cmd+C on the selected row, or focus apart from selection.
+// shortcut: no indent guides, filter history, multi-selection, or focus apart from selection.
 
 use std::cell::Cell;
 use std::collections::HashSet;
@@ -59,6 +59,8 @@ pub struct ProblemsView {
     menu_bounds: Rc<Cell<Bounds<Pixels>>>,
     /// The focused and selected row.
     selected: Option<Row>,
+    /// The light bulb of the selected marker's row, which Cmd+. opens.
+    selected_light_bulb: Rc<Cell<Bounds<Pixels>>>,
 }
 
 /// A row of the tree: a resource by `URI.toString()`, a marker by resource and index, or a marker's related
@@ -90,6 +92,7 @@ impl ProblemsView {
             table: None,
             menu_bounds: Rc::default(),
             selected: None,
+            selected_light_bulb: Rc::default(),
         }
     }
 
@@ -181,6 +184,47 @@ pub fn filter_resources<'a>(resources: &'a [ResourceMarkers], options: &FilterOp
 
 fn related_information(marker: &Marker) -> &[Value] {
     marker.related_information.as_array().map_or(&[], Vec::as_slice)
+}
+
+/// markersModel.ts `Marker.toString`: the marker as tab-indented JSON, its resource and related resources as paths.
+fn marker_json(marker: &Marker) -> String {
+    let path = |uri: &Value| super::host_requests::uri_parts(uri).map(|(_, path)| path.to_string_lossy().into_owned()).unwrap_or_default();
+    let mut json = serde_json::Map::new();
+    json.insert("resource".into(), json!(crate::uri::Uri::parse(&marker.resource).map(|uri| uri.path).unwrap_or_default()));
+    json.insert("owner".into(), json!(marker.owner));
+    if !marker.code.is_null() {
+        json.insert("code".into(), marker.code.clone());
+    }
+    json.insert("severity".into(), json!(marker.severity));
+    json.insert("message".into(), json!(marker.message));
+    if let Some(source) = &marker.source {
+        json.insert("source".into(), json!(source));
+    }
+    for (key, value) in [("startLineNumber", marker.start_line), ("startColumn", marker.start_column), ("endLineNumber", marker.end_line), ("endColumn", marker.end_column)] {
+        json.insert(key.into(), json!(value));
+    }
+    let related = related_information(marker);
+    if !related.is_empty() {
+        let related: Vec<Value> = related.iter().map(|related| {
+            let mut related = related.clone();
+            related["resource"] = json!(path(&related["resource"]));
+            related
+        }).collect();
+        json.insert("relatedInformation".into(), json!(related));
+    }
+    if let Some(version) = marker.model_version_id {
+        json.insert("modelVersionId".into(), json!(version));
+    }
+    if !marker.tags.is_empty() {
+        json.insert("tags".into(), json!(marker.tags));
+    }
+    if let Some(origin) = &marker.origin {
+        json.insert("origin".into(), json!(origin));
+    }
+    let mut out = Vec::new();
+    let mut serializer = serde_json::Serializer::with_formatter(&mut out, serde_json::ser::PrettyFormatter::with_indent(b"\t"));
+    serde::Serialize::serialize(&Value::Object(json), &mut serializer).expect("JSON values serialize");
+    String::from_utf8(out).expect("serde_json writes UTF-8")
 }
 
 fn related_basename(related: &Value) -> String {
@@ -289,6 +333,40 @@ impl Workbench {
             window.focus(&workbench.problems_focus, cx);
             Outcome::done()
         });
+        self.commands.register("problems.action.showQuickFixes", |workbench, _, window, cx| {
+            if matches!(workbench.problems.selected, Some(Row::Marker(..))) {
+                let anchor = workbench.problems.selected_light_bulb.get();
+                workbench.show_problems_quick_fixes(anchor, window, cx);
+            }
+            Outcome::done()
+        });
+        self.commands.register("problems.action.open", |workbench, _, window, cx| {
+            workbench.open_problems_row(window, cx);
+            Outcome::done()
+        });
+        // `MARKER_COPY_ACTION_ID` and `MARKER_COPY_MESSAGE_ACTION_ID`: the selected markers, or every marker shown.
+        self.commands.register("problems.action.copy", |workbench, _, _, cx| {
+            let markers: Vec<String> = workbench.selected_problem_markers().iter().map(|marker| marker_json(marker)).collect();
+            if !markers.is_empty() {
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(format!("[{}]", markers.join(","))));
+            }
+            Outcome::done()
+        });
+        self.commands.register("problems.action.copyMessage", |workbench, _, _, cx| {
+            let messages: Vec<String> = workbench.selected_problem_markers().iter().map(|marker| marker.message.clone()).collect();
+            if !messages.is_empty() {
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(messages.join("\n")));
+            }
+            Outcome::done()
+        });
+        self.commands.register("problems.action.copyRelatedInformationMessage", |workbench, _, _, cx| {
+            let Some(Row::Related(uri, index, related)) = workbench.problems.selected.clone() else { return Outcome::done() };
+            let marker = workbench.problems_resources().into_iter().find(|resource| resource.resource == uri).and_then(|resource| resource.markers.get(index).cloned());
+            if let Some(message) = marker.as_ref().and_then(|marker| related_information(marker).get(related)).and_then(|related| related["message"].as_str()) {
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(message.to_owned()));
+            }
+            Outcome::done()
+        });
         self.commands.register("problems.action.clearFilterText", |workbench, _, window, cx| {
             workbench.edit_problems_filter(|input| input.set_value(String::new()), window, cx);
             Outcome::done()
@@ -330,6 +408,10 @@ impl Workbench {
         if filter_focused || tree_focused {
             context.insert("focusedView".into(), json!(MARKERS_VIEW_ID));
         }
+        let selected = self.problems.selected.as_ref().filter(|_| tree_focused);
+        context.insert("problemsVisibility".into(), json!(!self.problems_table_mode()));
+        context.insert("problemFocus".into(), json!(matches!(selected, Some(Row::Marker(..)))));
+        context.insert("relatedInformationFocus".into(), json!(matches!(selected, Some(Row::Related(..)))));
     }
 
     /// markersView.ts `focus`: the tree takes focus and, with nothing selected, `setMarkerSelection` selects the
@@ -337,7 +419,8 @@ impl Workbench {
     fn focus_problems(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.problems_focus, cx);
         if self.problems.selected.is_none() {
-            self.problems.selected = self.problems_rows().into_iter().find(|row| matches!(row, Row::Marker(..)));
+            let first = self.problems_rows().into_iter().find(|row| matches!(row, Row::Marker(..)));
+            self.select_problems_row(first, cx);
         }
         cx.notify();
     }
@@ -379,8 +462,29 @@ impl Workbench {
             _ => return,
         };
         cx.stop_propagation();
-        self.problems.selected = rows.get(next).cloned();
+        self.select_problems_row(rows.get(next).cloned(), cx);
+    }
+
+    /// The selection moves to `row`; a marker's row asks for its quick fixes (`showLightBulb`).
+    fn select_problems_row(&mut self, row: Option<Row>, cx: &mut Context<Self>) {
+        if let Some(Row::Marker(uri, index)) = &row {
+            let marker = self.problems_resources().into_iter().find(|resource| resource.resource == *uri).and_then(|resource| resource.markers.get(*index).cloned());
+            if let Some(marker) = marker {
+                self.problems_marker_hovered(&marker, cx);
+            }
+        }
+        self.problems.selected = row;
         cx.notify();
+    }
+
+    /// `getSelectedMarkers`: a selected resource's markers or the selected marker, else every resource's markers.
+    fn selected_problem_markers(&self) -> Vec<Arc<Marker>> {
+        let resources = self.problems_resources();
+        match &self.problems.selected {
+            Some(Row::Resource(uri)) => resources.iter().filter(|resource| resource.resource == *uri).flat_map(|resource| resource.markers.clone()).collect(),
+            Some(Row::Marker(uri, index)) => resources.iter().filter(|resource| resource.resource == *uri).filter_map(|resource| resource.markers.get(*index).cloned()).collect(),
+            _ => resources.iter().flat_map(|resource| resource.markers.clone()).collect(),
+        }
     }
 
     fn open_problems_row(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -638,7 +742,7 @@ impl Workbench {
                     .child(shown.markers.len().to_string()),
             )
             .on_click(cx.listener(move |workbench, _, _, cx| {
-                workbench.problems.selected = Some(Row::Resource(key.clone()));
+                workbench.select_problems_row(Some(Row::Resource(key.clone())), cx);
                 if !workbench.problems.collapsed.remove(&key) {
                     workbench.problems.collapsed.insert(key.clone());
                 }
@@ -719,8 +823,11 @@ impl Workbench {
         // markers.css: on a hovered row the light bulb takes the severity icon's place.
         let quick_fix = self.problems_quick_fix_icon(marker);
         let severity = self.icon(icon, 16., 16., color).mx(px(6.)).when(quick_fix.is_some(), |icon| icon.group_hover(group.clone(), |icon| icon.invisible()));
+        // markers.css: the selected row shows its light bulb without the pointer over it.
+        let selected = self.problems.selected == Some(Row::Marker(key.0.clone(), key.1));
+        let severity = severity.when(selected && quick_fix.is_some(), |icon| icon.invisible());
         let light_bulb = quick_fix.map(|light_bulb| {
-            let bounds: Rc<Cell<Bounds<Pixels>>> = Rc::default();
+            let bounds = if selected { self.problems.selected_light_bulb.clone() } else { Rc::default() };
             self.icon(light_bulb, 20., 20., self.color(if light_bulb == "lightbulb" { "editorLightBulb.foreground" } else { "editorLightBulbAutoFix.foreground" }))
                 .id("problems-quick-fix")
                 .absolute()
@@ -728,7 +835,7 @@ impl Workbench {
                 .top(px(1.))
                 .rounded(px(5.))
                 .cursor_pointer()
-                .invisible()
+                .when(!selected, |icon| icon.invisible())
                 .group_hover(group.clone(), |icon| icon.visible())
                 .hover(|icon| icon.bg(self.color("toolbar.hoverBackground")))
                 .child(super::output_view::bounds_tracker(bounds.clone()))
@@ -758,7 +865,7 @@ impl Workbench {
             }))
             .child(div().flex_1().min_w_0().flex().flex_col().child(first).children(rest))
             .on_click(cx.listener(move |workbench, _, window, cx| {
-                workbench.problems.selected = Some(Row::Marker(selected_key.0.clone(), selected_key.1));
+                workbench.select_problems_row(Some(Row::Marker(selected_key.0.clone(), selected_key.1)), cx);
                 workbench.open_marker_related(&target, window, cx);
             }))
     }
@@ -784,7 +891,7 @@ impl Workbench {
             .child(div().opacity(0.7).pr(px(4.)).flex_none().child(":"))
             .child(self.filter_match(&message, &highlights.message))
             .on_click(cx.listener(move |workbench, _, window, cx| {
-                workbench.problems.selected = Some(row.clone());
+                workbench.select_problems_row(Some(row.clone()), cx);
                 workbench.open_marker_related(&target, window, cx);
             }))
     }
@@ -840,6 +947,9 @@ mod tests {
         assert_eq!(selected(cx), Some(Row::Marker(resource.clone(), 0)));
         cx.simulate_keystrokes("down");
         assert_eq!(selected(cx), Some(Row::Marker(resource.clone(), 1)));
+        run(&workbench, cx, "problems.action.copy");
+        let copied = cx.read_from_clipboard().and_then(|item| item.text()).unwrap();
+        assert!(copied.starts_with("[{\n\t\"resource\": \"") && copied.contains("\t\"startLineNumber\": 2,\n"), "{copied}");
         cx.simulate_keystrokes("up up");
         assert_eq!(selected(cx), Some(Row::Resource(resource.clone())));
         cx.simulate_keystrokes("enter");
