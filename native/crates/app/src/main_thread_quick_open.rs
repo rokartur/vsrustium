@@ -36,6 +36,8 @@ pub enum Owner {
     ResizeColumn(Option<usize>),
     /// A picker of output channels, with what accepting each item does.
     Output(Vec<crate::workbench::output_actions::OutputPick>),
+    /// The terminal profile picker or rename input.
+    Terminal(crate::workbench::terminal_view::TerminalInput),
 }
 
 impl Workbench {
@@ -208,6 +210,7 @@ impl Workbench {
             Owner::EditorStatus(_) => self.editor_status_event(id, event, window, cx),
             Owner::ResizeColumn(_) => self.resize_column_event(id, event, window, cx),
             Owner::Output(_) => self.output_pick_event(id, event, window, cx),
+            Owner::Terminal(_) => self.terminal_input_event(id, event, window, cx),
         }
     }
 

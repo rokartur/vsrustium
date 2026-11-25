@@ -161,6 +161,10 @@ impl Workbench {
             cx.stop_propagation();
             return;
         }
+        if !in_chord_mode && self.terminal_key(keystroke, &resolution, window, cx) {
+            cx.stop_propagation();
+            return;
+        }
         match resolution {
             Resolution::MoreChordsNeeded => {
                 cx.stop_propagation();
@@ -326,6 +330,7 @@ impl Workbench {
         self.keybindings_editor_context(window, &mut context);
         self.search_editor_context(window, &mut context);
         self.output_context(window, &mut context);
+        self.terminal_context(window, &mut context);
         context
     }
 

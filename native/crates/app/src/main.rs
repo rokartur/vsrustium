@@ -46,6 +46,7 @@ mod search_model;
 mod smart_snippet_inserter;
 mod split_view;
 mod syntax;
+mod terminal;
 mod tf_idf;
 mod theme;
 mod undo_redo;

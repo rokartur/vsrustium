@@ -9,6 +9,8 @@ name = "code-gpui"
 path = "src/main.rs"
 
 [dependencies]
+alacritty_terminal = "0.25"
+libc = "0.2"
 anyhow.workspace = true
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 config = { path = "../config" }

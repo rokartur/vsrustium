@@ -445,6 +445,15 @@ Scope (roadmap section 13): diagnostics, hover, completion, go to definition and
 - shortcut: Open Logs Folder reveals the session folder when it has no `main.log`; the port has no main process writing one.
 - Toggle Keyboard Shortcuts Troubleshooting writes `[KeybindingService]:` lines to the Window log from `dispatch_key` and `Resolver::resolve_logged`. shortcut: the keydown lines print GPUI's key name for the DOM `code` and `keyCode`, chords print as user settings labels for the scan code dispatch strings, and no focus marker is drawn (GPUI does not expose the focused element's bounds).
 
+## Milestone 15: integrated terminal (in progress)
+
+- Backend: `alacritty_terminal` 0.25 (Apache-2.0) is the VT parser and screen model in place of xterm.js; the PTY is the port's own node-pty (`terminal/pty.rs`: openpty, setsid, TIOCSCTTY, PWD set to the cwd as `unixTerminal.ts` does). Wu's `terminal` crate is GPL-3.0 and is not used.
+- Keys follow xterm.js `Keyboard.ts` (`terminal/keys.rs`), mouse reports `CoreMouseService` DEFAULT and SGR (`terminal/mouse.rs`). `terminal/skip_shell.rs` is `DEFAULT_COMMANDS_TO_SKIP_SHELL` plus the terminalContrib lists of 1.147.0: a keybinding to one of them runs instead of reaching the shell.
+- shortcut: the Terminal view is an editor tab with scheme `vscode-terminal`, mounted like the Output view until milestone 11's panel lands; its title actions (Switch Terminal, New, profiles dropdown, Split, Kill) sit where a text editor has its breadcrumbs. The tabs list, splits and groups are drawn inside the tab.
+- shortcut: the view title's "..." menu, the terminal context menu, cursor blinking, contributed profiles and the Ctrl+D exit exception are not ported (see the `shortcut:` comments in `workbench/terminal_view.rs`).
+- Without workspace trust (not ported, see milestone 12) the restricted settings `terminal.integrated.profiles.osx`, `defaultProfile.osx`, `env.osx` and `cwd` are read from workspace settings too, as in the reference with `security.workspace.trust.enabled` off: a folder's `.vscode/settings.json` picks the shell and its arguments.
+- OSC 52 writes reach the clipboard (ClipboardAddon); the `?` read query is not answered. Bracketed paste replaces ESC with U+241B as xterm's `bracketTextForPaste` does.
+- The port opens a workspace folder by its resolved path, so a folder under `/var` shows as `/private/var` in the prompt where the reference shows `/var`; the cause is the workspace, not the terminal.
 ## Milestone 18: extensions, install, update, gallery (in progress)
 
 Scope (roadmap section 18): extension management on disk with VSIX install and uninstall, add and remove in the running host; then the Open VSX gallery, the Extensions view, recommendations and language packs.

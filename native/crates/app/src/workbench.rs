@@ -30,6 +30,7 @@ pub mod logs_actions;
 mod notifications_view;
 pub mod output_actions;
 mod output_view;
+pub(crate) mod terminal_view;
 pub mod quick_access;
 mod quick_open;
 mod readonly;
@@ -102,6 +103,7 @@ pub struct Workbench {
     context_keys: HashMap<String, Value>,
     pub output: crate::output::Output,
     output_view: output_view::OutputView,
+    terminal_view: terminal_view::TerminalView,
     /// The status bar message and the task that hides it.
     status_message: Option<(String, Task<()>)>,
     scrollbars: editor_view::Scrollbars,
@@ -245,6 +247,7 @@ impl Workbench {
             context_keys: HashMap::new(),
             output: Default::default(),
             output_view: output_view::OutputView::new(cx),
+            terminal_view: terminal_view::TerminalView::new(cx),
             status_message: None,
             scrollbars: Default::default(),
             fold_controls: Default::default(),
@@ -316,6 +319,7 @@ impl Workbench {
         workbench.register_notifications_commands();
         workbench.register_output_actions();
         workbench.register_logs_actions();
+        workbench.register_terminal_actions();
         workbench.register_extension_management_commands();
         // Keybindings resolve before the focused element sees the key, and with nothing focused too.
         let entity = cx.entity().downgrade();

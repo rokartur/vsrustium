@@ -194,12 +194,12 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/sandbox | src/vs/platform | n/a | Electron process, IPC or DOM layer; replaced by the single-process Rust/GPUI architecture (port/notes.md) |
 | platform/secrets | src/vs/platform | ported | port/tools/settings-check secrets; Keychain items instead of safeStorage encryption, secrets.test not ported |
 | platform/sharedProcess | src/vs/platform | n/a | Electron process, IPC or DOM layer; replaced by the single-process Rust/GPUI architecture (port/notes.md) |
-| platform/shell | src/vs/platform | todo |  |
+| platform/shell | src/vs/platform | ported | terminal/profiles.rs: system shell from `$SHELL`, profile detection from /etc/shells and PATH |
 | platform/sign | src/vs/platform | todo |  |
 | platform/state | src/vs/platform | todo |  |
 | platform/storage | src/vs/platform | ported | cargo test -p storage (storage.integrationTest.ts cases); profile and workspace scopes only, storageService tests not ported |
 | platform/telemetry | src/vs/platform | todo |  |
-| platform/terminal | src/vs/platform | todo |  |
+| platform/terminal | src/vs/platform | ported | terminal/pty.rs (node-pty), terminal.rs (process, environment, exit messages) on alacritty_terminal; cargo test -p app terminal |
 | platform/test | src/vs/platform | n/a | upstream test infrastructure; the port tests with cargo test and port/tools |
 | platform/theme | src/vs/platform | ported | registry defaults for dark, light, hcDark, hcLight (theme.rs); cargo test -p app theme::tests |
 | platform/tunnel | src/vs/platform | removed | no remote or tunnels by decision (port/notes.md); one local extension host |
@@ -478,7 +478,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/tags | workbench contribution | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | workbench/contrib/tasks | workbench contribution | todo |  |
 | workbench/contrib/telemetry | workbench contribution | todo |  |
-| workbench/contrib/terminal | workbench contribution | todo |  |
+| workbench/contrib/terminal | workbench contribution | ported | workbench/terminal_view.rs: terminals, split, kill, rename, profiles, tabs list as an editor tab until the panel lands; ui-pair against the reference |
 | workbench/contrib/terminalContrib | workbench contribution | todo |  |
 | workbench/contrib/testing | workbench contribution | todo |  |
 | workbench/contrib/themes | workbench contribution | ported | Color Theme picker (`workbench.action.selectTheme`, Cmd+K Cmd+T): rows, order and descriptions as the reference, 200ms preview, Escape restores, accept writes `workbench.colorTheme` (cargo test -p app themes); no file icon or product icon theme pickers, no Marketplace browsing, no `window.autoDetectColorScheme` |
