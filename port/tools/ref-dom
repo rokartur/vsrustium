@@ -4,7 +4,8 @@
 // Usage: port/tools/ref-dom <out-dir> <action>...   Actions: `dump:<selector>` (the element and its descendants),
 // `click:<selector>`, `hover:<selector>`, `key:<key>` (CDP key name, e.g. Escape), `wait:<ms>`, `shot:<name>`.
 // Env REF, FOLDER, FILE as port/tools/ref-screenshot, THEME (dark, light, hc, hclight; default dark), ARGS (more
-// arguments, space separated, e.g. --extensionDevelopmentPath=<abs path>), SETTLE (ms before the first action, default 8000).
+// arguments, space separated, e.g. --extensionDevelopmentPath=<abs path>), SETTLE (ms before the first action, default 8000),
+// SETTINGS (a JSON object of more user settings).
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { referenceArgs, referenceUserData } from './ref-user-data.ts';
@@ -20,10 +21,10 @@ const keys: Record<string, { key: string; code: string; windowsVirtualKeyCode: n
 };
 
 mkdirSync(outDir, { recursive: true });
-const userData = referenceUserData(themes[process.env.THEME ?? 'dark'], { 'editor.accessibilitySupport': 'off' });
+const userData = referenceUserData(themes[process.env.THEME ?? 'dark'], { 'editor.accessibilitySupport': 'off', ...JSON.parse(process.env.SETTINGS ?? '{}') });
 const paths = [process.env.FOLDER, process.env.FILE].filter(path => path) as string[];
 const extraArgs = process.env.ARGS?.split(' ') ?? [];
-const app = Bun.spawn([electron, ref, ...paths, ...referenceArgs, ...extraArgs, '--user-data-dir', userData, '--remote-debugging-port=' + port], {
+const app = Bun.spawn([electron, ref, ...paths, ...referenceArgs, ...extraArgs, '--user-data-dir', userData, '--shared-data-dir', join(userData, 'shared'), '--remote-debugging-port=' + port], {
 	env: { ...process.env, VSCODE_DEV: '1', NODE_ENV: 'development' },
 	stdout: 'ignore',
 	stderr: 'ignore',

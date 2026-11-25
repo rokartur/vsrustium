@@ -172,3 +172,7 @@ On the Studio, the working tree of the `_workbench.open` commit. Combined grep o
 ## M13 diagnostics
 
 On the Studio, the working tree of the diagnostics and Next Problem commit. `MOCHA_GREP="vscode API - languages" SUITE_TIMEOUT=300 port/tools/api-tests`: api-folder 3 passing, 0 pending, 4 failing, 395 not reached (the pattern filters them). Passing: both `setTextDocumentLanguage` tests and `diagnostics, read & event`. Failing: link detector, diagnostics & CodeActionProvider, completions with document filters, folding command; they need `MainThreadLanguageFeatures`.
+
+## M12 workspace trust
+
+`MOCHA_GREP="vscode API - env|vscode API - workspace" SUITE_TIMEOUT=900 port/tools/api-tests` on the Studio, the working tree of the workspace trust commit (`--disable-workspace-trust`, as the reference run has `security.workspace.trust.enabled: false`). api-folder 113 passing, 2 pending, 7 failing, 280 not reached (exit 1 after 13s); api-workspace 4/0/0. The 7 failing are the 6 `env.power` tests and `env.remoteName`, as at e9ae1460.

@@ -7,6 +7,7 @@ mod bulk_text_edits;
 mod context_menu;
 mod define_keybinding;
 mod diagnostics;
+mod dialog_view;
 mod editor_commands;
 mod editor_menus;
 mod editor_message;
@@ -16,6 +17,7 @@ mod explorer_actions;
 mod explorer_find;
 mod file_participants;
 mod find_widget;
+mod host;
 mod hover;
 pub(crate) mod host_requests;
 mod input_box_view;
@@ -41,6 +43,7 @@ mod text_input;
 mod title_bar_actions;
 mod unicode_highlight;
 mod unusual_line_terminators;
+mod workspace_trust_view;
 
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -148,6 +151,9 @@ pub struct Workbench {
     profile_storage: Arc<Mutex<Storage>>,
     /// StorageScope.WORKSPACE of the opened folder, shared with the extension host's MainThreadStorage.
     workspace_storage: Arc<Mutex<Storage>>,
+    pub workspace_trust: crate::workspace_trust::WorkspaceTrust,
+    /// Custom dialogs, the shown one first.
+    dialogs: Vec<dialog_view::ShownDialog>,
 }
 
 impl Render for Workbench {
@@ -168,6 +174,7 @@ impl Render for Workbench {
             .flex()
             .flex_col()
             .child(self.title_bar(f32::from(viewport.width), cx))
+            .children(self.restricted_mode_banner(cx))
             .child(
                 div()
                     .flex_1()
@@ -186,6 +193,7 @@ impl Render for Workbench {
         let notifications = self.notifications_widget(viewport, window, cx);
         let context_menu = self.context_menu_widget(cx);
         let hover = self.hover_widget(window, cx);
+        let dialog = self.custom_dialog_widget(window, cx);
         self.update_menubar(window, cx);
         div()
             .relative()
@@ -200,6 +208,7 @@ impl Render for Workbench {
             .children(quick_input.map(|widget| div().absolute().left(px(inset)).top(px(inset)).child(widget)))
             .children(notifications)
             .children(context_menu)
+            .children(dialog)
             .children(hover)
             // style.css: .macos-tahoe windows round 16px, older macOS 10px.
             .when_some(window_border, |root, border| root.child(div().absolute().inset_0().border_1().rounded(px(if is_tahoe_or_newer() { 16. } else { 10. })).border_color(border)))
@@ -264,6 +273,8 @@ impl Workbench {
             installed_menubar: None,
             profile_storage: Arc::new(Mutex::new(Storage::in_memory())),
             workspace_storage: Arc::new(Mutex::new(Storage::in_memory())),
+            workspace_trust: Default::default(),
+            dialogs: Vec::new(),
         };
         crate::main_thread_commands::register_commands_documentation(&mut workbench);
         workbench.register_workbench_actions();
@@ -289,6 +300,8 @@ impl Workbench {
         workbench.register_marker_navigation_commands();
         workbench.register_define_keybinding_command();
         workbench.register_notifications_commands();
+        workbench.register_workspace_trust_commands();
+        workbench.register_host_commands();
         // Keybindings resolve before the focused element sees the key, and with nothing focused too.
         let entity = cx.entity().downgrade();
         cx.intercept_keystrokes(move |event, window, cx| {
@@ -853,7 +866,7 @@ impl Workbench {
             .text_size(px(12.))
             // statusbarpart.css: font-variant-numeric: tabular-nums.
             .font_features(FontFeatures(Arc::new(vec![("tnum".into(), 1)])))
-            .child(div().h(px(24.)).flex().child(self.icon("remote", 28., 16., foreground).h_full().cursor_pointer().child(self.hover_target("status.host", HoverContent::Text("Open a Remote Window".into()), HoverOptions::status_bar()))).children(self.notifications_status_item(true, foreground, cx)).child(self.extension_status_items(true, |priority| priority > PROBLEMS_PRIORITY, foreground, cx)).child(problems).child(self.extension_status_items(true, |priority| priority <= PROBLEMS_PRIORITY, foreground, cx)).children(self.status_bar_message()).children(self.window_progress_entry(cx.background_executor().now()).map(|entry| self.extension_status_item(&entry, foreground, cx))))
+            .child(div().h(px(24.)).flex().child(self.icon("remote", 28., 16., foreground).h_full().cursor_pointer().child(self.hover_target("status.host", HoverContent::Text("Open a Remote Window".into()), HoverOptions::status_bar()))).children(self.restricted_mode_status_item(foreground, cx)).children(self.notifications_status_item(true, foreground, cx)).child(self.extension_status_items(true, |priority| priority > PROBLEMS_PRIORITY, foreground, cx)).child(problems).child(self.extension_status_items(true, |priority| priority <= PROBLEMS_PRIORITY, foreground, cx)).children(self.status_bar_message()).children(self.window_progress_entry(cx.background_executor().now()).map(|entry| self.extension_status_item(&entry, foreground, cx))))
             .child(div().h(px(24.)).flex().child(self.extension_status_items(false, |priority| priority > EDITOR_STATUS_PRIORITY, foreground, cx)).children(self.editor_status_items(foreground, window, cx)).child(self.extension_status_items(false, |priority| priority <= EDITOR_STATUS_PRIORITY, foreground, cx)).children(self.notifications_status_item(false, foreground, cx)))
     }
 

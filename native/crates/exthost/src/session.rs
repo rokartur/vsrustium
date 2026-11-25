@@ -155,6 +155,8 @@ pub struct Session {
     pub files: Option<MainThreadFiles>,
     /// Workspace search; without it `findFiles` and `findTextInFiles` answer `undefined`.
     pub workspace: Option<MainThreadWorkspace>,
+    /// `isWorkspaceTrusted` for `$initializeWorkspace`; trust granted later reaches the host as `$onDidGrantWorkspaceTrust`.
+    pub workspace_trusted: bool,
     forward: Option<Forward>,
     /// The workbench's handler for the MainThread* requests it answers while the session thread waits.
     pub main_thread: Option<Box<dyn MainThread>>,
@@ -192,6 +194,7 @@ impl Session {
             secrets: None,
             files: None,
             workspace: None,
+            workspace_trusted: true,
             forward: None,
             main_thread: None,
             waiting: Waiting::default(),
@@ -204,7 +207,7 @@ impl Session {
         self.extensions = extensions.iter().map(|e| (e.id.to_lowercase(), e.description.clone())).collect();
         let configuration = self.configuration.as_ref().map_or_else(|| configuration_init_data(extensions), MainThreadConfiguration::configuration_data);
         self.notify("ExtHostConfiguration", "$initializeConfiguration", vec![configuration]);
-        self.notify("ExtHostWorkspace", "$initializeWorkspace", vec![workspace.unwrap_or(Value::Null), json!(true)]);
+        self.notify("ExtHostWorkspace", "$initializeWorkspace", vec![workspace.unwrap_or(Value::Null), json!(self.workspace_trusted)]);
         // TelemetryLevel.NONE and supportsTelemetry = false: the port has no telemetry.
         self.notify("ExtHostTelemetry", "$initializeTelemetryLevel", vec![json!(0), json!(false), json!({ "usage": false, "error": false })]);
         // MainThreadEditorTabs sends the model on construction; an empty window has one active group with no tabs.

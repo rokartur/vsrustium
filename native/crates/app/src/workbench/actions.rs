@@ -111,7 +111,7 @@ impl Workbench {
         (0..self.editors.editors.len()).filter(|index| self.editors.editors[*index].is_dirty()).collect()
     }
 
-    fn close_all_editors(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
+    pub(super) fn close_all_editors(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
         self.close_editors((0..self.editors.editors.len()).collect(), window, cx)
     }
 

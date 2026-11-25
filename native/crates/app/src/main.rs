@@ -47,6 +47,7 @@ mod tf_idf;
 mod theme;
 mod undo_redo;
 mod workbench;
+mod workspace_trust;
 
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, channel};
@@ -80,6 +81,12 @@ use main_thread::{HostRequest, WorkbenchMainThread};
 use theme::load_theme;
 use workbench::Workbench;
 
+/// The indexes of the folder and file arguments: those that are neither a flag nor a flag's value.
+pub(crate) fn positional_indexes(args: &[String]) -> Vec<usize> {
+    let value_flags = ["--user-data-dir", "--shared-data-dir", "--screenshot", "--screenshot-keys", "--screenshot-input", "--theme"];
+    (1..args.len()).filter(|&index| !args[index].starts_with("--") && !value_flags.contains(&args[index - 1].as_str())).collect()
+}
+
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let runtime = if args.iter().any(|arg| arg == "--node") { Runtime::Node } else { Runtime::Bun };
@@ -92,8 +99,7 @@ fn main() -> anyhow::Result<()> {
     let screenshot_input = flag_value("--screenshot-input").unwrap_or_default();
     // Typed before the capture, as port/tools/ref-screenshot types KEYS into the reference.
     let screenshot_keys: Vec<Keystroke> = flag_value("--screenshot-keys").unwrap_or_default().split_whitespace().map(Keystroke::parse).collect::<Result<_, _>>()?;
-    let value_flags = ["--user-data-dir", "--screenshot", "--screenshot-keys", "--screenshot-input", "--theme"];
-    let positional: Vec<&String> = args.iter().enumerate().skip(1).filter(|(i, arg)| !arg.starts_with("--") && !value_flags.contains(&args[i - 1].as_str())).map(|(_, arg)| arg).collect();
+    let positional: Vec<&String> = positional_indexes(&args).into_iter().map(|index| &args[index]).collect();
     let canonical = |path: &String| std::fs::canonicalize(path).with_context(|| format!("opening {path}"));
     let workspace = positional.first().map(|path| canonical(path)).transpose()?.map(Workspace::open);
     let file = positional.get(1).map(|path| canonical(path)).transpose()?;
@@ -105,8 +111,38 @@ fn main() -> anyhow::Result<()> {
     if let Some(development) = &development {
         development.add_extension(&mut extensions)?;
     }
-    let described: Vec<(&str, &serde_json::Value)> = extensions.iter().map(|extension| (extension.id.as_str(), &extension.description)).collect();
-    let settings = Settings::load(Registry::with_extensions(&described), user_data.join("User"), workspace.clone());
+    let load_settings = |extensions: &[ScannedExtension]| {
+        let described: Vec<(&str, &serde_json::Value)> = extensions.iter().map(|extension| (extension.id.as_str(), &extension.description)).collect();
+        Settings::load(Registry::with_extensions(&described), user_data.join("User"), workspace.clone())
+    };
+    let mut settings = load_settings(&extensions);
+    // storageMainService.ts: no storage during extension tests, so each test run starts empty.
+    let extension_tests = development.as_ref().is_some_and(|development| development.tests_path.is_some());
+    let storage = match extension_tests {
+        true => MainThreadStorage::in_memory(),
+        false => MainThreadStorage::open(&SessionPaths { app_root: &app_root, user_data: &user_data, workspace: workspace.as_ref() })?,
+    };
+    let shared_storage = match extension_tests {
+        true => Arc::new(Mutex::new(storage::Storage::in_memory())),
+        false => Arc::new(Mutex::new(open_shared_storage(flag_value("--shared-data-dir").map(PathBuf::from))?)),
+    };
+    let setting = |key: &str| settings.get_value(Some(key), &Overrides::default());
+    let workspace_trust = workspace_trust::WorkspaceTrust::new(shared_storage, workspace_trust::Startup {
+        // workspaceTrust.ts isWorkspaceTrustEnabled: only an explicit false turns the setting off.
+        enabled: !args.iter().any(|arg| arg == "--disable-workspace-trust") && setting("security.workspace.trust.enabled") != Some(json!(false)),
+        workspace: workspace.as_ref(),
+        empty_window_trusted: setting("security.workspace.trust.emptyWindow") == Some(json!(true)),
+        workspace_storage: &mut storage.workspace.lock().unwrap(),
+    });
+    if !workspace_trust.is_trusted() {
+        let configured = setting("extensions.supportUntrustedWorkspaces").unwrap_or_default();
+        let count = extensions.len();
+        extensions.retain(|extension| !workspace_trust::disabled_when_untrusted(extension, workspace.as_ref(), &configured));
+        if extensions.len() != count {
+            settings = load_settings(&extensions);
+        }
+        settings.update_workspace_trust(false);
+    }
     let theme = match flag_value("--theme") {
         Some(theme_id) => load_theme(&extensions, &theme_id)?,
         None => settings_theme(&extensions, &settings)?,
@@ -115,12 +151,6 @@ fn main() -> anyhow::Result<()> {
     let color_themes = theme::color_themes(&extensions)?;
     let settings = Arc::new(Mutex::new(settings));
     let keybindings_file = user_data.join("User/keybindings.json");
-    // storageMainService.ts: no storage during extension tests, so each test run starts empty.
-    let extension_tests = development.as_ref().is_some_and(|development| development.tests_path.is_some());
-    let storage = match extension_tests {
-        true => MainThreadStorage::in_memory(),
-        false => MainThreadStorage::open(&SessionPaths { app_root: &app_root, user_data: &user_data, workspace: workspace.as_ref() })?,
-    };
 
     application().run(move |cx: &mut App| {
         // Same size as the reference capture in port/tools/ref-screenshot, so pixel diffs line up.
@@ -153,7 +183,10 @@ fn main() -> anyhow::Result<()> {
                 workbench.color_themes = color_themes;
                 workbench.restore_profile_state(storage.profile.clone());
                 workbench.restore_workspace_state(storage.workspace.clone());
+                let workspace_trusted = workspace_trust.is_trusted();
+                workbench.workspace_trust = workspace_trust;
                 workbench.watch_editor_focus(window, cx);
+                workbench.show_trust_modal_on_start(window, cx);
                 if let Some(file) = file {
                     workbench.open_file(file, true, window, cx);
                 }
@@ -161,7 +194,7 @@ fn main() -> anyhow::Result<()> {
                     .name("exthost-session".into())
                     .spawn(move || {
                         let runs_tests = development.as_ref().is_some_and(|development| development.tests_path.is_some());
-                        if let Err(error) = run_extension_host(runtime, app_root, extensions, settings, storage, user_data, workspace, development, main_thread, request_sender, replies, &sender) {
+                        if let Err(error) = run_extension_host(runtime, app_root, extensions, settings, storage, workspace_trusted, user_data, workspace, development, main_thread, request_sender, replies, &sender) {
                             if runs_tests {
                                 eprintln!("extension host failed: {error:#}");
                                 std::process::exit(1);
@@ -260,6 +293,7 @@ fn run_extension_host(
     extensions: Vec<ScannedExtension>,
     settings: Arc<Mutex<Settings>>,
     mut storage: MainThreadStorage,
+    workspace_trusted: bool,
     user_data: PathBuf,
     workspace: Option<Workspace>,
     development: Option<ExtensionDevelopment>,
@@ -291,6 +325,7 @@ fn run_extension_host(
     session.workspace = Some(MainThreadWorkspace::new(folders, settings.clone(), &app_root));
     session.configuration = Some(MainThreadConfiguration::new(settings, development.is_some()));
     session.storage = Some(storage);
+    session.workspace_trusted = workspace_trusted;
     // secrets.ts: without encryption the secret storage falls back to memory.
     session.secrets = Some(match extension_tests {
         true => MainThreadSecretState::in_memory(),
@@ -395,6 +430,18 @@ fn icon_theme_follows_workbench_icon_theme() {
     assert!(!icons_with(r#"{ "workbench.iconTheme": null }"#));
     assert!(icons_with(r#"{ "workbench.iconTheme": "no-such-theme" }"#));
     std::fs::remove_dir_all(&user_home).unwrap();
+}
+
+/// The APPLICATION_SHARED storage, `sharedStorage/state.vscdb` in `--shared-data-dir`, else in
+/// `~/.vscode-gpui-shared` as the reference keeps it in `~/<sharedDataFolderName>`.
+fn open_shared_storage(shared_data: Option<PathBuf>) -> anyhow::Result<storage::Storage> {
+    let shared_data = match shared_data {
+        Some(dir) => dir,
+        None => PathBuf::from(std::env::var_os("HOME").context("HOME is not set")?).join(".vscode-gpui-shared"),
+    };
+    let dir = shared_data.join("sharedStorage");
+    std::fs::create_dir_all(&dir)?;
+    Ok(storage::Storage::open(&dir.join("state.vscdb")))
 }
 
 fn default_user_data() -> anyhow::Result<PathBuf> {

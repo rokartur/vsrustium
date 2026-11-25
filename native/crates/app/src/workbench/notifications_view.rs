@@ -713,7 +713,7 @@ impl Workbench {
     }
 
     /// The opener service for a message link: a `command:` link runs the command with its JSON arguments.
-    fn open_notification_link(&mut self, href: &str, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn open_notification_link(&mut self, href: &str, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(command) = href.strip_prefix("command:") {
             let (id, query) = command.split_once('?').unwrap_or((command, ""));
             let decoded = percent_decode(query);

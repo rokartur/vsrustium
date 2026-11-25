@@ -906,7 +906,7 @@ impl Workbench {
     }
 
     /// The 18px `.monaco-checkbox` of the list and the header: tri-state when `mixed`.
-    fn checkbox(&self, checked: bool, mixed: bool) -> Div {
+    pub(super) fn checkbox(&self, checked: bool, mixed: bool) -> Div {
         let icon = if mixed { Some("dash") } else if checked { Some("check") } else { None };
         div()
             .size(px(18.))

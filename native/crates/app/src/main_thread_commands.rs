@@ -53,6 +53,8 @@ impl Workbench {
             }
             ("MainThreadWorkspace", "$save") => self.save_resource(&arg(0), cx),
             ("MainThreadWorkspace", "$saveAll") => self.save_all(arg(0) == true, cx),
+            ("MainThreadWorkspace", "$requestWorkspaceTrust") => self.request_workspace_trust(&arg(0), window, cx),
+            ("MainThreadWorkspace", "$isResourceTrusted") => self.is_resource_trusted(&arg(0)),
             ("workbench", "applyTextEdits") => Outcome::Ready(self.apply_workspace_text_edits(&arg(0), &arg(1), cx)),
             ("workbench", "didRunFileOperation") => {
                 self.models_after_file_operation(arg(0).as_u64().unwrap_or_default(), &arg(1), cx);

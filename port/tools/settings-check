@@ -16,7 +16,7 @@ rm -rf "$OUT" && mkdir -p "$OUT"
 launch() { # <port|ref> <dir> [--extensionTestsPath=...]
   if [[ $1 == port ]]; then
     SHELL=/bin/bash VSCODE_GPUI_EXTENSIONS=$REF/extensions timeout -k 5 120 native/target/release/code-gpui "$2/folder" \
-      --user-data-dir "$2/udd" --extensionDevelopmentPath="$2/ext" "${@:3}"
+      --user-data-dir "$2/udd" --disable-workspace-trust --extensionDevelopmentPath="$2/ext" "${@:3}"
   else
     VSCODE_DEV=1 NODE_ENV=development timeout -k 5 120 "$REF/.build/electron/Code - OSS.app/Contents/MacOS/Code - OSS" "$REF" "$2/folder" \
       --user-data-dir "$2/udd" --disable-extensions --disable-workspace-trust --extensionDevelopmentPath="$2/ext" "${@:3}"

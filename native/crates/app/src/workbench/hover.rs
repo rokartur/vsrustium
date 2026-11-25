@@ -11,6 +11,7 @@ use gpui::{
 
 use super::Workbench;
 use super::context_menu::{LayoutAnchorPosition, layout2d};
+use crate::notifications::{Node, parse_linked_text};
 
 #[cfg(test)]
 mod tests;
@@ -25,6 +26,7 @@ const LINE_HEIGHT: f32 = 19.;
 const PADDING_X: f32 = 8.;
 const PADDING_Y: f32 = 2.;
 const MAX_WIDTH: f32 = 700.;
+const PARAGRAPH_GAP: f32 = 8.;
 /// CompositeMouseTracker's `_eventDebounceDelay` and WorkbenchHoverDelegate's `timeLimit`.
 const MOUSE_OUT_DELAY: Duration = Duration::from_millis(200);
 /// `.with-pointer` has 3px corners; roundedCorners.css gives other hovers cornerRadius.large.
@@ -46,6 +48,8 @@ pub enum HoverContent {
     Action { title: &'static str, command: &'static str },
     /// editorTabsControl.ts `getHoverTitle` of a preview editor: the title, then "(_preview_ $(gear))".
     Preview(String),
+    /// A trusted markdown tooltip: paragraphs split by a blank line, each linked text (`[label](href)`).
+    Markdown(String),
 }
 
 /// What the target's hover delegate decides.
@@ -243,7 +247,7 @@ impl Workbench {
 
     fn hover_text(&self, content: &HoverContent, window: &Window) -> String {
         match content {
-            HoverContent::Text(text) | HoverContent::Preview(text) => text.clone(),
+            HoverContent::Text(text) | HoverContent::Preview(text) | HoverContent::Markdown(text) => text.clone(),
             HoverContent::Action { title, command } => {
                 let context = self.key_context(window);
                 match self.keybindings.resolver.lookup_primary_keybinding(command, &context) {
@@ -257,12 +261,20 @@ impl Workbench {
     pub(super) fn hover_widget(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         let hover = self.hovers.shown.as_ref()?;
         let preview = matches!(hover.target.content, HoverContent::Preview(_));
-        // shortcut: a hover is one line of text; wrap at max-width 700px when content longer than that shows.
-        let mut content_width = text_width(&hover.text, false, window);
+        let markdown = matches!(hover.target.content, HoverContent::Markdown(_));
+        let paragraphs: Vec<Vec<Node>> = match markdown {
+            true => hover.text.split("\n\n").map(parse_linked_text).collect(),
+            false => vec![vec![Node::Text(hover.text.clone())]],
+        };
+        // shortcut: a paragraph is one line of text; wrap at max-width 700px when content longer than that shows.
+        let mut content_width = paragraphs.iter().map(|nodes| text_width(&linked_text_label(nodes), false, window)).fold(0., f32::max);
         if preview {
             content_width += text_width(" (", false, window) + text_width("preview", true, window) + text_width(" )", false, window) + FONT_SIZE;
         }
-        let size = Size { width: (content_width + 2. * PADDING_X).min(MAX_WIDTH - HOVER_BORDER_WIDTH) + HOVER_BORDER_WIDTH, height: LINE_HEIGHT + 2. * PADDING_Y + HOVER_BORDER_WIDTH };
+        let lines = paragraphs.len() as f32;
+        // hover.css: a markdown paragraph has an 8px bottom margin except the last.
+        let content_height = lines * LINE_HEIGHT + (lines - 1.) * PARAGRAPH_GAP;
+        let size = Size { width: (content_width + 2. * PADDING_X).min(MAX_WIDTH - HOVER_BORDER_WIDTH) + HOVER_BORDER_WIDTH, height: content_height + 2. * PADDING_Y + HOVER_BORDER_WIDTH };
         let viewport = window.viewport_size();
         let target = hover.target.bounds;
         let target = Bounds { origin: point(f32::from(target.origin.x), f32::from(target.origin.y)), size: Size { width: f32::from(target.size.width), height: f32::from(target.size.height) } };
@@ -300,7 +312,8 @@ impl Workbench {
                     inset: false,
                 }])
             })
-            .child(
+            .when(markdown, |panel| panel.child(self.markdown_paragraphs(paragraphs, cx)))
+            .when(!markdown, |panel| panel.child(
                 div()
                     .relative()
                     .flex()
@@ -318,9 +331,9 @@ impl Workbench {
                             }));
                         row.child(" (").child(div().italic().child("preview")).child(" ").child(gear).child(")")
                     }),
-            )
+            ))
             // hideOnHover is off for markdown with a link: the pointer may move onto the hover to click it.
-            .when(preview, |panel| {
+            .when(preview || markdown, |panel| {
                 panel.on_hover(cx.listener(|workbench, hovered: &bool, _, cx| match hovered {
                     true => workbench.hovers.hiding = None,
                     false if workbench.hovers.target.is_none() => workbench.hide_hover_later(cx),
@@ -334,6 +347,27 @@ impl Workbench {
             false => widget.into_any_element(),
         };
         Some(element)
+    }
+
+    fn markdown_paragraphs(&self, paragraphs: Vec<Vec<Node>>, cx: &mut Context<Self>) -> impl IntoElement {
+        let link_color = self.color("textLink.foreground");
+        let mut column = div().flex().flex_col().gap(px(PARAGRAPH_GAP));
+        for (paragraph, nodes) in paragraphs.into_iter().enumerate() {
+            let mut row = div().flex();
+            for (index, node) in nodes.into_iter().enumerate() {
+                row = match node {
+                    Node::Text(text) => row.child(text),
+                    Node::Link { label, href, .. } => row.child(
+                        div().id(("hover-link", paragraph * 100 + index)).cursor_pointer().text_color(link_color).child(label).on_click(cx.listener(move |workbench, _, window, cx| {
+                            workbench.dismiss_hover(cx);
+                            workbench.open_notification_link(&href, window, cx);
+                        })),
+                    ),
+                };
+            }
+            column = column.child(row);
+        }
+        column
     }
 
     /// `.workbench-hover-pointer:after`: a 6px square turned 45 degrees, centered on the hover's edge, showing the
@@ -383,6 +417,13 @@ impl Hovers {
     fn is_target(&self, id: &ElementId) -> bool {
         self.target.as_ref().is_some_and(|target| &target.id == id)
     }
+}
+
+fn linked_text_label(nodes: &[Node]) -> String {
+    nodes.iter().map(|node| match node {
+        Node::Text(text) => text.as_str(),
+        Node::Link { label, .. } => label.as_str(),
+    }).collect()
 }
 
 fn text_width(text: &str, italic: bool, window: &Window) -> f32 {

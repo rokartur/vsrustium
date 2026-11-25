@@ -69,7 +69,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | mainthread/MainThreadUriOpeners | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadChatOutputRenderer | MainThread* shape (Rust side) | removed | no sign-in/AI by decision (port/notes.md); API stays inert: session.rs answers undefined, list getters []; exthost-probe 30/30 on Bun and Node |
 | mainthread/MainThreadProfileContentHandlers | MainThread* shape (Rust side) | stub | session.rs answers undefined |
-| mainthread/MainThreadWorkspace | MainThread* shape (Rust side) | ported | main_thread_workspace.rs serves $startFileSearch and $startTextSearch through ripgrep over every workspace folder: api-tests workspace.test findFiles, findFiles2, findTextInFiles and their cancellation tests pass (11/11); multi-root workspace data: api-workspace 4/4; $updateWorkspaceFolders, $save, trust and $checkExists answer undefined |
+| mainthread/MainThreadWorkspace | MainThread* shape (Rust side) | ported | main_thread_workspace.rs serves $startFileSearch and $startTextSearch through ripgrep over every workspace folder: api-tests workspace.test findFiles, findFiles2, findTextInFiles and their cancellation tests pass (11/11); multi-root workspace data: api-workspace 4/4; $requestWorkspaceTrust (startup or request dialog, concurrent callers queued) and $isResourceTrusted answer from workspace_trust.rs, $initializeWorkspace sends the window's trust; $updateWorkspaceFolders, $save and $checkExists answer undefined |
 | mainthread/MainThreadFileSystem | MainThread* shape (Rust side) | verified | api-tests workspace.fs.test 12/12 passing (main_thread_files.rs over files::disk and extension providers) |
 | mainthread/MainThreadFileSystemEventService | MainThread* shape (Rust side) | ported | FSEvents watcher of the folder, extension watchers and provider changes reach $onFileEvent (cargo test -p files); file operation participants with files.participants.timeout: workspace.event.test 6/10, the 4 others need text documents (milestone 8); the "wants to make refactoring changes" dialog, its profile memento and files.participants.resetChoice (cargo test -p app file_participants, ui-pair with a participant extension); Show Preview skips the edit until the Refactor Preview (milestone 11) |
 | mainthread/MainThreadLabelService | MainThread* shape (Rust side) | removed | only workspace.registerResourceLabelFormatter calls it, behind the resolvers proposal that only remote resolvers enable; no remote by decision (port/notes.md); the call answers undefined |
@@ -392,7 +392,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/utilityProcess | workbench service | todo |  |
 | workbench/services/views | workbench service | todo |  |
 | workbench/services/workingCopy | workbench service | ported | WorkingCopyFileService create, move, copy, delete with participants (cargo test -p files operations); WorkingCopyHistoryService and its tracker for saves into User/History (local_history.rs: cargo test -p app local_history; ui-pair save of notes.txt wrote one merged entry); no working copies (milestone 8), history entries do not follow moves |
-| workbench/services/workspaces | workbench service | todo |  |
+| workbench/services/workspaces | workbench service | ported | workspace_trust.rs: WorkspaceTrustManagementService (uriTrustInfo in shared storage, longest trusted parent, empty window memento, parent folder trust) and WorkspaceTrustRequestService: cargo test -p app workspace_trust 8/8; workspace editing (add or remove folders, save as) not ported |
 | workbench/contrib/accessibility | workbench contribution | todo |  |
 | workbench/contrib/accessibilitySignals | workbench contribution | todo |  |
 | workbench/contrib/agentsVoice | workbench contribution | removed | no sign-in/AI by decision (port/notes.md); not ported |
@@ -496,7 +496,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/welcomeOnboarding | workbench contribution | todo |  |
 | workbench/contrib/welcomeViews | workbench contribution | todo |  |
 | workbench/contrib/welcomeWalkthrough | workbench contribution | todo |  |
-| workbench/contrib/workspace | workbench contribution | todo |  |
+| workbench/contrib/workspace | workbench contribution | ported | workbench/workspace_trust_view.rs: startup prompt (startupPrompt once/always/never, parent folder checkbox), request dialog, Restricted Mode status entry and hover, banner with Manage/Learn More and dismissal; untrusted windows drop extensions without untrustedWorkspaces support and restricted workspace settings (cargo test -p config untrusted); ui-pair startup prompt against the reference (port/notes.md milestone 12); Workspace Trust editor (workbench.trust.manage) not ported |
 | workbench/contrib/workspaces | workbench contribution | todo |  |
 | extension/bat | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/clojure | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
