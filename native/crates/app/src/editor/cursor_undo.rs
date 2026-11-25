@@ -70,7 +70,7 @@ mod tests {
         editor.type_text("hello");
         editor.move_horizontally(false, false);
         editor.delete_right();
-        assert_eq!(editor.document.lines, ["hell"]);
+        assert_eq!(editor.document().lines, ["hell"]);
         assert_eq!(editor.selections, caret(4));
         editor.move_horizontally(false, false);
         assert_eq!(editor.selections, caret(3));
@@ -83,7 +83,7 @@ mod tests {
         let mut editor = editor("", "\n");
         editor.type_text("hell");
         editor.type_text("o");
-        assert_eq!(editor.document.lines, ["hello"]);
+        assert_eq!(editor.document().lines, ["hello"]);
         assert_eq!(editor.selections, caret(5));
         editor.cursor_undo();
         assert_eq!(editor.selections, caret(5));

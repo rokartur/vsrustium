@@ -32,13 +32,17 @@ pub struct QuickAccess {
     pub files: Option<FilePickState>,
     /// The picker opened with `includeHelp` (the command center's), whose empty filter lists the help picks.
     help_input: Option<i64>,
-    /// The editor the shown Go to Line picker previews in.
+    /// The editor the shown Go to Line or Go to Symbol picker previews in.
     pub goto_line: Option<goto_line::GotoLineState>,
+    pub symbols: Option<goto_symbol::SymbolPickState>,
+    pub workspace_symbols: Option<workspace_symbols::WorkspaceSymbolState>,
+    /// `$registerNavigateTypeSupport`'s `lastResultId` per provider handle.
+    pub workspace_symbol_results: std::collections::HashMap<u64, u64>,
 }
 
 impl Default for QuickAccess {
     fn default() -> Self {
-        QuickAccess { menu: command_palette::menu(&[]), history: CommandsHistory::new(command_palette::DEFAULT_HISTORY_LENGTH), editor_history: EditorHistory::default(), files: None, help_input: None, goto_line: None }
+        QuickAccess { menu: command_palette::menu(&[]), history: CommandsHistory::new(command_palette::DEFAULT_HISTORY_LENGTH), editor_history: EditorHistory::default(), files: None, help_input: None, goto_line: None, symbols: None, workspace_symbols: None, workspace_symbol_results: Default::default() }
     }
 }
 
@@ -50,23 +54,29 @@ pub enum Accept {
     /// A help pick: shows the provider of `prefix`.
     Show { prefix: &'static str, include_help: bool },
     Position(Position),
+    Symbol(goto_symbol::SymbolTarget),
+    WorkspaceSymbol(workspace_symbols::WorkspaceSymbol),
     Nothing,
 }
 
 /// `getHelpPicks`: the help entries with a `commandCenterOrder`, by that order, of the providers the port has
 /// (Search for Text, Go to Symbol, Start Debugging and Run Task wait for theirs), with `commandCenterLabel`.
-const HELP_ENTRIES: [(&str, Provider, Option<&str>); 3] = [
+const HELP_ENTRIES: [(&str, Provider, Option<&str>); 4] = [
     ("Go to File", Provider::Files, Some("workbench.action.quickOpen")),
     ("Show and Run Commands", Provider::Commands, Some("workbench.action.showCommands")),
+    ("Go to Symbol in Editor", Provider::Symbols, Some("workbench.action.gotoSymbol")),
     ("More", Provider::Help, None),
 ];
 
-/// The `helpEntries` of each provider the port has, as the `?` picker lists them: provider, description, command.
-const PROVIDER_HELP: [(Provider, &str, &str); 4] = [
-    (Provider::Files, "Go to File", "workbench.action.quickOpen"),
-    (Provider::GotoLine, "Go to Line/Column", "workbench.action.gotoLine"),
-    (Provider::GotoOffset, "Go to Offset", "workbench.action.gotoOffset"),
-    (Provider::Commands, "Show and Run Commands", "workbench.action.showCommands"),
+/// The `helpEntries` of each provider the port has, as the `?` picker lists them: prefix, description, command.
+const PROVIDER_HELP: [(&str, &str, Option<&str>); 7] = [
+    ("", "Go to File", Some("workbench.action.quickOpen")),
+    (goto_line::GO_TO_LINE_PREFIX, "Go to Line/Column", Some("workbench.action.gotoLine")),
+    (goto_line::GO_TO_OFFSET_PREFIX, "Go to Offset", Some("workbench.action.gotoOffset")),
+    (COMMANDS_PREFIX, "Show and Run Commands", Some("workbench.action.showCommands")),
+    (goto_symbol::PREFIX, "Go to Symbol in Editor", Some("workbench.action.gotoSymbol")),
+    (goto_symbol::PREFIX_BY_CATEGORY, "Go to Symbol in Editor by Category", None),
+    (workspace_symbols::PREFIX, "Go to Symbol in Workspace", Some("workbench.action.showAllSymbols")),
 ];
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -76,6 +86,8 @@ enum Provider {
     GotoLine,
     GotoOffset,
     Help,
+    Symbols,
+    WorkspaceSymbols,
 }
 
 impl Provider {
@@ -87,6 +99,8 @@ impl Provider {
             _ if value.starts_with(goto_line::GO_TO_LINE_PREFIX) => Provider::GotoLine,
             _ if value.starts_with(COMMANDS_PREFIX) => Provider::Commands,
             _ if value.starts_with(HELP_PREFIX) => Provider::Help,
+            _ if value.starts_with(goto_symbol::PREFIX) => Provider::Symbols,
+            _ if value.starts_with(workspace_symbols::PREFIX) => Provider::WorkspaceSymbols,
             _ => Provider::Files,
         }
     }
@@ -98,6 +112,8 @@ impl Provider {
             Provider::GotoLine => goto_line::GO_TO_LINE_PREFIX,
             Provider::GotoOffset => goto_line::GO_TO_OFFSET_PREFIX,
             Provider::Help => HELP_PREFIX,
+            Provider::Symbols => goto_symbol::PREFIX,
+            Provider::WorkspaceSymbols => workspace_symbols::PREFIX,
         }
     }
 
@@ -107,6 +123,8 @@ impl Provider {
             Provider::Files => Some(quick_open::PLACEHOLDER.into()),
             Provider::GotoLine | Provider::GotoOffset => Some(goto_line::PLACEHOLDER.into()),
             Provider::Help => Some("Type '?' to get help on the actions you can take from here.".into()),
+            Provider::Symbols => Some(goto_symbol::PLACEHOLDER.into()),
+            Provider::WorkspaceSymbols => Some(workspace_symbols::PLACEHOLDER.into()),
         }
     }
 }
@@ -132,6 +150,14 @@ impl Workbench {
         });
         self.commands.register("workbench.action.gotoLine", |workbench, _, window, cx| {
             workbench.show_quick_access(goto_line::GO_TO_LINE_PREFIX, false, false, window, cx);
+            Outcome::done()
+        });
+        self.commands.register("workbench.action.gotoSymbol", |workbench, _, window, cx| {
+            workbench.show_quick_access_activating(goto_symbol::PREFIX, false, false, crate::quick_input::ItemActivation::None, window, cx);
+            Outcome::done()
+        });
+        self.commands.register("workbench.action.showAllSymbols", |workbench, _, window, cx| {
+            workbench.show_quick_access(workspace_symbols::PREFIX, false, false, window, cx);
             Outcome::done()
         });
         self.commands.register("workbench.action.gotoOffset", |workbench, _, window, cx| {
@@ -163,8 +189,13 @@ impl Workbench {
         value.and_then(|value| value.as_u64()).map_or(command_palette::DEFAULT_HISTORY_LENGTH, |length| length as usize)
     }
 
-    /// `QuickAccessController.show`: reuses a visible picker of the same provider, else fills a new one.
     fn show_quick_access(&mut self, value: &str, preserve_value: bool, include_help: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_quick_access_activating(value, preserve_value, include_help, crate::quick_input::ItemActivation::First, window, cx);
+    }
+
+    /// `QuickAccessController.show`: reuses a visible picker of the same provider, else fills a new one, its first
+    /// items activated as `item_activation` says.
+    fn show_quick_access_activating(&mut self, value: &str, preserve_value: bool, include_help: bool, item_activation: crate::quick_input::ItemActivation, window: &mut Window, cx: &mut Context<Self>) {
         // `updateConfiguration`: the configured length applies from the next pick list on.
         let limit = self.configured_command_history_length();
         self.quick_access.history.set_limit(limit);
@@ -196,6 +227,7 @@ impl Workbench {
         input.match_on_description = false;
         input.match_on_detail = false;
         input.sort_by_label = false;
+        input.item_activation = item_activation;
         // Showing it hides the visible picker, whose Hide event then drops it.
         let id = self.quick_inputs.add(input, Owner::QuickAccess(Vec::new()));
         self.quick_access.help_input = include_help.then_some(id);
@@ -210,8 +242,14 @@ impl Workbench {
         let value = input.input_box.value.clone();
         let provider = Provider::for_value(&value);
         let filter = value[provider.prefix().len()..].trim().to_owned();
-        if !matches!(provider, Provider::GotoLine | Provider::GotoOffset) {
+        if !matches!(provider, Provider::GotoLine | Provider::GotoOffset | Provider::Symbols) {
             self.dispose_goto_line(cx);
+        }
+        if provider != Provider::Symbols {
+            self.quick_access.symbols = None;
+        }
+        if provider != Provider::WorkspaceSymbols {
+            self.quick_access.workspace_symbols = None;
         }
         let picks = match provider {
             // helpQuickAccess.ts: the exact prefix of another provider after `?` shows that provider.
@@ -229,6 +267,8 @@ impl Workbench {
                 Some((entries, accepts, false))
             }
             Provider::Files => self.file_picks(id, &filter, window, cx),
+            Provider::Symbols => self.symbol_picks(id, &value, window, cx),
+            Provider::WorkspaceSymbols => self.workspace_symbol_picks(id, &value, window, cx),
             Provider::GotoLine | Provider::GotoOffset => Some((Vec::new(), self.goto_line_picks(id, &value, cx), false)),
         };
         let input = self.quick_inputs.get_mut(id).expect("checked above");
@@ -236,8 +276,9 @@ impl Workbench {
         input.can_accept_in_background = provider != Provider::Commands;
         let Some((entries, accepts, busy)) = picks else { return };
         input.busy = busy;
-        // The Go to Line provider sets its one pick and its buttons itself.
-        if !matches!(provider, Provider::GotoLine | Provider::GotoOffset) {
+        // The Go to Line provider sets its one pick and its buttons itself; an empty pending list leaves an empty
+        // picker alone, so `ItemActivation::None` applies to the resolved picks.
+        if !matches!(provider, Provider::GotoLine | Provider::GotoOffset) && !(busy && entries.is_empty() && input.rows.is_empty()) {
             input.set_items(entries);
         }
         if let Some(Owner::QuickAccess(picks)) = self.quick_inputs.owner_mut(id) {
@@ -271,14 +312,14 @@ impl Workbench {
     fn provider_help_picks(&self, filter: &str, window: &Window) -> (Vec<Entry>, Vec<Accept>) {
         let context = self.key_context(window);
         let mut providers = PROVIDER_HELP.to_vec();
-        providers.sort_by(|a, b| command_palette::locale_compare(a.0.prefix(), b.0.prefix()));
+        providers.sort_by(|a, b| command_palette::locale_compare(a.0, b.0));
         let (mut entries, mut accepts) = (Vec::new(), Vec::new());
-        for (provider, description, command) in providers {
-            let label = if provider.prefix().is_empty() { "\u{2026}" } else { provider.prefix() };
+        for (prefix, description, command) in providers {
+            let label = if prefix.is_empty() { "\u{2026}" } else { prefix };
             if !label.contains(filter) {
                 continue;
             }
-            let keybinding = self.keybindings.resolver.lookup_primary_keybinding(command, &context);
+            let keybinding = command.and_then(|command| self.keybindings.resolver.lookup_primary_keybinding(command, &context));
             entries.push(Entry::Item(Item {
                 handle: accepts.len() as i64,
                 label: label.into(),
@@ -287,7 +328,7 @@ impl Workbench {
                 keybinding: keybinding.map(|item| item.keybinding.iter().map(|chord| chord.key_caps()).collect()).unwrap_or_default(),
                 ..Item::default()
             }));
-            accepts.push(Accept::Show { prefix: provider.prefix(), include_help: false });
+            accepts.push(Accept::Show { prefix, include_help: false });
         }
         (entries, accepts)
     }
@@ -383,12 +424,18 @@ impl Workbench {
             }
             Event::Hide => {
                 self.dispose_goto_line(cx);
+                self.quick_access.symbols = None;
                 self.quick_inputs.remove(id);
                 if self.quick_access.files.as_ref().is_some_and(|state| state.input == id) {
                     self.quick_access.files = None;
                 }
             }
-            Event::ChangeActive(_) | Event::ChangeSelection(_) | Event::TriggerButton(..) => {}
+            Event::ChangeActive(handles) => {
+                if let Some(Accept::Symbol(target)) = handles.first().and_then(|handle| self.quick_access_pick(id, *handle)) {
+                    self.preview_symbol(&target, cx);
+                }
+            }
+            Event::ChangeSelection(_) | Event::TriggerButton(..) => {}
         }
     }
 
@@ -404,6 +451,8 @@ impl Workbench {
             Accept::File { path, .. } => return self.open_file_pick(path, in_background, window, cx),
             Accept::Show { prefix, include_help } => return self.show_quick_access(prefix, true, include_help, window, cx),
             Accept::Position(position) => return self.go_to_position(position, in_background, window, cx),
+            Accept::Symbol(target) => return self.go_to_symbol(&target, in_background, window, cx),
+            Accept::WorkspaceSymbol(symbol) => return self.open_workspace_symbol(symbol, in_background, window, cx),
             Accept::Nothing => return,
         };
         self.quick_access.history.push(&id);
@@ -473,6 +522,8 @@ fn show_command_error(label: &str, error: &Value, window: &mut Window, cx: &mut 
 }
 
 mod goto_line;
+pub(super) mod goto_symbol;
+mod workspace_symbols;
 
 #[cfg(test)]
 mod tests;

@@ -1,6 +1,6 @@
 //! The `Configuration` of platform/configuration/common/configurationModels.ts: the layers of one window and
-//! the merged view `getValue` reads. The port has no policies, remote, profiles or in-memory values yet, so
-//! those layers are empty and left out; `to_data` still sends them as upstream's `toData` does.
+//! the merged view `getValue` reads. The port has no remote or in-memory values, so those layers are empty and
+//! left out; `to_data` still sends them as upstream's `toData` does.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -13,6 +13,8 @@ use crate::model::{Change, ConfigurationModel, compare, merge_changes};
 #[derive(Clone, Debug, Default)]
 pub struct Configuration {
     pub defaults: ConfigurationModel,
+    /// `ApplicationConfiguration`: the default profile's application settings in a profile with its own settings.
+    pub application: ConfigurationModel,
     pub local_user: ConfigurationModel,
     pub workspace: ConfigurationModel,
     /// Each workspace folder and its `.vscode` settings; a folder window has one.
@@ -41,6 +43,7 @@ pub struct Inspected {
     pub value: Option<Value>,
     pub default_value: Option<Value>,
     pub policy_value: Option<Value>,
+    pub application: Layer,
     pub user_local: Layer,
     pub workspace: Layer,
     pub workspace_folder: Layer,
@@ -82,16 +85,17 @@ impl Configuration {
             value: self.get_value(Some(key), overrides),
             default_value: layer(Some(&self.defaults)).value,
             policy_value: self.policy.get_value(Some(key)),
+            application: layer((!self.application.keys.is_empty()).then_some(&self.application)),
             user_local: layer(Some(&self.local_user)),
             workspace: layer(self.has_workspace.then_some(&self.workspace)),
             workspace_folder: layer(self.folder_model_for(overrides.resource)),
         }
     }
 
-    /// `getConsolidatedConfigurationModel`: defaults, then user, workspace and the folder the resource is in,
+    /// `getConsolidatedConfigurationModel`: defaults, then application, user, workspace and the folder the resource is in,
     /// then the `[language]` block, then the policy values.
     fn consolidated(&self, overrides: &Overrides) -> ConfigurationModel {
-        let mut layers = vec![self.local_user.clone(), self.workspace.clone()];
+        let mut layers = vec![self.application.clone(), self.local_user.clone(), self.workspace.clone()];
         if let Some(folder) = self.folder_model_for(overrides.resource) {
             layers.push(folder.clone());
         }
@@ -127,13 +131,20 @@ impl Configuration {
         change
     }
 
+    /// `compareAndUpdateApplicationConfiguration`. The change compares the raw files, so a model parsed with other
+    /// scopes or exclusions from the same file is taken even when it reports no change.
+    pub fn compare_and_update_application(&mut self, application: ConfigurationModel) -> Change {
+        let change = compare(Some(&self.application), Some(&application));
+        self.application = application;
+        self.layers_changed();
+        change
+    }
+
     /// `compareAndUpdateLocalUserConfiguration`.
     pub fn compare_and_update_local_user(&mut self, user: ConfigurationModel) -> Change {
         let change = compare(Some(&self.local_user), Some(&user));
-        if !change.keys.is_empty() {
-            self.local_user = user;
-            self.layers_changed();
-        }
+        self.local_user = user;
+        self.layers_changed();
         change
     }
 
@@ -169,7 +180,7 @@ impl Configuration {
         json!({
             "defaults": self.defaults.to_json(),
             "policy": self.policy.to_json(),
-            "application": empty,
+            "application": self.application.to_json(),
             "userLocal": self.local_user.to_json_with_raw(),
             "userRemote": empty,
             "workspace": self.workspace.to_json(),

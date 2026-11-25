@@ -31,7 +31,7 @@ pub(super) struct FoldingProviders {
 impl Workbench {
     /// folding.ts `onModelChanged` and `onDidChangeModelContent`: another model shown or new content triggers.
     pub(super) fn folding_model_changed(&mut self, cx: &mut Context<Self>) {
-        let active = self.editors.active().map(|editor| (editor.model_id, editor.version_id));
+        let active = self.editors.active().map(|editor| (editor.model_id, editor.text_model().version_id));
         if active.is_some() && active != self.folding_providers.seen {
             self.folding_providers.seen = active;
             self.trigger_folding_model_changed(cx);
@@ -57,7 +57,7 @@ impl Workbench {
             return;
         }
         let Some(editor) = self.editors.active().filter(|editor| editor.model_id == model_id) else { return };
-        let handles = self.folding_range_providers(&editor.document.uri(), &editor.document.language_id);
+        let handles = self.folding_range_providers(&editor.document().uri(), &editor.document().language_id);
         if handles.is_empty() {
             let editor = self.editors.active_mut().expect("found above");
             if editor.syntax_folding {
@@ -66,7 +66,7 @@ impl Workbench {
             }
             return;
         }
-        let (uri, version, line_count) = (editor.document.uri(), editor.version_id, editor.document.lines.len());
+        let (uri, version, line_count) = (editor.document().uri(), editor.text_model().version_id, editor.document().lines.len());
         let calls: Vec<_> = handles.iter().map(|handle| self.host.call_cancellable("ExtHostLanguageFeatures", "$provideFoldingRanges", vec![json!(handle), uri.clone(), json!({})])).collect();
         cx.spawn(async move |workbench, cx| {
             let mut answers = Vec::new();
@@ -85,8 +85,9 @@ impl Workbench {
     /// `collectSyntaxRanges`: the ranges of every provider that answered with an array, valid for the model's
     /// lines, ranked by the provider's order; none answering an array falls back to the indentation provider.
     fn apply_folding_answers(&mut self, model_id: u32, version: u32, line_count: usize, answers: Vec<Value>, cx: &mut Context<Self>) {
-        let Some(editor) = self.editors.active().filter(|editor| editor.model_id == model_id && editor.version_id == version) else { return };
-        let overrides = Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
+        let Some(editor) = self.editors.active().filter(|editor| editor.model_id == model_id && editor.text_model().version_id == version) else { return };
+        let document = editor.document();
+        let overrides = Overrides { resource: Some(&document.path), override_identifier: Some(&document.language_id) };
         let settings = self.settings.lock().unwrap();
         let limit = settings.get_value(Some("editor.foldingMaximumRegions"), &overrides).and_then(|value| value.as_u64()).map_or(DEFAULT_MAXIMUM_REGIONS, |limit| (limit as usize).clamp(10, MAX_FOLDING_REGIONS));
         let fold_imports = settings.get_value(Some("editor.foldingImportsByDefault"), &overrides) == Some(json!(true));
@@ -104,6 +105,7 @@ impl Workbench {
             }
         }
         let regions = ranges.map(|ranges| sanitize_ranges(ranges, limit));
+        drop(document);
         self.editors.active_mut().expect("found above").apply_syntax_folding(regions, fold_imports);
         self.folding_regions_changed(cx);
     }
@@ -126,8 +128,8 @@ impl Workbench {
     /// `$emitFoldingRangeEvent`: a provider whose `onDidChangeFoldingRanges` fired folds the active model again.
     pub(crate) fn folding_range_event(&mut self, event_handle: &Value, cx: &mut Context<Self>) {
         let Some(editor) = self.editors.active() else { return };
-        let uri = editor.document.uri();
-        let language = editor.document.language_id.clone();
+        let uri = editor.document().uri();
+        let language = editor.document().language_id.clone();
         let registrations = self.language_features.ordered("$registerFoldingRangeProvider", &Candidate { uri: &uri, language: &language });
         if registrations.iter().any(|registration| registration.args.get(3) == Some(event_handle)) {
             self.trigger_folding_model_changed(cx);

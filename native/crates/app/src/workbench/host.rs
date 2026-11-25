@@ -98,7 +98,7 @@ impl Workbench {
             self.lifecycle.title = title;
         }
         let edited = !self.dirty_editors().is_empty();
-        let represented = self.editors.active().filter(|editor| editor.document.scheme == "file").map(|editor| editor.document.path.clone());
+        let represented = self.editors.active().filter(|editor| editor.document().scheme == "file").map(|editor| editor.document().path.clone());
         if self.lifecycle.document_edited == edited && self.lifecycle.represented_filename == represented {
             return;
         }

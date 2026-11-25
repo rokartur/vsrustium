@@ -22,8 +22,8 @@ impl Workbench {
     /// starts a drag instead of a click.
     pub(in crate::workbench) fn start_text_drag(&mut self, line: usize, visible: f32, modifiers: Modifiers, click_count: usize) -> bool {
         let editor = self.editors.active().expect("text is clickable only with an editor open");
-        let text = &editor.document.lines[line];
-        let tab_size = editor.document.indentation.tab_size;
+        let text = &editor.document().lines[line];
+        let tab_size = editor.document().indentation.tab_size;
         let on_text = visible < visible_column(text, text.chars().count(), tab_size) as f32;
         let position = Position::new(line, column_at_visible(text, visible, tab_size));
         let primary = editor.selection();
@@ -91,6 +91,8 @@ impl Workbench {
         match &self.text_drag {
             Some(TextDrag { dragged: Some(_), copy: true, .. }) => CursorStyle::DragCopy,
             Some(TextDrag { dragged: Some(_), .. }) => CursorStyle::Arrow,
+            // links.css `.goto-link-active` (`cursor: pointer`).
+            _ if self.link_active() => CursorStyle::PointingHand,
             _ => CursorStyle::IBeam,
         }
     }
@@ -108,6 +110,6 @@ impl Workbench {
 
     fn position_at(&self, line: usize, visible: f32) -> Position {
         let editor = self.editors.active().expect("text is draggable only with an editor open");
-        Position::new(line, column_at_visible(&editor.document.lines[line], visible, editor.document.indentation.tab_size))
+        Position::new(line, column_at_visible(&editor.document().lines[line], visible, editor.document().indentation.tab_size))
     }
 }

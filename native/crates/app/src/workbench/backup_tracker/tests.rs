@@ -97,7 +97,7 @@ fn quit_backs_up_and_the_next_window_restores(cx: &mut TestAppContext) {
     let path = dir.join("folder/a.txt");
     let (dirty, text) = restored.read_with(vcx, |workbench, _| {
         let model = workbench.editors.model("file", &path).unwrap();
-        (model.is_dirty(), model.document.lines.join("\n"))
+        (model.is_dirty(), model.document().lines.join("\n"))
     });
     assert!(dirty);
     assert_eq!(text, "xa");

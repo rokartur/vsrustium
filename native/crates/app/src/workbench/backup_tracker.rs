@@ -137,7 +137,8 @@ impl Workbench {
         }
         let mut dirty = Vec::new();
         for model in self.editors.editors.iter().chain(&self.editors.models).filter(|model| tracked(model) && model.is_dirty()) {
-            dirty.push(((model.document.scheme.clone(), model.document.path.clone()), model.alternative_version_id()));
+            let document = model.document();
+            dirty.push(((document.scheme.clone(), document.path.clone()), model.alternative_version_id()));
         }
         let tracker = &mut self.lifecycle.backups;
         let gone: Vec<(String, PathBuf)> = tracker.backed_up.keys().chain(tracker.pending.keys()).filter(|key| !dirty.iter().any(|(dirty, _)| dirty == *key)).cloned().collect();
@@ -167,7 +168,7 @@ impl Workbench {
         let Some(model) = self.editors.model(&key.0, &key.1).filter(|model| model.is_dirty()) else { return true };
         let resource = model_uri(model);
         let meta = (key.0 == "file").then(|| file_meta(&key.1, self.text_files.orphaned.contains(&key.1))).flatten();
-        let content = model.document.lines.join(model.document.eol);
+        let content = model.document().lines.join(model.document().eol);
         let version = model.alternative_version_id();
         match backups::write(&home, &resource, meta.as_ref(), &content) {
             Ok(()) => {
@@ -215,7 +216,7 @@ impl Workbench {
         if tracker.home.is_none() {
             return true;
         }
-        let dirty: Vec<(String, PathBuf)> = self.editors.editors.iter().chain(&self.editors.models).filter(|model| tracked(model) && model.is_dirty()).map(|model| (model.document.scheme.clone(), model.document.path.clone())).collect();
+        let dirty: Vec<(String, PathBuf)> = self.editors.editors.iter().chain(&self.editors.models).filter(|model| tracked(model) && model.is_dirty()).map(|model| (model.document().scheme.clone(), model.document().path.clone())).collect();
         let mut all = true;
         for key in dirty {
             if self.lifecycle.backups.backed_up.get(&key) != self.editors.model(&key.0, &key.1).map(OpenEditor::alternative_version_id).as_ref() {
@@ -248,11 +249,12 @@ impl Workbench {
 
 /// The working copies the port backs up: text files and untitled editors.
 fn tracked(model: &OpenEditor) -> bool {
-    matches!(model.document.scheme.as_str(), "file" | "untitled")
+    matches!(model.document().scheme.as_str(), "file" | "untitled")
 }
 
 fn model_uri(model: &OpenEditor) -> Uri {
-    Uri::new(&model.document.scheme, "", &model.document.path.to_string_lossy(), "", "").expect("file and untitled paths make URIs")
+    let document = model.document();
+    Uri::new(&document.scheme, "", &document.path.to_string_lossy(), "", "").expect("file and untitled paths make URIs")
 }
 
 /// textFileEditorModel.ts `backup` meta: the file's `mtime`, `ctime`, `size`, `etag` and whether it is orphaned.

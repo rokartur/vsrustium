@@ -11,7 +11,7 @@ fn with_brackets(text: &str) -> (OpenEditor, Languages) {
     let mut languages = Languages::new(&[]);
     languages.configure("bracketMode", &json!({ "brackets": [["{", "}"], ["[", "]"], ["(", ")"]] }));
     let mut editor = editor(text, "\n");
-    editor.document.language_id = "bracketMode".into();
+    editor.document_mut().language_id = "bracketMode".into();
     (editor, languages)
 }
 
@@ -96,13 +96,13 @@ fn removes_brackets() {
     let (mut editor, languages) = with_brackets("var x = (3 + (5-7)); y();");
     editor.set_selections(vec![at(9)]);
     editor.remove_brackets(&languages);
-    assert_eq!(editor.document.lines, ["var x = 3 + (5-7); y();"]);
+    assert_eq!(editor.document().lines, ["var x = 3 + (5-7); y();"]);
     let (mut editor, languages) = with_brackets("var x = (3 + (5-7)); y();");
     editor.set_selections(vec![at(16)]);
     assert_eq!(editor.remove_brackets(&languages).len(), 1);
-    assert_eq!(editor.document.lines, ["var x = (3 + 5-7); y();"]);
+    assert_eq!(editor.document().lines, ["var x = (3 + 5-7); y();"]);
     editor.remove_brackets(&languages);
-    assert_eq!(editor.document.lines, ["var x = 3 + 5-7; y();"]);
+    assert_eq!(editor.document().lines, ["var x = 3 + 5-7; y();"]);
     assert!(editor.remove_brackets(&languages).is_empty());
-    assert_eq!(editor.document.lines, ["var x = 3 + 5-7; y();"]);
+    assert_eq!(editor.document().lines, ["var x = 3 + 5-7; y();"]);
 }

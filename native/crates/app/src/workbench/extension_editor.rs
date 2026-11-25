@@ -48,7 +48,7 @@ impl Workbench {
     pub(super) fn open_extension_editor(&mut self, extension: Extension, preview: bool, window: &mut Window, cx: &mut Context<Self>) {
         let id = extension.identifier().id;
         let path = PathBuf::from(format!("{}", id.to_lowercase()));
-        if let Some(index) = self.editors.editors.iter().position(|editor| editor.document.is(EXTENSION_EDITOR_SCHEME, &path)) {
+        if let Some(index) = self.editors.editors.iter().position(|editor| editor.document().is(EXTENSION_EDITOR_SCHEME, &path)) {
             self.editors.activate(index);
         } else {
             let document = TextDocument::from_text(EXTENSION_EDITOR_SCHEME, &path, "", "utf8".into(), None, &self.languages, &self.settings.lock().unwrap());
@@ -91,7 +91,7 @@ impl Workbench {
 
     /// After a change: editors whose extension was uninstalled keep their gallery entry; the markdown stays.
     pub(super) fn refresh_extension_editors(&mut self) {
-        let open: Vec<PathBuf> = self.editors.editors.iter().filter(|editor| editor.document.scheme == EXTENSION_EDITOR_SCHEME).map(|editor| editor.document.path.clone()).collect();
+        let open: Vec<PathBuf> = self.editors.editors.iter().filter(|editor| editor.document().scheme == EXTENSION_EDITOR_SCHEME).map(|editor| editor.document().path.clone()).collect();
         self.extension_editors.retain(|editor| open.contains(&editor.path));
     }
 
@@ -146,7 +146,7 @@ impl Workbench {
 
     /// Runs each render: the active extension editor's markdown has its webview, the others none.
     pub(super) fn update_extension_editor_webviews(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let active = self.editors.active().filter(|editor| editor.document.scheme == EXTENSION_EDITOR_SCHEME).map(|editor| editor.document.path.clone());
+        let active = self.editors.active().filter(|editor| editor.document().scheme == EXTENSION_EDITOR_SCHEME).map(|editor| editor.document().path.clone());
         let covered = self.quick_inputs.current().is_some() || self.keybindings_editor.open || self.context_menu.is_some();
         let styles = self.extension_markdown_styles();
         let theme_styles = self.webview_theme_styles();

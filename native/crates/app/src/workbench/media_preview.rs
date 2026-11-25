@@ -186,12 +186,12 @@ impl Workbench {
 
     fn active_media_preview(&self) -> Option<&MediaPreview> {
         let editor = self.editors.active()?;
-        self.webview_panels.panels.iter().find(|panel| editor.document.is(&panel.scheme, &panel.path))?.media.as_ref()
+        self.webview_panels.panels.iter().find(|panel| editor.document().is(&panel.scheme, &panel.path))?.media.as_ref()
     }
 
     fn post_to_active_image(&mut self, message: Value) -> Outcome {
         let Some(editor) = self.editors.active() else { return Outcome::done() };
-        let (scheme, path) = (editor.document.scheme.clone(), editor.document.path.clone());
+        let (scheme, path) = (editor.document().scheme.clone(), editor.document().path.clone());
         let panel = self.webview_panels.panels.iter_mut().find(|panel| panel.scheme == scheme && panel.path == path);
         if let Some(webview) = panel.filter(|panel| panel.media.as_ref().is_some_and(|media| media.kind == MediaKind::Image)).and_then(|panel| panel.webview.as_mut()) {
             webview.send("message", json!({ "message": message, "buffers": [] }));

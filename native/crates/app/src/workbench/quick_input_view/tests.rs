@@ -22,7 +22,7 @@ fn dragging_the_header_moves_the_quick_input_and_a_double_click_puts_it_back(cx:
     let (workbench, cx) = cx.add_window_view(|_, cx| {
         let mut workbench = Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), crate::default_settings(), HostSync::new(std::sync::mpsc::channel().0), cx);
         workbench.load_keybindings(crate::keybindings::default_keybindings(&[]), dir.join("keybindings.json"), cx);
-        workbench.restore_profile_state(profile);
+        workbench.restore_profile_state(profile.clone(), profile);
         workbench
     });
     cx.run_until_parked();

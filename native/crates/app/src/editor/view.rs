@@ -64,6 +64,7 @@ pub enum VerticalReveal {
     CenterIfOutsideViewport,
     Top,
     NearTop,
+    NearTopIfOutsideViewport,
 }
 
 impl OpenEditor {
@@ -127,7 +128,7 @@ impl OpenEditor {
         if self.wraps() {
             return self.wrapped_view_line_count();
         }
-        self.folding.view_line_count(self.document.lines.len())
+        self.folding.view_line_count(self.document().lines.len())
     }
 
     /// The view line a model line shows on; a hidden line shows on the line it is folded into.
@@ -243,9 +244,9 @@ impl OpenEditor {
 
     /// `_computeScrollLeftToReveal` over one-line ranges: 30px of room before the box and 15px after it.
     fn reveal_columns(&mut self, ranges: &[(Position, Position)], selections: bool, viewport: Viewport) {
-        let tab_size = self.document.indentation.tab_size;
+        let tab_size = self.document().indentation.tab_size;
         let x = |position: Position| {
-            let text = &self.document.lines[position.line];
+            let text = &self.document().lines[position.line];
             let x = match super::line_overflow(text, viewport.stop_rendering_line_after) {
                 // Past the cut the position is the end of the "Show more" span.
                 _ if self.wraps() => self.segment_visible_column(self.segment(self.position_view_line(position, false)), position.column) as f32 * viewport.char_width,
@@ -331,9 +332,9 @@ fn scroll_top_to_reveal(viewport_top: f32, viewport: Viewport, (box_start, box_e
         return single_range.then_some(box_start);
     }
     Some(match reveal {
-        VerticalReveal::CenterIfOutsideViewport if inside => viewport_top,
+        VerticalReveal::CenterIfOutsideViewport | VerticalReveal::NearTopIfOutsideViewport if inside => viewport_top,
         // A gap of 20% of the viewport above the box, at least 5 lines, unless that pushes the box out.
-        VerticalReveal::NearTop => (box_start - (5. * LINE_HEIGHT).max(viewport_height * 0.2)).max(box_end - viewport_height),
+        VerticalReveal::NearTop | VerticalReveal::NearTopIfOutsideViewport => (box_start - (5. * LINE_HEIGHT).max(viewport_height * 0.2)).max(box_end - viewport_height),
         VerticalReveal::Center | VerticalReveal::CenterIfOutsideViewport => ((box_start + box_end) / 2. - viewport_height / 2.).max(0.),
         VerticalReveal::Simple | VerticalReveal::Top => minimum_scrolling(viewport_top, viewport_end, box_start, box_end, reveal == VerticalReveal::Top),
     })

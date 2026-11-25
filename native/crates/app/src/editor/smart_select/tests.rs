@@ -14,7 +14,7 @@ fn mock_js(text: &str) -> (OpenEditor, Languages) {
     let mut languages = Languages::new(&[]);
     languages.configure("mockJSMode", &json!({ "brackets": [["(", ")"], ["{", "}"], ["[", "]"]], "wordPattern": r#"(-?\d*\.\d\w*)|([^`\~\!\@\#\$\%\^\&\*\(\)\=\+\[\{\]\}\\\;\:\'\"\,\.\<\>\/\?\s]+)"# }));
     let mut editor = editor(text, "\n");
-    editor.document.language_id = "mockJSMode".into();
+    editor.document_mut().language_id = "mockJSMode".into();
     (editor, languages)
 }
 
@@ -23,11 +23,11 @@ fn spans(expected: &[Expected]) -> Vec<Span> {
 }
 
 fn word_pattern<'a>(editor: &OpenEditor, languages: &'a Languages) -> Option<&'a onig::Regex> {
-    languages.rules(&editor.document.language_id).unwrap().word_pattern.as_ref()
+    languages.rules(&editor.document().language_id).unwrap().word_pattern.as_ref()
 }
 
 fn brackets_of(editor: &OpenEditor, languages: &Languages) -> Vec<PairBracket> {
-    editor.document.tokens.pairs(languages, &editor.document.lines, &editor.document.language_id).brackets
+    editor.document().tokens.pairs(languages, &editor.document().lines, &editor.document().language_id).brackets
 }
 
 /// `assertGetRangesToPosition`: `expected` lists the outermost range first.
@@ -35,7 +35,7 @@ fn assert_ranges_to_position(text: &[&str], line: usize, column: usize, expected
     let (editor, languages) = mock_js(&text.join("\n"));
     let brackets = brackets_of(&editor, &languages);
     let options = Options { select_leading_and_trailing_whitespace, select_subwords: true };
-    let actual = provide_selection_ranges(&editor.document.lines, &char_brackets(&editor.document.lines, &brackets), word_pattern(&editor, &languages), Position::new(line - 1, column), options);
+    let actual = provide_selection_ranges(&editor.document().lines, &char_brackets(&editor.document().lines, &brackets), word_pattern(&editor, &languages), Position::new(line - 1, column), options);
     let mut expected = spans(expected);
     expected.reverse();
     assert_eq!(actual, expected);
@@ -53,7 +53,7 @@ fn assert_ranges(provider: Provider, value: &str, expected: &[Expected]) {
     let line = before.matches('\n').count();
     let column = before.chars().count() - before.rfind('\n').map_or(0, |newline| before[..=newline].chars().count()) + 1;
     let (editor, languages) = mock_js(&value.replacen('|', "", 1));
-    let lines = &editor.document.lines;
+    let lines = &editor.document().lines;
     let position = Position::new(line, column);
     let actual = match provider {
         Provider::Bracket => bracket_ranges(lines, &char_brackets(lines, &brackets_of(&editor, &languages)), position),

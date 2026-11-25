@@ -42,7 +42,6 @@ const SLIDE: Duration = Duration::from_millis(200);
 /// `--vscode-shadow-lg` (style.css) blurs 12px; CSS takes sigma as half the blur, GPUI's blur_radius is sigma.
 const SHADOW_BLUR: f32 = 6.;
 /// `workbench.sash.hoverDelay` default.
-const SASH_HOVER_DELAY: Duration = Duration::from_millis(300);
 const BUTTON_IDS: [&str; 7] = ["find-replace-toggle", "find-previous", "find-next", "find-selection", "find-close", "replace", "replace-all"];
 
 /// A find match's overview ruler mark, also drawn in the minimap unless past 1000 matches.
@@ -277,7 +276,7 @@ impl Workbench {
         // wordHighlighter.ts `_run`: without text focus the highlights keep the previous query's word.
         let highlighted_word = match self.editor_focus.is_focused(window) {
             true => None,
-            false => Some(editor.highlights.first().map(|(line, columns)| editor.document.lines[*line].chars().skip(columns.start).take(columns.len()).collect::<String>())),
+            false => Some(editor.highlights.first().map(|(line, columns)| editor.document().lines[*line].chars().skip(columns.start).take(columns.len()).collect::<String>())),
         };
         let (focus, change) = action(&mut find.controller, editor, viewport);
         multicursor::end_session_if_stale(&mut find.controller, editor, viewport, &match_mode);
@@ -285,7 +284,7 @@ impl Workbench {
         // refreshed them) runs the query again, so Replace All leaves none.
         let rerun = change.is_none() || !editor.highlights.is_empty();
         if let Some(word) = highlighted_word.filter(|_| rerun) {
-            editor.highlights = word.map_or_else(Vec::new, |word| crate::editor::word_occurrences(&editor.document.lines, &word));
+            editor.highlights = word.map_or_else(Vec::new, |word| crate::editor::word_occurrences(&editor.document().lines, &word));
         }
         let adjust_scroll = !self.find.controller.state.is_revealed || revealed || !self.selection_under_find_widget(selections[0]);
         self.layout_find_zone(adjust_scroll);
@@ -565,7 +564,7 @@ impl Workbench {
             max_length: self.setting("editor.selectionHighlightMaxLength").as_u64().unwrap_or(200) as usize,
         };
         let query = multicursor::selection_highlight_query(&self.find.controller, editor, &self.multicursor_context(window), options);
-        let key = query.map(|query| (editor.model_id, editor.version_id, editor.selections.clone(), query));
+        let key = query.map(|query| (editor.model_id, editor.text_model().version_id, editor.selections.clone(), query));
         if self.find.selection_highlights.as_ref().map(|(key, _)| key) == key.as_ref() {
             return;
         }
@@ -624,8 +623,8 @@ impl Workbench {
         if start_top >= FIND_INPUT_AREA_HEIGHT {
             return false;
         }
-        let tab_size = editor.document.indentation.tab_size;
-        let left = |position: Position| visible_column(&editor.document.lines[position.line], position.column, tab_size) as f32 * self.editors.viewport.char_width - editor.scroll.left;
+        let tab_size = editor.document().indentation.tab_size;
+        let left = |position: Position| visible_column(&editor.document().lines[position.line], position.column, tab_size) as f32 * self.editors.viewport.char_width - editor.scroll.left;
         let widget_left = self.find.widget_left.get();
         end.line > start.line || left(start) > widget_left || left(end) > widget_left
     }
@@ -649,7 +648,7 @@ impl Workbench {
         let whole_line = || div().absolute().inset_0().left(px(scroll_left));
         let range_highlight = || bordered(whole_line(), self.theme.color("editor.rangeHighlightBackground"), self.theme.color("editor.rangeHighlightBorder"), 1.);
         // editorNavigationQuickAccess.ts addDecorations: Go to Line's whole-line `rangeHighlight`.
-        if self.quick_access.goto_line.as_ref().and_then(|state| state.highlight(editor.model_id)).is_some_and(|position| position.line == index) {
+        if self.quick_access.goto_line.as_ref().and_then(|state| state.highlight(editor.model_id)).is_some_and(|(first, last)| first <= index && index <= last) {
             whole_lines.push(range_highlight());
         }
         let Some(model) = self.find.controller.model.as_ref().filter(|_| self.find.model_id == Some(editor.model_id)) else {
@@ -665,8 +664,8 @@ impl Workbench {
             }
         }
 
-        let text = &editor.document.lines[index];
-        let tab_size = editor.document.indentation.tab_size;
+        let text = &editor.document().lines[index];
+        let tab_size = editor.document().indentation.tab_size;
         let x = |column: usize| visible_column(text, column, tab_size) as f32 * char_width;
         let byte = |column: usize| expand_tabs(&text.chars().take(column).collect::<String>(), tab_size).len();
         let first = model.matches.partition_point(|range| range.end.line < index);
@@ -699,7 +698,7 @@ impl Workbench {
         let Some(model) = self.find.controller.model.as_ref().filter(|_| self.find.model_id == Some(editor.model_id)) else { return Vec::new() };
         let mut marks = Vec::new();
         if model.matches.len() > 1000 {
-            let approx_pixels_per_line = editor_height / editor.document.lines.len() as f32;
+            let approx_pixels_per_line = editor_height / editor.document().lines.len() as f32;
             let merge_lines_delta = ((3. / approx_pixels_per_line).ceil() as usize).max(2);
             for lines in merged_match_lines(&model.matches, merge_lines_delta) {
                 marks.push(FindMark { range: Position::new(lines.start, 0)..Position::new(lines.end, 0), in_minimap: false, current: false });
@@ -1095,9 +1094,10 @@ impl Workbench {
             .when(dragging || self.find.sash_hovered, |sash| sash.child(highlight))
             .on_hover(cx.listener(|workbench, hovered: &bool, window, cx| {
                 workbench.find.sash_hovered = false;
+                let delay = workbench.sash_hover_delay();
                 workbench.find.sash_hover = hovered.then(|| {
                     cx.spawn_in(window, async move |workbench, cx| {
-                        cx.background_executor().timer(SASH_HOVER_DELAY).await;
+                        cx.background_executor().timer(delay).await;
                         let _ = workbench.update(cx, |workbench, cx| {
                             workbench.find.sash_hovered = true;
                             cx.notify();

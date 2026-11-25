@@ -9,8 +9,8 @@ const FIRST_LINE_NAME_CANDIDATE_MAX_LENGTH: usize = FIRST_LINE_NAME_MAX_LENGTH *
 
 /// `name` of an untitled model, with `workbench.editor.untitled.labelFormat` `content` when `from_content`.
 pub fn name(editor: &OpenEditor, from_content: bool) -> String {
-    let first_line_words = (from_content && !editor.associated_file).then(|| first_line_words(&editor.document.lines[0])).flatten();
-    first_line_words.unwrap_or_else(|| editor.document.name())
+    let first_line_words = (from_content && !editor.text_model().associated_file).then(|| first_line_words(&editor.document().lines[0])).flatten();
+    first_line_words.unwrap_or_else(|| editor.document().name())
 }
 
 /// `updateNameFromFirstLine`: the first 400 UTF-16 units, trimmed, whitespace runs as one space, no U+202E,

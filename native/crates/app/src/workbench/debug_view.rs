@@ -139,7 +139,7 @@ impl Workbench {
         let Some(when) = when.and_then(crate::contextkey::Expr::deserialize) else { return true };
         let mut context = self.context_keys.clone();
         if let Some(editor) = self.editors.active() {
-            context.insert("debugStartLanguage".into(), json!(editor.document.language_id));
+            context.insert("debugStartLanguage".into(), json!(editor.document().language_id));
         }
         context.insert("isWeb".into(), json!(false));
         when.evaluate(&context)
@@ -559,7 +559,7 @@ impl Workbench {
         }
         for breakpoint in &model.breakpoints {
             let id = breakpoint.id().to_owned();
-            let dirty = self.editors.editors.iter().chain(&self.editors.models).any(|editor| editor.document.uri_string() == breakpoint.uri_string() && editor.is_dirty());
+            let dirty = self.editors.editors.iter().chain(&self.editors.models).any(|editor| editor.document().uri_string() == breakpoint.uri_string() && editor.is_dirty());
             let (icon, _) = super::breakpoint_widget::breakpoint_icon(breakpoint, model, debug_active, dirty);
             let path = breakpoint.uri["path"].as_str().unwrap_or_default();
             let name = path.rsplit('/').next().unwrap_or_default().to_owned();

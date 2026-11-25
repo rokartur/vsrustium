@@ -115,25 +115,25 @@ impl Workbench {
 
     /// The model path of the active editor when it is a search editor.
     pub(super) fn active_search_editor(&self) -> Option<PathBuf> {
-        let document = &self.editors.active()?.document;
+        let document = &self.editors.active()?.document();
         (document.scheme == SEARCH_EDITOR_SCHEME).then(|| document.path.clone())
     }
 
     /// `EditorInput.getName`: "Search: {query}" for a search editor (`SearchEditorInput.getName`), the file name otherwise.
     pub(super) fn editor_name(&self, editor: &crate::editor::OpenEditor) -> String {
-        match self.search_editors.get(&editor.document.path).filter(|_| editor.document.scheme == SEARCH_EDITOR_SCHEME) {
+        match self.search_editors.get(&editor.document().path).filter(|_| editor.document().scheme == SEARCH_EDITOR_SCHEME) {
             Some(search_editor) => search_editor_name(search_editor.backing_file.as_deref(), &search_editor.config.query),
-            None if editor.document.scheme == crate::output::OUTPUT_SCHEME => "Output".into(),
-            None if editor.document.scheme == super::terminal_view::TERMINAL_SCHEME => "Terminal".into(),
-            None if editor.document.scheme == "untitled" => crate::untitled::name(editor, self.untitled_names_from_content()),
-            None if editor.document.scheme == super::local_history_actions::LOCAL_HISTORY_SCHEME => {
-                self.local_history_labels.get(&editor.document.path).cloned().unwrap_or_else(|| editor.document.name())
+            None if editor.document().scheme == crate::output::OUTPUT_SCHEME => "Output".into(),
+            None if editor.document().scheme == "untitled" => crate::untitled::name(editor, self.untitled_names_from_content()),
+            None if editor.document().scheme == super::local_history_actions::LOCAL_HISTORY_SCHEME => {
+                self.local_history_labels.get(&editor.document().path).cloned().unwrap_or_else(|| editor.document().name())
             }
-            None if editor.document.scheme == super::extension_editor::EXTENSION_EDITOR_SCHEME => self.extension_editor_name(&editor.document.path),
-            None => super::preferences::editor_label(&editor.document)
-                .or_else(|| self.webview_title(&editor.document.path))
+            None if editor.document().scheme == super::extension_editor::EXTENSION_EDITOR_SCHEME => self.extension_editor_name(&editor.document().path),
+            None if editor.document().scheme == super::welcome_page::WALKTHROUGH_SCHEME => self.walkthrough_editor_name(&editor.document().path),
+            None => super::preferences::editor_label(&editor.document())
+                .or_else(|| self.webview_title(&editor.document().path))
                 .or_else(|| self.diff_name(editor))
-                .unwrap_or_else(|| editor.document.name()),
+                .unwrap_or_else(|| editor.document().name()),
         }
     }
 
@@ -146,10 +146,10 @@ impl Workbench {
         let seed = args["location"] == "new" || !(seed_setting == false || seed_setting == "" || seed_setting.is_null());
         let selected = self.selected_search_text().filter(|_| seed);
         let mut config = SearchConfiguration { query: selected.clone().unwrap_or_default(), ..SearchConfiguration::default() }.with_args(args);
-        let existing = self.editors.editors.iter().rposition(|editor| editor.document.scheme == SEARCH_EDITOR_SCHEME).filter(|_| reuse);
+        let existing = self.editors.editors.iter().rposition(|editor| editor.document().scheme == SEARCH_EDITOR_SCHEME).filter(|_| reuse);
         let path = match existing {
             Some(index) => {
-                let path = self.editors.editors[index].document.path.clone();
+                let path = self.editors.editors[index].document().path.clone();
                 self.editors.activate(index);
                 let editor = self.search_editors.get_mut(&path).expect("an open search editor has its state");
                 if selected.is_none() {
@@ -248,7 +248,7 @@ impl Workbench {
     /// `file`, the open one when there is one, its query widget focused (`SearchEditor.focus`).
     pub(super) fn open_search_editor_file(&mut self, file: PathBuf, pinned: bool, window: &mut Window, cx: &mut Context<Self>) {
         let open = self.search_editors.iter().find(|(_, editor)| editor.backing_file.as_ref() == Some(&file)).map(|(path, _)| path.clone());
-        let open_index = open.and_then(|path| self.editors.editors.iter().position(|editor| editor.document.is(SEARCH_EDITOR_SCHEME, &path)));
+        let open_index = open.and_then(|path| self.editors.editors.iter().position(|editor| editor.document().is(SEARCH_EDITOR_SCHEME, &path)));
         match open_index {
             Some(index) => {
                 self.editors.activate(index);
@@ -280,7 +280,7 @@ impl Workbench {
         let search_editor = &self.search_editors[&path];
         let model = self.editors.model(SEARCH_EDITOR_SCHEME, &path).expect("saving an open model");
         let version = model.alternative_version_id();
-        let contents = serialize_search_configuration(&search_editor.config) + "\n" + &model.document.lines.join("\n");
+        let contents = serialize_search_configuration(&search_editor.config) + "\n" + &model.document().lines.join("\n");
         if let Some(file) = search_editor.backing_file.clone() {
             let written = std::fs::write(&file, contents).map_err(|error| super::text_files::SaveError::Other(error.to_string()));
             let _ = sender.send(self.finish_save(SEARCH_EDITOR_SCHEME, &path, version, written, cx));
@@ -310,7 +310,7 @@ impl Workbench {
 
     /// `SearchEditorInput.revert`: the backing file read again, or the results emptied; the editor is clean.
     pub(super) fn revert_search_editor(&mut self, index: usize, cx: &mut Context<Self>) {
-        let path = self.editors.editors[index].document.path.clone();
+        let path = self.editors.editors[index].document().path.clone();
         let editor = self.search_editors.get_mut(&path).expect("an open search editor has its state");
         let text = match &editor.backing_file {
             None => String::new(),
@@ -401,7 +401,7 @@ impl Workbench {
 
     /// The match decorations follow an edit of a search editor's text.
     pub(super) fn search_editor_edited(&mut self, path: &Path, change: &ContentChanged) {
-        let Some(editor) = self.search_editors.get_mut(path).filter(|_| self.editors.active().is_some_and(|active| active.document.scheme == SEARCH_EDITOR_SCHEME)) else { return };
+        let Some(editor) = self.search_editors.get_mut(path).filter(|_| self.editors.active().is_some_and(|active| active.document().scheme == SEARCH_EDITOR_SCHEME)) else { return };
         for content_change in &change.changes {
             for range in &mut editor.match_ranges {
                 *range = range.after_change(content_change);
@@ -412,9 +412,9 @@ impl Workbench {
     /// searchEditor.css `.searchEditorFindMatch` boxes on line `index` of a search editor: background and a 1px border,
     /// dotted in high contrast.
     pub(super) fn search_editor_line_decorations(&self, editor: &OpenEditor, index: usize, char_width: f32) -> Vec<Div> {
-        let Some(search_editor) = self.search_editors.get(&editor.document.path).filter(|_| editor.document.scheme == SEARCH_EDITOR_SCHEME) else { return Vec::new() };
-        let text = &editor.document.lines[index];
-        let tab_size = editor.document.indentation.tab_size;
+        let Some(search_editor) = self.search_editors.get(&editor.document().path).filter(|_| editor.document().scheme == SEARCH_EDITOR_SCHEME) else { return Vec::new() };
+        let text = &editor.document().lines[index];
+        let tab_size = editor.document().indentation.tab_size;
         let x = |utf16: usize| visible_column(text, char_column(text, utf16 - 1), tab_size) as f32 * char_width;
         let background = self.theme.color("searchEditor.findMatchBackground");
         let border = self.theme.color("searchEditor.findMatchBorder");
@@ -463,7 +463,7 @@ impl Workbench {
     fn selected_search_text(&self) -> Option<String> {
         let editor = self.editors.active()?;
         let selection = editor.selection();
-        let lines = &editor.document.lines;
+        let lines = &editor.document().lines;
         if !selection.is_empty() {
             return Some(crate::editor::text_between(lines, selection.start(), selection.end()));
         }
@@ -482,11 +482,13 @@ impl Workbench {
         let viewport = self.editors.viewport;
         let ranges = &self.search_editors[path].match_ranges;
         let editor = self.editors.active_mut().expect("the search editor is active");
-        let lines = &editor.document.lines;
+        let document = editor.document();
+        let lines = &document.lines;
         let start = editor.selection().start();
         let position = (start.line + 1, utf16_column(&lines[start.line], start.column) + 1);
         let Some(range) = adjacent_match(ranges, position, reverse) else { return };
         let selection = range_selection(lines, &range);
+        drop(document);
         editor.set_selections(vec![selection]);
         editor.reveal_range(selection.start(), selection.end(), VerticalReveal::CenterIfOutsideViewport, viewport);
         self.host.send_selection(editor, "keyboard");
@@ -498,7 +500,7 @@ impl Workbench {
     fn select_all_search_editor_matches(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
         let ranges = &self.search_editors[path].match_ranges;
         let editor = self.editors.active_mut().expect("the search editor is active");
-        let selections: Vec<Selection> = ranges.iter().map(|range| range_selection(&editor.document.lines, range)).collect();
+        let selections: Vec<Selection> = ranges.iter().map(|range| range_selection(&editor.document().lines, range)).collect();
         if selections.is_empty() {
             return;
         }
@@ -512,7 +514,8 @@ impl Workbench {
     /// line after its block, as upstream gives those lines to the model after the edit.
     fn delete_search_editor_file_results(&mut self, cx: &mut Context<Self>) {
         let editor = self.editors.active_mut().expect("the search editor is active");
-        let lines = &editor.document.lines;
+        let document = editor.document();
+        let lines = &document.lines;
         let spans: Vec<(usize, usize)> = editor.selections.iter().map(|selection| (selection.start().line, selection.end().line)).collect();
         let (mut deleted, ending_lines) = result_block_lines(lines, &spans);
         deleted.sort_unstable();
@@ -534,13 +537,14 @@ impl Workbench {
         }
         let line_count = lines.len() - deleted.iter().filter(|line| **line + 1 < lines.len()).count();
         let endings = ending_lines.into_iter().map(|line| Selection::caret(Position::new(line.min(line_count - 1), 0))).collect::<Vec<_>>();
+        drop(document);
         editor.push_undo_stop();
         let change = editor.execute_edits(edits, Some(endings).filter(|endings| !endings.is_empty()), EditReason::Unknown("deleteResultBlock"));
         editor.push_undo_stop();
         if let Some(change) = change {
             let index = self.editors.active_index().expect("checked above");
             self.host.send_content_change(&self.editors, index, &change);
-            let path = self.editors.editors[index].document.path.clone();
+            let path = self.editors.editors[index].document().path.clone();
             self.search_editor_edited(&path, &change);
         }
         cx.notify();
@@ -551,22 +555,23 @@ impl Workbench {
     // shortcut: `peekDefinition` (the single click setting, the double click on a file line) does nothing, the peek
     // view (editor/contrib/peekView) is not ported; `openLocationToSide` opens in the active group, the port has one.
     pub(super) fn search_editor_mouse_up(&mut self, index: usize, visible: f32, click_count: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(editor) = self.editors.active().filter(|editor| editor.document.scheme == SEARCH_EDITOR_SCHEME) else { return };
+        let Some(editor) = self.editors.active().filter(|editor| editor.document().scheme == SEARCH_EDITOR_SCHEME) else { return };
         if click_count != 2 || self.setting("search.searchEditor.doubleClickBehaviour") == "selectWord" {
             return;
         }
-        let lines = &editor.document.lines;
-        let column = crate::editor::column_at_visible(&lines[index], visible, editor.document.indentation.tab_size);
+        let document = editor.document();
+        let lines = &document.lines;
+        let column = crate::editor::column_at_visible(&lines[index], visible, editor.document().indentation.tab_size);
         let Some((label, line, utf16)) = result_definition(lines, index, utf16_column(&lines[index], column)) else { return };
         let folders: Vec<(String, PathBuf)> = self.workspace().iter().flat_map(|workspace| &workspace.folders).map(|folder| (folder.name.clone(), folder.path.clone())).collect();
         let home = std::env::var_os("HOME").map(PathBuf::from);
         let Some(file) = resolve_result_path(&label, &folders, home.as_deref()) else { return };
         let caret = Selection::caret(Position::new(index, column));
+        drop(document);
         self.editors.active_mut().expect("checked above").set_selections(vec![caret]);
         self.open_file(file.clone(), false, window, cx);
-        let Some(target) = self.editors.active().filter(|editor| editor.document.is("file", &file)) else { return };
-        let text = target.document.lines.get(line).map_or("", String::as_str);
-        let column = char_column(text, utf16) + 1;
+        let Some(target) = self.editors.active().filter(|editor| editor.document().is("file", &file)) else { return };
+        let column = char_column(target.document().lines.get(line).map_or("", String::as_str), utf16) + 1;
         self.select_range(&file, crate::anything_quick_access::TextRange { start_line_number: line + 1, start_column: column, end_line_number: line + 1, end_column: column }, cx);
         window.focus(&self.editor_focus, cx);
     }

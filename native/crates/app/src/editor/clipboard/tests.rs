@@ -11,8 +11,8 @@ fn sel(anchor_line: usize, anchor_column: usize, line: usize, column: usize) -> 
     Selection { anchor: Position::new(anchor_line - 1, anchor_column - 1), head: Position::new(line - 1, column - 1) }
 }
 
-fn lines_of(editor: &OpenEditor) -> Vec<&str> {
-    editor.document.lines.iter().map(String::as_str).collect()
+fn lines_of(editor: &OpenEditor) -> Vec<String> {
+    editor.document().lines.clone()
 }
 
 const BLOCK: &str = "A\nBC\nD";
@@ -25,7 +25,7 @@ fn block_paste(editor: &mut OpenEditor, text: &str, spread: bool) {
 
 fn assert_block_paste(text: &[&str], selections: Vec<Selection>, pasted: &str, tab_size: usize, expected: &[&str]) {
     let mut editor = editor(&text.join("\n"), "\n");
-    editor.document.indentation.tab_size = tab_size;
+    editor.document_mut().indentation.tab_size = tab_size;
     editor.set_selections(selections);
     block_paste(&mut editor, pasted, true);
     assert_eq!(lines_of(&editor), expected, "pasting {pasted:?} into {text:?}");
@@ -83,7 +83,7 @@ fn multi_cursor_paste_full_and_missing_metadata() {
         let mut editor = editor(text, "\n");
         editor.set_selections(selections);
         editor.paste(pasted, spread, false);
-        editor.document.lines.join("\n")
+        editor.document().lines.join("\n")
     };
     let cursors = || vec![sel(1, 2, 1, 2), sel(2, 2, 2, 2), sel(3, 2, 3, 2)];
     // Block mode respects multiCursorPaste full without row metadata.
@@ -110,28 +110,28 @@ fn block_paste_undo_redo_and_cursor() {
     cursors.set_selections(selections.clone());
     block_paste(&mut cursors, BLOCK, true);
     let after = vec![sel(1, 3, 1, 3), sel(2, 4, 2, 4), sel(3, 3, 3, 3)];
-    assert_eq!((lines_of(&cursors), cursors.selections.clone()), (vec!["xAx", "yBCy", "zDz"], after.clone()));
+    assert_eq!((lines_of(&cursors).iter().map(String::as_str).collect::<Vec<_>>(), cursors.selections.clone()), (vec!["xAx", "yBCy", "zDz"], after.clone()));
     cursors.undo();
-    assert_eq!((lines_of(&cursors), cursors.selections.clone()), (vec!["xx", "yy", "zz"], selections));
+    assert_eq!((lines_of(&cursors).iter().map(String::as_str).collect::<Vec<_>>(), cursors.selections.clone()), (vec!["xx", "yy", "zz"], selections));
     cursors.redo();
-    assert_eq!((lines_of(&cursors), cursors.selections.clone()), (vec!["xAx", "yBCy", "zDz"], after));
+    assert_eq!((lines_of(&cursors).iter().map(String::as_str).collect::<Vec<_>>(), cursors.selections.clone()), (vec!["xAx", "yBCy", "zDz"], after));
 
     let mut aligned = editor("\tfirst\nmiddle\nlast--suffix\nx\n", "\n");
     let selection = sel(3, 7, 1, 2);
     aligned.set_selections(vec![selection]);
     block_paste(&mut aligned, "\nBC\n", true);
     let expected = (vec!["\t  suffix", "x   BC", "      "], vec![sel(3, 7, 3, 7)]);
-    assert_eq!((lines_of(&aligned), aligned.selections.clone()), expected);
+    assert_eq!((lines_of(&aligned).iter().map(String::as_str).collect::<Vec<_>>(), aligned.selections.clone()), expected);
     aligned.undo();
-    assert_eq!((lines_of(&aligned), aligned.selections.clone()), (vec!["\tfirst", "middle", "last--suffix", "x", ""], vec![selection]));
+    assert_eq!((lines_of(&aligned).iter().map(String::as_str).collect::<Vec<_>>(), aligned.selections.clone()), (vec!["\tfirst", "middle", "last--suffix", "x", ""], vec![selection]));
     aligned.redo();
-    assert_eq!((lines_of(&aligned), aligned.selections.clone()), expected);
+    assert_eq!((lines_of(&aligned).iter().map(String::as_str).collect::<Vec<_>>(), aligned.selections.clone()), expected);
 
     for (text, expected) in [("left\nleft\nleft", vec!["leftA ", "leftBC", "left  "]), ("left\nx\n", vec!["leftA ", "x   BC", "      "]), ("left", vec!["leftA ", "    BC", "      "])] {
         let mut trailing = editor(text, "\n");
         trailing.set_selections(vec![sel(1, 5, 1, 5)]);
         block_paste(&mut trailing, "A\nBC\n", true);
-        assert_eq!((lines_of(&trailing), trailing.selections.clone()), (expected, vec![sel(3, 7, 3, 7)]));
+        assert_eq!((lines_of(&trailing).iter().map(String::as_str).collect::<Vec<_>>(), trailing.selections.clone()), (expected, vec![sel(3, 7, 3, 7)]));
     }
 }
 
@@ -156,7 +156,7 @@ fn block_paste_follows_the_multi_cursor_paste_setting() {
         let mut editor = editor("left\nx\n", "\n");
         editor.set_selections(vec![sel(1, 5, 1, 5)]);
         block_paste(&mut editor, BLOCK, spread);
-        results.push(editor.document.lines.clone());
+        results.push(editor.document().lines.clone());
     }
     assert_eq!(results, [vec!["leftA ", "x   BC", "    D "], vec!["leftA", "BC", "D", "x", ""], vec!["leftA ", "x   BC", "    D "]]);
 }

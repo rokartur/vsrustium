@@ -53,7 +53,7 @@ impl Workbench {
     pub(super) fn register_inspect_tokens_commands(&mut self) {
         self.commands.register("editor.action.inspectTMScopes", |workbench, _, _, cx| {
             let shown = match (&workbench.inspect_tokens.shown, workbench.editors.active()) {
-                (None, Some(editor)) => Some((editor.model_id, editor.document.language_id.clone())),
+                (None, Some(editor)) => Some((editor.model_id, editor.document().language_id.clone())),
                 _ => None,
             };
             workbench.inspect_tokens.shown = shown;
@@ -66,7 +66,7 @@ impl Workbench {
     /// `onDidChangeModel` and `onDidChangeModelLanguage` stop the inspector.
     pub(super) fn stop_inspect_tokens_on_model_change(&mut self) {
         let Some((model_id, language)) = &self.inspect_tokens.shown else { return };
-        if self.editors.active().is_none_or(|editor| editor.model_id != *model_id || editor.document.language_id != *language) {
+        if self.editors.active().is_none_or(|editor| editor.model_id != *model_id || editor.document().language_id != *language) {
             self.inspect_tokens.shown = None;
         }
     }
@@ -131,7 +131,7 @@ impl Workbench {
             .when(measured.is_none(), |widget| widget.invisible())
             .on_any_mouse_down(|_, _, cx| cx.stop_propagation())
             .child(measure);
-        let widget = match inspect(&editor.document, position, &self.theme) {
+        let widget = match inspect(&editor.document(), position, &self.theme) {
             None => widget.child("No grammar or semantic tokens available."),
             Some(inspection) => widget.children(self.inspection_content(inspection, window)),
         };

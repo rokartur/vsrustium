@@ -199,8 +199,9 @@ impl Workbench {
     /// `editorHasCodeActionsProvider` and `supportedCodeAction` of the active editor.
     pub(super) fn code_actions_context(&self, context: &mut std::collections::HashMap<String, Value>) {
         let Some(editor) = self.editors.active() else { return };
-        let uri = editor.document.uri();
-        let candidate = Candidate { uri: &uri, language: &editor.document.language_id };
+        let uri = editor.document().uri();
+        let language = editor.document().language_id.clone();
+        let candidate = Candidate { uri: &uri, language: &language };
         let providers = self.language_features.ordered(REGISTER, &candidate);
         context.insert("editorHasCodeActionsProvider".into(), json!(!providers.is_empty()));
         if self.active_editor_readonly().is_none() {
@@ -215,6 +216,13 @@ impl Workbench {
             REGISTER => self.code_actions_model_changed(cx),
             "$registerCodeLensSupport" => self.code_lens_registrations_changed(cx),
             "$registerFoldingRangeProvider" => self.trigger_folding_model_changed(cx),
+            "$registerDocumentLinkProvider" => self.links_model_changed(cx),
+            "$registerLinkedEditingRangeProvider" => self.linked_editing_reinitialize(false, cx),
+            "$registerDocumentSemanticTokensProvider" | "$registerDocumentRangeSemanticTokensProvider" => self.semantic_tokens_providers_changed(cx),
+            "$registerDocumentFormattingSupport" | "$registerRangeFormattingSupport" => {
+                self.formatters_changed();
+                self.refresh_language_status(cx);
+            }
             _ => {}
         }
     }
@@ -236,7 +244,7 @@ impl Workbench {
         if content_changed
             && let Some(lightbulb) = &self.code_actions.lightbulb
             && let Some(editor) = self.editors.active()
-            && lightbulb.line + 1 >= editor.document.lines.len()
+            && lightbulb.line + 1 >= editor.document().lines.len()
         {
             self.hide_lightbulb();
         }
@@ -245,7 +253,7 @@ impl Workbench {
 
     /// `_onMarkerChanges`: markers of the active model ask again.
     pub(super) fn code_actions_markers_changed(&mut self, resources: &[String], cx: &mut Context<Self>) {
-        if self.editors.active().is_some_and(|editor| resources.contains(&editor.document.uri_string())) {
+        if self.editors.active().is_some_and(|editor| resources.contains(&editor.document().uri_string())) {
             self.try_auto_trigger_code_actions(cx);
         }
     }
@@ -276,8 +284,9 @@ impl Workbench {
     /// out, goes to the providers.
     fn trigger_code_actions(&mut self, trigger: Trigger, cx: &mut Context<Self>) {
         let Some(editor) = self.editors.active() else { return };
-        let uri = editor.document.uri();
-        let candidate = Candidate { uri: &uri, language: &editor.document.language_id };
+        let uri = editor.document().uri();
+        let language = editor.document().language_id.clone();
+        let candidate = Candidate { uri: &uri, language: &language };
         if self.language_features.ordered(REGISTER, &candidate).is_empty() || self.active_editor_readonly().is_some() {
             return;
         }
@@ -290,11 +299,11 @@ impl Workbench {
             && trigger.kind == INVOKE
             && (trigger.source == Source::QuickFix || trigger.filter.include.as_deref().is_some_and(|include| contains(include, QUICK_FIX)));
         let markers: Vec<Value> = match nearby {
-            true => self.diagnostics.service.read(ReadOptions { resource: Some(&editor.document.uri_string()), ..Default::default() }).iter().map(|marker| marker.to_data()).collect(),
+            true => self.diagnostics.service.read(ReadOptions { resource: Some(&editor.document().uri_string()), ..Default::default() }).iter().map(|marker| marker.to_data()).collect(),
             false => Vec::new(),
         };
         let head = selection.head;
-        let cursor = (head.line + 1, utf16_column(&editor.document.lines[head.line], head.column) + 1);
+        let cursor = (head.line + 1, utf16_column(&editor.document().lines[head.line], head.column) + 1);
         let calls = self.code_action_calls(editor, selection_value(editor, selection), &trigger);
         let caches = Rc::new(RefCell::new(Vec::new()));
         // Do not replace a manual request's state with an automatic one at another position at once.
@@ -335,8 +344,9 @@ impl Workbench {
     /// `getCodeActionProviders` and the `$provideCodeActions` calls of the model's providers that may answer the
     /// filter's kinds; an automatic request leaves out notebook providers.
     fn code_action_calls(&self, editor: &OpenEditor, range: Value, trigger: &Trigger) -> Vec<(u64, oneshot::Receiver<Result<Value, Value>>, Value)> {
-        let uri = editor.document.uri();
-        let candidate = Candidate { uri: &uri, language: &editor.document.language_id };
+        let uri = editor.document().uri();
+        let language = editor.document().language_id.clone();
+        let candidate = Candidate { uri: &uri, language: &language };
         let mut provider_filter = trigger.filter.clone();
         if trigger.kind == AUTO {
             provider_filter.excludes.push("notebook".to_owned());
@@ -554,8 +564,8 @@ impl Workbench {
         if set.valid.is_empty() || self.suggest_setting(editor, "editor.lightbulb.enabled") == json!("off") {
             return self.release_code_action_set(set);
         }
-        let lines = &editor.document.lines;
-        let tab_size = editor.document.indentation.tab_size;
+        let lines = &editor.document().lines;
+        let tab_size = editor.document().indentation.tab_size;
         let space_width = self.editors.viewport.char_width;
         let line = position.line.min(lines.len() - 1);
         let indent = compute_indent_level(&lines[line], tab_size);
@@ -637,8 +647,8 @@ impl Workbench {
         self.action_widget.content_left.set(content_left);
         let lightbulb = self.code_actions.lightbulb.as_ref().filter(|lightbulb| lightbulb.model_id == editor.model_id)?;
         let column = lightbulb.column?;
-        let text = &editor.document.lines[lightbulb.line];
-        let left = visible_column(text, column, editor.document.indentation.tab_size) as f32 * char_width - editor.scroll.left + content_left;
+        let text = &editor.document().lines[lightbulb.line];
+        let left = visible_column(text, column, editor.document().indentation.tab_size) as f32 * char_width - editor.scroll.left + content_left;
         let top = editor.line_top(editor.view_line(lightbulb.line), self.editors.viewport) - editor.scroll.top;
         let line_height = self.editors.viewport.line_height;
         let icon = self.icon(lightbulb.icon, 16., 16., self.color(lightbulb.color));
@@ -869,8 +879,8 @@ impl Workbench {
             (None, Some(diagnostics)) => diagnostics,
             (None, None) => return Vec::new(),
         };
-        let text = &editor.document.lines[index];
-        let tab_size = editor.document.indentation.tab_size;
+        let text = &editor.document().lines[index];
+        let tab_size = editor.document().indentation.tab_size;
         let border = self.theme.color("editor.findMatchHighlightBorder");
         let mut highlights = Vec::new();
         for range in ranges {
@@ -1119,7 +1129,7 @@ fn selection_unless_whitespace_enclosed(editor: &OpenEditor, trigger: &Trigger, 
     if lightbulb != "onCode" || !selection.is_empty() {
         return Some(selection);
     }
-    let chars: Vec<char> = editor.document.lines[selection.head.line].chars().collect();
+    let chars: Vec<char> = editor.document().lines[selection.head.line].chars().collect();
     let column = selection.head.column;
     let enclosed = match chars.len() {
         0 => true,
@@ -1132,7 +1142,7 @@ fn selection_unless_whitespace_enclosed(editor: &OpenEditor, trigger: &Trigger, 
 
 /// `ISelection` with 1-based UTF-16 columns.
 fn selection_value(editor: &OpenEditor, selection: Selection) -> Value {
-    let lines = &editor.document.lines;
+    let lines = &editor.document().lines;
     let column = |position: Position| utf16_column(&lines[position.line], position.column) + 1;
     let (start, end) = (selection.start(), selection.end());
     json!({

@@ -70,7 +70,7 @@ fn shown(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext) -> Vec
 }
 
 fn text(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext) -> String {
-    workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document.lines.join("\n"))
+    workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document().lines.join("\n"))
 }
 
 /// Typing a word start shows the other words of the document (the word based provider) and filters as it goes.

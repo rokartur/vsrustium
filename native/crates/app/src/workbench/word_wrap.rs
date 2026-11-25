@@ -56,8 +56,8 @@ impl Workbench {
             return clip.right_0();
         }
         let editor = self.editors.active().expect("a wrapped view line has an editor");
-        let text = &editor.document.lines[segment.line];
-        let tab_size = editor.document.indentation.tab_size;
+        let text = &editor.document().lines[segment.line];
+        let tab_size = editor.document().indentation.tab_size;
         let width = (visible_column(text, segment.end, tab_size) - visible_column(text, segment.start, tab_size)) as f32 * char_width;
         clip.w(px(width + 1.))
     }
@@ -79,8 +79,10 @@ impl Workbench {
         let Some(editor) = self.editors.active_mut().filter(|editor| editor.wraps()) else { return };
         let segment = editor.segment(view_line);
         let head = editor.selections.last().expect("an editor has a cursor").head;
-        let text = &editor.document.lines[segment.line];
-        let end_visible = visible_column(text, segment.end, editor.document.indentation.tab_size) as f32;
+        let end_visible = {
+            let document = editor.document();
+            visible_column(&document.lines[segment.line], segment.end, document.indentation.tab_size) as f32
+        };
         if !segment.last && head == crate::editor::Position::new(segment.line, segment.end) && visible >= end_visible - 0.5 {
             editor.set_row_ends(vec![head]);
         }
@@ -93,9 +95,8 @@ impl Workbench {
         let Some(editor) = self.editors.active() else { return false };
         let options = if in_diff { None } else { self.wrap_options(editor, viewport) };
         let editor = self.editors.active_mut().expect("checked above");
-        let lines = std::mem::take(&mut editor.document.lines);
-        let changed = editor.word_wrap.configure(options, &lines);
-        editor.document.lines = lines;
+        let model = editor.model.clone();
+        let changed = editor.word_wrap.configure(options, &model.borrow().document.lines);
         changed
     }
 
@@ -103,10 +104,11 @@ impl Workbench {
     /// scrollbar and 2px for the cursor, `wordWrapColumn` at that column, `bounded` at the smaller; a model too
     /// large for tokenization never wraps (viewModelImpl.ts `ViewModelLinesFromModelAsIs`).
     fn wrap_options(&self, editor: &OpenEditor, viewport: Viewport) -> Option<WrapOptions> {
-        if editor.document.too_large_for_tokenization || viewport.char_width <= 0. {
+        if editor.document().too_large_for_tokenization || viewport.char_width <= 0. {
             return None;
         }
-        let overrides = Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
+        let (resource, language) = (editor.document().path.clone(), editor.document().language_id.clone());
+        let overrides = Overrides { resource: Some(&resource), override_identifier: Some(&language) };
         let settings = self.settings.lock().unwrap();
         let value = |key: &str| settings.get_value(Some(key), &overrides).unwrap_or(Value::Null);
         let word_wrap = match editor.word_wrap.toggled {
@@ -128,7 +130,7 @@ impl Workbench {
         Some(WrapOptions {
             column,
             viewport_wrapping,
-            tab_size: editor.document.indentation.tab_size,
+            tab_size: editor.document().indentation.tab_size,
             indent: WrappingIndent::from_setting(&string("editor.wrappingIndent")),
             keep_all: string("editor.wordBreak") == "keepAll",
             wrap_on_escaped_line_feeds: value("editor.wrapOnEscapedLineFeeds") == json!(true),

@@ -73,7 +73,7 @@ impl Workbench {
         });
         // fileActions.ts `OpenActiveFileInEmptyWorkspace`; the port's file service has the `file` scheme only.
         self.commands.register("workbench.action.files.showOpenedFileInNewWindow", |workbench, _, window, cx| {
-            let file = workbench.editors.active().filter(|editor| editor.document.scheme == "file").map(|editor| editor.document.path.clone());
+            let file = workbench.editors.active().filter(|editor| editor.document().scheme == "file").map(|editor| editor.document().path.clone());
             let Some(file) = file else {
                 let _ = dialog::show_message_box(window, PromptLevel::Critical, "The active editor must contain an openable resource.", None, &["OK"], None, cx);
                 return Outcome::done();

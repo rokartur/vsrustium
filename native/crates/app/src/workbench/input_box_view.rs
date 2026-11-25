@@ -42,9 +42,12 @@ pub enum InputId {
     BreakpointWidget,
     DebugConsole,
     TerminalFind,
+    Rename,
+    ProfileName,
+    IconSelectSearch,
 }
 
-const INPUTS: [InputId; 18] = [
+const INPUTS: [InputId; 21] = [
     InputId::QuickInput,
     InputId::Explorer,
     InputId::ExplorerFind,
@@ -63,6 +66,9 @@ const INPUTS: [InputId; 18] = [
     InputId::BreakpointWidget,
     InputId::DebugConsole,
     InputId::TerminalFind,
+    InputId::Rename,
+    InputId::ProfileName,
+    InputId::IconSelectSearch,
 ];
 
 /// The view state of one input element.
@@ -131,12 +137,15 @@ impl Workbench {
             InputId::ExtensionsSearch => &self.extensions_viewlet.search_view,
             InputId::SettingsSearch => &self.settings_editor.search_view,
             InputId::SettingsValue => &self.settings_editor.value_view,
+            InputId::ProfileName => &self.user_data_profiles.editor.name_view,
+            InputId::IconSelectSearch => self.user_data_profiles.editor.icon_picker.as_ref().map_or(&self.user_data_profiles.editor.name_view, |picker| &picker.search_view),
             InputId::SettingsListKey => &self.settings_editor.list.key_view,
             InputId::SettingsListValue => &self.settings_editor.list.value_view,
             InputId::DebugView => &self.debug_view.input_view,
             InputId::BreakpointWidget => &self.debug_view.widget_view,
             InputId::DebugConsole => &self.debug_console.input_view,
             InputId::TerminalFind => &self.terminal_view.find.view,
+            InputId::Rename => &self.rename.view,
         }
     }
 
@@ -156,12 +165,18 @@ impl Workbench {
             InputId::ExtensionsSearch => &mut self.extensions_viewlet.search_view,
             InputId::SettingsSearch => &mut self.settings_editor.search_view,
             InputId::SettingsValue => &mut self.settings_editor.value_view,
+            InputId::ProfileName => &mut self.user_data_profiles.editor.name_view,
+            InputId::IconSelectSearch => match &mut self.user_data_profiles.editor.icon_picker {
+                Some(picker) => &mut picker.search_view,
+                None => &mut self.user_data_profiles.editor.name_view,
+            },
             InputId::SettingsListKey => &mut self.settings_editor.list.key_view,
             InputId::SettingsListValue => &mut self.settings_editor.list.value_view,
             InputId::DebugView => &mut self.debug_view.input_view,
             InputId::BreakpointWidget => &mut self.debug_view.widget_view,
             InputId::DebugConsole => &mut self.debug_console.input_view,
             InputId::TerminalFind => &mut self.terminal_view.find.view,
+            InputId::Rename => &mut self.rename.view,
         }
     }
 
@@ -181,12 +196,15 @@ impl Workbench {
             InputId::ExtensionsSearch => &self.extensions_viewlet.search_focus,
             InputId::SettingsSearch => &self.settings_editor.search_focus,
             InputId::SettingsValue => &self.settings_editor.value_focus,
+            InputId::ProfileName => self.user_data_profiles.editor.name_focus.as_ref().unwrap_or(&self.settings_editor.value_focus),
+            InputId::IconSelectSearch => self.user_data_profiles.editor.icon_search_focus.as_ref().unwrap_or(&self.settings_editor.value_focus),
             InputId::SettingsListKey => &self.settings_editor.list.key_focus,
             InputId::SettingsListValue => &self.settings_editor.list.value_focus,
             InputId::DebugView => &self.debug_view.input_focus,
             InputId::BreakpointWidget => &self.debug_view.widget_focus,
             InputId::DebugConsole => &self.debug_console.input_focus,
             InputId::TerminalFind => &self.terminal_view.find.focus,
+            InputId::Rename => &self.rename.focus,
         }
     }
 
@@ -206,12 +224,15 @@ impl Workbench {
             InputId::ExtensionsSearch => Some(&self.extensions_viewlet.search),
             InputId::SettingsSearch => Some(&self.settings_editor.search),
             InputId::SettingsValue => self.settings_editor.value.as_ref().map(|(_, input)| input),
+            InputId::ProfileName => Some(&self.user_data_profiles.editor.name),
+            InputId::IconSelectSearch => self.user_data_profiles.editor.icon_picker.as_ref().map(|picker| &picker.search),
             InputId::SettingsListKey => Some(&self.settings_editor.list.key),
             InputId::SettingsListValue => Some(&self.settings_editor.list.value),
             InputId::DebugView => self.debug_view.editing.as_ref().map(|_| &self.debug_view.input),
             InputId::BreakpointWidget => self.breakpoint_widget.as_ref().map(|widget| &widget.input),
             InputId::DebugConsole => Some(&self.debug_console.input),
             InputId::TerminalFind => Some(&self.terminal_view.find.input),
+            InputId::Rename => self.rename.widget.as_ref().map(|widget| &widget.input),
         }
     }
 
@@ -278,6 +299,14 @@ impl Workbench {
                 self.edit_settings_value(edit, window, cx);
                 Outcome::done()
             }
+            InputId::ProfileName => {
+                self.edit_profile_name(edit, cx);
+                Outcome::done()
+            }
+            InputId::IconSelectSearch => {
+                self.edit_icon_select_search(edit, cx);
+                Outcome::done()
+            }
             InputId::SettingsListKey | InputId::SettingsListValue => {
                 self.edit_settings_list_input(id == InputId::SettingsListKey, edit, cx);
                 Outcome::done()
@@ -296,6 +325,13 @@ impl Workbench {
             }
             InputId::TerminalFind => {
                 self.edit_terminal_find_input(edit, cx);
+                Outcome::done()
+            }
+            InputId::Rename => {
+                if let Some(widget) = self.rename.widget.as_mut() {
+                    edit(&mut widget.input);
+                    cx.notify();
+                }
                 Outcome::done()
             }
         }
@@ -487,12 +523,15 @@ impl Workbench {
                 InputId::ExtensionsSearch => "extensions-search-text".into(),
                 InputId::SettingsSearch => "settings-search-text".into(),
                 InputId::SettingsValue => "settings-value-text".into(),
+                InputId::ProfileName => "profile-name-text".into(),
+                InputId::IconSelectSearch => "icon-select-search-text".into(),
                 InputId::SettingsListKey => "settings-list-key-text".into(),
                 InputId::SettingsListValue => "settings-list-value-text".into(),
                 InputId::DebugView => "debug-view-input-text".into(),
                 InputId::BreakpointWidget => "breakpoint-widget-input-text".into(),
                 InputId::DebugConsole => "debug-console-input-text".into(),
                 InputId::TerminalFind => "terminal-find-text".into(),
+                InputId::Rename => "rename-input-text".into(),
             })
             .flex_1()
             .h_full()

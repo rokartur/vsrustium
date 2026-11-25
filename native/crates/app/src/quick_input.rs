@@ -63,8 +63,6 @@ pub enum Focus {
 /// `ItemActivation`: which item the list focuses when items are set.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum ItemActivation {
-    // Set by goto symbol and the simple file dialog upstream, neither ported yet; the #207832 test covers it.
-    #[cfg_attr(not(test), allow(dead_code))]
     None,
     #[default]
     First,
@@ -103,6 +101,8 @@ pub struct Item {
     /// `highlights`: matches a picker computed itself, kept while the list does not filter.
     pub label_highlights: Matches,
     pub description_highlights: Matches,
+    /// iconlabel.css `.strikethrough`: the label and description struck through.
+    pub strikethrough: bool,
 }
 
 #[derive(Clone, PartialEq, Debug)]

@@ -76,8 +76,8 @@ impl Workbench {
     /// `updateReadonly` of the active editor's file: `Some` sets the override (`None` resets it), `None` toggles
     /// from the state it has now.
     fn update_active_editor_readonly(&mut self, state: Option<Option<bool>>, cx: &mut Context<Self>) -> Outcome {
-        let Some(editor) = self.editors.active().filter(|editor| editor.document.scheme != "untitled") else { return Outcome::done() };
-        let resource = (editor.document.scheme.clone(), editor.document.path.clone());
+        let Some(editor) = self.editors.active().filter(|editor| editor.document().scheme != "untitled") else { return Outcome::done() };
+        let resource = (editor.document().scheme.clone(), editor.document().path.clone());
         let state = state.unwrap_or_else(|| Some(self.readonly(&resource.0, &resource.1).is_none()));
         match state {
             Some(readonly) => self.readonly_overrides.insert(resource, readonly),
@@ -119,7 +119,7 @@ impl Workbench {
 
     pub(super) fn active_editor_readonly(&self) -> Option<Readonly> {
         let editor = self.editors.active()?;
-        self.readonly(&editor.document.scheme, &editor.document.path)
+        self.readonly(&editor.document().scheme, &editor.document().path)
     }
 
     /// Whether an edit of the active editor must not run because it is read-only. An edit command's

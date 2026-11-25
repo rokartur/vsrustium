@@ -8,15 +8,18 @@ impl OpenEditor {
     /// `MoveCaretAction.run`: a `MoveCaretCommand` per selection, which swaps a one-line selection with the char
     /// before or after it.
     pub fn move_selected_text(&mut self, left: bool) -> Option<ContentChanged> {
-        let lines = &self.document.lines;
+        let document = self.document();
+        let lines = &document.lines;
         let commands = self.selections.iter().map(|&selection| move_caret_command(lines, selection, left)).collect();
         let id = if left { "editor.action.moveCarretLeftAction" } else { "editor.action.moveCarretRightAction" };
+        drop(document);
         self.run_commands_between_stops(commands, id)
     }
 
     /// `TransposeLettersAction.run`: each empty cursor swaps the chars around it, or the two before it at a line end.
     pub fn transpose_letters(&mut self) -> Option<ContentChanged> {
-        let lines = &self.document.lines;
+        let document = self.document();
+        let lines = &document.lines;
         let mut commands = Vec::new();
         for selection in &self.selections {
             if !selection.is_empty() {
@@ -41,6 +44,7 @@ impl OpenEditor {
         while commands.len() < self.selections.len() {
             commands.push(Command { edits: Vec::new(), tracked: None, cursor_state: Box::new(|_, _| unreachable!("a command without edits keeps its selection")) });
         }
+        drop(document);
         self.run_commands_between_stops(commands, "editor.action.transposeLetters")
     }
 }
@@ -85,7 +89,7 @@ mod tests {
         let mut model = editor("012345", "\n");
         model.set_selections(vec![selection(given)]);
         model.move_selected_text(left);
-        assert_eq!(model.document.lines, [expected_line]);
+        assert_eq!(model.document().lines, [expected_line]);
         assert_eq!(model.selections, [selection(expected)]);
     }
 
@@ -103,7 +107,7 @@ mod tests {
         model.set_selections(vec![selection((at.0, at.1, at.0, at.1))]);
         model.transpose_letters();
         let head = model.selections[0].head;
-        (model.document.lines.join("\n"), (head.line + 1, head.column + 1))
+        (model.document().lines.join("\n"), (head.line + 1, head.column + 1))
     }
 
     #[test]

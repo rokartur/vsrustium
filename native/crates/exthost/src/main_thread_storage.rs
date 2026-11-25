@@ -26,11 +26,11 @@ pub struct MainThreadStorage {
 }
 
 impl MainThreadStorage {
-    /// Opens `User/globalStorage/state.vscdb` and `User/workspaceStorage/<id>/state.vscdb`, creating the
-    /// folders. A window without a folder keeps its workspace state in memory.
-    pub fn open(paths: &SessionPaths) -> std::io::Result<Self> {
-        let global = paths.user_data.join("User/globalStorage");
-        std::fs::create_dir_all(&global)?;
+    /// Opens `state.vscdb` in the profile's `global` storage folder (`User/globalStorage` in the default profile)
+    /// and `User/workspaceStorage/<id>/state.vscdb`, creating the folders. A window without a folder keeps its
+    /// workspace state in memory.
+    pub fn open(paths: &SessionPaths, global: &Path) -> std::io::Result<Self> {
+        std::fs::create_dir_all(global)?;
         let workspace = match paths.workspace {
             Some(workspace) => Storage::open(&workspace_storage(paths.user_data, workspace)?),
             None => Storage::in_memory(),

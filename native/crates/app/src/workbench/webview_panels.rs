@@ -182,7 +182,7 @@ impl Workbench {
     pub(super) fn update_webview_panels(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.update_webview_views();
         let visible_views = self.visible_webview_views();
-        let active = self.editors.active().map(|editor| (editor.document.scheme.clone(), editor.document.path.clone()));
+        let active = self.editors.active().map(|editor| (editor.document().scheme.clone(), editor.document().path.clone()));
         // Native views draw over GPUI's layer: a quick input or menu on top of the webview would be hidden.
         // shortcut: the webview hides under these overlays, where Electron draws them over its iframe.
         let covered = self.quick_inputs.current().is_some() || self.keybindings_editor.open || self.context_menu.is_some();
@@ -441,7 +441,7 @@ impl WebviewPanel {
     }
 
     fn shows(&self, editor: &OpenEditor) -> bool {
-        editor.document.is(&self.scheme, &self.path)
+        editor.document().is(&self.scheme, &self.path)
     }
 
     /// webviewElement.ts `doUpdateContent`.

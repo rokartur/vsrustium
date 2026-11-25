@@ -32,7 +32,7 @@ impl Workbench {
         }
         let single = actions.len() == 1;
         let widget_height = if single { 28. } else { 26. };
-        let resource = editor.document.uri();
+        let resource = editor.document().uri();
         let context = self.key_context(window);
         let mut widget = div()
             .id("floating-menu")

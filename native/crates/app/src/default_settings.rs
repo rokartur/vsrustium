@@ -37,6 +37,10 @@ pub struct Setting {
     /// `extensionInfo.id`; `None` for core settings.
     pub extension_id: Option<String>,
     pub deprecation_message: Option<String>,
+    /// `deprecationMessageSeverity: 'info'`: an info icon in the foreground color instead of the error look.
+    pub deprecation_is_info: bool,
+    /// `deprecationMessageShowInSettings`: the tree keeps the setting while it is not configured.
+    pub deprecation_show_in_settings: bool,
     pub enum_values: Option<Vec<Value>>,
     pub enum_descriptions: Option<Vec<Value>>,
     /// `parseOverrideSettings`: the settings a `[lang]` default sets.
@@ -157,6 +161,8 @@ fn parse_setting(key: &str, property: &Property, target: Target) -> Option<Setti
         restricted: property.restricted,
         extension_id: property.source.clone(),
         deprecation_message: text("markdownDeprecationMessage").or(text("deprecationMessage")).map(str::to_string),
+        deprecation_is_info: schema["deprecationMessageSeverity"] == "info",
+        deprecation_show_in_settings: schema["deprecationMessageShowInSettings"] == true,
         enum_values,
         enum_descriptions,
         overrides,

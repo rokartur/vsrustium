@@ -31,7 +31,6 @@ unsafe extern "C" {
 
 /// `createWatcher(productName, policyDefinitions)`'s first update: the value of every policy the registry
 /// defines, read as the type `PolicyConfiguration.toPolicyDefinitionType` gives its setting.
-// shortcut: read at startup only; upstream also watches `/Library/Managed Preferences/` and applies changes live.
 pub fn read_native_policies(registry: &Registry, application: &str) -> PolicyValues {
     let mut values = PolicyValues::new();
     for (name, settings) in policy_configurations(registry) {
@@ -109,6 +108,57 @@ fn read_preference(application: &str, name: &str, kind: Kind) -> Option<Value> {
 fn cf_string(text: &str) -> *const c_void {
     let text = CString::new(text).expect("policy names and bundle ids have no NUL");
     unsafe { CFStringCreateWithCString(std::ptr::null(), text.as_ptr(), UTF8) }
+}
+
+/// PolicyWatcher.cc's stream: FSEvents on the folder managed profiles write, with its 1 second latency.
+pub const MANAGED_PREFERENCES: &str = "/Library/Managed Preferences/";
+
+/// `FSEventStreamCreate` over `path` on its own serial queue (PolicyWatcher::Start); `on_change` runs on that queue
+/// for each batch of events. FSEvents watches a path that does not exist yet. The stream lives as long as the process.
+pub fn watch_policy_changes(path: &str, on_change: impl Fn() + Send + 'static) {
+    type Callback = Box<dyn Fn() + Send>;
+    extern "C" fn fs_events(_stream: *const c_void, info: *mut c_void, _count: usize, _paths: *mut c_void, _flags: *const u32, _ids: *const u64) {
+        let on_change = unsafe { &*(info as *const Callback) };
+        on_change();
+    }
+    let info: *mut Callback = Box::into_raw(Box::new(Box::new(on_change)));
+    let label = CString::new(format!("{BUNDLE_IDENTIFIER}.policy-watcher")).expect("no NUL");
+    unsafe {
+        let path = cf_string(path);
+        let paths = CFArrayCreate(std::ptr::null(), &path, 1, std::ptr::null());
+        let context = FSEventStreamContext { version: 0, info: info.cast(), retain: std::ptr::null(), release: std::ptr::null(), copy_description: std::ptr::null() };
+        let stream = FSEventStreamCreate(std::ptr::null(), fs_events, &context, paths, SINCE_NOW, 1.0, 0);
+        CFRelease(paths);
+        CFRelease(path);
+        let queue = dispatch_queue_create(label.as_ptr(), std::ptr::null());
+        FSEventStreamSetDispatchQueue(stream, queue);
+        FSEventStreamStart(stream);
+    }
+}
+
+const SINCE_NOW: u64 = u64::MAX;
+
+#[repr(C)]
+struct FSEventStreamContext {
+    version: isize,
+    info: *mut c_void,
+    retain: *const c_void,
+    release: *const c_void,
+    copy_description: *const c_void,
+}
+
+type FSEventStreamCallback = extern "C" fn(*const c_void, *mut c_void, usize, *mut c_void, *const u32, *const u64);
+
+#[link(name = "CoreServices", kind = "framework")]
+unsafe extern "C" {
+    fn CFArrayCreate(allocator: *const c_void, values: *const *const c_void, count: isize, callbacks: *const c_void) -> *const c_void;
+    fn FSEventStreamCreate(allocator: *const c_void, callback: FSEventStreamCallback, context: *const FSEventStreamContext, paths: *const c_void, since_when: u64, latency: f64, flags: u32) -> *mut c_void;
+    fn FSEventStreamSetDispatchQueue(stream: *mut c_void, queue: *mut c_void);
+    fn FSEventStreamStart(stream: *mut c_void) -> bool;
+}
+
+unsafe extern "C" {
+    fn dispatch_queue_create(label: *const i8, attributes: *const c_void) -> *mut c_void;
 }
 
 #[cfg(test)]

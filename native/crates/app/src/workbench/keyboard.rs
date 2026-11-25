@@ -53,9 +53,17 @@ impl Workbench {
         // shortcut: the file is polled once a second where the reference has a file watcher; no watcher crate is in the port.
         cx.spawn(async move |workbench, cx| {
             let modified = |path: &PathBuf| std::fs::metadata(path).and_then(|metadata| metadata.modified()).ok();
-            let mut seen: Option<SystemTime> = modified(&user_file);
+            let mut watched = user_file;
+            let mut seen: Option<SystemTime> = modified(&watched);
             loop {
                 cx.background_executor().timer(Duration::from_secs(1)).await;
+                // A profile switch moves the file; its change was applied then.
+                let Ok(Some(user_file)) = workbench.read_with(cx, |workbench, _| workbench.keybindings.user_file.clone()) else { return };
+                if user_file != watched {
+                    seen = modified(&user_file);
+                    watched = user_file;
+                    continue;
+                }
                 let now = modified(&user_file);
                 if now == seen {
                     continue;
@@ -173,7 +181,7 @@ impl Workbench {
             return;
         }
         // The menu's own key handlers run before the window's keybindings.
-        if self.context_menu_key(keystroke, window, cx) || self.custom_dialog_key(keystroke, cx) || self.accessible_view_key(keystroke, window, cx) {
+        if self.context_menu_key(keystroke, window, cx) || self.custom_dialog_key(keystroke, cx) || self.accessible_view_key(keystroke, window, cx) || self.icon_select_box_key(keystroke, window, cx) {
             cx.stop_propagation();
             return;
         }
@@ -323,13 +331,15 @@ impl Workbench {
         // The sticky lines and the find widget are part of the editor's DOM, so their focus is the editor's but not its text's.
         let (find_focused, replace_focused) = (self.find.find_focus.is_focused(window), self.find.replace_focus.is_focused(window));
         let button_focused = self.find.button_focus.values().any(|focus| focus.is_focused(window));
-        context.insert("editorFocus".into(), json!(editor_focused || self.sticky_scroll.is_focused(window) || find_focused || replace_focused || button_focused));
+        context.insert("editorFocus".into(), json!(editor_focused || self.sticky_scroll.is_focused(window) || find_focused || replace_focused || button_focused || self.rename_input_focused(window)));
         context.insert("editorTextFocus".into(), json!(editor_focused));
         context.insert("textInputFocus".into(), json!(editor_focused));
         self.notifications_context(window, &mut context);
         self.banner_context(window, &mut context);
         self.host_context(window, &mut context);
         self.layout_context(&mut context);
+        self.editor_groups_context(&mut context);
+        self.history_context(&mut context);
         self.list_scroll_context(window, &mut context);
         context.insert("editorIsOpen".into(), json!(self.editors.active().is_some()));
         // viewDescriptorService.ts `<view id>.active`: the Changes view has no `when`, so it is always active.
@@ -339,6 +349,7 @@ impl Workbench {
         // toggleMultiCursorModifier.ts `MultiCursorModifierContextKeyController`.
         context.insert("multiCursorModifier".into(), json!(if self.multi_cursor_modifier_is_cmd() { "ctrlCmd" } else { "altKey" }));
         self.word_wrap_context(&mut context);
+        self.problems_context(&mut context);
         // contextkeys.ts WorkbenchContextKeysHandler: the desktop build supports every workspace kind.
         let workbench_state = match self.workspace() {
             None => "empty",
@@ -346,6 +357,12 @@ impl Workbench {
             Some(_) => "folder",
         };
         context.insert("workbenchState".into(), json!(workbench_state));
+        context.insert("workspaceFolderCount".into(), json!(self.workspace().map_or(0, |workspace| workspace.folders.len())));
+        // RemoteNameContext of a local window.
+        context.insert("remoteName".into(), json!(""));
+        // workspace.contribution.ts WorkspaceTrustContextKeys.
+        context.insert("isWorkspaceTrustEnabled".into(), json!(self.workspace_trust.enabled));
+        context.insert("isWorkspaceTrusted".into(), json!(self.workspace_trust.is_trusted()));
         for key in ["openFolderWorkspaceSupport", "enterMultiRootWorkspaceSupport", "emptyWorkspaceSupport"] {
             context.insert(key.into(), json!(true));
         }
@@ -359,16 +376,24 @@ impl Workbench {
             context.insert("activeEditorIsLastInGroup".into(), json!(index == self.editors.editors.len() - 1));
         }
         if let Some(editor) = self.editors.active() {
-            context.insert("activeEditor".into(), json!("workbench.editor.files"));
+            let pane = if editor.document().scheme == super::welcome_page::WALKTHROUGH_SCHEME { "gettingStartedPage" } else { "workbench.editor.files" };
+            context.insert("activeEditor".into(), json!(pane));
             self.insert_diff_editor_context(&mut context);
+            self.insert_multi_diff_editor_context(&mut context);
+            self.insert_merge_editor_context(&mut context);
             // The port opens only files, never untitled editors (editorGroupView.ts).
             context.insert("activeEditorCanRevert".into(), json!(true));
             let readonly = self.active_editor_readonly().is_some();
             context.insert("editorReadonly".into(), json!(readonly));
             context.insert("activeEditorIsReadonly".into(), json!(readonly));
-            context.insert("activeEditorCanToggleReadonly".into(), json!(editor.document.scheme != "untitled"));
+            context.insert("activeEditorCanToggleReadonly".into(), json!(editor.document().scheme != "untitled"));
             context.insert("messageVisible".into(), json!(self.editor_message_visible()));
             context.insert("markersNavigationVisible".into(), json!(self.markers_navigation_visible()));
+            context.insert("dirtyDiffVisible".into(), json!(self.quick_diff_visible()));
+            context.insert("quickDiffDecorationCount".into(), json!(self.quick_diff_decoration_count()));
+            self.goto_symbol_context(&mut context);
+            self.references_peek_context(window, &mut context);
+            self.hierarchy_peek_context(editor, window, &mut context);
             context.insert("editorHoverVisible".into(), json!(self.content_hover_visible()));
             self.suggest_context(&mut context);
             self.snippet_context(&mut context);
@@ -376,14 +401,17 @@ impl Workbench {
             self.code_actions_context(&mut context);
             self.action_widget_context(&mut context);
             self.code_lens_context(&mut context);
+            self.rename_context(&mut context);
+            self.format_context(&mut context);
+            self.linked_editing_context(&mut context);
             context.insert("editorHasSelection".into(), json!(editor.selections.iter().any(|selection| !selection.is_empty())));
             context.insert("editorHasMultipleSelections".into(), json!(editor.selections.len() > 1));
             context.insert("selectionAnchorSet".into(), json!(editor.selection_anchor.is_some()));
             context.insert("editorTabMovesFocus".into(), json!(self.tab_focus_mode()));
             context.insert("editorColumnSelection".into(), self.setting("editor.columnSelection"));
             context.insert("foldingEnabled".into(), self.setting("editor.folding"));
-            context.insert("editorLangId".into(), json!(editor.document.language_id));
-            context.insert("resourceLangId".into(), json!(editor.document.language_id));
+            context.insert("editorLangId".into(), json!(editor.document().language_id));
+            context.insert("resourceLangId".into(), json!(editor.document().language_id));
             self.sticky_scroll_context(window, &mut context);
             // findModel.ts CONTEXT_FIND_WIDGET_VISIBLE, CONTEXT_FIND_INPUT_FOCUSED, CONTEXT_REPLACE_INPUT_FOCUSED.
             context.insert("findWidgetVisible".into(), json!(self.find.controller.state.is_revealed));
@@ -396,10 +424,10 @@ impl Workbench {
                 context.insert("historyNavigationForwardsEnabled".into(), json!(true));
                 context.insert("historyNavigationBackwardsEnabled".into(), json!(true));
             }
-            context.insert("isFileSystemResource".into(), json!(editor.document.scheme == "file"));
-            let path = &editor.document.path;
-            context.insert("resource".into(), json!(crate::editor::uri_string(&editor.document.scheme, path)));
-            context.insert("resourceScheme".into(), json!(editor.document.scheme));
+            context.insert("isFileSystemResource".into(), json!(editor.document().scheme == "file"));
+            let path = &editor.document().path;
+            context.insert("resource".into(), json!(crate::editor::uri_string(&editor.document().scheme, path)));
+            context.insert("resourceScheme".into(), json!(editor.document().scheme));
             context.insert("resourceFilename".into(), json!(path.file_name().map(|name| name.to_string_lossy()).unwrap_or_default()));
             context.insert("resourceExtname".into(), json!(path.extension().map(|ext| format!(".{}", ext.to_string_lossy())).unwrap_or_default()));
         }
@@ -418,6 +446,7 @@ impl Workbench {
         self.search_editor_context(window, &mut context);
         self.output_context(window, &mut context);
         self.terminal_context(window, &mut context);
+        self.timeline_context(window, &mut context);
         self.accessibility_context(&mut context);
         context
     }
@@ -466,6 +495,8 @@ impl Workbench {
             workbench.context_keys.insert(key, args.next().unwrap_or(Value::Null));
             Outcome::done()
         });
+        // contextKeyService.ts `getContextKeyInfo`: the reference's RawContextKey.all() (port/tools/ref-commands).
+        self.commands.register("getContextKeyInfo", |_, _, _, _| Outcome::Ready(Ok(serde_json::from_str(include_str!("../contextkey/reference-context-keys.json")).expect("valid JSON"))));
         // mainThreadLogService.ts: `loggerService.setLogLevel(parseLogLevel(level))` and `logService.getLevel()`.
         self.commands.register("_extensionTests.setLogLevel", |workbench, args, _, _| {
             if let Some(level) = args.first().and_then(Value::as_str).and_then(crate::output::log_levels::parse_log_level) {

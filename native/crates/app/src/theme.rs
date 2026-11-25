@@ -9,7 +9,10 @@ use exthost::scan::ScannedExtension;
 use gpui::Rgba;
 use serde_json::Value;
 
+use crate::semantic_tokens::{SemanticTheme, SemanticTokenRule, TokenClassificationRegistry, read_semantic_token_customizations, read_theme_file_semantics, semantic_highlighting};
+
 mod debug_colors;
+mod welcome_colors;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ThemeKind {
@@ -42,6 +45,13 @@ pub struct Theme {
     token_rules: Vec<Value>,
     /// The TextMate theme of the token colors (`ColorThemeData.tokenColors`).
     pub tokens: textmate::Theme,
+    /// The theme file's `semanticTokenColors` and `semanticHighlighting`, before the settings' customizations.
+    semantic_rules: Vec<SemanticTokenRule>,
+    file_semantic_highlighting: bool,
+    /// `ColorThemeData.getTokenStyleMetadata` with `editor.semanticTokenColorCustomizations` applied.
+    pub semantic: SemanticTheme,
+    /// The `ColorThemeData.semanticHighlighting` getter.
+    pub semantic_highlighting: bool,
 }
 
 /// A contributed color theme before its file is read (`ColorThemeData.fromExtensionTheme`).
@@ -58,9 +68,23 @@ pub struct ColorThemeEntry {
 impl ColorThemeEntry {
     pub fn load(&self) -> anyhow::Result<Theme> {
         let (mut colors, mut token_colors) = (HashMap::new(), Vec::new());
-        read_colors(&self.path, &mut colors, &mut token_colors)?;
-        let mut theme = Theme { kind: self.kind, settings_id: self.settings_id.clone(), colors, custom_colors: HashMap::new(), token_rules: token_colors, tokens: textmate::Theme::new(&[]) };
+        let (mut semantic_rules, mut file_semantic_highlighting) = (Vec::new(), false);
+        read_colors(&self.path, &mut colors, &mut token_colors, &mut semantic_rules, &mut file_semantic_highlighting)?;
+        let semantic = SemanticTheme::new(TokenClassificationRegistry::new(), self.kind, semantic_rules.clone(), &[]);
+        let mut theme = Theme {
+            kind: self.kind,
+            settings_id: self.settings_id.clone(),
+            colors,
+            custom_colors: HashMap::new(),
+            token_rules: token_colors,
+            tokens: textmate::Theme::new(&[]),
+            semantic_rules,
+            file_semantic_highlighting,
+            semantic,
+            semantic_highlighting: file_semantic_highlighting,
+        };
         theme.tokens = crate::syntax::token_theme(&theme, &theme.token_rules);
+        theme.set_semantic_customizations(&Value::Null, &Value::Null);
         Ok(theme)
     }
 }
@@ -101,12 +125,13 @@ pub fn load_theme(extensions: &[ScannedExtension], settings_id: &str) -> anyhow:
 
 /// Merges the included file first, so the including theme wins, as `_loadColorTheme` does.
 /// shortcut: `tokenColors` as a path to a .tmTheme file is not read; no built-in theme uses one, port it with theme extensions from the Marketplace.
-fn read_colors(path: &Path, colors: &mut HashMap<String, Rgba>, token_colors: &mut Vec<Value>) -> anyhow::Result<()> {
+fn read_colors(path: &Path, colors: &mut HashMap<String, Rgba>, token_colors: &mut Vec<Value>, semantic_rules: &mut Vec<SemanticTokenRule>, semantic_highlighting: &mut bool) -> anyhow::Result<()> {
     let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     let theme: Value = serde_json::from_str(&strip_jsonc(&text)).with_context(|| format!("parsing {}", path.display()))?;
     if let Some(include) = theme["include"].as_str() {
-        read_colors(&path.parent().unwrap().join(include), colors, token_colors)?;
+        read_colors(&path.parent().unwrap().join(include), colors, token_colors, semantic_rules, semantic_highlighting)?;
     }
+    read_theme_file_semantics(&theme, semantic_rules, semantic_highlighting);
     token_colors.extend(theme["tokenColors"].as_array().into_iter().flatten().cloned());
     if let Some(entries) = theme["colors"].as_object() {
         for (key, value) in entries {
@@ -161,6 +186,18 @@ impl Theme {
             custom_token_rules(&customizations, &mut rules);
         }
         self.tokens = crate::syntax::token_theme(self, &rules);
+    }
+
+    /// `setCustomSemanticTokenColors`: `editor.semanticTokenColorCustomizations` after the theme's rules, over the
+    /// customized token colors; call after `set_customizations`.
+    pub fn set_semantic_customizations(&mut self, token_colors: &Value, semantic_colors: &Value) {
+        let mut rules = self.semantic_rules.clone();
+        let theme_specific = self.theme_specific(semantic_colors);
+        let enabled = read_semantic_token_customizations(semantic_colors, theme_specific.as_ref(), &mut rules);
+        let theme_specific_deprecated = self.theme_specific(token_colors).and_then(|colors| colors["semanticHighlighting"].as_bool());
+        let deprecated = theme_specific_deprecated.or(token_colors["semanticHighlighting"].as_bool());
+        self.semantic_highlighting = semantic_highlighting(enabled, deprecated, self.file_semantic_highlighting);
+        self.semantic = SemanticTheme::new(TokenClassificationRegistry::new(), self.kind, rules, self.tokens.rules());
     }
 
     /// `getThemeSpecificColors`: the merged values of the `[id]` keys (`[a][b]`, `*` wildcards at either end) matching
@@ -385,7 +422,7 @@ fn registry_default(key: &str, kind: ThemeKind) -> ColorValue {
             ThemeKind::HighContrastLight => hc_light,
         };
     }
-    if let Some([dark, light, hc, hc_light]) = debug_colors::debug_default(key) {
+    if let Some([dark, light, hc, hc_light]) = debug_colors::debug_default(key).or_else(|| welcome_colors::welcome_default(key)) {
         return match kind {
             ThemeKind::Dark => dark,
             ThemeKind::Light => light,
@@ -435,6 +472,7 @@ fn registry_default(key: &str, kind: ThemeKind) -> ColorValue {
             Hex("#FFFFFF"),
         ),
         "surface.background" => (Key("sideBar.background"), Key("editor.background"), Key("sideBar.background")),
+        "modernSash.gripForeground" => (Transparent(&Key("foreground"), 0.4), Transparent(&Key("foreground"), 0.4), Key("foreground")),
         "surface.border" => (
             Opaque(&Transparent(&Key("foreground"), 0.15), &Key("surface.background")),
             Opaque(&Transparent(&Key("foreground"), 0.15), &Key("surface.background")),
@@ -490,6 +528,10 @@ fn registry_default(key: &str, kind: ThemeKind) -> ColorValue {
         "editor.wordHighlightBackground" => (Hex("#575757B8"), Hex("#57575740"), None),
         "editor.wordHighlightTextBackground" => (Key("editor.wordHighlightBackground"), Key("editor.wordHighlightBackground"), Key("editor.wordHighlightBackground")),
         "editor.wordHighlightBorder" => (None, None, Key("contrastActiveBorder")),
+        "editor.wordHighlightStrongBackground" => (Hex("#004972B8"), Hex("#0e639c40"), None),
+        "editor.wordHighlightStrongBorder" => (None, None, Key("contrastActiveBorder")),
+        "editorOverviewRuler.wordHighlightForeground" => (Hex("#A0A0A0CC"), Hex("#A0A0A0CC"), Hex("#A0A0A0CC")),
+        "editorOverviewRuler.wordHighlightStrongForeground" => (Hex("#C0A0C0CC"), Hex("#C0A0C0CC"), Hex("#C0A0C0CC")),
         "editor.selectionHighlightBorder" => (None, None, Key("contrastActiveBorder")),
         "editor.wordHighlightTextBorder" => (Key("editor.wordHighlightBorder"), Key("editor.wordHighlightBorder"), Key("editor.wordHighlightBorder")),
         "editor.findMatchBackground" => (Hex("#515C6A"), Hex("#A8AC94"), None),
@@ -533,6 +575,19 @@ fn registry_default(key: &str, kind: ThemeKind) -> ColorValue {
         "editorMarkerNavigation.background" => (Key("editor.background"), Key("editor.background"), Key("editor.background")),
         "peekViewTitleLabel.foreground" => (Hex("#FFFFFF"), Hex("#000000"), Hex("#FFFFFF")),
         "peekViewTitleDescription.foreground" => (Hex("#ccccccb3"), Hex("#616161"), Hex("#FFFFFF99")),
+        "peekViewTitle.background" | "peekViewResult.background" => (Hex("#252526"), Hex("#F3F3F3"), Hex("#000000")),
+        "peekView.border" => (Key("editorInfo.foreground"), Key("editorInfo.foreground"), Key("contrastBorder")),
+        "peekViewResult.lineForeground" => (Hex("#bbbbbb"), Hex("#646465"), Hex("#FFFFFF")),
+        "peekViewResult.fileForeground" => (Hex("#FFFFFF"), Hex("#1E1E1E"), Hex("#FFFFFF")),
+        "peekViewResult.selectionBackground" => (Hex("#3399ff33"), Hex("#3399ff33"), None),
+        "peekViewResult.selectionForeground" => (Hex("#FFFFFF"), Hex("#6C6C6C"), Hex("#FFFFFF")),
+        "peekViewEditor.background" => (Hex("#001F33"), Hex("#F2F8FC"), Hex("#000000")),
+        "peekViewEditorGutter.background" => (Key("peekViewEditor.background"), Key("peekViewEditor.background"), Key("peekViewEditor.background")),
+        "peekViewResult.matchHighlightBackground" => (Hex("#ea5c004d"), Hex("#ea5c004d"), None),
+        "peekViewEditor.matchHighlightBackground" => (Hex("#ff8f0099"), Hex("#f5d802de"), None),
+        "peekViewEditor.matchHighlightBorder" | "editor.symbolHighlightBorder" => (None, None, Key("contrastActiveBorder")),
+        "editor.symbolHighlightBackground" => (Key("editor.findMatchHighlightBackground"), Key("editor.findMatchHighlightBackground"), None),
+        "editorLink.activeForeground" => (Hex("#4E94CE"), Hex("#0000FF"), Hex("#00FFFF")),
         "minimap.findMatchHighlight" => (MINIMAP_FIND_MATCH, MINIMAP_FIND_MATCH, Key("editor.findMatchHighlightBorder")),
         "searchEditor.findMatchBackground" => (
             Transparent(&Key("editor.findMatchHighlightBackground"), 0.66),
@@ -579,6 +634,14 @@ fn registry_default(key: &str, kind: ThemeKind) -> ColorValue {
         "editorGutter.modifiedBackground" => (Hex("#1B81A8"), Hex("#2090D3"), Hex("#1B81A8")),
         "editorGutter.addedBackground" => (Hex("#487E02"), Hex("#48985D"), Hex("#487E02")),
         "editorGutter.deletedBackground" => (Key("editorError.foreground"), Key("editorError.foreground"), Key("editorError.foreground")),
+        // scm/common/quickDiff.ts and editorColors.ts `editorGutter.background`.
+        "editorGutter.background" => (Key("editor.background"), Key("editor.background"), Key("editor.background")),
+        "editorGutter.modifiedSecondaryBackground" => (Darken(&Key("editorGutter.modifiedBackground"), 0.5), Lighten(&Key("editorGutter.modifiedBackground"), 0.7), Hex("#1B81A8")),
+        "editorGutter.addedSecondaryBackground" => (Darken(&Key("editorGutter.addedBackground"), 0.5), Lighten(&Key("editorGutter.addedBackground"), 0.7), Hex("#487E02")),
+        "editorGutter.deletedSecondaryBackground" => (Darken(&Key("editorGutter.deletedBackground"), 0.4), Lighten(&Key("editorGutter.deletedBackground"), 0.3), Hex("#F48771")),
+        "minimapGutter.modifiedBackground" => (Key("editorGutter.modifiedBackground"), Key("editorGutter.modifiedBackground"), Key("editorGutter.modifiedBackground")),
+        "minimapGutter.addedBackground" => (Key("editorGutter.addedBackground"), Key("editorGutter.addedBackground"), Key("editorGutter.addedBackground")),
+        "minimapGutter.deletedBackground" => (Key("editorGutter.deletedBackground"), Key("editorGutter.deletedBackground"), Key("editorGutter.deletedBackground")),
         "editorOverviewRuler.modifiedForeground" => (Transparent(&Key("editorGutter.modifiedBackground"), 0.6), Transparent(&Key("editorGutter.modifiedBackground"), 0.6), Transparent(&Key("editorGutter.modifiedBackground"), 0.6)),
         "editorOverviewRuler.addedForeground" => (Transparent(&Key("editorGutter.addedBackground"), 0.6), Transparent(&Key("editorGutter.addedBackground"), 0.6), Transparent(&Key("editorGutter.addedBackground"), 0.6)),
         "editorOverviewRuler.deletedForeground" => (Transparent(&Key("editorGutter.deletedBackground"), 0.6), Transparent(&Key("editorGutter.deletedBackground"), 0.6), Transparent(&Key("editorGutter.deletedBackground"), 0.6)),
@@ -611,6 +674,37 @@ fn registry_default(key: &str, kind: ThemeKind) -> ColorValue {
         "diffEditor.removedTextBorder" => (None, None, Hex("#FF008F")),
         "diffEditor.border" => (None, None, Key("contrastBorder")),
         "diffEditor.diagonalFill" => (Hex("#cccccc33"), Hex("#22222233"), None),
+        "diffEditor.unchangedRegionBackground" => (Key("sideBar.background"), Key("sideBar.background"), Key("sideBar.background")),
+        "diffEditor.unchangedRegionForeground" => (Key("foreground"), Key("foreground"), Key("foreground")),
+        "diffEditor.unchangedRegionShadow" => (Hex("#000000"), Hex("#737373BF"), Hex("#000000")),
+        "diffEditor.unchangedCodeBackground" => (Hex("#74747429"), Hex("#b8b8b829"), None),
+        // mergeEditor/browser/view/colors.ts.
+        "mergeEditor.change.background" => (Hex("#9bb95533"), Hex("#9bb95533"), Hex("#9bb95533")),
+        "mergeEditor.change.word.background" => (Hex("#9ccc2c33"), Hex("#9ccc2c66"), Hex("#9ccc2c33")),
+        "mergeEditor.conflict.unhandledUnfocused.border" => (Hex("#ffa6007a"), Hex("#ffa600FF"), Hex("#ffa6007a")),
+        "mergeEditor.conflict.unhandledFocused.border" => (Hex("#ffa600"), Hex("#ffa600"), Hex("#ffa600")),
+        "mergeEditor.conflict.handledUnfocused.border" => (Hex("#86868649"), Hex("#86868649"), Hex("#86868649")),
+        "mergeEditor.conflict.handledFocused.border" => (Hex("#c1c1c1cc"), Hex("#c1c1c1cc"), Hex("#c1c1c1cc")),
+        // multiDiffEditor/colors.ts.
+        "multiDiffEditor.headerBackground" => (Hex("#262626"), Key("tab.inactiveBackground"), Key("tab.inactiveBackground")),
+        "multiDiffEditor.background" => (Key("editor.background"), Key("editor.background"), Key("editor.background")),
+        "multiDiffEditor.border" => (Key("sideBarSectionHeader.border"), Hex("#cccccc"), Key("sideBarSectionHeader.border")),
+        // editorColors.ts merge conflict colors: headers at 0.5 (common 0.4), contents at 0.4 of their header.
+        "merge.currentHeaderBackground" => (Transparent(&Hex("#40C8AE"), 0.5), Transparent(&Hex("#40C8AE"), 0.5), None),
+        "merge.incomingHeaderBackground" => (Transparent(&Hex("#40A6FF"), 0.5), Transparent(&Hex("#40A6FF"), 0.5), None),
+        "merge.commonHeaderBackground" => (Transparent(&Hex("#606060"), 0.4), Transparent(&Hex("#606060"), 0.4), None),
+        "merge.currentContentBackground" => (Transparent(&Key("merge.currentHeaderBackground"), 0.4), Transparent(&Key("merge.currentHeaderBackground"), 0.4), Transparent(&Key("merge.currentHeaderBackground"), 0.4)),
+        "merge.incomingContentBackground" => (Transparent(&Key("merge.incomingHeaderBackground"), 0.4), Transparent(&Key("merge.incomingHeaderBackground"), 0.4), Transparent(&Key("merge.incomingHeaderBackground"), 0.4)),
+        "merge.commonContentBackground" => (Transparent(&Key("merge.commonHeaderBackground"), 0.4), Transparent(&Key("merge.commonHeaderBackground"), 0.4), Transparent(&Key("merge.commonHeaderBackground"), 0.4)),
+        "merge.border" => (None, None, Hex("#C3DF6F")),
+        "editorOverviewRuler.currentContentForeground" => (Key("merge.currentHeaderBackground"), Key("merge.currentHeaderBackground"), Key("merge.border")),
+        "editorOverviewRuler.incomingContentForeground" => (Key("merge.incomingHeaderBackground"), Key("merge.incomingHeaderBackground"), Key("merge.border")),
+        "editorOverviewRuler.commonContentForeground" => (Key("merge.commonHeaderBackground"), Key("merge.commonHeaderBackground"), Key("merge.border")),
+        // symbolIcons.ts; the kinds not listed take `foreground`.
+        "symbolIcon.classForeground" | "symbolIcon.enumeratorForeground" | "symbolIcon.eventForeground" => (Hex("#EE9D28"), Hex("#D67E00"), Hex("#EE9D28")),
+        "symbolIcon.constructorForeground" | "symbolIcon.functionForeground" | "symbolIcon.methodForeground" => (Hex("#B180D7"), Hex("#652D90"), Hex("#B180D7")),
+        "symbolIcon.enumeratorMemberForeground" | "symbolIcon.fieldForeground" | "symbolIcon.interfaceForeground" | "symbolIcon.variableForeground" => (Hex("#75BEFF"), Hex("#007ACC"), Hex("#75BEFF")),
+        symbol if symbol.starts_with("symbolIcon.") => (Key("foreground"), Key("foreground"), Key("foreground")),
         "editorGutter.itemGlyphForeground" => (Key("editor.foreground"), Key("editor.foreground"), Hex("#000000")),
         "editorGutter.itemBackground" => (
             Opaque(&Key("list.inactiveSelectionBackground"), &Key("editor.background")),
@@ -634,6 +728,18 @@ fn registry_default(key: &str, kind: ThemeKind) -> ColorValue {
         "notificationsErrorIcon.foreground" => (Key("editorError.foreground"), Key("editorError.foreground"), Key("editorError.foreground")),
         "notificationsWarningIcon.foreground" => (Key("editorWarning.foreground"), Key("editorWarning.foreground"), Key("editorWarning.foreground")),
         "notificationsInfoIcon.foreground" => (Key("editorInfo.foreground"), Key("editorInfo.foreground"), Key("editorInfo.foreground")),
+        "charts.blue" => (Key("editorInfo.foreground"), Key("editorInfo.foreground"), Key("editorInfo.foreground")),
+        "charts.purple" => (Hex("#B180D7"), Hex("#652D90"), Hex("#B180D7")),
+        "scmGraph.historyItemRefColor" => (Key("charts.blue"), Key("charts.blue"), Key("charts.blue")),
+        "scmGraph.historyItemRemoteRefColor" => (Key("charts.purple"), Key("charts.purple"), Key("charts.purple")),
+        "scmGraph.historyItemBaseRefColor" => (Hex("#EA5C00"), Hex("#EA5C00"), Hex("#EA5C00")),
+        "scmGraph.historyItemHoverDefaultLabelBackground" => (Key("badge.background"), Key("badge.background"), Key("badge.background")),
+        "scmGraph.historyItemHoverLabelForeground" => (Key("panel.background"), Key("panel.background"), Key("panel.background")),
+        "scmGraph.foreground1" => (Hex("#FFB000"), Hex("#FFB000"), Hex("#FFB000")),
+        "scmGraph.foreground2" => (Hex("#DC267F"), Hex("#DC267F"), Hex("#DC267F")),
+        "scmGraph.foreground3" => (Hex("#994F00"), Hex("#994F00"), Hex("#994F00")),
+        "scmGraph.foreground4" => (Hex("#40B0A6"), Hex("#40B0A6"), Hex("#40B0A6")),
+        "scmGraph.foreground5" => (Hex("#B66DFF"), Hex("#B66DFF"), Hex("#B66DFF")),
         _ => quick_input_default(key),
     };
     match kind {
@@ -659,10 +765,38 @@ fn hc_light_default(key: &str) -> ColorValue {
         "diffEditor.insertedTextBorder" => Hex("#374E06"),
         "diffEditor.removedTextBorder" => Hex("#AD0707"),
         "diffEditor.border" => Key("contrastBorder"),
+        "diffEditor.unchangedRegionBackground" => Key("sideBar.background"),
+        "diffEditor.unchangedRegionForeground" => Key("foreground"),
+        "diffEditor.unchangedRegionShadow" => Hex("#737373BF"),
+        "mergeEditor.change.background" => Hex("#9bb95533"),
+        "mergeEditor.change.word.background" => Hex("#9ccc2c66"),
+        "mergeEditor.conflict.unhandledUnfocused.border" => Hex("#ffa6007a"),
+        "mergeEditor.conflict.unhandledFocused.border" => Hex("#ffa600"),
+        "mergeEditor.conflict.handledUnfocused.border" => Hex("#86868649"),
+        "mergeEditor.conflict.handledFocused.border" => Hex("#c1c1c1cc"),
+        "multiDiffEditor.headerBackground" => Key("tab.inactiveBackground"),
+        "multiDiffEditor.background" => Key("editor.background"),
+        "multiDiffEditor.border" => Hex("#cccccc"),
+        "merge.currentContentBackground" => Transparent(&Key("merge.currentHeaderBackground"), 0.4),
+        "merge.incomingContentBackground" => Transparent(&Key("merge.incomingHeaderBackground"), 0.4),
+        "merge.commonContentBackground" => Transparent(&Key("merge.commonHeaderBackground"), 0.4),
+        "merge.border" => Hex("#007ACC"),
+        "editorOverviewRuler.currentContentForeground" | "editorOverviewRuler.incomingContentForeground" | "editorOverviewRuler.commonContentForeground" => Key("merge.border"),
+        "symbolIcon.classForeground" | "symbolIcon.enumeratorForeground" | "symbolIcon.eventForeground" => Hex("#D67E00"),
+        "symbolIcon.constructorForeground" | "symbolIcon.functionForeground" | "symbolIcon.methodForeground" => Hex("#652D90"),
+        "symbolIcon.enumeratorMemberForeground" | "symbolIcon.fieldForeground" | "symbolIcon.interfaceForeground" | "symbolIcon.variableForeground" => Hex("#007ACC"),
+        symbol if symbol.starts_with("symbolIcon.") => Key("foreground"),
         "editorGutter.itemGlyphForeground" => Hex("#FFFFFF"),
         "editorGutter.itemBackground" => Hex("#000000"),
         "editorGutter.addedBackground" => Hex("#48985D"),
         "editorGutter.deletedBackground" => Key("editorError.foreground"),
+        "editorGutter.background" => Key("editor.background"),
+        "editorGutter.modifiedSecondaryBackground" => Hex("#2090D3"),
+        "editorGutter.addedSecondaryBackground" => Hex("#48985D"),
+        "editorGutter.deletedSecondaryBackground" => Hex("#B5200D"),
+        "minimapGutter.modifiedBackground" => Key("editorGutter.modifiedBackground"),
+        "minimapGutter.addedBackground" => Key("editorGutter.addedBackground"),
+        "minimapGutter.deletedBackground" => Key("editorGutter.deletedBackground"),
         "editorOverviewRuler.modifiedForeground" => Transparent(&Key("editorGutter.modifiedBackground"), 0.6),
         "editorOverviewRuler.addedForeground" => Transparent(&Key("editorGutter.addedBackground"), 0.6),
         "editorOverviewRuler.deletedForeground" => Transparent(&Key("editorGutter.deletedBackground"), 0.6),
@@ -704,6 +838,7 @@ fn hc_light_default(key: &str) -> ColorValue {
         "activityBar.inactiveForeground" => Key("editor.foreground"),
         "surface.background" => Key("sideBar.background"),
         "surface.border" => Key("contrastBorder"),
+        "modernSash.gripForeground" => Key("foreground"),
         "statusBar.foreground" => Key("editor.foreground"),
         "statusBar.focusBorder" => Key("statusBar.foreground"),
         "statusBarItem.prominentForeground" => Key("statusBar.foreground"),
@@ -735,6 +870,12 @@ fn hc_light_default(key: &str) -> ColorValue {
         "editorMarkerNavigationWarning.headerBackground" => Transparent(&Key("editorMarkerNavigationWarning.background"), 0.2),
         "peekViewTitleLabel.foreground" => Key("editor.foreground"),
         "peekViewTitleDescription.foreground" => Hex("#292929"),
+        "peekViewTitle.background" | "peekViewResult.background" | "peekViewEditor.background" => Hex("#FFFFFF"),
+        "peekView.border" => Key("contrastBorder"),
+        "peekViewResult.lineForeground" | "peekViewResult.fileForeground" | "peekViewResult.selectionForeground" => Key("editor.foreground"),
+        "peekViewEditorGutter.background" => Key("peekViewEditor.background"),
+        "peekViewEditor.matchHighlightBorder" | "editor.symbolHighlightBorder" => Key("contrastActiveBorder"),
+        "editorLink.activeForeground" => Hex("#292929"),
         "editorBracketHighlight.foreground1" => Hex("#0431FAFF"),
         "editorBracketHighlight.foreground2" => Hex("#319331FF"),
         "editorBracketHighlight.foreground3" => Hex("#7B3814FF"),
@@ -763,7 +904,9 @@ fn hc_light_default(key: &str) -> ColorValue {
         "editorCursor.foreground" => Hex("#0F4A85"),
         "editorMultiCursor.primary.foreground" => Key("editorCursor.foreground"),
         "editorMultiCursor.secondary.foreground" => Key("editorCursor.foreground"),
-        "editor.wordHighlightBorder" | "editor.selectionHighlightBorder" => Key("contrastActiveBorder"),
+        "editor.wordHighlightBorder" | "editor.selectionHighlightBorder" | "editor.wordHighlightStrongBorder" => Key("contrastActiveBorder"),
+        "editorOverviewRuler.wordHighlightForeground" => Hex("#A0A0A0CC"),
+        "editorOverviewRuler.wordHighlightStrongForeground" => Hex("#C0A0C0CC"),
         "editor.wordHighlightTextBorder" => Key("editor.wordHighlightBorder"),
         "editor.findMatchBorder" | "editor.findMatchHighlightBorder" | "editor.rangeHighlightBorder" => Key("contrastActiveBorder"),
         "editor.findRangeHighlightBorder" => Transparent(&Key("contrastActiveBorder"), 0.4),
@@ -797,6 +940,18 @@ fn hc_light_default(key: &str) -> ColorValue {
         "notificationLink.foreground" => Key("textLink.foreground"),
         "notifications.border" => Key("notificationCenterHeader.background"),
         "notificationsErrorIcon.foreground" => Key("editorError.foreground"),
+        "charts.blue" => Key("editorInfo.foreground"),
+        "charts.purple" => Hex("#652D90"),
+        "scmGraph.historyItemRefColor" => Key("charts.blue"),
+        "scmGraph.historyItemRemoteRefColor" => Key("charts.purple"),
+        "scmGraph.historyItemBaseRefColor" => Hex("#EA5C00"),
+        "scmGraph.historyItemHoverDefaultLabelBackground" => Key("badge.background"),
+        "scmGraph.historyItemHoverLabelForeground" => Key("panel.background"),
+        "scmGraph.foreground1" => Hex("#FFB000"),
+        "scmGraph.foreground2" => Hex("#DC267F"),
+        "scmGraph.foreground3" => Hex("#994F00"),
+        "scmGraph.foreground4" => Hex("#40B0A6"),
+        "scmGraph.foreground5" => Hex("#B66DFF"),
         "notificationsWarningIcon.foreground" => Key("editorWarning.foreground"),
         "notificationsInfoIcon.foreground" => Key("editorInfo.foreground"),
         _ => quick_input_default_hc_light(key),
@@ -822,6 +977,10 @@ fn quick_input_default(key: &str) -> (ColorValue, ColorValue, ColorValue) {
         "inputOption.hoverBackground" => (Hex("#5a5d5e80"), Hex("#b8b8b850"), None),
         "inputOption.activeBackground" => (Transparent(&Key("focusBorder"), 0.4), Transparent(&Key("focusBorder"), 0.2), Hex("#00000000")),
         "inputOption.activeForeground" => (Hex("#FFFFFF"), Hex("#000000"), Key("foreground")),
+        "radio.activeForeground" => (Key("inputOption.activeForeground"), Key("inputOption.activeForeground"), Key("inputOption.activeForeground")),
+        "radio.activeBackground" => (Key("inputOption.activeBackground"), Key("inputOption.activeBackground"), Key("inputOption.activeBackground")),
+        "radio.activeBorder" => (Key("inputOption.activeBorder"), Key("inputOption.activeBorder"), Key("inputOption.activeBorder")),
+        "radio.inactiveBorder" => (Transparent(&Key("radio.activeForeground"), 0.2), Transparent(&Key("radio.activeForeground"), 0.2), Transparent(&Key("radio.activeForeground"), 0.4)),
         "editorWidget.border" => (Transparent(&Key("editorWidget.foreground"), 0.2), Transparent(&Key("editorWidget.foreground"), 0.2), Key("contrastBorder")),
         "errorForeground" => (Hex("#F48771"), Hex("#A1260D"), Hex("#F48771")),
         "list.errorForeground" => (Hex("#F88070"), Hex("#B01011"), None),
@@ -877,6 +1036,8 @@ fn quick_input_default(key: &str) -> (ColorValue, ColorValue, ColorValue) {
         "extensionIcon.verifiedForeground" => (Key("textLink.foreground"), Key("textLink.foreground"), Key("textLink.foreground")),
         "activityBarBadge.background" => (Hex("#007ACC"), Hex("#007ACC"), Hex("#000000")),
         "activityBarBadge.foreground" => (Hex("#FFFFFF"), Hex("#FFFFFF"), Hex("#FFFFFF")),
+        "profileBadge.background" => (Hex("#4D4D4D"), Hex("#C4C4C4"), Hex("#FFFFFF")),
+        "profileBadge.foreground" => (Hex("#FFFFFF"), Hex("#333333"), Hex("#000000")),
         "panel.border" => (Hex("#80808059"), Hex("#80808059"), Key("contrastBorder")),
         "panelSection.border" => (Key("panel.border"), Key("panel.border"), Key("panel.border")),
         "panelTitle.activeForeground" => (Hex("#E7E7E7"), Hex("#424242"), Hex("#FFFFFF")),
@@ -903,6 +1064,7 @@ fn quick_input_default(key: &str) -> (ColorValue, ColorValue, ColorValue) {
         "editorLightBulb.foreground" => (Hex("#FFCC00"), Hex("#DDB100"), Hex("#FFCC00")),
         "editorCodeLens.foreground" => (Hex("#999999"), Hex("#919191"), Hex("#999999")),
         "editorLink.activeForeground" => (Hex("#4E94CE"), Hex("#0000FF"), Hex("#00FFFF")),
+        "editor.linkedEditingBackground" => (Transparent(&Hex("#FF0000"), 0.3), Transparent(&Hex("#FF0000"), 0.3), Transparent(&Hex("#FF0000"), 0.3)),
         "editorLightBulbAutoFix.foreground" => (Hex("#75BEFF"), Hex("#007ACC"), Hex("#75BEFF")),
         "editorLightBulbAi.foreground" => (Key("editorLightBulb.foreground"), Key("editorLightBulb.foreground"), Key("editorLightBulb.foreground")),
         // `lighten(editorHoverBackground, 0.2)` is a darken by -0.2: both scale the lightness by the factor.
@@ -978,6 +1140,10 @@ fn quick_input_default_hc_light(key: &str) -> ColorValue {
         "inputOption.activeBorder" | "editorWidget.border" => Key("contrastBorder"),
         "inputOption.activeBackground" => Hex("#00000000"),
         "inputOption.activeForeground" => Key("foreground"),
+        "radio.activeForeground" => Key("inputOption.activeForeground"),
+        "radio.activeBackground" => Key("inputOption.activeBackground"),
+        "radio.activeBorder" => Key("inputOption.activeBorder"),
+        "radio.inactiveBorder" => Transparent(&Key("radio.activeForeground"), 0.2),
         "errorForeground" => Hex("#B5200D"),
         "inputValidation.infoBackground" | "inputValidation.warningBackground" | "inputValidation.errorBackground" => Hex("#FFFFFF"),
         "inputValidation.infoBorder" | "inputValidation.warningBorder" | "inputValidation.errorBorder" => Key("contrastBorder"),
@@ -1008,6 +1174,8 @@ fn quick_input_default_hc_light(key: &str) -> ColorValue {
         "extensionIcon.starForeground" | "extensionIcon.preReleaseForeground" | "extensionIcon.verifiedForeground" => Key("textLink.foreground"),
         "activityBarBadge.background" => Hex("#0F4A85"),
         "activityBarBadge.foreground" => Hex("#FFFFFF"),
+        "profileBadge.background" => Hex("#000000"),
+        "profileBadge.foreground" => Hex("#FFFFFF"),
         "panel.border" | "panelSection.border" => Key("contrastBorder"),
         "panelTitle.activeForeground" | "panelTitle.inactiveForeground" => Key("editor.foreground"),
         "panelTitle.activeBorder" => Hex("#B5200D"),
@@ -1027,6 +1195,7 @@ fn quick_input_default_hc_light(key: &str) -> ColorValue {
         "editorHoverWidget.highlightForeground" => Key("list.highlightForeground"),
         "editorLightBulb.foreground" | "editorLightBulbAutoFix.foreground" => Hex("#007ACC"),
         "editorCodeLens.foreground" | "editorLink.activeForeground" => Hex("#292929"),
+        "editor.linkedEditingBackground" => Hex("#FFFFFF"),
         "editorLightBulbAi.foreground" => Key("editorLightBulb.foreground"),
         "textCodeBlock.background" => Hex("#F2F2F2"),
         "textLink.foreground" | "textLink.activeForeground" => Hex("#0F4A85"),
