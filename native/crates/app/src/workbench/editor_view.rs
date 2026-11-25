@@ -277,7 +277,7 @@ impl Workbench {
             .child(tab)
     }
 
-    fn document_icon(&self, editor: &OpenEditor, line_height: f32, foreground: Rgba) -> Option<Div> {
+    pub(super) fn document_icon(&self, editor: &OpenEditor, line_height: f32, foreground: Rgba) -> Option<Div> {
         let document = &editor.document();
         // `SearchEditorInput.getIcon`.
         if document.scheme == SEARCH_EDITOR_SCHEME {

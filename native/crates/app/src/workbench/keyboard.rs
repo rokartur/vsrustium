@@ -350,6 +350,7 @@ impl Workbench {
         self.problems_context(window, &mut context);
         self.view_containers_context(&mut context);
         self.refactor_preview_context(&mut context);
+        self.modal_group_context(window, &mut context);
         // contextkeys.ts WorkbenchContextKeysHandler: the desktop build supports every workspace kind.
         let workbench_state = match self.workspace() {
             None => "empty",
@@ -445,7 +446,7 @@ impl Workbench {
                 return Outcome::error(format!("writing {}: {error}", file.display()));
             }
         }
-        self.open_file(file, true, window, cx);
+        self.open_preferences_file(file, window, cx);
         Outcome::done()
     }
 

@@ -164,8 +164,7 @@ impl Workbench {
 
     /// `open` with `jsonEditor: true`, then `openSettingsJson`: a query naming a setting reveals it.
     // shortcut: `workbench.settings.useSplitJSON` and `openDefaultSettings` open the plain JSON editor; the split
-    // settings editor needs editor groups (milestone 11). With `workbench.editor.useModal` the reference opens the
-    // file in the modal editor part, which hosts only the Keyboard Shortcuts editor here.
+    // settings editor (a side by side editor) is not ported yet.
     fn open_settings_json(&mut self, target: Target, folder: Option<&Path>, mut options: OpenSettingsOptions, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
         if let Some(query) = options.query.take().filter(|_| options.reveal_setting.is_none()) {
             let query = query.trim();
@@ -181,7 +180,7 @@ impl Workbench {
             Some(Err(error)) => return Outcome::error(error),
             None => return Outcome::done(),
         };
-        self.open_file(path, true, window, cx);
+        self.open_preferences_file(path, window, cx);
         if let Some((key, edit)) = options.reveal_setting {
             self.reveal_setting(&key, edit, cx);
         }

@@ -18,7 +18,7 @@ use crate::editor::minimap::MinimapLayoutInfo;
 use super::search_editor_view::SEARCH_EDITOR_SCHEME;
 use super::webview_panels::WEBVIEW_PANEL_SCHEME;
 use crate::commands::Outcome;
-use crate::editor::PANEL_GROUP;
+use crate::editor::{MODAL_GROUP, PANEL_GROUP};
 use crate::editor_grid::{Direction, EditorGrid, GridSash, GroupLayout, Orientation, SashId, SplitSizing};
 use crate::split_view::SashState;
 
@@ -487,7 +487,8 @@ impl Workbench {
     /// editorGroupView.ts `doCloseEditor`: the last editor of a group closed with `workbench.editor.closeEmptyGroups`.
     pub(super) fn close_group_if_empty(&mut self, group: u32) {
         let empty = if group == self.editors.id { self.editors.editors.is_empty() } else { self.editors.group(group).is_some_and(|state| state.editors.is_empty()) };
-        if empty && group != PANEL_GROUP && self.editors.has_several_groups() && self.setting("workbench.editor.closeEmptyGroups") != json!(false) {
+        // The modal part enforces `closeEmptyGroups`: its group goes with its last editor.
+        if empty && (group == MODAL_GROUP || group != PANEL_GROUP && self.editors.has_several_groups() && self.setting("workbench.editor.closeEmptyGroups") != json!(false)) {
             self.remove_group(group);
         }
     }
@@ -502,9 +503,8 @@ impl Workbench {
         self.editor_groups.views.remove(&group);
         self.remove_from_navigation(|entry| entry.group == group);
         let sizing = self.split_sizing();
-        let grid = self.editor_groups.grid.as_mut().expect("several groups have a grid");
-        // `applyLayout` takes the groups it drops out of the grid before their editors merge.
-        if grid.groups().contains(&group) {
+        // `applyLayout` takes the groups it drops out of the grid before their editors merge; the modal group has none.
+        if let Some(grid) = self.editor_groups.grid.as_mut().filter(|grid| grid.groups().contains(&group)) {
             grid.remove_group(group, sizing);
         }
         if !self.editors.has_several_groups() {

@@ -106,6 +106,8 @@ pub(super) struct ModalHeader {
     pub title: &'static str,
     pub json_title: &'static str,
     pub json_command: &'static str,
+    /// A text editor's file icon, name and description, drawn in place of `icon` and `title`.
+    pub resource: Option<AnyElement>,
 }
 
 pub struct KeybindingsEditor {
@@ -278,7 +280,7 @@ impl Workbench {
             Outcome::done()
         });
         commands.register("workbench.action.toggleModalEditorMaximized", |workbench, _, _, cx| {
-            let open = workbench.keybindings_editor.open || workbench.settings_editor.open;
+            let open = workbench.keybindings_editor.open || workbench.settings_editor.open || workbench.modal_group_open();
             let editor = &mut workbench.keybindings_editor;
             editor.maximized = open && !editor.maximized;
             cx.notify();
@@ -426,6 +428,7 @@ impl Workbench {
     /// `openGlobalKeybindingSettings(false, { query })`: shows the editor, focusing its search, and searches `query`.
     pub(super) fn open_keybindings_editor(&mut self, query: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
         self.close_settings_editor(window, cx);
+        self.close_modal_group(window, cx);
         let editor = &mut self.keybindings_editor;
         if !editor.open {
             editor.previous_focus = window.focused(cx);
@@ -611,7 +614,7 @@ impl Workbench {
     /// focus is in the modal, unless `workbench.editor.useModal` is `all`.
     pub(super) fn modal_blocks_command(&self, resolution: &Resolution, window: &Window) -> bool {
         let Resolution::KbFound { command, .. } = resolution else { return false };
-        (self.keybindings_editor_focused(window) || self.settings_editor_focused(window)) && command.starts_with("workbench.") && !MODAL_ALLOWED_COMMANDS.contains(&command.as_str()) && self.setting("workbench.editor.useModal") != json!("all")
+        (self.keybindings_editor_focused(window) || self.settings_editor_focused(window) || self.modal_group_focused(window)) && command.starts_with("workbench.") && !MODAL_ALLOWED_COMMANDS.contains(&command.as_str()) && self.setting("workbench.editor.useModal") != json!("all")
     }
 
     fn keybindings_editor_focused(&self, window: &Window) -> bool {
@@ -884,7 +887,7 @@ impl Workbench {
         if !self.keybindings_editor.open {
             return None;
         }
-        let header = ModalHeader { icon: "record-keys", title: "Keyboard Shortcuts", json_title: "Open Keyboard Shortcuts (JSON)", json_command: "workbench.action.openGlobalKeybindingsFile" };
+        let header = ModalHeader { icon: "record-keys", title: "Keyboard Shortcuts", json_title: "Open Keyboard Shortcuts (JSON)", json_command: "workbench.action.openGlobalKeybindingsFile", resource: None };
         let focus = self.keybindings_editor.modal_focus.clone();
         Some(self.modal_editor_part(header, &focus, window, cx, |workbench, width, height, window, cx| workbench.keybindings_editor_pane(width, height, window, cx).into_any_element()))
     }
@@ -947,6 +950,7 @@ impl Workbench {
         self.close_keybindings_editor(window, cx);
         self.close_settings_editor(window, cx);
         self.close_profiles_editor(cx);
+        self.close_modal_group(window, cx);
     }
 
     /// `.modal-editor-header`: the editor's icon and title, and the `ModalEditorTitle` actions.
@@ -985,8 +989,10 @@ impl Workbench {
                     cx.notify();
                 }
             }))
-            .child(self.icon(header.icon, 16., 16., foreground).mr(px(6.)))
-            .child(div().flex_1().text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).truncate().child(header.title))
+            .map(|row| match header.resource {
+                Some(resource) => row.child(div().flex_1().min_w_0().flex().items_center().text_size(px(12.)).child(resource)),
+                None => row.child(self.icon(header.icon, 16., 16., foreground).mr(px(6.))).child(div().flex_1().text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).truncate().child(header.title)),
+            })
             // `ModalEditorEditorTitle`, then a separator and `ModalEditorTitle`, 4px apart.
             // The Profiles editor has no JSON action and no separator.
             .when(!header.json_command.is_empty(), |row| {

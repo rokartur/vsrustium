@@ -497,7 +497,7 @@ impl Workbench {
         if !self.user_data_profiles.editor.open {
             return None;
         }
-        let header = ModalHeader { icon: "settings", title: "Profiles", json_title: "", json_command: "" };
+        let header = ModalHeader { icon: "settings", title: "Profiles", json_title: "", json_command: "", resource: None };
         let focus = self.user_data_profiles.editor.focus.clone()?;
         Some(self.modal_editor_part(header, &focus, window, cx, |workbench, width, height, window, cx| workbench.profiles_editor_pane(width, height, window, cx)))
     }

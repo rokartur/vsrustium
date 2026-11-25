@@ -20,6 +20,7 @@ mod debug_commands;
 mod debug_console;
 mod problems_filter;
 mod problems_table;
+mod modal_editor_group;
 mod problems_view;
 mod refactor_preview;
 mod view_containers;
@@ -391,7 +392,7 @@ impl Render for Workbench {
             .children(self.restricted_mode_banner(cx))
             .child(self.middle_section(viewport, editor, window, cx))
             .child(self.status_bar(window, cx));
-        let modal_editor = self.keybindings_editor_widget(window, cx).or_else(|| self.settings_editor_widget(window, cx)).or_else(|| self.profiles_editor_widget(window, cx));
+        let modal_editor = self.keybindings_editor_widget(window, cx).or_else(|| self.settings_editor_widget(window, cx)).or_else(|| self.profiles_editor_widget(window, cx)).or_else(|| self.modal_group_widget(window, cx));
         let quick_input = self.quick_input_widget(window, cx);
         let notifications = self.notifications_widget(viewport, window, cx);
         let context_menu = self.context_menu_widget(cx);
@@ -700,6 +701,10 @@ impl Workbench {
         if pinned {
             self.close_modal_editor(window, cx);
         }
+        self.open_file_in_active_group(path, pinned, window, cx);
+    }
+
+    pub(super) fn open_file_in_active_group(&mut self, path: PathBuf, pinned: bool, window: &mut Window, cx: &mut Context<Self>) {
         if path.to_string_lossy().ends_with(crate::search_editor::SEARCH_EDITOR_EXT) {
             return self.open_search_editor_file(path, pinned, window, cx);
         }

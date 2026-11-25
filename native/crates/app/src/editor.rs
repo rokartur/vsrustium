@@ -677,6 +677,8 @@ impl GroupState {
 /// The group of the panel's code editor (the Output view's): kept with the editor groups so it edits through
 /// the same code, but never in the grid nor a view column.
 pub const PANEL_GROUP: u32 = u32::MAX;
+/// The modal editor part's one group (modalEditorPart.ts), outside the grid like the panel's.
+pub const MODAL_GROUP: u32 = u32::MAX - 1;
 
 /// The editor part's groups. The active group's editors and state are the fields below; the other groups wait
 /// in `other_groups`. Text models are shared by the editors of their resource in every group, so `models`,
@@ -901,13 +903,18 @@ impl EditorGroup {
 
     /// Whether the part has more than one editor group.
     pub fn has_several_groups(&self) -> bool {
-        self.other_groups.iter().any(|group| group.id != PANEL_GROUP) || (self.id == PANEL_GROUP && self.other_groups.len() > 1)
+        std::iter::once(self.id).chain(self.other_groups.iter().map(|group| group.id)).filter(|id| *id != PANEL_GROUP && *id != MODAL_GROUP).count() > 1
     }
 
     /// The panel's group, made on first use.
     pub fn ensure_panel_group(&mut self) {
-        if self.id != PANEL_GROUP && self.group(PANEL_GROUP).is_none() {
-            self.other_groups.push(GroupState { id: PANEL_GROUP, editors: Vec::new(), recent: Vec::new(), viewport: self.viewport, unicode_banner_closed: false });
+        self.ensure_detached_group(PANEL_GROUP);
+    }
+
+    /// A group outside the grid (the panel's or the modal part's), made on first use.
+    pub fn ensure_detached_group(&mut self, id: u32) {
+        if self.id != id && self.group(id).is_none() {
+            self.other_groups.push(GroupState { id, editors: Vec::new(), recent: Vec::new(), viewport: self.viewport, unicode_banner_closed: false });
         }
     }
 

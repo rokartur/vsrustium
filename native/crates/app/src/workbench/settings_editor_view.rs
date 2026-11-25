@@ -388,6 +388,7 @@ impl Workbench {
     /// `preferencesService.openSettings` with `jsonEditor: false`: shows the editor in the modal part, then searches.
     pub(super) fn open_settings_editor(&mut self, query: Option<String>, target: Option<(Target, Option<PathBuf>)>, window: &mut Window, cx: &mut Context<Self>) {
         self.close_keybindings_editor(window, cx);
+        self.close_modal_group(window, cx);
         let editor = &mut self.settings_editor;
         let opening = !editor.open;
         if opening {
@@ -863,7 +864,7 @@ impl Workbench {
         if !self.settings_editor.open {
             return None;
         }
-        let header = ModalHeader { icon: "settings", title: "Settings", json_title: "Open Settings (JSON)", json_command: "workbench.action.openSettingsJson" };
+        let header = ModalHeader { icon: "settings", title: "Settings", json_title: "Open Settings (JSON)", json_command: "workbench.action.openSettingsJson", resource: None };
         let focus = self.settings_editor.modal_focus.clone();
         Some(self.modal_editor_part(header, &focus, window, cx, |workbench, width, height, window, cx| workbench.settings_editor_pane(width, height, window, cx)))
     }
