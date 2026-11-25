@@ -4,12 +4,14 @@
 pub mod auto_replies;
 pub mod colors;
 pub mod keys;
+pub mod link_parsing;
 pub mod mouse;
 pub mod profiles;
 pub mod prompt_input;
 pub mod environment_collection;
 pub mod injection;
 pub mod pty;
+pub mod search;
 pub mod shell_integration;
 pub mod skip_shell;
 

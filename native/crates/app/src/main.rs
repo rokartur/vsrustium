@@ -30,6 +30,7 @@ mod keyboard_layout;
 mod system_wide_keybindings;
 mod language_features;
 mod languages;
+mod link_computer;
 mod local_history;
 mod main_thread;
 mod main_thread_commands;
