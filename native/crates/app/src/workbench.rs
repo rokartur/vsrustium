@@ -225,6 +225,7 @@ impl Render for Workbench {
             .children(notifications)
             .children(context_menu)
             .children(hover)
+            .on_modifiers_changed(cx.listener(|workbench, event: &gpui::ModifiersChangedEvent, _, cx| workbench.hover_modifiers_changed(event.modifiers.alt, cx)))
             // style.css: .macos-tahoe windows round 16px, older macOS 10px.
             .when_some(window_border, |root, border| root.child(div().absolute().inset_0().border_1().rounded(px(if is_tahoe_or_newer() { 16. } else { 10. })).border_color(border)))
     }
