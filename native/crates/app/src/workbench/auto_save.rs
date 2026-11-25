@@ -149,6 +149,11 @@ impl Workbench {
         auto_save_mode(&configuration, reason, has_errors)
     }
 
+    /// A working copy the backup tracker auto saves on shutdown: not untitled, and its auto save mode is on.
+    pub(super) fn auto_saved_on_shutdown(&self, model: &OpenEditor) -> bool {
+        !self.untitled_working_copy(model) && !matches!(self.auto_save_mode(Some(model), None), AutoSaveMode::Off(_))
+    }
+
     /// fileEditorInput.ts `isSaving`: a dirty file with a short auto save delay shows as clean, the save is due.
     pub(super) fn editor_is_saving(&self, model: &OpenEditor) -> bool {
         !self.untitled_working_copy(model) && model.is_dirty() && self.auto_save_configuration(Some(model)).short_delay

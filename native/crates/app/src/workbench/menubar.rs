@@ -157,15 +157,16 @@ fn collect_command_ids(actions: &[MenuAction], ids: &mut Vec<String>) {
 }
 
 /// `Menubar.install`: the app menu, the workbench's menus, then the Window menu before Help.
-/// shortcut: no About, Check for Updates, Always on Top or Switch Window; the port has no about dialog, updates,
-/// always-on-top windows or window switching.
+/// shortcut: no Check for Updates, Always on Top or Switch Window; the port has no updates, always-on-top windows
+/// or window switching.
 fn native_menus(menubar: &Menubar) -> (Vec<Menu>, Vec<KeyBinding>) {
     let mut key_equivalents = vec![
         KeyBinding::new("cmd-h", Hide, Some(MENU_KEY_EQUIVALENT)),
         KeyBinding::new("alt-cmd-h", HideOthers, Some(MENU_KEY_EQUIVALENT)),
     ];
-    let mut app_items = Vec::new();
+    let mut app_items = vec![native_command("workbench.action.showAboutDialog", &format!("About {NAME_LONG}"), true, false, menubar, &mut key_equivalents)];
     if let Some((_, preferences)) = menubar.menus.iter().find(|(title, _)| title == "Preferences") {
+        app_items.push(MenuItem::separator());
         app_items.push(MenuItem::submenu(Menu::new("Preferences").items(native_items(preferences, menubar, &mut key_equivalents))));
         app_items.push(MenuItem::separator());
     }

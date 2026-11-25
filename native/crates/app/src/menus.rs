@@ -127,6 +127,8 @@ const WORKBENCH_MENUS: &[Row] = &[
     (MenuId::MenubarFileMenu, Some(MenuId::MenubarRecentMenu), "", "Open &&Recent", "2_open", 4., None, None),
     (MenuId::MenubarFileMenu, None, "workbench.action.closeFolder", "Close &&Folder", "6_close", 3., Some("workbenchState == 'folder' && emptyWorkspaceSupport && !isSessionsWindow"), Some("workbenchState != 'empty' && emptyWorkspaceSupport && !isSessionsWindow")),
     (MenuId::MenubarFileMenu, None, "workbench.action.closeFolder", "Close &&Workspace", "6_close", 3., Some("workbenchState == 'workspace' && emptyWorkspaceSupport && !isSessionsWindow"), Some("workbenchState != 'empty' && emptyWorkspaceSupport && !isSessionsWindow")),
+    // windowActions.ts (electron-browser) `CloseWindowAction`
+    (MenuId::MenubarFileMenu, None, "workbench.action.closeWindow", "Clos&&e Window", "6_close", 4., None, None),
     (MenuId::MenubarRecentMenu, None, "workbench.action.openRecent", "&&More...", "y_more", 1., None, None),
     (MenuId::MenubarRecentMenu, None, "workbench.action.clearRecentFiles", "&&Clear Recently Opened...", "z_clear", 1., None, None),
     // fileActions.contribution.ts

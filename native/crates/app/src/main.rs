@@ -7,6 +7,7 @@
 mod action_list;
 mod accessibility_signals;
 mod anything_quick_access;
+mod backups;
 mod brackets;
 mod clipboard;
 mod command_palette;
@@ -16,6 +17,7 @@ mod debug;
 mod default_settings;
 mod diff_editor;
 mod dialog;
+mod file_dialog;
 mod editor;
 mod editor_history;
 mod explorer;
@@ -298,10 +300,12 @@ fn main() -> anyhow::Result<()> {
                 workbench.shared_storage = shared_storage;
                 workbench.watch_recently_opened(window, cx);
                 workbench.watch_window_focus(window, cx);
+                workbench.watch_window_close(window, cx);
                 workbench.set_installed_extensions(builtins.clone(), UserExtensions { folder: user_extensions.folder.clone(), product_version: VERSION.into() }, developed.clone(), cx);
                 workbench.start_terminal_host();
                 workbench.watch_editor_focus(window, cx);
                 workbench.show_trust_modal_on_start(window, cx);
+                workbench.start_backups(&user_data, cx);
                 if let Some(file) = file {
                     workbench.open_file(file, true, window, cx);
                 }
@@ -459,7 +463,7 @@ fn run_extension_host(
             MainThreadSecretState::in_memory()
         }),
     });
-    session.forward(&["MainThreadCommands", "MainThreadCustomEditors", "MainThreadDebugService", "MainThreadDiagnostics", "MainThreadDownloadService", "MainThreadEditorTabs", "MainThreadLanguageFeatures", "MainThreadLogger", "MainThreadMessageService", "MainThreadOutputService", "MainThreadProgress", "MainThreadQuickOpen", "MainThreadSCM", "MainThreadStatusBar", "MainThreadTask", "MainThreadTerminalService", "MainThreadTerminalShellIntegration", "MainThreadTesting", "MainThreadUriOpeners", "MainThreadUrls", "MainThreadUrls.$registerUriHandler", "MainThreadUrls.$unregisterUriHandler", "MainThreadWebviewPanels", "MainThreadWebviewViews", "MainThreadWebviews", "MainThreadWindow.$openUri", "MainThreadWorkspace"], move |request| {
+    session.forward(&["MainThreadCommands", "MainThreadCustomEditors", "MainThreadDebugService", "MainThreadDialogs", "MainThreadDiagnostics", "MainThreadDownloadService", "MainThreadEditorTabs", "MainThreadLanguageFeatures", "MainThreadLogger", "MainThreadMessageService", "MainThreadOutputService", "MainThreadProgress", "MainThreadQuickOpen", "MainThreadSCM", "MainThreadStatusBar", "MainThreadTask", "MainThreadTerminalService", "MainThreadTerminalShellIntegration", "MainThreadTesting", "MainThreadUriOpeners", "MainThreadUrls", "MainThreadUrls.$registerUriHandler", "MainThreadUrls.$unregisterUriHandler", "MainThreadWebviewPanels", "MainThreadWebviewViews", "MainThreadWebviews", "MainThreadWindow.$openUri", "MainThreadWorkspace"], move |request| {
         let _ = workbench_requests.unbounded_send(request);
     }, workbench_replies);
     session.main_thread = Some(Box::new(main_thread));

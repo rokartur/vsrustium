@@ -286,11 +286,10 @@ impl Workbench {
             let _ = sender.send(self.finish_save(SEARCH_EDITOR_SCHEME, &path, version, written, cx));
             return receiver;
         }
-        let directory = self.workspace().and_then(|workspace| workspace.folders.first()).map(|folder| folder.path.clone());
-        let directory = directory.or_else(|| std::env::var_os("HOME").map(PathBuf::from)).unwrap_or_default();
-        let picked = cx.prompt_for_new_path(&directory, Some(&suggest_file_name(&search_editor.config.query)));
+        let suggested = self.default_file_path().join(suggest_file_name(&search_editor.config.query));
+        let picked = self.pick_file_to_save(suggested, cx);
         cx.spawn(async move |workbench, cx| {
-            let Ok(Ok(Some(file))) = picked.await else {
+            let Ok(Some(file)) = picked.await else {
                 let _ = sender.send(false);
                 return;
             };

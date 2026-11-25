@@ -26,6 +26,9 @@ mod exception_widget;
 mod floating_menu;
 mod diagnostics;
 mod dialog_view;
+mod backup_tracker;
+mod dialogs;
+mod lifecycle;
 mod editor_commands;
 mod editor_menus;
 mod editor_message;
@@ -40,6 +43,7 @@ mod extensions_list_view;
 mod workspace_recommendations;
 pub(crate) mod localization;
 pub(crate) mod extensions_view;
+mod file_dialogs;
 mod file_participants;
 mod find_options_widget;
 mod find_widget;
@@ -304,6 +308,7 @@ pub struct Workbench {
     recently_opened: crate::recently_opened::RecentlyOpened,
     /// Custom dialogs, the shown one first.
     dialogs: Vec<dialog_view::ShownDialog>,
+    lifecycle: lifecycle::Lifecycle,
     pub debug: debug_service::DebugService,
     debug_view: debug_view::DebugView,
     debug_console: debug_console::DebugConsole,
@@ -324,6 +329,7 @@ impl Render for Workbench {
         self.update_quick_diff(cx);
         self.update_extension_editor_webviews(window, cx);
         self.auto_save_models_changed(cx);
+        self.backup_models_changed(cx);
         self.follow_content_hover_editor();
         self.folding_model_changed(cx);
         self.accessibility_frame(window, cx);
@@ -498,6 +504,7 @@ impl Workbench {
             shared_storage: Arc::new(Mutex::new(Storage::in_memory())),
             recently_opened: Default::default(),
             dialogs: Vec::new(),
+            lifecycle: Default::default(),
             debug: Default::default(),
             debug_view: debug_view::DebugView::new(cx),
             debug_console: debug_console::DebugConsole::new(cx),
@@ -554,7 +561,6 @@ impl Workbench {
         workbench.register_define_keybinding_command();
         workbench.register_notifications_commands();
         workbench.register_output_actions();
-        workbench.register_empty_view_actions();
         workbench.register_logs_actions();
         workbench.register_terminal_actions();
         workbench.register_perf_view();
@@ -565,6 +571,8 @@ impl Workbench {
         workbench.register_workspace_trust_commands();
         workbench.register_host_commands();
         workbench.register_workspace_commands();
+        workbench.register_dialog_commands();
+        workbench.register_lifecycle_commands();
         workbench.register_url_commands();
         workbench.register_local_history_commands();
         workbench.register_extensions_view_commands();

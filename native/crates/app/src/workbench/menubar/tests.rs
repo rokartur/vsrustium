@@ -103,7 +103,9 @@ fn native_menus_show_keybindings_as_key_equivalents_or_in_the_label(cx: &mut Tes
     let (menus, key_equivalents) = native_menus(&menubar);
     let names: Vec<&str> = menus.iter().map(|menu| menu.name.as_ref()).collect();
     assert_eq!(names, ["VSRustium", "File", "Edit", "Selection", "View", "Go", "Window", "Help"]);
-    let MenuItem::Submenu(preferences) = &menus[0].items[0] else { panic!("Preferences first") };
+    let MenuItem::Action { name, .. } = &menus[0].items[0] else { panic!("About first") };
+    assert_eq!(name.as_ref(), "About VSRustium");
+    let MenuItem::Submenu(preferences) = &menus[0].items[2] else { panic!("Preferences after a separator") };
     let themes = preferences.items.iter().find_map(|item| match item {
         MenuItem::Submenu(menu) if menu.name.as_ref() == "Themes" => Some(menu),
         _ => None,

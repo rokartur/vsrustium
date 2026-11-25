@@ -381,11 +381,9 @@ impl Workbench {
     pub(super) fn save_as(&mut self, scheme: String, path: PathBuf, options: SaveOptions, cx: &mut Context<Self>) -> oneshot::Receiver<bool> {
         let (sender, receiver) = oneshot::channel();
         let suggested = self.suggest_save_path(&scheme, &path);
-        let directory = suggested.parent().map(Path::to_path_buf).unwrap_or_default();
-        let name = suggested.file_name().map(|name| name.to_string_lossy().into_owned());
-        let picked = cx.prompt_for_new_path(&directory, name.as_deref());
+        let picked = self.pick_file_to_save(suggested, cx);
         cx.spawn(async move |workbench, cx| {
-            let Ok(Ok(Some(target))) = picked.await else {
+            let Ok(Some(target)) = picked.await else {
                 let _ = sender.send(false);
                 return;
             };
@@ -537,19 +535,6 @@ impl Workbench {
             false => name,
         };
         self.default_file_path().join(name)
-    }
-
-    /// `fileDialogService.defaultFilePath`: `files.dialog.defaultPath`, else the folder of the last active file, else
-    /// the first workspace folder, else the home folder.
-    pub(super) fn default_file_path(&self) -> PathBuf {
-        let configured = self.settings.lock().unwrap().get_value(Some("files.dialog.defaultPath"), &Overrides::default());
-        if let Some(configured) = configured.as_ref().and_then(Value::as_str).map(PathBuf::from).filter(|path| path.is_absolute()) {
-            return configured;
-        }
-        // fileDialogService.ts `defaultFilePath`: the last active file's folder, then the first workspace folder, then home.
-        let last_active_folder = self.quick_access.editor_history.entries.first().and_then(|file| file.parent()).map(Path::to_path_buf);
-        let workspace_folder = || self.workspace().and_then(|workspace| workspace.folders.first()).map(|folder| folder.path.clone());
-        last_active_folder.or_else(workspace_folder).or_else(|| std::env::var_os("HOME").map(PathBuf::from)).unwrap_or_default()
     }
 
     /// textFileEditorModel.ts `onDidChangeFilesAssociation`: a file model without a picked language takes the one

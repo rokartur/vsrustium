@@ -55,6 +55,7 @@ impl Workbench {
         let dialog = CustomDialog {
             icon: "shield",
             message: format!("Do you trust the authors of the files in this {target}?"),
+            detail: None,
             details,
             checkbox,
             buttons: vec![
@@ -101,6 +102,7 @@ impl Workbench {
         let dialog = CustomDialog {
             icon: "shield",
             message: message.into(),
+            detail: None,
             details: vec![
                 details.into(),
                 "If you don't trust the authors of these files, we do not recommend continuing as the files may be malicious. See [our docs](https://aka.ms/vscode-workspace-trust) to learn more.".into(),

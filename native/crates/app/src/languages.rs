@@ -226,6 +226,17 @@ impl Languages {
         filenames.first().map_or(untitled_name, |name| name).to_string()
     }
 
+    /// `getExtensions`: the language's extensions with their dot, each once, in registration order.
+    pub fn extensions(&self, id: &str) -> Vec<&str> {
+        let mut extensions: Vec<&str> = Vec::new();
+        for extension in self.associations.iter().filter(|association| association.id == id).filter_map(|association| association.extension.as_deref()) {
+            if !extensions.contains(&extension) {
+                extensions.push(extension);
+            }
+        }
+        extensions
+    }
+
     /// `getSortedRegisteredLanguageNames`: each name with its language, the last language registered under a name,
     /// sorted ignoring case.
     pub fn sorted_names(&self) -> Vec<(&str, &str)> {

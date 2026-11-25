@@ -7,34 +7,24 @@ use std::path::PathBuf;
 use gpui::{Context, Window};
 
 use super::Workbench;
+use super::lifecycle::ShutdownReason;
 use crate::commands::Outcome;
 
 impl Workbench {
     pub(super) fn register_host_commands(&mut self) {
         self.commands.register("workbench.action.reloadWindow", |workbench, _, window, cx| {
             let folder = workbench.workspace_location();
-            workbench.relaunch(folder, window, cx)
+            workbench.relaunch(ShutdownReason::Reload, folder, window, cx)
         });
     }
 
-    /// Closes the editors, asking to save dirty ones, then starts the app on `folder` and quits this one.
-    pub(super) fn relaunch(&mut self, folder: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
-        let closed = self.close_all_editors(window, cx);
-        cx.spawn(async move |workbench, cx| {
-            if let Outcome::Pending(pending) = closed {
-                let _ = pending.await;
-            }
-            let _ = workbench.update(cx, |workbench, cx| {
-                if !workbench.editors.editors.is_empty() {
-                    return;
-                }
-                match open_new_window(folder) {
-                    Ok(()) => cx.quit(),
-                    Err(error) => workbench.notify_error(&format!("Failed to reload the window: {error}")),
-                }
-            });
-        })
-        .detach();
+    /// Shuts this window down for `reason` (a reload, or loading another workspace), then starts the app on `folder`
+    /// and quits this one.
+    pub(super) fn relaunch(&mut self, reason: ShutdownReason, folder: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
+        self.shutdown(reason, window, cx, move |workbench, _, cx| match open_new_window(folder) {
+            Ok(()) => cx.quit(),
+            Err(error) => workbench.notify_error(&format!("Failed to reload the window: {error}")),
+        });
         Outcome::done()
     }
 }
