@@ -221,12 +221,16 @@ impl HostSync {
 
     /// `editor`, open or a model the host opened, was written to disk while `was_dirty`.
     pub fn send_saved(&mut self, group: &EditorGroup, editor: &OpenEditor, was_dirty: bool) {
-        let uri = editor.document.uri();
         if was_dirty {
-            self.send("ExtHostDocuments", "$acceptDirtyStateChanged", vec![uri.clone(), json!(false)]);
-            self.send_tabs(group);
+            self.send_dirty_state(group, editor, false);
         }
-        self.send("ExtHostDocuments", "$acceptModelSaved", vec![uri]);
+        self.send("ExtHostDocuments", "$acceptModelSaved", vec![editor.document.uri()]);
+    }
+
+    /// The dirty state of `editor` flipped without a text change, then the tabs that show it.
+    pub fn send_dirty_state(&mut self, group: &EditorGroup, editor: &OpenEditor, dirty: bool) {
+        self.send("ExtHostDocuments", "$acceptDirtyStateChanged", vec![editor.document.uri(), json!(dirty)]);
+        self.send_tabs(group);
     }
 
     /// mainThreadEditor.ts `_updatePropertiesNow` on a scroll or layout: the visible lines, when they changed.
