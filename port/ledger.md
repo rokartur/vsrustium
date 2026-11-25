@@ -263,7 +263,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | editor/contrib/multicursor | src/vs/editor/contrib | stub | insertCursorAbove/Below, insertCursorAtEndOfEachLineSelected, addCursorsToTop/Bottom, column selection, Alt+click and drag (editor/multicursor.rs): cargo test -p app editor::multicursor::tests; no Cmd+D, selectHighlights or changeAll until find (port/notes.md milestone 8) |
 | editor/contrib/parameterHints | src/vs/editor/contrib | todo |  |
 | editor/contrib/peekView | src/vs/editor/contrib | todo |  |
-| editor/contrib/placeholderText | src/vs/editor/contrib | todo | only embedded editors set `placeholder` (comment reply, chat, SCM input); comes with the first of them (port/notes.md milestone 8) |
+| editor/contrib/placeholderText | src/vs/editor/contrib | n/a | the workbench text editor never sets `placeholder` and it is not a setting; only embedded editors do (comment reply, chat, SCM input), the port has none (port/notes.md milestone 8) |
 | editor/contrib/quickAccess | src/vs/editor/contrib | ported | gotoLineQuickAccess and editorNavigationQuickAccess (`workbench/quick_access/goto_line.rs`); no open to the side, relative line numbers, aria status; gotoSymbol not ported |
 | editor/contrib/readOnlyMessage | src/vs/editor/contrib | verified | a cursor edit in a read-only editor shows the reason (session, settings, permissions) with its `command:` links; cargo test -p app readonly; ui-pair ro.txt matches the reference |
 | editor/contrib/rename | src/vs/editor/contrib | todo |  |
