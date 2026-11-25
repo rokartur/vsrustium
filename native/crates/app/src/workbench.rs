@@ -4,6 +4,7 @@
 
 pub mod accessibility;
 pub mod accessible_view;
+pub mod new_file;
 mod actions;
 mod bulk_text_edits;
 mod configuration;
@@ -474,6 +475,7 @@ impl Workbench {
         workbench.register_extensions_view_commands();
         workbench.register_workspace_recommendations_commands();
         workbench.register_localization_commands();
+        workbench.register_new_file_commands();
         // Keybindings resolve before the focused element sees the key, and with nothing focused too.
         let entity = cx.entity().downgrade();
         cx.intercept_keystrokes(move |event, window, cx| {
