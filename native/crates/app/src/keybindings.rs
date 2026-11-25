@@ -309,6 +309,11 @@ impl Resolver {
         }
     }
 
+    /// `getKeybindings`: every rule in precedence order, the removals applied.
+    pub fn keybindings(&self) -> &[Item] {
+        &self.keybindings
+    }
+
     /// Keybindings of a command, the one that wins first.
     #[cfg(test)]
     pub fn lookup_keybindings(&self, command: &str) -> Vec<&Item> {

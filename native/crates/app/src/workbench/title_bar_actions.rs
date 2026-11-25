@@ -13,9 +13,15 @@ use crate::contextkey;
 use crate::menus::{Entry, MenuAction, MenuId, MenuItem, TITLE_BAR_TOGGLES, menu_actions};
 
 const REVEAL_PATH_COMMAND: &str = "workbench.action.revealPathInFinder";
+/// The command center's one item, `CommandCenterCenter`.
+const QUICK_OPEN_WITH_MODES: &str = "workbench.action.quickOpenWithModes";
 
 impl Workbench {
     pub(super) fn register_title_bar_actions(&mut self) {
+        // menuService.ts `createConfigureKeybindingAction` of the command center item, which has no `when`.
+        self.commands.register(format!("configureKeybinding/{QUICK_OPEN_WITH_MODES}"), |workbench, _, window, cx| {
+            workbench.execute_command(super::keybindings_editor_view::OPEN_COMMAND, vec![json!(format!("@command:{QUICK_OPEN_WITH_MODES}"))], window, cx)
+        });
         for (setting, ..) in TITLE_BAR_TOGGLES {
             self.commands.register(format!("toggle.{setting}"), move |workbench, _, _, cx| {
                 // `updateValue(section, !value)`
@@ -44,8 +50,7 @@ impl Workbench {
     /// the toolbar's `contextMenu: MenuId.TitleBarContext` toggles.
     pub(super) fn show_command_center_context_menu(&mut self, pointer: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
         let context = self.title_bar_context(window);
-        // shortcut: opens keybindings.json where upstream opens the Keybindings editor at the item's command; the port has no Keybindings editor yet.
-        let configure_keybinding = MenuAction::Command { id: "workbench.action.openGlobalKeybindingsFile".into(), title: "Configure Keybinding".into(), enabled: true, checked: false, alt: None };
+        let configure_keybinding = MenuAction::Command { id: format!("configureKeybinding/{QUICK_OPEN_WITH_MODES}"), title: "Configure Keybinding".into(), enabled: true, checked: false, alt: None };
         let mut actions = vec![configure_keybinding, MenuAction::Separator];
         actions.extend(menu_actions(&self.menus, MenuId::TitleBarContext, &context));
         self.show_context_menu_actions(actions, &context, Bounds { origin: pointer, size: Size::default() }, Vec::new(), window, cx);

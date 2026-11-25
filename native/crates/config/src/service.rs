@@ -471,7 +471,7 @@ fn write_file(path: &Path, content: &str) -> std::io::Result<()> {
 
 /// `getFormattingOptions(model)`: the indentation of the file's text model (language `jsonc`) and its line
 /// break, `\n` on macOS for a file with none.
-fn formatting_options(content: &str, configuration: &Configuration, path: &Path) -> FormattingOptions {
+pub fn formatting_options(content: &str, configuration: &Configuration, path: &Path) -> FormattingOptions {
     let lines: Vec<&str> = content.split('\n').map(|line| line.strip_suffix('\r').unwrap_or(line)).collect();
     let (tab_size, insert_spaces) = model_indentation(&lines, &creation_options(configuration, path, "jsonc"));
     let crlf = content.matches("\r\n").count();

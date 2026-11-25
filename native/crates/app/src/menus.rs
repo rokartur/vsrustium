@@ -65,7 +65,7 @@ pub enum MenuAction {
 /// The workbench's registrations of the features the port has: menu, submenu or command id, title, group, order,
 /// `when`, and the command's precondition.
 type Row = (MenuId, Option<MenuId>, &'static str, &'static str, &'static str, f64, Option<&'static str>, Option<&'static str>);
-const WORKBENCH_MENUS: [Row; 58] = [
+const WORKBENCH_MENUS: [Row; 59] = [
     // menubar.contribution.ts
     (MenuId::MenubarMainMenu, Some(MenuId::MenubarFileMenu), "", "&&File", "", 1., None, None),
     (MenuId::MenubarMainMenu, Some(MenuId::MenubarEditMenu), "", "&&Edit", "", 2., None, None),
@@ -107,6 +107,8 @@ const WORKBENCH_MENUS: [Row; 58] = [
     // quickAccess.contribution.ts
     (MenuId::MenubarViewMenu, None, "workbench.action.showCommands", "&&Command Palette...", "1_open", 1., None, None),
     (MenuId::MenubarHelpMenu, None, "workbench.action.showCommands", "Show All Commands", "1_welcome", 2., None, None),
+    // preferences.contribution.ts
+    (MenuId::MenubarPreferencesMenu, None, "workbench.action.openGlobalKeybindings", "Keyboard Shortcuts", "2_configuration", 4., None, None),
     // themes.contribution.ts
     (MenuId::MenubarPreferencesMenu, Some(MenuId::ThemesSubMenu), "", "&&Themes", "2_configuration", 7., None, None),
     // clipboard.ts and quickAccess.contribution.ts: the EditorContext items of the commands the port has.

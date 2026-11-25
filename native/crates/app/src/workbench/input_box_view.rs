@@ -17,7 +17,7 @@ use super::search_view::{SEARCH_FIELDS, SearchField};
 use crate::commands::Outcome;
 use crate::input_box::{InputBox, Motion};
 
-/// Which input element: the quick input's, the Explorer's inline editor, the find widget's, or one of the Search view's inputs.
+/// Which input element: the quick input's, the Explorer's inline editor, the find widget's, the Search view's, or the Keyboard Shortcuts editor's.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum InputId {
     QuickInput,
@@ -25,7 +25,11 @@ pub enum InputId {
     Find,
     Replace,
     Search(SearchField),
+    KeybindingsSearch,
+    KeybindingsWhen,
 }
+
+const INPUTS: [InputId; 6] = [InputId::QuickInput, InputId::Explorer, InputId::Find, InputId::Replace, InputId::KeybindingsSearch, InputId::KeybindingsWhen];
 
 /// The view state of one input element.
 pub struct InputView {
@@ -76,6 +80,8 @@ impl Workbench {
             InputId::Find => &self.find.find_view,
             InputId::Replace => &self.find.replace_view,
             InputId::Search(field) => &self.search.input(field).view,
+            InputId::KeybindingsSearch => &self.keybindings_editor.search_view,
+            InputId::KeybindingsWhen => &self.keybindings_editor.when_view,
         }
     }
 
@@ -86,6 +92,8 @@ impl Workbench {
             InputId::Find => &mut self.find.find_view,
             InputId::Replace => &mut self.find.replace_view,
             InputId::Search(field) => &mut self.search.input_mut(field).view,
+            InputId::KeybindingsSearch => &mut self.keybindings_editor.search_view,
+            InputId::KeybindingsWhen => &mut self.keybindings_editor.when_view,
         }
     }
 
@@ -96,6 +104,8 @@ impl Workbench {
             InputId::Find => &self.find.find_focus,
             InputId::Replace => &self.find.replace_focus,
             InputId::Search(field) => &self.search.input(field).focus,
+            InputId::KeybindingsSearch => &self.keybindings_editor.search_focus,
+            InputId::KeybindingsWhen => &self.keybindings_editor.when_focus,
         }
     }
 
@@ -106,19 +116,19 @@ impl Workbench {
             InputId::Find => Some(&self.find.find_input),
             InputId::Replace => Some(&self.find.replace_input),
             InputId::Search(field) => Some(&self.search.input(field).value),
+            InputId::KeybindingsSearch => Some(&self.keybindings_editor.search),
+            InputId::KeybindingsWhen => self.keybindings_editor.when.as_ref().map(|when| &when.input),
         }
     }
 
     /// The input element with the keyboard focus.
     pub(super) fn focused_input(&self, window: &Window) -> Option<InputId> {
-        let search = SEARCH_FIELDS.map(InputId::Search);
-        [InputId::QuickInput, InputId::Explorer, InputId::Find, InputId::Replace].into_iter().chain(search).find(|id| self.input_focus(*id).is_focused(window))
+        INPUTS.into_iter().chain(SEARCH_FIELDS.map(InputId::Search)).find(|id| self.input_focus(*id).is_focused(window))
     }
 
     /// Any input element in an IME composition: the IME owns the keys.
     pub(super) fn input_composing(&self) -> bool {
-        let search = SEARCH_FIELDS.map(InputId::Search);
-        [InputId::QuickInput, InputId::Explorer, InputId::Find, InputId::Replace].into_iter().chain(search).any(|id| self.input_view(id).marked.is_some())
+        INPUTS.into_iter().chain(SEARCH_FIELDS.map(InputId::Search)).any(|id| self.input_view(id).marked.is_some())
     }
 
     /// Runs `edit` on the element's value and restarts the caret blink.
@@ -136,6 +146,14 @@ impl Workbench {
             }
             InputId::Search(field) => {
                 self.edit_search_input(field, edit, window, cx);
+                Outcome::done()
+            }
+            InputId::KeybindingsSearch => {
+                self.edit_keybindings_search(edit, window, cx);
+                Outcome::done()
+            }
+            InputId::KeybindingsWhen => {
+                self.edit_when_input(edit, cx);
                 Outcome::done()
             }
         }
@@ -304,6 +322,8 @@ impl Workbench {
                 InputId::Find => "find-input-text".into(),
                 InputId::Replace => "replace-input-text".into(),
                 InputId::Search(field) => ("search-input-text", field as usize).into(),
+                InputId::KeybindingsSearch => "keybindings-search-text".into(),
+                InputId::KeybindingsWhen => "keybindings-when-text".into(),
             })
             .flex_1()
             .h_full()

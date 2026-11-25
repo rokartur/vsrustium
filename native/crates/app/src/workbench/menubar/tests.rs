@@ -85,7 +85,12 @@ fn native_menus_show_keybindings_as_key_equivalents_or_in_the_label(cx: &mut Tes
     let names: Vec<&str> = menus.iter().map(|menu| menu.name.as_ref()).collect();
     assert_eq!(names, ["Code - OSS", "File", "Edit", "Selection", "View", "Go", "Window", "Help"]);
     let MenuItem::Submenu(preferences) = &menus[0].items[0] else { panic!("Preferences first") };
-    let MenuItem::Submenu(themes) = &preferences.items[0] else { panic!("Themes") };
+    let themes = preferences.items.iter().find_map(|item| match item {
+        MenuItem::Submenu(menu) if menu.name.as_ref() == "Themes" => Some(menu),
+        _ => None,
+    });
+    let themes = themes.expect("Themes");
+    assert!(preferences.items.iter().any(|item| matches!(item, MenuItem::Action { name, .. } if name.as_ref() == "Keyboard Shortcuts [⌘K ⌘S]")));
     let MenuItem::Action { name, .. } = &themes.items[0] else { panic!("Color Theme") };
     assert_eq!(name.as_ref(), "Color Theme [⌘K ⌘T]");
     let MenuItem::Action { name, .. } = &menus[4].items[0] else { panic!("Command Palette") };

@@ -15,6 +15,7 @@ mod find_widget;
 mod hover;
 pub(crate) mod host_requests;
 mod input_box_view;
+mod keybindings_editor_view;
 mod keyboard;
 pub mod menubar;
 mod minimap_view;
@@ -73,6 +74,7 @@ pub struct Workbench {
     /// Extension tests run: dialogs answer their default without showing (abstractFileDialogService.ts skipDialogs).
     pub skip_dialogs: bool,
     pub keybindings: keyboard::Keybindings,
+    pub keybindings_editor: keybindings_editor_view::KeybindingsEditor,
     /// Context keys set with the `setContext` command.
     context_keys: HashMap<String, Value>,
     /// The level extension tests set with `_extensionTests.setLogLevel`; stderr logging does not filter by it.
@@ -143,6 +145,7 @@ impl Render for Workbench {
                     .child(if self.editors.active().is_some() { self.text_editor_part(window, cx) } else { self.editor_part() }),
             )
             .child(self.status_bar(window, cx));
+        let modal_editor = self.keybindings_editor_widget(window, cx);
         let quick_input = self.quick_input_widget(window, cx);
         let context_menu = self.context_menu_widget(cx);
         let hover = self.hover_widget(window, cx);
@@ -155,6 +158,7 @@ impl Render for Workbench {
             .text_color(self.color("foreground"))
             .text_size(px(13.))
             .child(grid)
+            .children(modal_editor)
             // The quick input lives in the workbench container, inside the window border as the grid.
             .children(quick_input.map(|widget| div().absolute().left(px(inset)).top(px(inset)).child(widget)))
             .children(context_menu)
@@ -179,6 +183,7 @@ impl Workbench {
             commands: Commands::default(),
             skip_dialogs: false,
             keybindings: keyboard::Keybindings::default(),
+            keybindings_editor: keybindings_editor_view::KeybindingsEditor::new(cx),
             context_keys: HashMap::new(),
             log_level: "info".into(),
             status_message: None,
@@ -221,6 +226,7 @@ impl Workbench {
         workbench.register_explorer_actions();
         workbench.register_search_actions();
         workbench.register_file_participant_commands();
+        workbench.register_keybindings_editor_commands();
         // Keybindings resolve before the focused element sees the key, and with nothing focused too.
         let entity = cx.entity().downgrade();
         cx.intercept_keystrokes(move |event, window, cx| {
@@ -245,6 +251,10 @@ impl Workbench {
     /// A single click opens a preview editor and keeps the focus in the Explorer, a double click opens a pinned
     /// one and focuses it (`workbench.editor.enablePreview`).
     pub fn open_file(&mut self, path: PathBuf, pinned: bool, window: &mut Window, cx: &mut Context<Self>) {
+        // editorGroupFinder.ts `handleModalEditorPart`: an editor opened without preserveFocus closes the modal.
+        if pinned {
+            self.close_keybindings_editor(window, cx);
+        }
         match self.editors.find(&path) {
             Some(index) => {
                 self.editors.activate(index);
