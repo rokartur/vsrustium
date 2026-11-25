@@ -867,6 +867,10 @@ fn quick_input_default(key: &str) -> (ColorValue, ColorValue, ColorValue) {
         "list.filterMatchBorder" => (Key("editor.findMatchHighlightBorder"), Key("editor.findMatchHighlightBorder"), Key("contrastBorder")),
         "tree.tableOddRowsBackground" => (Transparent(&Key("foreground"), 0.04), Transparent(&Key("foreground"), 0.04), None),
         "tree.tableColumnsBorder" => (Hex("#CCCCCC20"), Hex("#61616120"), None),
+        "tree.indentGuidesStroke" => (Hex("#585858"), Hex("#A9A9A9"), Hex("#A9A9A9")),
+        "tree.inactiveIndentGuidesStroke" => {
+            (Transparent(&Key("tree.indentGuidesStroke"), 0.4), Transparent(&Key("tree.indentGuidesStroke"), 0.4), Transparent(&Key("tree.indentGuidesStroke"), 0.4))
+        }
         "keybindingTable.headerBackground" | "keybindingTable.rowsBackground" => {
             (Key("tree.tableOddRowsBackground"), Key("tree.tableOddRowsBackground"), Key("tree.tableOddRowsBackground"))
         }
@@ -943,6 +947,8 @@ fn quick_input_default_hc_light(key: &str) -> ColorValue {
         "listFilterWidget.background" => Key("editorWidget.background"),
         "listFilterWidget.shadow" => Key("widget.shadow"),
         "list.filterMatchBorder" => Key("contrastActiveBorder"),
+        "tree.indentGuidesStroke" => Hex("#A5A5A5"),
+        "tree.inactiveIndentGuidesStroke" => Transparent(&Key("tree.indentGuidesStroke"), 0.4),
         "keybindingTable.headerBackground" | "keybindingTable.rowsBackground" => Key("tree.tableOddRowsBackground"),
         _ => None,
     }

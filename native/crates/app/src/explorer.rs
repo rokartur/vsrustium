@@ -61,7 +61,7 @@ pub struct NewItem {
     pub is_dir: bool,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Row {
     pub path: PathBuf,
     pub name: String,
@@ -249,6 +249,15 @@ impl FileTree {
             self.set_expanded(&path, false);
         }
         self.expanded.clear();
+    }
+
+    /// abstractTree.ts `collapse(element, recursive)`: the folder and every folder or nest under it.
+    pub fn collapse_recursive(&mut self, path: &Path) {
+        let under: Vec<PathBuf> = self.expanded.iter().filter(|expanded| expanded.starts_with(path)).cloned().collect();
+        for expanded in under {
+            self.set_expanded(&expanded, false);
+        }
+        self.set_expanded(path, false);
     }
 
     /// explorerView.ts `collapseAll`: in a workspace with a root's child expanded, the expanded roots stay open.

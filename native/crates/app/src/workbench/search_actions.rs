@@ -393,6 +393,7 @@ impl Workbench {
                 }
                 match search_run {
                     Some(run) if workbench.search.focus.is_focused(window) => run(workbench, window, cx),
+                    None if workbench.search.focus.is_focused(window) => workbench.run_search_list_command(id, window, cx),
                     _ if workbench.explorer.focus.is_focused(window) => workbench.run_explorer_list_command(id, window, cx),
                     _ => return Outcome::error(format!("command '{id}' not found")),
                 }
@@ -458,6 +459,7 @@ impl Workbench {
         }
         context.insert("listFocus".into(), json!(true));
         context.insert("searchResultListFocused".into(), json!(true));
+        self.search_list_context(context);
         let focus = view.focused.as_ref();
         let is_file = matches!(focus, Some(RowKey::File(_)));
         let is_folder = matches!(focus, Some(RowKey::Folder(_)));
@@ -1037,8 +1039,11 @@ impl Workbench {
 
     /// A click on a result row: a match opens in a preview editor, keeping the focus (`onPointer`), or pinned and
     /// focused on a double click; a file or folder row expands or collapses.
-    pub(super) fn search_row_clicked(&mut self, key: &RowKey, click_count: usize, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn search_row_clicked(&mut self, key: &RowKey, click_count: usize, modifiers: gpui::Modifiers, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.search.focus.clone(), cx);
+        if self.search_selection_click(key, modifiers, cx) {
+            return;
+        }
         self.search.focus_and_select(Some(key.clone()));
         cx.notify();
         match key {
@@ -1090,7 +1095,7 @@ impl Workbench {
 
     /// `list.focusDown` and the others: the focus moves by `step` rows, without wrapping; the focused match opens in a
     /// preview editor, keeping the focus (`selectionNavigation`).
-    fn move_search_focus(&mut self, step: isize, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn move_search_focus(&mut self, step: isize, window: &mut Window, cx: &mut Context<Self>) {
         let rows = self.search.rows(&self.search_folders(), Some(&self.collapse_results()));
         if rows.is_empty() {
             return;
@@ -1149,7 +1154,7 @@ impl Workbench {
     /// `searchView.open`: the match's file opens with the match selected (`getEditorSelectionFromMatch`), a file's
     /// last match for a file row.
     // shortcut: with a replace string upstream opens the replace preview diff editor, which waits for the diff editor.
-    fn open_search_row(&mut self, key: &RowKey, preserve_focus: bool, pinned: bool, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn open_search_row(&mut self, key: &RowKey, preserve_focus: bool, pinned: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some((path, found)) = self.search_row_match(key) else { return };
         let mut range = found.range;
         if self.search.replace_active && !self.search.value(SearchField::Replace).is_empty()

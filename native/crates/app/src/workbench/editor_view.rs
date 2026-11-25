@@ -778,7 +778,7 @@ impl Workbench {
 
     /// scrollDecoration.css: `box-shadow: var(--vscode-scrollbar-shadow) 0 6px 6px -6px inset` over a 6px strip,
     /// which leaves the blurred top edge only: alpha falls off as a Gaussian with sigma 3px, half strength at the edge.
-    fn scroll_shadow(&self) -> gpui::Canvas<()> {
+    pub(super) fn scroll_shadow(&self) -> gpui::Canvas<()> {
         let shadow = self.theme.color("scrollbar.shadow");
         canvas(
             |_, _, _| {},
@@ -1837,7 +1837,7 @@ impl RulerLanes {
 #[derive(Default)]
 pub(super) struct Scrollbars {
     pub mouse_over: bool,
-    shown: bool,
+    pub(super) shown: bool,
     /// When `shown` last flipped, and the opacity the transition started from.
     changed: Option<(Instant, f32)>,
     hide_timer: Option<Task<()>>,
@@ -1845,7 +1845,7 @@ pub(super) struct Scrollbars {
 }
 
 impl Scrollbars {
-    fn set_shown(&mut self, shown: bool, now: Instant) {
+    pub(super) fn set_shown(&mut self, shown: bool, now: Instant) {
         if self.shown != shown {
             let from = self.opacity(now);
             self.shown = shown;
@@ -1854,7 +1854,7 @@ impl Scrollbars {
     }
 
     /// Linear from where the last change started: 100ms to visible, 800ms to invisible.
-    fn opacity(&self, now: Instant) -> f32 {
+    pub(super) fn opacity(&self, now: Instant) -> f32 {
         let target = if self.shown { 1. } else { 0. };
         let Some((at, from)) = self.changed else { return target };
         let duration = if self.shown { SCROLLBAR_FADE_IN } else { SCROLLBAR_FADE_OUT };
@@ -1862,7 +1862,7 @@ impl Scrollbars {
         from + (target - from) * progress
     }
 
-    fn in_transition(&self, now: Instant) -> bool {
+    pub(super) fn in_transition(&self, now: Instant) -> bool {
         self.opacity(now) != if self.shown { 1. } else { 0. }
     }
 }

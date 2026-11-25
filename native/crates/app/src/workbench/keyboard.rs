@@ -202,7 +202,7 @@ impl Workbench {
             return;
         }
         // The list's own keydown listener runs before the window's keybindings.
-        if !in_chord_mode && self.explorer_type_navigation(keystroke, resolution == Resolution::NoMatchingKb, window, cx) {
+        if !in_chord_mode && self.list_type_navigation(keystroke, resolution == Resolution::NoMatchingKb, window, cx) {
             cx.stop_propagation();
             return;
         }
@@ -322,6 +322,7 @@ impl Workbench {
         context.insert("textInputFocus".into(), json!(editor_focused));
         self.notifications_context(window, &mut context);
         self.layout_context(&mut context);
+        self.list_scroll_context(window, &mut context);
         context.insert("editorIsOpen".into(), json!(self.editors.active().is_some()));
         // viewDescriptorService.ts `<view id>.active`: the Changes view has no `when`, so it is always active.
         context.insert("workbench.scm.active".into(), json!(true));

@@ -45,6 +45,9 @@ mod keyboard;
 mod markdown_view;
 mod empty_view;
 mod layout;
+mod list_scroll;
+mod search_list;
+mod tree_view;
 mod local_history_actions;
 mod marker_navigation;
 pub mod menubar;
@@ -214,6 +217,7 @@ pub struct Workbench {
     pub explorer: explorer_actions::ExplorerState,
     pub side_bar_view: search_view::SideBarView,
     pub search: search_view::SearchView,
+    list_scrolls: list_scroll::ListScrolls,
     pub search_editors: search_editor_view::SearchEditors,
     pub search_editor_widget: search_editor_widget::SearchEditorWidget,
     pub webview_panels: webview_panels::WebviewPanels,
@@ -390,6 +394,7 @@ impl Workbench {
             explorer: explorer_actions::ExplorerState::new(cx),
             side_bar_view: search_view::SideBarView::Explorer,
             search: search_view::SearchView::new(cx),
+            list_scrolls: Default::default(),
             search_editors: HashMap::new(),
             search_editor_widget: search_editor_widget::SearchEditorWidget::new(cx),
             webview_panels: Default::default(),
@@ -441,6 +446,7 @@ impl Workbench {
         workbench.register_explorer_keyboard_commands();
         workbench.register_explorer_find_commands();
         workbench.register_type_navigation_commands();
+        workbench.register_list_scroll_commands();
         workbench.register_search_actions();
         workbench.register_layout_actions();
         workbench.register_search_editor_actions();
@@ -800,7 +806,13 @@ impl Workbench {
         let selection_outline = self.theme.color("contrastActiveBorder");
         let folder_name = tree.workspace.label();
         let has_folder_icons = self.file_icons.as_ref().is_some_and(FileIconTheme::has_folder_icons);
-        let rows = tree_rows.into_iter().enumerate().map(|(index, row)| {
+        let active: Vec<usize> = tree_rows.iter().enumerate().filter(|(_, row)| tree.focused.as_ref() == Some(&row.path) || tree.selected.contains(&row.path)).map(|(index, _)| index).collect();
+        let guides = self.tree_guides(list_scroll::ListId::Explorer, tree_rows.iter().map(|row| row.depth).collect(), &active, window);
+        // abstractTree.ts `AbstractFindController`: its 30px paddingTop keeps the sticky rows away while find is open.
+        let sticky = if self.explorer.find.is_open() { Vec::new() } else { self.tree_sticky_rows(list_scroll::ListId::Explorer, &tree_rows.iter().map(|row| row.depth).collect::<Vec<_>>()) };
+        let sticky_rows: Vec<_> = sticky.iter().map(|sticky| (sticky.index, tree_rows[sticky.index].clone())).collect();
+        let mut render_row = |(index, row): (usize, crate::explorer::Row)| {
+            let row_guides = guides.row(index, 0.);
             let twistie = match (row.is_dir || row.has_nests, row.expanded) {
                 (true, true) => Some("chevron-down"),
                 (true, false) => Some("chevron-right"),
@@ -891,6 +903,7 @@ impl Workbench {
                 })
                 // explorerviewlet.css: .explorer-item.cut is at half opacity. Its 0.3 for the other rows while a name is
                 // edited needs `.explorer-folders-view` twice in the ancestry, which the reference DOM never has.
+                .children(row_guides)
                 .when(is_cut, |row| row.opacity(0.5))
                 .when(is_selected, |row| {
                     // shortcut: dashed, GPUI has no dotted border.
@@ -958,8 +971,12 @@ impl Workbench {
                         }
                     }))
                 })
-        });
-        let rows: Vec<_> = rows.collect();
+        };
+        let rows: Vec<_> = tree_rows.into_iter().enumerate().map(&mut render_row).collect();
+        let sticky_elements = sticky_rows.into_iter().map(|row| render_row(row).into_any_element()).collect();
+        let sticky_container = self.tree_sticky_container(list_scroll::ListId::Explorer, &sticky, sticky_elements, cx);
+        // explorerView.ts `setEditable`: no horizontal scrolling while a name is edited.
+        let horizontal = self.horizontal_scrolling(list_scroll::ListId::Explorer) && self.explorer.edit.is_none();
         self.side_bar_frame()
             .text_color(foreground)
             .child(title)
@@ -976,6 +993,7 @@ impl Workbench {
                     .aria_label("Files Explorer")
                     .track_focus(&self.explorer.focus)
                     .overflow_y_scroll()
+                    .when(horizontal, |tree| tree.overflow_x_scroll())
                     .track_scroll(&self.explorer.scroll)
                     .flex_1()
                     .min_h_0()
@@ -984,9 +1002,10 @@ impl Workbench {
                     .on_mouse_down(MouseButton::Right, cx.listener(|workbench, event: &MouseDownEvent, window, cx| workbench.show_explorer_context_menu(None, event.position, window, cx)))
                     // abstractTree.ts `AbstractFindController.open`: `paddingTop: 30` while the find widget shows.
                     .when(self.explorer.find.is_open(), |tree| tree.pt(px(30.)))
-                    .children(rows)
+                    // `horizontalScrolling`: unwrapped rows as wide as the widest, at least the view.
+                    .child(div().flex_none().flex().flex_col().when(horizontal, |rows| rows.self_start().min_w_full().whitespace_nowrap()).children(rows))
                     .child(self.explorer_empty_area(cx)),
-                ).children(self.explorer_find_widget(window, cx)).into_any_element() }, window, cx))
+                ).child(self.list_scroll_layer(list_scroll::ListId::Explorer, cx)).children(sticky_container).children(self.explorer_find_widget(window, cx)).into_any_element() }, window, cx))
             // shortcut: extension webview views sit below the Explorer's panes, not in view_panes.rs; milestone 11 moves them in.
             .children(self.webview_view_panes(cx))
             // The pane view is laid out 5px shorter than the side bar content.

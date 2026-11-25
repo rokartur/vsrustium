@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
+use super::list_scroll::ListId;
 use gpui::{ClickEvent, Context, Div, FocusHandle, MouseButton, MouseDownEvent, Rgba, Task, UniformListScrollHandle, Window, div, prelude::*, px, uniform_list};
 use search::ripgrep::Cancellation;
 
@@ -114,7 +115,9 @@ pub struct SearchView {
     pub collapsed: HashMap<RowKey, bool>,
     pub focused: Option<RowKey>,
     /// Follows the focus (`selectionNavigation`) except on a right click, which moves only the focus.
-    pub selected: Option<RowKey>,
+    pub selected: Vec<RowKey>,
+    /// Where a Shift range starts (listWidget.ts `anchor`).
+    pub anchor: Option<RowKey>,
     /// The row under the mouse: it shows its actions in place of its count badge.
     pub hovered: Option<RowKey>,
     pub state: SearchUiState,
@@ -157,7 +160,8 @@ impl SearchView {
             pattern: None,
             collapsed: HashMap::new(),
             focused: None,
-            selected: None,
+            selected: Vec::new(),
+            anchor: None,
             hovered: None,
             state: SearchUiState::Idle,
             validation: None,
@@ -172,7 +176,8 @@ impl SearchView {
     }
 
     pub fn focus_and_select(&mut self, key: Option<RowKey>) {
-        self.selected = key.clone();
+        self.selected = key.iter().cloned().collect();
+        self.anchor = key.clone();
         self.focused = key;
     }
 
@@ -569,20 +574,34 @@ impl Workbench {
         let rows = Rc::new(self.search.rows(&self.search_folders(), Some(&self.collapse_results())));
         let tree_focused = self.search.focus.is_focused(window);
         let count = rows.len();
+        let depths: Vec<usize> = rows.iter().map(|row| row.depth).collect();
+        let is_active = |row: &ResultRow| self.search.focused.as_ref() == Some(&row.key) || self.search.selected.contains(&row.key);
+        let active: Vec<usize> = rows.iter().enumerate().filter(|(_, row)| is_active(row)).map(|(index, _)| index).collect();
+        let guides = Rc::new(self.tree_guides(ListId::Search, depths.clone(), &active, window));
+        let sticky = self.tree_sticky_rows(ListId::Search, &depths);
+        let sticky_rows = rows.clone();
+        let horizontal = self.horizontal_scrolling(ListId::Search);
+        let widest = self.widest_search_row(&rows);
         let list = uniform_list(
             "search-results-list",
             count,
-            cx.processor(move |workbench, range: std::ops::Range<usize>, _window, cx| range.map(|index| workbench.search_row(&rows[index], index, tree_focused, cx)).collect::<Vec<_>>()),
+            cx.processor(move |workbench, range: std::ops::Range<usize>, _window, cx| {
+                // The row's content box starts 4px into the element search_row returns.
+                range.map(|index| div().relative().w_full().when(horizontal, |row| row.whitespace_nowrap()).child(workbench.search_row(&rows[index], index, tree_focused, cx)).children(guides.row(index, 4.)).into_any_element()).collect::<Vec<_>>()
+            }),
         )
         .track_scroll(&self.search.scroll)
+        .when(horizontal, |list| list.with_horizontal_sizing_behavior(gpui::ListHorizontalSizingBehavior::Unconstrained).with_width_from_item(Some(widest)))
         .size_full();
-        div().id("search-results").track_focus(&self.search.focus).flex_1().min_h_0().child(list)
+        let sticky_elements = sticky.iter().map(|row| self.search_row(&sticky_rows[row.index], row.index, tree_focused, cx)).collect();
+        let sticky_container = self.tree_sticky_container(ListId::Search, &sticky, sticky_elements, cx);
+        div().id("search-results").relative().track_focus(&self.search.focus).flex_1().min_h_0().child(list).child(self.list_scroll_layer(ListId::Search, cx)).children(sticky_container)
     }
 
     fn search_row(&self, row: &ResultRow, index: usize, tree_focused: bool, cx: &mut Context<Self>) -> gpui::AnyElement {
         let foreground = self.foreground_or("sideBar.foreground");
         let is_focused = self.search.focused.as_ref() == Some(&row.key);
-        let is_selected = self.search.selected.as_ref() == Some(&row.key);
+        let is_selected = self.search.selected.contains(&row.key);
         let (selection, selection_foreground) = match tree_focused {
             true => (self.color("list.activeSelectionBackground"), self.theme.color("list.activeSelectionForeground")),
             false => (self.color("list.inactiveSelectionBackground"), self.theme.color("list.inactiveSelectionForeground")),
@@ -631,7 +650,7 @@ impl Workbench {
             })
             .on_click({
                 let key = key.clone();
-                cx.listener(move |workbench, event: &ClickEvent, window, cx| workbench.search_row_clicked(&key, event.click_count(), window, cx))
+                cx.listener(move |workbench, event: &ClickEvent, window, cx| workbench.search_row_clicked(&key, event.click_count(), event.modifiers(), window, cx))
             })
             .on_mouse_down(MouseButton::Right, cx.listener(move |workbench, event: &MouseDownEvent, window, cx| workbench.show_search_context_menu(&key, event.position, window, cx)));
         // A uniform list sizes its items to their content; the wrapper takes the list's width.

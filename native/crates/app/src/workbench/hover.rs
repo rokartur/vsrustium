@@ -93,8 +93,8 @@ struct HoverTarget {
     content: HoverContent,
     options: HoverOptions,
     bounds: Bounds<Pixels>,
-    /// `target.x` of a mouse placed hover: the last pointer x plus 10.
-    mouse_x: f32,
+    /// `target.x` of a mouse placed hover: the last pointer x plus 10; none for a hover shown from the keyboard.
+    mouse_x: Option<f32>,
 }
 
 struct ShownHover {
@@ -136,7 +136,7 @@ impl Workbench {
         canvas(
             |bounds, window, _| window.insert_hitbox(bounds, HitboxBehavior::Normal),
             move |bounds, hitbox, window, _| {
-                let target = HoverTarget { id: id.clone(), content: content.clone(), options, bounds, mouse_x: 0. };
+                let target = HoverTarget { id: id.clone(), content: content.clone(), options, bounds, mouse_x: None };
                 let pressed = hitbox.clone();
                 // Capture phase, as the reference's listeners: a target's own handlers may stop the event.
                 window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
@@ -176,12 +176,12 @@ impl Workbench {
             return;
         }
         if let Some(current) = self.hovers.target.as_mut().filter(|current| current.id == target.id) {
-            current.mouse_x = mouse_x;
+            current.mouse_x = Some(mouse_x);
             return;
         }
         // Entering a target leaves the previous one first, whichever target's handler runs first.
         self.leave_hover_target(cx);
-        let target = HoverTarget { mouse_x, ..target.clone() };
+        let target = HoverTarget { mouse_x: Some(mouse_x), ..target.clone() };
         // Back on the target within the mouse tracker's delay: the hover stays.
         if self.hovers.shown.as_ref().is_some_and(|shown| shown.target.id == target.id) {
             self.hovers.hiding = None;
@@ -227,6 +227,13 @@ impl Workbench {
                 }
             });
         }));
+    }
+
+    /// hoverService.ts `showManagedHover` (`list.showHover`): the target's hover at once, placed by its bounds.
+    pub(super) fn show_managed_hover(&mut self, id: impl Into<ElementId>, content: HoverContent, options: HoverOptions, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
+        self.hovers.target = Some(HoverTarget { id: id.into(), content, options, bounds, mouse_x: None });
+        self.hovers.dismissed = false;
+        self.show_hover(false, window, cx);
     }
 
     fn show_hover(&mut self, fade_in: bool, window: &mut Window, cx: &mut Context<Self>) {
@@ -296,7 +303,7 @@ impl Workbench {
         let viewport = window.viewport_size();
         let target = hover.target.bounds;
         let target = Bounds { origin: point(f32::from(target.origin.x), f32::from(target.origin.y)), size: Size { width: f32::from(target.size.width), height: f32::from(target.size.height) } };
-        let mouse_x = hover.target.options.follows_mouse.then_some(hover.target.mouse_x);
+        let mouse_x = hover.target.mouse_x.filter(|_| hover.target.options.follows_mouse);
         let layout = layout_hover(Size { width: f32::from(viewport.width), height: f32::from(viewport.height) }, target, size, &hover.target.options, mouse_x);
         let radius = if layout.pointer.is_some() { POINTER_RADIUS } else { RADIUS };
         let foreground = self.color("editorHoverWidget.foreground");
