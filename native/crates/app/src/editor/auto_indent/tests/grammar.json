@@ -1,0 +1,9 @@
+{
+	"scopeName": "source.indentation-test",
+	"patterns": [
+		{ "name": "comment.line", "match": "//.*$" },
+		{ "name": "comment.block", "begin": "/\\*", "end": "\\*/" },
+		{ "name": "string.quoted.double", "begin": "\"", "end": "\"" },
+		{ "name": "string.quoted.single", "begin": "'", "end": "'" }
+	]
+}

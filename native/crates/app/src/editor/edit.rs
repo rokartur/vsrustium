@@ -762,8 +762,17 @@ impl OpenEditor {
     /// `executeCommand` of a command whose cursor state is `trackSelection` of the primary selection
     /// (replaceAllCommand.ts): the primary cursor alone stays.
     pub fn execute_edits_tracking_primary(&mut self, edits: Vec<(Position, Position, String)>, reason: EditReason) -> Option<ContentChanged> {
+        self.execute_edits_tracking_primary_on_empty(edits, None, reason)
+    }
+
+    /// `execute_edits_tracking_primary` with `trackSelection`'s `trackPreviousOnEmpty`: whether an empty
+    /// primary selection sticks to the character before it, else as at the line end.
+    pub fn execute_edits_tracking_primary_on_empty(&mut self, edits: Vec<(Position, Position, String)>, track_previous_on_empty: Option<bool>, reason: EditReason) -> Option<ContentChanged> {
         let primary = self.selection();
-        let sticks = track_selection_sticks(&self.document.lines, primary);
+        let sticks = match track_previous_on_empty.filter(|_| primary.is_empty()) {
+            Some(previous) => [previous; 2],
+            None => track_selection_sticks(&self.document.lines, primary),
+        };
         let edits = edits.into_iter().map(|(start, end, text)| (start, end, text, false)).collect();
         self.execute_tracked(edits, EndSelections::Tracked { selections: vec![(primary, sticks)], collapse_grown_carets: false }, reason)
     }

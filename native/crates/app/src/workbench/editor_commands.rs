@@ -291,8 +291,24 @@ impl Workbench {
             let from_empty_selection = metadata["isFromEmptySelection"] == json!(true);
             let Some(editor) = workbench.editors.active() else { return Outcome::done() };
             let overrides = Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
-            let overtype = workbench.overtype && workbench.settings.lock().unwrap().get_value(Some("editor.overtypeOnPaste"), &overrides) != Some(json!(false));
-            workbench.run_on_active_editor(|editor: &mut OpenEditor| editor.paste(clipboard.text(), from_empty_selection, multicursor_text.as_deref(), overtype), cx)
+            let settings = workbench.settings.lock().unwrap();
+            let overtype = workbench.overtype && settings.get_value(Some("editor.overtypeOnPaste"), &overrides) != Some(json!(false));
+            let indent_on_paste = settings.get_value(Some("editor.autoIndentOnPaste"), &overrides) == Some(json!(true));
+            let within_string = settings.get_value(Some("editor.autoIndentOnPasteWithinString"), &overrides) != Some(json!(false));
+            drop(settings);
+            workbench.run_indenting(
+                |editor, auto| {
+                    // codeEditorWidget.ts `_paste`: the pasted range runs from the selection start before to the one after.
+                    let start = editor.selection().start();
+                    let mut changes: Vec<_> = editor.paste(clipboard.text(), from_empty_selection, multicursor_text.as_deref(), overtype).into_iter().collect();
+                    if indent_on_paste {
+                        let end = editor.selection().start();
+                        changes.extend(editor.auto_indent_on_paste(start, end, auto, within_string));
+                    }
+                    changes
+                },
+                cx,
+            )
         });
     }
 

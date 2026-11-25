@@ -269,6 +269,13 @@ impl Tokenization {
         self.brackets = OnceCell::new();
     }
 
+    /// textModelTokens.ts `isCheapToTokenize`: line `index` is tokenized, or the first one not yet and shorter
+    /// than `CHEAP_TOKENIZATION_LENGTH_LIMIT` (2048).
+    pub fn is_cheap_to_tokenize(&self, lines: &[String], index: usize) -> bool {
+        let first_invalid = self.lines.borrow().len();
+        self.grammar.is_none() || index < first_invalid || (index == first_invalid && lines[index].encode_utf16().count() < 2048)
+    }
+
     /// The bracket pairs hold token styles of the theme they were paired under.
     pub fn theme_changed(&mut self) {
         self.brackets = OnceCell::new();
