@@ -3,6 +3,9 @@
 
 pub mod auto_replies;
 pub mod colors;
+pub mod completion_item;
+pub mod completion_model;
+pub mod completion_service;
 pub mod keys;
 pub mod link_parsing;
 pub mod mouse;
@@ -128,12 +131,16 @@ pub struct TerminalInstance {
     pub on_input: Option<Box<dyn FnMut()>>,
     /// terminalProcess.ts `shellType`, from the foreground process name.
     pub shell_type: Option<&'static str>,
+    /// commandDetectionCapability.ts `promptInputModel`, fed by the B, C, D and P sequences.
+    pub prompt_input: prompt_input::PromptInputModel,
 }
 
 /// What one chunk of process output did: its text (`onData`) and the shell integration events in stream order.
 pub struct Processed {
     pub text: String,
     pub shell_events: Vec<ShellEvent>,
+    /// The prompt input changed (`onDidChangeInput`).
+    pub input_changed: bool,
 }
 
 /// terminalProcessManager.ts `ErrorLaunchThresholdDuration`: an exit this soon after launch is a failed launch.
@@ -173,6 +180,7 @@ impl TerminalInstance {
             process_input: None,
             on_input: None,
             shell_type: None,
+            prompt_input: prompt_input::PromptInputModel::default(),
         };
         if instance.launch.extension_pty {
             return (instance, None);
@@ -212,6 +220,7 @@ impl TerminalInstance {
         let text = self.decode(bytes);
         let mut shell_events = Vec::new();
         let mut fed = 0;
+        let mut input_changed = false;
         for sequence in self.shell_integration.scan(&text) {
             if self.shell_integration.executing() && sequence.start > fed {
                 shell_events.push(ShellEvent::ExecutionData(text[fed..sequence.start].to_owned()));
@@ -220,6 +229,7 @@ impl TerminalInstance {
             fed = sequence.end;
             let cursor = self.buffer_cursor();
             let command_start = self.shell_integration.command_start_point();
+            input_changed |= self.prompt_sequence(&sequence.payload, cursor);
             for event in self.shell_integration.handle(&sequence.payload, cursor) {
                 shell_events.push(match event {
                     ShellEvent::CommandExecuted(command) if command.command_line.is_empty() => match command_start {
@@ -238,7 +248,43 @@ impl TerminalInstance {
             shell_events.push(ShellEvent::ExecutionData(text[fed..].to_owned()));
         }
         self.feed(&text[fed..], colors);
-        Processed { text, shell_events }
+        input_changed |= self.prompt_input.sync(&self.term);
+        Processed { text, shell_events, input_changed }
+    }
+
+    /// The prompt input model's side of shellIntegrationAddon.ts: B starts the input, C and D end it, `P;Prompt=`
+    /// and `P;ContinuationPrompt=` tell it the prompt. Returns whether the input changed.
+    fn prompt_sequence(&mut self, payload: &str, cursor: BufferPoint) -> bool {
+        let (ps, pt) = payload.split_once(';').unwrap_or((payload, ""));
+        if ps != "633" && ps != "133" {
+            return false;
+        }
+        let mut args = pt.split(';');
+        match args.next() {
+            Some("B") => self.prompt_input.command_start(&self.term, cursor),
+            Some("C") => {
+                self.prompt_input.command_executed();
+                true
+            }
+            Some("D") => {
+                self.prompt_input.command_finished();
+                true
+            }
+            Some("P") if ps == "633" => {
+                let value = shell_integration::deserialize_message(args.next().unwrap_or_default());
+                match value.split_once('=') {
+                    // `_updatePromptTerminator`: the prompt's last line without SGR sequences.
+                    Some(("Prompt", prompt)) => {
+                        let prompt = strip_sgr(prompt);
+                        let last_line = prompt.rsplit('\n').next().unwrap_or_default();
+                        self.prompt_input.set_last_prompt_line(&self.term, last_line)
+                    }
+                    Some(("ContinuationPrompt", prompt)) => self.prompt_input.set_continuation_prompt(&self.term, &strip_prompt_escapes(prompt)),
+                    _ => false,
+                }
+            }
+            _ => false,
+        }
     }
 
     fn feed(&mut self, text: &str, colors: &colors::TerminalColors) {
@@ -312,6 +358,7 @@ impl TerminalInstance {
         let changed = process.as_ref().is_some_and(|process| *process != self.process_title) || cwd != self.cwd;
         if let Some(process) = process {
             self.shell_type = shell_type(&process);
+            self.prompt_input.set_is_fish(self.shell_type == Some("fish"));
             self.process_title = process;
         }
         self.cwd = cwd;
@@ -341,6 +388,7 @@ impl TerminalInstance {
     pub fn input(&mut self, data: &str) {
         self.term.scroll_display(Scroll::Bottom);
         self.term.selection = None;
+        self.prompt_input.user_input(data);
         self.write_to_pty(data.as_bytes());
         if let Some(on_input) = &mut self.on_input {
             on_input();
@@ -498,6 +546,18 @@ pub fn shell_type(process: &str) -> Option<&'static str> {
         ("python", "python"), ("julia", "julia"), ("nu", "nu"), ("node", "node"), ("xonsh", "xonsh"),
     ];
     types.iter().find(|(process, _)| *process == name).map(|(_, kind)| *kind)
+}
+
+/// shellIntegrationAddon.ts `value.replace(/\x1b\[[0-9;]*m/g, '')`.
+fn strip_sgr(text: &str) -> String {
+    let sgr = regex::Regex::new(r"\x1b\[[0-9;]*m").unwrap();
+    sgr.replace_all(text, "").into_owned()
+}
+
+/// strings.ts `removeAnsiEscapeCodesFromPrompt`: escapes, then bash's `\[...\]` non-printing markers.
+fn strip_prompt_escapes(text: &str) -> String {
+    let non_printable = regex::Regex::new(r"\\\[.*?\\\]").unwrap();
+    non_printable.replace_all(&crate::tasks::problem_collector::strip_ansi(text), "").into_owned()
 }
 
 fn paste_data(text: &str, bracketed: bool) -> String {

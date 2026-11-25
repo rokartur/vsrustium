@@ -2,7 +2,7 @@
 //! side by side when split, with the tabs list at their right once there are two terminals.
 // shortcut: the view is an editor tab of the group, not a panel view; the panel part is milestone 11's.
 
-mod grid;
+pub(super) mod grid;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -65,9 +65,9 @@ pub struct TerminalView {
     groups: Vec<Group>,
     active_group: usize,
     next_id: u32,
-    metrics: Option<CellMetrics>,
+    pub(super) metrics: Option<CellMetrics>,
     /// Where each instance's pane painted, for its mouse events.
-    pane_bounds: HashMap<u32, Bounds<Pixels>>,
+    pub(super) pane_bounds: HashMap<u32, Bounds<Pixels>>,
     hovered: Option<u32>,
     /// The instance a left button drag selects in.
     selecting: Option<u32>,
@@ -85,6 +85,7 @@ pub struct TerminalView {
     pub(super) find: super::terminal_find::TerminalFind,
     /// What the extension host was told (mainThreadTerminalService.ts): the active terminal and the events it asked for.
     pub(super) host: HostTerminals,
+    pub(super) suggest: super::terminal_suggest::TerminalSuggest,
 }
 
 #[derive(Default)]
@@ -140,6 +141,7 @@ impl TerminalView {
             find: super::terminal_find::TerminalFind::new(cx),
             has_been_created: false,
             host: HostTerminals::default(),
+            suggest: Default::default(),
         }
     }
 
@@ -327,6 +329,7 @@ impl Workbench {
         }
         self.register_external_terminal_actions();
         self.register_terminal_contrib_actions();
+        self.register_terminal_suggest_actions();
         self.register_terminal_find_actions();
     }
 
@@ -493,7 +496,11 @@ impl Workbench {
     fn terminal_events(&mut self, id: u32, events: Vec<PtyEvent>, window: &mut Window, cx: &mut Context<Self>) -> bool {
         for event in events {
             match event {
-                PtyEvent::Data(bytes) => self.terminal_data(id, &bytes, cx),
+                PtyEvent::Data(bytes) => {
+                    if self.terminal_data(id, &bytes, cx) {
+                        self.sync_terminal_suggest(id, window, cx);
+                    }
+                }
                 PtyEvent::Exit(code) => {
                     if let Some(instance) = self.terminal_view.instance_mut(id) {
                         instance.exited(code);
@@ -507,11 +514,13 @@ impl Workbench {
     }
 
     /// Output of the process, a PTY's or an extension pty's: the screen, the clipboard and what the host listens to.
-    pub(super) fn terminal_data(&mut self, id: u32, bytes: &[u8], cx: &mut Context<Self>) {
+    /// Returns whether the prompt input changed.
+    pub(super) fn terminal_data(&mut self, id: u32, bytes: &[u8], cx: &mut Context<Self>) -> bool {
         let colors = TerminalColors::new(&self.theme);
         let auto_replies = self.setting("terminal.integrated.autoReplies");
-        let Some(instance) = self.terminal_view.instance_mut(id) else { return };
+        let Some(instance) = self.terminal_view.instance_mut(id) else { return false };
         let processed = instance.process(bytes, &colors);
+        let input_changed = processed.input_changed;
         instance.answer_auto_replies(&auto_replies, &processed.text);
         // xtermTerminal.ts loads ClipboardAddon: OSC 52 writes go to the clipboard and `?` reads it back.
         if let Some(text) = instance.clipboard_requests.drain(..).last() {
@@ -525,6 +534,7 @@ impl Workbench {
         self.task_output(id, &processed.text, cx);
         self.terminal_output_to_host(id, processed);
         cx.notify();
+        input_changed
     }
 
     /// terminalInstance.ts `_onProcessExit`: a non-zero exit shows its message, then the instance goes.
@@ -795,6 +805,7 @@ impl Workbench {
         let alt_buffer = view.active_instance_id().and_then(|id| view.instance(id)).is_some_and(|instance| instance.term.mode().contains(TermMode::ALT_SCREEN));
         context.insert("terminalAltBufferActive".into(), json!(alt_buffer));
         context.insert("terminal.active".into(), json!(true));
+        self.terminal_suggest_context(context);
         if self.terminal_view_visible() {
             context.insert("view".into(), json!(TERMINAL_VIEW_ID));
         }
@@ -823,7 +834,10 @@ impl Workbench {
                 let id = instance.id;
                 cx.defer_in(window, move |workbench, window, cx| workbench.dispose_terminal(id, EXIT_REASON_USER, window, cx));
             }
-            KeyResult::Send(data) => instance.input(&data),
+            KeyResult::Send(data) => {
+                instance.input(&data);
+                self.terminal_view.suggest.user_data(&data);
+            }
             KeyResult::PageUp => instance.scroll(Scroll::PageUp),
             KeyResult::PageDown => instance.scroll(Scroll::PageDown),
             KeyResult::SelectAll => instance.select_all(),
@@ -921,6 +935,9 @@ impl Workbench {
         }
         if let Some(find) = self.terminal_find_widget(window, cx) {
             panes = panes.child(find);
+        }
+        if let Some(suggest) = self.terminal_suggest_widget(window, cx) {
+            panes = panes.child(suggest);
         }
         let tabs_left = self.setting("terminal.integrated.tabs.location") == "left";
         div()
@@ -1076,6 +1093,8 @@ impl Workbench {
 
     fn terminal_mouse_down(&mut self, id: u32, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.terminal_view.set_active(id);
+        // terminalSuggestAddon.ts: a click in the terminal hides the widget.
+        self.hide_terminal_suggest(false);
         window.focus(&self.terminal_view.focus, cx);
         cx.stop_propagation();
         let force_selection = event.modifiers.alt && self.setting("terminal.integrated.macOptionClickForcesSelection") == true;

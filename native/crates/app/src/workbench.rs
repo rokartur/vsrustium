@@ -81,6 +81,7 @@ mod external_terminal;
 mod terminal_contrib;
 mod terminal_find;
 mod terminal_links;
+mod terminal_suggest;
 pub mod task_quick_pick;
 pub(crate) mod task_service;
 pub mod quick_access;

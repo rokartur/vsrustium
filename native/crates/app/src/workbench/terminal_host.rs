@@ -139,7 +139,9 @@ impl Workbench {
                 let id = arg(0).as_u64().unwrap_or_default() as u32;
                 self.run_terminal_command(id, arg(1).as_str().unwrap_or_default().to_owned(), window, cx);
             }
-            // Profile, completion, quick fix and link providers register here; the port has no UI that asks them yet.
+            ("MainThreadTerminalService", "$registerCompletionProvider") => self.register_terminal_completion_provider(&request.args),
+            ("MainThreadTerminalService", "$unregisterCompletionProvider") => self.unregister_terminal_completion_provider(arg(0).as_str().unwrap_or_default()),
+            // Profile, quick fix and link providers register here; the port has no UI that asks them yet.
             _ => {}
         }
         Outcome::done()
