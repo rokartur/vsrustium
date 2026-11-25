@@ -59,7 +59,7 @@ fn the_editor_menu_moves_the_cursor_to_the_pointer_unless_a_selection_holds_it(c
     let (_dir, workbench, cx) = workbench_with("editor-menu", &["a.txt"], cx);
     let pointer = point(px(400.), px(200.));
     workbench.update_in(cx, |workbench, window, cx| workbench.show_editor_context_menu(1, 3.2, pointer, window, cx));
-    assert_eq!(menu_titles(&workbench, cx), ["Change All Occurrences", "---", "Cut", "Copy", "Paste", "---", "Command Palette..."]);
+    assert_eq!(menu_titles(&workbench, cx), ["(Go to Definition)", "(Go to Declaration)", "(Go to Type Definition)", "(Go to Implementations)", "(Go to References)", "---", "---", "Change All Occurrences", "---", "Cut", "Copy", "Paste", "---", "Command Palette..."]);
     let selections = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().selections.clone());
     assert_eq!(selections(cx), [Selection::caret(Position::new(1, 3))]);
     cx.simulate_keystrokes("escape");
@@ -141,7 +141,7 @@ fn shift_f10_shows_the_editor_menu_below_the_cursor_without_moving_it(cx: &mut T
     let cursor = Selection::caret(Position::new(1, 3));
     workbench.update(cx, |workbench, _| workbench.editors.active_mut().unwrap().set_selections(vec![cursor]));
     workbench.update_in(cx, |workbench, window, cx| workbench.execute_command("editor.action.showContextMenu", vec![], window, cx));
-    assert_eq!(menu_titles(&workbench, cx), ["Change All Occurrences", "---", "Cut", "Copy", "Paste", "---", "Command Palette..."]);
+    assert_eq!(menu_titles(&workbench, cx), ["(Go to Definition)", "(Go to Declaration)", "(Go to Type Definition)", "(Go to Implementations)", "(Go to References)", "---", "---", "Change All Occurrences", "---", "Cut", "Copy", "Paste", "---", "Command Palette..."]);
     let (origin, anchor, selections) = workbench.update_in(cx, |workbench, window, _| (workbench.context_menu.as_ref().unwrap().levels[0].origin, workbench.cursor_anchor(window).unwrap(), workbench.editors.active().unwrap().selections.clone()));
     assert_eq!(selections, [cursor]);
     assert!(origin.x >= anchor.x - px(1.) && origin.y >= anchor.y - px(1.), "{origin:?} at {anchor:?}");

@@ -43,6 +43,7 @@ pub enum MenuId {
     EditorContext,
     EditorContextCopy,
     EditorContextShare,
+    EditorContextPeek,
     EditorTitleContext,
     EditorLineNumberContext,
     EditorTitleContextShare,
@@ -151,6 +152,9 @@ const WORKBENCH_MENUS: &[Row] = &[
         Some("activeEditorCanRevert || resourceScheme != 'untitled' && foldersViewVisible && sideBarFocus"),
     ),
     (MenuId::MenubarGoMenu, None, "workbench.action.quickOpen", "Go to &&File...", "3_global_nav", 1., None, None),
+    // searchActionsSymbol.ts and gotoSymbolQuickAccess.ts
+    (MenuId::MenubarGoMenu, None, "workbench.action.showAllSymbols", "Go to Symbol in &&Workspace...", "3_global_nav", 2., None, None),
+    (MenuId::MenubarGoMenu, None, "workbench.action.gotoSymbol", "Go to &&Symbol in Editor...", "4_symbol_nav", 1., None, None),
     // bracketMatching.ts
     (MenuId::MenubarGoMenu, None, "editor.action.jumpToBracket", "Go to &&Bracket", "5_infile_nav", 2., None, None),
     // editorExtensions.ts and clipboard.ts
@@ -220,6 +224,26 @@ const WORKBENCH_MENUS: &[Row] = &[
     (MenuId::EditorContext, Some(MenuId::EditorContextShare), "", "Share", "11_share", -1., Some("resourceScheme != 'output' && editorTextFocus"), None),
     (MenuId::ExplorerContext, Some(MenuId::ExplorerContextShare), "", "Share", "11_share", -1., None, None),
     (MenuId::EditorTitleContext, Some(MenuId::EditorTitleContextShare), "", "Share", "11_share", -1., Some("!multipleEditorsSelectedInGroup"), None),
+    // goToCommands.ts
+    (MenuId::EditorContext, None, "editor.action.revealDefinition", "Go to Definition", "navigation", 1.1, None, Some("editorHasDefinitionProvider")),
+    (MenuId::EditorContext, None, "editor.action.revealDeclaration", "Go to Declaration", "navigation", 1.3, None, Some("editorHasDeclarationProvider && !isInEmbeddedEditor")),
+    (MenuId::EditorContext, None, "editor.action.goToTypeDefinition", "Go to Type Definition", "navigation", 1.4, None, Some("editorHasTypeDefinitionProvider")),
+    (MenuId::EditorContext, None, "editor.action.goToImplementation", "Go to Implementations", "navigation", 1.45, None, Some("editorHasImplementationProvider")),
+    (MenuId::EditorContext, None, "editor.action.goToReferences", "Go to References", "navigation", 1.45, None, Some("editorHasReferenceProvider && !inReferenceSearchEditor && !isInEmbeddedEditor")),
+    (MenuId::EditorContext, Some(MenuId::EditorContextPeek), "", "Peek", "navigation", 100., None, None),
+    (MenuId::EditorContextPeek, None, "editor.action.peekDefinition", "Peek Definition", "peek", 2., None, Some("editorHasDefinitionProvider && !inReferenceSearchEditor && !isInEmbeddedEditor")),
+    (MenuId::EditorContextPeek, None, "editor.action.peekDeclaration", "Peek Declaration", "peek", 3., None, Some("editorHasDeclarationProvider && !inReferenceSearchEditor && !isInEmbeddedEditor")),
+    (MenuId::EditorContextPeek, None, "editor.action.peekTypeDefinition", "Peek Type Definition", "peek", 4., None, Some("editorHasTypeDefinitionProvider && !inReferenceSearchEditor && !isInEmbeddedEditor")),
+    (MenuId::EditorContextPeek, None, "editor.action.peekImplementation", "Peek Implementations", "peek", 5., None, Some("editorHasImplementationProvider && !inReferenceSearchEditor && !isInEmbeddedEditor")),
+    (MenuId::EditorContextPeek, None, "editor.action.referenceSearch.trigger", "Peek References", "peek", 6., None, Some("editorHasReferenceProvider && !inReferenceSearchEditor && !isInEmbeddedEditor")),
+    // callHierarchy.contribution.ts and typeHierarchy.contribution.ts
+    (MenuId::EditorContextPeek, None, "editor.showCallHierarchy", "Peek Call Hierarchy", "navigation", 1000., None, Some("editorHasCallHierarchyProvider && !inReferenceSearchEditor && !isInEmbeddedEditor")),
+    (MenuId::EditorContextPeek, None, "editor.showTypeHierarchy", "Peek Type Hierarchy", "navigation", 1000., None, Some("editorHasTypeHierarchyProvider && !inReferenceSearchEditor && !isInEmbeddedEditor")),
+    (MenuId::MenubarGoMenu, None, "editor.action.revealDefinition", "Go to &&Definition", "4_symbol_nav", 2., None, None),
+    (MenuId::MenubarGoMenu, None, "editor.action.revealDeclaration", "Go to &&Declaration", "4_symbol_nav", 3., None, None),
+    (MenuId::MenubarGoMenu, None, "editor.action.goToTypeDefinition", "Go to &&Type Definition", "4_symbol_nav", 3., None, None),
+    (MenuId::MenubarGoMenu, None, "editor.action.goToImplementation", "Go to &&Implementations", "4_symbol_nav", 4., None, None),
+    (MenuId::MenubarGoMenu, None, "editor.action.goToReferences", "Go to &&References", "4_symbol_nav", 5., None, None),
     // multicursor.ts, clipboard.ts and quickAccess.contribution.ts: the EditorContext items of the commands the port has.
     (MenuId::EditorContext, None, "editor.action.changeAll", "Change All Occurrences", "1_modification", 1.2, Some("!editorReadonly && editorTextFocus"), None),
     (MenuId::EditorContext, None, "editor.action.clipboardCutAction", "Cut", "9_cutcopypaste", 1., Some("!editorReadonly"), None),

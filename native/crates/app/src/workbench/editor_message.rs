@@ -5,7 +5,7 @@
 use std::ops::Range;
 use std::time::Duration;
 
-use gpui::{Animation, AnimationExt, Bounds, Context, Div, InteractiveElement, IntoElement, ParentElement, PathBuilder, Size, Stateful, StatefulInteractiveElement, Styled, Task, TextRun, Window, canvas, deferred, div, point, px};
+use gpui::{Animation, AnimationExt, Bounds, Context, Div, InteractiveElement, IntoElement, ParentElement, PathBuilder, SharedString, Size, Stateful, StatefulInteractiveElement, Styled, Task, TextRun, Window, canvas, deferred, div, point, px};
 use serde_json::Value;
 
 use super::Workbench;

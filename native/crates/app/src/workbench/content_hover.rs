@@ -280,12 +280,8 @@ impl Workbench {
         // shortcut: the hover takes no keyboard focus yet, so a second run leaves it as it is; port its focus and
         // scroll commands with the hover's keyboard navigation.
         self.commands.register("editor.action.showHover", |workbench, _, _, cx| {
-            if workbench.content_hover.shown.is_none()
-                && let Some(editor) = workbench.editors.active()
-            {
-                let head = editor.selection().head;
-                let anchor = Anchor { model_id: editor.model_id, line: head.line, start: head.column, end: head.column };
-                workbench.start_showing_or_update_hover(Some(anchor), Mode::Immediate, true, None, cx);
+            if workbench.content_hover.shown.is_none() {
+                workbench.show_content_hover_at_cursor(cx);
             }
             crate::commands::Outcome::done()
         });
@@ -293,6 +289,14 @@ impl Workbench {
             workbench.hide_content_hover(cx);
             crate::commands::Outcome::done()
         });
+    }
+
+    /// `showContentHover` at the primary cursor, `Immediate` from the keyboard.
+    pub(super) fn show_content_hover_at_cursor(&mut self, cx: &mut Context<Self>) {
+        let Some(editor) = self.editors.active() else { return };
+        let head = editor.selection().head;
+        let anchor = Anchor { model_id: editor.model_id, line: head.line, start: head.column, end: head.column };
+        self.start_showing_or_update_hover(Some(anchor), Mode::Immediate, true, None, cx);
     }
 
     /// `_startShowingOrUpdateHover`: whether the hover shows or will show for `anchor`.
@@ -449,6 +453,7 @@ impl Workbench {
             Some(editor) => {
                 let mut parts = marker_parts(editor, anchor);
                 parts.extend(self.unicode_parts(editor, anchor));
+                parts.extend(self.definition_link_hover_parts(editor, anchor));
                 parts
             }
             None => Vec::new(),

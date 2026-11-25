@@ -40,9 +40,9 @@ use crate::editor::folding::FoldDecoration;
 use crate::editor::whitespace::whitespace_marks;
 use crate::theme::ThemeKind;
 
-const EDITOR_FONT: &str = "Menlo";
+pub(super) const EDITOR_FONT: &str = "Menlo";
 /// `editor.fontSize` at zoom level 0.
-const EDITOR_FONT_SIZE: f32 = 12.;
+pub(super) const EDITOR_FONT_SIZE: f32 = 12.;
 /// lineDecorationsWidth 10 plus 16 for the folding controls (editorOptions.ts layout).
 const DECORATIONS_WIDTH: f32 = 26.;
 /// The workbench text editor sets lineNumbersMinChars to 3 (textEditor.ts).
@@ -301,17 +301,28 @@ impl Workbench {
             segments.insert(0, folder.name.clone());
         }
         let foreground = self.color("breadcrumb.foreground");
-        let last = segments.len() - 1;
-        let items = segments.into_iter().enumerate().map(|(index, segment)| {
+        let file = segments.len() - 1;
+        let symbols = self.breadcrumb_symbols(editor);
+        let last = file + symbols.len();
+        let symbol_items = symbols.into_iter().map(|(kind, name)| {
+            let codicon = kind.map(crate::symbol_icons::codicon);
+            let color = codicon.and_then(crate::symbol_icons::color_key).and_then(|key| self.theme.color(key)).unwrap_or(foreground);
+            let icon = codicon.filter(|_| self.setting("breadcrumbs.icons") != false).map(|codicon| self.icon(codicon, 16., 16., color));
+            (icon, name)
+        });
+        let file_items = segments.into_iter().enumerate().map(|(index, segment)| {
             // The 16px before each item is the item's own ::before; folders have no icon in Seti, the file does.
-            let file_icon = if index == last { self.document_icon(editor, BREADCRUMBS_HEIGHT, foreground) } else { None };
+            let file_icon = if index == file { self.document_icon(editor, BREADCRUMBS_HEIGHT, foreground) } else { None };
+            (file_icon, segment)
+        });
+        let items = file_items.chain(symbol_items).enumerate().map(|(index, (icon, segment))| {
             div()
                 .flex()
                 .items_center()
                 .pl(px(16.))
                 .pr(px(8.))
                 .whitespace_nowrap()
-                .when_some(file_icon, |item, icon| item.child(icon.mr(px(6.))))
+                .when_some(icon, |item, icon| item.child(icon.mr(px(6.))))
                 .child(segment)
                 .when(index < last, |item| item.child(self.icon("chevron-right", 16., 16., foreground).ml(px(8.))))
         });
@@ -422,6 +433,7 @@ impl Workbench {
             .on_modifiers_changed(cx.listener(|workbench, event: &gpui::ModifiersChangedEvent, _, cx| {
                 workbench.text_drag_modifiers_changed(event.modifiers, cx);
                 workbench.content_hover_modifiers_changed(event.modifiers, cx);
+                workbench.definition_link_modifiers_changed(event.modifiers, cx);
             }))
             .on_hover(cx.listener(|workbench, hovered: &bool, window, cx| {
                 workbench.scrollbars.mouse_over = *hovered;
@@ -430,6 +442,7 @@ impl Workbench {
                     false => {
                         workbench.hide_scrollbars(cx);
                         workbench.content_hover_mouse_left(window.mouse_position(), cx);
+                        workbench.definition_link_mouse_left();
                     }
                 }
             }))
@@ -448,7 +461,8 @@ impl Workbench {
                 }
             }))
             .capture_any_mouse_up(cx.listener(|workbench, _, _, cx| workbench.middle_scroll_mouse_up(cx)))
-            .capture_key_down(cx.listener(|workbench, _, _, cx| {
+            .capture_key_down(cx.listener(|workbench, event: &gpui::KeyDownEvent, _, cx| {
+                workbench.definition_link_key_down(event.keystroke.modifiers, cx);
                 workbench.end_middle_scroll(cx);
                 workbench.cancel_text_drag(cx);
             }))
@@ -508,6 +522,8 @@ impl Workbench {
                     // editorScrollbar.ts clips the lines at contentWidth: the column right of the minimap stays empty.
                     .child(div().absolute().left_0().right(px(minimap_width - margin_shift)).top_0().bottom_0().overflow_hidden().child(div().absolute().left_0().right_0().top(px(lines_top)).children(rows)))
                     .children(self.marker_navigation_widget(editor, metrics.content_left(), metrics.char_width, cx))
+                    .children(self.references_peek_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
+                    .children(self.hierarchy_peek_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
                     .child(
                         div().id("margin").absolute().top_0().bottom_0().left_0().w(px(metrics.content_left())).on_hover(cx.listener(|workbench, hovered: &bool, _, cx| {
                             workbench.fold_controls.set_shown(*hovered, Instant::now());
@@ -875,8 +891,6 @@ impl Workbench {
                 true => self.theme.color("editor.lineHighlightBorder"),
                 false => None,
             },
-            word: self.theme.color("editor.wordHighlightTextBackground"),
-            word_border: self.theme.color("editor.wordHighlightTextBorder"),
             selection_highlight: self.theme.color("editor.selectionHighlightBackground"),
             selection_highlight_border: self.theme.color("editor.selectionHighlightBorder"),
             guide: self.color("editorIndentGuide.background1"),
@@ -1050,11 +1064,12 @@ impl Workbench {
                     let start = visible_column(text, columns.start, tab_size) as f32 * char_width;
                     let end = visible_column(text, columns.end, tab_size) as f32 * char_width;
                     let mut highlight = div().absolute().top_0().h_full().left(px(start)).w(px(end - start));
-                    if let Some(background) = colors.word {
+                    let (word_background, word_border) = self.word_highlight_colors(index, columns);
+                    if let Some(background) = word_background {
                         highlight = highlight.bg(background);
                     }
                     // shortcut: GPUI has no dotted border, so the high contrast word highlight is dashed.
-                    if let Some(border) = colors.word_border {
+                    if let Some(border) = word_border {
                         highlight = highlight.border_1().border_dashed().border_color(border);
                     }
                     content = content.child(highlight);
@@ -1062,6 +1077,8 @@ impl Workbench {
                 content = content.children(self.content_hover_highlight(editor, index, char_width));
                 content = content.children(self.code_action_highlights(editor, index, char_width));
                 content = content.children(self.snippet_placeholder_highlights(editor, index, char_width));
+                content = content.children(self.symbol_highlight(editor, index, char_width));
+                content = content.children(self.definition_link_cursor(editor, index, char_width));
                 // bracketMatching.css .bracket-match: background and a 1px border inside the bracket's box.
                 for (_, bytes) in bracket_matches.iter().flat_map(|(pair, _)| pair).filter(|(line, _)| *line == index) {
                     let start = visible_column(text, text[..bytes.start].chars().count(), tab_size) as f32 * char_width;
@@ -1110,6 +1127,7 @@ impl Workbench {
                     highlights = crate::syntax::overlay_colors(highlights, &colored);
                 }
                 let runs = gpui::combine_highlights(gpui::combine_highlights(highlights, find_colors), self.marker_text_styles(editor, index, tab_size));
+                let runs = gpui::combine_highlights(runs, self.definition_link_styles(editor, index, tab_size));
                 let mut show_more = None;
                 match line_overflow(text, self.stop_rendering_line_after) {
                     None => content = content.child(div().absolute().top_0().left_0().whitespace_nowrap().child(StyledText::new(expand_tabs(text, tab_size)).with_highlights(runs))),
@@ -1190,6 +1208,7 @@ impl Workbench {
                         window.focus(&workbench.editor_focus, cx);
                         let modifiers = event.modifiers;
                         let visible = visible_at(workbench, event.position.x);
+                        workbench.definition_link_mouse_down(index, modifiers);
                         if workbench.start_text_drag(index, visible, modifiers, event.click_count) {
                             return;
                         }
@@ -1221,6 +1240,7 @@ impl Workbench {
                             workbench.release_fold_click(index, false, event.modifiers, false, cx);
                         }
                         workbench.search_editor_mouse_up(index, visible, event.click_count, window, cx);
+                        workbench.definition_link_mouse_up(index, visible, event.modifiers, event.click_count, window, cx);
                     }))
                     .on_mouse_up(MouseButton::Middle, cx.listener(move |workbench, event: &MouseUpEvent, _, cx| {
                         if workbench.at_line_end(index, visible_at(workbench, event.position.x)) {
@@ -1230,6 +1250,7 @@ impl Workbench {
                     .on_mouse_move(cx.listener(move |workbench, event: &MouseMoveEvent, _, cx| {
                         workbench.editor_message_mouse_moved(index, cx);
                         workbench.content_hover.row_target = Some((index, visible_at(workbench, event.position.x)));
+                        workbench.definition_link_mouse_moved(index, visible_at(workbench, event.position.x), event.modifiers, event.pressed_button.is_some(), cx);
                         match event.pressed_button {
                             Some(MouseButton::Left) if workbench.line_select_start.is_some() => workbench.gutter_line_select_drag(index, cx),
                             Some(MouseButton::Left) if workbench.text_drag.is_some() => workbench.drag_text(index, visible_at(workbench, event.position.x), event.modifiers.alt, cx),
@@ -1474,8 +1495,7 @@ impl Workbench {
     /// across all lanes, then the 1px border on the left and top edges.
     fn overview_ruler(&self, editor: &OpenEditor) -> gpui::Canvas<()> {
         let line_count = editor.document.lines.len();
-        let highlight_lines: Vec<(usize, usize)> = editor.highlights.iter().map(|(line, _)| (*line, *line)).collect();
-        let highlight = self.color("editorOverviewRuler.wordHighlightTextForeground");
+        let [(highlight_lines, highlight), (read_lines, read_color), (write_lines, write_color)] = self.word_highlight_ruler_lines(editor);
         let mut bracket_lines = Vec::new();
         for ([open, close], in_ruler) in self.bracket_matches(editor) {
             if in_ruler {
@@ -1497,7 +1517,7 @@ impl Workbench {
         cursors.sort_by_key(|(line, _)| *line);
         bracket_lines.sort();
         let find_color = self.color("editorOverviewRuler.findMatchForeground");
-        let range_lines: Vec<(usize, usize)> = self.quick_access.goto_line.iter().filter_map(|state| state.highlight(editor.model_id)).map(|position| (position.line, position.line)).collect();
+        let range_lines: Vec<(usize, usize)> = self.quick_access.goto_line.iter().filter_map(|state| state.highlight(editor.model_id)).collect();
         let range_color = self.color("editorOverviewRuler.rangeHighlightForeground");
         let (mut find_lines, mut current_find_lines) = (Vec::new(), Vec::new());
         for mark in self.find_marks(editor, self.editors.viewport.height) {
@@ -1538,6 +1558,8 @@ impl Workbench {
                     (&marker_warning_lines, marker_warning, (lanes.right_x, lanes.right_width)),
                     (&marker_error_lines, marker_error, (lanes.right_x, lanes.right_width)),
                     (&highlight_lines, highlight, center),
+                    (&read_lines, read_color, center),
+                    (&write_lines, write_color, center),
                     (&bracket_lines, bracket_color, center),
                     (&find_lines, find_color, center),
                     (&current_find_lines, find_color, center),
@@ -1684,7 +1706,7 @@ impl Workbench {
 }
 
 #[derive(Clone, Copy)]
-struct EditorMetrics {
+pub(super) struct EditorMetrics {
     font_size: f32,
     line_height: f32,
     char_width: f32,
@@ -1721,14 +1743,14 @@ impl EditorMetrics {
         self.line_height
     }
 
-    fn content_left(&self) -> f32 {
+    pub(super) fn content_left(&self) -> f32 {
         self.glyph_margin_width() + self.line_numbers_width + self.decorations_width
     }
 
     /// fontInfo.ts `BareFontInfo._create`: the editor zoom scales the font size and line height; then
     /// `typicalHalfwidthCharacterWidth` and `maxDigitWidth` of that font. The line numbers are as wide as the
     /// longest number, at least lineNumbersMinChars digits, rounded, and 0 wide when off (editorOptions.ts).
-    fn measure(window: &Window, line_count: usize, line_numbers: LineNumbers, zoom: f32) -> Self {
+    pub(super) fn measure(window: &Window, line_count: usize, line_numbers: LineNumbers, zoom: f32) -> Self {
         let (font_size, line_height) = (EDITOR_FONT_SIZE * zoom, LINE_HEIGHT * zoom);
         let text_system = window.text_system();
         let font_id = text_system.resolve_font(&font(EDITOR_FONT));
@@ -1745,8 +1767,6 @@ struct LineColors {
     text: Rgba,
     line_background: Option<Rgba>,
     line_border: Option<Rgba>,
-    word: Option<Rgba>,
-    word_border: Option<Rgba>,
     selection_highlight: Option<Rgba>,
     selection_highlight_border: Option<Rgba>,
     guide: Rgba,

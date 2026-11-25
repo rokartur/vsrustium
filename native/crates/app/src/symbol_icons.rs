@@ -36,7 +36,7 @@ pub fn completion_kind_icon(kind: u64) -> (&'static str, Option<&'static str>) {
         28 => "symbol-snippet",
         _ => "symbol-property",
     };
-    (svg_name(name), icon_color(name))
+    (svg_name(name), color_key(name))
 }
 
 /// codiconsLibrary.ts registers aliases under the code point of another icon; the SVG carries that icon's name.
@@ -59,8 +59,41 @@ pub fn svg_name(codicon: &'static str) -> &'static str {
     }
 }
 
-/// The `symbolIcon.*Foreground` key of a `.codicon-symbol-*` class.
-pub fn icon_color(codicon: &str) -> Option<&'static str> {
+/// `SymbolKinds.toIcon`: the codicon of a `SymbolKind` value, `symbol-property` for an unknown one.
+pub fn codicon(kind: u64) -> &'static str {
+    const BY_KIND: [&str; 26] = [
+        "symbol-file",
+        "symbol-module",
+        "symbol-namespace",
+        "symbol-package",
+        "symbol-class",
+        "symbol-method",
+        "symbol-property",
+        "symbol-field",
+        "symbol-constructor",
+        "symbol-enum",
+        "symbol-interface",
+        "symbol-function",
+        "symbol-variable",
+        "symbol-constant",
+        "symbol-string",
+        "symbol-number",
+        "symbol-boolean",
+        "symbol-array",
+        "symbol-object",
+        "symbol-key",
+        "symbol-null",
+        "symbol-enum-member",
+        "symbol-struct",
+        "symbol-event",
+        "symbol-operator",
+        "symbol-type-parameter",
+    ];
+    BY_KIND.get(kind as usize).copied().unwrap_or("symbol-property")
+}
+
+/// symbolIcons.css: the `symbolIcon.*Foreground` key of a `.codicon-symbol-*` class.
+pub fn color_key(codicon: &str) -> Option<&'static str> {
     Some(match codicon {
         "symbol-array" => "symbolIcon.arrayForeground",
         "symbol-boolean" => "symbolIcon.booleanForeground",
@@ -126,5 +159,23 @@ pub(crate) fn color_default(key: &str) -> Option<[ColorValue; 4]> {
         "editor.snippetTabstopHighlightBackground" => Some([Hex("#7C7C7C4D"), Hex("#0A326433"), Hex("#7C7C7C4D"), Hex("#0A326433")]),
         "editor.snippetFinalTabstopHighlightBorder" => Some([Hex("#525252"), Hex("#0A326480"), Hex("#525252"), Hex("#292929")]),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_kind_has_a_drawn_svg_and_a_registered_color() {
+        for kind in 0..26 {
+            let codicon = codicon(kind);
+            assert!(color_default(color_key(codicon).unwrap()).is_some(), "{codicon}");
+        }
+        assert_eq!(codicon(99), "symbol-property");
+        assert_eq!(svg_name(codicon(11)), "symbol-method");
+        assert_eq!(color_default("symbolIcon.functionForeground").map(|values| values[0]), Some(Hex("#B180D7")));
+        assert_eq!(color_default("symbolIcon.stringForeground").map(|values| values[0]), Some(Key("foreground")));
+        assert_eq!(color_default("editor.foreground"), None);
     }
 }

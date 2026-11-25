@@ -118,7 +118,7 @@ fn go_to_line_previews_the_line_and_restores_the_view_on_escape(cx: &mut TestApp
     let editor = |cx: &mut gpui::VisualTestContext| {
         workbench.read_with(cx, |workbench, _| {
             let editor = workbench.editors.active().unwrap();
-            let highlight = workbench.quick_access.goto_line.as_ref().and_then(|state| state.highlight(editor.model_id)).map(|position| position.line);
+            let highlight = workbench.quick_access.goto_line.as_ref().and_then(|state| state.highlight(editor.model_id)).map(|(line, _)| line);
             (editor.selection().head.line, editor.selection().head.column, editor.scroll.top > 0., highlight)
         })
     };
@@ -172,6 +172,9 @@ fn help_lists_the_providers_and_shows_the_picked_one(cx: &mut TestAppContext) {
         r#"…|Go to File|[["⌘", "P"]]"#,
         r#":|Go to Line/Column|[["⌃", "G"]]"#,
         "::|Go to Offset|[]",
+        r#"@|Go to Symbol in Editor|[["⇧", "⌘", "O"]]"#,
+        "@:|Go to Symbol in Editor by Category|[]",
+        r#"#|Go to Symbol in Workspace|[["⌘", "T"]]"#,
         r#">|Show and Run Commands|[["⇧", "⌘", "P"]]"#,
     ]);
     cx.simulate_keystrokes("down enter");

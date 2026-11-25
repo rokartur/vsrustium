@@ -375,6 +375,9 @@ impl Workbench {
             context.insert("activeEditorCanToggleReadonly".into(), json!(editor.document.scheme != "untitled"));
             context.insert("messageVisible".into(), json!(self.editor_message_visible()));
             context.insert("markersNavigationVisible".into(), json!(self.markers_navigation_visible()));
+            self.goto_symbol_context(&mut context);
+            self.references_peek_context(window, &mut context);
+            self.hierarchy_peek_context(editor, window, &mut context);
             context.insert("editorHoverVisible".into(), json!(self.content_hover_visible()));
             self.suggest_context(&mut context);
             self.snippet_context(&mut context);

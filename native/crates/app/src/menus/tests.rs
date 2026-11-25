@@ -238,7 +238,7 @@ fn the_github_share_items_fill_the_share_submenus() {
     let context = HashMap::from([("github.hasGitHubRepo".to_string(), json!(true)), ("resourceScheme".to_string(), json!("file")), ("editorTextFocus".to_string(), json!(true))]);
     let share = |menu| {
         let actions = menu_actions(&registry, menu, &context);
-        let submenu = actions.iter().find(|action| matches!(action, MenuAction::Submenu { .. })).cloned();
+        let submenu = actions.iter().find(|action| matches!(action, MenuAction::Submenu { title, .. } if title == "Share")).cloned();
         (ids(&actions).contains(&"Copy As"), submenu)
     };
     let link = |id: &str, title: &str| Some(MenuAction::Submenu { title: "Share".into(), actions: vec![MenuAction::Command { id: id.into(), title: title.into(), enabled: true, checked: false, alt: None }], checked: false });

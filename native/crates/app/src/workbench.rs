@@ -68,7 +68,15 @@ mod list_scroll;
 mod search_list;
 mod tree_view;
 mod local_history_actions;
+mod document_highlights;
+mod document_symbols;
+mod goto_definition_link;
+mod goto_symbol;
 mod marker_navigation;
+mod hierarchy_peek;
+mod outline_pane;
+mod peek_view;
+mod references_peek;
 pub mod menubar;
 mod middle_scroll;
 mod minimap_view;
@@ -226,6 +234,13 @@ pub struct Workbench {
     editor_message: editor_message::EditorMessages,
     inspect_tokens: inspect_tokens::InspectTokens,
     marker_navigation: marker_navigation::MarkerNavigation,
+    goto_symbol: goto_symbol::GotoSymbol,
+    definition_link: goto_definition_link::DefinitionLink,
+    document_highlights: document_highlights::DocumentHighlights,
+    document_symbols: document_symbols::DocumentSymbols,
+    references_peek: references_peek::ReferencesPeek,
+    outline_pane: outline_pane::OutlinePane,
+    hierarchy_peek: hierarchy_peek::HierarchyPeek,
     content_hover: content_hover::ContentHover,
     suggest: suggest_controller::Suggest,
     parameter_hints: parameter_hints::ParameterHints,
@@ -325,7 +340,13 @@ impl Render for Workbench {
         self.close_editor_message_on_cursor_change(cx);
         self.stop_inspect_tokens_on_model_change();
         self.follow_marker_navigation_cursor();
+        self.follow_references_peek_editor();
+        self.follow_hierarchy_peek_editor(window, cx);
+        self.follow_symbol_navigation();
+        self.follow_definition_link(cx);
         self.refresh_selection_highlights(window);
+        self.refresh_document_highlights(window, cx);
+        self.refresh_outline_pane(cx);
         self.update_webview_panels(window, cx);
         self.update_diff_editor();
         self.update_quick_diff(cx);
@@ -444,6 +465,13 @@ impl Workbench {
             editor_message: Default::default(),
             inspect_tokens: Default::default(),
             marker_navigation: Default::default(),
+            goto_symbol: Default::default(),
+            definition_link: Default::default(),
+            document_highlights: Default::default(),
+            document_symbols: Default::default(),
+            references_peek: references_peek::ReferencesPeek::new(cx),
+            outline_pane: outline_pane::OutlinePane::new(cx),
+            hierarchy_peek: hierarchy_peek::HierarchyPeek::new(cx),
             content_hover: Default::default(),
             suggest: Default::default(),
             parameter_hints: Default::default(),
@@ -560,6 +588,12 @@ impl Workbench {
         workbench.register_snippet_completions();
         workbench.register_snippet_commands();
         workbench.register_marker_navigation_commands();
+        workbench.register_goto_symbol_commands();
+        workbench.register_definition_link_commands();
+        workbench.register_document_highlight_commands();
+        workbench.register_document_symbol_commands();
+        workbench.register_references_peek_commands();
+        workbench.register_hierarchy_commands();
         workbench.register_define_keybinding_command();
         workbench.register_notifications_commands();
         workbench.register_output_actions();
@@ -1233,7 +1267,7 @@ impl Workbench {
     /// A codicon centered in a square box. Drawn from the icon's SVG: Wu's text system skips fonts
     /// without an 'm' glyph, so codicon.ttf cannot load (gpui_macos text_system.rs load_family).
     fn icon(&self, name: &str, box_size: f32, icon_size: f32, color: Rgba) -> Div {
-        let path = self.app_root.join("node_modules/@vscode/codicons/src/icons").join(format!("{name}.svg"));
+        let path = self.app_root.join("node_modules/@vscode/codicons/src/icons").join(format!("{}.svg", crate::symbol_icons::svg_name(name)));
         div()
             .relative()
             .size(px(box_size))
