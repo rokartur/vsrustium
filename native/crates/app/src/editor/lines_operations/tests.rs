@@ -2,7 +2,8 @@
 //! Selections are upstream's 1-based (anchor line, anchor column, head line, head column).
 
 use super::*;
-use crate::editor::edit::tests::editor;
+use crate::editor::auto_indent::Strategy;
+use crate::editor::edit::tests::{editor, no_rules};
 
 type Sel = (usize, usize, usize, usize);
 
@@ -89,11 +90,11 @@ fn duplicate_selection() {
 }
 
 fn move_down(lines: &[&str], given: Sel, expected: &[&str], expected_selection: Sel) {
-    run(lines, given, |model| _ = model.move_lines(true), expected, expected_selection);
+    run(lines, given, |model| _ = model.move_lines(true, no_rules(Strategy::Advanced)), expected, expected_selection);
 }
 
 fn move_up(lines: &[&str], given: Sel, expected: &[&str], expected_selection: Sel) {
-    run(lines, given, |model| _ = model.move_lines(false), expected, expected_selection);
+    run(lines, given, |model| _ = model.move_lines(false, no_rules(Strategy::Advanced)), expected, expected_selection);
 }
 
 #[test]
@@ -114,10 +115,52 @@ fn move_lines_command_cases() {
     move_down(&FIVE, (2, 1, 1, 1), &["second line", "first", "third line", "fourth line", "fifth"], (3, 1, 2, 1));
 }
 
+/// `testMoveLinesUpOrDownWithIndentCommand`: a `MoveLinesCommand` at `EditorAutoIndentStrategy.Full` in a
+/// language with the configuration `config`.
+fn move_with_rules(config: serde_json::Value, down: bool, lines: &[&str], given: Sel, expected: &[&str], expected_selection: Sel) {
+    let mut languages = crate::languages::Languages::new(&[]);
+    languages.configure("moveLinesMode", &config);
+    let mut model = with_selections(lines, &[given]);
+    model.document.language_id = "moveLinesMode".into();
+    model.move_lines(down, AutoIndent { languages: &languages, strategy: Strategy::Full });
+    assert_eq!(model.document.lines, expected);
+    assert_eq!(selections(&model), [expected_selection]);
+}
+
+fn move_lines_indent_rules() -> serde_json::Value {
+    serde_json::json!({ "indentationRules": {
+        "decreaseIndentPattern": r"^\s*((?!\S.*\/[*]).*[*]\/\s*)?[})\]]|^\s*(case\b.*|default):\s*(\/\/.*|\/[*].*[*]\/\s*)?$",
+        "increaseIndentPattern": r#"(\{[^}"'`]*|\([^)"']*|\[[^\]"']*|^\s*(\{\}|\(\)|\[\]|(case\b.*|default):))\s*(\/\/.*|\/[*].*[*]\/\s*)?$"#,
+        "indentNextLinePattern": r"^\s*(for|while|if|else)\b(?!.*[;{}]\s*(\/\/.*|\/[*].*[*]\/\s*)?$)",
+        "unIndentedLinePattern": r#"^(?!.*([;{}]|\S:)\s*(\/\/.*|\/[*].*[*]\/\s*)?$)(?!.*(\{[^}"']*|\([^)"']*|\[[^\]"']*|^\s*(\{\}|\(\)|\[\]|(case\b.*|default):))\s*(\/\/.*|\/[*].*[*]\/\s*)?$)(?!^\s*((?!\S.*\/[*]).*[*]\/\s*)?[})\]]|^\s*(case\b.*|default):\s*(\/\/.*|\/[*].*[*]\/\s*)?$)(?!^\s*(for|while|if|else)\b(?!.*[;{}]\s*(\/\/.*|\/[*].*[*]\/\s*)?$))"#,
+    } })
+}
+
+#[test]
+fn first_line_indentation_adjust_to_0() {
+    move_with_rules(move_lines_indent_rules(), false, &["class X {", "\tz = 2", "}"], (2, 1, 2, 1), &["z = 2", "class X {", "}"], (1, 1, 1, 1));
+}
+
+#[test]
+fn move_lines_across_block() {
+    let lines = ["const value = 2;", "const standardLanguageDescriptions = [", "    {", "        diagnosticSource: 'js',", "    }", "];"];
+    let expected = ["const standardLanguageDescriptions = [", "    const value = 2;", "    {", "        diagnosticSource: 'js',", "    }", "];"];
+    move_with_rules(move_lines_indent_rules(), true, &lines, (1, 1, 1, 1), &expected, (2, 5, 2, 5));
+}
+
 #[test]
 fn move_line_should_still_work_as_before_if_there_is_no_indentation_rules() {
     let lines = ["if (true) {", "    var task = new Task(() => {", "        var work = 1234;", "    });", "}"];
-    move_up(&lines, (3, 1, 3, 1), &["if (true) {", "        var work = 1234;", "    var task = new Task(() => {", "    });", "}"], (2, 1, 2, 1));
+    let expected = ["if (true) {", "        var work = 1234;", "    var task = new Task(() => {", "    });", "}"];
+    move_with_rules(serde_json::json!({}), false, &lines, (3, 1, 3, 1), &expected, (2, 1, 2, 1));
+}
+
+#[test]
+fn issue_54829_move_block_across_block() {
+    let rules = serde_json::json!({ "indentationRules": { "decreaseIndentPattern": r"^\s*\[$", "increaseIndentPattern": r"^\s*\]$" }, "brackets": [["{", "}"]] });
+    let lines = ["if (true) {", "    if (false) {", "        if (1) {", "            console.log('b');", "        }", "        console.log('a');", "    }", "}"];
+    let expected = ["if (true) {", "    if (false) {", "        console.log('a');", "        if (1) {", "            console.log('b');", "        }", "    }", "}"];
+    move_with_rules(rules, true, &lines, (3, 9, 5, 10), &expected, (4, 9, 6, 10));
 }
 
 #[test]
@@ -651,7 +694,7 @@ fn insert_line_before_and_after() {
     ];
     for (line, expected_selection, expected) in before {
         let mut model = with_selections(&text, &[(line, 3, line, 3)]);
-        model.insert_line_before();
+        model.insert_line_before(no_rules(Strategy::Full));
         assert_eq!((model.document.lines.clone(), ranges(&model)), (expected.map(String::from).to_vec(), vec![expected_selection]));
     }
     let after: [(usize, Sel, [&str; 4]); 3] = [
@@ -661,7 +704,7 @@ fn insert_line_before_and_after() {
     ];
     for (line, expected_selection, expected) in after {
         let mut model = with_selections(&text, &[(line, 3, line, 3)]);
-        model.insert_line_after();
+        model.insert_line_after(no_rules(Strategy::Full));
         assert_eq!((model.document.lines.clone(), ranges(&model)), (expected.map(String::from).to_vec(), vec![expected_selection]));
     }
 }
@@ -671,20 +714,20 @@ fn indent_lines() {
     // Bug 18276: Indentation broken when selection is empty
     let mut model = with_selections(&["function baz() {"], &[(1, 2, 1, 2)]);
     model.document.indentation.insert_spaces = false;
-    model.indent_lines();
+    model.indent_lines(no_rules(Strategy::Full));
     assert_eq!((model.document.lines[0].as_str(), ranges(&model)), ("\tfunction baz() {", vec![(1, 3, 1, 3)]));
-    model.tab();
+    model.tab(no_rules(Strategy::Full));
     assert_eq!(model.document.lines[0], "\tf\tunction baz() {");
 
     // issue #80736: the added tab is not selected
     let mut model = with_selections(&["Some text"], &[(1, 1, 1, 1)]);
     model.document.indentation.insert_spaces = false;
-    model.indent_lines();
+    model.indent_lines(no_rules(Strategy::Full));
     assert_eq!((model.document.lines[0].as_str(), ranges(&model)), ("\tSome text", vec![(1, 2, 1, 2)]));
 
     // Indenting on empty line should move cursor
     let mut model = with_selections(&[""], &[(1, 1, 1, 1)]);
-    model.indent_lines();
+    model.indent_lines(no_rules(Strategy::Full));
     assert_eq!((model.document.lines[0].as_str(), ranges(&model)), ("    ", vec![(1, 5, 1, 5)]));
 }
 
@@ -732,7 +775,7 @@ fn delete_lines_multicursor() {
 #[test]
 fn every_line_action_is_one_undo_step() {
     let mut model = with_selections(&FIVE, &[(2, 1, 2, 1)]);
-    model.move_lines(true);
+    model.move_lines(true, no_rules(Strategy::Full));
     model.copy_lines(true);
     assert_eq!(model.document.lines, ["first", "third line", "second line", "second line", "fourth line", "fifth"]);
     model.undo();

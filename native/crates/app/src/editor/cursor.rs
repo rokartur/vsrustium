@@ -380,13 +380,15 @@ pub fn delete_all_right_range(lines: &[String], selection: Selection) -> (Positi
 }
 
 /// `normalizeIndentation`: leading whitespace rewritten in the editor's indent unit.
-pub fn normalize_indentation(indent: &str, indentation: Indentation) -> String {
+pub fn normalize_indentation(text: &str, indentation: Indentation) -> String {
+    let rest = text.trim_start_matches([' ', '\t']);
+    let indent = &text[..text.len() - rest.len()];
     let size = indentation.indent_size();
     let width = super::visible_column(indent, indent.chars().count(), size);
     if indentation.insert_spaces {
-        return " ".repeat(width);
+        return " ".repeat(width) + rest;
     }
-    "\t".repeat(width / size) + &" ".repeat(width % size)
+    "\t".repeat(width / size) + &" ".repeat(width % size) + rest
 }
 
 /// `_replaceJumpToNextIndent`: spaces up to the next indent stop, or a tab.
@@ -400,7 +402,6 @@ pub fn tab_text(line: &str, column: usize, indentation: Indentation) -> String {
 
 /// `ShiftCommand.shiftIndent`/`unshiftIndent`: the indentation of a line whose content starts at
 /// visible column `visible`, moved one stop right or left.
-/// shortcut: the miss-aligned indent heuristic that asks the language's onEnter rules is not ported.
 pub fn shifted_indent(visible: usize, indentation: Indentation, unshift: bool) -> String {
     let size = if indentation.insert_spaces { indentation.indent_size() } else { indentation.tab_size };
     let stop = match unshift {
@@ -418,14 +419,24 @@ pub fn shift_lines(selection: Selection) -> std::ops::RangeInclusive<usize> {
     start.line..=last
 }
 
-/// The indentation edit of one line for a shift, or `None` when the line keeps its indentation.
-pub fn shift_line_edit(line: &str, indentation: Indentation, unshift: bool, indent_empty: bool) -> Option<(usize, String)> {
+/// The indentation edit of one line for a shift, or `None` when the line keeps its indentation. Up to
+/// `extra_spaces` spaces ending the indentation stay as content.
+pub fn shift_line_edit(line: &str, indentation: Indentation, unshift: bool, indent_empty: bool, extra_spaces: usize) -> Option<(usize, String)> {
     let text: Vec<char> = line.chars().collect();
-    let indent_end = first_non_whitespace(&text).unwrap_or(text.len());
+    let mut indent_end = first_non_whitespace(&text).unwrap_or(text.len());
     if unshift && indent_end == 0 {
         return None;
     }
     if !unshift && text.is_empty() && !indent_empty {
+        return None;
+    }
+    for _ in 0..extra_spaces {
+        if indent_end == 0 || text[indent_end - 1] != ' ' {
+            break;
+        }
+        indent_end -= 1;
+    }
+    if unshift && indent_end == 0 {
         return None;
     }
     let visible = super::visible_column(line, indent_end, indentation.tab_size);
@@ -558,11 +569,11 @@ mod tests {
     #[test]
     fn shifts_indent_to_the_next_or_previous_stop() {
         let tabs = Indentation { tab_size: 4, indent_size: None, insert_spaces: false };
-        assert_eq!(shift_line_edit("  x", SPACES_4, false, false), Some((2, "    ".into())));
-        assert_eq!(shift_line_edit("      x", SPACES_4, true, false), Some((6, "    ".into())));
-        assert_eq!(shift_line_edit("x", SPACES_4, true, false), None);
-        assert_eq!(shift_line_edit("", SPACES_4, false, false), None);
-        assert_eq!(shift_line_edit("\tx", tabs, false, false), Some((1, "\t\t".into())));
+        assert_eq!(shift_line_edit("  x", SPACES_4, false, false, 0), Some((2, "    ".into())));
+        assert_eq!(shift_line_edit("      x", SPACES_4, true, false, 0), Some((6, "    ".into())));
+        assert_eq!(shift_line_edit("x", SPACES_4, true, false, 0), None);
+        assert_eq!(shift_line_edit("", SPACES_4, false, false, 0), None);
+        assert_eq!(shift_line_edit("\tx", tabs, false, false, 0), Some((1, "\t\t".into())));
         assert_eq!(tab_text("ab", 2, SPACES_4), "  ");
         assert_eq!(normalize_indentation("\t  ", SPACES_4), "      ");
         assert_eq!(normalize_indentation("      ", tabs), "\t  ");

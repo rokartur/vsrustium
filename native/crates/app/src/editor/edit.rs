@@ -5,6 +5,7 @@
 
 use std::cmp::Reverse;
 
+use super::auto_indent::{AutoIndent, Model};
 use super::cursor::{self, Position, Selection};
 use super::{OpenEditor, folding, indent_guides};
 
@@ -353,17 +354,58 @@ impl OpenEditor {
         change
     }
 
-    /// Enter: a line break plus the indentation before each cursor.
-    /// shortcut: the language's onEnter and indentation rules are not ported, so `{` does not indent the next line.
-    pub fn enter(&mut self) -> Option<ContentChanged> {
+    /// `type` from the keyboard: `typeWithInterceptors` per char, so a line break goes through Enter, a char
+    /// the indentation rules outdent reindents its line, and a closing bracket takes its opening line's indent.
+    /// Each char is its own model change, as upstream.
+    pub fn type_keyboard(&mut self, text: &str, auto: AutoIndent) -> Vec<ContentChanged> {
+        let mut changes = Vec::new();
+        for ch in normalize_line_breaks(text).chars() {
+            let ch = ch.to_string();
+            let change = match ch.as_str() {
+                "\n" => self.enter(auto),
+                _ => match self.auto_indent_type(&ch, auto).or_else(|| self.electric_type(&ch, auto)) {
+                    Some(change) => change,
+                    None => self.type_text(&ch),
+                },
+            };
+            changes.extend(change);
+        }
+        changes
+    }
+
+    /// `AutoIndentOperation`: typing `ch` reindents every cursor's line, or `None` when one keeps its indentation.
+    fn auto_indent_type(&mut self, ch: &str, auto: AutoIndent) -> Option<Option<ContentChanged>> {
+        let model = auto.model(&self.document);
+        let mut edits = Vec::new();
+        for selection in &self.selections {
+            let (start, end, text, caret) = model.type_edit(selection.start(), selection.end(), ch)?;
+            edits.push(CursorEdit::replace(start, end, text, caret));
+        }
         self.push_undo_stop();
-        let lines = &self.document.lines;
-        let indentation = self.document.indentation;
+        let change = self.apply_cursor_edits(edits, TYPED);
+        self.history.last_kind = EditKind::TypingOther;
+        Some(change)
+    }
+
+    /// `InterceptorElectricCharOperation`, for one cursor only: an undo stop after the reindented line.
+    fn electric_type(&mut self, ch: &str, auto: AutoIndent) -> Option<Option<ContentChanged>> {
+        let [selection] = self.selections[..] else { return None };
+        if !selection.is_empty() {
+            return None;
+        }
+        let (start, end, text, caret) = auto.model(&self.document).electric_edit(selection.head, ch)?;
+        let change = self.apply_cursor_edits(vec![CursorEdit::replace(start, end, text, caret)], TYPED);
+        self.push_undo_stop();
+        self.history.last_kind = EditKind::TypingOther;
+        Some(change)
+    }
+
+    /// `EnterOperation`: a line break at each cursor, indented by the language's onEnter and indentation rules.
+    pub fn enter(&mut self, auto: AutoIndent) -> Option<ContentChanged> {
+        self.push_undo_stop();
+        let model = auto.model(&self.document);
         let edits = self.each_cursor(|selection| {
-            let (start, end) = (selection.start(), selection.end());
-            let indent: String = lines[start.line].chars().take(start.column).take_while(|c| *c == ' ' || *c == '\t').collect();
-            let text = format!("\n{}", cursor::normalize_indentation(&indent, indentation));
-            let caret = end_of(start, &text);
+            let (start, end, text, caret) = model.enter_edit(selection.start(), selection.end());
             CursorEdit::replace(start, end, text, caret)
         });
         let change = self.apply_cursor_edits(edits, TYPED);
@@ -406,23 +448,21 @@ impl OpenEditor {
         change
     }
 
-    /// `TabOperation.getCommands` per cursor: a blank line takes the indentation of the line above, an
-    /// empty or in-line selection jumps to the next indent stop, a selection over whole lines indents them.
-    /// shortcut: the indent of a blank line comes from the line above only, not from the language's indentation rules.
-    pub fn tab(&mut self) -> Option<ContentChanged> {
+    /// `TabOperation.getCommands` per cursor: a blank line takes the indentation the language's rules give it,
+    /// an empty or in-line selection jumps to the next indent stop, a selection over whole lines indents them.
+    pub fn tab(&mut self, auto: AutoIndent) -> Option<ContentChanged> {
         let lines = &self.document.lines;
         let indentation = self.document.indentation;
+        let model = auto.model(&self.document);
         let edits = self.each_cursor(|selection| {
             let (start, end) = (selection.start(), selection.end());
             let whole_lines = start.line != end.line || (start.column == 0 && end.column == cursor::line_len(lines, end.line));
             if !selection.is_empty() && whole_lines {
-                return shift_edit(lines, selection, indentation, false);
+                return shift_edit(&model, selection, false);
             }
             let line = &lines[start.line];
             if selection.is_empty() && line.chars().all(|c| c == ' ' || c == '\t') {
-                let above = lines[..start.line].iter().rev().find(|line| !line.trim_matches([' ', '\t']).is_empty());
-                let indent: String = above.map(|line| line.chars().take_while(|c| *c == ' ' || *c == '\t').collect()).unwrap_or_default();
-                let indent = cursor::normalize_indentation(if indent.is_empty() { "\t" } else { &indent }, indentation);
+                let indent = cursor::normalize_indentation(&model.tab_indent(start.line).unwrap_or_else(|| "\t".into()), indentation);
                 if !line.starts_with(&indent) {
                     let line_start = Position::new(start.line, 0);
                     let caret = end_of(line_start, &indent);
@@ -437,15 +477,14 @@ impl OpenEditor {
     }
 
     /// Shift+Tab: `ShiftCommand` unshift over each cursor's lines.
-    pub fn outdent(&mut self) -> Option<ContentChanged> {
-        self.shift(true, command("outdent"))
+    pub fn outdent(&mut self, auto: AutoIndent) -> Option<ContentChanged> {
+        self.shift(true, auto, command("outdent"))
     }
 
     /// `editor.action.indentLines` / `outdentLines`: `ShiftCommand` over each cursor's lines.
-    pub fn shift(&mut self, unshift: bool, reason: EditReason) -> Option<ContentChanged> {
-        let lines = &self.document.lines;
-        let indentation = self.document.indentation;
-        let edits = self.each_cursor(|selection| shift_edit(lines, selection, indentation, unshift));
+    pub fn shift(&mut self, unshift: bool, auto: AutoIndent, reason: EditReason) -> Option<ContentChanged> {
+        let model = auto.model(&self.document);
+        let edits = self.each_cursor(|selection| shift_edit(&model, selection, unshift));
         self.apply_between_stops(edits, reason)
     }
 
@@ -849,11 +888,13 @@ pub struct Copied {
 }
 
 /// `ShiftCommand`: every line of the selection moves one indent stop; a multi-line selection skips empty lines.
-fn shift_edit(lines: &[String], selection: Selection, indentation: super::Indentation, unshift: bool) -> CursorEdit {
+fn shift_edit(model: &Model, selection: Selection, unshift: bool) -> CursorEdit {
     let indent_empty = selection.start().line == selection.end().line;
     let mut replaces = Vec::new();
+    let mut extra_spaces = 0;
     for line in cursor::shift_lines(selection) {
-        let Some((indent_end, indent)) = cursor::shift_line_edit(&lines[line], indentation, unshift, indent_empty) else { continue };
+        extra_spaces = model.shift_extra_spaces(line, extra_spaces);
+        let Some((indent_end, indent)) = cursor::shift_line_edit(&model.lines[line], model.indentation, unshift, indent_empty, extra_spaces) else { continue };
         replaces.push(Replace { start: Position::new(line, 0), end: Position::new(line, indent_end), text: indent });
     }
     let moved = |position: Position| match replaces.iter().find(|replace| replace.start.line == position.line) {
@@ -1049,8 +1090,15 @@ fn normalize_line_breaks(text: &str) -> String {
 #[cfg(test)]
 pub(super) mod tests {
     use super::*;
+    use crate::editor::auto_indent::Strategy;
     use crate::editor::{EditorGroup, Indentation, TextDocument};
+    use crate::languages::Languages;
     use std::path::PathBuf;
+
+    /// `TestLanguageConfigurationService` with no language registered.
+    pub(in crate::editor) fn no_rules(strategy: Strategy) -> AutoIndent<'static> {
+        AutoIndent { languages: Box::leak(Box::new(Languages::new(&[]))), strategy }
+    }
 
     #[test]
     fn executed_edits_carry_the_selection_as_its_tracked_range() {
@@ -1180,7 +1228,7 @@ pub(super) mod tests {
         editor.document.path = dir.join("a.txt");
         editor.document.encoding = "utf8bom".into();
         editor.move_to(at(0, 1), false);
-        editor.enter();
+        editor.enter(no_rules(Strategy::Full));
         editor.save().unwrap();
         assert_eq!(std::fs::read(&editor.document.path).unwrap(), b"\xEF\xBB\xBFa\r\n");
         assert!(!editor.is_dirty());
@@ -1192,19 +1240,20 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn enter_keeps_the_indentation_and_tab_indents_blank_lines_like_the_line_above() {
+    fn enter_keeps_the_indentation_and_tab_indents_a_blank_line_without_rules_by_one_tab() {
+        let auto = no_rules(Strategy::Full);
         let mut editor = editor("    let x", "\n");
         editor.move_to(at(0, 9), false);
-        editor.enter();
+        editor.enter(auto);
         assert_eq!(editor.document.lines, ["    let x", "    "]);
         editor.type_text("y");
         editor.move_to(at(1, 0), false);
         editor.delete_all_right();
         assert_eq!(editor.document.lines[1], "");
-        let change = editor.tab().unwrap();
+        let change = editor.tab(auto).unwrap();
         assert_eq!((editor.document.lines[1].as_str(), editor.selection().head), ("    ", at(1, 4)));
         assert_eq!(change.reason, command("tab"));
-        editor.tab();
+        editor.tab(auto);
         assert_eq!(editor.document.lines[1], "        ");
     }
 
@@ -1212,10 +1261,10 @@ pub(super) mod tests {
     fn tab_over_lines_shifts_them_and_keeps_the_selection_on_them() {
         let mut editor = editor("a\n  b\n\nc", "\n");
         editor.set_selections(vec![Selection { anchor: at(0, 0), head: at(3, 1) }]);
-        editor.tab();
+        editor.tab(no_rules(Strategy::Full));
         assert_eq!(editor.document.lines, ["    a", "    b", "", "    c"]);
         assert_eq!(editor.selection(), Selection { anchor: at(0, 0), head: at(3, 5) });
-        editor.outdent();
+        editor.outdent(no_rules(Strategy::Full));
         assert_eq!(editor.document.lines, ["a", "b", "", "c"]);
         editor.undo();
         editor.undo();
@@ -1301,7 +1350,7 @@ pub(super) mod tests {
         // An Enter at each cursor puts the later cursors on new lines.
         let mut split = editor("ab\ncd", "\n");
         split.set_selections(vec![range((0, 1), (0, 1)), range((1, 1), (1, 1))]);
-        split.enter();
+        split.enter(no_rules(Strategy::Full));
         assert_eq!(text(&split), "a\nb\nc\nd");
         assert_eq!(split.selections, [Selection::caret(at(1, 0)), Selection::caret(at(3, 0))]);
         // Touching deletes both apply, then the cursors meet and merge.

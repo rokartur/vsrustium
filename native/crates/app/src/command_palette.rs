@@ -332,6 +332,8 @@ pub const EDITOR_ACTIONS: &[(&str, &str, Option<&str>)] = &[
     ("editor.action.indentUsingSpaces", "Indent Using Spaces", None),
     ("editor.action.changeTabDisplaySize", "Change Tab Display Size", None),
     ("editor.action.detectIndentation", "Detect Indentation from Content", None),
+    ("editor.action.reindentlines", "Reindent Lines", Some("!editorReadonly")),
+    ("editor.action.reindentselectedlines", "Reindent Selected Lines", Some("!editorReadonly")),
     ("editor.action.trimTrailingWhitespace", "Trim Trailing Whitespace", Some("!editorReadonly")),
     ("deleteAllLeft", "Delete All Left", Some("!editorReadonly")),
     ("deleteAllRight", "Delete All Right", Some("!editorReadonly")),

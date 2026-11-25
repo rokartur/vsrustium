@@ -15,6 +15,7 @@ use files::encoding;
 use crate::languages::Languages;
 use crate::syntax::Tokenization;
 
+pub mod auto_indent;
 pub mod commands;
 mod comment;
 mod cursor;

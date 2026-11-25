@@ -9,6 +9,7 @@ use exthost::scan::ScannedExtension;
 use serde_json::Value;
 
 use crate::brackets::LanguageBrackets;
+use crate::editor::auto_indent::LanguageRules;
 use crate::editor::folding::FoldingMarkers;
 use crate::theme::strip_jsonc;
 
@@ -44,12 +45,13 @@ pub struct Languages {
     first_lines: Vec<(String, onig::Regex)>,
     pub grammars: textmate::Registry,
     pub brackets: HashMap<String, LanguageBrackets>,
+    rules: HashMap<String, LanguageRules>,
 }
 
 impl Languages {
     pub fn new(extensions: &[ScannedExtension]) -> Self {
         let grammars = textmate::Registry::new(extensions.iter().map(|extension| (extension.location.as_path(), &extension.description)));
-        let mut languages = Languages { associations: Vec::new(), ids: Vec::new(), names: HashMap::new(), off_side: HashMap::new(), folding_markers: HashMap::new(), block_comments: HashMap::new(), line_comments: HashMap::new(), first_lines: Vec::new(), grammars, brackets: HashMap::new() };
+        let mut languages = Languages { associations: Vec::new(), ids: Vec::new(), names: HashMap::new(), off_side: HashMap::new(), folding_markers: HashMap::new(), block_comments: HashMap::new(), line_comments: HashMap::new(), first_lines: Vec::new(), grammars, brackets: HashMap::new(), rules: HashMap::new() };
         languages.register(&serde_json::json!({ "id": PLAINTEXT, "extensions": [".txt"], "aliases": ["Plain Text", "text"] }), None);
         for extension in extensions {
             for language in extension.description["contributes"]["languages"].as_array().into_iter().flatten() {
@@ -99,27 +101,33 @@ impl Languages {
                 .ok()
                 .and_then(|text| serde_json::from_str::<Value>(&strip_jsonc(&text)).ok())
                 .unwrap_or_default();
-            self.off_side.insert(id.into(), config["folding"]["offSide"].as_bool() == Some(true));
-            if let (Some(start), Some(end)) = (config["comments"]["blockComment"][0].as_str(), config["comments"]["blockComment"][1].as_str()) {
-                self.block_comments.insert(id.into(), (start.into(), end.into()));
-            }
-            // languageConfigurationRegistry.ts: an empty token is no line comment.
-            let line_comment = &config["comments"]["lineComment"];
-            let token = line_comment.as_str().or_else(|| line_comment["comment"].as_str()).filter(|token| !token.is_empty());
-            if let Some(token) = token {
-                self.line_comments.insert(id.into(), (token.into(), line_comment["noIndent"].as_bool() == Some(true)));
-            }
-            let markers = &config["folding"]["markers"];
-            if let (Some(start), Some(end)) = (marker_pattern(&markers["start"]), marker_pattern(&markers["end"])) {
-                match FoldingMarkers::new(start, end) {
-                    Ok(markers) => {
-                        self.folding_markers.insert(id.into(), Arc::new(markers));
-                    }
-                    Err(error) => eprintln!("[{id}]: Invalid regular expression in `folding.markers`: {error}"),
-                }
-            }
-            self.brackets.insert(id.into(), LanguageBrackets::new(id, &config));
+            self.configure(id, &config);
         }
+    }
+
+    /// `LanguageConfigurationFileHandler._handleConfig`: the language configuration file of a language.
+    pub(crate) fn configure(&mut self, id: &str, config: &Value) {
+        self.off_side.insert(id.into(), config["folding"]["offSide"].as_bool() == Some(true));
+        if let (Some(start), Some(end)) = (config["comments"]["blockComment"][0].as_str(), config["comments"]["blockComment"][1].as_str()) {
+            self.block_comments.insert(id.into(), (start.into(), end.into()));
+        }
+        // languageConfigurationRegistry.ts: an empty token is no line comment.
+        let line_comment = &config["comments"]["lineComment"];
+        let token = line_comment.as_str().or_else(|| line_comment["comment"].as_str()).filter(|token| !token.is_empty());
+        if let Some(token) = token {
+            self.line_comments.insert(id.into(), (token.into(), line_comment["noIndent"].as_bool() == Some(true)));
+        }
+        let markers = &config["folding"]["markers"];
+        if let (Some(start), Some(end)) = (marker_pattern(&markers["start"]), marker_pattern(&markers["end"])) {
+            match FoldingMarkers::new(start, end) {
+                Ok(markers) => {
+                    self.folding_markers.insert(id.into(), Arc::new(markers));
+                }
+                Err(error) => eprintln!("[{id}]: Invalid regular expression in `folding.markers`: {error}"),
+            }
+        }
+        self.brackets.insert(id.into(), LanguageBrackets::new(id, config));
+        self.rules.insert(id.into(), LanguageRules::new(id, config));
     }
 
     /// The language of a file by its path, else by the `firstLine` pattern its first line matches. No
@@ -214,6 +222,11 @@ impl Languages {
         self.block_comments.get(id).map(|(start, end)| (start.as_str(), end.as_str()))
     }
 
+    /// The onEnter, indentation and electric character rules of the language configuration.
+    pub fn rules(&self, id: &str) -> Option<&LanguageRules> {
+        self.rules.get(id)
+    }
+
     /// `getLanguageConfiguration(id).comments`.
     pub fn comments(&self, id: &str) -> Comments<'_> {
         let line = self.line_comments.get(id);
@@ -222,7 +235,7 @@ impl Languages {
 }
 
 /// languageConfigurationExtensionPoint.ts `_parseRegex`: a pattern string, or `{ pattern, flags }`.
-fn marker_pattern(value: &Value) -> Option<(&str, &str)> {
+pub(crate) fn marker_pattern(value: &Value) -> Option<(&str, &str)> {
     match value {
         Value::String(pattern) => Some((pattern, "")),
         Value::Object(object) => Some((object.get("pattern")?.as_str()?, object.get("flags").and_then(Value::as_str).unwrap_or(""))),

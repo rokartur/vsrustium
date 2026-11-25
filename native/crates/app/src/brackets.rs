@@ -75,11 +75,25 @@ impl LanguageBrackets {
     fn token(&self, text: &str) -> Option<&BracketToken> {
         self.tokens.get(&text.to_lowercase())
     }
+
+    /// `ClosingBracketKind.closes`: `close` is a closing bracket of the opening bracket `open`.
+    pub fn closes(&self, close: &str, open: &str) -> bool {
+        let (Some(close), Some(open)) = (self.token(close), self.token(open)) else { return false };
+        !close.opening && close.ids.contains(&open.id)
+    }
+
+    /// `text.replace(getBracketRegExp({ global: true }), '')`: the text without any bracket.
+    pub fn strip(&self, text: &str) -> String {
+        match &self.regex {
+            Some(regex) => regex.replace_all(text, ""),
+            None => text.to_string(),
+        }
+    }
 }
 
 /// `_extractValidBrackets`: the `[open, close]` string pairs of an array, empty strings dropped
 /// (`filterValidBrackets`); `None` when the key is not an array.
-fn character_pairs(value: &Value) -> Option<Vec<(String, String)>> {
+pub(crate) fn character_pairs(value: &Value) -> Option<Vec<(String, String)>> {
     let pairs = value.as_array()?.iter().filter_map(|pair| match pair.as_array()?.as_slice() {
         [Value::String(open), Value::String(close)] if !open.is_empty() && !close.is_empty() => Some((open.clone(), close.clone())),
         _ => None,
@@ -89,20 +103,26 @@ fn character_pairs(value: &Value) -> Option<Vec<(String, String)>> {
 
 /// `prepareBracketForRegExp`: escaped, with word boundaries where the bracket starts or ends with a
 /// word character or space (#132162, #150440).
-fn bracket_pattern(text: &str) -> String {
-    let mut escaped = String::new();
-    for c in text.chars() {
-        if "\\{}*+?|^$.[]()".contains(c) {
-            escaped.push('\\');
-        }
-        escaped.push(c);
-    }
+pub(crate) fn bracket_pattern(text: &str) -> String {
+    let mut escaped = escape_regex(text);
     let word = |c: Option<char>| c.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_' || c == ' ');
     if word(text.chars().next()) {
         escaped.insert_str(0, "\\b");
     }
     if word(text.chars().last()) {
         escaped.push_str("\\b");
+    }
+    escaped
+}
+
+/// `escapeRegExpCharacters`.
+pub(crate) fn escape_regex(text: &str) -> String {
+    let mut escaped = String::new();
+    for c in text.chars() {
+        if "\\{}*+?|^$.[]()".contains(c) {
+            escaped.push('\\');
+        }
+        escaped.push(c);
     }
     escaped
 }
