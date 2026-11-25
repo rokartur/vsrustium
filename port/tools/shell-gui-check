@@ -1,0 +1,169 @@
+#!/usr/bin/env bun
+// Product shell checks that need the window (roadmap section 19), run on the Studio after a release build:
+// - update: product.json's updateUrl points at a local server with a newer release; with `update.mode: start` the
+//   check 30 s after startup must reach the server and show "There is an available update (99.0.0) for VSRustium.".
+// - relaunch: changing `window.nativeTabs` in settings.json must ask to restart; Restart must start the app again
+//   with the same arguments and quit this one.
+//   port/tools/studio 'port/tools/shell-gui-check'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+
+const ref = process.env.REF ?? join(process.env.HOME!, 'Developer/vscode-ref');
+const binary = resolve('native/target/release/vsrustium');
+const scratch = mkdtempSync(join(tmpdir(), 'shell-gui-'));
+const env = { ...process.env, VSCODE_GPUI_EXTENSIONS: join(ref, 'extensions') };
+const failures: string[] = [];
+await takeGuiLock();
+try {
+	// ONLY="update relaunch process" picks checks.
+	const only = process.env.ONLY?.split(' ');
+	if (!only || only.includes('update')) await checkUpdate();
+	if (!only || only.includes('relaunch')) await checkRelaunch();
+	if (!only || only.includes('process')) await checkProcessExplorer();
+} finally {
+	rmSync(scratch, { recursive: true, force: true });
+}
+console.log(failures.length ? `shell gui check: FAILED ${failures.join('; ')}` : 'shell gui check: ok');
+process.exit(failures.length ? 1 : 0);
+
+async function checkUpdate() {
+	let requests = 0;
+	const server = Bun.serve({
+		port: 0,
+		fetch() {
+			requests++;
+			return Response.json({ tag_name: 'v99.0.0', html_url: 'https://github.com/rokartur/vsrustium/releases/tag/v99.0.0', draft: false, prerelease: false });
+		},
+	});
+	// The binary takes its working directory as the app root: the checkout, with product.json replaced.
+	const root = join(scratch, 'root');
+	mkdirSync(root);
+	for (const entry of readdirSync('.').filter(entry => entry !== 'product.json')) {
+		symlinkSync(resolve(entry), join(root, entry));
+	}
+	const product = JSON.parse(readFileSync('product.json', 'utf8'));
+	writeFileSync(join(root, 'product.json'), JSON.stringify({ ...product, updateUrl: `http://127.0.0.1:${server.port}/releases/latest` }));
+	const child = Bun.spawn([binary, '--user-data-dir', userData({ 'update.mode': 'start' })], { cwd: root, env, stdout: 'ignore', stderr: 'ignore' });
+	try {
+		await Bun.sleep(40000);
+		const tree = await windowTree(child.pid);
+		const message = 'There is an available update (99.0.0) for VSRustium.';
+		console.log(`update: ${requests} request(s), notification ${tree.includes(message) ? 'shown' : 'missing'}`);
+		if (requests !== 1 || !tree.includes(message)) {
+			failures.push(`update: ${requests} requests, notification ${tree.includes(message)}`);
+		}
+	} finally {
+		child.kill('SIGKILL');
+		server.stop(true);
+	}
+}
+
+async function checkRelaunch() {
+	const data = userData({ 'window.nativeTabs': false });
+	const child = Bun.spawn([binary, '--user-data-dir', data], { env, stdout: 'ignore', stderr: 'ignore' });
+	try {
+		await Bun.sleep(6000);
+		// SettingsChangeRelauncher asks only in the focused window.
+		Bun.spawnSync(['osascript', '-e', `tell application "System Events" to set frontmost of (first process whose unix id is ${child.pid}) to true`]);
+		await Bun.sleep(1000);
+		writeFileSync(join(data, 'User/settings.json'), JSON.stringify({ 'workbench.startupEditor': 'none', 'window.nativeTabs': true }));
+		await Bun.sleep(3000);
+		const tree = await windowTree(child.pid);
+		const asked = tree.includes('A setting has changed that requires a restart to take effect.');
+		// The prompt is a sheet cua-driver does not resolve as an AX window; System Events types into the frontmost app.
+		Bun.spawnSync(['osascript', '-e', `tell application "System Events" to tell (first process whose unix id is ${child.pid}) to set frontmost to true`, '-e', 'tell application "System Events" to key code 36']);
+		await Bun.sleep(4000);
+		const exited = child.exitCode !== null || child.signalCode !== null;
+		const relaunched = Bun.spawnSync(['pgrep', '-f', data]).stdout.toString().trim().split('\n').filter(pid => pid && Number(pid) !== child.pid);
+		console.log(`relaunch: prompt ${asked ? 'shown' : 'missing'}, old process ${exited ? 'quit' : 'running'}, ${relaunched.length} new process(es)`);
+		if (!asked || !exited || relaunched.length === 0) {
+			failures.push(`relaunch: prompt ${asked}, quit ${exited}, relaunched ${relaunched.length}`);
+		}
+		for (const pid of relaunched) {
+			process.kill(Number(pid), 'SIGKILL');
+		}
+	} finally {
+		child.kill('SIGKILL');
+	}
+}
+
+// Help > Open Process Explorer opens its window with the tree under the app: the root, the extension host, its rows.
+async function checkProcessExplorer() {
+	const log = join(scratch, 'process-explorer.log');
+	const child = Bun.spawn([binary, '--user-data-dir', userData({})], { env, stdout: 'ignore', stderr: Bun.file(log) });
+	try {
+		await Bun.sleep(8000);
+		const menu = Bun.spawnSync(['osascript', '-e', `tell application "System Events"
+			tell (first process whose unix id is ${child.pid})
+				set frontmost to true
+				click menu item "Open Process Explorer" of menu "Help" of menu bar 1
+			end tell
+		end tell`]);
+		await Bun.sleep(3000);
+		console.log(`process explorer: menu click exit ${menu.exitCode} ${menu.stderr.toString().trim()}, app ${child.exitCode === null ? 'running' : `exited ${child.exitCode}`}`);
+		if (child.exitCode !== null) {
+			console.log(readFileSync(log, 'utf8').split('\n').slice(-20).join('\n'));
+		}
+		const { windows } = await cua('list_windows', { pid: child.pid });
+		const titles = windows.map((window: { title: string }) => window.title);
+		const tree = await windowTree(child.pid);
+		// processExplorerControl.ts labels a row with the process's own name (the host's is its findName).
+		const rows = ['AXOutline "Process Explorer"', 'AXRow "vsrustium"', 'AXRow "electron-nodejs (bootstrap-exthost.js)"'].filter(text => tree.includes(text));
+		console.log(`process explorer: windows ${JSON.stringify(titles)}, found ${rows.join(', ')}`);
+		if (!titles.includes('Process Explorer') || rows.length !== 3) {
+			failures.push(`process explorer: windows ${titles}, rows ${rows}`);
+		}
+	} finally {
+		child.kill('SIGKILL');
+	}
+}
+
+function userData(settings: object) {
+	const data = mkdtempSync(join(scratch, 'user-'));
+	mkdirSync(join(data, 'User'));
+	writeFileSync(join(data, 'User/settings.json'), JSON.stringify({ 'workbench.startupEditor': 'none', ...settings }));
+	return data;
+}
+
+// Every window's accessibility tree; the first read wakes AccessKit, so read twice.
+async function windowTree(pid: number) {
+	const { windows } = await cua('list_windows', { pid });
+	let text = '';
+	for (const window of windows) {
+		await cua('get_window_state', { pid, window_id: window.window_id, max_image_dimension: 1 });
+		await Bun.sleep(500);
+		text += (await cua('get_window_state', { pid, window_id: window.window_id, max_image_dimension: 1 })).tree_markdown;
+	}
+	return text;
+}
+
+// ui-pair's lock: /tmp/port-gui.lock holds the owner's pid; a dead owner's lock is taken over.
+async function takeGuiLock() {
+	const lock = '/tmp/port-gui.lock';
+	while (true) {
+		try {
+			mkdirSync(lock);
+			writeFileSync(join(lock, 'pid'), String(process.pid));
+			process.on('exit', () => rmSync(lock, { recursive: true, force: true }));
+			return;
+		} catch {
+			const owner = Number(await Bun.file(join(lock, 'pid')).text().catch(() => '0'));
+			const alive = (() => { try { process.kill(owner, 0); return true; } catch { return false; } })();
+			if (owner && !alive) {
+				rmSync(lock, { recursive: true, force: true });
+				continue;
+			}
+			await Bun.sleep(5000);
+		}
+	}
+}
+
+async function cua(tool: string, args: object) {
+	const child = Bun.spawn(['cua-driver', 'call', tool, JSON.stringify({ session: 'shell-gui-check', ...args })], { stderr: 'pipe' });
+	const [stdout, stderr] = [await new Response(child.stdout).text(), await new Response(child.stderr).text()];
+	if (await child.exited) {
+		throw new Error(`cua-driver ${tool}: ${stderr}${stdout}`);
+	}
+	return JSON.parse(stdout);
+}
