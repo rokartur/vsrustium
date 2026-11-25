@@ -255,7 +255,7 @@ pub fn configured(settings: &Settings, path: Option<&Path>) -> String {
     value.as_ref().and_then(|value| value.as_str()).unwrap_or_default().to_string()
 }
 
-/// `getDefaultEncodingOverrides`: user settings, workspace files and each folder's `.vscode` are always UTF-8.
+/// `getDefaultEncodingOverrides`: user settings, workspace files and each folder's `.vscode` (and `.vsrustium`) are always UTF-8.
 fn is_utf8_override(settings: &Settings, path: Option<&Path>) -> bool {
     let Some(path) = path else { return false };
     let user_home = settings.user_home();
@@ -266,7 +266,7 @@ fn is_utf8_override(settings: &Settings, path: Option<&Path>) -> bool {
         return true;
     }
     let mut folders = settings.workspace.iter().flat_map(|workspace| &workspace.folders);
-    folders.any(|folder| path.starts_with(folder.path.join(".vscode")))
+    folders.any(|folder| config::service::FOLDER_CONFIG_DIRS.iter().any(|dir| path.starts_with(folder.path.join(dir))))
 }
 
 enum Codec {
