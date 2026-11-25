@@ -108,8 +108,14 @@ async function run(app: string, pid: number, folder: string) {
 			await cua('hotkey', { ...target, keys: step.hotkey });
 		} else if (step.type) {
 			// Key by key: type_text refuses windows without an accessible text field, as GPUI's.
+			// press_key knows no shifted symbols: they go as shift plus the US layout's base key.
+			const shifted: Record<string, string> = { '!': '1', '@': '2', '#': '3', '$': '4', '%': '5', '^': '6', '&': '7', '*': '8', '(': '9', ')': '0', '_': '-', '+': '=', '{': '[', '}': ']', '|': '\\', ':': ';', '"': "'", '<': ',', '>': '.', '?': '/', '~': '`' };
 			for (const key of step.type) {
-				await cua('press_key', { ...target, key: key === ' ' ? 'space' : key });
+				if (shifted[key]) {
+					await cua('hotkey', { ...target, keys: ['shift', shifted[key]] });
+				} else {
+					await cua('press_key', { ...target, key: key === ' ' ? 'space' : key });
+				}
 			}
 		} else if (step.wait) {
 			await Bun.sleep(step.wait);
