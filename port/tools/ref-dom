@@ -1,0 +1,138 @@
+#!/usr/bin/env bun
+// Runs the reference with CDP and dumps the boxes and computed styles of workbench elements and their descendants,
+// for parts a screenshot alone does not measure (toasts, the notification center, status bar entries, views).
+// Usage: port/tools/ref-dom <out-dir> <action>...   Actions: `dump:<selector>` (the element and its descendants),
+// `click:<selector>`, `hover:<selector>`, `key:<key>` (CDP key name, e.g. Escape), `wait:<ms>`, `shot:<name>`.
+// Env REF, FOLDER, FILE as port/tools/ref-screenshot, THEME (dark, light, hc, hclight; default dark), ARGS (more
+// arguments, space separated, e.g. --extensionDevelopmentPath=<abs path>), SETTLE (ms before the first action, default 8000).
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { referenceArgs, referenceUserData } from './ref-user-data.ts';
+
+const [outDir, ...actions] = process.argv.slice(2);
+const ref = process.env.REF ?? join(process.env.HOME!, 'Developer/vscode-ref');
+const electron = join(ref, '.build/electron/Code - OSS.app/Contents/MacOS/Code - OSS');
+const themes: Record<string, string> = { dark: 'Default Dark Modern', light: 'Default Light Modern', hc: 'Default High Contrast', hclight: 'Default High Contrast Light' };
+const port = 9338;
+const keys: Record<string, { key: string; code: string; windowsVirtualKeyCode: number }> = {
+	Escape: { key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 },
+	Enter: { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 },
+};
+
+mkdirSync(outDir, { recursive: true });
+const userData = referenceUserData(themes[process.env.THEME ?? 'dark'], { 'editor.accessibilitySupport': 'off' });
+const paths = [process.env.FOLDER, process.env.FILE].filter(path => path) as string[];
+const extraArgs = process.env.ARGS?.split(' ') ?? [];
+const app = Bun.spawn([electron, ref, ...paths, ...referenceArgs, ...extraArgs, '--user-data-dir', userData, '--remote-debugging-port=' + port], {
+	env: { ...process.env, VSCODE_DEV: '1', NODE_ENV: 'development' },
+	stdout: 'ignore',
+	stderr: 'ignore',
+});
+try {
+	const cdp = await connect();
+	await cdp('Emulation.setDeviceMetricsOverride', { width: 1024, height: 768, deviceScaleFactor: 2, mobile: false });
+	await until(async () => (await evaluate(cdp, `!!document.querySelector('.monaco-workbench .part.statusbar')`)) === true);
+	await Bun.sleep(Number(process.env.SETTLE ?? 8000));
+	await cdp('Page.bringToFront');
+	for (const action of actions) {
+		const [kind, ...rest] = action.split(':');
+		const argument = rest.join(':');
+		if (kind === 'wait') {
+			await Bun.sleep(Number(argument));
+		} else if (kind === 'shot') {
+			const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
+			writeFileSync(join(outDir, `${argument}.png`), Buffer.from(data, 'base64'));
+			console.log(`${argument}.png`);
+		} else if (kind === 'key') {
+			for (const type of ['keyDown', 'keyUp']) {
+				await cdp('Input.dispatchKeyEvent', { type, ...keys[argument] });
+			}
+		} else if (kind === 'click' || kind === 'hover') {
+			const point = await evaluate(cdp, `(() => {
+				const element = document.querySelector(${JSON.stringify(argument)});
+				if (!element) return null;
+				const box = element.getBoundingClientRect();
+				return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
+			})()`);
+			if (!point) {
+				console.log(`${action}: no element`);
+				continue;
+			}
+			await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point });
+			if (kind === 'click') {
+				await cdp('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button: 'left', clickCount: 1 });
+				await cdp('Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button: 'left', clickCount: 1 });
+			}
+		} else if (kind === 'dump') {
+			const dump = await evaluate(cdp, `(() => {
+				const root = document.querySelector(${JSON.stringify(argument)});
+				if (!root) return null;
+				const keys = ['display', 'font-size', 'font-weight', 'line-height', 'color', 'background-color', 'border-top-color', 'border-top-width', 'border-radius', 'box-shadow', 'padding', 'margin', 'opacity', 'cursor', 'outline'];
+				const out = [];
+				const walk = (element, depth) => {
+					const r = element.getBoundingClientRect();
+					const s = getComputedStyle(element);
+					if (s.display !== 'none' && r.width > 0) {
+						const text = [...element.childNodes].filter(node => node.nodeType === 3).map(node => node.textContent.trim()).join(' ');
+						out.push({ depth, tag: element.tagName.toLowerCase(), cls: String(element.className?.baseVal ?? element.className), id: element.id || undefined, text: text || undefined, box: [r.x, r.y, r.width, r.height].map(v => Math.round(v * 100) / 100), style: Object.fromEntries(keys.map(key => [key, s.getPropertyValue(key)])) });
+					}
+					for (const child of element.children) walk(child, depth + 1);
+				};
+				walk(root, 0);
+				return out;
+			})()`);
+			const name = argument.replace(/[^\w.-]+/g, '_');
+			writeFileSync(join(outDir, `${name}.json`), JSON.stringify(dump, null, 1));
+			console.log(`${name}.json: ${dump ? dump.length : 'no element'}`);
+		}
+		await Bun.sleep(300);
+	}
+} finally {
+	app.kill('SIGKILL');
+	await app.exited;
+	rmSync(userData, { recursive: true, force: true });
+}
+process.exit(0);
+
+async function evaluate(cdp: Cdp, expression: string) {
+	const { result, exceptionDetails } = await cdp('Runtime.evaluate', { expression, returnByValue: true });
+	if (exceptionDetails) {
+		throw new Error(exceptionDetails.exception?.description ?? exceptionDetails.text);
+	}
+	return result.value;
+}
+
+type Cdp = (method: string, params?: object) => Promise<any>;
+
+async function connect(): Promise<Cdp> {
+	const target = await until(async () => {
+		const targets: { type: string; url: string; webSocketDebuggerUrl: string }[] = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
+		return targets.find(t => t.type === 'page' && t.url.includes('workbench'));
+	});
+	const socket = new WebSocket(target.webSocketDebuggerUrl);
+	await new Promise(resolve => socket.addEventListener('open', resolve, { once: true }));
+	let nextId = 1;
+	const pending = new Map<number, (message: any) => void>();
+	socket.addEventListener('message', event => {
+		const message = JSON.parse(String(event.data));
+		pending.get(message.id)?.(message);
+		pending.delete(message.id);
+	});
+	return (method, params = {}) => new Promise<any>((resolve, reject) => {
+		const id = nextId++;
+		pending.set(id, message => message.error ? reject(new Error(`${method}: ${message.error.message}`)) : resolve(message.result));
+		socket.send(JSON.stringify({ id, method, params }));
+	});
+}
+
+async function until<T>(probe: () => Promise<T>, timeoutMs = 60000): Promise<NonNullable<T>> {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		const value = await probe().catch(() => undefined);
+		if (value) {
+			return value;
+		}
+		await Bun.sleep(250);
+	}
+	throw new Error('timed out');
+}

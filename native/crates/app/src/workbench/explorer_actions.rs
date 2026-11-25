@@ -458,13 +458,12 @@ impl Workbench {
                     });
                 }
                 Err(error) => {
-                    // shortcut: notifications are not ported; the error and its Retry action show in a dialog.
-                    let retry = workbench.update_in(cx, |workbench, window, cx| match workbench.skip_dialogs {
-                        true => None,
-                        false => Some(window.prompt(PromptLevel::Critical, &error, None, &["Retry", "Close"], cx)),
+                    let retry = workbench.update(cx, |workbench, cx| {
+                        cx.notify();
+                        workbench.prompt_notification(crate::notifications::Severity::Error, error, &["Retry"])
                     });
-                    if let Ok(Some(answer)) = retry
-                        && answer.await == Ok(0)
+                    if let Ok(answer) = retry
+                        && answer.await == Ok(Ok(json!(0)))
                     {
                         let _ = workbench.update_in(cx, |workbench, window, cx| workbench.create_explorer_item(target, is_dir, value, window, cx));
                     }
@@ -1154,14 +1153,10 @@ async fn confirm_or_stop_asking(workbench: &WeakEntity<Workbench>, cx: &mut Asyn
 }
 
 /// `notificationService.error`.
-/// shortcut: notifications are not ported; the message shows in a dialog.
 async fn notify_error(workbench: &WeakEntity<Workbench>, cx: &mut AsyncWindowContext, message: String) {
-    eprintln!("explorer: {message}");
-    let _ = workbench.update_in(cx, |workbench, window, cx| {
-        if !workbench.skip_dialogs {
-            // The only button closes the dialog, so the answer is not needed.
-            drop(window.prompt(PromptLevel::Critical, &message, None, &["OK"], cx));
-        }
+    let _ = workbench.update(cx, |workbench, cx| {
+        workbench.notify_error(message);
+        cx.notify();
     });
 }
 

@@ -14,6 +14,12 @@ impl Workbench {
         let arg = |index: usize| request.args.get(index).cloned().unwrap_or(Value::Null);
         match (request.proxy, request.method.as_str()) {
             ("MainThreadQuickOpen", _) | ("", "$cancel") => self.handle_quick_open_request(request, window, cx),
+            ("MainThreadMessageService", "$showMessage") => self.show_extension_message(&request.args, window, cx),
+            ("MainThreadProgress", "$startProgress") => self.start_progress(&request.args, window, cx),
+            ("MainThreadProgress", "$progressReport") => self.report_progress(&request.args, window, cx),
+            ("MainThreadProgress", "$progressEnd") => self.end_progress(&request.args, window, cx),
+            ("MainThreadStatusBar", "$setEntry") => self.set_extension_status_entry(&request.args, cx),
+            ("MainThreadStatusBar", "$disposeEntry") => self.dispose_extension_status_entry(&request.args, cx),
             ("MainThreadCommands", "$registerCommand") => {
                 let id = arg(0).as_str().unwrap_or_default().to_owned();
                 self.commands.register(id.clone(), move |workbench, args, _, _| {

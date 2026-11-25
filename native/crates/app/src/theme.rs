@@ -129,6 +129,7 @@ impl Theme {
             ColorValue::Key(key) => self.color(key),
             ColorValue::Transparent(inner, factor) => self.evaluate(inner).map(|color| Rgba { a: color.a * factor, ..color }),
             ColorValue::Darken(inner, factor) => self.evaluate(inner).map(|color| darken(color, *factor)),
+            ColorValue::Lighten(inner, factor) => self.evaluate(inner).map(|color| lighten(color, *factor)),
             ColorValue::Opaque(inner, background) => {
                 let (color, background) = (self.evaluate(inner)?, self.evaluate(background)?);
                 // Color.makeOpaque rounds each channel to a byte.
@@ -172,6 +173,12 @@ fn less_prominent(color: Rgba, background: Rgba, factor: f32, transparency: f32)
 fn darken(color: Rgba, factor: f32) -> Rgba {
     let (h, s, l, a) = hsla(color);
     from_hsla(h, s, round3(l - l * factor as f64), a)
+}
+
+/// `Color.lighten`: the HSLA lightness plus `factor` of itself.
+fn lighten(color: Rgba, factor: f32) -> Rgba {
+    let (h, s, l, a) = hsla(color);
+    from_hsla(h, s, round3(l + l * factor as f64), a)
 }
 
 fn round3(value: f64) -> f64 {
@@ -232,6 +239,7 @@ enum ColorValue {
     Key(&'static str),
     Transparent(&'static ColorValue, f32),
     Darken(&'static ColorValue, f32),
+    Lighten(&'static ColorValue, f32),
     Opaque(&'static ColorValue, &'static ColorValue),
     /// The color, the background, the factor and the transparency.
     LessProminent(&'static ColorValue, &'static ColorValue, f32, f32),
@@ -437,6 +445,17 @@ fn registry_default(key: &str, kind: ThemeKind) -> ColorValue {
         "inputOption.hoverBackground" => (Hex("#5a5d5e80"), Hex("#b8b8b850"), None),
         "inputOption.activeBackground" => (Transparent(&Key("focusBorder"), 0.4), Transparent(&Key("focusBorder"), 0.2), Hex("#0000")),
         "inputOption.activeForeground" => (Hex("#FFFFFF"), Hex("#000000"), Key("foreground")),
+        // workbench/common/theme.ts, for the notification toasts and center.
+        "editorError.foreground" => (Hex("#F14C4C"), Hex("#E51400"), Hex("#F48771")),
+        "notificationCenter.border" | "notificationToast.border" => (Key("widget.border"), Key("widget.border"), Key("contrastBorder")),
+        "notifications.foreground" => (Key("editorWidget.foreground"), Key("editorWidget.foreground"), Key("editorWidget.foreground")),
+        "notifications.background" => (Key("editorWidget.background"), Key("editorWidget.background"), Key("editorWidget.background")),
+        "notificationLink.foreground" => (Key("textLink.foreground"), Key("textLink.foreground"), Key("textLink.foreground")),
+        "notificationCenterHeader.background" => (Lighten(&Key("notifications.background"), 0.3), Darken(&Key("notifications.background"), 0.05), Key("notifications.background")),
+        "notifications.border" => (Key("notificationCenterHeader.background"), Key("notificationCenterHeader.background"), Key("notificationCenterHeader.background")),
+        "notificationsErrorIcon.foreground" => (Key("editorError.foreground"), Key("editorError.foreground"), Key("editorError.foreground")),
+        "notificationsWarningIcon.foreground" => (Key("editorWarning.foreground"), Key("editorWarning.foreground"), Key("editorWarning.foreground")),
+        "notificationsInfoIcon.foreground" => (Key("editorInfo.foreground"), Key("editorInfo.foreground"), Key("editorInfo.foreground")),
         _ => quick_input_default(key),
     };
     match kind {
@@ -562,6 +581,15 @@ fn hc_light_default(key: &str) -> ColorValue {
         "inputOption.activeBorder" => Key("contrastBorder"),
         "inputOption.activeBackground" => Hex("#0000"),
         "inputOption.activeForeground" => Key("foreground"),
+        "editorError.foreground" => Hex("#B5200D"),
+        "notificationCenter.border" | "notificationToast.border" => Key("contrastBorder"),
+        "notifications.foreground" => Key("editorWidget.foreground"),
+        "notifications.background" | "notificationCenterHeader.background" => Key("editorWidget.background"),
+        "notificationLink.foreground" => Key("textLink.foreground"),
+        "notifications.border" => Key("notificationCenterHeader.background"),
+        "notificationsErrorIcon.foreground" => Key("editorError.foreground"),
+        "notificationsWarningIcon.foreground" => Key("editorWarning.foreground"),
+        "notificationsInfoIcon.foreground" => Key("editorInfo.foreground"),
         _ => quick_input_default_hc_light(key),
     }
 }

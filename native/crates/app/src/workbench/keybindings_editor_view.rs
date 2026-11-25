@@ -892,7 +892,7 @@ impl Workbench {
                 .child(self.action_hover(title, command, super::hover::HoverOptions::mouse()))
                 .on_click(cx.listener(move |workbench, _, window, cx| {
                     let outcome = workbench.execute_command(command, Vec::new(), window, cx);
-                    super::keyboard::report_failure(command.to_string(), outcome, cx);
+                    super::keyboard::report_failure(outcome, cx);
                 }))
         };
         let maximize_title = if self.keybindings_editor.maximized { "Restore Modal Editor" } else { "Maximize Modal Editor" };

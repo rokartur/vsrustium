@@ -99,8 +99,10 @@ impl Workbench {
     /// The model is clean up to the version that was written, and the host hears it was saved.
     pub(super) fn finish_save(&mut self, scheme: &str, path: &Path, version: u32, written: Result<(), String>, cx: &mut Context<Self>) -> bool {
         if let Err(error) = written {
-            // shortcut: a save error is logged, not shown as the reference's notification.
-            eprintln!("saving {}: {error}", path.display());
+            // shortcut: textFileSaveErrorHandler.ts's generic error without its Retry, Save As and Revert actions.
+            let name = path.file_name().unwrap_or(path.as_os_str()).to_string_lossy();
+            self.notify_error(format!("Failed to save '{name}': {error}"));
+            cx.notify();
             return false;
         }
         // An editor closed while its model was written has nothing left to mark.

@@ -1,0 +1,19 @@
+{
+	"name": "messages",
+	"publisher": "port",
+	"displayName": "Port Messages",
+	"version": "0.0.1",
+	"description": "Shows notifications, progress and status bar items for port/tools/ui-pair and port/tools/ref-dom.",
+	"engines": { "vscode": "^1.100.0" },
+	"main": "./extension.js",
+	"activationEvents": ["onStartupFinished"],
+	"contributes": {
+		"commands": [
+			{ "command": "portMessages.info", "title": "Port Messages: Info" },
+			{ "command": "portMessages.warning", "title": "Port Messages: Warning" },
+			{ "command": "portMessages.error", "title": "Port Messages: Error" },
+			{ "command": "portMessages.long", "title": "Port Messages: Long" },
+			{ "command": "portMessages.modal", "title": "Port Messages: Modal" }
+		]
+	}
+}

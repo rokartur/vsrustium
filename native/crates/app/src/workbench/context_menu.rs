@@ -168,7 +168,7 @@ impl Workbench {
         let args = menu.args.clone();
         self.hide_context_menu(window, cx);
         let outcome = self.execute_command(&id, args, window, cx);
-        super::keyboard::report_failure(id, outcome, cx);
+        super::keyboard::report_failure(outcome, cx);
     }
 
     /// The menu over a block that takes every mouse down outside it and hides the menu (`blockMouse`).
