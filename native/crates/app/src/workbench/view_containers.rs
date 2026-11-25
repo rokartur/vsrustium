@@ -114,7 +114,7 @@ impl Workbench {
     }
 
     /// The shown views of a contributed container, by its `workbench.view.extension.<id>` id.
-    fn container_views(&self, id: &str) -> Vec<&'static str> {
+    pub(super) fn container_views(&self, id: &str) -> Vec<&'static str> {
         self.tree_views.containers.iter().find(|container| container.id == id).map(|container| self.shown_views_of(&container.key)).unwrap_or_default()
     }
 
