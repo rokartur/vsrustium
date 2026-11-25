@@ -77,10 +77,10 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | mainthread/MainThreadShare | MainThread* shape (Rust side) | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | mainthread/MainThreadTask | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadExtensionService | MainThread* shape (Rust side) | ported | session.rs: `$getExtension`, `$asBrowserUri`, activation and runtime errors to the port log (no notification until milestone 11); `$extensionTestsExecute` result is code-gpui's exit code (api-workspace exits 1 with 4 failing, 0 with no test matched) |
-| mainthread/MainThreadSCM | MainThread* shape (Rust side) | stub | session.rs answers undefined |
-| mainthread/MainThreadQuickDiff | MainThread* shape (Rust side) | stub | session.rs answers undefined |
+| mainthread/MainThreadSCM | MainThread* shape (Rust side) | ported | scm.rs model of the `$registerSourceControl`/groups/resources/input calls, workbench/scm_view.rs view, badge and status entries: cargo test -p app scm |
+| mainthread/MainThreadQuickDiff | MainThread* shape (Rust side) | ported | the source control quick diff (`$provideOriginalResource`, quickDiffModel/quickDiffDecorator: gutter bars and triangles, overview ruler marks) in workbench/editor_view/quick_diff.rs: cargo test -p app quick_diff; `registerQuickDiffProvider` of extensions not routed yet |
 | mainthread/MainThreadAgentEditorComments | MainThread* shape (Rust side) | removed | no sign-in/AI by decision (port/notes.md); API stays inert: session.rs answers undefined, list getters []; exthost-probe 30/30 on Bun and Node |
-| mainthread/MainThreadDocumentDiff | MainThread* shape (Rust side) | stub | session.rs answers undefined |
+| mainthread/MainThreadDocumentDiff | MainThread* shape (Rust side) | ported | `$computeDocumentDiff` (workbench/editor_view/diff_editor_view.rs `compute_document_diff`) over the native/crates/diff port of editor/common/diff: cargo test -p diff (upstream fixtures of src/vs/editor/test/node/diffing, verifyLinesDiff) |
 | mainthread/MainThreadDebugService | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadWindow | MainThread* shape (Rust side) | stub | session.rs: $getInitialState fixed {isFocused,isActive}; rest undefined |
 | mainthread/MainThreadTunnelService | MainThread* shape (Rust side) | removed | no remote or tunnels by decision (port/notes.md); one local extension host |
@@ -463,7 +463,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/remoteTunnel | workbench contribution | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/contrib/replNotebook | workbench contribution | todo |  |
 | workbench/contrib/sash | workbench contribution | todo |  |
-| workbench/contrib/scm | workbench contribution | todo |  |
+| workbench/contrib/scm | workbench contribution | ported | SCM view: input box, action button, groups, resources with decorations, inline and title actions, activity badge, status bar commands (workbench/scm_view.rs); quick diff gutter (quick_diff.rs). Missing: SCM graph view, repositories view, multi-repository selection, tree view mode |
 | workbench/contrib/screenshotTool | workbench contribution | removed | Artur: internal infrastructure or developer tool with no 1:1 counterpart in the native port |
 | workbench/contrib/scrollLocking | workbench contribution | todo |  |
 | workbench/contrib/search | workbench contribution | ported | Search view (workbench/search_view.rs, search_actions.rs) and its model (search_model.rs): cargo test -p app search_model (searchResult, fileMatch and replace tests) and workbench::search_actions (context menu, input history, hover right click), port/tools/ui-pair frames match the reference in dark, light and hc (port/notes.md milestone 12); anythingQuickAccess.ts file picks: cargo test -p app anything_quick_access quick_open. No search editor links, notebook or AI results, replace preview diff |

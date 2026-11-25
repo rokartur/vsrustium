@@ -10,6 +10,7 @@ use gpui::{Context, Div, PathBuilder, Rgba, ScrollWheelEvent, StyledText, Window
 use serde_json::{Value, json};
 
 use super::{EditorMetrics, Workbench};
+use crate::workbench::hover::{HoverContent, HoverOptions};
 use crate::commands::Outcome;
 use crate::diff_editor::{DIFF_EDITOR_SCHEME, DiffInput, DiffZone, Side, ZoneContent, ZoneSide, diff_options, range_alignment, view_zones};
 use crate::editor::{OpenEditor, Position, TextDocument, VerticalReveal, expand_tabs, visible_column};
@@ -55,6 +56,17 @@ impl Workbench {
                 Outcome::done()
             });
         }
+        self.commands.register("workbench.action.compareEditor.swapSides", |workbench, _, _, cx| {
+            workbench.swap_diff_sides();
+            cx.notify();
+            Outcome::done()
+        });
+        self.commands.register("diffEditor.toggleCollapseUnchangedRegions", |workbench, _, _, cx| {
+            let enabled = workbench.setting("diffEditor.hideUnchangedRegions.enabled") == json!(true);
+            workbench.update_setting("diffEditor.hideUnchangedRegions.enabled", json!(!enabled));
+            cx.notify();
+            Outcome::done()
+        });
         self.commands.register("toggle.diff.ignoreTrimWhitespace", |workbench, _, _, cx| {
             let ignore = workbench.setting("diffEditor.ignoreTrimWhitespace") != json!(false);
             workbench.update_setting("diffEditor.ignoreTrimWhitespace", json!(!ignore));
@@ -222,6 +234,62 @@ impl Workbench {
         })
     }
 
+    /// editorGroupView.ts `activeCompareEditorCanSwap`: the original is writable and both sides are files or untitled.
+    fn diff_can_swap(&self, input: &DiffInput) -> bool {
+        let provided = |side: &Side| matches!(side.scheme.as_str(), "file" | "untitled");
+        provided(&input.original) && provided(&input.modified) && self.readonly(&input.original.scheme, &input.original.path).is_none()
+    }
+
+    /// diffEditorCommandsService.ts `swapDiffSides`: the diff editor shows the modified side as the original.
+    fn swap_diff_sides(&mut self) {
+        let Some(id) = self.editors.active_tab().map(|tab| tab.model_id) else { return };
+        let Some(input) = self.editors.diffs.get(&id).filter(|input| self.diff_can_swap(input)) else { return };
+        let modified = input.modified.clone();
+        let mut input = self.editors.diffs.remove(&id).expect("found above");
+        if let Some(model) = self.editors.model_mut(&modified.scheme, &modified.path) {
+            for (zone, _) in std::mem::take(&mut input.placed_zones) {
+                model.remove_view_zone(zone);
+            }
+        }
+        let swapped = DiffInput::new(input.modified, input.original, input.label);
+        self.editors.diffs.insert(id, swapped);
+        self.update_diff_editor();
+    }
+
+    /// The diff editor's `navigation` actions of the editor title, in menu order: previous and next change (11 and
+    /// 10), swap sides (15), whitespace (20) and collapse unchanged regions (22).
+    pub(in crate::workbench) fn diff_title_actions(&self, cx: &mut Context<Self>) -> Vec<gpui::AnyElement> {
+        let Some(input) = self.editors.active_diff() else { return Vec::new() };
+        let has_changes = input.diff.as_ref().is_some_and(|diff| !diff.diff.changes.is_empty());
+        let mut actions = vec![
+            ("workbench.action.compareEditor.previousChange", "arrow-up", "Previous Change", has_changes),
+            ("workbench.action.compareEditor.nextChange", "arrow-down", "Next Change", has_changes),
+        ];
+        if self.diff_can_swap(input) {
+            actions.push(("workbench.action.compareEditor.swapSides", "arrow-swap", "Swap Left and Right Side", true));
+        }
+        actions.push(("toggle.diff.ignoreTrimWhitespace", "whitespace", "Show Leading/Trailing Whitespace Differences", true));
+        actions.push(("diffEditor.toggleCollapseUnchangedRegions", "map", "Toggle Collapse Unchanged Regions", true));
+        let icon_color = self.color("icon.foreground");
+        let disabled_color = self.color("disabledForeground");
+        actions
+            .into_iter()
+            .map(|(command, icon, title, enabled)| {
+                let color = if enabled { icon_color } else { disabled_color };
+                self.icon(icon, 22., 16., color)
+                    .id(command)
+                    .rounded(px(5.))
+                    .when(enabled, |icon| {
+                        icon.cursor_pointer().hover(|icon| icon.bg(self.color("toolbar.hoverBackground"))).on_click(cx.listener(move |workbench, _, window, cx| {
+                            drop(workbench.execute_command(command, Vec::new(), window, cx));
+                        }))
+                    })
+                    .child(self.hover_target(gpui::SharedString::from(format!("diff-title-{command}")), HoverContent::Action { title, command }, HoverOptions::mouse()))
+                    .into_any_element()
+            })
+            .collect()
+    }
+
     /// The context keys of an active diff editor (editor.ts `TextCompareEditorActiveContext` and the diff
     /// editor's own `isInDiffEditor`).
     pub(in crate::workbench) fn insert_diff_editor_context(&self, context: &mut std::collections::HashMap<String, Value>) {
@@ -233,6 +301,7 @@ impl Workbench {
         context.insert("diffEditorRenderSideBySideInlineBreakpointReached".into(), json!(input.inline_now && self.setting("diffEditor.renderSideBySide") != json!(false)));
         context.insert("diffEditorOriginalUri".into(), json!(crate::editor::uri_string(&input.original.scheme, &input.original.path)));
         context.insert("diffEditorModifiedUri".into(), json!(crate::editor::uri_string(&input.modified.scheme, &input.modified.path)));
+        context.insert("activeCompareEditorCanSwap".into(), json!(self.diff_can_swap(input)));
         context.insert("editorHasChanges".into(), json!(input.diff.as_ref().is_some_and(|diff| !diff.diff.changes.is_empty())));
     }
 

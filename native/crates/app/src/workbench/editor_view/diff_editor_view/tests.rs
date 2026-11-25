@@ -102,3 +102,25 @@ fn compute_document_diff_answers_with_line_ranges_and_inner_changes(cx: &mut Tes
     assert_eq!(result["changes"][1]["modifiedRange"], json!({ "startLineNumber": 4, "startColumn": 1, "endLineNumber": 5, "endColumn": 1 }));
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[gpui::test]
+fn swap_sides_shows_the_modified_file_as_the_original(cx: &mut TestAppContext) {
+    let (dir, workbench, _receiver, cx) = workbench_in("diff-swap", cx);
+    let (a, b) = (file_uri(&dir.join("a.txt")), file_uri(&dir.join("b.txt")));
+    workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("_workbench.diff", vec![a, b], window, cx)));
+    cx.run_until_parked();
+    workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("workbench.action.compareEditor.swapSides", Vec::new(), window, cx)));
+    cx.run_until_parked();
+
+    let (active, changes, zones) = workbench.read_with(cx, |workbench, _| {
+        let diff = workbench.editors.active_diff().unwrap();
+        let changes: Vec<String> = diff.diff.as_ref().unwrap().diff.changes.iter().map(|change| format!("{}->{}", change.original, change.modified)).collect();
+        let zones = workbench.editors.model("file", &dir.join("b.txt")).unwrap().view_zones.len();
+        (workbench.editors.active().unwrap().document.name(), changes, zones)
+    });
+    assert_eq!(active, "a.txt");
+    assert_eq!(changes, ["[2,3)->[2,3)", "[4,5)->[4,4)"]);
+    // The zones the diff placed in the former modified editor are gone.
+    assert_eq!(zones, 0);
+    std::fs::remove_dir_all(dir).unwrap();
+}

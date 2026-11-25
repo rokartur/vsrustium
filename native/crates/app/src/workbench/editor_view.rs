@@ -108,6 +108,7 @@ impl Workbench {
                     workbench.execute_command("rerunSearchEditorSearch", Vec::new(), window, cx);
                 })))
             })
+            .children(self.diff_title_actions(cx))
             .child(self.icon("split-horizontal", 22., 16., icon_color).cursor_pointer())
             .child(self.icon("ellipsis", 22., 16., icon_color).cursor_pointer());
         // The line under the strip (tabs-border-bottom) runs below the shoulders; the active fill covers it.
