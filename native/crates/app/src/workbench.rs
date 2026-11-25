@@ -19,6 +19,7 @@ mod explorer_find;
 mod extension_editor;
 mod extensions_list_view;
 mod workspace_recommendations;
+pub(crate) mod localization;
 pub(crate) mod extensions_view;
 mod file_participants;
 mod find_widget;
@@ -335,6 +336,7 @@ impl Workbench {
         workbench.register_extension_management_commands();
         workbench.register_extensions_view_commands();
         workbench.register_workspace_recommendations_commands();
+        workbench.register_localization_commands();
         // Keybindings resolve before the focused element sees the key, and with nothing focused too.
         let entity = cx.entity().downgrade();
         cx.intercept_keystrokes(move |event, window, cx| {
@@ -841,7 +843,7 @@ impl Workbench {
             .px(px(4.))
             .when_some(self.theme.color("sideBarTitle.border"), |title, border| title.border_b_1().border_color(border))
             // The h2 keeps its 32px line under the HC border-bottom, so it is laid out from the top, not centered.
-            .child(div().self_start().pl(px(8.)).line_height(px(32.)).text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).text_color(self.foreground_or("sideBarTitle.foreground")).child(name))
+            .child(div().self_start().pl(px(8.)).line_height(px(32.)).text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).text_color(self.foreground_or("sideBarTitle.foreground")).child(crate::nls::localize(&name).into_owned()))
     }
 
     /// A pane header (paneview.ts): 28px, sideBarSectionHeader colors, a top border on every section but the first.
@@ -863,7 +865,7 @@ impl Workbench {
             .text_color(foreground)
             .when_some(border, |header, border| header.child(div().absolute().top_0().left_0().right_0().h(px(1.)).bg(border)))
             .child(self.icon(if expanded { "chevron-down" } else { "chevron-right" }, 16., 16., foreground).mx(px(2.)))
-            .child(div().text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).child(title.to_string()))
+            .child(div().text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).child(crate::nls::localize(title).into_owned()))
     }
 
     fn editor_part(&self) -> Div {

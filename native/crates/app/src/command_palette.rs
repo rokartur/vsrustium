@@ -224,8 +224,8 @@ pub fn menu(extensions: &[ScannedExtension]) -> Vec<MenuItem> {
         .iter()
         .map(|item| MenuItem {
             id: text(&item["id"]).expect("an id"),
-            title: text(&item["title"]).unwrap_or_default(),
-            category: text(&item["category"]),
+            title: text(&item["title"]).map(|title| crate::nls::localize(&title).into_owned()).unwrap_or_default(),
+            category: text(&item["category"]).map(|category| crate::nls::localize(&category).into_owned()),
             when: item["when"].as_str().and_then(Expr::deserialize),
             precondition: item["precondition"].as_str().and_then(Expr::deserialize),
             source: None,

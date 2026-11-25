@@ -42,6 +42,7 @@ mod main_thread_quick_open;
 mod main_thread_status_bar;
 mod markers;
 mod menus;
+mod nls;
 mod notifications;
 mod output;
 mod quick_input;
@@ -102,7 +103,7 @@ fn main() -> anyhow::Result<()> {
     let screenshot_input = flag_value("--screenshot-input").unwrap_or_default();
     // Typed before the capture, as port/tools/ref-screenshot types KEYS into the reference.
     let screenshot_keys: Vec<Keystroke> = flag_value("--screenshot-keys").unwrap_or_default().split_whitespace().map(Keystroke::parse).collect::<Result<_, _>>()?;
-    let value_flags = ["--user-data-dir", "--extensions-dir", "--screenshot", "--screenshot-keys", "--screenshot-input", "--theme"];
+    let value_flags = ["--user-data-dir", "--extensions-dir", "--locale", "--screenshot", "--screenshot-keys", "--screenshot-input", "--theme"];
     let positional: Vec<&String> = args.iter().enumerate().skip(1).filter(|(i, arg)| !arg.starts_with("--") && !value_flags.contains(&args[i - 1].as_str())).map(|(_, arg)| arg).collect();
     let canonical = |path: &String| std::fs::canonicalize(path).with_context(|| format!("opening {path}"));
     let workspace = positional.first().map(|path| canonical(path)).transpose()?.map(Workspace::open);
@@ -110,6 +111,12 @@ fn main() -> anyhow::Result<()> {
     let development = ExtensionDevelopment::from_args(&args)?;
 
     let app_root = std::env::current_dir()?;
+    // Before any scan: the display language decides the manifests' messages.
+    let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
+    let locale = nls::user_locale(flag_value("--locale").as_deref(), &output::log_levels::argv_file(&home));
+    let resolved = exthost::language_packs::resolve_nls(&user_data, &locale);
+    nls::init(&resolved);
+    exthost::language_packs::set_nls(&user_data, resolved);
     let extensions_dir = std::env::var_os("VSCODE_GPUI_EXTENSIONS").map(PathBuf::from).unwrap_or_else(|| app_root.join("extensions"));
     let builtins = scan_builtin_extensions(&extensions_dir)?;
     // Artur: user extensions live in ~/.vsrustium/extensions, the default user data dir's extensions folder.

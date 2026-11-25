@@ -40,6 +40,8 @@ pub enum Owner {
     FolderSettings(Vec<std::path::PathBuf>),
     /// The folder pick of Configure Recommended Extensions (Workspace Folder).
     ExtensionsFolder(Vec<std::path::PathBuf>),
+    /// Configure Display Language: the languages, by item handle.
+    DisplayLanguage(Vec<crate::workbench::localization::LanguageItem>),
 }
 
 impl Workbench {
@@ -214,6 +216,7 @@ impl Workbench {
             Owner::Output(_) => self.output_pick_event(id, event, window, cx),
             Owner::FolderSettings(_) => self.folder_settings_pick_event(id, event, window, cx),
             Owner::ExtensionsFolder(_) => self.extensions_folder_pick_event(id, event, window, cx),
+            Owner::DisplayLanguage(_) => self.display_language_pick_event(id, event, window, cx),
         }
     }
 

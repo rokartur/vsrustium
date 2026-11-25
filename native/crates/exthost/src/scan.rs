@@ -36,13 +36,12 @@ pub fn scan_builtin_extensions(dir: &Path) -> anyhow::Result<Vec<ScannedExtensio
 
 pub fn scan_extension(folder: &Path, is_builtin: bool) -> anyhow::Result<ScannedExtension> {
     let mut manifest: Value = serde_json::from_slice(&std::fs::read(folder.join("package.json"))?)?;
-    if let Ok(nls) = std::fs::read(folder.join("package.nls.json")) {
-        let messages: Map<String, Value> = serde_json::from_slice(&nls)?;
-        replace_nls_placeholders(&mut manifest, &messages);
-    }
     let publisher = manifest["publisher"].as_str().unwrap_or("undefined_publisher");
     let name = manifest["name"].as_str().ok_or_else(|| anyhow::anyhow!("{} has no name", folder.display()))?;
     let id = format!("{publisher}.{name}");
+    if let Some(messages) = crate::language_packs::localized_messages(folder, &id, crate::language_packs::nls()) {
+        replace_nls_placeholders(&mut manifest, &messages);
+    }
 
     let object = manifest.as_object_mut().expect("package.json is an object");
     object.insert("id".into(), json!(id));

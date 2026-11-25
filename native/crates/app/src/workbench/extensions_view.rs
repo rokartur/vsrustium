@@ -287,6 +287,7 @@ impl Workbench {
             Err(error) => eprintln!("[extensions] scanning the user extensions: {error:#}"),
         }
         viewlet.installed = installed;
+        self.sync_language_packs();
     }
 
     /// The `Extension`s of the installed list (`extensionsWorkbenchService.local`) with their enablement and runtime state.
