@@ -1,8 +1,32 @@
-#![allow(dead_code, reason = "the Output view shows links once the editor has editor/contrib/links (ledger todo)")]
-
 use std::path::{Path, PathBuf};
 
 use regex::{Regex, RegexBuilder};
+use serde_json::{Value, json};
+
+use crate::editor::utf16_column;
+use crate::editor_history::file_uri_string;
+
+/// outputLinkComputer.ts `$computeLinks`: the links of each workspace folder's patterns as an `ILinksList`, the url
+/// a file URI with `#line` or `#line,column`, ranges in UTF-16 columns.
+pub fn compute_links(lines: &[String], workspace_folders: &[PathBuf]) -> Value {
+    let mut links = Vec::new();
+    for folder in workspace_folders {
+        let patterns = create_patterns(folder);
+        for (index, line) in lines.iter().enumerate() {
+            for link in detect_links(line, &patterns, folder) {
+                let url = match (link.line, link.column) {
+                    (Some(line), Some(column)) => format!("{}#{line},{column}", file_uri_string(&link.path)),
+                    (Some(line), None) => format!("{}#{line}", file_uri_string(&link.path)),
+                    _ => file_uri_string(&link.path),
+                };
+                let start = utf16_column(line, link.range.0 - 1) + 1;
+                let end = utf16_column(line, link.range.1 - 1) + 1;
+                links.push(json!({ "range": { "startLineNumber": index + 1, "startColumn": start, "endLineNumber": index + 1, "endColumn": end }, "url": url }));
+            }
+        }
+    }
+    json!({ "links": links })
+}
 
 /// One link found in an output line: outputLinkComputer.ts `ILink` with its `url` fragment `#line,column` split out.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -153,6 +177,18 @@ mod tests {
 
         assert_link(r#" at "C:\Users\someone\AppData\Local\Temp\_monacodata_9888\workspaces\mankala\Game.ts" in"#, "Game.ts", None, None, (6, 85));
         assert_link(r" at 'C:\Users\someone\AppData\Local\Temp\_monacodata_9888\workspaces\mankala\Game.ts' in", "Game.ts", None, None, (6, 85));
+    }
+
+    #[test]
+    fn compute_links_answers_file_urls_with_the_position() {
+        let lines = vec!["é /w/src/a.ts:3:7 and /w/b c.ts(9)".to_string(), "/other/x.ts".to_string()];
+        assert_eq!(
+            compute_links(&lines, &[PathBuf::from("/w")]),
+            json!({ "links": [
+                { "range": { "startLineNumber": 1, "startColumn": 23, "endLineNumber": 1, "endColumn": 35 }, "url": "file:///w/b%20c.ts#9" },
+                { "range": { "startLineNumber": 1, "startColumn": 3, "endLineNumber": 1, "endColumn": 18 }, "url": "file:///w/src/a.ts#3,7" },
+            ] })
+        );
     }
 
     #[test]

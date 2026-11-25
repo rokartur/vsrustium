@@ -18,6 +18,11 @@ use crate::theme::load_theme;
 use crate::workbench::Workbench;
 
 fn open(cx: &mut TestAppContext) -> (gpui::Entity<Workbench>, &mut VisualTestContext, Receiver<HostMessage>, PathBuf) {
+    open_in(cx, false)
+}
+
+/// `open`, with the temporary folder as the workspace's folder when `as_folder`.
+fn open_in(cx: &mut TestAppContext, as_folder: bool) -> (gpui::Entity<Workbench>, &mut VisualTestContext, Receiver<HostMessage>, PathBuf) {
     let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
@@ -27,7 +32,8 @@ fn open(cx: &mut TestAppContext) -> (gpui::Entity<Workbench>, &mut VisualTestCon
     let settings = Arc::new(Mutex::new(Settings::load(Registry::with_extensions(&[]), dir.join("User"), None)));
     let (sender, receiver) = std::sync::mpsc::channel();
     let (workbench, cx) = cx.add_window_view(|window, cx| {
-        let mut workbench = Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), settings, HostSync::new(sender), cx);
+        let workspace = as_folder.then(|| config::workspace::Workspace::folder(dir.clone()));
+        let mut workbench = Workbench::new(theme, app_root.clone(), workspace, Languages::new(&[]), settings, HostSync::new(sender), cx);
         workbench.watch_editor_focus(window, cx);
         workbench
     });
@@ -94,6 +100,30 @@ fn extension_channels_show_their_file_in_the_output_view(cx: &mut TestAppContext
 
     request(&workbench, cx, "MainThreadOutputService", "$dispose", json!([id]));
     assert!(workbench.read_with(cx, |workbench, _| workbench.output.channels.is_empty()));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// outputLinkProvider.ts: paths under a workspace folder in the Output view are links, also in appended text.
+#[gpui::test]
+fn output_paths_in_the_workspace_are_links(cx: &mut TestAppContext) {
+    let (workbench, cx, _receiver, dir) = open_in(cx, true);
+    let file = dir.join("1-build.log");
+    std::fs::write(&file, format!("error at {}/src/a.ts:3:7\n", dir.display())).unwrap();
+    let id = request(&workbench, cx, "MainThreadOutputService", "$register", json!(["build", { "scheme": "file", "path": file }, null, "pub.ext"]));
+    request(&workbench, cx, "MainThreadOutputService", "$reveal", json!([id, true]));
+    workbench.update_in(cx, |workbench, window, cx| workbench.focus_group(crate::editor::PANEL_GROUP, window, cx));
+    cx.run_until_parked();
+    let link_columns = |workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext, line: usize| {
+        workbench.read_with(cx, |workbench, _| workbench.link_styles(workbench.editors.active().unwrap(), line, 4).into_iter().map(|(range, _)| range).collect::<Vec<_>>())
+    };
+    let path_length = format!("{}/src/a.ts:3:7", dir.display()).len();
+    assert_eq!(link_columns(&workbench, cx, 0), [9..9 + path_length]);
+
+    std::fs::write(&file, format!("error at {0}/src/a.ts:3:7\nsee {0}/b.ts(2)\n", dir.display())).unwrap();
+    request(&workbench, cx, "MainThreadOutputService", "$update", json!([id, 1]));
+    cx.executor().advance_clock(std::time::Duration::from_millis(1000));
+    cx.run_until_parked();
+    assert_eq!(link_columns(&workbench, cx, 1), [4..4 + format!("{}/b.ts(2)", dir.display()).len()]);
     std::fs::remove_dir_all(dir).unwrap();
 }
 
