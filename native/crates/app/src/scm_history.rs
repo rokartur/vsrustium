@@ -1,6 +1,3 @@
-// The Source Control Graph view that consumes these is not built yet.
-#![cfg_attr(not(test), allow(dead_code))]
-
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
@@ -226,7 +223,7 @@ pub fn to_history_item_view_models(
 }
 
 /// The circle color of `renderSCMHistoryItemGraph`, inlined in `toISCMHistoryItemViewModelArray`.
-fn node_color(id: &str, input_swimlanes: &[GraphNode], output_swimlanes: &[GraphNode]) -> ColorId {
+pub fn node_color(id: &str, input_swimlanes: &[GraphNode], output_swimlanes: &[GraphNode]) -> ColorId {
     let circle_index = input_swimlanes.iter().position(|node| node.id == id).unwrap_or(input_swimlanes.len());
     output_swimlanes
         .get(circle_index)

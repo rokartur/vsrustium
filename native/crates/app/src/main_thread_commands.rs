@@ -21,6 +21,7 @@ impl Workbench {
             ("MainThreadProgress", "$progressEnd") => self.end_progress(&request.args, window, cx),
             ("MainThreadWebviews" | "MainThreadWebviewPanels", method) => self.handle_webview_request(method, &request.args, window, cx),
             ("MainThreadSCM", method) => self.handle_scm_request(method, &request.args, window, cx),
+            ("MainThreadTimeline", method) => self.handle_timeline_request(method, &request.args, cx),
             ("MainThreadGitHub", method) => self.handle_github_request(method, &request.args, cx),
             ("MainThreadStatusBar", "$setEntry") => self.set_extension_status_entry(&request.args, cx),
             ("MainThreadStatusBar", "$disposeEntry") => self.dispose_extension_status_entry(&request.args, cx),
@@ -85,6 +86,11 @@ impl Workbench {
             }
             ("MainThreadLanguageFeatures", "$unregister") => {
                 self.language_features.unregister(arg(0).as_u64().unwrap_or_default());
+                Outcome::done()
+            }
+            ("MainThreadLanguageFeatures", "$emitCodeLensEvent") => {
+                self.code_lens_event += 1;
+                cx.notify();
                 Outcome::done()
             }
             ("MainThreadLanguageFeatures", method) if method.starts_with("$register") => {

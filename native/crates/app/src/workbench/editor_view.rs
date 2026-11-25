@@ -17,6 +17,7 @@ use gpui::{
 };
 
 pub(super) mod diff_editor_view;
+pub(super) mod code_lens;
 pub(super) mod diff_gutter;
 pub(super) mod drag_and_drop;
 pub(super) mod quick_diff;

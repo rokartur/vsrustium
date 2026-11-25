@@ -488,6 +488,9 @@ impl Workbench {
     /// A view zone of the modified code editor: a diff zone's view, an unchanged region's placeholder, else empty
     /// whitespace.
     pub(super) fn view_zone_body(&self, editor: &OpenEditor, id: u32, height: f32, content_left: f32, cx: &mut Context<Self>) -> Div {
+        if let Some(lenses) = self.code_lens_zone(editor, id, content_left, cx) {
+            return lenses;
+        }
         let Some(input) = self.editors.active_diff().filter(|diff| editor.document.is(&diff.modified.scheme, &diff.modified.path)) else {
             return div().flex_none().h(px(height));
         };

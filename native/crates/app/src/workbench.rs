@@ -50,9 +50,11 @@ use status_entries::{EDITOR_STATUS_PRIORITY, PROBLEMS_PRIORITY};
 pub mod themes;
 mod quick_input_view;
 mod text_input;
+mod timeline_view;
 mod title_bar_actions;
 mod unicode_highlight;
 mod unusual_line_terminators;
+mod scm_graph_view;
 mod scm_tree;
 mod scm_view;
 mod webview_panels;
@@ -168,8 +170,12 @@ pub struct Workbench {
     pub search_editor_widget: search_editor_widget::SearchEditorWidget,
     pub webview_panels: webview_panels::WebviewPanels,
     pub scm: scm_view::ScmView,
+    timeline: timeline_view::TimelineView,
+    scm_graph: scm_graph_view::ScmGraph,
     quick_diffs: editor_view::quick_diff::QuickDiffs,
     pub(crate) github_clients: crate::main_thread_github::GitHubClients,
+    /// Bumped by `$emitCodeLensEvent`: the code lenses are asked again.
+    pub(crate) code_lens_event: u64,
     /// `contributes.commands` icons, for the view toolbars.
     pub command_icons: HashMap<String, crate::menus::CommandIcon>,
     /// `MenuRegistry`.
@@ -199,6 +205,9 @@ impl Render for Workbench {
         self.update_diff_editor();
         self.update_diff_symbols(cx);
         self.update_quick_diff(cx);
+        self.update_timeline(cx);
+        self.update_scm_graph(cx);
+        self.update_code_lenses(cx);
         self.auto_save_models_changed(cx);
         self.follow_content_hover_editor();
         let viewport = window.viewport_size();
@@ -316,8 +325,11 @@ impl Workbench {
             search_editor_widget: search_editor_widget::SearchEditorWidget::new(cx),
             webview_panels: Default::default(),
             scm: scm_view::ScmView::new(cx),
+            timeline: Default::default(),
+            scm_graph: Default::default(),
             quick_diffs: Default::default(),
             github_clients: Default::default(),
+            code_lens_event: 0,
             command_icons: HashMap::new(),
             menus: crate::menus::workbench_menus(),
             context_menu: None,
@@ -336,6 +348,7 @@ impl Workbench {
         workbench.register_unchanged_region_commands();
         workbench.register_scroll_locking_commands();
         workbench.register_scm_view_mode_commands();
+        workbench.register_timeline_commands();
         workbench.register_scm_commands();
         workbench.register_editor_commands();
         workbench.register_find_commands();
@@ -835,7 +848,7 @@ impl Workbench {
                     .child(self.explorer_empty_area(cx)),
                 ).children(self.explorer_find_widget(window, cx))))
             .child(self.section_header("Outline", false, true))
-            .child(self.section_header("Timeline", false, true))
+            .child(self.timeline_section(cx))
             // The pane view is laid out 5px shorter than the side bar content.
             .child(div().h(px(5.)).flex_none())
     }

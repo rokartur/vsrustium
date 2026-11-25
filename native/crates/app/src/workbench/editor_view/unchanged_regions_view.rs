@@ -336,8 +336,9 @@ impl Workbench {
             self.change_unchanged_regions(|input| input.unchanged[drag.region].show_more_above(reveal), cx);
             return;
         }
-        let Some(region) = self.editors.active_diff().map(|input| input.unchanged[drag.region]) else { return };
-        self.set_visible_bottom(drag.region, (region.visible_bottom + reveal).min(region.line_count - region.visible_top), cx);
+        let Some(mut region) = self.editors.active_diff().map(|input| input.unchanged[drag.region]) else { return };
+        region.show_more_below(reveal);
+        self.set_visible_bottom(drag.region, region.visible_bottom, cx);
     }
 
     /// The `diff-unchanged-lines` background of a line in an unchanged region.

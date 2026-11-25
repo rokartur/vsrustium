@@ -313,7 +313,8 @@ impl Workbench {
                 });
             }
         }
-        frame.child(header).child(div().id("scm-list").flex_1().min_h_0().overflow_y_scroll().track_focus(&self.scm.list_focus).children(rows))
+        let list = div().id("scm-list").flex_1().min_h_0().overflow_y_scroll().track_focus(&self.scm.list_focus).children(rows);
+        frame.child(header).child(list).when(provider.has_history_provider, |frame| frame.child(self.scm_graph_section(&provider, cx)))
     }
 
     /// The input box shows the active repository's input once, then keeps its own state while edited.
