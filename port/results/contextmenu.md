@@ -49,3 +49,12 @@ Reference: `FOLDER=port/fixtures/workspace port/tools/ref-contextmenu /tmp/ref-m
 - Right click: the menu targets the row's folder, items as in the section above.
 - Still different, not compact folders: the reference shows the pane's title actions, the tree indent guide and the row's path hover while the pointer rests in the view (view and row hover, milestone 11).
 - `cargo test -p app`: 891 passed, 1 ignored (`compacts_single_child_folders_into_one_row`, `compressed_navigation_moves_within_its_folders`, `get_context_matches_upstream`).
+
+## Milestone 9: submenus and the Manage menu
+
+`port/tools/ui-pair` with `ARGS=--extensionDevelopmentPath=port/fixtures/extensions/submenus` (a contributed "Port Submenu" first in the Explorer context menu), Dark Modern, and the port's `--screenshot-input "right 120 107; key down; key right"` for the keys (cua's key presses close the port's menu: they reach the window as an activation, a harness limit; the same keys through GPUI's input work).
+
+- Submenu (`raw/contextmenu/submenu-keys-port.png`, the reference's first ui-pair run shows the same): Down focuses Port Submenu, Right opens the submenu beside the menu with First Item focused and the parent item kept highlighted, the submenu's top 4px above its item (`calculateSubmenuMenuLayout`), the chevron (`menu-submenu`) at the item's right. A click on the item opens it too.
+- Manage (`raw/contextmenu/manage-menu.png`, reference left): the gear opens the menu right of the bar, bottom aligned with the button, at the reference's place (left edge 45pt, bottom 313pt in both crops). Items: Command Palette... [⇧⌘P] | Keyboard Shortcuts [⌘K ⌘S], Themes >. The reference also has Profiles, Settings, Extensions, Snippets, Tasks (milestones 10, 18, 13, 15) and Layout Density (the compact layout, milestone 11).
+- Share: with the github extension's `github.hasGitHubRepo`, Share > Copy vscode.dev Link shows in the Explorer, editor and tab menus (`cargo test -p app the_github_share_items`); the reference shows it for a GitHub clone, the port waits for git repositories (MainThreadSCM, milestone 14) to set the key.
+- `cargo test -p app`: 1104 passed, 1 ignored (`submenus_open_on_hover_and_keys_and_run_their_items`, `submenus_open_beside_their_item`, `the_manage_menu_opens_beside_its_button`, `the_manage_menu_lists_the_global_activity_items`).
