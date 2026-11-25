@@ -132,7 +132,7 @@ pub fn right(lines: &[String], position: Position) -> Position {
 /// (`leftover`, negative after a jump to the end of the last line), and moves to the document's
 /// edge when there is no line to go to. Lines in `hidden` are folded away and skipped.
 pub fn vertical(lines: &[String], hidden: &[Range<usize>], position: Position, leftover: isize, down: bool, tab_size: usize) -> (Position, isize) {
-    let visible_of = |position: Position| super::visible_column(&lines[position.line], position.column, tab_size) as isize;
+    let visible_of = |position: Position| super::logical_visible_column(&lines[position.line], position.column, tab_size) as isize;
     let visible = visible_of(position) + leftover;
     let last_line = folding::last_shown_line(lines.len(), hidden);
     let last = Position::new(last_line, line_len(lines, last_line));

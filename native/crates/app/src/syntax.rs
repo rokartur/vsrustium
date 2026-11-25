@@ -379,8 +379,9 @@ fn expanded_offsets(text: &str, tab_size: usize) -> Vec<usize> {
         for byte in 0..c.len_utf8() {
             offsets[index + byte] = expanded;
         }
-        let width = if c == '\t' { tab_size - visible % tab_size } else { 1 };
-        expanded += if c == '\t' { width } else { c.len_utf8() };
+        let width = crate::editor::char_columns(c, visible, tab_size);
+        // `expand_tabs` draws a tab and a bidi format character as spaces.
+        expanded += if c == '\t' || crate::editor::is_bidi_format_character(c) { width } else { c.len_utf8() };
         visible += width;
     }
     offsets[text.len()] = expanded;

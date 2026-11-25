@@ -3,7 +3,7 @@
 //! column selection (cursorColumnSelection.ts).
 
 use super::cursor::{self, Position, Selection};
-use super::{OpenEditor, visible_column, word_at};
+use super::{OpenEditor, logical_visible_column, word_at};
 
 /// What a command scrolls into view: all cursors (`revealAllCursors`), one position
 /// (`revealTopMostCursor`, `revealBottomMostCursor`), or nothing (`setSelections`).
@@ -164,7 +164,7 @@ impl OpenEditor {
         }
         let tab_size = self.document.indentation.tab_size;
         let Selection { anchor, head } = self.selection();
-        let visible = |position: Position| visible_column(&self.document.lines[position.line], position.column, tab_size);
+        let visible = |position: Position| logical_visible_column(&self.document.lines[position.line], position.column, tab_size);
         ColumnSelectData { from_line: anchor.line, from_visible: visible(anchor), to_line: head.line, to_visible: visible(head) }
     }
 
@@ -181,7 +181,7 @@ impl OpenEditor {
             let text = &self.document.lines[line];
             let start = cursor::column_from_visible(text, from_visible, tab_size);
             let end = cursor::column_from_visible(text, to_visible, tab_size);
-            let (visible_start, visible_end) = (visible_column(text, start, tab_size), visible_column(text, end, tab_size));
+            let (visible_start, visible_end) = (logical_visible_column(text, start, tab_size), logical_visible_column(text, end, tab_size));
             if from_visible < to_visible && (visible_start > to_visible || visible_end < from_visible) {
                 continue;
             }
@@ -211,7 +211,7 @@ impl OpenEditor {
         let max_visible = (data.from_line.min(data.to_line)..=data.from_line.max(data.to_line))
             .map(|line| {
                 let text = &self.document.lines[line];
-                visible_column(text, text.chars().count(), tab_size)
+                logical_visible_column(text, text.chars().count(), tab_size)
             })
             .max()
             .expect("a range of lines");

@@ -434,16 +434,35 @@ fn overflowing_char_count(count: usize) -> String {
     }
 }
 
-/// The visible column of char `column`, with tabs expanded to the next tab stop.
+/// The drawn column of char `column`: tabs expanded to the next tab stop, a bidi format character 8 wide.
 pub fn visible_column(line: &str, column: usize, tab_size: usize) -> usize {
+    line.chars().take(column).fold(0, |visible, c| visible + char_columns(c, visible, tab_size))
+}
+
+/// `CursorColumns.visibleColumnFromColumn`: tabs expanded, every other char one column, for cursor moves and Col.
+pub fn logical_visible_column(line: &str, column: usize, tab_size: usize) -> usize {
     line.chars().take(column).fold(0, |visible, c| if c == '\t' { visible + tab_size - visible % tab_size } else { visible + 1 })
+}
+
+/// viewLineRenderer.ts `isControlCharacter` past C0 and DEL: the bidi format characters, drawn as `[U+XXXX]`.
+pub fn is_bidi_format_character(c: char) -> bool {
+    matches!(c as u32, 0x202A..=0x202E | 0x2066..=0x2069 | 0x200E..=0x200F | 0x061C)
+}
+
+/// The columns char `c` takes when drawn at visible column `visible` (`producedCharacters` of `_renderLine`).
+pub fn char_columns(c: char, visible: usize, tab_size: usize) -> usize {
+    match c {
+        '\t' => tab_size - visible % tab_size,
+        c if is_bidi_format_character(c) => 8,
+        _ => 1,
+    }
 }
 
 /// The char index nearest to visible column `target`, for a click on the text.
 pub fn column_at_visible(line: &str, target: f32, tab_size: usize) -> usize {
     let mut visible = 0;
     for (index, c) in line.chars().enumerate() {
-        let width = if c == '\t' { tab_size - visible % tab_size } else { 1 };
+        let width = char_columns(c, visible, tab_size);
         if target < visible as f32 + width as f32 / 2. {
             return index;
         }
@@ -478,6 +497,9 @@ pub fn expand_tabs(line: &str, tab_size: usize) -> String {
         } else if c.is_ascii_control() {
             out.push(' ');
             visible += 1;
+        } else if is_bidi_format_character(c) {
+            out.push_str("        ");
+            visible += 8;
         } else {
             out.push(c);
             visible += 1;

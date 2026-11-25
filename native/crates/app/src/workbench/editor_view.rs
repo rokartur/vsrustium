@@ -1643,7 +1643,7 @@ fn selection_label(editor: &OpenEditor) -> String {
     }
     if let [selection] = editor.selections.as_slice() {
         let Position { line, column } = selection.head;
-        let visible = visible_column(&document.lines[line], column, document.indentation.tab_size);
+        let visible = crate::editor::logical_visible_column(&document.lines[line], column, document.indentation.tab_size);
         return match selected {
             0 => format!("Ln {}, Col {}", line + 1, visible + 1),
             _ => format!("Ln {}, Col {} ({selected} selected)", line + 1, visible + 1),
