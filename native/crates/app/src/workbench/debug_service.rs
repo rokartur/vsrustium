@@ -14,7 +14,7 @@ use serde_json::{Map, Value, json};
 
 use super::Workbench;
 use crate::commands::{Outcome, error_value};
-use crate::debug::configuration::{self, Debugger, Interactive, Launch};
+use crate::debug::configuration::{self, Debugger, Launch};
 use crate::debug::session::{self, ReplElement, Session, Severity, StackFrame, State, Variable};
 use crate::debug::{BreakpointData, BreakpointsChange, DataBreakpoint, DebugModel};
 use crate::main_thread_quick_open::Owner;
@@ -1068,21 +1068,6 @@ impl Workbench {
         receiver
     }
 
-    /// `quickInputService.input` for `promptString` inputs.
-    fn debug_input(&mut self, prompt: Option<String>, value: Option<String>, password: bool, window: &mut Window, cx: &mut Context<Self>) -> oneshot::Receiver<Option<String>> {
-        let (sender, receiver) = oneshot::channel();
-        let mut input = QuickInput::new(0, Kind::InputBox);
-        input.prompt = prompt;
-        input.password = password;
-        if let Some(value) = value {
-            input.set_value(value);
-        }
-        let id = self.quick_inputs.add(input, Owner::Debug(Some(sender)));
-        self.show_quick_input(id, window, cx);
-        self.flush_quick_input_events(window, cx);
-        receiver
-    }
-
     /// The picker or input box of the start flow: Enter answers the item's handle or the typed value.
     pub fn debug_pick_event(&mut self, id: i64, event: Event, window: &mut Window, cx: &mut Context<Self>) {
         match event {
@@ -1327,7 +1312,8 @@ async fn finish_session(this: &WeakEntity<Workbench>, cx: &mut AsyncWindowContex
     if registered {
         let reply = on_workbench(this, cx, |workbench, _, _| workbench.host.call("ExtHostDebugService", "$substituteVariables", vec![json!(folder_uri), config.clone()]))?;
         config = answer(reply).await?;
-        let Some(resolved) = resolve_interactive(this, cx, config, debugger.as_ref(), &inputs).await? else { return Ok(false) };
+        let commands = debugger.as_ref().and_then(|debugger| debugger.contribution["variables"].as_object().cloned()).unwrap_or_default();
+        let Some(resolved) = super::configuration_resolver::resolve_with_interaction_replace(this, cx, config, "launch", Some(&inputs), &commands).await? else { return Ok(false) };
         config = resolved;
     }
     // shortcut: preLaunchTask and postDebugTask wait for the task system of milestone 15; the session starts without it.
@@ -1448,75 +1434,5 @@ async fn launch_or_attach(this: &WeakEntity<Workbench>, cx: &mut AsyncWindowCont
     match launch.await.unwrap_or(Err(Value::Null)) {
         Ok(_) => Ok(()),
         Err(error) => Err((error_message(&error), error["showUser"] != false)),
-    }
-}
-
-/// configurationResolver.ts `resolveWithInteractionReplace`: `${command:...}` runs the command (through the
-/// debugger's `variables`), `${input:...}` asks with the launch's `inputs`; `None` when the user cancels.
-async fn resolve_interactive(this: &WeakEntity<Workbench>, cx: &mut AsyncWindowContext, mut config: Value, debugger: Option<&Debugger>, inputs: &[Value]) -> Result<Option<Value>, String> {
-    let mut resolved = Vec::new();
-    for variable in configuration::interactive_variables(&config) {
-        let value = match &variable {
-            Interactive::Command(name) => {
-                let command = debugger.map_or(name.as_str(), |debugger| debugger.variable_command(name)).to_owned();
-                let reply = on_workbench(this, cx, |workbench, window, cx| outcome_reply(workbench.execute_command(&command, vec![config.clone()], window, cx)))?;
-                match answer(reply).await? {
-                    Value::String(text) => Some(text),
-                    Value::Null => None,
-                    _ => return Err(format!("Cannot substitute command variable '{name}' because command did not return a result of type string.")),
-                }
-            }
-            Interactive::Input(name) => {
-                let Some(input) = configuration::input(inputs, name) else { return Err(format!("Undefined input variable '{name}' encountered. Remove or define '{name}' to continue.")) };
-                let text = |key: &str| input.get(key).and_then(Value::as_str).map(str::to_owned);
-                match input.get("type").and_then(Value::as_str) {
-                    Some("promptString") => {
-                        let answer = on_workbench(this, cx, |workbench, window, cx| workbench.debug_input(text("description"), text("default"), input.get("password") == Some(&json!(true)), window, cx))?;
-                        answer.await.ok().flatten()
-                    }
-                    Some("pickString") => {
-                        let options: Vec<(String, Option<String>)> = input
-                            .get("options")
-                            .and_then(Value::as_array)
-                            .into_iter()
-                            .flatten()
-                            .map(|option| match option {
-                                Value::String(value) => (value.clone(), None),
-                                _ => (option["value"].as_str().unwrap_or_default().to_owned(), option["label"].as_str().map(str::to_owned)),
-                            })
-                            .collect();
-                        let placeholder = text("description").unwrap_or_default();
-                        let picked = on_workbench(this, cx, |workbench, window, cx| workbench.debug_pick(&placeholder, options.clone(), window, cx))?;
-                        picked.await.ok().flatten().and_then(|index| index.parse::<usize>().ok()).map(|index| options[index].0.clone())
-                    }
-                    Some("command") => {
-                        let command = text("command").unwrap_or_default();
-                        let args = input.get("args").cloned().map_or_else(Vec::new, |args| vec![args]);
-                        let reply = on_workbench(this, cx, |workbench, window, cx| outcome_reply(workbench.execute_command(&command, args, window, cx)))?;
-                        match answer(reply).await? {
-                            Value::String(text) => Some(text),
-                            Value::Null => None,
-                            other => Some(other.to_string()),
-                        }
-                    }
-                    _ => return Err(format!("Input variable '{name}' can only be of type 'promptString', 'pickString', or 'command'.")),
-                }
-            }
-        };
-        let Some(value) = value else { return Ok(None) };
-        resolved.push((variable.variable(), value));
-    }
-    configuration::replace_variables(&mut config, &resolved);
-    Ok(Some(config))
-}
-
-fn outcome_reply(outcome: Outcome) -> Reply {
-    match outcome {
-        Outcome::Ready(result) => {
-            let (sender, receiver) = oneshot::channel();
-            let _ = sender.send(result);
-            receiver
-        }
-        Outcome::Pending(receiver) => receiver,
     }
 }
