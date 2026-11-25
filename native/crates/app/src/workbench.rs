@@ -761,6 +761,7 @@ impl Workbench {
         self.code_lens_model_changed(cx);
         self.sync_webview_panels();
         self.text_files_editors_changed();
+        self.save_editor_part_state();
         self.host.send_changes(&self.editors);
         cx.notify();
     }

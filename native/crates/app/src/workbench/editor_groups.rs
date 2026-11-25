@@ -885,5 +885,7 @@ fn opposite(direction: Direction) -> Direction {
     }
 }
 
+mod part_state;
+
 #[cfg(test)]
 mod tests;
