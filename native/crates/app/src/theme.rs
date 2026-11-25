@@ -207,8 +207,13 @@ impl Theme {
             ColorValue::Lighten(inner, factor) => self.evaluate(inner).map(|color| lighten(color, *factor)),
             ColorValue::Opaque(inner, background) => {
                 let (color, background) = (self.evaluate(inner)?, self.evaluate(background)?);
-                // Color.makeOpaque rounds each channel to a byte.
-                let blend = |c: f32, b: f32| ((b + color.a * (c - b)) * 255.).round() / 255.;
+                // Color.makeOpaque: RGBA's `_clampUint8` truncates each blended byte (`| 0`).
+                // The alpha is RGBA's, rounded to 3 decimals; the math is JS doubles.
+                let alpha = (color.a as f64 * 1000.).round() / 1000.;
+                let blend = |c: f32, b: f32| {
+                    let (c, b) = ((c as f64 * 255.).round(), (b as f64 * 255.).round());
+                    ((b - alpha * (b - c)).floor() / 255.) as f32
+                };
                 Some(Rgba { r: blend(color.r, background.r), g: blend(color.g, background.g), b: blend(color.b, background.b), a: 1. })
             }
             ColorValue::LessProminent(inner, background, factor, transparency) => {
@@ -836,7 +841,6 @@ fn quick_input_default(key: &str) -> (ColorValue, ColorValue, ColorValue) {
         "dropdown.background" => (Hex("#3C3C3C"), Hex("#FFFFFF"), Hex("#000000")),
         "dropdown.foreground" => (Hex("#F0F0F0"), Key("foreground"), Hex("#FFFFFF")),
         "dropdown.border" => (Key("dropdown.background"), Hex("#CECECE"), Key("contrastBorder")),
-        "toolbar.hoverBackground" => (Hex("#5a5d5e50"), Hex("#b8b8b850"), None),
         // menuColors.ts and editorWidget.border, the menu's fallback border (defaultStyles.ts defaultMenuStyles).
         "menu.border" => (None, None, Key("contrastBorder")),
         "menu.foreground" => (Key("dropdown.foreground"), Key("dropdown.foreground"), Key("dropdown.foreground")),

@@ -25,7 +25,6 @@ mod file_actions;
 mod file_icons;
 mod filters;
 mod history;
-mod host_color;
 mod fuzzy_scorer;
 mod host_sync;
 mod input_box;
