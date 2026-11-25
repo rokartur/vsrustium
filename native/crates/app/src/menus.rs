@@ -20,6 +20,7 @@ use crate::contextkey::{Context, Expr};
 pub enum MenuId {
     MenubarMainMenu,
     MenubarFileMenu,
+    NewFile,
     MenubarRecentMenu,
     MenubarEditMenu,
     MenubarSelectionMenu,
@@ -125,6 +126,9 @@ const WORKBENCH_MENUS: &[Row] = &[
     (MenuId::MenubarRecentMenu, None, "workbench.action.clearRecentFiles", "&&Clear Recently Opened...", "z_clear", 1., None, None),
     // fileActions.contribution.ts
     (MenuId::MenubarFileMenu, None, "workbench.action.files.newUntitledFile", "&&New Text File", "1_new", 1., None, None),
+    // newFile.contribution.ts
+    (MenuId::MenubarFileMenu, None, "welcome.showNewFileEntries", "New File...", "1_new", 2., Some("!isSessionsWindow"), Some("!isSessionsWindow")),
+    (MenuId::NewFile, None, "workbench.action.files.newUntitledFile", "Text File", "file", 1., None, None),
     (MenuId::MenubarFileMenu, None, "workbench.action.files.save", "&&Save", "4_save", 1., None, Some("activeEditor || foldersViewVisible && sideBarFocus")),
     (MenuId::MenubarFileMenu, None, "workbench.action.files.saveAs", "Save &&As...", "4_save", 2., None, Some("activeEditor || foldersViewVisible && sideBarFocus")),
     (MenuId::MenubarFileMenu, None, "saveAll", "Save A&&ll", "4_save", 3., None, Some("dirtyWorkingCopies")),
@@ -286,7 +290,8 @@ pub fn workbench_menus() -> Vec<MenuItem> {
 
 /// menusExtensionPoint.ts `apiMenus`: the `contributes.menus` keys of the menus the port shows. `commandPalette`
 /// is read by `command_palette::menu`.
-const API_MENUS: [(&str, MenuId); 16] = [
+const API_MENUS: [(&str, MenuId); 17] = [
+    ("file/newFile", MenuId::NewFile),
     ("editor/context", MenuId::EditorContext),
     ("explorer/context", MenuId::ExplorerContext),
     ("editor/title/context", MenuId::EditorTitleContext),

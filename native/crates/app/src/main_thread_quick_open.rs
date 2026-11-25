@@ -60,6 +60,10 @@ pub enum Owner {
     DisplayLanguage(Vec<crate::workbench::localization::LanguageItem>),
     /// Help: List Signal Sounds and Help: List Signal Announcements.
     AccessibilitySignals(crate::workbench::accessibility::SignalHelp),
+    /// Accessibility Help Configure (Un)assigned Keybindings.
+    AccessibleViewKeybindings(crate::workbench::accessible_view::KeybindingPick),
+    /// File > New File...
+    NewFile(crate::workbench::new_file::NewFilePicker),
     /// Configure Metered Connection.
     MeteredConnection,
 }
@@ -231,6 +235,8 @@ impl Workbench {
             Owner::QuickAccess(_) => self.quick_access_event(id, event, window, cx),
             Owner::ColorThemes(_) => self.color_theme_picker_event(id, event, window, cx),
             Owner::AccessibilitySignals(_) => self.signal_help_event(id, event, window, cx),
+            Owner::AccessibleViewKeybindings(_) => self.accessible_view_keybindings_event(id, event, window, cx),
+            Owner::NewFile(_) => self.new_file_picker_event(id, event, window, cx),
             Owner::MeteredConnection => self.metered_connection_picker_event(id, event, window, cx),
             Owner::GoToMatch => self.go_to_match_event(id, event, window, cx),
             Owner::EditorStatus(_) => self.editor_status_event(id, event, window, cx),

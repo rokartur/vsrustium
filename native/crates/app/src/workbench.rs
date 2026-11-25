@@ -3,6 +3,8 @@
 //! Sizes are the reference's CSS pixels.
 
 pub mod accessibility;
+pub mod accessible_view;
+pub mod new_file;
 mod actions;
 mod bulk_text_edits;
 mod configuration;
@@ -315,6 +317,7 @@ impl Render for Workbench {
         let action_widget = self.action_widget(window, cx);
         let hover = self.hover_widget(window, cx);
         let dialog = self.custom_dialog_widget(window, cx);
+        let accessible_view = self.accessible_view_widget(window, cx);
         self.update_menubar(window, cx);
         div()
             .relative()
@@ -328,6 +331,7 @@ impl Render for Workbench {
             // The quick input lives in the workbench container, inside the window border as the grid.
             .children(quick_input.map(|widget| div().absolute().left(px(inset)).top(px(inset)).child(widget)))
             .children(notifications)
+            .children(accessible_view)
             .children(context_menu)
             .children(dialog)
             .children(action_widget)
@@ -342,7 +346,7 @@ impl Render for Workbench {
 
 impl Workbench {
     pub fn new(theme: Theme, app_root: PathBuf, workspace: Option<Workspace>, languages: Languages, settings: Arc<Mutex<Settings>>, host: HostSync, cx: &mut Context<Self>) -> Self {
-        let accessibility = accessibility::AccessibilityState::new(&app_root);
+        let accessibility = accessibility::AccessibilityState::new(&app_root, cx);
         let mut workbench = Workbench {
             theme,
             color_themes: Vec::new(),
@@ -512,6 +516,7 @@ impl Workbench {
         workbench.register_extensions_view_commands();
         workbench.register_workspace_recommendations_commands();
         workbench.register_localization_commands();
+        workbench.register_new_file_commands();
         // Keybindings resolve before the focused element sees the key, and with nothing focused too.
         let entity = cx.entity().downgrade();
         cx.intercept_keystrokes(move |event, window, cx| {

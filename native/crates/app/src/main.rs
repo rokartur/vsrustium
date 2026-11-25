@@ -54,6 +54,9 @@ mod notifications;
 mod output;
 mod perf;
 mod power;
+// The process explorer (milestone 19 handoff) is its first caller; until then only its tests build it.
+#[cfg(test)]
+mod ps;
 mod product;
 mod policy;
 mod quick_input;

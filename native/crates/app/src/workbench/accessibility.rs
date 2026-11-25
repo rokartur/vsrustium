@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 use super::Workbench;
 use crate::accessibility_signals::{Modality, SIGNALS, SoundPlayer, is_enabled, signal_by_key, volume_percent};
 use crate::commands::Outcome;
-use crate::editor::OpenEditor;
+use crate::editor::{OpenEditor, Position};
 use crate::main_thread_quick_open::Owner;
 use crate::main_thread_status_bar::StatusEntry;
 use crate::markers::{ERROR, ReadOptions, WARNING};
@@ -25,7 +25,7 @@ use crate::quick_input::{Button, Event, Item, Kind, QuickInput};
 const SCREEN_READER_STATUS_ID: &str = "status.editor.screenReaderMode";
 /// Signals played as a user gesture by default (`userGestureSignals` of commands.ts).
 const USER_GESTURE_SIGNALS: [&str; 2] = ["accessibility.signals.save", "accessibility.signals.format"];
-/// editorTextPropertySignalsContribution.ts: line signals wait this long more right after typing.
+/// editorTextPropertySignalsContribution.ts: signals wait this long more right after typing.
 const TYPING_DELAY: Duration = Duration::from_millis(1000);
 
 pub struct AccessibilityState {
@@ -35,26 +35,45 @@ pub struct AccessibilityState {
     prompted: bool,
     /// The live region's message and a counter that gives each message its own node, so a repeat is read again.
     alert: Option<(String, u64)>,
-    /// The editor and the 0-based line the line signals last ran for (`lastLine`), the signals already played on it
-    /// (`ignoredLineSignalsForCurrentLine`) and the version seen with the time it changed (`didType`).
+    /// editorTextPropertySignalsContribution.ts per model: the cursor last seen, `lastLine`,
+    /// `ignoredLineSignalsForCurrentLine` (by line signal), the version seen with the time it changed (`didType`),
+    /// the signal timeouts, and what each watched property had at the cursor (at the position, on the line).
+    cursor: Option<(u32, Position)>,
     line: Option<(u32, usize)>,
     ignored_line_signals: HashSet<&'static str>,
     version: (u32, u32, Instant),
     pending: Vec<Task<()>>,
+    watched: Vec<(bool, bool)>,
+    pub view: super::accessible_view::AccessibleViewState,
 }
 
 impl AccessibilityState {
-    pub fn new(app_root: &Path) -> Self {
-        AccessibilityState { sounds: SoundPlayer::new(app_root), screen_reader_attached: false, prompted: false, alert: None, line: None, ignored_line_signals: HashSet::new(), version: (0, 0, Instant::now()), pending: Vec::new() }
+    pub fn new(app_root: &Path, cx: &mut Context<Workbench>) -> Self {
+        let view = super::accessible_view::AccessibleViewState::new(cx);
+        AccessibilityState { sounds: SoundPlayer::new(app_root), screen_reader_attached: false, prompted: false, alert: None, cursor: None, line: None, ignored_line_signals: HashSet::new(), version: (0, 0, Instant::now()), pending: Vec::new(), watched: Vec::new(), view }
     }
 }
 
-/// The signals of the cursor's line and position (`MarkerTextProperty`, `FoldedAreaTextProperty`; breakpoints wait
-/// for the debugger, milestone 16).
-const LINE_SIGNALS: [(&str, &str); 3] = [
-    ("accessibility.signals.lineHasError", "accessibility.signals.positionHasError"),
-    ("accessibility.signals.lineHasWarning", "accessibility.signals.positionHasWarning"),
-    ("accessibility.signals.lineHasFoldedArea", ""),
+/// A `TextProperty`: its line signal, its position signal, and the marker severity it looks for (none for folding).
+#[derive(Clone, Copy)]
+struct TextProperty {
+    line_signal: &'static str,
+    position_signal: Option<&'static str>,
+    severity: Option<u8>,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum SignalMode {
+    Line,
+    Position,
+}
+
+/// `MarkerTextProperty` for errors and warnings and `FoldedAreaTextProperty`, in upstream's order. shortcut:
+/// `BreakpointTextProperty` waits for the debugger's breakpoints (milestone 16).
+const TEXT_PROPERTIES: [TextProperty; 3] = [
+    TextProperty { line_signal: "accessibility.signals.lineHasError", position_signal: Some("accessibility.signals.positionHasError"), severity: Some(ERROR) },
+    TextProperty { line_signal: "accessibility.signals.lineHasWarning", position_signal: Some("accessibility.signals.positionHasWarning"), severity: Some(WARNING) },
+    TextProperty { line_signal: "accessibility.signals.lineHasFoldedArea", position_signal: None, severity: None },
 ];
 
 impl Workbench {
@@ -79,6 +98,18 @@ impl Workbench {
             workbench.show_signal_help(Modality::Announcement, window, cx);
             Outcome::done()
         });
+        self.register_accessible_view_actions();
+    }
+
+    /// unfocusedViewDimmingContribution.ts: the opacity of a text editor and its breadcrumbs while the editor does not
+    /// hold the focus, with `accessibility.dimUnfocused.enabled`.
+    pub(super) fn unfocused_editor_opacity(&self, window: &Window) -> f32 {
+        let find = &self.find;
+        let focus_within = self.editor_focus.is_focused(window) || self.sticky_scroll.is_focused(window) || find.find_focus.is_focused(window) || find.replace_focus.is_focused(window) || find.button_focus.values().any(|focus| focus.is_focused(window));
+        if focus_within || self.setting("accessibility.dimUnfocused.enabled") != json!(true) {
+            return 1.;
+        }
+        self.setting("accessibility.dimUnfocused.opacity").as_f64().map_or(0.75, |opacity| opacity.clamp(0.2, 1.)) as f32
     }
 
     /// `isScreenReaderOptimized`: `editor.accessibilitySupport` on, or auto with a screen reader attached.
@@ -92,6 +123,7 @@ impl Workbench {
 
     pub(super) fn accessibility_context(&self, context: &mut std::collections::HashMap<String, Value>) {
         context.insert("accessibilityModeEnabled".into(), json!(self.is_screen_reader_optimized()));
+        self.accessible_view_context(context);
     }
 
     /// Runs on every render: picks up a screen reader attaching or leaving, and plays the line signals of a
@@ -148,7 +180,7 @@ impl Workbench {
         .detach();
     }
 
-    fn update_user_setting(&mut self, key: &str, value: Value) {
+    pub(super) fn update_user_setting(&mut self, key: &str, value: Value) {
         let mut settings = self.settings.lock().unwrap();
         match settings.update_value(key, Some(&value), config::service::Target::User, None, &[]) {
             Ok(change) if !change.is_empty() => self.host.send_configuration_change(&settings, &change),
@@ -207,14 +239,15 @@ impl Workbench {
         is_enabled(&self.setting(settings_key), modality, self.is_screen_reader_optimized(), false)
     }
 
-    /// editorTextPropertySignalsContribution.ts: on a new cursor line, the line's signals once each; at every
-    /// cursor move, the position signals.
+    /// editorTextPropertySignalsContribution.ts `onDidChangeCursorPosition`: a new line triggers each property's
+    /// line signal, every move its position signal; while the cursor stays, a property appearing at it triggers too.
     fn line_signals(&mut self, cx: &mut Context<Self>) {
         let Some(editor) = self.editors.active() else {
-            self.accessibility.line = None;
+            self.accessibility.cursor = None;
+            self.accessibility.pending.clear();
             return;
         };
-        let cursor = editor.selections[0].head;
+        let position = editor.selections[0].head;
         let (model_id, version) = (editor.model_id, editor.version_id);
         let now = Instant::now();
         let state = &mut self.accessibility;
@@ -222,57 +255,122 @@ impl Workbench {
             state.version = (model_id, version, now);
         }
         let typed = now.duration_since(state.version.2) < Duration::from_millis(100);
-        let new_line = state.line != Some((model_id, cursor.line));
-        if !new_line {
-            return;
-        }
-        state.line = Some((model_id, cursor.line));
-        state.ignored_line_signals.clear();
-        state.pending.clear();
-        let present: Vec<&'static str> = LINE_SIGNALS.iter().map(|(line, _)| *line).filter(|key| self.line_has(editor, key, cursor.line)).collect();
-        let mut play = Vec::new();
-        for key in present {
-            for modality in [Modality::Sound, Modality::Announcement] {
-                if self.signal_enabled(key, modality) {
-                    play.push((key, modality));
+        if state.cursor != Some((model_id, position)) {
+            state.cursor = Some((model_id, position));
+            state.pending.clear();
+            if state.line != Some((model_id, position.line)) {
+                state.ignored_line_signals.clear();
+                state.line = Some((model_id, position.line));
+                for property in TEXT_PROPERTIES {
+                    self.trigger_text_property(property, SignalMode::Line, typed, cx);
                 }
             }
-        }
-        if play.is_empty() {
+            for property in TEXT_PROPERTIES {
+                self.trigger_text_property(property, SignalMode::Position, typed, cx);
+            }
+            // The state autoruns start from the current values; upstream returns at the first property with no
+            // enabled signal, so the properties after it are not watched.
+            let mut watched = Vec::new();
+            for property in TEXT_PROPERTIES {
+                if !self.any_signal_enabled(property.line_signal) && !property.position_signal.is_some_and(|key| self.any_signal_enabled(key)) {
+                    break;
+                }
+                watched.push(self.text_property_state(property));
+            }
+            self.accessibility.watched = watched;
             return;
         }
-        let delay = if typed { TYPING_DELAY } else { Duration::ZERO };
-        let task = cx.spawn(async move |workbench, cx| {
-            cx.background_executor().timer(delay).await;
-            let _ = workbench.update(cx, |workbench, cx| {
-                for (key, modality) in play {
-                    if workbench.accessibility.line != Some((model_id, cursor.line)) || workbench.accessibility.ignored_line_signals.contains(key) && modality == Modality::Sound {
-                        continue;
-                    }
-                    workbench.play_signal(key, false, Some(modality));
-                    if modality == Modality::Sound {
-                        workbench.accessibility.ignored_line_signals.insert(key);
-                    }
-                }
-                cx.notify();
-            });
-        });
-        self.accessibility.pending.push(task);
+        for index in 0..self.accessibility.watched.len() {
+            let property = TEXT_PROPERTIES[index];
+            let (was_at_position, was_on_line) = self.accessibility.watched[index];
+            let (at_position, on_line) = self.text_property_state(property);
+            if !was_at_position && at_position {
+                self.trigger_text_property(property, SignalMode::Position, typed, cx);
+            }
+            if !was_on_line && on_line {
+                self.trigger_text_property(property, SignalMode::Line, typed, cx);
+            }
+            self.accessibility.watched[index] = (at_position, on_line);
+        }
     }
 
-    /// `TextPropertySource.isPresentOnLine` of each property.
-    fn line_has(&self, editor: &OpenEditor, key: &str, line: usize) -> bool {
-        let line_number = line + 1;
-        let severity = match key {
-            "accessibility.signals.lineHasError" => ERROR,
-            "accessibility.signals.lineHasWarning" => WARNING,
-            _ => {
-                let folding = &editor.folding;
-                return folding.region_at_line(line_number).is_some_and(|index| folding.regions.is_collapsed(index) && folding.regions.get(index).start == line_number);
+    /// `trigger`: each enabled modality after its delay, if the property is still there; a line signal plays once
+    /// per line, and a position signal also counts as the line's.
+    fn trigger_text_property(&mut self, property: TextProperty, mode: SignalMode, typed: bool, cx: &mut Context<Self>) {
+        let key = match mode {
+            SignalMode::Line => property.line_signal,
+            SignalMode::Position => match property.position_signal {
+                Some(key) => key,
+                None => return,
+            },
+        };
+        if !self.any_signal_enabled(key) || !self.text_property_present(property, mode) {
+            return;
+        }
+        for modality in [Modality::Sound, Modality::Announcement] {
+            if !self.signal_enabled(key, modality) {
+                continue;
             }
+            let delay = self.signal_delay(key, modality, mode) + if typed { TYPING_DELAY } else { Duration::ZERO };
+            let task = cx.spawn(async move |workbench, cx| {
+                cx.background_executor().timer(delay).await;
+                let _ = workbench.update(cx, |workbench, cx| {
+                    if !workbench.text_property_present(property, mode) {
+                        return;
+                    }
+                    if mode == SignalMode::Position || !workbench.accessibility.ignored_line_signals.contains(property.line_signal) {
+                        workbench.play_signal(key, false, Some(modality));
+                    }
+                    workbench.accessibility.ignored_line_signals.insert(property.line_signal);
+                    cx.notify();
+                });
+            });
+            self.accessibility.pending.push(task);
+        }
+    }
+
+    /// `getEnabledState(signal, false).value`: any modality is on.
+    fn any_signal_enabled(&self, key: &str) -> bool {
+        self.signal_enabled(key, Modality::Sound) || self.signal_enabled(key, Modality::Announcement)
+    }
+
+    /// accessibilitySignalService.ts `getDelayMs`.
+    fn signal_delay(&self, key: &str, modality: Modality, mode: SignalMode) -> Duration {
+        if self.setting("accessibility.signalOptions.debouncePositionChanges") != json!(true) {
+            return Duration::ZERO;
+        }
+        let name = match (key, mode) {
+            ("accessibility.signals.positionHasError", SignalMode::Position) => "errorAtPosition",
+            ("accessibility.signals.positionHasWarning", SignalMode::Position) => "warningAtPosition",
+            _ => "general",
+        };
+        let value = self.setting(&format!("accessibility.signalOptions.experimental.delays.{name}"));
+        let field = if modality == Modality::Sound { "sound" } else { "announcement" };
+        Duration::from_millis(value[field].as_u64().unwrap_or(0))
+    }
+
+    /// The property at the cursor of the active editor: at its position, and on its line.
+    fn text_property_state(&self, property: TextProperty) -> (bool, bool) {
+        (self.text_property_present(property, SignalMode::Position), self.text_property_present(property, SignalMode::Line))
+    }
+
+    /// `TextPropertySource.isPresent` at the active editor's cursor.
+    fn text_property_present(&self, property: TextProperty, mode: SignalMode) -> bool {
+        let Some(editor) = self.editors.active() else { return false };
+        let position = editor.selections[0].head;
+        let (line_number, column) = (position.line + 1, position.column + 1);
+        let Some(severity) = property.severity else {
+            let folding = &editor.folding;
+            return mode == SignalMode::Line && folding.region_at_line(line_number).is_some_and(|index| folding.regions.is_collapsed(index) && folding.regions.get(index).start == line_number);
         };
         let resource = crate::editor::uri_string(&editor.document.scheme, &editor.document.path);
-        self.diagnostics.service.read(ReadOptions { resource: Some(&resource), ..ReadOptions::default() }).iter().any(|marker| marker.severity == severity && marker.start_line <= line_number && line_number <= marker.end_line)
+        self.diagnostics.service.read(ReadOptions { resource: Some(&resource), ..ReadOptions::default() }).iter().any(|marker| {
+            let on_line = marker.severity == severity && marker.start_line <= line_number && line_number <= marker.end_line;
+            match mode {
+                SignalMode::Line => on_line,
+                SignalMode::Position => on_line && marker.start_column <= column && column <= marker.end_column,
+            }
+        })
     }
 
     /// commands.ts `ShowSignalSoundHelp` and `ShowAccessibilityAnnouncementHelp`: every signal, checked when
@@ -436,24 +534,42 @@ pub(crate) fn screen_reader_page(lines: &[String], anchor: crate::editor::Positi
 }
 
 impl ScreenReaderPage {
-    fn build(self, builder: &mut A11ySubtreeBuilder) {
-        let Some(&(last_line, _)) = self.lines.last() else { return };
+    pub(super) fn build(self, builder: &mut A11ySubtreeBuilder) {
         let mut runs = Vec::new();
-        for (line, text) in &self.lines {
+        let mut value = String::new();
+        for (index, (line, text)) in self.run_texts().into_iter().enumerate() {
             let mut run = accesskit::Node::new(Role::TextRun);
-            let text = if *line < last_line { format!("{text}\n") } else { text.clone() };
             run.set_character_lengths(text.chars().map(|char| char.len_utf8() as u8).collect::<Vec<_>>());
+            value.push_str(&text);
             run.set_value(text);
-            let id = builder.synthetic_node_id(*line);
+            let id = builder.synthetic_node_id(index);
             builder.push_child(id, run);
-            runs.push(id);
+            if let Some(line) = line {
+                runs.push((line, id));
+            }
         }
         let position = |(line, column): (usize, usize)| {
-            let index = self.lines.iter().position(|(known, _)| *known == line).unwrap_or(0);
-            accesskit::TextPosition { node: runs[index], character_index: column.min(self.lines[index].1.chars().count()) }
+            let index = runs.iter().position(|(known, _)| *known == line).unwrap_or(0);
+            accesskit::TextPosition { node: runs[index].1, character_index: column.min(self.lines[index].1.chars().count()) }
         };
         let selection = accesskit::TextSelection { anchor: position(self.anchor), focus: position(self.focus) };
+        // accesskit_consumer derives AXValue from the runs only for single-line inputs: give the text area the page.
+        builder.parent_node().set_value(value);
         builder.parent_node().set_text_selection(selection);
+    }
+
+    /// The text area's runs: each line with its newline (the last without), and the `…` upstream puts between the
+    /// two pages when pages lie between them.
+    fn run_texts(&self) -> Vec<(Option<usize>, String)> {
+        let mut runs = Vec::new();
+        let last = self.lines.len().saturating_sub(1);
+        for (index, (line, text)) in self.lines.iter().enumerate() {
+            if index > 0 && self.lines[index - 1].0 + 1 != *line {
+                runs.push((None, "\u{2026}".to_owned()));
+            }
+            runs.push((Some(*line), if index < last { format!("{text}\n") } else { text.clone() }));
+        }
+        runs
     }
 }
 
@@ -476,8 +592,71 @@ mod tests {
         let apart = screen_reader_page(&lines(25), Position { line: 3, column: 0 }, Position { line: 21, column: 1 }, 10);
         let numbers: Vec<usize> = apart.lines.iter().map(|(line, _)| *line).collect();
         assert_eq!(numbers, (0..10).chain(20..25).collect::<Vec<_>>());
+        let text: String = apart.run_texts().into_iter().map(|(_, text)| text).collect();
+        assert!(text.starts_with("line 0\n") && text.contains("line 9\n\u{2026}line 20\n") && text.ends_with("line 24"));
         let last = screen_reader_page(&lines(25), Position { line: 24, column: 0 }, Position { line: 24, column: 0 }, 10);
         assert_eq!((last.lines[0].0, last.lines.len()), (20, 5));
+    }
+
+    #[gpui::test]
+    fn errors_are_announced_on_a_new_line_and_at_each_position_on_them(cx: &mut gpui::TestAppContext) {
+        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let themes = exthost::scan::scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
+        let theme = crate::theme::load_theme(&[themes], "Dark Modern").unwrap();
+        let dir = std::env::temp_dir().join(format!("code-gpui-line-signals-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("a.txt");
+        std::fs::write(&file, "let x\nlet y").unwrap();
+        let settings = config::service::Settings::load(config::registry::Registry::with_extensions(&[]), dir.join("user"), None);
+        let (workbench, cx) = cx.add_window_view(|window, cx| {
+            let mut workbench = Workbench::new(theme, app_root.clone(), None, crate::languages::Languages::new(&[]), std::sync::Arc::new(std::sync::Mutex::new(settings)), crate::host_sync::HostSync::new(std::sync::mpsc::channel().0), cx);
+            workbench.load_keybindings(crate::keybindings::default_keybindings(&[]), dir.join("keybindings.json"), cx);
+            workbench.open_file(file.clone(), true, window, cx);
+            workbench.watch_editor_focus(window, cx);
+            let mut settings = workbench.settings.lock().unwrap();
+            settings.update_value_derived("editor.accessibilitySupport", Some(&json!("on"))).unwrap();
+            for key in ["lineHasError", "positionHasError", "lineHasWarning", "positionHasWarning"] {
+                settings.update_value_derived(&format!("accessibility.signals.{key}"), Some(&json!({ "sound": "off", "announcement": "auto" }))).unwrap();
+            }
+            drop(settings);
+            workbench
+        });
+        cx.update(|window, _| window.activate_window());
+        let set_markers = |markers: Vec<Value>, cx: &mut gpui::VisualTestContext| {
+            workbench.update(cx, |workbench, cx| {
+                let resource = workbench.editors.active().unwrap().document.uri_string();
+                workbench.diagnostics.service.change_one("test", &resource, &markers, false);
+                cx.notify();
+            });
+            cx.run_until_parked();
+        };
+        let marker = |severity: u8, start: usize, end: usize| json!({ "severity": severity, "message": "bad", "startLineNumber": 2, "startColumn": start, "endLineNumber": 2, "endColumn": end });
+        set_markers(vec![marker(ERROR, 5, 6)], cx);
+        let alert = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.accessibility.alert.clone());
+
+        cx.simulate_keystrokes("down");
+        cx.run_until_parked();
+        let (message, count) = alert(cx).unwrap();
+        assert_eq!(message, "Error on Line");
+        cx.simulate_keystrokes("end");
+        cx.run_until_parked();
+        assert_eq!(alert(cx).unwrap(), ("Error".to_owned(), count + 1));
+        cx.simulate_keystrokes("home");
+        cx.run_until_parked();
+        assert_eq!(alert(cx).unwrap(), ("Error".to_owned(), count + 1), "the line's error already played");
+        // A warning appearing at the cursor plays its position signal, which also stands for the line's.
+        set_markers(vec![marker(ERROR, 5, 6), marker(WARNING, 1, 2)], cx);
+        assert_eq!(alert(cx).unwrap(), ("Warning".to_owned(), count + 2));
+
+        // accessibility.dimUnfocused: the editor dims once the focus leaves it.
+        let opacities = workbench.update_in(cx, |workbench, window, cx| {
+            workbench.settings.lock().unwrap().update_value_derived("accessibility.dimUnfocused.enabled", Some(&json!(true))).unwrap();
+            let focused = workbench.unfocused_editor_opacity(window);
+            window.focus(&workbench.status_bar_focus, cx);
+            (focused, workbench.unfocused_editor_opacity(window))
+        });
+        assert_eq!(opacities, (1., 0.75));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

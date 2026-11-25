@@ -350,7 +350,7 @@ fn highlight_range(parts: &[Part]) -> Option<(Position, Position)> {
 }
 
 /// markerHoverParticipant.ts `getAccessibleContent`.
-fn marker_accessible_content(marker: &Marker) -> String {
+pub(super) fn marker_accessible_content(marker: &Marker) -> String {
     let severity = match marker.severity {
         ERROR => "Error",
         WARNING => "Warning",
