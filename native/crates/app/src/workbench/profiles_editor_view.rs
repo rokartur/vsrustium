@@ -384,11 +384,13 @@ impl Workbench {
         let id = profile.id.clone();
         let menu_profile = profile.clone();
         let switch_to = profile.clone();
+        let open_name = profile.name.clone();
         let actions = div()
             .flex_1()
             .flex()
             .justify_end()
             .mr(px(10.))
+            .child(self.icon("empty-window", 22., 16., foreground).id(("profile-open-window", profile.id.len())).cursor_pointer().on_click(cx.listener(move |workbench, _, _, _| drop(workbench.open_window_with_profile_flags(vec!["--profile".into(), open_name.clone()])))))
             .when(!active, |actions| {
                 actions.child(self.icon("window", 22., 16., foreground).id(("profile-use", profile.id.len())).cursor_pointer().on_click(cx.listener(move |workbench, _, window, cx| workbench.switch_profile(&switch_to, window, cx))))
             })
@@ -436,18 +438,18 @@ impl Workbench {
             "Use for New Windows",
             self.profile_checkbox("profile-use-new", is_new_window, "Use this profile as the default for new windows", cx, move |workbench, _, cx| workbench.toggle_new_window_profile(&new_window, cx)),
         );
-        let contents = self.profile_row_container("Contents", div().flex().flex_col().child(div().opacity(0.9).child("Browse contents of this profile")).child(self.profile_contents_tree(profile, cx)));
+        let contents = self.profile_row_container("Contents", div().flex().flex_col().child(div().line_height(px(18.)).opacity(0.9).child("Browse contents of this profile")).child(self.profile_contents_tree(profile, cx)));
         let workspaces: Vec<String> = profile.workspaces.clone().unwrap_or_default();
         let description = if workspaces.is_empty() { "No folders or workspaces are using this profile" } else { "Following folders and workspaces are using this profile" };
         let header_background = self.color("keybindingTable.headerBackground");
-        let mut table = div().mt(px(8.)).flex().flex_col().child(div().h(px(30.)).flex().items_center().bg(header_background).font_weight(FontWeight::SEMIBOLD).child(div().w(px(120.)).pl(px(35.)).child("Host")).child(div().child("Path")));
+        let mut table = div().mt(px(8.)).flex().flex_col().child(div().h(px(30.)).flex().items_center().bg(header_background).font_weight(FontWeight::SEMIBOLD).child(div().w(px(155.)).pl(px(35.)).child("Host")).child(div().child("Path")));
         for workspace in &workspaces {
             let path = crate::uri::percent_decode(workspace.strip_prefix("file://").unwrap_or(workspace));
-            table = table.child(div().h(px(28.)).flex().items_center().italic().font_weight(FontWeight::SEMIBOLD).child(div().w(px(120.)).pl(px(35.)).child("Local")).child(div().flex_1().truncate().child(path)));
+            table = table.child(div().h(px(28.)).flex().items_center().italic().font_weight(FontWeight::SEMIBOLD).child(div().w(px(155.)).pl(px(35.)).child("Local")).child(div().flex_1().truncate().child(path)));
         }
         let add_folder_profile = profile.clone();
         let add_folder = self.text_button("profile-add-folder", "Add Folder", cx, move |workbench, window, cx| workbench.add_profile_folder(add_folder_profile.clone(), window, cx));
-        let folders = self.profile_row_container("Folders & Workspaces", div().flex().flex_col().child(div().opacity(0.9).child(description)).child(table).child(div().mt(px(8.)).child(add_folder)));
+        let folders = self.profile_row_container("Folders & Workspaces", div().flex().flex_col().child(div().line_height(px(18.)).opacity(0.9).child(description)).child(table).child(div().mt(px(8.)).flex().child(add_folder)));
         div().flex().flex_col().child(title).child(div().mt(px(15.)).ml(px(28.)).children(use_for_current).child(use_for_new).child(contents).child(folders))
     }
 
