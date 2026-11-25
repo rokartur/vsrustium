@@ -116,6 +116,11 @@ pub struct Workbench {
     pub editor_focus: FocusHandle,
     /// bannerController.ts: the banner element is focusable (`tabIndex = 0`) inside the editor's DOM node.
     unicode_banner_focus: FocusHandle,
+    status_bar_focus: FocusHandle,
+    /// `editor.tabFocusMode` when Toggle Tab Key Moves Focus last ran, and the mode it set.
+    tab_focus_toggle: Option<(bool, bool)>,
+    /// inputMode.ts `InputMode` is `overtype` instead of `insert`: one mode for every editor, starting in insert.
+    overtype: bool,
     editor_focus_listeners: Vec<gpui::Subscription>,
     /// `--screenshot` hides the input carets, as ref-screenshot does in the reference, so the blink phase drops out.
     pub(crate) input_carets_hidden: bool,
@@ -123,8 +128,10 @@ pub struct Workbench {
     marked_text: Option<Range<usize>>,
     /// A left button press in the text is held, so moves extend the selection.
     selecting_text: bool,
+    text_drag: Option<editor_view::drag_and_drop::TextDrag>,
     /// editorOptions.ts `stopRenderingLineAfter` (10000) of the group's code editor; longLinesHelper.ts clears it.
     stop_rendering_line_after: Option<usize>,
+    editor_zoom: crate::editor::zoom::EditorZoom,
     middle_scroll: Option<middle_scroll::MiddleScroll>,
     pub quick_inputs: quick_input_view::QuickInputs,
     pub quick_access: quick_access::QuickAccess,
@@ -155,6 +162,7 @@ impl Render for Workbench {
         // Cursors move and editors switch on many paths; every one of them renders.
         self.close_editor_message_on_cursor_change(cx);
         self.follow_marker_navigation_cursor();
+        self.refresh_selection_highlights(window);
         let viewport = window.viewport_size();
         let window_border = self.theme.color("window.activeBorder");
         // The reference lays the grid out at the full window size and shifts it inside the 1px window border.
@@ -242,11 +250,16 @@ impl Workbench {
             readonly_overrides: Default::default(),
             editor_focus: cx.focus_handle(),
             unicode_banner_focus: cx.focus_handle(),
+            status_bar_focus: cx.focus_handle(),
+            tab_focus_toggle: None,
+            overtype: false,
             editor_focus_listeners: Vec::new(),
             input_carets_hidden: false,
             marked_text: None,
             selecting_text: false,
+            text_drag: None,
             stop_rendering_line_after: Some(10_000),
+            editor_zoom: Default::default(),
             middle_scroll: None,
             quick_inputs: quick_input_view::QuickInputs::new(cx),
             quick_access: quick_access::QuickAccess::default(),
@@ -842,8 +855,10 @@ impl Workbench {
         // statusbarpart.css: pointer only on items with a command; status.message has none.
         let problems = self.problems_status_item(foreground);
         div()
+            .relative()
             .h(px(28.))
             .flex_none()
+            .track_focus(&self.status_bar_focus)
             .flex()
             .justify_between()
             .items_center()
@@ -853,8 +868,13 @@ impl Workbench {
             .text_size(px(12.))
             // statusbarpart.css: font-variant-numeric: tabular-nums.
             .font_features(FontFeatures(Arc::new(vec![("tnum".into(), 1)])))
+            // statusbarpart.css: a 1px `statusBar.focusBorder` outline inside the focused part, its bottom corners rounded on macOS.
+            .when_some(self.theme.color("statusBar.focusBorder").filter(|_| self.status_bar_focus.is_focused(window)), |bar, border| {
+                let radius = px(if is_tahoe_or_newer() { 16. } else { 10. });
+                bar.child(div().absolute().inset_0().border_1().rounded_bl(radius).rounded_br(radius).border_color(border))
+            })
             .child(div().h(px(24.)).flex().child(self.icon("remote", 28., 16., foreground).h_full().cursor_pointer().child(self.hover_target("status.host", HoverContent::Text("Open a Remote Window".into()), HoverOptions::status_bar()))).children(self.notifications_status_item(true, foreground, cx)).child(self.extension_status_items(true, |priority| priority > PROBLEMS_PRIORITY, foreground, cx)).child(problems).child(self.extension_status_items(true, |priority| priority <= PROBLEMS_PRIORITY, foreground, cx)).children(self.status_bar_message()).children(self.window_progress_entry(cx.background_executor().now()).map(|entry| self.extension_status_item(&entry, foreground, cx))))
-            .child(div().h(px(24.)).flex().child(self.extension_status_items(false, |priority| priority > EDITOR_STATUS_PRIORITY, foreground, cx)).children(self.editor_status_items(foreground, window, cx)).child(self.extension_status_items(false, |priority| priority <= EDITOR_STATUS_PRIORITY, foreground, cx)).children(self.notifications_status_item(false, foreground, cx)))
+            .child(div().h(px(24.)).flex().child(self.extension_status_items(false, |priority| priority > EDITOR_STATUS_PRIORITY, foreground, cx)).child(self.editor_status_items(foreground, window, cx)).child(self.extension_status_items(false, |priority| priority <= EDITOR_STATUS_PRIORITY, foreground, cx)).children(self.notifications_status_item(false, foreground, cx)))
     }
 
     /// The `status.message` entry: multi-chord mode, else the latest status message (notificationsStatus.ts).
@@ -896,6 +916,7 @@ mod tests {
     use config::workspace::Workspace;
     use exthost::scan::scan_extension;
     use gpui::{Modifiers, TestAppContext, point, px};
+    use serde_json::json;
 
     use super::Workbench;
     use crate::host_sync::HostSync;
@@ -979,6 +1000,77 @@ mod tests {
         let methods: Vec<_> = receiver.try_iter().map(|message| message.method).collect();
         assert_eq!(methods.iter().filter(|method| **method == "$acceptModelChanged").count(), 6);
         assert_eq!(methods.last(), Some(&"$acceptModelSaved"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[gpui::test]
+    fn saving_runs_the_text_save_participants_of_the_settings(cx: &mut TestAppContext) {
+        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
+        let theme = load_theme(&[themes], "Dark Modern").unwrap();
+        let dir = std::env::temp_dir().join(format!("code-gpui-save-participants-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("a.txt");
+        std::fs::write(&file, "ab  \ncd\n\n\n").unwrap();
+        std::fs::create_dir_all(dir.join("User")).unwrap();
+        let settings = std::sync::Arc::new(std::sync::Mutex::new(config::service::Settings::load(config::registry::Registry::with_extensions(&[]), dir.join("User"), None)));
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let (workbench, cx) = cx.add_window_view(|window, cx| {
+            let mut workbench = Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), settings, HostSync::new(sender), cx);
+            workbench.load_keybindings(crate::keybindings::default_keybindings(&[]), dir.join("keybindings.json"), cx);
+            workbench.open_file(file.clone(), true, window, cx);
+            workbench
+        });
+        cx.run_until_parked();
+        workbench.update(cx, |workbench, _| {
+            workbench.update_setting("files.trimTrailingWhitespace", json!(true));
+            workbench.update_setting("files.trimFinalNewlines", json!(true));
+        });
+        receiver.try_iter().count();
+
+        cx.simulate_keystrokes("cmd-s");
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "ab\ncd\n");
+        assert!(workbench.read_with(cx, |workbench, _| !workbench.editors.active().unwrap().is_dirty()));
+        let methods: Vec<_> = receiver.try_iter().map(|message| message.method).collect();
+        assert_eq!(methods.iter().filter(|method| **method == "$acceptModelChanged").count(), 2);
+        cx.simulate_keystrokes("cmd-z");
+        assert_eq!(workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document.lines.join("\n")), "ab  \ncd\n\n\n");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[gpui::test]
+    fn in_tab_focus_mode_tab_moves_focus_to_the_status_bar_instead_of_indenting(cx: &mut TestAppContext) {
+        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
+        let theme = load_theme(&[themes], "Dark Modern").unwrap();
+        let dir = std::env::temp_dir().join(format!("code-gpui-tab-focus-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("a.txt");
+        std::fs::write(&file, "ab").unwrap();
+        let (workbench, cx) = cx.add_window_view(|window, cx| {
+            let mut workbench = Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), crate::default_settings(), HostSync::new(std::sync::mpsc::channel().0), cx);
+            workbench.load_keybindings(crate::keybindings::default_keybindings(&[]), dir.join("keybindings.json"), cx);
+            workbench.open_file(file.clone(), true, window, cx);
+            workbench.watch_editor_focus(window, cx);
+            workbench
+        });
+        cx.update(|window, _| window.activate_window());
+        cx.run_until_parked();
+        let state = |cx: &mut gpui::VisualTestContext| {
+            workbench.update_in(cx, |workbench, window, _| {
+                let moves_focus = workbench.key_context(window).get("editorTabMovesFocus").cloned();
+                let editor = workbench.editors.active().unwrap();
+                (editor.document.lines.join("\n"), editor.highlights.len(), workbench.status_bar_focus.is_focused(window), moves_focus)
+            })
+        };
+
+        // wordHighlighter.ts stops the highlights once no code editor has the focus.
+        cx.simulate_keystrokes("ctrl-shift-m tab");
+        assert_eq!(state(cx), ("ab".to_string(), 0, true, Some(json!(true))));
+        cx.simulate_keystrokes("shift-tab");
+        assert_eq!(state(cx), ("ab".to_string(), 1, false, Some(json!(true))));
+        cx.simulate_keystrokes("ctrl-shift-m tab");
+        assert_eq!(state(cx), ("    ab".to_string(), 0, false, Some(json!(false))));
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -1068,6 +1160,86 @@ mod tests {
         cx.simulate_input("x");
         let visible_ranges: Vec<_> = receiver.try_iter().filter(|message| message.method == "$acceptEditorPropertiesChanged" && !message.args[1]["visibleRanges"].is_null()).collect();
         assert_eq!(visible_ranges.len(), 1, "{visible_ranges:?}");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[gpui::test]
+    fn selection_anchor_keys_select_from_the_anchor(cx: &mut TestAppContext) {
+        use crate::editor::{Position, Selection};
+        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
+        let theme = load_theme(&[themes], "Dark Modern").unwrap();
+        let dir = std::env::temp_dir().join(format!("code-gpui-anchor-keys-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("a.txt");
+        std::fs::write(&file, "hello\nworld").unwrap();
+        let (sender, _receiver) = std::sync::mpsc::channel();
+        let (workbench, cx) = cx.add_window_view(|window, cx| {
+            let mut workbench = Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), crate::default_settings(), HostSync::new(sender), cx);
+            workbench.load_keybindings(crate::keybindings::default_keybindings(&[]), dir.join("keybindings.json"), cx);
+            workbench.open_file(file.clone(), true, window, cx);
+            workbench
+        });
+        cx.run_until_parked();
+        let state = |cx: &mut gpui::VisualTestContext| {
+            workbench.read_with(cx, |workbench, _| {
+                let editor = workbench.editors.active().unwrap();
+                (editor.selection_anchor, editor.selections.clone())
+            })
+        };
+
+        cx.simulate_keystrokes("right cmd-k cmd-b");
+        assert_eq!(state(cx).0, Some(Position::new(0, 1)), "editor.action.setSelectionAnchor");
+        cx.simulate_input("ab");
+        assert_eq!(state(cx).0, Some(Position::new(0, 3)), "typing at the anchor pushes it");
+        cx.simulate_keystrokes("escape");
+        assert_eq!(state(cx).0, None, "editor.action.cancelSelectionAnchor");
+        cx.simulate_keystrokes("cmd-k cmd-b down cmd-k cmd-k");
+        assert_eq!(state(cx), (None, vec![Selection { anchor: Position::new(0, 3), head: Position::new(1, 3) }]), "editor.action.selectFromAnchorToCursor");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[gpui::test]
+    fn dragging_selected_text_moves_it_and_a_key_cancels_the_drag(cx: &mut TestAppContext) {
+        use crate::editor::{Position, Selection};
+        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
+        let theme = load_theme(&[themes], "Dark Modern").unwrap();
+        let dir = std::env::temp_dir().join(format!("code-gpui-text-drag-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("a.txt");
+        std::fs::write(&file, "Port notes for\nthe editor").unwrap();
+        let (sender, _receiver) = std::sync::mpsc::channel();
+        let (workbench, cx) = cx.add_window_view(|window, cx| {
+            let mut workbench = Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), crate::default_settings(), HostSync::new(sender), cx);
+            workbench.open_file(file.clone(), true, window, cx);
+            workbench
+        });
+        cx.run_until_parked();
+        let notes = Selection { anchor: Position::new(0, 5), head: Position::new(0, 10) };
+        let alt = gpui::Modifiers { alt: true, ..Default::default() };
+        workbench.update(cx, |workbench, cx| {
+            workbench.editors.active_mut().unwrap().set_selections(vec![notes]);
+            assert!(!workbench.start_text_drag(0, 7., alt, 1), "Alt adds a cursor instead");
+            assert!(!workbench.start_text_drag(0, 7., Default::default(), 2), "a double click selects a word");
+            assert!(!workbench.start_text_drag(0, 2., Default::default(), 1), "outside the selection");
+            assert!(workbench.start_text_drag(0, 7., Default::default(), 1));
+            workbench.drag_text(0, 8., false, cx);
+            assert_eq!(workbench.text_drag.as_ref().unwrap().target, None, "no target inside the selection");
+            workbench.drag_text(1, 7., false, cx);
+            assert_eq!(workbench.text_drag.as_ref().unwrap().target, Some(Position::new(1, 7)));
+            assert_eq!(workbench.text_cursor_style(), gpui::CursorStyle::Arrow);
+            workbench.drop_text(1, 7., Default::default(), cx);
+            let editor = workbench.editors.active().unwrap();
+            assert_eq!(editor.document.lines, ["Port  for", "the edinotestor"]);
+            assert_eq!(editor.selections, [Selection { anchor: Position::new(1, 7), head: Position::new(1, 12) }]);
+            assert!(workbench.start_text_drag(1, 9., Default::default(), 1));
+            workbench.drag_text(1, 9., true, cx);
+            workbench.drag_text(0, 0., true, cx);
+            assert_eq!(workbench.text_cursor_style(), gpui::CursorStyle::DragCopy);
+        });
+        cx.simulate_keystrokes("escape");
+        workbench.read_with(cx, |workbench, _| assert!(workbench.text_drag.is_none(), "a key press cancels the drag"));
         std::fs::remove_dir_all(dir).unwrap();
     }
 

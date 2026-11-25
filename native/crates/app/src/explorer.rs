@@ -33,10 +33,12 @@ pub struct FileTree {
     pub focused: Option<PathBuf>,
     pub selected: Vec<PathBuf>,
     anchor: Option<PathBuf>,
-    /// `IExplorerService.setToCopy`: the items copied or cut, and whether a paste moves them.
-    /// shortcut: kept in the window, where desktop writes the OS clipboard (`writeResources`); another window cannot paste them.
+    /// `IExplorerService.setToCopy`: the items copied or cut, and whether a paste moves them (`pasteShouldMove`).
+    /// The clipboard holds their URIs (`writeResources`).
     pub clipboard: Vec<PathBuf>,
     pub cut: bool,
+    /// `fileCopied`: set by a copy or cut, and from `hasResources` when the context menu opens.
+    pub file_copied: bool,
     /// `NewExplorerItem`: the row of the name being typed for a new file or folder, under `parent`.
     pub new_item: Option<NewItem>,
     /// `CompressedNavigationController.index` of compact rows, keyed by the row's last folder; a row not here is at its last.
@@ -161,6 +163,7 @@ impl FileTree {
             anchor: None,
             clipboard: Vec::new(),
             cut: false,
+            file_copied: false,
             new_item: None,
             compressed_index: HashMap::new(),
             filter: None,

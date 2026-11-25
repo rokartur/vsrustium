@@ -163,6 +163,10 @@ impl Workbench {
                 self.leave_chord_mode(cx);
                 cx.stop_propagation();
             }
+            _ if keystroke.key == "tab" && !(keystroke.modifiers.control || keystroke.modifiers.platform || keystroke.modifiers.alt) && self.move_tab_focus(keystroke.modifiers.shift, window, cx) => {
+                cx.stop_propagation();
+                self.dismiss_hover(cx);
+            }
             // hoverService.ts `_keyDown` with hideOnKeyDown, which every workbench hover delegate sets.
             _ => self.dismiss_hover(cx),
         }
@@ -236,6 +240,8 @@ impl Workbench {
         self.notifications_context(window, &mut context);
         context.insert("editorIsOpen".into(), json!(self.editors.active().is_some()));
         context.insert("dirtyWorkingCopies".into(), json!(self.editors.editors.iter().any(|editor| editor.is_dirty())));
+        // toggleMultiCursorModifier.ts `MultiCursorModifierContextKeyController`.
+        context.insert("multiCursorModifier".into(), json!(if self.multi_cursor_modifier_is_cmd() { "ctrlCmd" } else { "altKey" }));
         // viewDescriptorService.ts: the Explorer and Search containers always hold their view.
         for (container, view) in [("workbench.view.explorer", "workbench.explorer.fileView"), ("workbench.view.search", "workbench.view.search")] {
             context.insert(format!("viewContainer.{container}.enabled"), json!(true));
@@ -256,6 +262,8 @@ impl Workbench {
             context.insert("markersNavigationVisible".into(), json!(self.markers_navigation_visible()));
             context.insert("editorHasSelection".into(), json!(editor.selections.iter().any(|selection| !selection.is_empty())));
             context.insert("editorHasMultipleSelections".into(), json!(editor.selections.len() > 1));
+            context.insert("selectionAnchorSet".into(), json!(editor.selection_anchor.is_some()));
+            context.insert("editorTabMovesFocus".into(), json!(self.tab_focus_mode()));
             context.insert("editorColumnSelection".into(), self.setting("editor.columnSelection"));
             context.insert("foldingEnabled".into(), self.setting("editor.folding"));
             context.insert("editorLangId".into(), json!(editor.document.language_id));

@@ -59,7 +59,7 @@ fn the_editor_menu_moves_the_cursor_to_the_pointer_unless_a_selection_holds_it(c
     let (_dir, workbench, cx) = workbench_with("editor-menu", &["a.txt"], cx);
     let pointer = point(px(400.), px(200.));
     workbench.update_in(cx, |workbench, window, cx| workbench.show_editor_context_menu(1, 3.2, pointer, window, cx));
-    assert_eq!(menu_titles(&workbench, cx), ["Cut", "Copy", "Paste", "---", "Command Palette..."]);
+    assert_eq!(menu_titles(&workbench, cx), ["Change All Occurrences", "---", "Cut", "Copy", "Paste", "---", "Command Palette..."]);
     let selections = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().selections.clone());
     assert_eq!(selections(cx), [Selection::caret(Position::new(1, 3))]);
     cx.simulate_keystrokes("escape");
@@ -107,4 +107,30 @@ fn the_tab_menu_closes_around_the_right_clicked_editor(cx: &mut TestAppContext) 
     run("workbench.action.closeEditorsInGroup", 0, cx);
     assert!(open_names(&workbench, cx).is_empty());
     assert_eq!(std::fs::read_to_string(dir.join("a.txt")).unwrap(), "hello world\nsecond line");
+}
+
+#[gpui::test]
+fn the_host_moves_and_closes_tabs_by_their_ids(cx: &mut TestAppContext) {
+    let (_dir, workbench, cx) = workbench_with("editor-tabs", &["a.txt", "b.txt", "c.txt"], cx);
+    let request = |method: &str, args: Vec<serde_json::Value>, cx: &mut VisualTestContext| {
+        let request = exthost::session::ForwardedRequest { req: 1, proxy: "MainThreadEditorTabs", method: method.into(), args };
+        let outcome = workbench.update_in(cx, |workbench, window, cx| workbench.handle_host_request(request, window, cx));
+        let crate::commands::Outcome::Ready(result) = outcome else { panic!("{method} waits") };
+        result
+    };
+    let id = |name: &str, cx: &mut VisualTestContext| {
+        workbench.read_with(cx, |workbench, _| crate::host_sync::tab_id(workbench.editors.editors.iter().find(|editor| editor.document.name() == name).unwrap()))
+    };
+    let a = id("a.txt", cx);
+    // An index past the tabs moves the tab last, and the move pins it.
+    assert_eq!(request("$moveTab", vec![json!(a), json!(7), json!(0)], cx), Ok(json!(null)));
+    assert_eq!(open_names(&workbench, cx), ["b.txt", "c.txt", "a.txt"]);
+    assert!(workbench.read_with(cx, |workbench, _| !workbench.editors.editors[2].preview));
+    assert!(request("$moveTab", vec![json!("missing"), json!(0), json!(0)], cx).is_err());
+
+    let b = id("b.txt", cx);
+    assert_eq!(request("$closeTab", vec![json!([b, a])], cx), Ok(json!(true)));
+    assert_eq!(open_names(&workbench, cx), ["c.txt"]);
+    assert_eq!(request("$closeGroup", vec![json!([0])], cx), Ok(json!(true)));
+    assert!(open_names(&workbench, cx).is_empty());
 }

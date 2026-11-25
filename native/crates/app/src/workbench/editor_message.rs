@@ -142,7 +142,7 @@ impl Workbench {
         let run = TextRun { len: text.len(), font: gpui::font(UI_FONT), color: gpui::black(), background_color: None, underline: None, strikethrough: None };
         let text_width = f32::from(window.text_system().shape_line(text.into(), px(13.), &[run], None).width);
         let width = text_width + 2. * 4. + 2.;
-        let layout = layout_in_page(anchor_left - editor.scroll.left + content_left, anchor_top, width, self.text_area_bounds.get(), window.viewport_size().map(f32::from));
+        let layout = layout_in_page(anchor_left - editor.scroll.left + content_left, anchor_top, self.editors.viewport.line_height, width, self.text_area_bounds.get(), window.viewport_size().map(f32::from));
         let widget = self.message_box(message, layout.below, cx);
         // messageController.ts: `marginLeft = -6px` puts the anchor arrow's tip 4px right of the cursor.
         let widget = div().absolute().left(px(layout.left - 6.)).top(px(layout.top)).child(widget);
@@ -228,8 +228,8 @@ pub(super) struct MessageLayout {
 /// contentWidgets.ts `_layoutBoxInPage` and `_layoutHorizontalSegmentInPage` for the message, preferring ABOVE
 /// then BELOW: the widget shifts to stay 15px inside the window and within its own width of the editor, and goes
 /// below the line when its top would be less than 22px from the window's top. `left` is from the editor's left,
-/// `anchor_top` the line's top in the editor, `editor` the editor's window bounds.
-pub(super) fn layout_in_page(left: f32, anchor_top: f32, width: f32, editor: Bounds<f32>, window: Size<f32>) -> MessageLayout {
+/// `anchor_top` the line's top in the editor and `line_height` its height, `editor` the editor's window bounds.
+pub(super) fn layout_in_page(left: f32, anchor_top: f32, line_height: f32, width: f32, editor: Bounds<f32>, window: Size<f32>) -> MessageLayout {
     let height = MESSAGE_HEIGHT + ANCHOR_HEIGHT;
     let min_limit = 15f32.max(editor.origin.x - width);
     let max_limit = (editor.origin.x + editor.size.width + width).min(window.width - 15.);
@@ -245,7 +245,7 @@ pub(super) fn layout_in_page(left: f32, anchor_top: f32, width: f32, editor: Bou
     }
     let above_top = anchor_top - height;
     let fits_above = editor.origin.y + above_top >= 22.;
-    let below_top = anchor_top + crate::editor::LINE_HEIGHT;
+    let below_top = anchor_top + line_height;
     let fits_below = editor.origin.y + below_top + height <= window.height - 22.;
     match fits_above || !fits_below {
         true => MessageLayout { left, top: above_top, below: false },

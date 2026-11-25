@@ -9,10 +9,13 @@ use super::Workbench;
 use super::host_requests::uri_parts;
 use super::search_editor_view::SEARCH_EDITOR_SCHEME;
 use crate::commands::Outcome;
+use crate::host_sync::tab_id;
 use crate::editor::{EditReason, Position, TextDocument};
 
 /// `MAX_CONFIRM_FILES` of platform/dialogs/common/dialogs.ts.
 const MAX_CONFIRM_FILES: usize = 10;
+/// editorService.ts `ACTIVE_GROUP`, as a `viewColumn` of `$moveTab`.
+const ACTIVE_GROUP_COLUMN: i64 = -1;
 
 impl Workbench {
     pub(super) fn register_workbench_actions(&mut self) {
@@ -113,6 +116,57 @@ impl Workbench {
 
     fn close_all_editors(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
         self.close_editors((0..self.editors.editors.len()).collect(), window, cx)
+    }
+
+    /// mainThreadEditorTabs.ts `$moveTab`: the tab moves inside its group and is pinned; `index` past the tabs
+    /// moves it last.
+    pub(crate) fn move_tab(&mut self, id: &str, index: i64, view_column: i64, cx: &mut Context<Self>) -> Outcome {
+        let Some(from) = self.editors.editors.iter().position(|editor| tab_id(editor) == id) else {
+            return Outcome::error(format!("Attempted to close tab with id {id} which does not exist"));
+        };
+        // shortcut: one editor group until milestone 11; a move to another view column (a new group upstream) does nothing.
+        if !matches!(view_column, 0 | ACTIVE_GROUP_COLUMN) {
+            return Outcome::done();
+        }
+        let len = self.editors.editors.len() as i64;
+        let index = if index < 0 || index > len { len } else { index };
+        self.editors.move_editor(from, index as usize);
+        self.editors_changed(cx);
+        Outcome::done()
+    }
+
+    /// mainThreadEditorTabs.ts `$closeTab`: the tabs named by `tab_ids` close as `closeEditors` closes them, dirty
+    /// ones after the save prompt; true when every one of them closed.
+    pub(crate) fn close_tabs(&mut self, tab_ids: &[Value], window: &mut Window, cx: &mut Context<Self>) -> Outcome {
+        let indices: Vec<usize> = (0..self.editors.editors.len()).filter(|index| tab_ids.iter().any(|id| *id == tab_id(&self.editors.editors[*index]))).collect();
+        self.close_and_report(indices, window, cx)
+    }
+
+    /// mainThreadEditorTabs.ts `$closeGroup`: the one group closes all its editors and stays, as the last group does.
+    pub(crate) fn close_groups(&mut self, group_ids: &[Value], window: &mut Window, cx: &mut Context<Self>) -> Outcome {
+        if !group_ids.iter().any(|id| *id == 0) {
+            return Outcome::Ready(Ok(Value::Bool(true)));
+        }
+        self.close_and_report((0..self.editors.editors.len()).collect(), window, cx)
+    }
+
+    /// `close_editors`, answering whether every editor at `indices` closed (a Cancel keeps them).
+    fn close_and_report(&mut self, indices: Vec<usize>, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
+        let models: Vec<u32> = indices.iter().map(|index| self.editors.editors[*index].model_id).collect();
+        let all_closed = move |workbench: &Workbench| !workbench.editors.editors.iter().any(|editor| models.contains(&editor.model_id));
+        match self.close_editors(indices, window, cx) {
+            Outcome::Ready(_) => Outcome::Ready(Ok(Value::Bool(all_closed(self)))),
+            Outcome::Pending(closing) => {
+                let (sender, receiver) = oneshot::channel();
+                cx.spawn(async move |workbench, cx| {
+                    let _ = closing.await;
+                    let closed = workbench.read_with(cx, |workbench, _| all_closed(workbench)).unwrap_or(false);
+                    let _ = sender.send(Ok(Value::Bool(closed)));
+                })
+                .detach();
+                Outcome::Pending(receiver)
+            }
+        }
     }
 
     /// `AbstractCloseAllAction.run` and `handleDirtyClosing`: dirty editors among `indices` ask to save first;

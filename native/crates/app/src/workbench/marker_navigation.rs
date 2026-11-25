@@ -240,8 +240,8 @@ impl Workbench {
         }
         // `_getMaximumHeightInLines`: max(12, 80% of the editor).
         let height_in_lines = (3 + message_lines(&marker).min(17)) as f32;
-        let height_in_lines = height_in_lines.min(12f32.max(viewport.height / LINE_HEIGHT * 0.8));
-        let zone_id = editor.add_view_zone(position, height_in_lines * LINE_HEIGHT);
+        let height_in_lines = height_in_lines.min(12f32.max(viewport.height / viewport.line_height * 0.8));
+        let zone_id = editor.add_view_zone(position, height_in_lines * viewport.line_height);
         session.widget = Some(MarkerWidget { zone_id, marker, index, total, stale: false });
         editor.set_selections(vec![Selection::caret(position)]);
         // `_showImpl.revealRange`: the line and the zone below it, the last line near the top.

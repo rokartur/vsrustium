@@ -125,11 +125,14 @@ impl Workbench {
             if !workbench.editor_focus.is_focused(window) || workbench.edit_blocked(true, cx) {
                 return Outcome::done();
             }
-            workbench.run_indenting(|editor, auto| editor.type_keyboard(&text, auto), cx)
+            let overtype = workbench.overtype;
+            workbench.run_indenting(|editor, auto| editor.type_keyboard(&text, auto, overtype), cx)
         });
         for &id in commands::IDS {
+            // multicursor.ts FocusNextCursor/FocusPreviousCursor do nothing in a read-only editor.
+            let writes = matches!(id, "editor.action.focusNextCursor" | "editor.action.focusPreviousCursor");
             self.commands.register(id, move |workbench, _, _, cx| {
-                if workbench.editors.active().is_some() {
+                if workbench.editors.active().is_some() && !(writes && workbench.active_editor_readonly().is_some()) {
                     workbench.run_editor_command(id, "keyboard", cx);
                 }
                 Outcome::done()
@@ -177,6 +180,78 @@ impl Workbench {
                 false => workbench.run_in_place_replace(up, cx),
             });
         }
+        // shortcut: GPUI has no screen reader announcements, so "Anchor set at {0}:{1}" is not read out; add one with them.
+        self.commands.register("editor.action.setSelectionAnchor", |workbench, _, _, cx| {
+            if let Some(editor) = workbench.editors.active_mut() {
+                editor.set_selection_anchor();
+                cx.notify();
+            }
+            Outcome::done()
+        });
+        let anchor_moves: [(&str, fn(&mut OpenEditor)); 2] = [
+            ("editor.action.goToSelectionAnchor", OpenEditor::go_to_selection_anchor),
+            ("editor.action.selectFromAnchorToCursor", OpenEditor::select_from_anchor_to_cursor),
+        ];
+        for (id, command) in anchor_moves {
+            // `setPosition` and `setSelection` of the API: the host hears of it, the view does not reveal it.
+            self.commands.register(id, move |workbench, _, _, cx| {
+                let Some(editor) = workbench.editors.active_mut().filter(|editor| editor.selection_anchor.is_some()) else { return Outcome::done() };
+                command(editor);
+                workbench.host.send_selection(editor, "api");
+                cx.notify();
+                Outcome::done()
+            });
+        }
+        self.commands.register("editor.action.cancelSelectionAnchor", |workbench, _, _, cx| {
+            if let Some(editor) = workbench.editors.active_mut() {
+                editor.selection_anchor = None;
+                cx.notify();
+            }
+            Outcome::done()
+        });
+        self.commands.register("editor.action.insertFinalNewLine", |workbench, _, _, cx| workbench.run_on_active_editor(OpenEditor::insert_final_new_line, cx));
+        let zooms: [(&str, fn(f32) -> f32); 3] = [
+            ("editor.action.fontZoomIn", |level| level + 1.),
+            ("editor.action.fontZoomOut", |level| level - 1.),
+            ("editor.action.fontZoomReset", |_| 0.),
+        ];
+        for (id, level) in zooms {
+            self.commands.register(id, move |workbench, _, _, cx| {
+                if workbench.editor_zoom.set_level(level(workbench.editor_zoom.level())) {
+                    cx.notify();
+                }
+                Outcome::done()
+            });
+        }
+        self.commands.register("editor.action.toggleRenderWhitespace", |workbench, _, _, cx| {
+            let next = if workbench.setting("editor.renderWhitespace") == "none" { "all" } else { "none" };
+            workbench.update_setting("editor.renderWhitespace", json!(next));
+            cx.notify();
+            Outcome::done()
+        });
+        self.commands.register("editor.action.toggleMinimap", |workbench, _, _, cx| {
+            let enabled = workbench.setting("editor.minimap.enabled") != json!(false);
+            workbench.update_setting("editor.minimap.enabled", json!(!enabled));
+            cx.notify();
+            Outcome::done()
+        });
+        self.commands.register("editor.action.toggleColumnSelection", |workbench, _, _, cx| {
+            let on = workbench.setting("editor.columnSelection") != json!(true);
+            workbench.update_setting("editor.columnSelection", json!(on));
+            if let Some(editor) = workbench.editors.active_mut() {
+                let before = editor.selections.clone();
+                let reveal = editor.column_selection_mode_changed(on);
+                workbench.cursors_changed(before, reveal, "keyboard", cx);
+            }
+            cx.notify();
+            Outcome::done()
+        });
+        self.commands.register("workbench.action.toggleMultiCursorModifier", |workbench, _, _, cx| {
+            let next = if workbench.multi_cursor_modifier_is_cmd() { "alt" } else { "ctrlCmd" };
+            workbench.update_setting("editor.multiCursorModifier", json!(next));
+            cx.notify();
+            Outcome::done()
+        });
         self.commands.register("cursorUndo", |workbench, _, _, cx| workbench.run_cursor_undo(false, cx));
         self.commands.register("cursorRedo", |workbench, _, _, cx| workbench.run_cursor_undo(true, cx));
         self.commands.register("editor.action.clipboardCopyAction", |workbench, _, window, cx| workbench.copy_to_clipboard(false, window, cx));
@@ -192,7 +267,10 @@ impl Workbench {
             let metadata = clipboard.metadata_json::<Value>().unwrap_or_default();
             let multicursor_text: Option<Vec<String>> = serde_json::from_value(metadata["multicursorText"].clone()).ok();
             let from_empty_selection = metadata["isFromEmptySelection"] == json!(true);
-            workbench.run_on_active_editor(|editor: &mut OpenEditor| editor.paste(clipboard.text(), from_empty_selection, multicursor_text.as_deref()), cx)
+            let Some(editor) = workbench.editors.active() else { return Outcome::done() };
+            let overrides = Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
+            let overtype = workbench.overtype && workbench.settings.lock().unwrap().get_value(Some("editor.overtypeOnPaste"), &overrides) != Some(json!(false));
+            workbench.run_on_active_editor(|editor: &mut OpenEditor| editor.paste(clipboard.text(), from_empty_selection, multicursor_text.as_deref(), overtype), cx)
         });
     }
 

@@ -19,14 +19,12 @@ impl OpenEditor {
         self.adjust_selections_to_folds();
     }
 
-    /// `onHiddenRangesChanges`: a selection end on a hidden line moves to its fold line.
+    /// `onHiddenRangesChanges`: a selection end on a hidden line moves to its fold line through `setSelections`,
+    /// so the word highlights follow and Cursor Undo can bring the cursor back.
     fn adjust_selections_to_folds(&mut self) {
         let mut selections = self.selections.clone();
         if self.folding.adjust_selections(&self.document.lines, &mut selections) {
-            self.selections = selections;
-            cursor::normalize(&mut self.selections, &mut self.last_added);
-            // An `api` source cursor change: wordHighlighter.ts `_onPositionChanged` runs again.
-            self.refresh_highlights();
+            self.set_selections(selections);
         }
     }
 
@@ -198,5 +196,16 @@ mod tests {
         editor.run_folding_command("editor.fold");
         assert_eq!(editor.selection(), Selection::caret(Position::new(0, 18)));
         assert!(editor.highlights.is_empty());
+    }
+
+    #[test]
+    fn cursor_undo_brings_back_a_cursor_that_folding_moved() {
+        let mut editor = crate::editor::edit::tests::editor("function merge() {\n    second = 1;\n}", "\n");
+        editor.move_to(Position::new(1, 6), false);
+        editor.run_folding_command("editor.fold");
+        assert_eq!(editor.selection(), Selection::caret(Position::new(0, 18)));
+        editor.cursor_undo();
+        assert_eq!(editor.selection(), Selection::caret(Position::new(1, 6)));
+        assert!(!editor.folding.is_hidden(1), "the restored cursor unfolds its region");
     }
 }

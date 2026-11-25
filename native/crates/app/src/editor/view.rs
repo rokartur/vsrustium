@@ -7,6 +7,7 @@ use super::{OpenEditor, Position};
 #[cfg(test)]
 use super::Selection;
 
+/// `editor.lineHeight` for `editor.fontSize` 12 at zoom level 0 (`GOLDEN_LINE_HEIGHT_RATIO` 1.5 on macOS).
 pub const LINE_HEIGHT: f32 = 18.;
 /// `editor.scrollbar.verticalScrollbarSize` and `horizontalScrollbarSize`.
 pub const VERTICAL_SCROLLBAR_WIDTH: f32 = 14.;
@@ -21,12 +22,14 @@ const HORIZONTAL_EXTRA_PX: f32 = 30.;
 const REVEAL_HORIZONTAL_RIGHT_PADDING: f32 = 15.;
 
 /// The size of the scrollable text area: right of the gutter, scrollbars included.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Viewport {
     pub width: f32,
     pub height: f32,
     /// `typicalHalfwidthCharacterWidth` of the editor font.
     pub char_width: f32,
+    /// `EditorOption.lineHeight`, with the editor zoom.
+    pub line_height: f32,
     /// `editor.stickyScroll.maxLineCount` with sticky scroll on, else 0: a reveal keeps this many lines above the cursor.
     pub sticky_scroll_lines: usize,
     /// The find widget's view zone above the first line (`editor.find.addExtraSpaceOnTop`), 0 without it.
@@ -35,15 +38,21 @@ pub struct Viewport {
     pub stop_rendering_line_after: Option<usize>,
 }
 
+impl Default for Viewport {
+    fn default() -> Self {
+        Viewport { width: 0., height: 0., char_width: 0., line_height: LINE_HEIGHT, sticky_scroll_lines: 0, top_whitespace: 0., stop_rendering_line_after: None }
+    }
+}
+
 impl Viewport {
     /// `CursorConfiguration.pageSize`: the lines a page move goes, two less than fit.
     pub fn page_size(&self) -> usize {
-        ((self.height / LINE_HEIGHT).floor() as usize).saturating_sub(2).max(1)
+        ((self.height / self.line_height).floor() as usize).saturating_sub(2).max(1)
     }
 
     /// `getVerticalOffsetForLineNumber`: the whitespace above plus the lines before.
     pub fn line_top(&self, view_line: usize) -> f32 {
-        self.top_whitespace + view_line as f32 * LINE_HEIGHT
+        self.top_whitespace + view_line as f32 * self.line_height
     }
 }
 
@@ -61,7 +70,7 @@ impl OpenEditor {
     /// `_getContentHeight` with `scrollBeyondLastLine`, at least the viewport.
     pub fn scroll_height(&self, viewport: Viewport) -> f32 {
         let lines = self.line_top(self.view_line_count(), viewport);
-        viewport.height.max(lines + (viewport.height - LINE_HEIGHT).max(0.))
+        viewport.height.max(lines + (viewport.height - viewport.line_height).max(0.))
     }
 
     /// `_computeContentWidth` without wrapping: the widest line drawn so far, 4 columns and the vertical scrollbar.
@@ -290,15 +299,16 @@ impl Scrollbar {
 fn scroll_top_to_reveal(viewport_top: f32, viewport: Viewport, (box_start, box_end): (f32, f32), reveal: VerticalReveal, ignore_scroll_off: bool, single_range: bool) -> Option<f32> {
     let viewport_height = viewport.height;
     let viewport_end = viewport_top + viewport_height;
-    let (mut padding_top, mut padding_bottom) = (LINE_HEIGHT, 0.);
+    let line_height = viewport.line_height;
+    let (mut padding_top, mut padding_bottom) = (line_height, 0.);
     if !ignore_scroll_off {
-        let context = (viewport_height / LINE_HEIGHT / 2.).min(viewport.sticky_scroll_lines as f32);
-        padding_top = context * LINE_HEIGHT;
-        padding_bottom = (context - 1.).max(0.) * LINE_HEIGHT;
+        let context = (viewport_height / line_height / 2.).min(viewport.sticky_scroll_lines as f32);
+        padding_top = context * line_height;
+        padding_bottom = (context - 1.).max(0.) * line_height;
     }
     // Reveal one line more when the last line would be under the horizontal scrollbar.
     if reveal == VerticalReveal::Simple {
-        padding_bottom += LINE_HEIGHT;
+        padding_bottom += line_height;
     }
     let (box_start, box_end) = (box_start - padding_top, box_end + padding_bottom);
     let inside = viewport_top <= box_start && box_end <= viewport_end;
@@ -336,7 +346,7 @@ mod tests {
         editor(text, "\n")
     }
 
-    const VIEWPORT: Viewport = Viewport { width: 400., height: 360., char_width: 7.2, sticky_scroll_lines: 5, top_whitespace: 0., stop_rendering_line_after: None };
+    const VIEWPORT: Viewport = Viewport { width: 400., height: 360., char_width: 7.2, line_height: LINE_HEIGHT, sticky_scroll_lines: 5, top_whitespace: 0., stop_rendering_line_after: None };
 
     #[test]
     fn scrolls_past_the_last_line_by_one_viewport_less_one_line() {

@@ -64,7 +64,7 @@ impl Cursor {
 
     /// `viewModel.type(text, 'keyboard')`.
     fn type_text(&mut self, text: &str) {
-        self.editor.type_keyboard(text, AutoIndent { languages: &self.languages, strategy: self.strategy });
+        self.editor.type_keyboard(text, AutoIndent { languages: &self.languages, strategy: self.strategy }, false);
     }
 
     /// `CoreEditingCommands.Tab`.

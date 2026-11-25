@@ -44,6 +44,16 @@ impl OpenEditor {
         self.push_undo_stop();
         change
     }
+
+    /// insertFinalNewLineCommand.ts: the EOL appended to the last line whether or not it is empty, between undo stops.
+    pub fn insert_final_new_line(&mut self) -> Option<ContentChanged> {
+        let last = self.document.lines.len() - 1;
+        let end = Position::new(last, self.document.lines[last].chars().count());
+        self.push_undo_stop();
+        let change = self.execute_edits_tracking_primary(vec![(end, end, self.document.eol.to_string())], command("editor.action.insertFinalNewLine"));
+        self.push_undo_stop();
+        change
+    }
 }
 
 /// `getIndentationEditOperations`: each indented line's leading whitespace, tabs replaced by `tab_size` spaces,
@@ -68,7 +78,7 @@ fn indentation_edits(lines: &[String], tab_size: usize, to_spaces: bool) -> Vec<
 
 /// `trimTrailingWhitespace`: deletes each line's trailing whitespace, not left of a cursor on the line (the last
 /// cursor of a line counts), and not where `keep(line, byte offset)` holds.
-fn trim_trailing_whitespace_edits(lines: &[String], cursors: &[Position], keep: impl Fn(usize, usize) -> bool) -> Vec<(Position, Position, String)> {
+pub(super) fn trim_trailing_whitespace_edits(lines: &[String], cursors: &[Position], keep: impl Fn(usize, usize) -> bool) -> Vec<(Position, Position, String)> {
     let mut edits = Vec::new();
     for (line, text) in lines.iter().enumerate() {
         let length = text.chars().count();
@@ -163,5 +173,20 @@ mod tests {
         model.move_to(Position::new(1, 1), false);
         model.trim_trailing_whitespace(true);
         assert_eq!((model.document.lines.as_slice(), model.selection()), (["a", "b"].map(String::from).as_slice(), Selection::caret(Position::new(1, 1))));
+    }
+
+    #[test]
+    fn insert_final_new_line_appends_the_eol_and_the_selection_keeps_before_it() {
+        let mut model = editor("a\nbc", "\r\n");
+        model.move_to(Position::new(1, 2), false);
+        model.insert_final_new_line();
+        assert_eq!((model.document.lines.as_slice(), model.selection()), (["a", "bc", ""].map(String::from).as_slice(), Selection::caret(Position::new(1, 2))));
+        // The last line is empty now, and the action still appends another.
+        model.set_selections(vec![Selection { anchor: Position::new(0, 0), head: Position::new(2, 0) }]);
+        model.insert_final_new_line();
+        assert_eq!(model.document.lines, ["a", "bc", "", ""]);
+        assert_eq!(model.selection(), Selection { anchor: Position::new(0, 0), head: Position::new(2, 0) });
+        model.undo();
+        assert_eq!(model.document.lines, ["a", "bc", ""]);
     }
 }

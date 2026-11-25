@@ -1,7 +1,7 @@
 //! View zones: whitespace the view inserts below a model line, as viewZones.ts and linesLayout.ts lay them out for
 //! one line height. A zone widget (zoneWidget.ts) draws over the whitespace of its zone.
 
-use super::{LINE_HEIGHT, OpenEditor, Position, Viewport, end_of, folding::tracked};
+use super::{OpenEditor, Position, Viewport, end_of, folding::tracked};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ViewZone {
@@ -54,7 +54,7 @@ impl OpenEditor {
     pub fn view_zone_top(&self, id: u32, viewport: Viewport) -> Option<f32> {
         let zone = self.view_zone(id)?;
         let position = self.zone_view_position(zone)?;
-        Some(self.line_top(position - 1, viewport) + LINE_HEIGHT)
+        Some(self.line_top(position - 1, viewport) + viewport.line_height)
     }
 
     /// `getLineNumberAtOrAfterVerticalOffset` as a 0-based view line, not clamped to the line count: an offset in
@@ -63,7 +63,7 @@ impl OpenEditor {
         let offset = (offset - viewport.top_whitespace).max(0.);
         let mut above = 0.;
         for (position, height) in self.shown_zones() {
-            let zone_top = position as f32 * LINE_HEIGHT + above;
+            let zone_top = position as f32 * viewport.line_height + above;
             if offset < zone_top {
                 break;
             }
@@ -72,7 +72,7 @@ impl OpenEditor {
             }
             above += height;
         }
-        ((offset - above) / LINE_HEIGHT).floor() as usize
+        ((offset - above) / viewport.line_height).floor() as usize
     }
 
     /// The zones and where they go between the lines `lines`: the zones under each view line before the last.
@@ -92,9 +92,10 @@ impl OpenEditor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::editor::LINE_HEIGHT;
     use crate::editor::edit::tests::editor;
 
-    const VIEWPORT: Viewport = Viewport { width: 400., height: 360., char_width: 7.2, sticky_scroll_lines: 0, top_whitespace: 0., stop_rendering_line_after: None };
+    const VIEWPORT: Viewport = Viewport { width: 400., height: 360., char_width: 7.2, line_height: LINE_HEIGHT, sticky_scroll_lines: 0, top_whitespace: 0., stop_rendering_line_after: None };
 
     #[test]
     fn a_zone_pushes_the_lines_below_it_down() {

@@ -3,6 +3,7 @@
 
 pub mod controller;
 pub mod model;
+pub mod multicursor;
 pub mod replace_pattern;
 pub mod search;
 pub mod state;

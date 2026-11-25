@@ -382,12 +382,17 @@ fn utf16_len(text: &str) -> usize {
     text.encode_utf16().count()
 }
 
-fn tab_dto(editor: &OpenEditor, active: bool, search_tabs: &HashMap<PathBuf, SearchTab>) -> Value {
-    let uri = editor.document.uri();
+/// The tab's id in `$acceptTabOperation`, which `$moveTab` and `$closeTab` name a tab by.
+pub fn tab_id(editor: &OpenEditor) -> String {
     // Every scheme the file service reads opens as a file editor input; untitled text has its own.
     let type_id = if editor.document.scheme == "untitled" { "workbench.editors.untitledEditorInput" } else { "workbench.editors.files.fileEditorInput" };
+    format!("0~default-{type_id}-{} ", editor.document.uri_string())
+}
+
+fn tab_dto(editor: &OpenEditor, active: bool, search_tabs: &HashMap<PathBuf, SearchTab>) -> Value {
+    let uri = editor.document.uri();
     let mut tab = json!({
-        "id": format!("0~default-{type_id}-{} ", editor.document.uri_string()),
+        "id": tab_id(editor),
         "label": editor.document.name(),
         // TabInputKind.TextInput
         "input": { "kind": 1, "uri": uri },
@@ -450,7 +455,7 @@ mod tests {
         let (sender, receiver) = channel();
         let mut sync = HostSync::new(sender);
         let mut group = EditorGroup::default();
-        group.viewport = Viewport { width: 400., height: 360., char_width: 7.2, sticky_scroll_lines: 5, top_whitespace: 0., stop_rendering_line_after: None };
+        group.viewport = Viewport { width: 400., height: 360., char_width: 7.2, line_height: 18., sticky_scroll_lines: 5, top_whitespace: 0., stop_rendering_line_after: None };
 
         group.open(document("/w/a b.txt", "plaintext"), false);
         sync.send_changes(&group);
