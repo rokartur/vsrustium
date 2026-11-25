@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 pub mod filter;
+pub mod links;
 pub mod log_levels;
 #[cfg(test)]
 mod tests;
