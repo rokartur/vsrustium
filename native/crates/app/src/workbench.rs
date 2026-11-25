@@ -18,6 +18,7 @@ mod context_menu;
 pub mod custom_editors;
 mod debug_commands;
 mod debug_console;
+mod problems_view;
 mod debug_toolbar;
 pub(crate) mod debug_service;
 mod debug_view;
@@ -315,6 +316,8 @@ pub struct Workbench {
     pub debug: debug_service::DebugService,
     debug_view: debug_view::DebugView,
     debug_console: debug_console::DebugConsole,
+    problems: problems_view::ProblemsView,
+    problems_focus: FocusHandle,
     breakpoint_widget: Option<breakpoint_widget::BreakpointWidget>,
     pub testing: testing_service::TestingService,
     testing_view: testing_view::TestingView,
@@ -514,6 +517,8 @@ impl Workbench {
             debug: Default::default(),
             debug_view: debug_view::DebugView::new(cx),
             debug_console: debug_console::DebugConsole::new(cx),
+            problems: problems_view::ProblemsView::default(),
+            problems_focus: cx.focus_handle(),
             breakpoint_widget: None,
             testing: Default::default(),
             testing_view: Default::default(),
@@ -572,6 +577,7 @@ impl Workbench {
         workbench.register_empty_view_actions();
         workbench.register_logs_actions();
         workbench.register_terminal_actions();
+        workbench.register_problems_panel_view();
         workbench.register_output_panel_view();
         workbench.register_debug_console_panel_view();
         workbench.register_test_results_panel_view();
@@ -1228,7 +1234,7 @@ impl Workbench {
             None => (self.color("statusBar.noFolderForeground"), self.color("statusBar.noFolderBackground")),
         };
         // statusbarpart.css: pointer only on items with a command; status.message has none.
-        let problems = self.problems_status_item(foreground);
+        let problems = self.problems_status_item(foreground, cx);
         div()
             .relative()
             .h(px(28.))

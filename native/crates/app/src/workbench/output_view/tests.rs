@@ -146,9 +146,13 @@ fn the_debug_console_and_test_results_are_panel_views(cx: &mut TestAppContext) {
     let tabs = |workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext| {
         workbench.read_with(cx, |workbench, _| workbench.panel_tabs().iter().map(|view| view.title).collect::<Vec<_>>())
     };
-    assert_eq!(tabs(&workbench, cx), ["Output", "Debug Console", "Terminal"]);
+    assert_eq!(tabs(&workbench, cx), ["Problems", "Output", "Debug Console", "Terminal"]);
     workbench.update(cx, |workbench, _| workbench.testing.results.push(crate::testing::TestResult::new("r1".into(), json!({}))));
-    assert_eq!(tabs(&workbench, cx), ["Output", "Debug Console", "Test Results", "Terminal"]);
+    assert_eq!(tabs(&workbench, cx), ["Problems", "Output", "Debug Console", "Test Results", "Terminal"]);
+    run(&workbench, cx, "workbench.actions.view.toggleProblems");
+    assert!(workbench.read_with(cx, |workbench, _| workbench.panel_view_visible(super::super::problems_view::MARKERS_CONTAINER_ID)));
+    run(&workbench, cx, "workbench.actions.view.toggleProblems");
+    assert!(workbench.read_with(cx, |workbench, _| !workbench.panel_view_visible(super::super::problems_view::MARKERS_CONTAINER_ID)));
     std::fs::remove_dir_all(dir).unwrap();
 }
 fn run(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext, command: &str) {

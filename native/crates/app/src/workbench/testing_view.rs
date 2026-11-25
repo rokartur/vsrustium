@@ -174,6 +174,7 @@ impl Workbench {
             render: |workbench, _, cx| workbench.test_results_body(cx).into_any_element(),
             actions: |_, _, _| gpui::Empty.into_any_element(),
             visible: |workbench| !workbench.testing.results.is_empty(),
+            badge: |_| None,
         });
     }
 

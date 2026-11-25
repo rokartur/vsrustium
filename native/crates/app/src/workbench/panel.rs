@@ -23,6 +23,8 @@ pub struct PanelView {
     pub actions: fn(&Workbench, &mut Window, &mut Context<Workbench>) -> AnyElement,
     /// A `hideIfEmpty` container shows its tab only while one of its views' `when` holds.
     pub visible: fn(&Workbench) -> bool,
+    /// The activity count the view's tab shows (`IActivity.badge`).
+    pub badge: fn(&Workbench) -> Option<usize>,
 }
 
 #[derive(Default)]
@@ -190,6 +192,21 @@ impl Workbench {
             .text_color(foreground)
             .when(active, |tab| tab.bg(self.color("panel.background")).rounded_t(px(7.)).border_t_1().border_r_1().border_color(self.color("surface.border")))
             .child(div().line_height(px(24.)).child(view.title))
+            .children((view.badge)(self).filter(|count| *count > 0).map(|count| {
+                div()
+                    .ml(px(3.))
+                    .min_w(px(16.))
+                    .h(px(16.))
+                    .px(px(4.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(8.))
+                    .text_size(px(11.))
+                    .bg(self.color("activityBarBadge.background"))
+                    .text_color(self.foreground_or("activityBarBadge.foreground"))
+                    .child(count.to_string())
+            }))
             .on_click(cx.listener(move |workbench, _, _, cx| workbench.open_panel_view(id, cx)))
             .into_any_element()
     }

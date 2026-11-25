@@ -353,6 +353,7 @@ impl Workbench {
             },
             actions: |workbench, _, cx| workbench.terminal_title_actions(cx).into_any_element(),
             visible: |_| true,
+            badge: |_| None,
         });
     }
 

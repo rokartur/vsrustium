@@ -200,13 +200,22 @@ impl Workbench {
     }
 
     /// The `status.problems` entry: `$(error) N $(warning) N`, `$(info) N` only with infos.
-    pub(super) fn problems_status_item(&self, foreground: Rgba) -> Div {
+    pub(super) fn problems_status_item(&self, foreground: Rgba, cx: &mut Context<Self>) -> gpui::Stateful<Div> {
         let stats = self.diagnostics.service.statistics();
         let mut counts = vec![("error", stats.errors), ("warning", stats.warnings)];
         if stats.infos > 0 {
             counts.push(("info", stats.infos));
         }
-        let mut item = div().relative().h_full().cursor_pointer().mx(px(3.)).px(px(5.)).flex().items_center();
+        let mut item = div()
+            .id("status.problems")
+            .relative()
+            .h_full()
+            .cursor_pointer()
+            .mx(px(3.))
+            .px(px(5.))
+            .flex()
+            .items_center()
+            .on_click(cx.listener(|workbench, _, window, cx| drop(workbench.execute_command("workbench.actions.view.toggleProblems", Vec::new(), window, cx))));
         for (index, (icon, count)) in counts.iter().enumerate() {
             let separator = if index + 1 < counts.len() { " " } else { "" };
             item = item.child(self.icon(icon, 16., 16., foreground)).child(format!(" {}{separator}", pack_number(*count)));

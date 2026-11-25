@@ -11,8 +11,8 @@ use crate::debug::session::{ReplElement, Severity, Variable};
 use super::panel::PanelView;
 use crate::input_box::InputBox;
 
-/// debug.ts `REPL_VIEW_ID`, the view and its panel container.
-pub const REPL_VIEW_ID: &str = "workbench.panel.repl";
+/// debug.ts `DEBUG_PANEL_ID`, the panel container of the Debug Console view.
+pub const DEBUG_PANEL_ID: &str = "workbench.panel.repl";
 
 pub struct DebugConsole {
     pub focus: FocusHandle,
@@ -35,28 +35,29 @@ impl Workbench {
     // shortcut: the view's filter box and session picker are not ported; its title has Clear Console only.
     pub(super) fn register_debug_console_panel_view(&mut self) {
         self.register_panel_view(PanelView {
-            id: REPL_VIEW_ID,
+            id: DEBUG_PANEL_ID,
             title: "Debug Console",
             render: |workbench, window, cx| workbench.debug_console_body(window, cx).into_any_element(),
             actions: |workbench, _, cx| div().flex().child(workbench.search_action("clear-all", "workbench.debug.panel.action.clearReplAction", true, cx)).into_any_element(),
             visible: |_| true,
+            badge: |_| None,
         });
     }
 
     pub(super) fn debug_console_visible(&self) -> bool {
-        self.panel_view_visible(REPL_VIEW_ID)
+        self.panel_view_visible(DEBUG_PANEL_ID)
     }
 
     /// `viewsService.openView(REPL_VIEW_ID, focus)`.
     pub(crate) fn open_debug_console(&mut self, focus: bool, window: &mut Window, cx: &mut Context<Self>) {
-        self.open_panel_view(REPL_VIEW_ID, cx);
+        self.open_panel_view(DEBUG_PANEL_ID, cx);
         if focus {
             window.focus(&self.debug_console.input_focus, cx);
         }
     }
 
     pub(crate) fn close_debug_console(&mut self, cx: &mut Context<Self>) {
-        self.close_panel_view(REPL_VIEW_ID, cx);
+        self.close_panel_view(DEBUG_PANEL_ID, cx);
     }
 
     pub(super) fn register_debug_console_commands(&mut self) {
