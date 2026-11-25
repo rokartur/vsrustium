@@ -41,6 +41,7 @@ pub enum MenuId {
     ScmInputBox,
     DiffEditorHunkToolbar,
     EditorTitle,
+    EditorContent,
     /// A `contributes.submenus` entry, `MenuId.for('api:<id>')`, by registration order.
     Api(usize),
     #[cfg(test)]
@@ -249,7 +250,7 @@ pub fn workbench_menus() -> Vec<MenuItem> {
 
 /// menusExtensionPoint.ts `apiMenus`: the `contributes.menus` keys of the menus the port shows. `commandPalette`
 /// is read by `command_palette::menu`.
-const API_MENUS: [(&str, MenuId); 10] = [
+const API_MENUS: [(&str, MenuId); 11] = [
     ("editor/context", MenuId::EditorContext),
     ("explorer/context", MenuId::ExplorerContext),
     ("editor/title/context", MenuId::EditorTitleContext),
@@ -260,6 +261,7 @@ const API_MENUS: [(&str, MenuId); 10] = [
     ("scm/inputBox", MenuId::ScmInputBox),
     ("diffEditor/gutter/hunk", MenuId::DiffEditorHunkToolbar),
     ("editor/title", MenuId::EditorTitle),
+    ("editor/content", MenuId::EditorContent),
 ];
 
 /// The `icon` of each `contributes.commands` entry with one: a `$(codicon)` name, or the light and dark image paths.
@@ -314,6 +316,10 @@ pub fn extension_menus(extensions: &[ScannedExtension]) -> Vec<MenuItem> {
         for (key, entries) in menus {
             let Some(entries) = entries.as_array().filter(|entries| entries.iter().all(is_valid_item)) else { continue };
             let api_menu = API_MENUS.iter().find(|(api_key, _)| api_key == key).map(|(_, menu)| *menu);
+            // menusExtensionPoint.ts: `editor/content` is `proposed: 'contribEditorContentMenu'`.
+            if key == "editor/content" && !extension.description["enabledApiProposals"].as_array().is_some_and(|proposals| proposals.iter().any(|proposal| proposal == "contribEditorContentMenu")) {
+                continue;
+            }
             let Some(menu) = api_menu.or_else(|| submenus.iter().find(|(id, ..)| id == key).map(|(_, menu, _)| *menu)) else { continue };
             for entry in entries {
                 let (entry_value, title) = match entry["command"].as_str() {

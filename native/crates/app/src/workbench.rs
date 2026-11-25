@@ -9,6 +9,7 @@ mod content_hover;
 mod content_hover_view;
 mod context_menu;
 mod define_keybinding;
+mod floating_menu;
 mod diagnostics;
 mod editor_commands;
 mod editor_menus;

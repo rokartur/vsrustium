@@ -115,6 +115,17 @@ fn an_invalid_item_drops_its_menu() {
     assert_eq!(menus, [MenuId::EditorTitleContext]);
 }
 
+/// `editor/content` is a proposed menu: only an extension with `contribEditorContentMenu` enabled contributes to it.
+#[test]
+fn editor_content_needs_its_proposal() {
+    let contributes = json!({ "commands": [{ "command": "a.run", "title": "Run" }], "menus": { "editor/content": [{ "command": "a.run" }] } });
+    let mut proposed = extension("a", contributes.clone());
+    proposed.description["enabledApiProposals"] = json!(["contribEditorContentMenu"]);
+    let menus = |extension: ScannedExtension| extension_menus(&[extension]).iter().map(|item| item.menu).collect::<Vec<_>>();
+    assert_eq!(menus(extension("a", contributes)), Vec::<MenuId>::new());
+    assert_eq!(menus(proposed), [MenuId::EditorContent]);
+}
+
 /// `contributes.submenus`: a submenu item opens the submenu's own items; a submenu is added once per menu, the
 /// first registration of an id wins, and one without a label is skipped.
 #[test]

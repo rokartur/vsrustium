@@ -169,6 +169,27 @@ fn the_line_number_menu_selects_the_line_and_shows_contributed_items(cx: &mut Te
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+/// floatingMenu.ts: the floating toolbar shows the `editor/content` items whose `when` holds, from an extension with
+/// the `contribEditorContentMenu` proposal.
+#[gpui::test]
+fn the_floating_menu_shows_contributed_editor_content_items(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = workbench_with("floating-menu", &["a.txt"], cx);
+    let extension = exthost::scan::ScannedExtension {
+        id: "test.content".into(),
+        location: dir.clone(),
+        description: json!({ "enabledApiProposals": ["contribEditorContentMenu"], "contributes": {
+            "commands": [{ "command": "content.txt", "title": "Text Action" }, { "command": "content.md", "title": "Markdown Action" }],
+            "menus": { "editor/content": [{ "command": "content.txt", "when": "resourceExtname == .txt" }, { "command": "content.md", "when": "resourceExtname == .md" }] }
+        } }),
+    };
+    workbench.update(cx, |workbench, _| workbench.menus.extend(crate::menus::extension_menus(&[extension])));
+    let commands = workbench.update_in(cx, |workbench, window, _| {
+        workbench.floating_menu_actions(workbench.editors.active().unwrap(), window).into_iter().map(|action| action.command).collect::<Vec<_>>()
+    });
+    assert_eq!(commands, ["content.txt"]);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 #[gpui::test]
 fn gutter_presses_select_whole_lines_and_drags_extend_them(cx: &mut TestAppContext) {
     let (dir, workbench, cx) = workbench_with("gutter-select", &["a.txt"], cx);
