@@ -168,6 +168,7 @@ pub struct Workbench {
     pub webview_panels: webview_panels::WebviewPanels,
     pub scm: scm_view::ScmView,
     quick_diffs: editor_view::quick_diff::QuickDiffs,
+    pub(crate) github_clients: crate::main_thread_github::GitHubClients,
     /// `contributes.commands` icons, for the view toolbars.
     pub command_icons: HashMap<String, crate::menus::CommandIcon>,
     /// `MenuRegistry`.
@@ -315,6 +316,7 @@ impl Workbench {
             webview_panels: Default::default(),
             scm: scm_view::ScmView::new(cx),
             quick_diffs: Default::default(),
+            github_clients: Default::default(),
             command_icons: HashMap::new(),
             menus: crate::menus::workbench_menus(),
             context_menu: None,
