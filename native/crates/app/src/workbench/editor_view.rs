@@ -391,6 +391,7 @@ impl Workbench {
             .line_height(px(metrics.line_height))
             .track_focus(&self.editor_focus)
             .on_key_down(cx.listener(Self::editor_key_down))
+            .on_key_up(cx.listener(Self::inspect_tokens_key_up))
             .on_scroll_wheel(cx.listener(Self::editor_wheel))
             .on_modifiers_changed(cx.listener(Self::sticky_modifiers_changed))
             .on_modifiers_changed(cx.listener(|workbench, event: &gpui::ModifiersChangedEvent, _, cx| {
@@ -493,6 +494,7 @@ impl Workbench {
             .children(self.find_widget(self.editors.viewport.width + metrics.content_left() + minimap_width, metrics.content_left(), minimap_width, window, cx))
             .children(self.editor_message_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
             .children(self.content_hover_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
+            .children(self.inspect_tokens_widget(editor, metrics.content_left(), metrics.char_width, window))
             .children(self.keybindings_file_widgets(editor, self.editors.viewport.width + metrics.content_left() + minimap_width, viewport.height, minimap_width, window, cx))
     }
 

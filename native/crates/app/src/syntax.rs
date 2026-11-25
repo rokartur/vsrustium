@@ -195,6 +195,17 @@ impl Tokenization {
         tokens.iter().find(|token| token.end > offset).or(tokens.last()).map_or(textmate::StandardTokenType::Other, |token| token.token_type)
     }
 
+    /// The token at byte `offset` of line `index` as the inspector picks it (the last one starting at or before
+    /// it, else the first): its byte range, scopes and standard type; none without a grammar or tokens.
+    pub fn token_at(&self, lines: &[String], index: usize, offset: usize) -> Option<(Range<usize>, std::rc::Rc<textmate::ScopeStack>, textmate::StandardTokenType)> {
+        self.grammar.as_ref()?;
+        self.tokenize_to(lines, index);
+        let tokenized = self.lines.borrow();
+        let tokens = &tokenized[index].0;
+        let token = tokens.iter().rev().find(|token| token.start <= offset).or(tokens.first())?;
+        Some((token.start..token.end.min(lines[index].len()), token.scopes.clone(), token.token_type))
+    }
+
     /// The tokens of line `index` as (byte end, standard type, embedded language), or one `Other` token over
     /// the line without a grammar or tokens.
     pub fn line_tokens(&self, lines: &[String], index: usize) -> Vec<(usize, textmate::StandardTokenType, Option<std::rc::Rc<str>>)> {

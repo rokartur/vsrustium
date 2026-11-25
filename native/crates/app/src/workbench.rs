@@ -58,6 +58,7 @@ mod quick_input_view;
 mod text_files;
 mod control_characters;
 mod large_file;
+mod inspect_tokens;
 mod gutter_mouse;
 mod word_wrap;
 mod text_input;
@@ -145,6 +146,7 @@ pub struct Workbench {
     /// The text area's window bounds at paint, where content widgets that may overflow it lay out.
     text_area_bounds: Rc<Cell<gpui::Bounds<f32>>>,
     editor_message: editor_message::EditorMessages,
+    inspect_tokens: inspect_tokens::InspectTokens,
     marker_navigation: marker_navigation::MarkerNavigation,
     content_hover: content_hover::ContentHover,
     /// The providers extensions registered through MainThreadLanguageFeatures.
@@ -209,6 +211,7 @@ impl Render for Workbench {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Cursors move and editors switch on many paths; every one of them renders.
         self.close_editor_message_on_cursor_change(cx);
+        self.stop_inspect_tokens_on_model_change();
         self.follow_marker_navigation_cursor();
         self.refresh_selection_highlights(window);
         self.update_webview_panels(window, cx);
@@ -297,6 +300,7 @@ impl Workbench {
             diff_part_width: Rc::default(),
             text_area_bounds: Rc::default(),
             editor_message: Default::default(),
+            inspect_tokens: Default::default(),
             marker_navigation: Default::default(),
             content_hover: Default::default(),
             language_features: Default::default(),
@@ -348,6 +352,7 @@ impl Workbench {
         workbench.register_scm_commands();
         workbench.register_text_file_commands();
         workbench.register_large_file_commands();
+        workbench.register_inspect_tokens_commands();
         workbench.register_word_wrap_commands();
         workbench.register_editor_commands();
         workbench.register_find_commands();

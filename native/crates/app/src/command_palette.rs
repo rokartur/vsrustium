@@ -397,6 +397,7 @@ pub const EDITOR_ACTIONS: &[(&str, &str, Option<&str>)] = &[
     ("editor.action.marker.prev", "Go to Previous Problem (Error, Warning, Info)", None),
     ("editor.action.marker.nextInFiles", "Go to Next Problem in Files (Error, Warning, Info)", None),
     ("editor.action.marker.prevInFiles", "Go to Previous Problem in Files (Error, Warning, Info)", None),
+    ("editor.action.inspectTMScopes", "Developer: Inspect Editor Tokens and Scopes", None),
 ];
 
 /// `getCodeEditorCommandPicks`: the active editor's supported actions, those whose precondition holds.

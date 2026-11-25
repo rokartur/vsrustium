@@ -29,6 +29,7 @@ pub struct Theme {
     defaults: Style,
     root: TrieElement,
     match_cache: RefCell<HashMap<String, Rc<Vec<TrieRule>>>>,
+    rules: Vec<Value>,
 }
 
 struct ParsedRule {
@@ -66,11 +67,16 @@ impl Theme {
             let style = Style { font_style: rule.font_style, foreground: color_id(&mut color_map, rule.foreground.as_deref()), background: color_id(&mut color_map, rule.background.as_deref()) };
             root.insert(0, &rule.scope, rule.parent_scopes.as_deref(), style);
         }
-        Theme { color_map, defaults, root, match_cache: RefCell::default() }
+        Theme { color_map, defaults, root, match_cache: RefCell::default(), rules: rules.to_vec() }
     }
 
     pub fn color_map(&self) -> &[String] {
         &self.color_map
+    }
+
+    /// The rules the theme was built from, as `ColorThemeData.tokenColors` lists them.
+    pub fn rules(&self) -> &[Value] {
+        &self.rules
     }
 
     pub fn defaults(&self) -> Style {
