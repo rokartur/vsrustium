@@ -1,0 +1,10 @@
+{
+	"name": "refactor-preview",
+	"publisher": "port",
+	"displayName": "Port Refactor Preview",
+	"version": "0.0.1",
+	"description": "Applies a workspace edit that needs confirmation, which opens the Refactor Preview, for port/tools/ui-pair.",
+	"engines": { "vscode": "^1.100.0" },
+	"main": "./extension.js",
+	"activationEvents": ["onStartupFinished"]
+}

@@ -170,7 +170,9 @@ impl Workbench {
     pub(super) fn register_test_results_panel_view(&mut self) {
         self.register_panel_view(PanelView {
             id: TEST_RESULTS_VIEW_ID,
+            view_id: "workbench.panel.testResults.view",
             title: "Test Results",
+            open: |workbench, _, cx| workbench.open_panel_view(TEST_RESULTS_VIEW_ID, cx),
             render: |workbench, _, cx| workbench.test_results_body(cx).into_any_element(),
             actions: |_, _, _| gpui::Empty.into_any_element(),
             visible: |workbench| !workbench.testing.results.is_empty(),

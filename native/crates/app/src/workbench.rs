@@ -18,7 +18,13 @@ mod context_menu;
 pub mod custom_editors;
 mod debug_commands;
 mod debug_console;
+mod problems_filter;
+mod problems_table;
+mod modal_editor_group;
 mod problems_view;
+mod refactor_preview;
+mod view_containers;
+mod view_visibility;
 mod debug_toolbar;
 pub(crate) mod debug_service;
 mod debug_view;
@@ -365,6 +371,7 @@ pub struct Workbench {
     debug_console: debug_console::DebugConsole,
     problems: problems_view::ProblemsView,
     problems_focus: FocusHandle,
+    refactor_preview: refactor_preview::RefactorPreview,
     breakpoint_widget: Option<breakpoint_widget::BreakpointWidget>,
     pub testing: testing_service::TestingService,
     testing_view: testing_view::TestingView,
@@ -419,7 +426,7 @@ impl Render for Workbench {
             .children(self.restricted_mode_banner(cx))
             .child(self.middle_section(viewport, editor, window, cx))
             .child(self.status_bar(window, cx));
-        let modal_editor = self.keybindings_editor_widget(window, cx).or_else(|| self.settings_editor_widget(window, cx)).or_else(|| self.profiles_editor_widget(window, cx));
+        let modal_editor = self.keybindings_editor_widget(window, cx).or_else(|| self.settings_editor_widget(window, cx)).or_else(|| self.profiles_editor_widget(window, cx)).or_else(|| self.modal_group_widget(window, cx));
         let quick_input = self.quick_input_widget(window, cx);
         let notifications = self.notifications_widget(viewport, window, cx);
         let context_menu = self.context_menu_widget(cx);
@@ -597,8 +604,9 @@ impl Workbench {
             debug: Default::default(),
             debug_view: debug_view::DebugView::new(cx),
             debug_console: debug_console::DebugConsole::new(cx),
-            problems: problems_view::ProblemsView::default(),
+            problems: problems_view::ProblemsView::new(cx),
             problems_focus: cx.focus_handle(),
+            refactor_preview: Default::default(),
             breakpoint_widget: None,
             testing: Default::default(),
             testing_view: Default::default(),
@@ -683,6 +691,7 @@ impl Workbench {
         workbench.register_debug_console_panel_view();
         workbench.register_test_results_panel_view();
         workbench.register_terminal_panel_view();
+        workbench.register_refactor_preview();
         workbench.register_perf_view();
         workbench.register_accessibility_actions();
         workbench.start_system_events(cx);
@@ -753,6 +762,10 @@ impl Workbench {
         if pinned {
             self.close_modal_editor(window, cx);
         }
+        self.open_file_in_active_group(path, pinned, window, cx);
+    }
+
+    pub(super) fn open_file_in_active_group(&mut self, path: PathBuf, pinned: bool, window: &mut Window, cx: &mut Context<Self>) {
         if path.to_string_lossy().ends_with(crate::search_editor::SEARCH_EDITOR_EXT) {
             return self.open_search_editor_file(path, pinned, window, cx);
         }
@@ -813,6 +826,7 @@ impl Workbench {
         self.refresh_language_status(cx);
         self.sync_webview_panels();
         self.text_files_editors_changed();
+        self.save_editor_part_state();
         self.host.send_changes(&self.editors);
         cx.notify();
     }
@@ -996,7 +1010,8 @@ impl Workbench {
                     .flex_col()
                     .gap(px(8.))
                     .children(items)
-                    .children(self.testing_activity_item(hover, inactive, cx)),
+                    .children(self.testing_activity_item(hover, inactive, cx))
+                    .children(self.contributed_activity_items(hover, inactive, cx)),
             )
             .child(
                 self.icon(self.manage_activity_icon(), 36., 24., inactive)
@@ -1039,8 +1054,11 @@ impl Workbench {
     /// The Explorer: title, then the folder's view with its tree, Outline and Timeline as panes.
     fn side_bar_view(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         let foreground = self.foreground_or("sideBar.foreground");
+        if let SideBarView::Contributed(id) = self.side_bar_view {
+            return self.contributed_side_bar(id, window, cx);
+        }
         if self.side_bar_view == SideBarView::Scm {
-            return self.scm_side_bar(window, cx);
+            return self.scm_side_bar(window, cx).children(self.contributed_sections_of("scm", window, cx));
         }
         if self.side_bar_view == SideBarView::Extensions {
             let title = self.side_bar_title_text(self.extensions_title()).child(self.extensions_title_actions(cx));
@@ -1051,15 +1069,14 @@ impl Workbench {
             return self.side_bar_frame().text_color(foreground).child(title).child(self.search_view(window, cx));
         }
         if self.side_bar_view == SideBarView::Debug {
-            return self.debug_side_bar(window, cx);
+            return self.debug_side_bar(window, cx).children(self.contributed_sections_of("debug", window, cx));
         }
         if self.side_bar_view == SideBarView::Testing {
-            return self.testing_side_bar(cx);
+            return self.testing_side_bar(cx).children(self.contributed_sections_of("test", window, cx));
         }
         let title = self
             .side_bar_title("Explorer")
-            // actionbar.css: .monaco-action-bar .action-item is cursor: pointer.
-            .child(self.icon("ellipsis", 22., 16., foreground).cursor_pointer());
+            .child(self.view_container_more_actions("explorer", cx));
         let Some(tree) = self.folder.as_ref() else {
             let empty = view_panes::ExplorerPane { id: view_panes::EMPTY_VIEW, title: "No Folder Opened".into(), description: None, actions: None, body: self.empty_view(window, cx).into_any_element() };
             return self.side_bar_frame().text_color(foreground).child(title).child(self.explorer_pane_view(empty, window, cx)).child(div().h(px(5.)).flex_none());

@@ -1,8 +1,9 @@
 //! The Problems view (markersView.ts, markersTreeViewer.ts, markersModel.ts): the markers of every resource as a
 //! tree, a resource row with its file icon, folder and count over its markers, each with its severity icon, message,
-//! source, code and position. A click opens the marker's location.
-// shortcut: no filter box, View as Table, multi-line messages, related information rows, quick fix actions, indent
-// guides or the focused first row on open.
+//! source, code and position. A click opens the marker's location. The filter is in problems_filter.rs, the table
+//! in problems_table.rs.
+// Not ported yet: multi-line messages, related information rows, quick fix actions, indent guides, row focus and
+// selection (the first row focused on open).
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -13,18 +14,28 @@ use serde_json::json;
 
 use super::Workbench;
 use super::panel::PanelView;
+use super::problems_filter::{ProblemsFilter, ViewMode};
+use super::problems_table::ProblemsTable;
 use crate::commands::Outcome;
 use crate::markers::{ERROR, INFO, Marker, ReadOptions, WARNING};
+use crate::markers_filter::{FilterOptions, FilteredMarker, FilteredResource, marker_code};
 
 /// markers.ts `Markers.MARKERS_CONTAINER_ID` and `MARKERS_VIEW_ID`.
 pub const MARKERS_CONTAINER_ID: &str = "workbench.panel.markers";
-const MARKERS_VIEW_ID: &str = "workbench.panel.markers.view";
+pub(super) const MARKERS_VIEW_ID: &str = "workbench.panel.markers.view";
 const ROW_HEIGHT: f32 = 22.;
 
-#[derive(Default)]
 pub struct ProblemsView {
     /// Resources whose markers are hidden, by `URI.toString()`.
     pub collapsed: HashSet<String>,
+    pub filter: ProblemsFilter,
+    pub table: ProblemsTable,
+}
+
+impl ProblemsView {
+    pub fn new(cx: &mut gpui::App) -> Self {
+        Self { collapsed: HashSet::new(), filter: ProblemsFilter::new(cx), table: ProblemsTable::default() }
+    }
 }
 
 /// `ResourceMarkers`: a resource's file path and its markers in `_compareMarkers` order.
@@ -52,14 +63,25 @@ pub fn resource_markers(mut markers: Vec<Arc<Marker>>) -> Vec<ResourceMarkers> {
     resources
 }
 
+fn resource_name(resource: &ResourceMarkers) -> String {
+    resource.path.file_name().map_or_else(|| resource.resource.clone(), |name| name.to_string_lossy().into_owned())
+}
+
 impl Workbench {
     /// markers.contribution.ts registers the Problems container in the panel at order 0.
     pub(super) fn register_problems_panel_view(&mut self) {
+        self.restore_problems_filter();
+        self.register_problems_filter_actions();
         self.register_panel_view(PanelView {
             id: MARKERS_CONTAINER_ID,
+            view_id: MARKERS_VIEW_ID,
             title: "Problems",
-            render: |workbench, window, cx| workbench.problems_body(window, cx).into_any_element(),
-            actions: |workbench, _, cx| div().flex().child(workbench.search_action("collapse-all", "workbench.actions.treeView.workbench.panel.markers.view.collapseAll", true, cx)).into_any_element(),
+            open: |workbench, window, cx| {
+                workbench.open_panel_view(MARKERS_CONTAINER_ID, cx);
+                window.focus(&workbench.problems_focus, cx);
+            },
+            render: |workbench, _, cx| workbench.problems_body(cx).into_any_element(),
+            actions: |workbench, window, cx| workbench.problems_title_actions(window, cx).into_any_element(),
             visible: |_| true,
             // markersView.ts: the tab counts every marker the view shows.
             badge: |workbench| Some(workbench.diagnostics.service.read(ReadOptions::default()).len()),
@@ -92,34 +114,111 @@ impl Workbench {
         });
     }
 
-    /// The `${MARKERS_VIEW_ID}.active` key: the view is registered and its `when` holds.
-    pub(super) fn problems_context(&self, context: &mut std::collections::HashMap<String, serde_json::Value>) {
+    /// The `${MARKERS_VIEW_ID}.active` key (the view is registered and its `when` holds), `focusedView` while
+    /// the view's content has focus, and the filter's keys.
+    pub(super) fn problems_context(&self, window: &Window, context: &mut std::collections::HashMap<String, serde_json::Value>) {
         context.insert(format!("{MARKERS_VIEW_ID}.active"), json!(true));
+        if self.problems_focus.is_focused(window) {
+            context.insert("focusedView".into(), json!(MARKERS_VIEW_ID));
+        }
+        self.problems_filter_context(window, context);
     }
 
-    fn problems_body(&self, _window: &Window, cx: &mut Context<Self>) -> Div {
-        let resources = resource_markers(self.diagnostics.service.read(ReadOptions::default()));
+    /// markersView.ts `getResourceMarkers`: only the active editor's resource with Show Active File Only.
+    fn problems_shown_resources<'a>(&self, all: &'a [ResourceMarkers]) -> Vec<&'a ResourceMarkers> {
+        let active = self.editors.active().map(|editor| crate::editor::uri_string(&editor.document().scheme, &editor.document().path));
+        all.iter().filter(|resource| !self.problems.filter.active_file || active.as_ref() == Some(&resource.resource)).collect()
+    }
+
+    /// markersView.ts `getFilterStats`: the shown markers and all markers.
+    pub(super) fn problems_filter_stats(&self) -> (usize, usize) {
+        let all = resource_markers(self.diagnostics.service.read(ReadOptions::default()));
+        let total = all.iter().map(|resource| resource.markers.len()).sum();
+        let resources = self.problems_shown_resources(&all);
+        let options = self.problems_filter_options();
+        let filtered = match self.problems.filter.view_mode {
+            ViewMode::Tree => resources.iter().filter_map(|resource| options.filter_resource(&resource.path.to_string_lossy(), &resource_name(resource), &resource.markers)).map(|shown| shown.markers.len()).sum(),
+            ViewMode::Table => self.problems_table_markers(&resources, &options).len(),
+        };
+        (filtered, total)
+    }
+
+    fn problems_body(&mut self, cx: &mut Context<Self>) -> Div {
+        let all = resource_markers(self.diagnostics.service.read(ReadOptions::default()));
+        let total: usize = all.iter().map(|resource| resource.markers.len()).sum();
+        let active_file = self.problems.filter.active_file;
+        let resources = self.problems_shown_resources(&all);
+        let options = self.problems_filter_options();
         let list = div().id("problems-tree").track_focus(&self.problems_focus).flex_1().min_h_0().overflow_y_scroll().flex().flex_col().text_size(px(13.));
-        if resources.is_empty() {
-            // markersView.ts `renderMessage`: the message area at the top of the view.
-            return div().flex_1().min_h_0().flex().flex_col().child(list.child(div().px(px(20.)).py(px(5.)).child("No problems have been detected in the workspace.")));
-        }
-        let mut rows = Vec::new();
-        for resource in &resources {
-            let collapsed = self.problems.collapsed.contains(&resource.resource);
-            rows.push(self.problems_resource_row(resource, collapsed, cx));
-            if !collapsed {
-                rows.extend(resource.markers.iter().enumerate().map(|(index, marker)| self.problems_marker_row(marker, index, cx)));
+        match self.problems.filter.view_mode {
+            ViewMode::Tree => {
+                let (rows, filtered) = self.problems_tree_rows(&resources, &options, cx);
+                if filtered > 0 {
+                    return div().flex_1().min_h_0().flex().flex_col().child(list.children(rows));
+                }
+            }
+            ViewMode::Table => {
+                let rows = self.problems_table_markers(&resources, &options);
+                if !rows.is_empty() {
+                    return div().flex_1().min_h_0().flex().flex_col().child(self.problems_table(rows, list, cx));
+                }
             }
         }
-        div().flex_1().min_h_0().flex().flex_col().child(list.children(rows))
+        // markersView.ts `renderMessage`: the message area at the top of the view, the widget hidden.
+        let message = div().px(px(20.)).py(px(5.)).flex();
+        let message = if active_file && !resources.is_empty() || !active_file && total > 0 {
+            let link = self.color("textLink.foreground");
+            message.child("No results found with provided filter criteria.").child(
+                div().id("problems-clear-filters").ml(px(4.)).underline().cursor_pointer().text_color(link).child("Clear Filters").on_click(cx.listener(|workbench, _, window, cx| workbench.clear_problems_filters(window, cx))),
+            ).child(".")
+        } else if active_file {
+            message.child("No problems have been detected in the current file.")
+        } else {
+            message.child("No problems have been detected in the workspace.")
+        };
+        div().flex_1().min_h_0().flex().flex_col().child(list.child(message))
+    }
+
+    /// The tree's rows and its visible marker count (`MarkersTree.getVisibleItemCount`).
+    fn problems_tree_rows(&self, resources: &[&ResourceMarkers], options: &FilterOptions, cx: &mut Context<Self>) -> (Vec<gpui::AnyElement>, usize) {
+        let mut rows = Vec::new();
+        let mut filtered = 0;
+        for resource in resources {
+            let name = resource_name(resource);
+            let Some(shown) = options.filter_resource(&resource.path.to_string_lossy(), &name, &resource.markers) else { continue };
+            filtered += shown.markers.len();
+            let collapsed = self.problems.collapsed.contains(&resource.resource);
+            rows.push(self.problems_resource_row(resource, &name, &shown, collapsed, cx));
+            if !collapsed {
+                rows.extend(shown.markers.iter().enumerate().map(|(index, marker)| self.problems_marker_row(marker, index, cx)));
+            }
+        }
+        (rows, filtered)
+    }
+
+    /// `HighlightedLabel`: the text with its matches bold in `list.highlightForeground`.
+    /// Matches are bold (markers.css); in the tree on `list.filterMatchBackground` (views.css `.pane-body
+    /// .monaco-tl-contents`), in the table in `list.highlightForeground` (style.css).
+    pub(super) fn problems_label(&self, text: &str, matches: &[std::ops::Range<usize>], table: bool) -> gpui::AnyElement {
+        let label = div().min_w_0().overflow_hidden().text_ellipsis().whitespace_nowrap();
+        if matches.is_empty() {
+            return label.child(text.to_string()).into_any_element();
+        }
+        let mut style = gpui::HighlightStyle { font_weight: Some(gpui::FontWeight::BOLD), ..Default::default() };
+        match table {
+            true => style.color = Some(self.color("list.highlightForeground").into()),
+            false => style.background_color = self.theme.color("list.filterMatchBackground").map(Into::into),
+        }
+        // Matches count chars; StyledText takes byte ranges.
+        let byte = |char_index: usize| text.char_indices().nth(char_index).map_or(text.len(), |(byte, _)| byte);
+        let highlights: Vec<_> = matches.iter().filter(|range| !range.is_empty()).map(|range| (byte(range.start)..byte(range.end), style)).collect();
+        label.child(gpui::StyledText::new(text.to_string()).with_highlights(highlights)).into_any_element()
     }
 
     /// `ResourceMarkersRenderer`: twistie, file icon, name, folder description and the marker count.
-    fn problems_resource_row(&self, resource: &ResourceMarkers, collapsed: bool, cx: &mut Context<Self>) -> gpui::AnyElement {
+    fn problems_resource_row(&self, resource: &ResourceMarkers, name: &str, shown: &FilteredResource, collapsed: bool, cx: &mut Context<Self>) -> gpui::AnyElement {
         let foreground = self.foreground_or("foreground");
         let icon = self.file_icons.as_ref().and_then(|icons| icons.file_icon(&resource.path, self.languages.language_of(&resource.path, ""), self.theme.kind, 13., ROW_HEIGHT, foreground));
-        let name = resource.path.file_name().map_or_else(|| resource.resource.clone(), |name| name.to_string_lossy().into_owned());
         let workspace = self.workspace();
         let description = resource.path.parent().map(|parent| crate::quick_input::path_label(parent, workspace)).filter(|label| !label.is_empty());
         let key = resource.resource.clone();
@@ -134,7 +233,7 @@ impl Workbench {
             .hover(|row| row.bg(self.color("list.hoverBackground")))
             .child(self.icon(if collapsed { "chevron-right" } else { "chevron-down" }, 16., 16., foreground).mr(px(2.)))
             .children(icon.map(|icon| icon.mr(px(6.))))
-            .child(div().flex_none().child(name))
+            .child(div().flex_none().child(self.problems_label(name, &shown.uri_matches, false)))
             .children(description.map(|description| div().ml(px(6.5)).text_size(px(11.7)).opacity(0.7).min_w_0().overflow_hidden().text_ellipsis().whitespace_nowrap().child(description)))
             .child(
                 div()
@@ -150,7 +249,7 @@ impl Workbench {
                     .text_size(px(11.))
                     .bg(self.color("badge.background"))
                     .text_color(self.foreground_or("badge.foreground"))
-                    .child(resource.markers.len().to_string()),
+                    .child(shown.markers.len().to_string()),
             )
             .on_click(cx.listener(move |workbench, _, _, cx| {
                 if !workbench.problems.collapsed.remove(&key) {
@@ -162,20 +261,13 @@ impl Workbench {
     }
 
     /// `MarkerRenderer`: severity icon, the message's first line, `source(code)` and `[Ln, Col]` at 70% opacity.
-    fn problems_marker_row(&self, marker: &Arc<Marker>, index: usize, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let (icon, color) = match marker.severity {
-            ERROR => ("error", self.color("problemsErrorIcon.foreground")),
-            WARNING => ("warning", self.color("problemsWarningIcon.foreground")),
-            INFO => ("info", self.color("problemsInfoIcon.foreground")),
-            _ => ("lightbulb", self.foreground_or("foreground")),
-        };
-        let code = match &marker.code {
-            serde_json::Value::String(code) => Some(code.clone()),
-            serde_json::Value::Object(code) => code.get("value").and_then(serde_json::Value::as_str).map(str::to_string),
-            _ => None,
-        };
-        let detail = |text: String| div().ml(px(6.)).opacity(0.7).flex_none().child(text);
-        let first_line = marker.message.lines().next().unwrap_or_default().to_string();
+    fn problems_marker_row(&self, shown: &FilteredMarker, index: usize, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let marker = &shown.marker;
+        let (icon, color) = self.problems_severity_icon(marker.severity);
+        let code = marker_code(marker);
+        let detail = || div().ml(px(6.)).opacity(0.7).flex_none().flex();
+        let first_line = marker.message.split('\n').next().unwrap_or_default();
+        let first_matches = shown.line_matches.first().map(Vec::as_slice).unwrap_or_default();
         let target = json!({ "resource": crate::debug::uri_from_string(&marker.resource), "startLineNumber": marker.start_line, "startColumn": marker.start_column });
         div()
             .id(gpui::SharedString::from(format!("problems-marker-{}-{index}", marker.resource)))
@@ -188,13 +280,24 @@ impl Workbench {
             .whitespace_nowrap()
             .hover(|row| row.bg(self.color("list.hoverBackground")))
             .child(self.icon(icon, 16., 16., color).mx(px(6.)))
-            .child(div().min_w_0().overflow_hidden().text_ellipsis().child(first_line))
+            .child(self.problems_label(first_line, first_matches, false))
             .when(marker.source.is_some() || code.is_some(), |row| {
-                row.child(detail(format!("{}{}", marker.source.clone().unwrap_or_default(), code.map(|code| format!("({code})")).unwrap_or_default())))
+                let source = marker.source.as_deref().map(|source| self.problems_label(source, &shown.source_matches, false));
+                let code = code.map(|code| div().flex().child("(").child(self.problems_label(&code, &shown.code_matches, false)).child(")"));
+                row.child(detail().children(source).children(code))
             })
-            .child(detail(format!("[Ln {}, Col {}]", marker.start_line, marker.start_column)))
+            .child(detail().child(format!("[Ln {}, Col {}]", marker.start_line, marker.start_column)))
             .on_click(cx.listener(move |workbench, _, window, cx| workbench.open_marker_related(&target, window, cx)))
             .into_any_element()
+    }
+
+    pub(super) fn problems_severity_icon(&self, severity: u8) -> (&'static str, gpui::Rgba) {
+        match severity {
+            ERROR => ("error", self.color("problemsErrorIcon.foreground")),
+            WARNING => ("warning", self.color("problemsWarningIcon.foreground")),
+            INFO => ("info", self.color("problemsInfoIcon.foreground")),
+            _ => ("lightbulb", self.foreground_or("foreground")),
+        }
     }
 }
 

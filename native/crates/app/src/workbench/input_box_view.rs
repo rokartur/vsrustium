@@ -45,9 +45,10 @@ pub enum InputId {
     Rename,
     ProfileName,
     IconSelectSearch,
+    ProblemsFilter,
 }
 
-const INPUTS: [InputId; 21] = [
+const INPUTS: [InputId; 22] = [
     InputId::QuickInput,
     InputId::Explorer,
     InputId::ExplorerFind,
@@ -69,6 +70,7 @@ const INPUTS: [InputId; 21] = [
     InputId::Rename,
     InputId::ProfileName,
     InputId::IconSelectSearch,
+    InputId::ProblemsFilter,
 ];
 
 /// The view state of one input element.
@@ -146,6 +148,7 @@ impl Workbench {
             InputId::DebugConsole => &self.debug_console.input_view,
             InputId::TerminalFind => &self.terminal_view.find.view,
             InputId::Rename => &self.rename.view,
+            InputId::ProblemsFilter => &self.problems.filter.view,
         }
     }
 
@@ -177,6 +180,7 @@ impl Workbench {
             InputId::DebugConsole => &mut self.debug_console.input_view,
             InputId::TerminalFind => &mut self.terminal_view.find.view,
             InputId::Rename => &mut self.rename.view,
+            InputId::ProblemsFilter => &mut self.problems.filter.view,
         }
     }
 
@@ -205,6 +209,7 @@ impl Workbench {
             InputId::DebugConsole => &self.debug_console.input_focus,
             InputId::TerminalFind => &self.terminal_view.find.focus,
             InputId::Rename => &self.rename.focus,
+            InputId::ProblemsFilter => &self.problems.filter.focus,
         }
     }
 
@@ -233,6 +238,7 @@ impl Workbench {
             InputId::DebugConsole => Some(&self.debug_console.input),
             InputId::TerminalFind => Some(&self.terminal_view.find.input),
             InputId::Rename => self.rename.widget.as_ref().map(|widget| &widget.input),
+            InputId::ProblemsFilter => Some(&self.problems.filter.input),
         }
     }
 
@@ -332,6 +338,10 @@ impl Workbench {
                     edit(&mut widget.input);
                     cx.notify();
                 }
+                Outcome::done()
+            }
+            InputId::ProblemsFilter => {
+                self.edit_problems_filter(edit, window, cx);
                 Outcome::done()
             }
         }
@@ -532,6 +542,7 @@ impl Workbench {
                 InputId::DebugConsole => "debug-console-input-text".into(),
                 InputId::TerminalFind => "terminal-find-text".into(),
                 InputId::Rename => "rename-input-text".into(),
+                InputId::ProblemsFilter => "problems-filter-text".into(),
             })
             .flex_1()
             .h_full()

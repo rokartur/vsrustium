@@ -91,7 +91,12 @@ impl Workbench {
     pub(super) fn register_output_panel_view(&mut self) {
         self.register_panel_view(PanelView {
             id: OUTPUT_VIEW_ID,
+            view_id: OUTPUT_VIEW_ID,
             title: "Output",
+            open: |workbench, window, cx| {
+                workbench.open_panel_view(OUTPUT_VIEW_ID, cx);
+                workbench.open_output_view(true, window, cx);
+            },
             render: |workbench, window, cx| workbench.output_panel_body(window, cx).into_any_element(),
             actions: |workbench, window, cx| workbench.output_title_actions(window, cx).into_any_element(),
             visible: |_| true,

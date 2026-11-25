@@ -22,8 +22,8 @@ const MINIMUM_BODY_SIZE: f32 = 120.;
 const STATE_KEY: &str = "workbench.explorer.views.state";
 pub const FILE_VIEW: &str = "workbench.explorer.fileView";
 pub const EMPTY_VIEW: &str = "workbench.explorer.emptyView";
-const OUTLINE_VIEW: &str = "outline";
-const TIMELINE_VIEW: &str = "timeline";
+pub(super) const OUTLINE_VIEW: &str = "outline";
+pub(super) const TIMELINE_VIEW: &str = "timeline";
 
 /// The panes of a `PaneView` in a split view: a collapsed pane is its header, an expanded one at least the header
 /// and `MINIMUM_BODY_SIZE`.
@@ -212,7 +212,8 @@ impl Workbench {
         let height = side_bar_height - 2. - 32. - compact - 5.;
         let first = if self.folder.is_some() { FILE_VIEW } else { EMPTY_VIEW };
         let contributed = self.shown_tree_views();
-        let ids: Vec<&'static str> = [first, OUTLINE_VIEW, TIMELINE_VIEW].into_iter().chain(contributed.iter().copied()).collect();
+        let built_in = [first, OUTLINE_VIEW, TIMELINE_VIEW].into_iter().filter(|&id| id == FILE_VIEW || !self.view_hidden("explorer", id));
+        let ids: Vec<&'static str> = built_in.chain(contributed.iter().copied()).collect();
         for &id in &ids {
             self.explorer_panes.focus.entry(id).or_insert_with(|| cx.focus_handle());
         }
@@ -225,7 +226,7 @@ impl Workbench {
         let global_state = self.profile_storage.lock().unwrap().get(&format!("{STATE_KEY}.hidden")).and_then(|raw| serde_json::from_str::<Value>(raw).ok()).unwrap_or_default();
         let order = |id: &str| global_state.as_array().and_then(|views| views.iter().find(|view| view["id"] == id)).and_then(|view| view["order"].as_f64());
         // viewsExtensionPoint.ts `showCollapsed`: an extension's view in the Explorer starts collapsed.
-        let mut descriptors: Vec<(&'static str, bool)> = [(first, false), (OUTLINE_VIEW, true), (TIMELINE_VIEW, true)].into_iter().chain(contributed.into_iter().map(|id| (id, true))).collect();
+        let mut descriptors: Vec<(&'static str, bool)> = ids.iter().map(|&id| (id, id != first)).collect();
         descriptors.sort_by(|a, b| order(a.0).unwrap_or(f64::MAX).total_cmp(&order(b.0).unwrap_or(f64::MAX)));
         self.explorer_panes.stored_sizes.clear();
         let panes: Vec<_> = descriptors
@@ -246,7 +247,8 @@ impl Workbench {
     fn store_explorer_panes(&self) {
         let view = self.explorer_panes.view.as_ref().expect("stored after a layout");
         let mut workspace = serde_json::Map::new();
-        let mut global = Vec::new();
+        // The hidden views keep their entries: `isHidden` is what keeps them out of the pane view.
+        let mut global: Vec<Value> = self.views_visibility_state("explorer").into_iter().filter(|entry| !view.ids().iter().any(|&id| entry["id"] == id)).collect();
         for (index, &id) in view.ids().iter().enumerate() {
             let mut state = json!({ "collapsed": !view.is_expanded(index), "isHidden": false });
             if let Some(size) = self.explorer_panes.stored_sizes.get(id) {

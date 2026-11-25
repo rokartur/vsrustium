@@ -20,26 +20,35 @@ use crate::menus::MenuId;
 #[cfg(test)]
 mod tests;
 
-/// A view of `contributes.views.explorer`.
+/// A tree view of `contributes.views`.
 pub(super) struct ContributedView {
     pub id: &'static str,
     pub name: String,
-    when: Option<Expr>,
+    /// The `contributes.views` key: `explorer`, `scm`, `debug`, `test` or a `viewsContainers` id.
+    pub container: String,
+    pub when: Option<Expr>,
+    /// `"visibility": "hidden"`: hidden until shown from the container's Views submenu.
+    pub hide_by_default: bool,
+    /// `"visibility": "collapsed"`.
+    pub collapsed: bool,
 }
 
 #[derive(Default)]
 pub(super) struct TreeViews {
     pub views: Vec<ContributedView>,
+    pub containers: Vec<super::view_containers::ViewContainer>,
+    /// Collapsed views of containers other than the Explorer, which keeps its own pane state.
+    pub collapsed: HashSet<&'static str>,
     trees: HashMap<String, CustomTree>,
     /// Views whose tree shows, as last told to the host (`$setVisible`).
     visible: HashSet<String>,
-    focus: HashMap<String, FocusHandle>,
+    pub focus: HashMap<String, FocusHandle>,
     /// The roots being fetched per view, which a reveal waits for (AsyncDataTree shares a node's refresh).
     root_fetches: HashMap<String, Shared<Task<()>>>,
 }
 
 /// Pane ids are `&'static str`; a contributed view's id is interned once, so a reinstall does not leak again.
-fn static_id(id: &str) -> &'static str {
+pub(super) fn static_id(id: &str) -> &'static str {
     static IDS: LazyLock<Mutex<HashSet<&'static str>>> = LazyLock::new(Mutex::default);
     let mut ids = IDS.lock().unwrap();
     if let Some(&interned) = ids.get(id) {
@@ -50,18 +59,21 @@ fn static_id(id: &str) -> &'static str {
     interned
 }
 
-/// viewsExtensionPoint.ts: the tree views of the Explorer container (`contributes.views.explorer`), in extension
-/// order. Views of other containers are not drawn yet: the port has no view container registry for them.
+/// viewsExtensionPoint.ts: the tree views of every container, in extension order. Webview views (`type: webview`)
+/// are webview_views.rs's.
 pub(super) fn contributed_views(extensions: &[exthost::scan::ScannedExtension]) -> Vec<ContributedView> {
     let mut views = Vec::new();
     for extension in extensions {
-        for view in extension.description["contributes"]["views"]["explorer"].as_array().into_iter().flatten() {
-            // A webview view (`type: webview`) needs `MainThreadWebviewViews`, not ported.
-            let (Some(id), Some(name)) = (view["id"].as_str(), view["name"].as_str()) else { continue };
-            if view["type"] == "webview" {
-                continue;
+        let Some(containers) = extension.description["contributes"]["views"].as_object() else { continue };
+        for (container, container_views) in containers {
+            for view in container_views.as_array().into_iter().flatten() {
+                let (Some(id), Some(name)) = (view["id"].as_str(), view["name"].as_str()) else { continue };
+                if view["type"] == "webview" {
+                    continue;
+                }
+                let (hide_by_default, collapsed) = super::view_visibility::initial_visibility(view);
+                views.push(ContributedView { id: static_id(id), name: name.to_owned(), container: container.clone(), when: view["when"].as_str().and_then(Expr::deserialize), hide_by_default, collapsed });
             }
-            views.push(ContributedView { id: static_id(id), name: name.to_owned(), when: view["when"].as_str().and_then(Expr::deserialize) });
         }
     }
     views
@@ -70,11 +82,21 @@ pub(super) fn contributed_views(extensions: &[exthost::scan::ScannedExtension]) 
 impl Workbench {
     pub(crate) fn set_tree_views(&mut self, extensions: &[exthost::scan::ScannedExtension]) {
         self.tree_views.views = contributed_views(extensions);
+        // viewsExtensionPoint.ts `showCollapsed`: the scm and debug containers start every contributed view collapsed.
+        self.tree_views.collapsed = self.tree_views.views.iter().filter(|view| view.collapsed || view.container == "scm" || view.container == "debug").map(|view| view.id).collect();
+        self.tree_views.containers = super::view_containers::contributed_view_containers(extensions);
+        self.register_view_container_commands();
     }
 
-    /// The contributed views whose `when` holds, which the Explorer shows as panes.
+    /// The contributed views of the Explorer whose `when` holds, which it shows as panes.
     pub(super) fn shown_tree_views(&self) -> Vec<&'static str> {
-        let views = self.tree_views.views.iter().filter(|view| view.when.as_ref().is_none_or(|when| when.evaluate(&self.context_keys)));
+        self.shown_views_of("explorer")
+    }
+
+    /// viewContainerModel.ts `visibleViewDescriptors`: the container's contributed views whose `when` holds and
+    /// that are not hidden.
+    pub(super) fn shown_views_of(&self, container: &str) -> Vec<&'static str> {
+        let views = self.tree_views.views.iter().filter(|view| view.container == container && view.when.as_ref().is_none_or(|when| when.evaluate(&self.context_keys)) && !self.view_hidden(container, view.id));
         views.map(|view| view.id).collect()
     }
 
@@ -87,6 +109,14 @@ impl Workbench {
                 let tree = self.tree_views.trees.entry(id.clone()).or_default();
                 tree.has_provider = true;
                 tree.show_collapse_all = arg(1)["showCollapseAll"] == true;
+                let collapse_all = format!("workbench.actions.treeView.{id}.collapseAll");
+                if tree.show_collapse_all && self.commands.get(&collapse_all).is_none() {
+                    let view = id.clone();
+                    self.commands.register(collapse_all, move |workbench, _, _, cx| {
+                        workbench.update_tree(&view, |tree| tree.expanded.clear(), cx);
+                        Outcome::done()
+                    });
+                }
                 tree.can_select_many = arg(1)["canSelectMany"] == true;
                 let visible = self.tree_views.visible.contains(&id);
                 self.host.send("ExtHostTreeViews", "$setVisible", vec![json!(id), json!(visible)]);
@@ -132,11 +162,7 @@ impl Workbench {
     /// mainThreadTreeViews.ts `$reveal`: opens the view, then (its tree shown) fetches the roots if there are none,
     /// expands the parents, selects and focuses the item and expands it `expand` levels (3 at most).
     fn reveal_tree_item(&mut self, id: String, item_info: Value, options: Value, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
-        if self.shown_tree_views().contains(&id.as_str()) {
-            drop(self.execute_command("workbench.view.explorer", Vec::new(), window, cx));
-            self.expand_explorer_pane(&id, cx);
-            self.sync_tree_views(cx);
-        }
+        self.open_tree_view(&id, false, window, cx);
         let (sender, receiver) = oneshot::channel();
         let handle = item_info["item"]["handle"].as_str().map(str::to_owned);
         let parents: Vec<String> = item_info["parentChain"].as_array().into_iter().flatten().filter_map(|parent| parent["handle"].as_str().map(str::to_owned)).collect();
@@ -292,12 +318,12 @@ impl Workbench {
     /// treeView.ts `onDidChangeBodyVisibility`: `$setVisible` when a view's tree shows or hides; the first show
     /// activates `onView:<id>` (`TreeView.activate`) and fetches the roots.
     pub(super) fn sync_tree_views(&mut self, cx: &mut Context<Self>) {
-        for id in self.shown_tree_views() {
+        for id in self.tree_views.views.iter().map(|view| view.id).collect::<Vec<_>>() {
             self.tree_views.focus.entry(id.to_owned()).or_insert_with(|| cx.focus_handle());
         }
-        let explorer = self.side_bar_view == super::search_view::SideBarView::Explorer && self.is_part_visible(super::layout::Part::SideBar);
-        for id in self.shown_tree_views().into_iter().chain(self.tree_views.visible.iter().map(|id| static_id(id)).collect::<Vec<_>>()) {
-            let visible = explorer && self.shown_tree_views().contains(&id) && self.explorer_pane_expanded(id);
+        let shown: Vec<&'static str> = self.tree_views.views.iter().map(|view| view.id).filter(|&id| self.tree_view_body_visible(id)).collect();
+        for id in shown.iter().copied().chain(self.tree_views.visible.iter().map(|id| static_id(id)).collect::<Vec<_>>()) {
+            let visible = shown.contains(&id);
             if visible == self.tree_views.visible.contains(id) {
                 continue;
             }
@@ -325,7 +351,9 @@ impl Workbench {
         let foreground = self.foreground_or("sideBar.foreground");
         let mut context = self.key_context(window);
         context.insert("view".into(), json!(id));
-        let actions = self.inline_actions(MenuId::ViewTitle, &context, Vec::new(), foreground, cx).into_any_element();
+        // treeView.ts `CollapseAllAction`: last in the navigation group of a view made with `showCollapseAll`.
+        let collapse_all = tree.show_collapse_all.then(|| self.search_action("collapse-all", static_id(&format!("workbench.actions.treeView.{id}.collapseAll")), true, cx));
+        let actions = div().flex().child(self.inline_actions(MenuId::ViewTitle, &context, Vec::new(), foreground, cx)).children(collapse_all).into_any_element();
         let message = tree.message.clone().map(|message| div().pt(px(4.)).pb(px(4.)).pl(px(18.)).pr(px(12.)).child(message));
         let focused = focus.is_focused(window);
         let rows: Vec<AnyElement> = tree.rows().into_iter().enumerate().map(|(index, (item, depth))| self.tree_row(id, tree, item, depth, index, focused, window, cx).into_any_element()).collect();
@@ -371,7 +399,12 @@ impl Workbench {
             false => (self.color("list.inactiveSelectionBackground"), self.theme.color("list.inactiveSelectionForeground")),
         };
         let tooltip = item.dto["tooltip"].as_str().or(item.dto["tooltip"]["value"].as_str()).map(str::to_owned);
-        let label = item.label();
+        let label = self.tree_item_label(item);
+        // `description: true`: the resource's folder as the label service shows it, relative to the workspace.
+        let description = match item.dto["description"] {
+            Value::Bool(true) => item.dto["resourceUri"]["path"].as_str().and_then(|path| std::path::Path::new(path).parent()).map(|folder| crate::quick_input::path_label(folder, self.workspace())),
+            _ => item.description(),
+        };
         let clicked = handle.clone();
         let command = item.dto["command"].clone();
         let context_menu = context.clone();
@@ -396,7 +429,7 @@ impl Workbench {
             .child(twistie)
             .children(self.tree_item_icon(item, foreground).map(|icon| icon.ml(px(3.)).mr(px(6.))))
             .child(div().flex_none().whitespace_nowrap().when(item.strikethrough(), |label| label.line_through()).child(label))
-            .children(item.description().map(|description| div().flex_1().min_w_0().ml(px(6.5)).overflow_hidden().whitespace_nowrap().text_size(px(11.7)).opacity(0.7).child(description)))
+            .children(description.map(|description| div().flex_1().min_w_0().ml(px(6.5)).overflow_hidden().whitespace_nowrap().text_size(px(11.7)).opacity(0.7).child(description)))
             .child(div().ml_auto().invisible().group_hover(row_id, |actions| actions.visible()).when(selected || is_focus, |actions| actions.visible()).child(actions))
             .on_click(cx.listener(move |workbench, _: &ClickEvent, window, cx| workbench.tree_item_clicked(id, &clicked, &command, window, cx)))
             .on_mouse_down(MouseButton::Right, cx.listener(move |workbench, event: &MouseDownEvent, window, cx| {
@@ -406,6 +439,22 @@ impl Workbench {
 
     /// treeView.ts `TreeRenderer`: a theme icon as a codicon (`file` and `folder` take the resource's file icon), an
     /// icon path as an image, else the resource's file icon.
+    /// `ITreeItemLabel.highlights` (UTF-16 offsets) on `list.filterMatchBackground` (views.css `.pane-body .monaco-tl-contents`).
+    fn tree_item_label(&self, item: &TreeItem) -> gpui::StyledText {
+        let label = item.label();
+        let background = self.theme.color("list.filterMatchBackground").map(Into::into);
+        let byte = |utf16: u64| {
+            let mut units = 0;
+            label.char_indices().find(|(_, char)| {
+                let reached = units >= utf16;
+                units += char.len_utf16() as u64;
+                reached
+            }).map_or(label.len(), |(byte, _)| byte)
+        };
+        let highlights: Vec<_> = item.dto["label"]["highlights"].as_array().into_iter().flatten().filter_map(|range| Some((byte(range[0].as_u64()?), byte(range[1].as_u64()?)))).filter(|(start, end)| start < end).map(|(start, end)| (start..end, gpui::HighlightStyle { background_color: background, ..Default::default() })).collect();
+        gpui::StyledText::new(label).with_highlights(highlights)
+    }
+
     fn tree_item_icon(&self, item: &TreeItem, foreground: gpui::Rgba) -> Option<Div> {
         let resource = item.dto["resourceUri"]["path"].as_str().map(std::path::PathBuf::from);
         match item.theme_icon() {

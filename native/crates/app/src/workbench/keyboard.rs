@@ -347,7 +347,10 @@ impl Workbench {
         // toggleMultiCursorModifier.ts `MultiCursorModifierContextKeyController`.
         context.insert("multiCursorModifier".into(), json!(if self.multi_cursor_modifier_is_cmd() { "ctrlCmd" } else { "altKey" }));
         self.word_wrap_context(&mut context);
-        self.problems_context(&mut context);
+        self.problems_context(window, &mut context);
+        self.view_containers_context(&mut context);
+        self.refactor_preview_context(&mut context);
+        self.modal_group_context(window, &mut context);
         // contextkeys.ts WorkbenchContextKeysHandler: the desktop build supports every workspace kind.
         let workbench_state = match self.workspace() {
             None => "empty",
@@ -435,7 +438,7 @@ impl Workbench {
             SideBarView::Search => self.search_context(window, &mut context),
             SideBarView::Scm => {}
             SideBarView::Extensions => self.extensions_context(window, &mut context),
-            SideBarView::Debug | SideBarView::Testing => {}
+            SideBarView::Debug | SideBarView::Testing | SideBarView::Contributed(_) => {}
         }
         self.scm_key_context(window, &mut context);
         self.debug_context(window, &mut context);
@@ -458,7 +461,7 @@ impl Workbench {
                 return Outcome::error(format!("writing {}: {error}", file.display()));
             }
         }
-        self.open_file(file, true, window, cx);
+        self.open_preferences_file(file, window, cx);
         Outcome::done()
     }
 
