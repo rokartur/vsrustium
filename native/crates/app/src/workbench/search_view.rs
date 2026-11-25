@@ -16,6 +16,7 @@ use super::input_box_view::{InputId, InputLook, InputView};
 use super::find_widget::HISTORY_LIMIT;
 use crate::history::HistoryNavigator;
 use crate::input_box::InputBox;
+use crate::search_editor::SearchConfiguration;
 use crate::search_model::{MessageLink, PatternInfo, ReplacePattern, SearchResult, compare_paths};
 
 /// The view the side bar shows.
@@ -179,6 +180,22 @@ impl SearchView {
         &self.input(field).value.value
     }
 
+    /// The search the inputs and toggles ask for, as `searchEditorInput`'s configuration holds it.
+    pub fn configuration(&self) -> SearchConfiguration {
+        SearchConfiguration {
+            query: self.value(SearchField::Query).to_string(),
+            files_to_include: self.value(SearchField::Include).to_string(),
+            files_to_exclude: self.value(SearchField::Exclude).to_string(),
+            is_regexp: self.regex,
+            is_case_sensitive: self.match_case,
+            use_exclude_settings_and_ignore_files: self.use_excludes_and_ignore_files,
+            match_whole_word: self.whole_word,
+            context_lines: 0,
+            show_includes_excludes: self.details_visible,
+            only_open_editors: self.only_open_editors,
+        }
+    }
+
     /// The replace pattern the previews and the replace actions use (`SearchModel.replacePattern`).
     pub fn replace_pattern(&self) -> Option<ReplacePattern> {
         let pattern = self.pattern.as_ref()?;
@@ -330,7 +347,9 @@ impl Workbench {
             true => ("collapse-all", "search.action.collapseSearchResults", has_results),
             false => ("expand-all", "search.action.expandSearchResults", true),
         };
-        let actions = [refresh, ("clear-all", "search.action.clearSearchResults", can_clear), (view_mode.0, view_mode.1, has_results), collapse];
+        // `searchNewEditorIcon` is the new-file codicon.
+        let new_editor = ("new-file", "search.action.openNewEditorFromView", true);
+        let actions = [refresh, ("clear-all", "search.action.clearSearchResults", can_clear), new_editor, (view_mode.0, view_mode.1, has_results), collapse];
         let mut bar = div().flex().gap(px(4.));
         for (icon, command, enabled) in actions {
             bar = bar.child(self.search_action(icon, command, enabled, cx));

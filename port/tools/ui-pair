@@ -98,7 +98,7 @@ async function run(app: string, pid: number) {
 		} else if (step.type) {
 			// Key by key: type_text refuses windows without an accessible text field, as GPUI's.
 			for (const key of step.type) {
-				await cua('press_key', { ...target, key });
+				await cua('press_key', { ...target, key: key === ' ' ? 'space' : key });
 			}
 		} else if (step.wait) {
 			await Bun.sleep(step.wait);

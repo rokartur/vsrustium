@@ -194,8 +194,8 @@ pub struct MenuItem {
 /// The workbench's palette items of the commands this port runs, with upstream's titles and categories:
 /// `f1: true` actions and `appendToCommandPalette` (fileActions.contribution.ts), undo/redo/select all
 /// (editorExtensions.ts), clipboard.ts, commandsQuickAccess.ts, gotoLineQuickAccess.ts, preferences.contribution.ts, themes.contribution.ts,
-/// stickyScrollActions.ts, mainThreadFileSystemEventService.ts, editorStatus.ts. Each is the id, title, category, `when` and `precondition`.
-const WORKBENCH_ITEMS: [(&str, &str, Option<&str>, Option<&str>, Option<&str>); 22] = [
+/// stickyScrollActions.ts, mainThreadFileSystemEventService.ts, editorStatus.ts, searchEditor.contribution.ts. Each is the id, title, category, `when` and `precondition`.
+const WORKBENCH_ITEMS: [(&str, &str, Option<&str>, Option<&str>, Option<&str>); 25] = [
     ("workbench.action.showCommands", "Show All Commands", None, None, None),
     ("workbench.action.gotoLine", "Go to Line/Column...", None, None, None),
     ("workbench.action.gotoOffset", "Go to Offset...", None, None, None),
@@ -218,6 +218,9 @@ const WORKBENCH_ITEMS: [(&str, &str, Option<&str>, Option<&str>, Option<&str>); 
     ("editor.action.clipboardPasteAction", "Paste", None, None, None),
     ("editor.action.toggleStickyScroll", "Toggle Editor Sticky Scroll", Some("View"), None, None),
     ("editor.action.focusStickyScroll", "Focus Editor Sticky Scroll", None, None, Some("config.editor.stickyScroll.enabled && stickyScrollVisible")),
+    ("search.action.openNewEditor", "New Search Editor", Some("Search Editor"), None, None),
+    ("search.action.openEditor", "Open Search Editor", Some("Search Editor"), None, None),
+    ("search.action.openInEditor", "Open Results in Editor", Some("Search Editor"), None, None),
 ];
 
 /// `MenuRegistry.getMenuItems(MenuId.CommandPalette)`: the workbench's items, the extensions'

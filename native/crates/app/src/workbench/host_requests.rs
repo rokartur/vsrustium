@@ -219,7 +219,7 @@ impl Workbench {
     /// New text for a model in one edit, after which the model is clean: a content provider's model is no text file
     /// model, and a file read again matches the disk.
     // shortcut: one edit over the whole model where upstream applies computeMoreMinimalEdits; port the diff worker when an extension needs the smaller events.
-    fn replace_clean_model_text(&mut self, scheme: &str, path: &Path, text: String, cx: &mut Context<Self>) {
+    pub(super) fn replace_clean_model_text(&mut self, scheme: &str, path: &Path, text: String, cx: &mut Context<Self>) {
         let model = self.editors.model_mut(scheme, path).expect("the caller found the model");
         let end = document_end(&model.document.lines);
         let change = model.execute_edits(vec![(Position::new(0, 0), end, text, false)], None, EditReason::ApplyEdits);

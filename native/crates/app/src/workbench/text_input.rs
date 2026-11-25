@@ -45,6 +45,9 @@ impl Workbench {
             let document = &self.editors.active().expect("still open").document;
             let (scheme, path) = (document.scheme.clone(), document.path.clone());
             self.search_model_changed(&scheme, &path);
+            if let Some(change) = &change {
+                self.search_editor_edited(&path, change);
+            }
         }
         if scrolled {
             self.editor_scrolled(cx);
