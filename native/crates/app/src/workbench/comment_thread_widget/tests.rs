@@ -68,7 +68,7 @@ fn the_height_counts_the_head_comments_and_form_in_whole_lines() {
         is_template: false,
     };
     // 22 head + 1 + (42 + 18) + 48 form + 6 arrow + 4 frame + 8 = 149, 9 lines of 18.
-    assert_eq!(widget_height(&thread(vec![comment(json!("one"))]), false, 18.), 162.);
+    assert_eq!(widget_height(&thread(vec![comment(json!("one"))]), None, false, 18.), 162.);
     // A markdown body of two paragraphs counts two lines: 167, 10 lines.
-    assert_eq!(widget_height(&thread(vec![comment(json!({ "value": "one\n\ntwo" }))]), false, 18.), 180.);
+    assert_eq!(widget_height(&thread(vec![comment(json!({ "value": "one\n\ntwo" }))]), None, false, 18.), 180.);
 }

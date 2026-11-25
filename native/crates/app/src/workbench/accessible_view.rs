@@ -57,6 +57,7 @@ enum Provider {
     Editor,
     Hover,
     Notification(u64),
+    Comments,
 }
 
 impl Provider {
@@ -66,6 +67,7 @@ impl Provider {
             Provider::Editor => "editor",
             Provider::Hover => "hover",
             Provider::Notification(_) => "notification",
+            Provider::Comments => "comments",
         }
     }
 
@@ -74,6 +76,7 @@ impl Provider {
             Provider::Editor => "accessibility.verbosity.editor",
             Provider::Hover => "accessibility.verbosity.hover",
             Provider::Notification(_) => "accessibility.verbosity.notification",
+            Provider::Comments => "accessibility.verbosity.comments",
         }
     }
 }
@@ -113,6 +116,8 @@ impl Workbench {
         self.commands.register("editor.action.accessibilityHelp", |workbench, _, window, cx| {
             if workbench.accessibility.view.shown.as_ref().is_some_and(|shown| !shown.help) {
                 workbench.show_accessible_view_help(window, cx);
+            } else if workbench.comments.reply_focus.is_focused(window) {
+                workbench.show_accessible_view(Provider::Comments, true, window, cx);
             } else if workbench.content_hover_visible() {
                 workbench.show_accessible_view(Provider::Hover, true, window, cx);
             } else {
@@ -213,6 +218,7 @@ impl Workbench {
             (_, true) => self.accessible_view_help_dialog_content(provider),
             (Provider::Editor, _) => self.editor_accessibility_help(),
             (Provider::Hover, _) => self.hover_accessible_content()?,
+            (Provider::Comments, _) => super::commenting_ranges::COMMENTS_ACCESSIBILITY_HELP.join("\n"),
             (Provider::Notification(key), _) => self.notification_accessible_content(key)?,
         };
         if !help {
@@ -253,8 +259,8 @@ impl Workbench {
         }
     }
 
-    /// editorAccessibilityHelp.ts `provideContent`, without its chat, comment and dictation parts: no AI by
-    /// decision, and no comment or speech provider in the port.
+    /// editorAccessibilityHelp.ts `provideContent`, without its chat and dictation parts: no AI by decision, and no
+    /// speech provider in the port.
     fn editor_accessibility_help(&self) -> String {
         let read_only = self.active_editor_readonly().is_some();
         let mut content = vec![match (self.editors.active_diff().is_some(), read_only) {
@@ -275,6 +281,11 @@ impl Workbench {
             "Run the command: List Signal Announcements for an overview of announcements and their current status.",
             "Run the command: Announce Cursor Position<keybinding:editor.action.announceCursorPosition> to hear the current line and column.",
             "Focus notification toasts<keybinding:notifications.focusToasts> to navigate them with the keyboard. Accept the primary action of a focused notification<keybinding:notification.acceptPrimaryAction>.",
+        ]);
+        if let Some(info) = self.comment_command_info() {
+            content.push(info);
+        }
+        content.extend([
             "Trigger the suggest widget<keybinding:editor.action.triggerSuggest> to show possible inline suggestions.",
             "Accept suggestion<keybinding:acceptSelectedSuggestion> to accept the currently selected suggestion.",
             "Toggle focus between the suggest widget and the editor<keybinding:focusSuggestion> and toggle details focus with<keybinding:toggleSuggestionFocus> to learn more about the suggestion.",
@@ -393,6 +404,7 @@ impl Workbench {
                 window.focus(&self.notifications.focus, cx);
             }
             Provider::Editor | Provider::Hover => window.focus(&self.editor_focus, cx),
+            Provider::Comments => window.focus(&self.comments.reply_focus, cx),
         }
         self.accessibility.view.previous_focus = None;
     }

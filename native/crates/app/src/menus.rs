@@ -80,6 +80,8 @@ pub enum MenuId {
     TerminalInstanceContext,
     CommentThreadTitle,
     CommentThreadActions,
+    CommentTitle,
+    CommentActions,
     /// A `contributes.submenus` entry, `MenuId.for('api:<id>')`, by registration order.
     Api(usize),
     #[cfg(test)]
@@ -477,7 +479,7 @@ pub fn workbench_menus() -> Vec<MenuItem> {
 
 /// menusExtensionPoint.ts `apiMenus`: the `contributes.menus` keys of the menus the port shows. `commandPalette`
 /// is read by `command_palette::menu`.
-const API_MENUS: [(&str, MenuId); 29] = [
+const API_MENUS: [(&str, MenuId); 31] = [
     ("file/newFile", MenuId::NewFile),
     ("editor/context", MenuId::EditorContext),
     ("explorer/context", MenuId::ExplorerContext),
@@ -507,6 +509,8 @@ const API_MENUS: [(&str, MenuId); 29] = [
     ("editor/content", MenuId::EditorContent),
     ("comments/commentThread/title", MenuId::CommentThreadTitle),
     ("comments/commentThread/context", MenuId::CommentThreadActions),
+    ("comments/comment/title", MenuId::CommentTitle),
+    ("comments/comment/context", MenuId::CommentActions),
 ];
 
 /// The `icon` of each `contributes.commands` entry with one: a `$(codicon)` name, or the light and dark image paths.

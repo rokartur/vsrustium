@@ -17,6 +17,25 @@ use crate::menus::MenuAction;
 /// `_computeCommentingRangeScheduler`: the ranges are asked again 200ms after the last edit.
 const CONTENT_CHANGE_DELAY: Duration = Duration::from_millis(200);
 
+/// commentsAccessibility.ts `CommentsAccessibilityHelpProvider.provideContent`, the help of a focused comment input.
+pub(super) const COMMENTS_ACCESSIBILITY_HELP: [&str; 7] = [
+    "This widget contains a text area, for composition of new comments, and actions, that can be tabbed to once tab moves focus mode has been enabled with the command Toggle Tab Key Moves Focus<keybinding:editor.action.toggleTabFocusMode>.",
+    "Some useful comment commands include:",
+    "- Dismiss Comment<keybinding:workbench.action.hideComment>.",
+    "- Add Comment on Current Selection<keybinding:workbench.action.addComment>.",
+    "- Submit Comment<keybinding:editor.action.submitComment>.",
+    "- Go to Next Commenting Range<keybinding:editor.action.nextCommentingRange>.",
+    "- Go to Previous Commenting Range<keybinding:editor.action.previousCommentingRange>.",
+];
+
+/// editorAccessibilityHelp.ts `getCommentCommandInfo`.
+const COMMENT_COMMAND_INFO: &str = "The editor contains commentable range(s). Some useful commands include:
+- Add Comment on Current Selection<keybinding:workbench.action.addComment>.
+- Go to Next Comment Thread<keybinding:editor.action.nextCommentThreadAction>.
+- Go to Previous Comment Thread<keybinding:editor.action.previousCommentThreadAction>.
+- Go to Next Commenting Range<keybinding:editor.action.nextCommentingRange>.
+- Go to Previous Commenting Range<keybinding:editor.action.previousCommentingRange>.";
+
 #[derive(Default)]
 pub(super) struct CommentingRanges {
     /// The active model's ranges per controller, 0-based inclusive lines.
@@ -48,8 +67,10 @@ impl Workbench {
         });
     }
 
-    /// `activeCursorHasCommentingRange`, `activeEditorHasCommentingRange` and `activeCursorHasComment`.
+    /// `workspaceHasCommenting`, `activeCursorHasCommentingRange`, `activeEditorHasCommentingRange` and
+    /// `activeCursorHasComment`.
     pub(super) fn commenting_context(&self, context: &mut std::collections::HashMap<String, Value>) {
+        context.insert("workspaceHasCommenting".into(), json!(self.comments_view_registered()));
         let Some(editor) = self.editors.active() else { return };
         let line = editor.selection().head.line;
         let ranges = self.commenting_ranges_of(editor);
@@ -66,6 +87,19 @@ impl Workbench {
     fn commenting_ranges_of<'a>(&'a self, editor: &OpenEditor) -> impl Iterator<Item = &'a ControllerRanges> + Clone {
         let uri = editor.document().uri();
         self.comments.commenting.ranges.iter().filter(move |ranges| ranges.resource["path"] == uri["path"] && ranges.resource["scheme"] == uri["scheme"])
+    }
+
+    /// The commenting ranges of `editor`'s model by start line, each controller's together.
+    pub(super) fn commenting_lines(&self, editor: &OpenEditor) -> Vec<(usize, usize)> {
+        let mut lines: Vec<(usize, usize)> = self.commenting_ranges_of(editor).flat_map(|ranges| ranges.lines.iter().copied()).collect();
+        lines.sort();
+        lines
+    }
+
+    /// `getCommentCommandInfo`: the comment commands, when the active editor has commenting ranges.
+    pub(super) fn comment_command_info(&self) -> Option<&'static str> {
+        let editor = self.editors.active()?;
+        self.commenting_ranges_of(editor).next().is_some().then_some(COMMENT_COMMAND_INFO)
     }
 
     /// Whether the editor's model has commenting ranges, which reserve the gutter space as threads do.

@@ -133,6 +133,8 @@ mod emmet;
 mod tab_completion;
 mod outline_actions;
 mod inlay_hints_accessibility;
+mod comment_navigation;
+mod comment_node;
 mod comment_thread_widget;
 mod comments;
 mod comments_view;

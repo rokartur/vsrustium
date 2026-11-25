@@ -21,13 +21,15 @@ pub(super) struct Comments {
     pub(super) reply_focus: FocusHandle,
     pub(super) view: super::comments_view::ViewState,
     pub(super) commenting: super::commenting_ranges::CommentingRanges,
+    /// The `reaction.command.<label>` commands of the last reaction picker.
+    pub(super) reaction_commands: Vec<(String, crate::commands::Registration)>,
 }
 
 impl Comments {
     pub(super) fn new(cx: &mut Context<Workbench>) -> Comments {
         let reply_focus = cx.focus_handle();
         let view = super::comments_view::ViewState::new(cx);
-        Comments { controllers: Vec::new(), collapsed: Default::default(), widgets: Vec::new(), reply: None, reply_view: InputView::default(), reply_focus, view, commenting: Default::default() }
+        Comments { controllers: Vec::new(), collapsed: Default::default(), widgets: Vec::new(), reply: None, reply_view: InputView::default(), reply_focus, view, commenting: Default::default(), reaction_commands: Vec::new() }
     }
 }
 
@@ -37,6 +39,8 @@ pub(super) struct Controller {
     pub(super) label: String,
     /// `CommentControllerFeatures.contextValue`, the `commentController` context key.
     pub(super) context_value: Option<String>,
+    /// `CommentControllerFeatures.reactionHandler`: reactions toggle.
+    pub(super) reaction_handler: bool,
     /// `updateCommentingRanges` was called, which registers the view upstream.
     pub(super) has_commenting_ranges: bool,
     pub(super) threads: Vec<Thread>,
@@ -65,11 +69,12 @@ impl Workbench {
         match method {
             "$registerCommentController" => {
                 let text = |index: usize| arg(index).as_str().unwrap_or_default().to_owned();
-                self.comments.controllers.push(Controller { handle, label: text(2), context_value: None, has_commenting_ranges: false, threads: Vec::new() });
+                self.comments.controllers.push(Controller { handle, label: text(2), context_value: None, reaction_handler: false, has_commenting_ranges: false, threads: Vec::new() });
             }
             "$updateCommentControllerFeatures" => {
                 if let Some(controller) = self.comment_controller_mut(handle) {
                     controller.context_value = arg(1)["contextValue"].as_str().map(str::to_owned);
+                    controller.reaction_handler = arg(1)["reactionHandler"] == true;
                 }
             }
             "$unregisterCommentController" => self.comments.controllers.retain(|controller| controller.handle != handle),
@@ -84,9 +89,10 @@ impl Workbench {
             "$updateCommentThread" => {
                 let Some(controller) = self.comment_controller_mut(handle) else { return Outcome::done() };
                 let thread_handle = arg(1).as_u64().unwrap_or_default();
-                if let Some(thread) = controller.threads.iter_mut().find(|thread| thread.handle == thread_handle) {
-                    thread.update(&arg(4));
-                }
+                let Some(thread) = controller.threads.iter_mut().find(|thread| thread.handle == thread_handle) else { return Outcome::done() };
+                let before = thread.comments.clone();
+                thread.update(&arg(4));
+                self.sync_comment_edits(handle, thread_handle, &before, window, cx);
             }
             "$deleteCommentThread" => {
                 let thread_handle = arg(1).as_u64().unwrap_or_default();

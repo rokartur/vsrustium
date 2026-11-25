@@ -60,7 +60,7 @@ impl Workbench {
         let left = metrics.glyph_margin_width() + metrics.line_numbers_width;
         let bar = div().absolute().top_0().left(px(10.)).w(px(3.)).h_full().bg(range_color);
         let hovered = self.comments.commenting.hover_line == Some(index);
-        let plus = hovered.then(|| self.icon("plus", 18., 16., self.color("editorGutter.commentGlyphForeground")).absolute().top_0().left(px(2.)).h_full().rounded(px(3.)).bg(range_color));
+        let plus = hovered.then(|| self.icon("add", 18., 16., self.color("editorGutter.commentGlyphForeground")).absolute().top_0().left(px(2.)).h_full().rounded(px(3.)).bg(range_color));
         let glyph = div()
             .absolute()
             .top_0()

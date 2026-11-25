@@ -141,6 +141,7 @@ impl Workbench {
             },
         });
         self.register_commenting_commands();
+        self.register_comment_navigation_commands();
         self.commands.register("workbench.action.focusCommentsPanel", |workbench, _, window, cx| {
             workbench.open_panel_view(COMMENTS_VIEW_ID, cx);
             workbench.select_first_comment_thread();

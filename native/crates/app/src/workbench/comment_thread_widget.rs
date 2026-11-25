@@ -1,8 +1,9 @@
 //! commentThreadZoneWidget.ts, commentThreadWidget.ts, commentNode.ts and commentReply.ts: an expanded thread as a
 //! zone below its range's last line. The frame and arrow take the thread state's color, the head shows the label
 //! and the `comments/commentThread/title` actions, then each comment, then the reply form whose buttons are the
-//! `comments/commentThread/context` items. shortcut: the reply is a single-line input, not an editor, comments
-//! have no title actions, reactions or edit mode, and the range is not highlighted; upgrade with an editor input.
+//! `comments/commentThread/context` items; each comment is drawn by comment_node.rs. shortcut: the reply is a
+//! single-line input, not an editor, one at a time with a comment's edit form, and the range is not highlighted;
+//! upgrade with an editor input.
 
 use std::collections::HashMap;
 
@@ -10,14 +11,13 @@ use gpui::{AnyElement, Context, KeyDownEvent, MouseButton, PathBuilder, Rgba, Wi
 use serde_json::{Value, json};
 
 use super::Workbench;
+use super::comment_node::{REACTIONS_ROW, comment_text};
 use super::comments::Thread;
 use super::hover::{HoverContent, HoverOptions};
 use super::input_box_view::{InputId, InputLook};
-use super::markdown_view::MarkdownStyle;
 use super::peek_view::UI_FONT;
 use crate::editor::{OpenEditor, Position, VERTICAL_SCROLLBAR_WIDTH, visible_column};
 use crate::input_box::InputBox;
-use crate::markdown::{MarkdownString, parse};
 use crate::menus::{MenuAction, MenuId, menu_actions};
 
 #[cfg(test)]
@@ -28,11 +28,14 @@ const EXPANDED: u64 = 1;
 /// review.css `.review-comment`: 8px above and below, the 22px author line and the body's 4px top padding.
 const COMMENT_CHROME: f32 = 8. + 22. + 4. + 8.;
 /// shortcut: a body line is taken as the 18px the reference draws; measure it to size a wrapped body exactly.
-const BODY_LINE: f32 = 18.;
+pub(super) const BODY_LINE: f32 = 18.;
 /// `.comment-form-container` 8px margins around the 32px "Reply..." button.
 const REPLY_BUTTON_FORM: f32 = 8. + 32. + 8.;
 /// The expanded form: the 90px input with its 12px padding, then the 26px buttons in 10px margins.
 const REPLY_EDITOR_FORM: f32 = 8. + 102. + 10. + 26. + 10. + 8.;
+/// `.edit-container`: 5px above the 102px input, then the buttons in 10px margins and 10px padding; it replaces the
+/// body and its 4px padding.
+const EDIT_FORM: f32 = 5. + 102. + 10. + 10. + 26. + 10. - 4.;
 
 /// An expanded thread shown in an editor: its zone.
 pub(super) struct ThreadWidget {
@@ -42,10 +45,12 @@ pub(super) struct ThreadWidget {
     pub zone_id: u32,
 }
 
-/// The reply being written in a thread (`.comment-form-container.expand`).
+/// The reply being written in a thread (`.comment-form-container.expand`), or the text of the comment being edited.
 pub(super) struct Reply {
     pub controller: u64,
     pub thread: u64,
+    /// The edited comment's `uniqueIdInThread`; None for a reply.
+    pub comment: Option<u64>,
     pub input: InputBox,
 }
 
@@ -58,8 +63,8 @@ impl Workbench {
         for controller in &self.comments.controllers {
             for thread in controller.threads.iter().filter(|thread| thread.collapse_state == EXPANDED) {
                 let Some(range) = thread.range.as_ref() else { continue };
-                let replying = self.comments.reply.as_ref().is_some_and(|reply| reply.controller == controller.handle && reply.thread == thread.handle);
-                let height = widget_height(thread, replying, line_height);
+                let reply = self.comments.reply.as_ref().filter(|reply| reply.controller == controller.handle && reply.thread == thread.handle);
+                let height = widget_height(thread, reply.map(|reply| reply.comment), controller.reaction_handler, line_height);
                 for editor in self.editors.editors.iter().filter(|editor| same_resource(&editor.document().uri(), &thread.resource)) {
                     wanted.push((controller.handle, thread.handle, editor.model_id, arrow_position(range), height));
                 }
@@ -104,22 +109,22 @@ impl Workbench {
         controller.threads.iter_mut().find(|candidate| candidate.handle == thread)
     }
 
-    fn comment_thread(&self, controller: u64, thread: u64) -> Option<&Thread> {
+    pub(super) fn comment_thread(&self, controller: u64, thread: u64) -> Option<&Thread> {
         let controller = self.comments.controllers.iter().find(|candidate| candidate.handle == controller)?;
         controller.threads.iter().find(|candidate| candidate.handle == thread)
     }
 
     /// `expandReplyArea`: the input shows, focused.
     pub(super) fn expand_comment_reply(&mut self, controller: u64, thread: u64, window: &mut Window, cx: &mut Context<Self>) {
-        self.comments.reply = Some(Reply { controller, thread, input: InputBox::default() });
+        self.comments.reply = Some(Reply { controller, thread, comment: None, input: InputBox::default() });
         self.comments.reply_view.reset();
         self.sync_comment_widgets();
         window.focus(&self.comments.reply_focus, cx);
         cx.notify();
     }
 
-    /// `hideReplyArea` (`workbench.action.hideComment`): the text is dropped and the button shows again.
-    fn hide_comment_reply(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// `hideReplyArea`: the text is dropped and the button shows again.
+    pub(super) fn hide_comment_reply(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(reply) = self.comments.reply.take() else { return };
         // commentThreadZoneWidget.ts `collapse`: a thread without comments is deleted.
         if self.comment_thread(reply.controller, reply.thread).is_some_and(|thread| thread.comments.is_empty()) {
@@ -139,7 +144,7 @@ impl Workbench {
 
     /// The context the thread's menus see: `commentController`, `commentThread`, `commentThreadIsEmpty` and, in the
     /// reply form, `commentIsEmpty`.
-    fn comment_thread_context(&self, controller: u64, thread: &Thread, window: &Window) -> HashMap<String, Value> {
+    pub(super) fn comment_thread_context(&self, controller: u64, thread: &Thread, window: &Window) -> HashMap<String, Value> {
         let mut context = self.key_context(window);
         let controller = self.comments.controllers.iter().find(|candidate| candidate.handle == controller);
         if let Some(value) = controller.and_then(|controller| controller.context_value.as_ref()) {
@@ -166,7 +171,7 @@ impl Workbench {
 
     /// `editor.action.submitComment` (Cmd+Enter in the reply): the first form action runs.
     fn submit_comment_reply(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((controller, thread)) = self.comments.reply.as_ref().map(|reply| (reply.controller, reply.thread)) else { return };
+        let Some((controller, thread)) = self.comments.reply.as_ref().filter(|reply| reply.comment.is_none()).map(|reply| (reply.controller, reply.thread)) else { return };
         let Some(state) = self.comment_thread(controller, thread) else { return };
         let context = self.comment_thread_context(controller, state, window);
         let first = menu_actions(&self.menus, MenuId::CommentThreadActions, &context).into_iter().find_map(|action| match action {
@@ -303,8 +308,8 @@ impl Workbench {
     /// `CommentThreadBody` and the reply form.
     fn comment_thread_body(&self, widget: &ThreadWidget, thread: &Thread, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let mut body = div().flex().flex_col();
-        for (index, comment) in thread.comments.iter().enumerate() {
-            body = body.child(self.comment_node(widget, index, comment, cx));
+        for index in 0..thread.comments.len() {
+            body = body.child(self.comment_node(widget, thread, index, window, cx));
         }
         if thread.can_reply != false {
             body = body.child(self.comment_reply_form(widget, thread, window, cx));
@@ -312,38 +317,11 @@ impl Workbench {
         body.into_any_element()
     }
 
-    /// `CommentNode`: the author, the comment's label, then the body (plain text, or rendered markdown).
-    fn comment_node(&self, widget: &ThreadWidget, index: usize, comment: &Value, cx: &mut Context<Self>) -> AnyElement {
-        let foreground = self.foreground_or("foreground");
-        let header = div()
-            .h(px(22.))
-            .flex()
-            .items_center()
-            .child(div().font_weight(gpui::FontWeight::BOLD).child(comment["userName"].as_str().unwrap_or_default().to_owned()))
-            .children(comment["label"].as_str().map(|label| div().mx(px(5.)).px(px(2.)).italic().child(label.to_owned())));
-        let text = match &comment["body"] {
-            Value::String(text) => div().whitespace_normal().child(text.clone()).into_any_element(),
-            markdown => {
-                let blocks = parse(&MarkdownString::from_value(markdown));
-                let style = MarkdownStyle { font_size: 13., line_height: BODY_LINE, foreground };
-                self.markdown_blocks(&format!("comment-{}-{}-{index}", widget.controller, widget.thread), &blocks, style, "", cx).into_any_element()
-            }
-        };
-        div()
-            .pt(px(8.))
-            .pb(px(8.))
-            .pl(px(20.))
-            .pr(px(16.))
-            .flex()
-            .child(div().pl(px(20.)).flex_1().min_w_0().overflow_hidden().child(header).child(div().pt(px(4.)).line_height(px(BODY_LINE)).child(text)))
-            .into_any_element()
-    }
-
     /// `CommentReply`: the "Reply..." button, or the input with the `comments/commentThread/context` buttons, the
     /// first one primary.
     fn comment_reply_form(&self, widget: &ThreadWidget, thread: &Thread, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let (controller, thread_handle) = (widget.controller, widget.thread);
-        let replying = self.comments.reply.as_ref().is_some_and(|reply| reply.controller == controller && reply.thread == thread_handle);
+        let replying = self.comments.reply.as_ref().is_some_and(|reply| reply.controller == controller && reply.thread == thread_handle && reply.comment.is_none());
         let prompt = if thread.comments.is_empty() { "Type a new comment" } else { "Reply..." };
         let form = div().mx(px(20.)).my(px(8.));
         if !replying {
@@ -378,10 +356,12 @@ impl Workbench {
             .border_1()
             .border_color(outline)
             .bg(self.color("editorCommentsWidget.replyInputBackground"))
+            // simpleCommentEditor.ts: the editor's font family and size.
             .font_family("Menlo")
+            .text_size(px(12.))
             .on_key_down(cx.listener(|workbench, event: &KeyDownEvent, window, cx| match (event.keystroke.key.as_str(), event.keystroke.modifiers.platform) {
                 ("enter", true) => workbench.submit_comment_reply(window, cx),
-                ("escape", _) => workbench.hide_comment_reply(window, cx),
+                ("escape", _) => drop(workbench.execute_command("workbench.action.hideComment", Vec::new(), window, cx)),
                 _ => {}
             }))
             .child(div().h(px(18.)).flex().child(self.input_text(InputId::CommentReply, InputLook { password: false, placeholder: Some(prompt.into()), focused }, cx)));
@@ -425,15 +405,20 @@ fn arrow_position(range: &Value) -> Position {
 }
 
 /// `_refresh`: the head (1.2 lines), the comments and the form, the arrow, the frame and 8px, in whole lines.
-fn widget_height(thread: &Thread, replying: bool, line_height: f32) -> f32 {
+/// `reply` is the open form: Some(None) a reply, Some(Some(id)) the edit of comment `id`. With a reaction handler
+/// every comment has a reactions row, for the picker.
+fn widget_height(thread: &Thread, reply: Option<Option<u64>>, reaction_handler: bool, line_height: f32) -> f32 {
     let mut body = 1.;
     for comment in &thread.comments {
-        let text = comment["body"].as_str().or(comment["body"]["value"].as_str()).unwrap_or_default();
-        let lines = text.lines().filter(|line| !line.trim().is_empty()).count().max(1);
-        body += COMMENT_CHROME + lines as f32 * BODY_LINE;
+        let editing = reply.flatten().is_some_and(|id| comment["uniqueIdInThread"].as_u64() == Some(id));
+        let lines = comment_text(comment).lines().filter(|line| !line.trim().is_empty()).count().max(1);
+        body += COMMENT_CHROME + if editing { EDIT_FORM } else { lines as f32 * BODY_LINE };
+        if reaction_handler || comment["commentReactions"].as_array().into_iter().flatten().any(|reaction| reaction["count"].as_u64().unwrap_or_default() > 0) {
+            body += REACTIONS_ROW;
+        }
     }
     if thread.can_reply != false {
-        body += if replying { REPLY_EDITOR_FORM } else { REPLY_BUTTON_FORM };
+        body += if reply == Some(None) { REPLY_EDITOR_FORM } else { REPLY_BUTTON_FORM };
     }
     let head = (line_height * 1.2).ceil();
     let arrow = (line_height / 3.).round();

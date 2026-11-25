@@ -10,11 +10,15 @@
 	"contributes": {
 		"commands": [
 			{ "command": "port-comments.reply", "title": "Reply" },
-			{ "command": "port-comments.resolve", "title": "Resolve", "icon": "$(check)" }
+			{ "command": "port-comments.resolve", "title": "Resolve", "icon": "$(check)" },
+			{ "command": "port-comments.edit", "title": "Edit", "icon": "$(edit)" },
+			{ "command": "port-comments.save", "title": "Save" }
 		],
 		"menus": {
 			"comments/commentThread/context": [{ "command": "port-comments.reply", "group": "inline" }],
-			"comments/commentThread/title": [{ "command": "port-comments.resolve", "group": "inline" }]
+			"comments/commentThread/title": [{ "command": "port-comments.resolve", "group": "inline" }],
+			"comments/comment/title": [{ "command": "port-comments.edit", "group": "inline", "when": "comment == editable" }],
+			"comments/comment/context": [{ "command": "port-comments.save", "group": "inline" }]
 		}
 	}
 }
