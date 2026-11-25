@@ -144,10 +144,10 @@ pub struct KeybindingsEditor {
     when_blur: Option<Subscription>,
 }
 
-/// The shown `DefineKeybindingWidget`: the row it defines a keybinding for and the chords pressed so far.
-struct Define {
-    entry: Entry,
-    add: bool,
+/// The shown `DefineKeybindingWidget`: the row it defines a keybinding for, whether it adds one, and the chords
+/// pressed so far. No row is the `DefineKeybindingOverlayWidget` over the user keybindings.json.
+pub(super) struct Define {
+    row: Option<(Entry, bool)>,
     chords: Vec<Chord>,
 }
 
@@ -452,7 +452,9 @@ impl Workbench {
             return;
         }
         editor.open = false;
-        editor.define = None;
+        if editor.define.as_ref().is_some_and(|define| define.row.is_some()) {
+            editor.define = None;
+        }
         editor.when = None;
         editor.filtering = None;
         editor.define_blur = None;
@@ -570,9 +572,6 @@ impl Workbench {
     /// `closeModalEditor` closes the modal, others are recorded. Returns whether the key was used.
     pub(super) fn keybindings_editor_record_key(&mut self, chord: Chord, resolution: &Resolution, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let editor = &mut self.keybindings_editor;
-        if !editor.open {
-            return false;
-        }
         let closes = matches!(resolution, Resolution::KbFound { command, .. } if command == CLOSE_MODAL_COMMAND);
         let key = chord.key_aria_label();
         let plain = !chord.ctrl && !chord.shift && !chord.alt && !chord.meta;
@@ -586,6 +585,9 @@ impl Workbench {
                 _ => self.record_define_chord(chord, cx),
             }
             return true;
+        }
+        if !editor.open {
+            return false;
         }
         if editor.recording && editor.search_focus.is_focused(window) && !closes {
             if key == "Escape" && plain {
@@ -643,8 +645,13 @@ impl Workbench {
         if let Some(index) = index {
             self.select_keybinding_entry(index, true, window, cx);
         }
+        self.show_define_widget(Some((entry, add)), window, cx);
+    }
+
+    /// `DefineKeybindingWidget.define`: the widget takes the focus and records until Enter, Escape or a blur.
+    pub(super) fn show_define_widget(&mut self, row: Option<(Entry, bool)>, window: &mut Window, cx: &mut Context<Self>) {
         let editor = &mut self.keybindings_editor;
-        editor.define = Some(Define { entry, add, chords: Vec::new() });
+        editor.define = Some(Define { row, chords: Vec::new() });
         let focus = editor.define_focus.clone();
         window.focus(&focus, cx);
         // `onBlur` cancels.
@@ -680,10 +687,11 @@ impl Workbench {
         editor.define_blur = None;
         let Some(define) = editor.define.take() else { return };
         cx.notify();
+        let Some((entry, add)) = define.row else { return self.define_overlay_accepted(key, window, cx) };
         if let Some(key) = key {
-            self.update_keybinding(&define.entry, &key, define.add, window, cx);
+            self.update_keybinding(&entry, &key, add, window, cx);
         }
-        if let Some(index) = self.keybindings_editor.entries.iter().position(|shown| shown.row.id() == define.entry.row.id()) {
+        if let Some(index) = self.keybindings_editor.entries.iter().position(|shown| shown.row.id() == entry.row.id()) {
             self.select_keybinding_entry(index, true, window, cx);
         }
     }
@@ -922,7 +930,7 @@ impl Workbench {
     fn keybindings_editor_pane(&mut self, width: f32, height: f32, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let table_width = width - 27.;
         self.keybindings_changed(window, cx);
-        let define = self.define_keybinding_widget(width, height, window, cx);
+        let define = self.define_widget_shown(false).then(|| self.define_keybinding_widget(width, height, window, cx));
         div()
             .relative()
             .flex_1()
@@ -1325,12 +1333,17 @@ impl Workbench {
         }
     }
 
-    /// `DefineKeybindingWidget`, centered over the editor.
-    fn define_keybinding_widget(&self, width: f32, height: f32, window: &Window, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
-        let define = self.keybindings_editor.define.as_ref()?;
+    /// Whether the define widget shows over the user keybindings.json (`over_file`) or over the keybindings editor.
+    pub(super) fn define_widget_shown(&self, over_file: bool) -> bool {
+        self.keybindings_editor.define.as_ref().is_some_and(|define| define.row.is_none() == over_file)
+    }
+
+    /// `DefineKeybindingWidget`, centered over the editor; only the keybindings editor calls `printExisting`.
+    pub(super) fn define_keybinding_widget(&self, width: f32, height: f32, window: &Window, cx: &mut Context<Self>) -> Stateful<Div> {
+        let define = self.keybindings_editor.define.as_ref().expect("checked by define_widget_shown");
         let focused = self.keybindings_editor.define_focus.is_focused(window);
         let value = define.chords.iter().map(Chord::user_settings_label).collect::<Vec<_>>().join(" ");
-        let existing = match define.chords.is_empty() {
+        let existing = match define.chords.is_empty() || define.row.is_none() {
             true => 0,
             false => self.keybindings_editor.model.fetch(&format!("\"{value}\""), false).len(),
         };
@@ -1350,43 +1363,44 @@ impl Workbench {
         let input = div()
             .mt(px(10.))
             .w(px(DEFINE_WIDTH))
-            .h(px(26.))
+            .h(px(30.))
             .flex()
             .items_center()
             .justify_center()
+            .rounded(px(4.))
             .bg(self.color("input.background"))
             .border_1()
             .border_color(input_border)
             .text_color(self.foreground_or("input.foreground"))
             .child(value.clone());
         let label = value.clone();
-        Some(
-            div()
-                .id("define-keybinding-widget")
-                .track_focus(&self.keybindings_editor.define_focus)
-                .absolute()
-                .left(px(((width - DEFINE_WIDTH) / 2.).round()))
-                .top(px(((height - DEFINE_HEIGHT) / 2.).round()))
-                .p(px(10.))
-                .rounded(px(8.))
-                .border_1()
-                .border_color(self.theme.color("editorWidget.border").unwrap_or(transparent()))
-                .bg(self.color("editorWidget.background"))
-                .text_color(self.foreground_or("editorWidget.foreground"))
-                .shadow(vec![BoxShadow { color: self.color("widget.shadow").into(), offset: point(px(0.), px(0.)), blur_radius: px(6.), spread_radius: px(0.), inset: false }])
-                .on_mouse_down(MouseButton::Left, |_, window, cx| {
-                    window.prevent_default();
-                    cx.stop_propagation();
-                })
-                .child(div().w(px(DEFINE_WIDTH)).flex().justify_center().child("Press desired key combination and then press ENTER."))
-                .child(input)
-                .child(output)
-                .children(existing_text.map(|text| {
-                    // `onShowExistingKeybidings`: the search shows the commands bound to the keys.
-                    let show = cx.listener(move |workbench, _: &gpui::ClickEvent, window, cx| workbench.set_keybindings_search(format!("\"{label}\""), window, cx));
-                    div().mt(px(10.)).w(px(DEFINE_WIDTH)).flex().justify_center().child(div().id("existing-keybindings").underline().cursor_pointer().child(text).on_click(show))
-                })),
-        )
+        div()
+            .id("define-keybinding-widget")
+            .track_focus(&self.keybindings_editor.define_focus)
+            .absolute()
+            .left(px(((width - DEFINE_WIDTH) / 2.).round()))
+            .top(px(((height - DEFINE_HEIGHT) / 2.).round()))
+            // setHeight(110) on a content-box with 10px padding and a 1px border.
+            .h(px(DEFINE_HEIGHT + 22.))
+            .p(px(10.))
+            .rounded(px(8.))
+            .border_1()
+            .border_color(self.theme.color("editorWidget.border").unwrap_or(transparent()))
+            .bg(self.color("editorWidget.background"))
+            .text_color(self.foreground_or("editorWidget.foreground"))
+            .shadow(vec![BoxShadow { color: self.color("widget.shadow").into(), offset: point(px(0.), px(0.)), blur_radius: px(6.), spread_radius: px(0.), inset: false }])
+            .on_mouse_down(MouseButton::Left, |_, window, cx| {
+                window.prevent_default();
+                cx.stop_propagation();
+            })
+            .child(div().w(px(DEFINE_WIDTH)).line_height(px(18.)).flex().justify_center().child("Press desired key combination and then press ENTER."))
+            .child(input)
+            .child(output)
+            .children(existing_text.map(|text| {
+                // `onShowExistingKeybidings`: the search shows the commands bound to the keys.
+                let show = cx.listener(move |workbench, _: &gpui::ClickEvent, window, cx| workbench.set_keybindings_search(format!("\"{label}\""), window, cx));
+                div().mt(px(10.)).w(px(DEFINE_WIDTH)).flex().justify_center().child(div().id("existing-keybindings").underline().cursor_pointer().child(text).on_click(show))
+            }))
     }
 }
 

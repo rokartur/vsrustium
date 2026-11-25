@@ -49,6 +49,7 @@ impl Workbench {
             if let Some(change) = &change {
                 self.search_editor_edited(&path, change);
             }
+            self.schedule_keybinding_marks(cx);
         }
         if scrolled {
             self.editor_scrolled(cx);

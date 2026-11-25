@@ -5,6 +5,7 @@
 mod actions;
 mod bulk_text_edits;
 mod context_menu;
+mod define_keybinding;
 mod editor_commands;
 mod editor_menus;
 mod editor_message;
@@ -82,6 +83,7 @@ pub struct Workbench {
     pub skip_dialogs: bool,
     pub keybindings: keyboard::Keybindings,
     pub keybindings_editor: keybindings_editor_view::KeybindingsEditor,
+    keybinding_marks: define_keybinding::KeybindingMarks,
     /// Context keys set with the `setContext` command.
     context_keys: HashMap<String, Value>,
     /// The level extension tests set with `_extensionTests.setLogLevel`; stderr logging does not filter by it.
@@ -206,6 +208,7 @@ impl Workbench {
             skip_dialogs: false,
             keybindings: keyboard::Keybindings::default(),
             keybindings_editor: keybindings_editor_view::KeybindingsEditor::new(cx),
+            keybinding_marks: Default::default(),
             context_keys: HashMap::new(),
             log_level: "info".into(),
             status_message: None,
@@ -264,6 +267,7 @@ impl Workbench {
         workbench.register_keybindings_editor_commands();
         workbench.register_readonly_commands();
         workbench.register_editor_message_commands();
+        workbench.register_define_keybinding_command();
         // Keybindings resolve before the focused element sees the key, and with nothing focused too.
         let entity = cx.entity().downgrade();
         cx.intercept_keystrokes(move |event, window, cx| {
@@ -335,6 +339,7 @@ impl Workbench {
         self.drop_closed_search_editors();
         self.load_search_editor_widget();
         self.find_editor_changed();
+        self.schedule_keybinding_marks(cx);
         self.host.send_changes(&self.editors);
         cx.notify();
     }

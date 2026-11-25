@@ -380,6 +380,66 @@ impl Resolver {
     }
 }
 
+/// `KeybindingEditorDecorationsRenderer._userSettingsFuzzyEquals`: the same keybinding after trimming and
+/// lowercasing, where a `[code]` chord equals only the same scan code, never the key it types.
+pub fn user_settings_fuzzy_equals(a: &str, b: &str) -> bool {
+    let (a, b) = (a.trim().to_lowercase(), b.trim().to_lowercase());
+    if a == b {
+        return true;
+    }
+    let scan_codes = |input: &str| input.split_whitespace().map(|chord| chord.contains('[')).collect::<Vec<_>>();
+    parse_keybinding(&a) == parse_keybinding(&b) && scan_codes(&a) == scan_codes(&b)
+}
+
+/// Whether a key of the layout types `key`. macLinuxKeyboardMapper.ts always maps the Latin letters and the digits,
+/// and the immutable keys; the OEM and ABNT key codes exist only where a key's characters (`raw_mapping`'s value,
+/// withShift, withAltGr, withShiftAltGr) are their US symbols. The port has no scan code mapper (port/notes.md
+/// milestone 9), so this asks per key code, not per modifier combination as `lookupKeyCodeCombo` does.
+pub fn layout_types_key(key: usize, raw_mapping: &Value) -> bool {
+    const OEM_1: usize = 85;
+    const OEM_102: usize = 97;
+    const ABNT_C1: usize = 120;
+    const ABNT_C2: usize = 121;
+    if key == 0 {
+        return false;
+    }
+    if !(OEM_1..=OEM_102).contains(&key) && !(ABNT_C1..=ABNT_C2).contains(&key) {
+        return true;
+    }
+    let Some(mapping) = raw_mapping.as_object() else { return false };
+    let layout_keys = mapping.iter().filter(|(code, _)| LAYOUT_DEPENDENT_CODES.contains(&code.as_str()));
+    let characters = layout_keys.flat_map(|(_, entry)| ["value", "withShift", "withAltGr", "withShiftAltGr"].map(|name| entry[name].as_str().unwrap_or_default().to_string()));
+    characters.filter_map(|text| text.chars().next()).any(|character| us_key_of_char(character) == key)
+}
+
+/// The scan codes `IMMUTABLE_CODE_TO_KEY_CODE` leaves to the layout, besides the letters and digits.
+const LAYOUT_DEPENDENT_CODES: [&str; 15] =
+    ["Minus", "Equal", "BracketLeft", "BracketRight", "Backslash", "IntlHash", "Semicolon", "Quote", "Backquote", "Comma", "Period", "Slash", "IntlBackslash", "IntlRo", "IntlYen"];
+
+/// `CHAR_CODE_TO_KEY_CODE` of a US symbol, shifted or not; 0 for any other character.
+fn us_key_of_char(character: char) -> usize {
+    let unshifted = match US_SHIFTED_SYMBOLS.chars().position(|symbol| symbol == character) {
+        Some(index) => US_UNSHIFTED_SYMBOLS.chars().nth(index).expect("the symbol rows have the same length"),
+        None => character,
+    };
+    if !US_UNSHIFTED_SYMBOLS.contains(unshifted) {
+        return 0;
+    }
+    key_from_user_settings(&unshifted.to_string())
+}
+
+/// preferences.contribution.ts gives `editor.action.defineKeybinding` the condition
+/// `resource == <the profile's keybindings.json>`; the reference's exports froze the exporting profile's temp file in
+/// it, so the port puts its own user keybindings.json URI in its place.
+pub fn with_keybindings_resource(when: Option<Expr>, resource: &str) -> Option<Expr> {
+    const FILE: &str = "/User/keybindings.json'";
+    let serialized = when?.serialize();
+    let Some(start) = serialized.find("'vscode-userdata:") else { return Expr::deserialize(&serialized) };
+    let Some(length) = serialized[start..].find(FILE) else { return Expr::deserialize(&serialized) };
+    let end = start + length + FILE.len();
+    Expr::deserialize(&format!("{}'{resource}'{}", &serialized[..start], &serialized[end..]))
+}
+
 /// One `{ key, command, when, args }` rule of keybindings.json or the default table.
 fn rule_item(rule: &Value, key: &str, is_default: bool) -> Option<Item> {
     let command = rule.get("command")?.as_str()?;

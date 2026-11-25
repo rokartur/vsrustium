@@ -56,6 +56,8 @@ impl Workbench {
         self.schedule_unusual_line_terminators_check(editor, window, cx);
         div()
             .flex_1()
+            // A long breadcrumbs path must not widen the part past the window.
+            .min_w_0()
             .relative()
             .flex()
             .flex_col()
@@ -259,6 +261,8 @@ impl Workbench {
             .relative()
             .h(px(BREADCRUMBS_HEIGHT))
             .flex_none()
+            // shortcut: clips a long path at the right, where breadcrumbsWidget.ts reveals the last item; until breadcrumbs scroll.
+            .overflow_hidden()
             // The breadcrumbs sit in the title (editortabscontrol.css) and each item is pointer (breadcrumbsWidget.css).
             .cursor_pointer()
             .flex()
@@ -377,6 +381,7 @@ impl Workbench {
             .children(self.sticky_scroll_widget(editor, metrics, window, cx))
             .children(self.find_widget(self.editors.viewport.width + metrics.content_left() + minimap_width, metrics.content_left(), minimap_width, window, cx))
             .children(self.editor_message_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
+            .children(self.keybindings_file_widgets(editor, self.editors.viewport.width + metrics.content_left() + minimap_width, viewport.height, minimap_width, window, cx))
     }
 
     /// wordHighlighter.ts: `onDidBlurEditorWidget` stops the highlights once no code editor has the focus,
@@ -790,6 +795,7 @@ impl Workbench {
                     content = content.child(bracket);
                 }
                 content = content.children(self.unicode_highlight_boxes(editor, index, unicode.as_ref(), char_width));
+                content = content.children(self.keybinding_mark_boxes(editor, index, |column| visible_column(text, column, tab_size) as f32 * char_width));
                 content = content.children(find_matches);
                 // inPlaceReplace.css: .valueSetReplacement only in the light theme (`.monaco-editor.vs`), a 2px outline.
                 if let Some((_, line, columns)) = &editor.value_set_replacement
@@ -1136,6 +1142,7 @@ impl Workbench {
             let lines = if mark.current { &mut current_find_lines } else { &mut find_lines };
             lines.push((mark.range.start.line, mark.range.end.line));
         }
+        let [(info_lines, info_color), (error_lines, error_color)] = self.keybinding_ruler_marks(editor);
         let border = self.theme.color("editorOverviewRuler.border");
         let top_whitespace = self.editors.viewport.top_whitespace;
         canvas(
@@ -1159,6 +1166,8 @@ impl Workbench {
                 let center = (lanes.center_x, lanes.center_width);
                 for (lines, color, (x, width)) in [
                     (&range_lines, range_color, (lanes.full_x, lanes.full_width)),
+                    (&info_lines, info_color, (lanes.right_x, lanes.right_width)),
+                    (&error_lines, error_color, (lanes.right_x, lanes.right_width)),
                     (&highlight_lines, highlight, center),
                     (&bracket_lines, bracket_color, center),
                     (&find_lines, find_color, center),
@@ -1406,6 +1415,8 @@ fn mouse_column(visible: f32) -> usize {
 struct RulerLanes {
     center_x: f32,
     center_width: f32,
+    right_x: f32,
+    right_width: f32,
     full_x: f32,
     full_width: f32,
 }
@@ -1414,7 +1425,8 @@ impl RulerLanes {
     fn new(canvas_width: f32) -> Self {
         let remaining = canvas_width - 1.;
         let side = (remaining / 3.).floor();
-        RulerLanes { center_x: 1. + side, center_width: remaining - 2. * side, full_x: 1., full_width: remaining }
+        let center_width = remaining - 2. * side;
+        RulerLanes { center_x: 1. + side, center_width, right_x: 1. + side + center_width, right_width: side, full_x: 1., full_width: remaining }
     }
 }
 
