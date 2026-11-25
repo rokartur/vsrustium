@@ -60,26 +60,26 @@ impl Workbench {
     fn model_creation_options(&self) -> Vec<CreationOptions> {
         let settings = self.settings.lock().unwrap();
         let models = self.editors.editors.iter().chain(&self.editors.models);
-        models.map(|model| creation_options(&settings.configuration, &model.document.path, &model.document.language_id)).collect()
+        models.map(|model| creation_options(&settings.configuration, &model.document().path, &model.document().language_id)).collect()
     }
 
     /// modelService.ts `_updateModelOptions` for each model whose creation options changed.
     fn update_model_options(&mut self, before: Vec<CreationOptions>) {
         let after = self.model_creation_options();
-        let active_before = self.editors.active().map(|editor| editor.document.indentation);
+        let active_before = self.editors.active().map(|editor| editor.document().indentation);
         let models = self.editors.editors.iter_mut().chain(&mut self.editors.models);
         for ((model, old), new) in models.zip(before).zip(after) {
             if old == new {
                 continue;
             }
             let indentation = match new.detect_indentation {
-                true => guess_indentation(&model.document.lines, Indentation { tab_size: new.tab_size, indent_size: None, insert_spaces: new.insert_spaces }),
+                true => guess_indentation(&model.document().lines, Indentation { tab_size: new.tab_size, indent_size: None, insert_spaces: new.insert_spaces }),
                 false => Indentation { tab_size: new.tab_size, indent_size: new.indent_size, insert_spaces: new.insert_spaces },
             };
             model.set_indentation(indentation);
         }
         if let Some(editor) = self.editors.active()
-            && active_before != Some(editor.document.indentation)
+            && active_before != Some(editor.document().indentation)
         {
             self.host.send_options(editor);
         }

@@ -489,19 +489,19 @@ mod tests {
         let mut group = crate::editor::EditorGroup::default();
         group.open(document, false);
         let editor = group.active_mut().unwrap();
-        let highlights = |editor: &crate::editor::OpenEditor, index| editor.document.tokens.highlights(&theme, &languages, &editor.document.lines, index, 4);
+        let highlights = |editor: &crate::editor::OpenEditor, index| editor.document().tokens.highlights(&theme, &languages, &editor.document().lines, index, 4);
         let before = (highlights(editor, 0), highlights(editor, 1));
-        assert!(editor.document.tokens.bracket_match(&theme, &languages, &editor.document.lines, (0, 8)).is_some());
+        assert!(editor.document().tokens.bracket_match(&theme, &languages, &editor.document().lines, (0, 8)).is_some());
 
         editor.move_to(crate::editor::Position::new(0, 0), false);
         editor.type_text("/* ").unwrap();
         let fresh = Tokenization::new(languages.grammars.grammar("typescript"));
-        let lines = editor.document.lines.clone();
+        let lines = editor.document().lines.clone();
         for index in 0..2 {
             assert_eq!(highlights(editor, index), fresh.highlights(&theme, &languages, &lines, index, 4), "line {index}");
         }
         assert_ne!((highlights(editor, 0), highlights(editor, 1)), before);
-        assert!(editor.document.tokens.bracket_match(&theme, &languages, &lines, (0, 11)).is_none());
+        assert!(editor.document().tokens.bracket_match(&theme, &languages, &lines, (0, 11)).is_none());
     }
 
     #[test]

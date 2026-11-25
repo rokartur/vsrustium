@@ -319,11 +319,11 @@ impl Workbench {
     /// outputView.ts `OutputEditor.onDidChangeCursorPosition`: with `output.smartScroll.enabled`, a cursor on the
     /// last line turns auto scrolling on and any other line turns it off.
     pub(super) fn output_cursor_moved(&mut self) {
-        let Some(editor) = self.editors.active().filter(|editor| editor.document.scheme == OUTPUT_SCHEME) else { return };
+        let Some(editor) = self.editors.active().filter(|editor| editor.document().scheme == OUTPUT_SCHEME) else { return };
         if self.setting("output.smartScroll.enabled") != true {
             return;
         }
-        let last_line = editor.document.lines.len() - 1;
+        let last_line = editor.document().lines.len() - 1;
         self.output_view.scroll_lock = editor.selections[0].head.line != last_line;
     }
 }

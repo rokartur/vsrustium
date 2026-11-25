@@ -677,13 +677,14 @@ impl<'a> AutoIndent<'a> {
 impl OpenEditor {
     /// `ReindentLinesAction.run`: every line reindented by the language's indentation rules, as one undo step.
     pub fn reindent_lines(&mut self, auto: AutoIndent) -> Option<ContentChanged> {
-        let edits = auto.model(&self.document).reindent_edits(0, self.document.lines.len() - 1);
+        let edits = auto.model(&*self.document()).reindent_edits(0, self.document().lines.len() - 1);
         self.reindent(edits, "editor.action.reindentlines")
     }
 
     /// `ReindentSelectedLinesAction.run`: each selection's lines reindented, from the line above it.
     pub fn reindent_selected_lines(&mut self, auto: AutoIndent) -> Option<ContentChanged> {
-        let model = auto.model(&self.document);
+        let document = self.document();
+        let model = auto.model(&document);
         let mut edits = Vec::new();
         for selection in &self.selections {
             let (mut start, mut end) = (selection.start().line, selection.end().line);
@@ -696,6 +697,7 @@ impl OpenEditor {
             start = start.saturating_sub(1);
             edits.extend(model.reindent_edits(start, end));
         }
+        drop(document);
         self.reindent(edits, "editor.action.reindentselectedlines")
     }
 

@@ -71,12 +71,12 @@ impl OutputView {
 impl Workbench {
     /// The tab that hosts the Output view, if it is open.
     pub(super) fn output_editor_index(&self) -> Option<usize> {
-        self.editors.editors.iter().position(|editor| editor.document.scheme == OUTPUT_SCHEME)
+        self.editors.editors.iter().position(|editor| editor.document().scheme == OUTPUT_SCHEME)
     }
 
     /// `isViewVisible(OUTPUT_VIEW_ID)`: the group shows the Output view's tab.
     pub(crate) fn output_view_visible(&self) -> bool {
-        self.editors.active().is_some_and(|editor| editor.document.scheme == OUTPUT_SCHEME)
+        self.editors.active().is_some_and(|editor| editor.document().scheme == OUTPUT_SCHEME)
     }
 
     /// `viewsService.openView(OUTPUT_VIEW_ID, focus)`: shows the active channel (`OutputViewPane.showChannel`).
@@ -96,7 +96,7 @@ impl Workbench {
         self.output_view.text = text;
         self.output.active = Some(id.to_owned());
         match self.output_editor_index() {
-            Some(index) if self.editors.editors[index].document.path == path => self.editors.activate(index),
+            Some(index) if self.editors.editors[index].document().path == path => self.editors.activate(index),
             Some(index) => self.editors.replace(index, document),
             None => self.editors.open(document, false),
         }
@@ -135,7 +135,7 @@ impl Workbench {
     pub(crate) fn output_channels_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sync_output_channel_commands();
         let Some(index) = self.output_editor_index() else { return };
-        let shown = self.editors.editors[index].document.path.to_string_lossy().into_owned();
+        let shown = self.editors.editors[index].document().path.to_string_lossy().into_owned();
         if self.output.channel(&shown).is_some() {
             return;
         }
@@ -166,7 +166,7 @@ impl Workbench {
     }
 
     fn output_editor_shows(&self, id: &str) -> bool {
-        self.output_editor_index().is_some_and(|index| self.editors.editors[index].document.path == Path::new(id))
+        self.output_editor_index().is_some_and(|index| self.editors.editors[index].document().path == Path::new(id))
     }
 
     fn apply_output_content(&mut self, id: &str, content: Content, cx: &mut Context<Self>) {
@@ -183,7 +183,7 @@ impl Workbench {
             Content::Append(text) => {
                 self.output_view.text.push_str(&text);
                 let model = self.editors.model_mut(OUTPUT_SCHEME, path).expect("the output editor shows the channel");
-                let end = document_end(&model.document.lines);
+                let end = document_end(&model.document().lines);
                 let change = model.execute_edits(vec![(end, end, text, false)], None, EditReason::ApplyEdits);
                 model.mark_saved();
                 if let Some(change) = change {
@@ -338,7 +338,7 @@ impl Workbench {
         let viewport = self.editors.viewport;
         let Some(index) = self.output_editor_index() else { return };
         let editor = &mut self.editors.editors[index];
-        let end = document_end(&editor.document.lines);
+        let end = document_end(&editor.document().lines);
         editor.reveal_range(end, end, crate::editor::VerticalReveal::Simple, viewport);
     }
 

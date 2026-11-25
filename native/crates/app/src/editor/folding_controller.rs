@@ -13,17 +13,18 @@ impl OpenEditor {
     /// the edits, until the workbench applies their next answer (`apply_syntax_folding`).
     pub fn refresh_folding_ranges(&mut self) {
         // folding.ts `onModelChanged`: a model too large for tokenization gets no folding model.
-        if self.document.too_large_for_tokenization {
+        if self.document().too_large_for_tokenization {
             return;
         }
         if self.syntax_folding {
             return self.adjust_selections_to_folds();
         }
-        let document = &self.document;
+        let document = self.document();
         let regions = compute_ranges(&document.lines, document.indentation.tab_size, document.off_side, document.folding_markers.as_deref());
+        drop(document);
         self.sticky_model = super::sticky_scroll::from_folding_regions(&regions);
         let lines = self.selection_start_lines();
-        self.folding.update(regions, self.document.lines.len(), Some(&lines));
+        self.folding.update(regions, self.model.borrow().document.lines.len(), Some(&lines));
         self.adjust_selections_to_folds();
     }
 
@@ -31,7 +32,7 @@ impl OpenEditor {
     /// none answered with an array, which falls back to the indentation provider. With `editor.foldingImportsByDefault`
     /// the first regions of kind `imports` collapse.
     pub fn apply_syntax_folding(&mut self, regions: Option<FoldingRegions>, fold_imports: bool) {
-        if self.document.too_large_for_tokenization {
+        if self.document().too_large_for_tokenization {
             return;
         }
         let Some(mut regions) = regions else {
@@ -49,7 +50,7 @@ impl OpenEditor {
         }
         self.sticky_model = super::sticky_scroll::from_folding_regions(&regions);
         let lines = self.selection_start_lines();
-        self.folding.update(regions, self.document.lines.len(), Some(&lines));
+        self.folding.update(regions, self.model.borrow().document.lines.len(), Some(&lines));
         self.adjust_selections_to_folds();
     }
 
@@ -57,7 +58,7 @@ impl OpenEditor {
     /// so the word highlights follow and Cursor Undo can bring the cursor back.
     fn adjust_selections_to_folds(&mut self) {
         let mut selections = self.selections.clone();
-        if self.folding.adjust_selections(&self.document.lines, &mut selections) {
+        if self.folding.adjust_selections(&self.document().lines, &mut selections) {
             self.set_selections(selections);
         }
     }
@@ -125,9 +126,10 @@ impl OpenEditor {
         if self.folding.regions.has_types() {
             return set_collapse_state_for_type(&mut self.folding, "comment", true);
         }
-        let Some((token, _)) = &self.document.block_comment else { return };
+        let model = self.model.borrow();
+        let Some((token, _)) = &model.document.block_comment else { return };
         let regex = onig::Regex::new(&format!(r"^\s*{}", escape_regex(token))).expect("an escaped token is a valid pattern");
-        set_collapse_state_for_matching_lines(&mut self.folding, &self.document.lines, &regex, true);
+        set_collapse_state_for_matching_lines(&mut self.folding, &model.document.lines, &regex, true);
     }
 
     /// `FoldAllRegionsAction`/`UnfoldAllRegionsAction`: region kinds, else the lines matching the start marker.
@@ -135,8 +137,9 @@ impl OpenEditor {
         if self.folding.regions.has_types() {
             return set_collapse_state_for_type(&mut self.folding, "region", collapse);
         }
-        if let Some(markers) = &self.document.folding_markers {
-            set_collapse_state_for_matching_lines(&mut self.folding, &self.document.lines, &markers.start, collapse);
+        let model = self.model.borrow();
+        if let Some(markers) = &model.document.folding_markers {
+            set_collapse_state_for_matching_lines(&mut self.folding, &model.document.lines, &markers.start, collapse);
         }
     }
 
@@ -163,7 +166,7 @@ impl OpenEditor {
         let Some(caret) = caret else { return };
         self.set_selections(vec![Selection::caret(caret)]);
         collapse.sort_by_key(|range| range.start);
-        let merged = FoldingRegions::sanitize_and_merge(self.folding.regions.ranges(), &collapse, self.document.lines.len(), None);
+        let merged = FoldingRegions::sanitize_and_merge(self.folding.regions.ranges(), &collapse, self.document().lines.len(), None);
         self.folding.update_post(FoldingRegions::new(merged));
     }
 
@@ -201,8 +204,8 @@ impl OpenEditor {
 
     /// The end of the document as the view shows it: the end of the last line not hidden.
     pub fn last_shown_position(&self) -> Position {
-        let line = folding::last_shown_line(self.document.lines.len(), self.folding.hidden());
-        Position::new(line, cursor::line_len(&self.document.lines, line))
+        let line = folding::last_shown_line(self.document().lines.len(), self.folding.hidden());
+        Position::new(line, cursor::line_len(&self.document().lines, line))
     }
 }
 

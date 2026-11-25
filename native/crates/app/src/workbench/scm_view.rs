@@ -125,7 +125,7 @@ impl Workbench {
         if method == "$unregisterSourceControl"
             && let Some(handle) = handle
             && let Some((scheme, path)) = self.scm.input_models.remove(&handle)
-            && let Some(index) = self.editors.models.iter().position(|model| model.document.is(&scheme, &path))
+            && let Some(index) = self.editors.models.iter().position(|model| model.document().is(&scheme, &path))
         {
             self.editors.models.remove(index);
             self.editors_changed(cx);

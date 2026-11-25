@@ -73,7 +73,7 @@ impl Workbench {
             .bg(self.color("editor.background"))
             .border_color(self.color("surface.border"))
             .child(self.tab_strip(window, cx))
-            .map(|part| match editor.document.scheme.as_str() {
+            .map(|part| match editor.document().scheme.as_str() {
                 // A webview editor has no breadcrumbs: its resource has no file system provider.
                 WEBVIEW_PANEL_SCHEME => part.child(self.webview_editor_body(editor)),
                 // searchEditor.ts draws its query widget where a text editor has its breadcrumbs.
@@ -86,7 +86,7 @@ impl Workbench {
             })
             .map(|part| match self.editors.active_diff() {
                 Some(diff) => part.child(self.diff_editor_body(diff, editor, window, cx)),
-                None => part.when(!matches!(editor.document.scheme.as_str(), WEBVIEW_PANEL_SCHEME | TERMINAL_SCHEME), |part| part.children(self.unicode_banner(editor, cx)).child(self.text_area(editor, window, cx))),
+                None => part.when(!matches!(editor.document().scheme.as_str(), WEBVIEW_PANEL_SCHEME | TERMINAL_SCHEME), |part| part.children(self.unicode_banner(editor, cx)).child(self.text_area(editor, window, cx))),
             })
             // The active tab reaches into the part's top border, which Chrome still draws over it.
             .child(div().absolute().inset(px(-1.)).border_1().rounded(px(8.)).border_color(self.color("surface.border")))
@@ -136,7 +136,7 @@ impl Workbench {
     fn editor_title_actions(&self, window: &Window, cx: &mut Context<Self>) -> Vec<gpui::AnyElement> {
         let mut actions = self.diff_title_actions(cx);
         let context = self.key_context(window);
-        let resource = self.editors.active().map(|editor| editor.document.uri()).into_iter().collect::<Vec<_>>();
+        let resource = self.editors.active().map(|editor| editor.document().uri()).into_iter().collect::<Vec<_>>();
         let foreground = self.color("icon.foreground");
         for item in self.menus.iter().filter(|item| item.menu == crate::menus::MenuId::EditorTitle && item.group == "navigation" && item.when.as_ref().is_none_or(|when| when.evaluate(&context))) {
             let crate::menus::Entry::Command { id, .. } = &item.entry else { continue };
@@ -170,15 +170,15 @@ impl Workbench {
     fn tab_hover(&self, index: usize) -> impl IntoElement {
         let editor = &self.editors.editors[index];
         // `getTitle(Verbosity.LONG)`: a search editor's and a webview's is its name.
-        let title = match (self.editors.diffs.get(&editor.model_id), editor.document.scheme.as_str()) {
+        let title = match (self.editors.diffs.get(&editor.model_id), editor.document().scheme.as_str()) {
             (Some(diff), _) => diff.title(|side| crate::quick_input::path_label(crate::editor::split_query(&side.scheme, &side.path).0, None)),
             (None, SEARCH_EDITOR_SCHEME | WEBVIEW_PANEL_SCHEME | TERMINAL_SCHEME) => self.editor_name(editor),
             // labels.ts: an untitled label's title is its name and its path.
-            (None, "untitled") if !editor.associated_file => match self.untitled_description(editor) {
+            (None, "untitled") if !editor.text_model().associated_file => match self.untitled_description(editor) {
                 Some(path) => format!("{} \u{2022} {path}", self.editor_name(editor)),
                 None => self.editor_name(editor),
             },
-            (None, _) => crate::quick_input::path_label(&editor.document.path, None),
+            (None, _) => crate::quick_input::path_label(&editor.document().path, None),
         };
         let content = if editor.preview { super::hover::HoverContent::Preview(title) } else { super::hover::HoverContent::Text(title) };
         self.hover_target(("tab-hover", index), content, super::hover::HoverOptions::mouse())
@@ -187,13 +187,13 @@ impl Workbench {
     /// A tab sized to its label (tab.sizing fit): 8px before the label, 30.5px after it for the close action.
     fn tab(&self, index: usize, active: bool, cx: &mut Context<Self>) -> Div {
         let editor = &self.editors.editors[index];
-        let readonly = self.readonly(&editor.document.scheme, &editor.document.path).is_some();
+        let readonly = self.readonly(&editor.document().scheme, &editor.document().path).is_some();
         let action_foreground = if active { self.foreground_or("modernEditorTab.activeForeground") } else { self.foreground_or("tab.inactiveForeground") };
         // tabs.css colors `.tab-label:not(.monaco-decoration-itemColor)`: a decorated label (read-only, no color of its
         // own) inherits the tab's color from multieditortabscontrol.css, `tab.activeForeground` when active.
         let foreground = if active && readonly { self.foreground_or("tab.activeForeground") } else { action_foreground };
         // textFileService.ts decorations: a deleted file's label is struck through in `list.errorForeground`.
-        let orphaned = editor.document.scheme == "file" && self.text_files.orphaned.contains(&editor.document.path);
+        let orphaned = editor.document().scheme == "file" && self.text_files.orphaned.contains(&editor.document().path);
         let label = div()
             .mt(px(3.5))
             .h(px(24.))
@@ -265,7 +265,7 @@ impl Workbench {
     }
 
     fn document_icon(&self, editor: &OpenEditor, line_height: f32, foreground: Rgba) -> Option<Div> {
-        let document = &editor.document;
+        let document = &editor.document();
         // `SearchEditorInput.getIcon`.
         if document.scheme == SEARCH_EDITOR_SCHEME {
             return Some(self.icon("search", 16., 16., foreground).h(px(line_height)));
@@ -279,7 +279,7 @@ impl Workbench {
     /// The file's path below its workspace folder, one item per segment (breadcrumbs.filePath relative), after the
     /// folder's name in a workspace (`BreadcrumbsModel._initFilePathInfo`).
     fn breadcrumbs(&self, editor: &OpenEditor) -> Div {
-        let path = &editor.document.path;
+        let path = &editor.document().path;
         let workspace = self.workspace();
         let folder = workspace.and_then(|workspace| workspace.folder_of(path));
         let relative: PathBuf = match folder {
@@ -323,11 +323,11 @@ impl Workbench {
     }
 
     fn editor_metrics(&self, editor: &OpenEditor, window: &mut Window) -> EditorMetrics {
-        let overrides = config::configuration::Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
+        let overrides = config::configuration::Overrides { resource: Some(&editor.document().path), override_identifier: Some(&editor.document().language_id) };
         // shortcut: only "off" applies; "relative" and "interval" number every line as "on" does.
         // outputView.ts `OutputEditor.getConfigurationOverrides`: output editors hide line numbers.
-        let line_numbers = editor.document.scheme != crate::output::OUTPUT_SCHEME && self.settings.lock().unwrap().get_value(Some("editor.lineNumbers"), &overrides) != Some(serde_json::Value::from("off"));
-        let mut metrics = EditorMetrics::measure(window, editor.document.lines.len(), line_numbers, self.editor_zoom.multiplier());
+        let line_numbers = editor.document().scheme != crate::output::OUTPUT_SCHEME && self.settings.lock().unwrap().get_value(Some("editor.lineNumbers"), &overrides) != Some(serde_json::Value::from("off"));
+        let mut metrics = EditorMetrics::measure(window, editor.document().lines.len(), line_numbers, self.editor_zoom.multiplier());
         // diffEditorEditors.ts `_adjustOptionsForSubEditor`: no folding and no minimap in either side.
         if self.editors.active_diff().is_some() {
             metrics.decorations_width = diff_editor_view::diff_decorations_width(metrics.char_width);
@@ -341,7 +341,7 @@ impl Workbench {
         let metrics = self.editor_metrics(editor, window);
         let head = editor.selection().head;
         let viewport = self.editors.viewport;
-        let left = metrics.content_left() + visible_column(&editor.document.lines[head.line], head.column, editor.document.indentation.tab_size) as f32 * metrics.char_width - editor.scroll.left;
+        let left = metrics.content_left() + visible_column(&editor.document().lines[head.line], head.column, editor.document().indentation.tab_size) as f32 * metrics.char_width - editor.scroll.left;
         let top = editor.line_top(editor.view_line(head.line), viewport) - editor.scroll.top + metrics.line_height;
         let origin = self.text_area_bounds.get().origin;
         Some(point(px(origin.x + left), px(origin.y + top)))
@@ -470,7 +470,7 @@ impl Workbench {
                 MouseButton::Right,
                 // Below the last line (MouseTargetType.CONTENT_EMPTY): the position is the end of the last line.
                 cx.listener(|workbench, event: &MouseDownEvent, window, cx| {
-                    let last = workbench.editors.active().expect("the text area shows an editor").document.lines.len() - 1;
+                    let last = workbench.editors.active().expect("the text area shows an editor").document().lines.len() - 1;
                     workbench.show_editor_context_menu(last, f32::MAX, event.position, window, cx);
                 }),
             ))
@@ -534,7 +534,7 @@ impl Workbench {
             let Some(editor) = workbench.editors.active_mut() else { return };
             // A picked command runs before GPUI reports the restored focus; upstream's delayed query, started on
             // focus, is cancelled by that command's edit (`onDidChangeModelContent` stops it).
-            let returned = blurred_at.take().is_none_or(|(model, version)| model != editor.model_id || version == editor.version_id);
+            let returned = blurred_at.take().is_none_or(|(model, version)| model != editor.model_id || version == editor.text_model().version_id);
             let reactivated = deactivated.take();
             if returned && !reactivated {
                 editor.refresh_highlights();
@@ -556,7 +556,7 @@ impl Workbench {
         self.text_drag = None;
         if let Some(editor) = self.editors.active_mut() {
             editor.highlights.clear();
-            blurred_at.set(Some((editor.model_id, editor.version_id)));
+            blurred_at.set(Some((editor.model_id, editor.text_model().version_id)));
         }
         self.editor_blurred_auto_save(cx);
         cx.notify();
@@ -578,12 +578,14 @@ impl Workbench {
             editor.forget_line_widths();
         }
         for view_line in visible_lines {
-            let text = &editor.document.lines[editor.model_line(view_line)];
-            let tab_size = editor.document.indentation.tab_size;
+            let document = editor.document();
+            let text = &document.lines[editor.model_line(view_line)];
+            let tab_size = editor.document().indentation.tab_size;
             let width = match line_overflow(text, self.stop_rendering_line_after) {
                 None => visible_column(text, text.chars().count(), tab_size) as f32 * viewport.char_width,
                 Some((limit, _, label)) => visible_column(text, limit, tab_size) as f32 * viewport.char_width + show_more_width(&label, viewport.char_width),
             };
+            drop(document);
             editor.saw_line_width(width);
         }
         let moved = editor.set_scroll(editor.scroll.top, editor.scroll.left, viewport);
@@ -781,7 +783,7 @@ impl Workbench {
         let focused = self.editor_focus.is_focused(window);
         let scroll_left = editor.scroll.left;
         let selections = &editor.selections;
-        let tab_size = editor.document.indentation.tab_size;
+        let tab_size = editor.document().indentation.tab_size;
         let primary_line = editor.selection().head.line;
         // currentLineHighlight.ts: every cursor's line, drawn only while all selections are empty.
         let all_empty = selections.iter().all(|selection| selection.is_empty());
@@ -810,7 +812,7 @@ impl Workbench {
         let block_cursor = self.setting(if self.overtype { "editor.overtypeCursorStyle" } else { "editor.cursorStyle" }) == json!("block");
         let cursor_background = self.theme.color("editorCursor.background");
         // outputView.ts `OutputEditor.getConfigurationOverrides`: renderLineHighlight none.
-        let line_highlight = editor.document.scheme != crate::output::OUTPUT_SCHEME;
+        let line_highlight = editor.document().scheme != crate::output::OUTPUT_SCHEME;
         let char_width = metrics.char_width;
         let fold_controls = self.fold_controls.opacity(Instant::now());
         let fold_control_color = self.color("editorGutter.foldingControlForeground");
@@ -829,7 +831,7 @@ impl Workbench {
         // viewLines.ts linesVisibleRangesForRange: a selected line break is one typicalHalfwidthCharacterWidth wide.
         let selection_range = |selection: Selection, view_line: usize| {
             let line = editor.model_line(view_line);
-            let text = &editor.document.lines[line];
+            let text = &editor.document().lines[line];
             let (start, end, line_break) = selected_columns(selection, line, text)?;
             let left = visible_column(text, start, tab_size) as f32 * char_width;
             Some((left, visible_column(text, end, tab_size) as f32 * char_width + if line_break { char_width } else { 0. }))
@@ -843,7 +845,7 @@ impl Workbench {
         range
             .map(|view_line| {
                 let index = editor.model_line(view_line);
-                let text = &editor.document.lines[index];
+                let text = &editor.document().lines[index];
                 let collapsed = fold_starts.get(&index).copied();
                 // lineNumbers.ts marks only the primary cursor's line active.
                 let number = div()
@@ -912,8 +914,8 @@ impl Workbench {
                     pieces.push(rest);
                 }
                 content = content.children(inner_corners).children(pieces);
-                for level in 0..editor.guides[index] {
-                    let x = (level * editor.document.indentation.indent_size()) as f32 * char_width;
+                for level in 0..editor.text_model().guides[index] {
+                    let x = (level * editor.document().indentation.indent_size()) as f32 * char_width;
                     content = content.child(div().absolute().top_0().left(px(x)).w(px(1.)).h_full().bg(colors.guide));
                 }
                 // foldingDecorations.ts COLLAPSED_HIGHLIGHTED_VISUAL_DECORATION: .folded-background over the whole line.
@@ -1001,7 +1003,7 @@ impl Workbench {
                     let marks: Vec<_> = marks.into_iter().map(|mark| (visible_column(text, mark, tab_size) as f32 * char_width, text.chars().nth(mark) == Some('\t'))).collect();
                     content = content.child(whitespace_canvas(marks, char_width, line_height, whitespace_color));
                 }
-                let highlights = editor.document.tokens.highlights(&self.theme, &self.languages, &editor.document.lines, index, tab_size);
+                let highlights = editor.document().tokens.highlights(&self.theme, &self.languages, &editor.document().lines, index, tab_size);
                 let runs = gpui::combine_highlights(gpui::combine_highlights(highlights, find_colors), self.marker_text_styles(editor, index, tab_size));
                 let mut show_more = None;
                 match line_overflow(text, self.stop_rendering_line_after) {
@@ -1169,8 +1171,8 @@ impl Workbench {
     /// Whether `visible` falls at or after the end of `line`, as a click on a collapsed region's ellipsis does.
     fn at_line_end(&self, line: usize, visible: f32) -> bool {
         let editor = self.editors.active().expect("text is clickable only with an editor open");
-        let text = &editor.document.lines[line];
-        editor.folding.has_hidden() && column_at_visible(text, visible, editor.document.indentation.tab_size) == text.chars().count()
+        let text = &editor.document().lines[line];
+        editor.folding.has_hidden() && column_at_visible(text, visible, editor.document().indentation.tab_size) == text.chars().count()
     }
 
     /// folding.ts `onEditorMouseUp`: a release on the line pressed toggles its region, with Alt the regions around
@@ -1203,10 +1205,10 @@ impl Workbench {
         if editor.selections.len() > 100 {
             return Vec::new();
         }
-        let lines = &editor.document.lines;
+        let lines = &editor.document().lines;
         let mut matches = Vec::new();
         for selection in editor.selections.iter().filter(|selection| selection.is_empty()) {
-            matches.extend(editor.document.tokens.bracket_match(&self.theme, &self.languages, lines, (selection.head.line, selection.head.column)));
+            matches.extend(editor.document().tokens.bracket_match(&self.theme, &self.languages, lines, (selection.head.line, selection.head.column)));
         }
         matches
     }
@@ -1219,9 +1221,9 @@ impl Workbench {
     /// longLinesHelper.ts: a press on the text at or past the cut renders every line whole from then on.
     fn show_long_line(&mut self, line: usize, visible: f32, char_width: f32, cx: &mut Context<Self>) {
         let editor = self.editors.active().expect("text is clickable only with an editor open");
-        let text = &editor.document.lines[line];
+        let text = &editor.document().lines[line];
         let Some((limit, _, label)) = line_overflow(text, self.stop_rendering_line_after) else { return };
-        let tab_size = editor.document.indentation.tab_size;
+        let tab_size = editor.document().indentation.tab_size;
         // The "Show more" span is text too; a press right of it is empty content.
         let span_end = visible_column(text, limit, tab_size) as f32 + show_more_width(&label, char_width) / char_width;
         if column_at_visible(text, visible, tab_size) + 1 >= limit && visible < span_end {
@@ -1238,13 +1240,17 @@ impl Workbench {
             false => (modifiers.alt, modifiers.control || modifiers.platform),
         };
         let editor = self.editors.active_mut().expect("text is clickable only with an editor open");
-        let text = &editor.document.lines[line];
-        let tab_size = editor.document.indentation.tab_size;
+        let document = editor.document();
+        let text = &document.lines[line];
+        let tab_size = document.indentation.tab_size;
         let column = match line_overflow(text, self.stop_rendering_line_after) {
             // The reference puts a press on the "Show more" span before the last drawn char.
             Some((limit, _, _)) if visible >= visible_column(text, limit, tab_size) as f32 => limit - 1,
             _ => column_at_visible(text, visible, tab_size),
         };
+        let word = word_at(text, column).unwrap_or(column..column);
+        let line_end = if line + 1 < document.lines.len() { Position::new(line + 1, 0) } else { Position::new(line, text.chars().count()) };
+        drop(document);
         let position = Position::new(line, column);
         let before = editor.selections.clone();
         if multi_cursor && click_count < 4 {
@@ -1276,14 +1282,12 @@ impl Workbench {
         }
         match click_count {
             2 => {
-                let word = word_at(text, column).unwrap_or(column..column);
                 editor.move_to(Position::new(line, word.start), false);
                 editor.move_to(Position::new(line, word.end), true);
             }
             3.. => {
-                let end = if line + 1 < editor.document.lines.len() { Position::new(line + 1, 0) } else { Position::new(line, text.chars().count()) };
                 editor.move_to(Position::new(line, 0), false);
-                editor.move_to(end, true);
+                editor.move_to(line_end, true);
             }
             _ if select && (column_selection || modifiers.alt) => {
                 let reveal = editor.column_select_to_pointer(line, mouse_column(visible), true);
@@ -1350,7 +1354,7 @@ impl Workbench {
     /// decorationsOverviewRuler.ts `_render`, in device pixels: word highlights, matched brackets and find matches in the center lane, the cursor
     /// across all lanes, then the 1px border on the left and top edges.
     fn overview_ruler(&self, editor: &OpenEditor) -> gpui::Canvas<()> {
-        let line_count = editor.document.lines.len();
+        let line_count = editor.document().lines.len();
         let highlight_lines: Vec<(usize, usize)> = editor.highlights.iter().map(|(line, _)| (*line, *line)).collect();
         let highlight = self.color("editorOverviewRuler.wordHighlightTextForeground");
         let mut bracket_lines = Vec::new();
@@ -1493,7 +1497,7 @@ impl Workbench {
         }
         let prominent_items = items.len();
         // A webview editor or terminal shows no editor status entries.
-        if let Some(editor) = self.editors.active().filter(|editor| !matches!(editor.document.scheme.as_str(), WEBVIEW_PANEL_SCHEME | TERMINAL_SCHEME)) {
+        if let Some(editor) = self.editors.active().filter(|editor| !matches!(editor.document().scheme.as_str(), WEBVIEW_PANEL_SCHEME | TERMINAL_SCHEME)) {
             items.extend(Self::editor_status_entries(editor, &self.languages));
         }
         let prominent = (self.theme.color("statusBarItem.prominentBackground"), self.color("statusBarItem.prominentForeground"));
@@ -1502,7 +1506,7 @@ impl Workbench {
         style.font_features = FontFeatures(Arc::new(vec![("tnum".into(), 1)]));
         let text_width = |label: &str| window.text_system().shape_line(label.to_owned().into(), px(12.), &[style.to_run(label.len())], None).width;
         // A search editor's input supports neither encodings nor language changes (toEditorWithEncodingSupport, toEditorWithLanguageSupport).
-        let search_editor = self.editors.active().is_some_and(|editor| editor.document.scheme == SEARCH_EDITOR_SCHEME);
+        let search_editor = self.editors.active().is_some_and(|editor| editor.document().scheme == SEARCH_EDITOR_SCHEME);
         let items = items.into_iter().filter(|(_, _, command)| !search_editor || !matches!(*command, "workbench.action.editor.changeEncoding" | "workbench.action.editor.changeLanguageMode"));
         let items = items.enumerate().map(|(index, (label, tooltip, command))| {
             let hover = self.hover_target(tooltip, super::hover::HoverContent::Text(tooltip.into()), super::hover::HoverOptions::status_bar());
@@ -1537,7 +1541,7 @@ impl Workbench {
 
     /// editorStatus.ts entries of the editor: text, tooltip and command.
     fn editor_status_entries(editor: &OpenEditor, languages: &crate::languages::Languages) -> [(String, &'static str, &'static str); 5] {
-        let document = &editor.document;
+        let document = &editor.document();
         let Indentation { tab_size, insert_spaces, .. } = document.indentation;
         let indent_size = document.indentation.indent_size();
         let indentation = match (insert_spaces, tab_size == indent_size) {
@@ -1610,7 +1614,7 @@ struct LineColors {
 /// editorStatus.ts `getSelectionLabel`: the primary cursor's line and visible column for one cursor, the
 /// count for several, and the chars selected (`getCharacterCountInRange`: code points, a line break as the EOL's length).
 fn selection_label(editor: &OpenEditor) -> String {
-    let document = &editor.document;
+    let document = &editor.document();
     let mut selected = 0;
     for selection in &editor.selections {
         let (start, end) = (selection.start(), selection.end());

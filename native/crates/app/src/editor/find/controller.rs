@@ -93,7 +93,7 @@ pub fn selection_search_string(editor: &OpenEditor, seed: Seed, non_empty_only: 
     if !(seed == Seed::Single && start.line == end.line || seed == Seed::Multiple) {
         return None;
     }
-    let lines = &editor.document.lines;
+    let lines = &editor.document().lines;
     if selection.is_empty() {
         let word = word_at(&lines[start.line], start.column).filter(|_| !non_empty_only)?;
         return Some(lines[start.line].chars().skip(word.start).take(word.len()).collect());
@@ -200,7 +200,8 @@ impl FindController {
             self.change(editor, viewport, NewFindState { search_scope: Some(None), ..Default::default() }, true);
             return;
         }
-        let lines = &editor.document.lines;
+        let document = editor.document();
+        let lines = &document.lines;
         let mut scopes = Vec::new();
         for selection in &editor.selections {
             let (start, mut end) = (selection.start(), selection.end());
@@ -212,6 +213,7 @@ impl FindController {
             }
         }
         if !scopes.is_empty() {
+            drop(document);
             self.change(editor, viewport, NewFindState { search_scope: Some(Some(scopes)), ..Default::default() }, true);
         }
     }
@@ -414,7 +416,7 @@ fn query_change(query: QueryOptions) -> NewFindState {
 
 /// `TextModel.isTooLargeForSyncing`: the text is over `_MODEL_SYNC_LIMIT`, 50 MB.
 fn too_large_for_syncing(editor: &OpenEditor) -> bool {
-    let length: usize = editor.document.lines.iter().map(|line| line.len() + 1).sum();
+    let length: usize = editor.document().lines.iter().map(|line| line.len() + 1).sum();
     length > 50 * 1024 * 1024
 }
 

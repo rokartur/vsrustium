@@ -61,14 +61,15 @@ impl OpenEditor {
                 previous = current;
             }
         }
-        let commands = order.iter().map(|&index| copy_lines_command(&self.document.lines, selections[index], down, ignored[index])).collect();
+        let commands = order.iter().map(|&index| copy_lines_command(&self.document().lines, selections[index], down, ignored[index])).collect();
         self.run_commands_between_stops(commands, id)
     }
 
     /// `DuplicateSelectionAction.run`: an empty selection copies its line down, a selection inserts its text
     /// after itself and selects the copy.
     pub fn duplicate_selection(&mut self) -> Option<ContentChanged> {
-        let lines = &self.document.lines;
+        let document = self.document();
+        let lines = &document.lines;
         let commands = self
             .selections
             .iter()
@@ -77,12 +78,14 @@ impl OpenEditor {
                 false => replace_command_that_selects_text(selection.end(), text_between(lines, selection.start(), selection.end())),
             })
             .collect();
+        drop(document);
         self.run_commands_between_stops(commands, "editor.action.duplicateSelection")
     }
 
     /// `AbstractMoveLinesAction.run`: a `MoveLinesCommand` per selection.
     pub fn move_lines(&mut self, down: bool, auto: AutoIndent) -> Option<ContentChanged> {
-        let model = auto.model(&self.document);
+        let document = self.document();
+        let model = auto.model(&document);
         let id = if down { "editor.action.moveLinesDownAction" } else { "editor.action.moveLinesUpAction" };
         let mut empty_line_moves = Vec::new();
         let commands = self
@@ -94,6 +97,7 @@ impl OpenEditor {
                 command
             })
             .collect();
+        drop(document);
         let selections_before = self.selections.clone();
         let change = self.run_commands_between_stops(commands, id);
         // Upstream moves an empty line over an empty line with a no-op edit, which still runs `computeCursorState`.
@@ -109,20 +113,23 @@ impl OpenEditor {
     /// any selection has nothing to sort or is sorted already.
     pub fn sort_lines(&mut self, descending: bool) -> Option<ContentChanged> {
         let id = if descending { "editor.action.sortLinesDescending" } else { "editor.action.sortLinesAscending" };
-        let lines = &self.document.lines;
+        let document = self.document();
+        let lines = &document.lines;
         let selections = whole_document_for_one_line(lines, &self.selections);
         let can_run = |selection| sort_data(lines, selection, descending).is_some_and(|(_, _, before, after)| before != after);
         if !selections.iter().all(|&selection| can_run(selection)) {
             return None;
         }
         let commands = selections.into_iter().map(|selection| sort_lines_command(lines, selection, descending)).collect();
+        drop(document);
         self.run_commands_between_stops(commands, id)
     }
 
     /// `DeleteDuplicateLinesAction.run`: each selection's lines keep the first of equal lines and end up
     /// selected; one selection on one line works on the whole document and keeps the cursors.
     pub fn delete_duplicate_lines(&mut self) -> Option<ContentChanged> {
-        let lines = &self.document.lines;
+        let document = self.document();
+        let lines = &document.lines;
         if lines.len() == 1 && lines[0].is_empty() {
             return None;
         }
@@ -141,13 +148,15 @@ impl OpenEditor {
             end_selections.push(Selection { anchor: Position::new(first, 0), head: Position::new(first + kept.len() - 1, last.chars().count()) });
             lines_deleted += end - start + 1 - kept.len();
         }
+        drop(document);
         self.execute_edits_between_stops(edits, (!one_line).then_some(end_selections), "editor.action.removeDuplicateLines")
     }
 
     /// `ReverseLinesAction.run`: each selection's lines in reverse order, without a last empty line of the
     /// document; one selection on one line reverses the whole document. Cursors move with their lines.
     pub fn reverse_lines(&mut self) -> Option<ContentChanged> {
-        let lines = &self.document.lines;
+        let document = self.document();
+        let lines = &document.lines;
         let original = self.selections.clone();
         let selections = whole_document_for_one_line(lines, &self.selections);
         let mut edits = Vec::new();
@@ -175,13 +184,15 @@ impl OpenEditor {
                 false => Selection { anchor: Position::new(moved_line(original.anchor.line), original.anchor.column), head: Position::new(moved_line(original.head.line), original.head.column) },
             });
         }
+        drop(document);
         self.execute_edits_between_stops(edits, Some(end_selections), "editor.action.reverseLines")
     }
 
     /// `DeleteLinesAction.run`: the lines of the selections, merged where they touch, each with a line break;
     /// each cursor keeps its column on the line that takes their place.
     pub fn delete_lines(&mut self) -> Option<ContentChanged> {
-        let lines = &self.document.lines;
+        let document = self.document();
+        let lines = &document.lines;
         if lines.len() == 1 && lines[0].is_empty() {
             return None;
         }
@@ -199,6 +210,7 @@ impl OpenEditor {
             end_selections.push(Selection::caret(Position::new(start.line - lines_deleted, column)));
             lines_deleted += last - first + 1;
         }
+        drop(document);
         self.execute_edits_between_stops(edits, Some(end_selections), "editor.action.deleteLines")
     }
 
@@ -210,7 +222,8 @@ impl OpenEditor {
     /// `InsertLineBeforeAction.run`: Enter at the end of the line above each cursor; above the first line the
     /// new line is empty. Only an undo stop before, as upstream.
     pub fn insert_line_before(&mut self, auto: AutoIndent) -> Option<ContentChanged> {
-        let model = auto.model(&self.document);
+        let document = self.document();
+        let model = auto.model(&document);
         let commands = self
             .selections
             .iter()
@@ -219,14 +232,17 @@ impl OpenEditor {
                 line => enter_at_line_end(&model, line - 1),
             })
             .collect();
+        drop(document);
         self.push_undo_stop();
         self.execute_commands(commands, command("editor.action.insertLineBefore"))
     }
 
     /// `InsertLineAfterAction.run`: Enter at the end of each cursor's line.
     pub fn insert_line_after(&mut self, auto: AutoIndent) -> Option<ContentChanged> {
-        let model = auto.model(&self.document);
+        let document = self.document();
+        let model = auto.model(&document);
         let commands = self.selections.iter().map(|selection| enter_at_line_end(&model, selection.head.line)).collect();
+        drop(document);
         self.push_undo_stop();
         self.execute_commands(commands, command("editor.action.insertLineAfter"))
     }
@@ -234,7 +250,8 @@ impl OpenEditor {
     /// `DeleteAllLeftAction.run`: each cursor's text to its line start, or the line break before it at column 1;
     /// a selection widens to its first line's start. Ranges that touch merge, the primary cursor comes first.
     pub fn delete_all_left(&mut self) -> Option<ContentChanged> {
-        let lines = &self.document.lines;
+        let document = self.document();
+        let lines = &document.lines;
         let mut ranges: Vec<(Position, Position)> = self.selections.iter().map(|&selection| cursor::delete_all_left_range(lines, selection)).collect();
         ranges.sort();
         let ranges = merge_touching(ranges);
@@ -248,12 +265,14 @@ impl OpenEditor {
         }
         let end_selections = primary_first(carets);
         let edits = ranges.into_iter().map(|(start, end)| (start, end, String::new(), false)).collect();
+        drop(document);
         self.execute_edits_between_stops(edits, Some(end_selections), "deleteAllLeft")
     }
 
     /// `DeleteAllRightAction.run`: each cursor's text to its line end, or the line break after it at the line end.
     pub fn delete_all_right(&mut self) -> Option<ContentChanged> {
-        let lines = &self.document.lines;
+        let document = self.document();
+        let lines = &document.lines;
         let mut ranges: Vec<(Position, Position)> = self.selections.iter().map(|&selection| cursor::delete_all_right_range(lines, selection)).collect();
         ranges.sort();
         let ranges = merge_touching(ranges);
@@ -261,13 +280,15 @@ impl OpenEditor {
         let carets = ranges.iter().map(|&(start, end)| (Selection::caret(start), intersects((start, end), (primary.start(), primary.end())))).collect();
         let end_selections = primary_first(carets);
         let edits = ranges.into_iter().map(|(start, end)| (start, end, String::new(), false)).collect();
+        drop(document);
         self.execute_edits_between_stops(edits, Some(end_selections), "deleteAllRight")
     }
 
     /// `JoinLinesAction.run`: each selection's lines, or a cursor's line and the next, become one line, the
     /// indentation of the joined lines replaced by one space.
     pub fn join_lines(&mut self) -> Option<ContentChanged> {
-        let lines = &self.document.lines;
+        let document = self.document();
+        let lines = &document.lines;
         let mut primary = self.selection();
         let mut selections = self.selections.clone();
         selections.sort_by_key(|selection| (selection.start(), selection.end()));
@@ -339,13 +360,15 @@ impl OpenEditor {
             line_offset += end_line - start_line;
         }
         let end_selections = std::iter::once(end_primary).chain(others).collect();
+        drop(document);
         self.execute_edits_between_stops(edits, Some(end_selections), "editor.action.joinLines")
     }
 
     /// `TransposeAction.run`: each cursor swaps the characters around it and moves right; at a line end it swaps
     /// the last character with the line break.
     pub fn transpose(&mut self) -> Option<ContentChanged> {
-        let lines = &self.document.lines;
+        let document = self.document();
+        let lines = &document.lines;
         let mut commands = Vec::new();
         for selection in &self.selections {
             if !selection.is_empty() {
@@ -372,12 +395,14 @@ impl OpenEditor {
         while commands.len() < self.selections.len() {
             commands.push(Command { edits: Vec::new(), tracked: None, cursor_state: Box::new(|_, _| unreachable!("a command without edits keeps its selection")) });
         }
+        drop(document);
         self.run_commands_between_stops(commands, "editor.action.transpose")
     }
 
     /// `AbstractCaseAction.run`: each selection's text, or the word at an empty cursor, in the new case.
     pub fn transform_case(&mut self, transform: CaseTransform) -> Option<ContentChanged> {
-        let lines = &self.document.lines;
+        let document = self.document();
+        let lines = &document.lines;
         let mut edits = Vec::new();
         for selection in &self.selections {
             let (start, end) = match selection.is_empty() {
@@ -389,6 +414,7 @@ impl OpenEditor {
             };
             edits.push((start, end, modify_case(&text_between(lines, start, end), transform), false));
         }
+        drop(document);
         self.execute_edits_between_stops(edits, None, transform.id())
     }
 

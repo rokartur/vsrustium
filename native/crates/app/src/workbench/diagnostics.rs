@@ -77,7 +77,7 @@ impl Workbench {
     pub(super) fn update_marker_decorations(&mut self, resources: Option<&[String]>) {
         let service = &self.diagnostics.service;
         for editor in self.editors.editors.iter_mut().chain(&mut self.editors.models) {
-            let resource = editor.document.uri_string();
+            let resource = editor.document().uri_string();
             if resources.is_some_and(|resources| !resources.contains(&resource)) {
                 continue;
             }
@@ -89,9 +89,10 @@ impl Workbench {
     /// The marker decorations' `className`s on model line `line`, lowest z-index first: the squiggles of
     /// codeEditorWidget.ts and editor.css; `x` maps a char column to its left edge.
     pub(super) fn marker_line_decorations(&self, editor: &OpenEditor, line: usize, char_width: f32, x: impl Fn(usize) -> f32) -> Vec<AnyElement> {
-        let mut decorations: Vec<&MarkerDecoration> = editor.markers.iter().filter(|decoration| decoration.start.line <= line && line <= decoration.end.line).collect();
+        let model = editor.text_model();
+        let mut decorations: Vec<&MarkerDecoration> = model.markers.iter().filter(|decoration| decoration.start.line <= line && line <= decoration.end.line).collect();
         decorations.sort_by_key(|decoration| decoration.marker.severity);
-        let line_length = editor.document.lines[line].chars().count();
+        let line_length = editor.document().lines[line].chars().count();
         let mut elements = Vec::new();
         for decoration in decorations {
             let from = if line == decoration.start.line { decoration.start.column } else { 0 };
@@ -122,7 +123,7 @@ impl Workbench {
     /// unnecessary code at `editorUnnecessaryCode.opacity` with `editor.showUnused`, deprecated code struck through
     /// with `editor.showDeprecated`.
     pub(super) fn marker_text_styles(&self, editor: &OpenEditor, line: usize, tab_size: usize) -> Vec<(Range<usize>, HighlightStyle)> {
-        let text = &editor.document.lines[line];
+        let text = &editor.document().lines[line];
         let byte = |column: usize| expand_tabs(&text.chars().take(column).collect::<String>(), tab_size).len();
         let fade = match self.setting("editor.showUnused") != false {
             true => self.theme.color("editorUnnecessaryCode.opacity").map(|opacity| 1. - opacity.a),
@@ -130,7 +131,7 @@ impl Workbench {
         };
         let strikethrough = (self.setting("editor.showDeprecated") != false).then(|| StrikethroughStyle { thickness: px(1.), color: self.theme.color("editor.foreground").map(Into::into) });
         let mut styles = Vec::new();
-        for decoration in editor.markers.iter().filter(|decoration| decoration.start.line <= line && line <= decoration.end.line) {
+        for decoration in editor.text_model().markers.iter().filter(|decoration| decoration.start.line <= line && line <= decoration.end.line) {
             let style = match (decoration.marker.has_tag(DEPRECATED), decoration.marker.has_tag(UNNECESSARY)) {
                 (true, _) => HighlightStyle { strikethrough, ..Default::default() },
                 (false, true) => HighlightStyle { fade_out: fade, ..Default::default() },
@@ -149,7 +150,7 @@ impl Workbench {
     /// The marker decorations' `overviewRuler` line ranges in `OverviewRulerLane.Right` by z-index: infos, warnings, errors.
     pub(super) fn marker_ruler_lines(&self, editor: &OpenEditor) -> [(Vec<(usize, usize)>, Rgba); 3] {
         let lines = |severity: u8| {
-            let mut lines: Vec<(usize, usize)> = editor.markers.iter().filter(|decoration| decoration.marker.severity == severity).map(|decoration| (decoration.start.line, decoration.end.line)).collect();
+            let mut lines: Vec<(usize, usize)> = editor.text_model().markers.iter().filter(|decoration| decoration.marker.severity == severity).map(|decoration| (decoration.start.line, decoration.end.line)).collect();
             lines.sort();
             lines
         };
@@ -165,7 +166,7 @@ impl Workbench {
         let mut ranges = Vec::new();
         for (severity, key) in [(INFO, "minimap.infoHighlight"), (WARNING, "minimap.warningHighlight"), (ERROR, "minimap.errorHighlight")] {
             let Some(color) = self.theme.color(key) else { continue };
-            ranges.extend(editor.markers.iter().filter(|decoration| decoration.marker.severity == severity).map(|decoration| (decoration.start, decoration.end, color)));
+            ranges.extend(editor.text_model().markers.iter().filter(|decoration| decoration.marker.severity == severity).map(|decoration| (decoration.start, decoration.end, color)));
         }
         ranges
     }

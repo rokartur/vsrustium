@@ -269,7 +269,7 @@ impl Workbench {
 
     /// `isViewVisible(TERMINAL_VIEW_ID)`: the group shows the Terminal view's tab.
     pub(crate) fn terminal_view_visible(&self) -> bool {
-        self.editors.active().is_some_and(|editor| editor.document.scheme == TERMINAL_SCHEME)
+        self.editors.active().is_some_and(|editor| editor.document().scheme == TERMINAL_SCHEME)
     }
 
     /// `terminalGroupService.showPanel(true)`: shows the view, creating a terminal when there is none.
@@ -282,7 +282,7 @@ impl Workbench {
     }
 
     fn show_terminal_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        match self.editors.editors.iter().position(|editor| editor.document.scheme == TERMINAL_SCHEME) {
+        match self.editors.editors.iter().position(|editor| editor.document().scheme == TERMINAL_SCHEME) {
             Some(index) => self.editors.activate(index),
             None => {
                 let document = TextDocument::from_text(TERMINAL_SCHEME, Path::new(TERMINAL_VIEW_ID), "", "utf8".into(), None, &self.languages, &self.settings.lock().unwrap());
@@ -295,7 +295,7 @@ impl Workbench {
 
     /// `viewsService.closeView(TERMINAL_VIEW_ID)`: the terminals keep running.
     fn close_terminal_view(&mut self, cx: &mut Context<Self>) {
-        let Some(index) = self.editors.editors.iter().position(|editor| editor.document.scheme == TERMINAL_SCHEME) else { return };
+        let Some(index) = self.editors.editors.iter().position(|editor| editor.document().scheme == TERMINAL_SCHEME) else { return };
         self.editors.close(index);
         self.editors_changed(cx);
     }

@@ -562,7 +562,8 @@ impl Workbench {
         let allow_unselected_word = allow_unselected_word && self.setting("search.seedWithNearestWord") == true;
         let Some(editor) = self.editors.active() else { return false };
         let selection = editor.selection();
-        let lines = &editor.document.lines;
+        let document = editor.document();
+        let lines = &document.lines;
         let text = match selection.is_empty() {
             true if allow_unselected_word => {
                 let line = &lines[selection.head.line];
@@ -579,6 +580,7 @@ impl Workbench {
         self.search.input_mut(SearchField::Query).value.set_value(text);
         self.search.validation = Self::validate_search_input(&self.search);
         if let Some(delay) = self.search_on_type_delay(&self.search) {
+            drop(document);
             self.trigger_search(true, Some(delay), window, cx);
         }
         true
@@ -876,7 +878,7 @@ impl Workbench {
         let setting = move |folder: &Path, key: &str| settings.lock().unwrap().get_value(Some(key), &Overrides { resource: Some(folder), ..Overrides::default() }).unwrap_or(Value::Null);
         let mut query = search_paths::expanded_text_query(&pattern, &workspace, include, exclude, &options, &setting)?;
         if config.only_open_editors {
-            let open_editors: Vec<PathBuf> = self.editors.editors.iter().filter(|editor| editor.document.scheme == "file").map(|editor| editor.document.path.clone()).collect();
+            let open_editors: Vec<PathBuf> = self.editors.editors.iter().filter(|editor| editor.document().scheme == "file").map(|editor| editor.document().path.clone()).collect();
             search_paths::restrict_to_open_editors(&mut query, &open_editors, &workspace);
         }
         let searched = query.folder_queries.len();
@@ -897,7 +899,7 @@ impl Workbench {
         let params = SearchParams { search_string: &content_pattern.pattern, is_regex: content_pattern.is_reg_exp, match_case: content_pattern.is_case_sensitive, word_separators: content_pattern.is_word_match.then_some(word_separators.as_str()) };
         let mut local = Vec::new();
         for editor in &self.editors.editors {
-            let document = &editor.document;
+            let document = &editor.document();
             if !matches!(document.scheme.as_str(), "file" | "untitled") || !search::query::path_included_in_query(query, &document.path) {
                 continue;
             }
@@ -1024,7 +1026,7 @@ impl Workbench {
         let word_separators = self.setting("editor.wordSeparators").as_str().unwrap_or_default().to_string();
         let params = SearchParams { search_string: &pattern.pattern, is_regex: pattern.is_reg_exp, match_case: pattern.is_case_sensitive, word_separators: pattern.is_word_match.then_some(word_separators.as_str()) };
         let folder = file.folder;
-        self.search.result.set_model_matches(folder, path, &model.document.lines, &params);
+        self.search.result.set_model_matches(folder, path, &model.document().lines, &params);
         self.update_result_count_message();
     }
 
@@ -1152,10 +1154,12 @@ impl Workbench {
             range = SearchRange { start_line: range.start_line, start_column: range.start_column, end_line: range.start_line, end_column: range.start_column + utf16_len(&replace) };
         }
         self.open_file(path.clone(), pinned, window, cx);
-        let Some(editor) = self.editors.active().filter(|editor| editor.document.path == path) else { return };
-        let lines = &editor.document.lines;
+        let Some(editor) = self.editors.active().filter(|editor| editor.document().path == path) else { return };
+        let document = editor.document();
+        let lines = &document.lines;
         let column = |line: usize, utf16: usize| lines.get(line).map_or(utf16, |text| char_column(text, utf16)) + 1;
         let text_range = TextRange { start_line_number: range.start_line + 1, start_column: column(range.start_line, range.start_column), end_line_number: range.end_line + 1, end_column: column(range.end_line, range.end_column) };
+        drop(document);
         self.select_range(&path, text_range, cx);
         match preserve_focus {
             true => window.focus(&self.search.focus.clone(), cx),

@@ -93,15 +93,16 @@ impl Test {
 
     /// `setValue`: one edit over the whole text, then the model's content listener.
     fn set_value(&mut self, text: &str) {
-        let end = last_position(&self.editor.document.lines);
+        let end = last_position(&self.editor.document().lines);
         let change = self.editor.execute_edits(vec![(Position::default(), end, text.into(), false)], Some(vec![Selection::caret(Position::default())]), EditReason::Unknown("setValue")).expect("text changed");
         if let Some(model) = &mut self.model {
             model.content_changed(&mut self.editor, &mut self.state, VIEWPORT, &change);
         }
     }
 
-    fn line(&self, line: usize) -> &str {
-        &self.editor.document.lines[line - 1]
+    // The model sits behind a RefCell; a leaked copy keeps the assertions' `&str` tuples.
+    fn line(&self, line: usize) -> &'static str {
+        self.editor.document().lines[line - 1].clone().leak()
     }
 
     fn next(&mut self) {
@@ -971,7 +972,7 @@ fn issue_32522_replaceall_with_on_more_than_1000_matches() {
     t.replace_all();
 
     let expected: String = (0..1100).map(|i| format!("a line{i}\n")).collect::<String>() + "a ";
-    assert_eq!(t.editor.document.lines.join("\n"), expected);
+    assert_eq!(t.editor.document().lines.join("\n"), expected);
 
     t.dispose();
 }
@@ -989,10 +990,10 @@ fn replace_all_past_the_matches_limit_is_one_edit_keeping_the_selection() {
     t.replace_all();
 
     let expected: String = (0..20100).map(|i| format!("line-{i}\n")).collect();
-    assert_eq!(t.editor.document.lines.join("\n"), expected);
+    assert_eq!(t.editor.document().lines.join("\n"), expected);
     assert_eq!(t.editor.selections, [selection(5, 3, 5, 3)], "a selection inside a match stays");
     assert!(t.editor.undo().is_some());
-    assert_eq!(t.editor.document.lines.join("\n"), initial);
+    assert_eq!(t.editor.document().lines.join("\n"), initial);
 }
 
 /// issue #19740 Find and replace capture group/backreference inserts `undefined` instead of empty string

@@ -30,14 +30,14 @@ fn a_reopened_file_takes_back_its_cursors_folds_and_scroll() {
     editor.click_fold_control(3, true, false, false);
     editor.set_selections(vec![Selection { anchor: Position::new(30, 1), head: Position::new(31, 3) }]);
     editor.set_scroll(10. * viewport.line_height + 5., 0., viewport);
-    let (folding, scroll, selections) = (editor.folding.get_memento(&editor.document.lines), editor.scroll.top, editor.selections.clone());
+    let (folding, scroll, selections) = (editor.folding.get_memento(&editor.document().lines), editor.scroll.top, editor.selections.clone());
     assert!(folding.is_some());
     group.close(0);
 
     group.open(file(&long_text()), false);
     let editor = &group.editors[0];
     assert_eq!(editor.selections, selections);
-    assert_eq!(editor.folding.get_memento(&editor.document.lines), folding);
+    assert_eq!(editor.folding.get_memento(&editor.document().lines), folding);
     assert_eq!(editor.scroll.top, scroll);
 }
 

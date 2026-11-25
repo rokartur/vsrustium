@@ -99,7 +99,7 @@ impl Workbench {
     /// mainThreadWorkspace.ts `$save`: the editors of `uri` saved even when clean (`force`); the URI once saved.
     pub(crate) fn save_resource(&mut self, uri: &Value, cx: &mut Context<Self>) -> Outcome {
         let Ok((scheme, path)) = uri_parts(uri) else { return Outcome::done() };
-        let indexes: Vec<usize> = (0..self.editors.editors.len()).filter(|index| self.editors.editors[*index].document.is(scheme, &path)).collect();
+        let indexes: Vec<usize> = (0..self.editors.editors.len()).filter(|index| self.editors.editors[*index].document().is(scheme, &path)).collect();
         let saves: Vec<_> = indexes.into_iter().map(|index| self.save_editor(index, cx)).collect();
         let uri = uri.clone();
         let saved_any = !saves.is_empty();
@@ -109,7 +109,7 @@ impl Workbench {
     /// mainThreadWorkspace.ts `$saveAll`: the dirty editors, untitled ones only with `include_untitled`; true once
     /// every one is saved.
     pub(crate) fn save_all(&mut self, include_untitled: bool, cx: &mut Context<Self>) -> Outcome {
-        let dirty: Vec<usize> = self.dirty_editors().into_iter().filter(|index| include_untitled || self.editors.editors[*index].document.scheme != "untitled").collect();
+        let dirty: Vec<usize> = self.dirty_editors().into_iter().filter(|index| include_untitled || self.editors.editors[*index].document().scheme != "untitled").collect();
         let saves = dirty.into_iter().map(|index| self.save_editor(index, cx)).collect();
         when_saved(saves, Value::Bool, cx)
     }
@@ -236,8 +236,9 @@ impl Workbench {
     /// `editorService.revert` of one editor: a file's model reads its file again and is clean; an untitled model
     /// is emptied and answers true: its input is disposed (untitledTextEditorInput.ts), so the caller closes it.
     pub(super) fn revert_editor(&mut self, index: usize, cx: &mut Context<Self>) -> bool {
-        let document = &self.editors.editors[index].document;
+        let document = self.editors.editors[index].document();
         let (scheme, path) = (document.scheme.clone(), document.path.clone());
+        drop(document);
         match scheme.as_str() {
             SEARCH_EDITOR_SCHEME => {
                 self.revert_search_editor(index, cx);

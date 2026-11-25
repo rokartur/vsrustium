@@ -52,8 +52,9 @@ impl Workbench {
             return vec![Accept::Nothing];
         };
         let state = self.quick_access.goto_line.get_or_insert_with(|| GotoLineState { model_id: editor.model_id, selections: editor.selections.clone(), scroll: editor.scroll, highlight: None });
-        let document = &editor.document;
+        let document = editor.document();
         let parsed = parse_position(&document.lines, document.eol, document.indentation.tab_size, &value.trim()[GO_TO_LINE_PREFIX.len()..], zero_based);
+        drop(document);
         state.highlight = parsed.position;
         if let Some(position) = parsed.position {
             editor.reveal_range(position, position, VerticalReveal::Center, viewport);

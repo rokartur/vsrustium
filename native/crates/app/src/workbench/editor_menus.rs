@@ -13,7 +13,7 @@ impl Workbench {
     pub(super) fn show_editor_context_menu(&mut self, line: usize, visible: f32, pointer: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.editor_focus, cx);
         let editor = self.editors.active_mut().expect("text is clickable only with an editor open");
-        let position = Position::new(line, column_at_visible(&editor.document.lines[line], visible, editor.document.indentation.tab_size));
+        let position = Position::new(line, column_at_visible(&editor.document().lines[line], visible, editor.document().indentation.tab_size));
         if !editor.selections.iter().any(|selection| selection.start() <= position && position <= selection.end()) {
             editor.move_to(position, false);
             self.editor_edited(None, true, "mouse", cx);
@@ -39,7 +39,7 @@ impl Workbench {
     /// `{ lineNumber, uri }` argument; a click on a line no selection touches selects that line first.
     pub(super) fn show_line_number_context_menu(&mut self, line: usize, pointer: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
         let editor = self.editors.active_mut().expect("the gutter is clickable only with an editor open");
-        let line_end = Position::new(line, editor.document.lines[line].chars().count());
+        let line_end = Position::new(line, editor.document().lines[line].chars().count());
         let touched = editor.selections.iter().any(|selection| !selection.is_empty() && selection.start() <= line_end && Position::new(line, 0) <= selection.end());
         if !touched {
             let before = editor.selections.clone();
@@ -83,7 +83,7 @@ impl Workbench {
 }
 
 fn document_uri(editor: &crate::editor::OpenEditor) -> Value {
-    editor.document.uri()
+    editor.document().uri()
 }
 
 fn point_anchor(pointer: Point<Pixels>) -> Bounds<Pixels> {

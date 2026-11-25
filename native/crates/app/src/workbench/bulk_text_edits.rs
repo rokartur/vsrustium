@@ -35,14 +35,14 @@ impl Workbench {
             self.editors_changed(cx);
         }
         for (scheme, path, group) in &resources {
-            let version_id = self.editors.model(scheme, path).expect("resolved above").version_id;
+            let version_id = self.editors.model(scheme, path).expect("resolved above").text_model().version_id;
             if group.iter().any(|edit| edit["versionId"].as_u64().is_some_and(|expected| expected != u64::from(version_id))) {
                 return Err(serialized_error(&format!("{} has changed in the meantime", uri_string(scheme, path))));
             }
         }
         let clipboard = cx.read_from_clipboard().and_then(|item| item.text());
         for (scheme, ref path, group) in resources {
-            let in_active_editor = self.editors.active().is_some_and(|editor| editor.document.is(scheme, path));
+            let in_active_editor = self.editors.active().is_some_and(|editor| editor.document().is(scheme, path));
             let model = self.editors.model_mut(scheme, path).expect("resolved above");
             let mut eol = None;
             // `ModelEditTask.addEdit`: (start, end, text, insertAsSnippet, keepWhitespace).
@@ -52,7 +52,7 @@ impl Workbench {
                 eol = text_edit["eol"].as_u64().or(eol);
                 let text = text_edit["text"].as_str().unwrap_or_default();
                 let (start, end) = match text_edit["range"].is_null() {
-                    true => (Position::new(0, 0), document_end(&model.document.lines)),
+                    true => (Position::new(0, 0), document_end(&model.document().lines)),
                     false => range(model, &text_edit["range"]),
                 };
                 if (text_edit["range"].is_null() || start == end) && text.is_empty() {
@@ -68,7 +68,7 @@ impl Workbench {
                 let (edits, selections) = snippet_edits(model, &snippets, clipboard.as_deref());
                 model.execute_edits(edits, Some(selections), EditReason::Unknown("snippet"))
             } else {
-                let indentation = model.document.indentation;
+                let indentation = model.document().indentation;
                 let edits = replaces
                     .iter()
                     .map(|&(start, end, text, is_snippet, _)| {
@@ -138,7 +138,7 @@ impl Workbench {
     fn move_models(&mut self, source_scheme: &str, source: &Path, target_scheme: &str, target: &Path) -> bool {
         let mut moved = false;
         for model in self.editors.editors.iter_mut().chain(&mut self.editors.models) {
-            let document = &mut model.document;
+            let mut document = model.document_mut();
             let Some(rest) = document.path.strip_prefix(source).ok().filter(|_| document.scheme == source_scheme) else { continue };
             document.path = if rest.as_os_str().is_empty() { target.to_path_buf() } else { target.join(rest) };
             document.scheme = target_scheme.to_string();
@@ -151,7 +151,7 @@ impl Workbench {
     fn revert_model(&mut self, scheme: &str, path: &Path, bytes: &[u8]) -> bool {
         let document = TextDocument::from_bytes(scheme, path, bytes, None, &self.languages, &self.settings.lock().unwrap());
         let Some(model) = self.editors.model_mut(scheme, path) else { return false };
-        let end = document_end(&model.document.lines);
+        let end = document_end(&model.document().lines);
         model.push_undo_stop();
         let change = model.execute_edits(vec![(Position::new(0, 0), end, document.lines.join("\n"), false)], None, EditReason::ApplyEdits);
         model.push_undo_stop();
@@ -164,7 +164,7 @@ impl Workbench {
 
     /// The change of a model edited without the keyboard: with the cursor when the active editor shows it.
     pub(super) fn send_model_edit(&mut self, scheme: &str, path: &Path, change: &ContentChanged) {
-        match self.editors.active_index().filter(|&index| self.editors.editors[index].document.is(scheme, path)) {
+        match self.editors.active_index().filter(|&index| self.editors.editors[index].document().is(scheme, path)) {
             Some(index) => self.host.send_content_change(&self.editors, index, change),
             None => self.host.send_model_change(&self.editors, self.editors.model(scheme, path).expect("just edited"), change),
         }

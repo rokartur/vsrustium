@@ -142,7 +142,7 @@ fn quick_open_lists_history_and_files_and_opens_at_the_line(cx: &mut TestAppCont
     cx.simulate_keystrokes("enter");
     let (path, selection, preview) = workbench.read_with(cx, |workbench, _| {
         let editor = workbench.editors.active().expect("an opened editor");
-        (editor.document.path.clone(), editor.selection(), editor.preview)
+        (editor.document().path.clone(), editor.selection(), editor.preview)
     });
     assert_eq!(path, folder.join("src/main.ts"));
     assert_eq!(selection, Selection::caret(Position::new(1, 2)));

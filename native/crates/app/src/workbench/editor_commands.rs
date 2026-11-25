@@ -283,8 +283,10 @@ impl Workbench {
             let multicursor_text: Option<Vec<String>> = serde_json::from_value(metadata["multicursorText"].clone()).ok();
             let from_empty_selection = metadata["isFromEmptySelection"] == json!(true);
             let Some(editor) = workbench.editors.active() else { return Outcome::done() };
-            let overrides = Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
+            let document = editor.document();
+            let overrides = Overrides { resource: Some(&document.path), override_identifier: Some(&document.language_id) };
             let overtype = workbench.overtype && workbench.settings.lock().unwrap().get_value(Some("editor.overtypeOnPaste"), &overrides) != Some(json!(false));
+            drop(document);
             workbench.run_on_active_editor(|editor: &mut OpenEditor| editor.paste(clipboard.text(), from_empty_selection, multicursor_text.as_deref(), overtype), cx)
         });
     }
@@ -313,9 +315,11 @@ impl Workbench {
     /// editor's language; each model change it makes reaches the host in turn.
     pub(super) fn run_indenting(&mut self, command: impl FnOnce(&mut OpenEditor, AutoIndent) -> Vec<ContentChanged>, cx: &mut Context<Self>) -> Outcome {
         let Some(editor) = self.editors.active_mut() else { return Outcome::done() };
-        let overrides = Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
+        let document = editor.document();
+        let overrides = Overrides { resource: Some(&document.path), override_identifier: Some(&document.language_id) };
         let strategy = Strategy::from_setting(self.settings.lock().unwrap().get_value(Some("editor.autoIndent"), &overrides).as_ref());
         let selections_before = editor.selections.clone();
+        drop(document);
         let changes = command(editor, AutoIndent { languages: &self.languages, strategy });
         if changes.is_empty() {
             return self.editor_command_ran(None, selections_before, cx);
@@ -349,12 +353,14 @@ impl Workbench {
     /// smartSelect.ts `GrowSelectionAction` and `ShrinkSelectionAction` with the `editor.smartSelect` options.
     fn run_smart_select(&mut self, forward: bool, cx: &mut Context<Self>) -> Outcome {
         let Some(editor) = self.editors.active_mut() else { return Outcome::done() };
-        let overrides = Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
+        let document = editor.document();
+        let overrides = Overrides { resource: Some(&document.path), override_identifier: Some(&document.language_id) };
         let settings = self.settings.lock().unwrap();
         let enabled = |key| settings.get_value(Some(key), &overrides) != Some(json!(false));
         let options = smart_select::Options { select_leading_and_trailing_whitespace: enabled("editor.smartSelect.selectLeadingAndTrailingWhitespace"), select_subwords: enabled("editor.smartSelect.selectSubwords") };
         drop(settings);
         let selections_before = editor.selections.clone();
+        drop(document);
         editor.smart_select(forward, &self.languages, options);
         self.editor_command_ran(None, selections_before, cx)
     }
@@ -364,9 +370,9 @@ impl Workbench {
         let Some(editor) = self.editors.active_mut() else { return Outcome::done() };
         let selections_before = editor.selections.clone();
         let Some((change, (line, range))) = editor.in_place_replace(up, &self.languages) else { return Outcome::done() };
-        let version = editor.version_id;
+        let version = editor.text_model().version_id;
         editor.value_set_replacement = Some((version, line, range));
-        let (scheme, path) = (editor.document.scheme.clone(), editor.document.path.clone());
+        let (scheme, path) = (editor.document().scheme.clone(), editor.document().path.clone());
         cx.spawn(async move |workbench, cx| {
             cx.background_executor().timer(Duration::from_millis(350)).await;
             let _ = workbench.update(cx, |workbench, cx| {
@@ -385,11 +391,13 @@ impl Workbench {
     /// language at each cursor.
     fn run_comment_action(&mut self, kind: Option<LineCommentKind>, cx: &mut Context<Self>) -> Outcome {
         let Some(editor) = self.editors.active_mut() else { return Outcome::done() };
-        let overrides = Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
+        let document = editor.document();
+        let overrides = Overrides { resource: Some(&document.path), override_identifier: Some(&document.language_id) };
         let settings = self.settings.lock().unwrap();
         let insert_space = settings.get_value(Some("editor.comments.insertSpace"), &overrides) != Some(json!(false));
         let ignore_empty_lines = settings.get_value(Some("editor.comments.ignoreEmptyLines"), &overrides) != Some(json!(false));
         drop(settings);
+        drop(document);
         let selections_before = editor.selections.clone();
         let change = match kind {
             Some(kind) => editor.comment_lines(kind, insert_space, ignore_empty_lines, &self.languages),

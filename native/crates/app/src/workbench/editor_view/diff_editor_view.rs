@@ -151,7 +151,7 @@ impl Workbench {
             // textDiffEditor.ts `revealFirstDiff`: an editor without view state shows its first change.
             let viewport = self.editors.viewport;
             let editor = self.editors.active_mut().expect("the diff editor's modified model");
-            let line = first.saturating_sub(1).min(editor.document.lines.len() - 1);
+            let line = first.saturating_sub(1).min(editor.document().lines.len() - 1);
             editor.reveal_range(Position::new(line, 0), Position::new(line, 0), VerticalReveal::CenterIfOutsideViewport, viewport);
         }
         if options["preserveFocus"] != json!(true) {
@@ -181,7 +181,7 @@ impl Workbench {
                 input.update(original, modified, options);
                 input.inline_now = !side_by_side;
                 let computed = input.diff.as_ref().expect("just computed");
-                let alignments = range_alignment(&computed.diff, &original.document.lines, side_by_side);
+                let alignments = range_alignment(&computed.diff, &original.document().lines, side_by_side);
                 input.zones = view_zones(&computed.diff, &alignments, side_by_side);
                 let line_height = self.editors.viewport.line_height;
                 let modified = self.editors.model_mut(&input.modified.scheme, &input.modified.path).expect("found above");
@@ -207,7 +207,7 @@ impl Workbench {
     pub(in crate::workbench) fn compute_document_diff(&self, original: &Value, modified: &Value, ignore_trim_whitespace: bool, max_computation_time_ms: u64, compute_moves: bool) -> Value {
         let model = |uri: &Value| uri_parts(uri).ok().and_then(|(scheme, path)| self.editors.model(scheme, &path));
         let (Some(original), Some(modified)) = (model(original), model(modified)) else { return Value::Null };
-        let (original, modified) = (&original.document.lines, &modified.document.lines);
+        let (original, modified) = (&original.document().lines, &modified.document().lines);
         let options = diff::DiffOptions { ignore_trim_whitespace, max_computation_time_ms, compute_moves, extend_to_subwords: false };
         let result = diff::compute_diff(original, modified, options);
         let line_range = |range: LineRange| json!({ "startLineNumber": range.start, "startColumn": 1, "endLineNumber": range.end, "endColumn": 1 });
@@ -325,7 +325,7 @@ impl Workbench {
             true => changes.iter().copied().find(|&start| start > line).unwrap_or(changes[0]),
             false => changes.iter().rev().copied().find(|&start| start < line).unwrap_or(*changes.last().expect("not empty")),
         };
-        let target = target.min(editor.document.lines.len() - 1);
+        let target = target.min(editor.document().lines.len() - 1);
         editor.move_to(Position::new(target, 0), false);
         editor.reveal_range(Position::new(target, 0), Position::new(target, 0), VerticalReveal::CenterIfOutsideViewport, viewport);
         cx.notify();
@@ -357,7 +357,7 @@ impl Workbench {
                 && self.setting("diffEditor.hideOriginalLineNumbers") != json!(true)
             {
                 // diffEditorWidget.ts: inline, the original editor shows up to its decorations, its line numbers.
-                let metrics = EditorMetrics::measure(window, original.document.lines.len(), false, self.editor_zoom.multiplier());
+                let metrics = EditorMetrics::measure(window, original.document().lines.len(), false, self.editor_zoom.multiplier());
                 let width = (metrics.glyph_margin_width() + metrics.line_numbers_width).max(5.);
                 body = body.child(self.original_pane(input, original, modified, false, window).w(px(width)).flex_none());
             }
@@ -380,7 +380,7 @@ impl Workbench {
     /// The original editor, read-only and scrolled with the modified one: its lines, the deleted line and character
     /// decorations, the `-` signs and the diagonal fill under the side with fewer lines.
     fn original_pane(&self, input: &DiffInput, original: &OpenEditor, modified: &OpenEditor, side_by_side: bool, window: &mut Window) -> Div {
-        let metrics = EditorMetrics::measure(window, original.document.lines.len(), side_by_side, self.editor_zoom.multiplier());
+        let metrics = EditorMetrics::measure(window, original.document().lines.len(), side_by_side, self.editor_zoom.multiplier());
         let line_height = metrics.line_height;
         let decorations_width = diff_decorations_width(metrics.char_width);
         // `_adjustOptionsForLeftHandSide`: the glyph margin shows side by side.
@@ -394,7 +394,7 @@ impl Workbench {
             rows.push(self.diff_zone_view(zone, line_height, content_left).absolute().top(px(top - scroll_top)).left_0().right_0());
             top += zone.lines as f32 * line_height;
         }
-        for index in 0..original.document.lines.len() {
+        for index in 0..original.document().lines.len() {
             if top > scroll_top + height {
                 break;
             }
@@ -426,8 +426,8 @@ impl Workbench {
         let line_number = index + 1;
         let changes = input.diff.as_ref().map_or(&[][..], |diff| &diff.diff.changes[..]);
         let change = changes.iter().find(|change| change.original.contains(line_number));
-        let text = &original.document.lines[index];
-        let tab_size = original.document.indentation.tab_size;
+        let text = &original.document().lines[index];
+        let tab_size = original.document().indentation.tab_size;
         let char_width = metrics.char_width;
         let mut content = div().absolute().top_0().bottom_0().right_0().left(px(metrics.glyph_margin_width() + metrics.line_numbers_width + decorations_width));
         if let Some(change) = change {
@@ -436,11 +436,11 @@ impl Workbench {
                 content = content.children(char_ranges(change, ZoneSide::Original, line_number, text, tab_size, char_width).into_iter().map(|(left, width)| self.char_background(ZoneSide::Original, left, width)));
             }
         }
-        for level in 0..original.guides.get(index).copied().unwrap_or(0) {
-            let x = (level * original.document.indentation.indent_size()) as f32 * char_width;
+        for level in 0..original.text_model().guides.get(index).copied().unwrap_or(0) {
+            let x = (level * original.document().indentation.indent_size()) as f32 * char_width;
             content = content.child(div().absolute().top_0().left(px(x)).w(px(1.)).h_full().bg(self.color("editorIndentGuide.background1")));
         }
-        let highlights = original.document.tokens.highlights(&self.theme, &self.languages, &original.document.lines, index, tab_size);
+        let highlights = original.document().tokens.highlights(&self.theme, &self.languages, &original.document().lines, index, tab_size);
         content = content.child(div().absolute().top_0().left_0().whitespace_nowrap().child(StyledText::new(expand_tabs(text, tab_size)).with_highlights(highlights)));
         div()
             .h(px(metrics.line_height))
@@ -466,7 +466,7 @@ impl Workbench {
 
     /// A view zone of the modified code editor: a diff zone's view, else empty whitespace.
     pub(super) fn view_zone_body(&self, editor: &OpenEditor, id: u32, height: f32, content_left: f32, _window: &mut Window) -> Div {
-        let zone = self.editors.active_diff().filter(|diff| editor.document.is(&diff.modified.scheme, &diff.modified.path)).and_then(|diff| diff.placed_zones.iter().find(|placed| placed.0 == id));
+        let zone = self.editors.active_diff().filter(|diff| editor.document().is(&diff.modified.scheme, &diff.modified.path)).and_then(|diff| diff.placed_zones.iter().find(|placed| placed.0 == id));
         match zone {
             Some((_, zone)) => self.diff_zone_view(zone, self.editors.viewport.line_height, content_left).flex_none(),
             None => div().flex_none().h(px(height)),
@@ -478,16 +478,17 @@ impl Workbench {
         let Some(input) = self.editors.active_diff() else { return div() };
         let (Some(original), Some(computed)) = (self.editors.model(&input.original.scheme, &input.original.path), input.diff.as_ref()) else { return div() };
         let change = &computed.diff.changes[change];
-        let tab_size = original.document.indentation.tab_size;
+        let tab_size = original.document().indentation.tab_size;
         let char_width = self.editors.viewport.char_width;
         let mut block = div().h(px(lines.len() as f32 * line_height)).relative();
         for (row, line_number) in (lines.start..lines.end).enumerate() {
-            let Some(text) = original.document.lines.get(line_number - 1) else { break };
+            let document = original.document();
+            let Some(text) = document.lines.get(line_number - 1) else { break };
             let mut content = div().absolute().top_0().bottom_0().right_0().left(px(content_left)).children(self.line_background(ZoneSide::Original));
             if !change.modified.is_empty() {
                 content = content.children(char_ranges(change, ZoneSide::Original, line_number, text, tab_size, char_width).into_iter().map(|(left, width)| self.char_background(ZoneSide::Original, left, width)));
             }
-            let highlights = original.document.tokens.highlights(&self.theme, &self.languages, &original.document.lines, line_number - 1, tab_size);
+            let highlights = original.document().tokens.highlights(&self.theme, &self.languages, &original.document().lines, line_number - 1, tab_size);
             content = content.child(div().absolute().top_0().left_0().whitespace_nowrap().child(StyledText::new(expand_tabs(text, tab_size)).with_highlights(highlights)));
             let metrics = EditorMetrics { font_size: 0., line_height, char_width, line_numbers_width: 0., decorations_width: 0. };
             let sign_left = content_left - diff_decorations_width(char_width);
@@ -509,10 +510,10 @@ impl Workbench {
     /// The modified editor's line and character decorations of the active diff (`line-insert`, `char-insert`).
     pub(super) fn diff_line_decorations(&self, editor: &OpenEditor, index: usize, char_width: f32, scroll_left: f32) -> Vec<Div> {
         let Some(change) = self.modified_change(editor, index) else { return Vec::new() };
-        let text = &editor.document.lines[index];
+        let text = &editor.document().lines[index];
         let mut decorations: Vec<Div> = self.line_background(ZoneSide::Modified).into_iter().map(|line| line.left(px(scroll_left))).collect();
         if !change.original.is_empty() {
-            for (left, width) in char_ranges(change, ZoneSide::Modified, index + 1, text, editor.document.indentation.tab_size, char_width) {
+            for (left, width) in char_ranges(change, ZoneSide::Modified, index + 1, text, editor.document().indentation.tab_size, char_width) {
                 decorations.push(self.char_background(ZoneSide::Modified, left, width));
             }
         }
@@ -533,7 +534,7 @@ impl Workbench {
 
     /// The change a line of the active diff's modified model is in.
     fn modified_change(&self, editor: &OpenEditor, index: usize) -> Option<&diff::LineRangeMapping> {
-        let input = self.editors.active_diff().filter(|diff| editor.document.is(&diff.modified.scheme, &diff.modified.path))?;
+        let input = self.editors.active_diff().filter(|diff| editor.document().is(&diff.modified.scheme, &diff.modified.path))?;
         input.diff.as_ref()?.diff.changes.iter().find(|change| change.modified.contains(index + 1))
     }
 
@@ -651,7 +652,7 @@ impl Workbench {
     fn aligned_line_tops(&self, input: &DiffInput, modified: &OpenEditor) -> LineTops {
         let line_height = self.editors.viewport.line_height;
         let original_zones = input.zones.iter().filter(|zone| zone.side == ZoneSide::Original).map(|zone| (zone.after_line, zone.lines as f32 * line_height)).collect();
-        LineTops { line_height, original_zones, viewport: self.editors.viewport, modified_lines: modified.document.lines.len() }
+        LineTops { line_height, original_zones, viewport: self.editors.viewport, modified_lines: modified.document().lines.len() }
     }
 }
 

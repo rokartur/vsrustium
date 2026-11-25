@@ -135,7 +135,7 @@ impl Workbench {
             };
             self.theme = theme;
             for editor in &mut self.editors.editors {
-                editor.document.tokens.theme_changed();
+                editor.document_mut().tokens.theme_changed();
             }
             self.host.send_color_theme(self.theme.kind);
             self.restyle_webviews();

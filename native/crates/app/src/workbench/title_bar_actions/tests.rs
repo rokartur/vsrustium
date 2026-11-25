@@ -99,7 +99,7 @@ fn the_title_bar_menus_toggle_the_command_center_and_the_layout_controls(cx: &mu
     let path_items = titles.iter().position(|title| title == "---").unwrap();
     assert_eq!(titles[0], "notes.txt");
     assert_eq!(titles[path_items - 1], "/");
-    let opened = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document.path.clone());
+    let opened = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document().path.clone());
     assert_eq!(path_items, opened.components().count());
     assert_eq!(titles[path_items + 1..], ["Command Center [x]", "Navigation Controls [x]", "Layout Controls [x]"]);
     cx.simulate_keystrokes("escape");

@@ -48,8 +48,8 @@ fn request(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext, prox
 
 fn shown_text(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext) -> Option<(String, String)> {
     workbench.read_with(cx, |workbench, _| {
-        let editor = workbench.editors.active().filter(|editor| editor.document.scheme == OUTPUT_SCHEME)?;
-        Some((editor.document.path.to_string_lossy().into_owned(), editor.document.lines.join("\n")))
+        let editor = workbench.editors.active().filter(|editor| editor.document().scheme == OUTPUT_SCHEME)?;
+        Some((editor.document().path.to_string_lossy().into_owned(), editor.document().lines.join("\n")))
     })
 }
 
@@ -106,7 +106,7 @@ fn loggers_are_log_channels(cx: &mut TestAppContext) {
     }
     workbench.update_in(cx, |workbench, window, cx| workbench.show_output_channel("vscode.git.Git.log", true, window, cx));
     assert_eq!(shown_text(&workbench, cx), Some(("vscode.git.Git.log".into(), "Git log".into())));
-    let language = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document.language_id.clone());
+    let language = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document().language_id.clone());
     assert_eq!(language, "log");
     request(&workbench, cx, "MainThreadLogger", "$deregisterLogger", json!([{ "scheme": "file", "path": dir.join("vscode.git.Git.log.log") }]));
     assert_eq!(shown_text(&workbench, cx), Some(("exthost".into(), "Extension Host log".into())));

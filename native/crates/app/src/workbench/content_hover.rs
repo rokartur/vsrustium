@@ -137,7 +137,7 @@ const LOADING_ORDINAL: usize = 2000;
 impl Workbench {
     pub(super) fn hover_settings(&self, editor: &OpenEditor) -> HoverSettings {
         let settings = self.settings.lock().unwrap();
-        let overrides = Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
+        let overrides = Overrides { resource: Some(&editor.document().path), override_identifier: Some(&editor.document().language_id) };
         let value = |key: &str| settings.get_value(Some(&format!("editor.hover.{key}")), &overrides).unwrap_or(Value::Null);
         HoverSettings {
             enabled: value("enabled").as_str().unwrap_or("on").to_owned(),
@@ -392,9 +392,9 @@ impl Workbench {
         let Some(anchor) = self.operation(serial).map(|operation| operation.anchor) else { return };
         let mut calls = Vec::new();
         if let Some(editor) = self.editors.active().filter(|editor| editor.model_id == anchor.model_id) {
-            let uri = editor.document.uri();
-            let candidate = Candidate { uri: &uri, language: &editor.document.language_id };
-            let column = utf16_column(&editor.document.lines[anchor.line], anchor.start);
+            let uri = editor.document().uri();
+            let candidate = Candidate { uri: &uri, language: &editor.document().language_id };
+            let column = utf16_column(&editor.document().lines[anchor.line], anchor.start);
             let position = json!({ "lineNumber": anchor.line + 1, "column": column + 1 });
             for (ordinal, registration) in self.language_features.ordered("$registerHoverProvider", &candidate).into_iter().enumerate() {
                 let args = vec![json!(registration.handle), uri.clone(), position.clone(), json!({})];
@@ -513,7 +513,7 @@ impl Workbench {
     fn unicode_parts(&self, editor: &OpenEditor, anchor: Anchor) -> Vec<Part> {
         let Some((options, highlights)) = self.unicode_highlights(editor).filter(|(_, highlights)| !highlights.has_more) else { return Vec::new() };
         let highlighter = CodePointHighlighter::new(&options);
-        let text = &editor.document.lines[anchor.line];
+        let text = &editor.document().lines[anchor.line];
         let mut reasons = Vec::new();
         let mut parts = Vec::new();
         for (start, end) in highlights.ranges.iter().filter(|(start, _)| start.line == anchor.line) {
@@ -539,7 +539,7 @@ impl Workbench {
             }
             reasons.push(reason_text.clone());
             let offset = text.char_indices().nth(start.column).map_or(text.len(), |(offset, _)| offset);
-            let token = editor.document.tokens.token_type_at(&editor.document.lines, anchor.line, offset);
+            let token = editor.document().tokens.token_type_at(&editor.document().lines, anchor.line, offset);
             let args = json!({
                 "codePoint": c as u32,
                 "reason": unicode_reason_value(reason, &highlighter, &options.allowed_locales, c),
@@ -559,9 +559,9 @@ impl Workbench {
 /// decorations are `showIfCollapsed`, so they take an anchor one column beyond either end.
 fn marker_parts(editor: &OpenEditor, anchor: Anchor) -> Vec<Part> {
     let line = anchor.line;
-    let max_column = editor.document.lines[line].chars().count();
+    let max_column = editor.document().lines[line].chars().count();
     let mut parts = Vec::new();
-    for decoration in editor.markers.iter().filter(|decoration| decoration.start.line <= line && decoration.end.line >= line) {
+    for decoration in editor.text_model().markers.iter().filter(|decoration| decoration.start.line <= line && decoration.end.line >= line) {
         let start = if decoration.start.line == line { decoration.start.column } else { 0 };
         let end = if decoration.end.line == line { decoration.end.column } else { max_column };
         if start > anchor.start + 1 || anchor.end as isize - 1 > end as isize {
@@ -577,8 +577,9 @@ fn marker_parts(editor: &OpenEditor, anchor: Anchor) -> Vec<Part> {
 /// contentHoverWidgetWrapper.ts `_findHoverAnchorCandidates` for a mouse target: the char under the mouse, or the
 /// end of the line when the mouse is less than half a char past it (mouseTarget.ts `createMouseTargetFromHitTestPosition`).
 fn anchor_at(editor: &OpenEditor, line: usize, visible: f32) -> Option<Anchor> {
-    let text = editor.document.lines.get(line)?;
-    let tab_size = editor.document.indentation.tab_size;
+    let document = editor.document();
+    let text = document.lines.get(line)?;
+    let tab_size = editor.document().indentation.tab_size;
     let count = text.chars().count();
     let width = visible_column(text, count, tab_size) as f32;
     let empty = |column| Anchor { model_id: editor.model_id, line, start: column, end: column };

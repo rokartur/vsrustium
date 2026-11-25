@@ -98,7 +98,7 @@ impl Workbench {
 
     /// `isInterestingEditorModel`.
     fn is_user_keybindings(&self, editor: &OpenEditor) -> bool {
-        editor.document.scheme == "file" && self.keybindings.user_file.as_ref() == Some(&editor.document.path)
+        editor.document().scheme == "file" && self.keybindings.user_file.as_ref() == Some(&editor.document().path)
     }
 
     /// `showDefineKeybindingWidget` and `DefineKeybindingOverlayWidget.start`.
@@ -132,7 +132,7 @@ impl Workbench {
             "}$0".into(),
         ]
         .join("\n");
-        let smart = insert_snippet(&editor.document.lines, editor.document.eol, editor.selections[0].head);
+        let smart = insert_snippet(&editor.document().lines, editor.document().eol, editor.selections[0].head);
         let template = format!("{}{template}{}", smart.prepend, smart.append);
         let (edits, selections) = snippet_edits(editor, &[(smart.position, smart.position, &template, false)], None);
         editor.push_undo_stop();
@@ -154,7 +154,7 @@ impl Workbench {
                 let Some(editor) = workbench.editors.active().filter(|editor| editor.model_id == model_id) else {
                     return;
                 };
-                let marks = keybinding_marks(&editor.document.lines, editor.document.eol, &crate::keyboard_layout::current_raw_mapping());
+                let marks = keybinding_marks(&editor.document().lines, editor.document().eol, &crate::keyboard_layout::current_raw_mapping());
                 workbench.keybinding_marks = KeybindingMarks { model_id: Some(model_id), marks, update: None };
                 cx.notify();
             });

@@ -74,10 +74,10 @@ impl Workbench {
     /// `openEditor` of a read-only `vscode://defaultsettings` resource: its open editor, its model, or a new model.
     fn open_preferences_resource(&mut self, resource: &str, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
         let path = PathBuf::from(resource);
-        if let Some(index) = self.editors.editors.iter().position(|editor| editor.document.is("vscode", &path)) {
+        if let Some(index) = self.editors.editors.iter().position(|editor| editor.document().is("vscode", &path)) {
             self.editors.activate(index);
         } else {
-            let index = match self.editors.models.iter().position(|model| model.document.is("vscode", &path)) {
+            let index = match self.editors.models.iter().position(|model| model.document().is("vscode", &path)) {
                 Some(index) => index,
                 None => {
                     let text = self.preferences_content(&path).expect("a defaultsettings resource");
@@ -178,27 +178,27 @@ impl Workbench {
             other => Some(default_of_type(other)),
         };
         let default_value = default_value.or_else(|| is_override.then(|| json!({})));
-        let in_workspace_file = settings.workspace.as_ref().and_then(|workspace| workspace.file.as_deref()) == self.editors.active().map(|editor| editor.document.path.as_path());
+        let in_workspace_file = settings.workspace.as_ref().and_then(|workspace| workspace.file.as_deref()) == self.editors.active().map(|editor| editor.document().path.clone()).as_deref();
         drop(settings);
         let Some(editor) = self.editors.active() else { return };
         let mut path = vec![Segment::Key(key.to_string())];
         if in_workspace_file {
             path.insert(0, Segment::Key("settings".into()));
         }
-        let mut setting = setting_ranges(&editor.document.lines, &path);
+        let mut setting = setting_ranges(&editor.document().lines, &path);
         if setting.is_none()
             && edit
             && let Some(value) = default_value
         {
-            let text = editor.document.lines.join("\n");
-            let indentation = editor.document.indentation;
-            let options = FormattingOptions { tab_size: indentation.tab_size, insert_spaces: indentation.insert_spaces, eol: editor.document.eol.to_string() };
+            let text = editor.document().lines.join("\n");
+            let indentation = editor.document().indentation;
+            let options = FormattingOptions { tab_size: indentation.tab_size, insert_spaces: indentation.insert_spaces, eol: editor.document().eol.to_string() };
             let edits: Vec<_> = set_property(&text, &path, Some(&value), &options)
                 .into_iter()
                 .map(|edit| (position_at(&text, edit.offset), position_at(&text, edit.offset + edit.length), edit.content.replace("\r\n", "\n"), false))
                 .collect();
             self.run_indenting(|editor, _| editor.execute_edits(edits, None, EditReason::Unknown("jsonEditing")).into_iter().collect(), cx);
-            setting = setting_ranges(&self.editors.active().expect("still active").document.lines, &path);
+            setting = setting_ranges(&self.editors.active().expect("still active").document().lines, &path);
         }
         let Some(setting) = setting else { return };
         let position = match edit {
@@ -206,14 +206,16 @@ impl Workbench {
                 let after_bracket = Position::new(setting.value_start.line, setting.value_start.column + 1);
                 self.set_active_position(after_bracket);
                 self.run_indenting(|editor, auto| editor.line_break_insert(auto).into_iter().collect(), cx);
-                let lines = &self.editors.active().expect("still active").document.lines;
+                let document = self.editors.active().expect("still active").document();
+                let lines = &document.lines;
                 let next = after_bracket.line + 1;
                 let first_non_whitespace = lines[next].chars().position(|c| !c.is_whitespace());
                 match first_non_whitespace {
                     Some(column) => {
+                        drop(document);
                         self.set_active_position(Position::new(next, column));
                         self.run_indenting(|editor, auto| editor.line_break_insert(auto).into_iter().collect(), cx);
-                        let lines = &self.editors.active().expect("still active").document.lines;
+                        let lines = &self.editors.active().expect("still active").document().lines;
                         Position::new(next, lines[next].chars().count())
                     }
                     None => Position::new(next, lines[next].chars().count()),

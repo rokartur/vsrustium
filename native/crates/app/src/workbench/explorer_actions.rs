@@ -132,7 +132,7 @@ impl Workbench {
         if let Some(path) = args.first().and_then(|uri| uri["path"].as_str()) {
             return vec![PathBuf::from(path)];
         }
-        self.editors.active().map(|editor| editor.document.path.clone()).into_iter().collect()
+        self.editors.active().map(|editor| editor.document().path.clone()).into_iter().collect()
     }
 
     /// fileCommands.ts `resourcesToClipboard`: one path per line, with `explorer.copyPathSeparator` or
@@ -992,7 +992,7 @@ async fn delete_files(workbench: WeakEntity<Workbench>, cx: &mut AsyncWindowCont
     loop {
         let primary = if use_trash { "Move to Trash" } else { "Delete" };
         let Ok((dirty, confirm_delete)) = workbench.update(cx, |workbench, _| {
-            let dirty = workbench.editors.editors.iter().filter(|editor| editor.is_dirty() && items.iter().any(|item| editor.document.path.starts_with(item))).count();
+            let dirty = workbench.editors.editors.iter().filter(|editor| editor.is_dirty() && items.iter().any(|item| editor.document().path.starts_with(item))).count();
             (dirty, workbench.setting("explorer.confirmDelete") != json!(false))
         }) else {
             return;

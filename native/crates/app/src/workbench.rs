@@ -428,7 +428,7 @@ impl Workbench {
                 }
             }
             // A model without an editor, as a search replace leaves it, keeps its text.
-            None => match self.editors.models.iter().position(|model| model.document.is("file", &path)) {
+            None => match self.editors.models.iter().position(|model| model.document().is("file", &path)) {
                 Some(index) => self.editors.show_model(index, !pinned),
                 None => match self.read_document(&path) {
                     Ok(document) => self.editors.open(document, !pinned),
@@ -448,7 +448,7 @@ impl Workbench {
     /// Keeps the Explorer selection and the extension host in step with the group.
     fn editors_changed(&mut self, cx: &mut Context<Self>) {
         if let (Some(tree), Some(editor)) = (self.folder.as_mut(), self.editors.active()) {
-            tree.reveal(&editor.document.path);
+            tree.reveal(&editor.document().path);
         }
         self.record_editor_history();
         self.drop_closed_search_editors();
@@ -1003,7 +1003,7 @@ mod tests {
         cx.run_until_parked();
 
         let editors = workbench.read_with(cx, |workbench, _| {
-            workbench.editors.editors.iter().map(|editor| (editor.document.uri_string(), editor.preview, editor.document.lines[..2].join("\n"))).collect::<Vec<_>>()
+            workbench.editors.editors.iter().map(|editor| (editor.document().uri_string(), editor.preview, editor.document().lines[..2].join("\n"))).collect::<Vec<_>>()
         });
         let expected = |name: &str| (format!("untitled:{name}"), false, "{\n\t\"layout\": {".to_string());
         assert_eq!(editors, [expected("Untitled-1"), expected("Untitled-2")]);
@@ -1027,7 +1027,7 @@ mod tests {
         });
         cx.run_until_parked();
         receiver.try_iter().count();
-        let text = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document.lines.join("\n"));
+        let text = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document().lines.join("\n"));
 
         cx.simulate_keystrokes("down end");
         cx.simulate_input("!");
@@ -1078,7 +1078,7 @@ mod tests {
         let methods: Vec<_> = receiver.try_iter().map(|message| message.method).collect();
         assert_eq!(methods.iter().filter(|method| **method == "$acceptModelChanged").count(), 2);
         cx.simulate_keystrokes("cmd-z");
-        assert_eq!(workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document.lines.join("\n")), "ab  \ncd\n\n\n");
+        assert_eq!(workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document().lines.join("\n")), "ab  \ncd\n\n\n");
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -1104,7 +1104,7 @@ mod tests {
             workbench.update_in(cx, |workbench, window, _| {
                 let moves_focus = workbench.key_context(window).get("editorTabMovesFocus").cloned();
                 let editor = workbench.editors.active().unwrap();
-                (editor.document.lines.join("\n"), editor.highlights.len(), workbench.status_bar_focus.is_focused(window), moves_focus)
+                (editor.document().lines.join("\n"), editor.highlights.len(), workbench.status_bar_focus.is_focused(window), moves_focus)
             })
         };
 
@@ -1275,7 +1275,7 @@ mod tests {
             assert_eq!(workbench.text_cursor_style(), gpui::CursorStyle::Arrow);
             workbench.drop_text(1, 7., Default::default(), cx);
             let editor = workbench.editors.active().unwrap();
-            assert_eq!(editor.document.lines, ["Port  for", "the edinotestor"]);
+            assert_eq!(editor.document().lines, ["Port  for", "the edinotestor"]);
             assert_eq!(editor.selections, [Selection { anchor: Position::new(1, 7), head: Position::new(1, 12) }]);
             assert!(workbench.start_text_drag(1, 9., Default::default(), 1));
             workbench.drag_text(1, 9., true, cx);
@@ -1305,7 +1305,7 @@ mod tests {
             workbench
         });
         cx.run_until_parked();
-        let lines = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document.lines.clone());
+        let lines = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document().lines.clone());
 
         cx.simulate_keystrokes("cmd-/");
         assert_eq!(lines(cx), ["// let a = 1;", "    let b = 2;"], "editor.action.commentLine");
@@ -1346,7 +1346,7 @@ mod tests {
             workbench
         });
         cx.run_until_parked();
-        let lines = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document.lines.clone());
+        let lines = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document().lines.clone());
 
         cx.simulate_keystrokes("alt-down");
         assert_eq!(lines(cx), ["two", "one", "three"], "editor.action.moveLinesDownAction");
@@ -1421,7 +1421,7 @@ mod tests {
         cx.simulate_input("the");
         cx.simulate_keystrokes("alt-cmd-enter");
         assert_eq!(zone(cx).0, 62.);
-        let text = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document.lines.join("\n"));
+        let text = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document().lines.join("\n"));
         assert_eq!(text, "a cat\nand a dog\na end");
 
         cx.simulate_keystrokes("escape");

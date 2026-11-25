@@ -135,8 +135,8 @@ impl Workbench {
         if message.model_id != editor.model_id || editor.folding.is_hidden(message.position.line) {
             return None;
         }
-        let text = &editor.document.lines[message.position.line];
-        let anchor_left = visible_column(text, message.position.column, editor.document.indentation.tab_size) as f32 * char_width;
+        let text = &editor.document().lines[message.position.line];
+        let anchor_left = visible_column(text, message.position.column, editor.document().indentation.tab_size) as f32 * char_width;
         let anchor_top = editor.line_top(editor.view_line(message.position.line), self.editors.viewport) - editor.scroll.top;
         let text: String = message.parts.iter().map(|part| part.text).collect();
         let run = TextRun { len: text.len(), font: gpui::font(UI_FONT), color: gpui::black(), background_color: None, underline: None, strikethrough: None };

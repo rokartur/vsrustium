@@ -43,12 +43,12 @@ fn workbench_open_shows_files_and_untitled_files_and_rejects_other_strings(cx: &
     assert_eq!(open(&workbench, vec![untitled], cx), Ok(Value::Null));
     let (name, dirty) = workbench.read_with(cx, |workbench, _| {
         let editor = workbench.editors.active().unwrap();
-        (editor.document.name(), editor.is_dirty())
+        (editor.document().name(), editor.is_dirty())
     });
     assert_eq!((name.as_str(), dirty), ("untitled-file.txt", true));
     // untitledTextEditorModel.ts `revert`: emptied and clean, never read from or written to its file; the input closes.
     workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("workbench.action.files.revert", Vec::new(), window, cx)));
-    let names = workbench.read_with(cx, |workbench, _| workbench.editors.editors.iter().map(|editor| editor.document.name()).collect::<Vec<_>>());
+    let names = workbench.read_with(cx, |workbench, _| workbench.editors.editors.iter().map(|editor| editor.document().name()).collect::<Vec<_>>());
     assert_eq!(names, ["far.js"]);
     assert!(!dir.join("untitled-file.txt").exists());
 

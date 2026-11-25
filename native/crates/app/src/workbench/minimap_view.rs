@@ -251,7 +251,7 @@ impl Workbench {
             foreground_alpha: self.theme.color("minimap.foregroundOpacity").map_or(255, |color| byte(color.a)),
             use_lighter_font: relative_luminance(default_background) >= 0.5,
         };
-        let document = &editor.document;
+        let document = &editor.document();
         let tab_size = document.indentation.tab_size;
         let renderer = CharRenderer::prebaked(info.scale);
         let mut image = render_lines(info, layout, &renderer, &colors, tab_size, |view_line| {
@@ -281,7 +281,7 @@ impl Workbench {
         // convertModelPositionToViewPosition: a hidden position shows at the end of its fold line.
         let view = |line: usize, column: usize| {
             let view_line = editor.view_line(line);
-            let column = if editor.folding.is_hidden(line) { editor.document.lines[editor.model_line(view_line)].chars().count() } else { column };
+            let column = if editor.folding.is_hidden(line) { editor.document().lines[editor.model_line(view_line)].chars().count() } else { column };
             (view_line + 1, column)
         };
         let mut selections: Vec<MinimapRange> = editor.selections.iter().map(|selection| MinimapRange { start: view(selection.start().line, selection.start().column), end: view(selection.end().line, selection.end().column) }).collect();
@@ -296,7 +296,7 @@ impl Workbench {
             for (range, decoration) in editor.folding.regions.ranges().iter().zip(editor.folding.decorations()) {
                 if decoration == FoldDecoration::Collapsed {
                     let line = range.start - 1;
-                    decorations.push((MinimapRange { start: view(line, 0), end: view(line, editor.document.lines[line].chars().count()) }, color));
+                    decorations.push((MinimapRange { start: view(line, 0), end: view(line, editor.document().lines[line].chars().count()) }, color));
                 }
             }
         }
@@ -311,8 +311,8 @@ impl Workbench {
         for (start, end, color) in self.marker_minimap_ranges(editor) {
             decorations.push((MinimapRange { start: view(start.line, start.column), end: view(end.line, end.column) }, color));
         }
-        let tab_size = editor.document.indentation.tab_size;
-        decoration_fills(info, layout, self.theme.color("minimap.selectionHighlight"), &selections, &decorations, tab_size, |view_line| editor.document.lines[editor.model_line(view_line - 1)].as_str())
+        let document = editor.document();
+        decoration_fills(info, layout, self.theme.color("minimap.selectionHighlight"), &selections, &decorations, document.indentation.tab_size, |view_line| document.lines[editor.model_line(view_line - 1)].as_str())
     }
 
     /// sectionHeaders.ts `SectionHeaderDetector` and `getSectionHeaderDecorationsInViewport`: the headers from a font
@@ -320,7 +320,7 @@ impl Workbench {
     // shortcut: found again on the UI thread for each new model version, where upstream asks the editor worker 250ms
     // after the last edit and moves the old headers with the text meanwhile; upgrade when large files lag on typing.
     fn minimap_section_labels(&self, editor: &OpenEditor, info: &MinimapLayoutInfo, pixel_ratio: f64, layout: &MinimapLayout, options: &SectionHeaderOptions) -> Vec<SectionLabel> {
-        let key = (editor.model_id, editor.version_id, options.show_region, options.mark_regex.clone());
+        let key = (editor.model_id, editor.text_model().version_id, options.show_region, options.mark_regex.clone());
         let mut cached = self.minimap.section_headers.borrow_mut();
         let headers = match cached.as_ref().filter(|(cached_key, _)| *cached_key == key) {
             Some((_, headers)) => headers.clone(),
@@ -442,7 +442,7 @@ impl Workbench {
 
 /// `findSectionHeaders` then `updateDecorations`: a mark header stays only when it starts in a comment token.
 fn section_headers(editor: &OpenEditor, options: &SectionHeaderOptions) -> Vec<SectionHeader> {
-    let document = &editor.document;
+    let document = &editor.document();
     let options = FindOptions {
         region_start: document.folding_markers.as_deref().map(|markers| &markers.start_with_flags).filter(|_| options.show_region),
         mark_regex: options.mark_regex.as_deref(),

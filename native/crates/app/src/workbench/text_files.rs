@@ -84,13 +84,13 @@ impl Workbench {
         });
         self.commands.register("workbench.action.files.saveAs", |workbench, _, _, cx| {
             let Some(editor) = workbench.editors.active() else { return Outcome::done() };
-            let (scheme, path) = (editor.document.scheme.clone(), editor.document.path.clone());
+            let (scheme, path) = (editor.document().scheme.clone(), editor.document().path.clone());
             let saved = workbench.save_as(scheme, path, SaveOptions { force: true, ..SaveOptions::default() }, cx);
             when_saved(vec![saved], |_| Value::Null, cx)
         });
         self.commands.register("workbench.action.files.saveWithoutFormatting", |workbench, _, _, cx| {
             let Some(editor) = workbench.editors.active() else { return Outcome::done() };
-            let (scheme, path) = (editor.document.scheme.clone(), editor.document.path.clone());
+            let (scheme, path) = (editor.document().scheme.clone(), editor.document().path.clone());
             let saved = workbench.save_model_with(scheme, path, SaveReason::Explicit, SaveOptions { force: true, skip_participants: true, ..SaveOptions::default() }, cx);
             when_saved(vec![saved], |_| Value::Null, cx)
         });
@@ -138,7 +138,7 @@ impl Workbench {
         let configured = || self.settings.lock().unwrap().get_value(Some("files.defaultLanguage"), &Overrides::default()).and_then(|value| value.as_str().map(str::to_string));
         let language = language.or_else(configured).filter(|language| !language.is_empty());
         let language = match language.as_deref() {
-            Some("${activeEditorLanguage}") => self.editors.active().map(|editor| editor.document.language_id.clone()),
+            Some("${activeEditorLanguage}") => self.editors.active().map(|editor| editor.document().language_id.clone()),
             _ => language,
         };
         let document = TextDocument::untitled(&path, "", language.as_deref().filter(|id| self.languages.is_registered(id)), &self.languages, &self.settings.lock().unwrap());
@@ -206,11 +206,12 @@ impl Workbench {
             return receiver;
         }
         if scheme == "file" {
-            let written = self.write_text_file(&path, &editor.document.language_id.clone(), &bytes, options);
+            let language_id = editor.document().language_id.clone();
+            let written = self.write_text_file(&path, &language_id, &bytes, options);
             let _ = sender.send(self.finish_save(&scheme, &path, version, written, cx));
             return receiver;
         }
-        let write = self.host.run_files(FileJob::Write(resource(&editor.document.uri()), bytes));
+        let write = self.host.run_files(FileJob::Write(resource(&editor.document().uri()), bytes));
         cx.spawn(async move |workbench, cx| {
             let written = match write.await {
                 Ok(result) => result.map(drop).map_err(|error| SaveError::Other(error.to_string())),
@@ -279,7 +280,7 @@ impl Workbench {
     fn show_save_error(&mut self, scheme: &str, path: &Path, error: SaveError) {
         let uri = uri_string(scheme, path);
         let uri_value = match self.editors.model(scheme, path) {
-            Some(model) => model.document.uri(),
+            Some(model) => model.document().uri(),
             None => json!({ "$mid": 1, "scheme": scheme, "authority": "", "path": path, "query": "", "fragment": "" }),
         };
         let name = path.file_name().unwrap_or(path.as_os_str()).to_string_lossy();
@@ -344,8 +345,8 @@ impl Workbench {
 
     /// `textFileService.save` of an untitled model: to its associated file, else to the path picked in the save dialog.
     fn save_untitled(&mut self, path: PathBuf, options: SaveOptions, cx: &mut Context<Self>) -> oneshot::Receiver<bool> {
-        let model = self.editors.model("untitled", &path).expect("saving an open model");
-        match model.associated_file {
+        let associated_file = self.editors.model("untitled", &path).expect("saving an open model").text_model().associated_file;
+        match associated_file {
             true => self.save_as_to("untitled".into(), path.clone(), path, options, cx),
             false => self.save_as("untitled".into(), path, options, cx),
         }
@@ -381,7 +382,7 @@ impl Workbench {
             return self.save_model_with(scheme, path, SaveReason::Explicit, SaveOptions { force: true, ..options }, cx);
         }
         let readonly = self.readonly("file", &target).is_some();
-        let associated = scheme == "untitled" && self.editors.model(&scheme, &path).is_some_and(|model| model.associated_file);
+        let associated = scheme == "untitled" && self.editors.model(&scheme, &path).is_some_and(|model| model.text_model().associated_file);
         let replace = associated && target == path && target.exists();
         let name = target.file_name().unwrap_or_default().to_string_lossy().into_owned();
         let folder = target.parent().and_then(Path::file_name).unwrap_or_default().to_string_lossy().into_owned();
@@ -423,8 +424,8 @@ impl Workbench {
     /// takes the source editor's place with its cursors and scroll.
     pub(super) fn do_save_as(&mut self, scheme: &str, path: &Path, target: PathBuf, options: SaveOptions, cx: &mut Context<Self>) -> bool {
         let Some(source) = self.editors.model(scheme, path) else { return false };
-        let text = source.document.lines.join(source.document.eol);
-        let (encoding, language, indentation, eol) = (source.document.encoding.clone(), source.document.language_id.clone(), source.document.indentation, source.document.eol);
+        let text = source.document().lines.join(source.document().eol);
+        let (encoding, language, indentation, eol) = (source.document().encoding.clone(), source.document().language_id.clone(), source.document().indentation, source.document().eol);
         let (selections, scroll) = (source.selections.clone(), source.scroll);
         if self.editors.model("file", &target).is_none() {
             let document = match target.exists() {
@@ -442,10 +443,10 @@ impl Workbench {
         }
         self.update_model("file", &target, &text, false);
         let target_model = self.editors.model_mut("file", &target).expect("opened above");
-        target_model.document.encoding = encoding;
-        target_model.document.eol = eol;
+        target_model.document_mut().encoding = encoding;
+        target_model.document_mut().eol = eol;
         target_model.set_indentation(indentation);
-        let target_language = target_model.document.language_id.clone();
+        let target_language = target_model.document().language_id.clone();
         if language != PLAINTEXT && target_language == PLAINTEXT {
             self.set_model_language("file", &target, &language, cx);
         }
@@ -453,11 +454,11 @@ impl Workbench {
         if saved_now(saved) != Some(true) {
             return false;
         }
-        let source_index = self.editors.editors.iter().position(|editor| editor.document.is(scheme, path));
+        let source_index = self.editors.editors.iter().position(|editor| editor.document().is(scheme, path));
         match scheme {
             "untitled" => {
                 self.revert_untitled(path);
-                self.editors.models.retain(|model| !model.document.is("untitled", path));
+                self.editors.models.retain(|model| !model.document().is("untitled", path));
             }
             _ => {
                 if let Err(error) = self.revert_text_file(scheme, path, cx) {
@@ -478,7 +479,7 @@ impl Workbench {
     /// `replaceEditors`: the editor at `index` closes and `target`'s editor shows in its place, the one already open
     /// moved there.
     fn replace_editor_with_model(&mut self, index: usize, target: &Path) {
-        let pinned_target = self.editors.editors.iter().position(|editor| editor.document.is("file", target));
+        let pinned_target = self.editors.editors.iter().position(|editor| editor.document().is("file", target));
         match pinned_target {
             Some(open) => {
                 self.editors.activate(open);
@@ -487,7 +488,7 @@ impl Workbench {
             }
             None => {
                 self.editors.activate(index);
-                let model = self.editors.models.iter().position(|model| model.document.is("file", target)).expect("opened by the save");
+                let model = self.editors.models.iter().position(|model| model.document().is("file", target)).expect("opened by the save");
                 self.editors.show_model(model, false);
                 self.editors.close(index);
             }
@@ -498,14 +499,14 @@ impl Workbench {
     /// it has none of its own (`suggestFilename`), in the dialog's default folder; a file's own path.
     fn suggest_save_path(&self, scheme: &str, path: &Path) -> PathBuf {
         let Some(model) = self.editors.model(scheme, path) else { return path.to_path_buf() };
-        if scheme == "file" || model.associated_file {
+        if scheme == "file" || model.text_model().associated_file {
             return path.to_path_buf();
         }
         let mut name = crate::untitled::name(model, self.untitled_names_from_content());
         if name.contains('/') || name.starts_with('.') && name.chars().all(|char| char == '.') {
-            name = model.document.name();
+            name = model.document().name();
         }
-        let language = &model.document.language_id;
+        let language = &model.document().language_id;
         let name = match language != PLAINTEXT {
             true => self.languages.suggest_file_name(language, &name),
             false => name,
@@ -520,9 +521,9 @@ impl Workbench {
         if let Some(configured) = configured.as_ref().and_then(Value::as_str).map(PathBuf::from).filter(|path| path.is_absolute()) {
             return configured;
         }
-        let last_file = self.editors.active().filter(|editor| editor.document.scheme == "file").and_then(|editor| editor.document.path.parent());
-        let folder = self.workspace().and_then(|workspace| workspace.folders.first()).map(|folder| folder.path.as_path());
-        last_file.or(folder).map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or_default()))
+        let last_file = self.editors.active().filter(|editor| editor.document().scheme == "file").and_then(|editor| editor.document().path.parent().map(Path::to_path_buf));
+        let folder = self.workspace().and_then(|workspace| workspace.folders.first()).map(|folder| folder.path.clone());
+        last_file.or(folder).unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or_default()))
     }
 
     /// textFileEditorModel.ts `onDidChangeFilesAssociation`: a file model without a picked language takes the one
@@ -530,8 +531,8 @@ impl Workbench {
     pub(super) fn files_associations_changed(&mut self, cx: &mut Context<Self>) {
         let associations = self.settings.lock().unwrap().get_value(Some("files.associations"), &Overrides::default()).unwrap_or_default();
         let mut changed = Vec::new();
-        for model in self.editors.editors.iter().chain(&self.editors.models).filter(|model| model.document.scheme == "file") {
-            let document = &model.document;
+        for model in self.editors.editors.iter().chain(&self.editors.models).filter(|model| model.document().scheme == "file") {
+            let document = &model.document();
             if self.text_files.preferred_languages.contains(&(document.scheme.clone(), document.path.clone())) {
                 continue;
             }
@@ -548,10 +549,10 @@ impl Workbench {
 
     /// labels.ts: an untitled model named by its content has its resource path as its label's description.
     pub(super) fn untitled_description(&self, editor: &OpenEditor) -> Option<String> {
-        if editor.document.scheme != "untitled" || editor.associated_file {
+        if editor.document().scheme != "untitled" || editor.text_model().associated_file {
             return None;
         }
-        let path = editor.document.path.to_string_lossy().into_owned();
+        let path = editor.document().path.to_string_lossy().into_owned();
         (crate::untitled::name(editor, self.untitled_names_from_content()) != path).then_some(path)
     }
 
@@ -570,7 +571,7 @@ impl Workbench {
             return Ok(());
         }
         let Some(model) = self.editors.model(scheme, path) else { return Ok(()) };
-        let (was_dirty, encoding) = (model.is_dirty(), model.document.encoding.clone());
+        let (was_dirty, encoding) = (model.is_dirty(), model.document().encoding.clone());
         let sent = match std::fs::read(path) {
             Ok(bytes) => {
                 let sent = self.update_model(scheme, path, &encoding::decode(&bytes, &encoding), true);
@@ -599,8 +600,8 @@ impl Workbench {
         self.update_model("untitled", path, "", false);
         let model = self.editors.model_mut("untitled", path).expect("still open");
         let dirty = model.is_dirty();
-        model.associated_file = false;
-        model.host_reference = None;
+        model.text_model_mut().associated_file = false;
+        model.text_model_mut().host_reference = None;
         if dirty {
             let model = self.editors.model("untitled", path).expect("found above");
             self.host.send_dirty_state(&self.editors, model, false);
@@ -615,7 +616,8 @@ impl Workbench {
         let model = self.editors.model_mut(scheme, path).expect("the caller found the model");
         let (lines, eol) = crate::editor::split_lines(text);
         let eol_change = eol.and_then(|eol| model.push_eol(if eol == "\r\n" { 1 } else { 0 }));
-        let change = match compute_edits(&model.document.lines, &lines, model.document.eol) {
+        let edit = compute_edits(&model.document().lines, &lines, model.document().eol);
+        let change = match edit {
             Some(edit) => {
                 model.push_undo_stop();
                 let change = model.execute_edits(vec![(edit.start, edit.end, edit.text, true)], None, EditReason::Unknown("updateModel"));
@@ -628,7 +630,7 @@ impl Workbench {
             model.mark_saved();
         }
         let Some(change) = change.or(eol_change) else { return false };
-        if self.editors.active().is_some_and(|editor| editor.document.is(scheme, path)) {
+        if self.editors.active().is_some_and(|editor| editor.document().is(scheme, path)) {
             self.find_editor_edited(Some(&change));
         }
         self.send_model_edit(scheme, path, &change);
@@ -639,11 +641,11 @@ impl Workbench {
     /// outside them, and the stats of models that are gone.
     pub(super) fn text_files_editors_changed(&mut self) {
         self.host.untitled_names_from_content = self.untitled_names_from_content();
-        let open: HashSet<&Path> = self.editors.editors.iter().chain(&self.editors.models).filter(|model| model.document.scheme == "file").map(|model| model.document.path.as_path()).collect();
-        self.text_files.stats.retain(|path, _| open.contains(path.as_path()));
-        self.text_files.orphaned.retain(|path| open.contains(path.as_path()));
-        let models: HashSet<(&str, &Path)> = self.editors.editors.iter().chain(&self.editors.models).map(|model| (model.document.scheme.as_str(), model.document.path.as_path())).collect();
-        self.text_files.preferred_languages.retain(|(scheme, path)| models.contains(&(scheme.as_str(), path.as_path())));
+        let open: HashSet<PathBuf> = self.editors.editors.iter().chain(&self.editors.models).filter(|model| model.document().scheme == "file").map(|model| model.document().path.clone()).collect();
+        self.text_files.stats.retain(|path, _| open.contains(path));
+        self.text_files.orphaned.retain(|path| open.contains(path));
+        let models: HashSet<(String, PathBuf)> = self.editors.editors.iter().chain(&self.editors.models).map(|model| (model.document().scheme.clone(), model.document().path.clone())).collect();
+        self.text_files.preferred_languages.retain(|key| models.contains(key));
         self.watch_visible_file();
         let shown = self.editors.active().map(|editor| editor.model_id);
         if shown != std::mem::replace(&mut self.text_files.shown_model, shown) {
@@ -686,7 +688,7 @@ impl Workbench {
             return;
         }
         let inside = |path: &Path| self.workspace().is_some_and(|workspace| workspace.folders.iter().any(|folder| path.starts_with(&folder.path)));
-        let visible = self.editors.active().filter(|editor| editor.document.scheme == "file" && !inside(&editor.document.path)).map(|editor| editor.document.path.clone());
+        let visible = self.editors.active().filter(|editor| editor.document().scheme == "file" && !inside(&editor.document().path)).map(|editor| editor.document().path.clone());
         let text_files = &mut self.text_files;
         let watcher = text_files.watcher.as_mut().expect("started above");
         text_files.watched_files.retain(|path, id| {
@@ -740,7 +742,7 @@ impl Workbench {
         let Some(model) = self.editors.model("file", &path) else { return };
         let close = !model.is_dirty() && self.settings.lock().unwrap().get_value(Some("workbench.editor.closeOnFileDelete"), &Overrides::default()) == Some(json!(true));
         if close {
-            let mut indices: Vec<usize> = (0..self.editors.editors.len()).filter(|index| self.editors.editors[*index].document.is("file", &path)).collect();
+            let mut indices: Vec<usize> = (0..self.editors.editors.len()).filter(|index| self.editors.editors[*index].document().is("file", &path)).collect();
             indices.reverse();
             for index in indices {
                 self.editors.close(index);
@@ -760,7 +762,7 @@ impl Workbench {
             return;
         }
         let Ok(bytes) = std::fs::read(path) else { return };
-        let encoding = self.editors.model("file", path).expect("the caller found the model").document.encoding.clone();
+        let encoding = self.editors.model("file", path).expect("the caller found the model").document().encoding.clone();
         self.update_model("file", path, &encoding::decode(&bytes, &encoding), true);
         self.text_files.stats.insert(path.to_path_buf(), disk);
         cx.notify();

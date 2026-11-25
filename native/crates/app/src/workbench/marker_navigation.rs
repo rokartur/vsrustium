@@ -141,7 +141,7 @@ fn word_range(marker: &Marker, lines: &[String]) -> (MarkerPosition, MarkerPosit
 }
 
 fn marker_position(editor: &OpenEditor, position: Position) -> MarkerPosition {
-    (position.line + 1, utf16_column(&editor.document.lines[position.line], position.column) + 1)
+    (position.line + 1, utf16_column(&editor.document().lines[position.line], position.column) + 1)
 }
 
 /// The `MarkerController` session: the list and the widget, from the first navigation until it closes.
@@ -188,7 +188,7 @@ impl Workbench {
     fn navigate_markers(&mut self, forward: bool, multi_file: bool, window: &mut Window, cx: &mut Context<Self>) {
         let by_position = self.setting("problems.sortOrder") == "position";
         let Some(editor) = self.editors.active() else { return };
-        let resource = editor.document.uri_string();
+        let resource = editor.document().uri_string();
         let position = marker_position(editor, editor.selection().head);
         let model_id = editor.model_id;
         let filter = (!multi_file).then(|| resource.clone());
@@ -199,13 +199,13 @@ impl Workbench {
             let mut list = MarkerList::new(filter, &self.diagnostics.service, by_position);
             let editor = self.editors.active().expect("checked above");
             if reuse_position {
-                list.move_to(true, &resource, &editor.document.lines, position);
+                list.move_to(true, &resource, &editor.document().lines, position);
             }
             self.marker_navigation.session = Some(Session { list, model_id, widget: None });
         }
         let editor = self.editors.active().expect("checked above");
         let session = self.marker_navigation.session.as_mut().expect("created above");
-        session.list.move_to(forward, &resource, &editor.document.lines, position);
+        session.list.move_to(forward, &resource, &editor.document().lines, position);
         let Some((marker, index, total)) = session.list.selected() else { return cx.notify() };
         if marker.resource == resource {
             return self.show_at_marker(marker, index, total, window, cx);
@@ -215,9 +215,11 @@ impl Workbench {
         let Some(path) = crate::editor_history::file_path(&marker.resource) else { return cx.notify() };
         self.open_file(path, false, window, cx);
         let viewport = self.editors.viewport;
-        let Some(editor) = self.editors.active_mut().filter(|editor| editor.document.uri_string() == marker.resource) else { return cx.notify() };
-        let lines = &editor.document.lines;
+        let Some(editor) = self.editors.active_mut().filter(|editor| editor.document().uri_string() == marker.resource) else { return cx.notify() };
+        let document = editor.document();
+        let lines = &document.lines;
         let (start, end) = (validate(lines, marker.start_line, marker.start_column), validate(lines, marker.end_line, marker.end_column));
+        drop(document);
         editor.set_selections(vec![Selection { anchor: start, head: end }]);
         editor.reveal_range(start, end, VerticalReveal::NearTop, viewport);
         self.host.send_selection(editor, "code.jump");
@@ -230,7 +232,7 @@ impl Workbench {
     pub(super) fn show_marker_navigation_at(&mut self, marker: &Marker, window: &mut Window, cx: &mut Context<Self>) {
         let by_position = self.setting("problems.sortOrder") == "position";
         let Some(editor) = self.editors.active() else { return };
-        let resource = editor.document.uri_string();
+        let resource = editor.document().uri_string();
         let model_id = editor.model_id;
         if self.marker_navigation.session.as_ref().is_none_or(|session| session.list.resource.as_deref() != Some(resource.as_str())) {
             self.end_marker_session();
@@ -240,7 +242,7 @@ impl Workbench {
         let editor = self.editors.active().expect("checked above");
         let session = self.marker_navigation.session.as_mut().expect("created above");
         session.list.next = None;
-        session.list.move_to(true, &resource, &editor.document.lines, (marker.start_line, marker.start_column));
+        session.list.move_to(true, &resource, &editor.document().lines, (marker.start_line, marker.start_column));
         if let Some((marker, index, total)) = session.list.selected() {
             self.show_at_marker(marker, index, total, window, cx);
         }
@@ -251,10 +253,12 @@ impl Workbench {
     fn show_at_marker(&mut self, marker: Arc<Marker>, index: usize, total: usize, window: &mut Window, cx: &mut Context<Self>) {
         let viewport = self.editors.viewport;
         let editor = self.editors.active_mut().expect("the session's editor is active");
-        let lines = &editor.document.lines;
+        let document = editor.document();
+        let lines = &document.lines;
         let (start, end) = (validate(lines, marker.start_line, marker.start_column), validate(lines, marker.end_line, marker.end_column));
         let head = editor.selection().head;
         let position = if start <= head && head <= end { head } else { start };
+        drop(document);
         let session = self.marker_navigation.session.as_mut().expect("navigating");
         if let Some(widget) = session.widget.take() {
             editor.remove_view_zone(widget.zone_id);
@@ -319,7 +323,7 @@ impl Workbench {
         let Some(widget) = session.widget.as_mut() else { return };
         let Some(editor) = self.editors.editors.iter().find(|editor| editor.model_id == session.model_id) else { return };
         let Some(zone) = editor.view_zone(widget.zone_id) else { return };
-        match session.list.find(&editor.document.uri_string(), marker_position(editor, zone.anchor.expect("marker zones follow a line"))) {
+        match session.list.find(&editor.document().uri_string(), marker_position(editor, zone.anchor.expect("marker zones follow a line"))) {
             Some((marker, index, total)) => (widget.marker, widget.index, widget.total, widget.stale) = (marker, index, total, false),
             None => widget.stale = true,
         }
@@ -347,9 +351,9 @@ impl Workbench {
         let frame = self.color(frame_key);
         // zoneWidget.ts `show`: the arrow is not pretty at column 1 and moves to column 2.
         let anchor = zone.anchor.expect("marker zones follow a line");
-        let line = &editor.document.lines[anchor.line];
+        let line = &editor.document().lines[anchor.line];
         let arrow_column = anchor.column.max(1).min(line.chars().count().max(1));
-        let arrow_x = content_left + visible_column(line, arrow_column, editor.document.indentation.tab_size) as f32 * char_width - editor.scroll.left;
+        let arrow_x = content_left + visible_column(line, arrow_column, editor.document().indentation.tab_size) as f32 * char_width - editor.scroll.left;
         let arrow = canvas(
             |_, _, _| (),
             move |bounds, _, window, _| {
@@ -370,7 +374,7 @@ impl Workbench {
         .w(px(2. * ARROW_HEIGHT))
         .h(px(ARROW_HEIGHT));
         let container_height = zone.height - 2. * ARROW_HEIGHT - 2. * FRAME_WIDTH;
-        let file_name = editor.document.path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+        let file_name = editor.document().path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
         let detail = match widget.total > 1 {
             true => format!("{} of {} problems", widget.index, widget.total),
             false => format!("{} of {} problem", widget.index, widget.total),
@@ -539,7 +543,7 @@ impl Workbench {
         let Some(editor) = self.editors.active_mut() else { return };
         let line = related["startLineNumber"].as_u64().unwrap_or(1) as usize;
         let column = related["startColumn"].as_u64().unwrap_or(1) as usize;
-        let position = validate(&editor.document.lines, line, column);
+        let position = validate(&editor.document().lines, line, column);
         editor.set_selections(vec![Selection::caret(position)]);
         editor.reveal_range(position, position, VerticalReveal::CenterIfOutsideViewport, viewport);
         self.host.send_selection(editor, "code.jump");
@@ -563,7 +567,7 @@ impl Workbench {
 }
 
 fn lines_len(editor: &OpenEditor) -> usize {
-    editor.document.lines.len()
+    editor.document().lines.len()
 }
 
 /// `MessageWidget._lines`: the message lines, and with related information a spacer line and one per item.

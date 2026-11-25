@@ -40,7 +40,7 @@ fn run(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext, command:
 fn active_text_and_cursor(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext) -> (String, Position) {
     workbench.read_with(cx, |workbench, _| {
         let editor = workbench.editors.active().unwrap();
-        (editor.document.lines.join("\n"), editor.selections[0].head)
+        (editor.document().lines.join("\n"), editor.selections[0].head)
     })
 }
 
@@ -83,7 +83,7 @@ fn the_raw_default_settings_open_read_only(cx: &mut TestAppContext) {
 
     let (uri, first_line, language, readonly) = workbench.read_with(cx, |workbench, _| {
         let editor = workbench.editors.active().unwrap();
-        let document = &editor.document;
+        let document = &editor.document();
         (document.uri_string(), document.lines[0].clone(), document.language_id.clone(), workbench.active_editor_readonly())
     });
     assert_eq!((uri.as_str(), first_line.as_str(), language.as_str()), ("vscode://defaultsettings/defaultSettings.jsonc", "{", "jsonc"));
@@ -100,7 +100,7 @@ fn the_default_keybindings_file_lists_the_defaults_then_the_unbound_commands(cx:
 
     let (name, lines) = workbench.read_with(cx, |workbench, _| {
         let editor = workbench.editors.active().unwrap();
-        (workbench.editor_name(editor), editor.document.lines.clone())
+        (workbench.editor_name(editor), editor.document().lines.clone())
     });
     assert_eq!(name, "Default Keybindings");
     assert_eq!(lines[..2], ["// Override key bindings by placing them into your key bindings file.", "["]);

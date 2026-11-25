@@ -116,13 +116,13 @@ impl HostSync {
     /// Sends what changed in `group` since the last call: activation for new languages, the document
     /// and editor delta, then the tab model.
     pub fn send_changes(&mut self, group: &EditorGroup) {
-        let is_text = |editor: &&OpenEditor| !self.webview_tabs.contains_key(&editor.document.path) && editor.document.scheme != DIFF_EDITOR_SCHEME;
+        let is_text = |editor: &&OpenEditor| !self.webview_tabs.contains_key(&editor.document().path) && editor.document().scheme != DIFF_EDITOR_SCHEME;
         let open: Vec<&OpenEditor> = group.editors.iter().chain(&group.models).filter(is_text).collect();
-        let added: Vec<&OpenEditor> = open.iter().copied().filter(|editor| !self.documents.iter().any(|(uri, _)| *uri == editor.document.uri_string())).collect();
+        let added: Vec<&OpenEditor> = open.iter().copied().filter(|editor| !self.documents.iter().any(|(uri, _)| *uri == editor.document().uri_string())).collect();
         let removed: Vec<(String, Value)> =
-            self.documents.iter().filter(|(uri, _)| !open.iter().any(|editor| editor.document.uri_string() == *uri)).cloned().collect();
+            self.documents.iter().filter(|(uri, _)| !open.iter().any(|editor| editor.document().uri_string() == *uri)).cloned().collect();
         for editor in &added {
-            for event in [format!("onLanguage:{}", editor.document.language_id), "onLanguage".to_string()] {
+            for event in [format!("onLanguage:{}", editor.document().language_id), "onLanguage".to_string()] {
                 // `activate_by_event`, inlined: `is_text` still borrows `self.webview_tabs`.
                 if !self.activations.contains_key(&event) {
                     let activation = self.call("ExtHostExtensionService", "$activateByEvent", vec![json!(event), json!(0)]).shared();
@@ -155,7 +155,7 @@ impl HostSync {
             self.send("ExtHostDocumentsAndEditors", "$acceptDocumentsAndEditorsDelta", vec![Value::Object(delta)]);
         }
         self.documents.retain(|document| !removed.contains(document));
-        self.documents.extend(added.iter().map(|editor| (editor.document.uri_string(), editor.document.uri())));
+        self.documents.extend(added.iter().map(|editor| (editor.document().uri_string(), editor.document().uri())));
         self.editor = active_id;
         self.send_tabs(group);
     }
@@ -222,7 +222,7 @@ impl HostSync {
 
     /// The text of `editor`, shown or a model without an editor, changed: the change, then the dirty state and tabs when it flipped.
     pub fn send_model_change(&mut self, group: &EditorGroup, editor: &OpenEditor, change: &ContentChanged) {
-        let document = &editor.document;
+        let document = &editor.document();
         let uri = document.uri();
         let changes: Vec<Value> = change
             .changes
@@ -259,12 +259,12 @@ impl HostSync {
         if was_dirty {
             self.send_dirty_state(group, editor, false);
         }
-        self.send("ExtHostDocuments", "$acceptModelSaved", vec![editor.document.uri()]);
+        self.send("ExtHostDocuments", "$acceptModelSaved", vec![editor.document().uri()]);
     }
 
     /// The dirty state of `editor` flipped without a text change, then the tabs that show it.
     pub fn send_dirty_state(&mut self, group: &EditorGroup, editor: &OpenEditor, dirty: bool) {
-        self.send("ExtHostDocuments", "$acceptDirtyStateChanged", vec![editor.document.uri(), json!(dirty)]);
+        self.send("ExtHostDocuments", "$acceptDirtyStateChanged", vec![editor.document().uri(), json!(dirty)]);
         self.send_tabs(group);
     }
 
@@ -361,10 +361,10 @@ pub fn snapshot_id(editor: &OpenEditor) -> String {
 }
 
 fn model_added_data(editor: &OpenEditor) -> Value {
-    let document = &editor.document;
+    let document = &editor.document();
     json!({
         "uri": document.uri(),
-        "versionId": editor.version_id,
+        "versionId": editor.text_model().version_id,
         "lines": document.lines,
         "EOL": document.eol,
         "languageId": document.language_id,
@@ -374,7 +374,7 @@ fn model_added_data(editor: &OpenEditor) -> Value {
 }
 
 fn text_editor_add_data(editor: &OpenEditor, visible_lines: &[(usize, usize)]) -> Value {
-    let document = &editor.document;
+    let document = &editor.document();
     json!({
         "id": snapshot_id(editor),
         "documentUri": document.uri(),
@@ -387,7 +387,7 @@ fn text_editor_add_data(editor: &OpenEditor, visible_lines: &[(usize, usize)]) -
 
 /// `IResolvedTextEditorConfiguration`: TextEditorCursorStyle.Line, RenderLineNumbersType.On.
 fn options(editor: &OpenEditor) -> Value {
-    let indentation = editor.document.indentation;
+    let indentation = editor.document().indentation;
     json!({
         "tabSize": indentation.tab_size,
         "indentSize": indentation.indent_size(),
@@ -400,13 +400,13 @@ fn options(editor: &OpenEditor) -> Value {
 
 /// `getVisibleRanges` without folding: one range over whole lines.
 fn visible_ranges(editor: &OpenEditor, lines: &[(usize, usize)]) -> Value {
-    let range = |&(first, last): &(usize, usize)| json!({ "startLineNumber": first + 1, "startColumn": 1, "endLineNumber": last + 1, "endColumn": utf16_len(&editor.document.lines[last]) + 1 });
+    let range = |&(first, last): &(usize, usize)| json!({ "startLineNumber": first + 1, "startColumn": 1, "endLineNumber": last + 1, "endColumn": utf16_len(&editor.document().lines[last]) + 1 });
     Value::Array(lines.iter().map(range).collect())
 }
 
 /// The cursors' `ISelection`s, primary first, 1-based with UTF-16 columns as the text model counts them.
 fn selections(editor: &OpenEditor) -> Value {
-    let lines = &editor.document.lines;
+    let lines = &editor.document().lines;
     let column = |position: Position| utf16_len(&lines[position.line].chars().take(position.column).collect::<String>()) + 1;
     let selection = |&Selection { anchor, head }: &Selection| {
         json!({ "selectionStartLineNumber": anchor.line + 1, "selectionStartColumn": column(anchor), "positionLineNumber": head.line + 1, "positionColumn": column(head) })
@@ -431,16 +431,16 @@ fn utf16_len(text: &str) -> usize {
 /// The tab's id in `$acceptTabOperation`, which `$moveTab` and `$closeTab` name a tab by.
 pub fn tab_id(editor: &OpenEditor) -> String {
     // Every scheme the file service reads opens as a file editor input; untitled text has its own.
-    let type_id = if editor.document.scheme == "untitled" { "workbench.editors.untitledEditorInput" } else { "workbench.editors.files.fileEditorInput" };
-    format!("0~default-{type_id}-{} ", editor.document.uri_string())
+    let type_id = if editor.document().scheme == "untitled" { "workbench.editors.untitledEditorInput" } else { "workbench.editors.files.fileEditorInput" };
+    format!("0~default-{type_id}-{} ", editor.document().uri_string())
 }
 
 fn tab_dto(editor: &OpenEditor, active: bool, sync: &HostSync) -> Value {
     let (search_tabs, webview_tabs) = (&sync.search_tabs, &sync.webview_tabs);
-    let uri = editor.document.uri();
-    let label = match editor.document.scheme.as_str() {
+    let uri = editor.document().uri();
+    let label = match editor.document().scheme.as_str() {
         "untitled" => crate::untitled::name(editor, sync.untitled_names_from_content),
-        _ => editor.document.name(),
+        _ => editor.document().name(),
     };
     let mut tab = json!({
         "id": tab_id(editor),
@@ -454,7 +454,7 @@ fn tab_dto(editor: &OpenEditor, active: bool, sync: &HostSync) -> Value {
         "isDirty": editor.is_dirty(),
     });
     // A search editor is no text resource input: TabInputKind.UnknownInput, its editor id is its type id.
-    if let Some(search) = search_tabs.get(&editor.document.path).filter(|_| editor.document.scheme == "search-editor") {
+    if let Some(search) = search_tabs.get(&editor.document().path).filter(|_| editor.document().scheme == "search-editor") {
         let type_id = "workbench.editorinputs.searchEditorInput";
         tab["id"] = json!(format!("0~{type_id}-{type_id}-{} ", search.resource));
         tab["label"] = json!(search.label);
@@ -462,9 +462,9 @@ fn tab_dto(editor: &OpenEditor, active: bool, sync: &HostSync) -> Value {
         tab["editorId"] = json!(type_id);
     }
     // mainThreadEditorTabs.ts: TabInputKind.WebviewEditorInput, its editor id is the view type.
-    if let Some(webview) = webview_tabs.get(&editor.document.path) {
+    if let Some(webview) = webview_tabs.get(&editor.document().path) {
         let type_id = "workbench.editors.webviewInput";
-        tab["id"] = json!(format!("0~{}-{type_id}-{} ", webview.view_type, editor.document.uri_string()));
+        tab["id"] = json!(format!("0~{}-{type_id}-{} ", webview.view_type, editor.document().uri_string()));
         tab["label"] = json!(webview.label);
         tab["input"] = json!({ "kind": 7, "viewType": webview.view_type });
         tab["editorId"] = json!(webview.view_type);

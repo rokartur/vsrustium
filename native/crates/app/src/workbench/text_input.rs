@@ -48,8 +48,9 @@ impl Workbench {
         // The edit can unfold a region or change the line count, which changes the visible lines.
         if change.is_some() {
             self.host.send_visible_ranges(&self.editors);
-            let document = &self.editors.active().expect("still open").document;
+            let document = self.editors.active().expect("still open").document();
             let (scheme, path) = (document.scheme.clone(), document.path.clone());
+            drop(document);
             self.search_model_changed(&scheme, &path);
             if let Some(change) = &change {
                 self.search_editor_edited(&path, change);
@@ -68,8 +69,9 @@ impl Workbench {
 
     /// fileCommands.ts `save`: the editor's model, also when clean (`force`).
     pub(super) fn save_editor(&mut self, index: usize, cx: &mut Context<Self>) -> oneshot::Receiver<bool> {
-        let document = &self.editors.tab_model(index).document;
+        let document = self.editors.tab_model(index).document();
         let (scheme, path) = (document.scheme.clone(), document.path.clone());
+        drop(document);
         self.save_model_with(scheme, path, SaveReason::Explicit, SaveOptions { force: true, ..SaveOptions::default() }, cx)
     }
 
@@ -81,14 +83,15 @@ impl Workbench {
     /// saveParticipants.ts: the text participants of the model's language and resource, their changes sent to the host.
     pub(super) fn run_save_participants(&mut self, scheme: &str, path: &Path, reason: SaveReason) {
         // `findEditor`: only the group's one code editor, showing the active model, has cursors.
-        let shown = self.editors.active().is_some_and(|editor| editor.document.is(scheme, path));
+        let shown = self.editors.active().is_some_and(|editor| editor.document().is(scheme, path));
         let model = self.editors.model_mut(scheme, path).expect("saving an open model");
         let spared_cursors = match reason == SaveReason::Auto && shown {
             true => model.selections.iter().map(|selection| selection.head).collect(),
             false => Vec::new(),
         };
         let settings = self.settings.lock().unwrap();
-        let overrides = Overrides { resource: Some(path), override_identifier: Some(&model.document.language_id) };
+        let language_id = model.document().language_id.clone();
+        let overrides = Overrides { resource: Some(path), override_identifier: Some(&language_id) };
         let on = |key: &str| settings.get_value(Some(key), &overrides) == Some(json!(true));
         let participants = SaveParticipants {
             trim_trailing_whitespace: on("files.trimTrailingWhitespace"),
@@ -131,7 +134,7 @@ impl Workbench {
     fn input_range(&self, range: Range<usize>) -> (usize, usize) {
         let editor = self.editors.active().expect("input goes to the active editor");
         let head = editor.selection().head;
-        let line = &editor.document.lines[head.line];
+        let line = &editor.document().lines[head.line];
         let (start, end) = (column_at_utf16(line, range.start), column_at_utf16(line, range.end));
         (head.column.saturating_sub(start), end.saturating_sub(head.column))
     }
@@ -146,7 +149,7 @@ impl EntityInputHandler for Workbench {
             return self.input_text_for_range(id, range, adjusted_range);
         }
         let editor = self.editors.active()?;
-        let units: Vec<u16> = editor.document.lines[editor.selection().head.line].encode_utf16().collect();
+        let units: Vec<u16> = editor.document().lines[editor.selection().head.line].encode_utf16().collect();
         let range = range.start.min(units.len())..range.end.min(units.len());
         *adjusted_range = Some(range.clone());
         Some(String::from_utf16_lossy(&units[range]))
@@ -158,7 +161,7 @@ impl EntityInputHandler for Workbench {
         }
         let editor = self.editors.active()?;
         let selection = editor.selection();
-        let line = &editor.document.lines[selection.head.line];
+        let line = &editor.document().lines[selection.head.line];
         let head = utf16_column(line, selection.head.column);
         let anchor = if selection.anchor.line == selection.head.line { utf16_column(line, selection.anchor.column) } else { head };
         Some(UTF16Selection { range: anchor.min(head)..anchor.max(head), reversed: head < anchor })
@@ -217,7 +220,7 @@ impl EntityInputHandler for Workbench {
         let primary = editor.selection();
         let start = if primary.is_empty() { Position::new(primary.head.line, primary.head.column.saturating_sub(previous)) } else { primary.start() };
         let change = editor.type_replacing(new_text, previous, next, "compositionType");
-        let marked_start = utf16_column(&editor.document.lines[start.line], start.column);
+        let marked_start = utf16_column(&editor.document().lines[start.line], start.column);
         self.marked_text = (!new_text.is_empty()).then(|| marked_start..marked_start + new_text.encode_utf16().count());
         self.editor_edited(change, false, "keyboard", cx);
     }

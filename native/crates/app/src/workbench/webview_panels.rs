@@ -153,7 +153,7 @@ impl Workbench {
 
     /// The body of a webview editor: an empty box the native view is placed over once laid out.
     pub(super) fn webview_editor_body(&self, editor: &OpenEditor) -> Div {
-        let view = self.webview_panel(&editor.document.path).and_then(|panel| panel.webview.as_ref()).map(Webview::view);
+        let view = self.webview_panel(&editor.document().path).and_then(|panel| panel.webview.as_ref()).map(Webview::view);
         div().flex_1().min_h_0().child(
             canvas(
                 move |bounds, window, _| {
@@ -170,7 +170,7 @@ impl Workbench {
     /// Runs each render: the active panel's webview exists, the others hide or are released, and a webview
     /// gives the keyboard back once GPUI focused one of its own elements.
     pub(super) fn update_webview_panels(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let active = self.editors.active().map(|editor| editor.document.path.clone());
+        let active = self.editors.active().map(|editor| editor.document().path.clone());
         // Native views draw over GPUI's layer: a quick input or menu on top of the webview would be hidden.
         // shortcut: the webview hides under these overlays, where Electron draws them over its iframe.
         let covered = self.quick_inputs.current().is_some() || self.keybindings_editor.open || self.context_menu.is_some();
@@ -301,7 +301,7 @@ impl Workbench {
     pub(super) fn sync_webview_panels(&mut self) {
         let editors = &self.editors;
         let (open, closed): (Vec<WebviewPanel>, Vec<WebviewPanel>) =
-            std::mem::take(&mut self.webview_panels.panels).into_iter().partition(|panel| editors.editors.iter().any(|editor| editor.document.is(WEBVIEW_PANEL_SCHEME, &panel.path)));
+            std::mem::take(&mut self.webview_panels.panels).into_iter().partition(|panel| editors.editors.iter().any(|editor| editor.document().is(WEBVIEW_PANEL_SCHEME, &panel.path)));
         self.webview_panels.panels = open;
         for panel in closed {
             self.host.send("ExtHostWebviewPanels", "$onDidDisposeWebviewPanel", vec![json!(panel.handle)]);
@@ -312,7 +312,7 @@ impl Workbench {
             .iter()
             .map(|panel| (panel.path.clone(), WebviewTab { label: panel.title.clone(), view_type: format!("mainThreadWebview-{}", panel.view_type) }))
             .collect();
-        let active_path = self.editors.active().map(|editor| editor.document.path.clone());
+        let active_path = self.editors.active().map(|editor| editor.document().path.clone());
         let active = self.webview_panels.panels.iter().find(|panel| active_path.as_ref() == Some(&panel.path)).map(|panel| panel.handle.clone());
         if active == self.webview_panels.active {
             return;
@@ -370,7 +370,7 @@ impl Workbench {
 
     fn webview_editor_index(&self, handle: &str) -> Option<usize> {
         let panel = self.webview_panels.panels.iter().find(|panel| panel.handle == handle)?;
-        self.editors.editors.iter().position(|editor| editor.document.is(WEBVIEW_PANEL_SCHEME, &panel.path))
+        self.editors.editors.iter().position(|editor| editor.document().is(WEBVIEW_PANEL_SCHEME, &panel.path))
     }
 }
 

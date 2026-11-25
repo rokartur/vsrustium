@@ -41,18 +41,19 @@ impl DisposedModels {
     /// `_onWillDispose`: the model's undo and redo elements are kept when its scheme maintains them
     /// (`_schemaShouldMaintainUndoRedoElements`), they fit in the cache and the text is small enough to hash.
     pub fn insert(&mut self, mut model: OpenEditor) {
-        if !self.should_restore_undo_stack() || !matches!(model.document.scheme.as_str(), "file" | "fake-fs") {
+        if !self.should_restore_undo_stack() || !matches!(model.document().scheme.as_str(), "file" | "fake-fs") {
             return;
         }
-        let Some(heap_size) = model.history.heap_size() else { return };
-        let text = model.document.lines.join(model.document.eol);
+        let Some(heap_size) = model.text_model().history.heap_size() else { return };
+        let text = model.document().lines.join(model.document().eol);
         if heap_size > MAX_MEMORY_FOR_CLOSED_FILES_UNDO_STACK || text.len() > MAX_MODEL_SIZE {
             return;
         }
         self.ensure_heap_size(MAX_MEMORY_FOR_CLOSED_FILES_UNDO_STACK - heap_size);
-        let disposed = DisposedModel { history: std::mem::take(&mut model.history), version_id: model.version_id, digest: digest(&text), time: Instant::now(), heap_size };
+        let version_id = model.text_model().version_id;
+        let disposed = DisposedModel { history: std::mem::take(&mut model.text_model_mut().history), version_id, digest: digest(&text), time: Instant::now(), heap_size };
         self.heap_size += heap_size;
-        if let Some(replaced) = self.models.insert(model.document.uri_string(), disposed) {
+        if let Some(replaced) = self.models.insert(model.document().uri_string(), disposed) {
             self.heap_size -= replaced.heap_size;
         }
     }
@@ -60,14 +61,14 @@ impl DisposedModels {
     /// `_createModelData`: a new model of a disposed one's resource takes back its elements and version ids when
     /// the text is the same; either way the disposed entry goes.
     pub fn restore(&mut self, model: &mut OpenEditor) {
-        let Some(disposed) = self.models.remove(&model.document.uri_string()) else { return };
+        let Some(disposed) = self.models.remove(&model.document().uri_string()) else { return };
         self.heap_size -= disposed.heap_size;
-        let text = model.document.lines.join(model.document.eol);
+        let text = model.document().lines.join(model.document().eol);
         if text.len() > MAX_MODEL_SIZE || digest(&text) != disposed.digest {
             return;
         }
-        model.history = disposed.history;
-        model.version_id = disposed.version_id;
+        model.text_model_mut().history = disposed.history;
+        model.text_model_mut().version_id = disposed.version_id;
         // textFileEditorModel.ts `updateSavedVersionId` after the model is created: it matches the disk.
         model.mark_saved();
     }
@@ -148,14 +149,14 @@ mod tests {
         let editor = &mut group.editors[0];
         editor.execute_edits(vec![(Position::new(0, 0), Position::new(0, 0), "new ".into(), false)], None, EditReason::Unknown("test"));
         editor.mark_saved();
-        let version = editor.version_id;
+        let version = editor.text_model().version_id;
         group.close(0);
         group.open(file("new text"), false);
         let editor = &mut group.editors[0];
-        assert_eq!(editor.version_id, version);
+        assert_eq!(editor.text_model().version_id, version);
         assert!(!editor.is_dirty());
         assert!(editor.undo().is_some());
-        assert_eq!(editor.document.lines, ["text"]);
+        assert_eq!(editor.document().lines, ["text"]);
         assert!(editor.is_dirty());
     }
 

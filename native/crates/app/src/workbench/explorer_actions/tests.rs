@@ -71,7 +71,7 @@ fn new_file_takes_a_validated_name_and_opens(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("enter");
     cx.run_until_parked();
     assert_eq!(names(&dir), ["a.txt", "b.txt", "sub"]);
-    let opened = workbench.read_with(cx, |workbench, _| workbench.editors.active().map(|editor| editor.document.path.clone()));
+    let opened = workbench.read_with(cx, |workbench, _| workbench.editors.active().map(|editor| editor.document().path.clone()));
     assert_eq!(opened, Some(dir.join("b.txt")));
 
     run(&workbench, "explorer.newFolder", cx);
@@ -124,7 +124,7 @@ fn files_dropped_from_finder_copy_into_the_folder_under_the_pointer(cx: &mut Tes
     drop(&["dropped.txt"], sub_row, cx);
     assert_eq!(names(&dir.join("sub")), ["dropped.txt"]);
     assert_eq!(names(&finder), ["a.txt", "dropped.txt", "folder"], "a drop copies");
-    let opened = workbench.read_with(cx, |workbench, _| workbench.editors.active().map(|editor| editor.document.path.clone()));
+    let opened = workbench.read_with(cx, |workbench, _| workbench.editors.active().map(|editor| editor.document().path.clone()));
     assert_eq!(opened, Some(dir.join("sub/dropped.txt")), "explorer.autoOpenDroppedFile");
 
     // A folder dropped into a workspace folder asks first; the skipped dialog picks Add, which the port lacks.
