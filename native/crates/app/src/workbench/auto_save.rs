@@ -226,6 +226,10 @@ impl Workbench {
     /// Saves the model if it is dirty and its mode allows `reason`; a save held back by errors waits for them to go.
     fn auto_save_model(&mut self, key: Key, reason: SaveReason, cx: &mut Context<Self>) {
         let Some(model) = self.editors.model(&key.0, &key.1).filter(|model| model.is_dirty()) else { return };
+        // textFileEditorModel.ts `doSave` ignores a save request of a read-only model.
+        if self.readonly(&key.0, &key.1).is_some() {
+            return;
+        }
         match self.auto_save_mode(Some(model), Some(reason)) {
             AutoSaveMode::Off(Disabled::Errors) => _ = self.auto_save.waiting.insert(key, reason),
             AutoSaveMode::Off(_) => {}
