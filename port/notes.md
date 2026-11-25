@@ -216,6 +216,7 @@ Scope as in port/roadmap.md. Done in this milestone: the command registry, conte
 - The modal header's Open Modal Editor in Main Window and New Window are left out (the editor area hosts only text editors, no auxiliary windows); the open-in-product icon is drawn disabled. The extension name in the Source column does not open the extension: no Extensions view.
 - Record Keys and the define widget record on key down; GPUI sends a lone modifier as a modifiers change, not a key down, so the bare `⌘` upstream shows while only a modifier is held does not appear.
 - shortcut: unbound commands with `args` metadata are listed; the port's command registry has no metadata.
+- Command titles come from the reference: `port/tools/ref-commands` dumps 1.147.0's `MenuRegistry` commands, editor action labels and `MenuId.CommandPalette` items into `command_palette/reference-commands.json`. The Keyboard Shortcuts editor labels a command as `getActionsLabels` does (an extension's `MenuRegistry` title, else the reference label), so `copyFilePath` reads "File: Copy Path of Active File". The palette lists a workbench item only when the port registers its command; extension items always, as they register on activation. `viewContainer.<id>.enabled`, `<view>.active`, `activeEditorIsLastInGroup` and `viewHasSomeCollapsibleResult` are set so the items' `when` clauses hold as in the reference. Rerun the tool when the reference moves.
 
 ## Milestone 12: files, explorer, search, workspace (in progress)
 

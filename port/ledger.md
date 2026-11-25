@@ -111,7 +111,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/accessibilitySignal | src/vs/platform | todo |  |
 | platform/action | src/vs/platform | todo |  |
 | platform/actionWidget | src/vs/platform | todo |  |
-| platform/actions | src/vs/platform | ported | menus.rs: MenuRegistry rows with group, order, when, precondition, toggled and submenus, sorted as menuService.ts; cargo test -p app menus (the menuService.test.ts sorting cases); command_palette.rs keeps the CommandPalette menu; no context menus yet |
+| platform/actions | src/vs/platform | ported | menus.rs: MenuRegistry rows with group, order, when, precondition, toggled and submenus, sorted as menuService.ts; cargo test -p app menus (the menuService.test.ts sorting cases); command_palette.rs keeps the CommandPalette menu, built from the 1.147.0 dump of `MenuRegistry` titles and CommandPalette items (port/tools/ref-commands, command_palette/reference-commands.json); no context menus yet |
 | platform/agentHost | src/vs/platform | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | platform/agentPlugins | src/vs/platform | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | platform/artifactIntegrations | src/vs/platform | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
@@ -456,7 +456,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/policyExport | workbench contribution | todo |  |
 | workbench/contrib/preferences | workbench contribution | todo | keybindingsEditor.ts, keybindingWidgets.ts and the keybindings actions of preferences.contribution.ts ported as workbench/keybindings_editor_view.rs (cargo test -p app keybindings_editor_view, port/results/keybindings-editor.md); keybindingsEditorContribution.ts (the keybindings.json define overlay and decorations), keyboardLayoutPicker.ts and the Settings editor (milestone 10) not ported |
 | workbench/contrib/processExplorer | workbench contribution | todo |  |
-| workbench/contrib/quickaccess | workbench contribution | ported | commandsQuickAccess.ts as quick_access.rs and command_palette.rs; cargo test -p app quick_access command_palette tf_idf, history in profile storage; viewQuickAccess.ts not ported |
+| workbench/contrib/quickaccess | workbench contribution | ported | commandsQuickAccess.ts as quick_access.rs and command_palette.rs; cargo test -p app quick_access command_palette tf_idf, history in profile storage; the workbench's palette items are the reference's, listed when the port registers their command; viewQuickAccess.ts not ported |
 | workbench/contrib/relauncher | workbench contribution | todo |  |
 | workbench/contrib/remote | workbench contribution | removed | no remote or tunnels by decision (port/notes.md); one local extension host |
 | workbench/contrib/remoteCodingAgents | workbench contribution | removed | no sign-in/AI by decision (port/notes.md); not ported |

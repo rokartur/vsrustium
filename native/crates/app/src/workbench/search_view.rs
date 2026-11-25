@@ -308,13 +308,18 @@ fn child_folder(folder: &Path, path: &Path) -> Option<PathBuf> {
 }
 
 impl Workbench {
+    /// `SearchContext.ViewHasSomeCollapsibleKey`: some folder or file row of the results is expanded.
+    pub(super) fn search_has_expanded_rows(&self) -> bool {
+        let rows = self.search.rows(&self.search_folders(), Some(&self.collapse_results()));
+        rows.iter().any(|row| matches!(row.kind, RowKind::Folder { collapsed: false, .. } | RowKind::File { collapsed: false, .. }))
+    }
+
     /// The Search view's title actions (searchActionsTopBar.ts), in their menu order.
     pub(super) fn search_title_actions(&self, cx: &mut Context<Self>) -> Div {
         let view = &self.search;
         let has_pattern = !view.value(SearchField::Query).is_empty();
         let has_results = !view.result.is_empty();
-        let rows = view.rows(&self.search_folders(), Some(&self.collapse_results()));
-        let can_collapse = rows.iter().any(|row| matches!(row.kind, RowKind::Folder { collapsed: false, .. } | RowKind::File { collapsed: false, .. }));
+        let can_collapse = self.search_has_expanded_rows();
         let refresh = match view.state {
             SearchUiState::SlowSearch => ("search-stop", "search.action.cancel", true),
             _ => ("refresh", "search.action.refreshSearchResults", has_pattern),

@@ -160,14 +160,17 @@ fn menu_lists_contributed_commands_and_honours_command_palette_when() {
         ] }
     } });
     let menu = menu(&[extension(description)]);
+    let mut commands = Commands::default();
+    commands.register("workbench.action.files.saveFiles", |_, _, _, _| crate::commands::Outcome::done());
     let context = std::collections::HashMap::new();
-    let ids: Vec<String> = enabled_commands(&menu, &context).into_iter().filter(|pick| pick.id.starts_with("ext.")).map(|pick| pick.label).collect();
+    let ids: Vec<String> = enabled_commands(&menu, &context, &commands).into_iter().filter(|pick| pick.id.starts_with("ext.")).map(|pick| pick.label).collect();
     assert_eq!(ids, ["Ext: Hello", "Titled", "Uncategorized"]);
 
     let ready = std::collections::HashMap::from([("ext.ready".to_string(), Value::Bool(true))]);
-    let picks = enabled_commands(&menu, &ready);
+    let picks = enabled_commands(&menu, &ready, &commands);
     assert!(picks.iter().any(|pick| pick.id == "ext.disabled"));
     assert!(picks.iter().any(|pick| pick.label == "File: Save All Files" && pick.category.as_deref() == Some("File")));
+    assert!(!picks.iter().any(|pick| pick.id == "workbench.action.files.save"), "a workbench command the port does not register");
     assert!(!menu.iter().any(|item| item.id == "ext.unknown"));
 }
 

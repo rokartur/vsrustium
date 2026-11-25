@@ -61,6 +61,8 @@ fn command_palette_runs_an_extension_command_and_remembers_it(cx: &mut TestAppCo
     let all = workbench.read_with(cx, labels);
     assert!(all.contains(&"Port: Say Hello".to_string()), "{all:?}");
     assert!(all.contains(&"Show All Commands".to_string()), "{all:?}");
+    // `viewContainer.workbench.view.explorer.enabled` and `workbench.view.search.active` hold.
+    assert!(all.contains(&"View: Show Explorer".to_string()) && all.contains(&"View: Show Search".to_string()), "{all:?}");
 
     cx.simulate_input("say hel");
     assert_eq!(workbench.read_with(cx, labels), ["Port: Say Hello"]);

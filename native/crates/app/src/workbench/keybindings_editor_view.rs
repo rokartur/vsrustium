@@ -880,18 +880,19 @@ impl Workbench {
             .flex()
             .items_center()
             .when(recording, |actions| {
-                // `.recording-badge.monaco-count-badge.long`.
+                // `.recording-badge.monaco-count-badge.long` under modern UI: `fontSize.label3` 10px, `cornerRadius.small`,
+                // `line-height: normal` (22px tall in the reference); the border only with `contrastBorder` (countBadge.ts).
+                let border = self.theme.color("contrastBorder");
                 actions.child(
                     div()
                         .mr(px(8.))
                         .p(px(4.))
-                        .rounded(px(2.))
-                        .text_size(px(11.))
-                        .line_height(px(11.))
+                        .rounded(px(4.))
+                        .text_size(px(10.))
+                        .line_height(px(14.))
                         .bg(self.color("badge.background"))
                         .text_color(self.color("badge.foreground"))
-                        .border_1()
-                        .border_color(self.theme.color("contrastBorder").unwrap_or(transparent()))
+                        .when_some(border, |badge, border| badge.border_1().border_color(border))
                         .child("Recording Keys"),
                 )
             })

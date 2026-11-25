@@ -1,0 +1,136 @@
+#!/usr/bin/env bun
+// Dumps the command titles the reference's Keyboard Shortcuts editor and Command Palette read: MenuRegistry.getCommands()
+// (title, category, precondition; extension commands left out, the port reads them from package.json), the labels and
+// preconditions of EditorExtensionsRegistry.getEditorActions(), and the MenuId.CommandPalette items with their `when`.
+// Usage: port/tools/ref-commands [out.json]   (env REF as port/tools/ref-screenshot). Run on the Studio.
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+const out = process.argv[2] ?? 'native/crates/app/src/command_palette/reference-commands.json';
+const ref = process.env.REF ?? join(process.env.HOME!, 'Developer/vscode-ref');
+const electron = join(ref, '.build/electron/Code - OSS.app/Contents/MacOS/Code - OSS');
+const port = 9338;
+
+await takeGuiLock();
+const userData = mkdtempSync(join(tmpdir(), 'ref-commands-'));
+mkdirSync(join(userData, 'User'));
+writeFileSync(join(userData, 'User/settings.json'), JSON.stringify({
+	'workbench.startupEditor': 'none',
+	'window.restoreWindows': 'none',
+	'update.mode': 'none',
+	'chat.disableAIFeatures': true,
+	'security.workspace.trust.enabled': false,
+}));
+const app = Bun.spawn([electron, ref, '--user-data-dir', userData, `--remote-debugging-port=${port}`, '--disable-extension', 'GitHub.copilot-chat', '--disable-extension', 'vscode.vscode-api-tests'], {
+	env: { ...process.env, VSCODE_DEV: '1', NODE_ENV: 'development' },
+	stdout: 'ignore',
+	stderr: 'ignore',
+});
+try {
+	const cdp = await connect();
+	await until(async () => (await evaluate(cdp, `!!document.querySelector('.monaco-workbench .part.statusbar')`)) === true);
+	await Bun.sleep(5000);
+	// The dev workbench loads each module from out/; importing the same URL gives the instance the workbench filled.
+	const dump = await evaluate(cdp, `(async () => {
+		const out = location.href.slice(0, location.href.indexOf('/out/') + '/out'.length);
+		const load = path => import(out + path);
+		const { MenuRegistry, MenuId, isIMenuItem } = await load('/vs/platform/actions/common/actions.js');
+		const { EditorExtensionsRegistry } = await load('/vs/editor/browser/editorExtensions.js');
+		const text = value => typeof value === 'string' ? value : value?.value;
+		const label = command => command.category ? text(command.category) + ': ' + text(command.title) : text(command.title);
+		// KeybindingsEditor.getActionsLabels, then toKeybindingEntry's MenuRegistry.getCommand first.
+		const labels = {};
+		for (const action of EditorExtensionsRegistry.getEditorActions()) {
+			labels[action.id] = action.label;
+		}
+		const commandPalette = [];
+		for (const item of MenuRegistry.getMenuItems(MenuId.CommandPalette)) {
+			if (!isIMenuItem(item) || item.command.source) {
+				continue;
+			}
+			labels[item.command.id] = label(item.command);
+			commandPalette.push({ id: item.command.id, title: text(item.command.title), category: text(item.command.category), when: item.when?.serialize(), precondition: item.command.precondition?.serialize() });
+		}
+		for (const [id, command] of MenuRegistry.getCommands()) {
+			if (!command.source) {
+				labels[id] = label(command);
+			}
+		}
+		return { labels, commandPalette };
+	})()`);
+	writeFileSync(out, JSON.stringify(dump, null, '\t') + '\n');
+	console.log(`${Object.keys(dump.labels).length} labels, ${dump.commandPalette.length} palette items: ${out}`);
+} finally {
+	app.kill('SIGKILL');
+	await app.exited;
+	rmSync(userData, { recursive: true, force: true });
+}
+process.exit(0);
+
+async function evaluate(cdp: (method: string, params?: object) => Promise<any>, expression: string) {
+	const result = await cdp('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
+	if (result.exceptionDetails) {
+		throw new Error(result.exceptionDetails.exception?.description ?? result.exceptionDetails.text);
+	}
+	return result.result.value;
+}
+
+async function connect() {
+	const target = await until(async () => (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json() as { type: string; url: string; webSocketDebuggerUrl: string }[]).find(t => t.type === 'page' && t.url.includes('workbench')));
+	const socket = new WebSocket(target.webSocketDebuggerUrl);
+	await new Promise(resolve => socket.addEventListener('open', resolve, { once: true }));
+	let nextId = 1;
+	const pending = new Map<number, (message: any) => void>();
+	socket.addEventListener('message', event => {
+		const message = JSON.parse(String(event.data));
+		pending.get(message.id)?.(message);
+		pending.delete(message.id);
+	});
+	return (method: string, params: object = {}) => new Promise<any>((resolve, reject) => {
+		const id = nextId++;
+		pending.set(id, message => message.error ? reject(new Error(`${method}: ${message.error.message}`)) : resolve(message.result));
+		socket.send(JSON.stringify({ id, method, params }));
+	});
+}
+
+/** gui-lock.sh's lock: windows of parallel sessions take turns. */
+async function takeGuiLock() {
+	const lock = '/tmp/port-gui.lock';
+	while (true) {
+		try {
+			mkdirSync(lock);
+			writeFileSync(join(lock, 'pid'), String(process.pid));
+			process.on('exit', () => rmSync(lock, { recursive: true, force: true }));
+			return;
+		} catch {
+			const owner = Number(await Bun.file(join(lock, 'pid')).text().catch(() => '0'));
+			if (owner && !isAlive(owner)) {
+				rmSync(lock, { recursive: true, force: true });
+				continue;
+			}
+			await Bun.sleep(5000);
+		}
+	}
+}
+
+function isAlive(pid: number) {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+async function until<T>(probe: () => Promise<T>, timeoutMs = 60000): Promise<NonNullable<T>> {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		const value = await probe().catch(() => undefined);
+		if (value) {
+			return value;
+		}
+		await Bun.sleep(250);
+	}
+	throw new Error('timed out');
+}

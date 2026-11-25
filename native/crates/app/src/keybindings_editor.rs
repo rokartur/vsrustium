@@ -12,7 +12,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 use serde_json::Value;
 
-use crate::command_palette::{EDITOR_ACTIONS, MenuItem, locale_compare, word_filter};
+use crate::command_palette::{EDITOR_ACTIONS, MenuItem, locale_compare, reference_label, word_filter};
 use crate::contextkey::Expr;
 use crate::filters::{Matches, matches_camel_case, matches_contiguous_sub_string, matches_contiguous_words, matches_words};
 use crate::keybindings::{self, Chord, ExtensionSource, Item};
@@ -121,7 +121,9 @@ impl Model {
             bound.insert(item.command.as_str());
         }
         let with_defaults: HashSet<&str> = defaults.iter().map(|item| item.command.as_str()).collect();
-        let candidates = menu.iter().map(|item| item.id.as_str()).chain(EDITOR_ACTIONS.iter().map(|action| action.0)).chain(registered.iter().copied());
+        // The workbench's palette items list commands the port may not register; an extension's are registered on activation.
+        let contributed = menu.iter().filter(|item| item.source.is_some()).map(|item| item.id.as_str());
+        let candidates = contributed.chain(EDITOR_ACTIONS.iter().map(|action| action.0)).chain(registered.iter().copied());
         for command in unbound_commands(candidates, &bound) {
             let item = Item::new(Vec::new(), command, None, None, !with_defaults.contains(command));
             by_precedence.push(row(command, &item, &commands));
@@ -185,10 +187,12 @@ fn row(command: &str, item: &Item, commands: &HashMap<&str, &MenuItem>) -> Row {
         Some(extension) => Source::Contributed(extension.clone()),
         None => Source::System,
     };
-    let command_label = match menu_command {
-        Some(MenuItem { category: Some(category), title, .. }) if !category.is_empty() => format!("{category}: {title}"),
-        Some(command) => command.title.clone(),
-        None => EDITOR_ACTIONS.iter().find(|action| action.0 == command).map(|action| action.1.to_string()).unwrap_or_default(),
+    // An extension's command is in `MenuRegistry.getCommand`; the workbench's and the editor's take the reference's label.
+    let command_label = match (menu_command, reference_label(command)) {
+        (Some(menu_command), _) if menu_command.source.is_some() => menu_command.label(),
+        (_, Some(label)) => label.to_string(),
+        (Some(menu_command), None) => menu_command.label(),
+        (None, None) => String::new(),
     };
     Row {
         keybinding: item.keybinding.clone(),
