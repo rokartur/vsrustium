@@ -467,7 +467,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/screenshotTool | workbench contribution | removed | Artur: internal infrastructure or developer tool with no 1:1 counterpart in the native port |
 | workbench/contrib/scrollLocking | workbench contribution | todo |  |
 | workbench/contrib/search | workbench contribution | ported | Search view (workbench/search_view.rs, search_actions.rs) and its model (search_model.rs): cargo test -p app search_model (searchResult, fileMatch and replace tests) and workbench::search_actions (context menu, input history, hover right click), port/tools/ui-pair frames match the reference in dark, light and hc (port/notes.md milestone 12); anythingQuickAccess.ts file picks: cargo test -p app anything_quick_access quick_open. No search editor links, notebook or AI results, replace preview diff |
-| workbench/contrib/searchEditor | workbench contribution | todo |  |
+| workbench/contrib/searchEditor | workbench contribution | ported | search_editor.rs, workbench/search_editor_view.rs, search_editor_widget.rs: cargo test -p app search_editor (serialization, match navigation, result blocks, definitions, paths) and workbench::search_actions (openNewEditor, openInEditor), host_sync a_search_editor_tab_has_its_name_and_an_unknown_input. ui-pair: the port's New Search Editor frame did not match yet (port/notes.md milestone 12) |
 | workbench/contrib/sessionChanges | workbench contribution | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | workbench/contrib/sessions | workbench contribution | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/contrib/share | workbench contribution | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
@@ -564,7 +564,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | extension/ruby | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/rust | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/scss | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
-| extension/search-result | built-in extension | todo |  |
+| extension/search-result | built-in extension | ported | grammar colors search editors (language search-result); definition provider and relativePathToUri ported in search_editor.rs (cargo test -p app result_definition result_paths); symbols, links and completions wait for MainThreadLanguageFeatures |
 | extension/shaderlab | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/shellscript | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/simple-browser | built-in extension | todo |  |

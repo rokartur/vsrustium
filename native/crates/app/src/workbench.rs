@@ -22,6 +22,7 @@ pub mod quick_access;
 mod quick_open;
 mod search_actions;
 mod search_editor_view;
+mod search_editor_widget;
 mod search_view;
 pub mod themes;
 mod quick_input_view;
@@ -100,6 +101,7 @@ pub struct Workbench {
     pub side_bar_view: search_view::SideBarView,
     pub search: search_view::SearchView,
     pub search_editors: search_editor_view::SearchEditors,
+    pub search_editor_widget: search_editor_widget::SearchEditorWidget,
     /// `MenuRegistry`.
     pub menus: Vec<crate::menus::MenuItem>,
     pub(crate) context_menu: Option<context_menu::ContextMenu>,
@@ -196,6 +198,7 @@ impl Workbench {
             side_bar_view: search_view::SideBarView::Explorer,
             search: search_view::SearchView::new(cx),
             search_editors: HashMap::new(),
+            search_editor_widget: search_editor_widget::SearchEditorWidget::new(cx),
             menus: crate::menus::workbench_menus(),
             context_menu: None,
             context_menus_shown: 0,
@@ -218,6 +221,7 @@ impl Workbench {
         workbench.register_explorer_actions();
         workbench.register_search_actions();
         workbench.register_search_editor_actions();
+        workbench.register_search_editor_widget_actions();
         workbench.register_file_participant_commands();
         // Keybindings resolve before the focused element sees the key, and with nothing focused too.
         let entity = cx.entity().downgrade();
@@ -249,6 +253,9 @@ impl Workbench {
     /// A single click opens a preview editor and keeps the focus in the Explorer, a double click opens a pinned
     /// one and focuses it (`workbench.editor.enablePreview`).
     pub fn open_file(&mut self, path: PathBuf, pinned: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if path.to_string_lossy().ends_with(crate::search_editor::SEARCH_EDITOR_EXT) {
+            return self.open_search_editor_file(path, pinned, window, cx);
+        }
         match self.editors.find(&path) {
             Some(index) => {
                 self.editors.activate(index);
@@ -281,6 +288,7 @@ impl Workbench {
         }
         self.record_editor_history();
         self.drop_closed_search_editors();
+        self.load_search_editor_widget();
         self.find_editor_changed();
         self.host.send_changes(&self.editors);
         cx.notify();

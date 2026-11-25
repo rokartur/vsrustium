@@ -62,7 +62,7 @@ impl Workbench {
             .child(self.tab_strip(cx))
             // searchEditor.ts draws its query widget where a text editor has its breadcrumbs.
             .map(|part| match editor.document.scheme == SEARCH_EDITOR_SCHEME {
-                true => part,
+                true => part.child(self.search_editor_query(window, cx)),
                 false => part.child(self.breadcrumbs(editor)),
             })
             .child(self.text_area(editor, window, cx))
@@ -131,7 +131,11 @@ impl Workbench {
     /// editorTabsControl.ts `getHoverTitle`: the long title, with a preview note on a preview editor's tab.
     fn tab_hover(&self, index: usize) -> impl IntoElement {
         let editor = &self.editors.editors[index];
-        let title = crate::quick_input::path_label(&editor.document.path, None);
+        // `getTitle(Verbosity.LONG)`: a search editor's is its name.
+        let title = match editor.document.scheme == SEARCH_EDITOR_SCHEME {
+            true => self.editor_name(editor),
+            false => crate::quick_input::path_label(&editor.document.path, None),
+        };
         let content = if editor.preview { super::hover::HoverContent::Preview(title) } else { super::hover::HoverContent::Text(title) };
         self.hover_target(("tab-hover", index), content, super::hover::HoverOptions::mouse())
     }
@@ -669,10 +673,12 @@ impl Workbench {
                         workbench.fold_mouse_down = workbench.at_line_end(index, visible).then_some((index, false));
                         workbench.column_select_text(index, visible, event.modifiers.shift, cx);
                     }))
-                    .on_mouse_up(MouseButton::Left, cx.listener(move |workbench, event: &MouseUpEvent, _, cx| {
-                        if workbench.at_line_end(index, visible_at(workbench, event.position.x)) {
+                    .on_mouse_up(MouseButton::Left, cx.listener(move |workbench, event: &MouseUpEvent, window, cx| {
+                        let visible = visible_at(workbench, event.position.x);
+                        if workbench.at_line_end(index, visible) {
                             workbench.release_fold_click(index, false, event.modifiers, false, cx);
                         }
+                        workbench.search_editor_mouse_up(index, visible, event.click_count, window, cx);
                     }))
                     .on_mouse_up(MouseButton::Middle, cx.listener(move |workbench, event: &MouseUpEvent, _, cx| {
                         if workbench.at_line_end(index, visible_at(workbench, event.position.x)) {

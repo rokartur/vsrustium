@@ -10,6 +10,7 @@ use exthost::main_thread_files::resource;
 use futures::channel::oneshot;
 
 use super::Workbench;
+use super::search_editor_view::SEARCH_EDITOR_SCHEME;
 use serde_json::json;
 
 use crate::editor::{ContentChanged, Position, utf16_column};
@@ -67,6 +68,9 @@ impl Workbench {
 
     /// `save_editor` for any open model, one without an editor too.
     pub(super) fn save_model(&mut self, scheme: String, path: PathBuf, cx: &mut Context<Self>) -> oneshot::Receiver<bool> {
+        if scheme == SEARCH_EDITOR_SCHEME {
+            return self.save_search_editor(path, cx);
+        }
         let (sender, receiver) = oneshot::channel();
         let editor = self.editors.model(&scheme, &path).expect("saving an open model");
         let version = editor.alternative_version_id();
@@ -90,7 +94,7 @@ impl Workbench {
     }
 
     /// The model is clean up to the version that was written, and the host hears it was saved.
-    fn finish_save(&mut self, scheme: &str, path: &Path, version: u32, written: Result<(), String>, cx: &mut Context<Self>) -> bool {
+    pub(super) fn finish_save(&mut self, scheme: &str, path: &Path, version: u32, written: Result<(), String>, cx: &mut Context<Self>) -> bool {
         if let Err(error) = written {
             // shortcut: a save error is logged, not shown as the reference's notification.
             eprintln!("saving {}: {error}", path.display());

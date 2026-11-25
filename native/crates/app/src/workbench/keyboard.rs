@@ -205,6 +205,7 @@ impl Workbench {
             SideBarView::Explorer => self.explorer_context(window, &mut context),
             SideBarView::Search => self.search_context(window, &mut context),
         }
+        self.search_editor_context(window, &mut context);
         context
     }
 

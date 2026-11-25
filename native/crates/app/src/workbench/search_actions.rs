@@ -18,7 +18,7 @@ use super::Workbench;
 use super::explorer_actions::confirm;
 use super::find_widget::HISTORY_LIMIT;
 use super::input_box_view::InputId;
-use super::search_view::{MessagePart, RowAction, RowKey, RowKind, SEARCH_FIELDS, SearchField, SearchOption, SearchUiState, SideBarView};
+use super::search_view::{MessagePart, RowAction, RowKey, RowKind, SEARCH_FIELDS, SearchField, SearchOption, SearchUiState, SearchView, SideBarView};
 use crate::anything_quick_access::TextRange;
 use crate::commands::Outcome;
 use crate::editor::char_column;
@@ -109,7 +109,10 @@ impl Workbench {
             });
         }
         self.commands.register("workbench.action.search.toggleQueryDetails", |workbench, _, window, cx| {
-            workbench.toggle_query_details(None, true, window, cx);
+            match workbench.in_search_editor(window) {
+                true => workbench.toggle_search_editor_details(None, cx),
+                false => workbench.toggle_query_details(None, true, window, cx),
+            }
             Outcome::done()
         });
         self.commands.register("closeReplaceInFilesWidget", |workbench, _, window, cx| {
@@ -117,12 +120,19 @@ impl Workbench {
             workbench.focus_search_input(SearchField::Query, false, window, cx);
             Outcome::done()
         });
+        // searchActionsNav.ts: with a search editor active, its inputs.
         self.commands.register("search.focus.nextInputBox", |workbench, _, window, cx| {
-            workbench.focus_next_search_input(true, window, cx);
+            match workbench.active_search_editor().is_some() {
+                true => workbench.focus_next_search_editor_input(true, window, cx),
+                false => workbench.focus_next_search_input(true, window, cx),
+            }
             Outcome::done()
         });
         self.commands.register("search.focus.previousInputBox", |workbench, _, window, cx| {
-            workbench.focus_next_search_input(false, window, cx);
+            match workbench.active_search_editor().is_some() {
+                true => workbench.focus_next_search_editor_input(false, window, cx),
+                false => workbench.focus_next_search_input(false, window, cx),
+            }
             Outcome::done()
         });
         self.commands.register("search.action.focusSearchFromResults", |workbench, _, window, cx| {
@@ -156,11 +166,17 @@ impl Workbench {
             });
         }
         self.commands.register("search.action.focusNextSearchResult", |workbench, _, window, cx| {
-            workbench.select_search_match(true, window, cx);
+            match workbench.active_search_editor() {
+                Some(path) => workbench.select_search_editor_match(&path, false, window, cx),
+                None => workbench.select_search_match(true, window, cx),
+            }
             Outcome::done()
         });
         self.commands.register("search.action.focusPreviousSearchResult", |workbench, _, window, cx| {
-            workbench.select_search_match(false, window, cx);
+            match workbench.active_search_editor() {
+                Some(path) => workbench.select_search_editor_match(&path, true, window, cx),
+                None => workbench.select_search_match(false, window, cx),
+            }
             Outcome::done()
         });
         self.commands.register("search.action.copyPath", |workbench, _, _, cx| {
@@ -521,7 +537,7 @@ impl Workbench {
         if let Some(value) = args["onlyOpenEditors"].as_bool() {
             view.only_open_editors = value;
         }
-        self.search.validation = self.validate_search_input();
+        self.search.validation = Self::validate_search_input(&self.search);
         if args["triggerSearch"] == true {
             self.trigger_search(true, None, window, cx);
         }
@@ -557,8 +573,8 @@ impl Workbench {
             false => text,
         };
         self.search.input_mut(SearchField::Query).value.set_value(text);
-        self.search.validation = self.validate_search_input();
-        if let Some(delay) = self.search_on_type_delay() {
+        self.search.validation = Self::validate_search_input(&self.search);
+        if let Some(delay) = self.search_on_type_delay(&self.search) {
             self.trigger_search(true, Some(delay), window, cx);
         }
         true
@@ -574,8 +590,8 @@ impl Workbench {
         }
         match field {
             SearchField::Query => {
-                self.search.validation = self.validate_search_input();
-                if let Some(delay) = self.search_on_type_delay() {
+                self.search.validation = Self::validate_search_input(&self.search);
+                if let Some(delay) = self.search_on_type_delay(&self.search) {
                     self.trigger_search(true, Some(delay), window, cx);
                 }
             }
@@ -585,6 +601,7 @@ impl Workbench {
                     let _ = workbench.update(cx, |workbench, _| workbench.add_to_search_history(&[SearchField::Replace]));
                 }));
             }
+            SearchField::ContextLines => unreachable!("the Search view has no context lines input"),
             SearchField::Include | SearchField::Exclude => {
                 let delay = self.debounce_period();
                 self.trigger_search(true, Some(delay), window, cx);
@@ -593,12 +610,12 @@ impl Workbench {
     }
 
     /// `onSearchInputChanged`: the debounce period, scaled by how much a regex matches.
-    fn search_on_type_delay(&self) -> Option<Duration> {
+    pub(super) fn search_on_type_delay(&self, view: &SearchView) -> Option<Duration> {
         let period = self.debounce_period();
-        if !self.search.regex {
+        if !view.regex {
             return Some(period);
         }
-        let regex = onig::Regex::new(self.search.value(SearchField::Query)).ok()?;
+        let regex = onig::Regex::new(view.value(SearchField::Query)).ok()?;
         let matchiness = regex.find_iter(MATCHINESS_TEXT).count();
         let multiplier = match matchiness {
             0..50 => 1,
@@ -608,14 +625,14 @@ impl Workbench {
         Some(period * multiplier)
     }
 
-    fn debounce_period(&self) -> Duration {
+    pub(super) fn debounce_period(&self) -> Duration {
         Duration::from_millis(self.setting("search.searchOnTypeDebouncePeriod").as_u64().unwrap_or(300))
     }
 
     /// `validateSearchInput`: a regex must compile.
-    fn validate_search_input(&self) -> Option<String> {
-        let value = self.search.value(SearchField::Query);
-        if value.is_empty() || !self.search.regex {
+    pub(super) fn validate_search_input(view: &SearchView) -> Option<String> {
+        let value = view.value(SearchField::Query);
+        if value.is_empty() || !view.regex {
             return None;
         }
         onig::Regex::new(value).err().map(|error| format!("Invalid regular expression: /{value}/: {error}"))
@@ -646,6 +663,7 @@ impl Workbench {
                 SearchField::Query => true,
                 SearchField::Replace => self.search.replace_active,
                 SearchField::Include | SearchField::Exclude => self.search.details_visible,
+                SearchField::ContextLines => false,
             })
             .collect();
         let current = self.focused_input(window).and_then(|id| match id {
@@ -703,7 +721,7 @@ impl Workbench {
         if option == SearchOption::PreserveCase {
             return;
         }
-        self.search.validation = self.validate_search_input();
+        self.search.validation = Self::validate_search_input(&self.search);
         self.trigger_search(true, None, window, cx);
     }
 

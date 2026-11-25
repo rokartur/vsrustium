@@ -470,6 +470,7 @@ fn hc_light_default(key: &str) -> ColorValue {
         "minimap.findMatchHighlight" => Key("editor.findMatchHighlightBorder"),
         "searchEditor.findMatchBackground" => Key("editor.findMatchHighlightBackground"),
         "searchEditor.findMatchBorder" => Key("editor.findMatchHighlightBorder"),
+        "searchEditor.textInputBorder" => Key("input.border"),
         "editorOverviewRuler.wordHighlightTextForeground" => Key("editorOverviewRuler.selectionHighlightForeground"),
         "breadcrumb.foreground" => Transparent(&Key("foreground"), 0.8),
         "breadcrumb.background" => Key("editor.background"),
