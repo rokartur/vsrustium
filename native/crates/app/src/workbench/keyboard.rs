@@ -308,7 +308,13 @@ impl Workbench {
 
     /// The context keys the keybindings' `when` clauses see: the keys extensions set, then the focused part's.
     pub fn key_context(&self, window: &Window) -> HashMap<String, Value> {
-        let mut context = self.context_keys.clone();
+        // contextKeyService.ts `ConfigAwareContextValuesContainer`: `config.<setting>` is the setting's value.
+        let mut context = HashMap::new();
+        let configuration = self.settings.lock().unwrap().get_value(None, &config::configuration::Overrides::default());
+        if let Some(Value::Object(sections)) = configuration {
+            insert_config_keys("config", sections, &mut context);
+        }
+        context.extend(self.context_keys.clone());
         // list.contribution.ts `ListContext`; listSupportsKeyboardNavigation is the deprecated name.
         for key in ["listSupportsTypeNavigation", "listSupportsKeyboardNavigation"] {
             context.entry(key.into()).or_insert(json!(true));
@@ -474,6 +480,17 @@ pub(super) fn report_failure(outcome: Outcome, cx: &mut Context<Workbench>) {
         }
     })
     .detach();
+}
+
+/// The settings below `prefix` as `prefix.<section>.<key>` context keys, one per value that is not an object.
+fn insert_config_keys(prefix: &str, sections: serde_json::Map<String, Value>, context: &mut HashMap<String, Value>) {
+    for (key, value) in sections {
+        let key = format!("{prefix}.{key}");
+        match value {
+            Value::Object(children) => insert_config_keys(&key, children, context),
+            value => drop(context.insert(key, value)),
+        }
+    }
 }
 
 #[cfg(test)]
