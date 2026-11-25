@@ -567,6 +567,8 @@ impl Workbench {
             }
         }
         self.terminal_closed(instance, exit_reason);
+        // terminalTaskSystem.ts `onDisposed`: a task whose terminal goes ends with it.
+        self.task_process_exited(id, None, window, cx);
         if self.terminal_view.instances.is_empty() {
             if self.setting("terminal.integrated.hideOnLastClosed") == true {
                 self.close_terminal_view(cx);

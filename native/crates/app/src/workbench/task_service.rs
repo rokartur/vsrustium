@@ -273,6 +273,16 @@ impl Workbench {
 
     /// terminalTaskSystem.ts `_executeInTerminal`: a terminal named after the task runs it.
     fn start_task(&mut self, task: Task, reply: oneshot::Sender<Option<i32>>, window: &mut Window, cx: &mut Context<Self>) {
+        // `run`: past `runOptions.instanceLimit` (1 by default) the task does not start again; the caller waits for the
+        // newest instance and `_handleInstancePolicy` applies.
+        let instances: Vec<usize> = (0..self.tasks.active.len()).filter(|&index| self.tasks.active[index].task.id == task.id).collect();
+        let limit = task.run_options["instanceLimit"].as_u64().unwrap_or(1) as usize;
+        if task.execution.is_some() && instances.len() >= limit {
+            let newest = *instances.last().expect("the limit is at least one instance");
+            self.tasks.active[newest].waiters.push(reply);
+            self.handle_instance_policy(&task, instances, window, cx);
+            return;
+        }
         let Some(execution) = task.execution.clone() else {
             // A task with only dependencies ends as soon as they did.
             let _ = reply.send(Some(0));
@@ -312,6 +322,28 @@ impl Workbench {
             self.host.send("ExtHostTask", "$onDidStartTaskProblemMatchers", vec![json!({ "execution": execution_dto })]);
         }
         self.tasks.active.push(ActiveTask { task, terminal, start_id, collector, waiters: vec![reply] });
+    }
+
+    /// `_handleInstancePolicy`: the task's terminal shows, then the newest or oldest instance restarts, nothing
+    /// happens, a warning shows, or (`prompt`, the default) the user picks the instance to restart.
+    fn handle_instance_policy(&mut self, task: &Task, instances: Vec<usize>, window: &mut Window, cx: &mut Context<Self>) {
+        let terminals: Vec<u32> = instances.iter().map(|&index| self.tasks.active[index].terminal).collect();
+        let newest = *terminals.last().expect("at least one instance");
+        self.terminal_view.set_active(newest);
+        self.show_terminal_tab(window, cx);
+        match task.run_options["instancePolicy"].as_str() {
+            Some("terminateNewest") => self.restart_task_instance(task, newest, window, cx),
+            Some("terminateOldest") => self.restart_task_instance(task, terminals[0], window, cx),
+            Some("silent") => {}
+            Some("warn") => self.notify_warning("The instance limit for this task has been reached."),
+            _ => self.show_instance_picker(task, terminals, window, cx),
+        }
+    }
+
+    /// `_restart` of one instance: its terminal goes (ending the task), then the task runs again.
+    pub(super) fn restart_task_instance(&mut self, task: &Task, terminal: u32, window: &mut Window, cx: &mut Context<Self>) {
+        self.kill_terminal(terminal, window, cx);
+        drop(self.run_task(task.clone(), window, cx));
     }
 
     /// `_createShellLaunchConfig` for macOS: the automation shell (`-c` and the command line) or the process.
@@ -388,7 +420,11 @@ impl Workbench {
         let Some(index) = self.tasks.active.iter().position(|active| active.terminal == terminal) else { return false };
         let active = &self.tasks.active[index];
         if active.start_id.is_none() {
-            self.host.send("ExtHostTask", "$onDidEndTaskProcess", vec![json!({ "id": active.task.id, "exitCode": code })]);
+            let mut event = json!({ "id": active.task.id });
+            if let Some(code) = code {
+                event["exitCode"] = json!(code);
+            }
+            self.host.send("ExtHostTask", "$onDidEndTaskProcess", vec![event]);
         }
         self.task_ended(index, code, window, cx);
         true

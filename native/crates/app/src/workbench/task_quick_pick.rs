@@ -32,6 +32,8 @@ pub enum TaskPick {
     /// `settingType`: `{type}.autoDetect` is off.
     EnableDetection(String),
     TerminateAll,
+    /// One running instance of a task, by its terminal.
+    Instance(Task, u32),
     Nothing,
 }
 
@@ -199,6 +201,7 @@ impl Workbench {
             (TaskPick::Task(task), PickAction::Run) => self.run_picked_task(task, window, cx),
             (TaskPick::Task(task), PickAction::Terminate) => self.terminate_task(&task, window, cx),
             (TaskPick::Task(task), PickAction::Restart) => self.restart_task(&task, window, cx),
+            (TaskPick::Instance(task, terminal), _) => self.restart_task_instance(&task, terminal, window, cx),
             (TaskPick::TerminateAll, _) => self.terminate_all_tasks(window, cx),
             (TaskPick::Configure, _) => self.configure_tasks(window, cx),
             (TaskPick::EnableDetection(task_type), _) => self.enable_task_detection(task_type, window, cx),
@@ -347,6 +350,23 @@ impl Workbench {
         input.match_on_description = true;
         input.set_items(entries);
         let id = self.quick_inputs.add(input, Owner::Tasks(TaskPicker { picks, action }));
+        self.show_quick_input(id, window, cx);
+        self.flush_quick_input_events(window, cx);
+    }
+
+    /// `_handleInstancePolicy` prompt: the running instances of the task; the picked one restarts.
+    pub(super) fn show_instance_picker(&mut self, task: &Task, terminals: Vec<u32>, window: &mut Window, cx: &mut Context<Self>) {
+        let mut entries = Vec::new();
+        let mut picks = Vec::new();
+        for terminal in terminals {
+            let mut item = self.task_item(task);
+            item.buttons.clear();
+            push_entry(&mut entries, &mut picks, item, TaskPick::Instance(task.clone(), terminal));
+        }
+        let mut input = QuickInput::new(0, Kind::QuickPick);
+        input.placeholder = Some("Select an instance to terminate".into());
+        input.set_items(entries);
+        let id = self.quick_inputs.add(input, Owner::Tasks(TaskPicker { picks, action: PickAction::Restart }));
         self.show_quick_input(id, window, cx);
         self.flush_quick_input_events(window, cx);
     }
