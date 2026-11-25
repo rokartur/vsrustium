@@ -30,6 +30,7 @@ pub mod find;
 pub mod folding;
 pub(crate) mod in_place_replace;
 mod folding_controller;
+mod graphemes;
 mod indentation;
 mod lines_operations;
 pub mod marker_decorations;
