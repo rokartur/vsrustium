@@ -108,7 +108,7 @@ impl Workbench {
         div().absolute().top_0().left(px(x)).w(px(2.)).h_full().children(dots)
     }
 
-    fn position_at(&self, line: usize, visible: f32) -> Position {
+    pub(in crate::workbench) fn position_at(&self, line: usize, visible: f32) -> Position {
         let editor = self.editors.active().expect("text is draggable only with an editor open");
         Position::new(line, column_at_visible(&editor.document().lines[line], visible, editor.document().indentation.tab_size))
     }

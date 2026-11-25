@@ -41,6 +41,8 @@ pub enum StatusPick {
     Encoding { id: String, reopen: bool },
     /// A user setting's new value (unicodeHighlighter.ts `ShowExcludeOptions`).
     UserSetting { key: &'static str, value: Value },
+    /// An edit of the Paste As pick (workbench/paste_edits.rs).
+    PasteEdit(usize),
     Nothing,
 }
 
@@ -352,6 +354,7 @@ impl Workbench {
                 show_failure(command.into(), outcome, window, cx);
             }
             StatusPick::ExtensionCommand(id, args) => self.run_code_lens_command(&id, args, window, cx),
+            StatusPick::PasteEdit(index) => self.accept_paste_as_pick(index, cx),
             StatusPick::TabSize { size, insert_spaces, display_only } => self.update_active_indentation(
                 |editor| {
                     let indentation = editor.document().indentation;

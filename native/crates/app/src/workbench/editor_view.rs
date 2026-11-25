@@ -12,7 +12,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    Axis, Bounds, Context, DispatchPhase, Div, ElementInputHandler, FontFeatures, Hitbox, HitboxBehavior, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
+    Axis, Bounds, Context, DispatchPhase, Div, DragMoveEvent, ElementInputHandler, ExternalPaths, FontFeatures, Hitbox, HitboxBehavior, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Pixels, Point,
     PathBuilder, Rgba, ScrollDelta, ScrollWheelEvent, Stateful, StyledText, Task, Window, canvas, div, fill, font, point, prelude::*, px, rgb, size,
 };
 
@@ -468,6 +469,11 @@ impl Workbench {
             .on_key_down(cx.listener(Self::editor_key_down))
             .on_key_up(cx.listener(Self::inspect_tokens_key_up))
             .on_scroll_wheel(cx.listener(Self::editor_wheel))
+            .on_drag_move(cx.listener(|workbench, event: &DragMoveEvent<ExternalPaths>, _, cx| {
+                if !event.bounds.contains(&event.event.position) {
+                    workbench.drag_files_over_text(None, false, cx);
+                }
+            }))
             .on_modifiers_changed(cx.listener(Self::sticky_modifiers_changed))
             .on_modifiers_changed(cx.listener(|workbench, event: &gpui::ModifiersChangedEvent, _, cx| {
                 workbench.text_drag_modifiers_changed(event.modifiers, cx);
@@ -606,6 +612,8 @@ impl Workbench {
                 area.children(self.find_widget(self.editors.viewport.width + metrics.content_left() + minimap_width, metrics.content_left(), minimap_width, window, cx))
                     .children(self.parameter_hints_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
                     .children(self.lightbulb_widget(editor, metrics.content_left(), metrics.char_width, cx))
+                    .children(self.paste_widget(editor, metrics.content_left(), metrics.char_width, cx))
+                    .children(self.inline_progress_widget(editor, metrics.content_left(), metrics.char_width, cx))
                     .children(self.code_lens_widgets(editor, metrics.content_left(), metrics.char_width, cx))
                     .children(self.comment_thread_widgets(editor, metrics.content_left(), metrics.char_width, window, cx))
                     .children(self.rename_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
@@ -1261,7 +1269,7 @@ impl Workbench {
                     let left = if x >= 1. { x - 1. } else { x };
                     content = content.child(div().absolute().top_0().left(px(left)).w(px(2.)).h_full().bg(color));
                 }
-                if let Some(target) = self.text_drag.as_ref().and_then(|drag| drag.target).filter(|target| target.line == index) {
+                if let Some(target) = self.text_drag.as_ref().and_then(|drag| drag.target).or(self.drop_target()).filter(|target| target.line == index) {
                     content = content.child(self.drop_target_marker(layout.x(target.column) * char_width));
                 }
                 let segment_columns = (layout.x(segment.start), if segment.last { f32::MAX } else { layout.x(segment.end) });
@@ -1328,6 +1336,15 @@ impl Workbench {
                         if workbench.at_line_end(index, visible_at(workbench, event.position.x)) {
                             workbench.release_fold_click(index, false, event.modifiers, true, cx);
                         }
+                    }))
+                    .on_drag_move(cx.listener(move |workbench, event: &DragMoveEvent<ExternalPaths>, _, cx| {
+                        if event.bounds.contains(&event.event.position) {
+                            workbench.drag_files_over_text(Some((index, visible_at(workbench, event.event.position.x))), event.event.modifiers.shift, cx);
+                        }
+                    }))
+                    .on_drop(cx.listener(move |workbench, paths: &ExternalPaths, window, cx| {
+                        let visible = visible_at(workbench, window.mouse_position().x);
+                        workbench.drop_files_on_text(index, visible, paths.paths().to_vec(), window, cx);
                     }))
                     .on_mouse_move(cx.listener(move |workbench, event: &MouseMoveEvent, _, cx| {
                         workbench.editor_message_mouse_moved(index, cx);

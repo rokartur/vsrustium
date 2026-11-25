@@ -120,6 +120,8 @@ mod settings_editor_view;
 mod status_entries;
 mod parameter_hints;
 mod action_widget;
+mod inline_progress;
+mod paste_edits;
 mod code_actions;
 mod code_lens;
 mod color_detector;
@@ -284,6 +286,7 @@ pub struct Workbench {
     parameter_hints: parameter_hints::ParameterHints,
     code_actions: code_actions::CodeActions,
     action_widget: action_widget::ActionWidget,
+    paste_edits: paste_edits::PasteEdits,
     code_lenses: code_lens::CodeLenses,
     inlay_hints: inlay_hints::InlayHints,
     color_detector: color_detector::ColorDetector,
@@ -546,6 +549,7 @@ impl Workbench {
             parameter_hints: Default::default(),
             code_actions: Default::default(),
             action_widget: Default::default(),
+            paste_edits: Default::default(),
             code_lenses: Default::default(),
             inlay_hints: Default::default(),
             color_detector: Default::default(),

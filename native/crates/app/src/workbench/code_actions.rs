@@ -194,6 +194,7 @@ impl Workbench {
         }
         self.commands.register("_executeCodeActionProvider", |workbench, args, _, cx| workbench.execute_code_action_provider(&args, cx));
         self.register_action_widget_commands();
+        self.register_paste_edits();
     }
 
     /// `editorHasCodeActionsProvider` and `supportedCodeAction` of the active editor.
@@ -746,7 +747,7 @@ impl Workbench {
                 bar.push((if show_disabled { "Hide Disabled" } else { "Show Disabled" }.to_owned(), None));
             }
         }
-        self.show_action_widget(items, looks, anchor, bar, set, include_disabled, from_lightbulb, cx);
+        self.show_action_widget(items, looks, anchor, bar, super::action_widget::Owner::CodeActions { set, include_disabled, from_lightbulb }, cx);
     }
 
     /// `toMenuItems`: the actions under their group's header, each group once in `codeActionGroups` order.

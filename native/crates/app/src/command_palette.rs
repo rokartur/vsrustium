@@ -345,6 +345,9 @@ pub const EDITOR_ACTIONS: &[(&str, &str, Option<&str>)] = &[
     ("editor.action.reindentlines", "Reindent Lines", Some("!editorReadonly")),
     ("editor.action.smartSelect.expand", "Expand Selection", None),
     ("editor.action.smartSelect.shrink", "Shrink Selection", None),
+    // copyPasteContribution.ts
+    ("editor.action.pasteAs", "Paste As...", Some("!editorReadonly")),
+    ("editor.action.pasteAsText", "Paste as Text", Some("!editorReadonly")),
     ("cursorUndo", "Cursor Undo", None),
     ("cursorRedo", "Cursor Redo", None),
     ("editor.action.reindentselectedlines", "Reindent Selected Lines", Some("!editorReadonly")),

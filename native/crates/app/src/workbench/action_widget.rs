@@ -54,12 +54,17 @@ struct Shown {
     anchor: Anchor,
     /// The action bar: documentation commands, then Show or Hide Disabled (no command).
     bar: Vec<(String, Option<Value>)>,
-    set: Rc<CodeActionSet>,
-    include_disabled: bool,
-    from_lightbulb: bool,
+    owner: Owner,
     show_above: Option<bool>,
     /// The pointer moved the focus last (`mouse-navigation`).
     mouse_navigation: bool,
+}
+
+/// Who showed the widget and gets the accepted row.
+pub(super) enum Owner {
+    CodeActions { set: Rc<CodeActionSet>, include_disabled: bool, from_lightbulb: bool },
+    /// postEditWidget.ts `showSelector`: the row is the index of a paste edit.
+    PasteEdits,
 }
 
 impl Workbench {
@@ -132,16 +137,16 @@ impl Workbench {
     pub(super) fn action_widget_focused_action(&self) -> Option<&Value> {
         let shown = self.action_widget.shown.as_ref()?;
         let index = shown.list.focused_item()?.item?;
-        shown.set.all.iter().chain(&shown.set.valid).nth(index).map(|item| &item.action)
+        let Owner::CodeActions { set, .. } = &shown.owner else { return None };
+        set.all.iter().chain(&set.valid).nth(index).map(|item| &item.action)
     }
 
     /// `ActionWidgetService.show`: the rows with the first focusable one focused.
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn show_action_widget(&mut self, items: Vec<Item<usize>>, looks: Vec<RowLook>, anchor: Anchor, bar: Vec<(String, Option<Value>)>, set: Rc<CodeActionSet>, include_disabled: bool, from_lightbulb: bool, cx: &mut Context<Self>) {
+    pub(super) fn show_action_widget(&mut self, items: Vec<Item<usize>>, looks: Vec<RowLook>, anchor: Anchor, bar: Vec<(String, Option<Value>)>, owner: Owner, cx: &mut Context<Self>) {
         self.hide_action_widget(cx);
         let mut list = ActionList::new(items, Options::default());
         list.focus();
-        self.action_widget.shown = Some(Shown { list, looks, anchor, bar, set, include_disabled, from_lightbulb, show_above: None, mouse_navigation: false });
+        self.action_widget.shown = Some(Shown { list, looks, anchor, bar, owner, show_above: None, mouse_navigation: false });
         self.action_widget.scroll = ScrollHandle::new();
         cx.notify();
     }
@@ -149,7 +154,9 @@ impl Workbench {
     /// `hide`: the rows go and the set is released unless the light bulb still shows it.
     pub(super) fn hide_action_widget(&mut self, cx: &mut Context<Self>) {
         if let Some(shown) = self.action_widget.shown.take() {
-            self.release_code_action_set(shown.set);
+            if let Owner::CodeActions { set, .. } = shown.owner {
+                self.release_code_action_set(set);
+            }
             cx.notify();
         }
     }
@@ -172,9 +179,15 @@ impl Workbench {
             None => shown.list.accept_selected(false, false),
         };
         let crate::action_list::Accepted::Select { item, .. } = accepted else { return cx.notify() };
-        let set = shown.set.clone();
+        let set = match &shown.owner {
+            Owner::CodeActions { set, .. } => Some(set.clone()),
+            Owner::PasteEdits => None,
+        };
         self.hide_action_widget(cx);
-        self.accept_code_action(item, set, window, cx);
+        match set {
+            Some(set) => self.accept_code_action(item, set, window, cx),
+            None => self.select_paste_edit(item, window, cx),
+        }
     }
 
     /// An action bar entry: a documentation command runs, Show or Hide Disabled shows the list again.
@@ -189,7 +202,8 @@ impl Workbench {
                 drop(self.execute_command(command["id"].as_str().unwrap_or_default(), args, window, cx));
             }
             None => {
-                let (set, anchor, include_disabled, from_lightbulb) = (shown.set.clone(), shown.anchor, shown.include_disabled, shown.from_lightbulb);
+                let Owner::CodeActions { set, include_disabled, from_lightbulb } = &shown.owner else { return };
+                let (set, anchor, include_disabled, from_lightbulb) = (set.clone(), shown.anchor, *include_disabled, *from_lightbulb);
                 self.action_widget.show_disabled = !self.action_widget.show_disabled;
                 self.show_code_action_list(set, anchor, include_disabled, from_lightbulb, cx);
             }

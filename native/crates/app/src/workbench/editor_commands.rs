@@ -353,37 +353,45 @@ impl Workbench {
             }
             let Some(ClipboardEntry::String(clipboard)) = cx.read_from_clipboard().and_then(|item| item.entries().first().cloned()) else { return Outcome::done() };
             let metadata = clipboard.metadata_json::<Value>().unwrap_or_default();
-            let multicursor_text: Option<Vec<String>> = serde_json::from_value(metadata["multicursorText"].clone()).ok();
-            let Some(editor) = workbench.editors.active() else { return Outcome::done() };
-            let empty_selection_clipboard = workbench.editor_bool_setting(editor, "editor.emptySelectionClipboard");
-            let pasted = Pasted {
-                text: clipboard.text(),
-                paste_on_new_line: empty_selection_clipboard && metadata["isFromEmptySelection"] == json!(true),
-                multicursor_text: multicursor_text.as_deref(),
-                is_block: metadata["isBlock"] == json!(true),
-            };
-            let (resource, language) = (editor.document().path.clone(), editor.document().language_id.clone());
-            let overrides = Overrides { resource: Some(&resource), override_identifier: Some(&language) };
-            let settings = workbench.settings.lock().unwrap();
-            let spread = settings.get_value(Some("editor.multiCursorPaste"), &overrides) != Some(json!("full"));
-            let overtype = workbench.overtype && settings.get_value(Some("editor.overtypeOnPaste"), &overrides) != Some(json!(false));
-            let indent_on_paste = settings.get_value(Some("editor.autoIndentOnPaste"), &overrides) == Some(json!(true));
-            let within_string = settings.get_value(Some("editor.autoIndentOnPasteWithinString"), &overrides) != Some(json!(false));
-            drop(settings);
-            workbench.run_indenting(
-                |editor, auto| {
-                    // codeEditorWidget.ts `_paste`: the pasted range runs from the selection start before to the one after.
-                    let start = editor.selection().start();
-                    let mut changes: Vec<_> = editor.paste(pasted, spread, overtype).into_iter().collect();
-                    if indent_on_paste {
-                        let end = editor.selection().start();
-                        changes.extend(editor.auto_indent_on_paste(start, end, auto, within_string));
-                    }
-                    changes
-                },
-                cx,
-            )
+            if workbench.try_paste_with_providers(&clipboard.text(), &metadata, window, cx) {
+                return Outcome::done();
+            }
+            workbench.default_paste(&clipboard.text(), &metadata, cx)
         });
+    }
+
+    /// `Handler.Paste` with the clipboard's payload: `codeEditorWidget.ts` `_paste`.
+    pub(super) fn default_paste(&mut self, text: &str, metadata: &Value, cx: &mut Context<Self>) -> Outcome {
+        let multicursor_text: Option<Vec<String>> = serde_json::from_value(metadata["multicursorText"].clone()).ok();
+        let Some(editor) = self.editors.active() else { return Outcome::done() };
+        let empty_selection_clipboard = self.editor_bool_setting(editor, "editor.emptySelectionClipboard");
+        let pasted = Pasted {
+            text,
+            paste_on_new_line: empty_selection_clipboard && metadata["isFromEmptySelection"] == json!(true),
+            multicursor_text: multicursor_text.as_deref(),
+            is_block: metadata["isBlock"] == json!(true),
+        };
+        let (resource, language) = (editor.document().path.clone(), editor.document().language_id.clone());
+        let overrides = Overrides { resource: Some(&resource), override_identifier: Some(&language) };
+        let settings = self.settings.lock().unwrap();
+        let spread = settings.get_value(Some("editor.multiCursorPaste"), &overrides) != Some(json!("full"));
+        let overtype = self.overtype && settings.get_value(Some("editor.overtypeOnPaste"), &overrides) != Some(json!(false));
+        let indent_on_paste = settings.get_value(Some("editor.autoIndentOnPaste"), &overrides) == Some(json!(true));
+        let within_string = settings.get_value(Some("editor.autoIndentOnPasteWithinString"), &overrides) != Some(json!(false));
+        drop(settings);
+        self.run_indenting(
+            |editor, auto| {
+                // codeEditorWidget.ts `_paste`: the pasted range runs from the selection start before to the one after.
+                let start = editor.selection().start();
+                let mut changes: Vec<_> = editor.paste(pasted, spread, overtype).into_iter().collect();
+                if indent_on_paste {
+                    let end = editor.selection().start();
+                    changes.extend(editor.auto_indent_on_paste(start, end, auto, within_string));
+                }
+                changes
+            },
+            cx,
+        )
     }
 
     /// clipboard.ts `registerExecCommandImpl` for the editor with text focus: nothing for an empty selection
@@ -414,13 +422,14 @@ impl Workbench {
         let length = copied.multicursor_text.as_ref().map_or_else(|| copied.text.encode_utf16().count(), Vec::len);
         let rich_text = (force || (self.editor_bool_setting(editor, "editor.copyWithSyntaxHighlighting") && length < 65536)).then(|| self.rich_text_to_copy(empty_selection_clipboard)).flatten();
         let (html, mode) = rich_text.unzip();
-        let metadata = json!({
+        let mut metadata = json!({
             "version": 1,
             "isFromEmptySelection": copied.from_empty_selection,
             "isBlock": copied.is_block,
             "multicursorText": copied.multicursor_text,
             "mode": mode,
         });
+        self.prepare_document_paste(&mut metadata, cx);
         cx.write_to_clipboard(ClipboardItem::new_string_with_json_metadata(copied.text, metadata));
         if let Some(html) = html {
             crate::clipboard::write_html(&html);
