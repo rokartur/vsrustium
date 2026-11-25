@@ -87,3 +87,7 @@ Drop into the editor (Shift while dragging files) is checked by `cargo test -p a
 ## Semantic tokens and language status
 
 `FOLDER` a copy of port/fixtures/language-features/semantic, `FILE=f.ts` (`const value`, used twice), steps `steps-semantic.json`. Pair `semantic-pair.png`: the readonly `value` in #4FC1FF on all three lines, as in the reference. Pair `language-status-pair.png` (hover on `{}`): the same two TypeScript rows, "No tsconfig" with Configure TSConfig and "6.0.3 - TypeScript version" with Select Version, each with its pin. Left: the reference shows the `const` word highlight and a light bulb on line 1, the port neither; not traced yet, likely the reference asking before the TypeScript server was ready (a textual highlight); the hovered `{}` item has `statusBarItem.hoverBackground` in the reference only (the status bar part draws no item hover).
+
+## Keybindings schema
+
+Empty `FOLDER`, steps `steps-keybindings.json`: Preferences: Open Keyboard Shortcuts (JSON), then `{"key": "f9", "command": "editor.action.refactor", "args": {}}` typed into the array. Pair `keybindings-schema-pair.png`: "Missing property "kind"." at Ln 3, Col 60, the only problem, in both. An earlier run that opened Default Keybindings showed the port failing to load `vscode://schemas/inlineCompletionProviderIdArgs`, now served from the inline completion providers (`inlineCompletionProviderGetMatcher`). Left: the Default Keybindings content itself (the port lists fewer commands), which is the keybinding service's, not this schema's.
