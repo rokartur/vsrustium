@@ -75,11 +75,25 @@ impl LanguageBrackets {
     fn token(&self, text: &str) -> Option<&BracketToken> {
         self.tokens.get(&text.to_lowercase())
     }
+
+    /// `ClosingBracketKind.closes`: `close` is a closing bracket of the opening bracket `open`.
+    pub fn closes(&self, close: &str, open: &str) -> bool {
+        let (Some(close), Some(open)) = (self.token(close), self.token(open)) else { return false };
+        !close.opening && close.ids.contains(&open.id)
+    }
+
+    /// `text.replace(getBracketRegExp({ global: true }), '')`: the text without any bracket.
+    pub fn strip(&self, text: &str) -> String {
+        match &self.regex {
+            Some(regex) => regex.replace_all(text, ""),
+            None => text.to_string(),
+        }
+    }
 }
 
 /// `_extractValidBrackets`: the `[open, close]` string pairs of an array, empty strings dropped
 /// (`filterValidBrackets`); `None` when the key is not an array.
-fn character_pairs(value: &Value) -> Option<Vec<(String, String)>> {
+pub(crate) fn character_pairs(value: &Value) -> Option<Vec<(String, String)>> {
     let pairs = value.as_array()?.iter().filter_map(|pair| match pair.as_array()?.as_slice() {
         [Value::String(open), Value::String(close)] if !open.is_empty() && !close.is_empty() => Some((open.clone(), close.clone())),
         _ => None,
@@ -89,20 +103,26 @@ fn character_pairs(value: &Value) -> Option<Vec<(String, String)>> {
 
 /// `prepareBracketForRegExp`: escaped, with word boundaries where the bracket starts or ends with a
 /// word character or space (#132162, #150440).
-fn bracket_pattern(text: &str) -> String {
-    let mut escaped = String::new();
-    for c in text.chars() {
-        if "\\{}*+?|^$.[]()".contains(c) {
-            escaped.push('\\');
-        }
-        escaped.push(c);
-    }
+pub(crate) fn bracket_pattern(text: &str) -> String {
+    let mut escaped = escape_regex(text);
     let word = |c: Option<char>| c.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_' || c == ' ');
     if word(text.chars().next()) {
         escaped.insert_str(0, "\\b");
     }
     if word(text.chars().last()) {
         escaped.push_str("\\b");
+    }
+    escaped
+}
+
+/// `escapeRegExpCharacters`.
+pub(crate) fn escape_regex(text: &str) -> String {
+    let mut escaped = String::new();
+    for c in text.chars() {
+        if "\\{}*+?|^$.[]()".contains(c) {
+            escaped.push('\\');
+        }
+        escaped.push(c);
     }
     escaped
 }
@@ -140,12 +160,22 @@ pub struct Pair {
     pub close: Option<BracketRange>,
 }
 
+/// A bracket of a pair (`IFoundBracket`): `key` is the `languageId:::text` of the bracket, or of the first
+/// opening bracket a closing one closes.
+pub struct PairBracket {
+    pub range: BracketRange,
+    pub opening: bool,
+    pub key: String,
+}
+
 /// The brackets of a whole document: the colorized brackets of each line
-/// (`getBracketsInRange(range, true)`) and every pair, outer pairs first (`getBracketPairsInRange`).
+/// (`getBracketsInRange(range, true)`), every pair, outer pairs first (`getBracketPairsInRange`), and
+/// every bracket of a pair in document order (`getFirstBracketAfter`/`Before` skip unexpected closings).
 #[derive(Default)]
 pub struct DocumentBrackets {
     pub lines: Vec<Vec<Bracket>>,
     pub pairs: Vec<Pair>,
+    pub brackets: Vec<PairBracket>,
 }
 
 impl DocumentBrackets {
@@ -156,9 +186,10 @@ impl DocumentBrackets {
         while parser.next < found.len() {
             nodes.extend(parser.parse_child(&[], 1));
         }
-        let mut result = DocumentBrackets { lines: vec![Vec::new(); lines.len()], pairs: Vec::new() };
+        let mut result = DocumentBrackets { lines: vec![Vec::new(); lines.len()], pairs: Vec::new(), brackets: Vec::new() };
         collect(&nodes, &found, 0, &mut result.lines);
         collect_pairs(&nodes, &found, &mut result.pairs);
+        collect_pair_brackets(&nodes, &found, &mut result.brackets);
         result
     }
 
@@ -287,6 +318,18 @@ impl Parser<'_> {
             self.next += 1;
         }
         Some(Node::Pair { open: index, children, close })
+    }
+}
+
+fn collect_pair_brackets(nodes: &[Node], found: &[Found], result: &mut Vec<PairBracket>) {
+    for node in nodes {
+        let Node::Pair { open, children, close } = node else { continue };
+        let bracket = |index: usize| PairBracket { range: (found[index].line, found[index].range.clone()), opening: found[index].token.opening, key: found[index].token.id.clone() };
+        result.push(bracket(*open));
+        collect_pair_brackets(children, found, result);
+        if let Some(close) = close {
+            result.push(bracket(*close));
+        }
     }
 }
 

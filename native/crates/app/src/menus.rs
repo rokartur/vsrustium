@@ -65,7 +65,7 @@ pub enum MenuAction {
 /// The workbench's registrations of the features the port has: menu, submenu or command id, title, group, order,
 /// `when`, and the command's precondition.
 type Row = (MenuId, Option<MenuId>, &'static str, &'static str, &'static str, f64, Option<&'static str>, Option<&'static str>);
-const WORKBENCH_MENUS: [Row; 59] = [
+const WORKBENCH_MENUS: [Row; 61] = [
     // menubar.contribution.ts
     (MenuId::MenubarMainMenu, Some(MenuId::MenubarFileMenu), "", "&&File", "", 1., None, None),
     (MenuId::MenubarMainMenu, Some(MenuId::MenubarEditMenu), "", "&&Edit", "", 2., None, None),
@@ -98,6 +98,9 @@ const WORKBENCH_MENUS: [Row; 59] = [
     (MenuId::MenubarEditMenu, None, "editor.action.commentLine", "&&Toggle Line Comment", "5_insert", 1., None, Some("!editorReadonly")),
     (MenuId::MenubarEditMenu, None, "editor.action.blockComment", "Toggle &&Block Comment", "5_insert", 2., None, Some("!editorReadonly")),
     (MenuId::MenubarSelectionMenu, None, "editor.action.selectAll", "&&Select All", "1_basic", 1., None, None),
+    // smartSelect.ts
+    (MenuId::MenubarSelectionMenu, None, "editor.action.smartSelect.expand", "&&Expand Selection", "1_basic", 2., None, None),
+    (MenuId::MenubarSelectionMenu, None, "editor.action.smartSelect.shrink", "&&Shrink Selection", "1_basic", 3., None, None),
     // linesOperations.ts
     (MenuId::MenubarSelectionMenu, None, "editor.action.copyLinesUpAction", "&&Copy Line Up", "2_line", 1., None, Some("!editorReadonly")),
     (MenuId::MenubarSelectionMenu, None, "editor.action.copyLinesDownAction", "Co&&py Line Down", "2_line", 2., None, Some("!editorReadonly")),

@@ -186,6 +186,47 @@ impl Tokenization {
         tokens.iter().find(|token| token.end > offset).or(tokens.last()).map_or(textmate::StandardTokenType::Other, |token| token.token_type)
     }
 
+    /// The tokens of line `index` as (byte end, standard type, embedded language), or one `Other` token over
+    /// the line without a grammar or tokens.
+    pub fn line_tokens(&self, lines: &[String], index: usize) -> Vec<(usize, textmate::StandardTokenType, Option<std::rc::Rc<str>>)> {
+        let len = lines[index].len();
+        if self.grammar.is_none() {
+            return vec![(len, textmate::StandardTokenType::Other, None)];
+        }
+        self.tokenize_to(lines, index);
+        let tokens: Vec<_> = self.lines.borrow()[index].0.iter().map(|token| (token.end.min(len), token.token_type, token.scopes.language.clone())).collect();
+        if tokens.is_empty() {
+            return vec![(len, textmate::StandardTokenType::Other, None)];
+        }
+        tokens
+    }
+
+    /// `findMatchingBracketUp`: the line of the opening bracket that `close` closes in the innermost pair
+    /// around (line, byte), its closing bracket typed or not.
+    pub fn matching_bracket_up(&self, languages: &Languages, lines: &[String], language: &str, close: &str, line: usize, offset: usize) -> Option<usize> {
+        let config = languages.brackets.get(language)?;
+        let brackets = self.pairs(languages, lines, language);
+        let pair = brackets.pairs.iter().rev().find(|pair| {
+            let (open_line, open_range) = &pair.open;
+            let starts_before = (*open_line, open_range.start) <= (line, offset);
+            let ends_after = pair.close.as_ref().is_none_or(|(close_line, close_range)| (*close_line, close_range.end) >= (line, offset));
+            starts_before && ends_after && config.closes(close, &lines[*open_line][open_range.clone()])
+        })?;
+        Some(pair.open.0)
+    }
+
+    /// The bracket pairs of the document in `language`, also without a grammar.
+    // shortcut: pairs the whole document per call, where upstream queries its incremental bracket tree.
+    pub fn pairs(&self, languages: &Languages, lines: &[String], language: &str) -> DocumentBrackets {
+        if self.grammar.is_some() {
+            return self.document_brackets(&textmate::Theme::new(&[]), languages, lines);
+        }
+        // nullTokenize: one Other token over each line, in the model's language.
+        let style = textmate::Style { font_style: 0, foreground: 0, background: 0 };
+        let spans: Vec<_> = lines.iter().map(|text| (text.as_str(), vec![Span { end: text.len(), language, token_type: textmate::StandardTokenType::Other, balanced_brackets: true, style }])).collect();
+        DocumentBrackets::new(&spans, &languages.brackets)
+    }
+
     /// `BracketMatchingController` with `editor.matchBrackets` "always": the pair whose bracket touches
     /// the cursor (line, char column), shown in the overview ruler, else the pair around it, not shown there.
     pub fn bracket_match(&self, theme: &Theme, languages: &Languages, lines: &[String], cursor: (usize, usize)) -> Option<([BracketRange; 2], bool)> {

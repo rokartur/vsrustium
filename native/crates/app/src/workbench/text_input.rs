@@ -162,11 +162,12 @@ impl EntityInputHandler for Workbench {
             return self.input_replace(id, range, text, false, window, cx);
         }
         let range = range.or(self.marked_text.take()).map(|range| self.input_range(range));
-        let editor = self.editors.active_mut().expect("input goes to the active editor");
-        let change = match range {
-            None => editor.type_text(text),
-            Some((previous, next)) => editor.type_replacing(text, previous, next, "type"),
+        let Some((previous, next)) = range else {
+            self.run_indenting(|editor, auto| editor.type_keyboard(text, auto), cx);
+            return;
         };
+        let editor = self.editors.active_mut().expect("input goes to the active editor");
+        let change = editor.type_replacing(text, previous, next, "type");
         self.editor_edited(change, false, "keyboard", cx);
     }
 

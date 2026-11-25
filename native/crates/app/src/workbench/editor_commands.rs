@@ -8,12 +8,13 @@ use serde_json::{Value, json};
 
 use super::Workbench;
 use crate::commands::Outcome;
-use crate::editor::{CaseTransform, ContentChanged, Copied, LineCommentKind, OpenEditor, Selection, commands};
+use crate::editor::auto_indent::{AutoIndent, Strategy};
+use crate::editor::{CaseTransform, ContentChanged, Copied, LineCommentKind, OpenEditor, Selection, commands, smart_select};
 
 type EditorCommand = fn(&mut OpenEditor) -> Option<ContentChanged>;
 
 /// Cursor and edit commands: `EditorCommand`s, which run on the focused editor or else the active one.
-const EDITOR_COMMANDS: [(&str, EditorCommand); 44] = [
+const EDITOR_COMMANDS: [(&str, EditorCommand); 36] = [
     ("cursorLeft", |editor| { editor.move_horizontally(false, false); None }),
     ("cursorLeftSelect", |editor| { editor.move_horizontally(false, true); None }),
     ("cursorRight", |editor| { editor.move_horizontally(true, false); None }),
@@ -40,24 +41,32 @@ const EDITOR_COMMANDS: [(&str, EditorCommand); 44] = [
     ("deleteWordRight", OpenEditor::delete_word_right),
     ("deleteAllLeft", OpenEditor::delete_all_left),
     ("deleteAllRight", OpenEditor::delete_all_right),
-    ("tab", OpenEditor::tab),
-    ("outdent", OpenEditor::outdent),
     ("editor.action.copyLinesUpAction", |editor| editor.copy_lines(false)),
     ("editor.action.copyLinesDownAction", |editor| editor.copy_lines(true)),
     ("editor.action.duplicateSelection", OpenEditor::duplicate_selection),
-    ("editor.action.moveLinesUpAction", |editor| editor.move_lines(false)),
-    ("editor.action.moveLinesDownAction", |editor| editor.move_lines(true)),
     ("editor.action.sortLinesAscending", |editor| editor.sort_lines(false)),
     ("editor.action.sortLinesDescending", |editor| editor.sort_lines(true)),
     ("editor.action.removeDuplicateLines", OpenEditor::delete_duplicate_lines),
     ("editor.action.reverseLines", OpenEditor::reverse_lines),
     ("editor.action.deleteLines", OpenEditor::delete_lines),
-    ("editor.action.indentLines", OpenEditor::indent_lines),
-    ("editor.action.outdentLines", OpenEditor::outdent),
-    ("editor.action.insertLineBefore", OpenEditor::insert_line_before),
-    ("editor.action.insertLineAfter", OpenEditor::insert_line_after),
     ("editor.action.joinLines", OpenEditor::join_lines),
     ("editor.action.transpose", OpenEditor::transpose),
+];
+
+type IndentingCommand = fn(&mut OpenEditor, AutoIndent) -> Option<ContentChanged>;
+
+/// Edit commands that indent by the language's onEnter and indentation rules (`CursorConfiguration.autoIndent`).
+const INDENTING_EDITOR_COMMANDS: [(&str, IndentingCommand); 10] = [
+    ("tab", OpenEditor::tab),
+    ("outdent", OpenEditor::outdent),
+    ("editor.action.indentLines", OpenEditor::indent_lines),
+    ("editor.action.outdentLines", OpenEditor::outdent),
+    ("editor.action.moveLinesUpAction", |editor, auto| editor.move_lines(false, auto)),
+    ("editor.action.moveLinesDownAction", |editor, auto| editor.move_lines(true, auto)),
+    ("editor.action.insertLineBefore", OpenEditor::insert_line_before),
+    ("editor.action.insertLineAfter", OpenEditor::insert_line_after),
+    ("editor.action.reindentlines", OpenEditor::reindent_lines),
+    ("editor.action.reindentselectedlines", OpenEditor::reindent_selected_lines),
 ];
 
 /// Commands of the editor with text focus only (`MultiCommand`s and `EditorHandlerCommand`s): elsewhere they
@@ -73,6 +82,9 @@ impl Workbench {
         for (id, command) in EDITOR_COMMANDS {
             self.commands.register(id, move |workbench, _, _, cx| workbench.run_on_active_editor(command, cx));
         }
+        for (id, command) in INDENTING_EDITOR_COMMANDS {
+            self.commands.register(id, move |workbench, _, _, cx| workbench.run_indenting(|editor, auto| command(editor, auto).into_iter().collect(), cx));
+        }
         for (id, command) in FOCUSED_EDITOR_COMMANDS {
             self.commands.register(id, move |workbench, _, window, cx| match workbench.editor_focus.is_focused(window) {
                 true => workbench.run_on_active_editor(command, cx),
@@ -84,11 +96,7 @@ impl Workbench {
             if !workbench.editor_focus.is_focused(window) {
                 return Outcome::done();
             }
-            // The editor's own Enter: a typed line break keeps the line's indentation.
-            match text.as_str() {
-                "\n" => workbench.run_on_active_editor(OpenEditor::enter, cx),
-                _ => workbench.run_on_active_editor(move |editor: &mut OpenEditor| editor.type_text(&text), cx),
-            }
+            workbench.run_indenting(|editor, auto| editor.type_keyboard(&text, auto), cx)
         });
         for &id in commands::IDS {
             self.commands.register(id, move |workbench, _, _, cx| {
@@ -110,6 +118,12 @@ impl Workbench {
         for (id, kind) in comment_actions {
             self.commands.register(id, move |workbench, _, _, cx| workbench.run_comment_action(kind, cx));
         }
+        // `editor.action.smartSelect.grow` is the expand command's old id (registerCommandAlias).
+        for (id, forward) in [("editor.action.smartSelect.expand", true), ("editor.action.smartSelect.grow", true), ("editor.action.smartSelect.shrink", false)] {
+            self.commands.register(id, move |workbench, _, _, cx| workbench.run_smart_select(forward, cx));
+        }
+        self.commands.register("cursorUndo", |workbench, _, _, cx| workbench.run_cursor_undo(false, cx));
+        self.commands.register("cursorRedo", |workbench, _, _, cx| workbench.run_cursor_undo(true, cx));
         self.commands.register("editor.action.clipboardCopyAction", |workbench, _, window, cx| workbench.copy_to_clipboard(false, window, cx));
         self.commands.register("editor.action.clipboardCutAction", |workbench, _, window, cx| workbench.copy_to_clipboard(true, window, cx));
         self.commands.register("editor.action.clipboardPasteAction", |workbench, _, window, cx| {
@@ -144,11 +158,54 @@ impl Workbench {
         self.editor_command_ran(change, selections_before, cx)
     }
 
+    /// Runs an editor command that indents by the language's rules, with `editor.autoIndent` of the
+    /// editor's language; each model change it makes reaches the host in turn.
+    pub(super) fn run_indenting(&mut self, command: impl FnOnce(&mut OpenEditor, AutoIndent) -> Vec<ContentChanged>, cx: &mut Context<Self>) -> Outcome {
+        let Some(editor) = self.editors.active_mut() else { return Outcome::done() };
+        let overrides = Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
+        let strategy = Strategy::from_setting(self.settings.lock().unwrap().get_value(Some("editor.autoIndent"), &overrides).as_ref());
+        let selections_before = editor.selections.clone();
+        let changes = command(editor, AutoIndent { languages: &self.languages, strategy });
+        if changes.is_empty() {
+            return self.editor_command_ran(None, selections_before, cx);
+        }
+        for change in changes {
+            self.editor_command_ran(Some(change), selections_before.clone(), cx);
+        }
+        Outcome::done()
+    }
+
     fn editor_command_ran(&mut self, change: Option<ContentChanged>, selections_before: Vec<Selection>, cx: &mut Context<Self>) -> Outcome {
         let moved = self.editors.active().is_some_and(|editor| editor.selections != selections_before);
         self.marked_text = None;
         self.editor_edited(change, moved, "keyboard", cx);
         Outcome::Ready(Ok(Value::Null))
+    }
+
+    /// cursorUndo.ts `CursorUndo` and `CursorRedo`: the selections, then the scroll position they had.
+    fn run_cursor_undo(&mut self, redo: bool, cx: &mut Context<Self>) -> Outcome {
+        let Some(editor) = self.editors.active_mut() else { return Outcome::done() };
+        let selections_before = editor.selections.clone();
+        let Some(scroll) = (if redo { editor.cursor_redo() } else { editor.cursor_undo() }) else { return Outcome::done() };
+        let outcome = self.editor_command_ran(None, selections_before, cx);
+        let viewport = self.editors.viewport;
+        if self.editors.active_mut().expect("still open").set_scroll(scroll.top, scroll.left, viewport) {
+            self.editor_scrolled(cx);
+        }
+        outcome
+    }
+
+    /// smartSelect.ts `GrowSelectionAction` and `ShrinkSelectionAction` with the `editor.smartSelect` options.
+    fn run_smart_select(&mut self, forward: bool, cx: &mut Context<Self>) -> Outcome {
+        let Some(editor) = self.editors.active_mut() else { return Outcome::done() };
+        let overrides = Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
+        let settings = self.settings.lock().unwrap();
+        let enabled = |key| settings.get_value(Some(key), &overrides) != Some(json!(false));
+        let options = smart_select::Options { select_leading_and_trailing_whitespace: enabled("editor.smartSelect.selectLeadingAndTrailingWhitespace"), select_subwords: enabled("editor.smartSelect.selectSubwords") };
+        drop(settings);
+        let selections_before = editor.selections.clone();
+        editor.smart_select(forward, &self.languages, options);
+        self.editor_command_ran(None, selections_before, cx)
     }
 
     /// comment.ts `CommentLineAction` and `BlockCommentAction` with the `editor.comments` options, on the

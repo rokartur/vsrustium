@@ -218,7 +218,7 @@ impl FoldingMarkers {
     }
 }
 
-fn marker_regex(pattern: &str, flags: &str) -> Result<onig::Regex, onig::Error> {
+pub(crate) fn marker_regex(pattern: &str, flags: &str) -> Result<onig::Regex, onig::Error> {
     // CAPTURE_GROUP keeps `(start)` group 1 when a marker has named groups (css `(?<label>...)`).
     let mut options = onig::RegexOptions::REGEX_OPTION_CAPTURE_GROUP;
     if flags.contains('i') {

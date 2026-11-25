@@ -8,6 +8,7 @@ use icu_collator::options::CollatorOptions;
 use icu_collator::{Collator, CollatorBorrowed, CollatorPreferences};
 use regex::Regex;
 
+use super::auto_indent::{self, AutoIndent, Model};
 use super::edit::{Command, command};
 use super::{ContentChanged, EditReason, OpenEditor, Position, Replace, Selection, cursor, text_between, word_at};
 
@@ -80,16 +81,15 @@ impl OpenEditor {
     }
 
     /// `AbstractMoveLinesAction.run`: a `MoveLinesCommand` per selection.
-    /// The moved lines keep their indentation, as upstream does for a language without indentation rules
-    /// (`shouldAutoIndent`); the port loads no indentation rules yet.
-    pub fn move_lines(&mut self, down: bool) -> Option<ContentChanged> {
+    pub fn move_lines(&mut self, down: bool, auto: AutoIndent) -> Option<ContentChanged> {
+        let model = auto.model(&self.document);
         let id = if down { "editor.action.moveLinesDownAction" } else { "editor.action.moveLinesUpAction" };
         let mut empty_line_moves = Vec::new();
         let commands = self
             .selections
             .iter()
             .map(|&selection| {
-                let (command, empty_line_move) = move_lines_command(&self.document.lines, selection, down);
+                let (command, empty_line_move) = move_lines_command(&model, selection, down);
                 empty_line_moves.push(empty_line_move);
                 command
             })
@@ -203,21 +203,20 @@ impl OpenEditor {
     }
 
     /// `IndentLinesAction.run`: `TypeOperations.indent`, a `ShiftCommand` over each cursor's lines.
-    pub fn indent_lines(&mut self) -> Option<ContentChanged> {
-        self.shift(false, command("editor.action.indentLines"))
+    pub fn indent_lines(&mut self, auto: AutoIndent) -> Option<ContentChanged> {
+        self.shift(false, auto, command("editor.action.indentLines"))
     }
 
-    /// `InsertLineBeforeAction.run`: a line above each cursor's line with that line's indentation, the cursor on
-    /// it; above the first line the new line is empty. Only an undo stop before, as upstream.
-    pub fn insert_line_before(&mut self) -> Option<ContentChanged> {
-        let lines = &self.document.lines;
-        let indentation = self.document.indentation;
+    /// `InsertLineBeforeAction.run`: Enter at the end of the line above each cursor; above the first line the
+    /// new line is empty. Only an undo stop before, as upstream.
+    pub fn insert_line_before(&mut self, auto: AutoIndent) -> Option<ContentChanged> {
+        let model = auto.model(&self.document);
         let commands = self
             .selections
             .iter()
             .map(|selection| match selection.head.line {
                 0 => Command { edits: vec![Replace::new(Position::new(0, 0), Position::new(0, 0), "\n")], tracked: None, cursor_state: Box::new(|_, ranges| Selection::caret(ranges[0].0)) },
-                line => enter_at_line_end(lines, line - 1, indentation),
+                line => enter_at_line_end(&model, line - 1),
             })
             .collect();
         self.push_undo_stop();
@@ -225,10 +224,9 @@ impl OpenEditor {
     }
 
     /// `InsertLineAfterAction.run`: Enter at the end of each cursor's line.
-    pub fn insert_line_after(&mut self) -> Option<ContentChanged> {
-        let lines = &self.document.lines;
-        let indentation = self.document.indentation;
-        let commands = self.selections.iter().map(|selection| enter_at_line_end(lines, selection.head.line, indentation)).collect();
+    pub fn insert_line_after(&mut self, auto: AutoIndent) -> Option<ContentChanged> {
+        let model = auto.model(&self.document);
+        let commands = self.selections.iter().map(|selection| enter_at_line_end(&model, selection.head.line)).collect();
         self.push_undo_stop();
         self.execute_commands(commands, command("editor.action.insertLineAfter"))
     }
@@ -456,14 +454,15 @@ fn replace_command_that_selects_text(at: Position, text: String) -> Command {
     Command { edits: vec![Replace::new(at, at, text)], tracked: None, cursor_state: Box::new(|_, ranges| Selection { anchor: ranges[0].0, head: ranges[0].1 }) }
 }
 
-/// `MoveLinesCommand` without the indentation rules, and where an empty line moved over an empty line puts the
-/// cursor, which no edit carries.
-fn move_lines_command(lines: &[String], selection: Selection, down: bool) -> (Command, Option<Selection>) {
+/// `MoveLinesCommand`, and where an empty line moved over an empty line puts the cursor, which no edit carries.
+fn move_lines_command(model: &Model, selection: Selection, down: bool) -> (Command, Option<Selection>) {
+    let lines = model.lines;
     let keep = || Command { edits: Vec::new(), tracked: Some(selection), cursor_state: Box::new(|tracked, _| tracked.expect("tracked")) };
     if (down && selection.end().line == lines.len() - 1) || (!down && selection.start().line == 0) {
         return (keep(), None);
     }
     let mut move_end_down = false;
+    let mut shrink_end = false;
     let mut s = selection;
     if s.start().line < s.end().line && s.end().column == 0 {
         move_end_down = true;
@@ -485,29 +484,102 @@ fn move_lines_command(lines: &[String], selection: Selection, down: bool) -> (Co
     } else if down {
         let moving = s.end().line + 1;
         edits.push(Replace::new(line_end(moving - 1), line_end(moving), ""));
-        edits.push(Replace::new(Position::new(s.start().line, 0), Position::new(s.start().line, 0), format!("{}\n", lines[moving])));
+        let inserting = match model.indents_moved_lines(s.start().line, s.end().line) {
+            true => moved_down_line(model, s, moving),
+            false => lines[moving].clone(),
+        };
+        edits.push(Replace::new(Position::new(s.start().line, 0), Position::new(s.start().line, 0), format!("{inserting}\n")));
+        if model.indents_moved_lines(s.start().line, s.end().line) {
+            let offset = model.enter_rule_offset_moving_down(s.start().line, moving, &inserting).or_else(|| {
+                let map = |line: usize| match line {
+                    line if line == s.start().line => moving,
+                    line if line > s.start().line && line <= s.end().line + 1 => line - 1,
+                    line => line,
+                };
+                let moved = model.virtual_model(&map, Some((s.start().line, inserting.clone(), model.processed_line(moving))));
+                let indent = moved.good_indent(&model.language_at(moving, 0), s.start().line + 1)?;
+                Some(indent_offset(model, &indent, s.start().line))
+            });
+            shrink_end = indent_moving_block(model, s, offset.unwrap_or(0), &mut edits);
+        }
     } else {
         let moving = s.start().line - 1;
         edits.push(Replace::new(Position::new(moving, 0), Position::new(moving + 1, 0), ""));
         edits.push(Replace::new(line_end(s.end().line), line_end(s.end().line), format!("\n{}", lines[moving])));
+        if model.indents_moved_lines(s.start().line, s.end().line) {
+            let offset = model.enter_rule_offset(s.start().line, s.start().line.checked_sub(2)).or_else(|| {
+                let map = |line: usize| if line == moving { s.start().line } else { line };
+                let moved = model.virtual_model(&map, None);
+                let indent = moved.good_indent(&model.language_at(s.start().line, 0), moving)?;
+                Some(indent_offset(model, &indent, s.start().line))
+            });
+            shrink_end = indent_moving_block(model, s, offset.unwrap_or(0), &mut edits);
+        }
     }
     let cursor_state = Box::new(move |tracked: Option<Selection>, _: &[(Position, Position)]| {
-        let tracked = tracked.expect("tracked");
-        match move_end_down {
-            true => with_end(tracked, Position::new(tracked.end().line + 1, 0)),
-            false => tracked,
+        let mut tracked = tracked.expect("tracked");
+        if move_end_down {
+            tracked = with_end(tracked, Position::new(tracked.end().line + 1, 0));
         }
+        if shrink_end && tracked.start().line < tracked.end().line {
+            tracked = with_end(tracked, Position::new(tracked.end().line, 1));
+        }
+        tracked
     });
     (Command { edits, tracked: Some(s), cursor_state }, None)
 }
 
-/// `_enter` at the end of `line` without onEnter or indentation rules: a line break and the line's indentation,
-/// the cursor after them.
-fn enter_at_line_end(lines: &[String], line: usize, indentation: super::Indentation) -> Command {
-    let at = Position::new(line, cursor::line_len(lines, line));
-    let indent: String = lines[line].chars().take_while(|c| *c == ' ' || *c == '\t').collect();
-    let text = format!("\n{}", cursor::normalize_indentation(&indent, indentation));
-    Command { edits: vec![Replace::new(at, at, text)], tracked: None, cursor_state: Box::new(|_, ranges| Selection::caret(ranges[0].1)) }
+/// The line moving down over `s`, reindented for its new place above it: by the onEnter rule of the line
+/// above, else by the indentation rules.
+fn moved_down_line(model: &Model, s: Selection, moving: usize) -> String {
+    let text = &model.lines[moving];
+    let indentation = model.indentation;
+    let old = auto_indent::space_count(auto_indent::leading_whitespace(text), indentation.tab_size) as isize;
+    let reindented = |count: isize| auto_indent::generate_indent(count, indentation) + text.trim_start();
+    if let Some(offset) = model.enter_rule_offset(moving, s.start().line.checked_sub(1)) {
+        return reindented(old + offset);
+    }
+    let map = |line: usize| if line == s.start().line { moving } else { line };
+    let moved = model.virtual_model(&map, None);
+    match moved.good_indent(&model.language_at(moving, 0), s.start().line) {
+        Some(indent) if auto_indent::space_count(&indent, indentation.tab_size) as isize != old => reindented(auto_indent::space_count(&indent, indentation.tab_size) as isize),
+        _ => text.clone(),
+    }
+}
+
+/// How many columns `indent` is wider than `line`'s indentation.
+fn indent_offset(model: &Model, indent: &str, line: usize) -> isize {
+    let tab_size = model.indentation.tab_size;
+    auto_indent::space_count(indent, tab_size) as isize - auto_indent::space_count(auto_indent::leading_whitespace(&model.lines[line]), tab_size) as isize
+}
+
+/// `getIndentEditsOfMovingBlock`: each line of `s` indented by `offset` columns. Answers whether the selection
+/// end, inside the last line's indentation that goes, moves to that line's second column.
+fn indent_moving_block(model: &Model, s: Selection, offset: isize, edits: &mut Vec<Replace>) -> bool {
+    if offset == 0 {
+        return false;
+    }
+    let mut shrink_end = false;
+    for line in s.start().line..=s.end().line {
+        let original = auto_indent::leading_whitespace(&model.lines[line]);
+        let indent = auto_indent::generate_indent(auto_indent::space_count(original, model.indentation.tab_size) as isize + offset, model.indentation);
+        if indent != original {
+            edits.push(Replace::new(Position::new(line, 0), Position::new(line, original.chars().count()), indent.clone()));
+            if line == s.end().line && s.end().column <= original.chars().count() && indent.is_empty() {
+                shrink_end = true;
+            }
+        }
+    }
+    shrink_end
+}
+
+/// `EnterOperation._enter` at the end of `line`, the cursor where Enter leaves it.
+fn enter_at_line_end(model: &Model, line: usize) -> Command {
+    let at = Position::new(line, cursor::line_len(model.lines, line));
+    let (start, end, text, caret) = model.enter_edit(at, at);
+    let lines_down = caret.line - start.line;
+    let cursor_state = Box::new(move |_: Option<Selection>, ranges: &[(Position, Position)]| Selection::caret(Position::new(ranges[0].0.line + lines_down, caret.column)));
+    Command { edits: vec![Replace::new(start, end, text)], tracked: None, cursor_state }
 }
 
 /// `Selection.setEndPosition`: the same direction with a new end.

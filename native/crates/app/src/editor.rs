@@ -15,7 +15,9 @@ use files::encoding;
 use crate::languages::Languages;
 use crate::syntax::Tokenization;
 
+pub mod auto_indent;
 pub mod commands;
+pub mod cursor_undo;
 mod comment;
 mod cursor;
 mod edit;
@@ -27,6 +29,7 @@ mod lines_operations;
 pub mod minimap;
 mod multicursor;
 pub mod section_headers;
+pub mod smart_select;
 mod snippet;
 pub mod sticky_scroll;
 mod view;
@@ -399,6 +402,9 @@ pub struct OpenEditor {
     leftovers: Vec<(isize, isize)>,
     /// The last column selection and the selections it made: it goes on while they are unchanged (`_columnSelectData`).
     column_select: Option<(ColumnSelectData, Vec<Selection>)>,
+    /// The ranges of the last Expand or Shrink Selection and the selections it made: kept while they are unchanged.
+    smart_select: Option<(Vec<smart_select::SelectionRanges>, Vec<Selection>)>,
+    cursor_states: cursor_undo::CursorStates,
     /// `getVersionId`: 1 when opened, one more per content change.
     pub version_id: u32,
     history: History,
@@ -434,7 +440,7 @@ impl OpenEditor {
     fn new(document: TextDocument, preview: bool, model_id: u32) -> Self {
         let indentation = document.indentation;
         let guides = indent_guides(&document.lines, indentation.tab_size, indentation.indent_size(), document.off_side);
-        let mut editor = OpenEditor { document, preview, model_id, selections: vec![Selection::default()], last_added: 0, leftovers: Vec::new(), column_select: None, version_id: 1, history: History::default(), guides, highlights: Vec::new(), folding: FoldingModel::default(), sticky_model: Default::default(), scroll: Scroll::default(), max_line_width: 0., host_reference: None, associated_file: false };
+        let mut editor = OpenEditor { document, preview, model_id, selections: vec![Selection::default()], last_added: 0, leftovers: Vec::new(), column_select: None, smart_select: None, cursor_states: Default::default(), version_id: 1, history: History::default(), guides, highlights: Vec::new(), folding: FoldingModel::default(), sticky_model: Default::default(), scroll: Scroll::default(), max_line_width: 0., host_reference: None, associated_file: false };
         editor.refresh_highlights();
         editor.refresh_folding_ranges();
         editor
@@ -552,8 +558,19 @@ impl EditorGroup {
 
     pub fn activate(&mut self, index: usize) {
         let id = self.editors[index].model_id;
+        let shown = self.recent.first().copied();
         self.recent.retain(|recent| *recent != id);
         self.recent.insert(0, id);
+        self.shown_model_changed(shown);
+    }
+
+    /// The group's code editor shows another model (`onDidChangeModel`).
+    fn shown_model_changed(&mut self, previous: Option<u32>) {
+        if self.recent.first().copied() != previous
+            && let Some(editor) = self.active_mut()
+        {
+            editor.clear_cursor_states();
+        }
     }
 
     pub fn pin(&mut self, index: usize) {
@@ -562,7 +579,9 @@ impl EditorGroup {
 
     pub fn close(&mut self, index: usize) {
         let closed = self.editors.remove(index);
+        let shown = self.recent.first().copied();
         self.recent.retain(|id| *id != closed.model_id);
+        self.shown_model_changed(shown);
         if closed.host_reference.is_some() {
             self.models.push(closed);
         }
