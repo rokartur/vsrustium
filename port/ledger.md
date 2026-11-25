@@ -391,7 +391,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/userDataSync | workbench service | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/services/utilityProcess | workbench service | todo |  |
 | workbench/services/views | workbench service | todo |  |
-| workbench/services/workingCopy | workbench service | ported | WorkingCopyFileService create, move, copy, delete with participants (cargo test -p files operations); no working copies (milestone 8) |
+| workbench/services/workingCopy | workbench service | ported | WorkingCopyFileService create, move, copy, delete with participants (cargo test -p files operations); WorkingCopyHistoryService and its tracker for saves into User/History (local_history.rs: cargo test -p app local_history; ui-pair save of notes.txt wrote one merged entry); no working copies (milestone 8), history entries do not follow moves |
 | workbench/services/workspaces | workbench service | todo |  |
 | workbench/contrib/accessibility | workbench contribution | todo |  |
 | workbench/contrib/accessibilitySignals | workbench contribution | todo |  |
