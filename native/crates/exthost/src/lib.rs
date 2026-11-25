@@ -4,6 +4,8 @@
 pub mod activation_events;
 pub mod console;
 pub mod extension_development;
+pub mod extension_management;
+pub mod extension_validator;
 pub mod frame;
 pub mod main_thread_bulk_edits;
 pub mod main_thread_configuration;
@@ -17,6 +19,7 @@ pub mod scan;
 pub mod main_thread;
 pub mod session;
 pub mod utc;
+pub mod zip;
 
 use std::io::{Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};

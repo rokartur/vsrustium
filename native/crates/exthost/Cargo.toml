@@ -9,8 +9,10 @@ anyhow.workspace = true
 base64 = "0.22"
 config = { path = "../config" }
 files = { path = "../files" }
+flate2 = "1"
 md5 = { package = "md-5", version = "0.10" }
 search = { path = "../search" }
 security-framework = "3"
+semver = "1"
 serde_json.workspace = true
 storage = { path = "../storage" }

@@ -1509,9 +1509,11 @@ dependencies = [
  "base64",
  "config",
  "files",
+ "flate2",
  "md-5",
  "search",
  "security-framework",
+ "semver",
  "serde_json",
  "storage",
 ]

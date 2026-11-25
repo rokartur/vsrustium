@@ -11,7 +11,9 @@ use futures::channel::oneshot;
 
 use config::model::Change;
 use config::service::Settings;
+use exthost::extension_management::Job;
 use exthost::main_thread_configuration::changed_args;
+use exthost::scan::ScannedExtension;
 use files::operations::{self, FileEdit, FileUndo, WorkingCopyFiles};
 use serde_json::{Value, json};
 
@@ -27,7 +29,12 @@ pub struct HostMessage {
     pub reply: Option<oneshot::Sender<Result<Value, Value>>>,
     /// Working copy file operations, run on the host thread so they reach its file operation participants.
     pub files: Option<FileWork>,
+    /// An install or uninstall, run on the host thread, which owns the extensions and tells the host.
+    pub extensions: Option<(Job, ExtensionsReply)>,
 }
+
+/// The running extensions after a `Job`, or why it failed.
+pub type ExtensionsReply = oneshot::Sender<Result<Vec<ScannedExtension>, String>>;
 
 /// Explorer file edits (`IExplorerService.applyBulkEdit`), the undo or redo of earlier ones, or the write of a
 /// saved model of an extension's file system provider.
@@ -277,13 +284,13 @@ impl HostSync {
 
     pub(crate) fn send(&self, proxy: &'static str, method: &'static str, args: Vec<Value>) {
         // The session thread is gone once the host exits; the workbench keeps working without it.
-        let _ = self.sender.send(HostMessage { proxy, method, args, reply: None, files: None });
+        let _ = self.sender.send(HostMessage { proxy, method, args, reply: None, files: None, extensions: None });
     }
 
     /// Runs file edits on the host thread; with no host they run here on the disk, without participants.
     pub fn run_files(&self, job: FileJob) -> oneshot::Receiver<files::Result<FileUndo>> {
         let (reply, receiver) = oneshot::channel();
-        let message = HostMessage { proxy: "", method: "", args: Vec::new(), reply: None, files: Some(FileWork { job, reply }) };
+        let message = HostMessage { proxy: "", method: "", args: Vec::new(), reply: None, files: Some(FileWork { job, reply }), extensions: None };
         if let Err(unsent) = self.sender.send(message) {
             unsent.0.files.expect("the message carries file work").run(&mut files::disk::Disk);
         }
@@ -304,7 +311,14 @@ impl HostSync {
     /// Sends a request whose answer arrives on the receiver; a host that is gone drops the sender.
     pub fn call(&self, proxy: &'static str, method: &'static str, args: Vec<Value>) -> oneshot::Receiver<Result<Value, Value>> {
         let (reply, receiver) = oneshot::channel();
-        let _ = self.sender.send(HostMessage { proxy, method, args, reply: Some(reply), files: None });
+        let _ = self.sender.send(HostMessage { proxy, method, args, reply: Some(reply), files: None, extensions: None });
+        receiver
+    }
+
+    /// Installs or uninstalls on the host thread; a host that is gone drops the sender.
+    pub fn run_extensions(&self, job: Job) -> oneshot::Receiver<Result<Vec<ScannedExtension>, String>> {
+        let (reply, receiver) = oneshot::channel();
+        let _ = self.sender.send(HostMessage { proxy: "", method: "", args: Vec::new(), reply: None, files: None, extensions: Some((job, reply)) });
         receiver
     }
 }

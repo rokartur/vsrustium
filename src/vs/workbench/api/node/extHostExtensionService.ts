@@ -25,7 +25,8 @@ import { escapeRegExpCharacters } from '../../../base/common/strings.js';
 import { assertType } from '../../../base/common/types.js';
 import { generateUuid } from '../../../base/common/uuid.js';
 import { BidirectionalMap } from '../../../base/common/map.js';
-import { DisposableStore, toDisposable } from '../../../base/common/lifecycle.js';
+import { DisposableStore, IDisposable, toDisposable } from '../../../base/common/lifecycle.js';
+import { ExtensionDescriptionRegistry } from '../../services/extensions/common/extensionDescriptionRegistry.js';
 import { markNodeCompileCacheReady } from '../../../base/node/nodeCompileCache.js';
 const require = nodeModule.createRequire(import.meta.url);
 
@@ -147,7 +148,7 @@ class NodeModuleRequireInterceptor extends RequireInterceptor {
 			return scriptDataUrlSrc;
 		};
 		if (process.versions.bun) {
-			installBunESMInterceptor(this._extensionRegistry.all.getAllExtensionDescriptions(), lookup);
+			this._store.add(installBunESMInterceptor(this._extensionRegistry.all, lookup));
 			return;
 		}
 		const hooks = nodeModule.registerHooks({
@@ -174,12 +175,30 @@ declare const Bun: {
  * Bun 1.4.5 has no `module.registerHooks` and its runtime `onResolve` does not see bare specifiers,
  * so ESM extensions get their `vscode` imports rewritten to the same data: URL the Node hook resolves to.
  */
-function installBunESMInterceptor(extensions: readonly IExtensionDescription[], lookup: (parentUrl: string) => string): void {
-	const esmRoots = extensions.filter(extension => extension.type === 'module').map(extension => escapeRegExpCharacters(extension.extensionLocation.fsPath));
-	// shortcut: covers .mjs files and ESM extensions known at startup, not ones added later through $deltaExtensions; extend the filter when that lands.
-	const filter = esmRoots.length
-		? new RegExp(`\\.mjs$|^(?:${esmRoots.join('|')})/(?!.*/node_modules/).*\\.js$`)
-		: /\.mjs$/;
+function installBunESMInterceptor(registry: ExtensionDescriptionRegistry, lookup: (parentUrl: string) => string): IDisposable {
+	const coveredRoots = new Set<string>();
+	const newESMRoots = () => {
+		// Bun matches the resolved path: /var/folders is /private/var/folders on macOS.
+		const roots = registry.getAllExtensionDescriptions().filter(extension => extension.type === 'module').map(extension => realpathSync(extension.extensionLocation.fsPath)).filter(root => !coveredRoots.has(root));
+		roots.forEach(root => coveredRoots.add(root));
+		return roots.map(escapeRegExpCharacters);
+	};
+	const esmRoots = newESMRoots();
+	addVSCodeImportPlugin(esmRoots.length ? new RegExp(`\\.mjs$|${esmRootsPattern(esmRoots)}`) : /\.mjs$/, lookup);
+	// Bun.plugin filters are fixed once registered: ESM extensions added through $deltaExtensions get a plugin of their own.
+	return registry.onDidChange(() => {
+		const added = newESMRoots();
+		if (added.length) {
+			addVSCodeImportPlugin(new RegExp(esmRootsPattern(added)), lookup);
+		}
+	});
+}
+
+function esmRootsPattern(escapedRoots: string[]): string {
+	return `^(?:${escapedRoots.join('|')})/(?!.*/node_modules/).*\\.js$`;
+}
+
+function addVSCodeImportPlugin(filter: RegExp, lookup: (parentUrl: string) => string): void {
 	const vscodeImport = /(\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)(['"])vscode\2/g;
 	Bun.plugin({
 		name: 'vscode-api',

@@ -12,7 +12,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | seam/init-data | extension host seam | verified | port/tools/settings-check environment: vscode.env, storage, log and extension paths as the reference except appName (reference dev run), machineId format (uuid, upstream fallback) and isTelemetryEnabled (no telemetry); loggers [] |
 | seam/bun-runtime | extension host seam | verified | exthost-probe --runtime bun: 30/30 code extensions activate (copilot and sign-in extensions removed by decision) |
 | seam/node-control | extension host seam | verified | exthost-probe --runtime node: 30/30, same set as Bun |
-| seam/vscode-module-bun | extension host seam | ported | exthost-probe: CJS extensions and ESM github, markdown-language-features, mermaid-markdown-features activate on Bun; ESM added after startup not covered |
+| seam/vscode-module-bun | extension host seam | verified | exthost-probe: CJS extensions and ESM github, markdown-language-features, mermaid-markdown-features activate on Bun; ESM installed after startup activates: port/tools/extensions-check `an ESM extension activates after install` |
 | mainthread/MainThreadGitExtension | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadClipboard | MainThread* shape (Rust side) | verified | host_requests.rs answers $readText and $writeText with the system clipboard: api-tests MOCHA_GREP="vscode API - editors" (insert snippet with clipboard variables passes) |
 | mainthread/MainThreadCommands | MainThread* shape (Rust side) | ported | api-tests MOCHA_GREP="vscode API - commands\|showInputBox\|#7013": 11 passing, 3 failing after the milestone 8 merge (vscode.open twice and vscode.diff: wait for editor groups and the diff editor) |
@@ -140,10 +140,10 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/encryption | src/vs/platform | todo |  |
 | platform/endpoint | src/vs/platform | removed | no remote or tunnels by decision (port/notes.md); one local extension host |
 | platform/environment | src/vs/platform | ported | port/tools/settings-check environment; only the paths and values init data carries |
-| platform/extensionManagement | src/vs/platform | todo |  |
+| platform/extensionManagement | src/vs/platform | ported | VSIX install, update, uninstall and clean-up on disk (extensionsScannerService.ts, extensionsProfileScannerService.ts layout): cargo test -p exthost extension_management, zip; gallery install is item 2 of milestone 18 |
 | platform/extensionRecommendations | src/vs/platform | todo |  |
 | platform/extensionResourceLoader | src/vs/platform | todo |  |
-| platform/extensions | src/vs/platform | todo |  |
+| platform/extensions | src/vs/platform | ported | extensionValidator.ts with the cases of extensionValidator.test.ts: cargo test -p exthost extension_validator; built-in extensions are not validated yet |
 | platform/externalServices | src/vs/platform | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | platform/externalTerminal | src/vs/platform | todo |  |
 | platform/files | src/vs/platform | ported | native/crates/files: disk provider, Trash, FSEvents watcher with upstream coalescing, provider errors, glob port with upstream glob tests: cargo test -p files 44 passed; api-tests workspace.fs.test 12/12 |
@@ -325,9 +325,9 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/editor | workbench service | todo |  |
 | workbench/services/encryption | workbench service | todo |  |
 | workbench/services/environment | workbench service | todo |  |
-| workbench/services/extensionManagement | workbench service | todo |  |
+| workbench/services/extensionManagement | workbench service | ported | installVSIX, uninstall, Install from VSIX and their errors: port/tools/extensions-check (3 ok); gallery and the Extensions view are milestone 18 items 2 and 3 |
 | workbench/services/extensionRecommendations | workbench service | todo |  |
-| workbench/services/extensions | workbench service | todo |  |
+| workbench/services/extensions | workbench service | ported | `_deltaExtensions` with `_activateAddedExtensionIfNeeded` and configuration defaults: port/tools/extensions-check, exthost-probe --install-vsix/--uninstall; other extension points the workbench reads (icon themes, static status bar items) are read at startup only |
 | workbench/services/files | workbench service | todo |  |
 | workbench/services/filesConfiguration | workbench service | stub | read-only part only (`workbench/readonly.rs`): session override commands, `files.readonlyInclude`/`readonlyExclude`/`readonlyFromPermissions`, tab lock badge, edit guards; not ported: `updateReadonly` custom reasons and events (filesConfigurationService.test.ts, used by chat and extension services), auto save and hot exit settings |
 | workbench/services/github | workbench service | todo |  |

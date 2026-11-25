@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value, json};
 
+#[derive(Clone)]
 pub struct ScannedExtension {
     pub id: String,
     pub location: PathBuf,
