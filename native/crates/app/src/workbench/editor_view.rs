@@ -281,12 +281,25 @@ impl Workbench {
             .when_some(title_border, |crumbs, color| crumbs.child(div().absolute().bottom_0().left_0().right_0().h(px(1.)).bg(color)))
     }
 
+    /// `editor.lineNumbers` of `editor`.
+    pub(super) fn line_numbers(&self, editor: &OpenEditor) -> LineNumbers {
+        let overrides = config::configuration::Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
+        let setting = self.settings.lock().unwrap().get_value(Some("editor.lineNumbers"), &overrides);
+        match setting.as_ref().and_then(|value| value.as_str()) {
+            // outputView.ts `OutputEditor.getConfigurationOverrides`: output editors hide line numbers.
+            _ if editor.document.scheme == crate::output::OUTPUT_SCHEME => LineNumbers::Off,
+            Some("off") => LineNumbers::Off,
+            // gotoLineQuickAccess.ts: relative numbers switch to "on" while the picker previews in this editor.
+            Some("relative") if self.quick_access.goto_line.as_ref().is_some_and(|state| state.previews(editor.model_id)) => LineNumbers::On,
+            Some("relative") => LineNumbers::Relative,
+            Some("interval") => LineNumbers::Interval,
+            _ => LineNumbers::On,
+        }
+    }
+
     fn text_area(&self, editor: &OpenEditor, window: &mut Window, cx: &mut Context<Self>) -> Stateful<Div> {
         let overrides = config::configuration::Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
-        // shortcut: only "off" applies; "relative" and "interval" number every line as "on" does.
-        // outputView.ts `OutputEditor.getConfigurationOverrides`: output editors hide line numbers.
-        let line_numbers = editor.document.scheme != crate::output::OUTPUT_SCHEME && self.settings.lock().unwrap().get_value(Some("editor.lineNumbers"), &overrides) != Some(serde_json::Value::from("off"));
-        let metrics = EditorMetrics::measure(window, editor.document.lines.len(), line_numbers, self.editor_zoom.multiplier());
+        let metrics = EditorMetrics::measure(window, editor.document.lines.len(), self.line_numbers(editor), self.editor_zoom.multiplier());
         let area_left = self.text_area_left.clone();
         let area_bounds = self.text_area_bounds.clone();
         let focus = self.editor_focus.clone();
@@ -768,7 +781,9 @@ impl Workbench {
                     .flex_none()
                     .text_right()
                     .text_color(if index == primary_line { colors.active_number } else { colors.number })
-                    .when(metrics.line_numbers_width > 0., |number| number.child((index + 1).to_string()));
+                    // lineNumbers.css `.relative-current-line-number`: the cursor's line number aligns left.
+                    .when(metrics.line_numbers == LineNumbers::Relative && index == primary_line, |number| number.text_left())
+                    .children(line_number_label(metrics.line_numbers, index, primary_line, editor.document.lines.len()));
                 let mut current_line = div().absolute().inset_0();
                 if line_highlight && all_empty && selections.iter().any(|selection| selection.head.line == index) {
                     current_line = current_line.border(px(line_border_width)).border_color(colors.line_border);
@@ -1462,7 +1477,29 @@ struct EditorMetrics {
     font_size: f32,
     line_height: f32,
     char_width: f32,
+    line_numbers: LineNumbers,
     line_numbers_width: f32,
+}
+
+/// editorOptions.ts `RenderLineNumbersType` from `editor.lineNumbers`.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(super) enum LineNumbers {
+    Off,
+    On,
+    Relative,
+    Interval,
+}
+
+/// lineNumbers.ts `_getLineRenderLineNumber` for the zero-based `line` with the primary cursor on `cursor_line`.
+fn line_number_label(render: LineNumbers, line: usize, cursor_line: usize, line_count: usize) -> Option<String> {
+    let number = line + 1;
+    match render {
+        LineNumbers::Off => None,
+        LineNumbers::On => Some(number.to_string()),
+        LineNumbers::Relative if line == cursor_line => Some(number.to_string()),
+        LineNumbers::Relative => Some(line.abs_diff(cursor_line).to_string()),
+        LineNumbers::Interval => (line == cursor_line || number % 10 == 0 || number == line_count).then(|| number.to_string()),
+    }
 }
 
 impl EditorMetrics {
@@ -1478,14 +1515,14 @@ impl EditorMetrics {
     /// fontInfo.ts `BareFontInfo._create`: the editor zoom scales the font size and line height; then
     /// `typicalHalfwidthCharacterWidth` and `maxDigitWidth` of that font. The line numbers are as wide as the
     /// longest number, at least lineNumbersMinChars digits, rounded, and 0 wide when off (editorOptions.ts).
-    fn measure(window: &Window, line_count: usize, line_numbers: bool, zoom: f32) -> Self {
+    fn measure(window: &Window, line_count: usize, line_numbers: LineNumbers, zoom: f32) -> Self {
         let (font_size, line_height) = (EDITOR_FONT_SIZE * zoom, LINE_HEIGHT * zoom);
         let text_system = window.text_system();
         let font_id = text_system.resolve_font(&font(EDITOR_FONT));
         let advance = |c: char| f32::from(text_system.advance(font_id, px(font_size), c).expect("Menlo has ASCII glyphs").width);
         let max_digit_width = ('0'..='9').map(advance).fold(0., f32::max);
-        let digits = if line_numbers { line_count.to_string().len().max(LINE_NUMBERS_MIN_CHARS) } else { 0 };
-        EditorMetrics { font_size, line_height, char_width: advance('x'), line_numbers_width: (digits as f32 * max_digit_width).round() }
+        let digits = if line_numbers == LineNumbers::Off { 0 } else { line_count.to_string().len().max(LINE_NUMBERS_MIN_CHARS) };
+        EditorMetrics { font_size, line_height, char_width: advance('x'), line_numbers, line_numbers_width: (digits as f32 * max_digit_width).round() }
     }
 }
 
@@ -1775,8 +1812,17 @@ pub(super) fn erfc(x: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{Corner, SelectionCorners, selection_corners};
+    use super::{Corner, LineNumbers, SelectionCorners, line_number_label, selection_corners};
     use Corner::{Extern, Flat, Intern};
+
+    #[test]
+    fn line_numbers_render_as_line_numbers_ts() {
+        let labels = |render, cursor_line| (0..12).map(|line| line_number_label(render, line, cursor_line, 12).unwrap_or_default()).collect::<Vec<_>>().join(" ");
+        assert_eq!(labels(LineNumbers::On, 2), "1 2 3 4 5 6 7 8 9 10 11 12");
+        assert_eq!(labels(LineNumbers::Relative, 2), "2 1 3 1 2 3 4 5 6 7 8 9");
+        assert_eq!(labels(LineNumbers::Interval, 2), "  3       10  12");
+        assert_eq!(labels(LineNumbers::Off, 2), "           ");
+    }
 
     #[test]
     fn selection_corners_follow_the_neighbor_lines() {

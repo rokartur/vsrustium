@@ -143,6 +143,37 @@ fn go_to_line_previews_the_line_and_restores_the_view_on_escape(cx: &mut TestApp
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+/// gotoLineQuickAccess.ts `provideWithTextEditor`: relative line numbers show as "on" while the picker is open.
+#[gpui::test]
+fn go_to_line_shows_relative_line_numbers_as_on_while_open(cx: &mut TestAppContext) {
+    use crate::workbench::editor_view::LineNumbers;
+
+    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
+    let theme = load_theme(&[themes], "Dark Modern").unwrap();
+    let dir = std::env::temp_dir().join(format!("code-gpui-goto-line-relative-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("User")).unwrap();
+    std::fs::write(dir.join("User/settings.json"), r#"{ "editor.lineNumbers": "relative" }"#).unwrap();
+    let file = dir.join("a.txt");
+    std::fs::write(&file, "a\nb\nc\n").unwrap();
+    let settings = std::sync::Arc::new(std::sync::Mutex::new(config::service::Settings::load(config::registry::Registry::with_extensions(&[]), dir.join("User"), None)));
+    let (workbench, cx) = cx.add_window_view(|window, cx| {
+        let mut workbench = Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), settings, HostSync::new(std::sync::mpsc::channel().0), cx);
+        workbench.load_keybindings(crate::keybindings::default_keybindings(&[]), dir.join("keybindings.json"), cx);
+        workbench.open_file(file.clone(), true, window, cx);
+        workbench
+    });
+    cx.run_until_parked();
+    let line_numbers = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.line_numbers(workbench.editors.active().unwrap()));
+
+    assert_eq!(line_numbers(cx), LineNumbers::Relative);
+    cx.simulate_keystrokes("ctrl-g");
+    assert_eq!(line_numbers(cx), LineNumbers::On);
+    cx.simulate_keystrokes("escape");
+    assert_eq!(line_numbers(cx), LineNumbers::Relative);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 #[test]
 fn removing_a_recently_used_pick_keeps_the_others() {
     let mut input = crate::quick_input::QuickInput::new(1, crate::quick_input::Kind::QuickPick);
