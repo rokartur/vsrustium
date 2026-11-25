@@ -21,7 +21,8 @@ pub struct GotoLineState {
     model_id: u32,
     selections: Vec<Selection>,
     scroll: Scroll,
-    highlight: Option<Position>,
+    /// The first and last line of the previewed range (`addDecorations`).
+    highlight: Option<(usize, usize)>,
 }
 
 impl GotoLineState {
@@ -29,9 +30,17 @@ impl GotoLineState {
         self.model_id == model_id
     }
 
-    /// The previewed position in the editor of `model_id`.
-    pub fn highlight(&self, model_id: u32) -> Option<Position> {
+    pub fn new(editor: &crate::editor::OpenEditor) -> Self {
+        GotoLineState { model_id: editor.model_id, selections: editor.selections.clone(), scroll: editor.scroll, highlight: None }
+    }
+
+    /// The previewed lines in the editor of `model_id`.
+    pub fn highlight(&self, model_id: u32) -> Option<(usize, usize)> {
         self.highlight.filter(|_| self.model_id == model_id)
+    }
+
+    pub fn set_highlight(&mut self, lines: Option<(usize, usize)>) {
+        self.highlight = lines;
     }
 }
 
@@ -55,10 +64,10 @@ impl Workbench {
             input.set_items(vec![Entry::Item(Item { handle: 0, label: NO_EDITOR.into(), pickable: true, ..Item::default() })]);
             return vec![Accept::Nothing];
         };
-        let state = self.quick_access.goto_line.get_or_insert_with(|| GotoLineState { model_id: editor.model_id, selections: editor.selections.clone(), scroll: editor.scroll, highlight: None });
+        let state = self.quick_access.goto_line.get_or_insert_with(|| GotoLineState::new(editor));
         let document = &editor.document;
         let parsed = parse_position(&document.lines, document.eol, document.indentation.tab_size, &value.trim()[GO_TO_LINE_PREFIX.len()..], zero_based);
-        state.highlight = parsed.position;
+        state.highlight = parsed.position.map(|position| (position.line, position.line));
         if let Some(position) = parsed.position {
             editor.reveal_range(position, position, VerticalReveal::Center, viewport);
         }

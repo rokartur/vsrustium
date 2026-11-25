@@ -5,25 +5,25 @@
 use std::ops::Range;
 use std::time::Duration;
 
-use gpui::{Animation, AnimationExt, Bounds, Context, Div, InteractiveElement, IntoElement, ParentElement, PathBuilder, Size, Stateful, StatefulInteractiveElement, Styled, Task, TextRun, Window, canvas, deferred, div, point, px};
+use gpui::{Animation, AnimationExt, Bounds, Context, Div, InteractiveElement, IntoElement, ParentElement, PathBuilder, SharedString, Size, Stateful, StatefulInteractiveElement, Styled, Task, TextRun, Window, canvas, deferred, div, point, px};
 use serde_json::Value;
 
 use super::Workbench;
 use crate::editor::{OpenEditor, Position, VerticalReveal, visible_column};
 
 pub struct MessagePart {
-    text: &'static str,
+    text: SharedString,
     command: Option<(&'static str, Vec<Value>)>,
 }
 
 impl MessagePart {
-    pub fn text(text: &'static str) -> Self {
-        MessagePart { text, command: None }
+    pub fn text(text: impl Into<SharedString>) -> Self {
+        MessagePart { text: text.into(), command: None }
     }
 
     /// A `command:` link of trusted markdown: a click closes the message and runs the command.
     pub fn link(text: &'static str, command: &'static str, args: Vec<Value>) -> Self {
-        MessagePart { text, command: Some((command, args)) }
+        MessagePart { text: text.into(), command: Some((command, args)) }
     }
 }
 
@@ -138,7 +138,7 @@ impl Workbench {
         let text = &editor.document.lines[message.position.line];
         let anchor_left = visible_column(text, message.position.column, editor.document.indentation.tab_size) as f32 * char_width;
         let anchor_top = editor.line_top(editor.view_line(message.position.line), self.editors.viewport) - editor.scroll.top;
-        let text: String = message.parts.iter().map(|part| part.text).collect();
+        let text: String = message.parts.iter().map(|part| part.text.as_ref()).collect();
         let run = TextRun { len: text.len(), font: gpui::font(UI_FONT), color: gpui::black(), background_color: None, underline: None, strikethrough: None };
         let text_width = f32::from(window.text_system().shape_line(text.into(), px(13.), &[run], None).width);
         let width = text_width + 2. * 4. + 2.;
@@ -160,10 +160,10 @@ impl Workbench {
         let mut text = div().flex().whitespace_nowrap();
         for (index, part) in message.parts.iter().enumerate() {
             let Some((command, args)) = part.command.clone() else {
-                text = text.child(part.text);
+                text = text.child(part.text.clone());
                 continue;
             };
-            text = text.child(div().id(("editor-message-link", index)).cursor_pointer().text_color(link).hover(move |style| style.text_color(link_hover)).child(part.text).on_click(cx.listener(
+            text = text.child(div().id(("editor-message-link", index)).cursor_pointer().text_color(link).hover(move |style| style.text_color(link_hover)).child(part.text.clone()).on_click(cx.listener(
                 move |workbench, _, window, cx| {
                     workbench.close_editor_message(cx);
                     workbench.execute_command(command, args.clone(), window, cx);

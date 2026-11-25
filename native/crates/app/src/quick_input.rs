@@ -103,6 +103,8 @@ pub struct Item {
     /// `highlights`: matches a picker computed itself, kept while the list does not filter.
     pub label_highlights: Matches,
     pub description_highlights: Matches,
+    /// iconlabel.css `.strikethrough`: the label and description struck through.
+    pub strikethrough: bool,
 }
 
 #[derive(Clone, PartialEq, Debug)]

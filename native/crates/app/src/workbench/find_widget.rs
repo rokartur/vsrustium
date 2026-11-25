@@ -638,7 +638,7 @@ impl Workbench {
         let whole_line = || div().absolute().inset_0().left(px(scroll_left));
         let range_highlight = || bordered(whole_line(), self.theme.color("editor.rangeHighlightBackground"), self.theme.color("editor.rangeHighlightBorder"), 1.);
         // editorNavigationQuickAccess.ts addDecorations: Go to Line's whole-line `rangeHighlight`.
-        if self.quick_access.goto_line.as_ref().and_then(|state| state.highlight(editor.model_id)).is_some_and(|position| position.line == index) {
+        if self.quick_access.goto_line.as_ref().and_then(|state| state.highlight(editor.model_id)).is_some_and(|(first, last)| first <= index && index <= last) {
             whole_lines.push(range_highlight());
         }
         let Some(model) = self.find.controller.model.as_ref().filter(|_| self.find.model_id == Some(editor.model_id)) else {

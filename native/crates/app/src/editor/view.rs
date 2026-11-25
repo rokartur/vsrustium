@@ -64,6 +64,7 @@ pub enum VerticalReveal {
     CenterIfOutsideViewport,
     Top,
     NearTop,
+    NearTopIfOutsideViewport,
 }
 
 impl OpenEditor {
@@ -316,9 +317,9 @@ fn scroll_top_to_reveal(viewport_top: f32, viewport: Viewport, (box_start, box_e
         return single_range.then_some(box_start);
     }
     Some(match reveal {
-        VerticalReveal::CenterIfOutsideViewport if inside => viewport_top,
+        VerticalReveal::CenterIfOutsideViewport | VerticalReveal::NearTopIfOutsideViewport if inside => viewport_top,
         // A gap of 20% of the viewport above the box, at least 5 lines, unless that pushes the box out.
-        VerticalReveal::NearTop => (box_start - (5. * LINE_HEIGHT).max(viewport_height * 0.2)).max(box_end - viewport_height),
+        VerticalReveal::NearTop | VerticalReveal::NearTopIfOutsideViewport => (box_start - (5. * LINE_HEIGHT).max(viewport_height * 0.2)).max(box_end - viewport_height),
         VerticalReveal::Center | VerticalReveal::CenterIfOutsideViewport => ((box_start + box_end) / 2. - viewport_height / 2.).max(0.),
         VerticalReveal::Simple | VerticalReveal::Top => minimum_scrolling(viewport_top, viewport_end, box_start, box_end, reveal == VerticalReveal::Top),
     })

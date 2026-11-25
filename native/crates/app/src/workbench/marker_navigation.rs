@@ -547,7 +547,7 @@ impl Workbench {
     }
 
     /// An action of the peek view's action bar: a 16px codicon in a 22px box with the toolbar hover.
-    fn peek_action(&self, icon: &str, title: &'static str, command: &'static str, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(super) fn peek_action(&self, icon: &str, title: &'static str, command: &'static str, cx: &mut Context<Self>) -> impl IntoElement {
         let hover = self.color("toolbar.hoverBackground");
         self.icon(icon, 22., 16., self.foreground_or("icon.foreground"))
             .id(command)

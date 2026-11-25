@@ -323,8 +323,14 @@ impl Workbench {
             let (start, end) = range(editor, &options["selection"]);
             editor.move_to(start, false);
             editor.move_to(end, true);
-            // editorOptions.ts applyTextEditorOptions: no `selectionRevealType` reveals in the center.
-            editor.reveal_range(start, end, VerticalReveal::Center, viewport);
+            // editorOptions.ts applyTextEditorOptions: `TextEditorSelectionRevealType`, the center without one.
+            let reveal = match options["selectionRevealType"].as_u64() {
+                Some(1) => VerticalReveal::CenterIfOutsideViewport,
+                Some(2) => VerticalReveal::NearTop,
+                Some(3) => VerticalReveal::NearTopIfOutsideViewport,
+                _ => VerticalReveal::Center,
+            };
+            editor.reveal_range(start, end, reveal, viewport);
         }
         if options["preserveFocus"] != json!(true) {
             window.focus(&self.editor_focus, cx);
