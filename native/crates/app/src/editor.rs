@@ -17,6 +17,7 @@ use crate::syntax::Tokenization;
 
 mod anchor_select;
 pub mod auto_indent;
+mod bracket_matching;
 mod caret_operations;
 pub mod clipboard;
 pub mod commands;

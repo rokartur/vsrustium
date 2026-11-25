@@ -2,6 +2,7 @@
 //! linesOperations.ts, clipboard.ts, multicursor.ts, folding.ts), so keybindings and
 //! `vscode.commands.executeCommand` run them.
 
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use config::configuration::Overrides;
@@ -244,6 +245,61 @@ impl Workbench {
         self.commands.register("cursorRedo", |workbench, _, _, cx| workbench.run_cursor_undo(true, cx));
         self.commands.register("editor.action.clipboardCopyAction", |workbench, _, window, cx| workbench.copy_to_clipboard(false, window, cx));
         self.commands.register("editor.action.clipboardCutAction", |workbench, _, window, cx| workbench.copy_to_clipboard(true, window, cx));
+        self.commands.register("editor.action.jumpToBracket", |workbench, _, _, cx| {
+            let languages = &workbench.languages;
+            let Some(editor) = workbench.editors.active_mut() else { return Outcome::done() };
+            let selections_before = editor.selections.clone();
+            editor.jump_to_bracket(languages);
+            workbench.editor_command_ran(None, selections_before, cx)
+        });
+        self.commands.register("editor.action.selectToBracket", |workbench, args, _, cx| {
+            let select_brackets = args.first().is_none_or(|args| args["selectBrackets"] != json!(false));
+            let languages = &workbench.languages;
+            let Some(editor) = workbench.editors.active_mut() else { return Outcome::done() };
+            let selections_before = editor.selections.clone();
+            editor.select_to_bracket(languages, select_brackets);
+            workbench.editor_command_ran(None, selections_before, cx)
+        });
+        self.commands.register("editor.action.removeBrackets", |workbench, _, _, cx| {
+            if workbench.edit_blocked(false, cx) {
+                return Outcome::done();
+            }
+            let languages = &workbench.languages;
+            let Some(editor) = workbench.editors.active_mut() else { return Outcome::done() };
+            let selections_before = editor.selections.clone();
+            let changes = editor.remove_brackets(languages);
+            workbench.editor_changes_ran(changes, selections_before, cx)
+        });
+        // textMateTokenizationFeature.contribution.ts, which vscode-colorize-perf-tests times.
+        self.commands.register("_workbench.colorizeTextMateTokens", |workbench, args, _, _| {
+            let path = args.first().and_then(|uri| uri["path"].as_str()).map(PathBuf::from);
+            let text = path.as_ref().and_then(|path| std::fs::read_to_string(path).ok());
+            let (Some(path), Some(text)) = (path, text) else {
+                let resource = args.first().and_then(|uri| uri["path"].as_str()).map_or("undefined".into(), |path| crate::editor::uri_string("file", Path::new(path)));
+                return Outcome::error(format!("Cannot resolve text model for resource {resource}"));
+            };
+            let lines: Vec<&str> = text.split("\r\n").flat_map(|line| line.split(['\r', '\n'])).collect();
+            let language = workbench.languages.language_of(&path, lines[0]);
+            let Some(grammar) = workbench.languages.grammars.grammar(language) else {
+                return Outcome::error(format!("Cannot resolve tokenizer for language {language}"));
+            };
+            let started = std::time::Instant::now();
+            let mut state = None;
+            for line in lines {
+                if let Ok((_, next)) = grammar.tokenize_line(line, state.as_ref()) {
+                    state = Some(next);
+                }
+            }
+            Outcome::Ready(Ok(json!({ "tokenizeTime": started.elapsed().as_secs_f64() * 1000. })))
+        });
+        self.commands.register("editor.action.forceRetokenize", |workbench, _, _, cx| {
+            let Some(editor) = workbench.editors.active_mut() else { return Outcome::done() };
+            let started = std::time::Instant::now();
+            editor.document.tokens.force_retokenize(&editor.document.lines);
+            eprintln!("tokenization took {}", started.elapsed().as_secs_f64() * 1000.);
+            cx.notify();
+            Outcome::done()
+        });
         // clipboard.ts `ExecCommandCopyWithSyntaxHighlightingAction`: an editor action, so the active editor without focus too.
         self.commands.register("editor.action.clipboardCopyWithSyntaxHighlightingAction", |workbench, _, window, cx| {
             let Some(editor) = workbench.editors.active() else { return Outcome::done() };
@@ -423,6 +479,11 @@ impl Workbench {
         let strategy = Strategy::from_setting(self.settings.lock().unwrap().get_value(Some("editor.autoIndent"), &overrides).as_ref());
         let selections_before = editor.selections.clone();
         let changes = command(editor, AutoIndent { languages: &self.languages, strategy });
+        self.editor_changes_ran(changes, selections_before, cx)
+    }
+
+    /// An editor command that made several model changes: each reaches the host in turn.
+    fn editor_changes_ran(&mut self, changes: Vec<ContentChanged>, selections_before: Vec<Selection>, cx: &mut Context<Self>) -> Outcome {
         if changes.is_empty() {
             return self.editor_command_ran(None, selections_before, cx);
         }
@@ -504,3 +565,6 @@ impl Workbench {
         self.editor_command_ran(change, selections_before, cx)
     }
 }
+
+#[cfg(test)]
+mod tests;

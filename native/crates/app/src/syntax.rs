@@ -276,6 +276,14 @@ impl Tokenization {
         self.brackets = OnceCell::new();
     }
 
+    /// tokenization.ts `ForceRetokenizeAction`: `resetTokenization`, then `forceTokenization` of every line.
+    pub fn force_retokenize(&mut self, lines: &[String]) {
+        self.invalidate_from(0);
+        if self.grammar.is_some() && !lines.is_empty() {
+            self.tokenize_to(lines, lines.len() - 1);
+        }
+    }
+
     /// The bracket pairs hold token styles of the theme they were paired under.
     pub fn theme_changed(&mut self) {
         self.brackets = OnceCell::new();
@@ -338,7 +346,7 @@ fn bracket_colors(theme: &Theme) -> Vec<Hsla> {
 }
 
 /// The bracket colors over the token styles: a bracket keeps its token's font style.
-fn overlay_colors(highlights: Vec<(Range<usize>, HighlightStyle)>, colors: &[(Range<usize>, Hsla)]) -> Vec<(Range<usize>, HighlightStyle)> {
+pub(crate) fn overlay_colors(highlights: Vec<(Range<usize>, HighlightStyle)>, colors: &[(Range<usize>, Hsla)]) -> Vec<(Range<usize>, HighlightStyle)> {
     let mut result = Vec::new();
     for (range, style) in highlights {
         let mut start = range.start;
@@ -441,6 +449,19 @@ mod tests {
             state = Some(next);
         }
         result
+    }
+
+    #[test]
+    fn force_retokenize_tokenizes_every_line_again() {
+        let extensions = exthost::scan::scan_builtin_extensions(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../extensions")).unwrap();
+        let languages = Languages::new(&extensions);
+        let lines: Vec<String> = ["let a = 1;", "/* open", "still comment */", "a;"].map(String::from).into();
+        let mut tokens = Tokenization::new(languages.grammars.grammar("typescript"));
+        tokens.tokenize_to(&lines, 0);
+        tokens.force_retokenize(&lines);
+        assert_eq!(tokens.lines.borrow().len(), 4);
+        assert!(tokens.line_tokens(&lines, 2).iter().all(|(_, token_type, _)| *token_type == textmate::StandardTokenType::Comment));
+        Tokenization::new(None).force_retokenize(&lines);
     }
 
     /// Every colorize-tests fixture gives the reference's tokens, scopes and, in each default theme, colors.

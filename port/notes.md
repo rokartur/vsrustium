@@ -484,6 +484,8 @@ Scope (roadmap section 18): extension management on disk with VSIX install and u
 - The Copy As and Share submenus are not shown: no built-in extension contributes to `menuBar/edit/copy` or `editor/context/copy`, and Share's only item (github's vscode.dev link) needs a GitHub repository and the removed share service, so upstream hides both empty submenus too.
 - Host console, errors and activation errors: the session keeps printing and answering them on stderr (the api-tests logs read them), and hands the workbench a copy with `OBSERVED_REQ`, which `cancel` drops instead of answering. The workbench writes them to the Window log as mainThreadConsole.ts and mainThreadErrors.ts do: errors only, labeled `[Extension Host]`, in a normal window; every entry, unlabeled, with `--extensionTestsPath`. Unexpected errors pass `createUnexpectedErrorHandler` (same text within 1000 ms dropped).
 - File loggers (`output/logger.rs` `LogFile`) write spdlog's format and rotate as spdlogLog.ts (30 MB over 6 files, `name.N.log`). Not ported: electron-browser logService.ts's console-main logger in test runs, which echoes the workbench's own log lines to the main process stdout.
+- Bracket commands (`editor/bracket_matching.rs`) query `Tokenization::pairs`, which pairs the whole document per call (the shortcut noted there); `findNextBracket` is the first bracket of a pair ending after the position, as `getFirstBracketAfter` walks the AST.
+- workbench/services/treeSitter is n/a: in 1.147.0 tree-sitter tokens run only under the experimental `editor.experimental.preferTreeSitter.*` settings (off by default) or for telemetry, and the chat agent's terminal tools use the parser; both removed or off. The settings stay registered and do nothing.
 
 ## Benchmarks
 

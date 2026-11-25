@@ -916,7 +916,14 @@ impl Workbench {
                     let marks: Vec<_> = marks.into_iter().map(|mark| (visible_column(text, mark, tab_size) as f32 * char_width, text.chars().nth(mark) == Some('\t'))).collect();
                     content = content.child(whitespace_canvas(marks, char_width, line_height, whitespace_color));
                 }
-                let highlights = editor.document.tokens.highlights(&self.theme, &self.languages, &editor.document.lines, index, tab_size);
+                let mut highlights = editor.document.tokens.highlights(&self.theme, &self.languages, &editor.document.lines, index, tab_size);
+                // bracketMatching.ts theming participant: `editorBracketMatch.foreground` over the bracket pair colors.
+                if let Some(color) = self.theme.color("editorBracketMatch.foreground") {
+                    let expanded = |byte: usize| expand_tabs(&text[..byte], tab_size).len();
+                    let matched = bracket_matches.iter().flat_map(|(pair, _)| pair).filter(|(line, _)| *line == index);
+                    let colored: Vec<_> = matched.map(|(_, bytes)| (expanded(bytes.start)..expanded(bytes.end), gpui::Hsla::from(color))).collect();
+                    highlights = crate::syntax::overlay_colors(highlights, &colored);
+                }
                 let runs = gpui::combine_highlights(gpui::combine_highlights(highlights, find_colors), self.marker_text_styles(editor, index, tab_size));
                 let mut show_more = None;
                 match line_overflow(text, self.stop_rendering_line_after) {
@@ -1105,15 +1112,20 @@ impl Workbench {
         }
     }
 
-    /// bracketMatching.ts `_recomputeBrackets`: the brackets matched at each empty cursor, none past 100 selections.
+    /// bracketMatching.ts `_recomputeBrackets`: the brackets matched at each empty cursor, none past 100 selections;
+    /// `editor.matchBrackets` "near" leaves out the enclosing pairs, "never" matches nothing.
     fn bracket_matches(&self, editor: &OpenEditor) -> Vec<([BracketRange; 2], bool)> {
-        if editor.selections.len() > 100 {
+        let overrides = config::configuration::Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
+        let match_brackets = self.settings.lock().unwrap().get_value(Some("editor.matchBrackets"), &overrides);
+        if editor.selections.len() > 100 || match_brackets == Some(json!("never")) {
             return Vec::new();
         }
+        let near = match_brackets == Some(json!("near"));
         let lines = &editor.document.lines;
         let mut matches = Vec::new();
         for selection in editor.selections.iter().filter(|selection| selection.is_empty()) {
-            matches.extend(editor.document.tokens.bracket_match(&self.theme, &self.languages, lines, (selection.head.line, selection.head.column)));
+            let found = editor.document.tokens.bracket_match(&self.theme, &self.languages, lines, (selection.head.line, selection.head.column));
+            matches.extend(found.filter(|(_, touching)| *touching || !near));
         }
         matches
     }
