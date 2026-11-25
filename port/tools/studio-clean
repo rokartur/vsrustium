@@ -1,0 +1,34 @@
+#!/bin/bash
+# Frees disk on the Mac Studio. Removes the mirrors (with their api-tests logs and git.git ref) of worktrees that no
+# longer exist here, the cargo target of worktree mirrors unused for a day, and incremental caches older than two days.
+# All of it is rebuilt by the next port/tools/studio run. A mirror some process still works in is left alone.
+set -euo pipefail
+cd "$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
+keep=(port-src)
+while read -r path; do
+  keep+=("port-src-$(basename "$path")")
+done < <(git worktree list --porcelain | awk '/^worktree / {print $2}' | tail -n +2)
+ssh studio bash -s -- "${keep[@]}" <<'EOF'
+set -uo pipefail
+cd ~/Developer/vscode-gpui-work
+keep=" $* "
+for dir in port-src*; do
+  [[ -d $dir ]] || continue
+  if pgrep -f "$dir(/| |\$)" >/dev/null; then
+    echo "in use, kept: $dir"
+    continue
+  fi
+  if [[ $keep != *" $dir "* ]]; then
+    rm -rf "$dir" "/tmp/api-tests-$dir"
+    git -C git.git update-ref -d "refs/mirror/$dir" 2>/dev/null
+    echo "removed mirror: $dir"
+  # port-src is the seed new mirrors are cloned from: its warm target saves them a full build.
+  elif [[ $dir != port-src && -d $dir/native/target && -z $(find "$dir/native/target" -maxdepth 2 -mtime -1 -print -quit) ]]; then
+    rm -rf "$dir/native/target"
+    echo "removed idle target: $dir"
+  elif [[ -d $dir/native/target ]]; then
+    find "$dir"/native/target/*/incremental -mindepth 1 -maxdepth 1 -mtime +2 -exec rm -rf {} + 2>/dev/null
+  fi
+done
+echo "disk free: $(df -h ~ | awk 'NR==2 {print $4}')"
+EOF
