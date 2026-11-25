@@ -15,6 +15,7 @@ pub mod editor_status;
 mod editor_view;
 mod explorer_actions;
 mod explorer_find;
+mod explorer_keyboard;
 mod file_participants;
 mod find_widget;
 mod host;
@@ -307,6 +308,7 @@ impl Workbench {
         workbench.register_editor_status_commands();
         workbench.register_title_bar_actions();
         workbench.register_explorer_actions();
+        workbench.register_explorer_keyboard_commands();
         workbench.register_explorer_find_commands();
         workbench.register_search_actions();
         workbench.register_search_editor_actions();

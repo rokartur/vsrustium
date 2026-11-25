@@ -190,6 +190,20 @@ impl Workbench {
         if input_focused {
             context.insert("inputFocus".into(), json!(true));
         }
+        // listService.ts `WorkbenchListSupportsMultiSelectContextKey`, `WorkbenchListHasSelectionOrFocus` and the
+        // tree's `WorkbenchTreeElement*` keys of the focused row.
+        context.insert("listSupportsMultiselect".into(), json!(true));
+        context.insert("listHasSelectionOrFocus".into(), json!(tree.focused.is_some() || !tree.selected.is_empty()));
+        let rows = tree.rows();
+        let focused_index = tree.focused.as_ref().and_then(|focused| rows.iter().position(|row| row.path == *focused));
+        if let Some(index) = focused_index {
+            let row = &rows[index];
+            let collapsible = row.is_dir || row.has_nests;
+            context.insert("treeElementCanCollapse".into(), json!(collapsible && row.expanded));
+            context.insert("treeElementCanExpand".into(), json!(collapsible && !row.expanded));
+            context.insert("treeElementHasChild".into(), json!(rows.get(index + 1).is_some_and(|child| child.depth > row.depth)));
+            context.insert("treeElementHasParent".into(), json!(row.depth > 1));
+        }
         // Without a focused row the keys describe the last workspace folder, a root.
         let stat = tree.focused.clone().unwrap_or_else(|| tree.workspace.folders.last().expect("a workspace has a folder").path.clone());
         let is_root = tree.focused.is_none() || tree.is_root(&stat);
@@ -281,18 +295,27 @@ impl Workbench {
             return;
         }
         tree.reveal(&path);
-        if auto_reveal != json!(true) {
-            return;
+        if auto_reveal == json!(true) {
+            self.reveal_explorer_focus(true);
         }
+    }
+
+    /// listWidget.ts `reveal` of the focused row when it is not fully in view: to the middle with `center`
+    /// (`reveal(item, 0.5)`), else to the nearest edge as the list commands do.
+    pub(super) fn reveal_explorer_focus(&mut self, center: bool) {
+        let Some(tree) = self.folder.as_ref() else { return };
         let rows = tree.rows();
         let Some(index) = rows.iter().position(|row| tree.focused.as_ref() == Some(&row.path)) else { return };
         let (row_height, viewport) = (px(22.), self.explorer.scroll.bounds().size.height);
         let (top, scroll_top) = (row_height * index as f32, -self.explorer.scroll.offset().y);
-        if top < scroll_top || top + row_height > scroll_top + viewport {
-            let max_scroll_top = (row_height * rows.len() as f32 - viewport).max(px(0.));
-            let scroll_top = (top - (viewport - row_height) * 0.5).clamp(px(0.), max_scroll_top);
-            self.explorer.scroll.set_offset(gpui::point(px(0.), -scroll_top));
-        }
+        let scroll_top = match (top < scroll_top, top + row_height > scroll_top + viewport) {
+            (false, false) => return,
+            _ if center => top - (viewport - row_height) * 0.5,
+            (true, _) => top,
+            (false, true) => top + row_height - viewport,
+        };
+        let max_scroll_top = (row_height * rows.len() as f32 - viewport).max(px(0.));
+        self.explorer.scroll.set_offset(gpui::point(px(0.), -scroll_top.clamp(px(0.), max_scroll_top)));
     }
 
     /// explorerService.ts `shouldAutoRevealItem`: the pattern matches the file, with its siblings for `when`, or a
@@ -536,6 +559,7 @@ impl Workbench {
         if let Some(tree) = self.folder.as_mut() {
             tree.reveal(path);
         }
+        self.reveal_explorer_focus(true);
         window.focus(&self.explorer.focus.clone(), cx);
         cx.notify();
     }

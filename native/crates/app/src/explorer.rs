@@ -229,6 +229,46 @@ impl FileTree {
         self.anchor = Some(path.to_path_buf());
     }
 
+    /// A keyboard move: the focus and the anchor go to `path`, the selection stays (listCommands.ts `navigate`).
+    pub fn focus(&mut self, path: Option<PathBuf>) {
+        self.anchor = path.clone();
+        self.focused = path;
+    }
+
+    pub fn clear_anchor(&mut self) {
+        self.anchor = None;
+    }
+
+    /// `list.collapseAll`: every folder and nest collapses.
+    pub fn collapse_all(&mut self) {
+        let expanded: Vec<PathBuf> = self.rows().into_iter().filter(|row| row.expanded).map(|row| row.path).collect();
+        for path in expanded {
+            self.set_expanded(&path, false);
+        }
+        self.expanded.clear();
+    }
+
+    /// listCommands.ts `list.selectAll` on a tree: the shown rows under the parent of the focused row (or of the
+    /// selection's first), with the parent itself when they were all selected already.
+    pub fn select_all(&mut self) {
+        let rows = self.rows();
+        let start = match &self.focused {
+            Some(focused) if self.selected.is_empty() || !self.selected.contains(focused) => Some(focused.clone()),
+            _ => self.selected.first().cloned(),
+        };
+        let start = start.and_then(|start| rows.iter().position(|row| row.path == start));
+        let scope = start.and_then(|start| rows[..start].iter().rposition(|row| row.depth < rows[start].depth));
+        let (first, depth) = match scope {
+            Some(scope) => (scope + 1, rows[scope].depth),
+            None => (0, 0),
+        };
+        let mut selection: Vec<PathBuf> = rows[first..].iter().take_while(|row| row.depth > depth).map(|row| row.path.clone()).collect();
+        if let Some(scope) = scope.filter(|_| self.selected.len() == selection.len()) {
+            selection.insert(0, rows[scope].path.clone());
+        }
+        self.selected = selection;
+    }
+
     /// explorerService.ts `onDidRunOperation` for a move: the moved item and the items under it keep their
     /// focus, selection and expansion, as upstream moves the model element itself.
     pub fn move_item(&mut self, old: &Path, new: &Path) {

@@ -375,7 +375,75 @@ fn opening_a_file_reveals_it_unless_auto_reveal_is_off_or_excludes_it(cx: &mut T
     std::fs::remove_dir_all(&user).unwrap();
 }
 
+#[gpui::test]
+fn keys_move_the_focus_expand_collapse_select_and_open(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = explorer("explorer-keys", cx);
+    std::fs::write(dir.join("sub/b.txt"), "b").unwrap();
+    let selected = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.folder.as_ref().unwrap().selected.clone());
 
+    cx.simulate_keystrokes("down");
+    assert_eq!(focused(&workbench, cx), Some(dir.join("sub")), "the first down focuses the first row");
+    cx.simulate_keystrokes("right");
+    assert_eq!(rows(&workbench, cx), ["sub", "b.txt", "a.txt"]);
+    cx.simulate_keystrokes("right");
+    assert_eq!(focused(&workbench, cx), Some(dir.join("sub/b.txt")), "right on an expanded folder goes to its first child");
+    cx.simulate_keystrokes("left");
+    assert_eq!(focused(&workbench, cx), Some(dir.join("sub")), "left on a file goes to its parent");
+    cx.simulate_keystrokes("left");
+    assert_eq!(rows(&workbench, cx), ["sub", "a.txt"]);
+    cx.simulate_keystrokes("space");
+    assert_eq!(rows(&workbench, cx), ["sub", "b.txt", "a.txt"], "space toggles a folder");
+
+    cx.simulate_keystrokes("end shift-up");
+    assert_eq!(focused(&workbench, cx), Some(dir.join("sub/b.txt")));
+    assert_eq!(selected(cx), [dir.join("sub/b.txt")], "shift-up adds the row it moves to");
+    cx.simulate_keystrokes("home");
+    cx.simulate_keystrokes("cmd-a");
+    assert_eq!(selected(cx), [dir.join("sub"), dir.join("sub/b.txt"), dir.join("a.txt")]);
+    cx.simulate_keystrokes("escape");
+    assert_eq!(selected(cx), Vec::<PathBuf>::new(), "escape clears a multi-selection and keeps the focus");
+    assert_eq!(focused(&workbench, cx), Some(dir.join("sub")));
+
+    cx.simulate_keystrokes("end space");
+    let active = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.editors.active().map(|editor| editor.document.path.clone()));
+    assert_eq!(active(cx), Some(dir.join("a.txt")), "space opens a file");
+    assert!(workbench.update_in(cx, |workbench, window, _| workbench.explorer.focus.is_focused(window)), "space keeps the focus");
+    cx.simulate_keystrokes("up cmd-down");
+    assert_eq!(active(cx), Some(dir.join("sub/b.txt")), "cmd-down opens a file and passes the focus");
+    assert!(workbench.update_in(cx, |workbench, window, _| workbench.editor_focus.is_focused(window)));
+
+    workbench.update_in(cx, |workbench, window, cx| window.focus(&workbench.explorer.focus.clone(), cx));
+    cx.simulate_keystrokes("cmd-left");
+    assert_eq!(rows(&workbench, cx), ["sub", "a.txt"], "cmd-left collapses every folder");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[gpui::test]
+fn page_keys_move_the_focus_by_the_rows_in_view(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = explorer("explorer-page-keys", cx);
+    for index in 0..150 {
+        std::fs::write(dir.join(format!("f{index:03}.txt")), "").unwrap();
+    }
+    cx.update(|window, _| window.refresh());
+    cx.run_until_parked();
+    let page = workbench.read_with(cx, |workbench, _| (f32::from(workbench.explorer.scroll.bounds().size.height) / 22.).floor() as usize);
+    let focused_index = |cx: &mut VisualTestContext| {
+        let path = focused(&workbench, cx).unwrap();
+        workbench.read_with(cx, |workbench, _| workbench.folder.as_ref().unwrap().rows().iter().position(|row| row.path == path).unwrap())
+    };
+
+    cx.simulate_keystrokes("pagedown");
+    assert_eq!(focused_index(cx), page - 1, "the first page down focuses the page's last row");
+    cx.simulate_keystrokes("pagedown");
+    assert!(focused_index(cx) > page, "the next one scrolls a page");
+    let scroll_top = workbench.read_with(cx, |workbench, _| -workbench.explorer.scroll.offset().y);
+    assert!(scroll_top > px(0.));
+    cx.simulate_keystrokes("end");
+    assert_eq!(focused_index(cx), 151);
+    cx.simulate_keystrokes("home");
+    assert_eq!(workbench.read_with(cx, |workbench, _| workbench.explorer.scroll.offset().y), px(0.), "home scrolls the first row in");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
 fn rows(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<String> {
     workbench.read_with(cx, |workbench, _| workbench.folder.as_ref().unwrap().rows().into_iter().map(|row| row.name).collect())
 }
