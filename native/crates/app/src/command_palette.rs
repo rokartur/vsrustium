@@ -359,6 +359,8 @@ pub const EDITOR_ACTIONS: &[(&str, &str, Option<&str>)] = &[
     ("editor.action.joinLines", "Join Lines", Some("!editorReadonly")),
     ("editor.action.transpose", "Transpose Characters around the Cursor", Some("!editorReadonly")),
     ("expandLineSelection", "Expand Line Selection", None),
+    ("editor.action.inPlaceReplace.up", "Replace with Previous Value", Some("!editorReadonly")),
+    ("editor.action.inPlaceReplace.down", "Replace with Next Value", Some("!editorReadonly")),
     ("editor.action.moveCarretLeftAction", "Move Selected Text Left", Some("!editorReadonly")),
     ("editor.action.moveCarretRightAction", "Move Selected Text Right", Some("!editorReadonly")),
     ("editor.action.transposeLetters", "Transpose Letters", Some("!editorReadonly")),

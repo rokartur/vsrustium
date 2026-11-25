@@ -247,7 +247,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | editor/contrib/gotoSymbol | src/vs/editor/contrib | todo |  |
 | editor/contrib/gpu | src/vs/editor/contrib | removed | Artur: internal infrastructure or developer tool with no 1:1 counterpart in the native port |
 | editor/contrib/hover | src/vs/editor/contrib | todo |  |
-| editor/contrib/inPlaceReplace | src/vs/editor/contrib | todo |  |
+| editor/contrib/inPlaceReplace | src/vs/editor/contrib | verified | Replace with Previous/Next Value (Shift+Cmd+, and ., palette): number step and value sets of `navigateValueSet`, 350 ms outline in light themes; cargo test -p app editor::in_place_replace (upstream has no test); ui-pair light theme `x = true; y = 41; z = 1.5` from the palette |
 | editor/contrib/indentation | src/vs/editor/contrib | ported | indentation.ts actions (indent using spaces/tabs, tab display size, detect, convert to spaces/tabs) and trimTrailingWhitespaceCommand.ts with their upstream tests, auto-indent on Enter and on type (`editor.autoIndent`), Reindent Lines and Reindent Selected Lines: cargo test -p app indentation editor_status editor::auto_indent (cursor.test.ts indent cases, Auto Indent On Type - TypeScript/JavaScript, shiftCommand.test.ts doc block cases); no auto-indent on paste (`editor.autoIndentOnPaste`, default off), not the Ruby, PHP, Go, CPP, HTML, Visual Basic, Latex and Lua suites |
 | editor/contrib/inlayHints | src/vs/editor/contrib | todo |  |
 | editor/contrib/inlineCompletions | src/vs/editor/contrib | todo |  |

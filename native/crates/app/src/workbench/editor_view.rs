@@ -638,6 +638,16 @@ impl Workbench {
                     content = content.child(bracket);
                 }
                 content = content.children(find_matches);
+                // inPlaceReplace.css: .valueSetReplacement only in the light theme (`.monaco-editor.vs`), a 2px outline.
+                if let Some((_, line, columns)) = &editor.value_set_replacement
+                    && *line == index
+                    && self.theme.kind == ThemeKind::Light
+                    && let Some(border) = bracket_box.1
+                {
+                    let start = visible_column(text, columns.start, tab_size) as f32 * char_width;
+                    let end = visible_column(text, columns.end, tab_size) as f32 * char_width;
+                    content = content.child(div().absolute().top(px(-2.)).bottom(px(-2.)).left(px(start - 2.)).w(px(end - start + 4.)).border_2().border_color(border));
+                }
                 let highlights = editor.document.tokens.highlights(&self.theme, &self.languages, &editor.document.lines, index, tab_size);
                 let text_runs = StyledText::new(expand_tabs(text, tab_size)).with_highlights(gpui::combine_highlights(highlights, find_colors));
                 content = content.child(div().absolute().top_0().left_0().whitespace_nowrap().child(text_runs));
