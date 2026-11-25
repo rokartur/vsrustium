@@ -1412,8 +1412,8 @@ impl Workbench {
 /// columns by weight, each 120px at least.
 fn table_columns() -> SplitView {
     let views = (0..5).map(|index| match index {
-        0 => View { size: 0., minimum: ACTIONS_COLUMN_WIDTH, maximum: ACTIONS_COLUMN_WIDTH },
-        _ => View { size: column_weight(index), minimum: MIN_COLUMN_WIDTH, maximum: f32::INFINITY },
+        0 => View::new(0., ACTIONS_COLUMN_WIDTH, ACTIONS_COLUMN_WIDTH),
+        _ => View::new(column_weight(index), MIN_COLUMN_WIDTH, f32::INFINITY),
     });
     SplitView::new(COLUMN_WEIGHTS.iter().sum(), views.collect())
 }

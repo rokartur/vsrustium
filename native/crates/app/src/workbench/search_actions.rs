@@ -18,6 +18,7 @@ use super::Workbench;
 use super::explorer_actions::confirm;
 use super::find_widget::HISTORY_LIMIT;
 use super::input_box_view::InputId;
+use super::layout::Part;
 use super::search_view::{MessagePart, RowAction, RowKey, RowKind, SEARCH_FIELDS, SearchField, SearchOption, SearchUiState, SearchView, SideBarView};
 use crate::anything_quick_access::TextRange;
 use crate::commands::Outcome;
@@ -50,6 +51,7 @@ impl Workbench {
         });
         self.commands.register("workbench.view.explorer", |workbench, _, window, cx| {
             workbench.side_bar_view = SideBarView::Explorer;
+            workbench.set_part_hidden(Part::SideBar, false, cx);
             window.focus(&workbench.explorer.focus.clone(), cx);
             cx.notify();
             Outcome::done()
@@ -470,7 +472,7 @@ impl Workbench {
 
     fn open_search_view(&mut self, cx: &mut Context<Self>) {
         self.side_bar_view = SideBarView::Search;
-        cx.notify();
+        self.set_part_hidden(Part::SideBar, false, cx);
     }
 
     /// `searchWidget.focus(select, focusReplace)`.

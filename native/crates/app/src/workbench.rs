@@ -22,12 +22,14 @@ pub(crate) mod host_requests;
 mod input_box_view;
 mod keybindings_editor_view;
 mod keyboard;
+mod layout;
 mod marker_navigation;
 pub mod menubar;
 mod middle_scroll;
 mod minimap_view;
 pub mod logs_actions;
 mod notifications_view;
+mod part_grid;
 pub mod output_actions;
 mod output_view;
 pub mod quick_access;
@@ -163,6 +165,7 @@ pub struct Workbench {
     profile_storage: Arc<Mutex<Storage>>,
     /// StorageScope.WORKSPACE of the opened folder, shared with the extension host's MainThreadStorage.
     workspace_storage: Arc<Mutex<Storage>>,
+    part_grid: part_grid::PartGrid,
 }
 
 impl Render for Workbench {
@@ -176,6 +179,7 @@ impl Render for Workbench {
         let window_border = self.theme.color("window.activeBorder");
         // The reference lays the grid out at the full window size and shifts it inside the 1px window border.
         let inset = if window_border.is_some() { 1. } else { 0. };
+        let editor = if self.editors.active().is_some() { self.text_editor_part(window, cx) } else { self.editor_part() };
         let grid = div()
             .absolute()
             .left(px(inset))
@@ -185,18 +189,7 @@ impl Render for Workbench {
             .flex()
             .flex_col()
             .child(self.title_bar(f32::from(viewport.width), cx))
-            .child(
-                div()
-                    .flex_1()
-                    .flex()
-                    .flex_row()
-                    .gap(px(4.))
-                    .px(px(4.))
-                    .pb(px(4.))
-                    // The side bar meets the activity bar flush; the bar draws the seam (floatingPanels.css).
-                    .child(div().flex().child(self.activity_bar(cx)).when(self.side_bar_visible(), |row| row.child(self.side_bar(window, cx))))
-                    .child(if self.editors.active().is_some() { self.text_editor_part(window, cx) } else { self.editor_part() }),
-            )
+            .child(self.middle_section(viewport, editor, window, cx))
             .child(self.status_bar(window, cx));
         let modal_editor = self.keybindings_editor_widget(window, cx);
         let quick_input = self.quick_input_widget(window, cx);
@@ -289,6 +282,7 @@ impl Workbench {
             installed_menubar: None,
             profile_storage: Arc::new(Mutex::new(Storage::in_memory())),
             workspace_storage: Arc::new(Mutex::new(Storage::in_memory())),
+            part_grid: part_grid::PartGrid::default(),
         };
         crate::main_thread_commands::register_commands_documentation(&mut workbench);
         workbench.register_workbench_actions();
@@ -305,6 +299,7 @@ impl Workbench {
         workbench.register_explorer_actions();
         workbench.register_explorer_find_commands();
         workbench.register_search_actions();
+        workbench.register_layout_actions();
         workbench.register_search_editor_actions();
         workbench.register_search_editor_widget_actions();
         workbench.register_file_participant_commands();
@@ -465,7 +460,7 @@ impl Workbench {
                 }
             }));
         let center = div().absolute().top(px(6.5)).w_full().h(px(24.)).flex().justify_center().items_center().child(title);
-        let side_bar_toggle = if self.folder.is_some() { "layout-sidebar-left" } else { "layout-sidebar-left-off" };
+        let side_bar_toggle = if self.side_bar_visible() { "layout-sidebar-left" } else { "layout-sidebar-left-off" };
         let layout_actions = [
             ("layout", "Customize Layout...", "workbench.action.customizeLayout"),
             (side_bar_toggle, "Toggle Primary Side Bar", "workbench.action.toggleSidebarVisibility"),
@@ -521,12 +516,8 @@ impl Workbench {
         format!("Search {root_name} \u{2014} {}", self.window_title())
     }
 
-    /// The Explorer shows only with a folder; the Search view searches the open editors without one.
     fn side_bar_visible(&self) -> bool {
-        match self.side_bar_view {
-            SideBarView::Explorer => self.folder.is_some(),
-            SideBarView::Search => true,
-        }
+        self.is_part_visible(layout::Part::SideBar)
     }
 
     fn activity_bar(&self, cx: &mut Context<Self>) -> Div {
@@ -541,7 +532,14 @@ impl Workbench {
         let view_icon = |icon: &str, view: SideBarView, command: &'static str| {
             let active = self.side_bar_view == view && self.side_bar_visible();
             let icon = if active { self.active_view_icon(icon) } else { self.icon(icon, 36., 24., inactive) };
-            icon.id(command).cursor_pointer().on_click(cx.listener(move |workbench, _: &ClickEvent, window, cx| {
+            icon.id(command).cursor_pointer().on_click(cx.listener(move |workbench, event: &ClickEvent, window, cx| {
+                // paneCompositeBar.ts `ViewContainerActivityAction.run`: a double click runs once, and the active
+                // view's icon hides the side bar unless `workbench.activityBar.iconClickBehavior` is `focus`.
+                if event.click_count() > 1 {
+                    return;
+                }
+                let toggles = active && workbench.setting("workbench.activityBar.iconClickBehavior") != "focus";
+                let command = if toggles { "workbench.action.closeSidebar" } else { command };
                 workbench.execute_command(command, Vec::new(), window, cx);
             }))
         };
@@ -590,11 +588,14 @@ impl Workbench {
             let title = self.side_bar_title("Search").child(self.search_title_actions(cx));
             return self.side_bar_frame().text_color(foreground).child(title).child(self.search_view(window, cx));
         }
-        let tree = self.folder.as_ref().expect("the Explorer is drawn only with a folder");
         let title = self
             .side_bar_title("Explorer")
             // actionbar.css: .monaco-action-bar .action-item is cursor: pointer.
             .child(self.icon("ellipsis", 22., 16., foreground).cursor_pointer());
+        // emptyView.ts draws its welcome content (Open Folder, Open Recent) under the header: milestone 11 item 2.
+        let Some(tree) = self.folder.as_ref() else {
+            return self.side_bar_frame().text_color(foreground).child(title).child(self.section_header("No Folder Opened", true, false));
+        };
         // explorerviewlet.css: in high contrast an explorer item has a 20px line from the row top, 1px above center.
         let label_line = if self.theme.kind.is_high_contrast() { 20. } else { 22. };
         let edit_focused = self.explorer.input_focus.is_focused(window);
@@ -790,7 +791,9 @@ impl Workbench {
 
     fn side_bar_frame(&self) -> Div {
         div()
-            .w(px(256.))
+            .flex_1()
+            .min_w_0()
+            .overflow_hidden()
             .flex()
             .flex_col()
             // The seam with the activity bar is the bar's border; the side bar keeps a transparent 1px edge.

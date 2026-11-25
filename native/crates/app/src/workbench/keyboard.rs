@@ -269,6 +269,7 @@ impl Workbench {
         context.insert("editorTextFocus".into(), json!(editor_focused));
         context.insert("textInputFocus".into(), json!(editor_focused));
         self.notifications_context(window, &mut context);
+        self.layout_context(&mut context);
         context.insert("editorIsOpen".into(), json!(self.editors.active().is_some()));
         context.insert("dirtyWorkingCopies".into(), json!(self.editors.editors.iter().any(|editor| editor.is_dirty())));
         // toggleMultiCursorModifier.ts `MultiCursorModifierContextKeyController`.
