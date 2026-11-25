@@ -2,7 +2,7 @@
 // Drives the reference and the port through the same steps with cua-driver and saves window screenshots of both,
 // for states a still pixel-check frame cannot reach (inline editors, dialogs, drags). Run on the Studio.
 // Usage: port/tools/ui-pair <out-dir> <steps.json> [dark|light|hc|hclight]   (env REF = reference checkout,
-// default ~/Developer/vscode-ref; env FOLDER = folder to open, default a copy of port/fixtures/workspace;
+// default ~/Developer/vscode-ref; env FOLDER = folder to open, default a copy of port/fixtures/workspace, empty for an empty window;
 // env FILE = file to open, relative to the folder; env ONLY = "reference" or "port" to run one of them; env ARGS = more arguments for both, space separated;
 // env SETTINGS = a JSON object of user settings for both)
 // Steps, in window points (both windows are 1024x768):
@@ -35,10 +35,10 @@ await takeGuiLock();
 const scratch = mkdtempSync(join(tmpdir(), 'ui-pair-'));
 for (const app of (process.env.ONLY ?? 'reference port').split(' ')) {
 	const folder = process.env.FOLDER ?? join(scratch, app, 'workspace');
-	if (!process.env.FOLDER) {
+	if (process.env.FOLDER === undefined) {
 		cpSync('port/fixtures/workspace', folder, { recursive: true });
 	}
-	const paths = process.env.FILE ? [folder, join(folder, process.env.FILE)] : [folder];
+	const paths = process.env.FOLDER === '' ? [] : process.env.FILE ? [folder, join(folder, process.env.FILE)] : [folder];
 	const child = app === 'reference' ? startReference(paths) : startPort(paths);
 	try {
 		await run(app, child.pid, folder);

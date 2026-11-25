@@ -19,14 +19,14 @@ use crate::split_view::SashState;
 const TITLE_BAR_HEIGHT: f32 = 35.;
 const STATUS_BAR_HEIGHT: f32 = 28.;
 /// `workbench.sash.hoverDelay`'s default.
-const SASH_HOVER_DELAY: Duration = Duration::from_millis(300);
+pub(super) const SASH_HOVER_DELAY: Duration = Duration::from_millis(300);
 /// `LayoutStateModel.STORAGE_PREFIX`.
 const STORAGE_PREFIX: &str = "workbench.";
 
 #[derive(Default)]
 pub(super) struct PartGrid {
     /// Laid out on the first render, when the window size the default part sizes come from is known.
-    grid: Option<Grid>,
+    pub(super) grid: Option<Grid>,
     hovered: Option<Sash>,
     hover: Option<(Sash, Task<()>)>,
 }
@@ -54,7 +54,13 @@ impl Workbench {
             workbench.hide_side_bar(window, cx);
             Outcome::done()
         });
-        for (command, location) in [("workbench.action.activityBarLocation.default", "default"), ("workbench.action.activityBarLocation.hide", "hidden")] {
+        self.register_panel_actions();
+        for (command, location) in [
+            ("workbench.action.activityBarLocation.default", "default"),
+            ("workbench.action.activityBarLocation.top", "top"),
+            ("workbench.action.activityBarLocation.bottom", "bottom"),
+            ("workbench.action.activityBarLocation.hide", "hidden"),
+        ] {
             self.commands.register(command, move |workbench, _, _, cx| {
                 workbench.update_setting("workbench.activityBar.location", json!(location));
                 cx.notify();
@@ -77,6 +83,11 @@ impl Workbench {
 
     pub(super) fn layout_context(&self, context: &mut HashMap<String, Value>) {
         context.insert("sideBarVisible".into(), json!(self.is_part_visible(Part::SideBar)));
+        context.insert("panelVisible".into(), json!(self.is_part_visible(Part::Panel)));
+        context.insert("panelMaximized".into(), json!(self.is_panel_maximized()));
+        context.insert("panelPosition".into(), json!("bottom"));
+        context.insert("panelAlignment".into(), json!("center"));
+        context.insert("auxiliaryBarVisible".into(), json!(self.is_part_visible(Part::AuxiliaryBar)));
     }
 
     /// `setPartHidden`.
@@ -85,6 +96,19 @@ impl Workbench {
             grid.set_visible(part, !hidden);
         }
         self.workspace_storage.lock().unwrap().set(&format!("{STORAGE_PREFIX}{}", hidden_key(part)), hidden.to_string());
+        cx.notify();
+    }
+
+    /// `isPanelMaximized`: the panel at the bottom with the editor hidden.
+    pub(super) fn is_panel_maximized(&self) -> bool {
+        self.part_grid.grid.as_ref().is_some_and(|grid| grid.is_visible(Part::Panel) && !grid.is_editor_visible())
+    }
+
+    /// `setEditorHidden`, runtime state as upstream's `EDITOR_HIDDEN`.
+    pub(super) fn set_editor_hidden(&mut self, hidden: bool, cx: &mut Context<Self>) {
+        if let Some(grid) = self.part_grid.grid.as_mut() {
+            grid.set_editor_visible(!hidden);
+        }
         cx.notify();
     }
 
@@ -144,11 +168,27 @@ impl Workbench {
         grid.layout(width, height);
         grid.set_visible(Part::ActivityBar, activity_bar_visible);
         let row = grid.row_sizes();
-        let editor_height = grid.column_sizes()[0];
+        let column = grid.column_sizes();
+        let panel_visible = grid.is_visible(Part::Panel);
+        let editor_visible = grid.is_editor_visible();
         let sashes = grid.sashes();
         let dragging = grid.dragged_sash().is_some();
         let auxiliary_bar_visible = grid.is_visible(Part::AuxiliaryBar);
+        if self.is_part_visible(Part::SideBar) {
+            self.layout_explorer_panes(height - CARD_MARGIN, cx);
+        }
         let side_bar = self.is_part_visible(Part::SideBar).then(|| self.side_bar(window, cx));
+        let panel = panel_visible.then(|| self.panel_part(window, cx));
+        let auxiliary_bar = auxiliary_bar_visible.then(|| self.auxiliary_bar_part(cx));
+        let editor_column = div()
+            .w(px(row[2]))
+            .flex_none()
+            .flex()
+            .flex_col()
+            .pl(px(CARD_MARGIN))
+            .when(!auxiliary_bar_visible, |part| part.pr(px(CARD_MARGIN)))
+            .when(editor_visible, |part| part.child(div().h(px(column[0])).flex_none().flex().pb(px(CARD_MARGIN)).child(editor)))
+            .when_some(panel, |part, panel| part.child(div().h(px(column[1])).flex_none().flex().pb(px(CARD_MARGIN)).child(panel)));
         div()
             .relative()
             .h(px(height))
@@ -159,7 +199,8 @@ impl Workbench {
             .when_some(side_bar, |section, side_bar| {
                 section.child(div().w(px(row[1])).flex_none().flex().when(!activity_bar_visible, |part| part.pl(px(CARD_MARGIN))).pb(px(CARD_MARGIN)).child(side_bar))
             })
-            .child(div().w(px(row[2])).h(px(editor_height)).flex_none().flex().pl(px(CARD_MARGIN)).when(!auxiliary_bar_visible, |part| part.pr(px(CARD_MARGIN))).pb(px(CARD_MARGIN)).child(editor))
+            .child(editor_column)
+            .when_some(auxiliary_bar, |section, auxiliary_bar| section.child(div().w(px(row[3])).flex_none().flex().px(px(CARD_MARGIN)).pb(px(CARD_MARGIN)).child(auxiliary_bar)))
             .children(sashes.into_iter().map(|(sash, state, bounds)| self.part_sash(sash, state, bounds, cx)))
             .when(dragging, |section| section.child(self.part_sash_drag(cx)))
     }

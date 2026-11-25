@@ -21,3 +21,25 @@ Checks (Studio):
 
 - `cargo test -p app -- part_grid layout split_view`: 27 passed.
 - `cargo test -p app`: 1047 passed, 0 failed, 1 ignored.
+
+## Item 2: panel, side bar, view panes, compact activity bar, empty window
+
+Same setup; pairs in `raw/layout/<run>-<step>.png`, reference left, port right. AE at 6% fuzz over 2048x1536.
+
+| Run | Step | AE | Cause |
+|---|---|---|---|
+| panes | collapsed | 1574 | glyph antialiasing |
+| panes | expanded (click Outline, click Timeline) | 2548 | glyph antialiasing; 366/148/148 pane sizes as the reference |
+| panes | sash-held, sash-dragged (Explorer/Outline sash 434 to 334) | 2281, 2293 | glyph antialiasing |
+| panes | keys (Up, Space) | 6250 | Space toggled twice in the port (fixed below); the reference also highlights the sash under the still pointer (gpui hover limit as above) |
+| welcome | empty window | 11929 | "You can clone a repository locally." and Clone Repository come from the git extension (not ported) |
+| top | compact, compact-search | 1338, 3268 | glyph antialiasing; Search view input rows |
+| bottom | compact, compact-search | 1715, 3247 | glyph antialiasing; Search view input rows |
+
+Fixed after the pairs: Space toggled a pane header twice (the key handler and gpui's keyboard click on key up); Enter and Space now go through `on_click` only, covered by `explorer_pane_headers_toggle_with_the_mouse_and_keys_and_their_state_is_restored`.
+
+The panel's tab row is not compared: no panel view is registered before the Output view moves in (item 3).
+
+Checks (Studio):
+
+- `cargo test -p app -- view_panes explorer_pane part_grid layout split_view side_bar empty_view panel`: 37 passed.

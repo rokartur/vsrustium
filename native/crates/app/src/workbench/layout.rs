@@ -115,6 +115,15 @@ impl Grid {
         self.row.layout(self.width);
     }
 
+    pub fn is_editor_visible(&self) -> bool {
+        self.column.is_view_visible(COLUMN_EDITOR)
+    }
+
+    /// `setEditorHidden`: a hidden editor maximizes the panel (`toggleMaximizedPanel`).
+    pub fn set_editor_visible(&mut self, visible: bool) {
+        self.column.set_view_visible(COLUMN_EDITOR, visible);
+    }
+
     /// The part's size across its sash, or the size it comes back at while hidden (`getViewCachedVisibleSize`).
     pub fn size(&self, part: Part) -> f32 {
         match part {

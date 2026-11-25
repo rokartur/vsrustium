@@ -190,6 +190,13 @@ impl SplitView {
         self.save_proportions();
     }
 
+    /// `moveView`: the view keeps its size at its new index.
+    pub fn move_view(&mut self, from: usize, to: usize) {
+        let view = self.views.remove(from);
+        self.views.insert(to, view);
+        self.save_proportions();
+    }
+
     pub fn is_view_visible(&self, index: usize) -> bool {
         self.views[index].visible
     }

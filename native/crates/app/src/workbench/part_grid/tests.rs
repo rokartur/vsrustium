@@ -41,6 +41,23 @@ fn side_bar_visible(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestCont
 }
 
 #[gpui::test]
+fn the_activity_bar_on_top_is_a_tab_strip_in_the_side_bar_header_whose_tabs_switch_views(cx: &mut TestAppContext) {
+    let dir = std::env::temp_dir().join(format!("code-gpui-compact-bar-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let (workbench, window_cx) = open(Some(dir.clone()), &stores(), cx);
+    std::fs::create_dir_all(dir.join("User")).unwrap();
+    let settings = config::service::Settings::load(config::registry::Registry::with_extensions(&[]), dir.join("User"), None);
+    workbench.update(window_cx, |workbench, _| *workbench.settings.lock().unwrap() = settings);
+    workbench.update_in(window_cx, |workbench, window, cx| drop(workbench.execute_command("workbench.action.activityBarLocation.top", Vec::new(), window, cx)));
+    window_cx.run_until_parked();
+    assert!(workbench.read_with(window_cx, |workbench, _| !workbench.is_part_visible(Part::ActivityBar)));
+    // The side bar card starts 4pt in under the 35pt title bar; its second 36pt tab is Search.
+    window_cx.simulate_click(point(px(4. + 36. + 18.), px(35. + 1. + 16.)), Modifiers::none());
+    assert!(workbench.read_with(window_cx, |workbench, _| workbench.side_bar_view == crate::workbench::search_view::SideBarView::Search));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[gpui::test]
 fn the_side_bar_is_hidden_in_an_empty_window_and_cmd_b_toggles_it_for_the_next_open(cx: &mut TestAppContext) {
     let stores = stores();
     let (workbench, window_cx) = open(None, &stores, cx);
@@ -59,6 +76,31 @@ fn the_side_bar_is_hidden_in_an_empty_window_and_cmd_b_toggles_it_for_the_next_o
 
     let (reopened, window_cx) = open(None, &stores, cx);
     assert!(side_bar_visible(&reopened, window_cx));
+}
+
+#[gpui::test]
+fn cmd_j_shows_the_panel_under_the_editor_and_maximize_hides_the_editor_until_the_panel_closes(cx: &mut TestAppContext) {
+    let stores = stores();
+    let (workbench, window_cx) = open(None, &stores, cx);
+    let column = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.part_grid.grid.as_ref().unwrap().column_sizes());
+    window_cx.simulate_keystrokes("cmd-j");
+    assert!(workbench.read_with(window_cx, |workbench, _| workbench.is_part_visible(Part::Panel)));
+    assert_eq!(stores.workspace.lock().unwrap().get("workbench.panel.hidden"), Some("false"));
+    // layout.ts: the panel takes a third of the window's height, 768 / 3 in the test window.
+    let [editor, panel] = column(window_cx)[..] else { panic!() };
+    assert!(editor > 0. && panel > 0.);
+
+    window_cx.update(|window, cx| workbench.update(cx, |workbench, cx| workbench.execute_command("workbench.action.toggleMaximizedPanel", Vec::new(), window, cx)));
+    assert!(workbench.read_with(window_cx, |workbench, _| workbench.is_panel_maximized()));
+    assert_eq!(column(window_cx)[0], 0.);
+    window_cx.simulate_keystrokes("cmd-j");
+    assert!(!workbench.read_with(window_cx, |workbench, _| workbench.is_part_visible(Part::Panel) || workbench.is_panel_maximized()));
+    assert_eq!(column(window_cx)[0], editor + panel);
+
+    window_cx.simulate_keystrokes("alt-cmd-b");
+    assert!(workbench.read_with(window_cx, |workbench, _| workbench.is_part_visible(Part::AuxiliaryBar)));
+    let context = workbench.update_in(window_cx, |workbench, window, _| workbench.key_context(window));
+    assert_eq!((context["auxiliaryBarVisible"].clone(), context["panelVisible"].clone()), (true.into(), false.into()));
 }
 
 #[gpui::test]
@@ -83,5 +125,39 @@ fn dragging_the_side_bar_sash_resizes_it_stores_the_size_and_past_half_its_minim
     window_cx.simulate_mouse_move(sash - point(px(width + 40. - 80.), px(0.)), MouseButton::Left, Modifiers::none());
     window_cx.simulate_mouse_up(sash - point(px(width + 40. - 80.), px(0.)), MouseButton::Left, Modifiers::none());
     assert!(!side_bar_visible(&workbench, window_cx));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[gpui::test]
+fn explorer_pane_headers_toggle_with_the_mouse_and_keys_and_their_state_is_restored(cx: &mut TestAppContext) {
+    let stores = stores();
+    let dir = std::env::temp_dir().join(format!("code-gpui-view-panes-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let collapsed = |stores: &Stores, id: &str| {
+        let state: serde_json::Value = serde_json::from_str(stores.workspace.lock().unwrap().get("workbench.explorer.views.state").unwrap()).unwrap();
+        state[id]["collapsed"].as_bool().unwrap()
+    };
+    let (_, window_cx) = open(Some(dir.clone()), &stores, cx);
+    // The folder's header is the first pane, under the 35pt title bar, the card's border and the 32pt view title.
+    window_cx.simulate_click(point(px(150.), px(35. + 1. + 32. + 14.)), Modifiers::none());
+    assert!(collapsed(&stores, "workbench.explorer.fileView"));
+    window_cx.simulate_keystrokes("down right");
+    assert!(!collapsed(&stores, "outline"));
+    assert!(collapsed(&stores, "timeline"));
+    // gpui clicks a focused element when the activation key is released.
+    for key in ["space", "enter"] {
+        window_cx.simulate_keystrokes(key);
+        window_cx.simulate_event(gpui::KeyUpEvent { keystroke: gpui::Keystroke::parse(key).unwrap() });
+    }
+    assert!(!collapsed(&stores, "outline"));
+    window_cx.simulate_keystrokes("space");
+    window_cx.simulate_event(gpui::KeyUpEvent { keystroke: gpui::Keystroke::parse("space").unwrap() });
+    assert!(collapsed(&stores, "outline"));
+    window_cx.update(|window, _| window.remove_window());
+
+    let (_, window_cx) = open(Some(dir.clone()), &stores, cx);
+    window_cx.simulate_click(point(px(150.), px(35. + 1. + 32. + 14.)), Modifiers::none());
+    assert!(!collapsed(&stores, "workbench.explorer.fileView"));
+    assert!(collapsed(&stores, "outline"));
     std::fs::remove_dir_all(&dir).unwrap();
 }

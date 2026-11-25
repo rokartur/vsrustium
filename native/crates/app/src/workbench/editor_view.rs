@@ -122,7 +122,7 @@ impl Workbench {
 
     /// `--modern-ui-connected-tab-strip-background` (connectedEditorTabs.ts): the connected tabs background,
     /// else the tabs background, else the editor's.
-    fn tab_strip_background(&self) -> Rgba {
+    pub(super) fn tab_strip_background(&self) -> Rgba {
         ["editorGroupHeader.connectedTabsBackground", "editorGroupHeader.tabsBackground", "editor.background"]
             .into_iter()
             .find_map(|key| self.theme.color(key))
