@@ -240,7 +240,7 @@ impl Workbench {
         let supports_resolve = self.language_features.registration(link.handle).is_some_and(|registration| registration.args.get(2) == Some(&json!(true)));
         let resolve = match (link.dto.get("url").filter(|url| !url.is_null()), supports_resolve) {
             (Some(_), _) | (None, false) => None,
-            (None, true) => Some(self.host.call("ExtHostLanguageFeatures", "$resolveDocumentLink", vec![json!(link.handle), link.dto["cacheId"].clone()])),
+            (None, true) => Some(self.host.call_cancellable("ExtHostLanguageFeatures", "$resolveDocumentLink", vec![json!(link.handle), link.dto["cacheId"].clone()])),
         };
         let model_path = self.editors.active().filter(|editor| editor.document().scheme == "file").map(|editor| editor.document().path.clone());
         cx.spawn_in(window, async move |workbench, cx| {

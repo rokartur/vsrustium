@@ -32,7 +32,7 @@ impl Workbench {
             .ordered(REGISTER, &candidate)
             .iter()
             .rev()
-            .map(|registration| (registration.handle, self.host.call("ExtHostLanguageFeatures", "$provideInlayHints", vec![json!(registration.handle), uri.clone(), range.clone()])))
+            .map(|registration| (registration.handle, self.host.call_cancellable("ExtHostLanguageFeatures", "$provideInlayHints", vec![json!(registration.handle), uri.clone(), range.clone()])))
             .collect();
         let (sender, receiver) = oneshot::channel();
         cx.spawn(async move |workbench, cx| {
