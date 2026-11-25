@@ -194,6 +194,7 @@ impl OpenEditor {
     /// last added one (`_setSecondaryStates`).
     pub(super) fn set_cursor_states(&mut self, selections: Vec<Selection>, mut leftovers: Vec<(isize, isize)>) {
         self.push_undo_stop();
+        let previous = self.selections.clone();
         self.last_added = match selections.len() > self.selections.len() {
             true => selections.len() - 1,
             false => self.last_added.min(selections.len() - 1),
@@ -205,6 +206,9 @@ impl OpenEditor {
             }
         }
         self.leftovers = leftovers;
+        if self.selections != previous {
+            self.record_cursor_state(previous);
+        }
         self.unfold_at_hidden_cursors();
         self.refresh_highlights();
     }
@@ -847,6 +851,7 @@ impl OpenEditor {
     /// Word highlights stop while the text changes: wordHighlighter.ts ignores non-explicit cursor changes.
     fn after_text_change(&mut self, selections: Vec<Selection>) {
         self.selections = selections;
+        self.clear_cursor_states();
         cursor::normalize(&mut self.selections, &mut self.last_added);
         self.leftovers.clear();
         self.highlights.clear();

@@ -232,7 +232,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | editor/contrib/colorPicker | src/vs/editor/contrib | todo |  |
 | editor/contrib/comment | src/vs/editor/contrib | verified | `editor/comment.rs`: line and block comment commands over a `CommandExecutor` port, Toggle/Add/Remove Line Comment and Toggle Block Comment with their keys, Edit menu rows and palette entries; cargo test -p app editor::comment (lineCommentCommand.test.ts, blockCommentCommand.test.ts) comment_keys menubar; ui-pair Cmd+/ and Shift+Alt+A match the reference (port/notes.md milestone 8) |
 | editor/contrib/contextmenu | src/vs/editor/contrib | ported | right click on text or below the last line: focus, cursor to the pointer unless a selection holds it, `MenuId.EditorContext` with Cut, Copy, Paste and Command Palette... (port/results/contextmenu.md, cargo test -p app editor_menus); no Change All Occurrences or Refactor... (no such commands yet), no scrollbar menu, no Shift+F10 |
-| editor/contrib/cursorUndo | src/vs/editor/contrib | todo |  |
+| editor/contrib/cursorUndo | src/vs/editor/contrib | verified | Cursor Undo (Cmd+U) and Cursor Redo over the selections and scroll positions of cursor-only changes, cleared by an edit or another shown model: cargo test -p app cursor_undo (both cursorUndo.test.ts cases); ui-pair on a .ts file matches the reference |
 | editor/contrib/diffEditorBreadcrumbs | src/vs/editor/contrib | todo |  |
 | editor/contrib/dnd | src/vs/editor/contrib | todo |  |
 | editor/contrib/documentSymbols | src/vs/editor/contrib | todo |  |

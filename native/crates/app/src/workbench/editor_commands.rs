@@ -122,6 +122,8 @@ impl Workbench {
         for (id, forward) in [("editor.action.smartSelect.expand", true), ("editor.action.smartSelect.grow", true), ("editor.action.smartSelect.shrink", false)] {
             self.commands.register(id, move |workbench, _, _, cx| workbench.run_smart_select(forward, cx));
         }
+        self.commands.register("cursorUndo", |workbench, _, _, cx| workbench.run_cursor_undo(false, cx));
+        self.commands.register("cursorRedo", |workbench, _, _, cx| workbench.run_cursor_undo(true, cx));
         self.commands.register("editor.action.clipboardCopyAction", |workbench, _, window, cx| workbench.copy_to_clipboard(false, window, cx));
         self.commands.register("editor.action.clipboardCutAction", |workbench, _, window, cx| workbench.copy_to_clipboard(true, window, cx));
         self.commands.register("editor.action.clipboardPasteAction", |workbench, _, window, cx| {
@@ -178,6 +180,19 @@ impl Workbench {
         self.marked_text = None;
         self.editor_edited(change, moved, "keyboard", cx);
         Outcome::Ready(Ok(Value::Null))
+    }
+
+    /// cursorUndo.ts `CursorUndo` and `CursorRedo`: the selections, then the scroll position they had.
+    fn run_cursor_undo(&mut self, redo: bool, cx: &mut Context<Self>) -> Outcome {
+        let Some(editor) = self.editors.active_mut() else { return Outcome::done() };
+        let selections_before = editor.selections.clone();
+        let Some(scroll) = (if redo { editor.cursor_redo() } else { editor.cursor_undo() }) else { return Outcome::done() };
+        let outcome = self.editor_command_ran(None, selections_before, cx);
+        let viewport = self.editors.viewport;
+        if self.editors.active_mut().expect("still open").set_scroll(scroll.top, scroll.left, viewport) {
+            self.editor_scrolled(cx);
+        }
+        outcome
     }
 
     /// smartSelect.ts `GrowSelectionAction` and `ShrinkSelectionAction` with the `editor.smartSelect` options.
