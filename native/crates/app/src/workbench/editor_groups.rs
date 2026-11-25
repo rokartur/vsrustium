@@ -8,17 +8,17 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, Bounds, Context, CursorStyle, DispatchPhase, Div, InteractiveElement, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, ScrollWheelEvent, StatefulInteractiveElement, Styled, Task,
-    Window, canvas, div, prelude::FluentBuilder, px,
+    AnyElement, Bounds, Context, CursorStyle, DispatchPhase, Div, DragMoveEvent, InteractiveElement, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Render, ScrollWheelEvent, SharedString, Stateful,
+    StatefulInteractiveElement, Styled, Task, Window, canvas, div, prelude::*, px,
 };
 use serde_json::{Value, json};
 
 use super::Workbench;
 use crate::editor::minimap::MinimapLayoutInfo;
 use super::search_editor_view::SEARCH_EDITOR_SCHEME;
-use super::terminal_view::TERMINAL_SCHEME;
 use super::webview_panels::WEBVIEW_PANEL_SCHEME;
 use crate::commands::Outcome;
+use crate::editor::PANEL_GROUP;
 use crate::editor_grid::{Direction, EditorGrid, GridSash, GroupLayout, Orientation, SashId, SplitSizing};
 use crate::split_view::SashState;
 
@@ -31,6 +31,22 @@ struct GroupView {
     minimap_info: Option<(MinimapLayoutInfo, f64)>,
 }
 
+/// A tab being dragged (`DraggedEditorIdentifier`): its group and index, and its label for the drag image.
+#[derive(Clone)]
+pub(super) struct DraggedTab {
+    group: u32,
+    index: usize,
+    label: SharedString,
+    foreground: gpui::Rgba,
+    background: gpui::Rgba,
+}
+
+impl Render for DraggedTab {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().h(px(32.)).px(px(10.)).flex().items_center().text_size(px(13.)).text_color(self.foreground).bg(self.background).opacity(0.8).child(self.label.clone())
+    }
+}
+
 #[derive(Default)]
 pub(super) struct EditorGroups {
     /// Made at the first split, with the part's size the last frame measured.
@@ -41,13 +57,15 @@ pub(super) struct EditorGroups {
     /// Set while another group draws through the active group's code.
     pub(super) drawing_inactive: bool,
     hovered_sash: Option<SashId>,
+    /// editorDropTarget.ts: the group a dragged tab is over and the side it would split, `None` to move into it.
+    drop_target: Option<(u32, Option<Direction>)>,
     sash_hover: Option<(SashId, Task<()>)>,
 }
 
 /// Editors that cannot be copied into a new group (`EditorInputCapabilities.Singleton` or not serializable):
 /// a split of one of them makes an empty group.
 fn copies_into_split(scheme: &str) -> bool {
-    !matches!(scheme, WEBVIEW_PANEL_SCHEME | TERMINAL_SCHEME | SEARCH_EDITOR_SCHEME | crate::output::OUTPUT_SCHEME)
+    !matches!(scheme, WEBVIEW_PANEL_SCHEME | SEARCH_EDITOR_SCHEME)
 }
 
 impl Workbench {
@@ -61,12 +79,14 @@ impl Workbench {
         ];
         for (id, direction) in splits {
             self.commands.register(id, move |workbench, _, window, cx| {
+                workbench.leave_panel_group();
                 let direction = direction.unwrap_or_else(|| workbench.side_by_side_direction());
                 workbench.split_editor(direction, window, cx);
                 Outcome::done()
             });
         }
         self.commands.register("workbench.action.splitEditorOrthogonal", |workbench, _, window, cx| {
+            workbench.leave_panel_group();
             let direction = match workbench.side_by_side_direction() {
                 Direction::Right => Direction::Down,
                 _ => Direction::Right,
@@ -76,13 +96,15 @@ impl Workbench {
         });
         let ordinals = ["First", "Second", "Third", "Fourth", "Fifth", "Sixth", "Seventh", "Eighth"];
         for (index, ordinal) in ordinals.into_iter().enumerate() {
-            self.commands.register(&format!("workbench.action.focus{ordinal}EditorGroup"), move |workbench, _, window, cx| {
+            self.commands.register(format!("workbench.action.focus{ordinal}EditorGroup"), move |workbench, _, window, cx| {
+                workbench.leave_panel_group();
                 workbench.focus_group_at(index, window, cx);
                 Outcome::done()
             });
         }
         for (id, next) in [("workbench.action.focusNextGroup", true), ("workbench.action.focusPreviousGroup", false)] {
             self.commands.register(id, move |workbench, _, window, cx| {
+                workbench.leave_panel_group();
                 if let Some(target) = workbench.group_by_location(next, true) {
                     workbench.focus_group(target, window, cx);
                 }
@@ -91,26 +113,30 @@ impl Workbench {
         }
         let directions = [("Left", Direction::Left), ("Right", Direction::Right), ("Above", Direction::Up), ("Below", Direction::Down)];
         for (name, direction) in directions {
-            self.commands.register(&format!("workbench.action.focus{name}Group"), move |workbench, _, window, cx| {
+            self.commands.register(format!("workbench.action.focus{name}Group"), move |workbench, _, window, cx| {
+                workbench.leave_panel_group();
                 if let Some(target) = workbench.group_in_direction(direction) {
                     workbench.focus_group(target, window, cx);
                 }
                 Outcome::done()
             });
-            self.commands.register(&format!("workbench.action.moveEditorTo{name}Group"), move |workbench, _, window, cx| {
+            self.commands.register(format!("workbench.action.moveEditorTo{name}Group"), move |workbench, _, window, cx| {
+                workbench.leave_panel_group();
                 let target = workbench.group_in_direction(direction).unwrap_or_else(|| workbench.add_group_beside(direction));
                 workbench.move_active_editor_to(target, window, cx);
                 Outcome::done()
             });
         }
         for (name, direction) in [("Left", Direction::Left), ("Right", Direction::Right), ("Up", Direction::Up), ("Down", Direction::Down)] {
-            self.commands.register(&format!("workbench.action.moveActiveEditorGroup{name}"), move |workbench, _, _, cx| {
+            self.commands.register(format!("workbench.action.moveActiveEditorGroup{name}"), move |workbench, _, _, cx| {
+                workbench.leave_panel_group();
                 workbench.move_active_group(direction, cx);
                 Outcome::done()
             });
         }
         for (id, next) in [("workbench.action.moveEditorToNextGroup", true), ("workbench.action.moveEditorToPreviousGroup", false)] {
             self.commands.register(id, move |workbench, _, window, cx| {
+                workbench.leave_panel_group();
                 let target = match workbench.group_by_location(next, false) {
                     Some(target) => target,
                     None if next => workbench.add_group_beside(workbench.side_by_side_direction()),
@@ -122,6 +148,7 @@ impl Workbench {
         }
         for (id, last) in [("workbench.action.moveEditorToFirstGroup", false), ("workbench.action.moveEditorToLastGroup", true)] {
             self.commands.register(id, move |workbench, _, window, cx| {
+                workbench.leave_panel_group();
                 let groups = workbench.groups_in_grid_order();
                 let target = if last { groups[groups.len() - 1] } else { groups[0] };
                 workbench.move_active_editor_to(target, window, cx);
@@ -129,10 +156,12 @@ impl Workbench {
             });
         }
         self.commands.register("workbench.action.closeGroup", |workbench, _, window, cx| {
+            workbench.leave_panel_group();
             workbench.close_group(workbench.editors.id, window, cx);
             Outcome::done()
         });
         self.commands.register("workbench.action.joinTwoGroups", |workbench, _, window, cx| {
+            workbench.leave_panel_group();
             let source = workbench.editors.id;
             let target = [Direction::Right, Direction::Down, Direction::Left, Direction::Up].into_iter().find_map(|direction| workbench.group_in_direction(direction));
             if let Some(target) = target {
@@ -141,6 +170,7 @@ impl Workbench {
             Outcome::done()
         });
         self.commands.register("workbench.action.joinAllGroups", |workbench, _, window, cx| {
+            workbench.leave_panel_group();
             let target = workbench.editors.id;
             for source in workbench.groups_in_grid_order().into_iter().filter(|group| *group != target) {
                 workbench.merge_group(source, target, window, cx);
@@ -158,12 +188,14 @@ impl Workbench {
             ("TwoRowsRight", Orientation::Horizontal, vec![GroupLayout { size: None, groups: Vec::new() }, GroupLayout { size: None, groups: leaves(2) }]),
         ];
         for (name, orientation, groups) in layouts {
-            self.commands.register(&format!("workbench.action.editorLayout{name}"), move |workbench, _, window, cx| {
+            self.commands.register(format!("workbench.action.editorLayout{name}"), move |workbench, _, window, cx| {
+                workbench.leave_panel_group();
                 workbench.apply_editor_layout(orientation, &groups, window, cx);
                 Outcome::done()
             });
         }
         self.commands.register("workbench.action.toggleEditorGroupLayout", |workbench, _, _, cx| {
+            workbench.leave_panel_group();
             if let Some(grid) = workbench.editor_groups.grid.as_mut() {
                 let flipped = match grid.orientation() {
                     Orientation::Horizontal => Orientation::Vertical,
@@ -175,6 +207,7 @@ impl Workbench {
             Outcome::done()
         });
         self.commands.register("workbench.action.evenEditorWidths", |workbench, _, _, cx| {
+            workbench.leave_panel_group();
             if let Some(grid) = workbench.editor_groups.grid.as_mut() {
                 grid.distribute();
                 cx.notify();
@@ -182,6 +215,7 @@ impl Workbench {
             Outcome::done()
         });
         self.commands.register("workbench.action.toggleEditorWidths", |workbench, _, _, cx| {
+            workbench.leave_panel_group();
             let active = workbench.editors.id;
             if let Some(grid) = workbench.editor_groups.grid.as_mut() {
                 match grid.is_expanded(active) {
@@ -193,6 +227,7 @@ impl Workbench {
             Outcome::done()
         });
         self.commands.register("workbench.action.toggleMaximizeEditorGroup", |workbench, _, _, cx| {
+            workbench.leave_panel_group();
             let active = workbench.editors.id;
             if let Some(grid) = workbench.editor_groups.grid.as_mut() {
                 match grid.is_maximized() {
@@ -208,23 +243,36 @@ impl Workbench {
     /// The editor part's context keys (editorPart.ts `handleContextKeys`, editorGroupView.ts).
     pub(super) fn editor_groups_context(&self, context: &mut HashMap<String, Value>) {
         let groups = self.groups_in_grid_order();
-        let index = groups.iter().position(|group| *group == self.editors.id).expect("the active group is in the grid");
+        let index = groups.iter().position(|group| *group == self.editor_group_id()).expect("the active group is in the grid");
         let maximized = self.editor_groups.grid.as_ref().is_some_and(EditorGrid::is_maximized);
         context.insert("multipleEditorGroups".into(), json!(groups.len() > 1));
         context.insert("editorPartMultipleEditorGroups".into(), json!(groups.len() > 1));
         context.insert("editorPartMaximizedEditorGroup".into(), json!(maximized));
-        context.insert("activeEditorGroupEmpty".into(), json!(self.editors.editors.is_empty()));
+        context.insert("activeEditorGroupEmpty".into(), json!(self.editors.group_tabs(self.editor_group_id()).0.is_empty()));
         context.insert("activeEditorGroupIndex".into(), json!(index + 1));
         context.insert("activeEditorGroupLast".into(), json!(index + 1 == groups.len()));
         context.insert("activeEditorGroupLocked".into(), json!(false));
-        context.insert("groupEditorsCount".into(), json!(self.editors.editors.len()));
+        context.insert("groupEditorsCount".into(), json!(self.editors.group_tabs(self.editor_group_id()).0.len()));
     }
 
     /// `getGroups(GroupsOrder.GRID_APPEARANCE)`.
     pub(super) fn groups_in_grid_order(&self) -> Vec<u32> {
         match &self.editor_groups.grid {
             Some(grid) => grid.groups(),
-            None => vec![self.editors.id],
+            None => vec![self.editor_group_id()],
+        }
+    }
+
+    /// The active editor group: the active group, or while the panel's editor has focus the group active before it.
+    pub(super) fn editor_group_id(&self) -> u32 {
+        self.editors.group_ids_mru()[0]
+    }
+
+    /// Editor group commands act on the editor groups: focus in the panel's editor gives way to the last group first.
+    pub(super) fn leave_panel_group(&mut self) {
+        if self.editors.id == PANEL_GROUP {
+            let group = self.editor_group_id();
+            self.activate_group(group);
         }
     }
 
@@ -270,7 +318,7 @@ impl Workbench {
     }
 
     /// `activateGroup` and the focus of its editor (`IEditorGroup.focus`).
-    pub(super) fn focus_group(&mut self, group: u32, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn focus_group(&mut self, group: u32, window: &mut Window, cx: &mut Context<Self>) {
         self.activate_group(group);
         window.focus(&self.editor_focus, cx);
         self.editors_changed(cx);
@@ -380,7 +428,7 @@ impl Workbench {
     /// editorGroupView.ts `doCloseEditor`: the last editor of a group closed with `workbench.editor.closeEmptyGroups`.
     pub(super) fn close_group_if_empty(&mut self, group: u32) {
         let empty = if group == self.editors.id { self.editors.editors.is_empty() } else { self.editors.group(group).is_some_and(|state| state.editors.is_empty()) };
-        if empty && self.editors.other_groups.len() > 0 && self.setting("workbench.editor.closeEmptyGroups") != json!(false) {
+        if empty && group != PANEL_GROUP && self.editors.has_several_groups() && self.setting("workbench.editor.closeEmptyGroups") != json!(false) {
             self.remove_group(group);
         }
     }
@@ -400,7 +448,7 @@ impl Workbench {
         if grid.groups().contains(&group) {
             grid.remove_group(group, sizing);
         }
-        if self.editors.other_groups.is_empty() {
+        if !self.editors.has_several_groups() {
             self.editor_groups.grid = None;
         }
     }
@@ -458,10 +506,13 @@ impl Workbench {
             .child(measure);
         let sash_size = self.sash_size();
         let Some(grid) = self.editor_groups.grid.as_mut() else {
-            if self.editors.active().is_none() {
+            let group = self.editor_group_id();
+            if self.editors.group_tabs(group).0.is_empty() {
                 return card.flex().flex_col().items_center().justify_center().child(self.watermark(256.));
             }
-            return card.flex().flex_col().child(self.text_editor_part(window, cx)).child(self.part_top_border());
+            let body = if group == self.editors.id { self.text_editor_part(window, cx) } else { self.inactive_group_body(group, window, cx) };
+            let area = self.group_drop_area(group, div().flex_1().min_h_0().relative().flex().flex_col().child(body), cx);
+            return card.flex().flex_col().child(area).child(self.part_top_border());
         };
         let size = self.editor_groups.part_bounds.get().size;
         grid.layout(size.width, size.height);
@@ -469,13 +520,14 @@ impl Workbench {
         let sashes = self.editor_groups.grid.as_ref().expect("checked above").sashes(sash_size);
         let separator = self.theme.color("editorGroup.border").or(self.theme.color("contrastBorder")).unwrap_or(gpui::transparent_black().into());
         let active = self.editors.id;
-        let mut groups = Vec::new();
+        let mut groups: Vec<Stateful<Div>> = Vec::new();
         for (group, rect) in places {
             let body = match group == active {
                 true => self.editor_group_body(window, cx),
                 false => self.inactive_group_body(group, window, cx),
             };
-            groups.push(div().absolute().left(px(rect.x)).top(px(rect.y)).w(px(rect.width)).h(px(rect.height)).overflow_hidden().flex().flex_col().child(body));
+            let area = div().absolute().left(px(rect.x)).top(px(rect.y)).w(px(rect.width)).h(px(rect.height)).overflow_hidden().flex().flex_col().child(body);
+            groups.push(self.group_drop_area(group, area, cx));
         }
         let separators = sashes.iter().map(|sash| {
             let line = div().absolute().bg(separator);
@@ -499,12 +551,16 @@ impl Workbench {
         }
     }
 
-    /// Another group, drawn while swapped in. A press in it activates it before the press reaches its editor;
-    /// moves and the wheel over it go to it alone (editorGroupView.ts focuses the group on mousedown).
     fn inactive_group_body(&mut self, group: u32, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        self.swapped_group_body(group, |workbench, window, cx| workbench.editor_group_body(window, cx), window, cx)
+    }
+
+    /// Another group drawn by `draw` while swapped in. A press in it activates it before the press reaches its
+    /// editor; moves and the wheel over it go to it alone (editorGroupView.ts focuses the group on mousedown).
+    pub(super) fn swapped_group_body(&mut self, group: u32, draw: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) -> Div, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let body = self.with_group(group, |workbench| {
             workbench.editor_groups.drawing_inactive = true;
-            let body = workbench.editor_group_body(window, cx);
+            let body = draw(workbench, window, cx);
             workbench.editor_groups.drawing_inactive = false;
             body
         });
@@ -542,6 +598,91 @@ impl Workbench {
             false if self.editors.group(group).is_some() => self.with_group(group, laid_out),
             false => {}
         }
+    }
+
+    /// multieditortabscontrol.ts: a tab drags to another place in its group, another group's tabs, or a group's
+    /// drop area; over a tab the `tab.dragAndDropBorder` line marks where it goes.
+    pub(super) fn tab_drag_and_drop(&self, tab: Stateful<Div>, index: usize, cx: &mut Context<Self>) -> Stateful<Div> {
+        let group = self.editors.id;
+        let dragged = DraggedTab {
+            group,
+            index,
+            label: self.editor_name(&self.editors.editors[index]).into(),
+            foreground: self.foreground_or("tab.activeForeground"),
+            background: self.color("tab.activeBackground"),
+        };
+        let border = self.theme.color("tab.dragAndDropBorder").unwrap_or(self.foreground_or("tab.activeForeground"));
+        tab.on_drag(dragged, |dragged, _, _, cx| cx.new(|_| dragged.clone()))
+            .drag_over::<DraggedTab>(move |style, _, _, _| style.border_l_2().border_color(border))
+            .on_drop(cx.listener(move |workbench, dragged: &DraggedTab, window, cx| {
+                workbench.editor_groups.drop_target = None;
+                workbench.move_dragged_tab(dragged, group, Some(index), window, cx);
+            }))
+    }
+
+    /// The drop area of a group (below its tabs): the half it would split into, or the whole of it.
+    fn group_drop_area(&self, group: u32, body: Div, cx: &mut Context<Self>) -> Stateful<Div> {
+        // editorDropTarget.ts `getDropAreaOffsetHeight`: below the tabs of a group with editors.
+        let title_height = if self.editors.group_tabs(group).0.is_empty() { 0. } else { 32. };
+        let target = self.editor_groups.drop_target.filter(|(over, _)| *over == group && cx.has_active_drag());
+        let prefer_vertical = self.side_by_side_direction() == Direction::Right;
+        let overlay = target.map(|(_, direction)| {
+            let fill = div().absolute().bg(self.color("editorGroup.dropBackground"));
+            let fill = match self.theme.color("activeContrastBorder") {
+                Some(border) => fill.border_2().border_dashed().border_color(border),
+                None => fill,
+            };
+            let area = div().absolute().left_0().right_0().bottom_0().top(px(title_height));
+            area.child(match direction {
+                None => fill.inset_0(),
+                Some(Direction::Up) => fill.top_0().left_0().right_0().h_1_2(),
+                Some(Direction::Down) => fill.bottom_0().left_0().right_0().h_1_2(),
+                Some(Direction::Left) => fill.top_0().bottom_0().left_0().w_1_2(),
+                Some(Direction::Right) => fill.top_0().bottom_0().right_0().w_1_2(),
+            })
+        });
+        body.id(("group-drop", group as usize))
+            .on_drag_move::<DraggedTab>(cx.listener(move |workbench, event: &DragMoveEvent<DraggedTab>, _, cx| {
+                let bounds = event.bounds;
+                let (x, y) = (f32::from(event.event.position.x - bounds.origin.x), f32::from(event.event.position.y - bounds.origin.y) - title_height);
+                let (width, height) = (f32::from(bounds.size.width), f32::from(bounds.size.height) - title_height);
+                let inside = x >= 0. && y >= 0. && x <= width && y <= height;
+                let target = inside.then(|| (group, split_direction(x, y, width, height, prefer_vertical)));
+                let over_this = workbench.editor_groups.drop_target.is_some_and(|(over, _)| over == group);
+                if (target.is_some() || over_this) && workbench.editor_groups.drop_target != target {
+                    workbench.editor_groups.drop_target = target;
+                    cx.notify();
+                }
+            }))
+            .on_drop(cx.listener(move |workbench, dragged: &DraggedTab, window, cx| {
+                let Some((_, direction)) = workbench.editor_groups.drop_target.take().filter(|(over, _)| *over == group) else { return };
+                let target = match direction {
+                    Some(direction) => {
+                        workbench.activate_group(group);
+                        workbench.add_group_beside(direction)
+                    }
+                    None => group,
+                };
+                workbench.move_dragged_tab(dragged, target, None, window, cx);
+            }))
+            .children(overlay)
+    }
+
+    /// `moveEditor` / `doMoveEditorAcrossGroups` of a dropped tab, to `index` or after the target's active editor.
+    fn move_dragged_tab(&mut self, dragged: &DraggedTab, target: u32, index: Option<usize>, window: &mut Window, cx: &mut Context<Self>) {
+        if dragged.group == target {
+            self.with_group(target, |workbench| workbench.editors.move_editor(dragged.index, index.unwrap_or(usize::MAX)));
+        } else {
+            let editor = self.with_group(dragged.group, |workbench| workbench.editors.take_editor(dragged.index));
+            self.with_group(target, |workbench| {
+                workbench.editors.insert_moved(editor);
+                if let (Some(index), Some(from)) = (index, workbench.editors.active_index()) {
+                    workbench.editors.move_editor(from, index);
+                }
+            });
+            self.close_group_if_empty(dragged.group);
+        }
+        self.focus_group(target, window, cx);
     }
 
     /// `.monaco-sash` between groups: the grid's sash size, the hover border after the hover delay, double click
@@ -649,6 +790,26 @@ impl Workbench {
         )
         .size_0()
     }
+}
+
+/// editorDropTarget.ts `getSplitDirection` for an editor drag: 10% edges split, then the preferred direction's
+/// thirds decide the side; the center moves into the group.
+fn split_direction(x: f32, y: f32, width: f32, height: f32, prefer_vertical: bool) -> Option<Direction> {
+    let (edge_width, edge_height) = (width * 0.1, height * 0.1);
+    if x > edge_width && x < width - edge_width && y > edge_height && y < height - edge_height {
+        return None;
+    }
+    let (split_width, split_height) = (width / 3., height / 3.);
+    Some(match prefer_vertical {
+        true if x < split_width => Direction::Left,
+        true if x > split_width * 2. => Direction::Right,
+        true if y < height / 2. => Direction::Up,
+        true => Direction::Down,
+        false if y < split_height => Direction::Up,
+        false if y > split_height * 2. => Direction::Down,
+        false if x < width / 2. => Direction::Left,
+        false => Direction::Right,
+    })
 }
 
 fn leaves(count: usize) -> Vec<GroupLayout> {

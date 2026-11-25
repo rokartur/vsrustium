@@ -208,8 +208,9 @@ impl Workbench {
             .flex_col()
             .pl(px(CARD_MARGIN))
             .when(!auxiliary_bar_visible, |part| part.pr(px(CARD_MARGIN)))
-            .when(editor_visible, |part| part.child(div().h(px(column[0])).flex_none().flex().pb(px(CARD_MARGIN)).child(editor)))
-            .when_some(panel, |part, panel| part.child(div().h(px(column[1])).flex_none().flex().pb(px(CARD_MARGIN)).child(panel)));
+            // floatingPanels.css: a bottom panel under the editor has the gap as its margin-top, the editor none.
+            .when(editor_visible, |part| part.child(div().h(px(column[0])).flex_none().flex().when(!panel_visible, |editor| editor.pb(px(CARD_MARGIN))).child(editor)))
+            .when_some(panel, |part, panel| part.child(div().h(px(column[1])).flex_none().flex().when(editor_visible, |panel| panel.pt(px(CARD_MARGIN))).pb(px(CARD_MARGIN)).child(panel)));
         div()
             .relative()
             .h(px(height))

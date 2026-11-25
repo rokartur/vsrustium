@@ -385,6 +385,8 @@ impl Workbench {
         workbench.register_empty_view_actions();
         workbench.register_logs_actions();
         workbench.register_terminal_actions();
+        workbench.register_output_panel_view();
+        workbench.register_terminal_panel_view();
         workbench.register_extension_management_commands();
         // Keybindings resolve before the focused element sees the key, and with nothing focused too.
         let entity = cx.entity().downgrade();
@@ -459,11 +461,12 @@ impl Workbench {
         if std::mem::take(&mut self.editors.closed_last_editor) {
             self.close_group_if_empty(self.editors.id);
         }
-        self.editors.columns = if self.editors.other_groups.is_empty() { Vec::new() } else { self.groups_in_grid_order() };
+        self.editors.columns = if self.editors.has_several_groups() { self.groups_in_grid_order() } else { Vec::new() };
         for (group, path, index) in std::mem::take(&mut self.editors.closed) {
             self.remember_closed_editor(group, path, index);
         }
         self.record_navigation(None);
+        self.editors.panel_editor_shown = self.output_view_visible() && self.output_editor().is_some();
         if let (Some(tree), Some(editor)) = (self.folder.as_mut(), self.editors.active()) {
             tree.reveal(&editor.document().path);
         }

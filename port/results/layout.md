@@ -55,3 +55,15 @@ What differs:
 - Minimap and scrollbar edges in both groups, the tab's right edge, the activity bar's selected icon and glyph antialiasing.
 
 Checks (Studio): `cargo test -p app editor_groups` (split, cursor sync across groups, close empty group, close group merging, layouts, Go Back/Forward, Reopen Closed Editor: 7 passed), `cargo test -p app editor_grid` (gridview.ts and grid.test.ts cases: 14 passed), `cargo test -p app navigation` (historyService.test.ts stack cases: 16 passed), `cargo test -p app host_sync` (both groups reach the host on one document: 5 passed).
+
+## Output and Terminal in the panel (milestone 11 item 1)
+
+`port/tools/pixel-check` window `panel` (the split, then Cmd+J), Dark Modern, 1024x768 at 2x: 46704 different and 52306 anti-aliased of 3145728 pixels, from 97109 before two fixes found in the first run: the Terminal view is the default panel view (terminal.contribution.ts `isDefault`) and creates a terminal when shown (terminalView.ts `_initializeTerminal`); the 4px gap above a bottom panel is the panel's margin, not the editor's (floatingPanels.css), so the panel card is 248px high as in the reference. Pair in `raw/layout/panel-reference.png` and `raw/layout/panel-port.png`.
+
+What differs:
+
+- The reference's panel has Problems, Debug Console and Ports views; the port registers Output and Terminal only.
+- The shell's own output: fish prints a suggestion line in the reference run, and the port's terminal shows the folder as `/private/tmp/...` where the reference keeps the `/tmp` symlink.
+- The breadcrumbs' editor type picker, as in the split window.
+
+Checks (Studio): `cargo test -p app editor_groups` (9 passed, with `the_output_view_shows_in_the_panel_and_takes_the_focus_from_the_groups` and the drop target split areas), `cargo test -p app output_view` (8 passed), `cargo test -p app terminal` (9 passed), `cargo test -p app part_grid` (5 passed), `cargo test -p app panel` (6 passed).

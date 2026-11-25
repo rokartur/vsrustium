@@ -39,7 +39,7 @@ impl Workbench {
         // viewsService.ts `OpenViewAction` of the view's `openCommandActionDescriptor`.
         self.commands.register("workbench.action.output.toggleOutput", |workbench, args, window, cx| {
             let preserve_focus = args.first().is_some_and(|options| options["preserveFocus"] == true);
-            if workbench.output_view_visible() && workbench.editor_focus.is_focused(window) && !preserve_focus {
+            if workbench.output_focused(window) && !preserve_focus {
                 workbench.close_output_view(cx);
             } else {
                 workbench.open_output_view(!preserve_focus, window, cx);
@@ -120,7 +120,7 @@ impl Workbench {
     /// outputServices.ts context keys of the active channel and the view's filters.
     pub(super) fn output_context(&self, window: &Window, context: &mut HashMap<String, Value>) {
         context.insert(format!("{OUTPUT_VIEW_ID}.active"), json!(true));
-        context.insert("inOutput".into(), json!(self.output_view_visible() && self.editor_focus.is_focused(window)));
+        context.insert("inOutput".into(), json!(self.output_focused(window)));
         context.insert("outputView.scrollLock".into(), json!(self.output_view.scroll_lock));
         context.insert("outputFilterFocus".into(), json!(self.output_view.filter_focus.is_focused(window)));
         let filters = &self.output.filters;

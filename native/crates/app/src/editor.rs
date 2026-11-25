@@ -634,6 +634,10 @@ impl GroupState {
     }
 }
 
+/// The group of the panel's code editor (the Output view's): kept with the editor groups so it edits through
+/// the same code, but never in the grid nor a view column.
+pub const PANEL_GROUP: u32 = u32::MAX;
+
 /// The editor part's groups. The active group's editors and state are the fields below; the other groups wait
 /// in `other_groups`. Text models are shared by the editors of their resource in every group, so `models`,
 /// `diffs`, the disposed models and the view states are the part's.
@@ -648,6 +652,8 @@ pub struct EditorGroup {
     /// The groups in grid order (`GroupsOrder.GRID_APPEARANCE`), which the host numbers as view columns; the
     /// workbench sets it, empty while the part has one group.
     pub columns: Vec<u32>,
+    /// The panel's code editor shows (the Output view is visible): the host sees it as a visible text editor.
+    pub panel_editor_shown: bool,
     /// Closed file editors as (group, path, tab index), for the workbench's Reopen Closed Editor.
     pub closed: Vec<(u32, PathBuf, usize)>,
     /// The active group's last editor closed (`closeEmptyGroups` closes the group then).
@@ -791,8 +797,9 @@ impl EditorGroup {
         self.editors.iter().chain(&self.models).chain(self.other_groups.iter().flat_map(|group| &group.editors))
     }
 
+    /// The editor groups, most recently active first; the panel's group is not one.
     pub fn group_ids_mru(&self) -> Vec<u32> {
-        std::iter::once(self.id).chain(self.group_mru.iter().copied()).collect()
+        std::iter::once(self.id).chain(self.group_mru.iter().copied()).filter(|id| *id != PANEL_GROUP).collect()
     }
 
     pub fn group(&self, id: u32) -> Option<&GroupState> {
@@ -849,6 +856,18 @@ impl EditorGroup {
         self.group_mru.insert(0, previous);
         if let Some(editor) = self.active_mut() {
             editor.sync_with_model();
+        }
+    }
+
+    /// Whether the part has more than one editor group.
+    pub fn has_several_groups(&self) -> bool {
+        self.other_groups.iter().any(|group| group.id != PANEL_GROUP) || (self.id == PANEL_GROUP && self.other_groups.len() > 1)
+    }
+
+    /// The panel's group, made on first use.
+    pub fn ensure_panel_group(&mut self) {
+        if self.id != PANEL_GROUP && self.group(PANEL_GROUP).is_none() {
+            self.other_groups.push(GroupState { id: PANEL_GROUP, editors: Vec::new(), recent: Vec::new(), viewport: self.viewport, unicode_banner_closed: false });
         }
     }
 

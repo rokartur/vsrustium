@@ -45,7 +45,7 @@ fn groups(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext) -> (V
     workbench.read_with(cx, |workbench, _| {
         let order = workbench.groups_in_grid_order();
         let names = order.iter().map(|group| workbench.editors.group_tabs(*group).0.iter().map(|editor| editor.document().name()).collect()).collect();
-        (names, order.iter().position(|group| *group == workbench.editors.id).unwrap())
+        (names, order.iter().position(|group| *group == workbench.editor_group_id()).unwrap())
     })
 }
 
@@ -136,4 +136,37 @@ fn reopen_closed_editor_brings_back_the_last_closed_file(cx: &mut TestAppContext
     assert_eq!(groups(&workbench, cx).0, vec![vec!["a.txt".to_string()]]);
     run(&workbench, "workbench.action.reopenClosedEditor", cx);
     assert_eq!(groups(&workbench, cx).0, vec![vec!["a.txt".to_string(), "b.txt".to_string()]]);
+}
+
+#[test]
+fn a_drag_splits_at_the_edges_and_moves_in_the_center() {
+    use super::split_direction;
+    use crate::editor_grid::Direction;
+    // editorDropTarget.ts with openSideBySideDirection right: the left and right thirds split sideways.
+    assert_eq!(split_direction(50., 50., 100., 100., true), None);
+    assert_eq!(split_direction(5., 50., 100., 100., true), Some(Direction::Left));
+    assert_eq!(split_direction(95., 50., 100., 100., true), Some(Direction::Right));
+    assert_eq!(split_direction(50., 5., 100., 100., true), Some(Direction::Up));
+    assert_eq!(split_direction(50., 5., 100., 100., false), Some(Direction::Up));
+    assert_eq!(split_direction(20., 95., 100., 100., false), Some(Direction::Down));
+}
+
+#[gpui::test]
+fn the_output_view_shows_in_the_panel_and_takes_the_focus_from_the_groups(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = workbench_with("output-panel", &["a.txt"], cx);
+    std::fs::write(dir.join("renderer.log"), "started\n").unwrap();
+    workbench.update_in(cx, |workbench, window, cx| {
+        workbench.output.register_window_log(dir.join("renderer.log"));
+        workbench.show_output_channel(crate::output::WINDOW_LOG_ID, false, window, cx);
+    });
+    cx.run_until_parked();
+    workbench.update_in(cx, |workbench, window, _| {
+        assert!(workbench.output_view_visible());
+        assert_eq!(workbench.editors.id, crate::editor::PANEL_GROUP);
+        let context = workbench.key_context(window);
+        assert_eq!((context["inOutput"].clone(), context["activeEditorGroupIndex"].clone()), (json!(true), json!(1)));
+    });
+    assert_eq!(groups(&workbench, cx), (vec![vec!["a.txt".to_string()]], 0));
+    run(&workbench, "workbench.action.splitEditor", cx);
+    assert_eq!(groups(&workbench, cx), (vec![vec!["a.txt".to_string()], vec!["a.txt".to_string()]], 1));
 }

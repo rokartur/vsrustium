@@ -28,7 +28,6 @@ use serde_json::json;
 use super::Workbench;
 use super::minimap_view::minimap_info;
 use super::search_editor_view::SEARCH_EDITOR_SCHEME;
-use super::terminal_view::TERMINAL_SCHEME;
 use super::webview_panels::WEBVIEW_PANEL_SCHEME;
 use crate::brackets::BracketRange;
 use crate::editor::minimap::MinimapLayoutInfo;
@@ -76,15 +75,13 @@ impl Workbench {
                 WEBVIEW_PANEL_SCHEME => part.child(self.webview_editor_body(editor)),
                 // searchEditor.ts draws its query widget where a text editor has its breadcrumbs.
                 SEARCH_EDITOR_SCHEME => part.child(self.search_editor_query(window, cx)),
-                crate::output::OUTPUT_SCHEME => part.child(self.output_title_actions(window, cx)),
-                TERMINAL_SCHEME => part.child(self.terminal_title_actions(cx)).child(self.terminal_body(cx)),
                 // breadcrumbsControl.ts `update`: no breadcrumbs for a resource without a file system provider.
                 "untitled" => part,
                 _ => part.child(self.breadcrumbs(editor)),
             })
             .map(|part| match self.editors.active_diff() {
                 Some(diff) => part.child(self.diff_editor_body(diff, editor, window, cx)),
-                None => part.when(!matches!(editor.document().scheme.as_str(), WEBVIEW_PANEL_SCHEME | TERMINAL_SCHEME), |part| part.children(self.unicode_banner(editor, cx)).child(self.text_area(editor, window, cx))),
+                None => part.when(editor.document().scheme != WEBVIEW_PANEL_SCHEME, |part| part.children(self.unicode_banner(editor, cx)).child(self.text_area(editor, window, cx))),
             })
     }
 
@@ -177,7 +174,7 @@ impl Workbench {
         // `getTitle(Verbosity.LONG)`: a search editor's and a webview's is its name.
         let title = match (self.editors.diffs.get(&editor.model_id), editor.document().scheme.as_str()) {
             (Some(diff), _) => diff.title(|side| crate::quick_input::path_label(crate::editor::split_query(&side.scheme, &side.path).0, None)),
-            (None, SEARCH_EDITOR_SCHEME | WEBVIEW_PANEL_SCHEME | TERMINAL_SCHEME) => self.editor_name(editor),
+            (None, SEARCH_EDITOR_SCHEME | WEBVIEW_PANEL_SCHEME) => self.editor_name(editor),
             // labels.ts: an untitled label's title is its name and its path.
             (None, "untitled") if !editor.text_model().associated_file => match self.untitled_description(editor) {
                 Some(path) => format!("{} \u{2022} {path}", self.editor_name(editor)),
@@ -238,6 +235,7 @@ impl Workbench {
                 None => tab.pl(px(8.)).child(label),
             })
             .children(lock)
+            .map(|tab| self.tab_drag_and_drop(tab, index, cx))
             .on_click(cx.listener(move |workbench, event: &gpui::ClickEvent, _, cx| {
                 workbench.editors.activate(index);
                 if event.click_count() == 2 {
@@ -352,7 +350,7 @@ impl Workbench {
         Some(point(px(origin.x + left), px(origin.y + top)))
     }
 
-    fn text_area(&self, editor: &OpenEditor, window: &mut Window, cx: &mut Context<Self>) -> Stateful<Div> {
+    pub(super) fn text_area(&self, editor: &OpenEditor, window: &mut Window, cx: &mut Context<Self>) -> Stateful<Div> {
         let metrics = self.editor_metrics(editor, window);
         let in_diff = self.editors.active_diff().is_some();
         let area_left = self.text_area_left.clone();
@@ -1510,8 +1508,8 @@ impl Workbench {
             items.push(("OVR".to_string(), "Enable Insert Mode", "editor.action.toggleOvertypeInsertMode"));
         }
         let prominent_items = items.len();
-        // A webview editor or terminal shows no editor status entries.
-        if let Some(editor) = self.editors.active().filter(|editor| !matches!(editor.document().scheme.as_str(), WEBVIEW_PANEL_SCHEME | TERMINAL_SCHEME)) {
+        // A webview editor shows no editor status entries.
+        if let Some(editor) = self.editors.active().filter(|editor| editor.document().scheme != WEBVIEW_PANEL_SCHEME) {
             items.extend(Self::editor_status_entries(editor, &self.languages));
         }
         let prominent = (self.theme.color("statusBarItem.prominentBackground"), self.color("statusBarItem.prominentForeground"));

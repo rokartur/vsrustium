@@ -5,7 +5,7 @@
 mod grid;
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use alacritty_terminal::grid::{Dimensions, Scroll};
@@ -20,8 +20,8 @@ use serde_json::{Value, json};
 
 use self::grid::{CellMetrics, GUTTER, Look, SCROLLBAR_WIDTH, SCROLLBAR_WIDTH_MODERN};
 use super::Workbench;
+use super::panel::PanelView;
 use crate::commands::Outcome;
-use crate::editor::TextDocument;
 use crate::keybindings::Resolution;
 use crate::main_thread_quick_open::Owner;
 use crate::quick_input::{Entry, Event, Item, Kind, QuickInput};
@@ -35,8 +35,6 @@ use crate::terminal::{ShellLaunchConfig, TerminalInstance, create_environment};
 
 /// terminal.ts `TERMINAL_VIEW_ID`.
 pub const TERMINAL_VIEW_ID: &str = "terminal";
-/// The scheme of the editor tab that hosts the view (`Schemas.vscodeTerminal`).
-pub const TERMINAL_SCHEME: &str = "vscode-terminal";
 
 /// terminalInstance.ts `_setupTitlePolling`: node-pty's process title is read every 200 ms on macOS.
 const TITLE_POLL_INTERVAL: Duration = Duration::from_millis(200);
@@ -267,9 +265,25 @@ impl Workbench {
         }
     }
 
-    /// `isViewVisible(TERMINAL_VIEW_ID)`: the group shows the Terminal view's tab.
+    /// `isViewVisible(TERMINAL_VIEW_ID)`: the panel shows the Terminal view.
     pub(crate) fn terminal_view_visible(&self) -> bool {
-        self.editors.active().is_some_and(|editor| editor.document().scheme == TERMINAL_SCHEME)
+        self.panel_view_visible(TERMINAL_VIEW_ID)
+    }
+
+    /// terminal.contribution.ts registers the Terminal view container in the panel.
+    pub(super) fn register_terminal_panel_view(&mut self) {
+        self.register_panel_view(PanelView {
+            id: TERMINAL_VIEW_ID,
+            title: "Terminal",
+            render: |workbench, window, cx| {
+                // terminalView.ts `_initializeTerminal`: the view made visible without terminals creates one.
+                if workbench.terminal_view.instances.is_empty() {
+                    workbench.create_terminal(None, false, window, cx);
+                }
+                workbench.terminal_body(cx).into_any_element()
+            },
+            actions: |workbench, _, cx| workbench.terminal_title_actions(cx).into_any_element(),
+        });
     }
 
     /// `terminalGroupService.showPanel(true)`: shows the view, creating a terminal when there is none.
@@ -282,22 +296,13 @@ impl Workbench {
     }
 
     fn show_terminal_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        match self.editors.editors.iter().position(|editor| editor.document().scheme == TERMINAL_SCHEME) {
-            Some(index) => self.editors.activate(index),
-            None => {
-                let document = TextDocument::from_text(TERMINAL_SCHEME, Path::new(TERMINAL_VIEW_ID), "", "utf8".into(), None, &self.languages, &self.settings.lock().unwrap());
-                self.editors.open(document, false);
-            }
-        }
-        self.editors_changed(cx);
+        self.open_panel_view(TERMINAL_VIEW_ID, cx);
         window.focus(&self.terminal_view.focus, cx);
     }
 
     /// `viewsService.closeView(TERMINAL_VIEW_ID)`: the terminals keep running.
     fn close_terminal_view(&mut self, cx: &mut Context<Self>) {
-        let Some(index) = self.editors.editors.iter().position(|editor| editor.document().scheme == TERMINAL_SCHEME) else { return };
-        self.editors.close(index);
-        self.editors_changed(cx);
+        self.close_panel_view(TERMINAL_VIEW_ID, cx);
     }
 
     /// `createTerminal`: a new group, or a pane after the active one with `split`; the split's cwd is its parent's
@@ -635,24 +640,16 @@ impl Workbench {
         DEFAULT_COMMANDS_TO_SKIP_SHELL.contains(&command) && !configured.iter().any(|entry| entry.strip_prefix('-') == Some(command))
     }
 
-    /// The view's title actions where a text editor has its breadcrumbs (terminalMenus.ts `MenuId.ViewTitle`):
-    /// the active terminal while the tabs list is hidden, New with the profile dropdown, Split and Kill while the
-    /// tabs list is hidden, and Clear.
+    /// The view's title actions in the panel title (terminalMenus.ts `MenuId.ViewTitle`): the active terminal while
+    /// the tabs list is hidden, New with the profile dropdown, Split and Kill while the tabs list is hidden.
     pub(super) fn terminal_title_actions(&self, cx: &mut Context<Self>) -> Div {
         let show_tabs = self.terminal_tabs_shown();
-        let title_border = ["editorGroupHeader.border", "contrastBorder"].into_iter().find_map(|key| self.theme.color(key));
         let active_title = self.terminal_view.active_instance_id().and_then(|id| self.terminal_view.instance(id)).map(TerminalInstance::title);
         let foreground = self.foreground_or("icon.foreground");
         div()
-            .relative()
-            .h(px(35.))
-            .flex_none()
             .flex()
             .items_center()
-            .justify_end()
-            .px(px(8.))
             .gap(px(4.))
-            .bg(self.color("breadcrumb.background"))
             .when_some(active_title.filter(|_| !show_tabs), |actions, title| {
                 actions.child(
                     div()
@@ -679,7 +676,6 @@ impl Workbench {
             .when(!show_tabs, |actions| {
                 actions.child(self.search_action("split-horizontal", "workbench.action.terminal.split", true, cx)).child(self.search_action("trash", "workbench.action.terminal.kill", true, cx))
             })
-            .when_some(title_border, |actions, color| actions.child(div().absolute().bottom_0().left_0().right_0().h(px(1.)).bg(color)))
     }
 
     fn terminal_tabs_shown(&self) -> bool {

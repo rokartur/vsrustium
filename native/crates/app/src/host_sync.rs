@@ -157,6 +157,10 @@ impl HostSync {
             .enumerate()
             .filter_map(|(column, id)| group.group_active(id).filter(|(editor, _)| is_text(editor)).map(|(editor, viewport)| (column, editor, viewport)))
             .collect();
+        // The Output view's editor is visible without a view column (`editorPosition` undefined).
+        let panel = group.panel_editor_shown.then(|| group.group_active(crate::editor::PANEL_GROUP)).flatten().filter(|(editor, _)| is_text(editor));
+        let visible: Vec<(Option<usize>, &OpenEditor, crate::editor::Viewport)> =
+            visible.into_iter().map(|(column, editor, viewport)| (Some(column), editor, viewport)).chain(panel.map(|(editor, viewport)| (None, editor, viewport))).collect();
         let ids: Vec<String> = visible.iter().map(|(_, editor, _)| snapshot_id(editor)).collect();
         let removed_editors: Vec<&String> = self.editors.iter().filter(|id| !ids.contains(id)).collect();
         if !removed_editors.is_empty() {
