@@ -156,6 +156,11 @@ impl Workbench {
                 };
                 TextDocument::from_text(scheme, path, &text, encoding::UTF8.into(), None, &self.languages, &self.settings.lock().unwrap())
             }
+            // textModelResolverService.ts `ensureResolvedTextModelContent`: an inmemory resource resolves only to a model it has.
+            ("inmemory", _) => {
+                let uri = uri_string(scheme, path);
+                return Err(serialized_error(&format!("cannot open {uri}. Detail: Unable to resolve text model content for resource {uri}")));
+            }
             _ => return Err(serialized_error(&format!("cannot open {scheme}:{}. Detail: Unable to resolve resource {scheme}:{}", path.display(), path.display()))),
         };
         let index = self.editors.open_model(document);
@@ -218,11 +223,11 @@ impl Workbench {
     }
 
     /// `$tryCreateDocument`: a new untitled model named `Untitled-<n>` with the first free n.
-    // shortcut: `files.defaultLanguage` is not read; an untitled model without a language is plain text.
     fn try_create_document(&mut self, options: &Value, cx: &mut Context<Self>) -> HostResult {
         let path = (1..).map(|n| PathBuf::from(format!("Untitled-{n}"))).find(|path| self.editors.model("untitled", path).is_none()).expect("a free name");
         let content = options["content"].as_str().unwrap_or_default();
-        let mut document = TextDocument::untitled(&path, content, options["language"].as_str(), &self.languages, &self.settings.lock().unwrap());
+        let language = self.untitled_language(options["language"].as_str().map(str::to_string));
+        let mut document = TextDocument::untitled(&path, content, language.as_deref(), &self.languages, &self.settings.lock().unwrap());
         document.encoding = options["encoding"].as_str().map_or(document.encoding, str::to_string);
         let uri = document.uri();
         let index = self.editors.open_model(document);
@@ -388,12 +393,12 @@ impl Workbench {
             Some(3) => VerticalReveal::Top,
             _ => VerticalReveal::Simple,
         };
-        let viewport = self.editors.viewport;
-        let editor = self.editors.active_mut().expect("checked by host_request");
-        let (start, end) = range(editor, range_value);
-        let scroll = editor.scroll;
-        editor.reveal_range(start, end, reveal, viewport);
-        if editor.scroll != scroll {
+        // mainThreadEditor.ts `_revealRange` scrolls with `ScrollType.Smooth`.
+        let scrolled = self.scroll_smoothly(cx, |editor, viewport| {
+            let (start, end) = range(editor, range_value);
+            editor.reveal_range(start, end, reveal, viewport);
+        });
+        if scrolled {
             self.editor_scrolled(cx);
         }
         Ok(Value::Null)

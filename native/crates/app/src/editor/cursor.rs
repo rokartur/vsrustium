@@ -1,12 +1,10 @@
 //! Where cursor commands move and what delete commands remove, as cursorMoveOperations.ts,
 //! cursorWordOperations.ts and cursorDeleteOperations.ts compute it. Positions are 0-based lines and
 //! char columns; upstream counts 1-based UTF-16 columns.
-//! shortcut: columns step over chars, not grapheme clusters; a ZWJ emoji takes several steps. Port
-//! strings.getLeftDeleteOffset and the grapheme iterator when that matters.
 
 use std::ops::Range;
 
-use super::{Indentation, folding};
+use super::{Indentation, folding, graphemes};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Position {
@@ -114,13 +112,14 @@ pub fn left(lines: &[String], position: Position) -> Position {
     match position {
         Position { column: 0, line: 0 } => position,
         Position { column: 0, line } => Position::new(line - 1, line_len(lines, line - 1)),
-        Position { line, column } => Position::new(line, column - 1),
+        Position { line, column } => Position::new(line, column - graphemes::prev_char_length(&chars(lines, line), column)),
     }
 }
 
 pub fn right(lines: &[String], position: Position) -> Position {
-    if position.column < line_len(lines, position.line) {
-        Position::new(position.line, position.column + 1)
+    let text = chars(lines, position.line);
+    if position.column < text.len() {
+        Position::new(position.line, position.column + graphemes::next_char_length(&text, position.column))
     } else if position.line + 1 < lines.len() {
         Position::new(position.line + 1, 0)
     } else {
@@ -132,7 +131,7 @@ pub fn right(lines: &[String], position: Position) -> Position {
 /// (`leftover`, negative after a jump to the end of the last line), and moves to the document's
 /// edge when there is no line to go to. Lines in `hidden` are folded away and skipped.
 pub fn vertical(lines: &[String], hidden: &[Range<usize>], position: Position, leftover: isize, down: bool, tab_size: usize) -> (Position, isize) {
-    let visible_of = |position: Position| super::visible_column(&lines[position.line], position.column, tab_size) as isize;
+    let visible_of = |position: Position| super::logical_visible_column(&lines[position.line], position.column, tab_size) as isize;
     let visible = visible_of(position) + leftover;
     let last_line = folding::last_shown_line(lines.len(), hidden);
     let last = Position::new(last_line, line_len(lines, last_line));
@@ -185,7 +184,8 @@ pub fn line_end(lines: &[String], position: Position) -> Position {
     Position::new(position.line, line_len(lines, position.line))
 }
 
-/// `deleteLeft`: the selection, else one char, else back to the previous indent stop inside the indentation.
+/// `deleteLeft`: the selection, else back to the previous indent stop inside the indentation, else the
+/// last emoji component or one char (`strings.getLeftDeleteOffset`).
 pub fn delete_left_range(lines: &[String], selection: Selection, indentation: Indentation) -> (Position, Position) {
     if !selection.is_empty() {
         return (selection.start(), selection.end());
@@ -198,7 +198,11 @@ pub fn delete_left_range(lines: &[String], selection: Selection, indentation: In
         let to = (from - 1) - (from - 1) % indentation.indent_size();
         return (Position::new(position.line, column_from_visible(text, to, indentation.tab_size)), position);
     }
-    (left(lines, position), position)
+    if position.column == 0 {
+        return (left(lines, position), position);
+    }
+    let column = graphemes::left_delete_offset(position.column, &chars(lines, position.line));
+    (Position::new(position.line, column), position)
 }
 
 pub fn delete_right_range(lines: &[String], selection: Selection) -> (Position, Position) {
@@ -337,6 +341,33 @@ mod tests {
         assert_eq!(right(&text, at(0, 2)), at(1, 0));
         assert_eq!(right(&text, at(1, 2)), at(1, 2));
         assert_eq!(left(&text, at(0, 0)), at(0, 0));
+    }
+
+    #[test]
+    fn moves_step_over_grapheme_clusters() {
+        // cursor.test.ts: 'move left/right with surrogate pair', 'grapheme breaking'
+        let text = lines("    Third Line🐶\na\u{303}a\u{303}a\u{303}\n辻\u{E0100}辻\u{E0100}\nப\u{BC1}");
+        assert_eq!(left(&text, at(0, 15)), at(0, 14));
+        assert_eq!(right(&text, at(0, 14)), at(0, 15));
+        for line in 1..=3 {
+            assert_eq!(right(&text, at(line, 0)), at(line, 2));
+            assert_eq!(left(&text, at(line, 2)), at(line, 0));
+        }
+    }
+
+    #[test]
+    fn deletes_step_over_emoji_components_left_and_grapheme_clusters_right() {
+        // cursor.test.ts: 'issue #99629: Emoji modifiers in text treated separately when using backspace'
+        let text = lines("👶🏾\n👨‍👩🏽‍👧‍👦\ne\u{301}x");
+        let delete_left = |position| delete_left_range(&text, Selection::caret(position), SPACES_4).0;
+        assert_eq!(delete_left(at(0, 2)), at(0, 0));
+        assert_eq!(delete_left(at(1, 8)), at(1, 6));
+        assert_eq!(delete_left(at(1, 6)), at(1, 4));
+        assert_eq!(delete_left(at(1, 4)), at(1, 1));
+        assert_eq!(delete_left(at(1, 1)), at(1, 0));
+        assert_eq!(delete_left(at(2, 2)), at(2, 1));
+        assert_eq!(delete_left(at(2, 0)), at(1, 8));
+        assert_eq!(delete_right_range(&text, Selection::caret(at(2, 0))), (at(2, 0), at(2, 2)));
     }
 
     #[test]

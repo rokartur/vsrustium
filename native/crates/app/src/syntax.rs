@@ -222,6 +222,17 @@ impl Tokenization {
         tokens.iter().find(|token| token.end > offset).or(tokens.last()).map_or(textmate::StandardTokenType::Other, |token| token.token_type)
     }
 
+    /// The token at byte `offset` of line `index` as the inspector picks it (the last one starting at or before
+    /// it, else the first): its byte range, scopes and standard type; none without a grammar or tokens.
+    pub fn token_at(&self, lines: &[String], index: usize, offset: usize) -> Option<(Range<usize>, std::rc::Rc<textmate::ScopeStack>, textmate::StandardTokenType)> {
+        self.grammar.as_ref()?;
+        self.tokenize_to(lines, index);
+        let tokenized = self.lines.borrow();
+        let tokens = &tokenized[index].0;
+        let token = tokens.iter().rev().find(|token| token.start <= offset).or(tokens.first())?;
+        Some((token.start..token.end.min(lines[index].len()), token.scopes.clone(), token.token_type))
+    }
+
     /// The tokens of line `index` as (byte end, standard type, embedded language), or one `Other` token over
     /// the line without a grammar or tokens.
     pub fn line_tokens(&self, lines: &[String], index: usize) -> Vec<(usize, textmate::StandardTokenType, Option<std::rc::Rc<str>>)> {
@@ -291,6 +302,13 @@ impl Tokenization {
         if self.grammar.is_some() && !lines.is_empty() {
             self.tokenize_to(lines, lines.len() - 1);
         }
+    }
+
+    /// textModelTokens.ts `isCheapToTokenize`: line `index` is tokenized, or the first one not yet and shorter
+    /// than `CHEAP_TOKENIZATION_LENGTH_LIMIT` (2048).
+    pub fn is_cheap_to_tokenize(&self, lines: &[String], index: usize) -> bool {
+        let first_invalid = self.lines.borrow().len();
+        self.grammar.is_none() || index < first_invalid || (index == first_invalid && lines[index].encode_utf16().count() < 2048)
     }
 
     /// The bracket pairs hold token styles of the theme they were paired under.
@@ -414,8 +432,9 @@ fn expanded_offsets(text: &str, tab_size: usize) -> Vec<usize> {
         for byte in 0..c.len_utf8() {
             offsets[index + byte] = expanded;
         }
-        let width = if c == '\t' { tab_size - visible % tab_size } else { 1 };
-        expanded += if c == '\t' { width } else { c.len_utf8() };
+        let width = crate::editor::char_columns(c, visible, tab_size);
+        // `expand_tabs` draws a tab and a bidi format character as spaces.
+        expanded += if c == '\t' || crate::editor::is_bidi_format_character(c) { width } else { c.len_utf8() };
         visible += width;
     }
     offsets[text.len()] = expanded;

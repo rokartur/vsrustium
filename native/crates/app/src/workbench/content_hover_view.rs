@@ -49,26 +49,29 @@ impl Workbench {
     pub(super) fn content_hover_widget(&self, editor: &OpenEditor, content_left: f32, char_width: f32, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         let shown = self.content_hover.shown.as_ref().filter(|shown| shown.anchor.model_id == editor.model_id)?;
         let anchor = shown.anchor;
-        let text = editor.document.lines.get(anchor.line)?;
-        if editor.folding.is_hidden(anchor.line) {
+        if anchor.line >= editor.document.lines.len() || editor.folding.is_hidden(anchor.line) {
             return None;
         }
-        let tab_size = editor.document.indentation.tab_size;
         let mut secondary = anchor.start;
         for part in shown.parts.iter().filter(|part| part.start.line == anchor.line && part.end.line == anchor.line) {
             secondary = secondary.min(part.start.column);
         }
-        let primary_left = visible_column(text, anchor.start, tab_size) as f32 * char_width;
-        let secondary_left = visible_column(text, secondary, tab_size) as f32 * char_width;
+        let view_line = editor.position_view_line(Position::new(anchor.line, anchor.start), false);
+        let segment = editor.segment(view_line);
+        let primary_left = editor.segment_visible_column(segment, anchor.start) as f32 * char_width;
+        let secondary_left = editor.segment_visible_column(segment, secondary.max(segment.start)) as f32 * char_width;
         // The measuring canvas fills the padding box: add the 1px border on each side.
         let measured = self.content_hover.widget_bounds.get().map(|bounds| Size { width: bounds.size.width + 2., height: bounds.size.height + 2. });
-        let size = measured.unwrap_or(Size { width: 0., height: 0. });
+        let mut size = measured.unwrap_or(Size { width: 0., height: 0. });
+        if measured.is_some() {
+            size.height = self.content_hover.content_height.get() + 2.;
+        }
         // contentWidgets.ts `_reduceAnchorCoordinates`: a full-width glyph is 1em of the editor font.
         let left = secondary_left.max(primary_left - size.width + EDITOR_FONT_SIZE);
         let editor_bounds = self.text_area_bounds.get();
         let window_size = window.viewport_size().map(f32::from);
         let left = horizontal_in_page(left - editor.scroll.left + content_left, size.width, editor_bounds, window_size);
-        let anchor_top = editor.line_top(editor.view_line(anchor.line), self.editors.viewport) - editor.scroll.top;
+        let anchor_top = editor.line_top(view_line, self.editors.viewport) - editor.scroll.top;
         let space_above = editor_bounds.origin.y + anchor_top - TOP_HEIGHT;
         let space_below = window_size.height - (editor_bounds.origin.y + anchor_top + LINE_HEIGHT) - BOTTOM_HEIGHT;
         let height = size.height.min(space_above.max(space_below).min(size.height));
@@ -159,12 +162,25 @@ impl Workbench {
         }
         let mut separator = self.color("editorHoverWidget.border");
         separator.a *= 0.5;
-        let mut column = div().id("content-hover-contents").relative().flex().flex_col().max_h(px(max_height)).overflow_y_scroll();
+        let content_height = self.content_hover.content_height.clone();
+        let measure = canvas(
+            move |bounds, window, _| {
+                let height = f32::from(bounds.size.height);
+                if content_height.get() != height {
+                    content_height.set(height);
+                    window.refresh();
+                }
+            },
+            |_, _, _, _| (),
+        )
+        .absolute()
+        .inset_0();
+        let mut column = div().relative().flex().flex_col().child(measure);
         for (index, row) in rows.into_iter().enumerate() {
             // hoverContribution.ts: `.hover-row:not(:first-child):not(:empty)` has a top border at half alpha.
             column = column.child(row.when(index > 0, |row| row.border_t_1().border_color(separator)));
         }
-        column
+        div().id("content-hover-contents").max_h(px(max_height)).overflow_y_scroll().child(column)
     }
 
     /// markerHoverParticipant.ts `_renderMarkerHover`: the severity icon, the message in the editor font, the source

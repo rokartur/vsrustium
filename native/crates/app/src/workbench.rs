@@ -14,6 +14,7 @@ mod configuration_resolver;
 mod context_menu;
 pub mod custom_editors;
 mod define_keybinding;
+mod floating_menu;
 mod diagnostics;
 mod dialog_view;
 mod editor_commands;
@@ -31,6 +32,7 @@ mod workspace_recommendations;
 pub(crate) mod localization;
 pub(crate) mod extensions_view;
 mod file_participants;
+mod find_options_widget;
 mod find_widget;
 mod folding_providers;
 mod auto_save;
@@ -86,9 +88,13 @@ use status_entries::{EDITOR_STATUS_PRIORITY, PROBLEMS_PRIORITY};
 pub mod themes;
 mod quick_input_view;
 mod text_files;
+pub(crate) mod text_model_resolver;
 mod control_characters;
 mod large_file;
+mod inspect_tokens;
 mod gutter_mouse;
+mod word_wrap;
+mod smooth_scrolling;
 mod text_input;
 mod title_bar_actions;
 mod type_navigation;
@@ -193,6 +199,7 @@ pub struct Workbench {
     /// The text area's window bounds at paint, where content widgets that may overflow it lay out.
     text_area_bounds: Rc<Cell<gpui::Bounds<f32>>>,
     editor_message: editor_message::EditorMessages,
+    inspect_tokens: inspect_tokens::InspectTokens,
     marker_navigation: marker_navigation::MarkerNavigation,
     content_hover: content_hover::ContentHover,
     suggest: suggest_controller::Suggest,
@@ -232,6 +239,7 @@ pub struct Workbench {
     stop_rendering_line_after: Option<usize>,
     editor_zoom: crate::editor::zoom::EditorZoom,
     middle_scroll: Option<middle_scroll::MiddleScroll>,
+    smooth_scrolling: Option<smooth_scrolling::SmoothScrolling>,
     pub quick_inputs: quick_input_view::QuickInputs,
     pub quick_access: quick_access::QuickAccess,
     pub explorer: explorer_actions::ExplorerState,
@@ -281,6 +289,7 @@ impl Render for Workbench {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Cursors move and editors switch on many paths; every one of them renders.
         self.close_editor_message_on_cursor_change(cx);
+        self.stop_inspect_tokens_on_model_change();
         self.follow_marker_navigation_cursor();
         self.refresh_selection_highlights(window);
         self.update_webview_panels(window, cx);
@@ -393,6 +402,7 @@ impl Workbench {
             diff_part_width: Rc::default(),
             text_area_bounds: Rc::default(),
             editor_message: Default::default(),
+            inspect_tokens: Default::default(),
             marker_navigation: Default::default(),
             content_hover: Default::default(),
             suggest: Default::default(),
@@ -421,6 +431,7 @@ impl Workbench {
             stop_rendering_line_after: Some(10_000),
             editor_zoom: Default::default(),
             middle_scroll: None,
+            smooth_scrolling: None,
             quick_inputs: quick_input_view::QuickInputs::new(cx),
             quick_access: quick_access::QuickAccess::default(),
             explorer: explorer_actions::ExplorerState::new(cx),
@@ -463,6 +474,8 @@ impl Workbench {
         workbench.register_text_file_commands();
         workbench.register_large_file_commands();
         workbench.register_media_preview_commands();
+        workbench.register_inspect_tokens_commands();
+        workbench.register_word_wrap_commands();
         workbench.register_editor_commands();
         workbench.register_find_commands();
         workbench.register_sticky_scroll_commands();

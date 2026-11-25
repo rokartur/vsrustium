@@ -19,6 +19,7 @@ use serde_json::{Value, json};
 use crate::host_sync::HostMessage;
 use crate::uri::Uri;
 use crate::workbench::host_requests::HOST_REQUESTS;
+use crate::workbench::text_model_resolver::ContentProviders;
 
 pub struct HostRequest {
     pub proxy: String,
@@ -33,8 +34,7 @@ pub struct WorkbenchMainThread {
     /// Host calls the workbench made with `HostSync::call`, waiting for their answer, and whether a dropped receiver
     /// still has to cancel the request.
     pub waiting: Vec<(u32, bool, oneshot::Sender<Result<Value, Value>>)>,
-    /// `$registerTextContentProvider` handles and schemes, newest first as textModelResolverService.ts keeps them.
-    pub content_providers: Vec<(Value, String)>,
+    pub content_providers: ContentProviders,
     pub extensions: WindowExtensions,
 }
 
@@ -49,11 +49,11 @@ impl MainThread for WorkbenchMainThread {
             .collect();
         match (proxy, method) {
             ("MainThreadDocumentContentProviders", "$registerTextContentProvider") => {
-                self.content_providers.insert(0, (args[0].clone(), args[1].as_str().unwrap_or_default().to_string()));
+                self.content_providers.register(args[0].clone(), args[1].as_str().unwrap_or_default().to_string());
                 return Some(Ok(Reply::Empty));
             }
             ("MainThreadDocumentContentProviders", "$unregisterTextContentProvider") => {
-                self.content_providers.retain(|(handle, _)| *handle != args[0]);
+                self.content_providers.unregister(&args[0]);
                 return Some(Ok(Reply::Empty));
             }
             ("MainThreadWindow", "$asExternalUri") => return Some(as_external_uri(session, &args[0])),
@@ -171,14 +171,13 @@ impl WorkbenchMainThread {
     }
 
     fn has_content_provider(&self, uri: &Value) -> bool {
-        self.content_providers.iter().any(|(_, scheme)| uri["scheme"] == json!(scheme))
+        self.content_providers.has(uri["scheme"].as_str().unwrap_or_default())
     }
 
     /// `ResourceModelCollection.ensureResolvedTextModelContent`: the first provider of the scheme that gives a string;
     /// a provider that fails fails the open.
     fn provide_text_content(&self, session: &mut Session, uri: &Value) -> Result<String, String> {
-        let handles: Vec<Value> = self.content_providers.iter().filter(|(_, scheme)| uri["scheme"] == json!(scheme)).map(|(handle, _)| handle.clone()).collect();
-        for handle in handles {
+        for handle in self.content_providers.handles(uri["scheme"].as_str().unwrap_or_default()) {
             let args = vec![Arg::Json(handle), Arg::Json(uri.clone())];
             match session.request("ExtHostDocumentContentProviders", "$provideTextDocumentContent", args, PROVIDER_TIMEOUT) {
                 Ok(CallResult::Ok(Reply::Json(Value::String(text)))) => return Ok(text),

@@ -41,6 +41,7 @@ pub enum MenuId {
     EditorTitleContext,
     EditorLineNumberContext,
     EditorTitleContextShare,
+    StickyScrollContext,
     TitleBarContext,
     TitleBarTitleContext,
     ScmTitle,
@@ -49,6 +50,7 @@ pub enum MenuId {
     ScmInputBox,
     DiffEditorHunkToolbar,
     EditorTitle,
+    EditorContent,
     /// A `contributes.submenus` entry, `MenuId.for('api:<id>')`, by registration order.
     Api(usize),
     #[cfg(test)]
@@ -265,6 +267,19 @@ pub fn workbench_menus() -> Vec<MenuItem> {
     // fileActions.contribution.ts: checked unless `files.autoSave` is `off`.
     let entry = Entry::Command { id: "workbench.action.toggleAutoSave".into(), precondition: None, toggled: Toggled::when(Expr::deserialize("config.files.autoSave != 'off'")), alt: None };
     items.push(MenuItem { menu: MenuId::MenubarFileMenu, entry, title: "A&&uto Save".into(), group: "5_autosave".into(), order: 1., when: None });
+    // stickyScrollActions.ts and breadcrumbsControl.ts: the toggles' checked titles, the only ones the menu shows while it is open.
+    for (id, setting, title) in [("breadcrumbs.toggle", "breadcrumbs.enabled", "Breadcrumbs"), ("editor.action.toggleStickyScroll", "editor.stickyScroll.enabled", "Sticky Scroll")] {
+        let entry = Entry::Command { id: id.into(), precondition: None, toggled: Expr::deserialize(&format!("config.{setting} == true")), alt: None };
+        items.push(MenuItem { menu: MenuId::StickyScrollContext, entry, title: title.into(), group: String::new(), order: 0., when: None });
+    }
+    // toggleWordWrap.ts: checked while the active editor wraps, enabled while it can toggle.
+    let entry = Entry::Command { id: "editor.action.toggleWordWrap".into(), precondition: Some(Expr::has("canToggleWordWrap")), toggled: Some(Expr::has("editorWordWrap")), alt: None };
+    items.push(MenuItem { menu: MenuId::MenubarViewMenu, entry, title: "&&Word Wrap".into(), group: "6_editor".into(), order: 1., when: None });
+    // toggleWordWrap.ts: the editor title action of a file dominated by long lines.
+    for (title, when) in [("Disable wrapping for this file", "isDominatedByLongLines && isWordWrapMinified"), ("Enable wrapping for this file", "!inDiffEditor && isDominatedByLongLines && !isWordWrapMinified")] {
+        let entry = Entry::Command { id: "editor.action.toggleWordWrap".into(), precondition: None, toggled: None, alt: None };
+        items.push(MenuItem { menu: MenuId::EditorTitle, entry, title: title.into(), group: "navigation".into(), order: 1., when: Expr::deserialize(when) });
+    }
     // toggleColumnSelection.ts: checked while `config.editor.columnSelection` is true.
     let entry = Entry::Command { id: "editor.action.toggleColumnSelection".into(), precondition: None, toggled: Toggled::when(Some(Expr::has("config.editor.columnSelection"))), alt: None };
     items.push(MenuItem { menu: MenuId::MenubarSelectionMenu, entry, title: "Column &&Selection Mode".into(), group: "4_config".into(), order: 2., when: None });
@@ -290,7 +305,7 @@ pub fn workbench_menus() -> Vec<MenuItem> {
 
 /// menusExtensionPoint.ts `apiMenus`: the `contributes.menus` keys of the menus the port shows. `commandPalette`
 /// is read by `command_palette::menu`.
-const API_MENUS: [(&str, MenuId); 17] = [
+const API_MENUS: [(&str, MenuId); 18] = [
     ("file/newFile", MenuId::NewFile),
     ("editor/context", MenuId::EditorContext),
     ("explorer/context", MenuId::ExplorerContext),
@@ -308,11 +323,14 @@ const API_MENUS: [(&str, MenuId); 17] = [
     ("editor/title/context/share", MenuId::EditorTitleContextShare),
     ("file/share", MenuId::MenubarShare),
     ("menuBar/edit/copy", MenuId::MenubarCopy),
+    ("editor/content", MenuId::EditorContent),
 ];
 
 /// The `icon` of each `contributes.commands` entry with one: a `$(codicon)` name, or the light and dark image paths.
 pub fn command_icons(extensions: &[ScannedExtension]) -> std::collections::HashMap<String, CommandIcon> {
     let mut icons = std::collections::HashMap::new();
+    // toggleWordWrap.ts: the editor title items' `Codicon.wordWrap`.
+    icons.insert("editor.action.toggleWordWrap".to_string(), CommandIcon::Codicon("word-wrap".into()));
     for extension in extensions {
         let commands = match &extension.description["contributes"]["commands"] {
             Value::Array(commands) => commands.iter().collect(),
@@ -360,6 +378,10 @@ pub fn extension_menus(extensions: &[ScannedExtension]) -> Vec<MenuItem> {
         for (key, entries) in menus {
             let Some(entries) = entries.as_array().filter(|entries| entries.iter().all(is_valid_item)) else { continue };
             let api_menu = API_MENUS.iter().find(|(api_key, _)| api_key == key).map(|(_, menu)| *menu);
+            // menusExtensionPoint.ts: `editor/content` is `proposed: 'contribEditorContentMenu'`.
+            if key == "editor/content" && !extension.description["enabledApiProposals"].as_array().is_some_and(|proposals| proposals.iter().any(|proposal| proposal == "contribEditorContentMenu")) {
+                continue;
+            }
             let Some(menu) = api_menu.or_else(|| submenus.iter().find(|(id, ..)| id == key).map(|(_, menu, _)| *menu)) else { continue };
             for entry in entries {
                 let (entry_value, title) = match entry["command"].as_str() {

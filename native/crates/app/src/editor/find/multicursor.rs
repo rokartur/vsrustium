@@ -162,6 +162,7 @@ pub fn selection_to_find_match(find: &mut FindController, editor: &mut OpenEdito
     }
     begin_session_if_needed(find, editor, viewport, context);
     let Some(session) = &mut find.multicursor else { return };
+    find.highlight_find_options = session.uses_find_options && session.current_match.is_none();
     let Some(found) = session.next_match(editor, next) else { return };
     let mut selections = editor.selections.clone();
     if !add {
@@ -181,6 +182,7 @@ pub fn select_all(find: &mut FindController, editor: &mut OpenEditor, viewport: 
     let find_regex = allow_find_regex && state.is_revealed && !state.search_string.is_empty() && state.is_regex;
     if !find_regex {
         begin_session_if_needed(find, editor, viewport, context);
+        find.highlight_find_options = find.multicursor.as_ref().is_some_and(|session| session.uses_find_options);
     }
     let state = &find.state;
     let lines = &editor.document.lines;

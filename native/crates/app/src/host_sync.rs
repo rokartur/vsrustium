@@ -222,7 +222,7 @@ impl HostSync {
         self.send_selection(editor, "keyboard");
     }
 
-    /// The text of `editor`, shown or a model without an editor, changed: the change, then the dirty state and tabs when it flipped.
+    /// The text of `editor`, shown or a model without an editor, changed: the change, then the dirty state and tabs when it flipped, the tabs also for an untitled model.
     pub fn send_model_change(&mut self, group: &EditorGroup, editor: &OpenEditor, change: &ContentChanged) {
         let document = &editor.document;
         let uri = document.uri();
@@ -252,6 +252,9 @@ impl HostSync {
         self.send("ExtHostDocuments", "$acceptModelChanged", vec![uri.clone(), event, json!(dirty)]);
         if dirty != change.was_dirty {
             self.send("ExtHostDocuments", "$acceptDirtyStateChanged", vec![uri, json!(dirty)]);
+        }
+        // untitledTextEditorInput.ts `onDidChangeLabel`: a new first line renames an untitled tab.
+        if dirty != change.was_dirty || document.scheme == "untitled" {
             self.send_tabs(group);
         }
     }

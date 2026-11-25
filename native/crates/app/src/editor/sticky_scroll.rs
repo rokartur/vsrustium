@@ -95,12 +95,12 @@ fn search_index(starts: &[usize], key: usize) -> usize {
 /// `findScrollWidgetState`: the candidates whose first line scrolled above the widget line they would stick to
 /// while their last line is still below it; the last one pushes up when the scope's end reaches it.
 /// `top_for_line` gives a 1-based model line's top in the editor's content, a hidden line its fold line's.
-pub fn find_widget_state(candidates: &[StickyLineCandidate], scroll_top: f32, max_lines: usize, top_for_line: impl Fn(usize) -> f32) -> StickyScrollState {
+pub fn find_widget_state(candidates: &[StickyLineCandidate], scroll_top: f32, max_lines: usize, top_for_line: impl Fn(usize) -> f32, bottom_for_line: impl Fn(usize) -> f32) -> StickyScrollState {
     let mut state = StickyScrollState::default();
     for candidate in candidates {
         let bottom_of_element = candidate.top + candidate.height;
         let top_of_beginning_line = top_for_line(candidate.start) - scroll_top;
-        let bottom_of_end_line = top_for_line(candidate.end) + candidate.height - scroll_top;
+        let bottom_of_end_line = bottom_for_line(candidate.end) - scroll_top;
         if candidate.top > top_of_beginning_line && candidate.top <= bottom_of_end_line {
             state.start_line_numbers.push(candidate.start);
             state.end_line_numbers.push(candidate.end + 1);
@@ -130,7 +130,9 @@ impl OpenEditor {
         let view_lines = self.visible_lines(viewport);
         let range = StickyRange { start: self.model_line(view_lines.start) + 1, end: self.model_line(view_lines.end - 1) + 1 };
         let candidates = candidates_intersecting(&self.sticky_model, range, self.document.lines.len(), viewport.line_height, self.folding.hidden());
-        find_widget_state(&candidates, self.scroll.top, max_lines, |line| self.line_top(self.view_line(line - 1), viewport))
+        // `getBottomForLineNumber`: the bottom of the line's last view line, past its wrapped lines.
+        let bottom = |line: usize| self.line_top(self.last_view_line(line - 1), viewport) + viewport.line_height;
+        find_widget_state(&candidates, self.scroll.top, max_lines, |line| self.line_top(self.view_line(line - 1), viewport), bottom)
     }
 
     /// `_toggleFoldingRegionForLine`: the region starting on the sticky line `line` (1-based) at `index` flips,
@@ -175,7 +177,7 @@ mod tests {
         let model_line = |view: usize| visible[view];
         let range = StickyRange { start: model_line(first_view), end: model_line(last_view) };
         let candidates = candidates_intersecting(model, range, line_count, LINE_HEIGHT, hidden);
-        find_widget_state(&candidates, scroll_top, 5, |line| view_line(line) as f32 * LINE_HEIGHT).start_line_numbers
+        find_widget_state(&candidates, scroll_top, 5, |line| view_line(line) as f32 * LINE_HEIGHT, |line| view_line(line) as f32 * LINE_HEIGHT + LINE_HEIGHT).start_line_numbers
     }
 
     #[test]

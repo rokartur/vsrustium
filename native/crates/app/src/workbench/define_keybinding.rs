@@ -8,23 +8,20 @@ use std::time::Duration;
 
 use config::json::{self, NodeType, ParseOptions};
 use gpui::{
-    AnyElement, BoxShadow, Context, Div, InteractiveElement, IntoElement, ParentElement, Rgba, StatefulInteractiveElement, Styled, Task,
-    Window, div, point, px, rgb, rgba,
+    AnyElement, Context, Div, IntoElement, ParentElement, Rgba, Styled, Task, Window, div, px, rgb, rgba,
 };
 use serde_json::Value;
 
 use super::Workbench;
 use super::hover::{HoverContent, HoverOptions};
 use crate::commands::Outcome;
-use crate::editor::{HORIZONTAL_SCROLLBAR_HEIGHT, OpenEditor, VERTICAL_SCROLLBAR_WIDTH, VerticalReveal};
+use crate::editor::{EditReason, HORIZONTAL_SCROLLBAR_HEIGHT, OpenEditor, VERTICAL_SCROLLBAR_WIDTH, VerticalReveal};
 use crate::keybindings;
 use crate::keyboard_mapper;
 use crate::smart_snippet_inserter::{insert_snippet, offset_to_position};
 
 pub const DEFINE_KEYBINDING_COMMAND: &str = "editor.action.defineKeybinding";
 const MARKS_DELAY: Duration = Duration::from_millis(500);
-/// `.floating-menu-overlay-widget.single-button`'s 28px button.
-const BUTTON_HEIGHT: f32 = 28.;
 
 /// `KeybindingEditorDecorationsRenderer`'s decorations of the open user keybindings.json.
 #[derive(Default)]
@@ -112,7 +109,7 @@ impl Workbench {
     }
 
     /// `isInterestingEditorModel`.
-    fn is_user_keybindings(&self, editor: &OpenEditor) -> bool {
+    pub(super) fn is_user_keybindings(&self, editor: &OpenEditor) -> bool {
         editor.document.scheme == "file" && self.keybindings.user_file.as_ref() == Some(&editor.document.path)
     }
 
@@ -215,77 +212,14 @@ impl Workbench {
         [(lines(false), self.color("editorOverviewRuler.infoForeground")), (lines(true), self.color("editorOverviewRuler.errorForeground"))]
     }
 
-    /// The `DefineKeybindingOverlayWidget` while it records, and the floating toolbar of `MenuId.EditorContent`,
-    /// whose one item is Define Keybinding in the user keybindings.json.
-    pub(super) fn keybindings_file_widgets(
-        &self,
-        editor: &OpenEditor,
-        width: f32,
-        height: f32,
-        minimap_width: f32,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> Vec<AnyElement> {
-        if !self.is_user_keybindings(editor) {
-            return Vec::new();
+    /// The `DefineKeybindingOverlayWidget` while it records keys in the user keybindings.json.
+    pub(super) fn define_keybinding_overlay(&self, editor: &OpenEditor, width: f32, height: f32, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !self.is_user_keybindings(editor) || !self.define_widget_shown(true) {
+            return None;
         }
-        let mut widgets = vec![self.define_keybinding_button(height, minimap_width, window, cx)];
-        if self.define_widget_shown(true) {
-            // The workbench's text style, not the editor's monospace lines it sits over.
-            let widget = self
-                .define_keybinding_widget(width, height, window, cx)
-                .font_family(".SystemUIFont")
-                .text_size(px(13.))
-                .line_height(gpui::phi());
-            widgets.push(widget.into_any_element());
-        }
-        widgets
-    }
-
-    /// floatingMenu.ts `FloatingEditorToolbar` with one action: `.single-button`, the action primary, at
-    /// `BOTTOM_RIGHT_CORNER` (overlayWidgets.ts: right of both scrollbars and the minimap, above twice the
-    /// horizontal scrollbar).
-    fn define_keybinding_button(&self, height: f32, minimap_width: f32, window: &Window, cx: &mut Context<Self>) -> AnyElement {
-        let context = self.key_context(window);
-        let keybinding = self
-            .keybindings
-            .resolver
-            .lookup_primary_keybinding(DEFINE_KEYBINDING_COMMAND, &context)
-            .map(|item| keybindings::label(&item.keybinding));
-        let label = match keybinding {
-            Some(keybinding) => format!("Define Keybinding ({keybinding})"),
-            None => "Define Keybinding".to_string(),
-        };
-        let hover_background = self.color("button.hoverBackground");
-        div()
-            .id("define-keybinding-button")
-            .absolute()
-            .right(px(2. * VERTICAL_SCROLLBAR_WIDTH + minimap_width))
-            .top(px(height - BUTTON_HEIGHT - 2. * HORIZONTAL_SCROLLBAR_HEIGHT))
-            .h(px(BUTTON_HEIGHT))
-            .px(px(8.))
-            .flex()
-            .items_center()
-            .font_family(".SystemUIFont")
-            .text_size(px(11.))
-            .rounded(px(6.))
-            .cursor_pointer()
-            .bg(self.color("button.background"))
-            .text_color(self.color("button.foreground"))
-            .hover(move |style| style.bg(hover_background))
-            .shadow(vec![BoxShadow {
-                color: self.color("widget.shadow").into(),
-                offset: point(px(0.), px(2.)),
-                blur_radius: px(8.),
-                spread_radius: px(0.),
-                inset: false,
-            }])
-            .child(label)
-            .child(self.action_hover("Define Keybinding", DEFINE_KEYBINDING_COMMAND, HoverOptions::mouse()))
-            .on_click(cx.listener(|workbench, _, window, cx| {
-                workbench.execute_command(DEFINE_KEYBINDING_COMMAND, Vec::new(), window, cx);
-            }))
-            .into_any_element()
+        // The workbench's text style, not the editor's monospace lines it sits over.
+        let widget = self.define_keybinding_widget(width, height, window, cx).font_family(".SystemUIFont").text_size(px(13.)).line_height(gpui::phi());
+        Some(widget.into_any_element())
     }
 }
 

@@ -241,6 +241,13 @@ impl Workbench {
             cx.notify();
             Outcome::done()
         });
+        // breadcrumbsControl.ts `ToggleBreadcrumb`.
+        self.commands.register("breadcrumbs.toggle", |workbench, _, _, cx| {
+            let enabled = workbench.setting("breadcrumbs.enabled") != json!(false);
+            workbench.update_setting("breadcrumbs.enabled", json!(!enabled));
+            cx.notify();
+            Outcome::done()
+        });
         self.commands.register("editor.action.toggleMinimap", |workbench, _, _, cx| {
             let enabled = workbench.setting("editor.minimap.enabled") != json!(false);
             workbench.update_setting("editor.minimap.enabled", json!(!enabled));
@@ -355,8 +362,22 @@ impl Workbench {
             let settings = workbench.settings.lock().unwrap();
             let spread = settings.get_value(Some("editor.multiCursorPaste"), &overrides) != Some(json!("full"));
             let overtype = workbench.overtype && settings.get_value(Some("editor.overtypeOnPaste"), &overrides) != Some(json!(false));
+            let indent_on_paste = settings.get_value(Some("editor.autoIndentOnPaste"), &overrides) == Some(json!(true));
+            let within_string = settings.get_value(Some("editor.autoIndentOnPasteWithinString"), &overrides) != Some(json!(false));
             drop(settings);
-            workbench.run_on_active_editor(|editor: &mut OpenEditor| editor.paste(pasted, spread, overtype), cx)
+            workbench.run_indenting(
+                |editor, auto| {
+                    // codeEditorWidget.ts `_paste`: the pasted range runs from the selection start before to the one after.
+                    let start = editor.selection().start();
+                    let mut changes: Vec<_> = editor.paste(pasted, spread, overtype).into_iter().collect();
+                    if indent_on_paste {
+                        let end = editor.selection().start();
+                        changes.extend(editor.auto_indent_on_paste(start, end, auto, within_string));
+                    }
+                    changes
+                },
+                cx,
+            )
         });
     }
 

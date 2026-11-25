@@ -83,6 +83,7 @@ impl Workbench {
                 TERMINAL_SCHEME => part.child(self.terminal_title_actions(cx)).child(self.terminal_body(cx)),
                 // breadcrumbsControl.ts `update`: no breadcrumbs for a resource without a file system provider.
                 "untitled" => part,
+                _ if self.setting("breadcrumbs.enabled") == json!(false) => part,
                 _ => part.child(self.breadcrumbs(editor).opacity(self.unfocused_editor_opacity(window))),
             })
             .map(|part| match self.editors.active_diff() {
@@ -344,8 +345,9 @@ impl Workbench {
         let metrics = self.editor_metrics(editor, window);
         let head = editor.selection().head;
         let viewport = self.editors.viewport;
-        let left = metrics.content_left() + visible_column(&editor.document.lines[head.line], head.column, editor.document.indentation.tab_size) as f32 * metrics.char_width - editor.scroll.left;
-        let top = editor.line_top(editor.view_line(head.line), viewport) - editor.scroll.top + metrics.line_height;
+        let view_line = editor.head_view_line(0);
+        let left = metrics.content_left() + editor.segment_visible_column(editor.segment(view_line), head.column) as f32 * metrics.char_width - editor.scroll.left;
+        let top = editor.line_top(view_line, viewport) - editor.scroll.top + metrics.line_height;
         let origin = self.text_area_bounds.get().origin;
         Some(point(px(origin.x + left), px(origin.y + top)))
     }
@@ -379,7 +381,8 @@ impl Workbench {
         let sticky_scroll_lines = self.sticky_scroll_lines();
         let top_whitespace = self.editors.viewport.top_whitespace;
         let stop_rendering_line_after = self.stop_rendering_line_after;
-        let minimap_enabled = !in_diff && self.setting("editor.minimap.enabled") != json!(false);
+        let minimap_settings = self.minimap_settings();
+        let minimap_enabled = !in_diff && minimap_settings.enabled;
         let viewport = self.editors.viewport;
         let lines = editor.visible_lines(viewport);
         let zones = editor.zones_between(lines.clone());
@@ -392,6 +395,8 @@ impl Workbench {
             rows.push(row);
         }
         let minimap_width = self.minimap.info.as_ref().map_or(0., |(info, _)| info.width as f32);
+        let margin_shift = self.minimap.info.as_ref().map_or(0., |(info, _)| info.margin_shift() as f32);
+        let shifted = || div().absolute().top_0().bottom_0().left(px(margin_shift)).right_0();
         let now = Instant::now();
         if self.scrollbars.in_transition(now) || self.fold_controls.in_transition(now) || self.minimap.in_transition(now) {
             window.request_animation_frame();
@@ -409,6 +414,7 @@ impl Workbench {
             .line_height(px(metrics.line_height))
             .track_focus(&self.editor_focus)
             .on_key_down(cx.listener(Self::editor_key_down))
+            .on_key_up(cx.listener(Self::inspect_tokens_key_up))
             .on_scroll_wheel(cx.listener(Self::editor_wheel))
             .on_modifiers_changed(cx.listener(Self::sticky_modifiers_changed))
             .on_modifiers_changed(cx.listener(|workbench, event: &gpui::ModifiersChangedEvent, _, cx| {
@@ -457,11 +463,13 @@ impl Workbench {
             .child(
                 canvas(
                     move |bounds, window, cx| {
-                        area_left.set(f32::from(bounds.left()));
-                        area_bounds.set(bounds.map(f32::from));
                         let (width, height) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
                         let pixel_ratio = window.scale_factor();
-                        let minimap = minimap_enabled.then(|| minimap_info(width, height, metrics.content_left(), metrics.char_width, metrics.line_height, view_line_count, pixel_ratio));
+                        let minimap = minimap_enabled.then(|| minimap_info(width, height, metrics.content_left(), metrics.char_width, metrics.line_height, view_line_count, pixel_ratio, minimap_settings.layout));
+                        // The margin and content right of a left minimap: pointer positions count from there.
+                        let shift = px(minimap.as_ref().map_or(0., |minimap| minimap.margin_shift() as f32));
+                        area_left.set(f32::from(bounds.left() + shift));
+                        area_bounds.set(Bounds::from_corners(point(bounds.left() + shift, bounds.top()), bounds.bottom_right()).map(f32::from));
                         // editorOptions.ts: contentWidth = remainingWidth - minimapWidth.
                         let minimap_width = minimap.as_ref().map_or(0., |minimap| minimap.width as f32);
                         let viewport = Viewport { width: width - metrics.content_left() - minimap_width, height, char_width: metrics.char_width, line_height: metrics.line_height, sticky_scroll_lines, top_whitespace, stop_rendering_line_after };
@@ -483,31 +491,46 @@ impl Workbench {
                 .absolute()
                 .inset_0(),
             )
-            // .view-lines is monaco-mouse-cursor-text; the line numbers, glyph margin and the overview ruler over the
-            // vertical scrollbar keep the default cursor.
-            .child(div().absolute().top_0().bottom_0().left(px(metrics.content_left())).right(px(OVERVIEW_RULER_WIDTH)).cursor(self.text_cursor_style()).on_mouse_down(
-                MouseButton::Right,
-                // Below the last line (MouseTargetType.CONTENT_EMPTY): the position is the end of the last line.
-                cx.listener(|workbench, event: &MouseDownEvent, window, cx| {
-                    let last = workbench.editors.active().expect("the text area shows an editor").document.lines.len() - 1;
-                    workbench.show_editor_context_menu(last, f32::MAX, event.position, window, cx);
-                }),
-            ))
-            // editorScrollbar.ts clips the lines at contentWidth: the column right of the minimap stays empty.
-            .child(div().absolute().left_0().right(px(minimap_width)).top_0().bottom_0().overflow_hidden().child(div().absolute().left_0().right_0().top(px(lines_top)).children(rows)))
-            .children(self.marker_navigation_widget(editor, metrics.content_left(), metrics.char_width, cx))
             .child(
-                div().id("margin").absolute().top_0().bottom_0().left_0().w(px(metrics.content_left())).on_hover(cx.listener(|workbench, hovered: &bool, _, cx| {
-                    workbench.fold_controls.set_shown(*hovered, Instant::now());
-                    cx.notify();
-                })),
+                shifted()
+                    // .view-lines is monaco-mouse-cursor-text; the line numbers, glyph margin and the overview ruler over the
+                    // vertical scrollbar keep the default cursor.
+                    .child(div().absolute().top_0().bottom_0().left(px(metrics.content_left())).right(px(OVERVIEW_RULER_WIDTH)).cursor(self.text_cursor_style()).on_mouse_down(
+                        MouseButton::Right,
+                        // Below the last line (MouseTargetType.CONTENT_EMPTY): the position is the end of the last line.
+                        cx.listener(|workbench, event: &MouseDownEvent, window, cx| {
+                            let last = workbench.editors.active().expect("the text area shows an editor").document.lines.len() - 1;
+                            workbench.show_editor_context_menu(last, f32::MAX, event.position, window, cx);
+                        }),
+                    ))
+                    // editorScrollbar.ts clips the lines at contentWidth: the column right of the minimap stays empty.
+                    .child(div().absolute().left_0().right(px(minimap_width - margin_shift)).top_0().bottom_0().overflow_hidden().child(div().absolute().left_0().right_0().top(px(lines_top)).children(rows)))
+                    .children(self.marker_navigation_widget(editor, metrics.content_left(), metrics.char_width, cx))
+                    .child(
+                        div().id("margin").absolute().top_0().bottom_0().left_0().w(px(metrics.content_left())).on_hover(cx.listener(|workbench, hovered: &bool, _, cx| {
+                            workbench.fold_controls.set_shown(*hovered, Instant::now());
+                            cx.notify();
+                        })),
+                    )
+                    .child(self.overview_ruler(editor).absolute().top_0().right_0().h_full())
+                    .child(self.scrollbars_canvas(editor, metrics, cx).absolute().inset_0())
+                    // contextmenu.ts: a right press on the scrollbar (MouseTargetType.SCROLLBAR) shows the minimap menu.
+                    .child(div().absolute().top_0().bottom_0().right_0().w(px(VERTICAL_SCROLLBAR_WIDTH)).on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(|workbench, event: &MouseDownEvent, window, cx| workbench.show_scrollbar_context_menu(event.position, window, cx)),
+                    )),
             )
-            .child(self.overview_ruler(editor).absolute().top_0().right_0().h_full())
-            .child(self.scrollbars_canvas(editor, metrics, cx).absolute().inset_0())
             .when(editor.scroll.top > 0., |area| area.child(div().absolute().top_0().left_0().right(px(VERTICAL_SCROLLBAR_WIDTH)).h(px(SCROLL_SHADOW_HEIGHT)).cursor_default().child(self.scroll_shadow().size_full())))
             .children(self.minimap(editor, cx))
-            .children(middle_scroll_dot)
-            .children(self.sticky_scroll_widget(editor, metrics, window, cx))
+            .child(
+                shifted()
+                    .children(middle_scroll_dot)
+                    .children(self.sticky_scroll_widget(editor, metrics, window, cx))
+                    .children(self.editor_message_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
+                    .children(self.content_hover_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
+                    .children(self.inspect_tokens_widget(editor, metrics.content_left(), metrics.char_width, window)),
+            )
+            // Overlay widgets: placed from the editor's right edge whichever side the minimap is on.
             .children(self.find_widget(self.editors.viewport.width + metrics.content_left() + minimap_width, metrics.content_left(), minimap_width, window, cx))
             .children(self.editor_message_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
             .children(self.content_hover_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
@@ -516,6 +539,9 @@ impl Workbench {
             .children(self.code_lens_widgets(editor, metrics.content_left(), metrics.char_width, cx))
             .children(self.suggest_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
             .children(self.keybindings_file_widgets(editor, self.editors.viewport.width + metrics.content_left() + minimap_width, viewport.height, minimap_width, window, cx))
+            .children(self.find_options_widget(minimap_width, cx))
+            .children(self.floating_menu(editor, viewport.height, minimap_width, window, cx))
+            .children(self.define_keybinding_overlay(editor, self.editors.viewport.width + metrics.content_left() + minimap_width, viewport.height, window, cx))
     }
 
     /// wordHighlighter.ts: `onDidBlurEditorWidget` stops the highlights once no code editor has the focus,
@@ -596,6 +622,7 @@ impl Workbench {
         let minimap_changed = self.minimap.info != minimap;
         self.editors.viewport = viewport;
         self.minimap.info = minimap;
+        let rewrapped = self.configure_word_wrap();
         let editor = self.editors.active_mut().expect("laid out only with an editor open");
         let scroll_width = editor.scroll_width(viewport);
         let visible_lines = editor.visible_lines(viewport);
@@ -607,6 +634,7 @@ impl Workbench {
             let text = &editor.document.lines[editor.model_line(view_line)];
             let tab_size = editor.document.indentation.tab_size;
             let width = match line_overflow(text, self.stop_rendering_line_after) {
+                _ if editor.wraps() => editor.wrapped_line_width(view_line).unwrap_or_default() as f32 * viewport.char_width,
                 None => visible_column(text, text.chars().count(), tab_size) as f32 * viewport.char_width,
                 Some((limit, _, label)) => visible_column(text, limit, tab_size) as f32 * viewport.char_width + show_more_width(&label, viewport.char_width),
             };
@@ -617,7 +645,7 @@ impl Workbench {
         if resized || moved {
             self.host.send_visible_ranges(&self.editors);
         }
-        if resized || moved || widened || minimap_changed {
+        if resized || moved || widened || minimap_changed || rewrapped {
             cx.notify();
         }
     }
@@ -643,9 +671,18 @@ impl Workbench {
                 return;
             }
         }
-        let viewport = self.editors.viewport;
-        let editor = self.editors.active_mut().expect("the text area scrolls only with an editor open");
-        if editor.scroll_by_wheel(x, y, event.modifiers.alt, viewport) {
+        let fast = event.modifiers.alt;
+        let scrolled = match event.delta {
+            // scrollableElement.ts: only a physical mouse wheel scrolls smoothly.
+            ScrollDelta::Lines(_) => self.scroll_smoothly(cx, |editor, viewport| {
+                editor.scroll_by_wheel(x, y, fast, viewport);
+            }),
+            ScrollDelta::Pixels(_) => {
+                let viewport = self.editors.viewport;
+                self.editors.active_mut().expect("the text area scrolls only with an editor open").scroll_by_wheel(x, y, fast, viewport)
+            }
+        };
+        if scrolled {
             cx.stop_propagation();
             self.editor_scrolled(cx);
         }
@@ -748,11 +785,20 @@ impl Workbench {
                 });
                 let workbench = workbench.clone();
                 window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
-                    if phase != DispatchPhase::Bubble || event.button != MouseButton::Left {
+                    if phase != DispatchPhase::Bubble {
                         return;
                     }
                     let Some((_, track, axis)) = tracks.iter().find(|(hitbox, _, _)| hitbox.is_hovered(window)) else { return };
                     let (track, axis) = (*track, *axis);
+                    // The vertical scrollbar's column shows the menu itself, shown or not.
+                    if event.button == MouseButton::Right && axis == Axis::Horizontal {
+                        cx.stop_propagation();
+                        workbench.update(cx, |workbench, cx| workbench.show_scrollbar_context_menu(event.position, window, cx));
+                        return;
+                    }
+                    if event.button != MouseButton::Left {
+                        return;
+                    }
                     let along = |position: Point<Pixels>| f32::from(if axis == Axis::Vertical { position.y - track.top() } else { position.x - track.left() });
                     let offset = along(event.position);
                     cx.stop_propagation();
@@ -859,12 +905,18 @@ impl Workbench {
         let editor_background = self.color("editor.background");
         let view_line_count = editor.view_line_count();
         // viewLines.ts linesVisibleRangesForRange: a selected line break is one typicalHalfwidthCharacterWidth wide.
+        // With word wrap each view line gets the part of the selection on its segment, in the view line's x.
         let selection_range = |selection: Selection, view_line: usize| {
-            let line = editor.model_line(view_line);
-            let text = &editor.document.lines[line];
-            let (start, end, line_break) = selected_columns(selection, line, text)?;
-            let left = visible_column(text, start, tab_size) as f32 * char_width;
-            Some((left, visible_column(text, end, tab_size) as f32 * char_width + if line_break { char_width } else { 0. }))
+            let segment = editor.segment(view_line);
+            let text = &editor.document.lines[segment.line];
+            let (start, end, line_break) = selected_columns(selection, segment.line, text)?;
+            let line_break = line_break && segment.last;
+            let (start, end) = (start.max(segment.start), end.min(segment.end));
+            if start > end || (start == end && !line_break && !segment.first) {
+                return None;
+            }
+            let left = editor.segment_visible_column(segment, start) as f32 * char_width;
+            Some((left, editor.segment_visible_column(segment, end) as f32 * char_width + if line_break { char_width } else { 0. }))
         };
         let mut fold_starts = HashMap::new();
         for (range, decoration) in editor.folding.regions.ranges().iter().zip(editor.folding.decorations()) {
@@ -874,9 +926,12 @@ impl Workbench {
         }
         range
             .map(|view_line| {
-                let index = editor.model_line(view_line);
+                let segment = editor.segment(view_line);
+                let index = segment.line;
                 let text = &editor.document.lines[index];
-                let collapsed = fold_starts.get(&index).copied();
+                // The x of the segment's first char in the model line's x, which the line's decorations use.
+                let shift = (visible_column(text, segment.start, tab_size) as f32 - segment.indent as f32) * char_width;
+                let collapsed = fold_starts.get(&index).copied().filter(|_| segment.first);
                 // lineNumbers.ts marks only the primary cursor's line active.
                 let number = div()
                     .w(px(metrics.line_numbers_width))
@@ -885,9 +940,9 @@ impl Workbench {
                     .text_color(if index == primary_line { colors.active_number } else { colors.number })
                     // lineNumbers.css `.relative-current-line-number`: the cursor's line number aligns left.
                     .when(metrics.line_numbers == LineNumbers::Relative && index == primary_line, |number| number.text_left())
-                    .children(line_number_label(metrics.line_numbers, index, primary_line, editor.document.lines.len()));
+                    .children(line_number_label(metrics.line_numbers, index, primary_line, editor.document.lines.len()).filter(|_| segment.first));
                 let mut current_line = div().absolute().inset_0();
-                if line_highlight && all_empty && selections.iter().any(|selection| selection.head.line == index) {
+                if line_highlight && all_empty && (0..selections.len()).any(|cursor_index| editor.head_view_line(cursor_index) == view_line) {
                     if let Some(background) = colors.line_background {
                         current_line = current_line.bg(background);
                     }
@@ -896,14 +951,15 @@ impl Workbench {
                     }
                 }
                 // The text scrolls left under the fixed margin and current line border.
-                let mut content = div().absolute().top_0().bottom_0().right_0().left(px(-scroll_left));
+                let mut content = div().absolute().top_0().bottom_0().right_0().left(px(-scroll_left - shift));
                 // selections.ts: inner corner pieces of every selection go before the rest (issue #77777).
                 let mut inner_corners = Vec::new();
                 let mut pieces = Vec::new();
                 for selection in selections {
-                    let Some((left, right)) = selection_range(*selection, view_line) else { continue };
-                    let above = view_line.checked_sub(1).and_then(|above| selection_range(*selection, above));
-                    let below = if view_line + 1 < view_line_count { selection_range(*selection, view_line + 1) } else { None };
+                    let in_line_x = |(left, right): (f32, f32)| (left + shift, right + shift);
+                    let Some((left, right)) = selection_range(*selection, view_line).map(in_line_x) else { continue };
+                    let above = view_line.checked_sub(1).and_then(|above| selection_range(*selection, above)).map(in_line_x);
+                    let below = if view_line + 1 < view_line_count { selection_range(*selection, view_line + 1).map(in_line_x) } else { None };
                     // `hasMultipleSelections` insets the first line by 1px at the top, the last (not also first) at the bottom.
                     let multiple = selections.len() > 1;
                     let top = if multiple && above.is_none() { 1. } else { 0. };
@@ -1084,11 +1140,11 @@ impl Workbench {
                     content = content.children(self.control_character_boxes(text, tab_size, char_width, rendered_len));
                 }
                 // folding.css .inline-folded:after: an ellipsis 0.2em after the line's last char.
-                if collapsed == Some(true) {
+                if collapsed == Some(true) && segment.last {
                     let end = visible_column(text, text.chars().count(), tab_size) as f32 * char_width + 0.2 * metrics.font_size;
                     content = content.child(div().absolute().top_0().left(px(end)).text_color(fold_placeholder).cursor_pointer().child("\u{22EF}"));
                 }
-                for (cursor_index, selection) in selections.iter().enumerate().filter(|(_, selection)| focused && selection.head.line == index) {
+                for (cursor_index, selection) in selections.iter().enumerate().filter(|(cursor_index, _)| focused && editor.head_view_line(*cursor_index) == view_line) {
                     // shortcut: the cursor does not blink (editor.cursorBlinking "blink" hides it every 500ms).
                     let color = match (selections.len(), cursor_index) {
                         (1, _) => colors.cursor,
@@ -1115,7 +1171,8 @@ impl Workbench {
                 if let Some(target) = self.text_drag.as_ref().and_then(|drag| drag.target).filter(|target| target.line == index) {
                     content = content.child(self.drop_target_marker(visible_column(text, target.column, tab_size) as f32 * char_width));
                 }
-                let visible_at = move |workbench: &Workbench, x: gpui::Pixels| (f32::from(x) - workbench.text_area_left.get() - metrics.content_left() + scroll_left) / char_width;
+                let segment_columns = (visible_column(text, segment.start, tab_size) as f32, if segment.last { f32::MAX } else { visible_column(text, segment.end, tab_size) as f32 });
+                let visible_at = move |workbench: &Workbench, x: gpui::Pixels| ((f32::from(x) - workbench.text_area_left.get() - metrics.content_left() + scroll_left + shift) / char_width).clamp(segment_columns.0, segment_columns.1);
                 let content = div()
                     .relative()
                     .flex_1()
@@ -1123,7 +1180,8 @@ impl Workbench {
                     .overflow_hidden()
                     .text_color(colors.text)
                     .child(current_line)
-                    .child(content)
+                    .child(self.wrapped_segment_clip(content, segment, shift, scroll_left, char_width))
+                    .children(self.word_wrap_indicator(editor, segment, scroll_left, char_width))
                     .on_mouse_down(MouseButton::Left, cx.listener(move |workbench, event: &MouseDownEvent, window, cx| {
                         window.focus(&workbench.editor_focus, cx);
                         let modifiers = event.modifiers;
@@ -1134,6 +1192,7 @@ impl Workbench {
                         workbench.selecting_text = true;
                         workbench.fold_mouse_down = workbench.at_line_end(index, visible).then_some((index, false));
                         workbench.click_text(index, visible, modifiers, modifiers.shift, event.click_count, cx);
+                        workbench.keep_click_at_row_end(view_line, visible);
                         workbench.show_long_line(index, visible, char_width, cx);
                     }))
                     .on_mouse_down(MouseButton::Right, cx.listener(move |workbench, event: &MouseDownEvent, window, cx| {
@@ -1170,7 +1229,11 @@ impl Workbench {
                         match event.pressed_button {
                             Some(MouseButton::Left) if workbench.line_select_start.is_some() => workbench.gutter_line_select_drag(index, cx),
                             Some(MouseButton::Left) if workbench.text_drag.is_some() => workbench.drag_text(index, visible_at(workbench, event.position.x), event.modifiers.alt, cx),
-                            Some(MouseButton::Left) if workbench.selecting_text => workbench.click_text(index, visible_at(workbench, event.position.x), event.modifiers, true, 1, cx),
+                            Some(MouseButton::Left) if workbench.selecting_text => {
+                                let visible = visible_at(workbench, event.position.x);
+                                workbench.click_text(index, visible, event.modifiers, true, 1, cx);
+                                workbench.keep_click_at_row_end(view_line, visible);
+                            }
                             Some(MouseButton::Middle) if workbench.selecting_text => workbench.column_select_text(index, visible_at(workbench, event.position.x), true, cx),
                             _ => {}
                         }
@@ -1379,16 +1442,13 @@ impl Workbench {
 
     /// After a command that moves cursors only: scrolls to what it reveals and tells the host.
     pub(super) fn cursors_changed(&mut self, before: Vec<Selection>, reveal: Reveal, source: &str, cx: &mut Context<Self>) {
-        let viewport = self.editors.viewport;
-        let editor = self.editors.active_mut().expect("cursors change in the active editor");
-        let scroll = editor.scroll;
-        match reveal {
+        let scrolled = self.scroll_smoothly(cx, |editor, viewport| match reveal {
             Reveal::Nothing => {}
             Reveal::All => editor.reveal_cursors(source, viewport),
             Reveal::Position(position) => editor.reveal_position(position, source, viewport),
             Reveal::CenterIfOutside(position) => editor.reveal_range(position, position, VerticalReveal::CenterIfOutsideViewport, viewport),
-        }
-        let (moved, scrolled) = (editor.selections != before, editor.scroll != scroll);
+        });
+        let moved = self.editors.active().expect("cursors change in the active editor").selections != before;
         if moved {
             self.output_cursor_moved();
             self.find_editor_edited(None);
@@ -1702,7 +1762,7 @@ fn selection_label(editor: &OpenEditor) -> String {
     }
     if let [selection] = editor.selections.as_slice() {
         let Position { line, column } = selection.head;
-        let visible = visible_column(&document.lines[line], column, document.indentation.tab_size);
+        let visible = crate::editor::logical_visible_column(&document.lines[line], column, document.indentation.tab_size);
         return match selected {
             0 => format!("Ln {}, Col {}", line + 1, visible + 1),
             _ => format!("Ln {}, Col {} ({selected} selected)", line + 1, visible + 1),
@@ -1907,7 +1967,7 @@ impl FoldControls {
 }
 
 /// CSS `ease`, cubic-bezier(0.25, 0.1, 0.25, 1): the curve's x solved by bisection, then its y.
-fn ease(x: f32) -> f32 {
+pub(super) fn ease(x: f32) -> f32 {
     let bezier = |p1: f32, p2: f32, t: f32| 3. * p1 * t * (1. - t).powi(2) + 3. * p2 * t * t * (1. - t) + t.powi(3);
     let (mut low, mut high) = (0., 1.);
     for _ in 0..24 {

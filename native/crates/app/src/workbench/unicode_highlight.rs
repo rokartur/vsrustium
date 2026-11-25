@@ -10,10 +10,10 @@ use serde_json::{Value, json};
 use textmate::StandardTokenType;
 
 use super::Workbench;
-use super::content_hover::code_point_to_hex;
+use super::content_hover::{code_point_to_hex, format_code_point_markdown};
 use super::editor_status::{StatusPick, label_item};
 use crate::editor::{OpenEditor, visible_column};
-use crate::editor::unicode_highlighter::{UnicodeHighlighterOptions, UnicodeHighlights, compute_unicode_highlights, is_invisible_character};
+use crate::editor::unicode_highlighter::{CodePointHighlighter, HighlightReason, UnicodeHighlighterOptions, UnicodeHighlights, compute_unicode_highlights, is_invisible_character};
 use crate::quick_input::{Entry, Kind, QuickInput};
 
 #[cfg(test)]
@@ -74,36 +74,10 @@ impl Workbench {
 
     /// `ShowExcludeOptions`: the hover's "Adjust settings" picker for one character.
     pub(super) fn show_unicode_exclude_options(&mut self, args: &Value, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(c) = args["codePoint"].as_u64().and_then(|code| char::from_u32(code as u32)) else { return };
-        let reason = &args["reason"];
-        let mut rows = Vec::new();
-        let mut row = |label: String, key: &'static str, value: Value| rows.push((Entry::Item(label_item(&label)), StatusPick::UserSetting { key, value }));
-        if reason["kind"] == 0 {
-            let user_locales = self.settings.lock().unwrap().configuration.inspect("editor.unicodeHighlight.allowedLocales", &Overrides::default()).user_local.value;
-            for locale in reason["notAmbiguousInLocales"].as_array().into_iter().flatten().filter_map(Value::as_str) {
-                let mut value = user_locales.clone().filter(Value::is_object).unwrap_or_else(|| json!({}));
-                value[locale] = json!(true);
-                row(format!("Allow unicode characters that are more common in the language \"{locale}\"."), "editor.unicodeHighlight.allowedLocales", value);
-            }
-        }
-        let mut allowed = Some(self.setting("editor.unicodeHighlight.allowedCharacters")).filter(Value::is_object).unwrap_or_else(|| json!({}));
-        allowed[c.to_string()] = json!(true);
-        let hex = code_point_to_hex(c);
-        let label = match is_invisible_character(c) {
-            true => format!("Exclude {hex} (invisible character) from being highlighted"),
-            false => format!("Exclude {hex} \"{c}\" from being highlighted"),
-        };
-        row(label, "editor.unicodeHighlight.allowedCharacters", allowed);
-        if args["inComment"] == true {
-            row("Disable highlighting of characters in comments".into(), "editor.unicodeHighlight.includeComments", json!(false));
-        } else if args["inString"] == true {
-            row("Disable highlighting of characters in strings".into(), "editor.unicodeHighlight.includeStrings", json!(false));
-        }
-        match reason["kind"].as_u64() {
-            Some(0) => row("Disable highlighting of ambiguous characters".into(), "editor.unicodeHighlight.ambiguousCharacters", json!(false)),
-            Some(1) => row("Disable highlighting of invisible characters".into(), "editor.unicodeHighlight.invisibleCharacters", json!(false)),
-            _ => row("Disable highlighting of non basic ASCII characters".into(), "editor.unicodeHighlight.nonBasicASCII", json!(false)),
-        }
+        let user_locales = self.settings.lock().unwrap().configuration.inspect("editor.unicodeHighlight.allowedLocales", &Overrides::default()).user_local.value;
+        let allowed_characters = self.setting("editor.unicodeHighlight.allowedCharacters");
+        let Some(options) = unicode_exclude_options(args, user_locales, allowed_characters) else { return };
+        let rows = options.into_iter().map(|(label, key, value)| (Entry::Item(label_item(&label)), StatusPick::UserSetting { key, value })).collect();
         let mut input = QuickInput::new(0, Kind::QuickPick);
         input.title = Some("Configure Unicode Highlight Options".into());
         self.show_status_picker(input, rows, window, cx);
@@ -203,4 +177,54 @@ impl Workbench {
                 .child(div().flex().items_center().pl(px(6.)).pr(px(10.)).child(close)),
         )
     }
+}
+
+/// UnicodeHighlighterHoverParticipant `computeSync`'s reason text for one highlighted character.
+pub(super) fn unicode_hover_reason(c: char, reason: HighlightReason, highlighter: &CodePointHighlighter) -> String {
+    let code_point = format_code_point_markdown(c);
+    match reason {
+        HighlightReason::Ambiguous => {
+            let confusable = highlighter.ambiguous.get(&(c as u32)).and_then(|code| char::from_u32(*code)).unwrap_or(c);
+            match confusable.is_ascii() {
+                true => format!("The character {code_point} could be confused with the ASCII character {}, which is more common in source code.", format_code_point_markdown(confusable)),
+                false => format!("The character {code_point} could be confused with the character {}, which is more common in source code.", format_code_point_markdown(confusable)),
+            }
+        }
+        HighlightReason::Invisible => format!("The character {code_point} is invisible."),
+        HighlightReason::NonBasicAscii => format!("The character {code_point} is not a basic ASCII character."),
+    }
+}
+
+/// `ShowExcludeOptions.run`'s picks for `ShowExcludeOptionsArgs`, in its order: label, user setting key, new value.
+fn unicode_exclude_options(args: &Value, user_locales: Option<Value>, allowed_characters: Value) -> Option<Vec<(String, &'static str, Value)>> {
+    let c = args["codePoint"].as_u64().and_then(|code| char::from_u32(code as u32))?;
+    let reason = &args["reason"];
+    let mut options = Vec::new();
+    if reason["kind"] == 0 {
+        for locale in reason["notAmbiguousInLocales"].as_array().into_iter().flatten().filter_map(Value::as_str) {
+            let mut value = user_locales.clone().filter(Value::is_object).unwrap_or_else(|| json!({}));
+            value[locale] = json!(true);
+            options.push((format!("Allow unicode characters that are more common in the language \"{locale}\"."), "editor.unicodeHighlight.allowedLocales", value));
+        }
+    }
+    let mut allowed = Some(allowed_characters).filter(Value::is_object).unwrap_or_else(|| json!({}));
+    allowed[c.to_string()] = json!(true);
+    let hex = code_point_to_hex(c);
+    let label = match is_invisible_character(c) {
+        true => format!("Exclude {hex} (invisible character) from being highlighted"),
+        false => format!("Exclude {hex} \"{c}\" from being highlighted"),
+    };
+    options.push((label, "editor.unicodeHighlight.allowedCharacters", allowed));
+    if args["inComment"] == true {
+        options.push(("Disable highlighting of characters in comments".into(), "editor.unicodeHighlight.includeComments", json!(false)));
+    } else if args["inString"] == true {
+        options.push(("Disable highlighting of characters in strings".into(), "editor.unicodeHighlight.includeStrings", json!(false)));
+    }
+    let (label, key) = match reason["kind"].as_u64() {
+        Some(0) => ("Disable highlighting of ambiguous characters", "editor.unicodeHighlight.ambiguousCharacters"),
+        Some(1) => ("Disable highlighting of invisible characters", "editor.unicodeHighlight.invisibleCharacters"),
+        _ => ("Disable highlighting of non basic ASCII characters", "editor.unicodeHighlight.nonBasicASCII"),
+    };
+    options.push((label.into(), key, json!(false)));
+    Some(options)
 }

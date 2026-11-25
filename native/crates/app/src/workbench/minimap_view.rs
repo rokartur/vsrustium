@@ -1,5 +1,6 @@
-//! The minimap (minimap.ts `Minimap` and `InnerMinimap`, minimap.css) at the text area's right edge, left of the
-//! vertical scrollbar: the lines canvas, the decorations canvas over it, the slider and the shadow.
+//! The minimap (minimap.ts `Minimap` and `InnerMinimap`, minimap.css) left of the vertical scrollbar, or at the text
+//! area's left edge with `editor.minimap.side: left`: the lines canvas, the decorations canvas over it, the slider and
+//! the shadow.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -15,17 +16,19 @@ use serde_json::json;
 
 use super::Workbench;
 use crate::editor::minimap::{
-    CharRenderer, LinesColors, MINIMAP_GUTTER_WIDTH, MinimapLayout, MinimapLayoutInfo, MinimapLayoutInput, MinimapOptions, MinimapRange, SliderOptions, compute_minimap_layout,
-    decoration_fills, render_lines,
+    CharRenderer, LinesColors, MINIMAP_GUTTER_WIDTH, MinimapLayout, MinimapLayoutInfo, MinimapLayoutInput, MinimapOptions, MinimapRange, MinimapSampling, MinimapSide, MinimapSize,
+    SliderOptions, compute_minimap_layout, contained_minimap_line_count, decoration_fills, render_lines,
 };
 use crate::editor::folding::FoldDecoration;
 use crate::editor::section_headers::{FindOptions, MARK_SECTION_HEADER_REGEX, SectionHeader, find_section_headers, fit_section_header};
-use crate::editor::{OpenEditor, VERTICAL_SCROLLBAR_WIDTH, Viewport};
+use crate::editor::{OpenEditor, Position, VERTICAL_SCROLLBAR_WIDTH, Viewport};
 use crate::theme::relative_luminance;
 
 /// minimap.css `.minimap-slider` opacity transition, and `_hideSliderAfterScrollScheduler`.
 const SLIDER_FADE: Duration = Duration::from_millis(100);
 const SLIDER_SCROLLING_TIMEOUT: Duration = Duration::from_millis(500);
+/// `_hideDelayedScheduler` of `autohide: scroll`.
+const MINIMAP_HIDE_DELAY: Duration = Duration::from_millis(500);
 /// minimap.css `.minimap-shadow-visible`: a 6px strip left of the minimap with `--vscode-shadow-md`,
 /// `0 0 6px rgba(0, 0, 0, 0.08)`, a blur of sigma 3px.
 const SHADOW_STRIP_WIDTH: f32 = 6.;
@@ -48,9 +51,11 @@ pub(super) struct Minimap {
     scrolling: Option<Task<()>>,
     scroll_top: f32,
     drag: Option<MinimapDrag>,
-    slider_shown: bool,
-    /// When `slider_shown` last flipped, and the opacity the transition started from.
-    changed: Option<(Instant, f32)>,
+    slider: Fade,
+    /// `autohide`: the minimap's own opacity, shown while hovered (`mouseover`) or `active` (`scroll`).
+    autohide: Fade,
+    /// `active` of `autohide: scroll`: shown after a scroll until 500ms pass without the pointer over it.
+    active: Option<Task<()>>,
     /// The section headers of a model version and the find options they were found with.
     section_headers: RefCell<Option<(SectionHeaderKey, Rc<Vec<SectionHeader>>)>>,
 }
@@ -70,33 +75,77 @@ struct MinimapDrag {
     scroll_top: f32,
 }
 
-impl Minimap {
-    fn update_slider(&mut self, now: Instant) {
-        let shown = self.mouse_over || self.scrolling.is_some() || self.drag.is_some();
-        if self.slider_shown != shown {
-            let from = self.slider_opacity(now);
-            self.slider_shown = shown;
+/// An opacity transition between hidden (0) and shown (1).
+#[derive(Default)]
+struct Fade {
+    shown: bool,
+    /// When `shown` last flipped, and the opacity the transition started from.
+    changed: Option<(Instant, f32)>,
+}
+
+impl Fade {
+    fn set(&mut self, shown: bool, now: Instant, transition: Transition) {
+        if self.shown != shown {
+            let from = self.opacity(now, transition);
+            self.shown = shown;
             self.changed = Some((now, from));
         }
     }
 
-    /// Linear over 100ms both ways (`transition: opacity 100ms linear`).
-    fn slider_opacity(&self, now: Instant) -> f32 {
-        let target = if self.slider_shown { 1. } else { 0. };
+    fn opacity(&self, now: Instant, (duration, curve): Transition) -> f32 {
+        let target = if self.shown { 1. } else { 0. };
         let Some((at, from)) = self.changed else { return target };
-        let progress = (now.duration_since(at).as_secs_f32() / SLIDER_FADE.as_secs_f32()).min(1.);
-        from + (target - from) * progress
+        let progress = (now.duration_since(at).as_secs_f32() / duration.as_secs_f32()).min(1.);
+        from + (target - from) * curve(progress)
     }
 
-    pub(super) fn in_transition(&self, now: Instant) -> bool {
-        self.slider_opacity(now) != if self.slider_shown { 1. } else { 0. }
+    fn in_transition(&self, now: Instant, transition: Transition) -> bool {
+        self.opacity(now, transition) != if self.shown { 1. } else { 0. }
     }
 }
 
-/// `EditorLayoutInfoComputer` for the minimap with the `editor.minimap.*` defaults: the text area's outer size,
-/// the gutter's width, the editor font's metrics and the view's line count.
-pub(super) fn minimap_info(outer_width: f32, outer_height: f32, content_left: f32, char_width: f32, line_height: f32, view_line_count: usize, pixel_ratio: f32) -> MinimapLayoutInfo {
-    compute_minimap_layout(&MinimapLayoutInput {
+type Transition = (Duration, fn(f32) -> f32);
+/// minimap.css: `transition: opacity 100ms linear` on the slider, `transition: opacity 0.5s` (ease) on the minimap.
+const SLIDER_TRANSITION: Transition = (SLIDER_FADE, |progress| progress);
+const AUTOHIDE_TRANSITION: Transition = (Duration::from_millis(500), super::editor_view::ease);
+
+impl Minimap {
+    fn update_slider(&mut self, now: Instant) {
+        let shown = self.mouse_over || self.scrolling.is_some() || self.drag.is_some();
+        self.slider.set(shown, now, SLIDER_TRANSITION);
+    }
+
+    pub(super) fn in_transition(&self, now: Instant) -> bool {
+        self.slider.in_transition(now, SLIDER_TRANSITION) || self.autohide.in_transition(now, AUTOHIDE_TRANSITION)
+    }
+}
+
+/// The `editor.minimap.*` settings of the view, validated as `EditorMinimap.validate`.
+#[derive(Clone, Copy, PartialEq)]
+pub(super) struct MinimapSettings {
+    pub enabled: bool,
+    pub layout: MinimapOptions,
+    pub slider_always: bool,
+    pub autohide: Autohide,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub(super) enum Autohide {
+    None,
+    Mouseover,
+    Scroll,
+}
+
+/// `EditorLayoutInfoComputer` for the minimap: the text area's outer size, the gutter's width, the editor font's
+/// metrics and the view's line count.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn minimap_info(outer_width: f32, outer_height: f32, content_left: f32, char_width: f32, line_height: f32, view_line_count: usize, pixel_ratio: f32, options: MinimapOptions) -> MinimapLayoutInfo {
+    compute_minimap_layout(&layout_input(outer_width, outer_height, content_left, char_width, line_height, view_line_count, pixel_ratio, options))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn layout_input(outer_width: f32, outer_height: f32, content_left: f32, char_width: f32, line_height: f32, view_line_count: usize, pixel_ratio: f32, options: MinimapOptions) -> MinimapLayoutInput {
+    MinimapLayoutInput {
         outer_width: outer_width as f64,
         outer_height: outer_height as f64,
         line_height: line_height as f64,
@@ -108,8 +157,19 @@ pub(super) fn minimap_info(outer_width: f32, outer_height: f32, content_left: f3
         vertical_scrollbar_width: VERTICAL_SCROLLBAR_WIDTH as f64,
         view_line_count,
         remaining_width: (outer_width - content_left) as f64,
-        options: MinimapOptions::default(),
-    })
+        options,
+    }
+}
+
+/// `MinimapSamplingState.compute` for the editor's view lines; only the heights count, the widths are 0.
+fn minimap_sampling(editor: &OpenEditor, viewport: Viewport, pixel_ratio: f64, options: MinimapOptions) -> MinimapSampling {
+    let input = layout_input(0., viewport.height, 0., viewport.char_width, viewport.line_height, editor.view_line_count(), pixel_ratio as f32, options);
+    MinimapSampling::new(editor.view_line_count(), contained_minimap_line_count(&input).minimap_line_count as usize)
+}
+
+/// The 1-based view line a 1-based minimap line shows.
+fn sampled_view_line(sampling: Option<&MinimapSampling>, minimap_line: usize) -> usize {
+    sampling.map_or(minimap_line, |sampling| sampling.lines[minimap_line - 1])
 }
 
 impl Workbench {
@@ -120,15 +180,22 @@ impl Workbench {
             return None;
         }
         let viewport = self.editors.viewport;
-        let layout = self.minimap_layout(editor, info, pixel_ratio, viewport);
-        let image = self.minimap_image(editor, &info, &layout);
-        let fills = self.minimap_decorations(editor, &info, &layout);
+        let settings = self.minimap_settings();
+        let sampling = info.is_sampling.then(|| Rc::new(minimap_sampling(editor, viewport, pixel_ratio, settings.layout)));
+        let layout = self.minimap_layout(editor, info, pixel_ratio, viewport, sampling.as_deref());
+        let image = self.minimap_image(editor, &info, &layout, sampling.as_deref());
+        let fills = self.minimap_decorations(editor, &info, &layout, sampling.as_deref());
         let label_options = self.section_header_options();
-        let labels = self.minimap_section_labels(editor, &info, pixel_ratio, &layout, &label_options);
+        let labels = self.minimap_section_labels(editor, &info, pixel_ratio, &layout, &label_options, sampling.as_deref());
         let background = self.minimap_background();
         let label_background = Rgba { a: 0.7, ..background };
         let label_foreground = Rgba { a: 1., ..self.theme.color("editor.foreground").unwrap_or_else(|| Rgba::try_from(self.theme.tokens.color_map()[1].as_str()).expect("the token color map holds hex colors")) };
-        let opacity = self.minimap.slider_opacity(Instant::now());
+        let now = Instant::now();
+        // minimap.css: only `.slider-mouseover` hides the slider.
+        let opacity = if settings.slider_always { 1. } else { self.minimap.slider.opacity(now, SLIDER_TRANSITION) };
+        let minimap_opacity = if settings.autohide == Autohide::None { 1. } else { self.minimap.autohide.opacity(now, AUTOHIDE_TRANSITION) };
+        // `.minimap-autohide-scroll` takes pointer events only while `active`.
+        let takes_pointer = settings.autohide != Autohide::Scroll || self.minimap.active.is_some();
         let dragging = self.minimap.drag.is_some();
         let slider_color = |key: &str| self.color(key);
         let (slider, slider_hover, slider_active) = (slider_color("minimapSlider.background"), slider_color("minimapSlider.hoverBackground"), slider_color("minimapSlider.activeBackground"));
@@ -187,13 +254,15 @@ impl Workbench {
             .h(px(layout.slider_height as f32))
             .opacity(opacity)
             .child(slider_fill)
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |workbench, event: &MouseDownEvent, _, cx| {
-                    cx.stop_propagation();
-                    workbench.start_minimap_drag(f32::from(event.position.y), layout, cx);
-                }),
-            );
+            .when(takes_pointer, |slider| {
+                slider.on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |workbench, event: &MouseDownEvent, _, cx| {
+                        cx.stop_propagation();
+                        workbench.start_minimap_drag(f32::from(event.position.y), layout, cx);
+                    }),
+                )
+            });
         Some(
             div()
                 .id("minimap")
@@ -204,25 +273,35 @@ impl Workbench {
                 .h(px(viewport.height))
                 // _applyLayout paints an opaque minimap background behind the canvas too.
                 .when(background.a == 1., |minimap| minimap.bg(background))
-                .cursor_default()
-                .block_mouse_except_scroll()
+                .opacity(minimap_opacity)
                 .when(shadow, |minimap| minimap.child(self.minimap_shadow().absolute().top_0().h_full().left(px(-SHADOW_STRIP_WIDTH - 3. * SHADOW_SIGMA)).w(px(3. * SHADOW_SIGMA))))
                 .child(lines)
                 .when(layout.slider_needed, |minimap| minimap.child(slider))
-                .on_hover(cx.listener(|workbench, hovered: &bool, _, cx| {
-                    workbench.minimap.mouse_over = *hovered;
-                    workbench.minimap.update_slider(Instant::now());
-                    cx.notify();
-                }))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |workbench, event: &MouseDownEvent, _, cx| workbench.press_minimap(f32::from(event.position.y), info, pixel_ratio, layout, cx)),
-                ),
+                .when(takes_pointer, |minimap| {
+                    minimap
+                        .cursor_default()
+                        .block_mouse_except_scroll()
+                        .on_hover(cx.listener(|workbench, hovered: &bool, _, cx| {
+                            workbench.minimap.mouse_over = *hovered;
+                            workbench.minimap_mouse_over_changed(cx);
+                        }))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |workbench, event: &MouseDownEvent, _, cx| workbench.press_minimap(f32::from(event.position.y), info, pixel_ratio, layout, sampling.as_deref(), cx)),
+                        )
+                        .on_mouse_down(
+                            MouseButton::Right,
+                            cx.listener(|workbench, event: &MouseDownEvent, window, cx| {
+                                cx.stop_propagation();
+                                workbench.show_scrollbar_context_menu(event.position, window, cx);
+                            }),
+                        )
+                }),
         )
     }
 
     /// `MinimapLayout.create` from the last frame's layout of the same editor.
-    fn minimap_layout(&self, editor: &OpenEditor, info: MinimapLayoutInfo, pixel_ratio: f64, viewport: Viewport) -> MinimapLayout {
+    fn minimap_layout(&self, editor: &OpenEditor, info: MinimapLayoutInfo, pixel_ratio: f64, viewport: Viewport, sampling: Option<&MinimapSampling>) -> MinimapLayout {
         let options = SliderOptions {
             pixel_ratio,
             minimap_line_height: info.line_height,
@@ -235,14 +314,17 @@ impl Workbench {
             scroll_beyond_last_line: true,
         };
         let previous = self.minimap.rendered.get().filter(|(model_id, _)| *model_id == editor.model_id).map(|(_, layout)| layout);
-        let first_line = editor.visible_lines(viewport).start + 1;
-        let layout = MinimapLayout::create(&options, first_line, viewport.height as f64, editor.view_line_count(), editor.scroll.top as f64, editor.scroll_height(viewport) as f64, previous.as_ref());
+        let (mut first_line, mut line_count) = (editor.visible_lines(viewport).start + 1, editor.view_line_count());
+        if let Some(sampling) = sampling {
+            (first_line, line_count) = (sampling.minimap_line(first_line), sampling.lines.len());
+        }
+        let layout = MinimapLayout::create(&options, first_line, viewport.height as f64, line_count, editor.view_line_count(), editor.scroll.top as f64, editor.scroll_height(viewport) as f64, previous.as_ref());
         self.minimap.rendered.set(Some((editor.model_id, layout)));
         layout
     }
 
     /// `renderLines`, kept as the last image while its pixels do not change, so the atlas holds one minimap.
-    fn minimap_image(&self, editor: &OpenEditor, info: &MinimapLayoutInfo, layout: &MinimapLayout) -> Arc<RenderImage> {
+    fn minimap_image(&self, editor: &OpenEditor, info: &MinimapLayoutInfo, layout: &MinimapLayout, sampling: Option<&MinimapSampling>) -> Arc<RenderImage> {
         let color_map = self.theme.tokens.color_map();
         let default_background = Rgba::try_from(color_map[2].as_str()).expect("the token color map holds hex colors");
         let colors = LinesColors {
@@ -253,10 +335,11 @@ impl Workbench {
         };
         let document = &editor.document;
         let tab_size = document.indentation.tab_size;
-        let renderer = CharRenderer::prebaked(info.scale);
-        let mut image = render_lines(info, layout, &renderer, &colors, tab_size, |view_line| {
+        let renderer = CharRenderer::create(info.scale);
+        let mut image = render_lines(info, layout, &renderer, &colors, tab_size, |minimap_line| {
+            let view_line = sampled_view_line(sampling, minimap_line);
             let index = editor.model_line(view_line - 1);
-            (document.lines[index].as_str(), document.tokens.minimap_runs(&self.theme, &document.lines, index))
+            editor.view_line_minimap_data(view_line - 1, document.tokens.minimap_runs(&self.theme, &document.lines, index))
         });
         // RenderImage holds BGRA.
         for pixel in image.data.chunks_exact_mut(4) {
@@ -277,11 +360,16 @@ impl Workbench {
     /// `renderDecorations`: the selections in `minimap.selectionHighlight`, then the word highlights in
     /// `minimap.selectionOccurrenceHighlight`, the collapsed folds' whole lines in `editor.foldBackground` and the find
     /// matches in `minimap.findMatchHighlight`.
-    fn minimap_decorations(&self, editor: &OpenEditor, info: &MinimapLayoutInfo, layout: &MinimapLayout) -> Vec<crate::editor::minimap::Fill> {
+    fn minimap_decorations(&self, editor: &OpenEditor, info: &MinimapLayoutInfo, layout: &MinimapLayout, sampling: Option<&MinimapSampling>) -> Vec<crate::editor::minimap::Fill> {
         // convertModelPositionToViewPosition: a hidden position shows at the end of its fold line.
         let view = |line: usize, column: usize| {
-            let view_line = editor.view_line(line);
-            let column = if editor.folding.is_hidden(line) { editor.document.lines[editor.model_line(view_line)].chars().count() } else { column };
+            if editor.folding.is_hidden(line) {
+                let view_line = editor.view_line(line);
+                let fold_line = editor.segment(view_line).line;
+                let (view_line, column) = editor.view_column(Position::new(fold_line, editor.document.lines[fold_line].chars().count()));
+                return (view_line + 1, column);
+            }
+            let (view_line, column) = editor.view_column(Position::new(line, column));
             (view_line + 1, column)
         };
         let mut selections: Vec<MinimapRange> = editor.selections.iter().map(|selection| MinimapRange { start: view(selection.start().line, selection.start().column), end: view(selection.end().line, selection.end().column) }).collect();
@@ -311,15 +399,25 @@ impl Workbench {
         for (start, end, color) in self.marker_minimap_ranges(editor) {
             decorations.push((MinimapRange { start: view(start.line, start.column), end: view(end.line, end.column) }, color));
         }
+        // `_getMinimapDecorationsInViewport` and `getSelections` with sampling: the ranges move to minimap lines.
+        if let Some(sampling) = sampling {
+            for range in &mut selections {
+                (range.start.0, range.end.0) = sampling.decoration_lines(range.start.0, range.end.0);
+            }
+            for (range, _) in &mut decorations {
+                (range.start.0, range.end.0) = (sampling.minimap_line(range.start.0), sampling.minimap_line(range.end.0));
+            }
+        }
         let tab_size = editor.document.indentation.tab_size;
-        decoration_fills(info, layout, self.theme.color("minimap.selectionHighlight"), &selections, &decorations, tab_size, |view_line| editor.document.lines[editor.model_line(view_line - 1)].as_str())
+        decoration_fills(info, layout, self.theme.color("minimap.selectionHighlight"), &selections, &decorations, tab_size, |minimap_line| editor.view_line_text(sampled_view_line(sampling, minimap_line) - 1))
     }
 
     /// sectionHeaders.ts `SectionHeaderDetector` and `getSectionHeaderDecorationsInViewport`: the headers from a font
     /// size above the first line to the last.
     // shortcut: found again on the UI thread for each new model version, where upstream asks the editor worker 250ms
     // after the last edit and moves the old headers with the text meanwhile; upgrade when large files lag on typing.
-    fn minimap_section_labels(&self, editor: &OpenEditor, info: &MinimapLayoutInfo, pixel_ratio: f64, layout: &MinimapLayout, options: &SectionHeaderOptions) -> Vec<SectionLabel> {
+    #[allow(clippy::too_many_arguments)]
+    fn minimap_section_labels(&self, editor: &OpenEditor, info: &MinimapLayoutInfo, pixel_ratio: f64, layout: &MinimapLayout, options: &SectionHeaderOptions, sampling: Option<&MinimapSampling>) -> Vec<SectionLabel> {
         let key = (editor.model_id, editor.version_id, options.show_region, options.mark_regex.clone());
         let mut cached = self.minimap.section_headers.borrow_mut();
         let headers = match cached.as_ref().filter(|(cached_key, _)| *cached_key == key) {
@@ -334,7 +432,11 @@ impl Workbench {
         let first_line = (layout.start_line_number as f64 - header_lines).max(1.).floor() as usize;
         let mut labels: Vec<SectionLabel> = headers
             .iter()
-            .map(|header| SectionLabel { view_line: editor.view_line(header.start.line) + 1, text: header.text.clone(), has_separator_line: header.has_separator_line })
+            .map(|header| {
+                let view_line = editor.view_line(header.start.line) + 1;
+                let view_line = sampling.map_or(view_line, |sampling| sampling.minimap_line(view_line));
+                SectionLabel { view_line, text: header.text.clone(), has_separator_line: header.has_separator_line }
+            })
             .filter(|label| (first_line..=layout.end_line_number).contains(&label.view_line))
             .collect();
         labels.sort_by_key(|label| label.view_line);
@@ -366,14 +468,26 @@ impl Workbench {
     }
 
     /// A press off the slider: `revealLineNumber` of the line under the pointer.
-    fn press_minimap(&mut self, pointer: f32, info: MinimapLayoutInfo, pixel_ratio: f64, layout: MinimapLayout, cx: &mut Context<Self>) {
+    #[allow(clippy::too_many_arguments)]
+    fn press_minimap(&mut self, pointer: f32, info: MinimapLayoutInfo, pixel_ratio: f64, layout: MinimapLayout, sampling: Option<&MinimapSampling>, cx: &mut Context<Self>) {
         let offset = (pointer - self.minimap.top.get()) as f64;
         let line_index = (offset * pixel_ratio / info.line_height).floor() as usize;
         let viewport = self.editors.viewport;
         let editor = self.editors.active_mut().expect("the minimap shows only with an editor open");
-        let line = (line_index + layout.start_line_number).saturating_sub(layout.top_padding_line_count).min(editor.view_line_count());
-        editor.reveal_view_line_centered(line.max(1) - 1, viewport);
+        let line_count = sampling.map_or(editor.view_line_count(), |sampling| sampling.lines.len());
+        let line = (line_index + layout.start_line_number).saturating_sub(layout.top_padding_line_count).min(line_count).max(1);
+        editor.reveal_view_line_centered(sampled_view_line(sampling, line) - 1, viewport);
         self.editor_scrolled(cx);
+    }
+
+    /// The pointer entered or left the minimap: the slider, and with `autohide: mouseover` the minimap, fade.
+    fn minimap_mouse_over_changed(&mut self, cx: &mut Context<Self>) {
+        let now = Instant::now();
+        self.minimap.update_slider(now);
+        if self.minimap_settings().autohide == Autohide::Mouseover {
+            self.minimap.autohide.set(self.minimap.mouse_over, now, AUTOHIDE_TRANSITION);
+        }
+        cx.notify();
     }
 
     fn start_minimap_drag(&mut self, pointer: f32, layout: MinimapLayout, cx: &mut Context<Self>) {
@@ -401,6 +515,27 @@ impl Workbench {
             return;
         }
         self.minimap.scroll_top = editor.scroll.top;
+        if self.minimap_settings().autohide == Autohide::Scroll {
+            self.minimap.autohide.set(true, Instant::now(), AUTOHIDE_TRANSITION);
+            self.minimap.active = Some(cx.spawn(async move |workbench, cx| {
+                // `_hideSoon`: 500ms, again while the pointer is over the minimap.
+                loop {
+                    cx.background_executor().timer(MINIMAP_HIDE_DELAY).await;
+                    let hidden = workbench.update(cx, |workbench, cx| {
+                        if workbench.minimap.mouse_over {
+                            return false;
+                        }
+                        workbench.minimap.active = None;
+                        workbench.minimap.autohide.set(false, Instant::now(), AUTOHIDE_TRANSITION);
+                        cx.notify();
+                        true
+                    });
+                    if !matches!(hidden, Ok(false)) {
+                        return;
+                    }
+                }
+            }));
+        }
         self.minimap.scrolling = Some(cx.spawn(async move |workbench, cx| {
             cx.background_executor().timer(SLIDER_SCROLLING_TIMEOUT).await;
             workbench
@@ -427,6 +562,34 @@ pub(super) struct SectionHeaderOptions {
 }
 
 impl Workbench {
+    /// `EditorMinimap.validate`: an unknown value falls back to the default; `scale` and `maxColumn` are clamped.
+    pub(super) fn minimap_settings(&self) -> MinimapSettings {
+        let string = |key: &str| self.setting(&format!("editor.minimap.{key}")).as_str().map(str::to_owned);
+        let number = |key: &str, default: f64, min: f64, max: f64| self.setting(&format!("editor.minimap.{key}")).as_f64().map_or(default, |value| value.floor().clamp(min, max));
+        let defaults = MinimapOptions::default();
+        let layout = MinimapOptions {
+            size: match string("size").as_deref() {
+                Some("fill") => MinimapSize::Fill,
+                Some("fit") => MinimapSize::Fit,
+                _ => MinimapSize::Proportional,
+            },
+            side: if string("side").as_deref() == Some("left") { MinimapSide::Left } else { MinimapSide::Right },
+            render_characters: self.setting("editor.minimap.renderCharacters").as_bool().unwrap_or(defaults.render_characters),
+            max_column: number("maxColumn", defaults.max_column, 1., 10000.),
+            scale: number("scale", defaults.scale, 1., 3.),
+        };
+        MinimapSettings {
+            enabled: self.setting("editor.minimap.enabled").as_bool().unwrap_or(true),
+            layout,
+            slider_always: string("showSlider").as_deref() == Some("always"),
+            autohide: match string("autohide").as_deref() {
+                Some("mouseover") => Autohide::Mouseover,
+                Some("scroll") => Autohide::Scroll,
+                _ => Autohide::None,
+            },
+        }
+    }
+
     pub(super) fn section_header_options(&self) -> SectionHeaderOptions {
         let float = |key: &str, default: f64, min: f64, max: f64| self.setting(key).as_f64().unwrap_or(default).clamp(min, max);
         let mark_regex = self.setting("editor.minimap.markSectionHeaderRegex");
