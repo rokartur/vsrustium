@@ -4,3 +4,4 @@ pub mod configuration;
 pub mod definitions;
 pub mod problem_collector;
 pub mod problem_matcher;
+pub mod templates;

@@ -40,6 +40,10 @@ pub enum Owner {
     FolderSettings(Vec<std::path::PathBuf>),
     /// The terminal profile picker or rename input.
     Terminal(crate::workbench::terminal_view::TerminalInput),
+    /// A task picker (run, build, test, terminate, restart).
+    Tasks(crate::workbench::task_quick_pick::TaskPicker),
+    /// The tasks.json template picker of the folder.
+    TaskTemplates(std::path::PathBuf),
 }
 
 impl Workbench {
@@ -214,6 +218,8 @@ impl Workbench {
             Owner::Output(_) => self.output_pick_event(id, event, window, cx),
             Owner::FolderSettings(_) => self.folder_settings_pick_event(id, event, window, cx),
             Owner::Terminal(_) => self.terminal_input_event(id, event, window, cx),
+            Owner::Tasks(_) => self.task_pick_event(id, event, window, cx),
+            Owner::TaskTemplates(_) => self.task_template_event(id, event, window, cx),
         }
     }
 

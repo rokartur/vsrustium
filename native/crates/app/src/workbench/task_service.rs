@@ -22,7 +22,7 @@ use crate::terminal::ShellLaunchConfig;
 #[derive(Default)]
 pub struct TaskService {
     /// `$registerTaskProvider`: handle and task type.
-    providers: Vec<(i64, String)>,
+    pub(super) providers: Vec<(i64, String)>,
     definitions: Vec<TaskDefinition>,
     matchers: Registry,
     /// `UUIDMap`: custom task ids by folder and label, stable across reads.
@@ -30,6 +30,8 @@ pub struct TaskService {
     /// Tasks the host referred to by id (`$executeTask` with a DTO), for `$getTaskExecution`.
     known: HashMap<String, Task>,
     active: Vec<ActiveTask>,
+    /// The last task a user ran, for `reRunTask`.
+    pub(super) last: Option<Task>,
 }
 
 struct ActiveTask {
@@ -75,6 +77,15 @@ impl Workbench {
         let contributions: Vec<(&str, &Value)> = self.extensions.iter().map(|extension| (extension.id.as_str(), &extension.description["contributes"])).collect();
         self.tasks = TaskService::new(&contributions);
         self.commands.register("workbench.action.tasks.runTask", |workbench, args, window, cx| workbench.run_task_command(args.into_iter().next().unwrap_or(Value::Null), window, cx));
+        self.register_task_pick_actions();
+    }
+
+    pub(super) fn running_tasks(&self) -> Vec<Task> {
+        self.tasks.active.iter().map(|active| active.task.clone()).collect()
+    }
+
+    pub(super) fn task_terminal(&self, task: &Task) -> Option<u32> {
+        self.tasks.active.iter().find(|active| active.task.id == task.id).map(|active| active.terminal)
     }
 
     pub fn handle_task_request(&mut self, request: ForwardedRequest, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
@@ -165,7 +176,7 @@ impl Workbench {
 
     /// `getWorkspaceTasks` then the providers (`_getGroupedTasks`): tasks.json of each folder, the provided tasks
     /// of `task_type` (every type without one), and the configurations merged into the tasks they configure.
-    fn fetch_tasks(&mut self, task_type: Option<String>, cx: &mut Context<Self>) -> Fetched {
+    pub(super) fn fetch_tasks(&mut self, task_type: Option<String>, cx: &mut Context<Self>) -> Fetched {
         let configured = self.configured_tasks();
         // `_activateTaskProviders`: the run command's event and `onTaskType:` of the type, or of every type.
         let mut events = vec!["onCommand:workbench.action.tasks.runTask".to_owned()];
@@ -214,7 +225,7 @@ impl Workbench {
 
 
     /// tasks.json of each folder through the configuration service (`.vscode/` and `.vsrustium/`).
-    fn configured_tasks(&mut self) -> Vec<Task> {
+    pub(super) fn configured_tasks(&mut self) -> Vec<Task> {
         let folders: Vec<PathBuf> = self.workspace().map(|workspace| workspace.folders.iter().map(|folder| folder.path.clone()).collect()).unwrap_or_default();
         let mut tasks = Vec::new();
         for folder in folders {
@@ -416,15 +427,27 @@ impl Workbench {
 
     /// `workbench.action.tasks.runTask`: a label, a task identifier object, or the pick of every task.
     pub(super) fn run_task_command(&mut self, argument: Value, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
+        if argument.is_null() {
+            self.show_run_task_picker(None, window, cx);
+            return Outcome::done();
+        }
         let fetched = self.fetch_tasks(argument["type"].as_str().map(str::to_owned), cx);
         let (reply, receiver) = oneshot::channel();
         cx.spawn_in(window, async move |workbench, cx| {
             let tasks = fetched.await.unwrap_or_default();
             let Some(task) = find_task(&tasks, &argument) else {
+                // `_doRunTaskCommand(tasks, type, name)`: the picker, filtered by the name.
+                let name = argument.as_str().map(str::to_owned).or_else(|| argument["task"].as_str().map(str::to_owned));
+                let _ = workbench.update_in(cx, |workbench, window, cx| workbench.show_run_task_picker(name, window, cx));
                 let _ = reply.send(Ok(Value::Null));
                 return;
             };
-            let Ok(ended) = workbench.update_in(cx, |workbench, window, cx| workbench.run_task(task, window, cx)) else { return };
+            let Ok(ended) = workbench.update_in(cx, |workbench, window, cx| {
+                workbench.add_recent_task(&task);
+                workbench.run_task(task, window, cx)
+            }) else {
+                return;
+            };
             let code = ended.await.ok().flatten();
             let _ = reply.send(Ok(json!({ "exitCode": code })));
         })

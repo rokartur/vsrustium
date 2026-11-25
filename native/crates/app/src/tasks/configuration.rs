@@ -12,7 +12,7 @@ use super::definitions::{TaskDefinition, create_task_identifier};
 pub const CUSTOMIZED_TASK_TYPE: &str = "$customized";
 
 /// One task the system knows: a tasks.json entry or one an extension provided.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Task {
     /// `_id`.
     pub id: String,
@@ -30,6 +30,8 @@ pub struct Task {
     pub is_background: bool,
     pub group: Option<Value>,
     pub detail: Option<String>,
+    /// `hide`: left out of the run pickers.
+    pub hide: bool,
     pub presentation: Value,
     pub problem_matchers: Vec<Value>,
     pub has_defined_matchers: bool,
@@ -93,6 +95,7 @@ impl Task {
             is_background: dto["isBackground"] == true,
             group: Some(dto["group"].clone()).filter(|group| !group.is_null()),
             detail: dto["detail"].as_str().map(str::to_owned),
+            hide: dto["hide"] == true,
             presentation: dto["presentationOptions"].clone(),
             problem_matchers: dto["problemMatchers"].as_array().cloned().unwrap_or_default(),
             has_defined_matchers: dto["hasDefinedMatchers"] == true,
@@ -126,6 +129,7 @@ impl Task {
         if configuration.detail.is_some() {
             task.detail = configuration.detail.clone();
         }
+        task.hide = configuration.hide;
         task.configures = false;
         task
     }
@@ -213,7 +217,7 @@ fn custom_task(label: &str, id: String, source: Value, folder: &Path, common: Ta
 fn common_properties(external: &Value, globals: &Map<String, Value>) -> Task {
     let group = match &external["group"] {
         Value::String(kind) => Some(json!({ "_id": kind, "isDefault": false })),
-        Value::Object(group) => group.get("kind").and_then(Value::as_str).map(|kind| json!({ "_id": kind, "isDefault": group.get("isDefault") == Some(&json!(true)) })),
+        Value::Object(group) => group.get("kind").and_then(Value::as_str).map(|kind| json!({ "_id": kind, "isDefault": group.get("isDefault").filter(|value| value.is_string() || value.is_boolean()).cloned().unwrap_or(json!(false)) })),
         _ => None,
     };
     let matchers = if external.get("problemMatcher").is_some() { &external["problemMatcher"] } else { globals.get("problemMatcher").unwrap_or(&Value::Null) };
@@ -237,6 +241,7 @@ fn common_properties(external: &Value, globals: &Map<String, Value>) -> Task {
         is_background: external["isBackground"] == true,
         group,
         detail: external["detail"].as_str().map(str::to_owned),
+        hide: external["hide"] == true,
         presentation: if external["presentation"].is_object() { external["presentation"].clone() } else { globals.get("presentation").cloned().unwrap_or(Value::Null) },
         has_defined_matchers: !matchers.is_null(),
         problem_matchers,
