@@ -82,6 +82,7 @@ pub struct TerminalView {
     pub(super) zoom_remainder: f32,
     /// Set once a terminal was created: `terminalHasBeenCreated`.
     has_been_created: bool,
+    pub(super) find: super::terminal_find::TerminalFind,
     /// What the extension host was told (mainThreadTerminalService.ts): the active terminal and the events it asked for.
     pub(super) host: HostTerminals,
 }
@@ -136,6 +137,7 @@ impl TerminalView {
             cursor_blink_off: false,
             cursor_blink_running: false,
             zoom_remainder: 0.,
+            find: super::terminal_find::TerminalFind::new(cx),
             has_been_created: false,
             host: HostTerminals::default(),
         }
@@ -325,6 +327,7 @@ impl Workbench {
         }
         self.register_external_terminal_actions();
         self.register_terminal_contrib_actions();
+        self.register_terminal_find_actions();
     }
 
     /// `isViewVisible(TERMINAL_VIEW_ID)`: the group shows the Terminal view's tab.
@@ -774,9 +777,13 @@ impl Workbench {
     pub(super) fn terminal_context(&self, window: &Window, context: &mut HashMap<String, Value>) {
         let view = &self.terminal_view;
         let focused = view.focus.is_focused(window);
+        let find_focused = view.find.focus.is_focused(window);
+        context.insert("terminalFindVisible".into(), json!(view.find.visible));
+        context.insert("terminalFindFocused".into(), json!(find_focused));
+        context.insert("terminalFindInputFocused".into(), json!(find_focused));
         let selected = view.active_instance_id().and_then(|id| view.instance(id)).is_some_and(|instance| instance.term.selection.as_ref().is_some_and(|selection| !selection.is_empty()));
         context.insert("terminalFocus".into(), json!(focused));
-        context.insert("terminalFocusInAny".into(), json!(focused));
+        context.insert("terminalFocusInAny".into(), json!(focused || find_focused));
         context.insert("terminalHasBeenCreated".into(), json!(view.has_been_created));
         context.insert("terminalIsOpen".into(), json!(!view.instances.is_empty()));
         context.insert("terminalCount".into(), json!(view.instances.len()));
@@ -902,15 +909,18 @@ impl Workbench {
     }
 
     /// The view below its title: the active group's panes and, at `terminal.integrated.tabs.location`, the tabs list.
-    pub(super) fn terminal_body(&self, cx: &mut Context<Self>) -> gpui::Stateful<Div> {
+    pub(super) fn terminal_body(&self, window: &Window, cx: &mut Context<Self>) -> gpui::Stateful<Div> {
         let view = &self.terminal_view;
         let background = self.theme.color("terminal.background").unwrap_or(self.color("panel.background"));
         let border = self.color("terminal.border");
-        let mut panes = div().flex_1().min_w_0().h_full().flex();
+        let mut panes = div().relative().flex_1().min_w_0().h_full().flex();
         if let Some(group) = view.groups.get(view.active_group) {
             for (index, &id) in group.instances.iter().enumerate() {
                 panes = panes.child(self.terminal_pane(id, index > 0, border, cx));
             }
+        }
+        if let Some(find) = self.terminal_find_widget(window, cx) {
+            panes = panes.child(find);
         }
         let tabs_left = self.setting("terminal.integrated.tabs.location") == "left";
         div()
@@ -953,6 +963,7 @@ impl Workbench {
         let scrollbar_width = if self.setting("workbench.experimental.modernUI") == true { SCROLLBAR_WIDTH_MODERN } else { SCROLLBAR_WIDTH };
         let colors = TerminalColors::new(&self.theme);
         let cursor_inactive_style = self.setting("terminal.integrated.cursorStyleInactive");
+        let find_matches = if self.terminal_view.active_instance_id() == Some(id) { self.terminal_view.find.matches.clone() } else { Vec::new() };
         let focused = self.terminal_view.focus.is_focused(window) && self.terminal_view.active_instance_id() == Some(id);
         if focused {
             // `cursorBlinking` is the default style's; a program's DECSCUSR overrides it.
@@ -970,6 +981,10 @@ impl Workbench {
             scrollbar_width,
             hovered: self.terminal_view.hovered == Some(id),
             scrollbar_slider: self.color("scrollbarSlider.background"),
+            find_matches: &find_matches,
+            find_current: self.terminal_view.find.current,
+            find_match: self.color("terminal.findMatchBackground"),
+            find_highlight: self.color("terminal.findMatchHighlightBackground"),
         };
         let (cols, rows) = metrics.grid_size(f32::from(bounds.size.width) - GUTTER - scrollbar_width, f32::from(bounds.size.height));
         let config = self.terminal_config();

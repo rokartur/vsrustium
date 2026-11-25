@@ -101,6 +101,11 @@ pub struct Look<'a> {
     /// The scrollbar shows while the pointer is over the terminal (`ScrollbarVisibility.Auto`).
     pub hovered: bool,
     pub scrollbar_slider: Rgba,
+    /// The find widget's matches, the selected one, and their `terminal.findMatch*Background` colors.
+    pub find_matches: &'a [alacritty_terminal::term::search::Match],
+    pub find_current: Option<usize>,
+    pub find_match: Rgba,
+    pub find_highlight: Rgba,
 }
 
 /// The grid's top left: bottom aligned in the pane (terminal.css `.xterm { bottom: 0 }`), right of the gutter.
@@ -147,6 +152,8 @@ pub fn paint(bounds: Bounds<Pixels>, instance: &TerminalInstance, look: &Look, w
     let mut rows_text: Vec<RowText> = (0..rows).map(|_| RowText::default()).collect();
     let cell = |column: usize, row: usize| Bounds::new(origin + point(px(column as f32 * metrics.cell_width), px(row as f32 * metrics.cell_height)), size(px(metrics.cell_width), px(metrics.cell_height)));
 
+    let (top, bottom) = (-offset, rows as i32 - 1 - offset);
+    let visible_matches: Vec<(usize, &alacritty_terminal::term::search::Match)> = look.find_matches.iter().enumerate().filter(|(_, found)| found.end().line.0 >= top && found.start().line.0 <= bottom).collect();
     for indexed in content.display_iter {
         let row = (indexed.point.line.0 + offset) as usize;
         let column = indexed.point.column.0;
@@ -191,6 +198,9 @@ pub fn paint(bounds: Bounds<Pixels>, instance: &TerminalInstance, look: &Look, w
         let cell_bounds = Bounds::new(cell(column, row).origin, size(px(metrics.cell_width * width as f32), px(metrics.cell_height)));
         if let Some(bg) = bg {
             window.paint_quad(fill(cell_bounds, bg));
+        }
+        if let Some((index, _)) = visible_matches.iter().find(|(_, found)| found.contains(&indexed.point)) {
+            window.paint_quad(fill(cell_bounds, if look.find_current == Some(*index) { look.find_match } else { look.find_highlight }));
         }
         if selected && !(is_cursor && block_cursor) {
             let selection = if look.focused { colors.selection } else { colors.inactive_selection };

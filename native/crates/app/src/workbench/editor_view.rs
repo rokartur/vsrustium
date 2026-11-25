@@ -76,7 +76,7 @@ impl Workbench {
                 // searchEditor.ts draws its query widget where a text editor has its breadcrumbs.
                 SEARCH_EDITOR_SCHEME => part.child(self.search_editor_query(window, cx)),
                 crate::output::OUTPUT_SCHEME => part.child(self.output_title_actions(window, cx)),
-                TERMINAL_SCHEME => part.child(self.terminal_title_actions(cx)).child(self.terminal_body(cx)),
+                TERMINAL_SCHEME => part.child(self.terminal_title_actions(cx)).child(self.terminal_body(window, cx)),
                 _ => part.child(self.breadcrumbs(editor)),
             })
             .when(!matches!(editor.document.scheme.as_str(), WEBVIEW_PANEL_SCHEME | TERMINAL_SCHEME), |part| part.children(self.unicode_banner(editor, cx)).child(self.text_area(editor, window, cx)))

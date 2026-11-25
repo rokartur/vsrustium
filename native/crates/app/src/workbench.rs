@@ -40,6 +40,7 @@ pub(crate) mod terminal_view;
 mod terminal_host;
 mod external_terminal;
 mod terminal_contrib;
+mod terminal_find;
 mod terminal_links;
 pub mod task_quick_pick;
 pub(crate) mod task_service;

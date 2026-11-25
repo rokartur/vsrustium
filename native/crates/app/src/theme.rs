@@ -574,6 +574,8 @@ fn hc_light_default(key: &str) -> ColorValue {
         "editorOverviewRuler.findMatchForeground" => Hex("#AB5A00"),
         "minimap.findMatchHighlight" => Key("editor.findMatchHighlightBorder"),
         "searchEditor.findMatchBackground" => Key("editor.findMatchHighlightBackground"),
+        "terminal.findMatchBackground" => Key("editor.findMatchBackground"),
+        "terminal.findMatchHighlightBackground" => Key("editor.findMatchHighlightBackground"),
         "searchEditor.findMatchBorder" => Key("editor.findMatchHighlightBorder"),
         "searchEditor.textInputBorder" => Key("input.border"),
         "editorOverviewRuler.wordHighlightTextForeground" => Key("editorOverviewRuler.selectionHighlightForeground"),
