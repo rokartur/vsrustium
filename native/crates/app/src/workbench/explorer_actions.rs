@@ -46,6 +46,7 @@ pub struct ExplorerState {
     undo: UndoRedo<FileUndo>,
     pub scroll: ScrollHandle,
     pub find: ExplorerFind,
+    pub type_navigation: super::type_navigation::TypeNavigation,
 }
 
 pub struct ExplorerEdit {
@@ -60,7 +61,7 @@ pub struct ExplorerEdit {
 
 impl ExplorerState {
     pub fn new(cx: &mut gpui::App) -> Self {
-        ExplorerState { focus: cx.focus_handle(), input: InputView::default(), input_focus: cx.focus_handle(), edit: None, drop_target: None, expand_timer: None, undo: UndoRedo::default(), scroll: ScrollHandle::new(), find: ExplorerFind::new(cx) }
+        ExplorerState { focus: cx.focus_handle(), input: InputView::default(), input_focus: cx.focus_handle(), edit: None, drop_target: None, expand_timer: None, undo: UndoRedo::default(), scroll: ScrollHandle::new(), find: ExplorerFind::new(cx), type_navigation: Default::default() }
     }
 }
 

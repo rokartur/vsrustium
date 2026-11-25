@@ -46,6 +46,7 @@ pub mod themes;
 mod quick_input_view;
 mod text_input;
 mod title_bar_actions;
+mod type_navigation;
 mod unicode_highlight;
 mod unusual_line_terminators;
 mod webview_panels;
@@ -317,6 +318,7 @@ impl Workbench {
         workbench.register_title_bar_actions();
         workbench.register_explorer_actions();
         workbench.register_explorer_find_commands();
+        workbench.register_type_navigation_commands();
         workbench.register_search_actions();
         workbench.register_search_editor_actions();
         workbench.register_search_editor_widget_actions();

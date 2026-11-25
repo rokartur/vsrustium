@@ -445,3 +445,21 @@ fn list_click_settings_change_what_clicks_do(cx: &mut TestAppContext) {
     std::fs::remove_dir_all(user).unwrap();
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+/// Type navigation in the Explorer: a letter focuses the next row starting with it, without selecting it.
+#[gpui::test]
+fn typing_a_letter_focuses_the_matching_row(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = explorer("type-navigation", cx);
+    select(&workbench, &dir.join("a.txt"), cx);
+    let focused = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.folder.as_ref().unwrap().focused.clone());
+    cx.simulate_keystrokes("s");
+    assert_eq!(focused(cx), Some(dir.join("sub")));
+    cx.simulate_keystrokes("x");
+    assert_eq!(focused(cx), Some(dir.join("sub")), "\"sx\" matches no row, the focus stays");
+    cx.executor().advance_clock(std::time::Duration::from_millis(800));
+    cx.run_until_parked();
+    cx.simulate_keystrokes("a");
+    assert_eq!(focused(cx), Some(dir.join("a.txt")), "after 800ms a new word starts");
+    assert_eq!(workbench.read_with(cx, |workbench, _| workbench.folder.as_ref().unwrap().selected.clone()), [dir.join("a.txt")], "the selection stays");
+    std::fs::remove_dir_all(dir).unwrap();
+}
