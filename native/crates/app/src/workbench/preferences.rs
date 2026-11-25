@@ -287,8 +287,8 @@ fn write_keybinding_item(item: &KeybindingItem) -> String {
     let key = format!("{},", Value::from(keybindings::user_settings_label(&item.keybinding)));
     // `rightPaddedString(str, 25)` pads with `new Array(25 - length).join(' ')`, one space short of 25.
     let mut out = format!("{{ \"key\": {key:<24} \"command\": {}", Value::from(item.command.as_str()));
-    if let Some(when) = &item.when {
-        out.push_str(&format!(",\n                                     \"when\": {}", Value::from(when.serialize())));
+    if let Some(when) = item.when_text.clone().or_else(|| item.when.as_ref().map(|when| when.serialize())) {
+        out.push_str(&format!(",\n                                     \"when\": {}", Value::from(when)));
     }
     if let Some(args) = &item.args {
         out.push_str(&format!(",\n                                     \"args\": {args}"));

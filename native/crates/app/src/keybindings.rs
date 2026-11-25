@@ -292,6 +292,9 @@ pub struct Item {
     pub system_wide: bool,
     /// `_sourceKey`: the `key` string of a keybindings.json entry.
     pub source_key: Option<String>,
+    /// A workbench default's `when` as its registration wrote it: `isLinux` and the other platform keys stay, where
+    /// `deserialize` folds them into `when` (KeybindingsRegistry rules are expressions, not parsed strings).
+    pub when_text: Option<String>,
 }
 
 /// The source of an extension's keybinding: its identifier and the `displayName` the Keyboard Shortcuts editor shows.
@@ -313,7 +316,7 @@ impl Item {
         let bubble = command.starts_with('^');
         let command = command.strip_prefix('^').unwrap_or(command).to_string();
         let chords = if keybinding.iter().any(Chord::is_modifier_key) { Vec::new() } else { keybinding.clone() };
-        Item { keybinding, chords, bubble, command, args, when, is_default, extension: None, system_wide: false, source_key: None }
+        Item { keybinding, chords, bubble, command, args, when, is_default, extension: None, system_wide: false, source_key: None, when_text: None }
     }
 
     /// keybindingResolver.ts `printSourceExplanation`.
@@ -617,7 +620,8 @@ fn rule_item(rule: &Value, key: &str, is_default: bool) -> Option<Item> {
     let when = rule.get("when").and_then(Value::as_str).and_then(Expr::deserialize);
     let system_wide = rule.get("systemWide") == Some(&Value::Bool(true));
     let source_key = (!is_default).then(|| key.to_string());
-    Some(Item { system_wide, source_key, ..Item::new(parse_keybinding(key), command, rule.get("args").cloned(), when, is_default) })
+    let when_text = rule.get("when").and_then(Value::as_str).filter(|_| is_default).map(str::to_string);
+    Some(Item { system_wide, source_key, when_text, ..Item::new(parse_keybinding(key), command, rule.get("args").cloned(), when, is_default) })
 }
 
 /// The macOS default keybindings of the workbench: the reference's own `--export-default-keybindings` output

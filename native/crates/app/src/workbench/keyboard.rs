@@ -82,7 +82,14 @@ impl Workbench {
     /// The default rules with the reference profile's `resource ==` clauses naming the port's keybindings.json.
     pub(super) fn with_user_keybindings_resource(&self, defaults: Vec<Item>) -> Vec<Item> {
         let resource = self.keybindings.user_file.as_ref().map(|file| crate::editor::uri_string("file", file)).unwrap_or_default();
-        defaults.into_iter().map(|item| Item { when: keybindings::with_keybindings_resource(item.when, &resource), ..item }).collect()
+        defaults
+            .into_iter()
+            .map(|item| {
+                let when = keybindings::with_keybindings_resource(item.when.clone(), &resource);
+                let when_text = if when == item.when { item.when_text } else { None };
+                Item { when, when_text, ..item }
+            })
+            .collect()
     }
 
     /// The Command Palette's items, whose `resource ==` clauses of the reference's profile name the port's

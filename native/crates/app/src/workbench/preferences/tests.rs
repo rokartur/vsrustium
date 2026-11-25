@@ -133,6 +133,9 @@ fn export_default_keybindings_writes_the_core_then_the_built_in_extension_rules(
     let last_core = lines.iter().rposition(|line| line.contains("\"workbench.action.openSettings\"")).unwrap();
     assert!(preview > last_core, "the built-in extension rules come after the core rules");
     assert!(text.contains("\n]\n\n\n// Here are other available commands: \n// - "));
+    // Core rules keep their platform keys, as the reference's export (/tmp/kbref on the Studio) writes them.
+    assert!(text.contains(r#""when": "isMacNative && openFolderWorkspaceSupport""#), "isMacNative stays");
+    assert!(text.contains(r#""when": "inChatInput && isLinux && !quickChatHasFocus || inChatInput && isWindows && !quickChatHasFocus""#));
     std::fs::remove_dir_all(dir).unwrap();
 }
 
