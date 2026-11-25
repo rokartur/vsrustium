@@ -67,7 +67,7 @@ impl Workbench {
     /// shortcut: no `$participateInSave` (only `$trySaveDocument` runs it), no format on save or code actions on save,
     /// no conflict check against the file on disk.
     pub(super) fn save_editor(&mut self, index: usize, cx: &mut Context<Self>) -> oneshot::Receiver<bool> {
-        let document = &self.editors.editors[index].document;
+        let document = &self.editors.tab_model(index).document;
         let (scheme, path) = (document.scheme.clone(), document.path.clone());
         self.save_model(scheme, path, SaveReason::Explicit, cx)
     }

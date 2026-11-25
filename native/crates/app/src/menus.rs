@@ -33,6 +33,10 @@ pub enum MenuId {
     EditorTitleContext,
     TitleBarContext,
     TitleBarTitleContext,
+    ScmTitle,
+    ScmResourceGroupContext,
+    ScmResourceStateContext,
+    ScmInputBox,
     /// A `contributes.submenus` entry, `MenuId.for('api:<id>')`, by registration order.
     Api(usize),
     #[cfg(test)]
@@ -226,8 +230,50 @@ pub fn workbench_menus() -> Vec<MenuItem> {
 
 /// menusExtensionPoint.ts `apiMenus`: the `contributes.menus` keys of the menus the port shows. `commandPalette`
 /// is read by `command_palette::menu`.
-const API_MENUS: [(&str, MenuId); 3] =
-    [("editor/context", MenuId::EditorContext), ("explorer/context", MenuId::ExplorerContext), ("editor/title/context", MenuId::EditorTitleContext)];
+const API_MENUS: [(&str, MenuId); 7] = [
+    ("editor/context", MenuId::EditorContext),
+    ("explorer/context", MenuId::ExplorerContext),
+    ("editor/title/context", MenuId::EditorTitleContext),
+    ("scm/title", MenuId::ScmTitle),
+    ("scm/resourceGroup/context", MenuId::ScmResourceGroupContext),
+    ("scm/resourceState/context", MenuId::ScmResourceStateContext),
+    ("scm/inputBox", MenuId::ScmInputBox),
+];
+
+/// The `icon` of each `contributes.commands` entry with one: a `$(codicon)` name, or the light and dark image paths.
+pub fn command_icons(extensions: &[ScannedExtension]) -> std::collections::HashMap<String, CommandIcon> {
+    let mut icons = std::collections::HashMap::new();
+    for extension in extensions {
+        let commands = match &extension.description["contributes"]["commands"] {
+            Value::Array(commands) => commands.iter().collect(),
+            command @ Value::Object(_) => vec![command],
+            _ => Vec::new(),
+        };
+        for command in commands {
+            let Some(id) = command["command"].as_str() else { continue };
+            let icon = match &command["icon"] {
+                Value::String(icon) => match icon.strip_prefix("$(").and_then(|icon| icon.strip_suffix(')')) {
+                    Some(codicon) => CommandIcon::Codicon(codicon.to_string()),
+                    None => CommandIcon::Image(extension.location.join(icon), extension.location.join(icon)),
+                },
+                Value::Object(paths) => {
+                    let path = |key: &str| extension.location.join(paths.get(key).and_then(Value::as_str).unwrap_or_default());
+                    CommandIcon::Image(path("light"), path("dark"))
+                }
+                _ => continue,
+            };
+            icons.insert(id.to_string(), icon);
+        }
+    }
+    icons
+}
+
+/// A command's icon in a toolbar (`ICommandAction.icon`).
+#[derive(Clone, Debug, PartialEq)]
+pub enum CommandIcon {
+    Codicon(String),
+    Image(std::path::PathBuf, std::path::PathBuf),
+}
 
 /// menusExtensionPoint.ts, the `submenus` and `menus` handlers: every extension's `contributes.menus` items of the
 /// port's menus and of contributed submenus, with their command's title and enablement from `contributes.commands`.

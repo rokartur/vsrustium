@@ -118,6 +118,7 @@ impl Workbench {
             None if editor.document.scheme == crate::output::OUTPUT_SCHEME => "Output".into(),
             None => super::preferences::editor_label(&editor.document)
                 .or_else(|| self.webview_title(&editor.document.path))
+                .or_else(|| self.diff_name(editor))
                 .unwrap_or_else(|| editor.document.name()),
         }
     }

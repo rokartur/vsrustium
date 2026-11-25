@@ -29,6 +29,7 @@ pub const HOST_REQUESTS: &[(&str, &str)] = &[
     ("MainThreadDocuments", "$trySaveDocument"),
     ("MainThreadDocuments", "$tryCreateDocument"),
     ("MainThreadDocumentContentProviders", "$onVirtualDocumentChange"),
+    ("MainThreadDocumentDiff", "$computeDocumentDiff"),
     ("MainThreadLanguages", "$changeLanguage"),
     ("MainThreadTextEditors", "$tryShowTextDocument"),
     ("MainThreadTextEditors", "$trySetSelections"),
@@ -61,6 +62,7 @@ impl Workbench {
             ("workbench", "isDirty") => uri_parts(arg(0)).map(|(scheme, path)| json!(self.editors.model(scheme, &path).is_some_and(|model| model.is_dirty()))),
             ("workbench", "hasModel") => uri_parts(arg(0)).map(|(scheme, path)| json!(self.editors.model(scheme, &path).is_some())),
             ("MainThreadDocumentContentProviders", "$onVirtualDocumentChange") => self.virtual_document_change(arg(0), arg(1), cx),
+            ("MainThreadDocumentDiff", "$computeDocumentDiff") => Ok(self.compute_document_diff(arg(0), arg(1), arg(2) == true, arg(3).as_u64().unwrap_or(0), arg(4) == true)),
             ("MainThreadLanguages", "$changeLanguage") => self.change_host_language(arg(0), arg(1), cx),
             ("workbench", "providerSaveText") => self.provider_save_bytes(arg(0)),
             ("workbench", "providerSaved") => self.provider_saved(arg(0), cx),
@@ -96,7 +98,7 @@ impl Workbench {
     /// `$tryOpenDocument`: the model of a file, of the bytes an extension's file system provider read
     /// (`provider_content` an array) or of a content provider's text (a string), opened without an editor and kept
     /// while the host references it. `options.encoding` decodes a new model, or a clean open one again.
-    fn try_open_document(&mut self, uri: &Value, options: &Value, provider_content: &Value, ignore_path_case: bool, cx: &mut Context<Self>) -> HostResult {
+    pub(super) fn try_open_document(&mut self, uri: &Value, options: &Value, provider_content: &Value, ignore_path_case: bool, cx: &mut Context<Self>) -> HostResult {
         let (scheme, ref path) = uri_parts(uri)?;
         // uriIdentityService.ts `asCanonicalUri`: where the provider ignores path case, the casing opened first wins.
         if ignore_path_case {
@@ -530,12 +532,14 @@ fn snippet_variable(name: &str, editor: &OpenEditor, start: Position, end: Posit
 /// which `TextDocument::uri` splits off again.
 pub(super) fn uri_parts(uri: &Value) -> Result<(&str, PathBuf), Value> {
     let part = |key: &str| uri[key].as_str().unwrap_or_default();
-    let (scheme, authority, path) = (part("scheme"), part("authority"), part("path"));
+    let (scheme, authority, path, query) = (part("scheme"), part("authority"), part("path"), part("query"));
+    // editor.rs `split_query`: a non-file query stays in the model's path.
+    let query = if query.is_empty() || scheme == "file" { String::new() } else { format!("?{query}") };
     match (scheme, authority) {
         ("", _) => Err(serialized_error("Invalid uri. Scheme and authority or path must be set.")),
         ("file", _) | (_, "") if path.is_empty() => Err(serialized_error("Invalid uri. Scheme and authority or path must be set.")),
-        ("file", _) | (_, "") => Ok((scheme, PathBuf::from(path))),
-        _ => Ok((scheme, PathBuf::from(format!("//{authority}{path}")))),
+        ("file", _) | (_, "") => Ok((scheme, PathBuf::from(format!("{path}{query}")))),
+        _ => Ok((scheme, PathBuf::from(format!("//{authority}{path}{query}")))),
     }
 }
 

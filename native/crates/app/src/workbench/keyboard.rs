@@ -283,6 +283,7 @@ impl Workbench {
         }
         if let Some(editor) = self.editors.active() {
             context.insert("activeEditor".into(), json!("workbench.editor.files"));
+            self.insert_diff_editor_context(&mut context);
             // The port opens only files, never untitled editors (editorGroupView.ts).
             context.insert("activeEditorCanRevert".into(), json!(true));
             let readonly = self.active_editor_readonly().is_some();
@@ -322,7 +323,9 @@ impl Workbench {
         match self.side_bar_view {
             SideBarView::Explorer => self.explorer_context(window, &mut context),
             SideBarView::Search => self.search_context(window, &mut context),
+            SideBarView::Scm => {}
         }
+        self.scm_key_context(window, &mut context);
         self.keybindings_editor_context(window, &mut context);
         self.search_editor_context(window, &mut context);
         self.output_context(window, &mut context);

@@ -16,6 +16,7 @@ use gpui::{
     PathBuilder, Rgba, ScrollDelta, ScrollWheelEvent, Stateful, StyledText, Task, Window, canvas, div, fill, font, point, prelude::*, px, rgb, size,
 };
 
+pub(super) mod diff_editor_view;
 pub(super) mod drag_and_drop;
 pub(super) mod sticky_scroll_view;
 
@@ -77,7 +78,10 @@ impl Workbench {
                 crate::output::OUTPUT_SCHEME => part.child(self.output_title_actions(window, cx)),
                 _ => part.child(self.breadcrumbs(editor)),
             })
-            .when(editor.document.scheme != WEBVIEW_PANEL_SCHEME, |part| part.children(self.unicode_banner(editor, cx)).child(self.text_area(editor, window, cx)))
+            .map(|part| match self.editors.active_diff() {
+                Some(diff) => part.child(self.diff_editor_body(diff, editor, window, cx)),
+                None => part.when(editor.document.scheme != WEBVIEW_PANEL_SCHEME, |part| part.children(self.unicode_banner(editor, cx)).child(self.text_area(editor, window, cx))),
+            })
             // The active tab reaches into the part's top border, which Chrome still draws over it.
             .child(div().absolute().inset(px(-1.)).border_1().rounded(px(8.)).border_color(self.color("surface.border")))
     }
@@ -144,9 +148,10 @@ impl Workbench {
     fn tab_hover(&self, index: usize) -> impl IntoElement {
         let editor = &self.editors.editors[index];
         // `getTitle(Verbosity.LONG)`: a search editor's and a webview's is its name.
-        let title = match matches!(editor.document.scheme.as_str(), SEARCH_EDITOR_SCHEME | WEBVIEW_PANEL_SCHEME) {
-            true => self.editor_name(editor),
-            false => crate::quick_input::path_label(&editor.document.path, None),
+        let title = match (self.editors.diffs.get(&editor.model_id), matches!(editor.document.scheme.as_str(), SEARCH_EDITOR_SCHEME | WEBVIEW_PANEL_SCHEME)) {
+            (Some(diff), _) => diff.title(|side| crate::quick_input::path_label(crate::editor::split_query(&side.scheme, &side.path).0, None)),
+            (None, true) => self.editor_name(editor),
+            (None, false) => crate::quick_input::path_label(&editor.document.path, None),
         };
         let content = if editor.preview { super::hover::HoverContent::Preview(title) } else { super::hover::HoverContent::Text(title) };
         self.hover_target(("tab-hover", index), content, super::hover::HoverOptions::mouse())
@@ -167,7 +172,7 @@ impl Workbench {
             .whitespace_nowrap()
             .when(editor.preview, |label| label.italic())
             .child(self.editor_name(editor));
-        let file_icon = self.document_icon(editor, 24., foreground);
+        let file_icon = self.document_icon(self.editors.tab_model(index), 24., foreground);
         // textFileService.ts decorations: a read-only file's label ends in the lockSmall badge at 0.75 opacity. The
         // iconlabel.css `::after` font-size 90% (11.7px) wins over the decoration rule's 16px, which loads first.
         let lock = readonly.then(|| self.icon("lock-small", 11.7, 11.7, foreground).mt(px(9.5)).ml(px(5.)).opacity(0.75));
@@ -286,7 +291,12 @@ impl Workbench {
         // shortcut: only "off" applies; "relative" and "interval" number every line as "on" does.
         // outputView.ts `OutputEditor.getConfigurationOverrides`: output editors hide line numbers.
         let line_numbers = editor.document.scheme != crate::output::OUTPUT_SCHEME && self.settings.lock().unwrap().get_value(Some("editor.lineNumbers"), &overrides) != Some(serde_json::Value::from("off"));
-        let metrics = EditorMetrics::measure(window, editor.document.lines.len(), line_numbers, self.editor_zoom.multiplier());
+        let mut metrics = EditorMetrics::measure(window, editor.document.lines.len(), line_numbers, self.editor_zoom.multiplier());
+        let in_diff = self.editors.active_diff().is_some();
+        // diffEditorEditors.ts `_adjustOptionsForSubEditor`: no folding and no minimap in either side.
+        if in_diff {
+            metrics.decorations_width = diff_editor_view::diff_decorations_width(metrics.char_width);
+        }
         let area_left = self.text_area_left.clone();
         let area_bounds = self.text_area_bounds.clone();
         let focus = self.editor_focus.clone();
@@ -296,7 +306,7 @@ impl Workbench {
         let sticky_scroll_lines = self.sticky_scroll_lines();
         let top_whitespace = self.editors.viewport.top_whitespace;
         let stop_rendering_line_after = self.stop_rendering_line_after;
-        let minimap_enabled = self.setting("editor.minimap.enabled") != json!(false);
+        let minimap_enabled = !in_diff && self.setting("editor.minimap.enabled") != json!(false);
         let viewport = self.editors.viewport;
         let lines = editor.visible_lines(viewport);
         let lines_top = editor.line_top(lines.start, viewport) - editor.scroll.top;
@@ -304,7 +314,7 @@ impl Workbench {
         let first_line = lines.start;
         let mut rows = Vec::new();
         for (index, row) in self.editor_lines(editor, lines, metrics, window, cx).into_iter().enumerate() {
-            rows.extend(zones.iter().filter(|zone| zone.0 == first_line + index).map(|zone| div().flex_none().h(px(zone.1))));
+            rows.extend(zones.iter().filter(|zone| zone.0 == first_line + index).map(|zone| self.view_zone_body(editor, zone.2, zone.1, metrics.content_left(), window)));
             rows.push(row);
         }
         let minimap_width = self.minimap.info.as_ref().map_or(0., |(info, _)| info.width as f32);
@@ -839,6 +849,7 @@ impl Workbench {
                 }
                 let (find_whole_lines, find_matches, find_colors) = self.find_line_decorations(editor, index, char_width, scroll_left);
                 content = content.children(find_whole_lines);
+                content = content.children(self.diff_line_decorations(editor, index, char_width, scroll_left));
                 content = content.children(self.search_editor_line_decorations(editor, index, char_width));
                 // anchorSelect.css: `.selection-anchor` is a 2px #007ACC bar in every theme, under the word highlights.
                 if let Some(anchor) = editor.selection_anchor
@@ -1040,7 +1051,9 @@ impl Workbench {
                 div()
                     .w_full()
                     .h(px(metrics.line_height))
+                    .relative()
                     .flex()
+                    .children(self.diff_margin(editor, index, metrics))
                     .child(div().w(px(metrics.glyph_margin_width())).flex_none())
                     .child(number)
                     .child(self.fold_control(index, collapsed, metrics, fold_control_color, fold_controls, cx))
@@ -1059,13 +1072,13 @@ impl Workbench {
             workbench.fold_mouse_down = (lane_x(workbench, event.position.x) >= 4.).then_some((index, true));
         };
         let mut lane = div()
-            .w(px(DECORATIONS_WIDTH))
+            .w(px(metrics.decorations_width))
             .flex_none()
             .on_mouse_down(MouseButton::Left, cx.listener(move |workbench, event: &MouseDownEvent, _, _| press(workbench, event)))
             .on_mouse_down(MouseButton::Middle, cx.listener(move |workbench, event: &MouseDownEvent, _, _| press(workbench, event)))
             .on_mouse_up(MouseButton::Left, cx.listener(move |workbench, event: &MouseUpEvent, _, cx| workbench.release_fold_click(index, true, event.modifiers, false, cx)))
             .on_mouse_up(MouseButton::Middle, cx.listener(move |workbench, event: &MouseUpEvent, _, cx| workbench.release_fold_click(index, true, event.modifiers, true, cx)));
-        let Some(collapsed) = collapsed else { return lane };
+        let Some(collapsed) = collapsed.filter(|_| self.editors.active_diff().is_none()) else { return lane };
         let (name, opacity) = if collapsed { ("chevron-right", 1.) } else { ("chevron-down", hover_opacity) };
         // folding.css: the icon box is the lane's width, 2px right, the glyph at 140% of the editor font size.
         let icon = self.icon(name, metrics.line_height, 1.4 * metrics.font_size, Rgba { a: color.a * opacity, ..color });
@@ -1463,6 +1476,8 @@ struct EditorMetrics {
     line_height: f32,
     char_width: f32,
     line_numbers_width: f32,
+    /// The line decorations lane: lineDecorationsWidth plus the folding controls, without them in a diff editor.
+    decorations_width: f32,
 }
 
 impl EditorMetrics {
@@ -1472,7 +1487,7 @@ impl EditorMetrics {
     }
 
     fn content_left(&self) -> f32 {
-        self.glyph_margin_width() + self.line_numbers_width + DECORATIONS_WIDTH
+        self.glyph_margin_width() + self.line_numbers_width + self.decorations_width
     }
 
     /// fontInfo.ts `BareFontInfo._create`: the editor zoom scales the font size and line height; then
@@ -1485,7 +1500,7 @@ impl EditorMetrics {
         let advance = |c: char| f32::from(text_system.advance(font_id, px(font_size), c).expect("Menlo has ASCII glyphs").width);
         let max_digit_width = ('0'..='9').map(advance).fold(0., f32::max);
         let digits = if line_numbers { line_count.to_string().len().max(LINE_NUMBERS_MIN_CHARS) } else { 0 };
-        EditorMetrics { font_size, line_height, char_width: advance('x'), line_numbers_width: (digits as f32 * max_digit_width).round() }
+        EditorMetrics { font_size, line_height, char_width: advance('x'), line_numbers_width: (digits as f32 * max_digit_width).round(), decorations_width: DECORATIONS_WIDTH }
     }
 }
 

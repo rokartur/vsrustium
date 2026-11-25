@@ -75,9 +75,12 @@ impl OpenEditor {
         ((offset - above) / viewport.line_height).floor() as usize
     }
 
-    /// The zones and where they go between the lines `lines`: the zones under each view line before the last.
-    pub fn zones_between(&self, lines: std::ops::Range<usize>) -> Vec<(usize, f32)> {
-        self.shown_zones().into_iter().filter(|zone| zone.0 > lines.start && zone.0 < lines.end).collect()
+    /// The zones and where they go between the lines `lines`: the zones under each view line before the last, with
+    /// their ids.
+    pub fn zones_between(&self, lines: std::ops::Range<usize>) -> Vec<(usize, f32, u32)> {
+        let mut zones: Vec<(usize, f32, u32)> = self.view_zones.iter().filter_map(|zone| Some((self.zone_view_position(zone)?, zone.height, zone.id))).collect();
+        zones.sort_by_key(|zone| zone.0);
+        zones.into_iter().filter(|zone| zone.0 > lines.start && zone.0 < lines.end).collect()
     }
 
     /// A zone follows its anchor like a decoration with `NeverGrowsWhenTypingAtEdges`.
@@ -107,7 +110,7 @@ mod tests {
         assert_eq!(editor.view_line_at(2. * LINE_HEIGHT + 10., VIEWPORT), 2);
         assert_eq!(editor.view_line_at(2. * LINE_HEIGHT + 50. + LINE_HEIGHT + 1., VIEWPORT), 3);
         assert_eq!(editor.view_line_at(LINE_HEIGHT + 1., VIEWPORT), 1);
-        assert_eq!(editor.zones_between(0..4), vec![(2, 50.)]);
+        assert_eq!(editor.zones_between(0..4), vec![(2, 50., id)]);
         assert_eq!(editor.zones_between(2..4), vec![]);
     }
 

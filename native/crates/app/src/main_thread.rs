@@ -103,6 +103,11 @@ impl MainThread for WorkbenchMainThread {
                 let _ = reply.send(self.extensions.run(session, job).map_err(|error| format!("{error:#}")));
                 continue;
             }
+            if (message.proxy, message.method) == ("workbench", "resolveTextContent") {
+                let content = self.resolve_text_content(session, &message.args[0]);
+                drop(message.reply.expect("resolveTextContent waits for its answer").send(content));
+                continue;
+            }
             let mut args: Vec<Arg> = message.args.into_iter().map(Arg::Json).collect();
             // extHostWebview.ts `$onMessage` reads its last argument as a SerializableObjectWithBuffers.
             if (message.proxy, message.method) == ("ExtHostWebviews", "$onMessage") && let Some(Arg::Json(json)) = args.pop() {
@@ -154,6 +159,18 @@ impl WorkbenchMainThread {
             }
         }
         Err(format!("Unable to resolve text model content for resource {}", uri_text(uri)))
+    }
+
+    /// `ITextModelService.createModelReference` for a resource the workbench has no model of: the text of the scheme's
+    /// content provider, else the bytes of its file system provider, in the form `$tryOpenDocument` reads at 2.
+    fn resolve_text_content(&self, session: &mut Session, uri: &Value) -> Result<Value, Value> {
+        if self.has_content_provider(uri) {
+            return self.provide_text_content(session, uri).map(Value::String).map_err(|detail| serialized_error(&format!("cannot open {}. Detail: {detail}", uri_text(uri))));
+        }
+        match files::read_file(&mut Providers { session }, &resource(uri)) {
+            Ok(bytes) => Ok(json!(bytes)),
+            Err(error) => Err(serialized_error(&format!("cannot open {}. Detail: {error}", uri_text(uri)))),
+        }
     }
 
     /// `$trySaveDocument` of a provider's document: the workbench gives the bytes, the provider writes it, the model is clean.

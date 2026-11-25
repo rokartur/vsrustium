@@ -135,6 +135,7 @@ impl Workbench {
         self.languages = crate::languages::Languages::new(&running);
         self.menus = crate::menus::workbench_menus();
         self.menus.extend(crate::menus::extension_menus(&running));
+        self.command_icons = crate::menus::command_icons(&running);
         self.set_default_keybindings(crate::keybindings::default_keybindings(&running));
         if let Some(file) = self.keybindings.user_file.clone() {
             self.set_user_keybindings(crate::keybindings::user_keybindings(&file));

@@ -48,6 +48,7 @@ mod text_input;
 mod title_bar_actions;
 mod unicode_highlight;
 mod unusual_line_terminators;
+mod scm_view;
 mod webview_panels;
 
 use std::cell::Cell;
@@ -119,6 +120,8 @@ pub struct Workbench {
     fold_mouse_down: Option<(usize, bool)>,
     /// Window x of the text area, recorded at paint, to turn a click into a column.
     text_area_left: Rc<Cell<f32>>,
+    /// The diff editor's width as last laid out, for the inline breakpoint.
+    diff_part_width: Rc<Cell<f32>>,
     /// The text area's window bounds at paint, where content widgets that may overflow it lay out.
     text_area_bounds: Rc<Cell<gpui::Bounds<f32>>>,
     editor_message: editor_message::EditorMessages,
@@ -152,6 +155,9 @@ pub struct Workbench {
     pub search_editors: search_editor_view::SearchEditors,
     pub search_editor_widget: search_editor_widget::SearchEditorWidget,
     pub webview_panels: webview_panels::WebviewPanels,
+    pub scm: scm_view::ScmView,
+    /// `contributes.commands` icons, for the view toolbars.
+    pub command_icons: HashMap<String, crate::menus::CommandIcon>,
     /// `MenuRegistry`.
     pub menus: Vec<crate::menus::MenuItem>,
     pub(crate) context_menu: Option<context_menu::ContextMenu>,
@@ -176,6 +182,7 @@ impl Render for Workbench {
         self.follow_marker_navigation_cursor();
         self.refresh_selection_highlights(window);
         self.update_webview_panels(window, cx);
+        self.update_diff_editor();
         self.auto_save_models_changed(cx);
         let viewport = window.viewport_size();
         let window_border = self.theme.color("window.activeBorder");
@@ -261,6 +268,7 @@ impl Workbench {
             find: find_widget::FindWidget::new(cx),
             fold_mouse_down: None,
             text_area_left: Rc::default(),
+            diff_part_width: Rc::default(),
             text_area_bounds: Rc::default(),
             editor_message: Default::default(),
             marker_navigation: Default::default(),
@@ -286,6 +294,8 @@ impl Workbench {
             search_editors: HashMap::new(),
             search_editor_widget: search_editor_widget::SearchEditorWidget::new(cx),
             webview_panels: Default::default(),
+            scm: scm_view::ScmView::new(cx),
+            command_icons: HashMap::new(),
             menus: crate::menus::workbench_menus(),
             context_menu: None,
             context_menus_shown: 0,
@@ -298,6 +308,8 @@ impl Workbench {
         };
         crate::main_thread_commands::register_commands_documentation(&mut workbench);
         workbench.register_workbench_actions();
+        workbench.register_diff_editor_commands();
+        workbench.register_scm_commands();
         workbench.register_editor_commands();
         workbench.register_find_commands();
         workbench.register_sticky_scroll_commands();
@@ -532,13 +544,12 @@ impl Workbench {
     fn side_bar_visible(&self) -> bool {
         match self.side_bar_view {
             SideBarView::Explorer => self.folder.is_some(),
-            SideBarView::Search => true,
+            SideBarView::Search | SideBarView::Scm => true,
         }
     }
 
     fn activity_bar(&self, cx: &mut Context<Self>) -> Div {
         let views = [
-            ("source-control", "Source Control", "workbench.view.scm"),
             ("debug-alt", "Run and Debug", "workbench.view.debug"),
             ("extensions", "Extensions", "workbench.view.extensions"),
         ];
@@ -554,6 +565,7 @@ impl Workbench {
         };
         let explorer = view_icon("files", SideBarView::Explorer, "workbench.view.explorer");
         let search = view_icon("search-large", SideBarView::Search, "workbench.view.search");
+        let scm = view_icon("source-control", SideBarView::Scm, "workbench.view.scm").children(self.activity_badge(self.scm_badge()));
         div()
             .w(px(44.))
             .flex()
@@ -573,6 +585,7 @@ impl Workbench {
                     .gap(px(8.))
                     .child(explorer.child(self.action_hover("Explorer", "workbench.view.explorer", hover)))
                     .child(search.child(self.action_hover("Search", "workbench.view.search", hover)))
+                    .child(scm.child(self.action_hover("Source Control", "workbench.view.scm", hover)))
                     .children(views.map(|(name, title, command)| self.icon(name, 36., 24., inactive).cursor_pointer().child(self.action_hover(title, command, hover)))),
             )
             .child(self.icon("settings-gear", 36., 24., inactive).cursor_pointer().child(self.hover_target("manage", HoverContent::Text("Manage".into()), hover)))
@@ -593,6 +606,9 @@ impl Workbench {
     /// The Explorer: title, the folder section with its tree, and the collapsed Outline and Timeline sections.
     fn side_bar(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         let foreground = self.foreground_or("sideBar.foreground");
+        if self.side_bar_view == SideBarView::Scm {
+            return self.scm_side_bar(window, cx);
+        }
         if self.side_bar_view == SideBarView::Search {
             let title = self.side_bar_title("Search").child(self.search_title_actions(cx));
             return self.side_bar_frame().text_color(foreground).child(title).child(self.search_view(window, cx));
