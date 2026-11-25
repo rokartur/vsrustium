@@ -57,7 +57,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | mainthread/MainThreadNotebookRenderers | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadInteractive | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadSpeech | MainThread* shape (Rust side) | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
-| mainthread/MainThreadBrowsers | MainThread* shape (Rust side) | stub | session.rs answers undefined |
+| mainthread/MainThreadBrowsers | MainThread* shape (Rust side) | removed | Artur: the integrated browser of 1.147 (WebContentsView, CDP proxy, Playwright, chat tools) serves the agent; Simple Browser stays on a webview panel |
 | mainthread/MainThreadLanguageModels | MainThread* shape (Rust side) | removed | no sign-in/AI by decision (port/notes.md); API stays inert: session.rs answers undefined, list getters []; exthost-probe 30/30 on Bun and Node |
 | mainthread/MainThreadChatContext | MainThread* shape (Rust side) | removed | no sign-in/AI by decision (port/notes.md); API stays inert: session.rs answers undefined, list getters []; exthost-probe 30/30 on Bun and Node |
 | mainthread/MainThreadChatDebug | MainThread* shape (Rust side) | removed | no sign-in/AI by decision (port/notes.md); API stays inert: session.rs answers undefined, list getters []; exthost-probe 30/30 on Bun and Node |
@@ -118,7 +118,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/assignment | src/vs/platform | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | platform/auxiliaryWindow | src/vs/platform | todo |  |
 | platform/backup | src/vs/platform | todo |  |
-| platform/browserView | src/vs/platform | todo |  |
+| platform/browserView | src/vs/platform | removed | Artur: the integrated browser of 1.147 (WebContentsView, CDP proxy, Playwright, chat tools) serves the agent; Simple Browser stays on a webview panel |
 | platform/chat | src/vs/platform | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | platform/checksum | src/vs/platform | n/a | only integrityService uses it, to hash the shipped JS files against product.json `checksums`; the port ships no workbench JS and product.json has no checksums. VSIX sha256 digests are checked by platform/sign |
 | platform/clipboard | src/vs/platform | ported | clipboard.rs: text through GPUI, `writeResources`/`readResources`/`hasResources` as `code/file-list` and `readFindText`/`writeFindText` on NSPasteboard; cargo test -p app clipboard; Explorer copy/paste and globalFindClipboard use it; readImage, triggerPaste not ported |
@@ -310,7 +310,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/authentication | workbench service | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/services/auxiliaryWindow | workbench service | todo |  |
 | workbench/services/banner | workbench service | todo |  |
-| workbench/services/browserView | workbench service | todo |  |
+| workbench/services/browserView | workbench service | removed | Artur: the integrated browser of 1.147 (WebContentsView, CDP proxy, Playwright, chat tools) serves the agent; Simple Browser stays on a webview panel |
 | workbench/services/chat | workbench service | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/services/checksum | workbench service | n/a | IPC client of platform/checksum, which only integrityService uses |
 | workbench/services/clipboard | workbench service | ported | electron-browser `NativeClipboardService` as clipboard.rs (platform/clipboard row): cargo test -p app clipboard; the browser service's navigator.clipboard fallback does not apply to a native app |
@@ -398,7 +398,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/agentsVoice | workbench contribution | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/contrib/authentication | workbench contribution | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/contrib/bracketPairColorizer2Telemetry | workbench contribution | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
-| workbench/contrib/browserView | workbench contribution | todo |  |
+| workbench/contrib/browserView | workbench contribution | removed | Artur: the integrated browser of 1.147 (WebContentsView, CDP proxy, Playwright, chat tools) serves the agent; Simple Browser stays on a webview panel |
 | workbench/contrib/bulkEdit | workbench contribution | ported | BulkFileEdits with grouping, options and undo edits (cargo test -p files operations); text edits in workbench/bulk_text_edits.rs; no preview or undo stack for text edits yet |
 | workbench/contrib/callHierarchy | workbench contribution | todo |  |
 | workbench/contrib/canvases | workbench contribution | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |

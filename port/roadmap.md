@@ -160,6 +160,8 @@ Done when: `port/tools/api-tests` gives 337/31/0 (folder) and 4/0/0 (workspace):
 
 Made: AI, Microsoft-service and telemetry parts and remote/tunnels are `removed` (41 rows); upstream test infrastructure (`base/test`, `editor/test`, `platform/test`, `workbench/services/driver`) is `n/a`; the api-tests suites of removed features leave the milestone 20 target; Electron process, IPC and DOM layers (`base/browser` `base/parts` `platform/domWidget` `platform/ipc` `platform/protocol` `platform/sandbox` `platform/sharedProcess` `platform/utilityProcess`) are `n/a`; `workbench/services/sharedProcess` and `workbench/services/utilityProcess` stay `todo`; internal infrastructure and developer tools with no 1:1 counterpart (base/common, base/node, platform/instantiation, platform/observable, platform/webWorker, platform/gpu, platform/cssDev, editor/standalone, editor/contrib/gpu, workbench/contrib/screenshotTool) are `removed`, replaced by the native architecture.
 
+Made later: the integrated browser (`browserView`, `MainThreadBrowsers`) is `removed`, Simple Browser stays.
+
 Open:
 
 1. No milestone yet: `workbench/services/sharedProcess` `workbench/services/utilityProcess` (Artur: not `n/a`).
