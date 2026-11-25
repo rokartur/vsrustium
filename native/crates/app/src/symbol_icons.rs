@@ -40,7 +40,7 @@ pub fn completion_kind_icon(kind: u64) -> (&'static str, Option<&'static str>) {
 }
 
 /// codiconsLibrary.ts registers aliases under the code point of another icon; the SVG carries that icon's name.
-pub fn svg_name(codicon: &'static str) -> &'static str {
+pub fn svg_name(codicon: &str) -> &str {
     match codicon {
         "symbol-function" | "symbol-constructor" => "symbol-method",
         "symbol-struct" => "symbol-structure",
@@ -174,8 +174,8 @@ mod tests {
         }
         assert_eq!(codicon(99), "symbol-property");
         assert_eq!(svg_name(codicon(11)), "symbol-method");
-        assert_eq!(color_default("symbolIcon.functionForeground").map(|values| values[0]), Some(Hex("#B180D7")));
-        assert_eq!(color_default("symbolIcon.stringForeground").map(|values| values[0]), Some(Key("foreground")));
-        assert_eq!(color_default("editor.foreground"), None);
+        assert!(matches!(color_default("symbolIcon.functionForeground"), Some([Hex("#B180D7"), ..])));
+        assert!(matches!(color_default("symbolIcon.stringForeground"), Some([Key("foreground"), ..])));
+        assert!(color_default("editor.foreground").is_none());
     }
 }
