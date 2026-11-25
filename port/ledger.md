@@ -596,5 +596,6 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | telemetry/source-search | cross-cutting check | todo |  |
 | telemetry/network-capture | cross-cutting check | todo |  |
 | gallery/open-vsx | cross-cutting check | todo |  |
+| port/settings-import | port feature | todo | Artur: import settings from VS Code, Cursor and VSCodium (roadmap milestone 10) |
 | look/screenshot-diff | cross-cutting check | verified | port/tools/pixel-check: CDP reference capture and Metal readback in 3 themes, pixeldiff reference vs itself 0 different; baseline in port/results/pixels.md |
 | perf/memory-benchmark | cross-cutting check | verified | port/tools/bench (Wu method), 3 runs on Studio; port/results/benchmark.md: exthost Bun 57 MiB, Node 98 MiB, reference 151 MiB |
