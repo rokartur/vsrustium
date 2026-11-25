@@ -49,7 +49,9 @@ impl Pty {
         let master = File::from(master);
         let mut reader = master.try_clone()?;
         let data_events = events.clone();
+        let (read_done, read_finished) = std::sync::mpsc::channel::<()>();
         std::thread::Builder::new().name("pty-read".into()).spawn(move || {
+            let _read_done = read_done;
             let mut buffer = vec![0; 64 * 1024];
             loop {
                 match reader.read(&mut buffer) {
@@ -65,6 +67,8 @@ impl Pty {
         std::thread::Builder::new().name("pty-wait".into()).spawn(move || {
             let mut child = child;
             let code = child.wait().ok().and_then(|status| status.code());
+            // unixTerminal.ts emits exit once the pty socket closes, or after DESTROY_SOCKET_TIMEOUT_MS (200 ms).
+            let _ = read_finished.recv_timeout(std::time::Duration::from_millis(200));
             let _ = events.unbounded_send(PtyEvent::Exit(code));
         })?;
         Ok(Pty { master, pid })
