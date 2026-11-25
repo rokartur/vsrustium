@@ -1,4 +1,4 @@
-#![allow(dead_code, reason = "wired into the output view next")]
+#![allow(dead_code, reason = "the Output view shows links once the editor has editor/contrib/links (ledger todo)")]
 
 use std::path::{Path, PathBuf};
 
