@@ -277,6 +277,8 @@ Scope shipped so far: `workspace.fs` and file events, Seti file icons and numeri
 - gpui's ellipsis drops whitespace and ASCII punctuation before "…" (line_wrapper.rs `truncate_line`), CSS keeps them; the match preview's trailing text gets a zero-width space after each, so it shows "the …" as the reference.
 - Light and high contrast frames match except in high contrast: gpui's dashed border is 2pt on, 1pt off (CSS 3pt and 2pt), and the match box is 0.5pt wider, so a preview can cut one character earlier.
 - Not done in the Search view: `search.action.openInEditor` and New Search Editor (search editor), notebook and AI results, the `search.quickOpen` and `search.experimental` settings.
+- `_workbench.open` (editorCommands.ts, `host_requests.rs` `api_open_editor`) opens a resource in the editor group with its `ITextEditorOptions`, an untitled resource with a path as a dirty untitled editor saved to that file, an http or https string in the browser, and ignores `command:` resources. `vscode.open` forwards its first argument. shortcut: every view column opens in the one editor group, so `api-command: vscode.open` still fails on `ViewColumn.Two` until the editor groups row.
+- `_workbench.diff` is not registered: the port has no diff editor (milestone 14), and `api-command: vscode.diff` fails with "command '_workbench.diff' not found".
 - Not done: workspace trust, recent workspaces, search editor, local history, opener and URL handling.
 
 ## Milestone 8: editor viewport and editing commands

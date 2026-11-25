@@ -35,6 +35,9 @@ pub const HOST_REQUESTS: &[(&str, &str)] = &[
     ("MainThreadTextEditors", "$tryInsertSnippet"),
 ];
 
+#[cfg(test)]
+mod tests;
+
 type HostResult = Result<Value, Value>;
 
 impl Workbench {
@@ -309,6 +312,31 @@ impl Workbench {
         }
         self.editors_changed(cx);
         Ok(json!(snapshot_id(self.editors.active().expect("just shown"))))
+    }
+
+    /// editorCommands.ts `_workbench.open`: a resource in the editor group, a web link in the browser.
+    // shortcut: one editor group, so every view column opens in it; ViewColumn.Two needs the editor groups row.
+    pub(super) fn api_open_editor(&mut self, args: &[Value], window: &mut Window, cx: &mut Context<Self>) -> HostResult {
+        let resource = args.first().unwrap_or(&Value::Null);
+        if let Some(link) = resource.as_str() {
+            // extHostApiCommands.ts lets only http and https strings through; the opener service shows them in the browser.
+            if !matches!(link.split(':').next(), Some("http" | "https")) {
+                return Err(serialized_error(&format!("Unable to open '{link}'")));
+            }
+            cx.open_url(link);
+            return Ok(Value::Null);
+        }
+        let (scheme, _) = uri_parts(resource)?;
+        match scheme {
+            // "do not allow to execute commands from here"
+            "command" => return Ok(Value::Null),
+            // An untitled resource with a path opens as an untitled editor saved to that file.
+            "untitled" => drop(self.try_open_document(resource, &Value::Null, &Value::Null, false, cx)?),
+            _ => {}
+        }
+        let options = &args.get(1).unwrap_or(&Value::Null)[1];
+        self.try_show_text_document(resource, options, window, cx)?;
+        Ok(Value::Null)
     }
 
     /// `setSelections`: one cursor per selection, the first the primary one; nothing scrolls.
