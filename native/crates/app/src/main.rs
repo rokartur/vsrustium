@@ -64,10 +64,11 @@ mod output;
 mod perf;
 mod power;
 // The process explorer (milestone 19 handoff) is its first caller; until then only its tests build it.
-#[cfg(test)]
 mod ps;
 mod product;
 mod profile_template;
+mod timer;
+mod walkthroughs;
 mod policy;
 mod quick_input;
 mod recently_opened;
@@ -179,10 +180,13 @@ fn main() -> anyhow::Result<()> {
     // Before any scan: the display language decides the manifests' messages.
     let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
     let locale = nls::user_locale(flag_value("--locale").as_deref(), &output::log_levels::argv_file(&home));
+    perf::mark("code/willGenerateNls");
     let resolved = exthost::language_packs::resolve_nls(&user_data, &locale);
     nls::init(&resolved);
     exthost::language_packs::set_nls(&user_data, resolved);
+    perf::mark("code/didGenerateNls");
     let extensions_dir = std::env::var_os("VSCODE_GPUI_EXTENSIONS").map(PathBuf::from).unwrap_or_else(|| app_root.join("extensions"));
+    perf::mark("code/willLoadExtensions");
     let mut builtins = scan_builtin_extensions(&extensions_dir)?;
     perf::mark("code/didScanExtensions");
     builtins.extend(exthost::scan::scan_dev_system_extensions(&app_root)?);
@@ -198,6 +202,7 @@ fn main() -> anyhow::Result<()> {
     }
     // storageMainService.ts: no storage during extension tests, so each test run starts empty.
     let extension_tests = development.as_ref().is_some_and(|development| development.tests_path.is_some());
+    perf::mark("code/willInitStorage");
     let storage = match extension_tests {
         true => MainThreadStorage::in_memory(),
         false => MainThreadStorage::open(&SessionPaths { app_root: &app_root, user_data: &user_data, workspace: workspace.as_ref() }, &profile.current.global_storage_home)?,
@@ -210,6 +215,7 @@ fn main() -> anyhow::Result<()> {
             Arc::new(Mutex::new(storage::Storage::open(&home.join("state.vscdb"))))
         }
     };
+    perf::mark("code/didInitStorage");
     // The extensions the user disabled stay out of the host and the registries (extensionEnablementService.ts).
     let developed: Vec<String> = extensions.iter().filter(|extension| extension.description["isUnderDevelopment"] == true).map(|extension| extension.id.clone()).collect();
     let installed = extensions.clone();
@@ -225,7 +231,9 @@ fn main() -> anyhow::Result<()> {
         settings.set_policy_values(policy::read_native_policies(&settings.registry, policy::BUNDLE_IDENTIFIER));
         settings
     };
+    perf::mark("code/willInitWorkspaceService");
     let mut settings = load_settings(&extensions);
+    perf::mark("code/didInitWorkspaceService");
     let shared_storage = match extension_tests {
         true => Arc::new(Mutex::new(storage::Storage::in_memory())),
         false => Arc::new(Mutex::new(open_shared_storage(flag_value("--shared-data-dir").map(PathBuf::from))?)),
@@ -259,6 +267,7 @@ fn main() -> anyhow::Result<()> {
     let keybindings_file = profile.current.keybindings_resource.clone();
 
     application().run(move |cx: &mut App| {
+        perf::mark("code/mainAppReady");
         // Same size as the reference capture in port/tools/ref-screenshot, so pixel diffs line up.
         let mut bounds = Bounds::centered(None, size(px(1024.), px(768.)), cx);
         // A half-point origin (an odd display height, e.g. 1650 px over screen sharing) makes the drawable 1 point taller.
@@ -266,7 +275,10 @@ fn main() -> anyhow::Result<()> {
         // The workbench draws its own title bar, as the reference does with window.titleBarStyle custom.
         let titlebar = TitlebarOptions { title: None, appears_transparent: true, traffic_light_position: Some(point(px(10.), px(10.))) };
         let options = WindowOptions { window_bounds: Some(WindowBounds::Windowed(bounds)), titlebar: Some(titlebar), app_owns_titlebar_drag: true, ..Default::default() };
+        perf::mark("code/willOpenNewWindow");
+        perf::mark("code/willCreateCodeWindow");
         let window = cx.open_window(options, |window, cx| {
+            perf::mark("code/willStartWorkbench");
             cx.new(|cx| {
                 let (sender, mut receiver) = unbounded::<String>();
                 let (host_sender, host_receiver) = channel();
@@ -278,8 +290,10 @@ fn main() -> anyhow::Result<()> {
                 let mut host = HostSync::new(host_sender);
                 host.configuration_scopes = development.is_some();
                 host.send_color_theme(theme.kind);
+                perf::mark("code/willCreateWorkbenchContributions/1");
                 let mut workbench = Workbench::new(theme, app_root.clone(), workspace.clone(), languages, settings.clone(), host, cx);
                 perf::mark("code/didCreateWorkbench");
+                perf::mark("code/didCreateWorkbenchContributions/2");
                 cx.observe_window_appearance(window, |workbench, _, cx| workbench.host_color_scheme_changed(cx)).detach();
                 let window_logs = exthost::session::window_logs_path(&user_data);
                 workbench.register_window_log(window_logs.join("renderer.log"));
@@ -325,9 +339,13 @@ fn main() -> anyhow::Result<()> {
                 workbench.start_terminal_host();
                 workbench.watch_editor_focus(window, cx);
                 workbench.show_trust_modal_on_start(window, cx);
+                perf::mark("code/willRestoreEditors");
                 if let Some(file) = file {
                     workbench.open_file(file, true, window, cx);
                 }
+                workbench.run_startup_page(args.iter().any(|arg| arg == "--skip-welcome"), window, cx);
+                perf::set_startup_editors(workbench.visible_editor_ids());
+                perf::mark("code/didRestoreEditors");
                 if let Some(url) = &open_url {
                     workbench.open_protocol_url(url, window, cx);
                 }
@@ -351,6 +369,7 @@ fn main() -> anyhow::Result<()> {
                         eprintln!("{line}");
                         if line.starts_with(HANDSHAKE_PREFIX) {
                             let _ = workbench.update(cx, |workbench, _| workbench.host.installed_extensions_registered = true);
+                            perf::mark("code/didLoadExtensions");
                         }
                         let (true, Some(path)) = (line.starts_with(ACTIVATED_PREFIX), screenshot.as_ref()) else { continue };
                         // Captured once eager extensions are up, so the frame shows the workbench as the host left it.
@@ -388,10 +407,12 @@ fn main() -> anyhow::Result<()> {
                     }
                 })
                 .detach();
+                perf::mark("code/didStartWorkbench");
                 workbench
             })
         })
         .unwrap();
+        perf::mark("code/didCreateCodeWindow");
         workbench::menubar::install(window, cx);
         cx.activate(true);
     });

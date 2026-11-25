@@ -70,7 +70,7 @@ function startPort(paths: string[]) {
 	const userData = mkdtempSync(join(scratch, 'port-user-'));
 	mkdirSync(join(userData, 'User'));
 	// Trust is off in referenceUserData; SETTINGS turns it on for both.
-	writeFileSync(join(userData, 'User/settings.json'), JSON.stringify({ 'security.workspace.trust.enabled': false, ...settings }));
+	writeFileSync(join(userData, 'User/settings.json'), JSON.stringify({ 'security.workspace.trust.enabled': false, 'workbench.startupEditor': 'none', ...settings }));
 	return Bun.spawn(['native/target/release/vsrustium', ...paths, ...extraArgs, '--user-data-dir', userData, '--shared-data-dir', join(userData, 'shared'), '--theme', portTheme], {
 		env: { ...process.env, VSCODE_GPUI_EXTENSIONS: join(ref, 'extensions') },
 		stdout: 'ignore',

@@ -4,8 +4,8 @@
 // packages they and the host resolve, and the upstream media the workbench reads, in Contents/Resources/app;
 // Info.plist with the reference's document types and the vsrustium URL protocol; then codesign with the hardened
 // runtime and `spctl -a`. Run on the Studio after a release build and port/tools/build-exthost:
-//   port/tools/studio 'port/tools/package-app'    env IDENTITY="Developer ID Application: ..." (default ad-hoc "-"),
-//   VSCODE_GPUI_EXTENSIONS (default the reference's extensions), OUT (default native/target/VSRustium.app)
+//   port/tools/studio 'port/tools/package-app'    env IDENTITY="Developer ID Application: ..." (default ad-hoc "-";
+//   a Developer ID signs in the GUI session), NOTARIZE=1 (notarize and staple), VSCODE_GPUI_EXTENSIONS (default the reference's extensions), OUT (default native/target/VSRustium.app)
 import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, relative } from 'node:path';
 import { inertPackages, shippedBuiltins } from './shipped-files.ts';
@@ -161,15 +161,36 @@ for (const file of machO) {
 		binaries.push(file);
 	}
 }
-const timestamp = identity === '-' ? ['--timestamp=none'] : ['--timestamp'];
-const codesign = (paths: string[], withEntitlements: boolean) => Bun.$`codesign --force ${timestamp} --options runtime --sign ${identity} ${withEntitlements ? ['--entitlements', entitlements] : []} ${paths}`;
-if (binaries.length) {
-	await codesign(binaries, false);
-}
-await codesign([join(contents, 'MacOS/bun')], true);
-await codesign([out], true);
+const timestamp = identity === '-' ? '--timestamp=none' : '--timestamp';
+// The Developer ID key sits in the login keychain, which stays locked in an ssh session (errSecInternalComponent):
+// signing with it runs as a script opened in the GUI session.
+const keychain = identity === '-' ? '' : `--keychain ${shellQuote(join(process.env.HOME!, 'Library/Keychains/login.keychain-db'))}`;
+const sign = (paths: string[], withEntitlements: boolean) =>
+	`codesign --force ${timestamp} --options runtime ${keychain} --sign ${shellQuote(identity)} ${withEntitlements ? `--entitlements ${shellQuote(entitlements)}` : ''} ${paths.map(shellQuote).join(' ')}`;
+const commands = [...(binaries.length ? [sign(binaries, false)] : []), sign([join(contents, 'MacOS/bun')], true), sign([out], true)];
+const signed = identity === '-' ? await Bun.$`bash -ec ${commands.join('\n')}`.nothrow() : await inGuiSession('sign', commands);
 rmSync(entitlements);
+if (signed.exitCode !== 0) {
+	console.log(`codesign failed: ${signed.stderr.toString().trim()}`);
+	process.exit(1);
+}
 
+// NOTARIZE=1 submits the signed app with the notarytool profile vsrustium-notary (stored once by Artur in the
+// Studio's login keychain: xcrun notarytool store-credentials vsrustium-notary --apple-id <id> --team-id N529W98U62)
+// and staples the ticket.
+if (process.env.NOTARIZE === '1') {
+	const zip = `${out}.zip`;
+	const notarized = await inGuiSession('notarize', [
+		`ditto -c -k --keepParent ${shellQuote(out)} ${shellQuote(zip)}`,
+		`xcrun notarytool submit ${shellQuote(zip)} --keychain-profile vsrustium-notary --wait`,
+		`xcrun stapler staple ${shellQuote(out)}`,
+	]);
+	rmSync(zip, { force: true });
+	console.log(`notarization: exit ${notarized.exitCode}\n${notarized.stderr.toString().trim()}`);
+	if (notarized.exitCode !== 0) {
+		process.exit(1);
+	}
+}
 const verify = await Bun.$`codesign --verify --deep --strict --verbose=2 ${out}`.nothrow();
 console.log(`${out}: ${binaries.length + 2} signatures as ${identity}, codesign --verify ${verify.exitCode === 0 ? 'ok' : 'failed'}`);
 console.log(verify.stderr.toString().trim());
@@ -184,3 +205,29 @@ if (status !== 'assessments enabled') {
 const assessment = await Bun.$`spctl -a -vv ${out}`.nothrow();
 console.log(`spctl -a: exit ${assessment.exitCode}: ${assessment.stderr.toString().trim()}`);
 process.exit(verify.exitCode || assessment.exitCode);
+
+function shellQuote(value: string) {
+	return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
+// Runs the commands in a .command script that Terminal opens in the GUI session, and waits for its exit code.
+async function inGuiSession(name: string, commands: string[]) {
+	const base = `/tmp/vsrustium-${name}-${process.pid}`;
+	const done = `${base}.done`;
+	rmSync(done, { force: true });
+	writeFileSync(`${base}.command`, `#!/bin/bash\n( set -e\n${commands.join('\n')}\n) >${shellQuote(`${base}.log`)} 2>&1\necho $? >${shellQuote(done)}\n`, { mode: 0o755 });
+	await Bun.$`open ${`${base}.command`}`;
+	// notarytool --wait takes minutes; an hour without the done file means Terminal never ran the script.
+	for (let waited = 0; !existsSync(done) || !readFileSync(done, 'utf8').trim(); waited++) {
+		if (waited > 3600) {
+			throw new Error(`${base}.command did not finish in an hour (is a GUI session logged in?)`);
+		}
+		await Bun.sleep(1000);
+	}
+	const exitCode = Number(readFileSync(done, 'utf8'));
+	const log = readFileSync(`${base}.log`, 'utf8');
+	for (const file of [`${base}.command`, `${base}.log`, done]) {
+		rmSync(file, { force: true });
+	}
+	return { exitCode, stderr: Buffer.from(log) };
+}

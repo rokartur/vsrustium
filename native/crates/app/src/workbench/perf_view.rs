@@ -18,6 +18,17 @@ impl Workbench {
         self.commands.register("perfview.show", |workbench, _, window, cx| workbench.show_perf_view(window, cx));
     }
 
+    /// timerService.ts `editorIds`: the ids of the visible editor panes.
+    pub(crate) fn visible_editor_ids(&self) -> Vec<String> {
+        let pane = |scheme: &str| match scheme {
+            "file" => "workbench.editors.files.textFileEditor".to_owned(),
+            "untitled" => "workbench.editors.textResourceEditor".to_owned(),
+            super::welcome_page::WALKTHROUGH_SCHEME => "gettingStartedPage".to_owned(),
+            scheme => scheme.to_owned(),
+        };
+        self.editors.active().map(|editor| pane(&editor.document.scheme)).into_iter().collect()
+    }
+
     /// Opens the model pinned, or refreshes it in its open editor, as `PerfModelContentProvider._updateModel` does.
     fn show_perf_view(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
         let text = self.perf_markdown(window);
@@ -46,13 +57,7 @@ impl Workbench {
         }
         md += "\n";
         heading(&mut md, "Performance Marks");
-        let phases = [
-            ("start => load settings & scan extensions", "code/didStartMain", "code/didScanExtensions", "[main]"),
-            ("create window & workbench", "code/didScanExtensions", "code/didCreateWorkbench", "[renderer]"),
-            ("spawn extension host & activate eager extensions", "code/willStartExtensionHost", "code/didStartExtensionHost", "[renderer->extHost]"),
-            ("workbench ready", "code/didStartMain", "code/didCreateWorkbench", "[main->renderer]"),
-        ];
-        let rows: Vec<Vec<String>> = phases.iter().map(|(what, from, to, process)| vec![what.to_string(), crate::perf::between(from, to).map_or("-".into(), |ms| ms.to_string()), process.to_string(), "-".into()]).collect();
+        let rows = crate::timer::summary_rows(crate::perf::between, &crate::perf::startup_editors());
         md += &table(&["What", "Duration", "Process", "Info"], &rows);
         md += "\n";
         let activations = crate::perf::activations();

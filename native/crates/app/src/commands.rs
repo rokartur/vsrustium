@@ -94,6 +94,7 @@ impl Workbench {
     /// `CommandService.executeCommand`: runs the command at once when `onCommand:<id>` is done or the host is not up yet,
     /// else waits for that activation first, registered or not, as an extension may override the command (issue #71471).
     pub fn execute_command(&mut self, id: &str, args: Vec<Value>, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
+        self.welcome_command_executed(id);
         let event = format!("onCommand:{id}");
         let activation = self.host.activate_by_event(&event);
         // `activationEventIsDone` is also true for an event no running extension declares: waiting for the host

@@ -303,9 +303,8 @@ impl Workbench {
         let title = self.side_bar_title("Source Control").child(self.icon("ellipsis", 22., 16., foreground).cursor_pointer());
         let frame = self.side_bar_frame().text_color(foreground).child(title);
         let Some(provider) = self.active_scm_provider().cloned() else {
-            // scmViewPane.ts: no repository shows the welcome content of `views.welcome` (git's "open a folder"
-            // messages need git's context keys; the empty pane stands for them).
-            return frame.child(self.section_header("Changes", true, false));
+            // scmViewPane.ts: no repository shows the view's welcome content, alone in the container without a pane header.
+            return frame.children(self.view_welcome(super::views_welcome::SCM_VIEW, window, cx));
         };
         let context = self.scm_context(&provider, None, None, window);
         let title_actions = self.inline_actions(MenuId::ScmTitle, &context, vec![Self::provider_arg(&provider)], foreground, cx);

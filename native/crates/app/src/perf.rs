@@ -24,6 +24,8 @@ pub struct Activation {
 static MARKS: Mutex<Vec<Mark>> = Mutex::new(Vec::new());
 static EXT_HOST_MARKS: Mutex<Vec<Mark>> = Mutex::new(Vec::new());
 static ACTIVATIONS: Mutex<Vec<Activation>> = Mutex::new(Vec::new());
+/// timerService.ts `editorIds`: the editor ids visible once the startup editors were restored.
+static STARTUP_EDITORS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 pub fn mark(name: &str) {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("the clock is after 1970").as_secs_f64() * 1000.;
@@ -38,6 +40,14 @@ pub fn performance_marks() -> Vec<(&'static str, Vec<Mark>)> {
         sources.push(("localExtHost", ext_host));
     }
     sources
+}
+
+pub fn set_startup_editors(ids: Vec<String>) {
+    *STARTUP_EDITORS.lock().unwrap() = ids;
+}
+
+pub fn startup_editors() -> Vec<String> {
+    STARTUP_EDITORS.lock().unwrap().clone()
 }
 
 /// The duration between two port marks, when both happened.
