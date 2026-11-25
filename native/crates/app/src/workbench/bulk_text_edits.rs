@@ -168,6 +168,7 @@ impl Workbench {
             Some(index) => self.host.send_content_change(&self.editors, index, change),
             None => self.host.send_model_change(&self.editors, self.editors.model(scheme, path).expect("just edited"), change),
         }
+        self.search_model_changed(scheme, path);
     }
 }
 

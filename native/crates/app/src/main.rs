@@ -30,6 +30,7 @@ mod main_thread_commands;
 mod main_thread_quick_open;
 mod menus;
 mod quick_input;
+mod search_model;
 mod syntax;
 mod tf_idf;
 mod theme;

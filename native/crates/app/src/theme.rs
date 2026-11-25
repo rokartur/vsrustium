@@ -359,6 +359,17 @@ fn registry_default(key: &str, kind: ThemeKind) -> ColorValue {
         "minimap.selectionOccurrenceHighlight" => (MINIMAP_OCCURRENCE, MINIMAP_OCCURRENCE, MINIMAP_OCCURRENCE),
         "minimap.selectionHighlight" => (MINIMAP_SELECTION, MINIMAP_SELECTION, MINIMAP_SELECTION),
         "minimap.foregroundOpacity" => (Hex("#000f"), Hex("#000f"), Hex("#000f")),
+        // The search view's keys (searchview.css, inputColors.ts, baseColors.ts).
+        "diffEditor.insertedTextBackground" => (Hex("#9ccc2c33"), Hex("#9ccc2c40"), None),
+        "diffEditor.removedTextBackground" => (Hex("#ff000033"), Hex("#ff000033"), None),
+        "diffEditor.insertedLineBackground" => (Hex("#9bb95533"), Hex("#9bb95533"), None),
+        "textLink.foreground" => (Hex("#3794FF"), Hex("#006AB1"), Hex("#21A6FF")),
+        "textLink.activeForeground" => (Hex("#3794FF"), Hex("#006AB1"), Hex("#21A6FF")),
+        "search.resultsInfoForeground" => (Transparent(&Key("foreground"), 0.65), Key("foreground"), Key("foreground")),
+        "inputOption.activeBorder" => (Hex("#007ACC"), Hex("#007ACC"), Key("contrastBorder")),
+        "inputOption.hoverBackground" => (Hex("#5a5d5e80"), Hex("#b8b8b850"), None),
+        "inputOption.activeBackground" => (Transparent(&Key("focusBorder"), 0.4), Transparent(&Key("focusBorder"), 0.2), Hex("#0000")),
+        "inputOption.activeForeground" => (Hex("#FFFFFF"), Hex("#000000"), Key("foreground")),
         _ => quick_input_default(key),
     };
     match kind {
@@ -451,6 +462,12 @@ fn hc_light_default(key: &str) -> ColorValue {
         "breadcrumb.foreground" => Transparent(&Key("foreground"), 0.8),
         "breadcrumb.background" => Key("editor.background"),
         "tab.border" => Key("contrastBorder"),
+        "textLink.foreground" => Hex("#0F4A85"),
+        "textLink.activeForeground" => Hex("#0F4A85"),
+        "search.resultsInfoForeground" => Key("foreground"),
+        "inputOption.activeBorder" => Key("contrastBorder"),
+        "inputOption.activeBackground" => Hex("#0000"),
+        "inputOption.activeForeground" => Key("foreground"),
         _ => quick_input_default_hc_light(key),
     }
 }

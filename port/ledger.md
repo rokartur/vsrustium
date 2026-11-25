@@ -363,7 +363,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/quickinput | workbench service | ported | quick_input_view.rs with header drag (cargo test -p app dragging); api-tests quick input 11/11; view state in application storage (cargo test -p app dragging) |
 | workbench/services/remote | workbench service | removed | no remote or tunnels by decision (port/notes.md); one local extension host |
 | workbench/services/request | workbench service | todo |  |
-| workbench/services/search | workbench service | ported | native/crates/search: QueryBuilder, ripgrep file search and text search with upstream ripgrepTextSearchEngineUtils and TextSearchResult tests: cargo test -p search 23 passed; no symlink loop rerun, no results from unsaved editors |
+| workbench/services/search | workbench service | ported | native/crates/search: QueryBuilder, ripgrep file search and text search with upstream ripgrepTextSearchEngineUtils and TextSearchResult tests, the view's search paths (search_paths.rs, queryBuilder.test.ts): cargo test -p search 40 passed; no symlink loop rerun, no results from unsaved editors |
 | workbench/services/secrets | workbench service | ported | port/tools/settings-check secrets |
 | workbench/services/sessions | workbench service | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/services/sharedProcess | workbench service | todo |  |
@@ -466,7 +466,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/scm | workbench contribution | todo |  |
 | workbench/contrib/screenshotTool | workbench contribution | removed | Artur: internal infrastructure or developer tool with no 1:1 counterpart in the native port |
 | workbench/contrib/scrollLocking | workbench contribution | todo |  |
-| workbench/contrib/search | workbench contribution | stub | anythingQuickAccess.ts file picks only (no symbol picks, search view in milestone 12): cargo test -p app anything_quick_access quick_open (21 reference queries via CDP, extractRange.test.ts cases); Cmd+P screenshot rows match the reference |
+| workbench/contrib/search | workbench contribution | ported | Search view (workbench/search_view.rs, search_actions.rs) and its model (search_model.rs): cargo test -p app search_model (searchResult, fileMatch and replace tests) and workbench::search_actions (6 GPUI cases), port/tools/ui-pair frames match the reference (port/notes.md milestone 12); anythingQuickAccess.ts file picks: cargo test -p app anything_quick_access quick_open. No search history, context menu, search editor links, notebook or AI results, replace preview diff |
 | workbench/contrib/searchEditor | workbench contribution | todo |  |
 | workbench/contrib/sessionChanges | workbench contribution | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | workbench/contrib/sessions | workbench contribution | removed | no sign-in/AI by decision (port/notes.md); not ported |

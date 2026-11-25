@@ -218,3 +218,7 @@ Rerun after the Explorer file operations, on the Studio. Every frame printed giv
 ## Milestone 12 Explorer checked against the reference
 
 Rerun after the Explorer fixes from the reference comparison (inline name row, NSAlert confirmations), on the Studio, `WINDOWS="folder multiroot"` plus a full run: every frame gives the multi-root section's counts (folder 7238/4067/960/874, multiroot 7371/4143/1110/951, empty, file and main unchanged). A first run gave folder 7967/4796/1689/21117 and multiroot 8628/5400/2367/22279: the Studio's pointer was left over the package.json row by `port/tools/ui-pair`, and the port draws the hover row (hc themes: dashed `contrastActiveBorder` outline). Move the pointer off the window before a pixel-check (`cua-driver call move_cursor '{"x": 3, "y": 400}'`).
+
+## Milestone 12 Search view
+
+Full rerun after the Search view, on the Studio with the pointer parked: every window and theme gives the counts above (empty 3567/3600/398/401, folder 7238/4067/960/874, file 10342/7164/4696/5468, main 11927/8685/5842/6873, multiroot 7371/4143/1110/951, folded 14070/27529/6987/9021). The first run gave main hc 7404 (breadcrumbs drawn at a shifted position); `WINDOWS=main THEMES="hc dark"` rerun gave 5842 and 11927.

@@ -156,3 +156,7 @@ Same `MOCHA_GREP` and setup as the bulk file edits section, on the Studio, the w
 | api-workspace | 4 | 0 | 0 | 0 | exit 0 after 0s |
 
 Unchanged, as expected: extension test runs show no participant dialog.
+
+## M12 Search view
+
+On the Studio, the working tree of the Search view commit. Combined grep of the baseline: api-folder 133/2/3/264 (exit 1 after 12s), api-workspace 4/0/0, unchanged. `MOCHA_GREP='vscode API - workspace'`: api-folder 107/2/0/293 (exit 0 after 10s), api-workspace 4/0/0, unchanged.

@@ -177,6 +177,9 @@ impl Workbench {
                 self.find_editor_edited(Some(&change));
             }
             self.host.send_content_change(&self.editors, index, &change);
+            let document = &self.editors.editors[index].document;
+            let (scheme, path) = (document.scheme.clone(), document.path.clone());
+            self.search_model_changed(&scheme, &path);
         }
         drop(self.save_editor(index, cx));
     }

@@ -13,16 +13,18 @@ use gpui::{
 };
 
 use super::Workbench;
+use super::search_view::{SEARCH_FIELDS, SearchField};
 use crate::commands::Outcome;
 use crate::input_box::{InputBox, Motion};
 
-/// Which input element: the quick input's, the Explorer's inline editor, or the find widget's.
+/// Which input element: the quick input's, the Explorer's inline editor, the find widget's, or one of the Search view's inputs.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum InputId {
     QuickInput,
     Explorer,
     Find,
     Replace,
+    Search(SearchField),
 }
 
 /// The view state of one input element.
@@ -73,6 +75,7 @@ impl Workbench {
             InputId::Explorer => &self.explorer.input,
             InputId::Find => &self.find.find_view,
             InputId::Replace => &self.find.replace_view,
+            InputId::Search(field) => &self.search.input(field).view,
         }
     }
 
@@ -82,6 +85,7 @@ impl Workbench {
             InputId::Explorer => &mut self.explorer.input,
             InputId::Find => &mut self.find.find_view,
             InputId::Replace => &mut self.find.replace_view,
+            InputId::Search(field) => &mut self.search.input_mut(field).view,
         }
     }
 
@@ -91,6 +95,7 @@ impl Workbench {
             InputId::Explorer => &self.explorer.input_focus,
             InputId::Find => &self.find.find_focus,
             InputId::Replace => &self.find.replace_focus,
+            InputId::Search(field) => &self.search.input(field).focus,
         }
     }
 
@@ -100,17 +105,20 @@ impl Workbench {
             InputId::Explorer => self.explorer.edit.as_ref().map(|edit| &edit.input),
             InputId::Find => Some(&self.find.find_input),
             InputId::Replace => Some(&self.find.replace_input),
+            InputId::Search(field) => Some(&self.search.input(field).value),
         }
     }
 
     /// The input element with the keyboard focus.
     pub(super) fn focused_input(&self, window: &Window) -> Option<InputId> {
-        [InputId::QuickInput, InputId::Explorer, InputId::Find, InputId::Replace].into_iter().find(|id| self.input_focus(*id).is_focused(window))
+        let search = SEARCH_FIELDS.map(InputId::Search);
+        [InputId::QuickInput, InputId::Explorer, InputId::Find, InputId::Replace].into_iter().chain(search).find(|id| self.input_focus(*id).is_focused(window))
     }
 
     /// Any input element in an IME composition: the IME owns the keys.
     pub(super) fn input_composing(&self) -> bool {
-        [InputId::QuickInput, InputId::Explorer, InputId::Find, InputId::Replace].into_iter().any(|id| self.input_view(id).marked.is_some())
+        let search = SEARCH_FIELDS.map(InputId::Search);
+        [InputId::QuickInput, InputId::Explorer, InputId::Find, InputId::Replace].into_iter().chain(search).any(|id| self.input_view(id).marked.is_some())
     }
 
     /// Runs `edit` on the element's value and restarts the caret blink.
@@ -124,6 +132,10 @@ impl Workbench {
             }
             InputId::Find | InputId::Replace => {
                 self.edit_find_input(id, edit, window, cx);
+                Outcome::done()
+            }
+            InputId::Search(field) => {
+                self.edit_search_input(field, edit, window, cx);
                 Outcome::done()
             }
         }
@@ -181,6 +193,12 @@ impl Workbench {
             (true, false, false) => Motion::Left,
             (false, false, false) => Motion::Right,
         };
+        if let InputId::Search(field) = id
+            && self.search_input_key(field, keystroke, window, cx)
+        {
+            cx.stop_propagation();
+            return;
+        }
         if id == InputId::Explorer && self.explorer_input_key(&keystroke.key, window, cx) {
             cx.stop_propagation();
             return;
@@ -281,10 +299,11 @@ impl Workbench {
         let workbench = cx.entity();
         div()
             .id(match id {
-                InputId::QuickInput => "quick-input-text",
-                InputId::Explorer => "explorer-input-text",
-                InputId::Find => "find-input-text",
-                InputId::Replace => "replace-input-text",
+                InputId::QuickInput => gpui::ElementId::from("quick-input-text"),
+                InputId::Explorer => "explorer-input-text".into(),
+                InputId::Find => "find-input-text".into(),
+                InputId::Replace => "replace-input-text".into(),
+                InputId::Search(field) => ("search-input-text", field as usize).into(),
             })
             .flex_1()
             .h_full()

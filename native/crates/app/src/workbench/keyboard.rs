@@ -10,6 +10,7 @@ use gpui::{Context, Keystroke, Task, Window};
 use serde_json::{Value, json};
 
 use super::Workbench;
+use super::search_view::SideBarView;
 use crate::commands::Outcome;
 use crate::keybindings::{self, Chord, Item, Resolution, Resolver};
 
@@ -200,7 +201,10 @@ impl Workbench {
             context.insert("resourceExtname".into(), json!(path.extension().map(|ext| format!(".{}", ext.to_string_lossy())).unwrap_or_default()));
         }
         self.quick_input_context(window, &mut context);
-        self.explorer_context(window, &mut context);
+        match self.side_bar_view {
+            SideBarView::Explorer => self.explorer_context(window, &mut context),
+            SideBarView::Search => self.search_context(window, &mut context),
+        }
         context
     }
 
