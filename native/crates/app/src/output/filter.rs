@@ -22,6 +22,8 @@ pub enum Level {
 #[derive(Clone, Debug, PartialEq)]
 pub struct LogEntry {
     pub lines: Range<usize>,
+    /// `new Date(header).getTime()`: the header's local time in milliseconds since the epoch.
+    pub timestamp: i64,
     pub level: Level,
     pub category: Option<String>,
 }
@@ -181,6 +183,12 @@ fn split_by_comma_respecting_quotes(text: &str) -> Vec<String> {
 
 /// `parseLogEntries` over a whole text: an entry runs from its header line to the line before the next header; the
 /// text's last empty line belongs to none. A text whose first line is no header has no entries.
+/// `new Date('2023-10-15 14:30:45.123').getTime()`: a date and time without a zone is local time.
+fn local_timestamp(text: &str) -> i64 {
+    let naive = chrono::NaiveDateTime::parse_from_str(text, "%Y-%m-%d %H:%M:%S%.3f").expect("LOG_ENTRY matched a date and time");
+    naive.and_local_timezone(chrono::Local).earliest().map_or_else(|| naive.and_utc().timestamp_millis(), |local| local.timestamp_millis())
+}
+
 pub fn parse_log_entries(lines: &[String]) -> Vec<LogEntry> {
     let header = |line: usize| LOG_ENTRY.captures(&lines[line]);
     let mut entries = Vec::new();
@@ -206,7 +214,7 @@ pub fn parse_log_entries(lines: &[String]) -> Vec<LogEntry> {
         while end < last && header(end + 1).is_none() && !(end + 1 == last && lines[last].is_empty()) {
             end += 1;
         }
-        entries.push(LogEntry { lines: line..end + 1, level, category });
+        entries.push(LogEntry { lines: line..end + 1, timestamp: local_timestamp(&captures[1]), level, category });
         line = end + 1;
     }
     entries
