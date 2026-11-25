@@ -4,6 +4,7 @@
 mod algorithms;
 mod computer;
 mod heuristics;
+pub mod lcs_diff;
 mod moved_lines;
 mod sequences;
 mod string_diff;
