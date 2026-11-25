@@ -87,14 +87,6 @@ impl Workbench {
         self.workspace().map(|workspace| workspace.file.clone().unwrap_or_else(|| workspace.folders[0].path.clone()))
     }
 
-    /// abstractFileDialogService.ts `defaultFilePath`: the folder of the last active file, else the first workspace
-    /// folder, else the user home.
-    fn default_file_path(&self) -> PathBuf {
-        let last_active_folder = self.quick_access.editor_history.entries.first().and_then(|file| file.parent()).map(Path::to_path_buf);
-        let workspace_folder = || self.workspace().and_then(|workspace| workspace.folders.first()).map(|folder| folder.path.clone());
-        last_active_folder.or_else(workspace_folder).or_else(|| std::env::var_os("HOME").map(PathBuf::from)).unwrap_or_default()
-    }
-
     /// `pickFileFolderAndOpen`, `pickFileAndOpen` and `pickFolderAndOpen` of the native dialogs: what is picked
     /// opens with `forceNewWindow: false`.
     fn pick_and_open(&mut self, files: bool, directories: bool, window: &mut Window, cx: &mut Context<Self>) -> Outcome {

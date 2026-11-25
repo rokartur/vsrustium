@@ -518,14 +518,15 @@ impl Workbench {
 
     /// `fileDialogService.defaultFilePath`: `files.dialog.defaultPath`, else the folder of the last active file, else
     /// the first workspace folder, else the home folder.
-    fn default_file_path(&self) -> PathBuf {
+    pub(super) fn default_file_path(&self) -> PathBuf {
         let configured = self.settings.lock().unwrap().get_value(Some("files.dialog.defaultPath"), &Overrides::default());
         if let Some(configured) = configured.as_ref().and_then(Value::as_str).map(PathBuf::from).filter(|path| path.is_absolute()) {
             return configured;
         }
-        let last_file = self.editors.active().filter(|editor| editor.document.scheme == "file").and_then(|editor| editor.document.path.parent());
-        let folder = self.workspace().and_then(|workspace| workspace.folders.first()).map(|folder| folder.path.as_path());
-        last_file.or(folder).map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or_default()))
+        // fileDialogService.ts `defaultFilePath`: the last active file's folder, then the first workspace folder, then home.
+        let last_active_folder = self.quick_access.editor_history.entries.first().and_then(|file| file.parent()).map(Path::to_path_buf);
+        let workspace_folder = || self.workspace().and_then(|workspace| workspace.folders.first()).map(|folder| folder.path.clone());
+        last_active_folder.or_else(workspace_folder).or_else(|| std::env::var_os("HOME").map(PathBuf::from)).unwrap_or_default()
     }
 
     /// textFileEditorModel.ts `onDidChangeFilesAssociation`: a file model without a picked language takes the one

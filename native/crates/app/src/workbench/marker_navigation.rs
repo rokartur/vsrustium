@@ -8,12 +8,10 @@ use serde_json::Value;
 
 use super::Workbench;
 use super::hover::HoverOptions;
-use super::opener::{OpenOptions, Target};
 use crate::commands::Outcome;
 use crate::editor::marker_decorations::validate;
 use crate::editor::{LINE_HEIGHT, OpenEditor, Position, Selection, VERTICAL_SCROLLBAR_WIDTH, VerticalReveal, utf16_column, visible_column, word_at};
 use crate::markers::{ERROR, INFO, Marker, MarkerService, ReadOptions, WARNING};
-use crate::uri::Uri;
 
 /// zoneWidget.ts: the arrow is a third of a line high, the frame `frameWidth` 1.
 const ARROW_HEIGHT: f32 = 6.;
