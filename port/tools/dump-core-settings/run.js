@@ -42,10 +42,10 @@ exports.run = async () => {
 		core[key] = { ...rest, default: defaultDefaultValue !== undefined ? defaultDefaultValue : defaultOfType(property.type) };
 	}
 	fs.writeFileSync(path.join(process.env.DUMP_OUT, 'core-settings.json'), JSON.stringify(core, null, '\t') + '\n');
-	// The schemas the settings schemas $ref, as settingsFilesystemProvider.ts serves them, and the package.json schema of
-	// extensionsRegistry.ts that extension-editing's jsonValidation names.
+	// The schemas the settings schemas $ref, as settingsFilesystemProvider.ts serves them, the package.json schema of
+	// extensionsRegistry.ts that extension-editing's jsonValidation names, and the snippets file schemas.
 	fs.mkdirSync(path.join(process.env.DUMP_OUT, 'schemas'));
-	for (const name of ['workbench-colors', 'token-styling', 'textmate-colors', 'size-customizations', 'launch', 'vscode-extensions', 'toolsParameters']) {
+	for (const name of ['workbench-colors', 'token-styling', 'textmate-colors', 'size-customizations', 'launch', 'vscode-extensions', 'toolsParameters', 'snippets', 'global-snippets']) {
 		fs.writeFileSync(path.join(process.env.DUMP_OUT, 'schemas', `${name}.json`), await read(`vscode://schemas/${name}`));
 	}
 };
