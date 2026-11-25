@@ -96,3 +96,35 @@ fn the_quick_input_stays_open_while_the_window_is_inactive(cx: &mut TestAppConte
     assert!(!shown(cx), "a real focus out hides it");
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[gpui::test]
+fn the_word_highlight_stops_while_the_quick_input_has_the_focus(cx: &mut TestAppContext) {
+    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
+    let theme = load_theme(&[themes], "Dark Modern").unwrap();
+    let dir = std::env::temp_dir().join(format!("code-gpui-word-blur-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("a.txt");
+    std::fs::write(&file, "the cat\nthe dog").unwrap();
+    let (workbench, cx) = cx.add_window_view(|window, cx| {
+        let mut workbench = Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), crate::default_settings(), HostSync::new(std::sync::mpsc::channel().0), cx);
+        workbench.load_keybindings(crate::keybindings::default_keybindings(&[]), dir.join("keybindings.json"), cx);
+        workbench.watch_editor_focus(window, cx);
+        workbench.open_file(file.clone(), true, window, cx);
+        workbench
+    });
+    cx.update(|window, _| window.activate_window());
+    cx.run_until_parked();
+    let highlights = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().highlights.len());
+    assert_eq!(highlights(cx), 2);
+
+    cx.simulate_keystrokes("cmd-p");
+    assert_eq!(highlights(cx), 0, "onDidBlurEditorWidget");
+    cx.deactivate_window();
+    cx.update(|window, _| window.activate_window());
+    cx.run_until_parked();
+    assert_eq!(highlights(cx), 0);
+    cx.simulate_keystrokes("escape");
+    assert_eq!(highlights(cx), 2, "onDidFocusEditorText");
+    std::fs::remove_dir_all(dir).unwrap();
+}

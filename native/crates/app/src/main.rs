@@ -135,6 +135,7 @@ fn main() -> anyhow::Result<()> {
                 workbench.color_themes = color_themes;
                 workbench.restore_profile_state(storage.profile.clone());
                 workbench.restore_workspace_state(storage.workspace.clone());
+                workbench.watch_editor_focus(window, cx);
                 if let Some(file) = file {
                     workbench.open_file(file, true, window, cx);
                 }
@@ -208,6 +209,10 @@ fn main() -> anyhow::Result<()> {
                         // The editor's scrollbars show at open and after a scroll, hide 500ms later and fade out
                         // over 800ms; ref-screenshot waits the same.
                         cx.background_executor().timer(Duration::from_millis(1500)).await;
+                        // The capture reads the last frame, which can be up to a blink old: draw one now, so an input's
+                        // caret shows its phase at capture time as Chromium's does (500 ms on, 500 ms off, from the last key).
+                        cx.update(|window, _| window.refresh()).ok();
+                        cx.background_executor().timer(Duration::from_millis(100)).await;
                         let saved = cx.update(|window, _| save_screenshot(window, path)).and_then(|result| result);
                         if let Err(error) = saved {
                             eprintln!("screenshot failed: {error:#}");

@@ -86,6 +86,7 @@ pub struct Workbench {
     /// Window x of the text area, recorded at paint, to turn a click into a column.
     text_area_left: Rc<Cell<f32>>,
     pub editor_focus: FocusHandle,
+    editor_focus_listeners: Vec<gpui::Subscription>,
     /// The IME's marked text: a UTF-16 range of the cursor's line.
     marked_text: Option<Range<usize>>,
     /// A left button press in the text is held, so moves extend the selection.
@@ -181,6 +182,7 @@ impl Workbench {
             fold_mouse_down: None,
             text_area_left: Rc::default(),
             editor_focus: cx.focus_handle(),
+            editor_focus_listeners: Vec::new(),
             marked_text: None,
             selecting_text: false,
             quick_inputs: quick_input_view::QuickInputs::new(cx),
