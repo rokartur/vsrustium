@@ -571,6 +571,7 @@ fn registry_default(key: &str, kind: ThemeKind) -> ColorValue {
         "terminalCommandDecoration.defaultBackground" => (Hex("#ffffff40"), Hex("#00000040"), Hex("#ffffff80")),
         "terminalCommandDecoration.successBackground" => (Hex("#1B81A8"), Hex("#2090D3"), Hex("#1B81A8")),
         "terminalCommandDecoration.errorBackground" => (Hex("#F14C4C"), Hex("#E51400"), Hex("#F14C4C")),
+        "terminalCommandGuide.foreground" => (Key("list.inactiveSelectionBackground"), Key("list.inactiveSelectionBackground"), Key("panel.border")),
         "scrollbar.shadow" => (Hex("#000000"), Hex("#DDDDDD"), None),
         "editor.selectionHighlightBackground" => (
             LessProminent(&Key("editor.selectionBackground"), &Key("editor.background"), 0.3, 0.6),
@@ -659,6 +660,7 @@ fn hc_light_default(key: &str) -> ColorValue {
         "terminalCommandDecoration.defaultBackground" => Hex("#00000040"),
         "terminalCommandDecoration.successBackground" => Hex("#007100"),
         "terminalCommandDecoration.errorBackground" => Hex("#B5200D"),
+        "terminalCommandGuide.foreground" => Key("panel.border"),
         "editor.background" => Hex("#ffffff"),
         "sideBar.background" => Hex("#FFFFFF"),
         "panel.background" => Key("editor.background"),

@@ -24,6 +24,18 @@ impl TerminalInstance {
         decorated
     }
 
+    /// `getCommandForLine` when it finds a full command: the rows of its command guide, from its prompt to the row
+    /// before its end (`showCommandGuide`), none past 200 rows.
+    pub fn command_guide_rows(&self, line: i64) -> Option<std::ops::Range<i64>> {
+        if self.current.prompt_line.is_some_and(|prompt| line >= prompt) {
+            return None;
+        }
+        let command = self.commands.iter().rev().find(|command| command.prompt_line.or(command.command_line).is_some_and(|start| start <= line))?;
+        let start = command.prompt_line.or(command.command_line)?;
+        let end = command.end_line.filter(|_| command.executed_line.is_some())?;
+        (end - start <= 200).then_some(start..end)
+    }
+
     /// The mark above the viewport top, else the top of the buffer.
     pub fn scroll_to_previous_mark(&mut self) {
         let viewport_y = self.viewport_y();
@@ -42,7 +54,7 @@ impl TerminalInstance {
         }
     }
 
-    fn viewport_y(&self) -> i64 {
+    pub fn viewport_y(&self) -> i64 {
         self.term.history_size() as i64 - self.term.grid().display_offset() as i64
     }
 
@@ -82,5 +94,8 @@ mod tests {
         instance.scroll_to_next_mark();
         assert_eq!(viewport(&instance), 16, "past the last mark: the bottom");
         assert_eq!(instance.decorated_commands(), [(Some(0), 0, Some(0)), (Some(1), 10, Some(0)), (None, 20, None)]);
+        assert_eq!(instance.command_guide_rows(4), Some(0..10));
+        assert_eq!(instance.command_guide_rows(10), Some(10..20));
+        assert_eq!(instance.command_guide_rows(20), None, "the prompt waiting for a command is no full command");
     }
 }

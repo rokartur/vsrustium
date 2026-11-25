@@ -87,6 +87,8 @@ pub struct TerminalView {
     pub(super) history: super::terminal_history::TerminalHistories,
     /// The instance whose sticky scroll overlay the pointer is over.
     pub(super) sticky_hovered: Option<u32>,
+    /// The command guide under the pointer: its instance and buffer rows.
+    pub(super) command_guide: Option<(u32, std::ops::Range<i64>)>,
     /// The last resize: its instance, `cols x rows` and when.
     pub(super) resize_overlay: Option<(u32, String, std::time::Instant)>,
 }
@@ -151,6 +153,7 @@ impl TerminalView {
             suggest: Default::default(),
             history: Default::default(),
             sticky_hovered: None,
+            command_guide: None,
             resize_overlay: None,
         }
     }
@@ -862,6 +865,7 @@ impl Workbench {
             KeyResult::Send(data) => {
                 instance.input(&data);
                 self.terminal_view.suggest.user_data(&data);
+                self.terminal_view.command_guide = None;
             }
             KeyResult::PageUp => instance.scroll(Scroll::PageUp),
             KeyResult::PageDown => instance.scroll(Scroll::PageDown),
@@ -990,9 +994,13 @@ impl Workbench {
             .child(canvas(|_, _, _| {}, move |bounds, _, window, cx| entity.update(cx, |workbench, _| workbench.paint_terminal_pane(id, bounds, window))).size_full())
             .children(self.terminal_sticky_scroll_hit_area(id, cx))
             .children(self.terminal_resize_overlay(id))
+            .children(self.terminal_command_guide(id))
             .children(self.terminal_decorations(id, cx))
             .on_hover(cx.listener(move |workbench, hovered: &bool, _, cx| {
                 workbench.terminal_view.hovered = hovered.then_some(id);
+                if !hovered {
+                    workbench.terminal_view.command_guide = None;
+                }
                 cx.notify();
             }))
             .on_mouse_down(MouseButton::Left, cx.listener(move |workbench, event: &MouseDownEvent, window, cx| workbench.terminal_mouse_down(id, event, window, cx)))
@@ -1187,8 +1195,15 @@ impl Workbench {
     fn terminal_mouse_move(&mut self, id: u32, event: &MouseMoveEvent, cx: &mut Context<Self>) {
         let (Some(bounds), Some(metrics)) = (self.terminal_view.pane_bounds.get(&id).copied(), self.terminal_view.metrics.clone()) else { return };
         let selecting = self.terminal_view.selecting == Some(id) && event.pressed_button == Some(MouseButton::Left);
-        let Some(instance) = self.terminal_view.instance_mut(id) else { return };
+        let show_command_guide = self.setting("terminal.integrated.shellIntegration.showCommandGuide") != false;
+        let Some(instance) = self.terminal_view.instance(id) else { return };
         let (row, column, side) = grid::cell_at(bounds, event.position, instance, &metrics);
+        let guide = show_command_guide.then(|| instance.command_guide_rows(instance.viewport_y() + row as i64)).flatten().map(|rows| (id, rows));
+        if guide != self.terminal_view.command_guide {
+            self.terminal_view.command_guide = guide;
+            cx.notify();
+        }
+        let Some(instance) = self.terminal_view.instance_mut(id) else { return };
         if selecting {
             instance.extend_selection(row, column, side);
             return cx.notify();

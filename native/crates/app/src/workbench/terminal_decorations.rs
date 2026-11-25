@@ -103,6 +103,34 @@ impl Workbench {
         self.show_context_menu_actions(actions, &context, anchor, vec![json!(instance), json!(index)], window, cx);
     }
 
+    /// markNavigationAddon.ts `showCommandGuide`: a 3px bar (`.terminal-command-guide`, 1.5px borders 20px left of the
+    /// text, moved 3px right) beside the rows of the command under the pointer.
+    pub(super) fn terminal_command_guide(&self, id: u32) -> Option<AnyElement> {
+        let (guide_id, rows) = self.terminal_view.command_guide.clone()?;
+        let (instance, pane, metrics) = (self.terminal_view.instance(id)?, self.terminal_view.pane_bounds.get(&id)?, self.terminal_view.metrics.as_ref()?);
+        if guide_id != id {
+            return None;
+        }
+        let screen_rows = instance.term.screen_lines() as i64;
+        let viewport_y = instance.viewport_y();
+        let first = (rows.start - viewport_y).max(0);
+        let last = (rows.end - viewport_y).min(screen_rows);
+        if first >= last {
+            return None;
+        }
+        let origin = grid::grid_origin(*pane, screen_rows as usize, metrics) - pane.origin;
+        let guide = gpui::div()
+            .absolute()
+            .left(origin.x - px(20.) + px(3.))
+            .top(origin.y + px(first as f32 * metrics.cell_height))
+            .w(px(3.))
+            .h(px((last - first) as f32 * metrics.cell_height))
+            .bg(self.color("terminalCommandGuide.foreground"))
+            .when(rows.start - viewport_y == first, |guide| guide.rounded_t(px(1.)))
+            .when(rows.end - viewport_y == last, |guide| guide.rounded_b(px(1.)));
+        Some(guide.into_any_element())
+    }
+
     /// The decorations of the rows on screen, where the grid painted last (`terminal.integrated.shellIntegration.decorationsEnabled`).
     pub(super) fn terminal_decorations(&self, id: u32, cx: &mut gpui::Context<Self>) -> Vec<AnyElement> {
         let enabled = self.setting("terminal.integrated.shellIntegration.decorationsEnabled");
