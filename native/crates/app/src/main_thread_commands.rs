@@ -81,6 +81,14 @@ impl Workbench {
                 self.clear_markers(arg(0).as_str().unwrap_or_default(), cx);
                 Outcome::done()
             }
+            ("MainThreadLanguageFeatures", "$unregister") => {
+                self.language_features.unregister(arg(0).as_u64().unwrap_or_default());
+                Outcome::done()
+            }
+            ("MainThreadLanguageFeatures", method) if method.starts_with("$register") => {
+                self.language_features.register(method, request.args.clone());
+                Outcome::done()
+            }
             ("MainThreadCommands", "$getCommands") => Outcome::Ready(Ok(json!(self.commands.ids().collect::<Vec<_>>()))),
             _ => Outcome::done(),
         }

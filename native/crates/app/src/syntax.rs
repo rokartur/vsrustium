@@ -115,6 +115,15 @@ impl Tokenization {
         overlay_colors(highlights, &colored)
     }
 
+    /// The token styles of line `index` without bracket pair colors, as `tokenizeToString` renders code blocks.
+    pub fn token_styles(&self, theme: &Theme, lines: &[String], index: usize, tab_size: usize) -> Vec<(Range<usize>, HighlightStyle)> {
+        if self.grammar.is_none() {
+            return Vec::new();
+        }
+        self.tokenize_to(lines, index);
+        token_highlights(&theme.tokens, &lines[index], &self.lines.borrow()[index].0, tab_size)
+    }
+
     /// The minimap's view of line `index` (`getMinimapLinesRenderingData`): each token's end byte offset with
     /// its foreground. Bracket pair colors are decorations upstream, so the minimap does not show them.
     pub fn minimap_runs(&self, theme: &Theme, lines: &[String], index: usize) -> Vec<(usize, [u8; 3])> {

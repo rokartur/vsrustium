@@ -7,7 +7,7 @@
 // env SETTINGS = a JSON object of user settings for both)
 // Steps, in window points (both windows are 1024x768):
 //   {"click": [x, y]}  {"click": [x, y], "modifier": ["cmd"]}  {"click": [x, y], "foreground": true}  {"doubleClick": [x, y]}  {"rightClick": [x, y]}  {"key": "return"}
-//   {"hotkey": ["cmd", "c"]}  {"type": "text"}  {"wait": ms}  {"shot": "name"}  {"clipboard": "name"} (the pasteboard text, the folder path as <folder>)
+//   {"hover": [x, y]} (the real pointer, for hovers)  {"hotkey": ["cmd", "c"]}  {"type": "text"}  {"wait": ms}  {"shot": "name"}  {"clipboard": "name"} (the pasteboard text, the folder path as <folder>)
 //   {"dragShot": [x1, y1, x2, y2], "shot": "name", "modifier": ["option"], "button": "middle"}: a slow drag, captured while held
 // Shots land in <out-dir>/<reference|port>-<name>.png at 2x; a sheet on the window is captured as its own window.
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { referenceArgs, referenceUserData } from './ref-user-data.ts';
 
-type Step = { click?: number[]; doubleClick?: number[]; rightClick?: number[]; modifier?: string[]; key?: string; hotkey?: string[]; type?: string; wait?: number; shot?: string; dragShot?: number[]; foreground?: boolean; clipboard?: string; button?: string };
+type Step = { click?: number[]; hover?: number[]; doubleClick?: number[]; rightClick?: number[]; modifier?: string[]; key?: string; hotkey?: string[]; type?: string; wait?: number; shot?: string; dragShot?: number[]; foreground?: boolean; clipboard?: string; button?: string };
 
 const [outDir, stepsFile, themeName = 'dark'] = process.argv.slice(2);
 const steps: Step[] = JSON.parse(readFileSync(stepsFile, 'utf8'));
@@ -91,6 +91,9 @@ async function run(app: string, pid: number, folder: string) {
 	for (const step of steps) {
 		if (step.click) {
 			await cua('click', { ...target, ...at(step.click), modifier: step.modifier, delivery_mode: step.foreground ? 'foreground' : undefined });
+		} else if (step.hover) {
+			// Editor hovers follow mouse moves, which only the real pointer sends; desktop coordinates are 2x pixels.
+			await cua('move_cursor', { scope: 'desktop', delivery_mode: 'foreground', x: (window.bounds.x + step.hover[0]) * 2, y: (window.bounds.y + step.hover[1]) * 2 });
 		} else if (step.doubleClick) {
 			await cua('double_click', { ...target, ...at(step.doubleClick) });
 		} else if (step.rightClick) {

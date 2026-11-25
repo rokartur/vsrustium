@@ -231,6 +231,20 @@ pub(super) struct MessageLayout {
 /// `anchor_top` the line's top in the editor and `line_height` its height, `editor` the editor's window bounds.
 pub(super) fn layout_in_page(left: f32, anchor_top: f32, line_height: f32, width: f32, editor: Bounds<f32>, window: Size<f32>) -> MessageLayout {
     let height = MESSAGE_HEIGHT + ANCHOR_HEIGHT;
+    let left = horizontal_in_page(left, width, editor, window);
+    let above_top = anchor_top - height;
+    let fits_above = editor.origin.y + above_top >= 22.;
+    let below_top = anchor_top + line_height;
+    let fits_below = editor.origin.y + below_top + height <= window.height - 22.;
+    match fits_above || !fits_below {
+        true => MessageLayout { left, top: above_top, below: false },
+        false => MessageLayout { left, top: below_top, below: true },
+    }
+}
+
+/// contentWidgets.ts `_layoutHorizontalSegmentInPage`: `left` from the editor's left, shifted to keep the widget
+/// 15px inside the window and within its own width of the editor.
+pub(super) fn horizontal_in_page(left: f32, width: f32, editor: Bounds<f32>, window: Size<f32>) -> f32 {
     let min_limit = 15f32.max(editor.origin.x - width);
     let max_limit = (editor.origin.x + editor.size.width + width).min(window.width - 15.);
     let mut absolute_left = editor.origin.x + left;
@@ -243,12 +257,5 @@ pub(super) fn layout_in_page(left: f32, anchor_top: f32, line_height: f32, width
     if absolute_left < min_limit {
         left -= absolute_left - min_limit;
     }
-    let above_top = anchor_top - height;
-    let fits_above = editor.origin.y + above_top >= 22.;
-    let below_top = anchor_top + line_height;
-    let fits_below = editor.origin.y + below_top + height <= window.height - 22.;
-    match fits_above || !fits_below {
-        true => MessageLayout { left, top: above_top, below: false },
-        false => MessageLayout { left, top: below_top, below: true },
-    }
+    left
 }

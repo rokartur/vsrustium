@@ -5,6 +5,8 @@
 mod actions;
 mod bulk_text_edits;
 mod configuration;
+mod content_hover;
+mod content_hover_view;
 mod context_menu;
 mod define_keybinding;
 mod diagnostics;
@@ -24,6 +26,7 @@ pub(crate) mod host_requests;
 mod input_box_view;
 mod keybindings_editor_view;
 mod keyboard;
+mod markdown_view;
 mod marker_navigation;
 pub mod menubar;
 mod middle_scroll;
@@ -125,6 +128,9 @@ pub struct Workbench {
     text_area_bounds: Rc<Cell<gpui::Bounds<f32>>>,
     editor_message: editor_message::EditorMessages,
     marker_navigation: marker_navigation::MarkerNavigation,
+    content_hover: content_hover::ContentHover,
+    /// The providers extensions registered through MainThreadLanguageFeatures.
+    pub(crate) language_features: crate::language_features::LanguageFeatures,
     readonly_overrides: readonly::SessionOverrides,
     pub editor_focus: FocusHandle,
     /// bannerController.ts: the banner element is focusable (`tabIndex = 0`) inside the editor's DOM node.
@@ -179,6 +185,7 @@ impl Render for Workbench {
         self.refresh_selection_highlights(window);
         self.update_webview_panels(window, cx);
         self.auto_save_models_changed(cx);
+        self.follow_content_hover_editor();
         let viewport = window.viewport_size();
         let window_border = self.theme.color("window.activeBorder");
         // The reference lays the grid out at the full window size and shifts it inside the 1px window border.
@@ -267,6 +274,8 @@ impl Workbench {
             text_area_bounds: Rc::default(),
             editor_message: Default::default(),
             marker_navigation: Default::default(),
+            content_hover: Default::default(),
+            language_features: Default::default(),
             readonly_overrides: Default::default(),
             editor_focus: cx.focus_handle(),
             unicode_banner_focus: cx.focus_handle(),
@@ -321,6 +330,7 @@ impl Workbench {
         workbench.register_readonly_commands();
         workbench.register_preferences_commands();
         workbench.register_editor_message_commands();
+        workbench.register_content_hover_commands();
         workbench.register_marker_navigation_commands();
         workbench.register_define_keybinding_command();
         workbench.register_notifications_commands();

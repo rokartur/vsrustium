@@ -328,15 +328,30 @@ impl Workbench {
             .on_key_down(cx.listener(Self::editor_key_down))
             .on_scroll_wheel(cx.listener(Self::editor_wheel))
             .on_modifiers_changed(cx.listener(Self::sticky_modifiers_changed))
-            .on_modifiers_changed(cx.listener(|workbench, event: &gpui::ModifiersChangedEvent, _, cx| workbench.text_drag_modifiers_changed(event.modifiers, cx)))
-            .on_hover(cx.listener(|workbench, hovered: &bool, _, cx| {
+            .on_modifiers_changed(cx.listener(|workbench, event: &gpui::ModifiersChangedEvent, _, cx| {
+                workbench.text_drag_modifiers_changed(event.modifiers, cx);
+                workbench.content_hover_modifiers_changed(event.modifiers, cx);
+            }))
+            .on_hover(cx.listener(|workbench, hovered: &bool, window, cx| {
                 workbench.scrollbars.mouse_over = *hovered;
                 match hovered {
                     true => workbench.reveal_scrollbars(cx),
-                    false => workbench.hide_scrollbars(cx),
+                    false => {
+                        workbench.hide_scrollbars(cx);
+                        workbench.content_hover_mouse_left(window.mouse_position(), cx);
+                    }
                 }
             }))
+            // The line's row sets `row_target` first: moves bubble from the row up to the text area.
+            .on_mouse_move(cx.listener(|workbench, event: &MouseMoveEvent, _, cx| {
+                let target = match workbench.content_hover.row_target.take() {
+                    Some((line, visible)) => super::content_hover::MouseTarget::Text { line, visible },
+                    None => super::content_hover::MouseTarget::Other,
+                };
+                workbench.content_hover_mouse_moved(target, event.position, event.modifiers, event.pressed_button.is_some(), cx);
+            }))
             .capture_any_mouse_down(cx.listener(|workbench, event: &MouseDownEvent, _, cx| {
+                workbench.hide_content_hover(cx);
                 if workbench.middle_scroll_mouse_down(event.button == MouseButton::Middle, event.position, cx) {
                     cx.stop_propagation();
                 }
@@ -410,6 +425,7 @@ impl Workbench {
             .children(self.sticky_scroll_widget(editor, metrics, window, cx))
             .children(self.find_widget(self.editors.viewport.width + metrics.content_left() + minimap_width, metrics.content_left(), minimap_width, window, cx))
             .children(self.editor_message_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
+            .children(self.content_hover_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
             .children(self.keybindings_file_widgets(editor, self.editors.viewport.width + metrics.content_left() + minimap_width, viewport.height, minimap_width, window, cx))
     }
 
@@ -877,6 +893,7 @@ impl Workbench {
                     }
                     content = content.child(highlight);
                 }
+                content = content.children(self.content_hover_highlight(editor, index, char_width));
                 // bracketMatching.css .bracket-match: background and a 1px border inside the bracket's box.
                 for (_, bytes) in bracket_matches.iter().flat_map(|(pair, _)| pair).filter(|(line, _)| *line == index) {
                     let start = visible_column(text, text[..bytes.start].chars().count(), tab_size) as f32 * char_width;
@@ -1030,6 +1047,7 @@ impl Workbench {
                     }))
                     .on_mouse_move(cx.listener(move |workbench, event: &MouseMoveEvent, _, cx| {
                         workbench.editor_message_mouse_moved(index, cx);
+                        workbench.content_hover.row_target = Some((index, visible_at(workbench, event.position.x)));
                         match event.pressed_button {
                             Some(MouseButton::Left) if workbench.text_drag.is_some() => workbench.drag_text(index, visible_at(workbench, event.position.x), event.modifiers.alt, cx),
                             Some(MouseButton::Left) if workbench.selecting_text => workbench.click_text(index, visible_at(workbench, event.position.x), event.modifiers, true, 1, cx),

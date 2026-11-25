@@ -27,8 +27,9 @@ pub struct HostRequest {
 pub struct WorkbenchMainThread {
     pub requests: UnboundedSender<HostRequest>,
     pub messages: Receiver<HostMessage>,
-    /// Host calls the workbench made with `HostSync::call`, waiting for their answer.
-    pub waiting: Vec<(u32, oneshot::Sender<Result<Value, Value>>)>,
+    /// Host calls the workbench made with `HostSync::call`, waiting for their answer, and whether a dropped receiver
+    /// still has to cancel the request.
+    pub waiting: Vec<(u32, bool, oneshot::Sender<Result<Value, Value>>)>,
     /// `$registerTextContentProvider` handles and schemes, newest first as textModelResolverService.ts keeps them.
     pub content_providers: Vec<(Value, String)>,
     pub extensions: WindowExtensions,
@@ -103,21 +104,29 @@ impl MainThread for WorkbenchMainThread {
                 let _ = reply.send(self.extensions.run(session, job).map_err(|error| format!("{error:#}")));
                 continue;
             }
-            let mut args: Vec<Arg> = message.args.into_iter().map(Arg::Json).collect();
-            // extHostWebview.ts `$onMessage` reads its last argument as a SerializableObjectWithBuffers.
-            if (message.proxy, message.method) == ("ExtHostWebviews", "$onMessage") && let Some(Arg::Json(json)) = args.pop() {
-                args.push(Arg::JsonWithBuffers { json, buffers: Vec::new() });
-            }
-            let req = session.send_request(message.proxy, message.method, args);
+            let req = if message.cancellable {
+                session.notify_cancellable(message.proxy, message.method, message.args)
+            } else {
+                let mut args: Vec<Arg> = message.args.into_iter().map(Arg::Json).collect();
+                // extHostWebview.ts `$onMessage` reads its last argument as a SerializableObjectWithBuffers.
+                if (message.proxy, message.method) == ("ExtHostWebviews", "$onMessage") && let Some(Arg::Json(json)) = args.pop() {
+                    args.push(Arg::JsonWithBuffers { json, buffers: Vec::new() });
+                }
+                session.send_request(message.proxy, message.method, args)
+            };
             if let Some(reply) = message.reply {
-                self.waiting.push((req, reply));
+                self.waiting.push((req, message.cancellable, reply));
             }
         }
         let mut still_waiting = Vec::new();
-        for (req, reply) in self.waiting.drain(..) {
+        for (req, cancellable, reply) in self.waiting.drain(..) {
             match session.take_result(req) {
                 Some(result) => drop(reply.send(result)),
-                None => still_waiting.push((req, reply)),
+                None if cancellable && reply.is_canceled() => {
+                    session.cancel(req);
+                    still_waiting.push((req, false, reply));
+                }
+                None => still_waiting.push((req, cancellable, reply)),
             }
         }
         self.waiting = still_waiting;

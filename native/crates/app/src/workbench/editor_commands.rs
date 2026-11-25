@@ -171,6 +171,10 @@ impl Workbench {
                 Outcome::done()
             });
         }
+        self.commands.register("editor.action.unicodeHighlight.showExcludeOptions", |workbench, args, window, cx| {
+            workbench.show_unicode_exclude_options(&args.first().cloned().unwrap_or_default(), window, cx);
+            Outcome::done()
+        });
         // `editor.action.smartSelect.grow` is the expand command's old id (registerCommandAlias).
         for (id, forward) in [("editor.action.smartSelect.expand", true), ("editor.action.smartSelect.grow", true), ("editor.action.smartSelect.shrink", false)] {
             self.commands.register(id, move |workbench, _, _, cx| workbench.run_smart_select(forward, cx));

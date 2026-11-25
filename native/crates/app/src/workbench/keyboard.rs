@@ -166,6 +166,9 @@ impl Workbench {
             cx.stop_propagation();
             return;
         }
+        if self.editor_focus.is_focused(window) {
+            self.content_hover_key_down(&resolution, cx);
+        }
         match resolution {
             Resolution::MoreChordsNeeded => {
                 cx.stop_propagation();
@@ -296,6 +299,7 @@ impl Workbench {
             context.insert("activeEditorCanToggleReadonly".into(), json!(editor.document.scheme != "untitled"));
             context.insert("messageVisible".into(), json!(self.editor_message_visible()));
             context.insert("markersNavigationVisible".into(), json!(self.markers_navigation_visible()));
+            context.insert("editorHoverVisible".into(), json!(self.content_hover_visible()));
             context.insert("editorHasSelection".into(), json!(editor.selections.iter().any(|selection| !selection.is_empty())));
             context.insert("editorHasMultipleSelections".into(), json!(editor.selections.len() > 1));
             context.insert("selectionAnchorSet".into(), json!(editor.selection_anchor.is_some()));

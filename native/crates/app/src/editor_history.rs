@@ -69,7 +69,11 @@ pub fn file_uri_string(path: &Path) -> String {
 
 /// The path of a `file:` URI string; `None` for other schemes.
 pub fn file_path(uri: &str) -> Option<PathBuf> {
-    let encoded = uri.strip_prefix("file://")?;
+    Some(PathBuf::from(percent_decode(uri.strip_prefix("file://")?)?))
+}
+
+/// `decodeURIComponent`; `None` when the decoded bytes are not UTF-8.
+pub fn percent_decode(encoded: &str) -> Option<String> {
     let bytes = encoded.as_bytes();
     let mut decoded = Vec::with_capacity(bytes.len());
     let mut index = 0;
@@ -86,7 +90,7 @@ pub fn file_path(uri: &str) -> Option<PathBuf> {
             }
         }
     }
-    Some(PathBuf::from(String::from_utf8(decoded).ok()?))
+    String::from_utf8(decoded).ok()
 }
 
 #[cfg(test)]

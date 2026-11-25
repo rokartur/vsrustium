@@ -29,6 +29,8 @@ pub struct HostMessage {
     pub args: Vec<Value>,
     /// Where the host's answer goes, for `HostSync::call`.
     pub reply: Option<oneshot::Sender<Result<Value, Value>>>,
+    /// The host method takes a `CancellationToken`; dropping the reply's receiver cancels it.
+    pub cancellable: bool,
     /// Working copy file operations, run on the host thread so they reach its file operation participants.
     pub files: Option<FileWork>,
     /// An install or uninstall, run on the host thread, which owns the extensions and tells the host.
@@ -296,13 +298,13 @@ impl HostSync {
 
     pub(crate) fn send(&self, proxy: &'static str, method: &'static str, args: Vec<Value>) {
         // The session thread is gone once the host exits; the workbench keeps working without it.
-        let _ = self.sender.send(HostMessage { proxy, method, args, reply: None, files: None, extensions: None });
+        let _ = self.sender.send(HostMessage { proxy, method, args, reply: None, cancellable: false, files: None, extensions: None });
     }
 
     /// Runs file edits on the host thread; with no host they run here on the disk, without participants.
     pub fn run_files(&self, job: FileJob) -> oneshot::Receiver<files::Result<FileUndo>> {
         let (reply, receiver) = oneshot::channel();
-        let message = HostMessage { proxy: "", method: "", args: Vec::new(), reply: None, files: Some(FileWork { job, reply }), extensions: None };
+        let message = HostMessage { proxy: "", method: "", args: Vec::new(), reply: None, cancellable: false, files: Some(FileWork { job, reply }), extensions: None };
         if let Err(unsent) = self.sender.send(message) {
             unsent.0.files.expect("the message carries file work").run(&mut files::disk::Disk);
         }
@@ -323,14 +325,21 @@ impl HostSync {
     /// Sends a request whose answer arrives on the receiver; a host that is gone drops the sender.
     pub fn call(&self, proxy: &'static str, method: &'static str, args: Vec<Value>) -> oneshot::Receiver<Result<Value, Value>> {
         let (reply, receiver) = oneshot::channel();
-        let _ = self.sender.send(HostMessage { proxy, method, args, reply: Some(reply), files: None, extensions: None });
+        let _ = self.sender.send(HostMessage { proxy, method, args, reply: Some(reply), cancellable: false, files: None, extensions: None });
         receiver
     }
 
     /// Installs or uninstalls on the host thread; a host that is gone drops the sender.
     pub fn run_extensions(&self, job: Job) -> oneshot::Receiver<Result<Vec<ScannedExtension>, String>> {
         let (reply, receiver) = oneshot::channel();
-        let _ = self.sender.send(HostMessage { proxy: "", method: "", args: Vec::new(), reply: None, files: None, extensions: Some((job, reply)) });
+        let _ = self.sender.send(HostMessage { proxy: "", method: "", args: Vec::new(), reply: None, cancellable: false, files: None, extensions: Some((job, reply)) });
+        receiver
+    }
+
+    /// `call` of a host method that takes a `CancellationToken`: dropping the receiver cancels the request.
+    pub fn call_cancellable(&self, proxy: &'static str, method: &'static str, args: Vec<Value>) -> oneshot::Receiver<Result<Value, Value>> {
+        let (reply, receiver) = oneshot::channel();
+        let _ = self.sender.send(HostMessage { proxy, method, args, reply: Some(reply), cancellable: true, files: None, extensions: None });
         receiver
     }
 }

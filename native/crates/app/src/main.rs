@@ -28,6 +28,7 @@ mod keybindings;
 mod keybindings_editor;
 mod keyboard_layout;
 mod system_wide_keybindings;
+mod language_features;
 mod languages;
 mod local_history;
 mod main_thread;
@@ -37,6 +38,7 @@ mod main_thread_output;
 mod main_thread_progress;
 mod main_thread_quick_open;
 mod main_thread_status_bar;
+mod markdown;
 mod markers;
 mod menus;
 mod notifications;
@@ -335,7 +337,7 @@ fn run_extension_host(
             MainThreadSecretState::in_memory()
         }),
     });
-    session.forward(&["MainThreadCommands", "MainThreadDiagnostics", "MainThreadDownloadService", "MainThreadEditorTabs", "MainThreadLogger", "MainThreadMessageService", "MainThreadOutputService", "MainThreadProgress", "MainThreadQuickOpen", "MainThreadStatusBar", "MainThreadWebviewPanels", "MainThreadWebviews", "MainThreadWorkspace"], move |request| {
+    session.forward(&["MainThreadCommands", "MainThreadDiagnostics", "MainThreadDownloadService", "MainThreadEditorTabs", "MainThreadLanguageFeatures", "MainThreadLogger", "MainThreadMessageService", "MainThreadOutputService", "MainThreadProgress", "MainThreadQuickOpen", "MainThreadStatusBar", "MainThreadWebviewPanels", "MainThreadWebviews", "MainThreadWorkspace"], move |request| {
         let _ = workbench_requests.unbounded_send(request);
     }, workbench_replies);
     session.main_thread = Some(Box::new(main_thread));

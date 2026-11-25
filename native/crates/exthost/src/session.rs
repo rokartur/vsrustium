@@ -381,6 +381,16 @@ impl Session {
         self.send_request(proxy, method, args.into_iter().map(Arg::Json).collect())
     }
 
+    /// `notify` of a host method that takes a `CancellationToken`; `cancel` cancels it.
+    pub fn notify_cancellable(&mut self, proxy: &str, method: &str, args: Vec<Value>) -> u32 {
+        self.send(proxy, method, args.into_iter().map(Arg::Json).collect(), true)
+    }
+
+    /// Cancels a request sent with `notify_cancellable`; the host still answers it, with a cancellation error.
+    pub fn cancel(&mut self, req: u32) {
+        self.host.send(rpc::encode(&Message::Cancel { req }));
+    }
+
     pub fn send_request(&mut self, proxy: &str, method: &str, args: Vec<Arg>) -> u32 {
         self.send(proxy, method, args, false)
     }
