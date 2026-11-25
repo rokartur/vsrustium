@@ -46,6 +46,7 @@ mod syntax;
 mod tf_idf;
 mod theme;
 mod undo_redo;
+mod webview;
 mod workbench;
 
 use std::path::PathBuf;
