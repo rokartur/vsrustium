@@ -431,7 +431,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/interactive | workbench contribution | todo |  |
 | workbench/contrib/issue | workbench contribution | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | workbench/contrib/keybindings | workbench contribution | stub | systemWideKeybindings.ts selection and contribution warnings ported in system_wide_keybindings.rs (cargo test -p app system_wide); Toggle Keyboard Shortcuts Troubleshooting waits for the Window output channel (workbench/contrib/output) |
-| workbench/contrib/keybindingsExport | workbench contribution | todo |  |
+| workbench/contrib/keybindingsExport | workbench contribution | n/a | docs build tool of non-stable builds (`--export-default-keybindings` writes doc.keybindings.{win,osx,linux}.json); the port's keybindings/default-macos.json is generated from the reference's own export (keybindings.rs DEFAULT_KEYBINDINGS) |
 | workbench/contrib/languageDetection | workbench contribution | todo |  |
 | workbench/contrib/languageStatus | workbench contribution | todo |  |
 | workbench/contrib/limitIndicator | workbench contribution | todo |  |
