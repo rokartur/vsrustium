@@ -132,3 +132,75 @@ fn toggle_output_opens_and_closes_the_view(cx: &mut TestAppContext) {
     assert_eq!(shown_text(&workbench, cx), None);
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+fn run(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext, command: &str) {
+    let command = command.to_owned();
+    workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command(&command, vec![], window, cx)));
+    cx.run_until_parked();
+}
+
+fn context_key(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext, key: &str) -> Value {
+    workbench.update_in(cx, |workbench, window, _| workbench.key_context(window).get(key).cloned().unwrap_or(Value::Null))
+}
+
+/// outputView.ts `FilterController`: the filter text and the level toggles hide whole log entries.
+#[gpui::test]
+fn filters_hide_log_entries(cx: &mut TestAppContext) {
+    let (workbench, cx, _receiver, dir) = open(cx);
+    let file = dir.join("exthost.log");
+    let log = "2025-01-01 10:00:00.000 [info] started\n2025-01-01 10:00:00.001 [debug] loading\n  detail\n2025-01-01 10:00:00.002 [error] failed\n";
+    std::fs::write(&file, log).unwrap();
+    request(&workbench, cx, "MainThreadLogger", "$registerLogger", json!([{ "id": "exthost", "name": "Extension Host", "resource": { "scheme": "file", "path": file } }]));
+    run(&workbench, cx, "workbench.action.output.show.exthost");
+    assert_eq!(shown_text(&workbench, cx).unwrap().1, log);
+
+    run(&workbench, cx, "workbench.actions.workbench.panel.output.toggle.debug");
+    assert_eq!(context_key(&workbench, cx, "output.filter.debug"), false);
+    assert_eq!(shown_text(&workbench, cx).unwrap().1, "2025-01-01 10:00:00.000 [info] started\n2025-01-01 10:00:00.002 [error] failed\n");
+
+    workbench.update_in(cx, |workbench, window, cx| workbench.edit_output_filter(|input| input.set_value("!fail".into()), window, cx));
+    cx.executor().advance_clock(std::time::Duration::from_millis(300));
+    cx.run_until_parked();
+    assert_eq!(shown_text(&workbench, cx).unwrap().1, "2025-01-01 10:00:00.000 [info] started\n");
+
+    std::fs::write(&file, format!("{log}2025-01-01 10:00:00.003 [info] more\n")).unwrap();
+    request(&workbench, cx, "MainThreadOutputService", "$update", json!(["exthost", 1]));
+    assert_eq!(shown_text(&workbench, cx).unwrap().1, "2025-01-01 10:00:00.000 [info] started\n2025-01-01 10:00:00.003 [info] more\n", "appends are filtered too");
+
+    run(&workbench, cx, "workbench.actions.workbench.panel.output.clearFilterText");
+    cx.executor().advance_clock(std::time::Duration::from_millis(300));
+    cx.run_until_parked();
+    run(&workbench, cx, "workbench.actions.workbench.panel.output.toggle.debug");
+    assert_eq!(shown_text(&workbench, cx).unwrap().1, format!("{log}2025-01-01 10:00:00.003 [info] more\n"));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// output.contribution.ts title actions: Clear Output, Toggle Auto Scrolling and the active channel's log level.
+#[gpui::test]
+fn title_actions_clear_scroll_lock_and_set_the_log_level(cx: &mut TestAppContext) {
+    let (workbench, cx, receiver, dir) = open(cx);
+    let file = dir.join("exthost.log");
+    std::fs::write(&file, "one\n").unwrap();
+    request(&workbench, cx, "MainThreadLogger", "$registerLogger", json!([{ "id": "exthost", "name": "Extension Host", "resource": { "scheme": "file", "path": file } }]));
+    run(&workbench, cx, "workbench.action.output.toggleOutput");
+    assert_eq!(context_key(&workbench, cx, "activeOutputChannel"), "exthost");
+
+    run(&workbench, cx, "workbench.output.action.clearOutput");
+    assert_eq!(shown_text(&workbench, cx).unwrap().1, "");
+    std::fs::write(&file, "one\ntwo\n").unwrap();
+    request(&workbench, cx, "MainThreadOutputService", "$update", json!(["exthost", 1]));
+    assert_eq!(shown_text(&workbench, cx).unwrap().1, "two\n", "a cleared channel shows what came after");
+
+    assert_eq!(context_key(&workbench, cx, "outputView.scrollLock"), false);
+    run(&workbench, cx, "workbench.output.action.toggleAutoScroll");
+    assert_eq!(context_key(&workbench, cx, "outputView.scrollLock"), true);
+
+    assert_eq!(context_key(&workbench, cx, "activeLogOutput.level"), "info");
+    receiver.try_iter().for_each(drop);
+    run(&workbench, cx, "workbench.action.output.activeOutputLogLevel.1");
+    assert_eq!(context_key(&workbench, cx, "activeLogOutput.level"), "trace");
+    assert_eq!(context_key(&workbench, cx, "activeLogOutput.levelIsDefault"), false);
+    let sent: Vec<Vec<Value>> = receiver.try_iter().filter(|message| message.method == "$setLogLevel").map(|message| message.args).collect();
+    assert_eq!(sent, [vec![json!(1), exthost::scan::file_uri(&file)]]);
+    std::fs::remove_dir_all(dir).unwrap();
+}

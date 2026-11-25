@@ -352,7 +352,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/notebook | workbench service | todo |  |
 | workbench/services/notification | workbench service | todo |  |
 | workbench/services/outline | workbench service | todo |  |
-| workbench/services/output | workbench service | todo |  |
+| workbench/services/output | workbench service | ported | output.rs: channels read from their files from a start offset, Replace/Clear move it, log channels from visible loggers, `OutputViewFilters` and `parseLogEntryAt` (output/filter.rs), the active channel and its log level: cargo test -p app output (11 tests) |
 | workbench/services/panecomposite | workbench service | todo |  |
 | workbench/services/path | workbench service | todo |  |
 | workbench/services/policies | workbench service | todo |  |
@@ -451,7 +451,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/onboarding | workbench contribution | todo |  |
 | workbench/contrib/opener | workbench contribution | todo |  |
 | workbench/contrib/outline | workbench contribution | todo |  |
-| workbench/contrib/output | workbench contribution | todo |  |
+| workbench/contrib/output | workbench contribution | ported | output_view.rs and output_actions.rs: read-only Output view with the channel dropdown, filter box with level and category menus, Clear Output, Toggle Auto Scrolling, log level gear, Open Output in Editor, Show Output Channels, `workbench.action.output.show.<id>`, Cmd+Shift+U toggle, the Window and Extension Host channels; the view is an editor tab until the milestone 11 panel lands (port/notes.md milestone 15): cargo test -p app output |
 | workbench/contrib/performance | workbench contribution | todo |  |
 | workbench/contrib/policyExport | workbench contribution | todo |  |
 | workbench/contrib/preferences | workbench contribution | todo | keybindingsEditor.ts, keybindingWidgets.ts and the keybindings actions of preferences.contribution.ts ported as workbench/keybindings_editor_view.rs (cargo test -p app keybindings_editor_view, port/results/keybindings-editor.md); keybindingsEditorContribution.ts and smartSnippetInserter.ts ported as workbench/define_keybinding.rs and smart_snippet_inserter.rs (cargo test -p app define_keybinding smart_snippet_inserter, raw/keybindings-editor/define-file-*.png); keyboardLayoutPicker.ts and the Settings editor (milestone 10) not ported |

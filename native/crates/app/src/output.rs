@@ -20,6 +20,10 @@ pub const OUTPUT_LANGUAGE: &str = "Log";
 pub const LOG_LANGUAGE: &str = "log";
 /// logConstants.ts `windowLogId`.
 pub const WINDOW_LOG_ID: &str = "rendererLog";
+/// log.ts `DEFAULT_LOG_LEVEL`, `LogLevel.Info`.
+pub const DEFAULT_LOG_LEVEL: u8 = 3;
+/// log.ts `LogLevel` from `Off` (0) to `Error` (5), with `LogLevelToString` and `LogLevelToLocalizedString`.
+pub const LOG_LEVELS: [(u8, &str, &str); 6] = [(1, "trace", "Trace"), (2, "debug", "Debug"), (3, "info", "Info"), (4, "warn", "Warning"), (5, "error", "Error"), (0, "off", "Off")];
 
 pub struct OutputChannel {
     pub id: String,
@@ -60,6 +64,8 @@ pub struct Output {
     pub loggers: Vec<Logger>,
     /// `MainThreadOutputService._extensionIdPool`.
     extension_id_pool: HashMap<String, u32>,
+    /// outputServices.ts `OutputViewFilters`, shared by every channel the view shows.
+    pub filters: filter::Filters,
 }
 
 impl OutputChannel {
@@ -149,6 +155,29 @@ impl Output {
         id
     }
 
+    /// The logger a log channel shows; plain channels have none.
+    pub fn channel_logger(&self, id: &str) -> Option<&Logger> {
+        let channel = self.channel(id).filter(|channel| channel.log)?;
+        self.loggers.iter().find(|logger| logger.file == channel.file)
+    }
+
+    /// `OutputService.getLogLevel`: the level of the channel's logger, else the default level.
+    pub fn channel_log_level(&self, id: &str) -> Option<u8> {
+        self.channel_logger(id).map(|logger| logger.log_level.unwrap_or(DEFAULT_LOG_LEVEL))
+    }
+
+    /// `OutputService.setLogLevel` and `LoggerService.setLogLevel(resource, level)`: the logger's file when its level
+    /// changed; the default level is stored as none.
+    pub fn set_channel_log_level(&mut self, id: &str, level: u8) -> Option<PathBuf> {
+        let file = self.channel_logger(id)?.file.clone();
+        let logger = self.loggers.iter_mut().find(|logger| logger.file == file).expect("the channel's logger");
+        if logger.log_level.unwrap_or(DEFAULT_LOG_LEVEL) == level {
+            return None;
+        }
+        logger.log_level = (level != DEFAULT_LOG_LEVEL).then_some(level);
+        Some(file)
+    }
+
     /// `registerLogger` and `LogOutputChannels.onDidAddLoggers`: a visible logger is a log channel.
     pub fn register_logger(&mut self, logger: Logger) {
         self.loggers.retain(|known| known.file != logger.file);
@@ -189,10 +218,16 @@ impl Output {
         self.register_logger(logger);
     }
 
-    /// fileLog.ts `FileLogger.log`: one `<local time> [<level>] <message>` line appended to the Window log.
-    pub fn log_window(&self, level: &str, message: &str) {
+    /// fileLog.ts `FileLogger.log`: one `<local time> [<level>] <message>` line appended to the Window log, when the
+    /// logger's level lets `level` through.
+    pub fn log_window(&self, level: u8, message: &str) {
         let Some(logger) = self.loggers.iter().find(|logger| logger.id == WINDOW_LOG_ID) else { return };
-        let line = format!("{} [{level}] {message}\n", chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f"));
+        let logger_level = logger.log_level.unwrap_or(DEFAULT_LOG_LEVEL);
+        if logger_level == 0 || level < logger_level {
+            return;
+        }
+        let name = ["", "trace", "debug", "info", "warning", "error"][level as usize];
+        let line = format!("{} [{name}] {message}\n", chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f"));
         let write = || -> std::io::Result<()> {
             std::fs::create_dir_all(logger.file.parent().expect("the log file is in a folder"))?;
             std::fs::OpenOptions::new().create(true).append(true).open(&logger.file)?.write_all(line.as_bytes())

@@ -22,6 +22,7 @@ mod keyboard;
 pub mod menubar;
 mod middle_scroll;
 mod minimap_view;
+pub mod output_actions;
 mod output_view;
 pub mod quick_access;
 mod quick_open;
@@ -215,7 +216,7 @@ impl Workbench {
             context_keys: HashMap::new(),
             log_level: "info".into(),
             output: Default::default(),
-            output_view: Default::default(),
+            output_view: output_view::OutputView::new(cx),
             status_message: None,
             scrollbars: Default::default(),
             fold_controls: Default::default(),

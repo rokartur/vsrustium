@@ -139,7 +139,7 @@ fn main() -> anyhow::Result<()> {
                 host.configuration_scopes = development.is_some();
                 host.send_color_theme(theme.kind);
                 let mut workbench = Workbench::new(theme, app_root.clone(), workspace.clone(), languages, settings.clone(), host, cx);
-                workbench.output.register_window_log(exthost::session::window_logs_path(&user_data).join("renderer.log"));
+                workbench.register_window_log(exthost::session::window_logs_path(&user_data).join("renderer.log"));
                 workbench.skip_dialogs = development.as_ref().is_some_and(|development| development.tests_path.is_some());
                 workbench.load_keybindings(keybindings::default_keybindings(&extensions), keybindings_file.clone(), cx);
                 workbench.start_system_wide_keybindings(window, cx);

@@ -69,7 +69,7 @@ pub enum MenuAction {
 /// The workbench's registrations of the features the port has: menu, submenu or command id, title, group, order,
 /// `when`, and the command's precondition.
 type Row = (MenuId, Option<MenuId>, &'static str, &'static str, &'static str, f64, Option<&'static str>, Option<&'static str>);
-const WORKBENCH_MENUS: [Row; 67] = [
+const WORKBENCH_MENUS: [Row; 69] = [
     // menubar.contribution.ts
     (MenuId::MenubarMainMenu, Some(MenuId::MenubarFileMenu), "", "&&File", "", 1., None, None),
     (MenuId::MenubarMainMenu, Some(MenuId::MenubarEditMenu), "", "&&Edit", "", 2., None, None),
@@ -123,6 +123,9 @@ const WORKBENCH_MENUS: [Row; 67] = [
     (MenuId::EditorContext, None, "editor.action.clipboardCopyAction", "Copy", "9_cutcopypaste", 2., None, None),
     (MenuId::EditorContext, None, "editor.action.clipboardPasteAction", "Paste", "9_cutcopypaste", 4., Some("!editorReadonly"), None),
     (MenuId::EditorContext, None, "workbench.action.showCommands", "Command Palette...", "z_commands", 1., Some("!editorSimpleInput"), None),
+    // output.contribution.ts and viewsService.ts `openCommandActionDescriptor.mnemonicTitle`
+    (MenuId::EditorContext, None, "workbench.output.action.clearOutput", "Clear Output", "", 0., Some("inOutput"), None),
+    (MenuId::MenubarViewMenu, None, "workbench.action.output.toggleOutput", "&&Output", "5_panel", 1., Some("workbench.panel.output.active"), None),
     // editor.contribution.ts: the EditorTitleContext items of the commands the port has.
     (MenuId::EditorTitleContext, None, "workbench.action.closeActiveEditor", "Close", "1_close", 10., Some("!activeEditorCannotClose"), None),
     (MenuId::EditorTitleContext, None, "workbench.action.closeOtherEditors", "Close Others", "1_close", 20., None, Some("groupEditorsCount != '1'")),

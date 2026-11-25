@@ -280,6 +280,7 @@ impl Workbench {
         }
         self.keybindings_editor_context(window, &mut context);
         self.search_editor_context(window, &mut context);
+        self.output_context(window, &mut context);
         context
     }
 

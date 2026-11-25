@@ -399,6 +399,9 @@ Done when (first item): api-tests `vscode API - editors` passes as in the refere
 - The Window channel is the workbench's own logger, `renderer.log` in the window's logs folder (`logService.ts`), written by `Output::log_window`. `exthost::session::window_logs_path` gives the host and the workbench the same session folder.
 - shortcut: the Output view is an editor tab with scheme `output`, not a panel view: there is no panel on the base of this milestone; milestone 11 builds it. Moving the view into the panel is the remaining step once milestone 11 lands.
 - shortcut: a logger's `group` and `when` are ignored, every logger is its own channel; the port's host registers no grouped logger.
+- The Output view's title row (channel dropdown, filter box, Clear, Toggle Auto Scrolling, gear, Open Output in Editor) sits where a text editor has its breadcrumbs, as the search editor's query widget does. Upstream draws these in the panel's title bar; they move there with the view.
+- shortcut: filtered-out lines are removed from the shown text, where upstream hides them with `setHiddenAreas`; the port's editor has no hidden areas. Appends are filtered as they arrive.
+- shortcut: Open Output in Editor and Open Log... open the channel's file, where upstream opens its `output:` resource in a second read-only editor; the port's editor group hosts one output-scheme editor, the Output view.
 
 ## Benchmarks
 
