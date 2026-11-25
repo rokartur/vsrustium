@@ -2,6 +2,8 @@
 //! the merged view `getValue` reads. The port has no policies, remote, profiles or in-memory values yet, so
 //! those layers are empty and left out; `to_data` still sends them as upstream's `toData` does.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
@@ -17,6 +19,9 @@ pub struct Configuration {
     pub folders: Vec<(PathBuf, ConfigurationModel)>,
     /// `WorkbenchState` is not EMPTY: a folder or a workspace file is open, so the workspace layer counts.
     pub has_workspace: bool,
+    /// `_workspaceConsolidatedConfiguration`, `_foldersConsolidatedConfigurations` and `overrideConfigurations`:
+    /// the merged model per folder and language. A write to a layer field must call `layers_changed`.
+    pub(crate) consolidated: RefCell<HashMap<(Option<PathBuf>, Option<String>), ConfigurationModel>>,
 }
 
 /// `IConfigurationOverrides`: a file the value is read for, and a language.
@@ -46,7 +51,15 @@ pub struct Layer {
 impl Configuration {
     /// `getValue(section, overrides)`.
     pub fn get_value(&self, section: Option<&str>, overrides: &Overrides) -> Option<Value> {
-        self.consolidated(overrides).get_value(section)
+        let folder = self.folder_for(overrides.resource).map(Path::to_path_buf);
+        let key = (folder, overrides.override_identifier.map(str::to_string));
+        let mut consolidated = self.consolidated.borrow_mut();
+        consolidated.entry(key).or_insert_with(|| self.consolidated(overrides)).get_value(section)
+    }
+
+    /// Drops the merged models after a layer changed.
+    pub fn layers_changed(&mut self) {
+        self.consolidated.get_mut().clear();
     }
 
     /// `inspect(key, overrides)`, the layers MainThreadConfiguration and `updateValue` decide a write target from.
@@ -85,8 +98,13 @@ impl Configuration {
 
     /// `getFolderConfigurationModelForResource`: the model of the folder closest to the resource.
     fn folder_model_for(&self, resource: Option<&Path>) -> Option<&ConfigurationModel> {
+        let folder = self.folder_for(resource)?;
+        self.folders.iter().find(|(path, _)| path == folder).map(|(_, model)| model)
+    }
+
+    fn folder_for(&self, resource: Option<&Path>) -> Option<&Path> {
         let resource = resource?;
-        self.folders.iter().filter(|(folder, _)| resource.starts_with(folder)).max_by_key(|(folder, _)| folder.components().count()).map(|(_, model)| model)
+        self.folders.iter().map(|(folder, _)| folder.as_path()).filter(|folder| resource.starts_with(folder)).max_by_key(|folder| folder.components().count())
     }
 
     /// `compareAndUpdateLocalUserConfiguration`.
@@ -94,6 +112,7 @@ impl Configuration {
         let change = compare(Some(&self.local_user), Some(&user));
         if !change.keys.is_empty() {
             self.local_user = user;
+            self.layers_changed();
         }
         change
     }
@@ -105,6 +124,7 @@ impl Configuration {
         let folder_change = compare(Some(current), Some(&folder_model));
         if !folder_change.keys.is_empty() {
             *current = folder_model.clone();
+            self.layers_changed();
         }
         if !single_folder {
             return folder_change;
@@ -117,6 +137,7 @@ impl Configuration {
         let change = compare(Some(&self.workspace), Some(&workspace));
         if !change.keys.is_empty() {
             self.workspace = workspace;
+            self.layers_changed();
         }
         change
     }

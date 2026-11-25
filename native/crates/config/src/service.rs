@@ -85,6 +85,7 @@ impl Settings {
         let folders: Vec<PathBuf> = settings.workspace.iter().flat_map(|workspace| workspace.folders.iter().map(|folder| folder.path.clone())).collect();
         settings.configuration.folders = folders.into_iter().map(|folder| (folder.clone(), settings.load_folder(&folder))).collect();
         settings.configuration.workspace = settings.load_workspace();
+        settings.configuration.layers_changed();
         settings.stamps = settings.watched_files().into_iter().map(|path| (path.clone(), stamp(&path))).collect();
         settings
     }
@@ -94,6 +95,7 @@ impl Settings {
         let defaults = registry.default_model();
         let change = compare(Some(&self.configuration.defaults), Some(&defaults));
         self.configuration.defaults = defaults;
+        self.configuration.layers_changed();
         self.registry = registry;
         change
     }
