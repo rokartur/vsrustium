@@ -118,6 +118,8 @@ pub enum TerminalInput {
     ProfileName { profile: Profile, existing: Vec<String> },
     /// Send Sequence's input box.
     SendSequence,
+    /// Write Data to Terminal's input box.
+    WriteData,
     /// Send Signal's picker, then its manual entry.
     Signal,
     ManualSignal,
@@ -788,7 +790,7 @@ impl Workbench {
             }
             (event, TerminalInput::RunRecent { kind, picks, fuzzy, instance }) => self.run_recent_input_event(id, event, kind, picks, fuzzy, instance, window, cx),
             (Event::Hide, _) => self.quick_inputs.remove(id),
-            (event, input @ (TerminalInput::SendSequence | TerminalInput::Signal | TerminalInput::ManualSignal)) => self.terminal_contrib_input_event(id, event, input, window, cx),
+            (event, input @ (TerminalInput::SendSequence | TerminalInput::WriteData | TerminalInput::Signal | TerminalInput::ManualSignal)) => self.terminal_contrib_input_event(id, event, input, window, cx),
             _ => {}
         }
     }

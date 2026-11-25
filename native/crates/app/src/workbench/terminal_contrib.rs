@@ -1,4 +1,5 @@
-//! The small terminalContrib actions: sendSequence, sendSignal and zoom (font size commands and Cmd+wheel).
+//! The small terminalContrib actions: sendSequence, sendSignal, zoom (font size commands and Cmd+wheel) and the
+//! developer contribution's Write Data to Terminal.
 
 use gpui::{Context, ScrollDelta, Window};
 use serde_json::json;
@@ -39,6 +40,16 @@ impl Workbench {
                 Some(signal) => workbench.send_signal(signal),
                 None => workbench.show_signal_picker(window, cx),
             }
+            Outcome::done()
+        });
+        self.commands.register("workbench.action.terminal.writeDataToTerminal", |workbench, _, window, cx| {
+            workbench.open_terminal_view(window, cx);
+            let mut input = QuickInput::new(0, Kind::InputBox);
+            input.placeholder = Some("Enter data (supports \\n, \\r, \\xAB)".into());
+            input.prompt = Some("Enter data to write directly to the terminal, bypassing the pty".into());
+            let id = workbench.quick_inputs.add(input, Owner::Terminal(TerminalInput::WriteData));
+            workbench.show_quick_input(id, window, cx);
+            workbench.flush_quick_input_events(window, cx);
             Outcome::done()
         });
         self.commands.register("workbench.action.terminal.fontZoomIn", |workbench, _, _, _| workbench.zoom_terminal_font(1.));
@@ -124,6 +135,13 @@ impl Workbench {
         self.hide_quick_input_by_id(id, window, cx);
         match input {
             TerminalInput::SendSequence if !value.is_empty() => self.send_sequence(&unescape_sequence(&value)),
+            // `xterm._writeText`: the data goes to the parser as if the process wrote it.
+            TerminalInput::WriteData if !value.is_empty() => {
+                if let Some(id) = self.terminal_view.active_instance_id() {
+                    self.terminal_data(id, unescape_sequence(&value).as_bytes(), cx);
+                    cx.notify();
+                }
+            }
             TerminalInput::Signal => match picked.map(|handle| handle as usize) {
                 Some(index) if index < SIGNALS.len() => self.send_signal(SIGNALS[index].0),
                 Some(_) => {
