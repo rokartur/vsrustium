@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 use super::Workbench;
 use super::host_requests::{range, snippet_edits, uri_parts};
 use crate::editor::{ContentChanged, EditReason, Position, TextDocument, expand_snippet, uri_string};
+use crate::local_history;
 
 impl Workbench {
     /// `BulkTextEdits.apply`: each resource's edits are one model change, made through the active editor when it shows
@@ -125,6 +126,9 @@ impl Workbench {
                 2 => {
                     if let Ok((source_scheme, ref source)) = uri_parts(&pair["source"]) {
                         changed |= self.move_models(source_scheme, source, scheme, target);
+                        if source_scheme == "file" && scheme == "file" {
+                            self.move_local_history(source, target, cx);
+                        }
                     }
                 }
                 _ => {}
@@ -145,6 +149,23 @@ impl Workbench {
             moved = true;
         }
         moved
+    }
+
+    /// workingCopyHistoryTracker.ts `onDidRunWorkingCopyFileOperation` for a move: the history of the moved files
+    /// follows them to `target`.
+    fn move_local_history(&self, source: &Path, target: &Path, cx: &mut Context<Self>) {
+        let settings = self.settings.clone();
+        let history_home = settings.lock().unwrap().user_home().join("History");
+        let (source, target) = (source.to_path_buf(), target.to_path_buf());
+        let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |since| since.as_millis() as i64);
+        cx.background_executor()
+            .spawn(async move {
+                let limits = |file: &Path| local_history::limits(&settings.lock().unwrap(), file);
+                if let Err(error) = local_history::move_entries(&history_home, &source, &target, timestamp, limits) {
+                    eprintln!("local history of {}: {error}", source.display());
+                }
+            })
+            .detach();
     }
 
     /// `TextFileEditorModel.revert`: the model takes the text of `bytes` and is clean.

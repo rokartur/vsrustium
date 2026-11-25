@@ -115,7 +115,10 @@ impl Workbench {
     pub(super) fn editor_name(&self, editor: &crate::editor::OpenEditor) -> String {
         match self.search_editors.get(&editor.document.path).filter(|_| editor.document.scheme == SEARCH_EDITOR_SCHEME) {
             Some(search_editor) => search_editor_name(search_editor.backing_file.as_deref(), &search_editor.config.query),
-            None => editor.document.name(),
+            None => match self.local_history_labels.get(&editor.document.path).filter(|_| editor.document.scheme == super::local_history_actions::LOCAL_HISTORY_SCHEME) {
+                Some(label) => label.clone(),
+                None => editor.document.name(),
+            },
         }
     }
 

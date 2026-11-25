@@ -436,7 +436,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/languageStatus | workbench contribution | todo |  |
 | workbench/contrib/limitIndicator | workbench contribution | todo |  |
 | workbench/contrib/list | workbench contribution | ported | list.resizeColumn: TableColumnResizeQuickPick's column pick and percentage input with its validation (cargo test -p app keybindings_editor_view: resize_column_sets_the_picked_column_to_a_percentage_of_the_table, a_column_width_must_be_an_integer_percentage); the Keyboard Shortcuts table is the only table so far |
-| workbench/contrib/localHistory | workbench contribution | todo |  |
+| workbench/contrib/localHistory | workbench contribution | ported | workbench/local_history_actions.rs: Find Entry to Restore, Delete All, Create Entry; entries follow renames and moves (local_history.rs `move_entries`); cargo test -p app local_history; entries open read-only until the diff editor (milestone 14); Timeline entry commands with workbench/contrib/timeline (milestone 14) |
 | workbench/contrib/localization | workbench contribution | todo |  |
 | workbench/contrib/logs | workbench contribution | todo |  |
 | workbench/contrib/markdown | workbench contribution | todo |  |

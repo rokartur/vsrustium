@@ -23,6 +23,7 @@ pub(crate) mod host_requests;
 mod input_box_view;
 mod keybindings_editor_view;
 mod keyboard;
+mod local_history_actions;
 mod marker_navigation;
 pub mod menubar;
 mod middle_scroll;
@@ -117,6 +118,8 @@ pub struct Workbench {
     editor_message: editor_message::EditorMessages,
     marker_navigation: marker_navigation::MarkerNavigation,
     readonly_overrides: readonly::SessionOverrides,
+    /// The editor labels of opened local history entries (`openEntry`), by entry file.
+    local_history_labels: HashMap<PathBuf, String>,
     pub editor_focus: FocusHandle,
     /// bannerController.ts: the banner element is focusable (`tabIndex = 0`) inside the editor's DOM node.
     unicode_banner_focus: FocusHandle,
@@ -254,6 +257,7 @@ impl Workbench {
             editor_message: Default::default(),
             marker_navigation: Default::default(),
             readonly_overrides: Default::default(),
+            local_history_labels: HashMap::new(),
             editor_focus: cx.focus_handle(),
             unicode_banner_focus: cx.focus_handle(),
             editor_focus_listeners: Vec::new(),
@@ -310,6 +314,7 @@ impl Workbench {
         workbench.register_workspace_trust_commands();
         workbench.register_host_commands();
         workbench.register_workspace_commands();
+        workbench.register_local_history_commands();
         // Keybindings resolve before the focused element sees the key, and with nothing focused too.
         let entity = cx.entity().downgrade();
         cx.intercept_keystrokes(move |event, window, cx| {

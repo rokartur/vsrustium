@@ -36,6 +36,12 @@ pub enum Owner {
     ResizeColumn(Option<usize>),
     /// `workbench.action.openRecent`: the recently opened entry of each item by handle.
     RecentlyOpened(Vec<Value>),
+    /// `workbench.action.localHistory.restoreViaPicker`: the files to pick, by handle.
+    LocalHistoryFiles(Vec<std::path::PathBuf>),
+    /// The picked file's local history entries, by handle.
+    LocalHistoryEntries(std::path::PathBuf, Vec<crate::local_history::Entry>),
+    /// `workbench.action.localHistory.create`: the input box of the new entry's source for the file.
+    LocalHistoryCreate(std::path::PathBuf),
 }
 
 impl Workbench {
@@ -208,6 +214,9 @@ impl Workbench {
             Owner::EditorStatus(_) => self.editor_status_event(id, event, window, cx),
             Owner::ResizeColumn(_) => self.resize_column_event(id, event, window, cx),
             Owner::RecentlyOpened(_) => self.recently_opened_event(id, event, window, cx),
+            Owner::LocalHistoryFiles(_) => self.local_history_files_event(id, event, window, cx),
+            Owner::LocalHistoryEntries(..) => self.local_history_entries_event(id, event, window, cx),
+            Owner::LocalHistoryCreate(_) => self.create_local_history_entry_event(id, event, window, cx),
         }
     }
 

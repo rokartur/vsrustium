@@ -22,14 +22,14 @@ fn history_folders_are_named_by_the_uri_hash() {
 #[test]
 fn saves_within_the_merge_window_replace_the_last_entry() {
     let (home, file, dir) = setup("merge");
-    let first = add_entry(&home, "file:///notes.txt", &file, None, 1_000, &limits()).unwrap();
+    let first = add_entry(&home, "file:///notes.txt", &file, None, None, 1_000, &limits()).unwrap();
     std::fs::write(&file, "two").unwrap();
-    let merged = add_entry(&home, "file:///notes.txt", &file, None, 11_000, &limits()).unwrap();
+    let merged = add_entry(&home, "file:///notes.txt", &file, None, None, 11_000, &limits()).unwrap();
     assert_eq!(merged.id, first.id);
     std::fs::write(&file, "three").unwrap();
-    let separate = add_entry(&home, "file:///notes.txt", &file, None, 21_001, &limits()).unwrap();
+    let separate = add_entry(&home, "file:///notes.txt", &file, None, None, 21_001, &limits()).unwrap();
     assert_ne!(separate.id, first.id);
-    let other_source = add_entry(&home, "file:///notes.txt", &file, Some("undoRedo.source"), 21_002, &limits()).unwrap();
+    let other_source = add_entry(&home, "file:///notes.txt", &file, Some("undoRedo.source"), None, 21_002, &limits()).unwrap();
     assert_ne!(other_source.id, separate.id);
 
     let folder = entries_folder(&home, "file:///notes.txt");
@@ -51,7 +51,7 @@ fn saves_within_the_merge_window_replace_the_last_entry() {
 fn entries_past_the_limit_are_deleted_oldest_first() {
     let (home, file, dir) = setup("limit");
     let limits = Limits { merge_window: 0., max_entries: 2 };
-    let ids: Vec<String> = (0..3).map(|index| add_entry(&home, "file:///notes.txt", &file, None, index * 1000, &limits).unwrap().id).collect();
+    let ids: Vec<String> = (0..3).map(|index| add_entry(&home, "file:///notes.txt", &file, None, None, index * 1000, &limits).unwrap().id).collect();
     let folder = entries_folder(&home, "file:///notes.txt");
     let kept: Vec<String> = read_entries(&folder, &file).unwrap().into_iter().map(|entry| entry.id).collect();
     assert_eq!(kept, ids[1..]);
@@ -91,4 +91,60 @@ fn entry_files_missing_from_the_listing_still_count() {
     let entries = read_entries(&folder, &file).unwrap();
     assert_eq!(entries.iter().map(|entry| entry.id.as_str()).collect::<Vec<_>>(), ["AbC1.txt"]);
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn entries_follow_a_renamed_file_and_a_moved_folder() {
+    let (home, file, dir) = setup("move");
+    let resource = uri_string("file", &file);
+    let saved = add_entry(&home, &resource, &file, None, None, 1_000, &limits()).unwrap();
+    let renamed = dir.join("renamed.txt");
+    std::fs::rename(&file, &renamed).unwrap();
+    let moved = move_entries(&home, &file, &renamed, 50_000, |_| Some(limits())).unwrap();
+    assert_eq!(moved, [renamed.clone()]);
+    assert!(!entries_folder(&home, &resource).exists());
+    let folder = entries_folder(&home, &uri_string("file", &renamed));
+    let entries = read_entries(&folder, &renamed).unwrap();
+    assert_eq!(entries[0].id, saved.id);
+    assert_eq!(entries[1].source.as_deref(), Some("renamed.source"));
+    assert_eq!(entries[1].source_description.as_deref(), Some(&*crate::quick_input::path_label(&file, None)));
+
+    let (sub, other) = (dir.join("sub"), dir.join("other"));
+    std::fs::create_dir(&sub).unwrap();
+    let in_sub = sub.join("renamed.txt");
+    std::fs::rename(&renamed, &in_sub).unwrap();
+    move_entries(&home, &renamed, &in_sub, 60_000, |_| Some(limits())).unwrap();
+    let entries = read_entries(&entries_folder(&home, &uri_string("file", &in_sub)), &in_sub).unwrap();
+    assert_eq!(entries.last().unwrap().source.as_deref(), Some("moved.source"));
+    // A moved folder takes the entries of the files under it.
+    std::fs::rename(&sub, &other).unwrap();
+    // Past the 10 s merge window of the "File Moved" entry at 60 000.
+    let moved = move_entries(&home, &sub, &other, 90_000, |_| Some(limits())).unwrap();
+    let in_other = other.join("renamed.txt");
+    assert_eq!(moved, [in_other.clone()]);
+    assert_eq!(read_entries(&entries_folder(&home, &uri_string("file", &in_other)), &in_other).unwrap().len(), 4);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn all_files_lists_the_files_with_entries_until_all_are_removed() {
+    let (home, file, dir) = setup("all");
+    add_entry(&home, &uri_string("file", &file), &file, None, None, 1_000, &limits()).unwrap();
+    let empty = entries_folder(&home, "file:///empty.txt");
+    std::fs::create_dir_all(&empty).unwrap();
+    write_listing(&empty, "file:///empty.txt", Vec::new()).unwrap();
+    assert_eq!(all_files(&home), [file.clone()]);
+    remove_all(&home).unwrap();
+    assert!(all_files(&home).is_empty());
+    remove_all(&home).unwrap();
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn date_labels_read_as_the_english_intl_format() {
+    use objc2_foundation::{NSDate, NSTimeZone};
+    // 2025-11-05 13:04 UTC, shifted so it reads 13:04 in the local time zone.
+    let utc = 1_762_347_840_000_i64;
+    let offset = NSTimeZone::localTimeZone().secondsFromGMTForDate(&NSDate::dateWithTimeIntervalSince1970(utc as f64 / 1000.));
+    assert_eq!(date_label(utc - offset as i64 * 1000), "November 5, 2025 at 1:04 PM");
 }
