@@ -124,3 +124,17 @@ fn workbench_open_opens_in_the_given_column(cx: &mut TestAppContext) {
     assert_eq!((columns.len(), columns[1]), (2, active), "ViewColumn.Two is the second group");
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+/// mainThreadLanguages.ts `$tokensAtPosition`: without a grammar the line is one Other token; a model that is not
+/// open has none.
+#[gpui::test]
+fn tokens_at_position_answers_the_token_of_an_open_model(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = workbench_in("tokens-at-position", cx);
+    let uri = file_uri(&dir.join("far.js"));
+    let position = json!({ "lineNumber": 2, "column": 2 });
+    let ask = |cx: &mut VisualTestContext| workbench.update_in(cx, |workbench, window, cx| workbench.host_request("MainThreadLanguages", "$tokensAtPosition", &[uri.clone(), position.clone()], window, cx));
+    assert_eq!(ask(cx), Ok(Value::Null));
+    assert_eq!(open(&workbench, vec![uri.clone()], cx), Ok(Value::Null));
+    assert_eq!(ask(cx), Ok(json!({ "type": 0, "range": { "startLineNumber": 2, "startColumn": 1, "endLineNumber": 2, "endColumn": 4 } })));
+    std::fs::remove_dir_all(dir).unwrap();
+}

@@ -52,3 +52,46 @@ fn the_outline_lists_the_symbols_and_opens_the_selected_one(cx: &mut TestAppCont
     key("right", cx);
     assert_eq!(rows(cx), ["A", "  run", "b"]);
 }
+
+/// outlineActions.ts: Sort By reorders siblings, Collapse All folds every parent, and Follow Cursor expands to and
+/// selects the symbol around the cursor.
+#[gpui::test]
+fn the_title_actions_sort_collapse_and_follow_the_cursor(cx: &mut TestAppContext) {
+    let (workbench, cx, receiver, _) = open(cx, "outline-actions", "class B {\n  run() {}\n}\nconst a = 1;\n");
+    workbench.update(cx, |workbench, cx| {
+        workbench.language_features.register(crate::workbench::document_symbols::REGISTER, vec![json!(11), json!("*"), json!("Test")]);
+        workbench.outline_pane.key = None;
+        workbench.refresh_outline_pane(cx);
+    });
+    let range = |start: usize, end: usize| json!({ "startLineNumber": start, "startColumn": 1, "endLineNumber": end, "endColumn": 20 });
+    answer(&receiver, "$provideDocumentSymbols", json!([
+        { "name": "a", "detail": "", "kind": 13, "range": range(4, 4), "selectionRange": range(4, 4), "children": [] },
+        { "name": "B", "detail": "", "kind": 4, "range": range(1, 3), "selectionRange": range(1, 1), "children": [
+            { "name": "run", "detail": "", "kind": 5, "range": range(2, 2), "selectionRange": range(2, 2), "children": [] },
+        ] },
+    ]), cx);
+    let rows = |cx: &mut gpui::VisualTestContext| {
+        workbench.update(cx, |workbench, _| {
+            let Status::Ready { model_id, outline, .. } = &workbench.outline_pane.status else { return Vec::new() };
+            workbench.outline_rows(*model_id, outline).iter().map(|row| format!("{}{}", "  ".repeat(row.depth), row.element.unwrap().symbol.name)).collect::<Vec<_>>()
+        })
+    };
+    let run = |command: &str, cx: &mut gpui::VisualTestContext| workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command(command, Vec::new(), window, cx)));
+    assert_eq!(rows(cx), ["B", "  run", "a"]);
+    run("outline.sortByName", cx);
+    assert_eq!(rows(cx), ["a", "B", "  run"]);
+    run("outline.sortByKind", cx);
+    assert_eq!(rows(cx), ["B", "  run", "a"], "class (4) before constant (13)");
+    run("outline.collapse", cx);
+    assert_eq!(rows(cx), ["B", "a"]);
+    assert!(workbench.read_with(cx, |workbench, _| workbench.outline_all_collapsed()));
+    run("outline.followCursor", cx);
+    workbench.update(cx, |workbench, cx| {
+        workbench.editors.active_mut().unwrap().set_selections(vec![crate::editor::Selection::caret(crate::editor::Position::new(1, 3))]);
+        workbench.refresh_outline_pane(cx);
+    });
+    assert_eq!(rows(cx), ["B", "  run", "a"], "the parent of the followed symbol expands");
+    assert_eq!(workbench.read_with(cx, |workbench, _| workbench.outline_pane.selected.clone()).as_deref(), Some("root/provider_0/B/run"));
+    let stored = workbench.read_with(cx, |workbench, _| workbench.workspace_storage.lock().unwrap().get("outline/state").map(str::to_owned));
+    assert_eq!(stored.as_deref(), Some(r#"{"followCursor":true,"sortBy":2,"filterOnType":true}"#));
+}

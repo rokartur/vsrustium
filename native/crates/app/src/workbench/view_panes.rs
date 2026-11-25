@@ -296,7 +296,7 @@ impl Workbench {
     pub(super) fn explorer_pane_view(&self, first: ExplorerPane, window: &Window, cx: &mut Context<Self>) -> Div {
         let mut panes = vec![
             first,
-            ExplorerPane { id: OUTLINE_VIEW, title: "Outline".into(), description: None, actions: None, body: self.outline_pane_body(window, cx) },
+            ExplorerPane { id: OUTLINE_VIEW, title: "Outline".into(), description: None, actions: Some(self.outline_title_actions(window, cx).into_any_element()), body: self.outline_pane_body(window, cx) },
             self.timeline_pane(window, cx),
         ];
         let view = self.explorer_panes.view.as_ref().expect("panes are laid out before they draw");

@@ -7,6 +7,7 @@ use std::time::Duration;
 use gpui::{AnyElement, ClickEvent, Context, Div, FocusHandle, KeyDownEvent, Task, Window, div, prelude::*, px};
 
 use super::Workbench;
+use super::outline_actions::SortOrder;
 use super::quick_access::goto_symbol::position_of;
 use crate::editor::{Selection, VerticalReveal};
 use crate::outline_model::{OutlineChildren, OutlineElement, OutlineMarker, OutlineModel, Range};
@@ -28,15 +29,18 @@ pub(super) struct OutlinePane {
     pub(super) focus: FocusHandle,
     /// The active editor's model and version the outline was asked for.
     key: Option<(u32, u32)>,
-    status: Status,
+    pub(super) status: Status,
     /// The rows whose expansion differs from `outline.collapseItems`, per model.
     toggled: HashSet<(u32, String)>,
     selected: Option<String>,
+    pub(super) view_state: super::outline_actions::OutlineViewState,
+    /// The model and cursor `revealActiveElement` last followed.
+    followed: Option<(u32, crate::editor::Position)>,
     _request: Option<Task<()>>,
     _loading: Option<Task<()>>,
 }
 
-enum Status {
+pub(super) enum Status {
     NoProvider,
     /// `Loading document symbols for '{0}'...`, shown 100ms after the request.
     Loading(String),
@@ -45,23 +49,24 @@ enum Status {
 
 impl OutlinePane {
     pub(super) fn new(cx: &mut Context<Workbench>) -> Self {
-        OutlinePane { focus: cx.focus_handle(), key: None, status: Status::NoProvider, toggled: HashSet::new(), selected: None, _request: None, _loading: None }
+        OutlinePane { focus: cx.focus_handle(), key: None, status: Status::NoProvider, toggled: HashSet::new(), selected: None, view_state: Default::default(), followed: None, _request: None, _loading: None }
     }
 }
 
 /// A visible row: its depth, its id, and the group label or the element.
-struct Row<'a> {
-    depth: usize,
-    id: &'a str,
+pub(super) struct Row<'a> {
+    pub(super) depth: usize,
+    pub(super) id: &'a str,
     group: Option<&'a str>,
     element: Option<&'a OutlineElement>,
-    has_children: bool,
+    pub(super) has_children: bool,
 }
 
 impl Workbench {
     /// `_handleEditorControlChanged` and `_createOutline`: a new model or version of the active editor asks the
     /// outline again; the previous tree stays until the answer, the loading message shows after 100ms.
     pub(super) fn refresh_outline_pane(&mut self, cx: &mut Context<Self>) {
+        self.reveal_outline_active_element(false, cx);
         let key = self.editors.active().map(|editor| (editor.model_id, editor.text_model().version_id));
         if self.outline_pane.key == key {
             return;
@@ -90,6 +95,7 @@ impl Workbench {
             let _ = workbench.update(cx, |workbench, cx| {
                 workbench.outline_pane._loading = None;
                 workbench.outline_pane.status = Status::Ready { model_id, name, outline };
+                workbench.reveal_outline_active_element(true, cx);
                 cx.notify();
             });
         }));
@@ -143,19 +149,20 @@ impl Workbench {
     }
 
     /// The rows the tree shows: the groups of several providers, then each element below its expanded parent,
-    /// siblings by position then name (`DocumentSymbolComparator.compareByPosition`).
-    fn outline_rows<'a>(&self, model_id: u32, outline: &'a OutlineModel) -> Vec<Row<'a>> {
-        let collapsed_by_default = self.setting("outline.collapseItems") == "alwaysCollapse";
-        let expanded = |id: &str| collapsed_by_default == self.outline_pane.toggled.contains(&(model_id, id.to_string()));
+    /// siblings in the Sort By order (`OutlineTreeSorter`).
+    pub(super) fn outline_rows<'a>(&self, model_id: u32, outline: &'a OutlineModel) -> Vec<Row<'a>> {
+        let expanded = |id: &str| self.outline_row_expanded(model_id, id);
         let shown = |element: &OutlineElement| self.shows_symbol_kind("outline", element.symbol.kind);
+        let sort_by = self.outline_pane.view_state.sort_by;
         let mut rows = Vec::new();
+        let push_elements = |rows: &mut Vec<Row<'a>>, elements, depth| push_elements(rows, elements, depth, sort_by, &expanded, &shown);
         match outline.children {
-            OutlineChildren::Elements => push_elements(&mut rows, &outline.groups[0].children, 0, &expanded, &shown),
+            OutlineChildren::Elements => push_elements(&mut rows, &outline.groups[0].children, 0),
             OutlineChildren::Groups => {
                 for group in &outline.groups {
                     rows.push(Row { depth: 0, id: &group.id, group: Some(&group.label), element: None, has_children: true });
                     if expanded(&group.id) {
-                        push_elements(&mut rows, &group.children, 1, &expanded, &shown);
+                        push_elements(&mut rows, &group.children, 1);
                     }
                 }
             }
@@ -170,7 +177,7 @@ impl Workbench {
         let indent = self.tree_indent();
         let twistie = match row.has_children {
             true => {
-                let expanded = (self.setting("outline.collapseItems") == "alwaysCollapse") == self.outline_pane.toggled.contains(&(model_id, id.clone()));
+                let expanded = self.outline_row_expanded(model_id, &id);
                 let chevron = if expanded { "chevron-down" } else { "chevron-right" };
                 let toggled = id.clone();
                 self.icon(chevron, 16., 16., self.foreground_or("icon.foreground")).id(("outline-twistie", index)).cursor_pointer().on_click(cx.listener(move |workbench, _: &ClickEvent, _, cx| {
@@ -276,6 +283,44 @@ impl Workbench {
         self.theme.color("list.activeSelectionIconForeground").or(self.theme.color("list.activeSelectionForeground")).unwrap_or(self.color("foreground"))
     }
 
+    pub(super) fn outline_row_expanded(&self, model_id: u32, id: &str) -> bool {
+        let collapsed_by_default = self.setting("outline.collapseItems") == "alwaysCollapse";
+        collapsed_by_default == self.outline_pane.toggled.contains(&(model_id, id.to_string()))
+    }
+
+    /// Expands or collapses `id`, whatever it shows now.
+    pub(super) fn set_outline_row_expanded(&mut self, model_id: u32, id: &str, expanded: bool) {
+        let collapsed_by_default = self.setting("outline.collapseItems") == "alwaysCollapse";
+        let key = (model_id, id.to_string());
+        match expanded == collapsed_by_default {
+            true => self.outline_pane.toggled.insert(key),
+            false => self.outline_pane.toggled.remove(&key),
+        };
+    }
+
+    /// outlinePane.ts `revealActiveElement`: with Follow Cursor, the element around the cursor of the shown model
+    /// is revealed (its parents expanded) and selected, once per cursor move unless `force`.
+    pub(super) fn reveal_outline_active_element(&mut self, force: bool, cx: &mut Context<Self>) {
+        let Some(editor) = self.editors.active() else { return };
+        let head = editor.selection().head;
+        let Status::Ready { model_id, outline, .. } = &self.outline_pane.status else { return };
+        let followed = Some((*model_id, head));
+        if !self.outline_pane.view_state.follow_cursor || *model_id != editor.model_id || (!force && self.outline_pane.followed == followed) {
+            return;
+        }
+        self.outline_pane.followed = followed;
+        let position = (head.line + 1, crate::editor::utf16_column(&editor.document().lines[head.line], head.column) + 1);
+        let Some(item) = outline.item_enclosing_position(position, None) else { return };
+        let path: Vec<String> = outline.path_to(&item.id).expect("an element of the outline").iter().map(|element| element.id.clone()).collect();
+        let model_id = *model_id;
+        let group = matches!(outline.children, OutlineChildren::Groups).then(|| outline.groups.iter().find(|group| item.id.starts_with(&format!("{}/", group.id))).map(|group| group.id.clone())).flatten();
+        for id in group.iter().chain(&path[..path.len() - 1]) {
+            self.set_outline_row_expanded(model_id, id, true);
+        }
+        self.outline_pane.selected = path.last().cloned();
+        cx.notify();
+    }
+
     fn toggle_outline_row(&mut self, model_id: u32, id: &str, cx: &mut Context<Self>) {
         let key = (model_id, id.to_string());
         if !self.outline_pane.toggled.remove(&key) {
@@ -322,7 +367,6 @@ impl Workbench {
         let model_id = *model_id;
         let rows = self.outline_rows(model_id, outline);
         let current = self.outline_pane.selected.as_deref().and_then(|selected| rows.iter().position(|row| row.id == selected));
-        let collapsed_by_default = self.setting("outline.collapseItems") == "alwaysCollapse";
         let target = match (key, current) {
             ("down", None) | ("home", _) => Some(0),
             ("up", None) | ("end", _) => Some(rows.len().saturating_sub(1)),
@@ -330,7 +374,7 @@ impl Workbench {
             ("up", Some(index)) => Some(index.saturating_sub(1)),
             ("left" | "right", Some(index)) => {
                 let row = &rows[index];
-                let expanded = collapsed_by_default == self.outline_pane.toggled.contains(&(model_id, row.id.to_string()));
+                let expanded = self.outline_row_expanded(model_id, row.id);
                 match (key, row.has_children && expanded, row.has_children) {
                     ("left", true, _) | ("right", false, true) => {
                         let id = row.id.to_string();
@@ -359,16 +403,27 @@ impl Workbench {
     }
 }
 
-fn push_elements<'a>(rows: &mut Vec<Row<'a>>, elements: &'a [OutlineElement], depth: usize, expanded: &impl Fn(&str) -> bool, shown: &impl Fn(&OutlineElement) -> bool) {
+fn push_elements<'a>(rows: &mut Vec<Row<'a>>, elements: &'a [OutlineElement], depth: usize, sort_by: SortOrder, expanded: &impl Fn(&str) -> bool, shown: &impl Fn(&OutlineElement) -> bool) {
     let mut sorted: Vec<&OutlineElement> = elements.iter().filter(|element| shown(element)).collect();
-    sorted.sort_by(|a, b| a.symbol.range.start.cmp(&b.symbol.range.start).then_with(|| a.symbol.name.cmp(&b.symbol.name)));
+    sorted.sort_by(|a, b| compare_elements(a, b, sort_by));
     for element in sorted {
         // `hideTwistiesOfChildlessElements`.
         let has_children = !element.children.is_empty();
         rows.push(Row { depth, id: &element.id, group: None, element: Some(element), has_children });
         if has_children && expanded(&element.id) {
-            push_elements(rows, &element.children, depth + 1, expanded, shown);
+            push_elements(rows, &element.children, depth + 1, sort_by, expanded, shown);
         }
+    }
+}
+
+/// `DocumentSymbolComparator`: names with `Intl.Collator(undefined, { numeric: true })`.
+fn compare_elements(a: &OutlineElement, b: &OutlineElement, sort_by: SortOrder) -> std::cmp::Ordering {
+    let by_position = || a.symbol.range.start.cmp(&b.symbol.range.start);
+    let by_name = || crate::explorer::compare_file_names(&a.symbol.name, &b.symbol.name);
+    match sort_by {
+        SortOrder::ByPosition => by_position().then_with(by_name),
+        SortOrder::ByName => by_name().then_with(by_position),
+        SortOrder::ByKind => a.symbol.kind.cmp(&b.symbol.kind).then_with(by_name),
     }
 }
 

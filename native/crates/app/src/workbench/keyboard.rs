@@ -402,6 +402,7 @@ impl Workbench {
             self.code_lens_context(&mut context);
             self.standalone_color_picker_context(&mut context);
             self.inline_completions_context(&mut context);
+            self.inlay_hints_accessibility_context(&mut context);
             self.rename_context(&mut context);
             self.format_context(&mut context);
             self.linked_editing_context(&mut context);

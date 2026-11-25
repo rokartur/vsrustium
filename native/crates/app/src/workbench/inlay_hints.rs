@@ -51,6 +51,8 @@ pub(super) struct InlayHints {
     modifiers: Modifiers,
     /// The event handles of the providers whose changes the hints follow.
     watched: Vec<u64>,
+    /// `isReadingLineWithInlayHints`.
+    pub(super) reading: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -81,6 +83,7 @@ impl Workbench {
         if model_id == self.inlay_hints.model_id {
             return;
         }
+        self.inlay_hints.reading = false;
         self.cache_inlay_hints();
         self.inlay_hints_update(cx);
     }
@@ -268,6 +271,35 @@ impl Workbench {
             }
         }
         items
+    }
+
+    /// `getInlayHintsForLine` of the active editor: each hint's column and label text, in position order.
+    pub(super) fn inlay_hints_for_line(&self, line: usize) -> Vec<(usize, String)> {
+        if self.editors.active().map(|editor| editor.model_id) != self.inlay_hints.model_id {
+            return Vec::new();
+        }
+        let mut hints: Vec<(usize, String)> = self
+            .current_inlay_hints()
+            .into_iter()
+            .filter(|item| item.position.line == line)
+            .map(|item| {
+                let label = match &item.hint["label"] {
+                    Value::String(label) => label.clone(),
+                    parts => parts.as_array().into_iter().flatten().filter_map(|part| part["label"].as_str()).collect(),
+                };
+                (item.position.column, label)
+            })
+            .collect();
+        hints.sort_by_key(|(column, _)| *column);
+        hints
+    }
+
+    /// `editorHasInlayHintsProvider`.
+    pub(super) fn has_inlay_hints_provider(&self) -> bool {
+        let Some(editor) = self.editors.active() else { return false };
+        let uri = editor.document().uri();
+        let language = editor.document().language_id.clone();
+        !self.language_features.ordered("$registerInlayHintsProvider", &crate::language_features::Candidate { uri: &uri, language: &language }).is_empty()
     }
 
     fn remove_inlay_hints(&mut self) {

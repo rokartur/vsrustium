@@ -33,6 +33,7 @@ pub const HOST_REQUESTS: &[(&str, &str)] = &[
     ("MainThreadDocumentContentProviders", "$onVirtualDocumentChange"),
     ("MainThreadDocumentDiff", "$computeDocumentDiff"),
     ("MainThreadLanguages", "$changeLanguage"),
+    ("MainThreadLanguages", "$tokensAtPosition"),
     ("MainThreadTextEditors", "$tryShowTextDocument"),
     ("MainThreadTextEditors", "$trySetSelections"),
     ("MainThreadTextEditors", "$tryRevealRange"),
@@ -78,6 +79,7 @@ impl Workbench {
             ("MainThreadDocumentContentProviders", "$onVirtualDocumentChange") => self.virtual_document_change(arg(0), arg(1), cx),
             ("MainThreadDocumentDiff", "$computeDocumentDiff") => Ok(self.compute_document_diff(arg(0), arg(1), arg(2) == true, arg(3).as_u64().unwrap_or(0), arg(4) == true)),
             ("MainThreadLanguages", "$changeLanguage") => self.change_host_language(arg(0), arg(1), cx),
+            ("MainThreadLanguages", "$tokensAtPosition") => uri_parts(arg(0)).map(|(scheme, path)| self.tokens_at_position(scheme, &path, arg(1))),
             ("workbench", "providerSaveText") => self.provider_save_bytes(arg(0)),
             ("workbench", "providerSaved") => self.provider_saved(arg(0), cx),
             ("MainThreadTextEditors", "$tryShowTextDocument") => self.try_show_text_document(arg(0), arg(1), window, cx),
@@ -254,6 +256,27 @@ impl Workbench {
         self.text_files.preferred_languages.insert((scheme.to_string(), path.clone()));
         self.set_model_language(scheme, path, language_id, cx);
         Ok(Value::Null)
+    }
+
+    /// mainThreadLanguages.ts `$tokensAtPosition`: the standard type and range of the token at the position, none
+    /// for a model that is not open.
+    fn tokens_at_position(&self, scheme: &str, path: &Path, position: &Value) -> Value {
+        let Some(editor) = self.editors.model(scheme, path) else { return Value::Null };
+        let document = editor.document();
+        let line_number = position["lineNumber"].as_u64().unwrap_or(1) as usize;
+        let Some(line) = document.lines.get(line_number.saturating_sub(1)) else { return Value::Null };
+        let index = line_number - 1;
+        let column = crate::editor::char_column(line, (position["column"].as_u64().unwrap_or(1) as usize).saturating_sub(1));
+        let offset = line.char_indices().nth(column).map_or(line.len(), |(offset, _)| offset);
+        let mut start = 0;
+        for (end, token_type, _) in document.tokens.line_tokens(&document.lines, index) {
+            if end > offset || end >= line.len() {
+                let utf16 = |byte: usize| line[..byte.min(line.len())].encode_utf16().count() + 1;
+                return json!({ "type": token_type as u8, "range": { "startLineNumber": line_number, "startColumn": utf16(start), "endLineNumber": line_number, "endColumn": utf16(end) } });
+            }
+            start = end;
+        }
+        Value::Null
     }
 
     /// `$tryCreateDocument`: a new untitled model named `Untitled-<n>` with the first free n.

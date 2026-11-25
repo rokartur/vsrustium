@@ -60,6 +60,7 @@ impl Workbench {
         self.restore_editor_view_states();
         self.restore_debug_state();
         self.restore_problems_state();
+        self.restore_outline_state();
     }
 
     /// `handleActiveEditorChangeInHistory`. Upstream saves on shutdown only; the port saves on each change, as its
