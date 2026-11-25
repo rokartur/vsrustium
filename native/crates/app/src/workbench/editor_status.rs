@@ -37,6 +37,8 @@ pub enum StatusPick {
     Associate(String),
     EncodingAction { reopen: bool },
     Encoding { id: String, reopen: bool },
+    /// A user setting's new value (unicodeHighlighter.ts `ShowExcludeOptions`).
+    UserSetting { key: &'static str, value: Value },
     Nothing,
 }
 
@@ -284,7 +286,7 @@ impl Workbench {
     }
 
     /// Shows a picker whose items run `picks`; separators take a pick so the handles stay row indices.
-    fn show_status_picker(&mut self, mut input: QuickInput, rows: Vec<(Entry, StatusPick)>, window: &mut Window, cx: &mut Context<Self>) -> i64 {
+    pub(super) fn show_status_picker(&mut self, mut input: QuickInput, rows: Vec<(Entry, StatusPick)>, window: &mut Window, cx: &mut Context<Self>) -> i64 {
         let mut entries = Vec::new();
         let mut picks = Vec::new();
         for (entry, pick) in rows {
@@ -371,6 +373,16 @@ impl Workbench {
             StatusPick::Associate(language_id) => self.write_file_association(&language_id),
             StatusPick::EncodingAction { reopen } => self.show_encoding_picker(reopen, window, cx),
             StatusPick::Encoding { id, reopen } => self.set_active_encoding(id, reopen, window, cx),
+            StatusPick::UserSetting { key, value } => {
+                let mut settings = self.settings.lock().unwrap();
+                match settings.update_value(key, Some(&value), Target::User, None, &[]) {
+                    Ok(change) if !change.is_empty() => self.host.send_configuration_change(&settings, &change),
+                    Ok(_) => {}
+                    Err(error) => eprintln!("writing {key}: {error}"),
+                }
+                drop(settings);
+                cx.notify();
+            }
             StatusPick::Nothing => {}
         }
     }
@@ -459,7 +471,7 @@ impl Workbench {
     }
 }
 
-fn label_item(label: &str) -> Item {
+pub(super) fn label_item(label: &str) -> Item {
     Item { label: label.to_string(), pickable: true, ..Item::default() }
 }
 

@@ -225,6 +225,27 @@ impl Workbench {
         self.navigate_markers(forward, multi_file, window, cx);
     }
 
+    /// `MarkerController.showAtMarker` (the hover's View Problem): the list of the editor's resource, its index reset
+    /// and moved forward from the marker's start.
+    pub(super) fn show_marker_navigation_at(&mut self, marker: &Marker, window: &mut Window, cx: &mut Context<Self>) {
+        let by_position = self.setting("problems.sortOrder") == "position";
+        let Some(editor) = self.editors.active() else { return };
+        let resource = editor.document.uri_string();
+        let model_id = editor.model_id;
+        if self.marker_navigation.session.as_ref().is_none_or(|session| session.list.resource.as_deref() != Some(resource.as_str())) {
+            self.end_marker_session();
+            let list = MarkerList::new(Some(resource.clone()), &self.diagnostics.service, by_position);
+            self.marker_navigation.session = Some(Session { list, model_id, widget: None });
+        }
+        let editor = self.editors.active().expect("checked above");
+        let session = self.marker_navigation.session.as_mut().expect("created above");
+        session.list.next = None;
+        session.list.move_to(true, &resource, &editor.document.lines, (marker.start_line, marker.start_column));
+        if let Some((marker, index, total)) = session.list.selected() {
+            self.show_at_marker(marker, index, total, window, cx);
+        }
+    }
+
     /// `MarkerNavigationWidget.showAtMarker`: the zone below the cursor when the marker contains it, else below the
     /// marker's start, the cursor moved there, revealed, and the editor focused.
     fn show_at_marker(&mut self, marker: Arc<Marker>, index: usize, total: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -442,18 +463,7 @@ impl Workbench {
                         .child(")")
                         .on_click(cx.listener(move |workbench, _: &ClickEvent, window, cx| {
                             cx.stop_propagation();
-                            // The opener service shows web links in the browser, other resources in an editor.
-                            let part = |key: &str| target[key].as_str().unwrap_or_default().to_string();
-                            match part("scheme").as_str() {
-                                "http" | "https" => {
-                                    let query = Some(part("query")).filter(|query| !query.is_empty()).map(|query| format!("?{query}")).unwrap_or_default();
-                                    let fragment = Some(part("fragment")).filter(|fragment| !fragment.is_empty()).map(|fragment| format!("#{fragment}")).unwrap_or_default();
-                                    cx.open_url(&format!("{}://{}{}{query}{fragment}", part("scheme"), part("authority"), part("path")));
-                                }
-                                _ => {
-                                    workbench.execute_command("vscode.open", vec![target.clone()], window, cx);
-                                }
-                            }
+                            workbench.open_marker_code(&target, window, cx);
                         })),
                 )
             }
@@ -499,6 +509,26 @@ impl Workbench {
     /// the session closes without focusing the old editor.
     fn open_related_information(&mut self, related: &Value, window: &mut Window, cx: &mut Context<Self>) {
         self.close_marker_navigation(false, window, cx);
+        self.open_marker_related(related, window, cx);
+    }
+
+    /// The opener service on a marker code's target: web links in the browser, other resources in an editor.
+    pub(super) fn open_marker_code(&mut self, target: &Value, window: &mut Window, cx: &mut Context<Self>) {
+        let part = |key: &str| target[key].as_str().unwrap_or_default().to_string();
+        match part("scheme").as_str() {
+            "http" | "https" => {
+                let query = Some(part("query")).filter(|query| !query.is_empty()).map(|query| format!("?{query}")).unwrap_or_default();
+                let fragment = Some(part("fragment")).filter(|fragment| !fragment.is_empty()).map(|fragment| format!("#{fragment}")).unwrap_or_default();
+                cx.open_url(&format!("{}://{}{}{query}{fragment}", part("scheme"), part("authority"), part("path")));
+            }
+            _ => {
+                self.execute_command("vscode.open", vec![target.clone()], window, cx);
+            }
+        }
+    }
+
+    /// A related information's resource opened pinned with the cursor at its start.
+    pub(super) fn open_marker_related(&mut self, related: &Value, window: &mut Window, cx: &mut Context<Self>) {
         let Ok((scheme, path)) = super::host_requests::uri_parts(&related["resource"]) else { return };
         if scheme != "file" {
             return;

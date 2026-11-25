@@ -5,13 +5,16 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use config::configuration::Overrides;
-use gpui::{Context, Div, InteractiveElement, MouseButton, ParentElement, Stateful, StatefulInteractiveElement, Styled, div, px};
-use serde_json::Value;
+use gpui::{Context, Div, InteractiveElement, MouseButton, ParentElement, Stateful, StatefulInteractiveElement, Styled, Window, div, px};
+use serde_json::{Value, json};
 use textmate::StandardTokenType;
 
 use super::Workbench;
+use super::content_hover::code_point_to_hex;
+use super::editor_status::{StatusPick, label_item};
 use crate::editor::{OpenEditor, visible_column};
-use crate::editor::unicode_highlighter::{UnicodeHighlighterOptions, UnicodeHighlights, compute_unicode_highlights};
+use crate::editor::unicode_highlighter::{UnicodeHighlighterOptions, UnicodeHighlights, compute_unicode_highlights, is_invisible_character};
+use crate::quick_input::{Entry, Kind, QuickInput};
 
 #[cfg(test)]
 mod tests;
@@ -67,6 +70,43 @@ impl Workbench {
         let highlights = Rc::new(compute_unicode_highlights(&editor.document.lines, 0, &options));
         *cached = Some((key, options.clone(), highlights.clone()));
         Some((options, highlights))
+    }
+
+    /// `ShowExcludeOptions`: the hover's "Adjust settings" picker for one character.
+    pub(super) fn show_unicode_exclude_options(&mut self, args: &Value, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(c) = args["codePoint"].as_u64().and_then(|code| char::from_u32(code as u32)) else { return };
+        let reason = &args["reason"];
+        let mut rows = Vec::new();
+        let mut row = |label: String, key: &'static str, value: Value| rows.push((Entry::Item(label_item(&label)), StatusPick::UserSetting { key, value }));
+        if reason["kind"] == 0 {
+            let user_locales = self.settings.lock().unwrap().configuration.inspect("editor.unicodeHighlight.allowedLocales", &Overrides::default()).user_local.value;
+            for locale in reason["notAmbiguousInLocales"].as_array().into_iter().flatten().filter_map(Value::as_str) {
+                let mut value = user_locales.clone().filter(Value::is_object).unwrap_or_else(|| json!({}));
+                value[locale] = json!(true);
+                row(format!("Allow unicode characters that are more common in the language \"{locale}\"."), "editor.unicodeHighlight.allowedLocales", value);
+            }
+        }
+        let mut allowed = Some(self.setting("editor.unicodeHighlight.allowedCharacters")).filter(Value::is_object).unwrap_or_else(|| json!({}));
+        allowed[c.to_string()] = json!(true);
+        let hex = code_point_to_hex(c);
+        let label = match is_invisible_character(c) {
+            true => format!("Exclude {hex} (invisible character) from being highlighted"),
+            false => format!("Exclude {hex} \"{c}\" from being highlighted"),
+        };
+        row(label, "editor.unicodeHighlight.allowedCharacters", allowed);
+        if args["inComment"] == true {
+            row("Disable highlighting of characters in comments".into(), "editor.unicodeHighlight.includeComments", json!(false));
+        } else if args["inString"] == true {
+            row("Disable highlighting of characters in strings".into(), "editor.unicodeHighlight.includeStrings", json!(false));
+        }
+        match reason["kind"].as_u64() {
+            Some(0) => row("Disable highlighting of ambiguous characters".into(), "editor.unicodeHighlight.ambiguousCharacters", json!(false)),
+            Some(1) => row("Disable highlighting of invisible characters".into(), "editor.unicodeHighlight.invisibleCharacters", json!(false)),
+            _ => row("Disable highlighting of non basic ASCII characters".into(), "editor.unicodeHighlight.nonBasicASCII", json!(false)),
+        }
+        let mut input = QuickInput::new(0, Kind::QuickPick);
+        input.title = Some("Configure Unicode Highlight Options".into());
+        self.show_status_picker(input, rows, window, cx);
     }
 
     /// unicodeHighlighter.css `.unicode-highlight` on the marks of model line `line`; `hideInCommentTokens` and

@@ -637,6 +637,10 @@ fn quick_input_default(key: &str) -> (ColorValue, ColorValue, ColorValue) {
         "editorHoverWidget.background" => (Key("editorWidget.background"), Key("editorWidget.background"), Key("editorWidget.background")),
         "editorHoverWidget.foreground" => (Key("editorWidget.foreground"), Key("editorWidget.foreground"), Key("editorWidget.foreground")),
         "editorHoverWidget.border" => (Key("editorWidget.border"), Key("editorWidget.border"), Key("editorWidget.border")),
+        // `lighten(editorHoverBackground, 0.2)` is a darken by -0.2: both scale the lightness by the factor.
+        "editorHoverWidget.statusBarBackground" => (Darken(&Key("editorHoverWidget.background"), -0.2), Darken(&Key("editorHoverWidget.background"), 0.05), Key("editorWidget.background")),
+        "editor.hoverHighlightBackground" => (Hex("#264f7840"), Hex("#ADD6FF26"), Hex("#ADD6FF26")),
+        "textCodeBlock.background" => (Hex("#0a0a0a66"), Hex("#dcdcdc66"), Hex("#000000")),
         "textLink.foreground" => (Hex("#3794FF"), Hex("#006AB1"), Hex("#21A6FF")),
         "textLink.activeForeground" => (Hex("#3794FF"), Hex("#006AB1"), Hex("#21A6FF")),
         // listColors.ts, editorColors.ts and keybindingsEditor.ts, for the Keyboard Shortcuts editor.
@@ -702,6 +706,7 @@ fn quick_input_default_hc_light(key: &str) -> ColorValue {
         "editorHoverWidget.background" => Key("editorWidget.background"),
         "editorHoverWidget.foreground" => Key("editorWidget.foreground"),
         "editorHoverWidget.border" => Key("editorWidget.border"),
+        "textCodeBlock.background" => Hex("#F2F2F2"),
         "textLink.foreground" | "textLink.activeForeground" => Hex("#0F4A85"),
         "list.focusOutline" => Key("contrastActiveBorder"),
         "keybindingTable.headerBackground" | "keybindingTable.rowsBackground" => Key("tree.tableOddRowsBackground"),

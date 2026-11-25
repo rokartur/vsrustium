@@ -81,6 +81,21 @@ pub fn ambiguous_characters(locales: &[String]) -> HashMap<u32, u32> {
     map
 }
 
+/// unicodeTextModelHighlighter.ts `notAmbiguousInLocales`: the locales that, added, make `c` unambiguous.
+pub fn not_ambiguous_in_locales(c: char, allowed_locales: &[String]) -> Vec<String> {
+    let mut result = Vec::new();
+    for locale in DATA.ambiguous.keys().filter(|locale| !locale.starts_with('_')) {
+        let mut locales = allowed_locales.to_vec();
+        locales.push(locale.clone());
+        if !ambiguous_characters(&locales).contains_key(&(c as u32)) {
+            result.push(locale.clone());
+        }
+    }
+    // The data file lists the locales sorted, the order `getLocales` keeps.
+    result.sort();
+    result
+}
+
 pub fn is_invisible_character(c: char) -> bool {
     DATA.invisible.contains(&(c as u32))
 }
