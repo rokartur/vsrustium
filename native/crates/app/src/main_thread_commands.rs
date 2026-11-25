@@ -52,6 +52,14 @@ impl Workbench {
                 self.models_after_file_operation(arg(0).as_u64().unwrap_or_default(), &arg(1), cx);
                 Outcome::done()
             }
+            ("MainThreadDiagnostics", "$changeMany") => {
+                self.change_many_markers(arg(0).as_str().unwrap_or_default(), &arg(1), cx);
+                Outcome::done()
+            }
+            ("MainThreadDiagnostics", "$clear") => {
+                self.clear_markers(arg(0).as_str().unwrap_or_default(), cx);
+                Outcome::done()
+            }
             ("MainThreadCommands", "$getCommands") => Outcome::Ready(Ok(json!(self.commands.ids().collect::<Vec<_>>()))),
             _ => Outcome::done(),
         }

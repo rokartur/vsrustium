@@ -6,6 +6,7 @@ mod actions;
 mod bulk_text_edits;
 mod context_menu;
 mod define_keybinding;
+mod diagnostics;
 mod editor_commands;
 mod editor_menus;
 mod editor_message;
@@ -19,6 +20,7 @@ pub(crate) mod host_requests;
 mod input_box_view;
 mod keybindings_editor_view;
 mod keyboard;
+mod marker_navigation;
 pub mod menubar;
 mod middle_scroll;
 mod minimap_view;
@@ -84,6 +86,7 @@ pub struct Workbench {
     pub keybindings: keyboard::Keybindings,
     pub keybindings_editor: keybindings_editor_view::KeybindingsEditor,
     keybinding_marks: define_keybinding::KeybindingMarks,
+    diagnostics: diagnostics::Diagnostics,
     /// Context keys set with the `setContext` command.
     context_keys: HashMap<String, Value>,
     /// The level extension tests set with `_extensionTests.setLogLevel`; stderr logging does not filter by it.
@@ -104,6 +107,7 @@ pub struct Workbench {
     /// The text area's window bounds at paint, where content widgets that may overflow it lay out.
     text_area_bounds: Rc<Cell<gpui::Bounds<f32>>>,
     editor_message: editor_message::EditorMessages,
+    marker_navigation: marker_navigation::MarkerNavigation,
     readonly_overrides: readonly::SessionOverrides,
     pub editor_focus: FocusHandle,
     /// bannerController.ts: the banner element is focusable (`tabIndex = 0`) inside the editor's DOM node.
@@ -143,6 +147,7 @@ impl Render for Workbench {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Cursors move and editors switch on many paths; every one of them renders.
         self.close_editor_message_on_cursor_change(cx);
+        self.follow_marker_navigation_cursor();
         let viewport = window.viewport_size();
         let window_border = self.theme.color("window.activeBorder");
         // The reference lays the grid out at the full window size and shifts it inside the 1px window border.
@@ -209,6 +214,7 @@ impl Workbench {
             keybindings: keyboard::Keybindings::default(),
             keybindings_editor: keybindings_editor_view::KeybindingsEditor::new(cx),
             keybinding_marks: Default::default(),
+            diagnostics: Default::default(),
             context_keys: HashMap::new(),
             log_level: "info".into(),
             status_message: None,
@@ -223,6 +229,7 @@ impl Workbench {
             text_area_left: Rc::default(),
             text_area_bounds: Rc::default(),
             editor_message: Default::default(),
+            marker_navigation: Default::default(),
             readonly_overrides: Default::default(),
             editor_focus: cx.focus_handle(),
             unicode_banner_focus: cx.focus_handle(),
@@ -267,6 +274,7 @@ impl Workbench {
         workbench.register_keybindings_editor_commands();
         workbench.register_readonly_commands();
         workbench.register_editor_message_commands();
+        workbench.register_marker_navigation_commands();
         workbench.register_define_keybinding_command();
         // Keybindings resolve before the focused element sees the key, and with nothing focused too.
         let entity = cx.entity().downgrade();
@@ -340,6 +348,7 @@ impl Workbench {
         self.load_search_editor_widget();
         self.find_editor_changed();
         self.schedule_keybinding_marks(cx);
+        self.update_marker_decorations(None);
         self.host.send_changes(&self.editors);
         cx.notify();
     }
@@ -798,19 +807,7 @@ impl Workbench {
             None => (self.color("statusBar.noFolderForeground"), self.color("statusBar.noFolderBackground")),
         };
         // statusbarpart.css: pointer only on items with a command; status.message has none.
-        let problems = div()
-            .relative()
-            .h_full()
-            .cursor_pointer()
-            .mx(px(3.))
-            .px(px(5.))
-            .flex()
-            .items_center()
-            .child(self.icon("error", 16., 16., foreground))
-            .child(" 0 ")
-            .child(self.icon("warning", 16., 16., foreground))
-            .child(" 0")
-            .child(self.hover_target("status.problems", HoverContent::Text("No Problems".into()), HoverOptions::status_bar()));
+        let problems = self.problems_status_item(foreground);
         div()
             .h(px(28.))
             .flex_none()

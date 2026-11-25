@@ -376,6 +376,10 @@ pub const EDITOR_ACTIONS: &[(&str, &str, Option<&str>)] = &[
     ("editor.action.addCommentLine", "Add Line Comment", Some("!editorReadonly")),
     ("editor.action.removeCommentLine", "Remove Line Comment", Some("!editorReadonly")),
     ("editor.action.blockComment", "Toggle Block Comment", Some("!editorReadonly")),
+    ("editor.action.marker.next", "Go to Next Problem (Error, Warning, Info)", None),
+    ("editor.action.marker.prev", "Go to Previous Problem (Error, Warning, Info)", None),
+    ("editor.action.marker.nextInFiles", "Go to Next Problem in Files (Error, Warning, Info)", None),
+    ("editor.action.marker.prevInFiles", "Go to Previous Problem in Files (Error, Warning, Info)", None),
 ];
 
 /// `getCodeEditorCommandPicks`: the active editor's supported actions, those whose precondition holds.

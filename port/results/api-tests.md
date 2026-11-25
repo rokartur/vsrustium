@@ -164,3 +164,7 @@ On the Studio, the working tree of the Search view commit. Combined grep of the 
 ## M12 `_workbench.open`
 
 On the Studio, the working tree of the `_workbench.open` commit. Combined grep of the baseline: api-folder 134/2/2/264 (exit 1 after 13s) against 133/2/3, api-workspace 4/0/0. `MOCHA_GREP='vscode API - workspace'`: api-folder 107/2/0/293 (exit 0 after 13s), api-workspace 4/0/0, unchanged. `MOCHA_GREP='vscode API - commands'`: 4 passing, 2 failing; `vscode.open with untitled supports associated resource (#138925)` passes now. Left: `api-command: vscode.open` fails at `tabGroups.all.length` 1 !== 2 after `ViewColumn.Two` (one editor group), `api-command: vscode.diff` with "command '_workbench.diff' not found" (no diff editor, milestone 14).
+
+## M13 diagnostics
+
+On the Studio, the working tree of the diagnostics and Next Problem commit. `MOCHA_GREP="vscode API - languages" SUITE_TIMEOUT=300 port/tools/api-tests`: api-folder 3 passing, 0 pending, 4 failing, 395 not reached (the pattern filters them). Passing: both `setTextDocumentLanguage` tests and `diagnostics, read & event`. Failing: link detector, diagnostics & CodeActionProvider, completions with document filters, folding command; they need `MainThreadLanguageFeatures`.

@@ -28,6 +28,8 @@ mod in_place_replace;
 mod folding_controller;
 mod indentation;
 mod lines_operations;
+pub mod marker_decorations;
+pub mod view_zones;
 pub mod minimap;
 mod multicursor;
 pub mod section_headers;
@@ -453,6 +455,9 @@ pub struct OpenEditor {
     pub host_reference: Option<Instant>,
     /// An untitled model the host opened for a path (`hasAssociatedFilePath`): dirty from the start, saved to that file.
     pub associated_file: bool,
+    /// The decorations of the model's problem markers.
+    pub markers: Vec<marker_decorations::MarkerDecoration>,
+    pub view_zones: Vec<view_zones::ViewZone>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -468,7 +473,7 @@ impl OpenEditor {
     fn new(document: TextDocument, preview: bool, model_id: u32) -> Self {
         let indentation = document.indentation;
         let guides = indent_guides(&document.lines, indentation.tab_size, indentation.indent_size(), document.off_side);
-        let mut editor = OpenEditor { document, preview, model_id, selections: vec![Selection::default()], last_added: 0, leftovers: Vec::new(), column_select: None, smart_select: None, cursor_states: Default::default(), version_id: 1, history: History::default(), guides, highlights: Vec::new(), value_set_replacement: None, folding: FoldingModel::default(), sticky_model: Default::default(), scroll: Scroll::default(), max_line_width: 0., host_reference: None, associated_file: false };
+        let mut editor = OpenEditor { document, preview, model_id, selections: vec![Selection::default()], last_added: 0, leftovers: Vec::new(), column_select: None, smart_select: None, cursor_states: Default::default(), version_id: 1, history: History::default(), guides, highlights: Vec::new(), value_set_replacement: None, folding: FoldingModel::default(), sticky_model: Default::default(), scroll: Scroll::default(), max_line_width: 0., host_reference: None, associated_file: false, markers: Vec::new(), view_zones: Vec::new() };
         editor.refresh_highlights();
         editor.refresh_folding_ranges();
         editor

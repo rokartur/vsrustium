@@ -130,7 +130,7 @@ impl OpenEditor {
         let view_lines = self.visible_lines(viewport);
         let range = StickyRange { start: self.model_line(view_lines.start) + 1, end: self.model_line(view_lines.end - 1) + 1 };
         let candidates = candidates_intersecting(&self.sticky_model, range, self.document.lines.len(), LINE_HEIGHT, self.folding.hidden());
-        find_widget_state(&candidates, self.scroll.top, max_lines, |line| viewport.line_top(self.view_line(line - 1)))
+        find_widget_state(&candidates, self.scroll.top, max_lines, |line| self.line_top(self.view_line(line - 1), viewport))
     }
 
     /// `_toggleFoldingRegionForLine`: the region starting on the sticky line `line` (1-based) at `index` flips,
@@ -142,7 +142,7 @@ impl OpenEditor {
         let region = self.folding.region_at_line(line).expect("the region toggled");
         let range = self.folding.regions.get(region);
         let target = if range.collapsed { range.end } else { range.start };
-        let top = viewport.line_top(self.view_line(target - 1)) - LINE_HEIGHT * index as f32 + 1.;
+        let top = self.line_top(self.view_line(target - 1), viewport) - LINE_HEIGHT * index as f32 + 1.;
         self.set_scroll(top, self.scroll.left, viewport);
         true
     }

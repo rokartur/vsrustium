@@ -638,7 +638,7 @@ impl FoldingModel {
 
 /// intervalTree.ts `nodeAcceptEdit` for one marker, by position: where `marker` goes when `start..end`
 /// becomes text ending at `new_end`.
-fn tracked(marker: Position, start: Position, end: Position, new_end: Position, stick_to_previous: bool) -> Position {
+pub(super) fn tracked(marker: Position, start: Position, end: Position, new_end: Position, stick_to_previous: bool) -> Position {
     if marker < start || (marker == start && (start != end || stick_to_previous)) {
         return marker;
     }

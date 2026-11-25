@@ -308,6 +308,10 @@ impl Workbench {
                 decorations.push((MinimapRange { start: view(mark.range.start.line, mark.range.start.column), end: view(mark.range.end.line, mark.range.end.column) }, color));
             }
         }
+        // markerDecorationsService.ts: inline minimap colors at z-index 10, 20 and 30.
+        for (start, end, color) in self.marker_minimap_ranges(editor) {
+            decorations.push((MinimapRange { start: view(start.line, start.column), end: view(end.line, end.column) }, color));
+        }
         let tab_size = editor.document.indentation.tab_size;
         decoration_fills(info, layout, self.theme.color("minimap.selectionHighlight"), &selections, &decorations, tab_size, |view_line| editor.document.lines[editor.model_line(view_line - 1)].as_str())
     }

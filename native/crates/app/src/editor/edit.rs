@@ -916,6 +916,9 @@ impl OpenEditor {
             text: text.replace('\n', eol),
         };
         self.folding.accept_replace(lines, start, end, text);
+        self.track_markers(start, end, text);
+        self.track_view_zones(start, end, text);
+        let lines = &mut self.document.lines;
         let prefix: String = lines[start.line].chars().take(start.column).collect();
         let suffix: String = lines[end.line].chars().skip(end.column).collect();
         let joined = prefix + text + &suffix;

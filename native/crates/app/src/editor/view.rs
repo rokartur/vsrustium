@@ -54,12 +54,13 @@ pub enum VerticalReveal {
     Center,
     CenterIfOutsideViewport,
     Top,
+    NearTop,
 }
 
 impl OpenEditor {
     /// `_getContentHeight` with `scrollBeyondLastLine`, at least the viewport.
     pub fn scroll_height(&self, viewport: Viewport) -> f32 {
-        let lines = viewport.line_top(self.view_line_count());
+        let lines = self.line_top(self.view_line_count(), viewport);
         viewport.height.max(lines + (viewport.height - LINE_HEIGHT).max(0.))
     }
 
@@ -125,10 +126,10 @@ impl OpenEditor {
     /// The view lines at least partly in the viewport (`getLinesViewportData` start and end).
     pub fn visible_lines(&self, viewport: Viewport) -> Range<usize> {
         let last = self.view_line_count() - 1;
-        let top = (self.scroll.top - viewport.top_whitespace).max(0.);
-        let start = ((top / LINE_HEIGHT).floor() as usize).min(last);
-        let bottom = (self.scroll.top + viewport.height - viewport.top_whitespace).max(0.);
-        let end = (((bottom / LINE_HEIGHT).ceil() as usize).max(start + 1)).min(last + 1);
+        let start = self.view_line_at(self.scroll.top, viewport).min(last);
+        let bottom = self.scroll.top + viewport.height;
+        let at_bottom = self.view_line_at(bottom, viewport);
+        let end = (at_bottom + usize::from(self.line_top(at_bottom, viewport) < bottom)).max(start + 1).min(last + 1);
         start..end
     }
 
@@ -137,10 +138,10 @@ impl OpenEditor {
     pub fn completely_visible_lines(&self, viewport: Viewport) -> Range<usize> {
         let lines = self.visible_lines(viewport);
         let (mut start, mut end) = (lines.start, lines.end - 1);
-        if start < end && viewport.line_top(start) < self.scroll.top {
+        if start < end && self.line_top(start, viewport) < self.scroll.top {
             start += 1;
         }
-        if start < end && viewport.line_top(end + 1) > self.scroll.top + viewport.height {
+        if start < end && self.line_top(end, viewport) + LINE_HEIGHT > self.scroll.top + viewport.height {
             end -= 1;
         }
         start..end + 1
@@ -174,7 +175,7 @@ impl OpenEditor {
         };
         let first = ranges.iter().map(|range| range.0.line).min().expect("an editor has a cursor");
         let last = ranges.iter().map(|range| range.1.line).max().expect("an editor has a cursor");
-        let box_lines = (viewport.line_top(self.view_line(first)), viewport.line_top(self.view_line(last) + 1));
+        let box_lines = (self.line_top(self.view_line(first), viewport), self.line_top(self.view_line(last), viewport) + LINE_HEIGHT);
         let Some(top) = scroll_top_to_reveal(self.scroll.top, viewport, box_lines, VerticalReveal::Simple, source == "mouse", single) else {
             return;
         };
@@ -187,7 +188,7 @@ impl OpenEditor {
     /// `revealRange` from the API (`TextEditor.revealRange`, source "api"): a range over several lines scrolls
     /// back to the left edge.
     pub fn reveal_range(&mut self, start: Position, end: Position, reveal: VerticalReveal, viewport: Viewport) {
-        let box_lines = (viewport.line_top(self.view_line(start.line)), viewport.line_top(self.view_line(end.line) + 1));
+        let box_lines = (self.line_top(self.view_line(start.line), viewport), self.line_top(self.view_line(end.line), viewport) + LINE_HEIGHT);
         let Some(top) = scroll_top_to_reveal(self.scroll.top, viewport, box_lines, reveal, false, true) else {
             return;
         };
@@ -201,7 +202,7 @@ impl OpenEditor {
 
     /// `revealTopMostCursor`/`revealBottomMostCursor`: one cursor position, vertically and horizontally.
     pub fn reveal_position(&mut self, position: Position, source: &str, viewport: Viewport) {
-        let box_lines = (viewport.line_top(self.view_line(position.line)), viewport.line_top(self.view_line(position.line) + 1));
+        let box_lines = (self.line_top(self.view_line(position.line), viewport), self.line_top(self.view_line(position.line), viewport) + LINE_HEIGHT);
         if let Some(top) = scroll_top_to_reveal(self.scroll.top, viewport, box_lines, VerticalReveal::Simple, source == "mouse", true) {
             self.set_scroll(top, self.scroll.left, viewport);
         }
@@ -211,7 +212,7 @@ impl OpenEditor {
     /// minimap.ts `revealLineNumber`: a click on the minimap centers the view line (0-based), with the mouse's
     /// padding and no horizontal scroll.
     pub fn reveal_view_line_centered(&mut self, view_line: usize, viewport: Viewport) {
-        let box_lines = (viewport.line_top(view_line), viewport.line_top(view_line + 1));
+        let box_lines = (self.line_top(view_line, viewport), self.line_top(view_line, viewport) + LINE_HEIGHT);
         if let Some(top) = scroll_top_to_reveal(self.scroll.top, viewport, box_lines, VerticalReveal::Center, true, true) {
             self.set_scroll(top, self.scroll.left, viewport);
         }
@@ -306,6 +307,8 @@ fn scroll_top_to_reveal(viewport_top: f32, viewport: Viewport, (box_start, box_e
     }
     Some(match reveal {
         VerticalReveal::CenterIfOutsideViewport if inside => viewport_top,
+        // A gap of 20% of the viewport above the box, at least 5 lines, unless that pushes the box out.
+        VerticalReveal::NearTop => (box_start - (5. * LINE_HEIGHT).max(viewport_height * 0.2)).max(box_end - viewport_height),
         VerticalReveal::Center | VerticalReveal::CenterIfOutsideViewport => ((box_start + box_end) / 2. - viewport_height / 2.).max(0.),
         VerticalReveal::Simple | VerticalReveal::Top => minimum_scrolling(viewport_top, viewport_end, box_start, box_end, reveal == VerticalReveal::Top),
     })

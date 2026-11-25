@@ -288,8 +288,14 @@ impl Workbench {
         let stop_rendering_line_after = self.stop_rendering_line_after;
         let viewport = self.editors.viewport;
         let lines = editor.visible_lines(viewport);
-        let lines_top = viewport.line_top(lines.start) - editor.scroll.top;
-        let rows = self.editor_lines(editor, lines, metrics, window, cx);
+        let lines_top = editor.line_top(lines.start, viewport) - editor.scroll.top;
+        let zones = editor.zones_between(lines.clone());
+        let first_line = lines.start;
+        let mut rows = Vec::new();
+        for (index, row) in self.editor_lines(editor, lines, metrics, window, cx).into_iter().enumerate() {
+            rows.extend(zones.iter().filter(|zone| zone.0 == first_line + index).map(|zone| div().flex_none().h(px(zone.1))));
+            rows.push(row);
+        }
         let minimap_width = self.minimap.info.as_ref().map_or(0., |(info, _)| info.width as f32);
         let now = Instant::now();
         if self.scrollbars.in_transition(now) || self.fold_controls.in_transition(now) || self.minimap.in_transition(now) {
@@ -367,6 +373,7 @@ impl Workbench {
             ))
             // editorScrollbar.ts clips the lines at contentWidth: the column right of the minimap stays empty.
             .child(div().absolute().left_0().right(px(minimap_width)).top_0().bottom_0().overflow_hidden().child(div().absolute().left_0().right_0().top(px(lines_top)).children(rows)))
+            .children(self.marker_navigation_widget(editor, metrics.content_left(), metrics.char_width, cx))
             .child(
                 div().id("margin").absolute().top_0().bottom_0().left_0().w(px(metrics.content_left())).on_hover(cx.listener(|workbench, hovered: &bool, _, cx| {
                     workbench.fold_controls.set_shown(*hovered, Instant::now());
@@ -796,6 +803,7 @@ impl Workbench {
                 }
                 content = content.children(self.unicode_highlight_boxes(editor, index, unicode.as_ref(), char_width));
                 content = content.children(self.keybinding_mark_boxes(editor, index, |column| visible_column(text, column, tab_size) as f32 * char_width));
+                content = content.children(self.marker_line_decorations(editor, index, char_width, |column| visible_column(text, column, tab_size) as f32 * char_width));
                 content = content.children(find_matches);
                 // inPlaceReplace.css: .valueSetReplacement only in the light theme (`.monaco-editor.vs`), a 2px outline.
                 if let Some((_, line, columns)) = &editor.value_set_replacement
@@ -808,7 +816,7 @@ impl Workbench {
                     content = content.child(div().absolute().top(px(-2.)).bottom(px(-2.)).left(px(start - 2.)).w(px(end - start + 4.)).border_2().border_color(border));
                 }
                 let highlights = editor.document.tokens.highlights(&self.theme, &self.languages, &editor.document.lines, index, tab_size);
-                let runs = gpui::combine_highlights(highlights, find_colors);
+                let runs = gpui::combine_highlights(gpui::combine_highlights(highlights, find_colors), self.marker_text_styles(editor, index, tab_size));
                 let mut show_more = None;
                 match line_overflow(text, self.stop_rendering_line_after) {
                     None => content = content.child(div().absolute().top_0().left_0().whitespace_nowrap().child(StyledText::new(expand_tabs(text, tab_size)).with_highlights(runs))),
@@ -1143,8 +1151,11 @@ impl Workbench {
             lines.push((mark.range.start.line, mark.range.end.line));
         }
         let [(info_lines, info_color), (error_lines, error_color)] = self.keybinding_ruler_marks(editor);
+        let [(marker_info_lines, marker_info), (marker_warning_lines, marker_warning), (marker_error_lines, marker_error)] = self.marker_ruler_lines(editor);
         let border = self.theme.color("editorOverviewRuler.border");
         let top_whitespace = self.editors.viewport.top_whitespace;
+        let zones: Vec<(usize, f32)> = editor.view_zones.iter().map(|zone| (zone.anchor.line + 1, zone.height)).collect();
+        let line_top = move |line: usize| top_whitespace + line as f32 * LINE_HEIGHT + zones.iter().filter(|zone| zone.0 <= line).map(|zone| zone.1).sum::<f32>();
         canvas(
             |_, _, _| {},
             move |bounds, _, window, _| {
@@ -1158,7 +1169,7 @@ impl Workbench {
                 let canvas_height = (f32::from(bounds.size.height) * scale).floor();
                 let viewport_height = f32::from(bounds.size.height);
                 // scrollBeyondLastLine: the last line can scroll to the top of the viewport.
-                let scroll_height = top_whitespace + line_count as f32 * LINE_HEIGHT + viewport_height - LINE_HEIGHT;
+                let scroll_height = line_top(line_count) + viewport_height - LINE_HEIGHT;
                 let ratio = canvas_height / scroll_height;
                 let lanes = RulerLanes::new(canvas_width);
                 let min_height = (6. * scale).floor();
@@ -1168,6 +1179,9 @@ impl Workbench {
                     (&range_lines, range_color, (lanes.full_x, lanes.full_width)),
                     (&info_lines, info_color, (lanes.right_x, lanes.right_width)),
                     (&error_lines, error_color, (lanes.right_x, lanes.right_width)),
+                    (&marker_info_lines, marker_info, (lanes.right_x, lanes.right_width)),
+                    (&marker_warning_lines, marker_warning, (lanes.right_x, lanes.right_width)),
+                    (&marker_error_lines, marker_error, (lanes.right_x, lanes.right_width)),
                     (&highlight_lines, highlight, center),
                     (&bracket_lines, bracket_color, center),
                     (&find_lines, find_color, center),
@@ -1175,8 +1189,8 @@ impl Workbench {
                 ] {
                     let mut previous: Option<(f32, f32)> = None;
                     for (start_line, end_line) in lines {
-                        let mut y1 = ((top_whitespace + *start_line as f32 * LINE_HEIGHT) * ratio).floor();
-                        let mut y2 = ((top_whitespace + *end_line as f32 * LINE_HEIGHT + LINE_HEIGHT) * ratio).floor();
+                        let mut y1 = (line_top(*start_line) * ratio).floor();
+                        let mut y2 = ((line_top(*end_line) + LINE_HEIGHT) * ratio).floor();
                         if y2 - y1 < min_height {
                             let half = (min_height / 2.).floor();
                             let center = ((y1 + y2) / 2.).floor().clamp(half, canvas_height - half);
@@ -1200,7 +1214,7 @@ impl Workbench {
                 let half = (height / 2.).floor();
                 let mut previous: Option<(f32, f32, Rgba)> = None;
                 for (line, color) in cursors.iter().filter_map(|(line, color)| Some((*line, (*color)?))) {
-                    let y1 = ((top_whitespace + line as f32 * LINE_HEIGHT) * ratio).floor().clamp(half, canvas_height - half) - half;
+                    let y1 = (line_top(line) * ratio).floor().clamp(half, canvas_height - half) - half;
                     let y2 = y1 + height;
                     previous = match previous {
                         Some((start, end, previous_color)) if y1 <= end + 1. && previous_color == color => Some((start, end.max(y2), color)),

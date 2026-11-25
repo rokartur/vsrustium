@@ -20,7 +20,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | mainthread/MainThreadAuthentication | MainThread* shape (Rust side) | removed | no sign-in/AI by decision (port/notes.md); API stays inert: session.rs answers undefined, list getters []; exthost-probe 30/30 on Bun and Node |
 | mainthread/MainThreadSecretState | MainThread* shape (Rust side) | verified | port/tools/settings-check secrets same as the reference; cargo test -p exthost main_thread_secret_state (on a throwaway keychain) |
 | mainthread/MainThreadConfiguration | MainThread* shape (Rust side) | verified | api-tests configuration 3/3; port/tools/settings-check configuration (reference fires extra empty events) |
-| mainthread/MainThreadDiagnostics | MainThread* shape (Rust side) | stub | session.rs answers undefined |
+| mainthread/MainThreadDiagnostics | MainThread* shape (Rust side) | verified | main_thread_commands.rs `$changeMany`/`$clear` into markers.rs, `$acceptMarkersChange` back: api-tests `vscode API - languages` diagnostics, read & event passes (port/results/api-tests.md M13) |
 | mainthread/MainThreadDiaglogs | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadDecorations | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadDocumentContentProviders | MainThread* shape (Rust side) | ported | main_thread.rs keeps the registrations and opens provider URIs through $provideTextDocumentContent; host_requests.rs applies $onVirtualDocumentChange as one edit (no minimal edits): api-tests MOCHA_GREP="vscode API - workspace" 94/2/13, all 8 content provider tests pass |
@@ -168,7 +168,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/localTranscription | src/vs/platform | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | platform/log | src/vs/platform | stub | the port log is code-gpui stderr: host console, errors, `$log` lines; no log levels, files or rotation |
 | platform/markdown | src/vs/platform | todo |  |
-| platform/markers | src/vs/platform | todo |  |
+| platform/markers | src/vs/platform | ported | markers.rs (markerService.ts: read filters, statistics, sanitizing, origins): cargo test -p app markers |
 | platform/mcp | src/vs/platform | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | platform/menubar | src/vs/platform | ported | workbench/menubar.rs: app, Window and Services menus of menubar.ts with key equivalents, chords in the label; AX tree of the port vs the reference (port/results/menubar.md); cargo test -p app menubar |
 | platform/meteredConnection | src/vs/platform | todo |  |
@@ -243,7 +243,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | editor/contrib/folding | src/vs/editor/contrib | stub | folding model, ranges, hidden ranges, indent and marker provider, gutter controls, fold/unfold keys and every folding command by id (editor/folding.rs, editor/folding_controller.rs): cargo test -p app editor::folding, pixel-check folded; extension providers with MainThreadLanguageFeatures, Cmd+K chords and per-file state at the M9/M10 merge (port/notes.md milestone 8) |
 | editor/contrib/fontZoom | src/vs/editor/contrib | todo |  |
 | editor/contrib/format | src/vs/editor/contrib | todo |  |
-| editor/contrib/gotoError | src/vs/editor/contrib | todo |  |
+| editor/contrib/gotoError | src/vs/editor/contrib | ported | workbench/marker_navigation.rs (gotoError.ts, markerNavigationService.ts, gotoErrorWidget.ts): cargo test -p app marker_navigation; no resize sash, no Go menu (port/notes.md milestone 13) |
 | editor/contrib/gotoSymbol | src/vs/editor/contrib | todo |  |
 | editor/contrib/gpu | src/vs/editor/contrib | removed | Artur: internal infrastructure or developer tool with no 1:1 counterpart in the native port |
 | editor/contrib/hover | src/vs/editor/contrib | todo |  |
@@ -262,7 +262,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | editor/contrib/middleScroll | src/vs/editor/contrib | verified | `editor.scrollOnMiddleClick`: a middle press starts a session that scrolls by the pointer's offset past 5px every 32ms, a press, a key or a release after scrolling ends it, the dot marks the press (middle_scroll.rs): cargo test -p app middle_scroll; ui-pair lines.txt middle drag 120px down (port/tools/ui-pair `button`) |
 | editor/contrib/multicursor | src/vs/editor/contrib | stub | insertCursorAbove/Below, insertCursorAtEndOfEachLineSelected, addCursorsToTop/Bottom, column selection, Alt+click and drag (editor/multicursor.rs): cargo test -p app editor::multicursor::tests; no Cmd+D, selectHighlights or changeAll until find (port/notes.md milestone 8) |
 | editor/contrib/parameterHints | src/vs/editor/contrib | todo |  |
-| editor/contrib/peekView | src/vs/editor/contrib | todo |  |
+| editor/contrib/peekView | src/vs/editor/contrib | stub | head, frame and actions drawn by workbench/marker_navigation.rs for the marker widget only; no PeekContext, no references peek yet |
 | editor/contrib/placeholderText | src/vs/editor/contrib | todo | only embedded editors set `placeholder` (comment reply, chat, SCM input); comes with the first of them (port/notes.md milestone 8) |
 | editor/contrib/quickAccess | src/vs/editor/contrib | ported | gotoLineQuickAccess and editorNavigationQuickAccess (`workbench/quick_access/goto_line.rs`); no open to the side, relative line numbers, aria status; gotoSymbol not ported |
 | editor/contrib/readOnlyMessage | src/vs/editor/contrib | verified | a cursor edit in a read-only editor shows the reason (session, settings, permissions) with its `command:` links; cargo test -p app readonly; ui-pair ro.txt matches the reference |
@@ -282,7 +282,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | editor/contrib/wordHighlighter | src/vs/editor/contrib | ported | textual provider only (USUAL_WORD_SEPARATORS, whole words) on cursor move, stops on editor widget blur (quick input, unicode banner action, an edit while the window is inactive); cargo test -p app (editor::tests word highlight, the_word_highlight_stops, the_banner_action); pixel-check file window; ui-pair many.ts and ult.txt |
 | editor/contrib/wordOperations | src/vs/editor/contrib | ported | word moves, selects and deletes with USUAL_WORD_SEPARATORS: cargo test -p app (editor::cursor::tests, editor::edit::tests) |
 | editor/contrib/wordPartOperations | src/vs/editor/contrib | verified | cursorWordPart(Left/Right)(Select), deleteWordPart(Left/Right), aliases cursorWordPartStartLeft(Select); cargo test -p app word_part (upstream cases); ui-pair Ctrl+Alt arrows, Ctrl+Alt+Backspace/Delete |
-| editor/contrib/zoneWidget | src/vs/editor/contrib | todo |  |
+| editor/contrib/zoneWidget | src/vs/editor/contrib | stub | editor/view_zones.rs (view zones, cargo test -p app view_zones) and the arrow and frame of the marker widget; no resize sash |
 | workbench/parts/activitybar | workbench part | ported | view icons with Explorer active when a folder is open, settings gear; no badges or clicks; pixel-check (port/results/pixels.md): same geometry, codicon edge pixels and active background rounding only |
 | workbench/parts/auxiliarybar | workbench part | todo |  |
 | workbench/parts/banner | workbench part | todo |  |
@@ -440,7 +440,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/localization | workbench contribution | todo |  |
 | workbench/contrib/logs | workbench contribution | todo |  |
 | workbench/contrib/markdown | workbench contribution | todo |  |
-| workbench/contrib/markers | workbench contribution | todo |  |
+| workbench/contrib/markers | workbench contribution | stub | status bar problems entry and tooltip from markers (workbench/diagnostics.rs); the Problems panel waits for milestone 11's panel part |
 | workbench/contrib/mcp | workbench contribution | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/contrib/mediaPreview | workbench contribution | todo |  |
 | workbench/contrib/mergeEditor | workbench contribution | todo |  |
