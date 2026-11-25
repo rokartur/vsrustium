@@ -21,3 +21,7 @@ Steps `port/fixtures/problems/steps-filter.json` (open Problems, type `comma`, s
 Same: the filter box in the panel title with `Showing 1 of 2` and `Showing 0 of 2` badges and the filter button, the one marker left with `comma` highlighted, "No results found with provided filter criteria. Clear Filters." with the underlined link.
 
 Differences: the port's panel keeps the Terminal tab in the title and squeezes the filter box, whose left part is cut off; the reference moves Terminal into the "..." overflow. The panel title's overflow belongs to the panel part (milestone 11).
+
+## After the milestone 11 merge
+
+One filter (markers_filter.rs, workbench/view_filter.rs, problems_view.rs) after merging both branches' filters; the table keeps the column sashes. Same steps and fixture, shots in `raw/problems-m13c/` on the Studio. Same as the reference: the 200px filter box with its placeholder, "Showing 1 of 2" and "Showing 0 of 2", the `comma` match, "No results found with provided filter criteria. Clear Filters.", Terminal in the "..." overflow, the table's columns and its filtered row. Differences: focused, the reference's box grows to 253px (280px in the table), the port's to 212px (236px), the room the panel's tab layout leaves (workbench/panel.rs `panel_tabs_that_fit`) being about 40px short; the placeholder clips without an ellipsis.
