@@ -34,6 +34,15 @@ pub fn scan_builtin_extensions(dir: &Path) -> anyhow::Result<Vec<ScannedExtensio
     folders.iter().map(|folder| scan_extension(folder, true)).collect()
 }
 
+/// extensionsScannerService.ts `scanDevSystemExtensions`: product.json `builtInExtensions` (js-debug and its
+/// companions) from `.build/builtInExtensions`, where port/tools/fetch-builtin-extensions puts them.
+pub fn scan_dev_system_extensions(app_root: &Path) -> anyhow::Result<Vec<ScannedExtension>> {
+    let product: Value = serde_json::from_slice(&std::fs::read(app_root.join("product.json"))?)?;
+    let names = product["builtInExtensions"].as_array().into_iter().flatten().filter_map(|extension| extension["name"].as_str());
+    let folders = names.map(|name| app_root.join(".build/builtInExtensions").join(name)).filter(|folder| folder.join("package.json").is_file());
+    folders.map(|folder| scan_extension(&folder, true)).collect()
+}
+
 pub fn scan_extension(folder: &Path, is_builtin: bool) -> anyhow::Result<ScannedExtension> {
     let mut manifest: Value = serde_json::from_slice(&std::fs::read(folder.join("package.json"))?)?;
     if let Ok(nls) = std::fs::read(folder.join("package.nls.json")) {
