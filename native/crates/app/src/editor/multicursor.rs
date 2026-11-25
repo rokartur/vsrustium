@@ -154,6 +154,11 @@ impl OpenEditor {
         self.set_cursor_states(selections, leftovers);
     }
 
+    /// `getCursorColumnSelectData().isReal`: the cursors are still the last column selection's.
+    pub fn is_column_selection(&self) -> bool {
+        self.column_select.as_ref().is_some_and(|(_, selections)| *selections == self.selections)
+    }
+
     /// `getCursorColumnSelectData`: the last column selection while its cursors are unchanged, else the
     /// primary cursor from its anchor to its head.
     pub fn column_select_data(&self) -> ColumnSelectData {

@@ -166,6 +166,33 @@ impl Tokenization {
         starts
     }
 
+    /// The tokens of line `index` for the HTML copy, in chars, merged where their metadata is equal as
+    /// vscode-textmate's `tokenizeLine2` gives them; one default token without a grammar.
+    pub fn html_tokens(&self, theme: &Theme, lines: &[String], index: usize) -> Vec<crate::editor::clipboard::HtmlToken> {
+        use crate::editor::clipboard::HtmlToken;
+        let text = &lines[index];
+        let default_token = vec![HtmlToken { end: text.chars().count(), foreground: 1, font_style: 0 }];
+        if self.grammar.is_none() {
+            return default_token;
+        }
+        self.tokenize_to(lines, index);
+        let tokenized = self.lines.borrow();
+        let mut tokens: Vec<(HtmlToken, _)> = Vec::new();
+        for token in &tokenized[index].0 {
+            let style = theme.tokens.style(&token.scopes);
+            let metadata = (style, token.token_type, token.scopes.language.clone());
+            let end = text[..token.end.min(text.len())].chars().count();
+            match tokens.last_mut() {
+                Some((last, last_metadata)) if *last_metadata == metadata => last.end = end,
+                _ => tokens.push((HtmlToken { end, foreground: style.foreground, font_style: style.font_style.max(0) }, metadata)),
+            }
+        }
+        if tokens.is_empty() {
+            return default_token;
+        }
+        tokens.into_iter().map(|(token, _)| token).collect()
+    }
+
     /// `getLanguageId` of the token at byte `offset` of line `index`: an embedded language, else none.
     pub fn language_at(&self, lines: &[String], index: usize, offset: usize) -> Option<std::rc::Rc<str>> {
         self.grammar.as_ref()?;

@@ -226,7 +226,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | editor/contrib/anchorSelect | src/vs/editor/contrib | verified | `editor/anchor_select.rs`: the four commands with their keys and `selectionAnchorSet`, the anchor moved by edits as a `NeverGrowsWhenTypingAtEdges` marker, the bar under the word highlights: cargo test -p app anchor; ui-pair notes.txt through the Command Palette; no hover message until editor hovers |
 | editor/contrib/bracketMatching | src/vs/editor/contrib | ported | bracket pair colors and match boxes with overview ruler lane (brackets.rs); cargo test -p app brackets::tests; no Go to Bracket / Select to Bracket commands until keybindings |
 | editor/contrib/caretOperations | src/vs/editor/contrib | verified | Move Selected Text Left/Right (palette), Transpose Letters (Ctrl+T): cargo test -p app caret_operations (moveCarretCommand.test.ts); ui-pair notes.txt Ctrl+T and both palette actions |
-| editor/contrib/clipboard | src/vs/editor/contrib | ported | Cmd+C/X/V with whole-line copy metadata: cargo test -p app keys_and_typed_text_edit_the_focused_editor_and_reach_the_host |
+| editor/contrib/clipboard | src/vs/editor/contrib | verified | Cut, Copy, Paste and Copy with Syntax Highlighting (editor/clipboard.rs, workbench/editor_commands.rs): `editor.emptySelectionClipboard`, `copyWithSyntaxHighlighting` HTML, `multiCursorPaste`, column block copy and paste; ui-pair text and HTML byte-identical with the reference (port/results/clipboard.md); cargo test -p app clipboard 18 passed |
 | editor/contrib/codeAction | src/vs/editor/contrib | todo |  |
 | editor/contrib/codelens | src/vs/editor/contrib | todo |  |
 | editor/contrib/colorPicker | src/vs/editor/contrib | todo |  |

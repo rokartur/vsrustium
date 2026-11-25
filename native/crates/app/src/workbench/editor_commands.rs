@@ -12,7 +12,7 @@ use super::Workbench;
 use crate::commands::Outcome;
 use crate::editor::auto_indent::{AutoIndent, Strategy};
 use crate::editor::word_operations::{self, AutoClosing, WordClassifier, WordDelete};
-use crate::editor::{CaseTransform, ContentChanged, Copied, LineCommentKind, OpenEditor, Selection, commands, smart_select};
+use crate::editor::{CaseTransform, ContentChanged, LineCommentKind, OpenEditor, Pasted, Selection, clipboard, commands, smart_select};
 
 type EditorCommand = fn(&mut OpenEditor) -> Option<ContentChanged>;
 
@@ -244,6 +244,16 @@ impl Workbench {
         self.commands.register("cursorRedo", |workbench, _, _, cx| workbench.run_cursor_undo(true, cx));
         self.commands.register("editor.action.clipboardCopyAction", |workbench, _, window, cx| workbench.copy_to_clipboard(false, window, cx));
         self.commands.register("editor.action.clipboardCutAction", |workbench, _, window, cx| workbench.copy_to_clipboard(true, window, cx));
+        // clipboard.ts `ExecCommandCopyWithSyntaxHighlightingAction`: an editor action, so the active editor without focus too.
+        self.commands.register("editor.action.clipboardCopyWithSyntaxHighlightingAction", |workbench, _, window, cx| {
+            let Some(editor) = workbench.editors.active() else { return Outcome::done() };
+            if !workbench.editor_bool_setting(editor, "editor.emptySelectionClipboard") && editor.selection().is_empty() {
+                return Outcome::done();
+            }
+            window.focus(&workbench.editor_focus, cx);
+            workbench.copy_editor_text(true, cx);
+            Outcome::done()
+        });
         self.commands.register("editor.action.clipboardPasteAction", |workbench, _, window, cx| {
             if !workbench.editor_focus.is_focused(window) {
                 return workbench.input_text_command("editor.action.clipboardPasteAction", window, cx).unwrap_or(Outcome::done());
@@ -254,24 +264,83 @@ impl Workbench {
             let Some(ClipboardEntry::String(clipboard)) = cx.read_from_clipboard().and_then(|item| item.entries().first().cloned()) else { return Outcome::done() };
             let metadata = clipboard.metadata_json::<Value>().unwrap_or_default();
             let multicursor_text: Option<Vec<String>> = serde_json::from_value(metadata["multicursorText"].clone()).ok();
-            let from_empty_selection = metadata["isFromEmptySelection"] == json!(true);
             let Some(editor) = workbench.editors.active() else { return Outcome::done() };
+            let empty_selection_clipboard = workbench.editor_bool_setting(editor, "editor.emptySelectionClipboard");
+            let pasted = Pasted {
+                text: clipboard.text(),
+                paste_on_new_line: empty_selection_clipboard && metadata["isFromEmptySelection"] == json!(true),
+                multicursor_text: multicursor_text.as_deref(),
+                is_block: metadata["isBlock"] == json!(true),
+            };
             let overrides = Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
-            let overtype = workbench.overtype && workbench.settings.lock().unwrap().get_value(Some("editor.overtypeOnPaste"), &overrides) != Some(json!(false));
-            workbench.run_on_active_editor(|editor: &mut OpenEditor| editor.paste(clipboard.text(), from_empty_selection, multicursor_text.as_deref(), overtype), cx)
+            let settings = workbench.settings.lock().unwrap();
+            let spread = settings.get_value(Some("editor.multiCursorPaste"), &overrides) != Some(json!("full"));
+            let overtype = workbench.overtype && settings.get_value(Some("editor.overtypeOnPaste"), &overrides) != Some(json!(false));
+            drop(settings);
+            workbench.run_on_active_editor(|editor: &mut OpenEditor| editor.paste(pasted, spread, overtype), cx)
         });
     }
 
+    /// clipboard.ts `registerExecCommandImpl` for the editor with text focus: nothing for an empty selection
+    /// without `editor.emptySelectionClipboard`, else the copy, then the cut.
     fn copy_to_clipboard(&mut self, cut: bool, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
         let Some(editor) = self.editors.active().filter(|_| self.editor_focus.is_focused(window)) else {
             let command = if cut { "editor.action.clipboardCutAction" } else { "editor.action.clipboardCopyAction" };
             return self.input_text_command(command, window, cx).unwrap_or(Outcome::done());
         };
-        cx.write_to_clipboard(clipboard_item(editor.copy_text()));
+        let empty_selection_clipboard = self.editor_bool_setting(editor, "editor.emptySelectionClipboard");
+        if !empty_selection_clipboard && editor.selection().is_empty() {
+            return Outcome::done();
+        }
+        self.copy_editor_text(false, cx);
         match cut && !self.edit_blocked(true, cx) {
-            true => self.run_on_active_editor(OpenEditor::cut, cx),
+            true => self.run_on_active_editor(|editor| editor.cut(empty_selection_clipboard), cx),
             false => Outcome::done(),
         }
+    }
+
+    /// clipboardUtils.ts `generateDataToCopy`: the active editor's text with its metadata, and its HTML when
+    /// `force` (Copy with Syntax Highlighting) or `editor.copyWithSyntaxHighlighting` and under 65536 long.
+    fn copy_editor_text(&mut self, force: bool, cx: &mut Context<Self>) {
+        let editor = self.editors.active().expect("the copy commands check for an active editor");
+        let empty_selection_clipboard = self.editor_bool_setting(editor, "editor.emptySelectionClipboard");
+        let copied = editor.copy_text(empty_selection_clipboard);
+        // `sourceText.length`: the pieces when there are several, else the UTF-16 length.
+        let length = copied.multicursor_text.as_ref().map_or_else(|| copied.text.encode_utf16().count(), Vec::len);
+        let rich_text = (force || (self.editor_bool_setting(editor, "editor.copyWithSyntaxHighlighting") && length < 65536)).then(|| self.rich_text_to_copy(empty_selection_clipboard)).flatten();
+        let (html, mode) = rich_text.unzip();
+        let metadata = json!({
+            "version": 1,
+            "isFromEmptySelection": copied.from_empty_selection,
+            "isBlock": copied.is_block,
+            "multicursorText": copied.multicursor_text,
+            "mode": mode,
+        });
+        cx.write_to_clipboard(ClipboardItem::new_string_with_json_metadata(copied.text, metadata));
+        if let Some(html) = html {
+            crate::clipboard::write_html(&html);
+        }
+    }
+
+    /// `ViewModel.getRichTextToCopy` for the active editor with the theme's token colors and the editor font.
+    fn rich_text_to_copy(&self, empty_selection_clipboard: bool) -> Option<(String, String)> {
+        let editor = self.editors.active()?;
+        let overrides = Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
+        let settings = self.settings.lock().unwrap();
+        let setting = |key| settings.get_value(Some(key), &overrides);
+        let font = clipboard::font_info(setting("editor.fontFamily"), setting("editor.fontWeight"), setting("editor.fontSize"), setting("editor.lineHeight"), 1. + f64::from(self.editor_zoom.level()) * 0.1);
+        drop(settings);
+        let mut color_map = vec!["#000000".to_string()];
+        color_map.extend(self.theme.tokens.color_map().iter().skip(1).map(|color| color[..7].to_lowercase()));
+        let document = &editor.document;
+        let line_tokens = |line| document.tokens.html_tokens(&self.theme, &document.lines, line);
+        clipboard::rich_text_to_copy(&document.lines, &document.language_id, &editor.selections, empty_selection_clipboard, &font, &color_map, document.indentation.tab_size, line_tokens)
+    }
+
+    /// A boolean editor setting for the editor's resource and language that defaults to true.
+    fn editor_bool_setting(&self, editor: &OpenEditor, key: &str) -> bool {
+        let overrides = Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
+        self.settings.lock().unwrap().get_value(Some(key), &overrides) != Some(json!(false))
     }
 
     /// wordOperations.ts and wordPartOperations.ts.
@@ -434,10 +503,4 @@ impl Workbench {
         };
         self.editor_command_ran(change, selections_before, cx)
     }
-}
-
-/// The copied text with the `ClipboardStoredMetadata` paste reads back.
-fn clipboard_item(copied: Copied) -> ClipboardItem {
-    let metadata = json!({ "isFromEmptySelection": copied.from_empty_selection, "multicursorText": copied.multicursor_text });
-    ClipboardItem::new_string_with_json_metadata(copied.text, metadata)
 }

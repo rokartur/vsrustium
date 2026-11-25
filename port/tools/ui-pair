@@ -7,7 +7,7 @@
 // env SETTINGS = a JSON object of user settings for both)
 // Steps, in window points (both windows are 1024x768):
 //   {"click": [x, y]}  {"click": [x, y], "modifier": ["cmd"]}  {"click": [x, y], "foreground": true}  {"doubleClick": [x, y]}  {"rightClick": [x, y]}  {"key": "return"}
-//   {"hotkey": ["cmd", "c"]}  {"type": "text"}  {"wait": ms}  {"shot": "name"}  {"clipboard": "name"} (the pasteboard text, the folder path as <folder>)
+//   {"hotkey": ["cmd", "c"]}  {"type": "text"}  {"wait": ms}  {"shot": "name"}  {"clipboard": "name"} (the pasteboard text, the folder path as <folder>, and its public.html as <name>.html)
 //   {"dragShot": [x1, y1, x2, y2], "shot": "name", "modifier": ["option"], "button": "middle"}: a slow drag, captured while held
 // Shots land in <out-dir>/<reference|port>-<name>.png at 2x; a sheet on the window is captured as its own window.
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -121,6 +121,11 @@ async function run(app: string, pid: number, folder: string) {
 			const text = (await Bun.$`pbpaste`.text()).replaceAll(folder, '<folder>');
 			writeFileSync(resolve(outDir, `${app}-${step.clipboard}.txt`), text);
 			console.log(`${app}-${step.clipboard}.txt: ${JSON.stringify(text)}`);
+			const html = await Bun.$`osascript -l JavaScript -e ${"ObjC.import('AppKit'); const h = $.NSPasteboard.generalPasteboard.stringForType('public.html'); h.isNil() ? '' : h.js"}`.text();
+			if (html.trim()) {
+				writeFileSync(resolve(outDir, `${app}-${step.clipboard}.html`), html.trimEnd());
+				console.log(`${app}-${step.clipboard}.html: ${html.trimEnd()}`);
+			}
 		}
 		await Bun.sleep(400);
 	}
