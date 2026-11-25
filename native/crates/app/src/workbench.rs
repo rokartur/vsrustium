@@ -112,6 +112,7 @@ mod view_panes;
 mod search_editor_view;
 mod search_editor_widget;
 mod search_view;
+mod scroll_locking;
 mod settings_editor_view;
 mod status_entries;
 mod parameter_hints;
@@ -141,10 +142,14 @@ mod gutter_mouse;
 mod word_wrap;
 mod smooth_scrolling;
 mod text_input;
+mod timeline_view;
 mod title_bar_actions;
 mod type_navigation;
 mod unicode_highlight;
 mod unusual_line_terminators;
+pub(crate) mod scm_actions;
+mod scm_graph_view;
+mod scm_tree;
 mod scm_view;
 mod tree_view;
 mod file_decorations;
@@ -312,9 +317,12 @@ pub struct Workbench {
     pub search_editor_widget: search_editor_widget::SearchEditorWidget,
     pub webview_panels: webview_panels::WebviewPanels,
     pub scm: scm_view::ScmView,
+    timeline: timeline_view::TimelineView,
+    scm_graph: scm_graph_view::ScmGraph,
     tree_views: tree_view::TreeViews,
     decorations: std::cell::RefCell<crate::decorations::Decorations>,
     quick_diffs: editor_view::quick_diff::QuickDiffs,
+    pub(crate) github_clients: crate::main_thread_github::GitHubClients,
     /// `contributes.commands` icons, for the view toolbars.
     pub command_icons: HashMap<String, crate::menus::CommandIcon>,
     url_handlers: url_handlers::UrlHandlers,
@@ -377,7 +385,13 @@ impl Render for Workbench {
         self.refresh_outline_pane(cx);
         self.update_webview_panels(window, cx);
         self.update_diff_editor();
+        self.update_merge_editor(cx);
+        self.update_multi_diff_editor();
+        self.update_diff_symbols(cx);
         self.update_quick_diff(cx);
+        self.follow_active_editor_repository();
+        self.update_timeline(cx);
+        self.update_scm_graph(cx);
         self.update_extension_editor_webviews(window, cx);
         self.auto_save_models_changed(cx);
         self.follow_content_hover_editor();
@@ -548,9 +562,12 @@ impl Workbench {
             search_editor_widget: search_editor_widget::SearchEditorWidget::new(cx),
             webview_panels: Default::default(),
             scm: scm_view::ScmView::new(cx),
+            timeline: timeline_view::TimelineView::new(cx),
+            scm_graph: Default::default(),
             tree_views: Default::default(),
             decorations: Default::default(),
             quick_diffs: Default::default(),
+            github_clients: Default::default(),
             command_icons: HashMap::new(),
             url_handlers: Default::default(),
             webview_views: Default::default(),
@@ -591,7 +608,14 @@ impl Workbench {
         workbench.register_workbench_actions();
         workbench.register_diff_editor_commands();
         workbench.register_diff_gutter_commands();
+        workbench.register_unchanged_region_commands();
+        workbench.register_scroll_locking_commands();
+        workbench.register_scm_view_mode_commands();
+        workbench.register_merge_editor_commands();
+        workbench.register_multi_diff_editor_commands();
+        workbench.register_timeline_commands();
         workbench.register_scm_commands();
+        workbench.register_scm_actions();
         workbench.register_text_file_commands();
         workbench.register_large_file_commands();
         workbench.register_media_preview_commands();
@@ -640,6 +664,7 @@ impl Workbench {
         workbench.register_snippet_completions();
         workbench.register_snippet_commands();
         workbench.register_marker_navigation_commands();
+        workbench.register_quick_diff_commands();
         workbench.register_goto_symbol_commands();
         workbench.register_definition_link_commands();
         workbench.register_document_highlight_commands();

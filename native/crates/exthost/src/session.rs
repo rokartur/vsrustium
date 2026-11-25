@@ -426,6 +426,9 @@ impl Session {
     }
 
     fn send(&mut self, proxy: &str, method: &str, args: Vec<Arg>, cancellable: bool) -> u32 {
+        if std::env::var_os("EXTHOST_TRACE").is_some() {
+            eprintln!("main> {proxy}.{method} {args:?}");
+        }
         self.next_req += 1;
         let req = self.next_req;
         if let ("$activateByEvent", Some(Arg::Json(Value::String(event)))) = (method, args.first()) {

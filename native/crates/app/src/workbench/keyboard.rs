@@ -377,6 +377,8 @@ impl Workbench {
             let pane = if editor.document().scheme == super::welcome_page::WALKTHROUGH_SCHEME { "gettingStartedPage" } else { "workbench.editor.files" };
             context.insert("activeEditor".into(), json!(pane));
             self.insert_diff_editor_context(&mut context);
+            self.insert_multi_diff_editor_context(&mut context);
+            self.insert_merge_editor_context(&mut context);
             // The port opens only files, never untitled editors (editorGroupView.ts).
             context.insert("activeEditorCanRevert".into(), json!(true));
             let readonly = self.active_editor_readonly().is_some();
@@ -385,6 +387,8 @@ impl Workbench {
             context.insert("activeEditorCanToggleReadonly".into(), json!(editor.document().scheme != "untitled"));
             context.insert("messageVisible".into(), json!(self.editor_message_visible()));
             context.insert("markersNavigationVisible".into(), json!(self.markers_navigation_visible()));
+            context.insert("dirtyDiffVisible".into(), json!(self.quick_diff_visible()));
+            context.insert("quickDiffDecorationCount".into(), json!(self.quick_diff_decoration_count()));
             self.goto_symbol_context(&mut context);
             self.references_peek_context(window, &mut context);
             self.hierarchy_peek_context(editor, window, &mut context);
@@ -440,6 +444,7 @@ impl Workbench {
         self.search_editor_context(window, &mut context);
         self.output_context(window, &mut context);
         self.terminal_context(window, &mut context);
+        self.timeline_context(window, &mut context);
         self.accessibility_context(&mut context);
         context
     }

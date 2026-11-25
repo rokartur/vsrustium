@@ -244,11 +244,11 @@ fn watch(fs: &mut Providers, watch_session: u64, uri: &Value, options: &Value, c
 
 pub fn resource(uri: &Value) -> Resource {
     let part = |key: &str| uri[key].as_str().unwrap_or_default().to_owned();
-    Resource { scheme: part("scheme"), authority: part("authority"), path: part("path") }
+    Resource { scheme: part("scheme"), authority: part("authority"), path: part("path"), query: part("query") }
 }
 
 fn uri(resource: &Resource) -> Value {
-    json!({ "$mid": 1, "scheme": resource.scheme, "authority": resource.authority, "path": resource.path })
+    json!({ "$mid": 1, "scheme": resource.scheme, "authority": resource.authority, "path": resource.path, "query": resource.query })
 }
 
 /// The file service's providers: the disk for `file`, `ExtHostFileSystem` for the schemes extensions registered.

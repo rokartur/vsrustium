@@ -47,6 +47,7 @@ mod link_computer;
 mod local_history;
 mod main_thread;
 mod main_thread_commands;
+mod main_thread_github;
 mod main_thread_errors;
 mod main_thread_message;
 mod main_thread_output;
@@ -56,6 +57,8 @@ mod main_thread_status_bar;
 mod markdown;
 mod markers;
 mod menus;
+mod merge_editor;
+mod multi_diff_editor;
 mod nls;
 mod outline_model;
 mod metered_connection;
@@ -75,6 +78,7 @@ mod recently_opened;
 mod references_model;
 mod search_editor;
 mod scm;
+mod scm_history;
 mod search_model;
 mod semantic_tokens;
 mod settings_editor;
@@ -83,6 +87,7 @@ mod settings_import;
 mod smart_snippet_inserter;
 mod snippets;
 mod split_view;
+mod symbol_kinds;
 mod suggest;
 mod symbol_icons;
 mod syntax;
@@ -91,6 +96,7 @@ mod terminal;
 mod testing;
 mod tf_idf;
 mod theme;
+mod timeline;
 mod trusted_domains;
 mod undo_redo;
 mod untitled;
@@ -476,7 +482,7 @@ fn run_extension_host(
             MainThreadSecretState::in_memory()
         }),
     });
-    session.forward(&["MainThreadCommands", "MainThreadCustomEditors", "MainThreadDecorations", "MainThreadDebugService", "MainThreadDiagnostics", "MainThreadDownloadService", "MainThreadEditorTabs", "MainThreadLanguageFeatures", "MainThreadLanguages.$setLanguageStatus", "MainThreadLanguages.$removeLanguageStatus", "MainThreadLogger", "MainThreadMessageService", "MainThreadOutputService", "MainThreadProgress", "MainThreadQuickOpen", "MainThreadSCM", "MainThreadStatusBar", "MainThreadTask", "MainThreadTerminalService", "MainThreadTerminalShellIntegration", "MainThreadTesting", "MainThreadTreeViews", "MainThreadUriOpeners", "MainThreadUrls", "MainThreadUrls.$registerUriHandler", "MainThreadUrls.$unregisterUriHandler", "MainThreadWebviewPanels", "MainThreadWebviewViews", "MainThreadWebviews", "MainThreadWindow.$openUri", "MainThreadWorkspace"], move |request| {
+    session.forward(&["MainThreadCommands", "MainThreadCustomEditors", "MainThreadDebugService", "MainThreadDecorations", "MainThreadDiagnostics", "MainThreadDownloadService", "MainThreadEditorTabs", "MainThreadGitHub", "MainThreadLanguageFeatures", "MainThreadLanguages.$removeLanguageStatus", "MainThreadLanguages.$setLanguageStatus", "MainThreadLogger", "MainThreadMessageService", "MainThreadOutputService", "MainThreadProgress", "MainThreadQuickDiff", "MainThreadQuickOpen", "MainThreadSCM", "MainThreadStatusBar", "MainThreadTask", "MainThreadTerminalService", "MainThreadTerminalShellIntegration", "MainThreadTesting", "MainThreadTimeline", "MainThreadTreeViews", "MainThreadUriOpeners", "MainThreadUrls", "MainThreadUrls.$registerUriHandler", "MainThreadUrls.$unregisterUriHandler", "MainThreadWebviewPanels", "MainThreadWebviewViews", "MainThreadWebviews", "MainThreadWindow.$openUri", "MainThreadWorkspace"], move |request| {
         let _ = workbench_requests.unbounded_send(request);
     }, workbench_replies);
     session.main_thread = Some(Box::new(main_thread));

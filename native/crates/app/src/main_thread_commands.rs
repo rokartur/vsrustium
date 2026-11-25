@@ -23,6 +23,9 @@ impl Workbench {
             ("MainThreadDecorations", method) => self.handle_decorations_request(method, &request.args, cx),
             ("MainThreadTreeViews", method) => self.handle_tree_view_request(method, &request.args, window, cx),
             ("MainThreadSCM", method) => self.handle_scm_request(method, &request.args, window, cx),
+            ("MainThreadQuickDiff", method) => self.handle_quick_diff_request(method, &request.args, cx),
+            ("MainThreadTimeline", method) => self.handle_timeline_request(method, &request.args, cx),
+            ("MainThreadGitHub", method) => self.handle_github_request(method, &request.args, cx),
             ("MainThreadWebviewViews", method) => self.handle_webview_views_request(method, &request.args, window, cx),
             ("MainThreadCustomEditors", method) => self.handle_custom_editors_request(method, &request.args, window, cx),
             ("MainThreadStatusBar", "$setEntry") => self.set_extension_status_entry(&request.args, cx),
@@ -119,6 +122,7 @@ impl Workbench {
                 self.clear_markers(arg(0).as_str().unwrap_or_default(), cx);
                 Outcome::done()
             }
+            // codelensController.ts: `codeLensProvider.onDidChange` asks for the lenses again.
             ("MainThreadLanguageFeatures", "$unregister") => {
                 if let Some(method) = self.language_features.unregister(arg(0).as_u64().unwrap_or_default()) {
                     self.language_providers_changed(&method, cx);

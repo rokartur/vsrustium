@@ -19,8 +19,13 @@ use gpui::{
 pub(super) mod diff_editor_view;
 pub(super) mod diff_gutter;
 pub(super) mod drag_and_drop;
+pub(super) mod merge_editor_view;
+pub(super) mod multi_diff_editor_view;
 pub(super) mod quick_diff;
+pub(super) mod quick_diff_widget;
 pub(super) mod sticky_scroll_view;
+pub(super) mod text_decorations;
+pub(super) mod unchanged_regions_view;
 
 use files::encoding::SUPPORTED_ENCODINGS;
 use serde_json::json;
@@ -37,6 +42,7 @@ use crate::editor::{
 };
 use crate::editor::folding::FoldDecoration;
 use crate::editor::whitespace::whitespace_marks;
+use crate::multi_diff_editor::MULTI_DIFF_EDITOR_SCHEME;
 use crate::theme::ThemeKind;
 
 pub(super) const EDITOR_FONT: &str = "Menlo";
@@ -77,8 +83,11 @@ impl Workbench {
                 super::welcome_page::WALKTHROUGH_SCHEME => part.child(self.walkthrough_editor_body(&editor.document().path, window, cx)),
                 // searchEditor.ts draws its query widget where a text editor has its breadcrumbs.
                 SEARCH_EDITOR_SCHEME => part.child(self.search_editor_query(window, cx)),
+                MULTI_DIFF_EDITOR_SCHEME => part.child(self.multi_diff_editor_body(window, cx)),
                 // breadcrumbsControl.ts `update`: no breadcrumbs for a resource without a file system provider.
                 "untitled" => part,
+                // mergeEditor.ts: the merge editor has no breadcrumbs.
+                _ if self.editors.active_merge().is_some() => part,
                 _ if self.setting("breadcrumbs.enabled") == json!(false) => part,
                 _ => part.child(self.breadcrumbs(editor).opacity(self.unfocused_editor_opacity(window))),
             })
@@ -86,7 +95,11 @@ impl Workbench {
                 Some(diff) => part.child(self.diff_editor_body(diff, editor, window, cx)),
                 None if matches!(editor.document().scheme.as_str(), super::extension_editor::EXTENSION_EDITOR_SCHEME | super::welcome_page::WALKTHROUGH_SCHEME) => part,
                 None if self.shows_webview(editor) => part.child(self.webview_editor_body(editor)),
-                None => part.children(self.unicode_banner(editor, cx)).child(self.text_area(editor, window, cx).opacity(self.unfocused_editor_opacity(window))),
+                None if editor.document().scheme == MULTI_DIFF_EDITOR_SCHEME => part,
+                None => match self.editors.active_merge() {
+                    Some(merge) => part.child(self.merge_editor_body(merge, editor, window, cx)),
+                    None => part.children(self.unicode_banner(editor, cx)).child(self.text_area(editor, window, cx).opacity(self.unfocused_editor_opacity(window))),
+                },
             })
     }
 
@@ -122,7 +135,9 @@ impl Workbench {
                     workbench.execute_command("workbench.action.splitEditor", Vec::new(), window, cx);
                 })))
             })
-            .child(self.icon("ellipsis", 22., 16., icon_color).cursor_pointer());
+            .child(self.icon("ellipsis", 22., 16., icon_color).cursor_pointer().when(self.editors.active_merge().is_some(), |more| {
+                more.on_mouse_down(gpui::MouseButton::Left, cx.listener(|workbench, event: &gpui::MouseDownEvent, window, cx| workbench.show_merge_more_actions(event, window, cx)))
+            }));
         // The line under the strip (tabs-border-bottom) runs below the shoulders; the active fill covers it.
         let bottom_line = div().absolute().bottom_0().left_0().right_0().h(px(1.)).bg(self.connected_tab_border());
         // editortabscontrol.css: the whole title, tabs and their close buttons included, is cursor pointer.
@@ -143,6 +158,8 @@ impl Workbench {
     fn editor_title_actions(&self, window: &Window, cx: &mut Context<Self>) -> Vec<gpui::AnyElement> {
         let mut actions = self.diff_title_actions(cx);
         let context = self.key_context(window);
+        actions.extend(self.multi_diff_title_actions(&context, cx));
+        actions.extend(self.merge_title_actions(cx));
         let resource = self.editors.active().map(|editor| editor.document().uri()).into_iter().collect::<Vec<_>>();
         let foreground = self.color("icon.foreground");
         for item in self.menus.iter().filter(|item| item.menu == crate::menus::MenuId::EditorTitle && item.group == "navigation" && item.when.as_ref().is_none_or(|when| when.evaluate(&context))) {
@@ -179,13 +196,17 @@ impl Workbench {
         // `getTitle(Verbosity.LONG)`: a search editor's and a webview's is its name.
         let title = match (self.editors.diffs.get(&editor.model_id), editor.document().scheme.as_str()) {
             (Some(diff), _) => diff.title(|side| crate::quick_input::path_label(crate::editor::split_query(&side.scheme, &side.path).0, None)),
-            (None, SEARCH_EDITOR_SCHEME | WEBVIEW_PANEL_SCHEME | super::extension_editor::EXTENSION_EDITOR_SCHEME | super::welcome_page::WALKTHROUGH_SCHEME) => self.editor_name(editor),
+            (None, SEARCH_EDITOR_SCHEME | WEBVIEW_PANEL_SCHEME | super::extension_editor::EXTENSION_EDITOR_SCHEME | super::welcome_page::WALKTHROUGH_SCHEME | MULTI_DIFF_EDITOR_SCHEME) => self.editor_name(editor),
             // labels.ts: an untitled label's title is its name and its path.
             (None, "untitled") if !editor.text_model().associated_file => match self.untitled_description(editor) {
                 Some(path) => format!("{} \u{2022} {path}", self.editor_name(editor)),
                 None => self.editor_name(editor),
             },
-            (None, _) => crate::quick_input::path_label(&editor.document().path, None),
+            // `MergeEditorInput` keeps `getTitle` of its result.
+            (None, _) => match self.editors.merges.get(&editor.model_id) {
+                Some(merge) => crate::quick_input::path_label(&merge.result.path, None),
+                None => crate::quick_input::path_label(&editor.document().path, None),
+            },
         };
         let content = if editor.preview { super::hover::HoverContent::Preview(title) } else { super::hover::HoverContent::Text(title) };
         self.hover_target(("tab-hover", index), content, super::hover::HoverOptions::mouse())
@@ -283,6 +304,10 @@ impl Workbench {
         // `SearchEditorInput.getIcon`.
         if document.scheme == SEARCH_EDITOR_SCHEME {
             return Some(self.icon("search", 16., 16., foreground).h(px(line_height)));
+        }
+        // `MultiDiffEditorInput.getIcon`.
+        if document.scheme == MULTI_DIFF_EDITOR_SCHEME {
+            return Some(self.icon("diff-multiple", 16., 16., foreground).h(px(line_height)));
         }
         // `ExtensionsInput.getIcon`.
         if document.scheme == super::extension_editor::EXTENSION_EDITOR_SCHEME {
@@ -412,7 +437,7 @@ impl Workbench {
         let first_line = lines.start;
         let mut rows = Vec::new();
         for (index, row) in self.editor_lines(editor, lines, metrics, window, cx).into_iter().enumerate() {
-            rows.extend(zones.iter().filter(|zone| zone.0 == first_line + index).map(|zone| self.view_zone_body(editor, zone.2, zone.1, metrics.content_left(), window)));
+            rows.extend(zones.iter().filter(|zone| zone.0 == first_line + index).map(|zone| self.view_zone_body(editor, zone.2, zone.1, metrics.content_left(), cx)));
             rows.push(row);
         }
         let minimap_width = self.minimap.info.as_ref().map_or(0., |(info, _)| info.width as f32);
@@ -538,6 +563,7 @@ impl Workbench {
                     // editorScrollbar.ts clips the lines at contentWidth: the column right of the minimap stays empty.
                     .child(div().absolute().left_0().right(px(minimap_width - margin_shift)).top_0().bottom_0().overflow_hidden().child(div().absolute().left_0().right_0().top(px(lines_top)).children(rows)))
                     .children(self.marker_navigation_widget(editor, metrics.content_left(), metrics.char_width, cx))
+                    .children(self.quick_diff_widget(editor, metrics, window, cx))
                     .children(self.references_peek_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
                     .children(self.hierarchy_peek_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
                     .child(
@@ -663,8 +689,12 @@ impl Workbench {
         let minimap_changed = self.minimap.info != minimap;
         self.editors.viewport = viewport;
         self.minimap.info = minimap;
+        let reveal = self.editors.reveal_after_layout.take();
         let rewrapped = self.configure_word_wrap();
         let editor = self.editors.active_mut().expect("laid out only with an editor open");
+        if let Some(line) = reveal {
+            editor.reveal_range(line, line, VerticalReveal::CenterIfOutsideViewport, viewport);
+        }
         let scroll_width = editor.scroll_width(viewport);
         let visible_lines = editor.visible_lines(viewport);
         // viewLines.ts `_updateLineWidths`: with every line drawn, their widest is the content width.
@@ -1059,6 +1089,7 @@ impl Workbench {
                 let (find_whole_lines, find_matches, find_colors) = self.find_line_decorations(editor, index, char_width, scroll_left);
                 content = content.children(find_whole_lines);
                 content = content.children(self.diff_line_decorations(editor, index, char_width, scroll_left));
+                content = content.children(self.text_decoration_boxes(editor, index, scroll_left, |column| visible_column(text, column, tab_size) as f32 * char_width));
                 content = content.children(self.search_editor_line_decorations(editor, index, char_width));
                 // anchorSelect.css: `.selection-anchor` is a 2px #007ACC bar in every theme, under the word highlights.
                 if let Some(anchor) = editor.selection_anchor
@@ -1153,7 +1184,8 @@ impl Workbench {
                 let highlights = super::semantic_tokens::overlay_semantic_styles(highlights, &self.semantic_token_styles(editor, index, tab_size));
                 let highlights = gpui::combine_highlights(highlights, self.link_styles(editor, index, tab_size));
                 let highlights = gpui::combine_highlights(highlights, self.linked_editing_styles(editor, index, tab_size));
-                let runs = gpui::combine_highlights(gpui::combine_highlights(highlights, find_colors), self.marker_text_styles(editor, index, tab_size));
+                let runs = gpui::combine_highlights(gpui::combine_highlights(highlights, self.text_decoration_styles(editor, index, tab_size)), find_colors);
+                let runs = gpui::combine_highlights(runs, self.marker_text_styles(editor, index, tab_size));
                 let runs = gpui::combine_highlights(runs, self.definition_link_styles(editor, index, tab_size));
                 let mut show_more = None;
                 match line_overflow(text, self.stop_rendering_line_after) {
@@ -1302,7 +1334,7 @@ impl Workbench {
                     .relative()
                     .flex()
                     .children(self.diff_margin(editor, index, metrics))
-                    .children(self.quick_diff_glyph(editor, index, metrics))
+                    .children(self.quick_diff_glyph(editor, index, metrics, cx))
                     .child(
                         div()
                             .relative()
@@ -1563,6 +1595,7 @@ impl Workbench {
         let [(info_lines, info_color), (error_lines, error_color)] = self.keybinding_ruler_marks(editor);
         let [(marker_info_lines, marker_info), (marker_warning_lines, marker_warning), (marker_error_lines, marker_error)] = self.marker_ruler_lines(editor);
         let quick_diff = self.quick_diff_ruler_lines(editor);
+        let decoration_marks = self.text_decoration_ruler_marks(editor);
         let border = self.theme.color("editorOverviewRuler.border");
         let Viewport { top_whitespace, line_height, .. } = self.editors.viewport;
         let zones: Vec<(usize, f32)> = editor.view_zones.iter().map(|zone| (zone.anchor.map_or(0, |anchor| anchor.line + usize::from(!zone.before)), zone.height)).collect();
@@ -1622,6 +1655,18 @@ impl Workbench {
                         paint(window, x, start, width, end - start, color);
                     }
                 }
+                // Extension decorations' `overviewRulerColor` in their `OverviewRulerLane`.
+                for (start, end, color, lane) in &decoration_marks {
+                    let (x, width) = match lane {
+                        1 => (lanes.full_x, lanes.center_x - lanes.full_x),
+                        2 => center,
+                        4 => (lanes.right_x, lanes.right_width),
+                        _ => (lanes.full_x, lanes.full_width),
+                    };
+                    let y1 = (line_top(*start) * ratio).floor();
+                    let y2 = ((line_top(*end) + line_height) * ratio).floor().max(y1 + min_height);
+                    paint(window, x, y1, width, y2 - y1, *color);
+                }
                 // quickDiffDecorator.ts: `OverviewRulerLane.Left`, each change its own mark.
                 for (start, end, color) in quick_diff.iter().filter_map(|(start, end, color)| Some((*start, *end, (*color)?))) {
                     let y1 = (line_top(start) * ratio).floor();
@@ -1673,8 +1718,8 @@ impl Workbench {
             items.push(("OVR".to_string(), "Enable Insert Mode", "editor.action.toggleOvertypeInsertMode"));
         }
         let prominent_items = items.len();
-        // A webview or extension editor shows no editor status entries.
-        if let Some(editor) = self.editors.active().filter(|editor| !self.shows_webview(editor) && !matches!(editor.document().scheme.as_str(), super::extension_editor::EXTENSION_EDITOR_SCHEME | super::welcome_page::WALKTHROUGH_SCHEME)) {
+        // A webview, extension, walkthrough or multi diff editor shows no editor status entries.
+        if let Some(editor) = self.editors.active().filter(|editor| !self.shows_webview(editor) && !matches!(editor.document().scheme.as_str(), super::extension_editor::EXTENSION_EDITOR_SCHEME | super::welcome_page::WALKTHROUGH_SCHEME | MULTI_DIFF_EDITOR_SCHEME)) {
             items.extend(Self::editor_status_entries(editor, &self.languages));
         }
         items.extend(self.media_preview_status_entries());

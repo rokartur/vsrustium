@@ -294,13 +294,10 @@ impl Workbench {
     /// The pane view of the Explorer, laid out by `layout_explorer_panes`: `first` (the folder's or the empty
     /// window's view), then Outline and Timeline in their stored order.
     pub(super) fn explorer_pane_view(&self, first: ExplorerPane, window: &Window, cx: &mut Context<Self>) -> Div {
-        // timelinePane.css `.message.timeline-subtle`.
-        // shortcut: no timeline providers are ported, so the view always shows its empty message.
-        let message = |text: &'static str| div().pt(px(10.)).px(px(22.)).opacity(0.5).line_height(px(18.2)).child(text).into_any_element();
         let mut panes = vec![
             first,
             ExplorerPane { id: OUTLINE_VIEW, title: "Outline".into(), description: None, actions: None, body: self.outline_pane_body(window, cx) },
-            ExplorerPane { id: TIMELINE_VIEW, title: "Timeline".into(), description: None, actions: None, body: message("The active editor cannot provide timeline information.") },
+            self.timeline_pane(window, cx),
         ];
         let view = self.explorer_panes.view.as_ref().expect("panes are laid out before they draw");
         let (ids, sizes, sash_states) = (view.ids().to_vec(), view.sizes(), view.sash_states());

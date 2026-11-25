@@ -39,6 +39,10 @@ pub const HOST_REQUESTS: &[(&str, &str)] = &[
     ("MainThreadTextEditors", "$trySetOptions"),
     ("MainThreadTextEditors", "$tryApplyEdits"),
     ("MainThreadTextEditors", "$tryInsertSnippet"),
+    ("MainThreadTextEditors", "$registerTextEditorDecorationType"),
+    ("MainThreadTextEditors", "$removeTextEditorDecorationType"),
+    ("MainThreadTextEditors", "$trySetDecorations"),
+    ("MainThreadTextEditors", "$trySetDecorationsFast"),
     ("MainThreadPower", "$getSystemIdleState"),
     ("MainThreadPower", "$getSystemIdleTime"),
     ("MainThreadPower", "$getCurrentThermalState"),
@@ -77,6 +81,21 @@ impl Workbench {
             ("workbench", "providerSaveText") => self.provider_save_bytes(arg(0)),
             ("workbench", "providerSaved") => self.provider_saved(arg(0), cx),
             ("MainThreadTextEditors", "$tryShowTextDocument") => self.try_show_text_document(arg(0), arg(1), window, cx),
+            ("MainThreadTextEditors", "$registerTextEditorDecorationType") => {
+                self.editors.decoration_types.insert(arg(1).as_str().unwrap_or_default().to_string(), arg(2).clone());
+                cx.notify();
+                Ok(null)
+            }
+            ("MainThreadTextEditors", "$removeTextEditorDecorationType") => {
+                let key = arg(0).as_str().unwrap_or_default();
+                self.editors.decoration_types.remove(key);
+                let others = self.editors.other_groups.iter_mut().flat_map(|group| &mut group.editors);
+                for editor in self.editors.editors.iter_mut().chain(self.editors.models.iter_mut()).chain(others) {
+                    editor.text_decorations.retain(|decoration| decoration.key != key);
+                }
+                cx.notify();
+                Ok(null)
+            }
             ("MainThreadTextEditors", method) => {
                 let id = arg(0).as_str().unwrap_or_default();
                 // Each group shows one editor at a time: a group's active editor is the only one the host can address.
@@ -90,6 +109,18 @@ impl Workbench {
                     "$trySetOptions" => workbench.set_host_options(arg(1), cx),
                     "$tryApplyEdits" => workbench.apply_host_edits(arg(1), arg(2), arg(3), cx),
                     "$tryInsertSnippet" => workbench.insert_host_snippet(arg(1), arg(2), arg(3), arg(4), window, cx),
+                    "$trySetDecorations" | "$trySetDecorationsFast" => {
+                        let key = arg(1).as_str().unwrap_or_default();
+                        let decorations = match method {
+                            "$trySetDecorations" => crate::editor::decoration_types::decorations_from_options(key, arg(2)),
+                            _ => crate::editor::decoration_types::decorations_from_numbers(key, arg(2)),
+                        };
+                        let editor = workbench.editors.active_mut().expect("the group's active editor has the id");
+                        editor.text_decorations.retain(|decoration| decoration.key != key);
+                        editor.text_decorations.extend(decorations);
+                        cx.notify();
+                        Ok(Value::Null)
+                    }
                     _ => unreachable!("not in HOST_REQUESTS: {method}"),
                 })
             }
@@ -98,9 +129,10 @@ impl Workbench {
     }
 
     /// `BoundModelReferenceCollection`: models the host opened and no editor shows are disposed after 3 minutes.
-    fn release_host_models(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn release_host_models(&mut self, cx: &mut Context<Self>) {
         let count = self.editors.models.len();
-        self.editors.release_models(Instant::now());
+        let scm_inputs = self.scm_input_models();
+        self.editors.release_models_except(Instant::now(), |model| scm_inputs.iter().any(|(scheme, path)| model.document().is(scheme, path)));
         if self.editors.models.len() != count {
             self.editors_changed(cx);
         }

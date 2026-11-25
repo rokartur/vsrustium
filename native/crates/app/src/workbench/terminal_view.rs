@@ -380,13 +380,22 @@ impl Workbench {
     /// `createTerminal`: a new group, or a pane after the active one with `split`; the split's cwd is its parent's
     /// (`terminal.integrated.splitCwd` inherited).
     fn create_terminal(&mut self, profile: Option<Profile>, split: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.create_terminal_with_cwd(profile, split, None, window, cx);
+    }
+
+    /// `createTerminal({ config: { cwd } })` of externalTerminal.contribution.ts `openInIntegratedTerminal`.
+    pub(super) fn create_terminal_in(&mut self, cwd: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        self.create_terminal_with_cwd(None, false, Some(cwd), window, cx);
+    }
+
+    fn create_terminal_with_cwd(&mut self, profile: Option<Profile>, split: bool, cwd: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) {
         let profile = profile.unwrap_or_else(|| self.default_terminal_profile());
         let parent = self.terminal_view.active_instance_id().filter(|_| split);
         let parent_cwd = match parent {
             Some(id) if self.setting("terminal.integrated.splitCwd") == "inherited" => self.terminal_view.instance(id).and_then(|parent| parent.cwd.clone()),
             _ => None,
         };
-        let cwd = parent_cwd.map(PathBuf::from).unwrap_or_else(|| self.terminal_initial_cwd());
+        let cwd = cwd.or(parent_cwd.map(PathBuf::from)).unwrap_or_else(|| self.terminal_initial_cwd());
         let launch = self.shell_launch_config(&profile, cwd);
         self.add_terminal(launch, parent, window, cx);
         self.show_terminal_tab(window, cx);

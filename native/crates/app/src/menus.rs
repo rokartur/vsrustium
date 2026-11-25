@@ -57,8 +57,22 @@ pub enum MenuId {
     ScmResourceGroupContext,
     ScmResourceStateContext,
     ScmInputBox,
+    /// `MenuId.SCMSourceControl`: a repository row's context menu.
+    ScmSourceControl,
+    /// scmViewPane.ts `Menus.ViewSort`: the View & Sort submenu.
+    ScmViewSort,
+    ScmHistoryTitle,
+    ScmHistoryItemContext,
+    ScmHistoryItemChangeContext,
+    ScmChangeContext,
     DiffEditorHunkToolbar,
+    /// `MenuId.MultiDiffEditorFileToolbar`: a multi diff editor file header's toolbar.
+    MultiDiffEditorFileToolbar,
     EditorTitle,
+    TimelineTitle,
+    TimelineItemContext,
+    /// timeline.contribution.ts "Filter Timeline": a toggle per timeline source.
+    TimelineFilterSubMenu,
     ViewTitle,
     ViewItemContext,
     EditorContent,
@@ -158,6 +172,8 @@ const WORKBENCH_MENUS: &[Row] = &[
         Some("activeEditorCanRevert || resourceScheme != 'untitled' && foldersViewVisible && sideBarFocus"),
     ),
     (MenuId::MenubarGoMenu, None, "workbench.action.quickOpen", "Go to &&File...", "3_global_nav", 1., None, None),
+    (MenuId::MenubarGoMenu, None, "editor.action.dirtydiff.next", "Next &&Change", "7_change_nav", 0., None, None),
+    (MenuId::MenubarGoMenu, None, "editor.action.dirtydiff.previous", "Previous &&Change", "7_change_nav", 0., None, None),
     // searchActionsSymbol.ts and gotoSymbolQuickAccess.ts
     (MenuId::MenubarGoMenu, None, "workbench.action.showAllSymbols", "Go to Symbol in &&Workspace...", "3_global_nav", 2., None, None),
     (MenuId::MenubarGoMenu, None, "workbench.action.gotoSymbol", "Go to &&Symbol in Editor...", "4_symbol_nav", 1., None, None),
@@ -335,6 +351,8 @@ const WORKBENCH_MENUS: &[Row] = &[
     // fileActions.contribution.ts, the ExplorerContext items of the commands the port has.
     (MenuId::ExplorerContext, None, "explorer.newFile", "New File...", "navigation", 4., Some("explorerResourceIsFolder"), Some("!explorerResourceReadonly")),
     (MenuId::ExplorerContext, None, "explorer.newFolder", "New Folder...", "navigation", 6., Some("explorerResourceIsFolder"), Some("!explorerResourceReadonly")),
+    // timeline.contribution.ts; the port's resource keys name `resourceSet` `hasResource`.
+    (MenuId::ExplorerContext, None, "files.openTimeline", "Open Timeline", "4_timeline", 1., Some("hasResource && timelineHasProvider"), None),
     (MenuId::ExplorerContext, None, "revealFileInOS", "Reveal in Finder", "navigation", 20., Some("resourceScheme == 'file' || resourceScheme == 'vscode-userdata'"), None),
     (MenuId::ExplorerContext, None, "filesExplorer.cut", "Cut", "5_cutcopypaste", 8., Some("!explorerResourceIsRoot && !explorerResourceReadonly"), None),
     (MenuId::ExplorerContext, None, "filesExplorer.copy", "Copy", "5_cutcopypaste", 10., Some("!explorerResourceIsRoot"), None),
@@ -443,12 +461,13 @@ pub fn workbench_menus() -> Vec<MenuItem> {
             items.push(MenuItem { menu, entry, title: title.to_string(), group: "2_config".into(), order, when: Expr::deserialize(when) });
         }
     }
+    items.extend(crate::workbench::scm_actions::menu_items());
     items
 }
 
 /// menusExtensionPoint.ts `apiMenus`: the `contributes.menus` keys of the menus the port shows. `commandPalette`
 /// is read by `command_palette::menu`.
-const API_MENUS: [(&str, MenuId); 20] = [
+const API_MENUS: [(&str, MenuId); 27] = [
     ("file/newFile", MenuId::NewFile),
     ("editor/context", MenuId::EditorContext),
     ("explorer/context", MenuId::ExplorerContext),
@@ -458,8 +477,15 @@ const API_MENUS: [(&str, MenuId); 20] = [
     ("scm/resourceGroup/context", MenuId::ScmResourceGroupContext),
     ("scm/resourceState/context", MenuId::ScmResourceStateContext),
     ("scm/inputBox", MenuId::ScmInputBox),
+    ("scm/change/title", MenuId::ScmChangeContext),
     ("diffEditor/gutter/hunk", MenuId::DiffEditorHunkToolbar),
+    ("multiDiffEditor/resource/title", MenuId::MultiDiffEditorFileToolbar),
     ("editor/title", MenuId::EditorTitle),
+    ("scm/sourceControl", MenuId::ScmSourceControl),
+    ("scm/history/title", MenuId::ScmHistoryTitle),
+    ("scm/historyItem/context", MenuId::ScmHistoryItemContext),
+    ("timeline/title", MenuId::TimelineTitle),
+    ("timeline/item/context", MenuId::TimelineItemContext),
     ("view/title", MenuId::ViewTitle),
     ("view/item/context", MenuId::ViewItemContext),
     ("editor/context/copy", MenuId::EditorContextCopy),
@@ -473,7 +499,7 @@ const API_MENUS: [(&str, MenuId); 20] = [
 
 /// The `icon` of each `contributes.commands` entry with one: a `$(codicon)` name, or the light and dark image paths.
 pub fn command_icons(extensions: &[ScannedExtension]) -> std::collections::HashMap<String, CommandIcon> {
-    let mut icons = std::collections::HashMap::new();
+    let mut icons = crate::workbench::scm_actions::command_icons();
     // toggleWordWrap.ts: the editor title items' `Codicon.wordWrap`.
     icons.insert("editor.action.toggleWordWrap".to_string(), CommandIcon::Codicon("word-wrap".into()));
     for extension in extensions {

@@ -20,6 +20,7 @@ use files::operations::{self, FileEdit, FileUndo, WorkingCopyFiles};
 use serde_json::{Value, json};
 
 use crate::diff_editor::{DIFF_EDITOR_SCHEME, DiffInput};
+use crate::multi_diff_editor::MULTI_DIFF_EDITOR_SCHEME;
 use crate::editor::{ContentChanged, EditReason, EditorGroup, OpenEditor, Position, Selection, uri_string, uri_value};
 use crate::theme::ThemeKind;
 
@@ -124,9 +125,10 @@ impl HostSync {
     /// Sends what changed in `group` since the last call: activation for new languages, the document
     /// and editor delta, then the tab model.
     pub fn send_changes(&mut self, group: &EditorGroup) {
-        let is_text = |editor: &&OpenEditor| !self.webview_tabs.contains_key(&editor.document().path) && editor.document().scheme != DIFF_EDITOR_SCHEME;
+        let is_entry = |editor: &&OpenEditor| matches!(editor.document().scheme.as_str(), DIFF_EDITOR_SCHEME | MULTI_DIFF_EDITOR_SCHEME | crate::merge_editor::MERGE_EDITOR_SCHEME);
+        let is_text = |editor: &&OpenEditor| !self.webview_tabs.contains_key(&editor.document().path) && !is_entry(editor);
         // A custom text editor's model stays a document, without a text editor (customTextEditorModel.ts).
-        let is_document = |editor: &&OpenEditor| self.webview_tabs.get(&editor.document().path).is_none_or(|tab| tab.custom_text) && editor.document().scheme != DIFF_EDITOR_SCHEME;
+        let is_document = |editor: &&OpenEditor| self.webview_tabs.get(&editor.document().path).is_none_or(|tab| tab.custom_text) && !is_entry(editor);
         let open: Vec<&OpenEditor> = group.all_editors().filter(is_document).collect();
         let mut added: Vec<&OpenEditor> = open.iter().copied().filter(|editor| !self.documents.iter().any(|(uri, _)| *uri == editor.document().uri_string())).collect();
         // Editors of one model in several groups are one document.
@@ -230,9 +232,18 @@ impl HostSync {
         editors
             .iter()
             .enumerate()
-            .map(|(index, editor)| match group.diffs.get(&editor.model_id) {
-                Some(diff) => diff_tab_dto(id, editor, diff, active == Some(index), dirty(editor, diff)),
-                None => tab_dto(id, editor, active == Some(index), self),
+            .map(|(index, editor)| {
+                let active = active == Some(index);
+                if let Some(diff) = group.diffs.get(&editor.model_id) {
+                    return diff_tab_dto(id, editor, diff, active, dirty(editor, diff));
+                }
+                if let Some(multi_diff) = group.multi_diffs.get(&editor.model_id) {
+                    return multi_diff.tab_dto(id, editor, active);
+                }
+                if let Some(merge) = group.merges.get(&editor.model_id) {
+                    return merge.tab_dto(id, editor, active, group.model(&merge.result.scheme, &merge.result.path).unwrap_or(editor).is_dirty());
+                }
+                tab_dto(id, editor, active, self)
             })
             .collect()
     }

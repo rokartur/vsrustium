@@ -9,6 +9,7 @@ use diff::LineRange;
 use gpui::{Context, Div, PathBuilder, Rgba, ScrollWheelEvent, StyledText, Window, canvas, div, fill, point, prelude::*, px, size};
 use serde_json::{Value, json};
 
+use super::unchanged_regions_view::PLACEHOLDER_HEIGHT;
 use super::{EditorMetrics, LineNumbers, Workbench};
 use crate::workbench::hover::{HoverContent, HoverOptions};
 use crate::commands::Outcome;
@@ -61,6 +62,12 @@ impl Workbench {
             cx.notify();
             Outcome::done()
         });
+        // shortcut: the original pane has no cursor (one code editor per group), so the modified side opens and
+        // `diffEditor.switchSide`, `compareEditor.focus*Side` are missing; add them when diff panes get editors.
+        self.commands.register("workbench.action.compareEditor.openSide", |workbench, _, window, cx| {
+            let Some(modified) = workbench.editors.active_diff().map(|diff| crate::editor::uri_value(&diff.modified.scheme, &diff.modified.path)) else { return Outcome::done() };
+            workbench.execute_command("vscode.open", vec![modified], window, cx)
+        });
         self.commands.register("diffEditor.toggleCollapseUnchangedRegions", |workbench, _, _, cx| {
             let enabled = workbench.setting("diffEditor.hideUnchangedRegions.enabled") == json!(true);
             workbench.update_setting("diffEditor.hideUnchangedRegions.enabled", json!(!enabled));
@@ -89,6 +96,7 @@ impl Workbench {
             Some(Value::Object(labels)) => labels.get("label").and_then(Value::as_str).map(str::to_string),
             _ => None,
         };
+        // shortcut: models key on scheme and path, so two `git:` refs of one file (index, HEAD) share a model; until text models keep the URI query.
         let column_and_options = args.get(3).cloned().unwrap_or_default();
         let mut options = column_and_options[1].clone();
         if !column_and_options[0].is_null() {
@@ -161,8 +169,11 @@ impl Workbench {
             // textDiffEditor.ts `revealFirstDiff`: an editor without view state shows its first change.
             let viewport = self.editors.viewport;
             let editor = self.editors.active_mut().expect("the diff editor's modified model");
-            let line = first.saturating_sub(1).min(editor.document().lines.len() - 1);
-            editor.reveal_range(Position::new(line, 0), Position::new(line, 0), VerticalReveal::CenterIfOutsideViewport, viewport);
+            let line = Position::new(first.saturating_sub(1).min(editor.document().lines.len() - 1), 0);
+            match viewport.height == 0. {
+                true => self.editors.reveal_after_layout = Some(line),
+                false => editor.reveal_range(line, line, VerticalReveal::CenterIfOutsideViewport, viewport),
+            }
         }
         if options["preserveFocus"] != json!(true) {
             window.focus(&self.editor_focus, cx);
@@ -180,15 +191,21 @@ impl Workbench {
         for id in ids {
             let mut input = self.editors.diffs.remove(&id).expect("listed above");
             let placed = std::mem::take(&mut input.placed_zones);
+            let placed_unchanged = std::mem::take(&mut input.placed_unchanged);
             if let Some(modified) = self.editors.model_mut(&input.modified.scheme, &input.modified.path) {
                 for zone in &placed {
                     modified.remove_view_zone(zone.0);
                 }
+                for zone in &placed_unchanged {
+                    modified.remove_view_zone(zone.0);
+                }
+                modified.folding.set_hidden_areas(Vec::new());
             }
             if Some(id) == active
                 && let (Some(original), Some(modified)) = (self.editors.model(&input.original.scheme, &input.original.path), self.editors.model(&input.modified.scheme, &input.modified.path))
             {
                 input.update(original, modified, options);
+                input.update_unchanged(original.document().lines.len(), modified.document().lines.len(), self.hide_unchanged_regions());
                 input.inline_now = !side_by_side;
                 let computed = input.diff.as_ref().expect("just computed");
                 let alignments = range_alignment(&computed.diff, &original.document().lines, side_by_side);
@@ -200,13 +217,14 @@ impl Workbench {
                     let id = modified.add_view_zone(anchor, zone.lines as f32 * line_height);
                     input.placed_zones.push((id, zone.clone()));
                 }
+                self.place_unchanged_regions(&mut input);
             }
             self.editors.diffs.insert(id, input);
         }
     }
 
     /// diffEditorOptions.ts `renderSideBySide` with `useInlineViewWhenSpaceIsLimited` below the 900px breakpoint.
-    fn diff_side_by_side(&self) -> bool {
+    pub(super) fn diff_side_by_side(&self) -> bool {
         let configured = self.setting("diffEditor.renderSideBySide") != json!(false);
         let limited = self.setting("diffEditor.useInlineViewWhenSpaceIsLimited") != json!(false);
         configured && !(limited && self.diff_part_width.get() > 0. && self.diff_part_width.get() < INLINE_BREAKPOINT)
@@ -317,9 +335,9 @@ impl Workbench {
         context.insert("editorHasChanges".into(), json!(input.diff.as_ref().is_some_and(|diff| !diff.diff.changes.is_empty())));
     }
 
-    /// The tab label of a diff editor (`DiffEditorInput.getName`).
+    /// The tab label of a diff editor (`DiffEditorInput.getName`) or a multi diff editor (`MultiDiffEditorInput.getName`).
     pub(in crate::workbench) fn diff_name(&self, editor: &OpenEditor) -> Option<String> {
-        self.editors.diffs.get(&editor.model_id).map(DiffInput::name)
+        self.editors.diffs.get(&editor.model_id).map(DiffInput::name).or_else(|| self.editors.multi_diffs.get(&editor.model_id).map(crate::multi_diff_editor::MultiDiffInput::name))
     }
 
     /// `navigateInDiffEditor`: the cursor goes to the next change's first line, wrapping around (diffNavigator).
@@ -355,7 +373,7 @@ impl Workbench {
             let sash_left = (width / 2.).floor().clamp(MINIMUM_EDITOR_WIDTH.min(width / 2.), (width - MINIMUM_EDITOR_WIDTH).max(width / 2.));
             // diffEditorWidget.ts: the gutter sits left of the sash, taken from the original editor.
             let gutter_width = self.diff_gutter_width(input);
-            body = body.child(self.original_pane(input, original, modified, true, window).w(px(sash_left - gutter_width)).flex_none());
+            body = body.child(self.original_pane(input, original, modified, true, window, cx).w(px(sash_left - gutter_width)).flex_none());
             if gutter_width > 0. {
                 body = body.child(self.diff_gutter(input, modified, cx));
             }
@@ -369,7 +387,7 @@ impl Workbench {
                 // diffEditorWidget.ts: inline, the original editor shows up to its decorations, its line numbers.
                 let metrics = EditorMetrics::measure(window, original.document().lines.len(), LineNumbers::Off, self.editor_zoom.multiplier());
                 let width = (metrics.glyph_margin_width() + metrics.line_numbers_width).max(5.);
-                body = body.child(self.original_pane(input, original, modified, false, window).w(px(width)).flex_none());
+                body = body.child(self.original_pane(input, original, modified, false, window, cx).w(px(width)).flex_none());
             }
         }
         let shadow = self.theme.color("scrollbar.shadow");
@@ -389,7 +407,7 @@ impl Workbench {
 
     /// The original editor, read-only and scrolled with the modified one: its lines, the deleted line and character
     /// decorations, the `-` signs and the diagonal fill under the side with fewer lines.
-    fn original_pane(&self, input: &DiffInput, original: &OpenEditor, modified: &OpenEditor, side_by_side: bool, window: &mut Window) -> Div {
+    fn original_pane(&self, input: &DiffInput, original: &OpenEditor, modified: &OpenEditor, side_by_side: bool, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let metrics = EditorMetrics::measure(window, original.document().lines.len(), if side_by_side { LineNumbers::On } else { LineNumbers::Off }, self.editor_zoom.multiplier());
         let line_height = metrics.line_height;
         let decorations_width = diff_decorations_width(metrics.char_width);
@@ -404,9 +422,20 @@ impl Workbench {
             rows.push(self.diff_zone_view(zone, line_height, content_left).absolute().top(px(top - scroll_top)).left_0().right_0());
             top += zone.lines as f32 * line_height;
         }
-        for index in 0..original.document().lines.len() {
+        // hideUnchangedRegionsFeature.ts: the original editor's hidden areas, each with its placeholder above.
+        let hidden: Vec<(LineRange, usize)> = input.unchanged.iter().enumerate().filter(|(_, region)| !region.is_fully_revealed()).map(|(index, region)| (region.hidden_original(), index)).collect();
+        let mut index = 0;
+        while index < original.document().lines.len() {
             if top > scroll_top + height {
                 break;
+            }
+            if let Some((range, region)) = hidden.iter().find(|(range, _)| range.start == index + 1) {
+                if top + PLACEHOLDER_HEIGHT >= scroll_top {
+                    rows.push(self.unchanged_placeholder(input, *region, ZoneSide::Original, content_left, !side_by_side, cx).absolute().top(px(top - scroll_top)).left_0().right_0());
+                }
+                top += PLACEHOLDER_HEIGHT;
+                index = range.end - 1;
+                continue;
             }
             let zones_below: f32 = zones.iter().filter(|zone| zone.after_line == index + 1).map(|zone| zone.lines as f32 * line_height).sum();
             if top + line_height + zones_below >= scroll_top {
@@ -418,6 +447,7 @@ impl Workbench {
                 }
             }
             top += line_height + zones_below;
+            index += 1;
         }
         div()
             .h_full()
@@ -440,6 +470,7 @@ impl Workbench {
         let tab_size = original.document().indentation.tab_size;
         let char_width = metrics.char_width;
         let mut content = div().absolute().top_0().bottom_0().right_0().left(px(metrics.glyph_margin_width() + metrics.line_numbers_width + decorations_width));
+        content = content.children(self.unchanged_line_background(input, ZoneSide::Original, line_number));
         if let Some(change) = change {
             content = content.children(self.line_background(ZoneSide::Original));
             if !change.modified.is_empty() {
@@ -457,7 +488,7 @@ impl Workbench {
             .flex()
             .when(change.is_some(), |row| row.children(self.margin_background(ZoneSide::Original, metrics.glyph_margin_width() + metrics.line_numbers_width + decorations_width)))
             .child(div().w(px(metrics.glyph_margin_width())).flex_none())
-            .child(div().w(px(metrics.line_numbers_width)).flex_none().text_right().text_color(self.color("editorLineNumber.foreground")).child(line_number.to_string()))
+            .child(div().w(px(metrics.line_numbers_width)).flex_none().flex().justify_end().whitespace_nowrap().text_color(self.color("editorLineNumber.foreground")).child(line_number.to_string()))
             .child(div().w(px(decorations_width)).flex_none().when(change.is_some() && self.diff_render_indicators(), |lane| lane.child(self.diff_sign(ZoneSide::Original, metrics))))
             .child(content)
     }
@@ -474,10 +505,16 @@ impl Workbench {
         }
     }
 
-    /// A view zone of the modified code editor: a diff zone's view, else empty whitespace.
-    pub(super) fn view_zone_body(&self, editor: &OpenEditor, id: u32, height: f32, content_left: f32, _window: &mut Window) -> Div {
-        let zone = self.editors.active_diff().filter(|diff| editor.document().is(&diff.modified.scheme, &diff.modified.path)).and_then(|diff| diff.placed_zones.iter().find(|placed| placed.0 == id));
-        match zone {
+    /// A view zone of the modified code editor: a diff zone's view, an unchanged region's placeholder, else empty
+    /// whitespace.
+    pub(super) fn view_zone_body(&self, editor: &OpenEditor, id: u32, height: f32, content_left: f32, cx: &mut Context<Self>) -> Div {
+        let Some(input) = self.editors.active_diff().filter(|diff| editor.document().is(&diff.modified.scheme, &diff.modified.path)) else {
+            return div().flex_none().h(px(height));
+        };
+        if let Some((_, region)) = input.placed_unchanged.iter().find(|placed| placed.0 == id) {
+            return self.unchanged_placeholder(input, *region, ZoneSide::Modified, content_left, false, cx);
+        }
+        match input.placed_zones.iter().find(|placed| placed.0 == id) {
             Some((_, zone)) => self.diff_zone_view(zone, self.editors.viewport.line_height, content_left).flex_none(),
             None => div().flex_none().h(px(height)),
         }
@@ -519,7 +556,10 @@ impl Workbench {
 
     /// The modified editor's line and character decorations of the active diff (`line-insert`, `char-insert`).
     pub(super) fn diff_line_decorations(&self, editor: &OpenEditor, index: usize, char_width: f32, scroll_left: f32) -> Vec<Div> {
-        let Some(change) = self.modified_change(editor, index) else { return Vec::new() };
+        let Some(change) = self.modified_change(editor, index) else {
+            let input = self.editors.active_diff().filter(|diff| editor.document().is(&diff.modified.scheme, &diff.modified.path));
+            return input.and_then(|input| self.unchanged_line_background(input, ZoneSide::Modified, index + 1)).map(|line| line.left(px(scroll_left))).into_iter().collect();
+        };
         let text = &editor.document().lines[index];
         let mut decorations: Vec<Div> = self.line_background(ZoneSide::Modified).into_iter().map(|line| line.left(px(scroll_left))).collect();
         if !change.original.is_empty() {
@@ -548,12 +588,12 @@ impl Workbench {
         input.diff.as_ref()?.diff.changes.iter().find(|change| change.modified.contains(index + 1))
     }
 
-    fn diff_render_indicators(&self) -> bool {
+    pub(super) fn diff_render_indicators(&self) -> bool {
         self.setting("diffEditor.renderIndicators") != json!(false)
     }
 
     /// style.css `.line-insert`, `.line-delete`: the whole line, with the text border in high contrast (dashed).
-    fn line_background(&self, side: ZoneSide) -> Option<Div> {
+    pub(super) fn line_background(&self, side: ZoneSide) -> Option<Div> {
         let (line, text, border) = match side {
             ZoneSide::Modified => ("diffEditor.insertedLineBackground", "diffEditor.insertedTextBackground", "diffEditor.insertedTextBorder"),
             ZoneSide::Original => ("diffEditor.removedLineBackground", "diffEditor.removedTextBackground", "diffEditor.removedTextBorder"),
@@ -574,7 +614,7 @@ impl Workbench {
     }
 
     /// style.css `.char-insert`, `.char-delete`.
-    fn char_background(&self, side: ZoneSide, left: f32, width: f32) -> Div {
+    pub(super) fn char_background(&self, side: ZoneSide, left: f32, width: f32) -> Div {
         let (text, border) = match side {
             ZoneSide::Modified => ("diffEditor.insertedTextBackground", "diffEditor.insertedTextBorder"),
             ZoneSide::Original => ("diffEditor.removedTextBackground", "diffEditor.removedTextBorder"),
@@ -590,7 +630,7 @@ impl Workbench {
     }
 
     /// style.css `.gutter-insert`, `.gutter-delete`: the margin of a changed line.
-    fn margin_background(&self, side: ZoneSide, width: f32) -> Option<Div> {
+    pub(super) fn margin_background(&self, side: ZoneSide, width: f32) -> Option<Div> {
         // style.css `var(--gutter, var(--line), var(--text))`: the fallback "line, text" is no color, so only the
         // gutter key paints.
         let key = match side {
@@ -602,7 +642,7 @@ impl Workbench {
     }
 
     /// `insert-sign codicon-diff-insert`, `delete-sign codicon-diff-remove`: 11px at 0.7 opacity (1 in high contrast).
-    fn diff_sign(&self, side: ZoneSide, metrics: EditorMetrics) -> Div {
+    pub(super) fn diff_sign(&self, side: ZoneSide, metrics: EditorMetrics) -> Div {
         let name = if side == ZoneSide::Modified { "add" } else { "remove" };
         let opacity = if self.theme.kind.is_high_contrast() { 1. } else { 0.7 };
         self.icon(name, metrics.line_height, 11., self.color("editor.foreground")).opacity(opacity)
@@ -693,7 +733,7 @@ fn twice_as_opaque(color: Rgba) -> Rgba {
 /// The character ranges of `change` on 1-based `line_number` of one side, as (left, width) in pixels; a range
 /// reaching past the line's end fills to the line break (`shouldFillLineOnLineBreak`), an empty one is 3px wide
 /// (`diff-range-empty`).
-fn char_ranges(change: &diff::LineRangeMapping, side: ZoneSide, line_number: usize, text: &str, tab_size: usize, char_width: f32) -> Vec<(f32, f32)> {
+pub(super) fn char_ranges(change: &diff::LineRangeMapping, side: ZoneSide, line_number: usize, text: &str, tab_size: usize, char_width: f32) -> Vec<(f32, f32)> {
     let line_length = text.chars().count();
     let x = |column: usize| visible_column(text, column.min(line_length), tab_size) as f32 * char_width;
     let mut ranges = Vec::new();
@@ -716,7 +756,7 @@ fn char_ranges(change: &diff::LineRangeMapping, side: ZoneSide, line_number: usi
 }
 
 /// style.css `.diagonal-fill`: a -45deg stripe pattern in 8px tiles, 2px wide stripes every 4px.
-fn diagonal_fill(color: Rgba) -> gpui::Canvas<()> {
+pub(super) fn diagonal_fill(color: Rgba) -> gpui::Canvas<()> {
     canvas(
         |_, _, _| (),
         move |bounds, _, window, _| {
