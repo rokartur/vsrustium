@@ -70,7 +70,7 @@ impl Workbench {
                 // CONTEXT_UPDATE_STATE is `disabled`: the precondition fails and the command does nothing.
                 return Outcome::done();
             }
-            workbench.check_for_updates(true, window, cx);
+            workbench.check_for_app_updates(true, window, cx);
             Outcome::done()
         });
         if update_url().is_none() {
@@ -82,7 +82,7 @@ impl Workbench {
                 cx.background_executor().timer(wait).await;
                 let Ok(mode) = workbench.update(cx, |workbench, _| workbench.setting("update.mode")) else { return };
                 if mode == "start" || mode == "default" {
-                    let _ = workbench.update_in(cx, |workbench, window, cx| workbench.check_for_updates(false, window, cx));
+                    let _ = workbench.update_in(cx, |workbench, window, cx| workbench.check_for_app_updates(false, window, cx));
                 }
                 if mode != "default" {
                     return;
@@ -95,7 +95,7 @@ impl Workbench {
 
     /// `checkForUpdates(explicit)`: an explicit check says when there is nothing new; a found release asks to open
     /// its page (`AvailableForDownload` on a platform that cannot update itself).
-    fn check_for_updates(&mut self, explicit: bool, window: &mut Window, cx: &mut Context<Self>) {
+    fn check_for_app_updates(&mut self, explicit: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some(url) = update_url() else { return };
         let current = crate::product::get("version").as_str().unwrap_or_default().to_owned();
         let latest = cx.background_executor().spawn(async move { fetch_latest(url) });
