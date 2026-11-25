@@ -349,7 +349,7 @@ impl Workbench {
                             }));
                         row.child(" (").child(div().italic().child("preview")).child(" ").child(gear).child(")")
                     }),
-            )
+            ))
             // hideOnHover is off for markdown with a link: the pointer may move onto the hover to click it. A locked
             // hover tracks the pointer too (`_lockMouseTracker`), to hide once Alt is up and the pointer leaves.
             .on_hover(cx.listener(move |workbench, hovered: &bool, _, cx| {
