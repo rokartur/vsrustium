@@ -228,7 +228,7 @@ fn the_scrollbar_menu_writes_the_minimap_settings(cx: &mut TestAppContext) {
     let checked = |cx: &mut VisualTestContext| {
         workbench.read_with(cx, |workbench, _| {
             let menu = workbench.context_menu.as_ref().expect("a context menu shows");
-            menu.actions.iter().filter_map(|action| if let MenuAction::Command { title, checked: true, .. } = action { Some(title.clone()) } else { None }).collect::<Vec<_>>()
+            menu.levels[0].actions.iter().filter_map(|action| if let MenuAction::Command { title, checked: true, .. } = action { Some(title.clone()) } else { None }).collect::<Vec<_>>()
         })
     };
     workbench.update_in(cx, |workbench, window, cx| workbench.show_scrollbar_context_menu(pointer, window, cx));
@@ -252,7 +252,7 @@ fn the_scrollbar_menu_writes_the_minimap_settings(cx: &mut TestAppContext) {
     );
     assert_eq!(checked(cx), ["Minimap", "Render Characters", "Vertical size: Proportional", "Slider: Mouse Over", "Side: Right"]);
     let id = workbench.read_with(cx, |workbench, _| {
-        workbench.context_menu.as_ref().unwrap().actions.iter().find_map(|action| match action {
+        workbench.context_menu.as_ref().unwrap().levels[0].actions.iter().find_map(|action| match action {
             MenuAction::Command { id, title, .. } if title == "Vertical size: Fill" => Some(id.clone()),
             _ => None,
         })

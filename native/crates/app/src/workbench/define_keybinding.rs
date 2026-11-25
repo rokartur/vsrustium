@@ -15,7 +15,7 @@ use serde_json::Value;
 use super::Workbench;
 use super::hover::{HoverContent, HoverOptions};
 use crate::commands::Outcome;
-use crate::editor::{EditReason, HORIZONTAL_SCROLLBAR_HEIGHT, OpenEditor, VERTICAL_SCROLLBAR_WIDTH, VerticalReveal};
+use crate::editor::{OpenEditor, VerticalReveal};
 use crate::keybindings;
 use crate::keyboard_mapper;
 use crate::smart_snippet_inserter::{insert_snippet, offset_to_position};

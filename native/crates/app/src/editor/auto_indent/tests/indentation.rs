@@ -165,7 +165,7 @@ impl Cursor {
 
     /// `viewModel.paste(text, true)`, then `AutoIndentOnPaste.trigger(range)`.
     fn paste(&mut self, text: &str, (start_line, start_column): (usize, usize), (end_line, end_column): (usize, usize)) {
-        self.editor.paste(text, true, None, false);
+        self.editor.paste(crate::editor::Pasted { text, paste_on_new_line: true, multicursor_text: None, is_block: false }, true, false);
         let auto = AutoIndent { languages: &self.languages, strategy: self.strategy };
         self.editor.auto_indent_on_paste(Position::new(start_line - 1, start_column - 1), Position::new(end_line - 1, end_column - 1), auto, true);
     }
