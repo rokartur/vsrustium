@@ -306,6 +306,8 @@ Scope shipped so far: `workspace.fs` and file events, Seti file icons and numeri
 - Still different, owned by editor rows: the `notes.txt:` line is not underlined (`editor/contrib/links`), the active indent guide is not brighter (editor guides), and a double click on a file line opens no peek (`editor/contrib/peekView`).
 - `_workbench.open` (editorCommands.ts, `host_requests.rs` `api_open_editor`) opens a resource in the editor group with its `ITextEditorOptions`, an untitled resource with a path as a dirty untitled editor saved to that file, an http or https string in the browser, and ignores `command:` resources. `vscode.open` forwards its first argument. shortcut: every view column opens in the one editor group, so `api-command: vscode.open` still fails on `ViewColumn.Two` until the editor groups row.
 - `_workbench.diff` is not registered: the port has no diff editor (milestone 14), and `api-command: vscode.diff` fails with "command '_workbench.diff' not found".
+- `env.asExternalUri` of an app uri: `$createAppUri` answers the uri with product.json's `urlProtocol` (`code-oss`), as urlService.ts `create`; api-tests `vscode API - env` 6/13, the rest are `env.power` (power service, milestone 19) and `env.remoteName`, which expects the removed github-authentication.
+- `MainThreadLabelService` and `MainThreadSearch` are removed rows: their only callers are proposed APIs (`resolvers`, `fileSearchProvider`, `textSearchProvider`, `aiTextSearchProvider`) that product.json enables for no extension and that only remote resolvers and the removed AI extension declare.
 - Not done: workspace trust, recent workspaces, local history, opener and URL handling.
 
 ## Milestone 8: editor viewport and editing commands

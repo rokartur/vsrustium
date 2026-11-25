@@ -54,7 +54,7 @@ pub fn init_data(paths: &SessionPaths, extensions: &[ScannedExtension], version:
             "appRoot": file_uri(paths.app_root),
             "appLanguage": "en",
             "isExtensionTelemetryLoggingOnly": false,
-            "appUriScheme": "code-oss",
+            "appUriScheme": URL_PROTOCOL,
             "globalStorageHome": file_uri(&paths.user_data.join("User/globalStorage")),
             "workspaceStorageHome": file_uri(&paths.user_data.join("User/workspaceStorage")),
             "extensionLogLevel": [],
@@ -557,6 +557,7 @@ impl Session {
             }
             ("MainThreadStorage", _) if self.storage.is_some() => return self.storage.as_mut().expect("checked by the match guard").serve(method, args),
             ("MainThreadWindow", "$getInitialState") => return Reply::Json(json!({ "isFocused": true, "isActive": true })),
+            ("MainThreadUrls", "$createAppUri") => return Reply::Json(app_uri(&arg(0))),
             // No sign-in and no AI in the port: these APIs stay callable and report nothing.
             ("MainThreadLanguageModelTools", "$getTools")
             | ("MainThreadAuthentication", "$getAccounts")
@@ -570,6 +571,20 @@ impl Session {
         // shortcut: every other MainThread* method answers `undefined`; each shape gets a real implementation as its ledger row lands.
         Reply::Empty
     }
+}
+
+/// product.json `urlProtocol`.
+const URL_PROTOCOL: &str = "code-oss";
+
+/// urlService.ts `NativeURLService.create`: the uri with the product's scheme.
+fn app_uri(uri: &Value) -> Value {
+    let text = |key: &str| uri[key].as_str().unwrap_or_default().to_owned();
+    let (authority, mut path) = (text("authority"), text("path"));
+    // URI validation requires a path if there is an authority
+    if !authority.is_empty() && !path.is_empty() && !path.starts_with('/') {
+        path.insert(0, '/');
+    }
+    json!({ "$mid": 1, "scheme": URL_PROTOCOL, "authority": authority, "path": path, "query": text("query"), "fragment": text("fragment") })
 }
 
 fn arg_value(arg: Arg) -> Value {
@@ -609,6 +624,12 @@ mod tests {
         assert_eq!(workspace_id(&workspace), "e36736311be12ff6d695feefe415b3e8");
         let upper = Workspace { file: Some(PathBuf::from("/Hello/Test")), ..workspace };
         assert_eq!(workspace_id(&upper), "e36736311be12ff6d695feefe415b3e8", "macOS paths are compared ignoring case");
+    }
+
+    #[test]
+    fn app_uris_take_the_product_scheme() {
+        let uri = json!({ "scheme": "vscode", "authority": "pub.ext", "path": "callback", "query": "a=1" });
+        assert_eq!(app_uri(&uri), json!({ "$mid": 1, "scheme": "code-oss", "authority": "pub.ext", "path": "/callback", "query": "a=1", "fragment": "" }));
     }
 
     #[test]
