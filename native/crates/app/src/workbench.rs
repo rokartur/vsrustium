@@ -45,6 +45,7 @@ mod text_input;
 mod title_bar_actions;
 mod unicode_highlight;
 mod unusual_line_terminators;
+mod url_handlers;
 mod webview_panels;
 
 use std::cell::Cell;
@@ -148,6 +149,7 @@ pub struct Workbench {
     pub search_editors: search_editor_view::SearchEditors,
     pub search_editor_widget: search_editor_widget::SearchEditorWidget,
     pub webview_panels: webview_panels::WebviewPanels,
+    url_handlers: url_handlers::UrlHandlers,
     /// `MenuRegistry`.
     pub menus: Vec<crate::menus::MenuItem>,
     pub(crate) context_menu: Option<context_menu::ContextMenu>,
@@ -280,6 +282,7 @@ impl Workbench {
             search_editors: HashMap::new(),
             search_editor_widget: search_editor_widget::SearchEditorWidget::new(cx),
             webview_panels: Default::default(),
+            url_handlers: Default::default(),
             menus: crate::menus::workbench_menus(),
             context_menu: None,
             context_menus_shown: 0,

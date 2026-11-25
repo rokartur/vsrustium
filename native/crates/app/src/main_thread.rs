@@ -4,6 +4,8 @@
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::Duration;
 
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use exthost::extension_management::WindowExtensions;
 use exthost::main_thread::{MainThread, serialized_error};
 use exthost::main_thread_files::{Providers, resource};
@@ -103,9 +105,12 @@ impl MainThread for WorkbenchMainThread {
                 continue;
             }
             let mut args: Vec<Arg> = message.args.into_iter().map(Arg::Json).collect();
-            // extHostWebview.ts `$onMessage` reads its last argument as a SerializableObjectWithBuffers.
-            if (message.proxy, message.method) == ("ExtHostWebviews", "$onMessage") && let Some(Arg::Json(json)) = args.pop() {
-                args.push(Arg::JsonWithBuffers { json, buffers: Vec::new() });
+            // extHostWebview.ts `$onMessage` reads its last argument as a SerializableObjectWithBuffers of VSBuffers,
+            // which the workbench passes as base64 strings.
+            if (message.proxy, message.method) == ("ExtHostWebviews", "$onMessage") && let Some(Arg::Json(encoded)) = args.pop() {
+                let buffers: Vec<Vec<u8>> = encoded.as_array().into_iter().flatten().map(|text| STANDARD.decode(text.as_str().unwrap_or_default()).unwrap_or_default()).collect();
+                let json = (0..buffers.len()).map(|index| json!({ "$$ref$$": index })).collect();
+                args.push(Arg::JsonWithBuffers { json, buffers });
             }
             let req = session.send_request(message.proxy, message.method, args);
             if let Some(reply) = message.reply {

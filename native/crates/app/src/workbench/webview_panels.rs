@@ -4,6 +4,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+use exthost::session::{URL_PROTOCOL, VSBUFFER_KEY};
 use futures::StreamExt;
 use futures::channel::mpsc::{UnboundedSender, unbounded};
 use gpui::{Context, Div, Keystroke, Modifiers, Window, canvas, div, prelude::*};
@@ -114,8 +115,9 @@ impl Workbench {
             }
             "$postMessage" => {
                 let Some(webview) = self.webview_panel_mut(&handle).and_then(|panel| panel.webview.as_mut()) else { return Outcome::Ready(Ok(json!(false))) };
-                let message: Value = serde_json::from_str(arg(1).as_str().unwrap_or("null")).unwrap_or(Value::Null);
-                webview.send("message", json!({ "message": message, "transfer": [] }));
+                // deserializeWebviewMessage runs in the host page's bridge, where the ArrayBuffers are made.
+                let buffers: Vec<Value> = args.iter().skip(2).map(|buffer| buffer[VSBUFFER_KEY].clone()).collect();
+                webview.send("message", json!({ "message": arg(1), "buffers": buffers }));
                 return Outcome::Ready(Ok(json!(true)));
             }
             _ => {}
@@ -234,9 +236,8 @@ impl Workbench {
                 }
             }
             "onmessage" => {
-                // serializeWebviewMessage: the message as JSON text, ArrayBuffers by reference.
-                let message = data["message"].to_string();
-                self.host.send("ExtHostWebviews", "$onMessage", vec![json!(event.id), json!(message), json!([])]);
+                // serializeWebviewMessage ran in the host page's bridge: JSON text, the ArrayBuffers as base64.
+                self.host.send("ExtHostWebviews", "$onMessage", vec![json!(event.id), data["message"].clone(), data["buffers"].clone()]);
             }
             "do-update-state" => panel.state = data,
             "no-csp-found" => {
@@ -265,11 +266,11 @@ impl Workbench {
     }
 
     /// mainThreadWebviews.ts `onDidClickLink`: `isSupportedLink`, then the opener service.
-    // shortcut: `vscode:` links are dropped, the port has no URL handler service for them.
     fn open_webview_link(&mut self, link: &str, enable_command_uris: &Value, window: &mut Window, cx: &mut Context<Self>) {
         let (scheme, rest) = link.split_once(':').unwrap_or_default();
         match scheme {
             "http" | "https" | "mailto" => cx.open_url(link),
+            URL_PROTOCOL => self.open_app_uri(link, window, cx),
             "command" => {
                 let command = rest.split_once('?').map_or(rest, |(command, _)| command);
                 let allowed = enable_command_uris == true || enable_command_uris.as_array().is_some_and(|ids| ids.iter().any(|id| id == command));
@@ -407,7 +408,7 @@ fn webview_origin(view_type: &str, extension_id: &str) -> String {
     format!("{}-{}-{}-{}-{}", &hex[..8], &hex[8..12], &hex[12..16], &hex[16..20], &hex[20..32])
 }
 
-fn percent_decode(text: &str) -> String {
+pub(super) fn percent_decode(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut index = 0;
