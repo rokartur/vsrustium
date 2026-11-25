@@ -3,7 +3,8 @@
 // for states a still pixel-check frame cannot reach (inline editors, dialogs, drags). Run on the Studio.
 // Usage: port/tools/ui-pair <out-dir> <steps.json> [dark|light|hc|hclight]   (env REF = reference checkout,
 // default ~/Developer/vscode-ref; env FOLDER = folder to open, default a copy of port/fixtures/workspace;
-// env FILE = file to open, relative to the folder; env ONLY = "reference" or "port" to run one of them; env ARGS = more arguments for both, space separated)
+// env FILE = file to open, relative to the folder; env ONLY = "reference" or "port" to run one of them; env ARGS = more arguments for both, space separated;
+// env SETTINGS = a JSON object of user settings for both)
 // Steps, in window points (both windows are 1024x768):
 //   {"click": [x, y]}  {"click": [x, y], "modifier": ["cmd"]}  {"click": [x, y], "foreground": true}  {"doubleClick": [x, y]}  {"rightClick": [x, y]}  {"key": "return"}
 //   {"hotkey": ["cmd", "c"]}  {"type": "text"}  {"wait": ms}  {"shot": "name"}  {"clipboard": "name"} (the pasteboard text, the folder path as <folder>)
@@ -27,6 +28,7 @@ const themes: Record<string, [string, string]> = {
 };
 const [referenceTheme, portTheme] = themes[themeName];
 const extraArgs = process.env.ARGS?.split(' ') ?? [];
+const settings: Record<string, unknown> = JSON.parse(process.env.SETTINGS ?? '{}');
 mkdirSync(outDir, { recursive: true });
 await takeGuiLock();
 
@@ -49,7 +51,7 @@ rmSync(scratch, { recursive: true, force: true });
 process.exit(0);
 
 function startReference(paths: string[]) {
-	const userData = referenceUserData(referenceTheme);
+	const userData = referenceUserData(referenceTheme, settings);
 	// cua-driver reads the accessibility tree, which the reference takes for a screen reader (a notification
 	// and "Screen Reader Optimized"); the port has no screen reader mode yet.
 	const settingsFile = join(userData, 'User/settings.json');
@@ -66,6 +68,8 @@ function startReference(paths: string[]) {
 
 function startPort(paths: string[]) {
 	const userData = mkdtempSync(join(scratch, 'port-user-'));
+	mkdirSync(join(userData, 'User'));
+	writeFileSync(join(userData, 'User/settings.json'), JSON.stringify(settings));
 	return Bun.spawn(['native/target/release/code-gpui', ...paths, ...extraArgs, '--user-data-dir', userData, '--theme', portTheme], {
 		env: { ...process.env, VSCODE_GPUI_EXTENSIONS: join(ref, 'extensions') },
 		stdout: 'ignore',

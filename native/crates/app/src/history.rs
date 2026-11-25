@@ -57,12 +57,10 @@ impl HistoryNavigator {
         self.current_position() == Some(0)
     }
 
-    #[cfg(test)]
     pub fn is_last(&self) -> bool {
         self.current_position().is_some_and(|position| position + 1 >= self.elements.len())
     }
 
-    #[cfg(test)]
     pub fn is_nowhere(&self) -> bool {
         self.current().is_none()
     }

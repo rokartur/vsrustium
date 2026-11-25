@@ -105,6 +105,41 @@ fn dragging_a_file_onto_a_folder_moves_it_and_alt_copies(cx: &mut TestAppContext
 }
 
 #[gpui::test]
+fn files_dropped_from_finder_copy_into_the_folder_under_the_pointer(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = explorer("explorer-import", cx);
+    let finder = dir.with_extension("finder");
+    std::fs::create_dir_all(finder.join("folder")).unwrap();
+    std::fs::write(finder.join("dropped.txt"), "dropped").unwrap();
+    std::fs::write(finder.join("a.txt"), "from finder").unwrap();
+    let drop = |paths: &[&str], at, cx: &mut VisualTestContext| {
+        let paths = gpui::ExternalPaths(paths.iter().map(|name| finder.join(name)).collect());
+        cx.simulate_event(gpui::FileDropEvent::Entered { position: at, paths });
+        cx.simulate_event(gpui::FileDropEvent::Pending { position: at });
+        cx.simulate_event(gpui::FileDropEvent::Submit { position: at });
+        cx.run_until_parked();
+    };
+    // Rows are 22px from y 96 under the section header: sub, then a.txt; the empty area follows.
+    let (sub_row, third_row, empty_area) = (point(px(120.), px(107.)), point(px(120.), px(151.)), point(px(120.), px(300.)));
+
+    drop(&["dropped.txt"], sub_row, cx);
+    assert_eq!(names(&dir.join("sub")), ["dropped.txt"]);
+    assert_eq!(names(&finder), ["a.txt", "dropped.txt", "folder"], "a drop copies");
+    let opened = workbench.read_with(cx, |workbench, _| workbench.editors.active().map(|editor| editor.document.path.clone()));
+    assert_eq!(opened, Some(dir.join("sub/dropped.txt")), "explorer.autoOpenDroppedFile");
+
+    // A folder dropped into a workspace folder asks first; the skipped dialog picks Add, which the port lacks.
+    drop(&["folder"], empty_area, cx);
+    assert!(!dir.join("folder").exists());
+
+    // A name the folder has asks to replace it; the skipped dialog confirms. Revealing sub/dropped.txt expanded sub,
+    // so a.txt is the third row.
+    drop(&["a.txt"], third_row, cx);
+    assert_eq!(std::fs::read_to_string(dir.join("a.txt")).unwrap(), "from finder");
+    std::fs::remove_dir_all(&dir).unwrap();
+    std::fs::remove_dir_all(&finder).unwrap();
+}
+
+#[gpui::test]
 fn rename_copy_paste_cut_delete_and_undo(cx: &mut TestAppContext) {
     let (dir, workbench, cx) = explorer("explorer-ops", cx);
     select(&workbench, &dir.join("a.txt"), cx);
@@ -304,5 +339,52 @@ fn closing_the_window_stores_the_tree_view_state_for_the_next_open(cx: &mut Test
         (tree.is_expanded(&dir.join("sub")), tree.focused.clone())
     });
     assert_eq!(restored, (true, Some(dir.join("sub/b.txt"))));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+fn rows(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<String> {
+    workbench.read_with(cx, |workbench, _| workbench.folder.as_ref().unwrap().rows().into_iter().map(|row| row.name).collect())
+}
+
+fn focused(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext) -> Option<PathBuf> {
+    workbench.read_with(cx, |workbench, _| workbench.folder.as_ref().unwrap().focused.clone())
+}
+
+/// Past `AsyncFindController`'s 250ms throttle, with the file search done.
+fn settle_find(cx: &mut VisualTestContext) {
+    cx.executor().advance_clock(std::time::Duration::from_millis(300));
+    cx.run_until_parked();
+}
+
+#[gpui::test]
+fn find_filters_the_tree_by_a_file_search_and_restores_it_on_close(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = explorer("explorer-find", cx);
+    std::fs::write(dir.join("sub/needle.rs"), "").unwrap();
+    std::fs::write(dir.join("other.md"), "").unwrap();
+    select(&workbench, &dir.join("a.txt"), cx);
+    cx.simulate_keystrokes("alt-cmd-f");
+    assert!(workbench.update_in(cx, |workbench, window, _| workbench.explorer.find.is_open() && workbench.explorer.find.focus.is_focused(window)));
+
+    // Highlight mode keeps every row; no row's name matches, so the focus stays.
+    cx.simulate_input("needle");
+    settle_find(cx);
+    assert_eq!(rows(&workbench, cx), ["sub", "a.txt", "other.md"]);
+    assert_eq!(focused(&workbench, cx), Some(dir.join("a.txt")));
+
+    run(&workbench, "list.toggleFindMode", cx);
+    settle_find(cx);
+    assert_eq!(rows(&workbench, cx), ["sub", "needle.rs"], "the filter shows the matches and their folders, expanded");
+    assert_eq!(focused(&workbench, cx), Some(dir.join("sub/needle.rs")));
+
+    cx.simulate_keystrokes("escape");
+    settle_find(cx);
+    assert!(workbench.update_in(cx, |workbench, window, _| !workbench.explorer.find.is_open() && workbench.explorer.focus.is_focused(window)));
+    assert_eq!(rows(&workbench, cx), ["sub", "a.txt", "other.md"], "the session's view state comes back");
+    assert_eq!(focused(&workbench, cx), Some(dir.join("a.txt")));
+
+    cx.simulate_keystrokes("alt-cmd-f");
+    settle_find(cx);
+    assert_eq!(workbench.read_with(cx, |workbench, _| workbench.explorer.find.input.value.clone()), "needle", "the widget reopens with the last pattern");
+    assert_eq!(rows(&workbench, cx), ["sub", "needle.rs"]);
     std::fs::remove_dir_all(&dir).unwrap();
 }

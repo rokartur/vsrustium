@@ -13,6 +13,7 @@ mod editor_message;
 pub mod editor_status;
 mod editor_view;
 mod explorer_actions;
+mod explorer_find;
 mod file_participants;
 mod find_widget;
 mod hover;
@@ -49,7 +50,7 @@ use config::service::Settings;
 use config::workspace::Workspace;
 use storage::Storage;
 
-use gpui::{ClickEvent, Context, Div, DragMoveEvent, FocusHandle, FontFeatures, FontWeight, MouseButton, MouseDownEvent, Rgba, Task, Window, div, prelude::*, px, rgb, svg, transparent_black};
+use gpui::{ClickEvent, Context, Div, DragMoveEvent, ExternalPaths, FocusHandle, FontFeatures, FontWeight, MouseButton, MouseDownEvent, Rgba, Task, Window, div, prelude::*, px, rgb, svg, transparent_black};
 use serde_json::Value;
 
 use crate::commands::Commands;
@@ -60,7 +61,7 @@ use crate::explorer::FileTree;
 use explorer_actions::DraggedItems;
 use hover::{HoverContent, HoverOptions, HoverPosition};
 use search_view::SideBarView;
-use crate::file_icons::FileIconTheme;
+use crate::file_icons::{FileIconTheme, FolderIcon};
 use crate::host_sync::HostSync;
 use crate::languages::Languages;
 use crate::theme::{ColorThemeEntry, Theme, ThemeKind};
@@ -267,6 +268,7 @@ impl Workbench {
         workbench.register_editor_status_commands();
         workbench.register_title_bar_actions();
         workbench.register_explorer_actions();
+        workbench.register_explorer_find_commands();
         workbench.register_search_actions();
         workbench.register_search_editor_actions();
         workbench.register_search_editor_widget_actions();
@@ -574,6 +576,7 @@ impl Workbench {
         // listWidget.ts: a selected row gets a 1px dotted listSelectionOutline (activeContrastBorder) inside it.
         let selection_outline = self.theme.color("contrastActiveBorder");
         let folder_name = tree.workspace.label();
+        let has_folder_icons = self.file_icons.as_ref().is_some_and(FileIconTheme::has_folder_icons);
         let rows = tree_rows.into_iter().enumerate().map(|(index, row)| {
             let twistie = match (row.is_dir || row.has_nests, row.expanded) {
                 (true, true) => Some("chevron-down"),
@@ -592,7 +595,7 @@ impl Workbench {
             let name = match (is_edited, navigation) {
                 (true, _) => self.explorer_input_box(label_line, edit_focused, cx).into_any_element(),
                 (false, Some(navigation)) => self.compressed_label(&row.compressed, &navigation, is_focused, segment_drop_target, cx).into_any_element(),
-                (false, None) => row.name.into_any_element(),
+                (false, None) => self.explorer_find_label(row.name, &path, (is_dir || row.has_nests) && !row.expanded),
             };
             let is_cut = tree.is_cut(&path);
             let is_drop_target = !row.is_new && segment_drop_target.is_none() && drop_target.is_some_and(|target| path.starts_with(target));
@@ -604,8 +607,13 @@ impl Workbench {
                 Some(edit) => PathBuf::from(&edit.input.value),
                 None => path.clone(),
             };
-            let file_icon = self.file_icons.as_ref().filter(|_| !is_dir).and_then(|icons| {
-                icons.file_icon(&icon_path, self.languages.language_of(&icon_path, ""), self.theme.kind, 13., label_line, foreground)
+            let file_icon = self.file_icons.as_ref().and_then(|icons| match is_dir {
+                true => {
+                    let name = path.file_name().map(|name| name.to_string_lossy()).unwrap_or_default();
+                    let folder = FolderIcon { name: &name, is_root: tree.is_root(&path), expanded: row.expanded };
+                    icons.folder_icon(folder, self.theme.kind, 13., label_line, foreground)
+                }
+                false => icons.file_icon(&icon_path, self.languages.language_of(&icon_path, ""), self.theme.kind, 13., label_line, foreground),
             });
             let indent = 8. * (row.depth - 1) as f32;
             let has_nests = row.has_nests;
@@ -630,22 +638,20 @@ impl Workbench {
                 .flex()
                 .items_center()
                 .rounded(px(4.))
-                .map(|row| match (file_icon, twistie) {
-                    (Some(icon), Some(chevron)) => row
-                        .pl(px(11. + indent))
-                        .child(twistie_element(chevron))
-                        .child(icon.self_start().ml(px(3.)))
-                        .child(div().self_start().flex_1().ml(px(6.)).line_height(px(label_line)).child(name)),
-                    (Some(icon), None) => row.pl(px(8. + indent)).child(icon.self_start()).child(div().self_start().flex_1().ml(px(6.)).line_height(px(label_line)).child(name)),
+                .map(|row| match (file_icon, twistie.is_some() || has_folder_icons) {
+                    (Some(icon), false) => row.pl(px(8. + indent)).child(icon.self_start()).child(div().self_start().flex_1().ml(px(6.)).line_height(px(label_line)).child(name)),
                     // monaco-tl-twistie: 3px row inset, 8px base indent plus 8px per level, a 16px icon, 6px before the label.
-                    (None, _) => row
-                        .pl(px(11. + indent))
+                    (icon, _) => {
+                        let label_margin = if icon.is_some() { 6. } else { 3. };
+                        row.pl(px(11. + indent))
                         .child(match twistie {
                             Some(chevron) if has_nests => twistie_element(chevron).into_any_element(),
                             Some(chevron) => self.icon(chevron, 16., 16., foreground).into_any_element(),
                             None => div().size(px(16.)).flex_none().into_any_element(),
                         })
-                        .child(div().self_start().flex_1().ml(px(3.)).line_height(px(label_line)).child(name)),
+                        .children(icon.map(|icon| icon.self_start().ml(px(3.))))
+                            .child(div().self_start().flex_1().ml(px(label_margin)).line_height(px(label_line)).child(name))
+                    }
                 })
                 // explorerviewlet.css: .explorer-item.cut is at half opacity. Its 0.3 for the other rows while a name is
                 // edited needs `.explorer-folders-view` twice in the ancestry, which the reference DOM never has.
@@ -663,15 +669,25 @@ impl Workbench {
                 .when_some(drag, |row, drag| row.on_drag(drag, |drag, _, _, cx| cx.new(|_| drag.clone())))
                 .when(!row.is_new, |row| {
                     let over = path.clone();
+                    let external_over = path.clone();
                     row.on_drag_move(cx.listener(move |workbench, event: &DragMoveEvent<DraggedItems>, window, cx| {
                         if event.bounds.contains(&event.event.position) {
                             let items = event.drag(cx).clone();
-                            workbench.explorer_drag_over(&over, &items, window, cx);
+                            workbench.explorer_drag_over(Some(&over), &items, window, cx);
+                        }
+                    }))
+                    .on_drag_move(cx.listener(move |workbench, event: &DragMoveEvent<ExternalPaths>, window, cx| {
+                        if event.bounds.contains(&event.event.position) {
+                            workbench.explorer_external_drag_over(Some(&external_over), window, cx);
                         }
                     }))
                     .on_drop(cx.listener(|workbench, items: &DraggedItems, window, cx| {
                         cx.stop_propagation();
                         workbench.explorer_drop(items, window, cx);
+                    }))
+                    .on_drop(cx.listener(|workbench, paths: &ExternalPaths, window, cx| {
+                        cx.stop_propagation();
+                        workbench.explorer_import(paths, window, cx);
                     }))
                 })
                 .when(!is_edited, |row| {
@@ -708,6 +724,7 @@ impl Workbench {
             .text_color(foreground)
             .child(title)
             .child(div().flex_1().overflow_hidden().flex().flex_col().child(self.section_header(&folder_name, true, false)).child(
+                div().relative().flex_1().min_h_0().flex().flex_col().child(
                 div()
                     .id("explorer-tree")
                     .track_focus(&self.explorer.focus)
@@ -718,8 +735,11 @@ impl Workbench {
                     .flex()
                     .flex_col()
                     .on_mouse_down(MouseButton::Right, cx.listener(|workbench, event: &MouseDownEvent, window, cx| workbench.show_explorer_context_menu(None, event.position, window, cx)))
-                    .children(rows),
-            ))
+                    // abstractTree.ts `AbstractFindController.open`: `paddingTop: 30` while the find widget shows.
+                    .when(self.explorer.find.is_open(), |tree| tree.pt(px(30.)))
+                    .children(rows)
+                    .child(self.explorer_empty_area(cx)),
+                ).children(self.explorer_find_widget(window, cx))))
             .child(self.section_header("Outline", false, true))
             .child(self.section_header("Timeline", false, true))
             // The pane view is laid out 5px shorter than the side bar content.

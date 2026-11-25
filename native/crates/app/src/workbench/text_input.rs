@@ -3,6 +3,7 @@
 
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::time::UNIX_EPOCH;
 
 use gpui::{Bounds, Context, EntityInputHandler, KeyDownEvent, Pixels, UTF16Selection, Window};
 
@@ -13,7 +14,8 @@ use super::Workbench;
 use super::search_editor_view::SEARCH_EDITOR_SCHEME;
 use serde_json::json;
 
-use crate::editor::{ContentChanged, Position, utf16_column};
+use crate::editor::{ContentChanged, Position, uri_string, utf16_column};
+use crate::local_history;
 use crate::host_sync::FileJob;
 
 impl Workbench {
@@ -108,8 +110,31 @@ impl Workbench {
         let became_clean = was_dirty && !model.is_dirty();
         let model = self.editors.model(scheme, path).expect("found above");
         self.host.send_saved(&self.editors, model, became_clean);
+        // storedFileWorkingCopy.ts saves only a dirty model, and only those saves reach the history tracker.
+        if scheme == "file" && was_dirty {
+            self.add_local_history_entry(path, cx);
+        }
         cx.notify();
         true
+    }
+
+    /// workingCopyHistoryTracker.ts `onDidSave`: the saved file goes into the local history with its modification
+    /// time. shortcut: every save has the "File Saved" source; the undo stack's label as the source
+    /// (`resolveSourceFromUndoRedo`) shows only in the Timeline, which is not ported.
+    fn add_local_history_entry(&self, path: &Path, cx: &mut Context<Self>) {
+        let Ok(metadata) = std::fs::metadata(path) else { return };
+        let settings = self.settings.lock().unwrap();
+        let Some(limits) = local_history::tracked(&settings, path, metadata.len()) else { return };
+        let history_home = settings.user_home().join("History");
+        drop(settings);
+        let timestamp = metadata.modified().ok().and_then(|modified| modified.duration_since(UNIX_EPOCH).ok()).map_or(0, |since| since.as_millis() as i64);
+        let (resource, path) = (uri_string("file", path), path.to_path_buf());
+        cx.background_executor().spawn(async move {
+            if let Err(error) = local_history::add_entry(&history_home, &resource, &path, None, timestamp, &limits) {
+                eprintln!("local history of {}: {error}", path.display());
+            }
+        })
+        .detach();
     }
 
     /// A UTF-16 range of the primary cursor's line, the text the input handler works on, as the chars

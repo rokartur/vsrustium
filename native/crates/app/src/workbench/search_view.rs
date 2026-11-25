@@ -14,6 +14,7 @@ use search::ripgrep::Cancellation;
 use super::Workbench;
 use super::input_box_view::{InputId, InputLook, InputView};
 use super::find_widget::HISTORY_LIMIT;
+use crate::file_icons::FolderIcon;
 use crate::history::HistoryNavigator;
 use crate::input_box::InputBox;
 use crate::search_editor::SearchConfiguration;
@@ -587,7 +588,7 @@ impl Workbench {
         let focus_outline = self.theme.color("list.focusOutline").or(self.theme.color("focusBorder")).filter(|_| tree_focused && is_focused);
         let indent = 8. * (row.depth - 1) as f32;
         let (content, collapsed) = match &row.kind {
-            RowKind::Folder { label, files, collapsed } => (self.search_folder_row(&row.key, label, files, is_focused, is_selected, cx), Some(*collapsed)),
+            RowKind::Folder { label, files, collapsed } => (self.search_folder_row(&row.key, label, files, *collapsed, is_focused, is_selected, foreground, cx), Some(*collapsed)),
             RowKind::File { file, collapsed } => (self.search_file_row(&row.key, *file, is_focused, is_selected, foreground, cx), Some(*collapsed)),
             RowKind::Match { file, index } => (self.search_match_row(&row.key, *file, *index, is_focused, is_selected, cx), None),
         };
@@ -635,15 +636,29 @@ impl Workbench {
         div().w_full().h(px(22.)).px(px(4.)).flex().child(row).into_any_element()
     }
 
-    /// `FolderMatchRenderer`: the folder's name and its count badge.
-    fn search_folder_row(&self, key: &RowKey, label: &str, files: &[usize], focused: bool, selected: bool, cx: &mut Context<Self>) -> Div {
+    /// `FolderMatchRenderer`: the folder's icon, its name and its count badge.
+    #[allow(clippy::too_many_arguments)]
+    fn search_folder_row(&self, key: &RowKey, label: &str, files: &[usize], collapsed: bool, focused: bool, selected: bool, foreground: Rgba, cx: &mut Context<Self>) -> Div {
         let count = files.iter().map(|&file| self.search.result.files[file].matches.len()).sum();
+        let label_line = if self.theme.kind.is_high_contrast() { 20. } else { 22. };
+        let RowKey::Folder(path) = key else { unreachable!("a folder row has a folder key") };
+        let name = path.file_name().map(|name| name.to_string_lossy()).unwrap_or_default();
+        let is_root = self.folder.as_ref().is_some_and(|tree| tree.is_root(path));
+        let folder = FolderIcon { name: &name, is_root, expanded: !collapsed };
+        let icon = self.file_icons.as_ref().and_then(|icons| icons.folder_icon(folder, self.theme.kind, 13., label_line, foreground));
         let mut actions = Vec::new();
         if self.search.replace_active {
             actions.push(("replace-all", RowAction::Replace));
         }
         actions.push(("close", RowAction::Dismiss));
-        self.search_label_row(key, div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().child(label.to_string()), Some(count), &actions, focused, selected, cx)
+        let label = div()
+            .flex_1()
+            .min_w_0()
+            .flex()
+            .items_center()
+            .children(icon.map(|icon| icon.mr(px(6.))))
+            .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().child(label.to_string()));
+        self.search_label_row(key, label, Some(count), &actions, focused, selected, cx)
     }
 
     /// `FileMatchRenderer`: the file icon, its name, the folder it is in as the description in the list view, the

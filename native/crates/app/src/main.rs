@@ -27,6 +27,7 @@ mod keybindings_editor;
 mod keyboard_layout;
 mod system_wide_keybindings;
 mod languages;
+mod local_history;
 mod main_thread;
 mod main_thread_commands;
 mod main_thread_quick_open;
