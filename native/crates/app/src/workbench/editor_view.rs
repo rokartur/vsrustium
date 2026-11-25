@@ -269,6 +269,10 @@ impl Workbench {
         if self.scrollbars.in_transition(now) || self.fold_controls.in_transition(now) || self.minimap.in_transition(now) {
             window.request_animation_frame();
         }
+        let editor_origin = self.text_area_bounds.get().origin;
+        let middle_scroll_dot = self.middle_scroll_dot(point(px(editor_origin.x), px(editor_origin.y)));
+        let middle_scrolling = middle_scroll_dot.is_some();
+        let scrolled = cx.entity();
         div()
             .id("text-area")
             .flex_1()
@@ -288,6 +292,13 @@ impl Workbench {
                     false => workbench.hide_scrollbars(cx),
                 }
             }))
+            .capture_any_mouse_down(cx.listener(|workbench, event: &MouseDownEvent, _, cx| {
+                if workbench.middle_scroll_mouse_down(event.button == MouseButton::Middle, event.position, cx) {
+                    cx.stop_propagation();
+                }
+            }))
+            .capture_any_mouse_up(cx.listener(|workbench, _, _, cx| workbench.middle_scroll_mouse_up(cx)))
+            .capture_key_down(cx.listener(|workbench, _, _, cx| workbench.end_middle_scroll(cx)))
             .on_mouse_up(MouseButton::Left, cx.listener(|workbench, _, _, _| workbench.selecting_text = false))
             .on_mouse_up_out(MouseButton::Left, cx.listener(|workbench, _, _, _| workbench.selecting_text = false))
             .child(
@@ -302,7 +313,18 @@ impl Workbench {
                         let viewport = Viewport { width: width - metrics.content_left() - minimap.width as f32, height, char_width: metrics.char_width, sticky_scroll_lines, top_whitespace, stop_rendering_line_after };
                         laid_out.update(cx, |workbench, cx| workbench.editor_laid_out(viewport, (minimap, pixel_ratio as f64), cx));
                     },
-                    move |bounds, _, window, cx| window.handle_input(&focus, ElementInputHandler::new(bounds, workbench), cx),
+                    move |bounds, _, window, cx| {
+                        window.handle_input(&focus, ElementInputHandler::new(bounds, workbench), cx);
+                        if middle_scrolling && scrolled.update(cx, |workbench, cx| workbench.middle_scroll_frame(cx)) {
+                            // observeWindowMousePos: the pointer anywhere in the window steers the session.
+                            window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, cx| {
+                                if phase == DispatchPhase::Bubble {
+                                    scrolled.update(cx, |workbench, _| workbench.middle_scroll_mouse_moved(event.position));
+                                }
+                            });
+                            window.request_animation_frame();
+                        }
+                    },
                 )
                 .absolute()
                 .inset_0(),
@@ -329,6 +351,7 @@ impl Workbench {
             .child(self.scrollbars_canvas(editor, metrics, cx).absolute().inset_0())
             .when(editor.scroll.top > 0., |area| area.child(div().absolute().top_0().left_0().right(px(VERTICAL_SCROLLBAR_WIDTH)).h(px(SCROLL_SHADOW_HEIGHT)).cursor_default().child(self.scroll_shadow().size_full())))
             .children(self.minimap(editor, cx))
+            .children(middle_scroll_dot)
             .children(self.sticky_scroll_widget(editor, metrics, window, cx))
             .children(self.find_widget(self.editors.viewport.width + metrics.content_left() + minimap_width, metrics.content_left(), minimap_width, window, cx))
             .children(self.editor_message_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
