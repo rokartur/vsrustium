@@ -296,6 +296,10 @@ impl Workbench {
     /// The context keys the keybindings' `when` clauses see: the keys extensions set, then the focused part's.
     pub fn key_context(&self, window: &Window) -> HashMap<String, Value> {
         let mut context = self.context_keys.clone();
+        // list.contribution.ts `ListContext`; listSupportsKeyboardNavigation is the deprecated name.
+        for key in ["listSupportsTypeNavigation", "listSupportsKeyboardNavigation"] {
+            context.entry(key.into()).or_insert(json!(true));
+        }
         let editor_focused = self.editor_focus.is_focused(window);
         // The sticky lines and the find widget are part of the editor's DOM, so their focus is the editor's but not its text's.
         let (find_focused, replace_focused) = (self.find.find_focus.is_focused(window), self.find.replace_focus.is_focused(window));
