@@ -184,7 +184,12 @@ const WORKBENCH_MENUS: &[Row] = &[
     (MenuId::MenubarViewMenu, None, "workbench.view.explorer", "&&Explorer", "3_sidebar", 0., Some("viewContainer.workbench.view.explorer.enabled"), Some("viewContainer.workbench.view.explorer.enabled")),
     (MenuId::MenubarViewMenu, None, "workbench.view.search", "&&Search", "3_sidebar", 1., Some("workbench.view.search.active"), Some("workbench.view.search.active")),
     (MenuId::MenubarViewMenu, None, "workbench.view.scm", "Source &&Control", "3_sidebar", 2., Some("workbench.scm.active"), Some("workbench.scm.active")),
+    (MenuId::MenubarViewMenu, None, "workbench.view.debug", "&&Run", "3_sidebar", 3., Some("viewContainer.workbench.view.debug.enabled"), Some("viewContainer.workbench.view.debug.enabled")),
     (MenuId::MenubarViewMenu, None, "workbench.view.extensions", "E&&xtensions", "3_sidebar", 4., Some("viewContainer.workbench.view.extensions.enabled"), Some("viewContainer.workbench.view.extensions.enabled")),
+    // repl.ts: Debug Console in the panel group.
+    (MenuId::MenubarViewMenu, None, "workbench.debug.action.toggleRepl", "De&&bug Console", "5_panel", 2., None, None),
+    // preferences.contribution.ts
+    (MenuId::MenubarPreferencesMenu, None, "workbench.action.openSettings", "&&Settings", "2_configuration", 2., None, None),
     (MenuId::MenubarViewMenu, None, "workbench.action.terminal.toggleTerminal", "&&Terminal", "5_panel", 3., Some("terminal.active"), Some("terminal.active")),
     (MenuId::MenubarPreferencesMenu, None, "workbench.view.extensions", "&&Extensions", "2_configuration", 3., Some("!isSessionsWindow"), Some("viewContainer.workbench.view.extensions.enabled")),
     // fileActions.contribution.ts, findController.ts, searchActionsFind.ts, searchActionsNav.ts, quickAccess.contribution.ts and gotoError.ts
@@ -271,7 +276,7 @@ const WORKBENCH_MENUS: &[Row] = &[
 /// layoutActions.ts, auxiliaryBarActions.ts, panelActions.ts, activitybarPart.ts, toggleMinimap.ts, stickyScrollActions.ts and
 /// toggleRenderControlCharacter.ts: the Appearance items the port has, checked by their `toggled`.
 type ToggleRow = (MenuId, &'static str, &'static str, &'static str, f64, &'static str, &'static str);
-const APPEARANCE_TOGGLES: [ToggleRow; 10] = [
+const APPEARANCE_TOGGLES: [ToggleRow; 11] = [
     (MenuId::MenubarAppearanceMenu, "workbench.action.toggleSidebarVisibility", "&&Primary Side Bar", "2_workbench_layout", 1., "!isSessionsWindow", "sideBarVisible"),
     (MenuId::MenubarAppearanceMenu, "workbench.action.toggleAuxiliaryBar", "&&Secondary Side Bar", "2_workbench_layout", 2., "!isSessionsWindow", "secondarySideBarVisible"),
     (MenuId::MenubarAppearanceMenu, "workbench.action.togglePanel", "&&Panel", "2_workbench_layout", 5., "", "panelVisible"),
@@ -280,6 +285,7 @@ const APPEARANCE_TOGGLES: [ToggleRow; 10] = [
     (MenuId::ActivityBarPositionMenu, "workbench.action.activityBarLocation.bottom", "&&Bottom", "", 3., "", "config.workbench.activityBar.location == 'bottom'"),
     (MenuId::ActivityBarPositionMenu, "workbench.action.activityBarLocation.hide", "&&Hidden", "", 4., "", "config.workbench.activityBar.location == 'hidden'"),
     (MenuId::MenubarAppearanceMenu, "editor.action.toggleMinimap", "&&Minimap", "4_editor", 1., "", "config.editor.minimap.enabled"),
+    (MenuId::MenubarAppearanceMenu, "breadcrumbs.toggle", "&&Breadcrumbs", "4_editor", 2., "", "config.breadcrumbs.enabled"),
     (MenuId::MenubarAppearanceMenu, "editor.action.toggleStickyScroll", "&&Sticky Scroll", "4_editor", 3., "", "config.editor.stickyScroll.enabled"),
     (MenuId::MenubarAppearanceMenu, "editor.action.toggleRenderControlCharacter", "Render &&Control Characters", "4_editor", 5., "", "config.editor.renderControlCharacters"),
 ];
