@@ -3,7 +3,8 @@
 //! (Use for Current Window, Use for New Windows, its contents and the folders and workspaces using it), or the form
 //! of a new profile (name, the profile to copy from, Create).
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
+use std::rc::Rc;
 
 use gpui::{AnyElement, Context, FocusHandle, FontWeight, MouseButton, PathPromptOptions, Window, div, prelude::*, px};
 use serde_json::{Value, json};
@@ -14,8 +15,10 @@ use super::input_box_view::{InputId, InputLook, InputView};
 use super::keybindings_editor_view::ModalHeader;
 use crate::commands::Outcome;
 use crate::input_box::InputBox;
+use crate::main_thread_quick_open::Owner;
 use crate::menus::MenuAction;
 use crate::profile_template::{self, Flags, PROFILE_EXTENSION};
+use crate::quick_input::{Entry, Event, Item, Kind, QuickInput};
 
 /// `CONFIG_NEW_WINDOW_PROFILE`.
 pub const NEW_WINDOW_PROFILE_SETTING: &str = "window.newWindowProfile";
@@ -44,6 +47,12 @@ pub struct NewProfile {
     pub copy_from: Option<String>,
     pub template: Option<Value>,
     pub error: Option<String>,
+    /// The name the form gave, replaced when the source changes while the user kept it.
+    default_name: String,
+    /// `flags`: the resources that use the Default profile's.
+    use_default: BTreeSet<&'static str>,
+    /// `copyFlags`: the resources copied from the source.
+    copy: BTreeSet<&'static str>,
 }
 
 impl Workbench {
@@ -70,7 +79,8 @@ impl Workbench {
             workbench.export_profile(current, window, cx);
             Outcome::done()
         });
-        self.commands.register("workbench.profiles.actions.importProfile", |workbench, _, window, cx| {
+        // The New Profile dropdown's "Import Profile..." action; upstream runs it without a command.
+        self.commands.register("_profilesEditor.importProfile", |workbench, _, window, cx| {
             workbench.open_profiles_editor(window, cx);
             workbench.import_profile(window, cx);
             Outcome::done()
@@ -102,11 +112,12 @@ impl Workbench {
         cx.notify();
     }
 
-    /// `createNewProfile(copyFrom)`: the new profile form, named after the template or "Untitled".
+    /// `createNewProfile(copyFrom)`: the new profile form, named after its source or "Untitled".
     fn start_new_profile(&mut self, copy_from: Option<String>, template: Option<Value>, window: &mut Window, cx: &mut Context<Self>) {
-        let name = template.as_ref().and_then(|template| template["name"].as_str()).unwrap_or("Untitled").to_owned();
+        let name = self.new_profile_default_name(copy_from.as_deref(), template.as_ref());
+        let copy = copy_flags(copy_from.as_deref(), template.as_ref());
         let editor = &mut self.user_data_profiles.editor;
-        editor.new_profile = Some(NewProfile { copy_from, template, error: None });
+        editor.new_profile = Some(NewProfile { copy_from, template, error: None, default_name: name.clone(), use_default: BTreeSet::new(), copy });
         editor.selected = None;
         editor.name = InputBox::new(name);
         editor.name.select_all();
@@ -169,8 +180,10 @@ impl Workbench {
             (None, Some(from)) => Some(self.profile_template(from, &name)),
             (None, None) => None,
         };
+        let template = template.map(|template| copied_template(template, &new_profile.copy, &new_profile.use_default));
+        let use_default_flags = (!new_profile.use_default.is_empty()).then(|| new_profile.use_default.iter().map(|resource| (resource.to_string(), true)).collect());
         let state = self.user_data_profiles.state.as_mut().expect("checked above");
-        let created = state.edit(|profiles, storage| profiles.create_named_profile(&name, Options { icon, ..Options::default() }, None, storage));
+        let created = state.edit(|profiles, storage| profiles.create_named_profile(&name, Options { icon, use_default_flags, ..Options::default() }, None, storage));
         let profile = match created {
             Ok((profile, _)) => profile,
             Err(error) => return self.set_new_profile_error(&error, cx),
@@ -185,6 +198,122 @@ impl Workbench {
         self.user_data_profiles.editor.selected = Some(profile.id.clone());
         self.profiles_changed(cx);
         self.switch_profile(&profile, window, cx);
+    }
+
+    /// The new profile's name for its source: the template's, "<profile> (Copy)", or "Untitled".
+    fn new_profile_default_name(&self, copy_from: Option<&str>, template: Option<&Value>) -> String {
+        if let Some(name) = template.and_then(|template| template["name"].as_str()) {
+            return name.to_owned();
+        }
+        let profiles = self.user_data_profiles.state.as_ref().map(|state| state.profiles.profiles()).unwrap_or_default();
+        match copy_from.and_then(|id| profiles.into_iter().find(|profile| profile.id == id)) {
+            Some(profile) => format!("{} (Copy)", profile.name),
+            None => "Untitled".to_owned(),
+        }
+    }
+
+    /// `NewProfileResourceTreeRenderer`'s radio: [copy,] Default, None.
+    fn set_new_profile_source(&mut self, resource: &'static str, index: usize, cx: &mut Context<Self>) {
+        let Some(new_profile) = &mut self.user_data_profiles.editor.new_profile else { return };
+        let has_source = new_profile.copy_from.is_some() || new_profile.template.is_some();
+        let (use_default, copy) = match has_source {
+            true => (index == 1, index == 0),
+            false => (index == 0, false),
+        };
+        set_member(&mut new_profile.use_default, resource, use_default);
+        set_member(&mut new_profile.copy, resource, copy);
+        cx.notify();
+    }
+
+    /// `ExistingProfileResourceTreeRenderer`'s radio: `setFlag`, saved to the profile's `useDefaultFlags`; the
+    /// current profile's files move with it.
+    fn set_profile_use_default(&mut self, profile_id: &str, resource: &'static str, use_default: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(state) = self.user_data_profiles.state.as_mut() else { return };
+        let Some(profile) = state.profiles.profiles().into_iter().find(|profile| profile.id == profile_id) else { return };
+        let mut flags: storage::profiles::UseDefaultFlags = profile.use_default_flags.clone().unwrap_or_default();
+        flags.insert(resource.to_owned(), use_default);
+        flags.retain(|_, used| *used);
+        let update = storage::profiles::UpdateOptions { use_default_flags: Some(flags), ..Default::default() };
+        let updated = match state.edit(|profiles, storage| profiles.update_profile(profile_id, update, storage)) {
+            Ok((updated, _)) => updated,
+            Err(error) => return self.notify_error(error),
+        };
+        let is_current = state.current.id == updated.id;
+        self.profiles_changed(cx);
+        if is_current {
+            self.change_current_profile(updated, window, cx);
+        }
+    }
+
+    /// The Contents row of the new profile form: the description, then each resource with its Source radio.
+    fn new_profile_source_contents(&self, bullets: Vec<(String, String)>, rows: Vec<(&'static str, &'static str, Vec<String>, usize)>, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let mut tree = div().flex().flex_col().child(self.source_description(bullets)).child(self.contents_header());
+        for (resource, title, options, active) in rows {
+            let radio = self.radio(resource, &options, active, cx, move |workbench, index, _, cx| workbench.set_new_profile_source(resource, index, cx));
+            tree = tree.child(div().h(px(24.)).flex().items_center().child(div().flex_1().pl(px(30.)).child(title)).child(div().flex_1().child(radio)).child(div().w(px(80.))));
+        }
+        tree
+    }
+
+    /// `updateDescription` of a profile that is not the default one.
+    fn source_description(&self, bullets: Vec<(String, String)>) -> impl IntoElement + use<> {
+        let mut description = div().flex().flex_col().line_height(px(18.)).opacity(0.9).child("Configure source of contents for this profile");
+        for (name, text) in bullets {
+            description = description.child(div().pl(px(17.)).flex().child(div().w(px(13.)).child("\u{2022}")).child(div().italic().child(format!("{name}:"))).child(div().ml(px(4.)).child(text)));
+        }
+        description
+    }
+
+    /// `.profile-content-tree-header` of a profile that is not the default one: Contents and Source.
+    fn contents_header(&self) -> impl IntoElement + use<> {
+        div()
+            .mt(px(5.))
+            .mb(px(2.))
+            .h(px(30.))
+            .flex()
+            .items_center()
+            .bg(self.color("keybindingTable.headerBackground"))
+            .font_weight(FontWeight::SEMIBOLD)
+            .child(div().flex_1().pl(px(30.)).child("Contents"))
+            .child(div().flex_1().child("Source"))
+            .child(div().w(px(80.)))
+    }
+
+    /// radio.ts `Radio`: a row of buttons, the active one in the radio colors.
+    fn radio(&self, id: &'static str, options: &[String], active: usize, cx: &mut Context<Self>, select: impl Fn(&mut Workbench, usize, &mut Window, &mut Context<Workbench>) + 'static) -> gpui::Div {
+        let select = Rc::new(select);
+        let last = options.len().saturating_sub(1);
+        let mut radio = div().flex();
+        for (index, option) in options.iter().enumerate() {
+            let is_active = index == active;
+            let (foreground, background, border) = match is_active {
+                true => (self.color("radio.activeForeground"), self.color("radio.activeBackground"), self.color("radio.activeBorder")),
+                false => (self.color("foreground"), gpui::transparent_black().into(), self.color("radio.inactiveBorder")),
+            };
+            let select = select.clone();
+            let button = div()
+                .id((id, index))
+                .h(px(22.))
+                .px(px(6.))
+                .flex()
+                .items_center()
+                .text_size(px(11.7))
+                .text_color(foreground)
+                .bg(background)
+                .border_color(border)
+                .border_t_1()
+                .border_b_1()
+                // `:not(.active):not(:last-child)` has no right border, `.previous-active` no left one.
+                .when(is_active || index == last, |button| button.border_r_1())
+                .when(index == 0 || index != active + 1, |button| button.border_l_1())
+                .when(index == 0, |button| button.rounded_l(px(3.)))
+                .when(index == last, |button| button.rounded_r(px(3.)))
+                .cursor_pointer()
+                .on_click(cx.listener(move |workbench, _, window, cx| select(workbench, index, window, cx)))
+                .child(option.clone());
+            radio = radio.child(button);
+        }
+        radio
     }
 
     fn set_new_profile_error(&mut self, error: &str, cx: &mut Context<Self>) {
@@ -260,8 +389,61 @@ impl Workbench {
         .detach();
     }
 
-    /// `importProfile` from a file: "Select Profile Template File", then the new profile form with its contents.
+    /// `importProfile`: a quick pick of the typed template URL ("Import from URL") and Select File...
     fn import_profile(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let mut input = QuickInput::new(0, Kind::QuickPick);
+        input.title = Some("Import from Profile Template...".into());
+        input.placeholder = Some("Provide Profile Template URL".into());
+        input.ignore_focus_out = true;
+        input.match_on_label = false;
+        input.match_on_description = false;
+        input.set_items(import_items(""));
+        let id = self.quick_inputs.add(input, Owner::ProfileTemplateImport);
+        self.show_quick_input(id, window, cx);
+        self.flush_quick_input_events(window, cx);
+    }
+
+    pub(crate) fn profile_template_import_event(&mut self, id: i64, event: Event, window: &mut Window, cx: &mut Context<Self>) {
+        match event {
+            Event::ChangeValue(value) => {
+                if let Some(input) = self.quick_inputs.get_mut(id) {
+                    input.set_items(import_items(&value));
+                }
+                cx.notify();
+            }
+            Event::Accept(_) => {
+                let Some(input) = self.quick_inputs.get(id) else { return };
+                let url = input.active_handles().first().is_some_and(|&handle| handle == IMPORT_URL_HANDLE).then(|| input.input_box.value.trim().to_owned());
+                self.hide_quick_input_by_id(id, window, cx);
+                match url {
+                    Some(url) => self.import_profile_from_url(url, window, cx),
+                    None => self.import_profile_from_file(window, cx),
+                }
+            }
+            Event::Hide => self.quick_inputs.remove(id),
+            _ => {}
+        }
+    }
+
+    /// `resolveProfileContent` of an http(s) URL: the template the request service fetches.
+    fn import_profile_from_url(&mut self, url: String, window: &mut Window, cx: &mut Context<Self>) {
+        let fetched = cx.background_executor().spawn(async move {
+            let response = exthost::request::request(&exthost::request::Request::get(&url)).map_err(|error| error.to_string())?;
+            let content = response.as_text().map_err(|error| error.to_string())?.unwrap_or_default();
+            profile_template::parse_template(&content)
+        });
+        cx.spawn_in(window, async move |workbench, cx| {
+            let template = fetched.await;
+            let _ = workbench.update_in(cx, |workbench, window, cx| match template {
+                Ok(template) => workbench.start_new_profile(None, Some(template), window, cx),
+                Err(error) => workbench.notify_error(error),
+            });
+        })
+        .detach();
+    }
+
+    /// `getProfileUriFromFileSystem`: "Select Profile Template File", then the new profile form with its contents.
+    fn import_profile_from_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let picked = cx.prompt_for_paths(PathPromptOptions { files: true, directories: false, multiple: false, prompt: Some("Select Profile Template File".into()) });
         cx.spawn_in(window, async move |workbench, cx| {
             let Ok(Ok(Some(paths))) = picked.await else { return };
@@ -376,7 +558,7 @@ impl Workbench {
                     .id("new-profile-dropdown")
                     .cursor_pointer()
                     .on_click(cx.listener(|workbench, event: &gpui::ClickEvent, window, cx| {
-                        let id = "workbench.profiles.actions.importProfile".to_owned();
+                        let id = "_profilesEditor.importProfile".to_owned();
                         let actions = vec![MenuAction::Command { id, title: "Import Profile...".into(), enabled: true, checked: false, alt: None }];
                         let position = event.position();
                         let anchor = gpui::Bounds::new(position, gpui::size(px(1.), px(1.)));
@@ -469,7 +651,11 @@ impl Workbench {
             "Use for New Windows",
             self.profile_checkbox("profile-use-new", is_new_window, "Use this profile as the default for new windows", cx, move |workbench, _, cx| workbench.toggle_new_window_profile(&new_window, cx)),
         );
-        let contents = self.profile_row_container("Contents", div().flex().flex_col().child(div().line_height(px(18.)).opacity(0.9).child("Browse contents of this profile")).child(self.profile_contents_tree(profile, cx)));
+        let description = match profile.is_default {
+            true => div().line_height(px(18.)).opacity(0.9).child("Browse contents of this profile").into_any_element(),
+            false => self.source_description(Vec::new()).into_any_element(),
+        };
+        let contents = self.profile_row_container("Contents", div().flex().flex_col().child(description).child(self.profile_contents_tree(profile, cx)));
         let workspaces: Vec<String> = profile.workspaces.clone().unwrap_or_default();
         let description = if workspaces.is_empty() { "No folders or workspaces are using this profile" } else { "Following folders and workspaces are using this profile" };
         let header_background = self.color("keybindingTable.headerBackground");
@@ -508,8 +694,29 @@ impl Workbench {
             .bg(self.color("dropdown.background"))
             .cursor_pointer()
             .on_click(cx.listener(|workbench, event: &gpui::ClickEvent, window, cx| workbench.show_copy_from_menu(event.position(), window, cx)))
-            .child(copy_from_name)
+            .child(copy_from_name.clone())
             .child(self.icon("chevron-down", 16., 16., self.color("foreground")));
+        // `getCopyFromName`: the Default profile shows as "Default (Copy)".
+        let source = (new_profile.copy_from.is_some() || new_profile.template.is_some()).then(|| {
+            let is_default = new_profile.copy_from.as_ref().is_some_and(|id| profiles.iter().any(|profile| profile.id == *id && profile.is_default));
+            (if is_default { format!("{copy_from_name} (Copy)") } else { copy_from_name.clone() }, copy_from_name.clone())
+        });
+        let mut bullets = Vec::new();
+        if let Some((option, name)) = &source {
+            bullets.push((option.clone(), format!("Copy contents from the {name} profile")));
+        }
+        bullets.push(("Default".to_owned(), "Use contents from the Default profile".to_owned()));
+        bullets.push(("None".to_owned(), "Create empty contents".to_owned()));
+        let rows = RESOURCES
+            .iter()
+            .map(|&(resource, title)| {
+                let use_default = new_profile.use_default.contains(resource);
+                match &source {
+                    Some((option, _)) => (resource, title, vec![option.clone(), "Default".to_owned(), "None".to_owned()], if new_profile.copy.contains(resource) { 0 } else if use_default { 1 } else { 2 }),
+                    None => (resource, title, vec!["Default".to_owned(), "None".to_owned()], if use_default { 0 } else { 1 }),
+                }
+            })
+            .collect();
         let create = self.text_button("profile-create", "Create", cx, |workbench, window, cx| workbench.create_new_profile(window, cx));
         let cancel = self.text_button("profile-cancel", "Cancel", cx, |workbench, _, cx| {
             let editor = &mut workbench.user_data_profiles.editor;
@@ -527,6 +734,7 @@ impl Workbench {
                     .ml(px(28.))
                     .child(self.profile_row_container("Name", div().flex().flex_col().gap(px(4.)).child(name).children(error)))
                     .child(self.profile_row_container("Copy from", div().flex().flex_col().gap(px(4.)).child(div().opacity(0.9).child("Select the profile source from which you want to copy contents")).child(copy_from)))
+                    .child(self.profile_row_container("Contents", self.new_profile_source_contents(bullets, rows, cx)))
                     .child(div().mt(px(10.)).flex().gap(px(8.)).child(create).child(cancel)),
             )
     }
@@ -541,9 +749,16 @@ impl Workbench {
         for (index, (choice, name)) in choices.into_iter().zip(names).enumerate() {
             let id = format!("_profilesEditor.copyFrom.{index}");
             self.commands.register(id.clone(), move |workbench, _, _, cx| {
-                if let Some(new_profile) = &mut workbench.user_data_profiles.editor.new_profile {
+                let name = workbench.new_profile_default_name(choice.as_deref(), None);
+                let editor = &mut workbench.user_data_profiles.editor;
+                if let Some(new_profile) = &mut editor.new_profile {
                     new_profile.copy_from = choice.clone();
                     new_profile.template = None;
+                    new_profile.copy = copy_flags(choice.as_deref(), None);
+                    if editor.name.value == new_profile.default_name {
+                        editor.name = InputBox::new(name.clone());
+                    }
+                    new_profile.default_name = name.clone();
                 }
                 cx.notify();
                 Outcome::done()
@@ -574,14 +789,18 @@ impl Workbench {
         .detach();
     }
 
-    /// The Contents tree: the resources, Snippets and Extensions expandable to their files and extensions.
+    /// The Contents tree: the resources, Snippets and Extensions expandable to their files and extensions; a profile
+    /// that is not the default one has a Source radio per resource (`ExistingProfileResourceTreeRenderer`).
     fn profile_contents_tree(&self, profile: &Profile, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let expanded = &self.user_data_profiles.editor.expanded;
-        let mut tree = div().mt(px(8.)).flex().flex_col().child(div().h(px(30.)).flex().items_center().pl(px(30.)).bg(self.color("keybindingTable.headerBackground")).font_weight(FontWeight::SEMIBOLD).child("Contents"));
+        let mut tree = match profile.is_default {
+            true => div().mt(px(8.)).flex().flex_col().child(div().h(px(30.)).flex().items_center().pl(px(30.)).bg(self.color("keybindingTable.headerBackground")).font_weight(FontWeight::SEMIBOLD).child("Contents")),
+            false => div().flex().flex_col().child(self.contents_header()),
+        };
         for (resource, title) in RESOURCES {
             let expandable = matches!(resource, "snippets" | "extensions");
             let twistie = expandable.then(|| self.icon(if expanded.contains(resource) { "chevron-down" } else { "chevron-right" }, 16., 16., self.color("foreground")));
-            let row = div()
+            let label = div()
                 .id(resource)
                 .h(px(24.))
                 .flex()
@@ -597,6 +816,16 @@ impl Workbench {
                 }))
                 .children(twistie)
                 .child(title);
+            let radio = (!profile.is_default).then(|| {
+                let use_default = profile.use_default_flags.as_ref().is_some_and(|flags| flags.get(resource) == Some(&true));
+                let options = vec!["Default".to_owned(), profile.name.clone()];
+                let id = profile.id.clone();
+                self.radio(resource, &options, if use_default { 0 } else { 1 }, cx, move |workbench, index, window, cx| workbench.set_profile_use_default(&id, resource, index == 0, window, cx))
+            });
+            let row = match radio {
+                Some(radio) => div().flex().items_center().child(label.flex_1()).child(div().flex_1().child(radio)).child(div().w(px(80.))).into_any_element(),
+                None => label.into_any_element(),
+            };
             tree = tree.child(row);
             if !expanded.contains(resource) {
                 continue;
@@ -646,7 +875,50 @@ impl Workbench {
     }
 }
 
+/// `getCopyFlagsFrom` and `initialize`: every resource of a profile, the resources a template has.
+fn copy_flags(copy_from: Option<&str>, template: Option<&Value>) -> BTreeSet<&'static str> {
+    match (template, copy_from) {
+        (Some(template), _) => RESOURCES.iter().map(|(resource, _)| *resource).filter(|resource| !template[*resource].is_null()).collect(),
+        (None, Some(_)) => RESOURCES.iter().map(|(resource, _)| *resource).collect(),
+        (None, None) => BTreeSet::new(),
+    }
+}
+
+/// `resourceTypeFlags: copyFlags`: the template keeps the resources copied and not taken from the Default profile.
+fn copied_template(mut template: Value, copy: &BTreeSet<&'static str>, use_default: &BTreeSet<&'static str>) -> Value {
+    if let Some(resources) = template.as_object_mut() {
+        for (resource, _) in RESOURCES {
+            if !copy.contains(resource) || use_default.contains(resource) {
+                resources.remove(resource);
+            }
+        }
+    }
+    template
+}
+
+fn set_member(set: &mut BTreeSet<&'static str>, resource: &'static str, member: bool) {
+    match member {
+        true => set.insert(resource),
+        false => set.remove(resource),
+    };
+}
+
+const IMPORT_URL_HANDLE: i64 = 0;
+
+/// `updateQuickPickItems`: the typed value as a URL to import from, then Select File...
+fn import_items(value: &str) -> Vec<Entry> {
+    let mut items = Vec::new();
+    if !value.is_empty() {
+        items.push(Entry::Item(Item { handle: IMPORT_URL_HANDLE, label: value.to_owned(), description: Some("Import from URL".into()), pickable: true, ..Item::default() }));
+    }
+    items.push(Entry::Item(Item { handle: 1, label: "Select File...".into(), pickable: true, ..Item::default() }));
+    items
+}
+
 /// `DEFAULT_ICON`: a profile without an icon shows the settings gear.
 fn profile_icon(icon: Option<&str>) -> &str {
     icon.unwrap_or("settings-gear")
 }
+
+#[cfg(test)]
+mod tests;
