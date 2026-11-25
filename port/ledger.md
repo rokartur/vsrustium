@@ -44,8 +44,8 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | mainthread/MainThreadTelemetry | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadEditorInsets | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadEditorTabs | MainThread* shape (Rust side) | ported | host_sync.rs sends $acceptTabOperation per tab change (cargo test -p app host_sync); $moveTab inside the group (pins the tab, an index past the tabs moves it last), $closeTab and $closeGroup through the save prompt, answering whether every tab closed (workbench/actions.rs): cargo test -p app the_host_moves_and_closes_tabs; the upstream window.test.ts tab tests are commented out; a move to another view column waits for editor groups (milestone 11) |
-| mainthread/MainThreadWebviews | MainThread* shape (Rust side) | stub | session.rs answers undefined |
-| mainthread/MainThreadWebviewPanels | MainThread* shape (Rust side) | stub | session.rs answers undefined |
+| mainthread/MainThreadWebviews | MainThread* shape (Rust side) | verified | api-tests `MOCHA_GREP="vscode API - webview"` webview.test passes as in the reference (625 local resources, postMessage both ways); cargo test -p app webview; ArrayBuffer messages and `vscode:` links not relayed (port/notes.md milestone 17) |
+| mainthread/MainThreadWebviewPanels | MainThread* shape (Rust side) | ported | workbench/webview_panels.rs: create, reveal, dispose, title, view states, WebviewEditorInput tab; api-tests `MOCHA_GREP="vscode API - webview"` webview.test passes as in the reference (625 local resources, postMessage both ways); cargo test -p app webview. Serializers only registered: restoring panels waits for editor restore (milestone 11) |
 | mainthread/MainThreadCustomEditors | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadWebviewViews | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadManagedSockets | MainThread* shape (Rust side) | removed | no remote or tunnels by decision (port/notes.md); one local extension host |
@@ -214,7 +214,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/utilityProcess | src/vs/platform | n/a | Electron process, IPC or DOM layer; replaced by the single-process Rust/GPUI architecture (port/notes.md) |
 | platform/webContentExtractor | src/vs/platform | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | platform/webWorker | src/vs/platform | removed | Artur: internal infrastructure or developer tool with no 1:1 counterpart in the native port |
-| platform/webview | src/vs/platform | todo |  |
+| platform/webview | src/vs/platform | verified | webview.rs: WKWebView child view, upstream pre/index.html through a WKURLSchemeHandler; api-tests `MOCHA_GREP="vscode API - webview"` webview.test passes as in the reference (625 local resources, postMessage both ways); cargo test -p app webview |
 | platform/window | src/vs/platform | todo |  |
 | platform/windows | src/vs/platform | todo |  |
 | platform/workspace | src/vs/platform | ported | config/src/workspace.rs: folders, getFolder, toWorkspaceFolders, workspace label; cargo test -p config workspace (workspace.test.ts cases); api-workspace 4/4 |
@@ -488,8 +488,8 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/url | workbench contribution | todo |  |
 | workbench/contrib/userDataProfile | workbench contribution | todo |  |
 | workbench/contrib/userDataSync | workbench contribution | removed | no sign-in/AI by decision (port/notes.md); not ported |
-| workbench/contrib/webview | workbench contribution | todo |  |
-| workbench/contrib/webviewPanel | workbench contribution | todo |  |
+| workbench/contrib/webview | workbench contribution | ported | webviewElement.ts host protocol, theme variables, focus handoff, local resource loading (webview.rs); api-tests `MOCHA_GREP="vscode API - webview"` webview.test passes as in the reference (625 local resources, postMessage both ways); cargo test -p app webview. Find widget and dev tools not ported |
+| workbench/contrib/webviewPanel | workbench contribution | ported | webview panels as editors (workbench/webview_panels.rs); api-tests `MOCHA_GREP="vscode API - webview"` webview.test passes as in the reference (625 local resources, postMessage both ways); cargo test -p app webview |
 | workbench/contrib/webviewView | workbench contribution | todo |  |
 | workbench/contrib/welcomeBanner | workbench contribution | todo |  |
 | workbench/contrib/welcomeGettingStarted | workbench contribution | todo |  |

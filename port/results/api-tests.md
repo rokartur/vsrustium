@@ -173,3 +173,17 @@ On the Studio, the working tree of the `_workbench.open` commit. Combined grep o
 ## M13 diagnostics
 
 On the Studio, the working tree of the diagnostics and Next Problem commit. `MOCHA_GREP="vscode API - languages" SUITE_TIMEOUT=300 port/tools/api-tests`: api-folder 3 passing, 0 pending, 4 failing, 395 not reached (the pattern filters them). Passing: both `setTextDocumentLanguage` tests and `diagnostics, read & event`. Failing: link detector, diagnostics & CodeActionProvider, completions with document filters, folding command; they need `MainThreadLanguageFeatures`.
+
+## Milestone 17: webviews
+
+`MOCHA_GREP=<pattern> SUITE_TIMEOUT=900 port/tools/api-tests` on the Studio, the working tree of the webview panels commit 0af14672.
+
+| MOCHA_GREP | passing | pending | failing |
+|------------|---------|---------|---------|
+| `vscode API - webview` | 1 | 0 | 0 |
+| the M12 combined pattern, api-folder | 134 | 2 | 2 |
+| the same, api-workspace | 4 | 0 | 0 |
+| `vscode API - window` | 29 | 0 | 11 |
+| `vscode API - editors` | 13 | 0 | 0 |
+
+webview.test.ts ("loads many local resources concurrently without crashing") passes as in the reference. The other counts equal their baselines above (M12 `_workbench.open`, Milestone 11, Milestone 8): nothing lost.

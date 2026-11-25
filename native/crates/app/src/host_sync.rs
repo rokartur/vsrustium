@@ -79,6 +79,8 @@ pub struct HostSync {
     tabs: Vec<Value>,
     /// The search editors' tabs by their model's path; the workbench keeps them current.
     pub search_tabs: HashMap<PathBuf, SearchTab>,
+    /// The webview panels' tabs by their editor's path; no text model backs them.
+    pub webview_tabs: HashMap<PathBuf, WebviewTab>,
     activation_events: HashSet<String>,
     /// `configurationScopes` go to the host in a development build only (`MainThreadConfiguration.send_scopes`).
     pub configuration_scopes: bool,
@@ -95,13 +97,14 @@ const CODE_EDITOR_ID: &str = "vs.editor.ICodeEditor:1";
 
 impl HostSync {
     pub fn new(sender: Sender<HostMessage>) -> Self {
-        HostSync { sender, documents: Vec::new(), editor: None, visible_lines: None, tabs: Vec::new(), search_tabs: HashMap::new(), activation_events: HashSet::new(), configuration_scopes: false }
+        HostSync { sender, documents: Vec::new(), editor: None, visible_lines: None, tabs: Vec::new(), search_tabs: HashMap::new(), webview_tabs: HashMap::new(), activation_events: HashSet::new(), configuration_scopes: false }
     }
 
     /// Sends what changed in `group` since the last call: activation for new languages, the document
     /// and editor delta, then the tab model.
     pub fn send_changes(&mut self, group: &EditorGroup) {
-        let open: Vec<&OpenEditor> = group.editors.iter().chain(&group.models).collect();
+        let is_text = |editor: &&OpenEditor| !self.webview_tabs.contains_key(&editor.document.path);
+        let open: Vec<&OpenEditor> = group.editors.iter().chain(&group.models).filter(is_text).collect();
         let added: Vec<&OpenEditor> = open.iter().copied().filter(|editor| !self.documents.iter().any(|(uri, _)| *uri == editor.document.uri_string())).collect();
         let removed: Vec<(String, Value)> =
             self.documents.iter().filter(|(uri, _)| !open.iter().any(|editor| editor.document.uri_string() == *uri)).cloned().collect();
@@ -121,7 +124,7 @@ impl HostSync {
         if !added.is_empty() {
             delta.insert("addedDocuments".into(), added.iter().map(|editor| model_added_data(editor)).collect());
         }
-        let active = group.active();
+        let active = group.active().filter(is_text);
         let active_id = active.map(snapshot_id);
         if active_id != self.editor {
             if let Some(previous) = &self.editor {
@@ -147,7 +150,7 @@ impl HostSync {
     /// sends them: a whole `$acceptEditorTabModel` fires no `onDidChangeTabs`, which TypeScript's
     /// TabResourceTracker needs before it reports diagnostics.
     pub fn send_tabs(&mut self, group: &EditorGroup) {
-        let tabs: Vec<Value> = group.editors.iter().enumerate().map(|(index, editor)| tab_dto(editor, group.active_index() == Some(index), &self.search_tabs)).collect();
+        let tabs: Vec<Value> = group.editors.iter().enumerate().map(|(index, editor)| tab_dto(editor, group.active_index() == Some(index), &self.search_tabs, &self.webview_tabs)).collect();
         let mut sent = std::mem::take(&mut self.tabs);
         for index in (0..sent.len()).rev() {
             if !tabs.iter().any(|tab| tab["id"] == sent[index]["id"]) {
@@ -403,7 +406,7 @@ pub fn tab_id(editor: &OpenEditor) -> String {
     format!("0~default-{type_id}-{} ", editor.document.uri_string())
 }
 
-fn tab_dto(editor: &OpenEditor, active: bool, search_tabs: &HashMap<PathBuf, SearchTab>) -> Value {
+fn tab_dto(editor: &OpenEditor, active: bool, search_tabs: &HashMap<PathBuf, SearchTab>, webview_tabs: &HashMap<PathBuf, WebviewTab>) -> Value {
     let uri = editor.document.uri();
     let mut tab = json!({
         "id": tab_id(editor),
@@ -424,6 +427,14 @@ fn tab_dto(editor: &OpenEditor, active: bool, search_tabs: &HashMap<PathBuf, Sea
         tab["input"] = json!({ "kind": 0 });
         tab["editorId"] = json!(type_id);
     }
+    // mainThreadEditorTabs.ts: TabInputKind.WebviewEditorInput, its editor id is the view type.
+    if let Some(webview) = webview_tabs.get(&editor.document.path) {
+        let type_id = "workbench.editors.webviewInput";
+        tab["id"] = json!(format!("0~{}-{type_id}-{} ", webview.view_type, editor.document.uri_string()));
+        tab["label"] = json!(webview.label);
+        tab["input"] = json!({ "kind": 7, "viewType": webview.view_type });
+        tab["editorId"] = json!(webview.view_type);
+    }
     tab
 }
 
@@ -433,6 +444,12 @@ fn tab_dto(editor: &OpenEditor, active: bool, search_tabs: &HashMap<PathBuf, Sea
 pub struct SearchTab {
     pub label: String,
     pub resource: String,
+}
+
+pub struct WebviewTab {
+    pub label: String,
+    /// `mainThreadWebview-<viewType>`.
+    pub view_type: String,
 }
 
 
