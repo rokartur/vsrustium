@@ -671,11 +671,19 @@ impl Workbench {
                         })),
                 )
             })
-            .child(self.search_action("add", "workbench.action.terminal.new", true, cx))
-            .child(self.search_action("chevron-down", "workbench.action.terminal.newWithProfile", true, cx))
+            // dropdown.css `.monaco-dropdown-with-primary`: New Terminal and its 12px profile chevron side by side.
+            .child(div().flex().child(self.search_action("add", "workbench.action.terminal.new", true, cx)).child(self.terminal_profile_chevron(foreground, cx)))
             .when(!show_tabs, |actions| {
                 actions.child(self.search_action("split-horizontal", "workbench.action.terminal.split", true, cx)).child(self.search_action("trash", "workbench.action.terminal.kill", true, cx))
             })
+    }
+
+    fn terminal_profile_chevron(&self, foreground: gpui::Rgba, cx: &mut Context<Self>) -> gpui::Stateful<Div> {
+        let hover = self.color("toolbar.hoverBackground");
+        self.icon("chevron-down", 16., 12., foreground).id("workbench.action.terminal.newWithProfile").rounded(px(4.)).cursor_pointer().hover(|action| action.bg(hover)).on_click(cx.listener(|workbench, _: &gpui::ClickEvent, window, cx| {
+            cx.stop_propagation();
+            workbench.execute_command("workbench.action.terminal.newWithProfile", Vec::new(), window, cx);
+        }))
     }
 
     fn terminal_tabs_shown(&self) -> bool {
