@@ -9,7 +9,6 @@ use exthost::scan::scan_extension;
 use gpui::{Modifiers, MouseButton, TestAppContext, VisualTestContext, point, px};
 use serde_json::{Value, json};
 
-use crate::explorer::FileTree;
 use crate::host_sync::HostSync;
 use crate::languages::Languages;
 use crate::menus::MenuAction;
@@ -31,7 +30,7 @@ fn search<'a>(name: &str, cx: &'a mut TestAppContext) -> (PathBuf, gpui::Entity<
     let folder = dir.clone();
     let settings = Arc::new(Mutex::new(Settings::load(Registry::with_extensions(&[]), dir.join("User"), None)));
     let (workbench, cx) = cx.add_window_view(|_, cx| {
-        let mut workbench = Workbench::new(theme, app_root.clone(), Some(FileTree::new(Workspace::folder(folder.clone()))), Languages::new(&[]), settings.clone(), host, cx);
+        let mut workbench = Workbench::new(theme, app_root.clone(), Some(Workspace::folder(folder.clone())), Languages::new(&[]), settings.clone(), host, cx);
         workbench.skip_dialogs = true;
         workbench.load_keybindings(crate::keybindings::default_keybindings(&[]), folder.join("keybindings.json"), cx);
         workbench

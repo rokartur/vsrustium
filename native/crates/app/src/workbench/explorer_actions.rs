@@ -10,7 +10,7 @@ use std::time::Duration;
 use config::configuration::Overrides;
 use files::Resource;
 use files::operations::{FileEdit, FileEditOptions, FileUndo};
-use gpui::{AsyncWindowContext, Context, Div, FocusHandle, FontWeight, HighlightStyle, PromptLevel, Rgba, StyledText, Subscription, Task, WeakEntity, Window, deferred, div, prelude::*, px};
+use gpui::{AsyncWindowContext, Context, Div, FocusHandle, FontWeight, HighlightStyle, PromptLevel, Rgba, ScrollHandle, StyledText, Subscription, Task, WeakEntity, Window, deferred, div, prelude::*, px};
 use serde_json::{Value, json};
 
 use super::Workbench;
@@ -43,6 +43,7 @@ pub struct ExplorerState {
     pub drop_target: Option<PathBuf>,
     expand_timer: Option<Task<()>>,
     undo: UndoRedo<FileUndo>,
+    pub scroll: ScrollHandle,
 }
 
 pub struct ExplorerEdit {
@@ -57,11 +58,30 @@ pub struct ExplorerEdit {
 
 impl ExplorerState {
     pub fn new(cx: &mut gpui::App) -> Self {
-        ExplorerState { focus: cx.focus_handle(), input: InputView::default(), input_focus: cx.focus_handle(), edit: None, drop_target: None, expand_timer: None, undo: UndoRedo::default() }
+        ExplorerState { focus: cx.focus_handle(), input: InputView::default(), input_focus: cx.focus_handle(), edit: None, drop_target: None, expand_timer: None, undo: UndoRedo::default(), scroll: ScrollHandle::new() }
     }
 }
 
+/// `ExplorerView.TREE_VIEW_STATE_STORAGE_KEY`, workspace storage.
+const TREE_VIEW_STATE_KEY: &str = "workbench.explorer.treeViewState";
+
 impl Workbench {
+    /// `ExplorerView.storeTreeViewState`. Upstream stores on `onWillSaveState`; the port's caller runs it when the
+    /// window closes or the app quits.
+    pub(super) fn store_explorer_view_state(&self) {
+        let Some(tree) = &self.folder else { return };
+        let state = tree.view_state(-f32::from(self.explorer.scroll.offset().y));
+        self.workspace_storage.lock().unwrap().set(TREE_VIEW_STATE_KEY, state.to_string());
+    }
+
+    pub(super) fn restore_explorer_view_state(&mut self) {
+        let Some(tree) = &mut self.folder else { return };
+        let stored = self.workspace_storage.lock().unwrap().get(TREE_VIEW_STATE_KEY).and_then(|raw| serde_json::from_str::<Value>(raw).ok());
+        let Some(state) = stored else { return };
+        let scroll_top = tree.restore_view_state(&state);
+        self.explorer.scroll.set_offset(gpui::point(px(0.), px(-scroll_top)));
+    }
+
     pub(super) fn register_explorer_actions(&mut self) {
         self.commands.register("explorer.newFile", |workbench, _, window, cx| workbench.new_explorer_item(false, window, cx));
         self.commands.register("explorer.newFolder", |workbench, _, window, cx| workbench.new_explorer_item(true, window, cx));

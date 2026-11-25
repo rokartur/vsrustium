@@ -68,7 +68,7 @@ fn file_uri_string(path: &Path) -> String {
 }
 
 /// The path of a `file:` URI string; `None` for other schemes.
-fn file_path(uri: &str) -> Option<PathBuf> {
+pub fn file_path(uri: &str) -> Option<PathBuf> {
     let encoded = uri.strip_prefix("file://")?;
     let bytes = encoded.as_bytes();
     let mut decoded = Vec::with_capacity(bytes.len());

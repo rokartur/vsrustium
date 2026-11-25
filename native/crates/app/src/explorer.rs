@@ -1,12 +1,20 @@
 //! The Explorer's file tree: which folders are expanded, and the visible rows read from disk in the
 //! order the reference explorer sorts them (explorerViewer.ts `FileSorter`, `explorer.sortOrder: default`).
 
+mod nesting;
+
 use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock, Mutex};
 
+use config::configuration::Overrides;
+use config::service::Settings;
 use config::workspace::Workspace;
+use serde_json::{Value, json};
+
+use crate::editor::uri_string;
+use nesting::FileNestingTrie;
 use icu_collator::options::CollatorOptions;
 use icu_collator::preferences::CollationNumericOrdering;
 use icu_collator::{Collator, CollatorBorrowed, CollatorPreferences};
@@ -16,7 +24,11 @@ const EXCLUDED_NAMES: [&str; 6] = [".git", ".svn", ".hg", ".jj", ".DS_Store", "T
 
 pub struct FileTree {
     pub workspace: Workspace,
+    /// Read for `explorer.fileNesting.*` of each folder.
+    settings: Arc<Mutex<Settings>>,
     expanded: HashSet<PathBuf>,
+    /// Nests the user collapsed: with `explorer.fileNesting.expand` the others are expanded (`collapseByDefault`).
+    collapsed_nests: HashSet<PathBuf>,
     /// The list's focused row, its selection, and where a Shift range starts.
     pub focused: Option<PathBuf>,
     pub selected: Vec<PathBuf>,
@@ -42,6 +54,8 @@ pub struct Row {
     /// 1 for the top rows, as the reference tree counts depth: the folder's children, or a workspace's folders.
     pub depth: usize,
     pub is_dir: bool,
+    /// A file other files are nested under; it has a twistie as a folder does.
+    pub has_nests: bool,
     pub expanded: bool,
     /// The new item's row: no name yet, `path` is its parent.
     pub is_new: bool,
@@ -50,12 +64,45 @@ pub struct Row {
 impl FileTree {
     /// `ExplorerView.doSetTreeInput` without a stored view state: a workspace file shows its folders as roots,
     /// the first five expanded.
-    pub fn new(workspace: Workspace) -> Self {
+    pub fn new(workspace: Workspace, settings: Arc<Mutex<Settings>>) -> Self {
         let mut expanded = HashSet::new();
         if workspace.file.is_some() {
             expanded.extend(workspace.folders.iter().take(5).map(|folder| folder.path.clone()));
         }
-        Self { workspace, expanded, focused: None, selected: Vec::new(), anchor: None, clipboard: Vec::new(), cut: false, new_item: None }
+        Self { workspace, settings, expanded, collapsed_nests: HashSet::new(), focused: None, selected: Vec::new(), anchor: None, clipboard: Vec::new(), cut: false, new_item: None }
+    }
+
+    /// `AsyncDataTree.getViewState` with explorerModel.ts `getId` (`<root URI>::<resource URI>`), as
+    /// `ExplorerView.storeTreeViewState` writes it.
+    pub fn view_state(&self, scroll_top: f32) -> Value {
+        let id = |path: &PathBuf| {
+            let root = self.workspace.folder_of(path).map_or(path.as_path(), |folder| folder.path.as_path());
+            format!("{}::{}", uri_string("file", root), uri_string("file", path))
+        };
+        let mut expanded: Vec<&PathBuf> = self.expanded.iter().filter(|path| path.exists()).collect();
+        let rows = self.rows();
+        expanded.extend(rows.iter().filter(|row| row.has_nests && row.expanded && !self.expanded.contains(&row.path)).map(|row| &row.path));
+        json!({
+            "focus": self.focused.iter().map(id).collect::<Vec<_>>(),
+            "selection": self.selected.iter().map(id).collect::<Vec<_>>(),
+            "expanded": expanded.into_iter().map(id).collect::<Vec<_>>(),
+            "scrollTop": scroll_top,
+        })
+    }
+
+    /// `ExplorerView.setTreeInput` with the stored view state: it replaces the default expansion, and focus and
+    /// selection keep the items that are shown once the stored folders are expanded. Answers `scrollTop`.
+    pub fn restore_view_state(&mut self, state: &Value) -> f32 {
+        let paths = |key: &str| -> Vec<PathBuf> {
+            let ids = state[key].as_array().map(Vec::as_slice).unwrap_or_default();
+            ids.iter().filter_map(|id| crate::editor_history::file_path(id.as_str()?.split("::").nth(1)?)).collect()
+        };
+        self.expanded = paths("expanded").into_iter().collect();
+        let shown: HashSet<PathBuf> = self.rows().into_iter().map(|row| row.path).collect();
+        self.focused = paths("focus").into_iter().find(|path| shown.contains(path));
+        self.selected = paths("selection").into_iter().filter(|path| shown.contains(path)).collect();
+        self.anchor = self.focused.clone();
+        state["scrollTop"].as_f64().unwrap_or(0.) as f32
     }
 
     /// The tree shows the folders as rows, as for any WorkbenchState but FOLDER.
@@ -92,9 +139,11 @@ impl FileTree {
                 *path = path_moved;
             }
         }
-        let expanded: Vec<PathBuf> = self.expanded.iter().filter_map(moved).collect();
-        self.expanded.retain(|path| !path.starts_with(old));
-        self.expanded.extend(expanded);
+        for set in [&mut self.expanded, &mut self.collapsed_nests] {
+            let moved_paths: Vec<PathBuf> = set.iter().filter_map(moved).collect();
+            set.retain(|path| !path.starts_with(old));
+            set.extend(moved_paths);
+        }
     }
 
     /// A right click: listWidget.ts `onViewPointer` focuses the row, or clears focus and selection outside the
@@ -139,12 +188,21 @@ impl FileTree {
 
     /// `ExplorerService.getContext`: the selection when it holds the focused row and `respect_multi_selection`,
     /// else the focused row.
+    /// With `respect_multi_selection`, a collapsed nest brings the files nested under it.
     pub fn context(&self, respect_multi_selection: bool) -> Vec<PathBuf> {
         let Some(focused) = &self.focused else { return Vec::new() };
-        match respect_multi_selection && self.selected.contains(focused) {
-            true => self.selected.clone(),
-            false => vec![focused.clone()],
+        if !respect_multi_selection || !self.selected.contains(focused) {
+            return vec![focused.clone()];
         }
+        let mut items = self.selected.clone();
+        for item in &self.selected {
+            let Some(folder) = item.parent().filter(|_| !item.is_dir()) else { continue };
+            let Some(entry) = self.entries(folder).into_iter().find(|entry| entry.path == *item) else { continue };
+            if !entry.nested.is_empty() && !self.nest_expanded(item) {
+                items.extend(entry.nested.into_iter().map(|(path, _)| path).filter(|path| !self.selected.contains(path)));
+            }
+        }
+        items
     }
 
     /// A workspace folder: the tree's root, a row only in a workspace.
@@ -174,9 +232,25 @@ impl FileTree {
     }
 
     pub fn toggle(&mut self, folder: &Path) {
-        if !self.expanded.remove(folder) {
-            self.expanded.insert(folder.to_path_buf());
+        let expanded = self.expanded.contains(folder);
+        self.set_expanded(folder, !expanded);
+    }
+
+    pub fn set_expanded(&mut self, path: &Path, expanded: bool) {
+        match expanded {
+            true => {
+                self.expanded.insert(path.to_path_buf());
+                self.collapsed_nests.remove(path);
+            }
+            false => {
+                self.expanded.remove(path);
+                self.collapsed_nests.insert(path.to_path_buf());
+            }
         }
+    }
+
+    fn nest_expanded(&self, path: &Path) -> bool {
+        self.expanded.contains(path) || (self.nesting_setting(path, "explorer.fileNesting.expand").as_bool() == Some(true) && !self.collapsed_nests.contains(path))
     }
 
     /// Read from disk on every call: no file watcher yet, so a redraw shows the folder as it is now.
@@ -188,7 +262,7 @@ impl FileTree {
         }
         for folder in &self.workspace.folders {
             let expanded = self.expanded.contains(&folder.path);
-            rows.push(Row { path: folder.path.clone(), name: folder.name.clone(), depth: 1, is_dir: true, expanded, is_new: false });
+            rows.push(Row { path: folder.path.clone(), name: folder.name.clone(), depth: 1, is_dir: true, has_nests: false, expanded, is_new: false });
             if expanded {
                 self.push_children(&folder.path, 2, &mut rows);
             }
@@ -199,37 +273,101 @@ impl FileTree {
     /// The new item has an empty name, so `FileSorter` puts it first among the folders or the files.
     fn push_children(&self, folder: &Path, depth: usize, rows: &mut Vec<Row>) {
         let new_item = self.new_item.as_ref().filter(|item| item.parent == folder);
-        let new_row = |is_dir| Row { path: folder.to_path_buf(), name: String::new(), depth, is_dir, expanded: false, is_new: true };
+        let new_row = |is_dir| Row { path: folder.to_path_buf(), name: String::new(), depth, is_dir, has_nests: false, expanded: false, is_new: true };
         if new_item.is_some_and(|item| item.is_dir) {
             rows.push(new_row(true));
         }
         let mut new_file = new_item.filter(|item| !item.is_dir);
-        for (path, name, is_dir) in sorted_children(folder) {
+        for Entry { path, name, is_dir, nested } in self.entries(folder) {
             if !is_dir && new_file.take().is_some() {
                 rows.push(new_row(false));
             }
-            let expanded = is_dir && self.expanded.contains(&path);
-            rows.push(Row { path: path.clone(), name, depth, is_dir, expanded, is_new: false });
-            if expanded {
+            let has_nests = !nested.is_empty();
+            let expanded = match is_dir {
+                true => self.expanded.contains(&path),
+                false => has_nests && self.nest_expanded(&path),
+            };
+            rows.push(Row { path: path.clone(), name, depth, is_dir, has_nests, expanded, is_new: false });
+            if expanded && is_dir {
                 self.push_children(&path, depth + 1, rows);
+            }
+            if expanded && has_nests {
+                rows.extend(nested.into_iter().map(|(path, name)| Row { path, name, depth: depth + 1, is_dir: false, has_nests: false, expanded: false, is_new: false }));
             }
         }
         if new_file.is_some() {
             rows.push(new_row(false));
         }
     }
+
+    /// The items of `folder` in `FileSorter` order. With `explorer.fileNesting.enabled`, a file nested under another
+    /// is left out and listed, sorted, in its parent's `nested` (explorerModel.ts `fetchChildren`). Names are
+    /// matched lowercased, as `getPlatformAwareName` on a disk without PathCaseSensitive.
+    fn entries(&self, folder: &Path) -> Vec<Entry> {
+        let children = sorted_children(folder);
+        let visible = |name: &str| !EXCLUDED_NAMES.contains(&name);
+        let Some(nester) = self.nester(folder) else {
+            return children.into_iter().filter(|(_, name, _)| visible(name)).map(|(path, name, is_dir)| Entry { path, name, is_dir, nested: Vec::new() }).collect();
+        };
+        // `files.exclude` filters the tree after nesting, so an excluded file still nests the files under it.
+        let files: Vec<String> = children.iter().filter(|(_, _, is_dir)| !is_dir).map(|(_, name, _)| name.to_lowercase()).collect();
+        let dirname = folder.file_name().map(|name| name.to_string_lossy().to_lowercase()).unwrap_or_default();
+        let nests = nester.nest(&files, &dirname);
+        let mut entries = Vec::new();
+        for (path, name, is_dir) in &children {
+            if !visible(name) {
+                continue;
+            }
+            if *is_dir {
+                entries.push(Entry { path: path.clone(), name: name.clone(), is_dir: true, nested: Vec::new() });
+                continue;
+            }
+            let Some(nested_names) = nests.get(&name.to_lowercase()) else { continue };
+            let nested = children
+                .iter()
+                .filter(|(_, child, is_dir)| !is_dir && visible(child) && nested_names.contains(&child.to_lowercase()))
+                .map(|(path, name, _)| (path.clone(), name.clone()))
+                .collect();
+            entries.push(Entry { path: path.clone(), name: name.clone(), is_dir: false, nested });
+        }
+        entries
+    }
+
+    /// explorerModel.ts `fileNester` for the folder's `explorer.fileNesting.patterns`; `None` while nesting is off.
+    fn nester(&self, folder: &Path) -> Option<FileNestingTrie> {
+        if self.nesting_setting(folder, "explorer.fileNesting.enabled").as_bool() != Some(true) {
+            return None;
+        }
+        let patterns = self.nesting_setting(folder, "explorer.fileNesting.patterns");
+        let mut config = Vec::new();
+        for (parent, children) in patterns.as_object().into_iter().flatten() {
+            let Some(children) = children.as_str().filter(|children| !parent.is_empty() && !children.is_empty()) else { continue };
+            let children = children.split(',').map(|child| child.trim().replace('\u{200b}', "").trim().to_lowercase()).filter(|child| !child.is_empty()).collect();
+            config.push((parent.trim().to_lowercase(), children));
+        }
+        Some(FileNestingTrie::new(&config))
+    }
+
+    fn nesting_setting(&self, resource: &Path, key: &str) -> Value {
+        self.settings.lock().unwrap().get_value(Some(key), &Overrides { resource: Some(resource), ..Overrides::default() }).unwrap_or(Value::Null)
+    }
 }
 
-/// Folders first, then names in `compareFileNamesDefault` order.
+/// An item of a folder, with the files nested under it.
+struct Entry {
+    path: PathBuf,
+    name: String,
+    is_dir: bool,
+    nested: Vec<(PathBuf, String)>,
+}
+
+/// Folders first, then names in `compareFileNamesDefault` order; excluded names too.
 fn sorted_children(folder: &Path) -> Vec<(PathBuf, String, bool)> {
     // shortcut: an unreadable folder shows no children; the reference shows the error in the tree.
     let Ok(entries) = std::fs::read_dir(folder) else { return Vec::new() };
     let mut children = Vec::new();
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
-        if EXCLUDED_NAMES.contains(&name.as_str()) {
-            continue;
-        }
         let is_dir = entry.path().is_dir();
         children.push((entry.path(), name, is_dir));
     }
@@ -265,7 +403,7 @@ mod tests {
         for file in ["README.md", "notes.txt", "src/main.ts", ".DS_Store"] {
             std::fs::write(root.join(file), "").unwrap();
         }
-        let mut tree = FileTree::new(Workspace::folder(root.clone()));
+        let mut tree = FileTree::new(Workspace::folder(root.clone()), crate::default_settings());
         let row = |name: &str, depth| (name.to_string(), depth);
         assert_eq!(names(&tree), [row("Docs", 1), row("src", 1), row("notes.txt", 1), row("README.md", 1)]);
 
@@ -309,7 +447,7 @@ mod tests {
         let configured: Vec<String> = folders.iter().map(|folder| format!(r#"{{ "path": "{folder}" }}"#)).collect();
         let file = root.join("test.code-workspace");
         std::fs::write(&file, format!(r#"{{ "folders": [{}, {{ "path": "folder1/../folder1" }}] }}"#, configured.join(", "))).unwrap();
-        let mut tree = FileTree::new(Workspace::from_file(file));
+        let mut tree = FileTree::new(Workspace::from_file(file), crate::default_settings());
         let rows = names(&tree);
         let row = |name: &str, depth| (name.to_string(), depth);
         assert_eq!(rows[..3], [row("folder1", 1), row("a.txt", 2), row("folder2", 1)]);
@@ -323,7 +461,7 @@ mod tests {
 
     #[test]
     fn a_moved_folder_keeps_selection_and_expansion_of_its_items() {
-        let mut tree = FileTree::new(Workspace::folder(PathBuf::from("/w")));
+        let mut tree = FileTree::new(Workspace::folder(PathBuf::from("/w")), crate::default_settings());
         tree.toggle(Path::new("/w/src"));
         tree.toggle(Path::new("/w/src/lib"));
         tree.click_select(Path::new("/w/src/lib/a.ts"), false, false);
@@ -332,6 +470,67 @@ mod tests {
         assert_eq!(tree.selected, [PathBuf::from("/w/out/src/lib/a.ts"), PathBuf::from("/w/srcfile")], "a name that only starts with the folder's stays");
         assert!(tree.expanded.contains(Path::new("/w/out/src")) && tree.expanded.contains(Path::new("/w/out/src/lib")));
         assert!(!tree.expanded.iter().any(|path| path.starts_with("/w/src")));
+    }
+
+    #[test]
+    fn nests_files_under_their_parent_with_file_nesting() {
+        let root = std::env::temp_dir().join(format!("explorer-nesting-test-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        for file in ["a.ts", "a.js", "a.js.map", "b.js", "package.json", "Package-Lock.json", ".DS_Store"] {
+            std::fs::write(root.join(file), "").unwrap();
+        }
+        let user = root.with_extension("user");
+        std::fs::create_dir_all(&user).unwrap();
+        let settings = Arc::new(Mutex::new(Settings::load(config::registry::Registry::with_extensions(&[]), user.clone(), None)));
+        let mut tree = FileTree::new(Workspace::folder(root.clone()), settings.clone());
+        assert_eq!(names(&tree).len(), 7, "nesting is off by default");
+
+        settings.lock().unwrap().update_value_derived("explorer.fileNesting.enabled", Some(&json!(true))).unwrap();
+        let rows = tree.rows();
+        let shown: Vec<(&str, usize, bool)> = rows.iter().map(|row| (row.name.as_str(), row.depth, row.has_nests)).collect();
+        assert_eq!(
+            shown,
+            [("src", 1, false), ("a.ts", 1, true), ("a.js", 2, false), ("a.js.map", 2, false), ("b.js", 1, false), ("package.json", 1, true), ("Package-Lock.json", 2, false)],
+            "the default patterns nest a.js and, through it, a.js.map under a.ts; names match without case"
+        );
+        assert!(rows[1].expanded, "explorer.fileNesting.expand defaults to true");
+
+        tree.set_expanded(&root.join("a.ts"), false);
+        assert_eq!(names(&tree).len(), 5);
+        tree.click_select(&root.join("a.ts"), false, false);
+        assert_eq!(tree.context(true), [root.join("a.ts"), root.join("a.js"), root.join("a.js.map")], "a collapsed nest brings its files");
+        assert_eq!(tree.context(false), [root.join("a.ts")]);
+
+        settings.lock().unwrap().update_value_derived("explorer.fileNesting.expand", Some(&json!(false))).unwrap();
+        tree.set_expanded(&root.join("a.ts"), true);
+        assert_eq!(names(&tree).len(), 6, "package.json starts collapsed, a.ts is expanded again");
+        std::fs::remove_dir_all(root).unwrap();
+        std::fs::remove_dir_all(user).unwrap();
+    }
+
+    #[test]
+    fn restores_the_stored_view_state() {
+        let root = std::env::temp_dir().join(format!("explorer-view-state-test-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("src/lib")).unwrap();
+        std::fs::write(root.join("src/lib/a b.ts"), "").unwrap();
+        let mut tree = FileTree::new(Workspace::folder(root.clone()), crate::default_settings());
+        tree.reveal(&root.join("src/lib/a b.ts"));
+        let state = tree.view_state(44.);
+        let root_uri = uri_string("file", &root);
+        assert_eq!(state["focus"], json!([format!("{root_uri}::{root_uri}/src/lib/a%20b.ts")]), "ids as explorerModel.ts getId");
+        assert_eq!(state["scrollTop"], json!(44.));
+
+        let mut reopened = FileTree::new(Workspace::folder(root.clone()), crate::default_settings());
+        assert_eq!(reopened.restore_view_state(&state), 44.);
+        assert_eq!(names(&reopened), names(&tree));
+        assert_eq!(reopened.selected, [root.join("src/lib/a b.ts")]);
+        assert_eq!(reopened.context(false), [root.join("src/lib/a b.ts")]);
+
+        std::fs::remove_dir_all(root.join("src/lib")).unwrap();
+        let mut reopened = FileTree::new(Workspace::folder(root.clone()), crate::default_settings());
+        reopened.restore_view_state(&state);
+        assert!(reopened.focused.is_none() && reopened.selected.is_empty(), "items no longer shown are dropped");
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     /// Cases from src/vs/base/test/browser/comparers.test.ts `compareFileNamesDefault`.
