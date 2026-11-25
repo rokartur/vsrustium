@@ -15,10 +15,12 @@ use crate::keybindings::{self, Chord, Item, Resolution, Resolver};
 
 /// The keybindings and the dispatch state of `AbstractKeybindingService`.
 pub struct Keybindings {
-    defaults: Vec<Item>,
+    pub(super) defaults: Vec<Item>,
     /// `<user data>/User/keybindings.json`.
-    user_file: Option<PathBuf>,
+    pub(super) user_file: Option<PathBuf>,
     pub resolver: Resolver,
+    /// Counts the resolver's rebuilds, so the Keyboard Shortcuts editor knows its rows are stale.
+    pub(super) generation: u64,
     /// Chords pressed so far in multi-chord mode, with their labels.
     chords: Vec<(Chord, String)>,
     chord_checker: Option<Task<()>>,
@@ -26,7 +28,7 @@ pub struct Keybindings {
 
 impl Default for Keybindings {
     fn default() -> Self {
-        Keybindings { defaults: Vec::new(), user_file: None, resolver: Resolver::new(Vec::new(), Vec::new()), chords: Vec::new(), chord_checker: None }
+        Keybindings { defaults: Vec::new(), user_file: None, resolver: Resolver::new(Vec::new(), Vec::new()), generation: 0, chords: Vec::new(), chord_checker: None }
     }
 }
 
@@ -37,6 +39,7 @@ impl Workbench {
         self.keybindings.resolver = Resolver::new(defaults.clone(), overrides);
         self.keybindings.defaults = defaults;
         self.keybindings.user_file = Some(user_file.clone());
+        self.keybindings.generation += 1;
         // shortcut: the file is polled once a second where the reference has a file watcher; no watcher crate is in the port.
         cx.spawn(async move |workbench, cx| {
             let modified = |path: &PathBuf| std::fs::metadata(path).and_then(|metadata| metadata.modified()).ok();
@@ -49,8 +52,10 @@ impl Workbench {
                 }
                 seen = now;
                 let overrides = keybindings::user_keybindings(&user_file);
-                let updated = workbench.update(cx, |workbench, _| {
+                let updated = workbench.update(cx, |workbench, cx| {
                     workbench.keybindings.resolver = Resolver::new(workbench.keybindings.defaults.clone(), overrides);
+                    workbench.keybindings.generation += 1;
+                    cx.notify();
                 });
                 if updated.is_err() {
                     return;
@@ -77,7 +82,16 @@ impl Workbench {
         }
         let current: Vec<Chord> = self.keybindings.chords.iter().map(|(chord, _)| *chord).collect();
         let in_chord_mode = !current.is_empty();
-        match self.keybindings.resolver.resolve(&self.key_context(window), &current, chord) {
+        let resolution = self.keybindings.resolver.resolve(&self.key_context(window), &current, chord);
+        if !in_chord_mode && self.keybindings_editor_record_key(chord, &resolution, window, cx) {
+            cx.stop_propagation();
+            return;
+        }
+        if self.modal_blocks_command(&resolution, window) {
+            cx.stop_propagation();
+            return;
+        }
+        match resolution {
             Resolution::MoreChordsNeeded => {
                 cx.stop_propagation();
                 self.expect_another_chord(chord, window, cx);
@@ -201,6 +215,7 @@ impl Workbench {
         }
         self.quick_input_context(window, &mut context);
         self.explorer_context(window, &mut context);
+        self.keybindings_editor_context(window, &mut context);
         context
     }
 

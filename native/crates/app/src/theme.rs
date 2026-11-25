@@ -527,6 +527,15 @@ fn quick_input_default(key: &str) -> (ColorValue, ColorValue, ColorValue) {
         "editorHoverWidget.foreground" => (Key("editorWidget.foreground"), Key("editorWidget.foreground"), Key("editorWidget.foreground")),
         "editorHoverWidget.border" => (Key("editorWidget.border"), Key("editorWidget.border"), Key("editorWidget.border")),
         "textLink.foreground" => (Hex("#3794FF"), Hex("#006AB1"), Hex("#21A6FF")),
+        "textLink.activeForeground" => (Hex("#3794FF"), Hex("#006AB1"), Hex("#21A6FF")),
+        // listColors.ts, editorColors.ts and keybindingsEditor.ts, for the Keyboard Shortcuts editor.
+        "list.focusOutline" => (Key("focusBorder"), Key("focusBorder"), Key("contrastActiveBorder")),
+        "widget.shadow" => (Hex("#0000005C"), Hex("#00000029"), None),
+        "tree.tableOddRowsBackground" => (Transparent(&Key("foreground"), 0.04), Transparent(&Key("foreground"), 0.04), None),
+        "tree.tableColumnsBorder" => (Hex("#CCCCCC20"), Hex("#61616120"), None),
+        "keybindingTable.headerBackground" | "keybindingTable.rowsBackground" => {
+            (Key("tree.tableOddRowsBackground"), Key("tree.tableOddRowsBackground"), Key("tree.tableOddRowsBackground"))
+        }
         _ => (None, None, None),
     }
 }
@@ -582,7 +591,9 @@ fn quick_input_default_hc_light(key: &str) -> ColorValue {
         "editorHoverWidget.background" => Key("editorWidget.background"),
         "editorHoverWidget.foreground" => Key("editorWidget.foreground"),
         "editorHoverWidget.border" => Key("editorWidget.border"),
-        "textLink.foreground" => Hex("#0F4A85"),
+        "textLink.foreground" | "textLink.activeForeground" => Hex("#0F4A85"),
+        "list.focusOutline" => Key("contrastActiveBorder"),
+        "keybindingTable.headerBackground" | "keybindingTable.rowsBackground" => Key("tree.tableOddRowsBackground"),
         _ => None,
     }
 }

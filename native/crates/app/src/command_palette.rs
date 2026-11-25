@@ -195,7 +195,7 @@ pub struct MenuItem {
 /// `f1: true` actions and `appendToCommandPalette` (fileActions.contribution.ts), undo/redo/select all
 /// (editorExtensions.ts), clipboard.ts, commandsQuickAccess.ts, gotoLineQuickAccess.ts, preferences.contribution.ts, themes.contribution.ts,
 /// stickyScrollActions.ts, mainThreadFileSystemEventService.ts, editorStatus.ts. Each is the id, title, category, `when` and `precondition`.
-const WORKBENCH_ITEMS: [(&str, &str, Option<&str>, Option<&str>, Option<&str>); 22] = [
+const WORKBENCH_ITEMS: [(&str, &str, Option<&str>, Option<&str>, Option<&str>); 23] = [
     ("workbench.action.showCommands", "Show All Commands", None, None, None),
     ("workbench.action.gotoLine", "Go to Line/Column...", None, None, None),
     ("workbench.action.gotoOffset", "Go to Offset...", None, None, None),
@@ -204,6 +204,7 @@ const WORKBENCH_ITEMS: [(&str, &str, Option<&str>, Option<&str>, Option<&str>); 
     ("workbench.action.files.saveFiles", "Save All Files", Some("File"), Some("!isSessionsWindow"), None),
     ("workbench.action.files.revert", "Revert File", Some("File"), Some("!isSessionsWindow"), None),
     ("workbench.action.closeAllEditors", "Close All Editors", Some("View"), None, None),
+    ("workbench.action.openGlobalKeybindings", "Open Keyboard Shortcuts", Some("Preferences"), None, None),
     ("workbench.action.openGlobalKeybindingsFile", "Open Keyboard Shortcuts (JSON)", Some("Preferences"), None, None),
     ("workbench.action.selectTheme", "Color Theme", Some("Preferences"), None, None),
     ("workbench.action.editor.changeLanguageMode", "Change Language Mode", None, None, Some("!notebookEditorFocused")),

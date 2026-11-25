@@ -312,10 +312,12 @@ impl Workbench {
             Event::TriggerItemButton(handle, button, _) => {
                 let Some(Accept::Command { id: command, .. }) = self.quick_access_pick(id, handle) else { return };
                 if button == 0 {
-                    // shortcut: opens keybindings.json where upstream opens the Keybindings editor at the command; the port has no Keybindings editor yet.
+                    // commandsQuickAccess.ts: the Keyboard Shortcuts editor at `createKeybindingCommandQuery(commandId, commandWhen)`.
                     self.hide_quick_input_by_id(id, window, cx);
-                    let outcome = self.execute_command("workbench.action.openGlobalKeybindingsFile", Vec::new(), window, cx);
-                    show_failure("Open Keyboard Shortcuts (JSON)".into(), outcome, window, cx);
+                    let when = self.quick_access.menu.iter().find(|item| item.id == command).and_then(|item| item.precondition.as_ref()).map(|when| format!(" +when:{}", when.serialize()));
+                    let query = format!("@command:{command}{}", when.unwrap_or_default());
+                    let outcome = self.execute_command(super::keybindings_editor_view::OPEN_COMMAND, vec![Value::String(query)], window, cx);
+                    show_failure("Open Keyboard Shortcuts".into(), outcome, window, cx);
                     return;
                 }
                 self.quick_access.history.remove(&command);

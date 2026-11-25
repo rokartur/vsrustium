@@ -19,10 +19,8 @@ mod history;
 mod fuzzy_scorer;
 mod host_sync;
 mod input_box;
-#[allow(dead_code, reason = "the Keyboard Shortcuts editor's view uses it in the next commit")]
 mod keybinding_editing;
 mod keybindings;
-#[allow(dead_code, reason = "the Keyboard Shortcuts editor's view uses it in the next commit")]
 mod keybindings_editor;
 mod languages;
 mod main_thread;

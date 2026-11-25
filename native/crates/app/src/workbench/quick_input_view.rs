@@ -849,7 +849,7 @@ impl Workbench {
     }
 
     /// A `HighlightedLabel` with `supportIcons`: `$(name)` draws a codicon, matches are bold in the highlight color.
-    fn highlighted_label(&self, text: &str, highlights: &[Range<usize>], color: Rgba, icon_size: f32, icon_color: Rgba) -> Div {
+    pub(super) fn highlighted_label(&self, text: &str, highlights: &[Range<usize>], color: Rgba, icon_size: f32, icon_color: Rgba) -> Div {
         let chars: Vec<char> = text.chars().collect();
         let mut line = div().flex().items_center().min_w_0();
         let mut segment = String::new();
@@ -881,30 +881,30 @@ impl Workbench {
 
     /// The `.monaco-keybinding` of a row: a box per key, chords apart.
     fn keybinding_label(&self, chords: &[Vec<String>], row_active: bool) -> Div {
-        let border = self.color("keybindingLabel.border");
-        let bottom = self.color("keybindingLabel.bottomBorder");
+        div().flex().items_center().children(chords.iter().enumerate().map(|(index, chord)| div().flex().when(index > 0, |chord| chord.ml(px(5.))).children(chord.iter().map(|label| self.key_cap(label, row_active)))))
+    }
+
+    /// keybindingLabel.css `.monaco-keybinding-key`.
+    pub(super) fn key_cap(&self, label: &str, row_active: bool) -> Div {
         let shadow = self.color("keybindingLabel.shadow");
-        let key = |label: &String| {
-            div()
-                .mx(px(2.))
-                .px(px(5.))
-                .h(px(18.))
-                .min_w(px(24.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(px(3.))
-                .text_size(px(11.))
-                .border_1()
-                .border_color(border)
-                .border_b_1()
-                .when(!row_active, |key| key.bg(self.color("keybindingLabel.background")))
-                .text_color(self.foreground_or("keybindingLabel.foreground"))
-                .shadow(vec![BoxShadow { color: shadow.into(), offset: point(px(0.), px(-1.)), blur_radius: px(0.), spread_radius: px(0.), inset: true }])
-                .child(div().border_b_1().border_color(bottom))
-                .child(label.clone())
-        };
-        div().flex().items_center().children(chords.iter().enumerate().map(|(index, chord)| div().flex().when(index > 0, |chord| chord.ml(px(5.))).children(chord.iter().map(key))))
+        div()
+            .mx(px(2.))
+            .px(px(5.))
+            .h(px(18.))
+            .min_w(px(24.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(3.))
+            .text_size(px(11.))
+            .border_1()
+            .border_color(self.color("keybindingLabel.border"))
+            .border_b_1()
+            .when(!row_active, |key| key.bg(self.color("keybindingLabel.background")))
+            .text_color(self.foreground_or("keybindingLabel.foreground"))
+            .shadow(vec![BoxShadow { color: shadow.into(), offset: point(px(0.), px(-1.)), blur_radius: px(0.), spread_radius: px(0.), inset: true }])
+            .child(div().border_b_1().border_color(self.color("keybindingLabel.bottomBorder")))
+            .child(label.to_string())
     }
 
     /// The 18px `.monaco-checkbox` of the list and the header: tri-state when `mixed`.

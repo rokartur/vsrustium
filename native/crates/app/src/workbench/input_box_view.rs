@@ -23,7 +23,11 @@ pub enum InputId {
     Explorer,
     Find,
     Replace,
+    KeybindingsSearch,
+    KeybindingsWhen,
 }
+
+const INPUTS: [InputId; 6] = [InputId::QuickInput, InputId::Explorer, InputId::Find, InputId::Replace, InputId::KeybindingsSearch, InputId::KeybindingsWhen];
 
 /// The view state of one input element.
 pub struct InputView {
@@ -73,6 +77,8 @@ impl Workbench {
             InputId::Explorer => &self.explorer.input,
             InputId::Find => &self.find.find_view,
             InputId::Replace => &self.find.replace_view,
+            InputId::KeybindingsSearch => &self.keybindings_editor.search_view,
+            InputId::KeybindingsWhen => &self.keybindings_editor.when_view,
         }
     }
 
@@ -82,6 +88,8 @@ impl Workbench {
             InputId::Explorer => &mut self.explorer.input,
             InputId::Find => &mut self.find.find_view,
             InputId::Replace => &mut self.find.replace_view,
+            InputId::KeybindingsSearch => &mut self.keybindings_editor.search_view,
+            InputId::KeybindingsWhen => &mut self.keybindings_editor.when_view,
         }
     }
 
@@ -91,6 +99,8 @@ impl Workbench {
             InputId::Explorer => &self.explorer.input_focus,
             InputId::Find => &self.find.find_focus,
             InputId::Replace => &self.find.replace_focus,
+            InputId::KeybindingsSearch => &self.keybindings_editor.search_focus,
+            InputId::KeybindingsWhen => &self.keybindings_editor.when_focus,
         }
     }
 
@@ -100,17 +110,19 @@ impl Workbench {
             InputId::Explorer => self.explorer.edit.as_ref().map(|edit| &edit.input),
             InputId::Find => Some(&self.find.find_input),
             InputId::Replace => Some(&self.find.replace_input),
+            InputId::KeybindingsSearch => Some(&self.keybindings_editor.search),
+            InputId::KeybindingsWhen => self.keybindings_editor.when.as_ref().map(|when| &when.input),
         }
     }
 
     /// The input element with the keyboard focus.
     pub(super) fn focused_input(&self, window: &Window) -> Option<InputId> {
-        [InputId::QuickInput, InputId::Explorer, InputId::Find, InputId::Replace].into_iter().find(|id| self.input_focus(*id).is_focused(window))
+        INPUTS.into_iter().find(|id| self.input_focus(*id).is_focused(window))
     }
 
     /// Any input element in an IME composition: the IME owns the keys.
     pub(super) fn input_composing(&self) -> bool {
-        [InputId::QuickInput, InputId::Explorer, InputId::Find, InputId::Replace].into_iter().any(|id| self.input_view(id).marked.is_some())
+        INPUTS.into_iter().any(|id| self.input_view(id).marked.is_some())
     }
 
     /// Runs `edit` on the element's value and restarts the caret blink.
@@ -124,6 +136,14 @@ impl Workbench {
             }
             InputId::Find | InputId::Replace => {
                 self.edit_find_input(id, edit, window, cx);
+                Outcome::done()
+            }
+            InputId::KeybindingsSearch => {
+                self.edit_keybindings_search(edit, window, cx);
+                Outcome::done()
+            }
+            InputId::KeybindingsWhen => {
+                self.edit_when_input(edit, cx);
                 Outcome::done()
             }
         }
@@ -285,6 +305,8 @@ impl Workbench {
                 InputId::Explorer => "explorer-input-text",
                 InputId::Find => "find-input-text",
                 InputId::Replace => "replace-input-text",
+                InputId::KeybindingsSearch => "keybindings-search-text",
+                InputId::KeybindingsWhen => "keybindings-when-text",
             })
             .flex_1()
             .h_full()
