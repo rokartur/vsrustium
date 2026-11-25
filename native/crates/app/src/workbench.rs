@@ -64,6 +64,7 @@ mod large_file;
 mod inspect_tokens;
 mod gutter_mouse;
 mod word_wrap;
+mod smooth_scrolling;
 mod text_input;
 mod title_bar_actions;
 mod unicode_highlight;
@@ -178,6 +179,7 @@ pub struct Workbench {
     stop_rendering_line_after: Option<usize>,
     editor_zoom: crate::editor::zoom::EditorZoom,
     middle_scroll: Option<middle_scroll::MiddleScroll>,
+    smooth_scrolling: Option<smooth_scrolling::SmoothScrolling>,
     pub quick_inputs: quick_input_view::QuickInputs,
     pub quick_access: quick_access::QuickAccess,
     pub explorer: explorer_actions::ExplorerState,
@@ -323,6 +325,7 @@ impl Workbench {
             stop_rendering_line_after: Some(10_000),
             editor_zoom: Default::default(),
             middle_scroll: None,
+            smooth_scrolling: None,
             quick_inputs: quick_input_view::QuickInputs::new(cx),
             quick_access: quick_access::QuickAccess::default(),
             explorer: explorer_actions::ExplorerState::new(cx),

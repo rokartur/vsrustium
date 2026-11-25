@@ -289,8 +289,10 @@ impl Workbench {
         }
         let adjust_scroll = !self.find.controller.state.is_revealed || revealed || !self.selection_under_find_widget(selections[0]);
         self.layout_find_zone(adjust_scroll);
+        let moved = self.editors.active().expect("checked above").selections != selections;
+        // findModel.ts reveals matches with `ScrollType.Smooth`.
+        let scrolled = self.animate_scroll_from(scroll, cx) || self.editors.viewport.top_whitespace != top_whitespace;
         let editor = self.editors.active().expect("checked above");
-        let (moved, scrolled) = (editor.selections != selections, editor.scroll != scroll || self.editors.viewport.top_whitespace != top_whitespace);
         match &change {
             Some(change) => {
                 self.host.send_content_change(&self.editors, self.editors.active_index().expect("checked above"), change);

@@ -384,12 +384,12 @@ impl Workbench {
             Some(3) => VerticalReveal::Top,
             _ => VerticalReveal::Simple,
         };
-        let viewport = self.editors.viewport;
-        let editor = self.editors.active_mut().expect("checked by host_request");
-        let (start, end) = range(editor, range_value);
-        let scroll = editor.scroll;
-        editor.reveal_range(start, end, reveal, viewport);
-        if editor.scroll != scroll {
+        // mainThreadEditor.ts `_revealRange` scrolls with `ScrollType.Smooth`.
+        let scrolled = self.scroll_smoothly(cx, |editor, viewport| {
+            let (start, end) = range(editor, range_value);
+            editor.reveal_range(start, end, reveal, viewport);
+        });
+        if scrolled {
             self.editor_scrolled(cx);
         }
         Ok(Value::Null)

@@ -42,6 +42,7 @@ pub mod model_service;
 mod multicursor;
 pub mod section_headers;
 pub mod smart_select;
+pub mod smooth_scroll;
 mod snippet;
 pub mod sticky_scroll;
 pub mod unicode_highlighter;

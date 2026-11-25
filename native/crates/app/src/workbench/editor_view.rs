@@ -642,9 +642,18 @@ impl Workbench {
                 return;
             }
         }
-        let viewport = self.editors.viewport;
-        let editor = self.editors.active_mut().expect("the text area scrolls only with an editor open");
-        if editor.scroll_by_wheel(x, y, event.modifiers.alt, viewport) {
+        let fast = event.modifiers.alt;
+        let scrolled = match event.delta {
+            // scrollableElement.ts: only a physical mouse wheel scrolls smoothly.
+            ScrollDelta::Lines(_) => self.scroll_smoothly(cx, |editor, viewport| {
+                editor.scroll_by_wheel(x, y, fast, viewport);
+            }),
+            ScrollDelta::Pixels(_) => {
+                let viewport = self.editors.viewport;
+                self.editors.active_mut().expect("the text area scrolls only with an editor open").scroll_by_wheel(x, y, fast, viewport)
+            }
+        };
+        if scrolled {
             cx.stop_propagation();
             self.editor_scrolled(cx);
         }
@@ -1377,16 +1386,13 @@ impl Workbench {
 
     /// After a command that moves cursors only: scrolls to what it reveals and tells the host.
     pub(super) fn cursors_changed(&mut self, before: Vec<Selection>, reveal: Reveal, source: &str, cx: &mut Context<Self>) {
-        let viewport = self.editors.viewport;
-        let editor = self.editors.active_mut().expect("cursors change in the active editor");
-        let scroll = editor.scroll;
-        match reveal {
+        let scrolled = self.scroll_smoothly(cx, |editor, viewport| match reveal {
             Reveal::Nothing => {}
             Reveal::All => editor.reveal_cursors(source, viewport),
             Reveal::Position(position) => editor.reveal_position(position, source, viewport),
             Reveal::CenterIfOutside(position) => editor.reveal_range(position, position, VerticalReveal::CenterIfOutsideViewport, viewport),
-        }
-        let (moved, scrolled) = (editor.selections != before, editor.scroll != scroll);
+        });
+        let moved = self.editors.active().expect("cursors change in the active editor").selections != before;
         if moved {
             self.output_cursor_moved();
             self.find_editor_edited(None);

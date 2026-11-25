@@ -34,11 +34,7 @@ impl Workbench {
 
     /// Tells the host about a content change or a cursor move, and reveals the cursor (cursor.ts `revealAll`).
     pub(super) fn editor_edited(&mut self, change: Option<ContentChanged>, moved: bool, source: &str, cx: &mut Context<Self>) {
-        let viewport = self.editors.viewport;
-        let editor = self.editors.active_mut().expect("only the active editor is edited");
-        let scroll = editor.scroll;
-        editor.reveal_cursors(source, viewport);
-        let scrolled = editor.scroll != scroll;
+        let scrolled = self.scroll_smoothly(cx, |editor, viewport| editor.reveal_cursors(source, viewport));
         self.find_editor_edited(change.as_ref());
         match &change {
             Some(change) => self.host.send_content_change(&self.editors, self.editors.active_index().expect("only the active editor is edited"), change),
