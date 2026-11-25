@@ -33,6 +33,7 @@ pub enum MenuId {
     EditorTitleContext,
     TitleBarContext,
     TitleBarTitleContext,
+    TerminalEditorInstanceContext,
     /// A `contributes.submenus` entry, `MenuId.for('api:<id>')`, by registration order.
     Api(usize),
     #[cfg(test)]
@@ -134,6 +135,14 @@ const WORKBENCH_MENUS: &[Row] = &[
     // output.contribution.ts and viewsService.ts `openCommandActionDescriptor.mnemonicTitle`
     (MenuId::EditorContext, None, "workbench.output.action.clearOutput", "Clear Output", "", 0., Some("inOutput"), None),
     (MenuId::MenubarViewMenu, None, "workbench.action.output.toggleOutput", "&&Output", "5_panel", 1., Some("workbench.panel.output.active"), None),
+    // terminalMenus.ts: the TerminalEditorInstanceContext items of the commands the port has.
+    (MenuId::TerminalEditorInstanceContext, None, "workbench.action.terminal.split", "Split Terminal", "1_create", 0., None, None),
+    (MenuId::TerminalEditorInstanceContext, None, "workbench.action.terminal.new", "New Terminal", "1_create", 0., None, None),
+    (MenuId::TerminalEditorInstanceContext, None, "workbench.action.terminal.killEditor", "Kill Terminal", "7_kill", 0., None, None),
+    (MenuId::TerminalEditorInstanceContext, None, "workbench.action.terminal.copySelection", "Copy", "3_edit", 1., None, None),
+    (MenuId::TerminalEditorInstanceContext, None, "workbench.action.terminal.paste", "Paste", "3_edit", 3., None, None),
+    (MenuId::TerminalEditorInstanceContext, None, "workbench.action.terminal.clear", "Clear", "5_clear", 0., None, None),
+    (MenuId::TerminalEditorInstanceContext, None, "workbench.action.terminal.selectAll", "Select All", "3_edit", 3., None, None),
     // editor.contribution.ts: the EditorTitleContext items of the commands the port has.
     (MenuId::EditorTitleContext, None, "workbench.action.closeActiveEditor", "Close", "1_close", 10., Some("!activeEditorCannotClose"), None),
     (MenuId::EditorTitleContext, None, "workbench.action.closeOtherEditors", "Close Others", "1_close", 20., None, Some("groupEditorsCount != '1'")),

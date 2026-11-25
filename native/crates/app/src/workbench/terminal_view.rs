@@ -15,7 +15,7 @@ use alacritty_terminal::term::{Config, TermMode};
 use alacritty_terminal::vte::ansi::{CursorShape, CursorStyle};
 use futures::StreamExt;
 use futures::channel::mpsc::UnboundedReceiver;
-use gpui::{Bounds, ClipboardItem, Context, Div, FocusHandle, FontWeight, Keystroke, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, ScrollDelta, ScrollWheelEvent, SharedString, Window, canvas, div, prelude::*, px};
+use gpui::{Bounds, ClipboardItem, Context, Div, FocusHandle, FontWeight, Keystroke, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollDelta, ScrollWheelEvent, SharedString, Size, Window, canvas, div, prelude::*, px};
 use config::configuration::Overrides;
 use config::service::Target;
 use serde_json::{Value, json};
@@ -26,6 +26,7 @@ use crate::commands::Outcome;
 use crate::editor::TextDocument;
 use crate::keybindings::Resolution;
 use crate::main_thread_quick_open::Owner;
+use crate::menus::MenuId;
 use crate::quick_input::{Button, Entry, Event, Item, Kind, QuickInput, Severity};
 use crate::terminal::colors::TerminalColors;
 use crate::terminal::environment_collection::EnvironmentCollections;
@@ -210,6 +211,12 @@ impl Workbench {
             Outcome::done()
         });
         self.commands.register("workbench.action.terminal.kill", |workbench, _, window, cx| {
+            if let Some(id) = workbench.terminal_view.active_instance_id() {
+                workbench.kill_terminal(id, window, cx);
+            }
+            Outcome::done()
+        });
+        self.commands.register("workbench.action.terminal.killEditor", |workbench, _, window, cx| {
             if let Some(id) = workbench.terminal_view.active_instance_id() {
                 workbench.kill_terminal(id, window, cx);
             }
@@ -1004,6 +1011,40 @@ impl Workbench {
         self.terminal_view.metrics.clone().expect("measured above")
     }
 
+    /// terminalContextMenu.ts `openContextMenu` after `rightClickBehavior`: selectWord (the macOS default) selects
+    /// the word under the pointer when nothing is selected, copyPaste copies a selection or pastes, paste pastes.
+    #[allow(clippy::too_many_arguments)]
+    fn terminal_right_click(&mut self, id: u32, row: i32, column: usize, side: Side, position: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
+        let behavior = self.setting("terminal.integrated.rightClickBehavior");
+        let Some(instance) = self.terminal_view.instance_mut(id) else { return };
+        let selection = instance.selection_text();
+        match behavior.as_str().unwrap_or("selectWord") {
+            "copyPaste" | "paste" => {
+                match selection.filter(|_| behavior == "copyPaste") {
+                    Some(text) => {
+                        cx.write_to_clipboard(ClipboardItem::new_string(text));
+                        instance.term.selection = None;
+                    }
+                    None => {
+                        if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+                            instance.paste(&text);
+                        }
+                    }
+                }
+                self.sync_terminals_to_host();
+                cx.notify();
+                return;
+            }
+            "selectWord" if selection.is_none() => instance.start_selection(SelectionType::Semantic, row, column, side),
+            "nothing" => return,
+            _ => {}
+        }
+        self.sync_terminals_to_host();
+        let context = self.key_context(window);
+        let anchor = Bounds { origin: position, size: Size::default() };
+        self.show_context_menu(MenuId::TerminalEditorInstanceContext, &context, anchor, Vec::new(), window, cx);
+    }
+
     fn terminal_mouse_down(&mut self, id: u32, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.terminal_view.set_active(id);
         window.focus(&self.terminal_view.focus, cx);
@@ -1025,9 +1066,11 @@ impl Workbench {
             cx.notify();
             return;
         }
-        // shortcut: the right click selects the word (`rightClickBehavior` selectWord) but shows no context menu; the terminal context menu is not ported.
+        if event.button == MouseButton::Right {
+            return self.terminal_right_click(id, row, column, side, event.position, window, cx);
+        }
         let kind = match (event.button, event.click_count) {
-            (MouseButton::Right, _) | (MouseButton::Left, 2) => SelectionType::Semantic,
+            (MouseButton::Left, 2) => SelectionType::Semantic,
             (MouseButton::Left, 3..) => SelectionType::Lines,
             (MouseButton::Left, _) => SelectionType::Simple,
             _ => return,
