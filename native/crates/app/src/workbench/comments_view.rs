@@ -360,7 +360,7 @@ impl Workbench {
     }
 
     /// The selected row's background and, in the focused tree, its `list.focusOutline`.
-    fn comments_row_selection(&self, row: gpui::Stateful<Div>, selected: bool, tree_focused: bool) -> gpui::Stateful<Div> {
+    pub(super) fn list_row_selection(&self, row: gpui::Stateful<Div>, selected: bool, tree_focused: bool) -> gpui::Stateful<Div> {
         if !selected {
             return row.hover(|row| row.bg(self.color("list.hoverBackground")));
         }
@@ -391,7 +391,7 @@ impl Workbench {
             .items_center()
             .pl(px(8.))
             .cursor_pointer();
-        self.comments_row_selection(row, selected, tree_focused)
+        self.list_row_selection(row, selected, tree_focused)
             .child(self.icon(if collapsed { "chevron-right" } else { "chevron-down" }, 16., 16., foreground).mr(px(2.)))
             .children(icon.map(|icon| icon.mr(px(6.))))
             .child(div().flex_none().child(name))
@@ -454,7 +454,7 @@ impl Workbench {
         let thread_handle = thread.handle;
         let selected = self.comments.view.selected == Some(Row::Thread(controller, thread_handle));
         let row = div().id(gpui::SharedString::from(format!("comments-thread-{controller}-{thread_handle}"))).flex_none().pl(px(30.)).cursor_pointer();
-        self.comments_row_selection(row, selected, tree_focused)
+        self.list_row_selection(row, selected, tree_focused)
             .child(first_line)
             .children(replies)
             .on_click(cx.listener(move |workbench, _, window, cx| {

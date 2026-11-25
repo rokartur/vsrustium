@@ -2,7 +2,7 @@
 //! tree, a resource row with its file icon, folder and count over its markers, each with its severity icon, message,
 //! source, code and position, its related information below. A click opens the marker's location. The filter box
 //! and its menu (markersViewActions.ts, markersFilterOptions.ts) pick what shows.
-// shortcut: no indent guides, row focus (so no Cmd+. for quick fixes), filter history or the focused first row on open.
+// shortcut: no indent guides, filter history, Cmd+. or Cmd+C on the selected row, or focus apart from selection.
 
 use std::cell::Cell;
 use std::collections::HashSet;
@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use gpui::{Bounds, Context, Div, FocusHandle, Pixels, Task, Window, div, prelude::*, px};
+use gpui::{Bounds, Context, Div, FocusHandle, KeyDownEvent, Pixels, Task, Window, div, prelude::*, px};
 use serde_json::{Value, json};
 
 use super::Workbench;
@@ -57,6 +57,17 @@ pub struct ProblemsView {
     /// `MarkersViewMode.Table`; `None` until set, then `problems.defaultViewMode` decides.
     table: Option<bool>,
     menu_bounds: Rc<Cell<Bounds<Pixels>>>,
+    /// The focused and selected row.
+    selected: Option<Row>,
+}
+
+/// A row of the tree: a resource by `URI.toString()`, a marker by resource and index, or a marker's related
+/// information by its index.
+#[derive(Clone, Debug, PartialEq)]
+enum Row {
+    Resource(String),
+    Marker(String, usize),
+    Related(String, usize, usize),
 }
 
 impl ProblemsView {
@@ -78,6 +89,7 @@ impl ProblemsView {
             multiline: true,
             table: None,
             menu_bounds: Rc::default(),
+            selected: None,
         }
     }
 
@@ -233,7 +245,7 @@ impl Workbench {
                 true => workbench.hide_panel(cx),
                 false => {
                     workbench.open_panel_view(MARKERS_CONTAINER_ID, cx);
-                    window.focus(&workbench.problems_focus, cx);
+                    workbench.focus_problems(window, cx);
                 }
             }
             Outcome::done()
@@ -243,13 +255,14 @@ impl Workbench {
                 true => workbench.close_panel_view(MARKERS_CONTAINER_ID, cx),
                 false => {
                     workbench.open_panel_view(MARKERS_CONTAINER_ID, cx);
-                    window.focus(&workbench.problems_focus, cx);
+                    workbench.focus_problems(window, cx);
                 }
             }
             Outcome::done()
         });
         self.commands.register("workbench.actions.treeView.workbench.panel.markers.view.collapseAll", |workbench, _, _, cx| {
             workbench.problems.collapsed = workbench.diagnostics.service.read(ReadOptions::default()).iter().map(|marker| marker.resource.clone()).collect();
+            workbench.problems.selected = None;
             cx.notify();
             Outcome::done()
         });
@@ -316,6 +329,81 @@ impl Workbench {
         context.insert("problems.filter.excludedFiles".into(), json!(self.problems.excluded_files));
         if filter_focused || tree_focused {
             context.insert("focusedView".into(), json!(MARKERS_VIEW_ID));
+        }
+    }
+
+    /// markersView.ts `focus`: the tree takes focus and, with nothing selected, `setMarkerSelection` selects the
+    /// first marker shown.
+    fn focus_problems(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus(&self.problems_focus, cx);
+        if self.problems.selected.is_none() {
+            self.problems.selected = self.problems_rows().into_iter().find(|row| matches!(row, Row::Marker(..)));
+        }
+        cx.notify();
+    }
+
+    /// The tree's rows in order: each resource, then, unless collapsed, its markers with their related information.
+    fn problems_rows(&self) -> Vec<Row> {
+        let resources = self.problems_resources();
+        let mut rows = Vec::new();
+        for resource in filter_resources(&resources, &self.problems_filter_options()) {
+            let uri = resource.resource.resource.clone();
+            rows.push(Row::Resource(uri.clone()));
+            if self.problems.collapsed.contains(&uri) {
+                continue;
+            }
+            for marker in &resource.markers {
+                rows.push(Row::Marker(uri.clone(), marker.index));
+                if !self.problems.collapsed_markers.contains(&(uri.clone(), marker.index)) {
+                    rows.extend((0..marker.related.len()).map(|related| Row::Related(uri.clone(), marker.index, related)));
+                }
+            }
+        }
+        rows
+    }
+
+    /// The list's keys: Up and Down move the selection, Enter and Space open a marker or toggle a resource.
+    fn problems_tree_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if self.problems_table_mode() {
+            return;
+        }
+        let rows = self.problems_rows();
+        let index = self.problems.selected.as_ref().and_then(|selected| rows.iter().position(|row| row == selected));
+        let next = match event.keystroke.key.as_str() {
+            "down" => index.map_or(0, |index| (index + 1).min(rows.len().saturating_sub(1))),
+            "up" => index.map_or(0, |index| index.saturating_sub(1)),
+            "enter" | "space" => {
+                cx.stop_propagation();
+                return self.open_problems_row(window, cx);
+            }
+            _ => return,
+        };
+        cx.stop_propagation();
+        self.problems.selected = rows.get(next).cloned();
+        cx.notify();
+    }
+
+    fn open_problems_row(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(row) = self.problems.selected.clone() else { return };
+        let resources = self.problems_resources();
+        let marker_at = |uri: &str, index: usize| resources.iter().find(|resource| resource.resource == uri).and_then(|resource| resource.markers.get(index)).cloned();
+        match row {
+            Row::Resource(uri) => {
+                if !self.problems.collapsed.remove(&uri) {
+                    self.problems.collapsed.insert(uri);
+                }
+                cx.notify();
+            }
+            Row::Marker(uri, index) => {
+                let Some(marker) = marker_at(&uri, index) else { return };
+                let target = json!({ "resource": crate::debug::uri_from_string(&marker.resource), "startLineNumber": marker.start_line, "startColumn": marker.start_column });
+                self.open_marker_related(&target, window, cx);
+            }
+            Row::Related(uri, index, related) => {
+                let Some(marker) = marker_at(&uri, index) else { return };
+                let Some(target) = related_information(&marker).get(related).cloned() else { return };
+                self.open_marker_related(&target, window, cx);
+            }
         }
     }
 
@@ -427,10 +515,16 @@ impl Workbench {
         table_items(&markers, &self.problems_filter_options(), path_of, file_label)
     }
 
-    fn problems_body(&self, _window: &Window, cx: &mut Context<Self>) -> Div {
+    fn problems_body(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         let resources = self.problems_resources();
         let shown = filter_resources(&resources, &self.problems_filter_options());
-        let list = div().id("problems-tree").track_focus(&self.problems_focus).flex_1().min_h_0().overflow_y_scroll().flex().flex_col().text_size(px(13.));
+        let focused = self.problems_focus.is_focused(window);
+        let selected = |row: Row| self.problems.selected.as_ref() == Some(&row);
+        let list = div()
+            .id("problems-tree")
+            .track_focus(&self.problems_focus)
+            .on_key_down(cx.listener(|workbench, event: &KeyDownEvent, window, cx| workbench.problems_tree_key_down(event, window, cx)))
+            .flex_1().min_h_0().overflow_y_scroll().flex().flex_col().text_size(px(13.));
         let total = self.diagnostics.service.read(ReadOptions::default()).len();
         let table = self.problems_table_mode().then(|| self.problems_table_items(&resources));
         let filtered = match &table {
@@ -446,16 +540,21 @@ impl Workbench {
         let mut rows = Vec::new();
         for resource in &shown {
             let collapsed = self.problems.collapsed.contains(&resource.resource.resource);
-            rows.push(self.problems_resource_row(resource, collapsed, cx));
+            let row = Row::Resource(resource.resource.resource.clone());
+            rows.push(self.list_row_selection(self.problems_resource_row(resource, collapsed, cx), selected(row), focused).into_any_element());
             if collapsed {
                 continue;
             }
             for marker in &resource.markers {
                 let key = (marker.marker.resource.clone(), marker.index);
                 let related_collapsed = self.problems.collapsed_markers.contains(&key);
-                rows.push(self.problems_marker_row(marker, related_collapsed, cx));
+                let row = Row::Marker(key.0.clone(), key.1);
+                rows.push(self.list_row_selection(self.problems_marker_row(marker, related_collapsed, cx), selected(row), focused).into_any_element());
                 if !related_collapsed {
-                    rows.extend(marker.related.iter().enumerate().map(|(index, (related, highlights))| self.problems_related_row(&key, index, related, highlights, cx)));
+                    for (index, (related, highlights)) in marker.related.iter().enumerate() {
+                        let row = Row::Related(key.0.clone(), key.1, index);
+                        rows.push(self.list_row_selection(self.problems_related_row(&key, index, related, highlights, cx), selected(row), focused).into_any_element());
+                    }
                 }
             }
         }
@@ -501,7 +600,7 @@ impl Workbench {
     }
 
     /// `ResourceMarkersRenderer`: twistie, file icon, name, folder description and the marker count.
-    fn problems_resource_row(&self, shown: &ShownResource, collapsed: bool, cx: &mut Context<Self>) -> gpui::AnyElement {
+    fn problems_resource_row(&self, shown: &ShownResource, collapsed: bool, cx: &mut Context<Self>) -> gpui::Stateful<Div> {
         let resource = shown.resource;
         let foreground = self.foreground_or("foreground");
         let icon = self.file_icons.as_ref().and_then(|icons| icons.file_icon(&resource.path, self.languages.language_of(&resource.path, ""), self.theme.kind, 13., ROW_HEIGHT, foreground));
@@ -517,7 +616,6 @@ impl Workbench {
             .items_center()
             .pl(px(15.))
             .cursor_pointer()
-            .hover(|row| row.bg(self.color("list.hoverBackground")))
             .child(self.icon(if collapsed { "chevron-right" } else { "chevron-down" }, 16., 16., foreground).mr(px(2.)))
             .children(icon.map(|icon| icon.mr(px(6.))))
             .child(self.filter_match(&name, &shown.highlights.uri).flex_none())
@@ -540,18 +638,18 @@ impl Workbench {
                     .child(shown.markers.len().to_string()),
             )
             .on_click(cx.listener(move |workbench, _, _, cx| {
+                workbench.problems.selected = Some(Row::Resource(key.clone()));
                 if !workbench.problems.collapsed.remove(&key) {
                     workbench.problems.collapsed.insert(key.clone());
                 }
                 cx.notify();
             }))
-            .into_any_element()
     }
 
     /// `MarkerRenderer`: severity icon, the message (every line with multi-line on, the first otherwise),
     /// `source(code)` and `[Ln, Col]` at 70% opacity on the first line, the multi-line toggle for longer messages; a
     /// twistie before the icon when the marker has related information.
-    fn problems_marker_row(&self, shown: &ShownMarker, related_collapsed: bool, cx: &mut Context<Self>) -> gpui::AnyElement {
+    fn problems_marker_row(&self, shown: &ShownMarker, related_collapsed: bool, cx: &mut Context<Self>) -> gpui::Stateful<Div> {
         let marker = shown.marker;
         let (icon, color) = match marker.severity {
             ERROR => ("error", self.color("problemsErrorIcon.foreground")),
@@ -640,6 +738,7 @@ impl Workbench {
                 }))
         });
         let hovered = marker.clone();
+        let selected_key = key.clone();
         div()
             .id(group.clone())
             .group(group)
@@ -650,7 +749,6 @@ impl Workbench {
             .pr(px(10.))
             .cursor_pointer()
             .whitespace_nowrap()
-            .hover(|row| row.bg(self.color("list.hoverBackground")))
             .children(twistie)
             .child(div().relative().h(px(ROW_HEIGHT)).flex().items_center().child(severity).children(light_bulb))
             .on_hover(cx.listener(move |workbench, hovered_now: &bool, _, cx| {
@@ -659,15 +757,18 @@ impl Workbench {
                 }
             }))
             .child(div().flex_1().min_w_0().flex().flex_col().child(first).children(rest))
-            .on_click(cx.listener(move |workbench, _, window, cx| workbench.open_marker_related(&target, window, cx)))
-            .into_any_element()
+            .on_click(cx.listener(move |workbench, _, window, cx| {
+                workbench.problems.selected = Some(Row::Marker(selected_key.0.clone(), selected_key.1));
+                workbench.open_marker_related(&target, window, cx);
+            }))
     }
 
     /// `RelatedInformationRenderer`: the file name, `[Ln, Col]`, a colon and the message.
-    fn problems_related_row(&self, marker: &(String, usize), index: usize, related: &Value, highlights: &Highlights, cx: &mut Context<Self>) -> gpui::AnyElement {
+    fn problems_related_row(&self, marker: &(String, usize), index: usize, related: &Value, highlights: &Highlights, cx: &mut Context<Self>) -> gpui::Stateful<Div> {
         let basename = related_basename(related);
         let message = related["message"].as_str().unwrap_or_default().to_owned();
         let target = related.clone();
+        let row = Row::Related(marker.0.clone(), marker.1, index);
         div()
             .id(gpui::SharedString::from(format!("problems-related-{}-{}-{index}", marker.0, marker.1)))
             .h(px(ROW_HEIGHT))
@@ -678,13 +779,14 @@ impl Workbench {
             .pr(px(10.))
             .cursor_pointer()
             .whitespace_nowrap()
-            .hover(|row| row.bg(self.color("list.hoverBackground")))
             .child(self.filter_match(&basename, &highlights.uri).flex_none())
             .child(div().ml(px(4.)).opacity(0.7).flex_none().child(format!("[Ln {}, Col {}]", related["startLineNumber"], related["startColumn"])))
             .child(div().opacity(0.7).pr(px(4.)).flex_none().child(":"))
             .child(self.filter_match(&message, &highlights.message))
-            .on_click(cx.listener(move |workbench, _, window, cx| workbench.open_marker_related(&target, window, cx)))
-            .into_any_element()
+            .on_click(cx.listener(move |workbench, _, window, cx| {
+                workbench.problems.selected = Some(row.clone());
+                workbench.open_marker_related(&target, window, cx);
+            }))
     }
 }
 
@@ -719,5 +821,33 @@ mod tests {
         assert_eq!(shown("declared"), [("file:///w/a.ts".to_owned(), 0, 1)]);
         assert_eq!(shown("b.ts"), [("file:///w/b.ts".to_owned(), 0, 0)]);
         assert_eq!(shown("!**/a.ts"), [("file:///w/b.ts".to_owned(), 0, 0)]);
+    }
+
+    /// markersView.ts `focus`: opening the view selects the first marker; Up, Down and Enter move through the rows.
+    #[gpui::test]
+    fn focusing_the_view_selects_the_first_marker_and_keys_move_the_selection(cx: &mut gpui::TestAppContext) {
+        use crate::workbench::goto_symbol::tests::{open, run};
+        let (workbench, cx, _, _) = open(cx, "problems-selection", "one\ntwo\n");
+        let resource = workbench.update(cx, |workbench, cx| {
+            let resource = workbench.editors.active().unwrap().document().uri_string();
+            let marker = |line: usize| json!({ "severity": ERROR, "message": "bad", "startLineNumber": line, "startColumn": 1, "endLineNumber": line, "endColumn": 2 });
+            workbench.diagnostics.service.change_one("test", &resource, &[marker(1), marker(2)], false);
+            cx.notify();
+            resource
+        });
+        run(&workbench, cx, "workbench.actions.view.problems");
+        let selected = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.problems.selected.clone());
+        assert_eq!(selected(cx), Some(Row::Marker(resource.clone(), 0)));
+        cx.simulate_keystrokes("down");
+        assert_eq!(selected(cx), Some(Row::Marker(resource.clone(), 1)));
+        cx.simulate_keystrokes("up up");
+        assert_eq!(selected(cx), Some(Row::Resource(resource.clone())));
+        cx.simulate_keystrokes("enter");
+        assert!(workbench.read_with(cx, |workbench, _| workbench.problems.collapsed.contains(&resource)), "Enter on a resource collapses it");
+        cx.simulate_keystrokes("enter down");
+        cx.simulate_keystrokes("down enter");
+        cx.run_until_parked();
+        let cursor = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().selection().head);
+        assert_eq!(cursor, crate::editor::Position::new(1, 0), "Enter opens the selected marker");
     }
 }
