@@ -101,4 +101,60 @@ impl Workbench {
         .detach();
         Outcome::Pending(receiver)
     }
+
+    /// `runCommands` (commands.contribution.ts): runs `{ commands }` in order, each an id or `{ command, args }`
+    /// whose array `args` spreads; the first failure stops the rest.
+    /// shortcut: the argument errors and the failure are logged, since the port has no notification toasts.
+    pub(crate) fn register_run_commands(&mut self) {
+        self.commands.register("runCommands", |_, args, window, cx| {
+            let Some(commands) = runnable_commands(args.first()) else {
+                eprintln!("'runCommands' has received an argument with incorrect type. Please, review the argument passed to the command.");
+                return Outcome::done();
+            };
+            if commands.is_empty() {
+                eprintln!("'runCommands' has not received commands to run. Did you forget to pass commands in the 'runCommands' argument?");
+                return Outcome::done();
+            }
+            let (sender, receiver) = oneshot::channel();
+            cx.spawn_in(window, async move |workbench, cx| {
+                for (id, args) in commands {
+                    let Ok(outcome) = workbench.update_in(cx, |workbench, window, cx| workbench.execute_command(&id, args, window, cx)) else { return };
+                    let result = match outcome {
+                        Outcome::Ready(result) => result,
+                        Outcome::Pending(pending) => pending.await.unwrap_or(Ok(Value::Null)),
+                    };
+                    if let Err(error) = result {
+                        eprintln!("runCommands: {}", error["message"].as_str().unwrap_or_default());
+                        break;
+                    }
+                }
+                let _ = sender.send(Ok(Value::Null));
+            })
+            .detach();
+            Outcome::Pending(receiver)
+        });
+    }
 }
+
+/// `_isCommandArgs` and `_runCommand`: each command's id and its arguments, or `None` for a malformed argument.
+fn runnable_commands(args: Option<&Value>) -> Option<Vec<(String, Vec<Value>)>> {
+    let mut commands = Vec::new();
+    for command in args?.get("commands")?.as_array()? {
+        let entry = match command {
+            Value::String(id) => (id.clone(), Vec::new()),
+            _ => {
+                let id = command.get("command")?.as_str()?.to_string();
+                match command.get("args") {
+                    None => (id, Vec::new()),
+                    Some(Value::Array(args)) => (id, args.clone()),
+                    Some(args) => (id, vec![args.clone()]),
+                }
+            }
+        };
+        commands.push(entry);
+    }
+    Some(commands)
+}
+
+#[cfg(test)]
+mod tests;

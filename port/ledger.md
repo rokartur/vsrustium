@@ -406,7 +406,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/chatWindow | workbench contribution | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/contrib/codeActions | workbench contribution | todo |  |
 | workbench/contrib/codeEditor | workbench contribution | stub | quickaccess/gotoLineQuickAccess (Go to Line/Column, Go to Offset) ported; the rest todo |
-| workbench/contrib/commands | workbench contribution | todo |  |
+| workbench/contrib/commands | workbench contribution | verified | runCommands (commands.rs register_run_commands): cargo test -p app commands::, argument checks, spread args, order, stop at a failure; the notifications are logged until notifications are ported |
 | workbench/contrib/comments | workbench contribution | todo |  |
 | workbench/contrib/customEditor | workbench contribution | todo |  |
 | workbench/contrib/debug | workbench contribution | todo |  |
