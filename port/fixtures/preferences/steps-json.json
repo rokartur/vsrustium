@@ -1,0 +1,1 @@
+[{"wait": 6000}, {"hotkey": ["cmd", "shift", "p"]}, {"wait": 800}, {"type": "open user settings json"}, {"wait": 1200}, {"key": "enter"}, {"wait": 3000}, {"shot": "settings-json"}]
