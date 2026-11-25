@@ -109,6 +109,7 @@ impl Settings {
         let folders: Vec<PathBuf> = self.configuration.folders.iter().map(|(folder, _)| folder.clone()).collect();
         self.configuration.folders = folders.into_iter().map(|folder| (folder.clone(), self.load_folder(&folder))).collect();
         self.configuration.workspace = self.load_workspace();
+        self.configuration.layers_changed();
     }
 
     /// `<user data>/User`, `environmentService.userRoamingDataHome`.
