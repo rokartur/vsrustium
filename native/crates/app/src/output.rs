@@ -4,13 +4,14 @@
 //! `FileContentProvider`): the extension host writes the files, the workbench reads them.
 
 use std::collections::HashMap;
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
 pub mod filter;
 pub mod log_levels;
+pub mod logger;
 #[cfg(test)]
 mod tests;
 
@@ -77,6 +78,8 @@ pub struct Output {
     pub startup_log_levels: log_levels::DefaultLogLevels,
     /// environmentService.argvResource.
     pub argv_file: PathBuf,
+    /// The loggers the workbench writes, created by `$createLogger`, and whether they log at every level.
+    written_loggers: Vec<(logger::LogFile, bool)>,
 }
 
 impl Default for Output {
@@ -90,6 +93,7 @@ impl Default for Output {
             log_level: DEFAULT_LOG_LEVEL,
             startup_log_levels: log_levels::DefaultLogLevels::default(),
             argv_file: PathBuf::new(),
+            written_loggers: Vec::new(),
         }
     }
 }
@@ -254,23 +258,63 @@ impl Output {
         self.register_logger(logger);
     }
 
-    /// fileLog.ts `FileLogger.log`: one `<local time> [<level>] <message>` line appended to the Window log, when the
-    /// logger's level lets `level` through.
+    /// The Window log (`NativeLogService`'s file logger, a rotating spdlog file of the main process): one line when
+    /// the logger's level lets `level` through.
     pub fn log_window(&self, level: u8, message: &str) {
         let Some(logger) = self.loggers.iter().find(|logger| logger.id == WINDOW_LOG_ID) else { return };
+        if self.lets_through(logger, level) {
+            logger::LogFile { path: logger.file.clone(), rotating: true, formatted: true }.append(level, message);
+        }
+    }
+
+    /// `AbstractLogger.checkLogLevel`: the logger's own level, else the global one; `Off` (0) lets nothing through.
+    fn lets_through(&self, logger: &Logger, level: u8) -> bool {
         let logger_level = logger.log_level.unwrap_or(self.log_level);
-        if logger_level == 0 || level < logger_level {
-            return;
-        }
-        let name = ["", "trace", "debug", "info", "warning", "error"][level as usize];
-        let line = format!("{} [{name}] {message}\n", chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f"));
-        let write = || -> std::io::Result<()> {
-            std::fs::create_dir_all(logger.file.parent().expect("the log file is in a folder"))?;
-            std::fs::OpenOptions::new().create(true).append(true).open(&logger.file)?.write_all(line.as_bytes())
+        logger_level != 0 && level >= logger_level
+    }
+
+    /// mainThreadLogService.ts `$createLogger`: `createLogger(resource, options)` for a logger the host does not write
+    /// itself; it is registered as `registerLogger` does, with `options.id` or the resource's hash as id.
+    pub fn create_logger(&mut self, file: PathBuf, uri: &str, options: &Value) {
+        let always = options["logLevel"] == "always";
+        // log.ts `createLogger`: 'always' is Trace and lets every level through.
+        let log_level = if always { Some(1) } else { options["logLevel"].as_u64().map(|level| level as u8) };
+        let id = options["id"].as_str().map_or_else(|| js_hex(crate::main_thread_status_bar::string_hash(uri)), str::to_owned);
+        let logger = Logger { id, name: options["name"].as_str().map(str::to_owned), file: file.clone(), hidden: options["hidden"] == true, extension_id: options["extensionId"].as_str().map(str::to_owned), log_level };
+        self.register_logger(logger);
+        let log_file = logger::LogFile { path: file, rotating: options["donotRotate"] != true, formatted: options["donotUseFormatters"] != true };
+        self.written_loggers.retain(|(known, _)| known.path != log_file.path);
+        self.written_loggers.push((log_file, always));
+    }
+
+    /// mainThreadLogService.ts `$log`: each message through the created logger's level.
+    pub fn log(&self, file: &Path, messages: &[(u8, String)]) -> Result<(), String> {
+        let Some((log_file, always)) = self.written_loggers.iter().find(|(log_file, _)| log_file.path == file) else {
+            return Err("Create the logger before logging".into());
         };
-        if let Err(error) = write() {
-            eprintln!("cannot write the Window log {}: {error}", logger.file.display());
+        let logger = self.loggers.iter().find(|logger| logger.file == file);
+        for (level, message) in messages {
+            if *always || logger.is_some_and(|logger| self.lets_through(logger, *level)) {
+                log_file.append(*level, message);
+            }
         }
+        Ok(())
+    }
+
+    /// mainThreadLogService.ts `$flush`: lines are written as they come, so only the check is left.
+    pub fn flush_logger(&self, file: &Path) -> Result<(), String> {
+        match self.written_loggers.iter().any(|(log_file, _)| log_file.path == file) {
+            true => Ok(()),
+            false => Err("Create the logger before flushing".into()),
+        }
+    }
+}
+
+/// `Number.prototype.toString(16)` of a 32-bit hash.
+fn js_hex(value: i32) -> String {
+    match value < 0 {
+        true => format!("-{:x}", value.unsigned_abs()),
+        false => format!("{value:x}"),
     }
 }
 

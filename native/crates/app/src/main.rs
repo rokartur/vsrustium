@@ -32,6 +32,7 @@ mod languages;
 mod local_history;
 mod main_thread;
 mod main_thread_commands;
+mod main_thread_errors;
 mod main_thread_message;
 mod main_thread_output;
 mod main_thread_progress;
@@ -161,6 +162,7 @@ fn main() -> anyhow::Result<()> {
                 let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
                 workbench.start_logs(output::log_levels::argv_file(&home), window_logs.parent().expect("a session folder").to_path_buf(), cx);
                 workbench.skip_dialogs = development.as_ref().is_some_and(|development| development.tests_path.is_some());
+                workbench.extension_development = development.is_some();
                 workbench.load_keybindings(keybindings::default_keybindings(&extensions), keybindings_file.clone(), cx);
                 workbench.watch_settings_files(cx);
                 workbench.start_system_wide_keybindings(window, cx);
@@ -192,8 +194,9 @@ fn main() -> anyhow::Result<()> {
                 cx.spawn_in(window, async move |workbench, cx| {
                     while let Some(request) = requests.next().await {
                         let req = request.req;
-                        // A cancellation answers nothing itself; the request it cancels gets its answer.
-                        let cancel = request.method == "$cancel";
+                        // A cancellation answers nothing itself; the request it cancels gets its answer. An observed call
+                        // was answered by the session.
+                        let cancel = request.method == "$cancel" || req == exthost::session::OBSERVED_REQ;
                         let Ok(outcome) = workbench.update_in(cx, |workbench, window, cx| workbench.handle_host_request(request, window, cx)) else { break };
                         let result = match outcome {
                             _ if cancel => continue,

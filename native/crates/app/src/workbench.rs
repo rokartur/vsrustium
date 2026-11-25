@@ -97,6 +97,10 @@ pub struct Workbench {
     pub commands: Commands,
     /// Extension tests run: dialogs answer their default without showing (abstractFileDialogService.ts skipDialogs).
     pub skip_dialogs: bool,
+    /// `IEnvironmentService.isExtensionDevelopment`.
+    pub extension_development: bool,
+    /// workbench.ts `setUnexpectedErrorHandler(createUnexpectedErrorHandler(logService))`.
+    pub unexpected_errors: crate::output::logger::UnexpectedErrorHandler,
     pub keybindings: keyboard::Keybindings,
     pub keybindings_editor: keybindings_editor_view::KeybindingsEditor,
     keybinding_marks: define_keybinding::KeybindingMarks,
@@ -243,6 +247,8 @@ impl Workbench {
             host,
             commands: Commands::default(),
             skip_dialogs: false,
+            extension_development: false,
+            unexpected_errors: Default::default(),
             keybindings: keyboard::Keybindings::default(),
             keybindings_editor: keybindings_editor_view::KeybindingsEditor::new(cx),
             keybinding_marks: Default::default(),
