@@ -285,6 +285,47 @@ fn new_search_editor_runs_its_query_with_context_lines(cx: &mut TestAppContext) 
     assert!(workbench.read_with(cx, |workbench, _| workbench.search_editors.is_empty()));
 }
 
+#[gpui::test]
+fn the_command_palette_opens_a_new_search_editor(cx: &mut TestAppContext) {
+    let (_dir, workbench, cx) = search("search-palette-editor", cx);
+    cx.simulate_keystrokes("cmd-shift-p");
+    cx.simulate_input("New Search Editor");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    let (scheme, name, _) = active_editor(&workbench, cx);
+    assert_eq!((scheme.as_str(), name.as_str()), ("search-editor", "Search"));
+    let context_lines = workbench.read_with(cx, |workbench, _| workbench.search_editors.values().next().unwrap().config.context_lines);
+    assert_eq!(context_lines, 1, "search.searchEditor.defaultNumberOfContextLines");
+
+    workbench.update(cx, |workbench, _| workbench.settings.lock().unwrap().update_value_derived("search.searchEditor.reusePriorSearchConfiguration", Some(&json!(true))).unwrap());
+    run(&workbench, "search.action.openNewEditor", vec![json!({ "query": "alpha", "isRegexp": true, "contextLines": 0, "triggerSearch": true })], cx);
+    run(&workbench, "search.action.openNewEditor", Vec::new(), cx);
+    let config = workbench.read_with(cx, |workbench, _| workbench.search_editors[&PathBuf::from("/3")].config.clone());
+    assert_eq!((config.query.as_str(), config.is_regexp, config.context_lines), ("", true, 1));
+}
+
+#[gpui::test]
+fn search_editor_keys_select_matches_delete_file_results_and_focus_the_query(cx: &mut TestAppContext) {
+    let (_dir, workbench, cx) = search("search-editor-keys", cx);
+    run(&workbench, "search.action.openNewEditor", vec![json!({ "query": "alpha", "contextLines": 0, "triggerSearch": true })], cx);
+    workbench.update_in(cx, |workbench, window, cx| window.focus(&workbench.editor_focus, cx));
+    cx.simulate_keystrokes("cmd-shift-l");
+    let selections = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().selections.len());
+    assert_eq!(selections, 4);
+
+    let (_, _, text) = active_editor(&workbench, cx);
+    let line = text.lines().position(|line| line == "sub/b.txt:").unwrap();
+    workbench.update(cx, |workbench, _| workbench.editors.active_mut().unwrap().set_selections(vec![crate::editor::Selection::caret(crate::editor::Position::new(line + 1, 3))]));
+    cx.simulate_keystrokes("cmd-shift-backspace");
+    let (_, _, text) = active_editor(&workbench, cx);
+    assert_eq!(text, "4 results - 2 files\n\na.txt:\n  1: alpha beta\n  2: Alpha\n\n");
+
+    cx.simulate_keystrokes("escape");
+    let focused = workbench.update_in(cx, |workbench, window, _| workbench.focused_input(window));
+    assert!(matches!(focused, Some(crate::workbench::input_box_view::InputId::SearchEditor(SearchField::Query))));
+}
+
 #[test]
 fn a_preview_keeps_its_space_and_punctuation_before_the_ellipsis() {
     assert_eq!(keep_before_ellipsis(" pixel check."), " \u{200B}pixel \u{200B}check.\u{200B}");

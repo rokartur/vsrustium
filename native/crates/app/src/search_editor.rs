@@ -9,7 +9,8 @@ use crate::search_model::{FileMatch, Match, SearchResult, utf16_len};
 pub const SEARCH_EDITOR_EXT: &str = ".code-search";
 
 /// `SearchConfiguration` without the notebook filters, which the port does not search.
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SearchConfiguration {
     pub query: String,
     pub files_to_include: String,

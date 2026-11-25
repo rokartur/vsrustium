@@ -26,6 +26,9 @@ use crate::search_model::{SearchResult, utf16_len};
 /// `SearchEditorConstants.SearchEditorScheme`.
 pub const SEARCH_EDITOR_SCHEME: &str = "search-editor";
 
+/// `Memento(SearchEditorInput.ID)` in workspace storage.
+const SEARCH_EDITOR_MEMENTO_KEY: &str = "memento/workbench.editorinputs.searchEditorInput";
+
 /// The search editors by their model's path.
 pub type SearchEditors = HashMap<PathBuf, SearchEditor>;
 
@@ -138,7 +141,10 @@ impl Workbench {
                 editor.config = config.clone();
                 path
             }
-            None => self.open_search_editor(config.clone(), String::new(), None, false),
+            None => {
+                config = self.new_search_editor_config(&selected, args);
+                self.open_search_editor(config.clone(), String::new(), None, false)
+            }
         };
         self.editors_changed(cx);
         self.set_search_editor_widget(path, &config);
@@ -152,6 +158,32 @@ impl Workbench {
         if focus_results != Some(true) {
             self.focus_search_editor_input(SearchField::Query, existing.is_some() && selected.is_none(), window, cx);
         }
+    }
+
+    /// `getOrMakeSearchEditorInput` from `rawData` without results: the defaults, the last search editor's
+    /// configuration with `search.searchEditor.reusePriorSearchConfiguration`, the arguments, then
+    /// `search.searchEditor.defaultNumberOfContextLines` unless the arguments set the context lines or it is null.
+    fn new_search_editor_config(&self, selected: &Option<String>, args: &Value) -> SearchConfiguration {
+        let mut config = SearchConfiguration::default();
+        if self.setting("search.searchEditor.reusePriorSearchConfiguration") == true {
+            let memento = self.workspace_storage.lock().unwrap().get(SEARCH_EDITOR_MEMENTO_KEY).and_then(|raw| serde_json::from_str::<Value>(raw).ok());
+            if let Some(memento) = memento {
+                config = config.with_args(&memento["searchConfig"]);
+            }
+        }
+        // `query: undefined` in the arguments still overrides the prior query.
+        config.query = selected.clone().unwrap_or_default();
+        config = config.with_args(args);
+        if let Some(lines) = self.setting("search.searchEditor.defaultNumberOfContextLines").as_u64() {
+            config.context_lines = args["contextLines"].as_u64().unwrap_or(lines) as usize;
+        }
+        config
+    }
+
+    /// `SearchEditorInput`'s `onConfigDidUpdate`: the configuration a new search editor can reuse.
+    fn remember_search_editor_config(&self, config: &SearchConfiguration) {
+        let memento = serde_json::json!({ "searchConfig": config });
+        self.workspace_storage.lock().unwrap().set(SEARCH_EDITOR_MEMENTO_KEY, memento.to_string());
     }
 
     /// `createEditorFromSearchResult`: the Search view's results in a new search editor, searched again with
@@ -297,6 +329,7 @@ impl Workbench {
             return;
         }
         self.search_editors.get_mut(&path).expect("checked above").config = config.clone();
+        self.remember_search_editor_config(&config);
         let Ok(query) = self.text_query(&config) else { return };
         let mut result = SearchResult::default();
         let local = self.add_open_editor_matches(&query, config.only_open_editors, &mut result);

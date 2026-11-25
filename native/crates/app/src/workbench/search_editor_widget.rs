@@ -174,7 +174,7 @@ impl Workbench {
             let changed_files = self.search_toggle("edit-code", false, false, |_: &ClickEvent, _: &mut Window, _: &mut gpui::App| {});
             let heading = |title: &'static str| div().pt(px(4.)).h(px(22.2)).text_size(px(11.)).line_height(px(18.2)).child(title);
             div()
-                .pb(px(4.))
+                .pb(px(10.))
                 .flex()
                 .flex_col()
                 .child(heading("files to include"))
@@ -183,7 +183,8 @@ impl Workbench {
                 .child(self.search_input_box(InputId::SearchEditor(SearchField::Exclude), "e.g. *.ts, src/**/exclude", 25., div().child(excludes), window, cx))
         });
         let includes_excludes = div().relative().min_h(px(13.)).child(more).children(details);
-        div().flex_none().ml(px(19.)).mr(px(12.)).mb(px(12.)).pt(px(6.)).text_color(foreground).child(widget).child(includes_excludes)
+        // The empty `.messages` box after the details has `margin-top: -5px`, pulling the results up by 5px.
+        div().flex_none().ml(px(19.)).mr(px(12.)).mb(px(12. - 5.)).pt(px(6.)).text_color(foreground).child(widget).child(includes_excludes)
     }
 
     /// `edit_input_box` for a search editor input: the value changes, then the widget reacts as its change events do.
