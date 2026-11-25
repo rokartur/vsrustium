@@ -34,7 +34,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | mainthread/MainThreadLanguageFeatures | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadLanguages | MainThread* shape (Rust side) | stub | $changeLanguage answered by host_requests.rs (setTextDocumentLanguage); $tokensAtPosition and the language status items answer undefined |
 | mainthread/MainThreadMessageService | MainThread* shape (Rust side) | stub | session.rs answers undefined |
-| mainthread/MainThreadOutputService | MainThread* shape (Rust side) | stub | session.rs answers undefined |
+| mainthread/MainThreadOutputService | MainThread* shape (Rust side) | verified | main_thread_output.rs: $register, $update (append, replace and clear with till), $reveal, $close, $dispose; cargo test -p app output (extension channel file shown, appended, replaced and cleared in the Output view); api-tests MOCHA_GREP=rpc 17/0/0 with no rpc, createOutputChannel(...) |
 | mainthread/MainThreadProgress | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadTerminalService | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadTerminalShellIntegration | MainThread* shape (Rust side) | stub | session.rs answers undefined |
@@ -92,7 +92,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | mainthread/MainThreadMeteredConnection | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadGitHub | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadPower | MainThread* shape (Rust side) | stub | session.rs answers undefined |
-| mainthread/MainThreadLogger | MainThread* shape (Rust side) | stub | `$log` lines go to the port log; no logger registry, visibility or log files (desktop file loggers are written by the host itself) |
+| mainthread/MainThreadLogger | MainThread* shape (Rust side) | ported | main_thread_output.rs: $registerLogger, $deregisterLogger and $setVisibility keep the logger registry, a visible logger is a log channel (cargo test -p app output loggers_are_log_channels); $log lines still go to the port log (desktop file loggers are written by the host itself) |
 | mainthread/MainThreadTheming | MainThread* shape (Rust side) | ported | host_sync.rs sends $onColorThemeChange at startup; no runtime theme switch yet |
 | mainthread/MainThreadLocalization | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadMcp | MainThread* shape (Rust side) | removed | no sign-in/AI by decision (port/notes.md); API stays inert: session.rs answers undefined, list getters []; exthost-probe 30/30 on Bun and Node |

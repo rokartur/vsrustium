@@ -29,8 +29,10 @@ mod system_wide_keybindings;
 mod languages;
 mod main_thread;
 mod main_thread_commands;
+mod main_thread_output;
 mod main_thread_quick_open;
 mod menus;
+mod output;
 mod quick_input;
 mod search_editor;
 mod search_model;
@@ -137,6 +139,7 @@ fn main() -> anyhow::Result<()> {
                 host.configuration_scopes = development.is_some();
                 host.send_color_theme(theme.kind);
                 let mut workbench = Workbench::new(theme, app_root.clone(), workspace.clone(), languages, settings.clone(), host, cx);
+                workbench.output.register_window_log(exthost::session::window_logs_path(&user_data).join("renderer.log"));
                 workbench.skip_dialogs = development.as_ref().is_some_and(|development| development.tests_path.is_some());
                 workbench.load_keybindings(keybindings::default_keybindings(&extensions), keybindings_file.clone(), cx);
                 workbench.start_system_wide_keybindings(window, cx);
@@ -292,7 +295,7 @@ fn run_extension_host(
             MainThreadSecretState::in_memory()
         }),
     });
-    session.forward(&["MainThreadCommands", "MainThreadQuickOpen", "MainThreadWorkspace"], move |request| {
+    session.forward(&["MainThreadCommands", "MainThreadQuickOpen", "MainThreadWorkspace", "MainThreadOutputService", "MainThreadLogger"], move |request| {
         let _ = workbench_requests.unbounded_send(request);
     }, workbench_replies);
     session.main_thread = Some(Box::new(main_thread));

@@ -392,6 +392,14 @@ Done when (first item): api-tests `vscode API - editors` passes as in the refere
 - Not done in placeholderText: nothing in the port sets the `placeholder` editor option. Upstream only embedded editors do (commentReply.ts, chat and SCM inputs); the workbench text editor never does. It comes with the first of those editors.
 - Open from the milestone: find/replace (with the multi-cursor find commands).
 
+## Milestone 15: Output panel and logs (in progress)
+
+- Channels are files, as upstream: the host writes each extension channel and logger to its file under `<userData>/logs/<session>/window1/exthost`, the workbench reads the file from the channel's start offset (`output.rs`, `FileContentProvider`). `$update` with Replace or Clear moves the start offset to `till`.
+- `MainThreadOutputService` and `MainThreadLogger` are forwarded from the session to the workbench (`main_thread_output.rs`), as `MainThreadQuickOpen` is. A visible logger is a log channel (`LogOutputChannels`); the host registers its own `exthost` logger, so the Extension Host channel comes from the host.
+- The Window channel is the workbench's own logger, `renderer.log` in the window's logs folder (`logService.ts`), written by `Output::log_window`. `exthost::session::window_logs_path` gives the host and the workbench the same session folder.
+- shortcut: the Output view is an editor tab with scheme `output`, not a panel view: there is no panel on the base of this milestone; milestone 11 builds it. Moving the view into the panel is the remaining step once milestone 11 lands.
+- shortcut: a logger's `group` and `when` are ignored, every logger is its own channel; the port's host registers no grouped logger.
+
 ## Benchmarks
 
 - `port/tools/bench`: Wu's `script/memory-benchmark` method generalized to N apps (`APPS="name=cmd;..."`), plus an extension host line per app.

@@ -115,6 +115,7 @@ impl Workbench {
     pub(super) fn editor_name(&self, editor: &crate::editor::OpenEditor) -> String {
         match self.search_editors.get(&editor.document.path).filter(|_| editor.document.scheme == SEARCH_EDITOR_SCHEME) {
             Some(search_editor) => search_editor_name(search_editor.backing_file.as_deref(), &search_editor.config.query),
+            None if editor.document.scheme == crate::output::OUTPUT_SCHEME => "Output".into(),
             None => editor.document.name(),
         }
     }
