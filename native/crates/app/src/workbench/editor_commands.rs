@@ -230,6 +230,10 @@ impl Workbench {
             cx.notify();
             Outcome::done()
         });
+        self.commands.register("editor.action.showContextMenu", |workbench, _, window, cx| {
+            workbench.show_editor_context_menu_at_cursor(window, cx);
+            Outcome::done()
+        });
         self.commands.register("editor.action.toggleRenderControlCharacter", |workbench, _, _, cx| {
             let on = workbench.setting("editor.renderControlCharacters") == json!(true);
             workbench.update_setting("editor.renderControlCharacters", json!(!on));

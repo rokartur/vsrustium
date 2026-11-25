@@ -297,12 +297,28 @@ impl Workbench {
             .when_some(title_border, |crumbs, color| crumbs.child(div().absolute().bottom_0().left_0().right_0().h(px(1.)).bg(color)))
     }
 
-    fn text_area(&self, editor: &OpenEditor, window: &mut Window, cx: &mut Context<Self>) -> Stateful<Div> {
+    fn editor_metrics(&self, editor: &OpenEditor, window: &mut Window) -> EditorMetrics {
         let overrides = config::configuration::Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
         // shortcut: only "off" applies; "relative" and "interval" number every line as "on" does.
         // outputView.ts `OutputEditor.getConfigurationOverrides`: output editors hide line numbers.
         let line_numbers = editor.document.scheme != crate::output::OUTPUT_SCHEME && self.settings.lock().unwrap().get_value(Some("editor.lineNumbers"), &overrides) != Some(serde_json::Value::from("off"));
-        let metrics = EditorMetrics::measure(window, editor.document.lines.len(), line_numbers, self.editor_zoom.multiplier());
+        EditorMetrics::measure(window, editor.document.lines.len(), line_numbers, self.editor_zoom.multiplier())
+    }
+
+    /// contextmenu.ts `_doShowContextMenu` without a mouse event: below the cursor (`getScrolledVisiblePosition`).
+    pub(super) fn cursor_anchor(&self, window: &mut Window) -> Option<gpui::Point<Pixels>> {
+        let editor = self.editors.active()?;
+        let metrics = self.editor_metrics(editor, window);
+        let head = editor.selection().head;
+        let viewport = self.editors.viewport;
+        let left = metrics.content_left() + visible_column(&editor.document.lines[head.line], head.column, editor.document.indentation.tab_size) as f32 * metrics.char_width - editor.scroll.left;
+        let top = editor.line_top(editor.view_line(head.line), viewport) - editor.scroll.top + metrics.line_height;
+        let origin = self.text_area_bounds.get().origin;
+        Some(point(px(origin.x + left), px(origin.y + top)))
+    }
+
+    fn text_area(&self, editor: &OpenEditor, window: &mut Window, cx: &mut Context<Self>) -> Stateful<Div> {
+        let metrics = self.editor_metrics(editor, window);
         let area_left = self.text_area_left.clone();
         let area_bounds = self.text_area_bounds.clone();
         let focus = self.editor_focus.clone();

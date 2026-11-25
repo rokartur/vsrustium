@@ -23,6 +23,18 @@ impl Workbench {
         self.show_context_menu(MenuId::EditorContext, &context, point_anchor(pointer), vec![uri], window, cx);
     }
 
+    /// `ShowContextMenu` (Shift+F10): `MenuId.EditorContext` below the cursor, which stays where it is; not with
+    /// `editor.contextmenu` off.
+    pub(super) fn show_editor_context_menu_at_cursor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.setting("editor.contextmenu") == json!(false) {
+            return;
+        }
+        let Some(anchor) = self.cursor_anchor(window) else { return };
+        let uri = document_uri(self.editors.active().expect("an anchor needs an editor"));
+        let context = self.key_context(window);
+        self.show_context_menu(MenuId::EditorContext, &context, point_anchor(anchor), vec![uri], window, cx);
+    }
+
     /// editorLineNumberMenu.ts `doShow`: `MenuId.EditorLineNumberContext` with `editorLineNumber` and the
     /// `{ lineNumber, uri }` argument; a click on a line no selection touches selects that line first.
     pub(super) fn show_line_number_context_menu(&mut self, line: usize, pointer: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {

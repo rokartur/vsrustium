@@ -136,6 +136,19 @@ fn the_host_moves_and_closes_tabs_by_their_ids(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn shift_f10_shows_the_editor_menu_below_the_cursor_without_moving_it(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = workbench_with("show-context-menu", &["a.txt"], cx);
+    let cursor = Selection::caret(Position::new(1, 3));
+    workbench.update(cx, |workbench, _| workbench.editors.active_mut().unwrap().set_selections(vec![cursor]));
+    workbench.update_in(cx, |workbench, window, cx| workbench.execute_command("editor.action.showContextMenu", vec![], window, cx));
+    assert_eq!(menu_titles(&workbench, cx), ["Change All Occurrences", "---", "Cut", "Copy", "Paste", "---", "Command Palette..."]);
+    let (origin, anchor, selections) = workbench.update_in(cx, |workbench, window, _| (workbench.context_menu.as_ref().unwrap().origin, workbench.cursor_anchor(window).unwrap(), workbench.editors.active().unwrap().selections.clone()));
+    assert_eq!(selections, [cursor]);
+    assert!(origin.x >= anchor.x - px(1.) && origin.y >= anchor.y - px(1.), "{origin:?} at {anchor:?}");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[gpui::test]
 fn the_line_number_menu_selects_the_line_and_shows_contributed_items(cx: &mut TestAppContext) {
     let (dir, workbench, cx) = workbench_with("line-number-menu", &["a.txt"], cx);
     let extension = exthost::scan::ScannedExtension {
