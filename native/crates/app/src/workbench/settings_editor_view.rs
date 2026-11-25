@@ -1058,8 +1058,8 @@ impl Workbench {
             None => {
                 let stored = self.profile_storage.lock().unwrap().get(SPLIT_VIEW_WIDTH_KEY).and_then(|raw| raw.parse::<f32>().ok());
                 let toc = stored.unwrap_or(TOC_RESET_WIDTH).clamp(TOC_MIN_WIDTH, width - EDITOR_MIN_WIDTH);
-                let toc_view = View { size: toc, minimum: TOC_MIN_WIDTH, maximum: f32::INFINITY };
-                let tree_view = View { size: width - toc, minimum: EDITOR_MIN_WIDTH, maximum: f32::INFINITY };
+                let toc_view = View::new(toc, TOC_MIN_WIDTH, f32::INFINITY);
+                let tree_view = View::new(width - toc, EDITOR_MIN_WIDTH, f32::INFINITY);
                 SplitView::new(width, vec![toc_view, tree_view])
             }
         };
