@@ -522,18 +522,7 @@ impl Workbench {
             }
             let Some(c) = text.chars().nth(start.column) else { continue };
             let Some(reason) = highlighter.reason(c, None) else { continue };
-            let code_point = format_code_point_markdown(c);
-            let reason_text = match reason {
-                HighlightReason::Ambiguous => {
-                    let confusable = highlighter.ambiguous.get(&(c as u32)).and_then(|code| char::from_u32(*code)).unwrap_or(c);
-                    match confusable.is_ascii() {
-                        true => format!("The character {code_point} could be confused with the ASCII character {}, which is more common in source code.", format_code_point_markdown(confusable)),
-                        false => format!("The character {code_point} could be confused with the character {}, which is more common in source code.", format_code_point_markdown(confusable)),
-                    }
-                }
-                HighlightReason::Invisible => format!("The character {code_point} is invisible."),
-                HighlightReason::NonBasicAscii => format!("The character {code_point} is not a basic ASCII character."),
-            };
+            let reason_text = super::unicode_highlight::unicode_hover_reason(c, reason, &highlighter);
             if reasons.contains(&reason_text) {
                 continue;
             }
@@ -603,7 +592,7 @@ fn distance_to_rectangle(point: Point<f32>, bounds: Bounds<f32>) -> f32 {
 }
 
 /// `formatCodePointMarkdown`: the `U+XXXX` code and, for a visible char, the char as inline code.
-fn format_code_point_markdown(c: char) -> String {
+pub(super) fn format_code_point_markdown(c: char) -> String {
     let code = format!("`{}`", code_point_to_hex(c));
     match crate::editor::unicode_highlighter::is_invisible_character(c) {
         true => code,
