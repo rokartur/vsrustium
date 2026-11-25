@@ -166,6 +166,15 @@ impl Tokenization {
         starts
     }
 
+    /// `getLanguageId` of the token at byte `offset` of line `index`: an embedded language, else none.
+    pub fn language_at(&self, lines: &[String], index: usize, offset: usize) -> Option<std::rc::Rc<str>> {
+        self.grammar.as_ref()?;
+        self.tokenize_to(lines, index);
+        let tokenized = self.lines.borrow();
+        let tokens = &tokenized[index].0;
+        tokens.iter().find(|token| token.end > offset).or(tokens.last()).and_then(|token| token.scopes.language.clone())
+    }
+
     /// `getStandardTokenType` of the token at byte `offset` of line `index` (`findTokenIndexAtOffset`).
     pub fn token_type_at(&self, lines: &[String], index: usize, offset: usize) -> textmate::StandardTokenType {
         if self.grammar.is_none() {

@@ -317,6 +317,29 @@ impl Workbench {
             .children(self.find_widget(self.editors.viewport.width + metrics.content_left() + minimap_width, metrics.content_left(), minimap_width, window, cx))
     }
 
+    /// wordHighlighter.ts: `onDidBlurEditorWidget` stops the highlights once no code editor has the focus,
+    /// `onDidFocusEditorText` runs the query from the selection again. The find widget and sticky lines are inside the widget.
+    pub fn watch_editor_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let focus = self.editor_focus.clone();
+        let blur = cx.on_focus_out(&focus, window, |workbench, _, window, cx| {
+            // GPUI reports a window deactivation as focus out; the DOM keeps the focus there.
+            if workbench.editor_focus.contains_focused(window, cx) {
+                return;
+            }
+            if let Some(editor) = workbench.editors.active_mut() {
+                editor.highlights.clear();
+            }
+            cx.notify();
+        });
+        let text_focus = cx.on_focus(&focus, window, |workbench, _, cx| {
+            if let Some(editor) = workbench.editors.active_mut() {
+                editor.refresh_highlights();
+            }
+            cx.notify();
+        });
+        self.editor_focus_listeners = vec![blur, text_focus];
+    }
+
     /// The text area got its size: the group's viewport follows it, which can clamp the scroll position and
     /// change the visible lines; the lines drawn widen the scrollable content (`ViewLines._ensureMaxLineWidth`).
     fn editor_laid_out(&mut self, viewport: Viewport, minimap: (MinimapLayoutInfo, f64), cx: &mut Context<Self>) {

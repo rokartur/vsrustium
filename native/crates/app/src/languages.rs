@@ -21,6 +21,14 @@ struct Association {
     filepattern: Option<String>,
 }
 
+/// `ICommentsConfiguration`: the line comment token, whether it goes in the first column, the block comment tokens.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Comments<'a> {
+    pub line: Option<&'a str>,
+    pub line_no_indent: bool,
+    pub block: Option<(&'a str, &'a str)>,
+}
+
 pub struct Languages {
     /// In registration order: the core plaintext language first (modesRegistry.ts), then the extensions.
     associations: Vec<Association>,
@@ -30,6 +38,8 @@ pub struct Languages {
     off_side: HashMap<String, bool>,
     folding_markers: HashMap<String, Arc<FoldingMarkers>>,
     block_comments: HashMap<String, (String, String)>,
+    /// `comments.lineComment`: the token and `noIndent`.
+    line_comments: HashMap<String, (String, bool)>,
     /// `firstLine` patterns in registration order, anchored at the line start (languagesRegistry.ts).
     first_lines: Vec<(String, onig::Regex)>,
     pub grammars: textmate::Registry,
@@ -39,7 +49,7 @@ pub struct Languages {
 impl Languages {
     pub fn new(extensions: &[ScannedExtension]) -> Self {
         let grammars = textmate::Registry::new(extensions.iter().map(|extension| (extension.location.as_path(), &extension.description)));
-        let mut languages = Languages { associations: Vec::new(), ids: Vec::new(), names: HashMap::new(), off_side: HashMap::new(), folding_markers: HashMap::new(), block_comments: HashMap::new(), first_lines: Vec::new(), grammars, brackets: HashMap::new() };
+        let mut languages = Languages { associations: Vec::new(), ids: Vec::new(), names: HashMap::new(), off_side: HashMap::new(), folding_markers: HashMap::new(), block_comments: HashMap::new(), line_comments: HashMap::new(), first_lines: Vec::new(), grammars, brackets: HashMap::new() };
         languages.register(&serde_json::json!({ "id": PLAINTEXT, "extensions": [".txt"], "aliases": ["Plain Text", "text"] }), None);
         for extension in extensions {
             for language in extension.description["contributes"]["languages"].as_array().into_iter().flatten() {
@@ -92,6 +102,12 @@ impl Languages {
             self.off_side.insert(id.into(), config["folding"]["offSide"].as_bool() == Some(true));
             if let (Some(start), Some(end)) = (config["comments"]["blockComment"][0].as_str(), config["comments"]["blockComment"][1].as_str()) {
                 self.block_comments.insert(id.into(), (start.into(), end.into()));
+            }
+            // languageConfigurationRegistry.ts: an empty token is no line comment.
+            let line_comment = &config["comments"]["lineComment"];
+            let token = line_comment.as_str().or_else(|| line_comment["comment"].as_str()).filter(|token| !token.is_empty());
+            if let Some(token) = token {
+                self.line_comments.insert(id.into(), (token.into(), line_comment["noIndent"].as_bool() == Some(true)));
             }
             let markers = &config["folding"]["markers"];
             if let (Some(start), Some(end)) = (marker_pattern(&markers["start"]), marker_pattern(&markers["end"])) {
@@ -197,6 +213,12 @@ impl Languages {
     pub fn block_comment(&self, id: &str) -> Option<(&str, &str)> {
         self.block_comments.get(id).map(|(start, end)| (start.as_str(), end.as_str()))
     }
+
+    /// `getLanguageConfiguration(id).comments`.
+    pub fn comments(&self, id: &str) -> Comments<'_> {
+        let line = self.line_comments.get(id);
+        Comments { line: line.map(|(token, _)| token.as_str()), line_no_indent: line.is_some_and(|(_, no_indent)| *no_indent), block: self.block_comment(id) }
+    }
 }
 
 /// languageConfigurationExtensionPoint.ts `_parseRegex`: a pattern string, or `{ pattern, flags }`.
@@ -274,6 +296,8 @@ mod tests {
         assert_eq!(css.classify("  /* #endregion */"), (false, true));
         assert!(languages.folding_markers("plaintext").is_none());
         assert_eq!(languages.block_comment("python"), Some(("\"\"\"", "\"\"\"")));
+        assert_eq!(languages.comments("typescript"), Comments { line: Some("//"), line_no_indent: false, block: Some(("/*", "*/")) });
+        assert_eq!(languages.comments("plaintext"), Comments::default());
     }
 
     #[test]

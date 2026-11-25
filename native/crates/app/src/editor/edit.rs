@@ -145,6 +145,15 @@ pub struct CursorEdit {
     pub after: Selection,
 }
 
+/// An `ICommand` for `execute_commands`: its edits in the order it adds them, the selection it tracks
+/// (`trackSelection`), and its `computeCursorState` from that selection after the edits and the ranges its
+/// edits' texts take then (the inverse edit operations, in its order).
+pub struct Command {
+    pub edits: Vec<Replace>,
+    pub tracked: Option<Selection>,
+    pub cursor_state: Box<dyn FnOnce(Option<Selection>, &[(Position, Position)]) -> Selection>,
+}
+
 impl CursorEdit {
     pub fn new(replaces: Vec<Replace>, after: Selection) -> Self {
         CursorEdit { replaces, after }
@@ -377,14 +386,6 @@ impl OpenEditor {
 
     pub fn delete_word_right(&mut self) -> Option<ContentChanged> {
         self.delete(cursor::delete_word_right_range, None, command("deleteWordRight"))
-    }
-
-    pub fn delete_all_left(&mut self) -> Option<ContentChanged> {
-        self.delete(cursor::delete_all_left_range, None, EditReason::Unknown("deleteAllLeft"))
-    }
-
-    pub fn delete_all_right(&mut self) -> Option<ContentChanged> {
-        self.delete(cursor::delete_all_right_range, None, EditReason::Unknown("deleteAllRight"))
     }
 
     /// Deletes each cursor's range. Consecutive char deletes (`kind`) in one direction undo together
@@ -620,6 +621,77 @@ impl OpenEditor {
         self.execute_tracked(edits, EndSelections::Tracked { selections: vec![(primary, sticks)], collapse_grown_carets: false }, reason)
     }
 
+    /// `CommandExecutor.executeCommands`: command `i` belongs to cursor `i`. A cursor whose edits overlap an
+    /// earlier cursor's loses them and is removed; when the first cursor loses, nothing happens. A cursor without
+    /// edits keeps its selection.
+    pub fn execute_commands(&mut self, mut commands: Vec<Command>, reason: EditReason) -> Option<ContentChanged> {
+        for command in &mut commands {
+            command.edits.retain(|edit| !edit.is_noop());
+        }
+        if commands.iter().all(|command| command.edits.is_empty()) {
+            return None;
+        }
+        let mut losers = losers(commands.iter().map(|command| command.edits.as_slice()));
+        if losers.contains(&0) {
+            return None;
+        }
+        for &loser in &losers {
+            commands[loser].edits.clear();
+        }
+        let eol_len = self.document.eol.len();
+        let lines = &self.document.lines;
+        let offset = |position| document_offset(lines, eol_len, position);
+        let markers: Vec<Option<([usize; 2], [bool; 2])>> =
+            commands.iter().map(|command| command.tracked.map(|selection| ([offset(selection.start()), offset(selection.end())], track_selection_sticks(lines, selection)))).collect();
+        // `_getInverseEditRanges`: each edit's text in the new text, the edits taken by their start in the old one.
+        let mut by_start: Vec<(usize, usize, usize, usize, usize)> = Vec::new();
+        for (index, command) in commands.iter().enumerate() {
+            for (minor, edit) in command.edits.iter().enumerate() {
+                by_start.push((offset(edit.start), offset(edit.end), edit.text.replace('\n', self.document.eol).encode_utf16().count(), index, minor));
+            }
+        }
+        by_start.sort_by_key(|&(start, end, ..)| (start, end));
+        let mut inverse: Vec<(usize, usize, usize, usize)> = Vec::new();
+        let mut delta = 0isize;
+        for (start, end, inserted, index, minor) in by_start {
+            let new_start = (start as isize + delta) as usize;
+            inverse.push((index, minor, new_start, new_start + inserted));
+            delta += inserted as isize - (end - start) as isize;
+        }
+        inverse.sort_by_key(|&(index, minor, ..)| (index, minor));
+        // Edits at one position apply last to first, so the first one's text ends up first.
+        let replaces: Vec<Replace> = commands.iter().flat_map(|command| command.edits.iter().cloned()).rev().collect();
+        let before = self.selections.clone();
+        let change = self.apply(replaces, before.clone(), reason)?;
+        let lines = &self.document.lines;
+        let position = |offset| document_position(lines, eol_len, offset);
+        let mut selections = Vec::new();
+        for (index, (command, marker)) in commands.into_iter().zip(markers).enumerate() {
+            if command.edits.is_empty() {
+                selections.push(before[index]);
+                continue;
+            }
+            let tracked = command.tracked.zip(marker).map(|(selection, ([mut start, mut end], [start_sticks, end_sticks]))| {
+                for change in &change.changes {
+                    let (from, to, inserted) = (change.range_offset, change.range_offset + change.range_length, change.text.encode_utf16().count());
+                    start = accept_edit(start, start_sticks, from, to, inserted, false);
+                    end = accept_edit(end, end_sticks, from, to, inserted, false);
+                }
+                let (start, end) = (position(start), position(end));
+                if selection.head < selection.anchor { Selection { anchor: end, head: start } } else { Selection { anchor: start, head: end } }
+            });
+            let ranges: Vec<(Position, Position)> = inverse.iter().filter(|edit| edit.0 == index).map(|&(_, _, start, end)| (position(start), position(end))).collect();
+            selections.push((command.cursor_state)(tracked, &ranges));
+        }
+        losers.sort_unstable_by(|a, b| b.cmp(a));
+        for loser in losers {
+            selections.remove(loser);
+        }
+        self.after_text_change(selections);
+        self.history.undo.last_mut().expect("the edit just pushed its group").selections_after = self.selections.clone();
+        Some(change)
+    }
+
     fn execute_tracked(&mut self, edits: Vec<(Position, Position, String, bool)>, end: EndSelections, reason: EditReason) -> Option<ContentChanged> {
         let mut edits: Vec<_> = edits.into_iter().filter(|(start, end, text, _)| start != end || !text.is_empty()).collect();
         // Edits at one position apply last to first, so the first one's text ends up first (`_doApplyEdits` sorts ties by sortIndex).
@@ -636,7 +708,11 @@ impl OpenEditor {
         let replaces = edits.into_iter().map(|(start, end, text, _)| Replace { start, end, text: normalize_line_breaks(&text) }).collect();
         let change = self.apply(replaces, self.selections.clone(), reason)?;
         let selections = match end {
-            EndSelections::Given(selections) => selections,
+            // `Cursor.setStates` validates the computed states, so a cursor past the deleted lines lands on the last.
+            EndSelections::Given(selections) => selections
+                .into_iter()
+                .map(|selection| Selection { anchor: valid_position(&self.document.lines, selection.anchor), head: valid_position(&self.document.lines, selection.head) })
+                .collect(),
             EndSelections::Tracked { selections: tracked, collapse_grown_carets } => tracked
                 .iter()
                 .zip(markers)
@@ -681,7 +757,7 @@ impl OpenEditor {
                 edit.after = *selection;
             }
         }
-        for loser in losers(&edits) {
+        for loser in losers(edits.iter().map(|edit| edit.replaces.as_slice())) {
             edits[loser] = CursorEdit::new(Vec::new(), self.selections[loser]);
         }
         let selections = selections_after(&edits, &self.selections);
@@ -793,8 +869,8 @@ fn shift_edit(lines: &[String], selection: Selection, indentation: super::Indent
 
 /// `_getLoserCursorMap`: with the edits sorted by their end, last first, an edit starting before the end
 /// of the next one overlaps it; the cursor with the higher index loses all its edits.
-fn losers(edits: &[CursorEdit]) -> Vec<usize> {
-    let mut operations: Vec<(usize, Position, Position)> = edits.iter().enumerate().flat_map(|(index, edit)| edit.replaces.iter().map(move |replace| (index, replace.start, replace.end))).collect();
+fn losers<'a>(edits: impl Iterator<Item = &'a [Replace]>) -> Vec<usize> {
+    let mut operations: Vec<(usize, Position, Position)> = edits.enumerate().flat_map(|(index, replaces)| replaces.iter().map(move |replace| (index, replace.start, replace.end))).collect();
     operations.sort_by_key(|&(_, start, end)| Reverse((end, start)));
     let mut losers = Vec::new();
     let mut at = 1;
@@ -851,6 +927,16 @@ pub(super) fn track_decoration([mut start, mut end]: [usize; 2], change: &Conten
         end = accept_edit(end, false, from, to, inserted, false);
     }
     [start, end]
+}
+
+/// `ICommand`'s `trackSelection` stickiness as whether the start and the end stick to the character before
+/// them: a caret keeps to the text before it at the end of its line, else to the text after it; a selection
+/// never grows (`NeverGrowsWhenTypingAtEdges`).
+fn track_selection_sticks(lines: &[String], selection: Selection) -> [bool; 2] {
+    match selection.is_empty() {
+        true => [selection.head.column == cursor::line_len(lines, selection.head.line); 2],
+        false => [false, true],
+    }
 }
 
 /// The selections after `execute_tracked`: given, or each one tracked through the edits with whether its
@@ -925,6 +1011,14 @@ pub fn utf16_column(line: &str, column: usize) -> usize {
 }
 
 /// The text from `start` to `end`, lines joined by "\n".
+/// `TextModel.validatePosition`: a line past the document becomes the end of the last line.
+fn valid_position(lines: &[String], position: Position) -> Position {
+    if position.line >= lines.len() {
+        return cursor::last_position(lines);
+    }
+    Position::new(position.line, position.column.min(cursor::line_len(lines, position.line)))
+}
+
 pub fn text_between(lines: &[String], start: Position, end: Position) -> String {
     if start.line == end.line {
         return lines[start.line].chars().skip(start.column).take(end.column - start.column).collect();

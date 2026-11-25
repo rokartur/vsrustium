@@ -2,17 +2,18 @@
 //! linesOperations.ts, clipboard.ts, multicursor.ts, folding.ts), so keybindings and
 //! `vscode.commands.executeCommand` run them.
 
+use config::configuration::Overrides;
 use gpui::{ClipboardEntry, ClipboardItem, Context, Window};
 use serde_json::{Value, json};
 
 use super::Workbench;
 use crate::commands::Outcome;
-use crate::editor::{ContentChanged, Copied, OpenEditor, commands};
+use crate::editor::{CaseTransform, ContentChanged, Copied, LineCommentKind, OpenEditor, Selection, commands};
 
 type EditorCommand = fn(&mut OpenEditor) -> Option<ContentChanged>;
 
 /// Cursor and edit commands: `EditorCommand`s, which run on the focused editor or else the active one.
-const EDITOR_COMMANDS: [(&str, EditorCommand); 28] = [
+const EDITOR_COMMANDS: [(&str, EditorCommand); 44] = [
     ("cursorLeft", |editor| { editor.move_horizontally(false, false); None }),
     ("cursorLeftSelect", |editor| { editor.move_horizontally(false, true); None }),
     ("cursorRight", |editor| { editor.move_horizontally(true, false); None }),
@@ -41,6 +42,22 @@ const EDITOR_COMMANDS: [(&str, EditorCommand); 28] = [
     ("deleteAllRight", OpenEditor::delete_all_right),
     ("tab", OpenEditor::tab),
     ("outdent", OpenEditor::outdent),
+    ("editor.action.copyLinesUpAction", |editor| editor.copy_lines(false)),
+    ("editor.action.copyLinesDownAction", |editor| editor.copy_lines(true)),
+    ("editor.action.duplicateSelection", OpenEditor::duplicate_selection),
+    ("editor.action.moveLinesUpAction", |editor| editor.move_lines(false)),
+    ("editor.action.moveLinesDownAction", |editor| editor.move_lines(true)),
+    ("editor.action.sortLinesAscending", |editor| editor.sort_lines(false)),
+    ("editor.action.sortLinesDescending", |editor| editor.sort_lines(true)),
+    ("editor.action.removeDuplicateLines", OpenEditor::delete_duplicate_lines),
+    ("editor.action.reverseLines", OpenEditor::reverse_lines),
+    ("editor.action.deleteLines", OpenEditor::delete_lines),
+    ("editor.action.indentLines", OpenEditor::indent_lines),
+    ("editor.action.outdentLines", OpenEditor::outdent),
+    ("editor.action.insertLineBefore", OpenEditor::insert_line_before),
+    ("editor.action.insertLineAfter", OpenEditor::insert_line_after),
+    ("editor.action.joinLines", OpenEditor::join_lines),
+    ("editor.action.transpose", OpenEditor::transpose),
 ];
 
 /// Commands of the editor with text focus only (`MultiCommand`s and `EditorHandlerCommand`s): elsewhere they
@@ -81,6 +98,18 @@ impl Workbench {
                 Outcome::done()
             });
         }
+        for (id, transform) in CaseTransform::ALL {
+            self.commands.register(id, move |workbench, _, _, cx| workbench.run_on_active_editor(|editor: &mut OpenEditor| editor.transform_case(transform), cx));
+        }
+        let comment_actions = [
+            ("editor.action.commentLine", Some(LineCommentKind::Toggle)),
+            ("editor.action.addCommentLine", Some(LineCommentKind::ForceAdd)),
+            ("editor.action.removeCommentLine", Some(LineCommentKind::ForceRemove)),
+            ("editor.action.blockComment", None),
+        ];
+        for (id, kind) in comment_actions {
+            self.commands.register(id, move |workbench, _, _, cx| workbench.run_comment_action(kind, cx));
+        }
         self.commands.register("editor.action.clipboardCopyAction", |workbench, _, window, cx| workbench.copy_to_clipboard(false, window, cx));
         self.commands.register("editor.action.clipboardCutAction", |workbench, _, window, cx| workbench.copy_to_clipboard(true, window, cx));
         self.commands.register("editor.action.clipboardPasteAction", |workbench, _, window, cx| {
@@ -112,10 +141,31 @@ impl Workbench {
         let Some(editor) = self.editors.active_mut() else { return Outcome::done() };
         let selections_before = editor.selections.clone();
         let change = command(editor);
-        let moved = editor.selections != selections_before;
+        self.editor_command_ran(change, selections_before, cx)
+    }
+
+    fn editor_command_ran(&mut self, change: Option<ContentChanged>, selections_before: Vec<Selection>, cx: &mut Context<Self>) -> Outcome {
+        let moved = self.editors.active().is_some_and(|editor| editor.selections != selections_before);
         self.marked_text = None;
         self.editor_edited(change, moved, "keyboard", cx);
         Outcome::Ready(Ok(Value::Null))
+    }
+
+    /// comment.ts `CommentLineAction` and `BlockCommentAction` with the `editor.comments` options, on the
+    /// language at each cursor.
+    fn run_comment_action(&mut self, kind: Option<LineCommentKind>, cx: &mut Context<Self>) -> Outcome {
+        let Some(editor) = self.editors.active_mut() else { return Outcome::done() };
+        let overrides = Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
+        let settings = self.settings.lock().unwrap();
+        let insert_space = settings.get_value(Some("editor.comments.insertSpace"), &overrides) != Some(json!(false));
+        let ignore_empty_lines = settings.get_value(Some("editor.comments.ignoreEmptyLines"), &overrides) != Some(json!(false));
+        drop(settings);
+        let selections_before = editor.selections.clone();
+        let change = match kind {
+            Some(kind) => editor.comment_lines(kind, insert_space, ignore_empty_lines, &self.languages),
+            None => editor.block_comment(insert_space, &self.languages),
+        };
+        self.editor_command_ran(change, selections_before, cx)
     }
 }
 

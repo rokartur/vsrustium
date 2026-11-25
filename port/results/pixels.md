@@ -44,6 +44,24 @@ Status bar widths and quick input shadows, `WINDOWS="file find quickopen folded"
 | quickopen | 44261 | 64254 | 36394 | 82041 |
 | folded | 12848 | 26290 | 5767 | 7782 |
 
+Word highlight on blur and caret phase, full `port/tools/pixel-check`: the editor drops its word highlights when its focus moves out (`onDidBlurEditorWidget`) and runs them again on focus in; `--screenshot` draws one more frame 100 ms before the capture, so an input's caret shows the phase it has at capture time, as Chromium's does. Neither find nor quickopen shows an input caret in either frame now. Only find and quickopen moved; the other six windows kept the numbers above.
+
+| window | dark | light | hc | hclight |
+|---|---|---|---|---|
+| find | 41078 | 21434 | 7113 | 15312 |
+| quickopen | 42349 | 62398 | 36073 | 81662 |
+
+At 2% fuzz (`magick compare -fuzz 2% -metric AE`) find differs in 2452 (dark) and 1600 (light) of 3.1M pixels and quickopen light in 2266: glyph antialiasing, the left edge of each find match box, and in quickopen the row's Open to the Side button. That button needs editor splits, which the port has not (`supportsSplitting`), so the reference's "recently opened" description sits one button further left. The rest of the pixeldiff count is the quick input shadow, which differs by under 2% per pixel (GPUI blur against CSS `box-shadow`).
+
+Frozen input carets and the quick input in high contrast, full `port/tools/pixel-check`: ref-screenshot sets `caret-color: transparent` before the capture and the port's `--screenshot` hides its input carets (`Workbench::input_carets_hidden`), so the blink phase no longer decides a frame; find and quickopen kept their counts, both carets were already off at the 1.6 s mark. In high contrast the reference draws the window border and lays the quick input inside the workbench container, 1 px right and down; the port drew it at the window edge. It now sits at the grid's inset, and its focused row gets the 1 px `listInactiveFocusOutline` (contrastActiveBorder), dashed because GPUI has no dotted border. Only quickopen hc and hclight moved, and main hc and hclight, where the TypeScript server's timing decides whether the reference shows the breadcrumb symbol, the lightbulb and the language status items.
+
+| window | dark | light | hc | hclight |
+|---|---|---|---|---|
+| main | 11501 | 8189 | 6953 | 6645 |
+| quickopen | 42349 | 62398 | 10456 | 20740 |
+
+What is left in quickopen: the Open to the Side row button (no editor splits), which moves the "recently opened" description one button left in the reference while the close button sits at the same x; the quick input shadow, whose GPUI blur bands against the CSS `box-shadow` (under 2% per pixel); the frosted glass fill in dark and light, where the reference blurs the title bar behind the widget's header to #202020 and the port fills #222222; and glyph antialiasing.
+
 ## Milestone 9: commands, keybindings, quick input
 
 No new window: pixel-check has no quick input. All 16 port frames are byte-identical to the milestone 7 run (md5 of `port-<theme>.png` per window).
