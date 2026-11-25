@@ -204,7 +204,7 @@ impl Workbench {
     }
 
     /// diffEditorOptions.ts `renderSideBySide` with `useInlineViewWhenSpaceIsLimited` below the 900px breakpoint.
-    fn diff_side_by_side(&self) -> bool {
+    pub(super) fn diff_side_by_side(&self) -> bool {
         let configured = self.setting("diffEditor.renderSideBySide") != json!(false);
         let limited = self.setting("diffEditor.useInlineViewWhenSpaceIsLimited") != json!(false);
         configured && !(limited && self.diff_part_width.get() > 0. && self.diff_part_width.get() < INLINE_BREAKPOINT)
@@ -315,9 +315,9 @@ impl Workbench {
         context.insert("editorHasChanges".into(), json!(input.diff.as_ref().is_some_and(|diff| !diff.diff.changes.is_empty())));
     }
 
-    /// The tab label of a diff editor (`DiffEditorInput.getName`).
+    /// The tab label of a diff editor (`DiffEditorInput.getName`) or a multi diff editor (`MultiDiffEditorInput.getName`).
     pub(in crate::workbench) fn diff_name(&self, editor: &OpenEditor) -> Option<String> {
-        self.editors.diffs.get(&editor.model_id).map(DiffInput::name)
+        self.editors.diffs.get(&editor.model_id).map(DiffInput::name).or_else(|| self.editors.multi_diffs.get(&editor.model_id).map(crate::multi_diff_editor::MultiDiffInput::name))
     }
 
     /// `navigateInDiffEditor`: the cursor goes to the next change's first line, wrapping around (diffNavigator).
@@ -570,12 +570,12 @@ impl Workbench {
         input.diff.as_ref()?.diff.changes.iter().find(|change| change.modified.contains(index + 1))
     }
 
-    fn diff_render_indicators(&self) -> bool {
+    pub(super) fn diff_render_indicators(&self) -> bool {
         self.setting("diffEditor.renderIndicators") != json!(false)
     }
 
     /// style.css `.line-insert`, `.line-delete`: the whole line, with the text border in high contrast (dashed).
-    fn line_background(&self, side: ZoneSide) -> Option<Div> {
+    pub(super) fn line_background(&self, side: ZoneSide) -> Option<Div> {
         let (line, text, border) = match side {
             ZoneSide::Modified => ("diffEditor.insertedLineBackground", "diffEditor.insertedTextBackground", "diffEditor.insertedTextBorder"),
             ZoneSide::Original => ("diffEditor.removedLineBackground", "diffEditor.removedTextBackground", "diffEditor.removedTextBorder"),
@@ -596,7 +596,7 @@ impl Workbench {
     }
 
     /// style.css `.char-insert`, `.char-delete`.
-    fn char_background(&self, side: ZoneSide, left: f32, width: f32) -> Div {
+    pub(super) fn char_background(&self, side: ZoneSide, left: f32, width: f32) -> Div {
         let (text, border) = match side {
             ZoneSide::Modified => ("diffEditor.insertedTextBackground", "diffEditor.insertedTextBorder"),
             ZoneSide::Original => ("diffEditor.removedTextBackground", "diffEditor.removedTextBorder"),
@@ -612,7 +612,7 @@ impl Workbench {
     }
 
     /// style.css `.gutter-insert`, `.gutter-delete`: the margin of a changed line.
-    fn margin_background(&self, side: ZoneSide, width: f32) -> Option<Div> {
+    pub(super) fn margin_background(&self, side: ZoneSide, width: f32) -> Option<Div> {
         // style.css `var(--gutter, var(--line), var(--text))`: the fallback "line, text" is no color, so only the
         // gutter key paints.
         let key = match side {
@@ -624,7 +624,7 @@ impl Workbench {
     }
 
     /// `insert-sign codicon-diff-insert`, `delete-sign codicon-diff-remove`: 11px at 0.7 opacity (1 in high contrast).
-    fn diff_sign(&self, side: ZoneSide, metrics: EditorMetrics) -> Div {
+    pub(super) fn diff_sign(&self, side: ZoneSide, metrics: EditorMetrics) -> Div {
         let name = if side == ZoneSide::Modified { "add" } else { "remove" };
         let opacity = if self.theme.kind.is_high_contrast() { 1. } else { 0.7 };
         self.icon(name, metrics.line_height, 11., self.color("editor.foreground")).opacity(opacity)
@@ -715,7 +715,7 @@ fn twice_as_opaque(color: Rgba) -> Rgba {
 /// The character ranges of `change` on 1-based `line_number` of one side, as (left, width) in pixels; a range
 /// reaching past the line's end fills to the line break (`shouldFillLineOnLineBreak`), an empty one is 3px wide
 /// (`diff-range-empty`).
-fn char_ranges(change: &diff::LineRangeMapping, side: ZoneSide, line_number: usize, text: &str, tab_size: usize, char_width: f32) -> Vec<(f32, f32)> {
+pub(super) fn char_ranges(change: &diff::LineRangeMapping, side: ZoneSide, line_number: usize, text: &str, tab_size: usize, char_width: f32) -> Vec<(f32, f32)> {
     let line_length = text.chars().count();
     let x = |column: usize| visible_column(text, column.min(line_length), tab_size) as f32 * char_width;
     let mut ranges = Vec::new();
@@ -738,7 +738,7 @@ fn char_ranges(change: &diff::LineRangeMapping, side: ZoneSide, line_number: usi
 }
 
 /// style.css `.diagonal-fill`: a -45deg stripe pattern in 8px tiles, 2px wide stripes every 4px.
-fn diagonal_fill(color: Rgba) -> gpui::Canvas<()> {
+pub(super) fn diagonal_fill(color: Rgba) -> gpui::Canvas<()> {
     canvas(
         |_, _, _| (),
         move |bounds, _, window, _| {

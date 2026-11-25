@@ -37,7 +37,10 @@ pub enum MenuId {
     ScmResourceGroupContext,
     ScmResourceStateContext,
     ScmInputBox,
+    ScmChangeContext,
     DiffEditorHunkToolbar,
+    /// `MenuId.MultiDiffEditorFileToolbar`: a multi diff editor file header's toolbar.
+    MultiDiffEditorFileToolbar,
     EditorTitle,
     /// A `contributes.submenus` entry, `MenuId.for('api:<id>')`, by registration order.
     Api(usize),
@@ -98,6 +101,8 @@ const WORKBENCH_MENUS: &[Row] = &[
         Some("activeEditorCanRevert || resourceScheme != 'untitled' && foldersViewVisible && sideBarFocus"),
     ),
     (MenuId::MenubarGoMenu, None, "workbench.action.quickOpen", "Go to &&File...", "3_global_nav", 1., None, None),
+    (MenuId::MenubarGoMenu, None, "editor.action.dirtydiff.next", "Next &&Change", "7_change_nav", 0., None, None),
+    (MenuId::MenubarGoMenu, None, "editor.action.dirtydiff.previous", "Previous &&Change", "7_change_nav", 0., None, None),
     // editorExtensions.ts and clipboard.ts
     (MenuId::MenubarEditMenu, None, "undo", "&&Undo", "1_do", 1., None, None),
     (MenuId::MenubarEditMenu, None, "redo", "&&Redo", "1_do", 2., None, None),
@@ -232,7 +237,7 @@ pub fn workbench_menus() -> Vec<MenuItem> {
 
 /// menusExtensionPoint.ts `apiMenus`: the `contributes.menus` keys of the menus the port shows. `commandPalette`
 /// is read by `command_palette::menu`.
-const API_MENUS: [(&str, MenuId); 9] = [
+const API_MENUS: [(&str, MenuId); 11] = [
     ("editor/context", MenuId::EditorContext),
     ("explorer/context", MenuId::ExplorerContext),
     ("editor/title/context", MenuId::EditorTitleContext),
@@ -240,7 +245,9 @@ const API_MENUS: [(&str, MenuId); 9] = [
     ("scm/resourceGroup/context", MenuId::ScmResourceGroupContext),
     ("scm/resourceState/context", MenuId::ScmResourceStateContext),
     ("scm/inputBox", MenuId::ScmInputBox),
+    ("scm/change/title", MenuId::ScmChangeContext),
     ("diffEditor/gutter/hunk", MenuId::DiffEditorHunkToolbar),
+    ("multiDiffEditor/resource/title", MenuId::MultiDiffEditorFileToolbar),
     ("editor/title", MenuId::EditorTitle),
 ];
 

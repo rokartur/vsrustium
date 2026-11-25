@@ -10,6 +10,10 @@ pub struct Provider {
     pub handle: u64,
     pub id: String,
     pub label: String,
+    /// `isHidden`: a repository the views leave out.
+    pub hidden: bool,
+    /// `iconPath` when it is a `ThemeIcon`: its codicon id.
+    pub icon: Option<String>,
     /// `rootUri` as `UriComponents`.
     pub root_uri: Value,
     pub input: Input,
@@ -114,7 +118,9 @@ impl Scm {
         let text = |index: usize| args.get(index).and_then(Value::as_str).unwrap_or_default().to_string();
         if method == "$registerSourceControl" {
             // `$registerSourceControl(handle, parentHandle, id, label, rootUri, iconPath, isHidden, inputBoxDocumentUri)`.
-            self.providers.push(Provider { handle, id: text(2), label: text(3), root_uri: args.get(4).cloned().unwrap_or(Value::Null), ..Default::default() });
+            let icon = args.get(5).and_then(|icon| icon["id"].as_str()).map(str::to_string);
+            let hidden = args.get(6) == Some(&Value::Bool(true));
+            self.providers.push(Provider { handle, id: text(2), label: text(3), hidden, icon, root_uri: args.get(4).cloned().unwrap_or(Value::Null), ..Default::default() });
             return ScmChange::Registered(handle);
         }
         if method == "$unregisterSourceControl" {

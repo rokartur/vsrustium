@@ -17,7 +17,7 @@ use crate::workbench::hover::{HoverContent, HoverOptions};
 pub(super) const PLACEHOLDER_HEIGHT: f32 = 24.;
 /// style.css `.diff-hidden-lines .top` and `.bottom`: 4px border, 4px bar, 2px border, moved up 6px (top) and
 /// down 18px (bottom) from the zone's top.
-const BAR_BOX: f32 = 10.;
+pub(super) const BAR_BOX: f32 = 10.;
 
 impl Workbench {
     pub(in crate::workbench) fn register_unchanged_region_commands(&mut self) {
@@ -40,7 +40,7 @@ impl Workbench {
         Some((count("diffEditor.hideUnchangedRegions.minimumLineCount"), count("diffEditor.hideUnchangedRegions.contextLineCount")))
     }
 
-    fn reveal_line_count(&self) -> usize {
+    pub(super) fn reveal_line_count(&self) -> usize {
         self.setting("diffEditor.hideUnchangedRegions.revealLineCount").as_u64().unwrap_or(20) as usize
     }
 

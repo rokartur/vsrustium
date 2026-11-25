@@ -203,8 +203,11 @@ impl Render for Workbench {
         self.refresh_selection_highlights(window);
         self.update_webview_panels(window, cx);
         self.update_diff_editor();
+        self.update_merge_editor(cx);
+        self.update_multi_diff_editor();
         self.update_diff_symbols(cx);
         self.update_quick_diff(cx);
+        self.follow_active_editor_repository();
         self.update_timeline(cx);
         self.update_scm_graph(cx);
         self.update_code_lenses(cx);
@@ -348,6 +351,8 @@ impl Workbench {
         workbench.register_unchanged_region_commands();
         workbench.register_scroll_locking_commands();
         workbench.register_scm_view_mode_commands();
+        workbench.register_merge_editor_commands();
+        workbench.register_multi_diff_editor_commands();
         workbench.register_timeline_commands();
         workbench.register_scm_commands();
         workbench.register_editor_commands();
@@ -372,6 +377,7 @@ impl Workbench {
         workbench.register_editor_message_commands();
         workbench.register_content_hover_commands();
         workbench.register_marker_navigation_commands();
+        workbench.register_quick_diff_commands();
         workbench.register_define_keybinding_command();
         workbench.register_notifications_commands();
         workbench.register_output_actions();

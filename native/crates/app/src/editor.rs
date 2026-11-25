@@ -14,6 +14,7 @@ use config::service::Settings;
 use files::encoding;
 
 use crate::diff_editor::DiffInput;
+use crate::multi_diff_editor::MultiDiffInput;
 use crate::languages::Languages;
 use crate::syntax::Tokenization;
 
@@ -569,6 +570,10 @@ pub struct EditorGroup {
     pub unicode_banner_closed: bool,
     /// The diff editors among `editors`, by their entry's model id: each shows two models found with `model`.
     pub diffs: HashMap<u32, DiffInput>,
+    /// The multi diff editors among `editors`, by their entry's model id.
+    pub multi_diffs: HashMap<u32, MultiDiffInput>,
+    /// The merge editors among `editors`, by their entry's model id: each edits its result model.
+    pub merges: HashMap<u32, crate::merge_editor::MergeInput>,
     /// `$registerTextEditorDecorationType` render options by decoration type key.
     pub decoration_types: HashMap<String, serde_json::Value>,
 }
@@ -577,15 +582,20 @@ impl EditorGroup {
     /// The model the code editor edits: the active editor's, or the modified side of the active diff editor.
     pub fn active(&self) -> Option<&OpenEditor> {
         let tab = self.active_tab()?;
-        match self.diffs.get(&tab.model_id) {
-            Some(diff) => self.model(&diff.modified.scheme, &diff.modified.path),
+        match self.edited_side(tab.model_id) {
+            Some(side) => self.model(&side.scheme, &side.path),
             None => Some(tab),
         }
     }
 
+    /// The side a diff editor (its modified one) or a merge editor (its result) edits in the code editor.
+    fn edited_side(&self, id: u32) -> Option<crate::diff_editor::Side> {
+        self.diffs.get(&id).map(|diff| diff.modified.clone()).or_else(|| self.merges.get(&id).map(|merge| merge.result.clone()))
+    }
+
     pub fn active_mut(&mut self) -> Option<&mut OpenEditor> {
         let id = *self.recent.first()?;
-        match self.diffs.get(&id).map(|diff| diff.modified.clone()) {
+        match self.edited_side(id) {
             Some(modified) => self.model_mut(&modified.scheme, &modified.path),
             None => self.editors.iter_mut().find(|editor| editor.model_id == id),
         }
@@ -602,11 +612,33 @@ impl EditorGroup {
         self.diffs.get(self.recent.first()?)
     }
 
+    /// The merge editor of the active tab, if it is one.
+    pub fn active_merge(&self) -> Option<&crate::merge_editor::MergeInput> {
+        self.merges.get(self.recent.first()?)
+    }
+
+    pub fn active_merge_mut(&mut self) -> Option<&mut crate::merge_editor::MergeInput> {
+        self.merges.get_mut(self.recent.first()?)
+    }
+
+    /// Opens a merge editor as `open_diff` opens a diff editor.
+    pub fn open_merge(&mut self, entry: TextDocument, input: crate::merge_editor::MergeInput, preview: bool) {
+        self.next_model_id += 1;
+        self.merges.insert(self.next_model_id, input);
+        let editor = OpenEditor::new(entry, preview, self.next_model_id);
+        self.insert(editor, preview);
+    }
+
+    /// The multi diff editor of the active tab, if it is one.
+    pub fn active_multi_diff(&self) -> Option<&MultiDiffInput> {
+        self.multi_diffs.get(self.recent.first()?)
+    }
+
     /// The model a tab edits: its own, or a diff editor's modified side.
     pub fn tab_model(&self, index: usize) -> &OpenEditor {
         let tab = &self.editors[index];
-        match self.diffs.get(&tab.model_id) {
-            Some(diff) => self.model(&diff.modified.scheme, &diff.modified.path).expect("a diff editor's models stay open"),
+        match self.edited_side(tab.model_id) {
+            Some(side) => self.model(&side.scheme, &side.path).expect("a diff or merge editor's models stay open"),
             None => tab,
         }
     }
@@ -615,6 +647,14 @@ impl EditorGroup {
     pub fn open_diff(&mut self, entry: TextDocument, input: DiffInput, preview: bool) {
         self.next_model_id += 1;
         self.diffs.insert(self.next_model_id, input);
+        let editor = OpenEditor::new(entry, preview, self.next_model_id);
+        self.insert(editor, preview);
+    }
+
+    /// Opens a multi diff editor as `open_diff` opens a diff editor.
+    pub fn open_multi_diff(&mut self, entry: TextDocument, input: MultiDiffInput, preview: bool) {
+        self.next_model_id += 1;
+        self.multi_diffs.insert(self.next_model_id, input);
         let editor = OpenEditor::new(entry, preview, self.next_model_id);
         self.insert(editor, preview);
     }
@@ -643,6 +683,8 @@ impl EditorGroup {
         let replaced = std::mem::replace(&mut self.editors[index], editor);
         self.recent.retain(|id| *id != replaced.model_id);
         self.diffs.remove(&replaced.model_id);
+        self.multi_diffs.remove(&replaced.model_id);
+        self.merges.remove(&replaced.model_id);
         if replaced.host_reference.is_some() {
             self.models.push(replaced);
         }
@@ -675,7 +717,8 @@ impl EditorGroup {
     /// Drops the clean models without an editor whose host reference ran out; a dirty model stays, as text file models do.
     pub fn release_models(&mut self, now: Instant) {
         let diffs = &self.diffs;
-        let shown_in_diff = |model: &OpenEditor| diffs.values().any(|diff| [&diff.original, &diff.modified].iter().any(|side| model.document.is(&side.scheme, &side.path)));
+        let shown_in_diff = |model: &OpenEditor| diffs.values().any(|diff| [&diff.original, &diff.modified].iter().any(|side| model.document.is(&side.scheme, &side.path))) || self.multi_diffs.values().any(|input| input.shows(model))
+            || self.merges.values().any(|merge| [&merge.base, &merge.input1.side, &merge.input2.side, &merge.result].iter().any(|side| model.document.is(&side.scheme, &side.path)));
         self.models.retain(|model| model.is_dirty() || shown_in_diff(model) || model.host_reference.is_some_and(|opened| now.duration_since(opened) < HOST_REFERENCE_AGE));
     }
 
@@ -687,6 +730,8 @@ impl EditorGroup {
                 self.recent.retain(|id| *id != replaced_id);
                 let replaced = std::mem::replace(&mut self.editors[index], editor);
                 self.diffs.remove(&replaced.model_id);
+                self.multi_diffs.remove(&replaced.model_id);
+                self.merges.remove(&replaced.model_id);
                 if replaced.host_reference.is_some() {
                     self.models.push(replaced);
                 }
@@ -742,6 +787,8 @@ impl EditorGroup {
     pub fn close(&mut self, index: usize) {
         let closed = self.editors.remove(index);
         self.diffs.remove(&closed.model_id);
+        self.multi_diffs.remove(&closed.model_id);
+        self.merges.remove(&closed.model_id);
         let shown = self.recent.first().copied();
         self.recent.retain(|id| *id != closed.model_id);
         self.shown_model_changed(shown);

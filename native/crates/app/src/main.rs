@@ -43,6 +43,8 @@ mod main_thread_status_bar;
 mod markdown;
 mod markers;
 mod menus;
+mod merge_editor;
+mod multi_diff_editor;
 mod notifications;
 mod output;
 mod quick_input;

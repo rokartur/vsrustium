@@ -24,29 +24,36 @@ pub enum ChangeKind {
     Delete,
 }
 
-/// A change as `toLineChanges` gives it: 1-based modified lines, `end` 0 for a deletion after `start`.
+/// A change as `toLineChanges` gives it (`IChange`): 1-based modified lines, `end` 0 for a deletion after
+/// `start`; the original lines likewise, `original_end` 0 for an insertion after `original_start`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct QuickDiffChange {
     pub kind: ChangeKind,
     pub start: usize,
     pub end: usize,
+    pub original_start: usize,
+    pub original_end: usize,
 }
 
 /// One modified model's quick diff.
 #[derive(Default)]
-struct Entry {
+pub(super) struct Entry {
     /// The provider's answer: `None` when it names no original.
-    original: Option<Side>,
+    pub(super) original: Option<Side>,
+    /// The quick diff's label (`quickDiffLabel`, else the source control's label).
+    pub(super) label: String,
     /// The SCM generation the answer is for; a newer one asks again.
-    generation: Option<u64>,
-    pending: bool,
-    versions: (u32, u32),
-    changes: Vec<QuickDiffChange>,
+    pub(super) generation: Option<u64>,
+    pub(super) pending: bool,
+    pub(super) versions: (u32, u32),
+    pub(super) changes: Vec<QuickDiffChange>,
 }
 
 #[derive(Default)]
 pub struct QuickDiffs {
-    entries: HashMap<(String, PathBuf), Entry>,
+    pub(super) entries: HashMap<(String, PathBuf), Entry>,
+    /// The quick diff peek of the active editor (`QuickDiffEditorController.widget`).
+    pub(super) widget: Option<super::quick_diff_widget::PeekWidget>,
     /// Bumped on every source control change, so the originals are asked for again.
     pub generation: u64,
 }
@@ -57,13 +64,14 @@ pub fn line_changes(diff: &diff::LinesDiff) -> Vec<QuickDiffChange> {
         .iter()
         .map(|change| {
             let (original, modified) = (change.original, change.modified);
-            if original.is_empty() {
-                QuickDiffChange { kind: ChangeKind::Add, start: modified.start, end: modified.end - 1 }
-            } else if modified.is_empty() {
-                QuickDiffChange { kind: ChangeKind::Delete, start: modified.start - 1, end: 0 }
-            } else {
-                QuickDiffChange { kind: ChangeKind::Modify, start: modified.start, end: modified.end - 1 }
-            }
+            let (original_start, original_end) = if original.is_empty() { (original.start - 1, 0) } else { (original.start, original.end - 1) };
+            let (start, end) = if modified.is_empty() { (modified.start - 1, 0) } else { (modified.start, modified.end - 1) };
+            let kind = match (original.is_empty(), modified.is_empty()) {
+                (true, _) => ChangeKind::Add,
+                (_, true) => ChangeKind::Delete,
+                _ => ChangeKind::Modify,
+            };
+            QuickDiffChange { kind, start, end, original_start, original_end }
         })
         .collect()
 }
@@ -78,6 +86,7 @@ impl Workbench {
     pub(in crate::workbench) fn update_quick_diff(&mut self, cx: &mut Context<Self>) {
         let open: Vec<(String, PathBuf)> = self.editors.editors.iter().map(|editor| (editor.document.scheme.clone(), editor.document.path.clone())).collect();
         self.quick_diffs.entries.retain(|key, _| open.contains(key));
+        self.follow_quick_diff_widget(None, cx);
         if !self.quick_diff_enabled() || self.editors.active_diff().is_some() {
             return;
         }
@@ -109,7 +118,8 @@ impl Workbench {
         let changes = line_changes(&diff::compute_diff(&original.document.lines, &modified.document.lines, options));
         let entry = self.quick_diffs.entries.get_mut(&key).expect("found above");
         entry.versions = versions;
-        entry.changes = changes;
+        let old_changes = std::mem::replace(&mut entry.changes, changes);
+        self.follow_quick_diff_widget(Some(old_changes), cx);
     }
 
     /// mainThreadSCM.ts `getOriginalResource`: the first source control whose root holds the file answers
@@ -120,6 +130,7 @@ impl Workbench {
             let root = provider.root_uri["path"].as_str().unwrap_or_default();
             provider.has_quick_diff_provider && provider.root_uri["scheme"] == uri["scheme"] && key.1.starts_with(root)
         });
+        let label = provider.map(|provider| provider.label.clone()).unwrap_or_default();
         let Some(handle) = provider.map(|provider| provider.handle) else {
             let entry = self.quick_diffs.entries.get_mut(&key).expect("inserted by the caller");
             *entry = Entry { generation: Some(generation), ..Entry::default() };
@@ -145,7 +156,7 @@ impl Workbench {
                     _ => None,
                 };
                 if let Some(entry) = workbench.quick_diffs.entries.get_mut(&key) {
-                    *entry = Entry { original: side, generation: Some(generation), ..Entry::default() };
+                    *entry = Entry { original: side, label, generation: Some(generation), ..Entry::default() };
                 }
                 cx.notify();
             });
@@ -154,7 +165,7 @@ impl Workbench {
     }
 
     /// The active editor's quick diff changes, empty when it has none.
-    fn quick_diff_changes(&self, editor: &OpenEditor) -> &[QuickDiffChange] {
+    pub(super) fn quick_diff_changes(&self, editor: &OpenEditor) -> &[QuickDiffChange] {
         let key = (editor.document.scheme.clone(), editor.document.path.clone());
         self.quick_diffs.entries.get(&key).map_or(&[], |entry| entry.changes.as_slice())
     }
@@ -162,7 +173,9 @@ impl Workbench {
     /// dirtydiffDecorator.css: the `dirty-diff-glyph` of line `index`, 5px into the line decorations lane: a bar
     /// `scm.diffDecorationsGutterWidth` wide for added and modified lines, a 4px triangle on the line's bottom
     /// edge for deleted ones.
-    pub(super) fn quick_diff_glyph(&self, editor: &OpenEditor, index: usize, metrics: EditorMetrics) -> Option<Div> {
+    /// With `scm.diffDecorationsGutterAction` `diff` a glyph is a pointer that opens the change's peek, and on hover
+    /// its `:before` grows 6px to the left in the glyph's color.
+    pub(super) fn quick_diff_glyph(&self, editor: &OpenEditor, index: usize, metrics: EditorMetrics, cx: &mut Context<Self>) -> Option<gpui::Stateful<Div>> {
         let setting = self.setting("scm.diffDecorations");
         if !matches!(setting.as_str(), Some("all" | "gutter") | None) {
             return None;
@@ -175,17 +188,26 @@ impl Workbench {
         let left = metrics.glyph_margin_width() + metrics.line_numbers_width + 5.;
         let opacity = if self.setting("scm.diffDecorationsGutterVisibility") == json!("hover") { 0. } else { 1. };
         let glyph = div().absolute().left(px(left)).opacity(opacity);
-        Some(match change.kind {
+        let glyph = match change.kind {
             ChangeKind::Delete => {
                 let color = self.color("editorGutter.deletedBackground");
                 glyph.top(px(metrics.line_height - 4.)).child(deleted_triangle(color))
             }
             kind => {
-                let key = if kind == ChangeKind::Add { "editorGutter.addedBackground" } else { "editorGutter.modifiedBackground" };
+                let color = self.color(if kind == ChangeKind::Add { "editorGutter.addedBackground" } else { "editorGutter.modifiedBackground" });
                 let width = self.setting("scm.diffDecorationsGutterWidth").as_f64().filter(|width| *width > 0. && *width <= 5.).unwrap_or(3.) as f32;
-                glyph.top_0().h(px(metrics.line_height)).w(px(width)).bg(self.color(key))
+                let hover_bar = div().absolute().top_0().h_full().left(px(-6.)).w(px(6.)).opacity(0.).group_hover("quick-diff-glyph", |bar| bar.opacity(1.));
+                glyph.top_0().h(px(metrics.line_height)).w(px(width)).bg(color).child(hover_bar.bg(color))
             }
-        })
+        };
+        let glyph = glyph.id(("quick-diff-glyph", index));
+        if self.setting("scm.diffDecorationsGutterAction") == json!("none") {
+            return Some(glyph);
+        }
+        Some(glyph.group("quick-diff-glyph").cursor_pointer().on_click(cx.listener(move |workbench, _: &gpui::ClickEvent, window, cx| {
+            cx.stop_propagation();
+            workbench.quick_diff_glyph_clicked(line, window, cx);
+        })))
     }
 
     /// quickDiffDecorator.ts `overviewRuler` lanes (`OverviewRulerLane.Left`): 0-based inclusive line spans and colors.
@@ -228,9 +250,9 @@ mod tests {
         assert_eq!(
             changes,
             vec![
-                QuickDiffChange { kind: ChangeKind::Modify, start: 2, end: 2 },
-                QuickDiffChange { kind: ChangeKind::Add, start: 4, end: 4 },
-                QuickDiffChange { kind: ChangeKind::Delete, start: 5, end: 0 },
+                QuickDiffChange { kind: ChangeKind::Modify, start: 2, end: 2, original_start: 2, original_end: 2 },
+                QuickDiffChange { kind: ChangeKind::Add, start: 4, end: 4, original_start: 3, original_end: 0 },
+                QuickDiffChange { kind: ChangeKind::Delete, start: 5, end: 0, original_start: 5, original_end: 5 },
             ]
         );
     }

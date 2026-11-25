@@ -20,7 +20,10 @@ pub(super) mod diff_editor_view;
 pub(super) mod code_lens;
 pub(super) mod diff_gutter;
 pub(super) mod drag_and_drop;
+pub(super) mod merge_editor_view;
+pub(super) mod multi_diff_editor_view;
 pub(super) mod quick_diff;
+pub(super) mod quick_diff_widget;
 pub(super) mod sticky_scroll_view;
 pub(super) mod text_decorations;
 pub(super) mod unchanged_regions_view;
@@ -41,6 +44,7 @@ use crate::editor::{
 };
 use crate::editor::folding::FoldDecoration;
 use crate::editor::whitespace::whitespace_marks;
+use crate::multi_diff_editor::MULTI_DIFF_EDITOR_SCHEME;
 use crate::theme::ThemeKind;
 
 const EDITOR_FONT: &str = "Menlo";
@@ -83,11 +87,15 @@ impl Workbench {
                 SEARCH_EDITOR_SCHEME => part.child(self.search_editor_query(window, cx)),
                 crate::output::OUTPUT_SCHEME => part.child(self.output_title_actions(window, cx)),
                 TERMINAL_SCHEME => part.child(self.terminal_title_actions(cx)).child(self.terminal_body(cx)),
+                MULTI_DIFF_EDITOR_SCHEME => part.child(self.multi_diff_editor_body(window, cx)),
                 _ => part.child(self.breadcrumbs(editor)),
             })
             .map(|part| match self.editors.active_diff() {
                 Some(diff) => part.child(self.diff_editor_body(diff, editor, window, cx)),
-                None => part.when(!matches!(editor.document.scheme.as_str(), WEBVIEW_PANEL_SCHEME | TERMINAL_SCHEME), |part| part.children(self.unicode_banner(editor, cx)).child(self.text_area(editor, window, cx))),
+                None => match self.editors.active_merge() {
+                    Some(merge) => part.child(self.merge_editor_body(merge, editor, window, cx)),
+                    None => part.when(!matches!(editor.document.scheme.as_str(), WEBVIEW_PANEL_SCHEME | TERMINAL_SCHEME | MULTI_DIFF_EDITOR_SCHEME), |part| part.children(self.unicode_banner(editor, cx)).child(self.text_area(editor, window, cx))),
+                },
             })
             // The active tab reaches into the part's top border, which Chrome still draws over it.
             .child(div().absolute().inset(px(-1.)).border_1().rounded(px(8.)).border_color(self.color("surface.border")))
@@ -137,6 +145,7 @@ impl Workbench {
     fn editor_title_actions(&self, window: &Window, cx: &mut Context<Self>) -> Vec<gpui::AnyElement> {
         let mut actions = self.diff_title_actions(cx);
         let context = self.key_context(window);
+        actions.extend(self.multi_diff_title_actions(&context, cx));
         let resource = self.editors.active().map(|editor| editor.document.uri()).into_iter().collect::<Vec<_>>();
         let foreground = self.color("icon.foreground");
         for item in self.menus.iter().filter(|item| item.menu == crate::menus::MenuId::EditorTitle && item.group == "navigation" && item.when.as_ref().is_none_or(|when| when.evaluate(&context))) {
@@ -171,7 +180,7 @@ impl Workbench {
     fn tab_hover(&self, index: usize) -> impl IntoElement {
         let editor = &self.editors.editors[index];
         // `getTitle(Verbosity.LONG)`: a search editor's and a webview's is its name.
-        let title = match (self.editors.diffs.get(&editor.model_id), matches!(editor.document.scheme.as_str(), SEARCH_EDITOR_SCHEME | WEBVIEW_PANEL_SCHEME | TERMINAL_SCHEME)) {
+        let title = match (self.editors.diffs.get(&editor.model_id), matches!(editor.document.scheme.as_str(), SEARCH_EDITOR_SCHEME | WEBVIEW_PANEL_SCHEME | TERMINAL_SCHEME | MULTI_DIFF_EDITOR_SCHEME)) {
             (Some(diff), _) => diff.title(|side| crate::quick_input::path_label(crate::editor::split_query(&side.scheme, &side.path).0, None)),
             (None, true) => self.editor_name(editor),
             (None, false) => crate::quick_input::path_label(&editor.document.path, None),
@@ -256,6 +265,10 @@ impl Workbench {
         // `SearchEditorInput.getIcon`.
         if document.scheme == SEARCH_EDITOR_SCHEME {
             return Some(self.icon("search", 16., 16., foreground).h(px(line_height)));
+        }
+        // `MultiDiffEditorInput.getIcon`.
+        if document.scheme == MULTI_DIFF_EDITOR_SCHEME {
+            return Some(self.icon("diff-multiple", 16., 16., foreground).h(px(line_height)));
         }
         if let Some(icon) = self.webview_icon(&document.path) {
             return Some(div().flex().items_center().h(px(line_height)).child(gpui::img(icon.to_path_buf()).size(px(16.))));
@@ -445,6 +458,7 @@ impl Workbench {
             // editorScrollbar.ts clips the lines at contentWidth: the column right of the minimap stays empty.
             .child(div().absolute().left_0().right(px(minimap_width)).top_0().bottom_0().overflow_hidden().child(div().absolute().left_0().right_0().top(px(lines_top)).children(rows)))
             .children(self.marker_navigation_widget(editor, metrics.content_left(), metrics.char_width, cx))
+            .children(self.quick_diff_widget(editor, metrics, window, cx))
             .child(
                 div().id("margin").absolute().top_0().bottom_0().left_0().w(px(metrics.content_left())).on_hover(cx.listener(|workbench, hovered: &bool, _, cx| {
                     workbench.fold_controls.set_shown(*hovered, Instant::now());
@@ -1098,7 +1112,7 @@ impl Workbench {
                     .relative()
                     .flex()
                     .children(self.diff_margin(editor, index, metrics))
-                    .children(self.quick_diff_glyph(editor, index, metrics))
+                    .children(self.quick_diff_glyph(editor, index, metrics, cx))
                     .child(div().w(px(metrics.glyph_margin_width())).flex_none())
                     .child(number)
                     .child(self.fold_control(index, collapsed, metrics, fold_control_color, fold_controls, cx))
@@ -1470,8 +1484,8 @@ impl Workbench {
             items.push(("OVR".to_string(), "Enable Insert Mode", "editor.action.toggleOvertypeInsertMode"));
         }
         let prominent_items = items.len();
-        // A webview editor or terminal shows no editor status entries.
-        if let Some(editor) = self.editors.active().filter(|editor| !matches!(editor.document.scheme.as_str(), WEBVIEW_PANEL_SCHEME | TERMINAL_SCHEME)) {
+        // A webview editor, terminal or multi diff editor shows no editor status entries.
+        if let Some(editor) = self.editors.active().filter(|editor| !matches!(editor.document.scheme.as_str(), WEBVIEW_PANEL_SCHEME | TERMINAL_SCHEME | MULTI_DIFF_EDITOR_SCHEME)) {
             items.extend(Self::editor_status_entries(editor, &self.languages));
         }
         let prominent = (self.theme.color("statusBarItem.prominentBackground"), self.color("statusBarItem.prominentForeground"));
