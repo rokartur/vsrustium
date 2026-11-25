@@ -21,6 +21,8 @@ pub struct PanelView {
     pub title: &'static str,
     pub render: fn(&mut Workbench, &mut Window, &mut Context<Workbench>) -> AnyElement,
     pub actions: fn(&Workbench, &mut Window, &mut Context<Workbench>) -> AnyElement,
+    /// A `hideIfEmpty` container shows its tab only while one of its views' `when` holds.
+    pub visible: fn(&Workbench) -> bool,
 }
 
 #[derive(Default)]
@@ -105,6 +107,11 @@ impl Workbench {
         self.editors_changed(cx);
     }
 
+    /// The views with a tab in the panel's composite bar, by registration order.
+    pub(super) fn panel_tabs(&self) -> Vec<&PanelView> {
+        self.panel.views.iter().filter(|view| (view.visible)(self)).collect()
+    }
+
     fn active_panel_view(&self) -> Option<&PanelView> {
         let storage = self.workspace_storage.lock().unwrap();
         let id = self.panel.active.or(storage.get(ACTIVE_PANEL_KEY));
@@ -116,7 +123,7 @@ impl Workbench {
     /// The panel card: the views' tabs, maximize and close, and the active view.
     pub(super) fn panel_part(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let active = self.active_panel_view().map(|view| view.id);
-        let tabs: Vec<AnyElement> = self.panel.views.iter().map(|view| self.panel_tab(view, Some(view.id) == active, cx)).collect();
+        let tabs: Vec<AnyElement> = self.panel_tabs().into_iter().map(|view| self.panel_tab(view, Some(view.id) == active, cx)).collect();
         let (maximize_icon, maximize_title) = match self.is_panel_maximized() {
             true => ("screen-normal", "Restore Panel Size"),
             false => ("screen-full", "Maximize Panel Size"),

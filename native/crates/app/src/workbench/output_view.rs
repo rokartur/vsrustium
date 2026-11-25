@@ -94,6 +94,7 @@ impl Workbench {
             title: "Output",
             render: |workbench, window, cx| workbench.output_panel_body(window, cx).into_any_element(),
             actions: |workbench, window, cx| workbench.output_title_actions(window, cx).into_any_element(),
+            visible: |_| true,
         });
     }
 

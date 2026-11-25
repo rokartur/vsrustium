@@ -1,8 +1,5 @@
 //! The Debug Console (repl.ts, replViewer.ts): the REPL elements of the focused session's output and evaluations,
 //! and the input that evaluates an expression in the focused frame.
-// shortcut: the console is an editor tab of the group, not a panel view; the panel part is milestone 11's.
-
-use std::path::Path;
 
 use gpui::{ClickEvent, Context, Div, FocusHandle, Window, div, prelude::*, px};
 use serde_json::json;
@@ -11,10 +8,11 @@ use super::Workbench;
 use super::input_box_view::{InputId, InputLook, InputView};
 use crate::commands::Outcome;
 use crate::debug::session::{ReplElement, Severity, Variable};
-use crate::editor::TextDocument;
+use super::panel::PanelView;
 use crate::input_box::InputBox;
 
-pub const DEBUG_CONSOLE_SCHEME: &str = "debug-console";
+/// debug.ts `REPL_VIEW_ID`, the view and its panel container.
+pub const REPL_VIEW_ID: &str = "workbench.panel.repl";
 
 pub struct DebugConsole {
     pub focus: FocusHandle,
@@ -33,34 +31,32 @@ impl DebugConsole {
 }
 
 impl Workbench {
-    pub(super) fn debug_console_visible(&self) -> bool {
-        self.editors.active().is_some_and(|editor| editor.document().scheme == DEBUG_CONSOLE_SCHEME)
+    /// debug.contribution.ts registers the Debug Console container in the panel at order 2, after Output.
+    // shortcut: the view's filter box and session picker are not ported; its title has Clear Console only.
+    pub(super) fn register_debug_console_panel_view(&mut self) {
+        self.register_panel_view(PanelView {
+            id: REPL_VIEW_ID,
+            title: "Debug Console",
+            render: |workbench, window, cx| workbench.debug_console_body(window, cx).into_any_element(),
+            actions: |workbench, _, cx| div().flex().child(workbench.search_action("clear-all", "workbench.debug.panel.action.clearReplAction", true, cx)).into_any_element(),
+            visible: |_| true,
+        });
     }
 
-    /// `viewsService.openView(REPL_VIEW_ID, focus)`. Without focus the console opens behind the active editor,
-    /// as the panel opens beside the editor upstream.
+    pub(super) fn debug_console_visible(&self) -> bool {
+        self.panel_view_visible(REPL_VIEW_ID)
+    }
+
+    /// `viewsService.openView(REPL_VIEW_ID, focus)`.
     pub(crate) fn open_debug_console(&mut self, focus: bool, window: &mut Window, cx: &mut Context<Self>) {
-        let previous = self.editors.active_index().filter(|_| !focus);
-        match self.editors.editors.iter().position(|editor| editor.document().scheme == DEBUG_CONSOLE_SCHEME) {
-            Some(index) => self.editors.activate(index),
-            None => {
-                let document = TextDocument::from_text(DEBUG_CONSOLE_SCHEME, Path::new("Debug Console"), "", "utf8".into(), Some("plaintext"), &self.languages, &self.settings.lock().unwrap());
-                self.editors.open(document, false);
-            }
-        }
-        if let Some(previous) = previous {
-            self.editors.activate(previous);
-        }
-        self.editors_changed(cx);
+        self.open_panel_view(REPL_VIEW_ID, cx);
         if focus {
             window.focus(&self.debug_console.input_focus, cx);
         }
     }
 
     pub(crate) fn close_debug_console(&mut self, cx: &mut Context<Self>) {
-        let Some(index) = self.editors.editors.iter().position(|editor| editor.document().scheme == DEBUG_CONSOLE_SCHEME) else { return };
-        self.editors.close(index);
-        self.editors_changed(cx);
+        self.close_panel_view(REPL_VIEW_ID, cx);
     }
 
     pub(super) fn register_debug_console_commands(&mut self) {

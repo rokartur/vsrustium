@@ -144,7 +144,7 @@ impl Workbench {
                     result.mark_task_complete(&text(1));
                 }
             }
-            "$finishedExtensionTestRun" => self.finish_test_run(&text(0)),
+            "$finishedExtensionTestRun" => self.finish_test_run(&text(0), cx),
             "$applyTestRunUpdates" => {
                 let run = text(1);
                 for update in arg(2).as_array().into_iter().flatten() {
@@ -190,7 +190,7 @@ impl Workbench {
     }
 
     /// `markComplete` and the `$publishTestResults` of testResultService.ts's `onResultsChanged`.
-    fn finish_test_run(&mut self, run: &str) {
+    fn finish_test_run(&mut self, run: &str, cx: &mut Context<Self>) {
         let Some(result) = self.testing.result_mut(run) else { return };
         if result.completed_at.is_some() {
             return;
@@ -198,7 +198,7 @@ impl Workbench {
         result.mark_complete(now_millis());
         let serialized = result.to_json();
         self.host.send("ExtHostTesting", "$publishTestResults", vec![json!([serialized])]);
-        self.test_run_finished(run);
+        self.test_run_finished(run, cx);
     }
 
     /// mainThreadTesting.ts `onDidChange` of the profiles: `$setDefaultRunProfiles`.
@@ -244,7 +244,7 @@ impl Workbench {
             by_controller.entry(controller.clone()).or_default().push(json!({ "runId": run, "excludeExtIds": exclude, "profileId": target["profileId"], "controllerId": controller, "testIds": ids }));
         }
         let replies: Vec<_> = by_controller.into_values().map(|requests| self.host.call("ExtHostTesting", "$runControllerTests", vec![json!(requests)])).collect();
-        self.show_test_results_on_start(&run);
+        self.show_test_results_on_start(&run, cx);
         let finished = run.clone();
         cx.spawn(async move |this, cx| {
             let mut errors = Vec::new();
@@ -257,7 +257,7 @@ impl Workbench {
                 if !errors.is_empty() {
                     workbench.notify_error(format!("An error occurred attempting to run tests: {}", errors.join(" ")));
                 }
-                workbench.finish_test_run(&finished);
+                workbench.finish_test_run(&finished, cx);
                 cx.notify();
             });
         })

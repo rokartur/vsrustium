@@ -72,7 +72,7 @@ impl Workbench {
             .child(self.tab_strip(window, cx))
             .map(|part| match editor.document().scheme.as_str() {
                 // A webview editor has no breadcrumbs: its resource has no file system provider.
-                WEBVIEW_PANEL_SCHEME | super::debug_console::DEBUG_CONSOLE_SCHEME | super::testing_view::TEST_RESULTS_SCHEME => part,
+                WEBVIEW_PANEL_SCHEME => part,
                 super::extension_editor::EXTENSION_EDITOR_SCHEME => part.child(self.extension_editor_body(&editor.document().path, cx)),
                 // searchEditor.ts draws its query widget where a text editor has its breadcrumbs.
                 SEARCH_EDITOR_SCHEME => part.child(self.search_editor_query(window, cx)),
@@ -84,8 +84,6 @@ impl Workbench {
             .map(|part| match self.editors.active_diff() {
                 Some(diff) => part.child(self.diff_editor_body(diff, editor, window, cx)),
                 None if editor.document().scheme == super::extension_editor::EXTENSION_EDITOR_SCHEME => part,
-                None if editor.document().scheme == super::debug_console::DEBUG_CONSOLE_SCHEME => part.child(self.debug_console_body(window, cx)),
-                None if editor.document().scheme == super::testing_view::TEST_RESULTS_SCHEME => part.child(self.test_results_body(cx)),
                 None if self.shows_webview(editor) => part.child(self.webview_editor_body(editor)),
                 None => part.children(self.unicode_banner(editor, cx)).child(self.text_area(editor, window, cx).opacity(self.unfocused_editor_opacity(window))),
             })

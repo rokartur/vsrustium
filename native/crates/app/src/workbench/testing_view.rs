@@ -1,20 +1,20 @@
 //! The Testing view container (testingExplorerView.ts), the Test Results editor (testResultsViewContent.ts with
 //! its tree and the task output), the run glyphs of testingDecorations.ts and the commands of
 //! testExplorerActions.ts.
-// shortcut: Test Results is an editor tab of the group, not a panel view; the panel part is milestone 11's.
 
 use std::collections::HashSet;
-use std::path::Path;
 
 use gpui::{ClickEvent, Context, Div, MouseButton, MouseDownEvent, Rgba, Window, div, prelude::*, px};
 use serde_json::{Value, json};
 
 use super::Workbench;
 use crate::commands::Outcome;
-use crate::editor::{OpenEditor, TextDocument};
+use super::panel::PanelView;
+use crate::editor::OpenEditor;
 use crate::testing::{ExpandState, GROUP_DEBUG, GROUP_RUN, ResultState};
 
-pub const TEST_RESULTS_SCHEME: &str = "test-results";
+/// testing.contribution.ts `Testing.ResultsPanelId`, the panel container of the Test Results view.
+pub const TEST_RESULTS_VIEW_ID: &str = "workbench.panel.testResults";
 const ROW_HEIGHT: f32 = 22.;
 
 /// The view state of the explorer and the results editor.
@@ -109,8 +109,8 @@ impl Workbench {
             cx.notify();
             Outcome::done()
         });
-        self.commands.register("testing.showMostRecentOutput", |workbench, _, window, cx| {
-            workbench.open_test_results(true, window, cx);
+        self.commands.register("testing.showMostRecentOutput", |workbench, _, _, cx| {
+            workbench.open_panel_view(TEST_RESULTS_VIEW_ID, cx);
             Outcome::done()
         });
         self.commands.register("testing.searchForTestExtension", |workbench, _, window, cx| workbench.execute_command("workbench.extensions.search", vec![json!("@category:\"testing\"")], window, cx));
@@ -146,41 +146,35 @@ impl Workbench {
     }
 
     /// `testing.automaticallyOpenTestResults`: `openOnTestStart` opens the results without focus.
-    pub(super) fn show_test_results_on_start(&mut self, run: &str) {
+    pub(super) fn show_test_results_on_start(&mut self, run: &str, cx: &mut Context<Self>) {
         self.testing_view.selected_result = Some(run.to_owned());
         self.testing_view.selected_test = None;
         if self.setting("testing.automaticallyOpenTestResults") == "openOnTestStart" {
-            self.open_test_results_tab();
+            self.open_panel_view(TEST_RESULTS_VIEW_ID, cx);
         }
     }
 
     pub(super) fn test_output_changed(&mut self, _run: &str) {}
 
     /// `openOnTestFailure` opens the results when a run ends with a failure.
-    pub(super) fn test_run_finished(&mut self, run: &str) {
+    pub(super) fn test_run_finished(&mut self, run: &str, cx: &mut Context<Self>) {
         let failed = self.testing.results.iter().find(|result| result.id == run).is_some_and(|result| result.count(ResultState::Failed) + result.count(ResultState::Errored) > 0);
         if failed && self.setting("testing.automaticallyOpenTestResults") == "openOnTestFailure" {
             self.testing_view.selected_result = Some(run.to_owned());
-            self.open_test_results_tab();
+            self.open_panel_view(TEST_RESULTS_VIEW_ID, cx);
         }
     }
 
-    fn open_test_results_tab(&mut self) {
-        match self.editors.editors.iter().position(|editor| editor.document().scheme == TEST_RESULTS_SCHEME) {
-            Some(index) => self.editors.activate(index),
-            None => {
-                let document = TextDocument::from_text(TEST_RESULTS_SCHEME, Path::new("Test Results"), "", "utf8".into(), Some("plaintext"), &self.languages, &self.settings.lock().unwrap());
-                self.editors.open(document, false);
-            }
-        }
-    }
-
-    fn open_test_results(&mut self, focus: bool, window: &mut Window, cx: &mut Context<Self>) {
-        self.open_test_results_tab();
-        self.editors_changed(cx);
-        if focus {
-            window.focus(&self.editor_focus, cx);
-        }
+    /// testing.contribution.ts registers the Test Results container in the panel at order 3, `hideIfEmpty`: its
+    /// view's `when` is `testing.hasAnyResults`.
+    pub(super) fn register_test_results_panel_view(&mut self) {
+        self.register_panel_view(PanelView {
+            id: TEST_RESULTS_VIEW_ID,
+            title: "Test Results",
+            render: |workbench, _, cx| workbench.test_results_body(cx).into_any_element(),
+            actions: |_, _, _| gpui::Empty.into_any_element(),
+            visible: |workbench| !workbench.testing.results.is_empty(),
+        });
     }
 
     /// The Testing side bar: the welcome without controllers, else the tests tree with the view's actions.

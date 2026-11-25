@@ -352,6 +352,7 @@ impl Workbench {
                 workbench.terminal_body(window, cx).into_any_element()
             },
             actions: |workbench, _, cx| workbench.terminal_title_actions(cx).into_any_element(),
+            visible: |_| true,
         });
     }
 

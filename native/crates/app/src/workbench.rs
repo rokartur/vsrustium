@@ -573,6 +573,8 @@ impl Workbench {
         workbench.register_logs_actions();
         workbench.register_terminal_actions();
         workbench.register_output_panel_view();
+        workbench.register_debug_console_panel_view();
+        workbench.register_test_results_panel_view();
         workbench.register_terminal_panel_view();
         workbench.register_perf_view();
         workbench.register_accessibility_actions();
