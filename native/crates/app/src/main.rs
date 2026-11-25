@@ -44,6 +44,7 @@ mod output;
 mod quick_input;
 mod search_editor;
 mod search_model;
+mod settings_editor;
 mod smart_snippet_inserter;
 mod split_view;
 mod syntax;
