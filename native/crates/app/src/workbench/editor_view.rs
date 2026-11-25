@@ -63,6 +63,7 @@ impl Workbench {
             .border_color(self.color("surface.border"))
             .child(self.tab_strip(cx))
             .child(self.breadcrumbs(editor))
+            .children(self.unicode_banner(editor, cx))
             .child(self.text_area(editor, window, cx))
             // The active tab reaches into the part's top border, which Chrome still draws over it.
             .child(div().absolute().inset(px(-1.)).border_1().rounded(px(8.)).border_color(self.color("surface.border")))
@@ -549,6 +550,8 @@ impl Workbench {
         // currentLineHighlight.ts: every cursor's line, drawn only while all selections are empty.
         let all_empty = selections.iter().all(|selection| selection.is_empty());
         let bracket_matches = self.bracket_matches(editor);
+        // Past the cap there are no marks, the banner shows instead.
+        let unicode = self.unicode_highlights(editor).filter(|(_, highlights)| !highlights.has_more);
         let bracket_box = (self.theme.color("editorBracketMatch.background"), self.theme.color("editorBracketMatch.border"));
         let colors = LineColors {
             number: self.color("editorLineNumber.foreground"),
@@ -697,6 +700,7 @@ impl Workbench {
                     }
                     content = content.child(bracket);
                 }
+                content = content.children(self.unicode_highlight_boxes(editor, index, unicode.as_ref(), char_width));
                 content = content.children(find_matches);
                 // inPlaceReplace.css: .valueSetReplacement only in the light theme (`.monaco-editor.vs`), a 2px outline.
                 if let Some((_, line, columns)) = &editor.value_set_replacement

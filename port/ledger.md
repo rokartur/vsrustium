@@ -277,7 +277,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | editor/contrib/symbolIcons | src/vs/editor/contrib | todo |  |
 | editor/contrib/toggleTabFocusMode | src/vs/editor/contrib | todo |  |
 | editor/contrib/tokenization | src/vs/editor/contrib | todo |  |
-| editor/contrib/unicodeHighlighter | src/vs/editor/contrib | todo |  |
+| editor/contrib/unicodeHighlighter | src/vs/editor/contrib | ported | editor/unicode_highlighter.rs (unicodeTextModelHighlighter.ts, strings.ts confusables and invisibles), workbench/unicode_highlight.rs (marks, banner past 1000), the three Disable actions: cargo test -p app unicode_highlighter, cargo test -p app theme::; ui-pair marks and banner match; no hover reason or exclude options (editor/contrib/hover is todo), no workspace trust |
 | editor/contrib/unusualLineTerminators | src/vs/editor/contrib | todo |  |
 | editor/contrib/wordHighlighter | src/vs/editor/contrib | ported | textual provider only (USUAL_WORD_SEPARATORS, whole words) on cursor move; cargo test -p app (editor::tests word highlight); pixel-check file window |
 | editor/contrib/wordOperations | src/vs/editor/contrib | ported | word moves, selects and deletes with USUAL_WORD_SEPARATORS: cargo test -p app (editor::cursor::tests, editor::edit::tests) |

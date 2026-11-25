@@ -133,6 +133,18 @@ impl Workbench {
         for (id, kind) in comment_actions {
             self.commands.register(id, move |workbench, _, _, cx| workbench.run_comment_action(kind, cx));
         }
+        let unicode_highlight_actions = [
+            ("editor.action.unicodeHighlight.disableHighlightingOfAmbiguousCharacters", "editor.unicodeHighlight.ambiguousCharacters"),
+            ("editor.action.unicodeHighlight.disableHighlightingOfInvisibleCharacters", "editor.unicodeHighlight.invisibleCharacters"),
+            ("editor.action.unicodeHighlight.disableHighlightingOfNonBasicAsciiCharacters", "editor.unicodeHighlight.nonBasicASCII"),
+        ];
+        for (id, key) in unicode_highlight_actions {
+            self.commands.register(id, move |workbench, _, _, cx| {
+                workbench.update_setting(key, false.into());
+                cx.notify();
+                Outcome::done()
+            });
+        }
         // `editor.action.smartSelect.grow` is the expand command's old id (registerCommandAlias).
         for (id, forward) in [("editor.action.smartSelect.expand", true), ("editor.action.smartSelect.grow", true), ("editor.action.smartSelect.shrink", false)] {
             self.commands.register(id, move |workbench, _, _, cx| workbench.run_smart_select(forward, cx));
