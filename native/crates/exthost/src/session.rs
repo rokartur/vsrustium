@@ -378,12 +378,12 @@ impl Session {
 
     /// Sends a request without waiting for its reply.
     pub fn notify(&mut self, proxy: &str, method: &str, args: Vec<Value>) -> u32 {
-        self.send_request(proxy, method, args.into_iter().map(Arg::Json).collect())
+        self.send_request(proxy, method, args.into_iter().map(Arg::from_value).collect())
     }
 
     /// `notify` of a host method that takes a `CancellationToken`; `cancel` cancels it.
     pub fn notify_cancellable(&mut self, proxy: &str, method: &str, args: Vec<Value>) -> u32 {
-        self.send(proxy, method, args.into_iter().map(Arg::Json).collect(), true)
+        self.send(proxy, method, args.into_iter().map(Arg::from_value).collect(), true)
     }
 
     /// Cancels a request sent with `notify_cancellable`; the host still answers it, with a cancellation error.
@@ -432,7 +432,7 @@ impl Session {
     /// A request whose host method takes a `CancellationToken`, cancelled after `timeout` (`raceCancellation`):
     /// `None` once cancelled or when the host is gone.
     pub fn request_cancellable(&mut self, proxy: &str, method: &str, args: Vec<Value>, timeout: Duration) -> Option<CallResult> {
-        let req = self.send(proxy, method, args.into_iter().map(Arg::Json).collect(), true);
+        let req = self.send(proxy, method, args.into_iter().map(Arg::from_value).collect(), true);
         let deadline = Instant::now() + timeout;
         loop {
             if let Some(result) = self.results.remove(&req) {

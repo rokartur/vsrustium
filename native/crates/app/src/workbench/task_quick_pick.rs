@@ -165,8 +165,7 @@ impl Workbench {
                 if button == 1 {
                     self.remove_recent_task(&task);
                     let Some(input) = self.quick_inputs.get_mut(id) else { return };
-                    let entries = input.items().iter().filter(|entry| !matches!(entry, Entry::Item(item) if item.handle == handle)).cloned().collect();
-                    input.set_items(entries);
+                    input.remove_item(handle);
                     cx.notify();
                     return;
                 }

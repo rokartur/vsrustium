@@ -25,6 +25,20 @@ const ARG_VSBUFFER: u8 = 2;
 const ARG_SERIALIZED_OBJECT_WITH_BUFFERS: u8 = 3;
 const ARG_UNDEFINED: u8 = 4;
 
+/// rpcProtocol.ts `undefinedRef`: an argument that is `undefined`, sent as `ArgType.Undefined`.
+pub fn undefined() -> Value {
+    serde_json::json!({ "$$ref$$": -1 })
+}
+
+impl Arg {
+    pub fn from_value(value: Value) -> Arg {
+        match value.get("$$ref$$").and_then(Value::as_i64) == Some(-1) {
+            true => Arg::Undefined,
+            false => Arg::Json(value),
+        }
+    }
+}
+
 /// One argument as it crosses the wire. `Json` is what most calls carry.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Arg {
@@ -303,5 +317,11 @@ mod tests {
         let message = Message::Request { req: 1, rpc_id: 2, method: "$m".into(), args: vec![Arg::JsonWithBuffers { json, buffers: vec![vec![1]] }], cancellable: false };
         let Message::Request { args, .. } = decode(&encode(&message)).unwrap() else { panic!("request expected") };
         assert_eq!(args[0], Arg::JsonWithBuffers { json: json!({ "newResource": {"path": "/a"}, "list": [null, {"$$ref$$": 0}] }), buffers: vec![vec![1]] });
+    }
+
+    #[test]
+    fn an_undefined_argument_is_sent_as_undefined() {
+        assert_eq!(Arg::from_value(undefined()), Arg::Undefined);
+        assert_eq!(Arg::from_value(json!(1)), Arg::Json(json!(1)));
     }
 }

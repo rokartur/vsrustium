@@ -1,5 +1,4 @@
 pub struct Template {
-    pub id: &'static str,
     pub label: &'static str,
     pub description: &'static str,
     pub content: &'static str,
@@ -11,7 +10,6 @@ pub fn templates() -> Vec<Template> {
 }
 
 const DOTNET_BUILD: Template = Template {
-    id: "dotnetCore",
     label: ".NET Core",
     description: "Executes .NET Core build command",
     content: concat!(
@@ -43,7 +41,6 @@ const DOTNET_BUILD: Template = Template {
 };
 
 const MSBUILD: Template = Template {
-    id: "msbuild",
     label: "MSBuild",
     description: "Executes the build target",
     content: concat!(
@@ -77,7 +74,6 @@ const MSBUILD: Template = Template {
 };
 
 const COMMAND: Template = Template {
-    id: "externalCommand",
     label: "Others",
     description: "Example to run an arbitrary external command",
     content: concat!(
@@ -97,7 +93,6 @@ const COMMAND: Template = Template {
 };
 
 const MAVEN: Template = Template {
-    id: "maven",
     label: "maven",
     description: "Executes common maven commands",
     content: concat!(
@@ -131,7 +126,7 @@ mod tests {
     fn others_template_parses_after_stripping_comments() {
         let all = templates();
         assert_eq!(all.len(), 4);
-        let others = all.iter().find(|t| t.id == "externalCommand").unwrap();
+        let others = all.iter().find(|t| t.label == "Others").unwrap();
         let json: String = others
             .content
             .lines()

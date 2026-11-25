@@ -316,8 +316,8 @@ impl Workbench {
         if instance.launch.extension_pty && exit_reason != EXIT_REASON_PROCESS {
             self.host.send("ExtHostTerminalService", "$acceptProcessShutdown", vec![json!(id), json!(true)]);
         }
-        let exit_code = instance.exit_code.flatten();
-        self.host.send("ExtHostTerminalService", "$acceptTerminalClosed", vec![json!(id), json!(exit_code), json!(exit_reason)]);
+        let exit_code = instance.exit_code.flatten().map_or_else(exthost::rpc::undefined, |code| json!(code));
+        self.host.send("ExtHostTerminalService", "$acceptTerminalClosed", vec![json!(id), exit_code, json!(exit_reason)]);
         self.host.send("ExtHostTerminalShellIntegration", "$closeTerminal", vec![json!(id)]);
         self.terminal_view.host.reported.remove(&id);
         self.sync_terminals_to_host();
@@ -407,7 +407,7 @@ impl Workbench {
             }
             let selection = instance.selection_text();
             if reported.selection != selection {
-                messages.push(("$acceptTerminalSelection", vec![json!(id), json!(selection)]));
+                messages.push(("$acceptTerminalSelection", vec![json!(id), selection.as_ref().map_or_else(exthost::rpc::undefined, |text| json!(text))]));
                 reported.selection = selection;
             }
         }
