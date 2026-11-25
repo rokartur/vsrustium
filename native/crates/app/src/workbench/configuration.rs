@@ -82,6 +82,9 @@ impl Workbench {
         if ["workbench.colorCustomizations", "editor.tokenColorCustomizations", "editor.semanticTokenColorCustomizations"].iter().any(|key| affects(change, key)) {
             self.customize_theme();
             self.semantic_tokens_settings_changed(cx);
+            // themeService.ts fires `onDidColorThemeChange` for customizations too.
+            self.host.send_color_theme(self.theme.kind);
+            self.host.send_syntax_highlighting_theme_changed();
         }
         self.update_model_options(before);
         if ["editor.folding", "editor.foldingStrategy", "editor.foldingMaximumRegions", "editor.defaultFoldingRangeProvider"].iter().any(|key| affects(change, key)) {

@@ -36,6 +36,8 @@ pub struct Languages {
     /// Language ids in the order they were first registered.
     ids: Vec<String>,
     names: HashMap<String, String>,
+    /// `_lowercaseNameMap`: each language's id and aliases, lower-cased.
+    lowercase_names: HashMap<String, String>,
     off_side: HashMap<String, bool>,
     folding_markers: HashMap<String, Arc<FoldingMarkers>>,
     block_comments: HashMap<String, (String, String)>,
@@ -51,7 +53,7 @@ pub struct Languages {
 impl Languages {
     pub fn new(extensions: &[ScannedExtension]) -> Self {
         let grammars = textmate::Registry::new(extensions.iter().map(|extension| (extension.location.as_path(), &extension.description)));
-        let mut languages = Languages { associations: Vec::new(), ids: Vec::new(), names: HashMap::new(), off_side: HashMap::new(), folding_markers: HashMap::new(), block_comments: HashMap::new(), line_comments: HashMap::new(), first_lines: Vec::new(), grammars, brackets: HashMap::new(), rules: HashMap::new() };
+        let mut languages = Languages { associations: Vec::new(), ids: Vec::new(), names: HashMap::new(), lowercase_names: HashMap::new(), off_side: HashMap::new(), folding_markers: HashMap::new(), block_comments: HashMap::new(), line_comments: HashMap::new(), first_lines: Vec::new(), grammars, brackets: HashMap::new(), rules: HashMap::new() };
         languages.register(&serde_json::json!({ "id": PLAINTEXT, "extensions": [".txt"], "aliases": ["Plain Text", "text"] }), None);
         for extension in extensions {
             for language in extension.description["contributes"]["languages"].as_array().into_iter().flatten() {
@@ -76,6 +78,10 @@ impl Languages {
         }
         if !self.ids.iter().any(|known| known == id) {
             self.ids.push(id.into());
+        }
+        self.lowercase_names.insert(id.to_lowercase(), id.into());
+        for alias in strings("aliases").into_iter().filter(|alias| !alias.is_empty()) {
+            self.lowercase_names.insert(alias.to_lowercase(), id.into());
         }
         // The first alias names the language and a later contribution with aliases renames it; one without aliases
         // keeps the name, and empty `aliases` leave the language without one.
@@ -193,6 +199,11 @@ impl Languages {
 
     pub fn is_registered(&self, id: &str) -> bool {
         self.ids.iter().any(|known| known == id)
+    }
+
+    /// `getLanguageIdByLanguageName`: the language one of its aliases or its id names, ignoring case.
+    pub fn id_by_name(&self, name: &str) -> Option<&str> {
+        self.lowercase_names.get(&name.to_lowercase()).map(String::as_str)
     }
 
     pub fn name<'a>(&'a self, id: &'a str) -> &'a str {

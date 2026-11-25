@@ -138,3 +138,26 @@ fn tokens_at_position_answers_the_token_of_an_open_model(cx: &mut TestAppContext
     assert_eq!(ask(cx), Ok(json!({ "type": 0, "range": { "startLineNumber": 2, "startColumn": 1, "endLineNumber": 2, "endColumn": 4 } })));
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+/// mainThreadLanguages.ts `$computeFullSyntaxHighlighting`: a language by its name, tokens with one style merged,
+/// a token per newline; an unknown language is one plain token.
+#[gpui::test]
+fn full_syntax_highlighting_tokenizes_with_the_theme(cx: &mut TestAppContext) {
+    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let theme = load_theme(&[scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap()], "Dark Modern").unwrap();
+    let languages = Languages::new(&exthost::scan::scan_builtin_extensions(&app_root.join("extensions")).unwrap());
+    let (workbench, cx) = cx.add_window_view(|_, cx| Workbench::new(theme, app_root.clone(), None, languages, crate::default_settings(), HostSync::new(std::sync::mpsc::channel().0), cx));
+    let ask = |source: &str, language: &str, cx: &mut VisualTestContext| {
+        let args = [json!(source), json!(language)];
+        workbench.update_in(cx, |workbench, window, cx| workbench.host_request("MainThreadLanguages", "$computeFullSyntaxHighlighting", &args, window, cx)).unwrap()
+    };
+    let result = ask("let x\nx", "TypeScript", cx);
+    let tokens: Vec<(u64, u64)> = result["tokens"].as_array().unwrap().iter().map(|token| (token["length"].as_u64().unwrap(), token["foreground"].as_u64().unwrap())).collect();
+    let color = |index: u64| result["colorMap"][index as usize].as_str().unwrap().to_owned();
+    assert_eq!(tokens.iter().map(|(length, _)| length).sum::<u64>(), 7);
+    assert_eq!(tokens[0].0, 3, "`let`");
+    assert_eq!(color(tokens[0].1), "#569cd6ff");
+    assert_eq!(tokens[tokens.len() - 2], (1, 0), "the newline");
+    assert_eq!(result["colorMap"][0], "");
+    assert_eq!(ask("ab", "no-such-language", cx)["tokens"], json!([{ "length": 2, "foreground": 0, "fontStyle": 0 }]));
+}

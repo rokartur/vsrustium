@@ -276,6 +276,7 @@ impl Workbench {
             self.customize_theme();
             self.semantic_tokens_settings_changed(cx);
             self.host.send_color_theme(self.theme.kind);
+            self.host.send_syntax_highlighting_theme_changed();
             cx.notify();
         }
         if target == SettingTarget::Preview {

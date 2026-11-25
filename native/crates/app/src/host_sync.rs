@@ -387,6 +387,11 @@ impl HostSync {
         self.send("ExtHostTheming", "$onColorThemeChange", vec![json!(scheme)]);
     }
 
+    /// mainThreadLanguages.ts: a color theme change tells `onDidChangeSyntaxHighlighting` listeners.
+    pub fn send_syntax_highlighting_theme_changed(&self) {
+        self.send("ExtHostLanguages", "$acceptSyntaxHighlightingThemeChanged", Vec::new());
+    }
+
     /// mainThreadLanguages.ts: `$acceptLanguageIds` with the registered languages, what `getLanguages` answers.
     pub fn send_language_ids(&self, languages: &crate::languages::Languages) {
         self.send("ExtHostLanguages", "$acceptLanguageIds", vec![json!(languages.ids())]);

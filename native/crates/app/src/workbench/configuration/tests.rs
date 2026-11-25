@@ -45,7 +45,7 @@ fn an_edit_of_settings_json_on_disk_reaches_the_host_the_theme_and_the_models(cx
     assert_eq!(workbench.read_with(cx, |workbench, _| workbench.theme.settings_id.clone()), "Abyss");
     let sent: Vec<(&str, Vec<Value>)> = messages.try_iter().map(|message| (message.method, message.args)).collect();
     let methods: Vec<&str> = sent.iter().map(|(method, _)| *method).collect();
-    assert_eq!(methods, ["$acceptConfigurationChanged", "$onColorThemeChange", "$acceptEditorPropertiesChanged"]);
+    assert_eq!(methods, ["$acceptConfigurationChanged", "$onColorThemeChange", "$acceptSyntaxHighlightingThemeChanged", "$acceptEditorPropertiesChanged"]);
     assert_eq!(sent[0].1[1]["keys"], serde_json::json!(["editor.tabSize", "workbench.colorTheme"]));
     assert_eq!(std::fs::read_to_string(&user_settings).unwrap(), edited, "applying the theme writes nothing back");
 

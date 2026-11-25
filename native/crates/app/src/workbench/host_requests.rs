@@ -34,6 +34,7 @@ pub const HOST_REQUESTS: &[(&str, &str)] = &[
     ("MainThreadDocumentDiff", "$computeDocumentDiff"),
     ("MainThreadLanguages", "$changeLanguage"),
     ("MainThreadLanguages", "$tokensAtPosition"),
+    ("MainThreadLanguages", "$computeFullSyntaxHighlighting"),
     ("MainThreadTextEditors", "$tryShowTextDocument"),
     ("MainThreadTextEditors", "$trySetSelections"),
     ("MainThreadTextEditors", "$tryRevealRange"),
@@ -80,6 +81,7 @@ impl Workbench {
             ("MainThreadDocumentDiff", "$computeDocumentDiff") => Ok(self.compute_document_diff(arg(0), arg(1), arg(2) == true, arg(3).as_u64().unwrap_or(0), arg(4) == true)),
             ("MainThreadLanguages", "$changeLanguage") => self.change_host_language(arg(0), arg(1), cx),
             ("MainThreadLanguages", "$tokensAtPosition") => uri_parts(arg(0)).map(|(scheme, path)| self.tokens_at_position(scheme, &path, arg(1))),
+            ("MainThreadLanguages", "$computeFullSyntaxHighlighting") => Ok(self.full_syntax_highlighting(arg(0).as_str().unwrap_or_default(), arg(1).as_str().unwrap_or_default())),
             ("workbench", "providerSaveText") => self.provider_save_bytes(arg(0)),
             ("workbench", "providerSaved") => self.provider_saved(arg(0), cx),
             ("MainThreadTextEditors", "$tryShowTextDocument") => self.try_show_text_document(arg(0), arg(1), window, cx),
@@ -277,6 +279,40 @@ impl Workbench {
             start = end;
         }
         Value::Null
+    }
+
+    /// `$computeFullSyntaxHighlighting`: the source's TextMate tokens in the language (by id or name) as UTF-16 lengths
+    /// with their theme foreground index and font style, a 1-long token per newline, and the theme's color map.
+    fn full_syntax_highlighting(&self, source: &str, language: &str) -> Value {
+        let color_map: Vec<String> = self.theme.tokens.color_map().iter().map(|color| css_hex_alpha(color)).collect();
+        let language = if self.languages.is_registered(language) { Some(language) } else { self.languages.id_by_name(language) };
+        let Some(grammar) = language.and_then(|language| self.languages.grammars.grammar(language)) else {
+            let tokens = if source.is_empty() { json!([]) } else { json!([{ "length": source.encode_utf16().count(), "foreground": 0, "fontStyle": 0 }]) };
+            return json!({ "tokens": tokens, "colorMap": color_map });
+        };
+        let mut tokens: Vec<Value> = Vec::new();
+        let mut state = None;
+        let lines: Vec<&str> = source.split('\n').collect();
+        for (index, line) in lines.iter().enumerate() {
+            let Ok((line_tokens, next)) = grammar.tokenize_line(line, state.as_ref()) else { break };
+            state = Some(next);
+            // tokenizeLine2 emits a token where the metadata changes, so neighbors with one style are one token.
+            let mut runs: Vec<(usize, usize, i32)> = Vec::new();
+            for token in &line_tokens {
+                let style = self.theme.tokens.style(&token.scopes);
+                let font_style = style.font_style.max(0);
+                let length = line[token.start.min(line.len())..token.end.min(line.len())].encode_utf16().count();
+                match runs.last_mut() {
+                    Some(last) if last.1 == style.foreground && last.2 == font_style => last.0 += length,
+                    _ => runs.push((length, style.foreground, font_style)),
+                }
+            }
+            tokens.extend(runs.into_iter().filter(|run| run.0 > 0).map(|(length, foreground, font_style)| json!({ "length": length, "foreground": foreground, "fontStyle": font_style })));
+            if index + 1 < lines.len() {
+                tokens.push(json!({ "length": 1, "foreground": 0, "fontStyle": 0 }));
+            }
+        }
+        json!({ "tokens": tokens, "colorMap": color_map })
     }
 
     /// `$tryCreateDocument`: a new untitled model named `Untitled-<n>` with the first free n.
@@ -600,6 +636,15 @@ pub(super) fn snippet_edits(editor: &OpenEditor, snippets: &[(Position, Position
     let selections = selections_after(&cursor_edits, &before);
     let edits = cursor_edits.into_iter().flat_map(|edit| edit.replaces).map(|replace| (replace.start, replace.end, replace.text, false)).collect();
     (edits, selections, texts)
+}
+
+/// `Color.Format.CSS.formatHexA`: `#rrggbbaa` in lower case; the empty first entry stays empty.
+fn css_hex_alpha(color: &str) -> String {
+    match color.len() {
+        0 => String::new(),
+        7 => format!("{}ff", color.to_lowercase()),
+        _ => color.to_lowercase(),
+    }
 }
 
 /// snippetVariables.ts: the selection, model and file variables; the rest insert their default.

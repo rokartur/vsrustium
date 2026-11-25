@@ -90,12 +90,12 @@ fn the_picker_previews_the_focused_theme_writes_the_accepted_one_and_escape_rest
     cx.executor().advance_clock(Duration::from_millis(1));
     cx.run_until_parked();
     assert_eq!(theme_id(cx), "Abyss");
-    assert_eq!(sent(), [("$onColorThemeChange", vec![json!("dark")])]);
+    assert_eq!(sent(), [("$onColorThemeChange", vec![json!("dark")]), ("$acceptSyntaxHighlightingThemeChanged", vec![])]);
     assert_eq!(user_settings(), None, "a preview writes nothing");
 
     cx.simulate_keystrokes("escape");
     assert_eq!(theme_id(cx), "Dark 2026");
-    assert_eq!(sent(), [("$onColorThemeChange", vec![json!("dark")])]);
+    assert_eq!(sent(), [("$onColorThemeChange", vec![json!("dark")]), ("$acceptSyntaxHighlightingThemeChanged", vec![])]);
     assert_eq!(user_settings(), None, "restoring the current theme writes nothing");
 
     cx.simulate_keystrokes("cmd-k cmd-t");
@@ -107,7 +107,7 @@ fn the_picker_previews_the_focused_theme_writes_the_accepted_one_and_escape_rest
     let written: Value = serde_json::from_str(&user_settings().unwrap()).unwrap();
     assert_eq!(written, json!({ "workbench.colorTheme": "Quiet Light" }));
     let methods: Vec<&str> = sent().into_iter().map(|(method, _)| method).collect();
-    assert_eq!(methods, ["$onColorThemeChange", "$acceptConfigurationChanged"]);
+    assert_eq!(methods, ["$onColorThemeChange", "$acceptSyntaxHighlightingThemeChanged", "$acceptConfigurationChanged"]);
 
     // Picking the default again removes the user value (`updateValue` without a target).
     cx.simulate_keystrokes("cmd-k cmd-t");
