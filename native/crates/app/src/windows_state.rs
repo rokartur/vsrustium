@@ -36,6 +36,36 @@ pub struct UiState {
     pub height: f64,
 }
 
+/// windowsStateHandler.ts `lastClosedState`: the last window closed, the last active one of a quit without windows;
+/// forgotten once another window opens.
+pub struct LastClosedWindow(pub Option<WindowState>);
+
+impl gpui::Global for LastClosedWindow {}
+
+/// `doGetNewWindowState` from the stored state: a window last seen on the same workspace, folder or empty window
+/// backup takes its place, and the first window the last active one's.
+pub fn stored_ui_state(user_data: &Path, window: &WindowState, first_window: bool, cx: &App) -> Option<UiState> {
+    let (last_active, opened) = load(user_data);
+    let same = |other: &&WindowState| match (&window.workspace, &window.folder) {
+        (Some(workspace), _) => other.workspace.as_ref() == Some(workspace),
+        (None, Some(folder)) => other.folder.as_ref() == Some(folder),
+        (None, None) => window.backup_path.is_some() && other.backup_path == window.backup_path,
+    };
+    if let Some(ui) = opened.iter().find(same).and_then(|other| other.ui) {
+        return Some(ui);
+    }
+    let last_closed = cx.try_global::<LastClosedWindow>().and_then(|closed| closed.0.clone());
+    last_closed.or(last_active).filter(|_| first_window).and_then(|last| last.ui)
+}
+
+/// `ensureNoOverlap`: 30 points right and down until no open window shares the left or top edge.
+pub fn cascade(mut bounds: Bounds<Pixels>, open: &[Bounds<Pixels>]) -> Bounds<Pixels> {
+    while open.iter().any(|other| other.origin.x == bounds.origin.x || other.origin.y == bounds.origin.y) {
+        bounds.origin = bounds.origin + point(px(30.), px(30.));
+    }
+    bounds
+}
+
 /// `restoreWindowsState`: the last active window and the opened windows.
 pub fn load(user_data: &Path) -> (Option<WindowState>, Vec<WindowState>) {
     let storage = FileStorage::open(&storage_file(user_data));
@@ -164,6 +194,13 @@ mod tests {
         save(&dir, Some(&folder), &[empty.clone(), folder.clone()]);
         assert_eq!(load(&dir), (Some(folder), vec![empty, WindowState { folder: Some(dir.join("folder")), backup_path: Some(dir.join("Backups/abc")), ui, ..WindowState::default() }]));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_new_window_cascades_off_the_open_ones() {
+        let at = |x: f32, y: f32| Bounds::new(point(px(x), px(y)), size(px(1024.), px(768.)));
+        assert_eq!(cascade(at(100., 50.), &[]), at(100., 50.));
+        assert_eq!(cascade(at(100., 50.), &[at(100., 50.), at(130., 300.)]), at(160., 110.));
     }
 
     #[test]

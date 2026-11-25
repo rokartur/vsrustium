@@ -110,6 +110,32 @@ impl Workbench {
     }
 }
 
+/// launchMainService.ts `startOpenWindow` for a second instance's command line: without paths the last active window
+/// comes to the front (the macOS default of `window.openWithoutArgumentsInNewWindow`), or an empty window opens with
+/// `on` or `--new-window`; folders and workspaces open as in `open_new_window`, files in the last active window.
+pub(crate) fn start_open_window(args: Vec<String>, cwd: PathBuf, cx: &mut App) {
+    let paths: Vec<PathBuf> = crate::positional_indexes(&args).into_iter().map(|index| cwd.join(&args[index])).filter(|path| path.exists()).collect();
+    let new_window = args.iter().any(|arg| arg == "--new-window");
+    let last_active = cx.window_stack().unwrap_or_else(|| cx.windows()).into_iter().find_map(|window| window.downcast::<Workbench>()).filter(|_| !new_window);
+    if paths.is_empty() {
+        let in_new_window = last_active.and_then(|handle| handle.read(cx).ok()).is_none_or(|workbench| workbench.setting("window.openWithoutArgumentsInNewWindow") == "on");
+        match last_active.filter(|_| !in_new_window) {
+            Some(handle) => drop(handle.update(cx, |_, window, _| window.activate_window())),
+            None => open_new_window(None, cx),
+        }
+        return;
+    }
+    for path in paths {
+        match (Openable::of(path), last_active) {
+            (Openable::File(path), Some(handle)) => drop(handle.update(cx, |workbench, window, cx| {
+                workbench.open_file(path, true, window, cx);
+                window.activate_window();
+            })),
+            (openable, _) => open_new_window(Some(openable.path().to_owned()), cx),
+        }
+    }
+}
+
 /// windowsMainService.ts `open` with `forceNewWindow`: a folder or `.code-workspace` file opens as a new window's
 /// workspace unless a window has it open already (that one comes to the front), any other path as an empty window's
 /// file, nothing as an empty window. Opened after the caller's update.

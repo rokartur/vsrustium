@@ -116,8 +116,10 @@ impl Workbench {
 
     /// mainThreadWindow.ts: `hostService.onDidChangeFocus` reaches `ExtHostWindow.$onDidChangeWindowFocus`.
     pub fn watch_window_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        cx.observe_window_activation(window, |workbench, window, _| {
+        // The title bar, the shell and the activity bar draw the inactive look.
+        cx.observe_window_activation(window, |workbench, window, cx| {
             workbench.host.send("ExtHostWindow", "$onDidChangeWindowFocus", vec![json!(window.is_window_active())]);
+            cx.notify();
         })
         .detach();
     }

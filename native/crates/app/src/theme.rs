@@ -198,6 +198,17 @@ impl Theme {
             || (starts && id.ends_with(&theme_id[1..]))
     }
 
+    /// titlebarPart.ts `updateStyles` `makeOpaque`: `key` over `WORKBENCH_BACKGROUND` of the theme's kind.
+    pub fn opaque_on_workbench(&self, key: &str) -> Option<Rgba> {
+        let workbench = match self.kind {
+            ThemeKind::Light => "#F3F3F3",
+            ThemeKind::HighContrastLight => "#FFFFFF",
+            ThemeKind::HighContrastDark => "#000000",
+            ThemeKind::Dark => "#252526",
+        };
+        Some(make_opaque(self.color(key)?, parse_hex(workbench).expect("a hex color")))
+    }
+
     fn evaluate(&self, value: &ColorValue) -> Option<Rgba> {
         match value {
             ColorValue::None => None,
@@ -207,17 +218,7 @@ impl Theme {
             ColorValue::Opacity(inner, opacity) => self.evaluate(inner).map(|color| Rgba { a: *opacity, ..color }),
             ColorValue::Darken(inner, factor) => self.evaluate(inner).map(|color| darken(color, *factor)),
             ColorValue::Lighten(inner, factor) => self.evaluate(inner).map(|color| lighten(color, *factor)),
-            ColorValue::Opaque(inner, background) => {
-                let (color, background) = (self.evaluate(inner)?, self.evaluate(background)?);
-                // Color.makeOpaque: RGBA's `_clampUint8` truncates each blended byte (`| 0`).
-                // The alpha is RGBA's, rounded to 3 decimals; the math is JS doubles.
-                let alpha = (color.a as f64 * 1000.).round() / 1000.;
-                let blend = |c: f32, b: f32| {
-                    let (c, b) = ((c as f64 * 255.).round(), (b as f64 * 255.).round());
-                    ((b - alpha * (b - c)).floor() / 255.) as f32
-                };
-                Some(Rgba { r: blend(color.r, background.r), g: blend(color.g, background.g), b: blend(color.b, background.b), a: 1. })
-            }
+            ColorValue::Opaque(inner, background) => Some(make_opaque(self.evaluate(inner)?, self.evaluate(background)?)),
             ColorValue::LessProminent(inner, background, factor, transparency) => {
                 let color = self.evaluate(inner)?;
                 let Some(background) = self.evaluate(background) else {
@@ -273,6 +274,17 @@ fn less_prominent(color: Rgba, background: Rgba, factor: f32, transparency: f32)
         false => round3(l - l * factor as f64 * (lum - background_lum) / lum),
     };
     from_hsla(h, s, l, round3(a * transparency as f64))
+}
+
+/// `Color.makeOpaque`: RGBA's `_clampUint8` truncates each blended byte (`| 0`). The alpha is RGBA's, rounded to 3
+/// decimals; the math is JS doubles.
+fn make_opaque(color: Rgba, background: Rgba) -> Rgba {
+    let alpha = (color.a as f64 * 1000.).round() / 1000.;
+    let blend = |c: f32, b: f32| {
+        let (c, b) = ((c as f64 * 255.).round(), (b as f64 * 255.).round());
+        ((b - alpha * (b - c)).floor() / 255.) as f32
+    };
+    Rgba { r: blend(color.r, background.r), g: blend(color.g, background.g), b: blend(color.b, background.b), a: 1. }
 }
 
 /// `Color.darken`: the HSLA lightness less `factor` of itself.
@@ -400,6 +412,15 @@ fn registry_default(key: &str, kind: ThemeKind) -> ColorValue {
         "titleBar.activeBackground" => (Hex("#3C3C3C"), Hex("#DDDDDD"), Hex("#000000")),
         "titleBar.activeForeground" => (Hex("#CCCCCC"), Hex("#333333"), Hex("#FFFFFF")),
         "commandCenter.foreground" => (Key("titleBar.activeForeground"), Key("titleBar.activeForeground"), Key("titleBar.activeForeground")),
+        "titleBar.inactiveForeground" => (Transparent(&Key("titleBar.activeForeground"), 0.6), Transparent(&Key("titleBar.activeForeground"), 0.6), None),
+        "titleBar.inactiveBackground" => (Transparent(&Key("titleBar.activeBackground"), 0.6), Transparent(&Key("titleBar.activeBackground"), 0.6), None),
+        "modernUI.shellBackground" => (Key("titleBar.activeBackground"), Key("titleBar.activeBackground"), Key("titleBar.activeBackground")),
+        "modernUI.inactiveShellBackground" => (Key("titleBar.inactiveBackground"), Key("titleBar.inactiveBackground"), Key("titleBar.inactiveBackground")),
+        "commandCenter.inactiveBorder" => (
+            Transparent(&Key("titleBar.inactiveForeground"), 0.25),
+            Transparent(&Key("titleBar.inactiveForeground"), 0.25),
+            Transparent(&Key("titleBar.inactiveForeground"), 0.25),
+        ),
         "commandCenter.background" => (Hex("#FFFFFF0D"), Hex("#0000000D"), None),
         "commandCenter.border" => (
             Transparent(&Key("titleBar.activeForeground"), 0.2),
@@ -662,6 +683,10 @@ fn hc_light_default(key: &str) -> ColorValue {
         "titleBar.activeForeground" => Hex("#292929"),
         "commandCenter.foreground" => Key("titleBar.activeForeground"),
         "commandCenter.border" => Key("contrastBorder"),
+        "titleBar.inactiveForeground" => Hex("#292929"),
+        "modernUI.shellBackground" => Key("titleBar.activeBackground"),
+        "modernUI.inactiveShellBackground" => Key("titleBar.inactiveBackground"),
+        "commandCenter.inactiveBorder" => Transparent(&Key("titleBar.inactiveForeground"), 0.25),
         "editor.selectionBackground" => Hex("#0F4A85"),
         "editor.selectionForeground" => Hex("#FFFFFF"),
         "editor.inactiveSelectionBackground" => Transparent(&Key("editor.selectionBackground"), 0.5),
@@ -1127,6 +1152,18 @@ mod tests {
         assert_eq!(hex(less_prominent(color("#C9D0D9"), color("#F5F5F5"), 0.3, 0.6)), "#e0e4ea99");
         assert_eq!(hex(darken(color("#0060C0"), 0.3)), "#004386ff");
         assert_eq!(hex(darken(color("#3794ff80"), 0.3)), "#0065d980");
+    }
+
+    /// theme.ts title bar and command center defaults for the inactive window, and titlebarPart.ts `makeOpaque` over
+    /// WORKBENCH_BACKGROUND (#252526 dark): #CCCCCC at 0.6 gives 37 + 0.6 * (204 - 37) = 137.2, truncated to 0x89.
+    #[test]
+    fn inactive_title_bar_colors_follow_the_registry() {
+        let dark_modern = builtin_theme("Dark Modern");
+        assert_eq!(dark_modern.color("commandCenter.inactiveBorder").map(hex).as_deref(), Some("#9d9d9d40"));
+        let dark_plus = builtin_theme("Dark+");
+        assert_eq!(dark_plus.color("titleBar.inactiveForeground").map(hex).as_deref(), Some("#cccccc99"));
+        assert_eq!(dark_plus.opaque_on_workbench("titleBar.inactiveForeground").map(hex).as_deref(), Some("#898989ff"));
+        assert_eq!(builtin_theme("Default High Contrast").color("titleBar.inactiveForeground"), None);
     }
 
     // Expected values: the reference workbench's --vscode-* variables per theme (port/results/pixels.md method).

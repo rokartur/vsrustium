@@ -39,6 +39,7 @@ mod keyboard_mapper;
 mod system_wide_keybindings;
 mod language_features;
 mod languages;
+mod launch;
 mod list_tree;
 mod link_computer;
 mod local_history;
@@ -143,6 +144,12 @@ fn main() -> anyhow::Result<()> {
         Some(dir) => PathBuf::from(dir),
         None => default_user_data()?,
     };
+    std::fs::create_dir_all(&user_data).with_context(|| format!("creating {}", user_data.display()))?;
+    let socket = launch::socket_path(&user_data);
+    if launch::send_to_running_instance(&socket, &args, &std::env::current_dir()?) {
+        return Ok(());
+    }
+    let launches = launch::listen(&socket);
     let screenshot = flag_value("--screenshot").map(PathBuf::from);
     let screenshot_input = flag_value("--screenshot-input").unwrap_or_default();
     // Typed before the capture, as port/tools/ref-screenshot types KEYS into the reference.
@@ -230,6 +237,9 @@ fn main() -> anyhow::Result<()> {
             std::process::exit(1);
         }
         workbench::menubar::install(cx);
+        if let Some(launches) = launches {
+            launch::handle_launches(launches, cx);
+        }
         cx.activate(true);
     });
     Ok(())
@@ -309,6 +319,7 @@ pub(crate) fn open_window(request: WindowRequest, cx: &mut App) -> anyhow::Resul
     };
     let mut settings = load_settings(&extensions);
     let setting = |key: &str| settings.get_value(Some(key), &Overrides::default());
+    let new_window_dimensions = setting("window.newWindowDimensions").and_then(|value| value.as_str().map(str::to_owned)).unwrap_or_default();
     add_recently_opened(&mut shared_storage.lock().unwrap(), workspace.as_ref(), file.as_deref());
     let workspace_trust = workspace_trust::WorkspaceTrust::new(shared_storage.clone(), workspace_trust::Startup {
         // workspaceTrust.ts isWorkspaceTrustEnabled: only an explicit false turns the setting off.
@@ -341,10 +352,31 @@ pub(crate) fn open_window(request: WindowRequest, cx: &mut App) -> anyhow::Resul
     let mut bounds = Bounds::centered(None, size(px(1024.), px(768.)), cx);
     // A half-point origin (an odd display height, e.g. 1650 px over screen sharing) makes the drawable 1 point taller.
     bounds.origin = point(bounds.origin.x.round(), bounds.origin.y.round());
+    let open_windows: Vec<Bounds<gpui::Pixels>> = cx.windows().into_iter().filter_map(|handle| handle.downcast::<Workbench>()).filter_map(|handle| handle.update(cx, |_, window, _| window.bounds()).ok()).collect();
+    let location = windows_state::WindowState {
+        workspace: workspace.as_ref().and_then(|workspace| workspace.file.clone()),
+        folder: workspace.as_ref().filter(|workspace| workspace.file.is_none()).map(|workspace| workspace.folders[0].path.clone()),
+        backup_path: backup_folder.clone(),
+        ui: None,
+    };
+    let ui = ui.or_else(|| windows_state::stored_ui_state(&user_data, &location, open_windows.is_empty(), cx).filter(|_| !extension_tests));
+    // windowsStateHandler.ts `doGetNewWindowState` for a window without a stored state: `window.newWindowDimensions`.
+    let last_active = cx.window_stack().unwrap_or_else(|| cx.windows()).into_iter().find_map(|handle| handle.downcast::<Workbench>());
+    let last_active_bounds = last_active.and_then(|handle| handle.update(cx, |_, window, _| window.window_bounds()).ok());
+    let default_bounds = match (new_window_dimensions.as_str(), last_active_bounds) {
+        ("maximized", _) => WindowBounds::Maximized(bounds),
+        ("fullscreen", _) => WindowBounds::Fullscreen(bounds),
+        ("inherit", Some(inherited)) => inherited,
+        ("offset", Some(WindowBounds::Windowed(inherited))) => WindowBounds::Windowed(windows_state::cascade(inherited, &open_windows)),
+        ("offset", Some(inherited)) => inherited,
+        _ => WindowBounds::Windowed(windows_state::cascade(bounds, &open_windows)),
+    };
     // The workbench draws its own title bar, as the reference does with window.titleBarStyle custom.
     let titlebar = TitlebarOptions { title: None, appears_transparent: true, traffic_light_position: Some(point(px(10.), px(10.))) };
-    let (display_id, window_bounds) = ui.and_then(|ui| windows_state::window_bounds(ui, cx)).map_or((None, WindowBounds::Windowed(bounds)), |(display, bounds)| (Some(display), bounds));
-    let options = WindowOptions { window_bounds: Some(window_bounds), display_id, titlebar: Some(titlebar), app_owns_titlebar_drag: true, ..Default::default() };
+    let (display_id, window_bounds) = ui.and_then(|ui| windows_state::window_bounds(ui, cx)).map_or((None, default_bounds), |(display, bounds)| (Some(display), bounds));
+    // window.ts `WindowMinimumSize`.
+    let window_min_size = Some(size(px(400.), px(270.)));
+    let options = WindowOptions { window_bounds: Some(window_bounds), display_id, titlebar: Some(titlebar), app_owns_titlebar_drag: true, window_min_size, ..Default::default() };
     let window = {
         cx.open_window(options, |window, cx| {
             cx.new(|cx| {

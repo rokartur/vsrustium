@@ -10,7 +10,7 @@ use super::Workbench;
 use super::actions::{file_names_message, save_confirm_text};
 use crate::commands::Outcome;
 use crate::dialog;
-use crate::windows_state::{self, WindowState};
+use crate::windows_state::{self, LastClosedWindow, WindowState};
 
 /// `ShutdownReason`.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -24,12 +24,6 @@ pub enum ShutdownReason {
     /// The window loads another workspace.
     Load,
 }
-
-/// windowsStateHandler.ts `lastClosedState`: the last window closed, the last active one of a quit without windows;
-/// forgotten once another window opens.
-struct LastClosedWindow(Option<WindowState>);
-
-impl gpui::Global for LastClosedWindow {}
 
 #[derive(Default)]
 pub struct Lifecycle {

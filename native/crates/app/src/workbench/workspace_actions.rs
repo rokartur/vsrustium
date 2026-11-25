@@ -31,7 +31,7 @@ impl Openable {
         }
     }
 
-    fn path(&self) -> &Path {
+    pub(super) fn path(&self) -> &Path {
         match self {
             Openable::Workspace(path) | Openable::File(path) => path,
         }
