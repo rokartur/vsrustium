@@ -172,7 +172,7 @@ impl Workbench {
             self.host.send("ExtHostDocuments", "$acceptEncodingChanged", vec![uri.clone(), json!(resolved)]);
         }
         if let Some(bytes) = bytes {
-            self.replace_clean_model_text(scheme, path, encoding::decode(&bytes, &resolved), cx);
+            self.replace_model_text(scheme, path, encoding::decode(&bytes, &resolved), true, cx);
         }
         Ok(())
     }
@@ -211,19 +211,21 @@ impl Workbench {
     fn virtual_document_change(&mut self, uri: &Value, value: &Value, cx: &mut Context<Self>) -> HostResult {
         let (scheme, ref path) = uri_parts(uri)?;
         if self.editors.model(scheme, path).is_some() {
-            self.replace_clean_model_text(scheme, path, value.as_str().unwrap_or_default().to_string(), cx);
+            self.replace_model_text(scheme, path, value.as_str().unwrap_or_default().to_string(), true, cx);
         }
         Ok(Value::Null)
     }
 
-    /// New text for a model in one edit, after which the model is clean: a content provider's model is no text file
-    /// model, and a file read again matches the disk.
+    /// New text for a model in one edit, after which the model is clean with `clean`: a content provider's model is
+    /// no text file model, and a file read again matches the disk.
     // shortcut: one edit over the whole model where upstream applies computeMoreMinimalEdits; port the diff worker when an extension needs the smaller events.
-    fn replace_clean_model_text(&mut self, scheme: &str, path: &Path, text: String, cx: &mut Context<Self>) {
+    pub(super) fn replace_model_text(&mut self, scheme: &str, path: &Path, text: String, clean: bool, cx: &mut Context<Self>) {
         let model = self.editors.model_mut(scheme, path).expect("the caller found the model");
         let end = document_end(&model.document.lines);
         let change = model.execute_edits(vec![(Position::new(0, 0), end, text, false)], None, EditReason::ApplyEdits);
-        model.mark_saved();
+        if clean {
+            model.mark_saved();
+        }
         if let Some(change) = change {
             self.send_model_edit(scheme, path, &change);
             cx.notify();

@@ -7,6 +7,7 @@ use serde_json::Value;
 
 use super::Workbench;
 use super::host_requests::uri_parts;
+use super::search_editor_view::SEARCH_EDITOR_SCHEME;
 use crate::commands::Outcome;
 use crate::editor::{EditReason, Position, TextDocument};
 
@@ -123,7 +124,7 @@ impl Workbench {
             self.discard_and_close(&dirty, &indices, cx);
             return Outcome::done();
         }
-        let names: Vec<String> = dirty.iter().map(|index| self.editors.editors[*index].document.name()).collect();
+        let names: Vec<String> = dirty.iter().map(|index| self.editor_name(&self.editors.editors[*index])).collect();
         let (message, detail) = save_confirm_text(&names);
         let save = if names.len() > 1 { "Save All" } else { "Save" };
         let answer = window.prompt(PromptLevel::Warning, &message, Some(&detail), &[save, "Don't Save", "Cancel"], cx);
@@ -178,6 +179,10 @@ impl Workbench {
     /// instead (untitledTextEditorModel.ts `revert`) and answers true: its input is disposed, so the caller closes it.
     /// shortcut: one whole-text edit plus a save of the same bytes, since `editor/` has no revert yet; move to an `OpenEditor::revert` that flushes the model like `setValue` once it does.
     pub(super) fn revert_editor(&mut self, index: usize, cx: &mut Context<Self>) -> bool {
+        if self.editors.editors[index].document.scheme == SEARCH_EDITOR_SCHEME {
+            self.revert_search_editor(index, cx);
+            return false;
+        }
         let editor = &mut self.editors.editors[index];
         let untitled = editor.document.scheme == "untitled";
         let text = match untitled {

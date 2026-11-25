@@ -336,6 +336,16 @@ fn registry_default(key: &str, kind: ThemeKind) -> ColorValue {
         "editorOverviewRuler.findMatchForeground" => (Hex("#d186167e"), Hex("#d186167e"), Hex("#AB5A00")),
         "editorOverviewRuler.rangeHighlightForeground" => (Hex("#007acc99"), Hex("#007acc99"), Hex("#007acc99")),
         "minimap.findMatchHighlight" => (MINIMAP_FIND_MATCH, MINIMAP_FIND_MATCH, Key("editor.findMatchHighlightBorder")),
+        "searchEditor.findMatchBackground" => (
+            Transparent(&Key("editor.findMatchHighlightBackground"), 0.66),
+            Transparent(&Key("editor.findMatchHighlightBackground"), 0.66),
+            Key("editor.findMatchHighlightBackground"),
+        ),
+        "searchEditor.findMatchBorder" => (
+            Transparent(&Key("editor.findMatchHighlightBorder"), 0.66),
+            Transparent(&Key("editor.findMatchHighlightBorder"), 0.66),
+            Key("editor.findMatchHighlightBorder"),
+        ),
         "editorOverviewRuler.wordHighlightTextForeground" => (
             Key("editorOverviewRuler.selectionHighlightForeground"),
             Key("editorOverviewRuler.selectionHighlightForeground"),
@@ -493,6 +503,9 @@ fn hc_light_default(key: &str) -> ColorValue {
         "editorOverviewRuler.selectionHighlightForeground" => Hex("#A0A0A0CC"),
         "editorOverviewRuler.findMatchForeground" => Hex("#AB5A00"),
         "minimap.findMatchHighlight" => Key("editor.findMatchHighlightBorder"),
+        "searchEditor.findMatchBackground" => Key("editor.findMatchHighlightBackground"),
+        "searchEditor.findMatchBorder" => Key("editor.findMatchHighlightBorder"),
+        "searchEditor.textInputBorder" => Key("input.border"),
         "editorOverviewRuler.wordHighlightTextForeground" => Key("editorOverviewRuler.selectionHighlightForeground"),
         "breadcrumb.foreground" => Transparent(&Key("foreground"), 0.8),
         "breadcrumb.background" => Key("editor.background"),

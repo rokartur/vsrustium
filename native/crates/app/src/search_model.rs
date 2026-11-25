@@ -3,6 +3,7 @@
 //! messages searchView.ts builds from the counts. Columns are UTF-16 code units, as the search reports them.
 
 use std::cmp::Ordering;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use search::text_search::SearchRange;
@@ -23,7 +24,7 @@ pub struct Match {
 }
 
 /// `FileMatchImpl`: a file's matches, sorted by their start.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub struct FileMatch {
     pub path: PathBuf,
     /// The index of the workspace folder the file is in.
@@ -31,6 +32,8 @@ pub struct FileMatch {
     pub matches: Vec<Match>,
     /// `_removedTextMatches`: dismissed matches a new search of the model leaves out.
     pub removed: Vec<Match>,
+    /// `_context`: the surrounding lines a search with context reported, by 1-based line number.
+    pub context: BTreeMap<usize, String>,
 }
 
 /// `MatchImpl.preview()`: the text around the match as the result row shows it.
@@ -69,6 +72,16 @@ impl Match {
             false => utf16_len(self.text()),
         };
         (self.preview_range.start_column, end)
+    }
+
+    /// `fullPreviewLines`: the preview lines the match spans.
+    pub fn full_preview_lines(&self) -> &[String] {
+        &self.preview_lines[self.preview_range.start_line..=self.preview_range.end_line]
+    }
+
+    /// `rangeInPreview`: the match in its preview lines, 0-based lines and UTF-16 columns.
+    pub fn range_in_preview(&self) -> &SearchRange {
+        &self.preview_range
     }
 
     /// `getMatchString`.
@@ -149,14 +162,37 @@ impl FileMatch {
         let index = self.matches.partition_point(|known| compare_starts(&known.range, &new.range) != Ordering::Greater);
         self.matches.insert(index, new);
     }
+
+    /// `getTextSearchMatchWithModelContext`: the `context` lines of a model before and after each match, never
+    /// repeating a line of the match before or reaching into the next one.
+    pub fn add_model_context(&mut self, lines: &[String], context: usize) {
+        if context == 0 {
+            return;
+        }
+        let mut previous_end = None;
+        for (index, found) in self.matches.iter().enumerate() {
+            let (start, end) = (found.range.start_line, found.range.end_line);
+            let first = start.saturating_sub(context).max(previous_end.map_or(0, |line: usize| line + 1));
+            let next_start = self.matches.get(index + 1).map_or(usize::MAX, |next| next.range.start_line);
+            let last = (end + context).min(next_start.saturating_sub(1)).min(lines.len() - 1);
+            for line in (first..start).chain(end + 1..=last) {
+                self.context.insert(line + 1, lines[line].clone());
+            }
+            previous_end = Some(end);
+        }
+    }
 }
 
 impl SearchResult {
     /// `SearchResultImpl.add`: the `IFileMatch` results the search reported for `path`, each match's range locations
-    /// one `Match` (`textSearchResultToMatches`); context lines carry no match.
+    /// one `Match` (`textSearchResultToMatches`); context lines go to the file's context (`addContext`).
     pub fn add(&mut self, folder: usize, path: &Path, results: &[Value]) {
         let index = self.file_index(folder, path);
         for result in results {
+            if let (Some(line_number), Some(text)) = (result["lineNumber"].as_u64(), result["text"].as_str()) {
+                self.files[index].context.insert(line_number as usize, text.to_string());
+                continue;
+            }
             let Some(locations) = result["rangeLocations"].as_array() else { continue };
             let preview_lines: Vec<String> = result["previewText"].as_str().unwrap_or_default().split('\n').map(str::to_string).collect();
             for location in locations {
@@ -186,7 +222,7 @@ impl SearchResult {
         if let Some(index) = self.files.iter().position(|file| file.path == path) {
             return index;
         }
-        let new = FileMatch { path: path.to_path_buf(), folder, matches: Vec::new(), removed: Vec::new() };
+        let new = FileMatch { path: path.to_path_buf(), folder, ..FileMatch::default() };
         let index = self.files.partition_point(|known| compare_file_matches(known, &new) != Ordering::Greater);
         self.files.insert(index, new);
         index

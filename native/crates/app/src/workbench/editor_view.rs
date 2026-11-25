@@ -23,6 +23,7 @@ use serde_json::json;
 
 use super::Workbench;
 use super::minimap_view::minimap_info;
+use super::search_editor_view::SEARCH_EDITOR_SCHEME;
 use crate::brackets::BracketRange;
 use crate::editor::minimap::MinimapLayoutInfo;
 use crate::editor::{
@@ -63,7 +64,11 @@ impl Workbench {
             .bg(self.color("editor.background"))
             .border_color(self.color("surface.border"))
             .child(self.tab_strip(cx))
-            .child(self.breadcrumbs(editor))
+            // searchEditor.ts draws its query widget where a text editor has its breadcrumbs.
+            .map(|part| match editor.document.scheme == SEARCH_EDITOR_SCHEME {
+                true => part.child(self.search_editor_query(window, cx)),
+                false => part.child(self.breadcrumbs(editor)),
+            })
             .children(self.unicode_banner(editor, cx))
             .child(self.text_area(editor, window, cx))
             // The active tab reaches into the part's top border, which Chrome still draws over it.
@@ -85,6 +90,12 @@ impl Workbench {
             .flex()
             .items_center()
             .gap(px(4.))
+            // searchEditor.contribution.ts: Rerun Search sits in the editor title of a search editor.
+            .when(self.active_search_editor().is_some(), |actions| {
+                actions.child(self.icon("refresh", 22., 16., icon_color).id("rerun-search").cursor_pointer().on_click(cx.listener(|workbench, _, window, cx| {
+                    workbench.execute_command("rerunSearchEditorSearch", Vec::new(), window, cx);
+                })))
+            })
             .child(self.icon("split-horizontal", 22., 16., icon_color).cursor_pointer())
             .child(self.icon("ellipsis", 22., 16., icon_color).cursor_pointer());
         // The line under the strip (tabs-border-bottom) runs below the shoulders; the active fill covers it.
@@ -125,7 +136,11 @@ impl Workbench {
     /// editorTabsControl.ts `getHoverTitle`: the long title, with a preview note on a preview editor's tab.
     fn tab_hover(&self, index: usize) -> impl IntoElement {
         let editor = &self.editors.editors[index];
-        let title = crate::quick_input::path_label(&editor.document.path, None);
+        // `getTitle(Verbosity.LONG)`: a search editor's is its name.
+        let title = match editor.document.scheme == SEARCH_EDITOR_SCHEME {
+            true => self.editor_name(editor),
+            false => crate::quick_input::path_label(&editor.document.path, None),
+        };
         let content = if editor.preview { super::hover::HoverContent::Preview(title) } else { super::hover::HoverContent::Text(title) };
         self.hover_target(("tab-hover", index), content, super::hover::HoverOptions::mouse())
     }
@@ -140,7 +155,7 @@ impl Workbench {
             .line_height(px(24.))
             .whitespace_nowrap()
             .when(editor.preview, |label| label.italic())
-            .child(editor.document.name());
+            .child(self.editor_name(editor));
         let file_icon = self.document_icon(editor, 24., foreground);
         // A dirty tab shows a filled circle where the close action goes, also when inactive (tabstitlecontrol.css).
         let close_icon = if editor.is_dirty() { "circle-filled" } else { "close-small" };
@@ -194,6 +209,10 @@ impl Workbench {
 
     fn document_icon(&self, editor: &OpenEditor, line_height: f32, foreground: Rgba) -> Option<Div> {
         let document = &editor.document;
+        // `SearchEditorInput.getIcon`.
+        if document.scheme == SEARCH_EDITOR_SCHEME {
+            return Some(self.icon("search", 16., 16., foreground).h(px(line_height)));
+        }
         self.file_icons.as_ref()?.file_icon(&document.path, &document.language_id, self.theme.kind, 13., line_height, foreground)
     }
 
@@ -242,7 +261,10 @@ impl Workbench {
     }
 
     fn text_area(&self, editor: &OpenEditor, window: &mut Window, cx: &mut Context<Self>) -> Stateful<Div> {
-        let metrics = EditorMetrics::measure(window, editor.document.lines.len());
+        let overrides = config::configuration::Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
+        // shortcut: only "off" applies; "relative" and "interval" number every line as "on" does.
+        let line_numbers = self.settings.lock().unwrap().get_value(Some("editor.lineNumbers"), &overrides) != Some(serde_json::Value::from("off"));
+        let metrics = EditorMetrics::measure(window, editor.document.lines.len(), line_numbers);
         let area_left = self.text_area_left.clone();
         let focus = self.editor_focus.clone();
         let workbench = cx.entity();
@@ -604,7 +626,7 @@ impl Workbench {
                     .flex_none()
                     .text_right()
                     .text_color(if index == primary_line { colors.active_number } else { colors.number })
-                    .child((index + 1).to_string());
+                    .when(metrics.line_numbers_width > 0., |number| number.child((index + 1).to_string()));
                 let mut current_line = div().absolute().inset_0();
                 if all_empty && selections.iter().any(|selection| selection.head.line == index) {
                     current_line = current_line.border(px(line_border_width)).border_color(colors.line_border);
@@ -675,6 +697,7 @@ impl Workbench {
                 }
                 let (find_whole_lines, find_matches, find_colors) = self.find_line_decorations(editor, index, char_width, scroll_left);
                 content = content.children(find_whole_lines);
+                content = content.children(self.search_editor_line_decorations(editor, index, char_width));
                 for (_, columns) in editor.highlights.iter().filter(|(line, _)| *line == index) {
                     let start = visible_column(text, columns.start, tab_size) as f32 * char_width;
                     let end = visible_column(text, columns.end, tab_size) as f32 * char_width;
@@ -758,10 +781,12 @@ impl Workbench {
                         workbench.fold_mouse_down = workbench.at_line_end(index, visible).then_some((index, false));
                         workbench.column_select_text(index, visible, event.modifiers.shift, cx);
                     }))
-                    .on_mouse_up(MouseButton::Left, cx.listener(move |workbench, event: &MouseUpEvent, _, cx| {
-                        if workbench.at_line_end(index, visible_at(workbench, event.position.x)) {
+                    .on_mouse_up(MouseButton::Left, cx.listener(move |workbench, event: &MouseUpEvent, window, cx| {
+                        let visible = visible_at(workbench, event.position.x);
+                        if workbench.at_line_end(index, visible) {
                             workbench.release_fold_click(index, false, event.modifiers, false, cx);
                         }
+                        workbench.search_editor_mouse_up(index, visible, event.click_count, window, cx);
                     }))
                     .on_mouse_up(MouseButton::Middle, cx.listener(move |workbench, event: &MouseUpEvent, _, cx| {
                         if workbench.at_line_end(index, visible_at(workbench, event.position.x)) {
@@ -1095,7 +1120,10 @@ impl Workbench {
         let mut style = window.text_style();
         style.font_features = FontFeatures(Arc::new(vec![("tnum".into(), 1)]));
         let text_width = |label: &str| window.text_system().shape_line(label.to_owned().into(), px(12.), &[style.to_run(label.len())], None).width;
-        let items = items.into_iter().enumerate().map(|(index, (label, tooltip, command))| {
+        // A search editor's input supports neither encodings nor language changes (toEditorWithEncodingSupport, toEditorWithLanguageSupport).
+        let search_editor = document.scheme == SEARCH_EDITOR_SCHEME;
+        let items = items.into_iter().filter(|(_, _, command)| !search_editor || !matches!(*command, "workbench.action.editor.changeEncoding" | "workbench.action.editor.changeLanguageMode"));
+        let items = items.enumerate().map(|(index, (label, tooltip, command))| {
             let hover = self.hover_target(tooltip, super::hover::HoverContent::Text(tooltip.into()), super::hover::HoverOptions::status_bar());
             div()
                 .id(("editor-status", index))
@@ -1133,14 +1161,14 @@ impl EditorMetrics {
     }
 
     /// `typicalHalfwidthCharacterWidth` and `maxDigitWidth` of the editor font; the line numbers are as wide
-    /// as the longest number, at least lineNumbersMinChars digits, rounded (editorOptions.ts).
-    fn measure(window: &Window, line_count: usize) -> Self {
+    /// as the longest number, at least lineNumbersMinChars digits, rounded, and 0 wide when off (editorOptions.ts).
+    fn measure(window: &Window, line_count: usize, line_numbers: bool) -> Self {
         let text_system = window.text_system();
         let font_id = text_system.resolve_font(&font(EDITOR_FONT));
         let font_size = px(EDITOR_FONT_SIZE);
         let advance = |c: char| f32::from(text_system.advance(font_id, font_size, c).expect("Menlo has ASCII glyphs").width);
         let max_digit_width = ('0'..='9').map(advance).fold(0., f32::max);
-        let digits = line_count.to_string().len().max(LINE_NUMBERS_MIN_CHARS);
+        let digits = if line_numbers { line_count.to_string().len().max(LINE_NUMBERS_MIN_CHARS) } else { 0 };
         EditorMetrics { char_width: advance('x'), line_numbers_width: (digits as f32 * max_digit_width).round() }
     }
 }

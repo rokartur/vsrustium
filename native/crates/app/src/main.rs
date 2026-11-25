@@ -32,6 +32,7 @@ mod main_thread_commands;
 mod main_thread_quick_open;
 mod menus;
 mod quick_input;
+mod search_editor;
 mod search_model;
 mod split_view;
 mod syntax;

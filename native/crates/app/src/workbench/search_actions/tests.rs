@@ -252,6 +252,39 @@ fn a_right_click_on_a_hovered_row_opens_the_menu_without_selecting_it(cx: &mut T
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+fn active_editor(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext) -> (String, String, String) {
+    workbench.read_with(cx, |workbench, _| {
+        let editor = workbench.editors.active().unwrap();
+        (editor.document.scheme.clone(), workbench.editor_name(editor), editor.document.lines.join("\n"))
+    })
+}
+
+#[gpui::test]
+fn open_in_editor_serializes_the_results_into_a_search_editor(cx: &mut TestAppContext) {
+    let (_dir, workbench, cx) = search("search-open-in-editor", cx);
+    run(&workbench, "workbench.action.findInFiles", vec![json!({ "query": "alphabet", "triggerSearch": true })], cx);
+    workbench.update(cx, |workbench, _| workbench.settings.lock().unwrap().update_value_derived("search.searchEditor.defaultNumberOfContextLines", Some(&json!(0))).unwrap());
+    run(&workbench, "search.action.openInEditor", Vec::new(), cx);
+    let (scheme, name, text) = active_editor(&workbench, cx);
+    assert_eq!((scheme.as_str(), name.as_str()), ("search-editor", "Search: alphabet"));
+    assert_eq!(text, "1 result - 1 file\n\nsub/b.txt:\n  1: alphabet alpha\n");
+    let ranges = workbench.read_with(cx, |workbench, _| workbench.search_editors.values().next().unwrap().match_ranges.clone());
+    assert_eq!(ranges.len(), 1);
+    assert!(workbench.read_with(cx, |workbench, _| !workbench.editors.active().unwrap().is_dirty()));
+}
+
+#[gpui::test]
+fn new_search_editor_runs_its_query_with_context_lines(cx: &mut TestAppContext) {
+    let (_dir, workbench, cx) = search("search-new-editor", cx);
+    run(&workbench, "search.action.openNewEditor", vec![json!({ "query": "Alpha", "isCaseSensitive": true, "contextLines": 1, "triggerSearch": true })], cx);
+    let (_, name, text) = active_editor(&workbench, cx);
+    assert_eq!(name, "Search: Alpha");
+    assert_eq!(text, "1 result - 1 file\n\na.txt:\n  1  alpha beta\n  2: Alpha\n");
+
+    run(&workbench, "workbench.action.closeActiveEditor", Vec::new(), cx);
+    assert!(workbench.read_with(cx, |workbench, _| workbench.search_editors.is_empty()));
+}
+
 #[test]
 fn a_preview_keeps_its_space_and_punctuation_before_the_ellipsis() {
     assert_eq!(keep_before_ellipsis(" pixel check."), " \u{200B}pixel \u{200B}check.\u{200B}");

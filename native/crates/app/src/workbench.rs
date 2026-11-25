@@ -22,6 +22,8 @@ mod minimap_view;
 pub mod quick_access;
 mod quick_open;
 mod search_actions;
+mod search_editor_view;
+mod search_editor_widget;
 mod search_view;
 pub mod themes;
 mod quick_input_view;
@@ -107,6 +109,8 @@ pub struct Workbench {
     pub explorer: explorer_actions::ExplorerState,
     pub side_bar_view: search_view::SideBarView,
     pub search: search_view::SearchView,
+    pub search_editors: search_editor_view::SearchEditors,
+    pub search_editor_widget: search_editor_widget::SearchEditorWidget,
     /// `MenuRegistry`.
     pub menus: Vec<crate::menus::MenuItem>,
     pub(crate) context_menu: Option<context_menu::ContextMenu>,
@@ -210,6 +214,8 @@ impl Workbench {
             explorer: explorer_actions::ExplorerState::new(cx),
             side_bar_view: search_view::SideBarView::Explorer,
             search: search_view::SearchView::new(cx),
+            search_editors: HashMap::new(),
+            search_editor_widget: search_editor_widget::SearchEditorWidget::new(cx),
             menus: crate::menus::workbench_menus(),
             context_menu: None,
             context_menus_shown: 0,
@@ -232,6 +238,8 @@ impl Workbench {
         workbench.register_title_bar_actions();
         workbench.register_explorer_actions();
         workbench.register_search_actions();
+        workbench.register_search_editor_actions();
+        workbench.register_search_editor_widget_actions();
         workbench.register_file_participant_commands();
         workbench.register_keybindings_editor_commands();
         // Keybindings resolve before the focused element sees the key, and with nothing focused too.
@@ -268,6 +276,9 @@ impl Workbench {
         if pinned {
             self.close_keybindings_editor(window, cx);
         }
+        if path.to_string_lossy().ends_with(crate::search_editor::SEARCH_EDITOR_EXT) {
+            return self.open_search_editor_file(path, pinned, window, cx);
+        }
         match self.editors.find(&path) {
             Some(index) => {
                 self.editors.activate(index);
@@ -299,6 +310,8 @@ impl Workbench {
             tree.reveal(&editor.document.path);
         }
         self.record_editor_history();
+        self.drop_closed_search_editors();
+        self.load_search_editor_widget();
         self.find_editor_changed();
         self.host.send_changes(&self.editors);
         cx.notify();
@@ -414,7 +427,7 @@ impl Workbench {
     /// empty here, or `nameLong` when it is empty.
     fn window_title(&self) -> String {
         let root_name = self.workspace().map(Workspace::label).unwrap_or_default();
-        let active_editor = self.editors.active().map(|editor| editor.document.name()).unwrap_or_default();
+        let active_editor = self.editors.active().map(|editor| self.editor_name(editor)).unwrap_or_default();
         let parts: Vec<_> = [active_editor, root_name].into_iter().filter(|part| !part.is_empty()).collect();
         match parts.is_empty() {
             true => menubar::NAME_LONG.to_string(),

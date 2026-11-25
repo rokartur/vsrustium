@@ -16,6 +16,7 @@ use super::input_box_view::{InputId, InputLook, InputView};
 use super::find_widget::HISTORY_LIMIT;
 use crate::history::HistoryNavigator;
 use crate::input_box::InputBox;
+use crate::search_editor::SearchConfiguration;
 use crate::search_model::{MessageLink, PatternInfo, ReplacePattern, SearchResult, compare_paths};
 
 /// The view the side bar shows.
@@ -32,6 +33,8 @@ pub enum SearchField {
     Replace,
     Include,
     Exclude,
+    /// The search editor's context lines input (`contextLinesInput`).
+    ContextLines,
 }
 
 pub const SEARCH_FIELDS: [SearchField; 4] = [SearchField::Query, SearchField::Replace, SearchField::Include, SearchField::Exclude];
@@ -83,7 +86,7 @@ pub enum RowKind {
 }
 
 pub struct SearchView {
-    pub inputs: [SearchInput; 4],
+    pub inputs: [SearchInput; 5],
     /// The results tree.
     pub focus: FocusHandle,
     /// The replace toggle is a button: a click focuses it and leaves the inputs.
@@ -97,6 +100,8 @@ pub struct SearchView {
     pub preserve_case: bool,
     pub only_open_editors: bool,
     pub use_excludes_and_ignore_files: bool,
+    /// The search editor's context lines toggle (`showContextToggle`).
+    pub show_context: bool,
     /// `search.defaultViewMode` until a view action changes it: the tree view groups files by folder.
     pub tree_view: bool,
     pub result: SearchResult,
@@ -129,7 +134,7 @@ pub struct SearchView {
 impl SearchView {
     pub fn new(cx: &mut Context<Workbench>) -> Self {
         let input = || SearchInput { value: InputBox::default(), history: HistoryNavigator::new(Vec::new(), HISTORY_LIMIT), view: InputView::default(), focus: cx.focus_handle() };
-        let inputs = [input(), input(), input(), input()];
+        let inputs = [input(), input(), input(), input(), input()];
         SearchView {
             inputs,
             focus: cx.focus_handle(),
@@ -143,6 +148,7 @@ impl SearchView {
             preserve_case: false,
             only_open_editors: false,
             use_excludes_and_ignore_files: true,
+            show_context: false,
             tree_view: false,
             result: SearchResult::default(),
             pattern: None,
@@ -177,6 +183,23 @@ impl SearchView {
 
     pub fn value(&self, field: SearchField) -> &str {
         &self.input(field).value.value
+    }
+
+    /// The search the inputs and toggles ask for, as `searchEditorInput`'s configuration holds it.
+    pub fn configuration(&self) -> SearchConfiguration {
+        SearchConfiguration {
+            query: self.value(SearchField::Query).to_string(),
+            files_to_include: self.value(SearchField::Include).to_string(),
+            files_to_exclude: self.value(SearchField::Exclude).to_string(),
+            is_regexp: self.regex,
+            is_case_sensitive: self.match_case,
+            use_exclude_settings_and_ignore_files: self.use_excludes_and_ignore_files,
+            match_whole_word: self.whole_word,
+            // `getContextLines`: `+value` of the input while the toggle is checked.
+            context_lines: if self.show_context { self.value(SearchField::ContextLines).trim().parse().unwrap_or(0) } else { 0 },
+            show_includes_excludes: self.details_visible,
+            only_open_editors: self.only_open_editors,
+        }
     }
 
     /// The replace pattern the previews and the replace actions use (`SearchModel.replacePattern`).
@@ -335,7 +358,9 @@ impl Workbench {
             true => ("collapse-all", "search.action.collapseSearchResults", has_results),
             false => ("expand-all", "search.action.expandSearchResults", true),
         };
-        let actions = [refresh, ("clear-all", "search.action.clearSearchResults", can_clear), (view_mode.0, view_mode.1, has_results), collapse];
+        // `searchNewEditorIcon` is the new-file codicon.
+        let new_editor = ("new-file", "search.action.openNewEditorFromView", true);
+        let actions = [refresh, ("clear-all", "search.action.clearSearchResults", can_clear), new_editor, (view_mode.0, view_mode.1, has_results), collapse];
         let mut bar = div().flex().gap(px(4.));
         for (icon, command, enabled) in actions {
             bar = bar.child(self.search_action(icon, command, enabled, cx));
@@ -385,14 +410,14 @@ impl Workbench {
             .child(self.search_toggle("case-sensitive", view.match_case, true, cx.listener(|workbench, _: &ClickEvent, window, cx| workbench.toggle_search_option(SearchOption::MatchCase, window, cx))))
             .child(self.search_toggle("whole-word", view.whole_word, true, cx.listener(|workbench, _: &ClickEvent, window, cx| workbench.toggle_search_option(SearchOption::WholeWord, window, cx))))
             .child(self.search_toggle("regex", view.regex, true, cx.listener(|workbench, _: &ClickEvent, window, cx| workbench.toggle_search_option(SearchOption::Regex, window, cx))));
-        let query = self.search_input_box(SearchField::Query, "Search", 26., query_toggles, window, cx);
+        let query = self.search_input_box(InputId::Search(SearchField::Query), "Search", 26., query_toggles, window, cx);
         let replace = view.replace_active.then(|| {
             let preserve_case = self.search_toggle("preserve-case", view.preserve_case, true, cx.listener(|workbench, _: &ClickEvent, window, cx| workbench.toggle_search_option(SearchOption::PreserveCase, window, cx)));
             let replace_all = self.search_action("replace-all", "search.action.replaceAll", !view.result.is_empty(), cx);
             div()
                 .mt(px(6.))
                 .flex()
-                .child(div().w(px(198.)).child(self.search_input_box(SearchField::Replace, "Replace", 26., div().child(preserve_case), window, cx)))
+                .child(div().w(px(198.)).child(self.search_input_box(InputId::Search(SearchField::Replace), "Replace", 26., div().child(preserve_case), window, cx)))
                 .child(div().ml(px(4.)).pt(px(1.5)).child(replace_all))
         });
         let widget = div().relative().pl(px(18.)).child(toggle_replace).child(query).children(replace);
@@ -420,9 +445,9 @@ impl Workbench {
                 .flex()
                 .flex_col()
                 .child(heading("files to include"))
-                .child(self.search_input_box(SearchField::Include, "e.g. *.ts, src/**/include", 25., div().flex().gap(px(2.)).child(changed_files).child(open_editors), window, cx))
+                .child(self.search_input_box(InputId::Search(SearchField::Include), "e.g. *.ts, src/**/include", 25., div().flex().gap(px(2.)).child(changed_files).child(open_editors), window, cx))
                 .child(heading("files to exclude"))
-                .child(self.search_input_box(SearchField::Exclude, "e.g. *.ts, src/**/exclude", 25., div().child(excludes), window, cx))
+                .child(self.search_input_box(InputId::Search(SearchField::Exclude), "e.g. *.ts, src/**/exclude", 25., div().child(excludes), window, cx))
         });
         let query_details = div().relative().ml(px(18.)).min_h(px(13.)).child(more).children(details);
         // searchview.css .search-widgets-container: margin 0 12px 0 2px inside the pane's 4px wider body.
@@ -440,15 +465,21 @@ impl Workbench {
 
     /// A pattern input (findInput.ts): the value with its toggles at the right, the focus border when focused, the
     /// validation message under it.
-    fn search_input_box(&self, field: SearchField, placeholder: &str, height: f32, controls: Div, window: &Window, cx: &mut Context<Self>) -> Div {
-        let focused = self.search.input(field).focus.is_focused(window);
-        let invalid = field == SearchField::Query && self.search.validation.is_some();
+    pub(super) fn search_input_box(&self, id: InputId, placeholder: &str, height: f32, controls: Div, window: &Window, cx: &mut Context<Self>) -> Div {
+        // searchEditor.ts styles its inputs with `searchEditor.textInputBorder`.
+        let (view, field, border_key) = match id {
+            InputId::Search(field) => (&self.search, field, "input.border"),
+            InputId::SearchEditor(field) => (&self.search_editor_widget.view, field, "searchEditor.textInputBorder"),
+            _ => unreachable!("{id:?} is not a search input"),
+        };
+        let focused = view.input(field).focus.is_focused(window);
+        let invalid = field == SearchField::Query && view.validation.is_some();
         let border = match (invalid, focused) {
             (true, _) => self.color("inputValidation.errorBorder"),
             (false, true) => self.color("focusBorder"),
-            (false, false) => self.theme.color("input.border").unwrap_or(self.color("input.background")),
+            (false, false) => self.theme.color(border_key).unwrap_or(self.color("input.background")),
         };
-        let message = self.search.validation.clone().filter(|_| invalid && focused).map(|message| {
+        let message = view.validation.clone().filter(|_| invalid && focused).map(|message| {
             div()
                 .absolute()
                 .top(px(height))
@@ -466,7 +497,7 @@ impl Workbench {
         // The pattern inputs show their placeholder only while focused (`showPlaceholderOnFocus`); HistoryInputBox
         // `addSuffix` names the Up and Down keys on a focused input with a history.
         let pattern = matches!(field, SearchField::Include | SearchField::Exclude);
-        let placeholder = match focused && !self.search.input(field).history.elements().is_empty() {
+        let placeholder = match focused && !view.input(field).history.elements().is_empty() {
             true => format!("{placeholder} (\u{21C5} for history)"),
             false => placeholder.to_string(),
         };
@@ -483,13 +514,13 @@ impl Workbench {
             .bg(self.color("input.background"))
             .border_color(border)
             .text_color(self.foreground_or("input.foreground"))
-            .child(div().flex_1().h_full().flex().child(self.input_text(InputId::Search(field), InputLook { password: false, placeholder, focused }, cx)))
+            .child(div().flex_1().h_full().flex().child(self.input_text(id, InputLook { password: false, placeholder, focused }, cx)))
             .child(controls)
             .children(message)
     }
 
     /// `Toggle` (toggle.ts): 20px with a 3px radius, the checked one in inputOption colors.
-    fn search_toggle(&self, icon: &str, checked: bool, enabled: bool, on_click: impl Fn(&ClickEvent, &mut Window, &mut gpui::App) + 'static) -> impl IntoElement {
+    pub(super) fn search_toggle(&self, icon: &str, checked: bool, enabled: bool, on_click: impl Fn(&ClickEvent, &mut Window, &mut gpui::App) + 'static) -> impl IntoElement {
         let foreground = match (checked, enabled) {
             (_, false) => self.color("disabledForeground"),
             (true, true) => self.foreground_or("inputOption.activeForeground"),

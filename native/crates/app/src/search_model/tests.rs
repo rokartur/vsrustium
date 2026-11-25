@@ -80,13 +80,13 @@ fn context_lines_add_no_match() {
 
 #[test]
 fn file_match_name() {
-    let file = FileMatch { path: "/folder/file.txt".into(), folder: 0, matches: Vec::new(), removed: Vec::new() };
+    let file = FileMatch { path: "/folder/file.txt".into(), folder: 0, ..FileMatch::default() };
     assert_eq!(file.name(), "file.txt");
 }
 
 #[test]
 fn comparer() {
-    let file = |path: &str| FileMatch { path: path.into(), folder: 0, matches: Vec::new(), removed: Vec::new() };
+    let file = |path: &str| FileMatch { path: path.into(), folder: 0, ..FileMatch::default() };
     assert_eq!(compare_file_matches(&file("/foo"), &file("/with/path")), Ordering::Less);
     assert_eq!(compare_file_matches(&file("/with/path"), &file("/foo")), Ordering::Greater);
     assert_eq!(compare_file_matches(&file("/foo"), &file("/foo")), Ordering::Equal);
@@ -97,7 +97,7 @@ fn comparer() {
 
 #[test]
 fn cross_folder_comparer() {
-    let file = |path: &str, folder| FileMatch { path: path.into(), folder, matches: Vec::new(), removed: Vec::new() };
+    let file = |path: &str, folder| FileMatch { path: path.into(), folder, ..FileMatch::default() };
     assert_eq!(compare_file_matches(&file("/voo/foo.a", 0), &file("/with/path.c", 1)), Ordering::Less);
     assert_eq!(compare_file_matches(&file("/with/path.c", 1), &file("/with/path/bar.b", 1)), Ordering::Less);
 }
@@ -296,7 +296,7 @@ fn messages() {
 
 #[test]
 fn matches_follow_model_and_dismissed_stay_out() {
-    let mut file = FileMatch { path: "/folder/file.txt".into(), folder: 0, matches: Vec::new(), removed: Vec::new() };
+    let mut file = FileMatch { path: "/folder/file.txt".into(), folder: 0, ..FileMatch::default() };
     let lines = vec!["the ąthe".to_string(), "other the".to_string()];
     let params = SearchParams { search_string: "the", is_regex: false, match_case: false, word_separators: None };
     file.update_from_lines(&lines, &params);
@@ -308,4 +308,23 @@ fn matches_follow_model_and_dismissed_stay_out() {
     result.files[0].update_from_lines(&lines, &params);
     assert_eq!(result.files[0].matches.len(), 3);
     assert_eq!(result.count(), 3);
+}
+
+/// searchHelpers.test.ts `getTextSearchMatchWithModelContext`: a model of 100 lines, each its 1-based number.
+fn model_context(match_lines: &[usize], context: usize) -> Vec<usize> {
+    let lines: Vec<String> = (1..=100).map(|line| line.to_string()).collect();
+    let pattern = match_lines.iter().map(|line| format!("^{}$", line + 1)).collect::<Vec<_>>().join("|");
+    let mut file = FileMatch { path: "/folder/file.txt".into(), ..FileMatch::default() };
+    file.update_from_lines(&lines, &SearchParams { search_string: &pattern, is_regex: true, match_case: false, word_separators: None });
+    file.add_model_context(&lines, context);
+    assert!(file.context.iter().all(|(line, text)| *text == line.to_string()));
+    file.context.into_keys().collect()
+}
+
+#[test]
+fn model_context_lines() {
+    assert_eq!(model_context(&[1], 0), Vec::<usize>::new());
+    assert_eq!(model_context(&[1], 1), vec![1, 3]);
+    assert_eq!(model_context(&[1, 2], 1), vec![1, 4]);
+    assert_eq!(model_context(&[0, 99], 1), vec![2, 99]);
 }

@@ -3,7 +3,8 @@
 //! (`$acceptTabOperation`), mainThreadEditors.ts (`$acceptEditorPropertiesChanged`) and the
 //! `onLanguage` activation languageService.ts sends when a model of a new language is created.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 
 use futures::channel::oneshot;
@@ -69,6 +70,8 @@ pub struct HostSync {
     visible_lines: Option<Vec<(usize, usize)>>,
     /// The tabs of group 0 the host has; session.rs starts it with an empty group.
     tabs: Vec<Value>,
+    /// The search editors' tabs by their model's path; the workbench keeps them current.
+    pub search_tabs: HashMap<PathBuf, SearchTab>,
     activation_events: HashSet<String>,
     /// `configurationScopes` go to the host in a development build only (`MainThreadConfiguration.send_scopes`).
     pub configuration_scopes: bool,
@@ -85,7 +88,7 @@ const CODE_EDITOR_ID: &str = "vs.editor.ICodeEditor:1";
 
 impl HostSync {
     pub fn new(sender: Sender<HostMessage>) -> Self {
-        HostSync { sender, documents: Vec::new(), editor: None, visible_lines: None, tabs: Vec::new(), activation_events: HashSet::new(), configuration_scopes: false }
+        HostSync { sender, documents: Vec::new(), editor: None, visible_lines: None, tabs: Vec::new(), search_tabs: HashMap::new(), activation_events: HashSet::new(), configuration_scopes: false }
     }
 
     /// Sends what changed in `group` since the last call: activation for new languages, the document
@@ -136,8 +139,8 @@ impl HostSync {
     /// One `$acceptTabOperation` per tab that closed, opened, moved or changed, as mainThreadEditorTabs.ts
     /// sends them: a whole `$acceptEditorTabModel` fires no `onDidChangeTabs`, which TypeScript's
     /// TabResourceTracker needs before it reports diagnostics.
-    fn send_tabs(&mut self, group: &EditorGroup) {
-        let tabs: Vec<Value> = group.editors.iter().enumerate().map(|(index, editor)| tab_dto(editor, group.active_index() == Some(index))).collect();
+    pub fn send_tabs(&mut self, group: &EditorGroup) {
+        let tabs: Vec<Value> = group.editors.iter().enumerate().map(|(index, editor)| tab_dto(editor, group.active_index() == Some(index), &self.search_tabs)).collect();
         let mut sent = std::mem::take(&mut self.tabs);
         for index in (0..sent.len()).rev() {
             if !tabs.iter().any(|tab| tab["id"] == sent[index]["id"]) {
@@ -379,11 +382,11 @@ fn utf16_len(text: &str) -> usize {
     text.encode_utf16().count()
 }
 
-fn tab_dto(editor: &OpenEditor, active: bool) -> Value {
+fn tab_dto(editor: &OpenEditor, active: bool, search_tabs: &HashMap<PathBuf, SearchTab>) -> Value {
     let uri = editor.document.uri();
     // Every scheme the file service reads opens as a file editor input; untitled text has its own.
     let type_id = if editor.document.scheme == "untitled" { "workbench.editors.untitledEditorInput" } else { "workbench.editors.files.fileEditorInput" };
-    json!({
+    let mut tab = json!({
         "id": format!("0~default-{type_id}-{} ", editor.document.uri_string()),
         "label": editor.document.name(),
         // TabInputKind.TextInput
@@ -393,7 +396,24 @@ fn tab_dto(editor: &OpenEditor, active: bool) -> Value {
         "isPinned": false,
         "isPreview": editor.preview,
         "isDirty": editor.is_dirty(),
-    })
+    });
+    // A search editor is no text resource input: TabInputKind.UnknownInput, its editor id is its type id.
+    if let Some(search) = search_tabs.get(&editor.document.path).filter(|_| editor.document.scheme == "search-editor") {
+        let type_id = "workbench.editorinputs.searchEditorInput";
+        tab["id"] = json!(format!("0~{type_id}-{type_id}-{} ", search.resource));
+        tab["label"] = json!(search.label);
+        tab["input"] = json!({ "kind": 0 });
+        tab["editorId"] = json!(type_id);
+    }
+    tab
+}
+
+/// What a search editor's tab shows the extension host: `SearchEditorInput.getName` and its resource, the backing
+/// file's URI or the model's.
+#[derive(Clone, PartialEq, Debug)]
+pub struct SearchTab {
+    pub label: String,
+    pub resource: String,
 }
 
 
@@ -593,5 +613,22 @@ mod tests {
         let sent = drain(&receiver);
         assert_eq!((sent[0].proxy, sent[0].method), ("ExtHostTheming", "$onColorThemeChange"));
         assert_eq!(sent[0].args, [json!("hcLight")]);
+    }
+
+    #[test]
+    fn a_search_editor_tab_has_its_name_and_an_unknown_input() {
+        let (sender, receiver) = channel();
+        let mut sync = HostSync::new(sender);
+        let mut group = EditorGroup::default();
+        group.open(TextDocument { scheme: "search-editor".into(), path: PathBuf::from("/1"), ..document("/1", "search-result") }, false);
+        sync.search_tabs.insert(PathBuf::from("/1"), SearchTab { label: "Search: hello".into(), resource: "file:///w/a.code-search".into() });
+        sync.send_changes(&group);
+        let sent = drain(&receiver);
+        let tab = &sent.iter().find(|message| message.method == "$acceptTabOperation").unwrap().args[0]["tabDto"];
+        let type_id = "workbench.editorinputs.searchEditorInput";
+        assert_eq!(tab["label"], "Search: hello");
+        assert_eq!(tab["editorId"], type_id);
+        assert_eq!(tab["input"], json!({ "kind": 0 }));
+        assert_eq!(tab["id"], format!("0~{type_id}-{type_id}-file:///w/a.code-search "));
     }
 }

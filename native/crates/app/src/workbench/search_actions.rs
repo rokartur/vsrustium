@@ -7,7 +7,8 @@ use std::time::Duration;
 
 use config::configuration::Overrides;
 use futures::StreamExt;
-use gpui::{AppContext, ClipboardItem, Context, Keystroke, PromptLevel, Window};
+use futures::channel::mpsc::UnboundedReceiver;
+use gpui::{AppContext, ClipboardItem, Context, Keystroke, PromptLevel, Task, Window};
 use search::ripgrep::Cancellation;
 use search::search_paths::{self, WorkspaceFolder};
 use search::text_search::SearchRange;
@@ -17,7 +18,7 @@ use super::Workbench;
 use super::explorer_actions::confirm;
 use super::find_widget::HISTORY_LIMIT;
 use super::input_box_view::InputId;
-use super::search_view::{MessagePart, RowAction, RowKey, RowKind, SEARCH_FIELDS, SearchField, SearchOption, SearchUiState, SideBarView};
+use super::search_view::{MessagePart, RowAction, RowKey, RowKind, SEARCH_FIELDS, SearchField, SearchOption, SearchUiState, SearchView, SideBarView};
 use crate::anything_quick_access::TextRange;
 use crate::commands::Outcome;
 use crate::editor::char_column;
@@ -25,7 +26,8 @@ use crate::editor::find::search::SearchParams;
 use crate::history::HistoryNavigator;
 use crate::input_box::InputBox;
 use crate::menus::MenuId;
-use crate::search_model::{MessageLink, after_replace_all_message, no_results_message, replace_all_confirmation_message, result_count_message, utf16_len};
+use crate::search_editor::SearchConfiguration;
+use crate::search_model::{MessageLink, SearchResult, after_replace_all_message, no_results_message, replace_all_confirmation_message, result_count_message, utf16_len};
 
 #[cfg(test)]
 mod tests;
@@ -107,7 +109,10 @@ impl Workbench {
             });
         }
         self.commands.register("workbench.action.search.toggleQueryDetails", |workbench, _, window, cx| {
-            workbench.toggle_query_details(None, true, window, cx);
+            match workbench.in_search_editor(window) {
+                true => workbench.toggle_search_editor_details(None, cx),
+                false => workbench.toggle_query_details(None, true, window, cx),
+            }
             Outcome::done()
         });
         self.commands.register("closeReplaceInFilesWidget", |workbench, _, window, cx| {
@@ -115,12 +120,19 @@ impl Workbench {
             workbench.focus_search_input(SearchField::Query, false, window, cx);
             Outcome::done()
         });
+        // searchActionsNav.ts: with a search editor active, its inputs.
         self.commands.register("search.focus.nextInputBox", |workbench, _, window, cx| {
-            workbench.focus_next_search_input(true, window, cx);
+            match workbench.active_search_editor().is_some() {
+                true => workbench.focus_next_search_editor_input(true, window, cx),
+                false => workbench.focus_next_search_input(true, window, cx),
+            }
             Outcome::done()
         });
         self.commands.register("search.focus.previousInputBox", |workbench, _, window, cx| {
-            workbench.focus_next_search_input(false, window, cx);
+            match workbench.active_search_editor().is_some() {
+                true => workbench.focus_next_search_editor_input(false, window, cx),
+                false => workbench.focus_next_search_input(false, window, cx),
+            }
             Outcome::done()
         });
         self.commands.register("search.action.focusSearchFromResults", |workbench, _, window, cx| {
@@ -154,11 +166,17 @@ impl Workbench {
             });
         }
         self.commands.register("search.action.focusNextSearchResult", |workbench, _, window, cx| {
-            workbench.select_search_match(true, window, cx);
+            match workbench.active_search_editor() {
+                Some(path) => workbench.select_search_editor_match(&path, false, window, cx),
+                None => workbench.select_search_match(true, window, cx),
+            }
             Outcome::done()
         });
         self.commands.register("search.action.focusPreviousSearchResult", |workbench, _, window, cx| {
-            workbench.select_search_match(false, window, cx);
+            match workbench.active_search_editor() {
+                Some(path) => workbench.select_search_editor_match(&path, true, window, cx),
+                None => workbench.select_search_match(false, window, cx),
+            }
             Outcome::done()
         });
         self.commands.register("search.action.copyPath", |workbench, _, _, cx| {
@@ -520,7 +538,7 @@ impl Workbench {
         if let Some(value) = args["onlyOpenEditors"].as_bool() {
             view.only_open_editors = value;
         }
-        self.search.validation = self.validate_search_input();
+        self.search.validation = Self::validate_search_input(&self.search);
         if args["triggerSearch"] == true {
             self.trigger_search(true, None, window, cx);
         }
@@ -556,8 +574,8 @@ impl Workbench {
             false => text,
         };
         self.search.input_mut(SearchField::Query).value.set_value(text);
-        self.search.validation = self.validate_search_input();
-        if let Some(delay) = self.search_on_type_delay() {
+        self.search.validation = Self::validate_search_input(&self.search);
+        if let Some(delay) = self.search_on_type_delay(&self.search) {
             self.trigger_search(true, Some(delay), window, cx);
         }
         true
@@ -573,8 +591,8 @@ impl Workbench {
         }
         match field {
             SearchField::Query => {
-                self.search.validation = self.validate_search_input();
-                if let Some(delay) = self.search_on_type_delay() {
+                self.search.validation = Self::validate_search_input(&self.search);
+                if let Some(delay) = self.search_on_type_delay(&self.search) {
                     self.trigger_search(true, Some(delay), window, cx);
                 }
             }
@@ -584,6 +602,7 @@ impl Workbench {
                     let _ = workbench.update(cx, |workbench, _| workbench.add_to_search_history(&[SearchField::Replace]));
                 }));
             }
+            SearchField::ContextLines => unreachable!("the Search view has no context lines input"),
             SearchField::Include | SearchField::Exclude => {
                 let delay = self.debounce_period();
                 self.trigger_search(true, Some(delay), window, cx);
@@ -592,12 +611,12 @@ impl Workbench {
     }
 
     /// `onSearchInputChanged`: the debounce period, scaled by how much a regex matches.
-    fn search_on_type_delay(&self) -> Option<Duration> {
+    pub(super) fn search_on_type_delay(&self, view: &SearchView) -> Option<Duration> {
         let period = self.debounce_period();
-        if !self.search.regex {
+        if !view.regex {
             return Some(period);
         }
-        let regex = onig::Regex::new(self.search.value(SearchField::Query)).ok()?;
+        let regex = onig::Regex::new(view.value(SearchField::Query)).ok()?;
         let matchiness = regex.find_iter(MATCHINESS_TEXT).count();
         let multiplier = match matchiness {
             0..50 => 1,
@@ -607,14 +626,14 @@ impl Workbench {
         Some(period * multiplier)
     }
 
-    fn debounce_period(&self) -> Duration {
+    pub(super) fn debounce_period(&self) -> Duration {
         Duration::from_millis(self.setting("search.searchOnTypeDebouncePeriod").as_u64().unwrap_or(300))
     }
 
     /// `validateSearchInput`: a regex must compile.
-    fn validate_search_input(&self) -> Option<String> {
-        let value = self.search.value(SearchField::Query);
-        if value.is_empty() || !self.search.regex {
+    pub(super) fn validate_search_input(view: &SearchView) -> Option<String> {
+        let value = view.value(SearchField::Query);
+        if value.is_empty() || !view.regex {
             return None;
         }
         onig::Regex::new(value).err().map(|error| format!("Invalid regular expression: /{value}/: {error}"))
@@ -645,6 +664,7 @@ impl Workbench {
                 SearchField::Query => true,
                 SearchField::Replace => self.search.replace_active,
                 SearchField::Include | SearchField::Exclude => self.search.details_visible,
+                SearchField::ContextLines => false,
             })
             .collect();
         let current = self.focused_input(window).and_then(|id| match id {
@@ -702,7 +722,7 @@ impl Workbench {
         if option == SearchOption::PreserveCase {
             return;
         }
-        self.search.validation = self.validate_search_input();
+        self.search.validation = Self::validate_search_input(&self.search);
         self.trigger_search(true, None, window, cx);
     }
 
@@ -763,45 +783,16 @@ impl Workbench {
         if self.search.validation.is_some() {
             return;
         }
-        let content = self.search.value(SearchField::Query).to_string();
-        if content.is_empty() {
+        let config = self.search.configuration();
+        if config.query.is_empty() {
             self.clear_search_results(false, cx);
             self.search.message = None;
             return;
         }
-        let include = self.search.value(SearchField::Include).trim().to_string();
-        let exclude = self.search.value(SearchField::Exclude).trim().to_string();
-        let use_excludes = self.search.use_excludes_and_ignore_files;
-        let pattern = json!({ "pattern": content, "isRegExp": self.search.regex, "isCaseSensitive": self.search.match_case, "isWordMatch": self.search.whole_word });
-        let options = json!({
-            "maxResults": self.setting("search.maxResults"),
-            "disregardIgnoreFiles": (!use_excludes).then_some(true),
-            "disregardExcludeSettings": (!use_excludes).then_some(true),
-            "ignoreGlobCase": true,
-            "previewOptions": { "matchLines": 1, "charsPerLine": if self.search.regex { 10000 } else { 1000 } },
-            "isSmartCase": self.setting("search.smartCase"),
-        });
-        let workspace_folders: Vec<_> = self.workspace().iter().flat_map(|workspace| &workspace.folders).map(|folder| (folder.path.clone(), folder.name.clone())).collect();
-        let folders: Vec<WorkspaceFolder> = workspace_folders.iter().map(|(path, name)| WorkspaceFolder { path, name }).collect();
-        let home = std::env::var("HOME").ok();
-        let workspace = search_paths::Workspace { folders: &folders, single_folder: folders.len() == 1 && self.workspace().is_some_and(|workspace| workspace.file.is_none()), home: home.as_deref() };
-        let settings = self.settings.clone();
-        let setting = move |folder: &Path, key: &str| settings.lock().unwrap().get_value(Some(key), &Overrides { resource: Some(folder), ..Overrides::default() }).unwrap_or(Value::Null);
-        let mut query = match search_paths::expanded_text_query(&pattern, &workspace, &include, &exclude, &options, &setting) {
+        let query = match self.text_query(&config) {
             Ok(query) => query,
             Err(error) => return self.show_search_error(error, cx),
         };
-        let open_editors: Vec<PathBuf> = self.editors.editors.iter().filter(|editor| editor.document.scheme == "file").map(|editor| editor.document.path.clone()).collect();
-        if self.search.only_open_editors {
-            search_paths::restrict_to_open_editors(&mut query, &open_editors, &workspace);
-        }
-        // `validateQuery`: missing folders drop out; when none exists the first one is the error.
-        let searched = query.folder_queries.len();
-        query.folder_queries.retain(|folder_query| folder_query.folder.exists());
-        if searched > 0 && query.folder_queries.is_empty() {
-            let missing = search_paths::expanded_text_query(&pattern, &workspace, &include, &exclude, &options, &setting).map(|query| query.folder_queries[0].folder.clone());
-            return self.show_search_error(format!("Search path not found: {}", missing.unwrap_or_default().display()), cx);
-        }
         self.search.history_update = Some(cx.spawn(async |workbench, cx| {
             cx.background_executor().timer(Duration::from_secs(2)).await;
             let _ = workbench.update(cx, |workbench, _| workbench.add_to_search_history(&[SearchField::Query, SearchField::Exclude, SearchField::Include]));
@@ -816,42 +807,15 @@ impl Workbench {
         self.search.state = SearchUiState::Searching;
         self.search.focus_and_select(None);
         self.search.collapsed.clear();
-        self.search.result = Default::default();
         self.search.warnings.clear();
-        let content_pattern = query.content_pattern.clone().expect("a text query has a content pattern");
-        let word_separators = self.setting("editor.wordSeparators").as_str().unwrap_or_default().to_string();
-        let params = SearchParams { search_string: &content_pattern.pattern, is_regex: content_pattern.is_reg_exp, match_case: content_pattern.is_case_sensitive, word_separators: content_pattern.is_word_match.then_some(word_separators.as_str()) };
-        // `getOpenEditorResults`: an open editor's model answers for its file, with or without matches.
-        let mut local = Vec::new();
-        for editor in &self.editors.editors {
-            let document = &editor.document;
-            if !matches!(document.scheme.as_str(), "file" | "untitled") || !search::query::path_included_in_query(&query, &document.path) {
-                continue;
-            }
-            if self.search.only_open_editors || document.scheme == "untitled" || folders.iter().any(|folder| document.path.starts_with(folder.path)) || query.folder_queries.iter().any(|folder_query| document.path.starts_with(&folder_query.folder)) || !query.using_search_paths {
-                local.push(document.path.clone());
-                let folder = search_folder_index(&workspace_folders, &document.path);
-                self.search.result.set_model_matches(folder, &document.path, &document.lines, &params);
-            }
-        }
-        self.search.pattern = Some(content_pattern);
+        let mut result = SearchResult::default();
+        let local = self.add_open_editor_matches(&query, config.only_open_editors, &mut result);
+        self.search.result = result;
+        self.search.pattern = query.content_pattern.clone();
         self.update_result_count_message();
         cx.notify();
-        let rg = search::ripgrep::rg_path(&self.app_root);
-        let cancellation = Arc::new(Cancellation::default());
+        let (cancellation, mut receiver, search) = self.spawn_text_search(query, local, cx);
         self.search.cancellation = Some(cancellation.clone());
-        let (sender, mut receiver) = futures::channel::mpsc::unbounded::<(PathBuf, Vec<Value>)>();
-        let search_cancellation = cancellation.clone();
-        let search = cx.background_spawn(async move {
-            match query.folder_queries.is_empty() {
-                true => Ok(false),
-                false => search::text_search::search(&query, &rg, &search_cancellation, &mut |path, results| {
-                    if !local.iter().any(|known| known == path) {
-                        let _ = sender.unbounded_send((path.to_path_buf(), results));
-                    }
-                }),
-            }
-        });
         let slow = cx.spawn_in(window, async move |workbench, cx| {
             cx.background_executor().timer(SLOW_SEARCH).await;
             let _ = workbench.update(cx, |workbench, cx| {
@@ -859,6 +823,7 @@ impl Workbench {
                 cx.notify();
             });
         });
+        let (include, exclude) = (config.files_to_include.trim().to_string(), config.files_to_exclude.trim().to_string());
         self.search.run = Some(cx.spawn_in(window, async move |workbench, cx| {
             while let Some(first) = receiver.next().await {
                 let mut batch = vec![first];
@@ -882,6 +847,87 @@ impl Workbench {
             drop(slow);
             let _ = workbench.update(cx, |workbench, cx| workbench.search_complete(finished, &cancellation, &include, &exclude, cx));
         }));
+    }
+
+    /// `queryBuilder.text` over the workspace folders, restricted to the open editors when asked, and `validateQuery`:
+    /// missing folders drop out; when none exists the first one is the error.
+    pub(super) fn text_query(&self, config: &SearchConfiguration) -> Result<search::query::Query, String> {
+        let include = config.files_to_include.trim();
+        let exclude = config.files_to_exclude.trim();
+        let use_excludes = config.use_exclude_settings_and_ignore_files;
+        let pattern = json!({ "pattern": config.query, "isRegExp": config.is_regexp, "isCaseSensitive": config.is_case_sensitive, "isWordMatch": config.match_whole_word });
+        let options = json!({
+            "maxResults": self.setting("search.maxResults"),
+            "disregardIgnoreFiles": (!use_excludes).then_some(true),
+            "disregardExcludeSettings": (!use_excludes).then_some(true),
+            "ignoreGlobCase": true,
+            "previewOptions": { "matchLines": 1, "charsPerLine": if config.is_regexp { 10000 } else { 1000 } },
+            "surroundingContext": config.context_lines,
+            "isSmartCase": self.setting("search.smartCase"),
+        });
+        let workspace_folders: Vec<_> = self.workspace().iter().flat_map(|workspace| &workspace.folders).map(|folder| (folder.path.clone(), folder.name.clone())).collect();
+        let folders: Vec<WorkspaceFolder> = workspace_folders.iter().map(|(path, name)| WorkspaceFolder { path, name }).collect();
+        let home = std::env::var("HOME").ok();
+        let workspace = search_paths::Workspace { folders: &folders, single_folder: folders.len() == 1 && self.workspace().is_some_and(|workspace| workspace.file.is_none()), home: home.as_deref() };
+        let settings = self.settings.clone();
+        let setting = move |folder: &Path, key: &str| settings.lock().unwrap().get_value(Some(key), &Overrides { resource: Some(folder), ..Overrides::default() }).unwrap_or(Value::Null);
+        let mut query = search_paths::expanded_text_query(&pattern, &workspace, include, exclude, &options, &setting)?;
+        if config.only_open_editors {
+            let open_editors: Vec<PathBuf> = self.editors.editors.iter().filter(|editor| editor.document.scheme == "file").map(|editor| editor.document.path.clone()).collect();
+            search_paths::restrict_to_open_editors(&mut query, &open_editors, &workspace);
+        }
+        let searched = query.folder_queries.len();
+        query.folder_queries.retain(|folder_query| folder_query.folder.exists());
+        if searched > 0 && query.folder_queries.is_empty() {
+            let missing = search_paths::expanded_text_query(&pattern, &workspace, include, exclude, &options, &setting).map(|query| query.folder_queries[0].folder.clone());
+            return Err(format!("Search path not found: {}", missing.unwrap_or_default().display()));
+        }
+        Ok(query)
+    }
+
+    /// `getOpenEditorResults`: an open editor's model answers for its file, with or without matches; returns the
+    /// paths the text search skips.
+    pub(super) fn add_open_editor_matches(&self, query: &search::query::Query, only_open_editors: bool, result: &mut SearchResult) -> Vec<PathBuf> {
+        let workspace_folders: Vec<_> = self.workspace().iter().flat_map(|workspace| &workspace.folders).map(|folder| (folder.path.clone(), folder.name.clone())).collect();
+        let content_pattern = query.content_pattern.as_ref().expect("a text query has a content pattern");
+        let word_separators = self.setting("editor.wordSeparators").as_str().unwrap_or_default().to_string();
+        let params = SearchParams { search_string: &content_pattern.pattern, is_regex: content_pattern.is_reg_exp, match_case: content_pattern.is_case_sensitive, word_separators: content_pattern.is_word_match.then_some(word_separators.as_str()) };
+        let mut local = Vec::new();
+        for editor in &self.editors.editors {
+            let document = &editor.document;
+            if !matches!(document.scheme.as_str(), "file" | "untitled") || !search::query::path_included_in_query(query, &document.path) {
+                continue;
+            }
+            let in_folder = workspace_folders.iter().any(|(folder, _)| document.path.starts_with(folder)) || query.folder_queries.iter().any(|folder_query| document.path.starts_with(&folder_query.folder));
+            if only_open_editors || document.scheme == "untitled" || in_folder || !query.using_search_paths {
+                local.push(document.path.clone());
+                let folder = search_folder_index(&workspace_folders, &document.path);
+                result.set_model_matches(folder, &document.path, &document.lines, &params);
+                if let Some(file) = result.files.iter_mut().find(|file| file.path == document.path) {
+                    file.add_model_context(&document.lines, query.surrounding_context);
+                }
+            }
+        }
+        local
+    }
+
+    /// Runs the text search on a background thread; the files it finds, except `skip`, arrive on the receiver.
+    pub(super) fn spawn_text_search(&self, query: search::query::Query, skip: Vec<PathBuf>, cx: &mut Context<Self>) -> (Arc<Cancellation>, UnboundedReceiver<(PathBuf, Vec<Value>)>, Task<Result<bool, String>>) {
+        let rg = search::ripgrep::rg_path(&self.app_root);
+        let cancellation = Arc::new(Cancellation::default());
+        let (sender, receiver) = futures::channel::mpsc::unbounded::<(PathBuf, Vec<Value>)>();
+        let search_cancellation = cancellation.clone();
+        let search = cx.background_spawn(async move {
+            match query.folder_queries.is_empty() {
+                true => Ok(false),
+                false => search::text_search::search(&query, &rg, &search_cancellation, &mut |path, results| {
+                    if !skip.iter().any(|known| known == path) {
+                        let _ = sender.unbounded_send((path.to_path_buf(), results));
+                    }
+                }),
+            }
+        });
+        (cancellation, receiver, search)
     }
 
     /// `onSearchComplete` and `onSearchError`.
