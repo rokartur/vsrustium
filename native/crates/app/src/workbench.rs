@@ -44,6 +44,7 @@ mod search_actions;
 mod search_editor_view;
 mod search_editor_widget;
 mod search_view;
+mod scroll_locking;
 mod status_entries;
 use status_entries::{EDITOR_STATUS_PRIORITY, PROBLEMS_PRIORITY};
 pub mod themes;
@@ -194,6 +195,7 @@ impl Render for Workbench {
         self.refresh_selection_highlights(window);
         self.update_webview_panels(window, cx);
         self.update_diff_editor();
+        self.update_diff_symbols(cx);
         self.update_quick_diff(cx);
         self.auto_save_models_changed(cx);
         self.follow_content_hover_editor();
@@ -328,6 +330,8 @@ impl Workbench {
         workbench.register_workbench_actions();
         workbench.register_diff_editor_commands();
         workbench.register_diff_gutter_commands();
+        workbench.register_unchanged_region_commands();
+        workbench.register_scroll_locking_commands();
         workbench.register_scm_commands();
         workbench.register_editor_commands();
         workbench.register_find_commands();

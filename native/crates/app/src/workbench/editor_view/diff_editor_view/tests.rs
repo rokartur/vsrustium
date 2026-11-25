@@ -20,7 +20,8 @@ fn workbench_in<'a>(name: &str, cx: &'a mut TestAppContext) -> (PathBuf, gpui::E
     std::fs::write(dir.join("a.txt"), "one\ntwo\nthree\nfour").unwrap();
     std::fs::write(dir.join("b.txt"), "one\nTWO\nthree\ninserted\nfour").unwrap();
     let (sender, receiver) = channel();
-    let (workbench, cx) = cx.add_window_view(|_, cx| Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), crate::default_settings(), HostSync::new(sender), cx));
+    let settings = std::sync::Arc::new(std::sync::Mutex::new(config::service::Settings::load(config::registry::Registry::with_extensions(&[]), dir.join("User"), None)));
+    let (workbench, cx) = cx.add_window_view(|_, cx| Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), settings, HostSync::new(sender), cx));
     (dir, workbench, receiver, cx)
 }
 
@@ -122,5 +123,51 @@ fn swap_sides_shows_the_modified_file_as_the_original(cx: &mut TestAppContext) {
     assert_eq!(changes, ["[2,3)->[2,3)", "[4,5)->[4,4)"]);
     // The zones the diff placed in the former modified editor are gone.
     assert_eq!(zones, 0);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[gpui::test]
+fn hide_unchanged_regions_collapses_both_sides(cx: &mut TestAppContext) {
+    let (dir, workbench, _receiver, cx) = workbench_in("diff-unchanged", cx);
+    let lines: Vec<String> = (1..=100).map(|line| format!("line {line}")).collect();
+    std::fs::write(dir.join("a.txt"), lines.join("\n")).unwrap();
+    let mut changed = lines.clone();
+    changed[49] = "changed".into();
+    std::fs::write(dir.join("b.txt"), changed.join("\n")).unwrap();
+    let (a, b) = (file_uri(&dir.join("a.txt")), file_uri(&dir.join("b.txt")));
+    workbench.update_in(cx, |workbench, window, cx| {
+        workbench.update_setting("diffEditor.hideUnchangedRegions.enabled", json!(true));
+        drop(workbench.execute_command("_workbench.diff", vec![a, b], window, cx));
+    });
+    cx.run_until_parked();
+    let state = |workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext| {
+        workbench.read_with(cx, |workbench, _| {
+            let diff = workbench.editors.active_diff().unwrap();
+            let hidden = workbench.editors.active().unwrap().folding.hidden().to_vec();
+            (hidden, diff.placed_unchanged.len())
+        })
+    };
+    // Line 50 changed: lines 1-46 and 54-100 hide, with 3 context lines each side and a placeholder above each.
+    assert_eq!(state(&workbench, cx), (vec![0..46, 53..100], 2));
+
+    workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("diffEditor.showAllUnchangedRegions", Vec::new(), window, cx)));
+    cx.run_until_parked();
+    assert_eq!(state(&workbench, cx), (vec![], 0));
+
+    workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("diffEditor.collapseAllUnchangedRegions", Vec::new(), window, cx)));
+    cx.run_until_parked();
+    assert_eq!(state(&workbench, cx).1, 2);
+
+    // A cursor moved onto a hidden line reveals it from the closer side.
+    workbench.update_in(cx, |workbench, _, cx| {
+        workbench.editors.active_mut().unwrap().move_to(crate::editor::Position::new(57, 0), false);
+        cx.notify();
+    });
+    cx.run_until_parked();
+    assert_eq!(state(&workbench, cx).0, vec![0..46, 58..100]);
+
+    workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("diffEditor.toggleCollapseUnchangedRegions", Vec::new(), window, cx)));
+    cx.run_until_parked();
+    assert_eq!(state(&workbench, cx), (vec![], 0));
     std::fs::remove_dir_all(dir).unwrap();
 }

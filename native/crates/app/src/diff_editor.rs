@@ -8,6 +8,10 @@ use diff::{DiffOptions, LineRange, LinesDiff};
 
 use crate::editor::{OpenEditor, split_query};
 
+pub mod unchanged_regions;
+
+use unchanged_regions::{OutlineSymbol, UnchangedDrag, UnchangedRegion};
+
 /// The scheme of a diff editor's tab entry: the group keeps it as an editor without text, its `DiffInput` names the
 /// two models it shows.
 pub const DIFF_EDITOR_SCHEME: &str = "diff-editor";
@@ -38,6 +42,18 @@ pub struct DiffInput {
     pub zones: Vec<DiffZone>,
     /// The modified side's zones as placed in its model: view zone id and zone.
     pub placed_zones: Vec<(u32, DiffZone)>,
+    /// The collapsed unchanged regions with `diffEditor.hideUnchangedRegions.enabled`, and the diff versions and
+    /// minimum and context line counts they were computed for.
+    pub unchanged: Vec<UnchangedRegion>,
+    pub unchanged_key: Option<((u32, u32), usize, usize)>,
+    /// The placeholder view zones of the modified side: view zone id and region index.
+    pub placed_unchanged: Vec<(u32, usize)>,
+    /// The modified editor's cursor lines the regions last revealed, and the bar being dragged.
+    pub unchanged_cursors: Vec<usize>,
+    pub unchanged_drag: Option<UnchangedDrag>,
+    /// The modified model's document symbols for the breadcrumbs, and the model version they were asked for.
+    pub symbols: Vec<OutlineSymbol>,
+    pub symbols_version: Option<u32>,
 }
 
 /// The diff of the models' versions it was computed for.
@@ -49,7 +65,7 @@ pub struct ComputedDiff {
 
 impl DiffInput {
     pub fn new(original: Side, modified: Side, label: Option<String>) -> Self {
-        DiffInput { original, modified, label, diff: None, inline_now: false, zones: Vec::new(), placed_zones: Vec::new() }
+        DiffInput { original, modified, label, diff: None, inline_now: false, zones: Vec::new(), placed_zones: Vec::new(), unchanged: Vec::new(), unchanged_key: None, placed_unchanged: Vec::new(), unchanged_cursors: Vec::new(), unchanged_drag: None, symbols: Vec::new(), symbols_version: None }
     }
 
     /// `computeLabels` name: the preferred label, else `original ↔ modified`.
@@ -81,6 +97,39 @@ impl DiffInput {
         let (original_lines, modified_lines) = (&original.document.lines, &modified.document.lines);
         let diff = diff::compute_diff(original_lines, modified_lines, options);
         self.diff = Some(ComputedDiff { versions, options: key, diff });
+    }
+
+    /// `updateUnchangedRegions` when the diff or the line counts changed; without `hide_unchanged` (minimum and
+    /// context line counts) no region, as the view model resets them when the option goes off.
+    pub fn update_unchanged(&mut self, original_count: usize, modified_count: usize, hide_unchanged: Option<(usize, usize)>) {
+        let Some((min_hidden, min_context)) = hide_unchanged else {
+            self.unchanged.clear();
+            self.unchanged_key = None;
+            return;
+        };
+        let computed = self.diff.as_ref().expect("update runs first");
+        let key = (computed.versions, min_hidden, min_context);
+        if self.unchanged_key == Some(key) {
+            return;
+        }
+        let new = UnchangedRegion::from_diffs(&computed.diff.changes, original_count, modified_count, min_hidden, min_context);
+        self.unchanged = unchanged_regions::transfer(new, &self.unchanged, original_count, modified_count);
+        // hideUnchangedRegionsFeature.ts: one region covering the whole modified model (no change) shows nothing.
+        if let [only] = self.unchanged[..]
+            && only.modified_line == 1
+            && only.line_count == modified_count
+        {
+            self.unchanged.clear();
+        }
+        self.unchanged_key = Some(key);
+    }
+
+    /// The unchanged region whose original (`ZoneSide::Original`) or modified 1-based `line` it contains.
+    pub fn unchanged_at(&self, side: ZoneSide, line: usize) -> Option<usize> {
+        self.unchanged.iter().position(|region| match side {
+            ZoneSide::Original => region.original_range().contains(line),
+            ZoneSide::Modified => region.modified_range().contains(line),
+        })
     }
 }
 

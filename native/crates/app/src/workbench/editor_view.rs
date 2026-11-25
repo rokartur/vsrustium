@@ -21,6 +21,7 @@ pub(super) mod diff_gutter;
 pub(super) mod drag_and_drop;
 pub(super) mod quick_diff;
 pub(super) mod sticky_scroll_view;
+pub(super) mod unchanged_regions_view;
 
 use files::encoding::SUPPORTED_ENCODINGS;
 use serde_json::json;
@@ -335,7 +336,7 @@ impl Workbench {
         let first_line = lines.start;
         let mut rows = Vec::new();
         for (index, row) in self.editor_lines(editor, lines, metrics, window, cx).into_iter().enumerate() {
-            rows.extend(zones.iter().filter(|zone| zone.0 == first_line + index).map(|zone| self.view_zone_body(editor, zone.2, zone.1, metrics.content_left(), window)));
+            rows.extend(zones.iter().filter(|zone| zone.0 == first_line + index).map(|zone| self.view_zone_body(editor, zone.2, zone.1, metrics.content_left(), cx)));
             rows.push(row);
         }
         let minimap_width = self.minimap.info.as_ref().map_or(0., |(info, _)| info.width as f32);

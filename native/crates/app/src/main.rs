@@ -50,6 +50,7 @@ mod scm;
 mod search_model;
 mod smart_snippet_inserter;
 mod split_view;
+mod symbol_kinds;
 mod syntax;
 mod terminal;
 mod tf_idf;
