@@ -33,12 +33,14 @@ pub struct SessionPaths<'a> {
 pub fn init_data(paths: &SessionPaths, extensions: &[ScannedExtension], version: &str) -> Value {
     let descriptions: Vec<&Value> = extensions.iter().map(|e| &e.description).collect();
     let ids: Vec<Value> = extensions.iter().map(|e| extension_identifier(&e.id)).collect();
-    let activation_events: BTreeMap<&str, &Value> =
-        extensions.iter().map(|e| (e.id.as_str(), e.description.get("activationEvents").unwrap_or(&Value::Null))).collect();
-    let activation_events: BTreeMap<&str, Value> = activation_events
-        .into_iter()
-        .map(|(id, events)| (id, if events.is_array() { events.clone() } else { json!([]) }))
-        .collect();
+    // ImplicitActivationEvents.createActivationEventsMap: lowercase ids, extensions without events left out.
+    let mut activation_events = serde_json::Map::new();
+    for extension in extensions {
+        let events = crate::activation_events::read_activation_events(&extension.id, &extension.description);
+        if !events.is_empty() {
+            activation_events.insert(extension.id.to_lowercase(), json!(events));
+        }
+    }
     let workspace = paths.workspace.map(|workspace| {
         let configuration = workspace.file.as_deref().map(file_uri);
         json!({ "id": workspace_id(workspace), "name": workspace.label(), "transient": workspace.transient, "configuration": configuration, "isUntitled": false })

@@ -238,6 +238,9 @@ fn extension_items_follow_the_right_clicked_rows_resource(cx: &mut TestAppContex
     cx.simulate_mouse_down(file_row, MouseButton::Right, Modifiers::none());
     cx.run_until_parked();
     assert_eq!(menu_titles(&workbench, cx), ["Open Text Preview", "---", "Cut", "Copy", "---", "Rename...", "Delete"]);
+    // markdown.showPreview opens only a `vscode.Uri`, which the host revives from `$mid` 1.
+    let resource = workbench.read_with(cx, |workbench, _| workbench.context_menu.as_ref().unwrap().args[0].clone());
+    assert_eq!(resource["$mid"], 1);
     cx.simulate_keystrokes("escape");
     let folder_row = point(px(120.), px(107.));
     cx.simulate_mouse_down(folder_row, MouseButton::Right, Modifiers::none());
