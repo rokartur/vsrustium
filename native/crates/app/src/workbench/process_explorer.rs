@@ -55,7 +55,9 @@ const MENU_ITEMS: [Option<(MenuCommand, &str)>; 5] =
 impl Workbench {
     pub(super) fn register_process_explorer_commands(&mut self) {
         self.commands.register("workbench.action.openProcessExplorer", |workbench, _, _, cx| {
-            open_process_explorer(cx.entity().downgrade(), workbench.profile_storage.clone(), cx);
+            let (entity, storage) = (cx.entity().downgrade(), workbench.profile_storage.clone());
+            // The new window's first render reads the workbench, which this command is still updating.
+            cx.defer(move |cx| open_process_explorer(entity, storage, cx));
             Outcome::done()
         });
     }
