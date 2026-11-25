@@ -86,6 +86,19 @@ impl Workbench {
                 Outcome::done()
             })
         });
+        self.commands.register("workbench.action.tasks.rerunAllRunningTasks", |workbench, _, window, cx| {
+            workbench.with_task_trust(window, cx, |workbench, window, cx| {
+                // `_runRerunAllRunningTasksCommand`.
+                let running = workbench.running_tasks();
+                if running.is_empty() {
+                    workbench.notify(Notification::new(Severity::Info, "No running tasks to restart"));
+                }
+                for task in &running {
+                    workbench.restart_task(task, window, cx);
+                }
+                Outcome::done()
+            })
+        });
         self.commands.register("workbench.action.tasks.showTasks", |workbench, _, window, cx| {
             workbench.with_task_trust(window, cx, |workbench, window, cx| {
                 workbench.terminate_or_show(PickAction::Restart, "Select the task to show its output", window, cx);
