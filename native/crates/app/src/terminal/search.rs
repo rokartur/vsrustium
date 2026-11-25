@@ -1,5 +1,4 @@
-#![allow(dead_code, reason = "the terminal find widget wires it next")]
-
+//! The find model of the search addon (@xterm/addon-search): matches over the whole buffer, wrapped lines joined.
 use alacritty_terminal::event::EventListener;
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column, Line, Point};
