@@ -298,7 +298,6 @@ impl Workbench {
     }
 
     fn text_area(&self, editor: &OpenEditor, window: &mut Window, cx: &mut Context<Self>) -> Stateful<Div> {
-        let overrides = config::configuration::Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
         let metrics = EditorMetrics::measure(window, editor.document.lines.len(), self.line_numbers(editor), self.editor_zoom.multiplier());
         let area_left = self.text_area_left.clone();
         let area_bounds = self.text_area_bounds.clone();
