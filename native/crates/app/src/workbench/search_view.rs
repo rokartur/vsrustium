@@ -370,7 +370,7 @@ impl Workbench {
     }
 
     /// An action of an action bar: 22px, hover background, disabled in disabledForeground.
-    fn search_action(&self, icon: &str, command: &'static str, enabled: bool, cx: &mut Context<Self>) -> gpui::Stateful<Div> {
+    pub(super) fn search_action(&self, icon: &str, command: &'static str, enabled: bool, cx: &mut Context<Self>) -> gpui::Stateful<Div> {
         let foreground = if enabled { self.foreground_or("icon.foreground") } else { self.color("disabledForeground") };
         let hover = self.color("toolbar.hoverBackground");
         self.icon(icon, 22., 16., foreground).id(command).rounded(px(4.)).when(enabled, |action| {

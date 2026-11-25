@@ -271,8 +271,8 @@ fn filter_modifiers_are_matched_with_complete_term() {
 
 #[test]
 fn filter_by_extension() {
-    let foo = ExtensionSource { id: "foo".into(), display_name: Some("foo bar".into()) };
-    let bar = ExtensionSource { id: "bar".into(), display_name: Some("bar foo".into()) };
+    let foo = ExtensionSource { id: "foo".into(), display_name: Some("foo bar".into()), is_builtin: false };
+    let bar = ExtensionSource { id: "bar".into(), display_name: Some("bar foo".into()), is_builtin: false };
     let mut contributed = item("command.1", "alt+escape", None, true);
     contributed.extension = Some(foo);
     let items = [contributed, item("command.2", "", None, true)];

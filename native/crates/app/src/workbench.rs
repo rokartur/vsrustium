@@ -25,7 +25,10 @@ mod marker_navigation;
 pub mod menubar;
 mod middle_scroll;
 mod minimap_view;
+pub mod logs_actions;
 mod notifications_view;
+pub mod output_actions;
+mod output_view;
 pub mod quick_access;
 mod quick_open;
 mod readonly;
@@ -93,8 +96,8 @@ pub struct Workbench {
     diagnostics: diagnostics::Diagnostics,
     /// Context keys set with the `setContext` command.
     context_keys: HashMap<String, Value>,
-    /// The level extension tests set with `_extensionTests.setLogLevel`; stderr logging does not filter by it.
-    log_level: String,
+    pub output: crate::output::Output,
+    output_view: output_view::OutputView,
     /// The status bar message and the task that hides it.
     status_message: Option<(String, Task<()>)>,
     scrollbars: editor_view::Scrollbars,
@@ -233,7 +236,8 @@ impl Workbench {
             keybinding_marks: Default::default(),
             diagnostics: Default::default(),
             context_keys: HashMap::new(),
-            log_level: "info".into(),
+            output: Default::default(),
+            output_view: output_view::OutputView::new(cx),
             status_message: None,
             scrollbars: Default::default(),
             fold_controls: Default::default(),
@@ -302,6 +306,8 @@ impl Workbench {
         workbench.register_marker_navigation_commands();
         workbench.register_define_keybinding_command();
         workbench.register_notifications_commands();
+        workbench.register_output_actions();
+        workbench.register_logs_actions();
         // Keybindings resolve before the focused element sees the key, and with nothing focused too.
         let entity = cx.entity().downgrade();
         cx.intercept_keystrokes(move |event, window, cx| {

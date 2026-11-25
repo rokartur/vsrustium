@@ -34,6 +34,8 @@ pub enum Owner {
     EditorStatus(Vec<crate::workbench::editor_status::StatusPick>),
     /// `list.resizeColumn`: the column pick, then the input box of the picked column's percentage.
     ResizeColumn(Option<usize>),
+    /// A picker of output channels, with what accepting each item does.
+    Output(Vec<crate::workbench::output_actions::OutputPick>),
 }
 
 impl Workbench {
@@ -205,6 +207,7 @@ impl Workbench {
             Owner::GoToMatch => self.go_to_match_event(id, event, window, cx),
             Owner::EditorStatus(_) => self.editor_status_event(id, event, window, cx),
             Owner::ResizeColumn(_) => self.resize_column_event(id, event, window, cx),
+            Owner::Output(_) => self.output_pick_event(id, event, window, cx),
         }
     }
 

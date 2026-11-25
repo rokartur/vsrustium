@@ -2,7 +2,8 @@
 //! workbench's MainThread* actors make, and a dispatcher for requests from the host.
 
 use std::collections::{BTreeMap, HashMap};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant, SystemTime};
 
 use config::configuration::Configuration;
@@ -26,6 +27,12 @@ pub struct SessionPaths<'a> {
     pub app_root: &'a Path,
     pub user_data: &'a Path,
     pub workspace: Option<&'a Workspace>,
+}
+
+/// environmentService.windowLogsPath: <userData>/logs/<session start>/window1, one session start per process.
+pub fn window_logs_path(user_data: &Path) -> PathBuf {
+    static SESSION_START: OnceLock<String> = OnceLock::new();
+    user_data.join("logs").join(SESSION_START.get_or_init(|| logs_folder_name(SystemTime::now()))).join("window1")
 }
 
 /// `IExtensionHostInitData` for a desktop window. Telemetry identifiers are placeholders the app replaces with
@@ -77,8 +84,7 @@ pub fn init_data(paths: &SessionPaths, extensions: &[ScannedExtension], version:
         },
         "logLevel": 3,
         "loggers": [],
-        // environmentService.extHostLogsPath: <userData>/logs/<session start>/window1/exthost.
-        "logsLocation": file_uri(&paths.user_data.join("logs").join(logs_folder_name(SystemTime::now())).join("window1/exthost")),
+        "logsLocation": file_uri(&window_logs_path(paths.user_data).join("exthost")),
         // The local host starts EagerManualStart: the main side sends $startExtensionHost.
         "autoStart": false,
         "remote": { "isRemote": false, "authority": null, "connectionData": null },
@@ -602,7 +608,7 @@ fn error_text(error: &Value) -> String {
 }
 
 /// `LogLevel` of platform/log/common/log.ts.
-fn log_level_name(level: &Value) -> &'static str {
+pub fn log_level_name(level: &Value) -> &'static str {
     match level.as_u64() {
         Some(0) => "off",
         Some(1) => "trace",

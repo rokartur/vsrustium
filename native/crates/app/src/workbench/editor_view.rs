@@ -69,9 +69,10 @@ impl Workbench {
             .border_color(self.color("surface.border"))
             .child(self.tab_strip(cx))
             // searchEditor.ts draws its query widget where a text editor has its breadcrumbs.
-            .map(|part| match editor.document.scheme == SEARCH_EDITOR_SCHEME {
-                true => part.child(self.search_editor_query(window, cx)),
-                false => part.child(self.breadcrumbs(editor)),
+            .map(|part| match editor.document.scheme.as_str() {
+                SEARCH_EDITOR_SCHEME => part.child(self.search_editor_query(window, cx)),
+                crate::output::OUTPUT_SCHEME => part.child(self.output_title_actions(window, cx)),
+                _ => part.child(self.breadcrumbs(editor)),
             })
             .children(self.unicode_banner(editor, cx))
             .child(self.text_area(editor, window, cx))
@@ -277,7 +278,8 @@ impl Workbench {
     fn text_area(&self, editor: &OpenEditor, window: &mut Window, cx: &mut Context<Self>) -> Stateful<Div> {
         let overrides = config::configuration::Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
         // shortcut: only "off" applies; "relative" and "interval" number every line as "on" does.
-        let line_numbers = self.settings.lock().unwrap().get_value(Some("editor.lineNumbers"), &overrides) != Some(serde_json::Value::from("off"));
+        // outputView.ts `OutputEditor.getConfigurationOverrides`: output editors hide line numbers.
+        let line_numbers = editor.document.scheme != crate::output::OUTPUT_SCHEME && self.settings.lock().unwrap().get_value(Some("editor.lineNumbers"), &overrides) != Some(serde_json::Value::from("off"));
         let metrics = EditorMetrics::measure(window, editor.document.lines.len(), line_numbers, self.editor_zoom.multiplier());
         let area_left = self.text_area_left.clone();
         let area_bounds = self.text_area_bounds.clone();
@@ -713,6 +715,8 @@ impl Workbench {
         // editorOptions.ts: overtype input mode draws `overtypeCursorStyle`, else `cursorStyle`; only block and line are drawn.
         let block_cursor = self.setting(if self.overtype { "editor.overtypeCursorStyle" } else { "editor.cursorStyle" }) == json!("block");
         let cursor_background = self.theme.color("editorCursor.background");
+        // outputView.ts `OutputEditor.getConfigurationOverrides`: renderLineHighlight none.
+        let line_highlight = editor.document.scheme != crate::output::OUTPUT_SCHEME;
         let char_width = metrics.char_width;
         let fold_controls = self.fold_controls.opacity(Instant::now());
         let fold_control_color = self.color("editorGutter.foldingControlForeground");
@@ -754,7 +758,7 @@ impl Workbench {
                     .text_color(if index == primary_line { colors.active_number } else { colors.number })
                     .when(metrics.line_numbers_width > 0., |number| number.child((index + 1).to_string()));
                 let mut current_line = div().absolute().inset_0();
-                if all_empty && selections.iter().any(|selection| selection.head.line == index) {
+                if line_highlight && all_empty && selections.iter().any(|selection| selection.head.line == index) {
                     current_line = current_line.border(px(line_border_width)).border_color(colors.line_border);
                 }
                 // The text scrolls left under the fixed margin and current line border.
@@ -1228,6 +1232,7 @@ impl Workbench {
         }
         let (moved, scrolled) = (editor.selections != before, editor.scroll != scroll);
         if moved {
+            self.output_cursor_moved();
             self.find_editor_edited(None);
             self.host.send_selection(self.editors.active().expect("still open"), source);
         }

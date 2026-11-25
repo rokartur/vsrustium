@@ -22,6 +22,8 @@ pub enum Readonly {
     Session,
     Configured,
     Locked,
+    /// The editor itself is read-only (`readOnly` without `readOnlyMessage`): the Output view.
+    Editor,
 }
 
 const SET_WRITEABLE: &str = "workbench.action.files.setActiveEditorWriteableInSession";
@@ -48,6 +50,7 @@ impl Readonly {
                 MessagePart::link("Click here", SET_WRITEABLE, vec![]),
                 MessagePart::text(" to set writeable anyway."),
             ],
+            Readonly::Editor => vec![MessagePart::text("Cannot edit in read-only editor")],
         }
     }
 }
@@ -87,6 +90,9 @@ impl Workbench {
     pub(super) fn readonly(&self, scheme: &str, path: &Path) -> Option<Readonly> {
         if scheme == "untitled" {
             return None;
+        }
+        if scheme == crate::output::OUTPUT_SCHEME {
+            return Some(Readonly::Editor);
         }
         if let Some(&readonly) = self.readonly_overrides.get(&(scheme.to_owned(), path.to_path_buf())) {
             return readonly.then_some(Readonly::Session);

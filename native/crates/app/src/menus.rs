@@ -131,6 +131,9 @@ const WORKBENCH_MENUS: &[Row] = &[
     (MenuId::EditorContext, None, "editor.action.clipboardCopyAction", "Copy", "9_cutcopypaste", 2., None, None),
     (MenuId::EditorContext, None, "editor.action.clipboardPasteAction", "Paste", "9_cutcopypaste", 4., Some("!editorReadonly"), None),
     (MenuId::EditorContext, None, "workbench.action.showCommands", "Command Palette...", "z_commands", 1., Some("!editorSimpleInput"), None),
+    // output.contribution.ts and viewsService.ts `openCommandActionDescriptor.mnemonicTitle`
+    (MenuId::EditorContext, None, "workbench.output.action.clearOutput", "Clear Output", "", 0., Some("inOutput"), None),
+    (MenuId::MenubarViewMenu, None, "workbench.action.output.toggleOutput", "&&Output", "5_panel", 1., Some("workbench.panel.output.active"), None),
     // editor.contribution.ts: the EditorTitleContext items of the commands the port has.
     (MenuId::EditorTitleContext, None, "workbench.action.closeActiveEditor", "Close", "1_close", 10., Some("!activeEditorCannotClose"), None),
     (MenuId::EditorTitleContext, None, "workbench.action.closeOtherEditors", "Close Others", "1_close", 20., None, Some("groupEditorsCount != '1'")),

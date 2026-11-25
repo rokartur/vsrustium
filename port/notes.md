@@ -430,6 +430,21 @@ Scope (roadmap section 13): diagnostics, hover, completion, go to definition and
 - Extension status bar entries (`main_thread_status_bar.rs`, `workbench/status_entries.rs`; mainThreadStatusBar.ts, statusBarExtensionPoint.ts, statusbarModel.ts): `$setEntry`/`$disposeEntry`, error and warning backgrounds as entry kinds, `$(icon)` text, colors, tooltip, command; static `statusBarItems` (with `contribStatusBarItems`) shown from the start and sent with `$acceptStaticEntries`. Order: higher priority first, then the extension id hash; left entries above 50 go before Problems, right entries above 100.1 before the editor items (shortcut: extensions between the editor entries' 100.1 and 100.8 all go first).
 - Checks: `port/tools/ref-dom` reads geometry from the running reference over CDP (`dump:<selector>`); the `port/fixtures/extensions/messages` extension shows the same messages in both apps (`PORT_MESSAGES=error,info,long`).
 
+## Milestone 15: Output panel and logs (in progress)
+
+- Channels are files, as upstream: the host writes each extension channel and logger to its file under `<userData>/logs/<session>/window1/exthost`, the workbench reads the file from the channel's start offset (`output.rs`, `FileContentProvider`). `$update` with Replace or Clear moves the start offset to `till`.
+- `MainThreadOutputService` and `MainThreadLogger` are forwarded from the session to the workbench (`main_thread_output.rs`), as `MainThreadQuickOpen` is. A visible logger is a log channel (`LogOutputChannels`); the host registers its own `exthost` logger, so the Extension Host channel comes from the host.
+- The Window channel is the workbench's own logger, `renderer.log` in the window's logs folder (`logService.ts`), written by `Output::log_window`. `exthost::session::window_logs_path` gives the host and the workbench the same session folder.
+- shortcut: the Output view is an editor tab with scheme `output`, not a panel view: there is no panel on the base of this milestone; milestone 11 builds it. Moving the view into the panel is the remaining step once milestone 11 lands.
+- shortcut: a logger's `group` and `when` are ignored, every logger is its own channel; the port's host registers no grouped logger.
+- The Output view's title row (channel dropdown, filter box, Clear, Toggle Auto Scrolling, gear, Open Output in Editor) sits where a text editor has its breadcrumbs, as the search editor's query widget does. Upstream draws these in the panel's title bar; they move there with the view.
+- shortcut: filtered-out lines are removed from the shown text, where upstream hides them with `setHiddenAreas`; the port's editor has no hidden areas. Appends are filtered as they arrive.
+- shortcut: Open Output in Editor and Open Log... open the channel's file, where upstream opens its `output:` resource in a second read-only editor; the port's editor group hosts one output-scheme editor, the Output view.
+- Log levels: `Output::log_level` is `LoggerService.logLevel`, a logger's own level is stored only when it differs (`logs_actions.rs`). The startup level is argv.json `log-level` (`<home>/.vscode-oss/argv.json`, product.json `dataFolderName`), which main.ts turns into `--log` arguments; Set As Default and the Set Log Level picker's button write it back with `json_edit::set_property`. shortcut: the `--log` and `--verbose` command line arguments are not read; the port's main.rs parses only the arguments it needs.
+- `logsDataCleaner.ts` runs in the window process ten seconds after startup (the port has no shared process): the session folders of `<userData>/logs` but the current one and the nine newest are removed.
+- shortcut: Open Logs Folder reveals the session folder when it has no `main.log`; the port has no main process writing one.
+- Toggle Keyboard Shortcuts Troubleshooting writes `[KeybindingService]:` lines to the Window log from `dispatch_key` and `Resolver::resolve_logged`. shortcut: the keydown lines print GPUI's key name for the DOM `code` and `keyCode`, chords print as user settings labels for the scan code dispatch strings, and no focus marker is drawn (GPUI does not expose the focused element's bounds).
+
 ## Benchmarks
 
 - `port/tools/bench`: Wu's `script/memory-benchmark` method generalized to N apps (`APPS="name=cmd;..."`), plus an extension host line per app.

@@ -30,11 +30,13 @@ pub struct Keybindings {
     chords: Vec<(Chord, String)>,
     chord_checker: Option<Task<()>>,
     system_wide: SystemWide,
+    /// `_logging`, toggled by Toggle Keyboard Shortcuts Troubleshooting.
+    pub(super) logging: bool,
 }
 
 impl Default for Keybindings {
     fn default() -> Self {
-        Keybindings { defaults: Vec::new(), user_file: None, resolver: Resolver::new(Vec::new(), Vec::new()), generation: 0, chords: Vec::new(), chord_checker: None, system_wide: SystemWide::default() }
+        Keybindings { defaults: Vec::new(), user_file: None, resolver: Resolver::new(Vec::new(), Vec::new()), generation: 0, chords: Vec::new(), chord_checker: None, system_wide: SystemWide::default(), logging: false }
     }
 }
 
@@ -117,8 +119,17 @@ impl Workbench {
 
     /// `_doDispatch`: runs the command bound to the key and keeps the key from the focused element.
     pub(super) fn dispatch_key(&mut self, keystroke: &Keystroke, window: &mut Window, cx: &mut Context<Self>) {
+        let chord = Chord::from_keystroke(keystroke);
+        if self.keybindings.logging {
+            // shortcut: GPUI key events carry no DOM code or keyCode; the key name stands in for them.
+            let m = &keystroke.modifiers;
+            let modifiers: Vec<&str> = [(m.control, "ctrl"), (m.shift, "shift"), (m.alt, "alt"), (m.platform, "meta")].into_iter().filter(|(on, _)| *on).map(|(_, name)| name).collect();
+            self.log_keybinding(&format!("/ Received  keydown event - modifiers: [{}], key: {}", modifiers.join(","), keystroke.key));
+            self.log_keybinding(&format!("| Converted keydown event - modifiers: [{}], keyCode: {} ('{}')", modifiers.join(","), chord.key, crate::keybindings::key_codes::KEY_CODES[chord.key].0));
+        }
         // isKeyInComposition: the IME owns the keys while it composes.
         if self.marked_text.is_some() || self.input_composing() {
+            self.log_keybinding("+ Ignoring keybinding dispatch because an IME composition is in progress.");
             return;
         }
         // The menu's own key handlers run before the window's keybindings.
@@ -126,13 +137,17 @@ impl Workbench {
             cx.stop_propagation();
             return;
         }
-        let chord = Chord::from_keystroke(keystroke);
         if chord.is_modifier_key() {
+            self.log_keybinding("\\ Keyboard event cannot be dispatched in keydown phase.");
             return;
         }
         let current: Vec<Chord> = self.keybindings.chords.iter().map(|(chord, _)| *chord).collect();
         let in_chord_mode = !current.is_empty();
-        let resolution = self.keybindings.resolver.resolve(&self.key_context(window), &current, chord);
+        let mut log = Vec::new();
+        let resolution = self.keybindings.resolver.resolve_logged(&self.key_context(window), &current, chord, &mut log);
+        for line in &log {
+            self.log_keybinding(line);
+        }
         if !in_chord_mode && self.keybindings_editor_record_key(chord, &resolution, window, cx) {
             cx.stop_propagation();
             return;
@@ -145,6 +160,7 @@ impl Workbench {
             Resolution::MoreChordsNeeded => {
                 cx.stop_propagation();
                 self.expect_another_chord(chord, window, cx);
+                self.log_keybinding(if current.is_empty() { "+ Entering multi-chord mode..." } else { "+ Continuing multi-chord mode..." });
             }
             Resolution::KbFound { command, args, bubble } if !command.is_empty() => {
                 if in_chord_mode {
@@ -153,11 +169,14 @@ impl Workbench {
                 if !bubble {
                     cx.stop_propagation();
                 }
+                self.log_keybinding(&format!("+ Invoking command {command}."));
                 let outcome = self.execute_command(&command, args.into_iter().collect(), window, cx);
                 report_failure(outcome, cx);
             }
             // Nothing bound, or bound to no command: only a chord sequence in progress ends with a message.
             _ if in_chord_mode => {
+                let mode = if resolution == Resolution::NoMatchingKb { "multi-chord mode" } else { "chord mode" };
+                self.log_keybinding(&format!("+ Leaving {mode}: Nothing bound to \"{}, {}\".", self.chord_labels(), chord.label()));
                 let message = format!("The key combination ({}, {}) is not a command.", self.chord_labels(), chord.label());
                 self.show_status(message, Duration::from_secs(10), window, cx);
                 self.leave_chord_mode(cx);
@@ -169,6 +188,13 @@ impl Workbench {
             }
             // hoverService.ts `_keyDown` with hideOnKeyDown, which every workbench hover delegate sets.
             _ => self.dismiss_hover(cx),
+        }
+    }
+
+    /// abstractKeybindingService.ts `_log`: an Info line of the Window log while troubleshooting.
+    fn log_keybinding(&self, line: &str) {
+        if self.keybindings.logging {
+            self.output.log_window(3, &format!("[KeybindingService]: {line}"));
         }
     }
 
@@ -294,6 +320,7 @@ impl Workbench {
         }
         self.keybindings_editor_context(window, &mut context);
         self.search_editor_context(window, &mut context);
+        self.output_context(window, &mut context);
         context
     }
 
@@ -336,14 +363,14 @@ impl Workbench {
             workbench.context_keys.insert(key, args.next().unwrap_or(Value::Null));
             Outcome::done()
         });
-        // mainThreadLogService.ts; the level starts at Info, the init data's logLevel 3.
+        // mainThreadLogService.ts: `loggerService.setLogLevel(parseLogLevel(level))` and `logService.getLevel()`.
         self.commands.register("_extensionTests.setLogLevel", |workbench, args, _, _| {
-            if let Some(Value::String(level)) = args.first() {
-                workbench.log_level = level.clone();
+            if let Some(level) = args.first().and_then(Value::as_str).and_then(crate::output::log_levels::parse_log_level) {
+                workbench.set_log_level(level);
             }
             Outcome::done()
         });
-        self.commands.register("_extensionTests.getLogLevel", |workbench, _, _, _| Outcome::Ready(Ok(Value::from(workbench.log_level.clone()))));
+        self.commands.register("_extensionTests.getLogLevel", |workbench, _, _, _| Outcome::Ready(Ok(Value::from(crate::output::log_level_name(workbench.output.log_level)))));
     }
 }
 

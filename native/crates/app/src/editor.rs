@@ -564,6 +564,18 @@ impl EditorGroup {
         self.insert(editor, preview);
     }
 
+    /// Shows `document` in the editor at `index`, in place of the model it showed, and activates it.
+    pub fn replace(&mut self, index: usize, document: TextDocument) {
+        self.next_model_id += 1;
+        let editor = OpenEditor::new(document, false, self.next_model_id);
+        let replaced = std::mem::replace(&mut self.editors[index], editor);
+        self.recent.retain(|id| *id != replaced.model_id);
+        if replaced.host_reference.is_some() {
+            self.models.push(replaced);
+        }
+        self.activate(index);
+    }
+
     /// Creates a text model with no editor, as `$tryOpenDocument` does; returns its index in `models`.
     pub fn open_model(&mut self, document: TextDocument) -> usize {
         self.next_model_id += 1;

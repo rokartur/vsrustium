@@ -34,7 +34,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | mainthread/MainThreadLanguageFeatures | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadLanguages | MainThread* shape (Rust side) | stub | $changeLanguage answered by host_requests.rs (setTextDocumentLanguage); $tokensAtPosition and the language status items answer undefined |
 | mainthread/MainThreadMessageService | MainThread* shape (Rust side) | ported | main_thread_message.rs: `$showMessage` as a notification with the items as buttons and Manage Extension (answers the picked handle, undefined on close), modal messages as an NSAlert sheet with the close affordance or Cancel/OK last; cargo test -p app notifications_view; no urgent auth sources (no sign-in by decision) |
-| mainthread/MainThreadOutputService | MainThread* shape (Rust side) | stub | session.rs answers undefined |
+| mainthread/MainThreadOutputService | MainThread* shape (Rust side) | verified | main_thread_output.rs: $register, $update (append, replace and clear with till), $reveal, $close, $dispose; cargo test -p app output (extension channel file shown, appended, replaced and cleared in the Output view); api-tests MOCHA_GREP=rpc 17/0/0 with no rpc, createOutputChannel(...) |
 | mainthread/MainThreadProgress | MainThread* shape (Rust side) | ported | main_thread_progress.rs: Notification and Window locations (cargo test -p app progress); Source Control location not shown (no SCM view) |
 | mainthread/MainThreadTerminalService | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadTerminalShellIntegration | MainThread* shape (Rust side) | stub | session.rs answers undefined |
@@ -92,7 +92,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | mainthread/MainThreadMeteredConnection | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadGitHub | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadPower | MainThread* shape (Rust side) | stub | session.rs answers undefined |
-| mainthread/MainThreadLogger | MainThread* shape (Rust side) | stub | `$log` lines go to the port log; no logger registry, visibility or log files (desktop file loggers are written by the host itself) |
+| mainthread/MainThreadLogger | MainThread* shape (Rust side) | ported | main_thread_output.rs: $registerLogger, $deregisterLogger and $setVisibility keep the logger registry, a visible logger is a log channel (cargo test -p app output loggers_are_log_channels); $log lines still go to the port log (desktop file loggers are written by the host itself) |
 | mainthread/MainThreadTheming | MainThread* shape (Rust side) | ported | host_sync.rs sends $onColorThemeChange at startup; no runtime theme switch yet |
 | mainthread/MainThreadLocalization | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadMcp | MainThread* shape (Rust side) | removed | no sign-in/AI by decision (port/notes.md); API stays inert: session.rs answers undefined, list getters []; exthost-probe 30/30 on Bun and Node |
@@ -166,7 +166,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/lifecycle | src/vs/platform | todo |  |
 | platform/list | src/vs/platform | ported | split_view.rs SplitView (proportional layout, distributeEmptySpace, sash drag with Alt for both sides, sash states) under the Keyboard Shortcuts table's column headers: sash cursors, 300ms hover border, double-click reset to the column weight, tree.tableColumnsBorder fading in on table hover (cargo test -p app split_view keybindings_editor_view; ui-pair drag and reset land on the reference's columns); listWidget and the other lists stay with their views |
 | platform/localTranscription | src/vs/platform | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
-| platform/log | src/vs/platform | stub | the port log is code-gpui stderr: host console, errors, `$log` lines; no log levels, files or rotation |
+| platform/log | src/vs/platform | stub | the Window logger writes `renderer.log` with levels (output.rs `log_window`), the logger registry and the global and per-logger levels follow `AbstractLoggerService` (cargo test -p app output); the rest of the port log is code-gpui stderr: host console, errors, `$log` lines; no rotation, no spdlog |
 | platform/markdown | src/vs/platform | todo |  |
 | platform/markers | src/vs/platform | ported | markers.rs (markerService.ts: read filters, statistics, sanitizing, origins): cargo test -p app markers |
 | platform/mcp | src/vs/platform | removed | no sign-in/AI by decision (port/notes.md); not ported |
@@ -345,14 +345,14 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/lifecycle | workbench service | todo |  |
 | workbench/services/localTranscription | workbench service | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | workbench/services/localization | workbench service | todo |  |
-| workbench/services/log | workbench service | stub | same port log as platform/log; no Output view of logs (milestone 15) |
+| workbench/services/log | workbench service | ported | output/log_levels.rs: defaultLogLevels.ts argv.json `log-level` read and write, `getDefaultLogLevel`, `parseLogLevel`; logs_actions.rs `setDefaultLogLevel` (cargo test -p app set_default_log_level_writes_argv, reads_and_writes_argv_log_levels); the Window log as logConstants.ts `windowLogId` |
 | workbench/services/mcp | workbench service | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/services/menubar | workbench service | ported | menubar.rs Workbench::menubar: MenubarMainMenu as menubarControl.ts sends it, rebuilt when when/enablement change; enablement matches the reference in the empty, folder and file windows (port/results/menubar.md) |
 | workbench/services/model | workbench service | todo | `_schemaShouldMaintainUndoRedoElements`: the undo stack of a closed file kept for a reopen with the same content needs modelService's disposed-model cache, which the port does not have (port/notes.md milestone 8) |
 | workbench/services/notebook | workbench service | todo |  |
 | workbench/services/notification | workbench service | ported | `notify`, `prompt` and the Do Not Disturb filters (global and per source, stored in application storage) on Workbench (notifications_view.rs); cargo test -p app notifications_view |
 | workbench/services/outline | workbench service | todo |  |
-| workbench/services/output | workbench service | todo |  |
+| workbench/services/output | workbench service | ported | output.rs: channels read from their files from a start offset, Replace/Clear move it, log channels from visible loggers, `OutputViewFilters` and `parseLogEntryAt` (output/filter.rs), the active channel and its log level: cargo test -p app output (14 tests) |
 | workbench/services/panecomposite | workbench service | todo |  |
 | workbench/services/path | workbench service | todo |  |
 | workbench/services/policies | workbench service | todo |  |
@@ -430,7 +430,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/inlineCompletions | workbench contribution | todo |  |
 | workbench/contrib/interactive | workbench contribution | todo |  |
 | workbench/contrib/issue | workbench contribution | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
-| workbench/contrib/keybindings | workbench contribution | stub | systemWideKeybindings.ts selection and contribution warnings ported in system_wide_keybindings.rs (cargo test -p app system_wide); Toggle Keyboard Shortcuts Troubleshooting waits for the Window output channel (workbench/contrib/output) |
+| workbench/contrib/keybindings | workbench contribution | ported | systemWideKeybindings.ts selection and contribution warnings ported in system_wide_keybindings.rs (cargo test -p app system_wide); Toggle Keyboard Shortcuts Troubleshooting logs dispatch and resolution to the Window log and shows it, without the focus marker (port/notes.md milestone 15; cargo test -p app keybindings_troubleshooting_logs_to_the_window_log) |
 | workbench/contrib/keybindingsExport | workbench contribution | n/a | docs build tool of non-stable builds (`--export-default-keybindings` writes doc.keybindings.{win,osx,linux}.json); the port's keybindings/default-macos.json is generated from the reference's own export (keybindings.rs DEFAULT_KEYBINDINGS) |
 | workbench/contrib/languageDetection | workbench contribution | todo |  |
 | workbench/contrib/languageStatus | workbench contribution | todo |  |
@@ -438,7 +438,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/list | workbench contribution | ported | list.resizeColumn: TableColumnResizeQuickPick's column pick and percentage input with its validation (cargo test -p app keybindings_editor_view: resize_column_sets_the_picked_column_to_a_percentage_of_the_table, a_column_width_must_be_an_integer_percentage); the Keyboard Shortcuts table is the only table so far |
 | workbench/contrib/localHistory | workbench contribution | todo |  |
 | workbench/contrib/localization | workbench contribution | todo |  |
-| workbench/contrib/logs | workbench contribution | todo |  |
+| workbench/contrib/logs | workbench contribution | ported | logs_actions.rs: Set Log Level... (global and per channel, Set as Default Log Level button), `workbench.action.setDefaultLogLevel`, Show Window Log, Show Logs..., Open Log..., Open Logs Folder, Open Extension Logs Folder, logsDataCleaner.ts (cargo test -p app set_default_log_level_writes_argv, old_log_sessions_are_removed); Open Logs Folder reveals the session folder (port/notes.md milestone 15) |
 | workbench/contrib/markdown | workbench contribution | todo |  |
 | workbench/contrib/markers | workbench contribution | stub | status bar problems entry and tooltip from markers (workbench/diagnostics.rs); the Problems panel waits for milestone 11's panel part |
 | workbench/contrib/mcp | workbench contribution | removed | no sign-in/AI by decision (port/notes.md); not ported |
@@ -451,7 +451,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/onboarding | workbench contribution | todo |  |
 | workbench/contrib/opener | workbench contribution | todo |  |
 | workbench/contrib/outline | workbench contribution | todo |  |
-| workbench/contrib/output | workbench contribution | todo |  |
+| workbench/contrib/output | workbench contribution | ported | output_view.rs and output_actions.rs: read-only Output view with the channel dropdown, filter box with level and category menus, Clear Output, Toggle Auto Scrolling, log level gear, Open Output in Editor, Show Output Channels, `workbench.action.output.show.<id>`, Cmd+Shift+U toggle, the Window and Extension Host channels; the view is an editor tab until the milestone 11 panel lands (port/notes.md milestone 15): cargo test -p app output |
 | workbench/contrib/performance | workbench contribution | todo |  |
 | workbench/contrib/policyExport | workbench contribution | todo |  |
 | workbench/contrib/preferences | workbench contribution | todo | keybindingsEditor.ts, keybindingWidgets.ts and the keybindings actions of preferences.contribution.ts ported as workbench/keybindings_editor_view.rs (cargo test -p app keybindings_editor_view, port/results/keybindings-editor.md); keybindingsEditorContribution.ts and smartSnippetInserter.ts ported as workbench/define_keybinding.rs and smart_snippet_inserter.rs (cargo test -p app define_keybinding smart_snippet_inserter, raw/keybindings-editor/define-file-*.png); keyboardLayoutPicker.ts and the Settings editor (milestone 10) not ported |

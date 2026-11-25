@@ -32,12 +32,14 @@ mod local_history;
 mod main_thread;
 mod main_thread_commands;
 mod main_thread_message;
+mod main_thread_output;
 mod main_thread_progress;
 mod main_thread_quick_open;
 mod main_thread_status_bar;
 mod markers;
 mod menus;
 mod notifications;
+mod output;
 mod quick_input;
 mod search_editor;
 mod search_model;
@@ -144,6 +146,10 @@ fn main() -> anyhow::Result<()> {
                 host.configuration_scopes = development.is_some();
                 host.send_color_theme(theme.kind);
                 let mut workbench = Workbench::new(theme, app_root.clone(), workspace.clone(), languages, settings.clone(), host, cx);
+                let window_logs = exthost::session::window_logs_path(&user_data);
+                workbench.register_window_log(window_logs.join("renderer.log"));
+                let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
+                workbench.start_logs(output::log_levels::argv_file(&home), window_logs.parent().expect("a session folder").to_path_buf(), cx);
                 workbench.skip_dialogs = development.as_ref().is_some_and(|development| development.tests_path.is_some());
                 workbench.load_keybindings(keybindings::default_keybindings(&extensions), keybindings_file.clone(), cx);
                 workbench.start_system_wide_keybindings(window, cx);
@@ -300,7 +306,7 @@ fn run_extension_host(
             MainThreadSecretState::in_memory()
         }),
     });
-    session.forward(&["MainThreadCommands", "MainThreadDiagnostics", "MainThreadEditorTabs", "MainThreadMessageService", "MainThreadProgress", "MainThreadQuickOpen", "MainThreadStatusBar", "MainThreadWorkspace"], move |request| {
+    session.forward(&["MainThreadCommands", "MainThreadDiagnostics", "MainThreadEditorTabs", "MainThreadLogger", "MainThreadMessageService", "MainThreadOutputService", "MainThreadProgress", "MainThreadQuickOpen", "MainThreadStatusBar", "MainThreadWorkspace"], move |request| {
         let _ = workbench_requests.unbounded_send(request);
     }, workbench_replies);
     session.main_thread = Some(Box::new(main_thread));
