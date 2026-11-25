@@ -191,3 +191,7 @@ webview.test.ts ("loads many local resources concurrently without crashing") pas
 ## M10 settings and storage
 
 On the Studio at 1ed0e932 (settings.json reload in the workbench, `.vsrustium` folders). `MOCHA_GREP="vscode API - configuration|vscode API - globalState" SUITE_TIMEOUT=300 port/tools/api-tests`: api-folder 5/0/0/397 (exit 0 after 1s), api-workspace 0/0/0/4. All three `configuration` tests and both `globalState / workspaceState` tests pass.
+
+## Milestone 15: terminal and tasks
+
+On the Studio at b9d74655619, `SHELL=/bin/bash MOCHA_GREP='vscode API - ([tT]erminal|tasks)' SUITE_TIMEOUT=600 port/tools/api-tests`: api-folder 47 passing, 4 pending, 0 failing, 351 not reached (exit 0 after 20s); api-workspace 0/0/0/4. terminal.test.ts, terminal.shellIntegration.test.ts and workspace.tasks.test.ts all pass; the 4 pending are upstream `test.skip` ("Test if env is set", "should listen to all future terminal data events", "should respect dimension overrides", "dependsOn task should start with a different processId (#118256)").
