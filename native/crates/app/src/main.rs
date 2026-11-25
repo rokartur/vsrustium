@@ -92,6 +92,9 @@ use main_thread::{HostRequest, WorkbenchMainThread};
 use theme::load_theme;
 use workbench::Workbench;
 
+/// The flags followed by a value; the other arguments without `--` are the folder and the file.
+pub const VALUE_FLAGS: [&str; 7] = ["--user-data-dir", "--extensions-dir", "--screenshot", "--screenshot-keys", "--screenshot-input", "--theme", "--export-default-keybindings"];
+
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let runtime = if args.iter().any(|arg| arg == "--node") { Runtime::Node } else { Runtime::Bun };
@@ -104,8 +107,7 @@ fn main() -> anyhow::Result<()> {
     let screenshot_input = flag_value("--screenshot-input").unwrap_or_default();
     // Typed before the capture, as port/tools/ref-screenshot types KEYS into the reference.
     let screenshot_keys: Vec<Keystroke> = flag_value("--screenshot-keys").unwrap_or_default().split_whitespace().map(Keystroke::parse).collect::<Result<_, _>>()?;
-    let value_flags = ["--user-data-dir", "--extensions-dir", "--screenshot", "--screenshot-keys", "--screenshot-input", "--theme", "--export-default-keybindings"];
-    let positional: Vec<&String> = args.iter().enumerate().skip(1).filter(|(i, arg)| !arg.starts_with("--") && !value_flags.contains(&args[i - 1].as_str())).map(|(_, arg)| arg).collect();
+    let positional: Vec<&String> = args.iter().enumerate().skip(1).filter(|(i, arg)| !arg.starts_with("--") && !VALUE_FLAGS.contains(&args[i - 1].as_str())).map(|(_, arg)| arg).collect();
     let canonical = |path: &String| std::fs::canonicalize(path).with_context(|| format!("opening {path}"));
     let workspace = positional.first().map(|path| canonical(path)).transpose()?.map(Workspace::open);
     let file = positional.get(1).map(|path| canonical(path)).transpose()?;

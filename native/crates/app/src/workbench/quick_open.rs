@@ -50,6 +50,7 @@ impl Workbench {
     /// Switches to the folder's workspace storage and reads the editor history from it.
     pub fn restore_workspace_state(&mut self, storage: Arc<Mutex<Storage>>) {
         self.workspace_storage = storage;
+        self.reset_part_grid();
         let stored = self.workspace_storage.lock().unwrap().get(HISTORY_STORAGE_KEY).map(str::to_owned);
         let excluded = self.history_exclude_matcher();
         self.quick_access.editor_history = EditorHistory::load(stored.as_deref(), |path| !excluded(path));

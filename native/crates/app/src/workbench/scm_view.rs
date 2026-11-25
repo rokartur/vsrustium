@@ -58,6 +58,28 @@ impl ScmView {
 }
 
 impl Workbench {
+    // shortcut: the Changes header is drawn here, not as a view pane of view_panes.rs; move it there with the Graph and Repositories views.
+    fn section_header(&self, title: &str, expanded: bool, separated: bool) -> Div {
+        let foreground = self.foreground_or("sideBarSectionHeader.foreground");
+        let border = self.theme.color("sideBarSectionHeader.border").filter(|_| separated);
+        div()
+            .relative()
+            .h(px(28.))
+            // paneview.css: .pane-header is cursor: pointer.
+            .cursor_pointer()
+            .flex_none()
+            .mx(px(4.))
+            .pl(px(4.))
+            .flex()
+            .items_center()
+            .rounded(px(4.))
+            .bg(self.color("sideBarSectionHeader.background"))
+            .text_color(foreground)
+            .when_some(border, |header, border| header.child(div().absolute().top_0().left_0().right_0().h(px(1.)).bg(border)))
+            .child(self.icon(if expanded { "chevron-down" } else { "chevron-right" }, 16., 16., foreground).mx(px(2.)))
+            .child(div().text_size(px(12.)).font_weight(gpui::FontWeight::SEMIBOLD).child(title.to_string()))
+    }
+
     pub(in crate::workbench) fn register_scm_commands(&mut self) {
         self.commands.register("workbench.view.scm", |workbench, _, window, cx| {
             workbench.side_bar_view = super::search_view::SideBarView::Scm;

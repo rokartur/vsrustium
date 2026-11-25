@@ -281,6 +281,7 @@ impl Workbench {
         context.insert("editorTextFocus".into(), json!(editor_focused));
         context.insert("textInputFocus".into(), json!(editor_focused));
         self.notifications_context(window, &mut context);
+        self.layout_context(&mut context);
         context.insert("editorIsOpen".into(), json!(self.editors.active().is_some()));
         // viewDescriptorService.ts `<view id>.active`: the Changes view has no `when`, so it is always active.
         context.insert("workbench.scm.active".into(), json!(true));
