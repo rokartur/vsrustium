@@ -28,6 +28,9 @@ pub enum MenuId {
     MenubarHelpMenu,
     MenubarPreferencesMenu,
     ThemesSubMenu,
+    /// userDataProfile.ts `ProfilesMenu` and `OpenProfileMenu`.
+    ProfilesMenu,
+    OpenProfileMenu,
     GlobalActivity,
     MenubarCopy,
     MenubarShare,

@@ -91,7 +91,7 @@ fn main() -> anyhow::Result<()> {
 
     let mut window_extensions = WindowExtensions {
         builtins: extensions.clone(),
-        user: UserExtensions { folder: user_data.join("extensions"), product_version: "1.147.0".into() },
+        user: UserExtensions::new(user_data.join("extensions"), "1.147.0"),
         running: extensions.clone(),
     };
     let mut changes = Vec::new();

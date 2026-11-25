@@ -21,6 +21,8 @@ pub mod editor_status;
 mod editor_view;
 mod explorer_actions;
 mod extension_management;
+pub(crate) mod extension_host_restart;
+mod user_data_profile;
 mod explorer_find;
 mod explorer_keyboard;
 mod extension_editor;
@@ -246,6 +248,7 @@ pub struct Workbench {
     profile_storage: Arc<Mutex<Storage>>,
     /// StorageScope.WORKSPACE of the opened folder, shared with the extension host's MainThreadStorage.
     workspace_storage: Arc<Mutex<Storage>>,
+    pub(crate) user_data_profiles: user_data_profile::UserDataProfiles,
     part_grid: part_grid::PartGrid,
     panel: panel::Panel,
     explorer_panes: view_panes::ExplorerPanes,
@@ -416,6 +419,7 @@ impl Workbench {
             installed_menubar: None,
             profile_storage: Arc::new(Mutex::new(Storage::in_memory())),
             workspace_storage: Arc::new(Mutex::new(Storage::in_memory())),
+            user_data_profiles: Default::default(),
             part_grid: part_grid::PartGrid::default(),
             panel: panel::Panel::default(),
             explorer_panes: view_panes::ExplorerPanes::default(),
@@ -470,6 +474,8 @@ impl Workbench {
         workbench.start_system_events(cx);
         workbench.user_activity(cx);
         workbench.register_extension_management_commands();
+        workbench.register_extension_host_commands();
+        workbench.register_user_data_profile_commands();
         workbench.register_workspace_trust_commands();
         workbench.register_host_commands();
         workbench.register_workspace_commands();

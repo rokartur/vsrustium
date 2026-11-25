@@ -7,7 +7,8 @@ use std::time::Duration;
 use config::json::{NodeType, ParseOptions, Tree, parse_tree};
 use config::model::{ConfigurationModel, is_override_key};
 use config::registry::{APPLICATION_SCOPES, Registry, Scope};
-use config::service::{FOLDER_CONFIG_DIRS, Settings, Target};
+use config::configuration::Overrides;
+use config::service::{APPLY_ALL_PROFILES_SETTING, FOLDER_CONFIG_DIRS, Settings, Target};
 use gpui::Context;
 use serde_json::{Value, json};
 
@@ -49,7 +50,8 @@ impl Workbench {
             }
             let Some((target, in_workspace_file)) = settings_file_target(&settings, &document.path) else { continue };
             let text = document.lines.join("\n");
-            let markers = unsupported_settings_markers(&text, target, in_workspace_file, &settings.registry, &settings.configuration.policy);
+            let profile_file = profile_file(&settings, &document.path);
+            let markers = unsupported_settings_markers(&text, target, in_workspace_file, &settings.registry, &settings.configuration.policy, &profile_file);
             rendered.push((document.path.clone(), markers));
         }
         drop(settings);
@@ -75,7 +77,8 @@ impl Workbench {
 /// The settings target of `path` and whether its settings sit under the workspace file's `settings` key; `None` for
 /// any other file. A single folder's settings file is the workspace's, as `getEditableSettingsURI` has it.
 fn settings_file_target(settings: &Settings, path: &Path) -> Option<(Target, bool)> {
-    if path == settings.user_home().join("settings.json") {
+    let user_files = settings.user_files();
+    if path == user_files.settings || user_files.default_settings.as_deref() == Some(path) {
         return Some((Target::UserLocal, false));
     }
     let workspace = settings.workspace.as_ref()?;
@@ -90,9 +93,30 @@ fn settings_file_target(settings: &Settings, path: &Path) -> Option<(Target, boo
     }
 }
 
-/// `generateMarkerData`; `policy` holds the values set by system policy. shortcut: no profile or untrusted-workspace
-/// markers until profiles (milestone 10 item 3) and workspace trust exist; remote windows are removed.
-pub fn unsupported_settings_markers(text: &str, target: Target, in_workspace_file: bool, registry: &Registry, policy: &ConfigurationModel) -> Vec<Value> {
+/// Which user settings file the markers are for, in a window whose profile keeps its own settings
+/// (`handleLocalUserConfiguration`); `all_profiles` is `workbench.settings.applyToAllProfiles`.
+pub enum ProfileFile {
+    Shared,
+    DefaultWhileOtherActive { all_profiles: Vec<String> },
+    Profile { all_profiles: Vec<String> },
+}
+
+fn profile_file(settings: &Settings, path: &Path) -> ProfileFile {
+    let user_files = settings.user_files();
+    if user_files.default_settings.is_none() {
+        return ProfileFile::Shared;
+    }
+    let all_profiles = settings.get_value(Some(APPLY_ALL_PROFILES_SETTING), &Overrides::default());
+    let all_profiles = all_profiles.as_ref().and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect();
+    match user_files.default_settings.as_deref() == Some(path) {
+        true => ProfileFile::DefaultWhileOtherActive { all_profiles },
+        false => ProfileFile::Profile { all_profiles },
+    }
+}
+
+/// `generateMarkerData`; `policy` holds the values set by system policy. shortcut: no untrusted-workspace markers
+/// until workspace trust reaches the settings files; remote windows are removed.
+pub fn unsupported_settings_markers(text: &str, target: Target, in_workspace_file: bool, registry: &Registry, policy: &ConfigurationModel, profile_file: &ProfileFile) -> Vec<Value> {
     let mut markers = Vec::new();
     for setting in parse_settings(text, in_workspace_file) {
         if is_override_key(&setting.key) {
@@ -129,6 +153,25 @@ pub fn unsupported_settings_markers(text: &str, target: Target, in_workspace_fil
             continue;
         }
         let scope = property.scope;
+        if target == Target::UserLocal {
+            let applied_for_all = |all_profiles: &[String]| APPLICATION_SCOPES.contains(&scope) || all_profiles.contains(&setting.key);
+            match profile_file {
+                ProfileFile::DefaultWhileOtherActive { all_profiles } if !applied_for_all(all_profiles) => markers.push(hint(
+                    &setting.range,
+                    "This setting cannot be applied while a non-default profile is active. It will be applied when the default profile is active.",
+                    true,
+                )),
+                ProfileFile::Profile { .. } if APPLICATION_SCOPES.contains(&scope) => {
+                    markers.push(hint(&setting.range, "This setting has an application scope and can only be set in the settings file from the Default profile.", true));
+                }
+                ProfileFile::Profile { all_profiles } if applied_for_all(all_profiles) => markers.push(hint(
+                    &setting.range,
+                    &format!("This setting cannot be applied because it is configured to be applied in all profiles using setting {APPLY_ALL_PROFILES_SETTING}. Value from the default profile will be used instead."),
+                    true,
+                )),
+                _ => {}
+            }
+        }
         if matches!(target, Target::Workspace | Target::WorkspaceFolder) {
             if APPLICATION_SCOPES.contains(&scope) {
                 markers.push(hint(&setting.range, "This setting has an application scope and can only be set in the settings file from the Default profile.", true));
