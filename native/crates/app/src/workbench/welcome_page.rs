@@ -375,14 +375,14 @@ impl Workbench {
     }
 
     fn welcome_page_active(&self) -> bool {
-        self.editors.active().is_some_and(|editor| editor.document.is(WALKTHROUGH_SCHEME, Path::new(GETTING_STARTED_PATH)))
+        self.editors.active().is_some_and(|editor| editor.document().is(WALKTHROUGH_SCHEME, Path::new(GETTING_STARTED_PATH)))
     }
 
     /// Opens the Welcome page, or activates it; as the startup page and Help > Welcome open it, as a preview.
     fn open_welcome_page(&mut self, preview: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.ensure_walkthroughs(window);
         let path = PathBuf::from(GETTING_STARTED_PATH);
-        match self.editors.editors.iter().position(|editor| editor.document.is(WALKTHROUGH_SCHEME, &path)) {
+        match self.editors.editors.iter().position(|editor| editor.document().is(WALKTHROUGH_SCHEME, &path)) {
             Some(index) => self.editors.activate(index),
             None => {
                 let document = TextDocument::from_text(WALKTHROUGH_SCHEME, &path, "", "utf8".into(), None, &self.languages, &self.settings.lock().unwrap());
@@ -502,7 +502,7 @@ impl Workbench {
         let progress = self.walkthroughs().progress_json();
         self.profile_storage.lock().unwrap().set(walkthroughs::PROGRESS_KEY, progress);
         let context = self.welcome_context(window);
-        let page_open = self.editors.editors.iter().any(|editor| editor.document.is(WALKTHROUGH_SCHEME, Path::new(GETTING_STARTED_PATH)));
+        let page_open = self.editors.editors.iter().any(|editor| editor.document().is(WALKTHROUGH_SCHEME, Path::new(GETTING_STARTED_PATH)));
         for id in steps {
             let Some((walkthrough, step)) = self.walkthroughs().step(&id) else {
                 eprintln!("Tried to progress unknown step");

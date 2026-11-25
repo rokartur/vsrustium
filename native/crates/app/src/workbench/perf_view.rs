@@ -26,7 +26,7 @@ impl Workbench {
             super::welcome_page::WALKTHROUGH_SCHEME => "gettingStartedPage".to_owned(),
             scheme => scheme.to_owned(),
         };
-        self.editors.active().map(|editor| pane(&editor.document.scheme)).into_iter().collect()
+        self.editors.active().map(|editor| pane(&editor.document().scheme)).into_iter().collect()
     }
 
     /// Opens the model pinned, or refreshes it in its open editor, as `PerfModelContentProvider._updateModel` does.

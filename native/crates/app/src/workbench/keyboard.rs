@@ -374,7 +374,7 @@ impl Workbench {
             context.insert("activeEditorIsLastInGroup".into(), json!(index == self.editors.editors.len() - 1));
         }
         if let Some(editor) = self.editors.active() {
-            let pane = if editor.document.scheme == super::welcome_page::WALKTHROUGH_SCHEME { "gettingStartedPage" } else { "workbench.editor.files" };
+            let pane = if editor.document().scheme == super::welcome_page::WALKTHROUGH_SCHEME { "gettingStartedPage" } else { "workbench.editor.files" };
             context.insert("activeEditor".into(), json!(pane));
             self.insert_diff_editor_context(&mut context);
             // The port opens only files, never untitled editors (editorGroupView.ts).
