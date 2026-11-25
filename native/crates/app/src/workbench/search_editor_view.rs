@@ -119,6 +119,7 @@ impl Workbench {
             None if editor.document.scheme == super::terminal_view::TERMINAL_SCHEME => "Terminal".into(),
             None => super::preferences::editor_label(&editor.document)
                 .or_else(|| self.webview_title(&editor.document.path))
+                .or_else(|| self.diff_name(editor))
                 .unwrap_or_else(|| editor.document.name()),
         }
     }

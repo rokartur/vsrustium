@@ -6,13 +6,14 @@ use super::{OpenEditor, Position, Viewport, end_of, folding::tracked};
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ViewZone {
     pub id: u32,
-    /// The model position the zone follows (`afterLineNumber`, `afterColumn`): the zone sits below its line.
-    pub anchor: Position,
+    /// The model position the zone follows (`afterLineNumber`, `afterColumn`): the zone sits below its line; `None`
+    /// is `afterLineNumber` 0, above the first line.
+    pub anchor: Option<Position>,
     pub height: f32,
 }
 
 impl OpenEditor {
-    pub fn add_view_zone(&mut self, anchor: Position, height: f32) -> u32 {
+    pub fn add_view_zone(&mut self, anchor: Option<Position>, height: f32) -> u32 {
         let id = self.view_zones.iter().map(|zone| zone.id + 1).max().unwrap_or(1);
         self.view_zones.push(ViewZone { id, anchor, height });
         id
@@ -29,8 +30,9 @@ impl OpenEditor {
     /// viewZones.ts `_computeWhitespaceProps`: the view lines above the zone; a zone in a folded range is not shown
     /// (`showInHiddenAreas` false), `None`.
     fn zone_view_position(&self, zone: &ViewZone) -> Option<usize> {
-        let view_line = self.view_line(zone.anchor.line);
-        (self.model_line(view_line) == zone.anchor.line).then_some(view_line + 1)
+        let Some(anchor) = zone.anchor else { return Some(0) };
+        let view_line = self.view_line(anchor.line);
+        (self.model_line(view_line) == anchor.line).then_some(view_line + 1)
     }
 
     /// The shown zones as (view lines above, height), in the order linesLayout.ts sorts them.
@@ -53,8 +55,10 @@ impl OpenEditor {
     /// The top of a zone's whitespace (`getVerticalOffsetForWhitespaceIndex`), `None` while it is folded away.
     pub fn view_zone_top(&self, id: u32, viewport: Viewport) -> Option<f32> {
         let zone = self.view_zone(id)?;
-        let position = self.zone_view_position(zone)?;
-        Some(self.line_top(position - 1, viewport) + viewport.line_height)
+        match self.zone_view_position(zone)? {
+            0 => Some(viewport.line_top(0)),
+            position => Some(self.line_top(position - 1, viewport) + viewport.line_height),
+        }
     }
 
     /// `getLineNumberAtOrAfterVerticalOffset` as a 0-based view line, not clamped to the line count: an offset in
@@ -75,16 +79,19 @@ impl OpenEditor {
         ((offset - above) / viewport.line_height).floor() as usize
     }
 
-    /// The zones and where they go between the lines `lines`: the zones under each view line before the last.
-    pub fn zones_between(&self, lines: std::ops::Range<usize>) -> Vec<(usize, f32)> {
-        self.shown_zones().into_iter().filter(|zone| zone.0 > lines.start && zone.0 < lines.end).collect()
+    /// The zones and where they go between the lines `lines`: the zones under each view line before the last, and
+    /// those above the first line when `lines` starts there, with their ids.
+    pub fn zones_between(&self, lines: std::ops::Range<usize>) -> Vec<(usize, f32, u32)> {
+        let mut zones: Vec<(usize, f32, u32)> = self.view_zones.iter().filter_map(|zone| Some((self.zone_view_position(zone)?, zone.height, zone.id))).collect();
+        zones.sort_by_key(|zone| zone.0);
+        zones.into_iter().filter(|zone| (zone.0 > lines.start || zone.0 == lines.start && lines.start == 0) && zone.0 < lines.end).collect()
     }
 
     /// A zone follows its anchor like a decoration with `NeverGrowsWhenTypingAtEdges`.
     pub(super) fn track_view_zones(&mut self, start: Position, end: Position, text: &str) {
         let new_end = end_of(start, text);
         for zone in &mut self.view_zones {
-            zone.anchor = tracked(zone.anchor, start, end, new_end, false);
+            zone.anchor = zone.anchor.map(|anchor| tracked(anchor, start, end, new_end, false));
         }
     }
 }
@@ -100,23 +107,34 @@ mod tests {
     #[test]
     fn a_zone_pushes_the_lines_below_it_down() {
         let mut editor = editor("a\nb\nc\nd", "\n");
-        let id = editor.add_view_zone(Position::new(1, 0), 50.);
+        let id = editor.add_view_zone(Some(Position::new(1, 0)), 50.);
         assert_eq!(editor.line_top(1, VIEWPORT), LINE_HEIGHT);
         assert_eq!(editor.line_top(2, VIEWPORT), 2. * LINE_HEIGHT + 50.);
         assert_eq!(editor.view_zone_top(id, VIEWPORT), Some(2. * LINE_HEIGHT));
         assert_eq!(editor.view_line_at(2. * LINE_HEIGHT + 10., VIEWPORT), 2);
         assert_eq!(editor.view_line_at(2. * LINE_HEIGHT + 50. + LINE_HEIGHT + 1., VIEWPORT), 3);
         assert_eq!(editor.view_line_at(LINE_HEIGHT + 1., VIEWPORT), 1);
-        assert_eq!(editor.zones_between(0..4), vec![(2, 50.)]);
+        assert_eq!(editor.zones_between(0..4), vec![(2, 50., id)]);
         assert_eq!(editor.zones_between(2..4), vec![]);
+    }
+
+    #[test]
+    fn a_zone_above_the_first_line_comes_before_it() {
+        let mut editor = editor("a\nb", "\n");
+        let id = editor.add_view_zone(None, 50.);
+        assert_eq!(editor.line_top(0, VIEWPORT), 50.);
+        assert_eq!(editor.view_zone_top(id, VIEWPORT), Some(0.));
+        assert_eq!(editor.view_line_at(10., VIEWPORT), 0);
+        assert_eq!(editor.zones_between(0..2), vec![(0, 50., id)]);
+        assert_eq!(editor.zones_between(1..2), vec![]);
     }
 
     #[test]
     fn a_zone_follows_its_line_through_edits() {
         let mut editor = editor("a\nb\nc", "\n");
-        let id = editor.add_view_zone(Position::new(1, 0), 50.);
+        let id = editor.add_view_zone(Some(Position::new(1, 0)), 50.);
         editor.track_view_zones(Position::new(0, 0), Position::new(0, 0), "x\ny\n");
-        assert_eq!(editor.view_zone(id).unwrap().anchor, Position::new(3, 0));
+        assert_eq!(editor.view_zone(id).unwrap().anchor, Some(Position::new(3, 0)));
         editor.remove_view_zone(id);
         assert!(editor.view_zone(id).is_none());
     }

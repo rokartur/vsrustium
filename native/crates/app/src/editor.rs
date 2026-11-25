@@ -2,6 +2,7 @@
 //! holds them (textModel.ts), and what the editor derives from them for drawing (indentation,
 //! indent guides, word highlights).
 
+use std::collections::HashMap;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -12,6 +13,7 @@ use config::indentation::creation_options;
 use config::service::Settings;
 use files::encoding;
 
+use crate::diff_editor::DiffInput;
 use crate::languages::Languages;
 use crate::syntax::Tokenization;
 
@@ -117,8 +119,9 @@ impl TextDocument {
     pub fn from_text(scheme: &str, path: &Path, text: &str, encoding: String, language_id: Option<&str>, languages: &Languages, settings: &Settings) -> Self {
         let (lines, found_eol) = split_lines(text);
         let associations = settings.get_value(Some("files.associations"), &Overrides::default()).unwrap_or_default();
-        let configured = Languages::configured_language(&associations, path);
-        let language_id = language_id.or(configured.as_deref()).unwrap_or_else(|| languages.language_of(path, lines[0].as_str())).to_string();
+        let (uri_path, _) = split_query(scheme, path);
+        let configured = Languages::configured_language(&associations, uri_path);
+        let language_id = language_id.or(configured.as_deref()).unwrap_or_else(|| languages.language_of(uri_path, lines[0].as_str())).to_string();
         let off_side = languages.off_side(&language_id);
         let folding_markers = languages.folding_markers(&language_id);
         let block_comment = languages.block_comment(&language_id).map(|(start, end)| (start.to_string(), end.to_string()));
@@ -134,13 +137,7 @@ impl TextDocument {
 
     /// `UriComponents` as the extension host revives them.
     pub fn uri(&self) -> serde_json::Value {
-        let path = self.path.to_string_lossy();
-        // host_requests.rs `uri_parts` keys a non-file URI's authority as the `//authority` start of its path.
-        let (authority, path) = match path.strip_prefix("//").filter(|_| self.scheme != "file") {
-            Some(rest) => rest.split_at(rest.find('/').unwrap_or(rest.len())),
-            None => ("", &*path),
-        };
-        serde_json::json!({ "$mid": 1, "scheme": self.scheme, "authority": authority, "path": path, "query": "", "fragment": "" })
+        uri_value(&self.scheme, &self.path)
     }
 
     pub fn is(&self, scheme: &str, path: &Path) -> bool {
@@ -148,7 +145,29 @@ impl TextDocument {
     }
 
     pub fn name(&self) -> String {
-        self.path.file_name().unwrap_or_default().to_string_lossy().into_owned()
+        split_query(&self.scheme, &self.path).0.file_name().unwrap_or_default().to_string_lossy().into_owned()
+    }
+}
+
+/// The `UriComponents` of a model's scheme and path, as the extension host revives them.
+pub fn uri_value(scheme: &str, path: &Path) -> serde_json::Value {
+    let (path, query) = split_query(scheme, path);
+    let path = path.to_string_lossy();
+    // host_requests.rs `uri_parts` keys a non-file URI's authority as the `//authority` start of its path.
+    let (authority, path) = match path.strip_prefix("//").filter(|_| scheme != "file") {
+        Some(rest) => rest.split_at(rest.find('/').unwrap_or(rest.len())),
+        None => ("", &*path),
+    };
+    serde_json::json!({ "$mid": 1, "scheme": scheme, "authority": authority, "path": path, "query": query, "fragment": "" })
+}
+
+/// A non-file URI's query is kept after a `?` in its model's path (host_requests.rs `uri_parts`), so models of
+/// one path with different queries (git's `ref`) stay apart: the path without it and the query.
+pub fn split_query<'a>(scheme: &str, path: &'a Path) -> (&'a Path, &'a str) {
+    let text = path.to_str().unwrap_or_default();
+    match text.split_once('?').filter(|_| scheme != "file") {
+        Some((path, query)) => (Path::new(path), query),
+        None => (path, ""),
     }
 }
 
@@ -210,11 +229,20 @@ pub fn uri_string(scheme: &str, path: &Path) -> String {
         "file" => String::from("file://"),
         scheme => format!("{scheme}:"),
     };
-    for byte in path.to_string_lossy().bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => uri.push(byte as char),
-            _ => uri.push_str(&format!("%{byte:02X}")),
+    let (path, query) = split_query(scheme, path);
+    let encode = |uri: &mut String, text: &str, keep_slash: bool| {
+        for byte in text.bytes() {
+            match byte {
+                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => uri.push(byte as char),
+                b'/' if keep_slash => uri.push('/'),
+                _ => uri.push_str(&format!("%{byte:02X}")),
+            }
         }
+    };
+    encode(&mut uri, &path.to_string_lossy(), true);
+    if !query.is_empty() {
+        uri.push('?');
+        encode(&mut uri, query, false);
     }
     uri
 }
@@ -534,17 +562,54 @@ pub struct EditorGroup {
     pub viewport: Viewport,
     /// unicodeHighlighter.ts `_bannerClosed`: the banner was closed for the model the code editor shows.
     pub unicode_banner_closed: bool,
+    /// The diff editors among `editors`, by their entry's model id: each shows two models found with `model`.
+    pub diffs: HashMap<u32, DiffInput>,
 }
 
 impl EditorGroup {
+    /// The model the code editor edits: the active editor's, or the modified side of the active diff editor.
     pub fn active(&self) -> Option<&OpenEditor> {
-        let id = *self.recent.first()?;
-        self.editors.iter().find(|editor| editor.model_id == id)
+        let tab = self.active_tab()?;
+        match self.diffs.get(&tab.model_id) {
+            Some(diff) => self.model(&diff.modified.scheme, &diff.modified.path),
+            None => Some(tab),
+        }
     }
 
     pub fn active_mut(&mut self) -> Option<&mut OpenEditor> {
         let id = *self.recent.first()?;
-        self.editors.iter_mut().find(|editor| editor.model_id == id)
+        match self.diffs.get(&id).map(|diff| diff.modified.clone()) {
+            Some(modified) => self.model_mut(&modified.scheme, &modified.path),
+            None => self.editors.iter_mut().find(|editor| editor.model_id == id),
+        }
+    }
+
+    /// The active tab's entry, a diff editor's too.
+    pub fn active_tab(&self) -> Option<&OpenEditor> {
+        let id = *self.recent.first()?;
+        self.editors.iter().find(|editor| editor.model_id == id)
+    }
+
+    /// The diff editor of the active tab, if it is one.
+    pub fn active_diff(&self) -> Option<&DiffInput> {
+        self.diffs.get(self.recent.first()?)
+    }
+
+    /// The model a tab edits: its own, or a diff editor's modified side.
+    pub fn tab_model(&self, index: usize) -> &OpenEditor {
+        let tab = &self.editors[index];
+        match self.diffs.get(&tab.model_id) {
+            Some(diff) => self.model(&diff.modified.scheme, &diff.modified.path).expect("a diff editor's models stay open"),
+            None => tab,
+        }
+    }
+
+    /// Opens a diff editor of two open models as `open` opens an editor; `entry` is its text-less tab document.
+    pub fn open_diff(&mut self, entry: TextDocument, input: DiffInput, preview: bool) {
+        self.next_model_id += 1;
+        self.diffs.insert(self.next_model_id, input);
+        let editor = OpenEditor::new(entry, preview, self.next_model_id);
+        self.insert(editor, preview);
     }
 
     pub fn active_index(&self) -> Option<usize> {
@@ -570,6 +635,7 @@ impl EditorGroup {
         let editor = OpenEditor::new(document, false, self.next_model_id);
         let replaced = std::mem::replace(&mut self.editors[index], editor);
         self.recent.retain(|id| *id != replaced.model_id);
+        self.diffs.remove(&replaced.model_id);
         if replaced.host_reference.is_some() {
             self.models.push(replaced);
         }
@@ -601,7 +667,9 @@ impl EditorGroup {
 
     /// Drops the clean models without an editor whose host reference ran out; a dirty model stays, as text file models do.
     pub fn release_models(&mut self, now: Instant) {
-        self.models.retain(|model| model.is_dirty() || model.host_reference.is_some_and(|opened| now.duration_since(opened) < HOST_REFERENCE_AGE));
+        let diffs = &self.diffs;
+        let shown_in_diff = |model: &OpenEditor| diffs.values().any(|diff| [&diff.original, &diff.modified].iter().any(|side| model.document.is(&side.scheme, &side.path)));
+        self.models.retain(|model| model.is_dirty() || shown_in_diff(model) || model.host_reference.is_some_and(|opened| now.duration_since(opened) < HOST_REFERENCE_AGE));
     }
 
     fn insert(&mut self, editor: OpenEditor, preview: bool) {
@@ -611,6 +679,7 @@ impl EditorGroup {
                 let replaced_id = self.editors[index].model_id;
                 self.recent.retain(|id| *id != replaced_id);
                 let replaced = std::mem::replace(&mut self.editors[index], editor);
+                self.diffs.remove(&replaced.model_id);
                 if replaced.host_reference.is_some() {
                     self.models.push(replaced);
                 }
@@ -665,6 +734,7 @@ impl EditorGroup {
 
     pub fn close(&mut self, index: usize) {
         let closed = self.editors.remove(index);
+        self.diffs.remove(&closed.model_id);
         let shown = self.recent.first().copied();
         self.recent.retain(|id| *id != closed.model_id);
         self.shown_model_changed(shown);

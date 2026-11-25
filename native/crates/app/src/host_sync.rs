@@ -19,7 +19,8 @@ use exthost::scan::ScannedExtension;
 use files::operations::{self, FileEdit, FileUndo, WorkingCopyFiles};
 use serde_json::{Value, json};
 
-use crate::editor::{ContentChanged, EditReason, EditorGroup, OpenEditor, Position, Selection};
+use crate::diff_editor::{DIFF_EDITOR_SCHEME, DiffInput};
+use crate::editor::{ContentChanged, EditReason, EditorGroup, OpenEditor, Position, Selection, uri_string, uri_value};
 use crate::theme::ThemeKind;
 
 #[derive(Debug)]
@@ -113,7 +114,7 @@ impl HostSync {
     /// Sends what changed in `group` since the last call: activation for new languages, the document
     /// and editor delta, then the tab model.
     pub fn send_changes(&mut self, group: &EditorGroup) {
-        let is_text = |editor: &&OpenEditor| !self.webview_tabs.contains_key(&editor.document.path);
+        let is_text = |editor: &&OpenEditor| !self.webview_tabs.contains_key(&editor.document.path) && editor.document.scheme != DIFF_EDITOR_SCHEME;
         let open: Vec<&OpenEditor> = group.editors.iter().chain(&group.models).filter(is_text).collect();
         let added: Vec<&OpenEditor> = open.iter().copied().filter(|editor| !self.documents.iter().any(|(uri, _)| *uri == editor.document.uri_string())).collect();
         let removed: Vec<(String, Value)> =
@@ -161,7 +162,15 @@ impl HostSync {
     /// sends them: a whole `$acceptEditorTabModel` fires no `onDidChangeTabs`, which TypeScript's
     /// TabResourceTracker needs before it reports diagnostics.
     pub fn send_tabs(&mut self, group: &EditorGroup) {
-        let tabs: Vec<Value> = group.editors.iter().enumerate().map(|(index, editor)| tab_dto(editor, group.active_index() == Some(index), &self.search_tabs, &self.webview_tabs)).collect();
+        let tabs: Vec<Value> = group
+            .editors
+            .iter()
+            .enumerate()
+            .map(|(index, editor)| match group.diffs.get(&editor.model_id) {
+                Some(diff) => diff_tab_dto(editor, diff, group.active_index() == Some(index), group.tab_model(index).is_dirty()),
+                None => tab_dto(editor, group.active_index() == Some(index), &self.search_tabs, &self.webview_tabs),
+            })
+            .collect();
         let mut sent = std::mem::take(&mut self.tabs);
         for index in (0..sent.len()).rev() {
             if !tabs.iter().any(|tab| tab["id"] == sent[index]["id"]) {
@@ -204,7 +213,7 @@ impl HostSync {
     /// Tells the host the text of the editor at `index` changed (mainThreadDocuments.ts ModelTracker), then the
     /// dirty state and tabs when it flipped, then where the cursor went.
     pub fn send_content_change(&mut self, group: &EditorGroup, index: usize, change: &ContentChanged) {
-        let editor = &group.editors[index];
+        let editor = group.tab_model(index);
         self.send_model_change(group, editor, change);
         self.send_selection(editor, "keyboard");
     }
@@ -454,6 +463,23 @@ fn tab_dto(editor: &OpenEditor, active: bool, search_tabs: &HashMap<PathBuf, Sea
         tab["editorId"] = json!(webview.view_type);
     }
     tab
+}
+
+/// mainThreadEditorTabs.ts for a `DiffEditorInput` of text: TabInputKind.TextDiffInput, the id from both sides'
+/// resources (`supportSideBySide: BOTH`, modified first), dirty when the modified model is.
+fn diff_tab_dto(editor: &OpenEditor, diff: &DiffInput, active: bool, dirty: bool) -> Value {
+    let (original, modified) = (uri_string(&diff.original.scheme, &diff.original.path), uri_string(&diff.modified.scheme, &diff.modified.path));
+    let uri = |side: &crate::diff_editor::Side| uri_value(&side.scheme, &side.path);
+    json!({
+        "id": format!("0~default-workbench.editors.diffEditorInput-{modified}-{original} "),
+        "label": diff.name(),
+        "input": { "kind": 2, "original": uri(&diff.original), "modified": uri(&diff.modified) },
+        "editorId": "default",
+        "isActive": active,
+        "isPinned": false,
+        "isPreview": editor.preview,
+        "isDirty": dirty,
+    })
 }
 
 /// What a search editor's tab shows the extension host: `SearchEditorInput.getName` and its resource, the backing

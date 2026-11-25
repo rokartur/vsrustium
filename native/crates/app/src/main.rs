@@ -12,6 +12,7 @@ mod command_palette;
 mod commands;
 mod contextkey;
 mod default_settings;
+mod diff_editor;
 mod dialog;
 mod editor;
 mod editor_history;
@@ -45,6 +46,7 @@ mod notifications;
 mod output;
 mod quick_input;
 mod search_editor;
+mod scm;
 mod search_model;
 mod smart_snippet_inserter;
 mod split_view;
@@ -173,6 +175,7 @@ fn main() -> anyhow::Result<()> {
                 workbench.start_system_wide_keybindings(window, cx);
                 workbench.set_command_palette_menu(command_palette::menu(&extensions));
                 workbench.menus.extend(menus::extension_menus(&extensions));
+                workbench.command_icons = menus::command_icons(&extensions);
                 workbench.status_entries = main_thread_status_bar::static_entries(&extensions);
                 workbench.file_icons = file_icons;
                 workbench.color_themes = color_themes;
@@ -338,7 +341,7 @@ fn run_extension_host(
             MainThreadSecretState::in_memory()
         }),
     });
-    session.forward(&["MainThreadCommands", "MainThreadDiagnostics", "MainThreadDownloadService", "MainThreadEditorTabs", "MainThreadLanguageFeatures", "MainThreadLogger", "MainThreadMessageService", "MainThreadOutputService", "MainThreadProgress", "MainThreadQuickOpen", "MainThreadStatusBar", "MainThreadWebviewPanels", "MainThreadWebviews", "MainThreadWorkspace"], move |request| {
+    session.forward(&["MainThreadCommands", "MainThreadDiagnostics", "MainThreadDownloadService", "MainThreadEditorTabs", "MainThreadLanguageFeatures", "MainThreadLogger", "MainThreadMessageService", "MainThreadOutputService", "MainThreadProgress", "MainThreadQuickOpen", "MainThreadSCM", "MainThreadStatusBar", "MainThreadWebviewPanels", "MainThreadWebviews", "MainThreadWorkspace"], move |request| {
         let _ = workbench_requests.unbounded_send(request);
     }, workbench_replies);
     session.main_thread = Some(Box::new(main_thread));

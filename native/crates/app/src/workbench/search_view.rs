@@ -25,6 +25,7 @@ use crate::search_model::{MessageLink, PatternInfo, ReplacePattern, SearchResult
 pub enum SideBarView {
     Explorer,
     Search,
+    Scm,
 }
 
 /// The search view's inputs, in their tab order.
