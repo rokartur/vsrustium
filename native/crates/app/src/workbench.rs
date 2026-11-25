@@ -140,6 +140,11 @@ pub struct Workbench {
     pub(crate) extension_commands: HashMap<String, crate::commands::Registration>,
     /// Extension tests run: dialogs answer their default without showing (abstractFileDialogService.ts skipDialogs).
     pub skip_dialogs: bool,
+    pub host_colors: themes::HostColorScheme,
+    /// `IEnvironmentService.isExtensionDevelopment`.
+    pub extension_development: bool,
+    /// workbench.ts `setUnexpectedErrorHandler(createUnexpectedErrorHandler(logService))`.
+    pub unexpected_errors: crate::output::logger::UnexpectedErrorHandler,
     pub keybindings: keyboard::Keybindings,
     pub keybindings_editor: keybindings_editor_view::KeybindingsEditor,
     keybinding_marks: define_keybinding::KeybindingMarks,
@@ -329,6 +334,9 @@ impl Workbench {
             commands: Commands::default(),
             extension_commands: HashMap::new(),
             skip_dialogs: false,
+            host_colors: themes::host_color_scheme(),
+            extension_development: false,
+            unexpected_errors: Default::default(),
             keybindings: keyboard::Keybindings::default(),
             keybindings_editor: keybindings_editor_view::KeybindingsEditor::new(cx),
             keybinding_marks: Default::default(),
@@ -483,6 +491,7 @@ impl Workbench {
             workbench.store_editor_view_states();
         })
         .detach();
+        workbench.customize_theme();
         workbench
     }
 
@@ -685,7 +694,7 @@ impl Workbench {
         self.is_part_visible(layout::Part::SideBar)
     }
 
-    fn activity_bar(&self, cx: &mut Context<Self>) -> Div {
+    fn activity_bar(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         // The side bar is on the left, so the hovers go right of the bar (activitybarPart.ts).
         let hover = HoverOptions::composite_bar(HoverPosition::Right);
         let inactive = self.color("activityBar.inactiveForeground");
@@ -709,8 +718,9 @@ impl Workbench {
             .border_1()
             .when(self.side_bar_visible(), |bar| bar.rounded_l(px(8.)))
             .when(!self.side_bar_visible(), |bar| bar.rounded(px(8.)))
-            .bg(self.color("activityBar.background"))
-            .border_color(self.color("surface.border"))
+            // activitybarPart.ts `updateStyles` with the modern UI: the inactive background while the window is not focused.
+            .bg(self.color(if window.is_window_active() { "modernActivityBar.background" } else { "modernActivityBar.inactiveBackground" }))
+            .border_color(self.color("modernActivityBar.border"))
             .child(
                 div()
                     .flex()

@@ -359,8 +359,8 @@ impl Workbench {
         let focus = &self.explorer_panes.focus[id];
         let focused = focus.is_focused(window);
         let foreground = self.foreground_or("sideBarSectionHeader.foreground");
-        let background = self.color("sideBarSectionHeader.background");
-        let border = self.theme.color("sideBarSectionHeader.border").filter(|_| index > 0);
+        let background = self.color("sideBar.background");
+        let border = self.theme.color("sideBarSectionHeader.border").or(self.theme.color("surface.border")).filter(|_| index > 0);
         let chevron = if expanded { "chevron-down" } else { "chevron-right" };
         let dragged = DraggedPane {
             id,
@@ -385,8 +385,9 @@ impl Workbench {
                 .items_center()
                 .rounded(px(4.))
                 .bg(background)
+                .hover(|header| header.bg(self.color("list.hoverBackground")))
                 .text_color(foreground)
-                .when_some(border, |header, border| header.child(div().absolute().top_0().left_0().right_0().h(px(1.)).bg(border)))
+                .when_some(border, |header, border| header.child(div().absolute().top_0().left(px(4.)).right(px(4.)).h(px(1.)).bg(border)))
                 .child(self.icon(chevron, 16., 16., foreground).mx(px(2.)))
                 .child(div().text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).child(title.to_string()))
                 .when(id == FILE_VIEW, |header| header.children(self.explorer_title_actions(window, cx)))

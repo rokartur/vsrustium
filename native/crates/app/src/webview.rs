@@ -326,7 +326,8 @@ pub fn theme_data(theme: &Theme, theme_label: &str, editor: &Value, underline_li
     styles.insert("text-link-decoration".into(), json!(if underline_links { "underline" } else { "none" }));
     for id in include_str!("webview/color_ids.txt").lines() {
         if let Some(color) = theme.color(id) {
-            styles.insert(format!("vscode-{}", id.replacen('.', "-", 1)), json!(css_color(color)));
+            // colorUtils.ts `asCssVariableName`: every dot.
+            styles.insert(format!("vscode-{}", id.replace('.', "-")), json!(css_color(color)));
         }
     }
     for (id, value) in SIZES {

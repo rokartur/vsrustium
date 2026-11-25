@@ -179,6 +179,18 @@ pub struct Session {
     waiting: Waiting,
 }
 
+/// Host calls the session answers itself (the port log on stderr, which must keep up with the extension tests'
+/// output) and also hands to the workbench as `OBSERVED_REQ`, which it answers nothing: the Window log and
+/// notifications of mainThreadConsole.ts, mainThreadErrors.ts and mainThreadExtensionService.ts.
+const OBSERVED: [(&str, &str); 3] = [
+    ("MainThreadConsole", "$logExtensionHostMessage"),
+    ("MainThreadErrors", "$onUnexpectedError"),
+    ("MainThreadExtensionService", "$onExtensionActivationError"),
+];
+
+/// The `req` of an observed call; the host numbers its requests from 1.
+pub const OBSERVED_REQ: u32 = 0;
+
 /// A host request the app answers later with `Session::reply` (MainThread* shapes the workbench implements).
 #[derive(Debug)]
 pub struct ForwardedRequest {
@@ -539,6 +551,10 @@ impl Session {
             Message::Request { req, rpc_id, method, args, .. } => {
                 self.host.send(rpc::encode(&Message::Acknowledged { req }));
                 let proxy = proxy_name(rpc_id);
+                if let Some(forward) = self.forward.as_mut().filter(|_| OBSERVED.contains(&(proxy, method.as_str()))) {
+                    let args = args.iter().cloned().map(forwarded_arg).collect();
+                    (forward.send)(ForwardedRequest { req: OBSERVED_REQ, proxy, method: method.clone(), args });
+                }
                 let forwards = |entry: &&str| *entry == proxy || entry.strip_prefix(proxy).and_then(|rest| rest.strip_prefix('.')) == Some(method.as_str());
                 if let Some(forward) = self.forward.as_mut().filter(|forward| forward.proxies.iter().any(forwards)) {
                     *self.log.host_calls.entry(format!("{proxy}.{method}")).or_default() += 1;

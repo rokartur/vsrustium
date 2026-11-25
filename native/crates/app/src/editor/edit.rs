@@ -7,7 +7,8 @@ use std::cmp::Reverse;
 
 use super::auto_indent::{AutoIndent, Model};
 use super::cursor::{self, Position, Selection};
-use super::{OpenEditor, anchor_select, folding, indent_guides};
+use super::word_operations::{self, AutoClosing, DeleteWordContext, WordClassifier, WordDelete, WordDeleteKind, WordNavigation};
+use super::{OpenEditor, anchor_select, clipboard, folding, indent_guides};
 
 /// `EditOperationType`: what the last edit was, which decides where undo stops go.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -284,14 +285,22 @@ impl OpenEditor {
         });
     }
 
-    /// `cursorWordStartLeft`/`cursorWordEndRight` from the head.
-    pub fn move_word(&mut self, right: bool, select: bool) {
-        self.move_cursors(select, |lines, selection, _| (if right { cursor::word_right(lines, selection.head) } else { cursor::word_left(lines, selection.head) }, 0));
+    /// wordOperations.ts `MoveWordCommand`: every cursor's head by word; without `select` the cursor collapses there.
+    pub fn move_word(&mut self, classifier: &WordClassifier, navigation: WordNavigation, right: bool, select: bool) {
+        let has_multicursor = self.selections.len() > 1;
+        self.move_cursors(select, |lines, selection, _| match right {
+            true => (word_operations::move_word_right(classifier, lines, selection.head, navigation), 0),
+            false => (word_operations::move_word_left(classifier, lines, selection.head, navigation, has_multicursor), 0),
+        });
     }
 
-    /// `cursorWordPartLeft`/`cursorWordPartRight` from the head (wordPartOperations.ts).
-    pub fn move_word_part(&mut self, right: bool, select: bool) {
-        self.move_cursors(select, |lines, selection, _| (if right { cursor::word_part_right(lines, selection.head, super::WORD_SEPARATORS) } else { cursor::word_part_left(lines, selection.head, super::WORD_SEPARATORS) }, 0));
+    /// wordPartOperations.ts `CursorWordPartLeft` and `CursorWordPartRight`.
+    pub fn move_word_part(&mut self, classifier: &WordClassifier, right: bool, select: bool) {
+        let has_multicursor = self.selections.len() > 1;
+        self.move_cursors(select, |lines, selection, _| match right {
+            true => (word_operations::move_word_part_right(classifier, lines, selection.head), 0),
+            false => (word_operations::move_word_part_left(classifier, lines, selection.head, has_multicursor), 0),
+        });
     }
 
     /// `cursorHome`/`cursorEnd`; Home toggles between the first non-blank character and column 0.
@@ -343,29 +352,29 @@ impl OpenEditor {
         };
     }
 
-    /// `getPlainTextToCopy` with `emptySelectionClipboard`: each selection in document order, an empty
-    /// one as its whole line with the line break, once per line. Several pieces also travel apart as
-    /// `multicursorText`; `isFromEmptySelection` holds for one empty cursor only.
-    pub fn copy_text(&self) -> Copied {
+    /// `getPlainTextToCopy`: each selection in document order; with `emptySelectionClipboard` an empty one
+    /// as its whole line with the line break, once per line. Several pieces also travel apart as
+    /// `multicursorText`; `isFromEmptySelection` holds for one empty cursor only, `isBlock` for a column selection.
+    pub fn copy_text(&self, empty_selection_clipboard: bool) -> Copied {
         let lines = &self.document.lines;
         let eol = self.document.eol;
         let mut selections = self.selections.clone();
         selections.sort_by_key(|selection| (selection.start(), selection.end()));
-        let any_empty = selections.iter().any(Selection::is_empty);
+        let whole_lines = empty_selection_clipboard && selections.iter().any(Selection::is_empty);
         let mut pieces = Vec::new();
         let mut previous_line = None;
         for selection in selections {
             let line = selection.start().line;
             if !selection.is_empty() {
                 pieces.push(text_between(lines, selection.start(), selection.end()).replace('\n', eol));
-            } else if any_empty && previous_line != Some(line) {
+            } else if whole_lines && previous_line != Some(line) {
                 pieces.push(format!("{}{eol}", lines[line]));
             }
             previous_line = Some(line);
         }
-        let from_empty_selection = self.selections.len() == 1 && self.selection().is_empty();
+        let from_empty_selection = empty_selection_clipboard && self.selections.len() == 1 && self.selection().is_empty();
         let multicursor_text = (pieces.len() > 1).then(|| pieces.clone());
-        Copied { text: pieces.join(eol), from_empty_selection, multicursor_text }
+        Copied { text: pieces.join(eol), from_empty_selection, is_block: self.is_column_selection(), multicursor_text }
     }
 
     /// `type`: text replaces every selection. Spaces and other text group into undo steps as upstream does.
@@ -511,20 +520,25 @@ impl OpenEditor {
         self.delete(cursor::delete_right_range, Some(EditKind::DeletingRight), command("deleteRight"))
     }
 
-    pub fn delete_word_left(&mut self) -> Option<ContentChanged> {
-        self.delete(cursor::delete_word_left_range, None, command("deleteWordLeft"))
+    /// wordOperations.ts and wordPartOperations.ts `DeleteWordCommand`s: each cursor's range of `word_delete`,
+    /// or nothing at the document edge, between undo stops.
+    pub fn delete_word(&mut self, classifier: &WordClassifier, auto_closing: &AutoClosing, word_delete: WordDelete, id: &'static str) -> Option<ContentChanged> {
+        let range = |lines: &[String], selection: Selection| {
+            let ctx = DeleteWordContext { classifier, lines, selection, whitespace_heuristics: word_delete.whitespace_heuristics, auto_closing };
+            let range = match word_delete.kind {
+                WordDeleteKind::Left(navigation) => word_operations::delete_word_left(&ctx, navigation),
+                WordDeleteKind::Right(navigation) => word_operations::delete_word_right(&ctx, navigation),
+                WordDeleteKind::PartLeft => word_operations::delete_word_part_left(&ctx),
+                WordDeleteKind::PartRight => Some(word_operations::delete_word_part_right(&ctx)),
+            };
+            range.unwrap_or((selection.head, selection.head))
+        };
+        self.delete(range, None, command(id))
     }
 
-    pub fn delete_word_right(&mut self) -> Option<ContentChanged> {
-        self.delete(cursor::delete_word_right_range, None, command("deleteWordRight"))
-    }
-
-    pub fn delete_word_part_left(&mut self) -> Option<ContentChanged> {
-        self.delete(|lines, selection| cursor::delete_word_part_left_range(lines, selection, super::WORD_SEPARATORS), None, command("deleteWordPartLeft"))
-    }
-
-    pub fn delete_word_part_right(&mut self) -> Option<ContentChanged> {
-        self.delete(|lines, selection| cursor::delete_word_part_right_range(lines, selection, super::WORD_SEPARATORS), None, command("deleteWordPartRight"))
+    /// wordOperations.ts `DeleteInsideWord` (Delete Word).
+    pub fn delete_inside_word(&mut self, classifier: &WordClassifier, only_word: bool) -> Option<ContentChanged> {
+        self.delete(|lines, selection| word_operations::delete_inside_word(classifier, lines, selection, only_word), None, command("deleteInsideWord"))
     }
 
     /// Deletes each cursor's range. Consecutive char deletes (`kind`) in one direction undo together
@@ -585,14 +599,24 @@ impl OpenEditor {
         self.apply_between_stops(edits, reason)
     }
 
-    /// `paste`: text replaces each selection. A whole line copied from an empty selection goes in above
-    /// each empty cursor (`pasteOnNewLine`); with as many pieces or lines as cursors, each cursor gets one
-    /// (`multiCursorPaste` "spread"). With `overtype` (overtype input mode and `editor.overtypeOnPaste`) the text also
-    /// replaces as many chars after the selection.
-    pub fn paste(&mut self, text: &str, from_empty_selection: bool, multicursor_text: Option<&[String]>, overtype: bool) -> Option<ContentChanged> {
-        let text = normalize_line_breaks(text);
+    /// `PasteOperation.getEdits`: text replaces each selection. A column block copy at one cursor pastes as a
+    /// block with `spread`. A whole line copied from an empty selection goes in above each empty cursor
+    /// (`pasteOnNewLine`); with as many pieces as cursors, or with `spread` as many lines, each cursor gets one.
+    /// With `overtype` (overtype input mode and `editor.overtypeOnPaste`) the text also replaces as many chars
+    /// after the selection.
+    pub fn paste(&mut self, pasted: Pasted, spread: bool, overtype: bool) -> Option<ContentChanged> {
+        let Pasted { text, paste_on_new_line, multicursor_text, is_block } = pasted;
         let reason = EditReason::Cursor { kind: "paste", detailed_source: "keyboard" };
-        if let Some(pieces) = self.distributed_paste(&text, from_empty_selection, multicursor_text) {
+        if is_block && spread && self.selections.len() == 1 {
+            let rows: Vec<String> = normalize_line_breaks(text).split('\n').map(String::from).collect();
+            let command = clipboard::column_selection_paste(&self.document.lines, self.selection(), &rows, self.document.indentation.tab_size, overtype);
+            self.push_undo_stop();
+            let change = self.execute_commands(vec![command], reason);
+            self.push_undo_stop();
+            return change;
+        }
+        let text = normalize_line_breaks(text);
+        if let Some(pieces) = self.distributed_paste(&text, paste_on_new_line, multicursor_text, spread) {
             let mut order: Vec<usize> = (0..self.selections.len()).collect();
             order.sort_by_key(|&index| (self.selections[index].start(), self.selections[index].end()));
             let mut edits = vec![CursorEdit::new(Vec::new(), Selection::default()); order.len()];
@@ -603,21 +627,25 @@ impl OpenEditor {
             }
             return self.apply_between_stops(edits, reason);
         }
-        let on_new_line = from_empty_selection && text.find('\n') == Some(text.len() - 1);
-        let edits = self.each_cursor(|selection| {
+        // `_simplePaste`: one non-empty selection turns `pasteOnNewLine` off for the cursors after it.
+        let mut on_new_line = paste_on_new_line && text.find('\n') == Some(text.len() - 1);
+        let mut edits = Vec::new();
+        for &selection in &self.selections {
+            on_new_line &= selection.is_empty();
             let head = selection.head;
-            if on_new_line && selection.is_empty() {
+            if on_new_line {
                 let start = Position::new(head.line, 0);
-                return CursorEdit::replace(start, start, text.clone(), Position::new(head.line + 1, head.column));
+                edits.push(CursorEdit::replace(start, start, text.clone(), Position::new(head.line + 1, head.column)));
+                continue;
             }
             let end = if overtype { overtype_end(&self.document.lines, selection, &text) } else { selection.end() };
-            CursorEdit::replace(selection.start(), end, text.clone(), end_of(selection.start(), &text))
-        });
+            edits.push(CursorEdit::replace(selection.start(), end, text.clone(), end_of(selection.start(), &text)));
+        }
         self.apply_between_stops(edits, reason)
     }
 
     /// `_distributePasteToCursors`.
-    fn distributed_paste(&self, text: &str, from_empty_selection: bool, multicursor_text: Option<&[String]>) -> Option<Vec<String>> {
+    fn distributed_paste(&self, text: &str, paste_on_new_line: bool, multicursor_text: Option<&[String]>, spread: bool) -> Option<Vec<String>> {
         let count = self.selections.len();
         if count == 1 {
             return None;
@@ -625,32 +653,43 @@ impl OpenEditor {
         if let Some(pieces) = multicursor_text.filter(|pieces| pieces.len() == count) {
             return Some(pieces.iter().map(|piece| normalize_line_breaks(piece)).collect());
         }
-        if from_empty_selection {
+        if paste_on_new_line || !spread {
             return None;
         }
         let lines: Vec<String> = text.strip_suffix('\n').unwrap_or(text).split('\n').map(String::from).collect();
         (lines.len() == count).then_some(lines)
     }
 
-    /// `cut`: each selection, or an empty cursor's whole line with a line break next to it.
-    pub fn cut(&mut self) -> Option<ContentChanged> {
+    /// `DeleteOperations.cut`: each selection; with `emptySelectionClipboard` an empty cursor's whole line with
+    /// a line break next to it, the last line's break before it unless an earlier cut already reached that line.
+    pub fn cut(&mut self, empty_selection_clipboard: bool) -> Option<ContentChanged> {
         let lines = &self.document.lines;
-        let edits = self.each_cursor(|selection| {
-            let (start, end) = match selection.is_empty() {
-                false => (selection.start(), selection.end()),
-                true => {
+        let mut order: Vec<usize> = (0..self.selections.len()).collect();
+        order.sort_by_key(|&index| self.selections[index].start());
+        let mut edits = vec![CursorEdit::new(Vec::new(), Selection::default()); order.len()];
+        let mut last_cut_end_line = None;
+        for index in order {
+            let selection = self.selections[index];
+            edits[index] = match (selection.is_empty(), empty_selection_clipboard) {
+                (false, _) => CursorEdit::replace(selection.start(), selection.end(), String::new(), selection.start()),
+                (true, false) => CursorEdit::new(Vec::new(), selection),
+                (true, true) => {
                     let line = selection.head.line;
-                    if line + 1 < lines.len() {
+                    let (start, end) = if line + 1 < lines.len() {
                         (Position::new(line, 0), Position::new(line + 1, 0))
-                    } else if line > 0 {
+                    } else if line > 0 && last_cut_end_line != Some(line) {
                         (cursor::line_end(lines, Position::new(line - 1, 0)), cursor::line_end(lines, Position::new(line, 0)))
                     } else {
                         (Position::new(line, 0), cursor::line_end(lines, Position::new(line, 0)))
+                    };
+                    last_cut_end_line = Some(end.line);
+                    match start == end {
+                        true => CursorEdit::new(Vec::new(), selection),
+                        false => CursorEdit::replace(start, end, String::new(), start),
                     }
                 }
             };
-            CursorEdit::replace(start, end, String::new(), start)
-        });
+        }
         self.apply_between_stops(edits, EditReason::Cursor { kind: "cut", detailed_source: "keyboard" })
     }
 
@@ -993,7 +1032,17 @@ impl OpenEditor {
 pub struct Copied {
     pub text: String,
     pub from_empty_selection: bool,
+    pub is_block: bool,
     pub multicursor_text: Option<Vec<String>>,
+}
+
+/// A paste's text and the clipboard metadata that came with it (`PastePayload`).
+#[derive(Clone, Copy)]
+pub struct Pasted<'a> {
+    pub text: &'a str,
+    pub paste_on_new_line: bool,
+    pub multicursor_text: Option<&'a [String]>,
+    pub is_block: bool,
 }
 
 /// `ShiftCommand`: every line of the selection moves one indent stop; a multi-line selection skips empty lines.
@@ -1186,7 +1235,7 @@ pub fn text_between(lines: &[String], start: Position, end: Position) -> String 
 /// Where text inserted at `start` ends.
 /// replaceCommand.ts `ReplaceOvertypeCommand`: the selection's end moved past as many chars as `text` has (one
 /// fewer for a selection), never past its line's end.
-fn overtype_end(lines: &[String], selection: Selection, text: &str) -> Position {
+pub(super) fn overtype_end(lines: &[String], selection: Selection, text: &str) -> Position {
     let end = selection.end();
     let delta = (text.chars().count() + usize::from(selection.is_empty())).saturating_sub(1);
     Position::new(end.line, (end.column + delta).min(cursor::line_len(lines, end.line)))
@@ -1393,15 +1442,15 @@ pub(super) mod tests {
     fn cut_and_paste_a_whole_line_from_an_empty_selection() {
         let mut editor = editor("one\ntwo\nthree", "\n");
         editor.move_to(at(1, 1), false);
-        let copied = editor.copy_text();
+        let copied = editor.copy_text(true);
         assert_eq!((copied.text.as_str(), copied.from_empty_selection, copied.multicursor_text.is_none()), ("two\n", true, true));
-        editor.cut();
+        editor.cut(true);
         assert_eq!((text(&editor), editor.selection().head), ("one\nthree".into(), at(1, 0)));
         editor.move_to(at(1, 2), false);
-        editor.paste(&copied.text, copied.from_empty_selection, None, false);
+        editor.paste(Pasted { text: &copied.text, paste_on_new_line: copied.from_empty_selection, multicursor_text: None, is_block: false }, true, false);
         assert_eq!((text(&editor), editor.selection().head), ("one\ntwo\nthree".into(), at(2, 2)));
         editor.move_to(at(2, 5), false);
-        editor.cut();
+        editor.cut(true);
         assert_eq!(text(&editor), "one\ntwo");
     }
 
@@ -1419,6 +1468,11 @@ pub(super) mod tests {
         assert_eq!(editor.selection().head, at(2, 4));
     }
 
+    /// A paste without clipboard metadata.
+    pub(in crate::editor) fn plain(text: &str) -> Pasted<'_> {
+        Pasted { text, paste_on_new_line: false, multicursor_text: None, is_block: false }
+    }
+
     fn range(anchor: (usize, usize), head: (usize, usize)) -> Selection {
         Selection { anchor: at(anchor.0, anchor.1), head: at(head.0, head.1) }
     }
@@ -1428,7 +1482,7 @@ pub(super) mod tests {
         // cursor.test.ts issue #4996: multicursorText pieces go one per cursor.
         let mut pieces = editor("line1\nline2\nline3", "\n");
         pieces.set_selections(vec![range((0, 0), (0, 0)), range((1, 0), (1, 0))]);
-        pieces.paste("a\nb\nc\nd", false, Some(&["a\nb".into(), "c\nd".into()]), false);
+        pieces.paste(Pasted { multicursor_text: Some(&["a\nb".into(), "c\nd".into()]), ..plain("a\nb\nc\nd") }, true, false);
         assert_eq!(text(&pieces), "a\nbline1\nc\ndline2\nline3");
         // multiCursorPasteCases: as many lines as cursors spread, a trailing line break ignored; other counts paste whole.
         let cases: [(&str, &[Selection], &str, &str); 4] = [
@@ -1440,7 +1494,7 @@ pub(super) mod tests {
         for (before, selections, pasted, expected) in cases {
             let mut lines = editor(before, "\n");
             lines.set_selections(selections.to_vec());
-            lines.paste(pasted, false, None, false);
+            lines.paste(plain(pasted), true, false);
             assert_eq!(text(&lines), expected, "pasting {pasted:?}");
         }
     }
@@ -1460,7 +1514,7 @@ pub(super) mod tests {
         let pasted = |selection, pasted: &str| {
             let mut editor = editor("123456789\n123456789", "\n");
             editor.set_selections(vec![selection]);
-            editor.paste(pasted, false, None, true);
+            editor.paste(plain(pasted), true, true);
             text(&editor)
         };
         assert_eq!(pasted(range((0, 4), (0, 4)), "cc"), "1234cc789\n123456789");
@@ -1510,7 +1564,8 @@ pub(super) mod tests {
         // Overlapping deletes: the later cursor loses its edit (`_getLoserCursorMap`) and only follows the text.
         let mut overlapping = editor("ab cd", "\n");
         overlapping.set_selections(vec![range((0, 4), (0, 4)), range((0, 5), (0, 5))]);
-        overlapping.delete_word_left();
+        let (_, delete_word_left) = word_operations::DELETE_COMMANDS[2];
+        overlapping.delete_word(&WordClassifier::new(word_operations::DEFAULT_WORD_SEPARATORS, &[]), &AutoClosing { delete: "auto", brackets: "languageDefined", quotes: "languageDefined", pairs: &[], auto_closed: &[] }, delete_word_left, "deleteWordLeft");
         assert_eq!(text(&overlapping), "ab d");
         assert_eq!(overlapping.selections, [Selection::caret(at(0, 3)), Selection::caret(at(0, 4))]);
     }
@@ -1534,13 +1589,13 @@ pub(super) mod tests {
     fn copy_joins_selections_in_document_order_and_keeps_the_pieces() {
         let mut editor = editor("one\ntwo\nthree", "\r\n");
         editor.set_selections(vec![range((2, 0), (2, 2)), range((0, 0), (1, 1))]);
-        let copied = editor.copy_text();
+        let copied = editor.copy_text(true);
         assert_eq!(copied.text, "one\r\nt\r\nth");
         assert_eq!(copied.multicursor_text, Some(vec!["one\r\nt".to_string(), "th".to_string()]));
         assert!(!copied.from_empty_selection);
         // Two empty cursors on one line copy it once; several empty cursors are not "from empty selection".
         editor.set_selections(vec![range((1, 0), (1, 0)), range((1, 2), (1, 2))]);
-        let copied = editor.copy_text();
+        let copied = editor.copy_text(true);
         assert_eq!((copied.text.as_str(), copied.from_empty_selection), ("two\r\n", false));
     }
 }

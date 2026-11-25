@@ -812,7 +812,12 @@ impl Workbench {
             number: self.color("editorLineNumber.foreground"),
             active_number: self.color("editorLineNumber.activeForeground"),
             text: self.color("editor.foreground"),
-            line_border: self.color("editor.lineHighlightBorder"),
+            // currentLineHighlight.ts theming participant: the border only without a visible background, or when the theme sets it.
+            line_background: self.theme.color(if focused { "editor.lineHighlightBackground" } else { "editor.inactiveLineHighlightBackground" }),
+            line_border: match self.theme.color("editor.lineHighlightBackground").is_none_or(|color| color.a == 0.) || self.theme.defines("editor.lineHighlightBorder") {
+                true => self.theme.color("editor.lineHighlightBorder"),
+                false => None,
+            },
             word: self.theme.color("editor.wordHighlightTextBackground"),
             word_border: self.theme.color("editor.wordHighlightTextBorder"),
             selection_highlight: self.theme.color("editor.selectionHighlightBackground"),
@@ -875,7 +880,12 @@ impl Workbench {
                     .children(line_number_label(metrics.line_numbers, index, primary_line, editor.document.lines.len()));
                 let mut current_line = div().absolute().inset_0();
                 if line_highlight && all_empty && selections.iter().any(|selection| selection.head.line == index) {
-                    current_line = current_line.border(px(line_border_width)).border_color(colors.line_border);
+                    if let Some(background) = colors.line_background {
+                        current_line = current_line.bg(background);
+                    }
+                    if let Some(border) = colors.line_border {
+                        current_line = current_line.border(px(line_border_width)).border_color(border);
+                    }
                 }
                 // The text scrolls left under the fixed margin and current line border.
                 let mut content = div().absolute().top_0().bottom_0().right_0().left(px(-scroll_left));
@@ -1022,7 +1032,14 @@ impl Workbench {
                     let marks: Vec<_> = marks.into_iter().map(|mark| (visible_column(text, mark, tab_size) as f32 * char_width, text.chars().nth(mark) == Some('\t'))).collect();
                     content = content.child(whitespace_canvas(marks, char_width, line_height, whitespace_color));
                 }
-                let highlights = editor.document.tokens.highlights(&self.theme, &self.languages, &editor.document.lines, index, tab_size);
+                let mut highlights = editor.document.tokens.highlights(&self.theme, &self.languages, &editor.document.lines, index, tab_size);
+                // bracketMatching.ts theming participant: `editorBracketMatch.foreground` over the bracket pair colors.
+                if let Some(color) = self.theme.color("editorBracketMatch.foreground") {
+                    let expanded = |byte: usize| expand_tabs(&text[..byte], tab_size).len();
+                    let matched = bracket_matches.iter().flat_map(|(pair, _)| pair).filter(|(line, _)| *line == index);
+                    let colored: Vec<_> = matched.map(|(_, bytes)| (expanded(bytes.start)..expanded(bytes.end), gpui::Hsla::from(color))).collect();
+                    highlights = crate::syntax::overlay_colors(highlights, &colored);
+                }
                 let runs = gpui::combine_highlights(gpui::combine_highlights(highlights, find_colors), self.marker_text_styles(editor, index, tab_size));
                 let mut show_more = None;
                 match line_overflow(text, self.stop_rendering_line_after) {
@@ -1219,15 +1236,20 @@ impl Workbench {
         }
     }
 
-    /// bracketMatching.ts `_recomputeBrackets`: the brackets matched at each empty cursor, none past 100 selections.
+    /// bracketMatching.ts `_recomputeBrackets`: the brackets matched at each empty cursor, none past 100 selections;
+    /// `editor.matchBrackets` "near" leaves out the enclosing pairs, "never" matches nothing.
     fn bracket_matches(&self, editor: &OpenEditor) -> Vec<([BracketRange; 2], bool)> {
-        if editor.selections.len() > 100 {
+        let overrides = config::configuration::Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
+        let match_brackets = self.settings.lock().unwrap().get_value(Some("editor.matchBrackets"), &overrides);
+        if editor.selections.len() > 100 || match_brackets == Some(json!("never")) {
             return Vec::new();
         }
+        let near = match_brackets == Some(json!("near"));
         let lines = &editor.document.lines;
         let mut matches = Vec::new();
         for selection in editor.selections.iter().filter(|selection| selection.is_empty()) {
-            matches.extend(editor.document.tokens.bracket_match(&self.theme, &self.languages, lines, (selection.head.line, selection.head.column)));
+            let found = editor.document.tokens.bracket_match(&self.theme, &self.languages, lines, (selection.head.line, selection.head.column));
+            matches.extend(found.filter(|(_, touching)| *touching || !near));
         }
         matches
     }
@@ -1641,7 +1663,8 @@ struct LineColors {
     number: Rgba,
     active_number: Rgba,
     text: Rgba,
-    line_border: Rgba,
+    line_background: Option<Rgba>,
+    line_border: Option<Rgba>,
     word: Option<Rgba>,
     word_border: Option<Rgba>,
     selection_highlight: Option<Rgba>,

@@ -169,3 +169,48 @@ fn the_file_icon_theme_picker_previews_writes_and_restores(cx: &mut TestAppConte
     assert_eq!(icon_theme(cx), None);
     assert_eq!(serde_json::from_str::<Value>(&user_settings().unwrap()).unwrap(), json!({ "workbench.iconTheme": null }));
 }
+
+// themeConfiguration.ts `getColorThemeSettingId` and workbenchThemeService.ts `onDidChangeColorScheme`.
+#[gpui::test]
+fn the_host_color_scheme_picks_the_preferred_theme_setting(cx: &mut TestAppContext) {
+    use super::{HostColorScheme, SettingTarget, color_theme_setting_id};
+    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let mut extensions = Vec::new();
+    for name in ["theme-defaults", "theme-solarized-dark", "theme-solarized-light"] {
+        extensions.push(scan_extension(&app_root.join("extensions").join(name), true).unwrap());
+    }
+    let dir = std::env::temp_dir().join(format!("code-gpui-host-scheme-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("User")).unwrap();
+    let user = r#"{ "window.autoDetectColorScheme": true, "workbench.preferredLightColorTheme": "Solarized Light", "workbench.preferredDarkColorTheme": "Solarized Dark" }"#;
+    std::fs::write(dir.join("User/settings.json"), user).unwrap();
+    let settings = Settings::load(Registry::with_extensions(&[]), dir.join("User"), None);
+    let scheme = |dark, high_contrast| HostColorScheme { dark, high_contrast };
+    assert_eq!(color_theme_setting_id(&settings, scheme(true, false)), "workbench.preferredDarkColorTheme");
+    assert_eq!(color_theme_setting_id(&settings, scheme(false, false)), "workbench.preferredLightColorTheme");
+    // window.autoDetectHighContrast is on by default and wins over the color scheme.
+    assert_eq!(color_theme_setting_id(&settings, scheme(true, true)), "workbench.preferredHighContrastColorTheme");
+    assert_eq!(color_theme_setting_id(&settings, scheme(false, true)), "workbench.preferredHighContrastLightColorTheme");
+
+    let theme = load_theme(&extensions, "Dark Modern").unwrap();
+    let settings = Arc::new(Mutex::new(settings));
+    let (sender, _messages) = std::sync::mpsc::channel();
+    let (workbench, cx) = cx.add_window_view(|_, cx| {
+        let mut workbench = Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), settings.clone(), HostSync::new(sender), cx);
+        workbench.color_themes = color_themes(&extensions).unwrap();
+        workbench
+    });
+    workbench.update(cx, |workbench, cx| {
+        workbench.host_colors = scheme(false, false);
+        workbench.restore_color_theme(cx);
+        assert_eq!(workbench.theme.settings_id, "Solarized Light");
+        workbench.host_colors = scheme(true, false);
+        workbench.restore_color_theme(cx);
+        assert_eq!(workbench.theme.settings_id, "Solarized Dark");
+        // A pick writes the setting the scheme reads.
+        workbench.set_color_theme("Dark Modern", SettingTarget::Auto, cx);
+    });
+    let written: Value = serde_json::from_str(&std::fs::read_to_string(dir.join("User/settings.json")).unwrap()).unwrap();
+    assert_eq!(written["workbench.preferredDarkColorTheme"], "Dark Modern");
+    assert_eq!(written.get("workbench.colorTheme"), None);
+}

@@ -61,7 +61,7 @@ impl Workbench {
     // shortcut: the SCM Changes and webview view headers are drawn here, not as view panes of view_panes.rs; milestone 11 moves them.
     pub(super) fn section_header(&self, title: &str, expanded: bool, separated: bool) -> Div {
         let foreground = self.foreground_or("sideBarSectionHeader.foreground");
-        let border = self.theme.color("sideBarSectionHeader.border").filter(|_| separated);
+        let border = self.theme.color("sideBarSectionHeader.border").or(self.theme.color("surface.border")).filter(|_| separated);
         div()
             .relative()
             .h(px(28.))
@@ -73,9 +73,10 @@ impl Workbench {
             .flex()
             .items_center()
             .rounded(px(4.))
-            .bg(self.color("sideBarSectionHeader.background"))
+            .bg(self.color("sideBar.background"))
+            .hover(|header| header.bg(self.color("list.hoverBackground")))
             .text_color(foreground)
-            .when_some(border, |header, border| header.child(div().absolute().top_0().left_0().right_0().h(px(1.)).bg(border)))
+            .when_some(border, |header, border| header.child(div().absolute().top_0().left(px(4.)).right(px(4.)).h(px(1.)).bg(border)))
             .child(self.icon(if expanded { "chevron-down" } else { "chevron-right" }, 16., 16., foreground).mx(px(2.)))
             .child(div().text_size(px(12.)).font_weight(gpui::FontWeight::SEMIBOLD).child(title.to_string()))
     }

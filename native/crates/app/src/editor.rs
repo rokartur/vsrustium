@@ -19,7 +19,9 @@ use crate::syntax::Tokenization;
 
 mod anchor_select;
 pub mod auto_indent;
+mod bracket_matching;
 mod caret_operations;
+pub mod clipboard;
 pub mod commands;
 pub mod cursor_undo;
 mod comment;
@@ -47,13 +49,14 @@ pub mod unicode_highlighter;
 pub mod unusual_line_terminators;
 mod view;
 pub mod whitespace;
+pub mod word_operations;
 pub mod zoom;
 
 pub use comment::LineCommentKind;
 pub use lines_operations::CaseTransform;
 pub use cursor::{Position, Selection, column_from_visible};
 use folding::{FoldingMarkers, FoldingModel};
-pub use edit::{ContentChange, ContentChanged, Copied, CursorEdit, EditReason, History, Replace, char_column, end_of, selections_after, text_between, utf16_column};
+pub use edit::{ContentChange, ContentChanged, CursorEdit, EditReason, History, Pasted, Replace, char_column, end_of, selections_after, text_between, utf16_column};
 pub use multicursor::{ColumnSelectData, Reveal};
 pub use snippet::expand as expand_snippet;
 pub use view::{HORIZONTAL_SCROLLBAR_HEIGHT, LINE_HEIGHT, Scrollbar, VERTICAL_SCROLLBAR_WIDTH, VerticalReveal, Viewport};

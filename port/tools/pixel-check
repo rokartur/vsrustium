@@ -7,7 +7,8 @@
 # (notes.txt with the find widget open on "the") and "quickopen" (notes.txt with Quick Open's file list). "chord" (the
 # file window with Cmd+K pressed: the status bar's chord message) and "titlebar" (the file window with
 # `window.commandCenter` off: the window title instead, 32px high on macOS 26) are not in the default list.
-# WINDOWS="file" checks only the listed windows, THEMES="dark hclight" only the listed themes.
+# WINDOWS="file" checks only the listed windows, THEMES="dark hclight" only the listed themes; the themes of the other
+# built-in theme extensions are abyss kimbie monokai dimmed quiet red sdark slight tnb, not in the default list.
 # Prints "window theme different anti_aliased total"; images land in $OUT/<window>.
 set -uo pipefail
 OUT=${OUT:-/tmp/pixel-check-$(basename "$PWD")}
@@ -44,7 +45,11 @@ for window in ${WINDOWS:-empty folder file main multiroot folded find quickopen}
   mkdir -p "$dir"
   FOLDER=$folder FILE=$file KEYS=$keys SETTINGS=$settings bun port/tools/ref-screenshot "$dir/reference" ${THEMES:-} >/dev/null || exit 1
   for theme in ${THEMES:-dark light hc hclight}; do
-    case $theme in dark) theme_id="Dark Modern" ;; light) theme_id="Light Modern" ;; hc) theme_id="Default High Contrast" ;; hclight) theme_id="Default High Contrast Light" ;; esac
+    case $theme in dark) theme_id="Dark Modern" ;; light) theme_id="Light Modern" ;; hc) theme_id="Default High Contrast" ;; hclight) theme_id="Default High Contrast Light" ;;
+      abyss) theme_id=Abyss ;; kimbie) theme_id="Kimbie Dark" ;; monokai) theme_id=Monokai ;; dimmed) theme_id="Monokai Dimmed" ;;
+      quiet) theme_id="Quiet Light" ;; red) theme_id=Red ;; sdark) theme_id="Solarized Dark" ;; slight) theme_id="Solarized Light" ;;
+      tnb) theme_id="Tomorrow Night Blue" ;;
+    esac
     user_data=$(mktemp -d)
     [[ -n $settings ]] && mkdir -p "$user_data/User" && echo "$settings" >"$user_data/User/settings.json"
     VSCODE_GPUI_EXTENSIONS=${VSCODE_GPUI_EXTENSIONS:-$HOME/Developer/vscode-ref/extensions} \

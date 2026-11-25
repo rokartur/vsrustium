@@ -175,6 +175,33 @@ impl Tokenization {
         starts
     }
 
+    /// The tokens of line `index` for the HTML copy, in chars, merged where their metadata is equal as
+    /// vscode-textmate's `tokenizeLine2` gives them; one default token without a grammar.
+    pub fn html_tokens(&self, theme: &Theme, lines: &[String], index: usize) -> Vec<crate::editor::clipboard::HtmlToken> {
+        use crate::editor::clipboard::HtmlToken;
+        let text = &lines[index];
+        let default_token = vec![HtmlToken { end: text.chars().count(), foreground: 1, font_style: 0 }];
+        if self.grammar.is_none() {
+            return default_token;
+        }
+        self.tokenize_to(lines, index);
+        let tokenized = self.lines.borrow();
+        let mut tokens: Vec<(HtmlToken, _)> = Vec::new();
+        for token in &tokenized[index].0 {
+            let style = theme.tokens.style(&token.scopes);
+            let metadata = (style, token.token_type, token.scopes.language.clone());
+            let end = text[..token.end.min(text.len())].chars().count();
+            match tokens.last_mut() {
+                Some((last, last_metadata)) if *last_metadata == metadata => last.end = end,
+                _ => tokens.push((HtmlToken { end, foreground: style.foreground, font_style: style.font_style.max(0) }, metadata)),
+            }
+        }
+        if tokens.is_empty() {
+            return default_token;
+        }
+        tokens.into_iter().map(|(token, _)| token).collect()
+    }
+
     /// `getLanguageId` of the token at byte `offset` of line `index`: an embedded language, else none.
     pub fn language_at(&self, lines: &[String], index: usize, offset: usize) -> Option<std::rc::Rc<str>> {
         self.grammar.as_ref()?;
@@ -258,6 +285,14 @@ impl Tokenization {
         self.brackets = OnceCell::new();
     }
 
+    /// tokenization.ts `ForceRetokenizeAction`: `resetTokenization`, then `forceTokenization` of every line.
+    pub fn force_retokenize(&mut self, lines: &[String]) {
+        self.invalidate_from(0);
+        if self.grammar.is_some() && !lines.is_empty() {
+            self.tokenize_to(lines, lines.len() - 1);
+        }
+    }
+
     /// The bracket pairs hold token styles of the theme they were paired under.
     pub fn theme_changed(&mut self) {
         self.brackets = OnceCell::new();
@@ -320,7 +355,7 @@ fn bracket_colors(theme: &Theme) -> Vec<Hsla> {
 }
 
 /// The bracket colors over the token styles: a bracket keeps its token's font style.
-fn overlay_colors(highlights: Vec<(Range<usize>, HighlightStyle)>, colors: &[(Range<usize>, Hsla)]) -> Vec<(Range<usize>, HighlightStyle)> {
+pub(crate) fn overlay_colors(highlights: Vec<(Range<usize>, HighlightStyle)>, colors: &[(Range<usize>, Hsla)]) -> Vec<(Range<usize>, HighlightStyle)> {
     let mut result = Vec::new();
     for (range, style) in highlights {
         let mut start = range.start;
@@ -423,6 +458,19 @@ mod tests {
             state = Some(next);
         }
         result
+    }
+
+    #[test]
+    fn force_retokenize_tokenizes_every_line_again() {
+        let extensions = exthost::scan::scan_builtin_extensions(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../extensions")).unwrap();
+        let languages = Languages::new(&extensions);
+        let lines: Vec<String> = ["let a = 1;", "/* open", "still comment */", "a;"].map(String::from).into();
+        let mut tokens = Tokenization::new(languages.grammars.grammar("typescript"));
+        tokens.tokenize_to(&lines, 0);
+        tokens.force_retokenize(&lines);
+        assert_eq!(tokens.lines.borrow().len(), 4);
+        assert!(tokens.line_tokens(&lines, 2).iter().all(|(_, token_type, _)| *token_type == textmate::StandardTokenType::Comment));
+        Tokenization::new(None).force_retokenize(&lines);
     }
 
     /// Every colorize-tests fixture gives the reference's tokens, scopes and, in each default theme, colors.

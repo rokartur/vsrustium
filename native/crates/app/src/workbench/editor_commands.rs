@@ -2,6 +2,7 @@
 //! linesOperations.ts, clipboard.ts, multicursor.ts, folding.ts), so keybindings and
 //! `vscode.commands.executeCommand` run them.
 
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use config::configuration::Overrides;
@@ -11,12 +12,13 @@ use serde_json::{Value, json};
 use super::Workbench;
 use crate::commands::Outcome;
 use crate::editor::auto_indent::{AutoIndent, Strategy};
-use crate::editor::{CaseTransform, ContentChanged, Copied, LineCommentKind, OpenEditor, Selection, commands, smart_select};
+use crate::editor::word_operations::{self, AutoClosing, WordClassifier, WordDelete};
+use crate::editor::{CaseTransform, ContentChanged, LineCommentKind, OpenEditor, Pasted, Selection, clipboard, commands, smart_select};
 
 type EditorCommand = fn(&mut OpenEditor) -> Option<ContentChanged>;
 
 /// Cursor and edit commands: `EditorCommand`s, which run on the focused editor or else the active one.
-const EDITOR_COMMANDS: [(&str, EditorCommand); 48] = [
+const EDITOR_COMMANDS: [(&str, EditorCommand); 34] = [
     ("cursorLeft", |editor| { editor.move_horizontally(false, false); None }),
     ("cursorLeftSelect", |editor| { editor.move_horizontally(false, true); None }),
     ("cursorRight", |editor| { editor.move_horizontally(true, false); None }),
@@ -25,17 +27,6 @@ const EDITOR_COMMANDS: [(&str, EditorCommand); 48] = [
     ("cursorUpSelect", |editor| { editor.move_vertically(false, true); None }),
     ("cursorDown", |editor| { editor.move_vertically(true, false); None }),
     ("cursorDownSelect", |editor| { editor.move_vertically(true, true); None }),
-    ("cursorWordLeft", |editor| { editor.move_word(false, false); None }),
-    ("cursorWordLeftSelect", |editor| { editor.move_word(false, true); None }),
-    ("cursorWordEndRight", |editor| { editor.move_word(true, false); None }),
-    ("cursorWordEndRightSelect", |editor| { editor.move_word(true, true); None }),
-    ("cursorWordPartLeft", |editor| { editor.move_word_part(false, false); None }),
-    ("cursorWordPartLeftSelect", |editor| { editor.move_word_part(false, true); None }),
-    // wordPartOperations.ts registerCommandAlias: the previous ids of the two above.
-    ("cursorWordPartStartLeft", |editor| { editor.move_word_part(false, false); None }),
-    ("cursorWordPartStartLeftSelect", |editor| { editor.move_word_part(false, true); None }),
-    ("cursorWordPartRight", |editor| { editor.move_word_part(true, false); None }),
-    ("cursorWordPartRightSelect", |editor| { editor.move_word_part(true, true); None }),
     ("cursorHome", |editor| { editor.move_to_line_edge(false, false); None }),
     ("cursorHomeSelect", |editor| { editor.move_to_line_edge(false, true); None }),
     ("cursorEnd", |editor| { editor.move_to_line_edge(true, false); None }),
@@ -47,10 +38,6 @@ const EDITOR_COMMANDS: [(&str, EditorCommand); 48] = [
     ("expandLineSelection", |editor| { editor.expand_line_selection(); None }),
     ("deleteLeft", OpenEditor::delete_left),
     ("deleteRight", OpenEditor::delete_right),
-    ("deleteWordLeft", OpenEditor::delete_word_left),
-    ("deleteWordRight", OpenEditor::delete_word_right),
-    ("deleteWordPartLeft", OpenEditor::delete_word_part_left),
-    ("deleteWordPartRight", OpenEditor::delete_word_part_right),
     ("deleteAllLeft", OpenEditor::delete_all_left),
     ("deleteAllRight", OpenEditor::delete_all_right),
     ("editor.action.copyLinesUpAction", |editor| editor.copy_lines(false)),
@@ -105,6 +92,7 @@ impl Workbench {
                 workbench.run_on_active_editor(command, cx)
             });
         }
+        self.register_word_commands();
         for (id, command) in INDENTING_EDITOR_COMMANDS {
             self.commands.register(id, move |workbench, _, _, cx| {
                 if workbench.edit_blocked(false, cx) {
@@ -276,6 +264,71 @@ impl Workbench {
         self.commands.register("cursorRedo", |workbench, _, _, cx| workbench.run_cursor_undo(true, cx));
         self.commands.register("editor.action.clipboardCopyAction", |workbench, _, window, cx| workbench.copy_to_clipboard(false, window, cx));
         self.commands.register("editor.action.clipboardCutAction", |workbench, _, window, cx| workbench.copy_to_clipboard(true, window, cx));
+        self.commands.register("editor.action.jumpToBracket", |workbench, _, _, cx| {
+            let languages = &workbench.languages;
+            let Some(editor) = workbench.editors.active_mut() else { return Outcome::done() };
+            let selections_before = editor.selections.clone();
+            editor.jump_to_bracket(languages);
+            workbench.editor_command_ran(None, selections_before, cx)
+        });
+        self.commands.register("editor.action.selectToBracket", |workbench, args, _, cx| {
+            let select_brackets = args.first().is_none_or(|args| args["selectBrackets"] != json!(false));
+            let languages = &workbench.languages;
+            let Some(editor) = workbench.editors.active_mut() else { return Outcome::done() };
+            let selections_before = editor.selections.clone();
+            editor.select_to_bracket(languages, select_brackets);
+            workbench.editor_command_ran(None, selections_before, cx)
+        });
+        self.commands.register("editor.action.removeBrackets", |workbench, _, _, cx| {
+            if workbench.edit_blocked(false, cx) {
+                return Outcome::done();
+            }
+            let languages = &workbench.languages;
+            let Some(editor) = workbench.editors.active_mut() else { return Outcome::done() };
+            let selections_before = editor.selections.clone();
+            let changes = editor.remove_brackets(languages);
+            workbench.editor_changes_ran(changes, selections_before, cx)
+        });
+        // textMateTokenizationFeature.contribution.ts, which vscode-colorize-perf-tests times.
+        self.commands.register("_workbench.colorizeTextMateTokens", |workbench, args, _, _| {
+            let path = args.first().and_then(|uri| uri["path"].as_str()).map(PathBuf::from);
+            let text = path.as_ref().and_then(|path| std::fs::read_to_string(path).ok());
+            let (Some(path), Some(text)) = (path, text) else {
+                let resource = args.first().and_then(|uri| uri["path"].as_str()).map_or("undefined".into(), |path| crate::editor::uri_string("file", Path::new(path)));
+                return Outcome::error(format!("Cannot resolve text model for resource {resource}"));
+            };
+            let lines: Vec<&str> = text.split("\r\n").flat_map(|line| line.split(['\r', '\n'])).collect();
+            let language = workbench.languages.language_of(&path, lines[0]);
+            let Some(grammar) = workbench.languages.grammars.grammar(language) else {
+                return Outcome::error(format!("Cannot resolve tokenizer for language {language}"));
+            };
+            let started = std::time::Instant::now();
+            let mut state = None;
+            for line in lines {
+                if let Ok((_, next)) = grammar.tokenize_line(line, state.as_ref()) {
+                    state = Some(next);
+                }
+            }
+            Outcome::Ready(Ok(json!({ "tokenizeTime": started.elapsed().as_secs_f64() * 1000. })))
+        });
+        self.commands.register("editor.action.forceRetokenize", |workbench, _, _, cx| {
+            let Some(editor) = workbench.editors.active_mut() else { return Outcome::done() };
+            let started = std::time::Instant::now();
+            editor.document.tokens.force_retokenize(&editor.document.lines);
+            eprintln!("tokenization took {}", started.elapsed().as_secs_f64() * 1000.);
+            cx.notify();
+            Outcome::done()
+        });
+        // clipboard.ts `ExecCommandCopyWithSyntaxHighlightingAction`: an editor action, so the active editor without focus too.
+        self.commands.register("editor.action.clipboardCopyWithSyntaxHighlightingAction", |workbench, _, window, cx| {
+            let Some(editor) = workbench.editors.active() else { return Outcome::done() };
+            if !workbench.editor_bool_setting(editor, "editor.emptySelectionClipboard") && editor.selection().is_empty() {
+                return Outcome::done();
+            }
+            window.focus(&workbench.editor_focus, cx);
+            workbench.copy_editor_text(true, cx);
+            Outcome::done()
+        });
         self.commands.register("editor.action.clipboardPasteAction", |workbench, _, window, cx| {
             if !workbench.editor_focus.is_focused(window) {
                 return workbench.input_text_command("editor.action.clipboardPasteAction", window, cx).unwrap_or(Outcome::done());
@@ -286,24 +339,147 @@ impl Workbench {
             let Some(ClipboardEntry::String(clipboard)) = cx.read_from_clipboard().and_then(|item| item.entries().first().cloned()) else { return Outcome::done() };
             let metadata = clipboard.metadata_json::<Value>().unwrap_or_default();
             let multicursor_text: Option<Vec<String>> = serde_json::from_value(metadata["multicursorText"].clone()).ok();
-            let from_empty_selection = metadata["isFromEmptySelection"] == json!(true);
             let Some(editor) = workbench.editors.active() else { return Outcome::done() };
+            let empty_selection_clipboard = workbench.editor_bool_setting(editor, "editor.emptySelectionClipboard");
+            let pasted = Pasted {
+                text: clipboard.text(),
+                paste_on_new_line: empty_selection_clipboard && metadata["isFromEmptySelection"] == json!(true),
+                multicursor_text: multicursor_text.as_deref(),
+                is_block: metadata["isBlock"] == json!(true),
+            };
             let overrides = Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
-            let overtype = workbench.overtype && workbench.settings.lock().unwrap().get_value(Some("editor.overtypeOnPaste"), &overrides) != Some(json!(false));
-            workbench.run_on_active_editor(|editor: &mut OpenEditor| editor.paste(clipboard.text(), from_empty_selection, multicursor_text.as_deref(), overtype), cx)
+            let settings = workbench.settings.lock().unwrap();
+            let spread = settings.get_value(Some("editor.multiCursorPaste"), &overrides) != Some(json!("full"));
+            let overtype = workbench.overtype && settings.get_value(Some("editor.overtypeOnPaste"), &overrides) != Some(json!(false));
+            drop(settings);
+            workbench.run_on_active_editor(|editor: &mut OpenEditor| editor.paste(pasted, spread, overtype), cx)
         });
     }
 
+    /// clipboard.ts `registerExecCommandImpl` for the editor with text focus: nothing for an empty selection
+    /// without `editor.emptySelectionClipboard`, else the copy, then the cut.
     fn copy_to_clipboard(&mut self, cut: bool, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
         let Some(editor) = self.editors.active().filter(|_| self.editor_focus.is_focused(window)) else {
             let command = if cut { "editor.action.clipboardCutAction" } else { "editor.action.clipboardCopyAction" };
             return self.input_text_command(command, window, cx).unwrap_or(Outcome::done());
         };
-        cx.write_to_clipboard(clipboard_item(editor.copy_text()));
+        let empty_selection_clipboard = self.editor_bool_setting(editor, "editor.emptySelectionClipboard");
+        if !empty_selection_clipboard && editor.selection().is_empty() {
+            return Outcome::done();
+        }
+        self.copy_editor_text(false, cx);
         match cut && !self.edit_blocked(true, cx) {
-            true => self.run_on_active_editor(OpenEditor::cut, cx),
+            true => self.run_on_active_editor(|editor| editor.cut(empty_selection_clipboard), cx),
             false => Outcome::done(),
         }
+    }
+
+    /// clipboardUtils.ts `generateDataToCopy`: the active editor's text with its metadata, and its HTML when
+    /// `force` (Copy with Syntax Highlighting) or `editor.copyWithSyntaxHighlighting` and under 65536 long.
+    fn copy_editor_text(&mut self, force: bool, cx: &mut Context<Self>) {
+        let editor = self.editors.active().expect("the copy commands check for an active editor");
+        let empty_selection_clipboard = self.editor_bool_setting(editor, "editor.emptySelectionClipboard");
+        let copied = editor.copy_text(empty_selection_clipboard);
+        // `sourceText.length`: the pieces when there are several, else the UTF-16 length.
+        let length = copied.multicursor_text.as_ref().map_or_else(|| copied.text.encode_utf16().count(), Vec::len);
+        let rich_text = (force || (self.editor_bool_setting(editor, "editor.copyWithSyntaxHighlighting") && length < 65536)).then(|| self.rich_text_to_copy(empty_selection_clipboard)).flatten();
+        let (html, mode) = rich_text.unzip();
+        let metadata = json!({
+            "version": 1,
+            "isFromEmptySelection": copied.from_empty_selection,
+            "isBlock": copied.is_block,
+            "multicursorText": copied.multicursor_text,
+            "mode": mode,
+        });
+        cx.write_to_clipboard(ClipboardItem::new_string_with_json_metadata(copied.text, metadata));
+        if let Some(html) = html {
+            crate::clipboard::write_html(&html);
+        }
+    }
+
+    /// `ViewModel.getRichTextToCopy` for the active editor with the theme's token colors and the editor font.
+    fn rich_text_to_copy(&self, empty_selection_clipboard: bool) -> Option<(String, String)> {
+        let editor = self.editors.active()?;
+        let overrides = Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
+        let settings = self.settings.lock().unwrap();
+        let setting = |key| settings.get_value(Some(key), &overrides);
+        let font = clipboard::font_info(setting("editor.fontFamily"), setting("editor.fontWeight"), setting("editor.fontSize"), setting("editor.lineHeight"), 1. + f64::from(self.editor_zoom.level()) * 0.1);
+        drop(settings);
+        let mut color_map = vec!["#000000".to_string()];
+        color_map.extend(self.theme.tokens.color_map().iter().skip(1).map(|color| color[..7].to_lowercase()));
+        let document = &editor.document;
+        let line_tokens = |line| document.tokens.html_tokens(&self.theme, &document.lines, line);
+        clipboard::rich_text_to_copy(&document.lines, &document.language_id, &editor.selections, empty_selection_clipboard, &font, &color_map, document.indentation.tab_size, line_tokens)
+    }
+
+    /// A boolean editor setting for the editor's resource and language that defaults to true.
+    fn editor_bool_setting(&self, editor: &OpenEditor, key: &str) -> bool {
+        let overrides = Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
+        self.settings.lock().unwrap().get_value(Some(key), &overrides) != Some(json!(false))
+    }
+
+    /// wordOperations.ts and wordPartOperations.ts.
+    fn register_word_commands(&mut self) {
+        for (id, word_move) in word_operations::MOVE_COMMANDS {
+            self.commands.register(id, move |workbench, _, _, cx| {
+                let Some(classifier) = workbench.word_classifier(word_move.default_separators) else { return Outcome::done() };
+                workbench.run_on_active_editor(|editor| { editor.move_word(&classifier, word_move.navigation, word_move.right, word_move.select); None }, cx)
+            });
+        }
+        // cursorWordPartStartLeft and its Select are registerCommandAlias ids of the left moves.
+        let part_moves = [("cursorWordPartLeft", false, false), ("cursorWordPartLeftSelect", false, true), ("cursorWordPartStartLeft", false, false), ("cursorWordPartStartLeftSelect", false, true), ("cursorWordPartRight", true, false), ("cursorWordPartRightSelect", true, true)];
+        for (id, right, select) in part_moves {
+            self.commands.register(id, move |workbench, _, _, cx| {
+                let Some(classifier) = workbench.word_classifier(false) else { return Outcome::done() };
+                workbench.run_on_active_editor(|editor| { editor.move_word_part(&classifier, right, select); None }, cx)
+            });
+        }
+        for (id, word_delete) in word_operations::DELETE_COMMANDS {
+            self.commands.register(id, move |workbench, _, _, cx| {
+                if workbench.edit_blocked(false, cx) {
+                    return Outcome::done();
+                }
+                workbench.run_word_delete(word_delete, id, cx)
+            });
+        }
+        self.commands.register("deleteInsideWord", |workbench, args, _, cx| {
+            if workbench.edit_blocked(false, cx) {
+                return Outcome::done();
+            }
+            let only_word = args.first().is_some_and(|args| args["onlyWord"] == json!(true));
+            let Some(classifier) = workbench.word_classifier(false) else { return Outcome::done() };
+            workbench.run_on_active_editor(|editor| editor.delete_inside_word(&classifier, only_word), cx)
+        });
+    }
+
+    /// `getMapForWordSeparators` with the active editor's `editor.wordSeparators` (or the default one) and
+    /// `editor.wordSegmenterLocales`.
+    fn word_classifier(&self, default_separators: bool) -> Option<WordClassifier> {
+        let editor = self.editors.active()?;
+        let overrides = Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
+        let settings = self.settings.lock().unwrap();
+        let configured = settings.get_value(Some("editor.wordSeparators"), &overrides);
+        let separators = match configured.as_ref().and_then(Value::as_str) {
+            Some(separators) if !default_separators => separators,
+            _ => word_operations::DEFAULT_WORD_SEPARATORS,
+        };
+        let locales = word_operations::segmenter_locales(settings.get_value(Some("editor.wordSegmenterLocales"), &overrides).as_ref());
+        Some(WordClassifier::new(separators, &locales))
+    }
+
+    /// `DeleteWordCommand.runEditorCommand` with the auto-closing settings and pairs of the editor's language.
+    /// The port does not auto-close typed brackets, so no cursor has auto-closed characters.
+    fn run_word_delete(&mut self, word_delete: WordDelete, id: &'static str, cx: &mut Context<Self>) -> Outcome {
+        let Some(classifier) = self.word_classifier(false) else { return Outcome::done() };
+        let editor = self.editors.active().expect("word_classifier found it");
+        let overrides = Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
+        let settings = self.settings.lock().unwrap();
+        let setting = |key| settings.get_value(Some(key), &overrides).and_then(|value| value.as_str().map(str::to_string)).unwrap_or_default();
+        let (delete, brackets, quotes) = (setting("editor.autoClosingDelete"), setting("editor.autoClosingBrackets"), setting("editor.autoClosingQuotes"));
+        drop(settings);
+        let pairs = self.languages.rules(&editor.document.language_id).map(|rules| rules.auto_closing_pairs.clone()).unwrap_or_default();
+        let auto_closing = AutoClosing { delete: &delete, brackets: &brackets, quotes: &quotes, pairs: &pairs, auto_closed: &[] };
+        self.run_on_active_editor(|editor| editor.delete_word(&classifier, &auto_closing, word_delete, id), cx)
     }
 
     /// Runs an editor command, then tells the host and scrolls the cursor into view as a key press does.
@@ -322,6 +498,11 @@ impl Workbench {
         let strategy = Strategy::from_setting(self.settings.lock().unwrap().get_value(Some("editor.autoIndent"), &overrides).as_ref());
         let selections_before = editor.selections.clone();
         let changes = command(editor, AutoIndent { languages: &self.languages, strategy });
+        self.editor_changes_ran(changes, selections_before, cx)
+    }
+
+    /// An editor command that made several model changes: each reaches the host in turn.
+    fn editor_changes_ran(&mut self, changes: Vec<ContentChanged>, selections_before: Vec<Selection>, cx: &mut Context<Self>) -> Outcome {
         if changes.is_empty() {
             return self.editor_command_ran(None, selections_before, cx);
         }
@@ -404,8 +585,5 @@ impl Workbench {
     }
 }
 
-/// The copied text with the `ClipboardStoredMetadata` paste reads back.
-fn clipboard_item(copied: Copied) -> ClipboardItem {
-    let metadata = json!({ "isFromEmptySelection": copied.from_empty_selection, "multicursorText": copied.multicursor_text });
-    ClipboardItem::new_string_with_json_metadata(copied.text, metadata)
-}
+#[cfg(test)]
+mod tests;

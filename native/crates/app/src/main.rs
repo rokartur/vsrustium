@@ -40,6 +40,7 @@ mod languages;
 mod local_history;
 mod main_thread;
 mod main_thread_commands;
+mod main_thread_errors;
 mod main_thread_message;
 mod main_thread_output;
 mod main_thread_progress;
@@ -242,12 +243,14 @@ fn main() -> anyhow::Result<()> {
                 host.send_color_theme(theme.kind);
                 let mut workbench = Workbench::new(theme, app_root.clone(), workspace.clone(), languages, settings.clone(), host, cx);
                 perf::mark("code/didCreateWorkbench");
+                cx.observe_window_appearance(window, |workbench, _, cx| workbench.host_color_scheme_changed(cx)).detach();
                 let window_logs = exthost::session::window_logs_path(&user_data);
                 workbench.register_window_log(window_logs.join("renderer.log"));
                 let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
                 workbench.start_logs(output::log_levels::argv_file(&home), window_logs.parent().expect("a session folder").to_path_buf(), cx);
                 workbench.skip_dialogs = development.as_ref().is_some_and(|development| development.tests_path.is_some());
                 workbench.refresh_keyboard_mapper();
+                workbench.extension_development = development.is_some();
                 workbench.load_keybindings(keybindings::default_keybindings(&extensions), keybindings_file.clone(), cx);
                 workbench.watch_settings_files(cx);
                 workbench.start_file_watcher(cx);
@@ -301,8 +304,9 @@ fn main() -> anyhow::Result<()> {
                 cx.spawn_in(window, async move |workbench, cx| {
                     while let Some(request) = requests.next().await {
                         let req = request.req;
-                        // A cancellation answers nothing itself; the request it cancels gets its answer.
-                        let cancel = request.method == "$cancel";
+                        // A cancellation answers nothing itself; the request it cancels gets its answer. An observed call
+                        // was answered by the session.
+                        let cancel = request.method == "$cancel" || req == exthost::session::OBSERVED_REQ;
                         let Ok(outcome) = workbench.update_in(cx, |workbench, window, cx| workbench.handle_host_request(request, window, cx)) else { break };
                         let result = match outcome {
                             _ if cancel => continue,
@@ -496,16 +500,14 @@ fn save_screenshot(_window: &Window, _path: &std::path::Path) -> anyhow::Result<
     anyhow::bail!("built without the screenshot feature: cargo build --features screenshot")
 }
 
-/// `workbench.colorTheme`; a theme no extension contributes falls back to the default, as ThemeService does.
+/// The color theme setting for the host scheme (`getColorThemeSettingId`); a theme no extension contributes falls back to the default, as ThemeService does.
 fn settings_theme(extensions: &[ScannedExtension], settings: &Settings) -> anyhow::Result<theme::Theme> {
-    // workbenchThemeService.ts: a host in high contrast picks the preferred high contrast theme.
-    let detect_high_contrast = settings.get_value(Some("window.autoDetectHighContrast"), &Overrides::default()) != Some(serde_json::Value::Bool(false));
-    let key = host_color::preferred_high_contrast_setting(detect_high_contrast, host_color::high_contrast(), host_color::dark()).unwrap_or("workbench.colorTheme");
+    let key = workbench::themes::color_theme_setting_id(settings, workbench::themes::host_color_scheme());
     let id = settings.get_value(Some(key), &Overrides::default());
     if let Some(theme) = id.as_ref().and_then(|id| id.as_str()).and_then(|id| load_theme(extensions, id).ok()) {
         return Ok(theme);
     }
-    let default = &settings.registry.property("workbench.colorTheme").expect("workbench.colorTheme is registered").default;
+    let default = &settings.registry.property(key).expect("the color theme settings are registered").default;
     load_theme(extensions, default.as_str().expect("the default theme is a settings id"))
 }
 

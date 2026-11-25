@@ -125,6 +125,11 @@ async function run(app: string, pid: number, folder: string) {
 			const text = (await Bun.$`pbpaste`.text()).replaceAll(folder, '<folder>');
 			writeFileSync(resolve(outDir, `${app}-${step.clipboard}.txt`), text);
 			console.log(`${app}-${step.clipboard}.txt: ${JSON.stringify(text)}`);
+			const html = await Bun.$`osascript -l JavaScript -e ${"ObjC.import('AppKit'); const h = $.NSPasteboard.generalPasteboard.stringForType('public.html'); h.isNil() ? '' : h.js"}`.text();
+			if (html.trim()) {
+				writeFileSync(resolve(outDir, `${app}-${step.clipboard}.html`), html.trimEnd());
+				console.log(`${app}-${step.clipboard}.html: ${html.trimEnd()}`);
+			}
 		}
 		await Bun.sleep(400);
 	}
