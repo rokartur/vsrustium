@@ -24,6 +24,7 @@ use serde_json::json;
 use super::Workbench;
 use super::minimap_view::minimap_info;
 use super::search_editor_view::SEARCH_EDITOR_SCHEME;
+use super::webview_panels::WEBVIEW_PANEL_SCHEME;
 use crate::brackets::BracketRange;
 use crate::editor::minimap::MinimapLayoutInfo;
 use crate::editor::{
@@ -66,13 +67,14 @@ impl Workbench {
             .bg(self.color("editor.background"))
             .border_color(self.color("surface.border"))
             .child(self.tab_strip(cx))
-            // searchEditor.ts draws its query widget where a text editor has its breadcrumbs.
-            .map(|part| match editor.document.scheme == SEARCH_EDITOR_SCHEME {
-                true => part.child(self.search_editor_query(window, cx)),
-                false => part.child(self.breadcrumbs(editor)),
+            .map(|part| match editor.document.scheme.as_str() {
+                // A webview editor has no breadcrumbs: its resource has no file system provider.
+                WEBVIEW_PANEL_SCHEME => part.child(self.webview_editor_body(editor)),
+                // searchEditor.ts draws its query widget where a text editor has its breadcrumbs.
+                SEARCH_EDITOR_SCHEME => part.child(self.search_editor_query(window, cx)),
+                _ => part.child(self.breadcrumbs(editor)),
             })
-            .children(self.unicode_banner(editor, cx))
-            .child(self.text_area(editor, window, cx))
+            .when(editor.document.scheme != WEBVIEW_PANEL_SCHEME, |part| part.children(self.unicode_banner(editor, cx)).child(self.text_area(editor, window, cx)))
             // The active tab reaches into the part's top border, which Chrome still draws over it.
             .child(div().absolute().inset(px(-1.)).border_1().rounded(px(8.)).border_color(self.color("surface.border")))
     }
@@ -138,8 +140,8 @@ impl Workbench {
     /// editorTabsControl.ts `getHoverTitle`: the long title, with a preview note on a preview editor's tab.
     fn tab_hover(&self, index: usize) -> impl IntoElement {
         let editor = &self.editors.editors[index];
-        // `getTitle(Verbosity.LONG)`: a search editor's is its name.
-        let title = match editor.document.scheme == SEARCH_EDITOR_SCHEME {
+        // `getTitle(Verbosity.LONG)`: a search editor's and a webview's is its name.
+        let title = match matches!(editor.document.scheme.as_str(), SEARCH_EDITOR_SCHEME | WEBVIEW_PANEL_SCHEME) {
             true => self.editor_name(editor),
             false => crate::quick_input::path_label(&editor.document.path, None),
         };

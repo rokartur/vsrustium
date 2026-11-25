@@ -138,6 +138,7 @@ impl Workbench {
                 editor.document.tokens.theme_changed();
             }
             self.host.send_color_theme(self.theme.kind);
+            self.restyle_webviews();
             cx.notify();
         }
         if target == SettingTarget::Preview {

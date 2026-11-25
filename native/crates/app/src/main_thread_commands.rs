@@ -18,6 +18,7 @@ impl Workbench {
             ("MainThreadProgress", "$startProgress") => self.start_progress(&request.args, window, cx),
             ("MainThreadProgress", "$progressReport") => self.report_progress(&request.args, window, cx),
             ("MainThreadProgress", "$progressEnd") => self.end_progress(&request.args, window, cx),
+            ("MainThreadWebviews" | "MainThreadWebviewPanels", method) => self.handle_webview_request(method, &request.args, window, cx),
             ("MainThreadStatusBar", "$setEntry") => self.set_extension_status_entry(&request.args, cx),
             ("MainThreadStatusBar", "$disposeEntry") => self.dispose_extension_status_entry(&request.args, cx),
             ("MainThreadCommands", "$registerCommand") => {

@@ -299,7 +299,7 @@ impl Session {
         self.send_request(proxy, method, args.into_iter().map(Arg::Json).collect())
     }
 
-    fn send_request(&mut self, proxy: &str, method: &str, args: Vec<Arg>) -> u32 {
+    pub fn send_request(&mut self, proxy: &str, method: &str, args: Vec<Arg>) -> u32 {
         self.send(proxy, method, args, false)
     }
 

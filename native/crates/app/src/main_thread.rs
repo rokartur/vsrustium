@@ -96,7 +96,12 @@ impl MainThread for WorkbenchMainThread {
                 work.run(&mut Providers { session: &mut *session });
                 continue;
             }
-            let req = session.notify(message.proxy, message.method, message.args);
+            let mut args: Vec<Arg> = message.args.into_iter().map(Arg::Json).collect();
+            // extHostWebview.ts `$onMessage` reads its last argument as a SerializableObjectWithBuffers.
+            if (message.proxy, message.method) == ("ExtHostWebviews", "$onMessage") && let Some(Arg::Json(json)) = args.pop() {
+                args.push(Arg::JsonWithBuffers { json, buffers: Vec::new() });
+            }
+            let req = session.send_request(message.proxy, message.method, args);
             if let Some(reply) = message.reply {
                 self.waiting.push((req, reply));
             }

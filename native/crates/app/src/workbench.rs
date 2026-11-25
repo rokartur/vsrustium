@@ -41,6 +41,7 @@ mod text_input;
 mod title_bar_actions;
 mod unicode_highlight;
 mod unusual_line_terminators;
+mod webview_panels;
 
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -133,6 +134,7 @@ pub struct Workbench {
     pub search: search_view::SearchView,
     pub search_editors: search_editor_view::SearchEditors,
     pub search_editor_widget: search_editor_widget::SearchEditorWidget,
+    pub webview_panels: webview_panels::WebviewPanels,
     /// `MenuRegistry`.
     pub menus: Vec<crate::menus::MenuItem>,
     pub(crate) context_menu: Option<context_menu::ContextMenu>,
@@ -155,6 +157,7 @@ impl Render for Workbench {
         // Cursors move and editors switch on many paths; every one of them renders.
         self.close_editor_message_on_cursor_change(cx);
         self.follow_marker_navigation_cursor();
+        self.update_webview_panels(window, cx);
         let viewport = window.viewport_size();
         let window_border = self.theme.color("window.activeBorder");
         // The reference lays the grid out at the full window size and shifts it inside the 1px window border.
@@ -255,6 +258,7 @@ impl Workbench {
             search: search_view::SearchView::new(cx),
             search_editors: HashMap::new(),
             search_editor_widget: search_editor_widget::SearchEditorWidget::new(cx),
+            webview_panels: Default::default(),
             menus: crate::menus::workbench_menus(),
             context_menu: None,
             context_menus_shown: 0,
@@ -363,6 +367,7 @@ impl Workbench {
         self.find_editor_changed();
         self.schedule_keybinding_marks(cx);
         self.update_marker_decorations(None);
+        self.sync_webview_panels();
         self.host.send_changes(&self.editors);
         cx.notify();
     }
