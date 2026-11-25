@@ -1,4 +1,4 @@
-#![allow(dead_code, reason = "tasks and terminal callers are not wired yet")]
+//! configurationResolver's variable resolution (variableResolver.ts): `${...}` in tasks, terminal settings and sequences.
 
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};

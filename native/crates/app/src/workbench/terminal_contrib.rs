@@ -73,11 +73,14 @@ impl Workbench {
         }
     }
 
-    /// `terminalSendSequenceCommand`: the text as is to the active terminal.
-    // shortcut: `${...}` variables are not resolved, the port has no configurationResolver yet; port it with that service.
+    /// `terminalSendSequenceCommand`: the text with its variables resolved against the first folder.
     fn send_sequence(&mut self, text: &str) {
+        let resolved = match self.resolve_variables(&json!(text), None) {
+            Ok(resolved) => resolved.as_str().unwrap_or(text).to_owned(),
+            Err(message) => return self.notify_error(message),
+        };
         if let Some(instance) = self.terminal_view.active_instance_mut() {
-            instance.send_text(text, false);
+            instance.send_text(&resolved, false);
         }
     }
 

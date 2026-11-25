@@ -289,6 +289,18 @@ impl Workbench {
             return;
         };
         let custom = execution["customExecution"] == "customExecution";
+        // `resolveVariablesFromSet`: the command, args and options of a shell or process task.
+        let execution = match custom {
+            true => execution,
+            false => match self.resolve_variables(&execution, task.workspace_folder.clone()) {
+                Ok(resolved) => resolved,
+                Err(message) => {
+                    self.notify_error(message);
+                    let _ = reply.send(None);
+                    return;
+                }
+            },
+        };
         let (launch, echo) = match custom {
             true => (ShellLaunchConfig { name: Some(task.name.clone()), extension_pty: true, is_feature_terminal: true, cwd: self.terminal_initial_cwd(), ..Default::default() }, task.label.clone()),
             false => self.task_launch_config(&task, &execution),
@@ -344,6 +356,33 @@ impl Workbench {
     pub(super) fn restart_task_instance(&mut self, task: &Task, terminal: u32, window: &mut Window, cx: &mut Context<Self>) {
         self.kill_terminal(terminal, window, cx);
         drop(self.run_task(task.clone(), window, cx));
+    }
+
+    /// What `configurationResolverService.resolveAsync` reads: the folders, `folder` for `${workspaceFolder}`, the
+    /// active editor's file and cursor.
+    // shortcut: `${selectedText}` stays unresolved, the editor model has no range text accessor here; add it with one.
+    pub(super) fn variable_context(&self, folder: Option<PathBuf>) -> crate::variables::VariableContext {
+        let folders: Vec<(String, PathBuf)> = self.workspace().map(|workspace| workspace.folders.iter().map(|folder| (folder.name.clone(), folder.path.clone())).collect()).unwrap_or_default();
+        let active = self.editors.active().filter(|editor| editor.document.scheme == "file");
+        let cursor = active.map(|editor| editor.selections[0].head);
+        crate::variables::VariableContext {
+            folder: folder.or_else(|| folders.first().map(|(_, path)| path.clone())),
+            folders,
+            file: active.map(|editor| editor.document.path.clone()),
+            line_number: cursor.map(|position| position.line as u32 + 1),
+            column_number: cursor.map(|position| position.column as u32 + 1),
+            selected_text: None,
+            exec_path: std::env::current_exe().ok(),
+            cwd: std::env::current_dir().unwrap_or_default(),
+            env: std::env::vars().collect(),
+            home: std::env::home_dir(),
+        }
+    }
+
+    /// `resolveAsync` with the configuration service for `${config:...}`.
+    pub(super) fn resolve_variables(&self, value: &Value, folder: Option<PathBuf>) -> Result<Value, String> {
+        let context = self.variable_context(folder);
+        crate::variables::resolve_value(value, &context, &|key| Some(self.setting(key)).filter(|value| !value.is_null()))
     }
 
     /// `_createShellLaunchConfig` for macOS: the automation shell (`-c` and the command line) or the process.
