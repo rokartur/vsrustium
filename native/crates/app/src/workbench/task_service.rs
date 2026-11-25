@@ -587,13 +587,24 @@ impl Workbench {
                 let _ = reply.send(Ok(Value::Null));
                 return;
             };
+            // `_runTaskCommand`: a task identifier runs as it is, a name asks for a problem matcher first.
+            // shortcut: a name answers once the prompt shows, without the exit code an identifier's run answers with.
             let Ok(ended) = workbench.update_in(cx, |workbench, window, cx| {
                 workbench.add_recent_task(&task);
-                workbench.run_task(task, window, cx)
+                match argument.is_string() {
+                    true => {
+                        workbench.run_attaching_problem_matcher(task, window, cx);
+                        None
+                    }
+                    false => Some(workbench.run_task(task, window, cx)),
+                }
             }) else {
                 return;
             };
-            let code = ended.await.ok().flatten();
+            let code = match ended {
+                Some(ended) => ended.await.ok().flatten(),
+                None => None,
+            };
             let _ = reply.send(Ok(json!({ "exitCode": code })));
         })
         .detach();

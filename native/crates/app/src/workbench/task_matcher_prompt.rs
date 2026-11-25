@@ -143,4 +143,34 @@ mod tests {
             assert!(!labels.contains(&"Less problems".to_owned()));
         });
     }
+
+    /// `_runTaskCommand`: a task name that matches runs with `attachProblemMatcher`, so the prompt comes first.
+    #[gpui::test]
+    fn run_task_with_a_name_asks_for_a_problem_matcher(cx: &mut gpui::TestAppContext) {
+        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let themes = exthost::scan::scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
+        let theme = crate::theme::load_theme(&[themes], "Dark Modern").unwrap();
+        let folder = std::env::temp_dir().join(format!("code-gpui-run-task-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        let workspace = config::workspace::Workspace::folder(folder.clone());
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let (workbench, cx) = cx.add_window_view(|_, cx| Workbench::new(theme, app_root.clone(), Some(workspace), crate::languages::Languages::new(&[]), crate::default_settings(), crate::host_sync::HostSync::new(sender), cx));
+        workbench.update_in(cx, |workbench, window, cx| {
+            workbench.tasks.matchers = crate::tasks::problem_matcher::Registry::new(&[]);
+            workbench.tasks.providers.push((1, "gulp".into()));
+            drop(workbench.run_task_command(json!("gulp: hello"), window, cx));
+        });
+        cx.run_until_parked();
+        let dto = json!({ "name": "hello", "definition": { "type": "gulp", "task": "hello" }, "source": { "label": "gulp", "extensionId": "vscode.gulp" }, "execution": { "commandLine": "gulp hello" }, "problemMatchers": [] });
+        // The activations answer first (a dropped reply), then the provider.
+        for _ in 0..2 {
+            for message in receiver.try_iter().filter(|message| message.method == "$provideTasks") {
+                let _ = message.reply.unwrap().send(Ok(json!({ "tasks": [dto.clone()] })));
+            }
+            cx.run_until_parked();
+        }
+        let asks = workbench.read_with(cx, |workbench, _| workbench.quick_inputs.find_id(|owner| matches!(owner, Owner::Tasks(picker) if picker.action == PickAction::AttachMatcher)).is_some());
+        assert!(asks);
+        std::fs::remove_dir_all(folder).unwrap();
+    }
 }
