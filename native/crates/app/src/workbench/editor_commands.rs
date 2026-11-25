@@ -14,7 +14,7 @@ use crate::editor::{CaseTransform, ContentChanged, Copied, LineCommentKind, Open
 type EditorCommand = fn(&mut OpenEditor) -> Option<ContentChanged>;
 
 /// Cursor and edit commands: `EditorCommand`s, which run on the focused editor or else the active one.
-const EDITOR_COMMANDS: [(&str, EditorCommand); 47] = [
+const EDITOR_COMMANDS: [(&str, EditorCommand); 48] = [
     ("cursorLeft", |editor| { editor.move_horizontally(false, false); None }),
     ("cursorLeftSelect", |editor| { editor.move_horizontally(false, true); None }),
     ("cursorRight", |editor| { editor.move_horizontally(true, false); None }),
@@ -42,6 +42,7 @@ const EDITOR_COMMANDS: [(&str, EditorCommand); 47] = [
     ("cursorTopSelect", |editor| { editor.move_to_document_edge(false, true); None }),
     ("cursorBottom", |editor| { editor.move_to_document_edge(true, false); None }),
     ("cursorBottomSelect", |editor| { editor.move_to_document_edge(true, true); None }),
+    ("expandLineSelection", |editor| { editor.expand_line_selection(); None }),
     ("deleteLeft", OpenEditor::delete_left),
     ("deleteRight", OpenEditor::delete_right),
     ("deleteWordLeft", OpenEditor::delete_word_left),

@@ -296,6 +296,23 @@ impl OpenEditor {
         self.set_selections(vec![Selection { anchor: Position::default(), head: cursor::last_position(&self.document.lines) }]);
     }
 
+    /// `CursorMoveCommands.expandLineSelection`: each selection from its start line's start to the start of the line
+    /// after its end, or to the end of the last line.
+    pub fn expand_line_selection(&mut self) {
+        let lines = &self.document.lines;
+        let selections = self
+            .selections
+            .iter()
+            .map(|selection| {
+                let end = selection.end().line;
+                let head = if end == lines.len() - 1 { cursor::last_position(lines) } else { Position::new(end + 1, 0) };
+                Selection { anchor: Position::new(selection.start().line, 0), head }
+            })
+            .collect();
+        self.push_undo_stop();
+        self.set_selections(selections);
+    }
+
     /// The word highlights of the primary selection (wordHighlighter.ts `_run`): none for a multi-line selection
     /// or one that reaches past the word at its start.
     pub fn refresh_highlights(&mut self) {
@@ -1386,6 +1403,21 @@ pub(super) mod tests {
         overlapping.delete_word_left();
         assert_eq!(text(&overlapping), "ab d");
         assert_eq!(overlapping.selections, [Selection::caret(at(0, 3)), Selection::caret(at(0, 4))]);
+    }
+
+    /// lineSelection.test.ts (columns 0-based here).
+    #[test]
+    fn expand_line_selection_grows_by_whole_lines() {
+        let mut editor = editor("    \tMy First Line\t \n\tMy Second Line\n    Third Line🐶\n\n1", "\n");
+        for column in [0, 1, 4, 18, 19, 20] {
+            editor.set_selections(vec![Selection::caret(at(0, column))]);
+            editor.expand_line_selection();
+            assert_eq!(editor.selections, [range((0, 0), (1, 0))]);
+        }
+        for expected in [at(2, 0), at(3, 0), at(4, 0), at(4, 1), at(4, 1)] {
+            editor.expand_line_selection();
+            assert_eq!(editor.selections, [Selection { anchor: at(0, 0), head: expected }]);
+        }
     }
 
     #[test]
