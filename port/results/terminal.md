@@ -26,3 +26,17 @@ ui-pair `/tmp/term/steps5.json` on the Studio at b9d74655619 (release build): Co
 | Show All Tasks... | the grunt, gulp and jake "task detection is turned off" entries (their `autoDetect` default is off) |
 
 The reference did not follow: its Command Palette ranked "Tasks: Rerun All Running Tasks" (recently used in the reference profile) first for every typed query, so its shots show "No running tasks to restart"; `cua-driver` cannot type the `:` of "Tasks: Run Task". The task picker look is compared by eye with the quick pick of earlier pairs, not pixel by pixel.
+
+## grunt, gulp, jake and the external terminal
+
+ui-pair on the Studio at 142fdae6aa3 (release build), fixture `port/fixtures/task-runners` copied to `/tmp/m15-tr` with `npm install`, settings `grunt.autoDetect`, `gulp.autoDetect`, `jake.autoDetect` on and `terminal.external.osxExec` set to a probe app (`/tmp/Probe.app`, writes `/tmp/m15-probe-launched` when it starts). Steps `/tmp/steps-gj.json`: Run Task, `grunt`, Enter, Enter, Enter (Continue without scanning); the same for `jake`; Cmd+Shift+E, Cmd+Shift+C. An earlier pair (`/tmp/m15/steps3`) ran `gulp: default` the same way.
+
+| Check | Port |
+|---|---|
+| `gulp`, `grunt`, `jake` under "contributed", Configure a Task with its `$(plus)` icon | as the reference |
+| second level: `gulp: default`, `gulp: hello`; `jake: hello`; Go back | as the reference |
+| the problem matcher prompt (placeholder, the four choices, "associate", the matchers sorted by label) | as the reference (jake) |
+| the task runs in a task terminal: `node_modules/.bin/gulp default`, `grunt default`, `jake hello` with their output and "Terminal will be reused by tasks" | as the reference |
+| Cmd+Shift+C starts `terminal.external.osxExec` (`open -a /tmp/Probe.app /tmp/m15-tr`) | probe file written |
+
+Difference: the first second-level fetch of a session can come back empty in the port ("No grunt tasks found. Go back"), where the reference lists the tasks; the next fetch has them (Configure Task listed `grunt: default` right after). See port/notes.md milestone 15 handoff.
