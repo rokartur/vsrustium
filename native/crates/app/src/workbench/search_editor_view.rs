@@ -116,6 +116,7 @@ impl Workbench {
         match self.search_editors.get(&editor.document.path).filter(|_| editor.document.scheme == SEARCH_EDITOR_SCHEME) {
             Some(search_editor) => search_editor_name(search_editor.backing_file.as_deref(), &search_editor.config.query),
             None if editor.document.scheme == crate::output::OUTPUT_SCHEME => "Output".into(),
+            None if editor.document.scheme == super::terminal_view::TERMINAL_SCHEME => "Terminal".into(),
             None => super::preferences::editor_label(&editor.document)
                 .or_else(|| self.webview_title(&editor.document.path))
                 .unwrap_or_else(|| editor.document.name()),

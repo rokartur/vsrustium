@@ -166,6 +166,10 @@ impl Workbench {
             cx.stop_propagation();
             return;
         }
+        if !in_chord_mode && self.terminal_key(keystroke, &resolution, window, cx) {
+            cx.stop_propagation();
+            return;
+        }
         if self.editor_focus.is_focused(window) {
             self.content_hover_key_down(&resolution, cx);
         }
@@ -335,6 +339,7 @@ impl Workbench {
         self.keybindings_editor_context(window, &mut context);
         self.search_editor_context(window, &mut context);
         self.output_context(window, &mut context);
+        self.terminal_context(window, &mut context);
         context
     }
 

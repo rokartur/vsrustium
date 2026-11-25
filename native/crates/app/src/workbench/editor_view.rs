@@ -25,6 +25,7 @@ use serde_json::json;
 use super::Workbench;
 use super::minimap_view::minimap_info;
 use super::search_editor_view::SEARCH_EDITOR_SCHEME;
+use super::terminal_view::TERMINAL_SCHEME;
 use super::webview_panels::WEBVIEW_PANEL_SCHEME;
 use crate::brackets::BracketRange;
 use crate::editor::minimap::MinimapLayoutInfo;
@@ -75,9 +76,10 @@ impl Workbench {
                 // searchEditor.ts draws its query widget where a text editor has its breadcrumbs.
                 SEARCH_EDITOR_SCHEME => part.child(self.search_editor_query(window, cx)),
                 crate::output::OUTPUT_SCHEME => part.child(self.output_title_actions(window, cx)),
+                TERMINAL_SCHEME => part.child(self.terminal_title_actions(cx)).child(self.terminal_body(cx)),
                 _ => part.child(self.breadcrumbs(editor)),
             })
-            .when(editor.document.scheme != WEBVIEW_PANEL_SCHEME, |part| part.children(self.unicode_banner(editor, cx)).child(self.text_area(editor, window, cx)))
+            .when(!matches!(editor.document.scheme.as_str(), WEBVIEW_PANEL_SCHEME | TERMINAL_SCHEME), |part| part.children(self.unicode_banner(editor, cx)).child(self.text_area(editor, window, cx)))
             // The active tab reaches into the part's top border, which Chrome still draws over it.
             .child(div().absolute().inset(px(-1.)).border_1().rounded(px(8.)).border_color(self.color("surface.border")))
     }
@@ -144,7 +146,7 @@ impl Workbench {
     fn tab_hover(&self, index: usize) -> impl IntoElement {
         let editor = &self.editors.editors[index];
         // `getTitle(Verbosity.LONG)`: a search editor's and a webview's is its name.
-        let title = match matches!(editor.document.scheme.as_str(), SEARCH_EDITOR_SCHEME | WEBVIEW_PANEL_SCHEME) {
+        let title = match matches!(editor.document.scheme.as_str(), SEARCH_EDITOR_SCHEME | WEBVIEW_PANEL_SCHEME | TERMINAL_SCHEME) {
             true => self.editor_name(editor),
             false => crate::quick_input::path_label(&editor.document.path, None),
         };
@@ -1410,8 +1412,8 @@ impl Workbench {
             items.push(("OVR".to_string(), "Enable Insert Mode", "editor.action.toggleOvertypeInsertMode"));
         }
         let prominent_items = items.len();
-        // A webview editor shows no editor status entries.
-        if let Some(editor) = self.editors.active().filter(|editor| editor.document.scheme != WEBVIEW_PANEL_SCHEME) {
+        // A webview editor or terminal shows no editor status entries.
+        if let Some(editor) = self.editors.active().filter(|editor| !matches!(editor.document.scheme.as_str(), WEBVIEW_PANEL_SCHEME | TERMINAL_SCHEME)) {
             items.extend(Self::editor_status_entries(editor, &self.languages));
         }
         let prominent = (self.theme.color("statusBarItem.prominentBackground"), self.color("statusBarItem.prominentForeground"));
