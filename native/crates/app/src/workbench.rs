@@ -114,6 +114,7 @@ pub struct Workbench {
     text_drag: Option<editor_view::drag_and_drop::TextDrag>,
     /// editorOptions.ts `stopRenderingLineAfter` (10000) of the group's code editor; longLinesHelper.ts clears it.
     stop_rendering_line_after: Option<usize>,
+    editor_zoom: crate::editor::zoom::EditorZoom,
     middle_scroll: Option<middle_scroll::MiddleScroll>,
     pub quick_inputs: quick_input_view::QuickInputs,
     pub quick_access: quick_access::QuickAccess,
@@ -226,6 +227,7 @@ impl Workbench {
             selecting_text: false,
             text_drag: None,
             stop_rendering_line_after: Some(10_000),
+            editor_zoom: Default::default(),
             middle_scroll: None,
             quick_inputs: quick_input_view::QuickInputs::new(cx),
             quick_access: quick_access::QuickAccess::default(),

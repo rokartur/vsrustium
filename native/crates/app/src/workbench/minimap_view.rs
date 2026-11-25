@@ -19,7 +19,7 @@ use crate::editor::minimap::{
 };
 use crate::editor::folding::FoldDecoration;
 use crate::editor::section_headers::{FindOptions, MARK_SECTION_HEADER_REGEX, SectionHeader, find_section_headers, fit_section_header};
-use crate::editor::{LINE_HEIGHT, OpenEditor, VERTICAL_SCROLLBAR_WIDTH, Viewport};
+use crate::editor::{OpenEditor, VERTICAL_SCROLLBAR_WIDTH, Viewport};
 use crate::theme::relative_luminance;
 
 /// minimap.css `.minimap-slider` opacity transition, and `_hideSliderAfterScrollScheduler`.
@@ -96,12 +96,12 @@ impl Minimap {
 }
 
 /// `EditorLayoutInfoComputer` for the minimap with the `editor.minimap.*` defaults: the text area's outer size,
-/// the gutter's width and the view's line count.
-pub(super) fn minimap_info(outer_width: f32, outer_height: f32, content_left: f32, char_width: f32, view_line_count: usize, pixel_ratio: f32) -> MinimapLayoutInfo {
+/// the gutter's width, the editor font's metrics and the view's line count.
+pub(super) fn minimap_info(outer_width: f32, outer_height: f32, content_left: f32, char_width: f32, line_height: f32, view_line_count: usize, pixel_ratio: f32) -> MinimapLayoutInfo {
     compute_minimap_layout(&MinimapLayoutInput {
         outer_width: outer_width as f64,
         outer_height: outer_height as f64,
-        line_height: LINE_HEIGHT as f64,
+        line_height: line_height as f64,
         typical_halfwidth_character_width: char_width as f64,
         pixel_ratio: pixel_ratio as f64,
         scroll_beyond_last_line: true,
@@ -228,7 +228,7 @@ impl Workbench {
             pixel_ratio,
             minimap_line_height: info.line_height,
             canvas_inner_height: info.canvas_inner_height,
-            line_height: LINE_HEIGHT as f64,
+            line_height: viewport.line_height as f64,
             height_is_editor_height: info.height_is_editor_height,
             minimap_height: viewport.height as f64,
             padding_top: 0.,

@@ -39,6 +39,7 @@ pub mod sticky_scroll;
 pub mod unicode_highlighter;
 pub mod unusual_line_terminators;
 mod view;
+pub mod zoom;
 
 pub use comment::LineCommentKind;
 pub use lines_operations::CaseTransform;

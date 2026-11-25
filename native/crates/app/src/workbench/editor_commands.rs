@@ -206,6 +206,19 @@ impl Workbench {
             }
             Outcome::done()
         });
+        let zooms: [(&str, fn(f32) -> f32); 3] = [
+            ("editor.action.fontZoomIn", |level| level + 1.),
+            ("editor.action.fontZoomOut", |level| level - 1.),
+            ("editor.action.fontZoomReset", |_| 0.),
+        ];
+        for (id, level) in zooms {
+            self.commands.register(id, move |workbench, _, _, cx| {
+                if workbench.editor_zoom.set_level(level(workbench.editor_zoom.level())) {
+                    cx.notify();
+                }
+                Outcome::done()
+            });
+        }
         self.commands.register("cursorUndo", |workbench, _, _, cx| workbench.run_cursor_undo(false, cx));
         self.commands.register("cursorRedo", |workbench, _, _, cx| workbench.run_cursor_undo(true, cx));
         self.commands.register("editor.action.clipboardCopyAction", |workbench, _, window, cx| workbench.copy_to_clipboard(false, window, cx));

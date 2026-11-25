@@ -3,7 +3,7 @@
 
 use gpui::{Context, CursorStyle, Div, Modifiers, Rgba, div, prelude::*, px, rgb};
 
-use super::{LINE_HEIGHT, Workbench};
+use super::Workbench;
 use crate::editor::{Position, Selection, column_at_visible, drag_and_drop, visible_column};
 use crate::theme::ThemeKind;
 
@@ -102,7 +102,7 @@ impl Workbench {
             ThemeKind::HighContrastDark => rgb(0xFFFFFF),
             ThemeKind::Light | ThemeKind::HighContrastLight => rgb(0x000000),
         };
-        let dots = (0..(LINE_HEIGHT / 4.).ceil() as usize).map(|dot| div().absolute().top(px(dot as f32 * 4.)).size(px(2.)).rounded_full().bg(color));
+        let dots = (0..(self.editors.viewport.line_height / 4.).ceil() as usize).map(|dot| div().absolute().top(px(dot as f32 * 4.)).size(px(2.)).rounded_full().bg(color));
         div().absolute().top_0().left(px(x)).w(px(2.)).h_full().children(dots)
     }
 

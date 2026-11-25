@@ -5,7 +5,7 @@ use super::*;
 use crate::editor::{EditReason, Selection};
 use crate::editor::edit::tests::editor;
 
-const VIEWPORT: Viewport = Viewport { width: 800., height: 600., char_width: 7.2, sticky_scroll_lines: 0, top_whitespace: 0., stop_rendering_line_after: None };
+const VIEWPORT: Viewport = Viewport { width: 800., height: 600., char_width: 7.2, line_height: 18., sticky_scroll_lines: 0, top_whitespace: 0., stop_rendering_line_after: None };
 
 fn position(line: usize, column: usize) -> Position {
     Position::new(line - 1, column - 1)

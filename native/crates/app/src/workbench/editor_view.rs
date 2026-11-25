@@ -34,9 +34,9 @@ use crate::editor::folding::FoldDecoration;
 use crate::theme::ThemeKind;
 
 const EDITOR_FONT: &str = "Menlo";
+/// `editor.fontSize` at zoom level 0.
 const EDITOR_FONT_SIZE: f32 = 12.;
-/// The glyph margin, then lineDecorationsWidth 10 plus 16 for the folding controls (editorOptions.ts layout).
-const GLYPH_MARGIN_WIDTH: f32 = 18.;
+/// lineDecorationsWidth 10 plus 16 for the folding controls (editorOptions.ts layout).
 const DECORATIONS_WIDTH: f32 = 26.;
 /// The workbench text editor sets lineNumbersMinChars to 3 (textEditor.ts).
 const LINE_NUMBERS_MIN_CHARS: usize = 3;
@@ -251,7 +251,7 @@ impl Workbench {
     }
 
     fn text_area(&self, editor: &OpenEditor, window: &mut Window, cx: &mut Context<Self>) -> Stateful<Div> {
-        let metrics = EditorMetrics::measure(window, editor.document.lines.len());
+        let metrics = EditorMetrics::measure(window, editor.document.lines.len(), self.editor_zoom.multiplier());
         let area_left = self.text_area_left.clone();
         let area_bounds = self.text_area_bounds.clone();
         let focus = self.editor_focus.clone();
@@ -280,8 +280,8 @@ impl Workbench {
             .relative()
             .overflow_hidden()
             .font_family(EDITOR_FONT)
-            .text_size(px(EDITOR_FONT_SIZE))
-            .line_height(px(LINE_HEIGHT))
+            .text_size(px(metrics.font_size))
+            .line_height(px(metrics.line_height))
             .track_focus(&self.editor_focus)
             .on_key_down(cx.listener(Self::editor_key_down))
             .on_scroll_wheel(cx.listener(Self::editor_wheel))
@@ -319,9 +319,9 @@ impl Workbench {
                         area_bounds.set(bounds.map(f32::from));
                         let (width, height) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
                         let pixel_ratio = window.scale_factor();
-                        let minimap = minimap_info(width, height, metrics.content_left(), metrics.char_width, view_line_count, pixel_ratio);
+                        let minimap = minimap_info(width, height, metrics.content_left(), metrics.char_width, metrics.line_height, view_line_count, pixel_ratio);
                         // editorOptions.ts: contentWidth = remainingWidth - minimapWidth.
-                        let viewport = Viewport { width: width - metrics.content_left() - minimap.width as f32, height, char_width: metrics.char_width, sticky_scroll_lines, top_whitespace, stop_rendering_line_after };
+                        let viewport = Viewport { width: width - metrics.content_left() - minimap.width as f32, height, char_width: metrics.char_width, line_height: metrics.line_height, sticky_scroll_lines, top_whitespace, stop_rendering_line_after };
                         laid_out.update(cx, |workbench, cx| workbench.editor_laid_out(viewport, (minimap, pixel_ratio as f64), cx));
                     },
                     move |bounds, _, window, cx| {
@@ -424,6 +424,7 @@ impl Workbench {
     /// change the visible lines; the lines drawn widen the scrollable content (`ViewLines._ensureMaxLineWidth`).
     fn editor_laid_out(&mut self, viewport: Viewport, minimap: (MinimapLayoutInfo, f64), cx: &mut Context<Self>) {
         let resized = self.editors.viewport != viewport;
+        let font_changed = (self.editors.viewport.char_width, self.editors.viewport.line_height) != (viewport.char_width, viewport.line_height);
         let minimap_changed = self.minimap.info != Some(minimap);
         self.editors.viewport = viewport;
         self.minimap.info = Some(minimap);
@@ -431,7 +432,7 @@ impl Workbench {
         let scroll_width = editor.scroll_width(viewport);
         let visible_lines = editor.visible_lines(viewport);
         // viewLines.ts `_updateLineWidths`: with every line drawn, their widest is the content width.
-        if visible_lines == (0..editor.view_line_count()) {
+        if font_changed || visible_lines == (0..editor.view_line_count()) {
             editor.forget_line_widths();
         }
         for view_line in visible_lines {
@@ -453,12 +454,27 @@ impl Workbench {
         }
     }
 
-    /// The wheel scrolls the editor in `StandardWheelEvent` units: 40 browser pixels or one line per notch.
+    /// The wheel scrolls the editor in `StandardWheelEvent` units: 40 browser pixels or one line per notch. With
+    /// `editor.mouseWheelZoom`, Cmd or Ctrl without Shift and Alt zooms instead (mouseHandler.ts).
     fn editor_wheel(&mut self, event: &ScrollWheelEvent, _: &mut Window, cx: &mut Context<Self>) {
         let (x, y) = match event.delta {
             ScrollDelta::Pixels(delta) => (f32::from(delta.x) / 40., f32::from(delta.y) / 40.),
             ScrollDelta::Lines(delta) => (delta.x, delta.y),
         };
+        if self.setting("editor.mouseWheelZoom").as_bool().unwrap_or(false) {
+            let modifiers = event.modifiers;
+            let has_zoom_modifiers = (modifiers.platform || modifiers.control) && !modifiers.shift && !modifiers.alt;
+            // ScrollDelta::Lines is AppKit's imprecise delta of a mouse wheel, `isPhysicalMouseWheel` upstream.
+            let physical_wheel = matches!(event.delta, ScrollDelta::Lines(_));
+            let level = self.editor_zoom.level();
+            if self.editor_zoom.wheel(y, physical_wheel, has_zoom_modifiers, Instant::now()) {
+                cx.stop_propagation();
+                if self.editor_zoom.level() != level {
+                    cx.notify();
+                }
+                return;
+            }
+        }
         let viewport = self.editors.viewport;
         let editor = self.editors.active_mut().expect("the text area scrolls only with an editor open");
         if editor.scroll_by_wheel(x, y, event.modifiers.alt, viewport) {
@@ -822,7 +838,7 @@ impl Workbench {
                             .text_color(foreground)
                             .when_some(self.theme.color("button.hoverBackground"), |span, hover| span.hover(move |span| span.bg(hover)))
                             .cursor_pointer()
-                            .child(div().absolute().top(px(2.)).left(px(4.)).line_height(px(LINE_HEIGHT)).whitespace_nowrap().child(label));
+                            .child(div().absolute().top(px(2.)).left(px(4.)).line_height(px(metrics.line_height)).whitespace_nowrap().child(label));
                         // The inline span's box reaches 3px above the line and 2px below it (reference pixels), past the
                         // line's own clip, so it gets a clip of its own over the text area.
                         show_more = Some(div().absolute().left(px(metrics.content_left())).right_0().top(px(-3.)).h(px(24.)).overflow_hidden().child(span));
@@ -830,7 +846,7 @@ impl Workbench {
                 }
                 // folding.css .inline-folded:after: an ellipsis 0.2em after the line's last char.
                 if collapsed == Some(true) {
-                    let end = visible_column(text, text.chars().count(), tab_size) as f32 * char_width + 0.2 * EDITOR_FONT_SIZE;
+                    let end = visible_column(text, text.chars().count(), tab_size) as f32 * char_width + 0.2 * metrics.font_size;
                     content = content.child(div().absolute().top_0().left(px(end)).text_color(fold_placeholder).cursor_pointer().child("\u{22EF}"));
                 }
                 for (cursor_index, selection) in selections.iter().enumerate().filter(|(_, selection)| focused && selection.head.line == index) {
@@ -910,9 +926,9 @@ impl Workbench {
                     }));
                 div()
                     .w_full()
-                    .h(px(LINE_HEIGHT))
+                    .h(px(metrics.line_height))
                     .flex()
-                    .child(div().w(px(GLYPH_MARGIN_WIDTH)).flex_none())
+                    .child(div().w(px(metrics.glyph_margin_width())).flex_none())
                     .child(number)
                     .child(self.fold_control(index, collapsed, metrics, fold_control_color, fold_controls, cx))
                     .child(content)
@@ -925,7 +941,7 @@ impl Workbench {
     /// (`folding-collapsed` stays visible, `folding-expanded` shows while the pointer is over the margin). A press
     /// 4px or more into the lane and a release on the same line toggle the region (folding.ts `onEditorMouseDown`).
     fn fold_control(&self, index: usize, collapsed: Option<bool>, metrics: EditorMetrics, color: Rgba, hover_opacity: f32, cx: &mut Context<Self>) -> Div {
-        let lane_x = move |workbench: &Workbench, x: Pixels| f32::from(x) - workbench.text_area_left.get() - GLYPH_MARGIN_WIDTH - metrics.line_numbers_width;
+        let lane_x = move |workbench: &Workbench, x: Pixels| f32::from(x) - workbench.text_area_left.get() - metrics.glyph_margin_width() - metrics.line_numbers_width;
         let press = move |workbench: &mut Workbench, event: &MouseDownEvent| {
             workbench.fold_mouse_down = (lane_x(workbench, event.position.x) >= 4.).then_some((index, true));
         };
@@ -939,8 +955,8 @@ impl Workbench {
         let Some(collapsed) = collapsed else { return lane };
         let (name, opacity) = if collapsed { ("chevron-right", 1.) } else { ("chevron-down", hover_opacity) };
         // folding.css: the icon box is the lane's width, 2px right, the glyph at 140% of the editor font size.
-        let icon = self.icon(name, LINE_HEIGHT, 1.4 * EDITOR_FONT_SIZE, Rgba { a: color.a * opacity, ..color });
-        lane = lane.child(div().w(px(DECORATIONS_WIDTH)).ml(px(2.)).h(px(LINE_HEIGHT)).flex().justify_center().cursor_pointer().child(icon));
+        let icon = self.icon(name, metrics.line_height, 1.4 * metrics.font_size, Rgba { a: color.a * opacity, ..color });
+        lane = lane.child(div().w(px(DECORATIONS_WIDTH)).ml(px(2.)).h(px(metrics.line_height)).flex().justify_center().cursor_pointer().child(icon));
         lane
     }
 
@@ -1143,7 +1159,7 @@ impl Workbench {
             lines.push((mark.range.start.line, mark.range.end.line));
         }
         let border = self.theme.color("editorOverviewRuler.border");
-        let top_whitespace = self.editors.viewport.top_whitespace;
+        let Viewport { top_whitespace, line_height, .. } = self.editors.viewport;
         canvas(
             |_, _, _| {},
             move |bounds, _, window, _| {
@@ -1157,7 +1173,7 @@ impl Workbench {
                 let canvas_height = (f32::from(bounds.size.height) * scale).floor();
                 let viewport_height = f32::from(bounds.size.height);
                 // scrollBeyondLastLine: the last line can scroll to the top of the viewport.
-                let scroll_height = top_whitespace + line_count as f32 * LINE_HEIGHT + viewport_height - LINE_HEIGHT;
+                let scroll_height = top_whitespace + line_count as f32 * line_height + viewport_height - line_height;
                 let ratio = canvas_height / scroll_height;
                 let lanes = RulerLanes::new(canvas_width);
                 let min_height = (6. * scale).floor();
@@ -1172,8 +1188,8 @@ impl Workbench {
                 ] {
                     let mut previous: Option<(f32, f32)> = None;
                     for (start_line, end_line) in lines {
-                        let mut y1 = ((top_whitespace + *start_line as f32 * LINE_HEIGHT) * ratio).floor();
-                        let mut y2 = ((top_whitespace + *end_line as f32 * LINE_HEIGHT + LINE_HEIGHT) * ratio).floor();
+                        let mut y1 = ((top_whitespace + *start_line as f32 * line_height) * ratio).floor();
+                        let mut y2 = ((top_whitespace + *end_line as f32 * line_height + line_height) * ratio).floor();
                         if y2 - y1 < min_height {
                             let half = (min_height / 2.).floor();
                             let center = ((y1 + y2) / 2.).floor().clamp(half, canvas_height - half);
@@ -1197,7 +1213,7 @@ impl Workbench {
                 let half = (height / 2.).floor();
                 let mut previous: Option<(f32, f32, Rgba)> = None;
                 for (line, color) in cursors.iter().filter_map(|(line, color)| Some((*line, (*color)?))) {
-                    let y1 = ((top_whitespace + line as f32 * LINE_HEIGHT) * ratio).floor().clamp(half, canvas_height - half) - half;
+                    let y1 = ((top_whitespace + line as f32 * line_height) * ratio).floor().clamp(half, canvas_height - half) - half;
                     let y2 = y1 + height;
                     previous = match previous {
                         Some((start, end, previous_color)) if y1 <= end + 1. && previous_color == color => Some((start, end.max(y2), color)),
@@ -1276,25 +1292,33 @@ impl Workbench {
 
 #[derive(Clone, Copy)]
 struct EditorMetrics {
+    font_size: f32,
+    line_height: f32,
     char_width: f32,
     line_numbers_width: f32,
 }
 
 impl EditorMetrics {
-    fn content_left(&self) -> f32 {
-        GLYPH_MARGIN_WIDTH + self.line_numbers_width + DECORATIONS_WIDTH
+    /// One glyph lane as wide as a line is high (editorOptions.ts layout).
+    fn glyph_margin_width(&self) -> f32 {
+        self.line_height
     }
 
-    /// `typicalHalfwidthCharacterWidth` and `maxDigitWidth` of the editor font; the line numbers are as wide
-    /// as the longest number, at least lineNumbersMinChars digits, rounded (editorOptions.ts).
-    fn measure(window: &Window, line_count: usize) -> Self {
+    fn content_left(&self) -> f32 {
+        self.glyph_margin_width() + self.line_numbers_width + DECORATIONS_WIDTH
+    }
+
+    /// fontInfo.ts `BareFontInfo._create`: the editor zoom scales the font size and line height; then
+    /// `typicalHalfwidthCharacterWidth` and `maxDigitWidth` of that font. The line numbers are as wide as the
+    /// longest number, at least lineNumbersMinChars digits, rounded (editorOptions.ts).
+    fn measure(window: &Window, line_count: usize, zoom: f32) -> Self {
+        let (font_size, line_height) = (EDITOR_FONT_SIZE * zoom, LINE_HEIGHT * zoom);
         let text_system = window.text_system();
         let font_id = text_system.resolve_font(&font(EDITOR_FONT));
-        let font_size = px(EDITOR_FONT_SIZE);
-        let advance = |c: char| f32::from(text_system.advance(font_id, font_size, c).expect("Menlo has ASCII glyphs").width);
+        let advance = |c: char| f32::from(text_system.advance(font_id, px(font_size), c).expect("Menlo has ASCII glyphs").width);
         let max_digit_width = ('0'..='9').map(advance).fold(0., f32::max);
         let digits = line_count.to_string().len().max(LINE_NUMBERS_MIN_CHARS);
-        EditorMetrics { char_width: advance('x'), line_numbers_width: (digits as f32 * max_digit_width).round() }
+        EditorMetrics { font_size, line_height, char_width: advance('x'), line_numbers_width: (digits as f32 * max_digit_width).round() }
     }
 }
 

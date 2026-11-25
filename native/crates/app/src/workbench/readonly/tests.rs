@@ -125,9 +125,9 @@ fn the_message_goes_above_the_cursor_unless_the_window_top_is_too_close() {
     let editor = gpui::Bounds { origin: gpui::point(300., 80.), size: size(800., 600.) };
     let window = size(1200., 800.);
     // 22px clearance: the 32px tall widget above line 1 at window y 80 starts at 48.
-    assert_eq!(layout_in_page(70., 0., 200., editor, window), MessageLayout { left: 70., top: -32., below: false });
+    assert_eq!(layout_in_page(70., 0., 18., 200., editor, window), MessageLayout { left: 70., top: -32., below: false });
     let high = gpui::Bounds { origin: gpui::point(300., 40.), ..editor };
-    assert_eq!(layout_in_page(70., 0., 200., high, window), MessageLayout { left: 70., top: 18., below: true });
+    assert_eq!(layout_in_page(70., 0., 18., 200., high, window), MessageLayout { left: 70., top: 18., below: true });
     // 15px from the window's right edge: 300 + 1000 + 200 passes 1185.
-    assert_eq!(layout_in_page(1000., 100., 200., editor, window), MessageLayout { left: 685., top: 68., below: false });
+    assert_eq!(layout_in_page(1000., 100., 18., 200., editor, window), MessageLayout { left: 685., top: 68., below: false });
 }

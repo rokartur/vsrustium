@@ -4,7 +4,7 @@
 use std::ops::Range;
 
 use super::folding::FoldingRegions;
-use super::{LINE_HEIGHT, OpenEditor, Viewport};
+use super::{OpenEditor, Viewport};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StickyRange {
@@ -123,13 +123,13 @@ pub fn max_sticky_lines(editor_height: f32, line_height: f32, max_line_count: us
 impl OpenEditor {
     /// `findScrollWidgetState` over the visible lines; empty with sticky scroll off (`sticky_scroll_lines` 0).
     pub fn sticky_scroll_state(&self, viewport: Viewport) -> StickyScrollState {
-        let max_lines = max_sticky_lines(viewport.height, LINE_HEIGHT, viewport.sticky_scroll_lines);
+        let max_lines = max_sticky_lines(viewport.height, viewport.line_height, viewport.sticky_scroll_lines);
         if max_lines == 0 {
             return StickyScrollState::default();
         }
         let view_lines = self.visible_lines(viewport);
         let range = StickyRange { start: self.model_line(view_lines.start) + 1, end: self.model_line(view_lines.end - 1) + 1 };
-        let candidates = candidates_intersecting(&self.sticky_model, range, self.document.lines.len(), LINE_HEIGHT, self.folding.hidden());
+        let candidates = candidates_intersecting(&self.sticky_model, range, self.document.lines.len(), viewport.line_height, self.folding.hidden());
         find_widget_state(&candidates, self.scroll.top, max_lines, |line| viewport.line_top(self.view_line(line - 1)))
     }
 
@@ -142,7 +142,7 @@ impl OpenEditor {
         let region = self.folding.region_at_line(line).expect("the region toggled");
         let range = self.folding.regions.get(region);
         let target = if range.collapsed { range.end } else { range.start };
-        let top = viewport.line_top(self.view_line(target - 1)) - LINE_HEIGHT * index as f32 + 1.;
+        let top = viewport.line_top(self.view_line(target - 1)) - viewport.line_height * index as f32 + 1.;
         self.set_scroll(top, self.scroll.left, viewport);
         true
     }
@@ -240,7 +240,7 @@ mod tests {
         let line_height = crate::editor::LINE_HEIGHT;
         let body = vec!["        x;"; 30].join("\n");
         let mut editor = crate::editor::edit::tests::editor(&format!("class A {{\n    b() {{\n{body}\n    }}\n}}\nx;"), "\n");
-        let viewport = Viewport { width: 400., height: 360., char_width: 7.2, sticky_scroll_lines: 5, top_whitespace: 0., stop_rendering_line_after: None };
+        let viewport = Viewport { width: 400., height: 360., char_width: 7.2, line_height: 18., sticky_scroll_lines: 5, top_whitespace: 0., stop_rendering_line_after: None };
         editor.set_scroll(10. * line_height, 0., viewport);
         assert_eq!(editor.sticky_scroll_state(viewport).start_line_numbers, vec![1, 2]);
         assert!(editor.toggle_sticky_fold(2, 1, viewport));

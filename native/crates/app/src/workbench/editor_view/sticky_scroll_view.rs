@@ -4,9 +4,9 @@
 use gpui::{BoxShadow, ClickEvent, Context, Div, FocusHandle, ModifiersChangedEvent, MouseButton, MouseMoveEvent, Rgba, Stateful, StyledText, Window, div, point, prelude::*, px};
 use serde_json::json;
 
-use super::{DECORATIONS_WIDTH, EDITOR_FONT_SIZE, EditorMetrics, FoldControls, GLYPH_MARGIN_WIDTH, Workbench};
+use super::{DECORATIONS_WIDTH, EditorMetrics, FoldControls, Workbench};
 use crate::commands::Outcome;
-use crate::editor::{LINE_HEIGHT, OpenEditor, Position, Reveal, Selection, VERTICAL_SCROLLBAR_WIDTH, expand_tabs, visible_column};
+use crate::editor::{OpenEditor, Position, Reveal, Selection, VERTICAL_SCROLLBAR_WIDTH, expand_tabs, visible_column};
 
 const ENABLED: &str = "editor.stickyScroll.enabled";
 
@@ -78,7 +78,7 @@ impl Workbench {
         if lines.is_empty() {
             return None;
         }
-        let height = lines.len() as f32 * LINE_HEIGHT + last_line_relative_position;
+        let height = lines.len() as f32 * metrics.line_height + last_line_relative_position;
         let now = std::time::Instant::now();
         if self.sticky_scroll.fold_icons.in_transition(now) {
             window.request_animation_frame();
@@ -101,7 +101,7 @@ impl Workbench {
             let StickyLine { line, end_line } = lines[index];
             let region = editor.folding.region_at_line(line).filter(|&region| editor.folding.regions.get(region).start == line);
             let collapsed = region.map(|region| editor.folding.regions.is_collapsed(region));
-            let mut top = index as f32 * LINE_HEIGHT;
+            let mut top = index as f32 * metrics.line_height;
             if index == last {
                 top += last_line_relative_position + if collapsed == Some(true) { 1. } else { 0. };
             }
@@ -120,26 +120,26 @@ impl Workbench {
                 .top(px(top))
                 .left_0()
                 .w(px(metrics.content_left()))
-                .h(px(LINE_HEIGHT))
+                .h(px(metrics.line_height))
                 .bg(gutter)
                 .text_color(number_color)
                 .on_hover(cx.listener(move |workbench, is_hovered: &bool, _, cx| hovered(workbench, is_hovered, cx)))
                 .on_mouse_move(cx.listener(move |workbench, event: &MouseMoveEvent, _, cx| workbench.show_sticky_end(index, event.modifiers.shift, cx)))
                 .on_click(cx.listener(move |workbench, event: &ClickEvent, window, cx| workbench.click_sticky_line(end_line, None, event, window, cx)))
-                .child(div().absolute().left(px(GLYPH_MARGIN_WIDTH)).w(px(metrics.line_numbers_width)).text_right().child(line.to_string()));
+                .child(div().absolute().left(px(metrics.glyph_margin_width())).w(px(metrics.line_numbers_width)).text_right().child(line.to_string()));
             if let Some(collapsed) = collapsed {
                 // StickyFoldingIcon.setVisible: a collapsed icon always shows, an expanded one while over the gutter.
                 let opacity = if collapsed { 1. } else { fold_icon_opacity };
                 let name = if collapsed { "chevron-right" } else { "chevron-down" };
-                let icon = self.icon(name, LINE_HEIGHT, 1.4 * EDITOR_FONT_SIZE, Rgba { a: fold_color.a * opacity, ..fold_color });
+                let icon = self.icon(name, metrics.line_height, 1.4 * metrics.font_size, Rgba { a: fold_color.a * opacity, ..fold_color });
                 let visible = collapsed || self.sticky_scroll.fold_icons.shown;
                 number = number.child(
                     div()
                         .id(("sticky-fold", index))
                         .absolute()
-                        .left(px(GLYPH_MARGIN_WIDTH + metrics.line_numbers_width + 2.))
+                        .left(px(metrics.glyph_margin_width() + metrics.line_numbers_width + 2.))
                         .w(px(DECORATIONS_WIDTH))
-                        .h(px(LINE_HEIGHT))
+                        .h(px(metrics.line_height))
                         .flex()
                         .justify_center()
                         .when(visible, |icon| icon.cursor_pointer())
@@ -167,7 +167,7 @@ impl Workbench {
                 .top(px(top))
                 .left_0()
                 .right_0()
-                .h(px(LINE_HEIGHT))
+                .h(px(metrics.line_height))
                 .overflow_hidden()
                 .bg(background)
                 .hover(|content| content.bg(hover))
