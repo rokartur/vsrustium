@@ -155,9 +155,14 @@ fn local_search_ranks_key_matches_and_falls_back_to_descriptions() {
 fn filters_match_tags_ids_and_extensions() {
     let groups = sample_groups();
     let hidden = groups[0].settings.iter().find(|setting| setting.key == "sample.hidden").unwrap();
-    assert!(matches_all_tags(hidden, false, &strings(&["advanced"])));
-    assert!(!matches_all_tags(hidden, false, &strings(&["modified"])));
-    assert!(matches_all_tags(hidden, true, &strings(&["modified", "advanced"])));
+    let unset = Inspection::default();
+    let configured = Inspection { is_configured: true, ..Inspection::default() };
+    let policy = Inspection { has_policy_value: true, ..Inspection::default() };
+    assert!(matches_all_tags(hidden, &unset, &strings(&["advanced"])));
+    assert!(!matches_all_tags(hidden, &unset, &strings(&["modified"])));
+    assert!(matches_all_tags(hidden, &configured, &strings(&["modified", "advanced"])));
+    assert!(!matches_all_tags(hidden, &unset, &strings(&["hasPolicy"])));
+    assert!(matches_all_tags(hidden, &policy, &strings(&["hasPolicy", "advanced"])));
     assert!(matches_any_id(hidden, &strings(&["sample.*"])));
     assert!(!matches_any_id(hidden, &strings(&["other"])));
     assert!(matches_any_extension(hidden, &strings(&["PUB.sample"])));
@@ -177,6 +182,7 @@ fn inspect_setting_reads_the_selected_scope_and_lists_the_others() {
         workspace: model(json!({ "editor.tabSize": 3, "[go]": { "editor.tabSize": 5 } })),
         folders: Vec::new(),
         has_workspace: true,
+        ..Default::default()
     };
     let user = inspect_setting(&configuration, "editor.tabSize", Target::UserLocal, None);
     assert_eq!(user.value, json!(2));
@@ -193,9 +199,45 @@ fn inspect_setting_reads_the_selected_scope_and_lists_the_others() {
 }
 
 #[test]
+fn a_policy_value_shows_instead_of_the_scope_value_and_is_not_configured() {
+    let configuration = config::configuration::Configuration {
+        defaults: model(json!({ "editor.tabSize": 4 })),
+        local_user: model(json!({ "editor.tabSize": 2 })),
+        policy: model(json!({ "editor.tabSize": 6 })),
+        ..Default::default()
+    };
+    let user = inspect_setting(&configuration, "editor.tabSize", Target::UserLocal, None);
+    assert_eq!(user.value, json!(6));
+    assert!(user.has_policy_value);
+    assert!(!user.is_configured);
+    assert!(!inspect_setting(&configuration, "editor.insertSpaces", Target::UserLocal, None).has_policy_value);
+}
+
+#[test]
 fn markdown_runs_keep_code_and_links_and_drop_their_syntax() {
     let (text, runs) = markdown_runs("Set `afterDelay` in [Files: Auto Save](#files.autoSave \"files.autoSave\") or [x] here.");
     assert_eq!(text, "Set afterDelay in Files: Auto Save or [x] here.");
     assert_eq!(runs, [(4..14, MarkdownRun::Code), (18..34, MarkdownRun::Link("#files.autoSave".into()))]);
     assert_eq!(markdown_runs("a `b").0, "a `b");
+}
+
+#[test]
+fn setting_links_become_links_named_by_category_and_label() {
+    let text = "Refer to the `#search.exclude#` setting or '#files.autoSave#', not `#a b#`.";
+    assert_eq!(
+        fix_setting_links(text, true),
+        "Refer to the [Search: Exclude](#search.exclude \"search.exclude\") setting or [Files: Auto Save](#files.autoSave \"files.autoSave\"), not `#a b#`."
+    );
+    assert_eq!(fix_setting_links("`#search.exclude#`", false), "\"Search: Exclude\"");
+}
+
+#[test]
+fn search_suggestions_follow_the_last_word() {
+    let all = search_suggestions("", &[], &[]);
+    assert_eq!(all[0], "@modified ");
+    assert!(all.contains(&"@ext:".to_string()));
+    assert!(!search_suggestions("@modified ", &[], &[]).contains(&"@modified ".to_string()));
+    assert!(search_suggestions("font", &[], &[]).is_empty());
+    assert_eq!(search_suggestions("@lang:", &["rust", "css"], &[]), ["@lang:css ", "@lang:rust "]);
+    assert_eq!(search_suggestions("@ext:a.b @ext:", &[], &["a.b", "c.d"]), ["@ext:c.d "]);
 }

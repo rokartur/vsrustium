@@ -76,6 +76,32 @@ fn a_setting_query_reveals_its_key_or_its_value(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn an_open_settings_file_marks_its_unknown_settings_until_it_closes(cx: &mut TestAppContext) {
+    let (workbench, cx, dir) = workbench(cx, "unknown");
+    std::fs::create_dir_all(dir.join("User")).unwrap();
+    std::fs::write(dir.join("User/settings.json"), "{\n\t\"editor.tabSize\": 2,\n\t\"editor.unknownSetting\": true\n}").unwrap();
+    let markers = |workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext| {
+        workbench.read_with(cx, |workbench, _| {
+            let markers = workbench.diagnostics.service.read(crate::markers::ReadOptions { owner: Some("UnsupportedSettingsRenderer"), ..Default::default() });
+            markers.iter().map(|marker| (marker.resource.clone(), marker.message.clone(), marker.start_line, marker.end_column)).collect::<Vec<_>>()
+        })
+    };
+
+    run(&workbench, cx, "workbench.action.openSettingsJson", vec![]);
+    assert_eq!(markers(&workbench, cx), Vec::new(), "the renderer waits 200ms");
+    cx.executor().advance_clock(std::time::Duration::from_millis(200));
+    cx.run_until_parked();
+    let resource = crate::editor::uri_string("file", &dir.join("User/settings.json"));
+    assert_eq!(markers(&workbench, cx), vec![(resource, "Unknown Configuration Setting".to_string(), 3, 31)]);
+
+    run(&workbench, cx, "workbench.action.closeActiveEditor", vec![]);
+    cx.executor().advance_clock(std::time::Duration::from_millis(200));
+    cx.run_until_parked();
+    assert_eq!(markers(&workbench, cx), Vec::new(), "dispose removes the markers");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[gpui::test]
 fn the_raw_default_settings_open_read_only(cx: &mut TestAppContext) {
     let (workbench, cx, dir) = workbench(cx, "raw");
 

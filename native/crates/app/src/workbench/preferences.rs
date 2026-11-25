@@ -22,6 +22,8 @@ use crate::keybindings_editor;
 use crate::main_thread_quick_open::Owner;
 use crate::quick_input::{Entry, Event, Item, Kind, QuickInput, path_label};
 
+mod unsupported_settings;
+
 #[cfg(test)]
 mod tests;
 

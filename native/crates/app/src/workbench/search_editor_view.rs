@@ -49,6 +49,10 @@ impl Workbench {
             self.commands.register(command, move |workbench, args, window, cx| {
                 let mut args = args.into_iter().next().filter(Value::is_object).unwrap_or_else(|| serde_json::json!({}));
                 args.as_object_mut().expect("checked above").entry("location").or_insert(location.into());
+                let args = match workbench.resolve_string_arguments(args) {
+                    Ok(args) => args,
+                    Err(error) => return Outcome::error(error.message),
+                };
                 workbench.open_new_search_editor(&args, window, cx);
                 Outcome::done()
             });
@@ -67,6 +71,10 @@ impl Workbench {
                 "useExcludeSettingsAndIgnoreFiles": config.use_exclude_settings_and_ignore_files,
                 "showIncludesExcludes": show_includes_excludes,
             });
+            let args = match workbench.resolve_string_arguments(args) {
+                Ok(args) => args,
+                Err(error) => return Outcome::error(error.message),
+            };
             workbench.open_new_search_editor(&args, window, cx);
             Outcome::done()
         });
@@ -124,7 +132,6 @@ impl Workbench {
 
     /// `openNewSearchEditor`: the query is the active editor's selection, or the word at its cursor with
     /// `search.seedWithNearestWord`; location `reuse` opens the most recent search editor in place of a new one.
-    // shortcut: `${...}` variables in the arguments are not resolved, the port has no configuration resolver.
     fn open_new_search_editor(&mut self, args: &Value, window: &mut Window, cx: &mut Context<Self>) {
         let reuse = args["location"] == "reuse";
         // Upstream tests the setting for truthiness, so "never" seeds too.

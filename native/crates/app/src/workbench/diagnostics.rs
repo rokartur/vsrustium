@@ -43,6 +43,21 @@ impl Workbench {
         self.markers_changed(changed, cx);
     }
 
+    /// `IMarkerService.changeOne` of a workbench owner; `_forwardMarkers` sends its markers to the host.
+    pub(super) fn change_workbench_markers(&mut self, owner: &str, uri: Value, markers: &[Value], cx: &mut Context<Self>) {
+        let Ok((scheme, path)) = uri_parts(&uri) else { return };
+        let resource = crate::editor::uri_string(scheme, &path);
+        self.diagnostics.uris.insert(resource.clone(), uri);
+        let changed = self.diagnostics.service.change_one(owner, &resource, markers, false);
+        self.markers_changed(changed, cx);
+    }
+
+    /// `IMarkerService.remove(owner, [resource])`.
+    pub(super) fn remove_workbench_markers(&mut self, owner: &str, resource: &str, cx: &mut Context<Self>) {
+        let changed = self.diagnostics.service.change_one(owner, resource, &[], false);
+        self.markers_changed(changed, cx);
+    }
+
     /// `$clear(owner)`.
     pub(crate) fn clear_markers(&mut self, owner: &str, cx: &mut Context<Self>) {
         let changed = self.diagnostics.service.change_all(owner, &[]);

@@ -45,9 +45,9 @@ const COLUMN_WEIGHTS: [f32; 4] = [0.3, 0.2, 0.35, 0.15];
 const MIN_COLUMN_WIDTH: f32 = 120.;
 const COLUMN_LABELS: [&str; 4] = ["Command", "Keybinding", "When", "Source"];
 /// `--vscode-sash-size`.
-const SASH_SIZE: f32 = 4.;
+pub(super) const SASH_SIZE: f32 = 4.;
 /// `workbench.sash.hoverDelay` default.
-const SASH_HOVER_DELAY: Duration = Duration::from_millis(300);
+pub(super) const SASH_HOVER_DELAY: Duration = Duration::from_millis(300);
 /// The `border-color 0.2s ease-out` transition of the column borders on table hover.
 const TABLE_BORDER_FADE: Duration = Duration::from_millis(200);
 /// `DefineKeybindingWidget.WIDTH` and `HEIGHT`.
@@ -1507,7 +1507,7 @@ fn matches_of(chord: &Chord, matched: ChordMatch) -> Vec<bool> {
 }
 
 /// A `HighlightedLabel` cut with an ellipsis: matches are bold in the highlight color.
-fn highlighted(text: &str, matches: &[Range<usize>], color: Rgba) -> Div {
+pub(super) fn highlighted(text: &str, matches: &[Range<usize>], color: Rgba) -> Div {
     let byte_at = |chars: usize| text.char_indices().nth(chars).map_or(text.len(), |(byte, _)| byte);
     let highlights = matches.iter().map(|range| (byte_at(range.start)..byte_at(range.end), HighlightStyle { color: Some(color.into()), font_weight: Some(FontWeight::BOLD), ..Default::default() }));
     div().min_w_0().truncate().child(StyledText::new(text.to_string()).with_highlights(highlights.collect::<Vec<_>>()))

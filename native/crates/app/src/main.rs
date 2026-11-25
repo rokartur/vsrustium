@@ -41,6 +41,7 @@ mod markers;
 mod menus;
 mod notifications;
 mod output;
+mod policy;
 mod quick_input;
 mod search_editor;
 mod search_model;
@@ -120,7 +121,8 @@ fn main() -> anyhow::Result<()> {
     }
     let window_extensions = WindowExtensions { builtins, user: user_extensions, running: extensions.clone() };
     let described: Vec<(&str, &serde_json::Value)> = extensions.iter().map(|extension| (extension.id.as_str(), &extension.description)).collect();
-    let settings = Settings::load(Registry::with_extensions(&described), user_data.join("User"), workspace.clone());
+    let mut settings = Settings::load(Registry::with_extensions(&described), user_data.join("User"), workspace.clone());
+    settings.set_policy_values(policy::read_native_policies(&settings.registry, policy::BUNDLE_IDENTIFIER));
     let theme = match flag_value("--theme") {
         Some(theme_id) => load_theme(&extensions, &theme_id)?,
         None => settings_theme(&extensions, &settings)?,

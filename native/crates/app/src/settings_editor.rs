@@ -5,6 +5,9 @@
 #[cfg(test)]
 mod tests;
 
+pub mod lists;
+pub mod validation;
+
 use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::path::Path;
@@ -905,6 +908,8 @@ pub struct Inspection {
     pub overridden_scopes: Vec<String>,
     /// `overriddenDefaultsLanguageList`: the languages whose default overrides set it.
     pub overridden_default_languages: Vec<String>,
+    /// `hasPolicyValue`: a policy sets the value, so the control is read-only and shows the policy's value.
+    pub has_policy_value: bool,
 }
 
 /// `inspectSetting` then `update`: the value shown in `target`'s tab, whether that scope sets it, and the scopes
@@ -917,9 +922,13 @@ pub fn inspect_setting(configuration: &Configuration, key: &str, target: Target,
         Target::WorkspaceFolder => &inspected.workspace_folder,
         _ => &inspected.user_local,
     };
-    let is_configured = selected.value.is_some();
     let default_value = inspected.default_value.clone().unwrap_or(Value::Null);
-    let value = selected.value.clone().unwrap_or_else(|| default_value.clone());
+    let has_policy_value = inspected.policy_value.is_some();
+    // The user did not set a policy value themselves, so it does not count as configured.
+    let (value, is_configured) = match &inspected.policy_value {
+        Some(policy_value) => (policy_value.clone(), false),
+        None => (selected.value.clone().unwrap_or_else(|| default_value.clone()), selected.value.is_some()),
+    };
     let mut overridden_scopes = Vec::new();
     if target != Target::Workspace && inspected.workspace.value.is_some() {
         overridden_scopes.push("workspace:".to_string());
@@ -936,7 +945,7 @@ pub fn inspect_setting(configuration: &Configuration, key: &str, target: Target,
     let user = language_blocks(&configuration.local_user);
     overridden_scopes.extend(workspace.iter().map(|language| format!("workspace:{language}")));
     overridden_scopes.extend(user.iter().map(|language| format!("user:{language}")));
-    Inspection { value, default_value, is_configured, overridden_scopes, overridden_default_languages }
+    Inspection { value, default_value, is_configured, overridden_scopes, overridden_default_languages, has_policy_value }
 }
 
 /// One run of `renderSettingMarkdown`'s inline markdown: a code span or a link with its href.
@@ -944,6 +953,21 @@ pub fn inspect_setting(configuration: &Configuration, key: &str, target: Target,
 pub enum MarkdownRun {
     Code,
     Link(String),
+}
+
+/// `fixSettingLinks`: `` `#key#` `` and `'#key#'` become a link named "Category: Label", or that name quoted.
+pub fn fix_setting_links(text: &str, linkify: bool) -> String {
+    let pattern = regex::Regex::new(r"`#([^#\s`]+)#`|'#([^#\s']+)#'").expect("the setting link pattern compiles");
+    pattern
+        .replace_all(text, |captures: &regex::Captures| {
+            let key = captures.get(1).or_else(|| captures.get(2)).map_or("", |key| key.as_str());
+            let (category, label) = setting_key_to_display_format(key, "", false);
+            match linkify {
+                true => format!("[{category}: {label}](#{key} \"{key}\")"),
+                false => format!("\"{category}: {label}\""),
+            }
+        })
+        .into_owned()
 }
 
 /// The plain text of a setting description and its code and link runs, as byte ranges of that text.
@@ -984,13 +1008,20 @@ pub fn markdown_runs(markdown: &str) -> (String, Vec<(std::ops::Range<usize>, Ma
     (text, runs)
 }
 
-/// `matchesAllTags` with the setting's `tags` set: its schema tags and `modified` when configured.
-pub fn matches_all_tags(setting: &Setting, is_configured: bool, filters: &[String]) -> bool {
+/// `matchesAllTags` with the setting's `tags` set: its schema tags, `modified` when configured and `hasPolicy`
+/// under a policy.
+pub fn matches_all_tags(setting: &Setting, inspection: &Inspection, filters: &[String]) -> bool {
     if filters.is_empty() {
         return true;
     }
-    let has = |tag: &str| (tag == MODIFIED_SETTING_TAG && is_configured) || (tag == REQUIRE_TRUSTED_WORKSPACE_SETTING_TAG && setting.restricted) || has_tag(setting, tag);
-    let any_tags = is_configured || setting.restricted || tags(setting).next().is_some();
+    let is_configured = inspection.is_configured;
+    let has = |tag: &str| {
+        (tag == MODIFIED_SETTING_TAG && is_configured)
+            || (tag == POLICY_SETTING_TAG && inspection.has_policy_value)
+            || (tag == REQUIRE_TRUSTED_WORKSPACE_SETTING_TAG && setting.restricted)
+            || has_tag(setting, tag)
+    };
+    let any_tags = is_configured || inspection.has_policy_value || setting.restricted || tags(setting).next().is_some();
     if filters.iter().any(|tag| tag == "stable") {
         if has_tag(setting, "preview") || has_tag(setting, "experimental") {
             return false;
@@ -1090,8 +1121,8 @@ pub struct Filters<'a> {
     pub parsed: &'a ParsedQuery,
     pub raw_query: &'a str,
     pub target: Target,
-    /// Whether each setting is set in the target, by setting index.
-    pub configured: &'a [bool],
+    /// Each setting's state in the target, by setting index.
+    pub inspections: &'a [Inspection],
     pub always_show_advanced: bool,
 }
 
@@ -1114,7 +1145,7 @@ pub fn search(model: &Model, groups: &[SettingsGroup], filters: &Filters, value_
     // `SearchResultModel.updateChildren`.
     let shown = matches.into_iter().map(|found| found.index).filter(|&index| {
         let setting = &model.settings[index];
-        matches_all_tags(setting, filters.configured[index], &parsed.tags)
+        matches_all_tags(setting, &filters.inspections[index], &parsed.tags)
             && matches_scope(setting, filters.target)
             && matches_any_extension(setting, &parsed.extension_filters)
             && matches_any_id(setting, &parsed.id_filters)
@@ -1129,6 +1160,14 @@ pub fn find_group<'a>(group: &'a Group, id: &str) -> Option<&'a Group> {
         return Some(group);
     }
     group.children.iter().find_map(|child| find_group(child, id))
+}
+
+/// `expandAll` of the TOC: every group id below `group`.
+pub fn collect_group_ids(group: &Group, ids: &mut HashSet<String>) {
+    for child in &group.children {
+        ids.insert(child.id.clone());
+        collect_group_ids(child, ids);
+    }
 }
 
 fn contains_setting(group: &Group, index: usize) -> bool {
@@ -1215,4 +1254,62 @@ pub fn group_path(model: &Model, id: &str) -> Vec<String> {
     let mut path = Vec::new();
     model.root.children.iter().any(|child| walk(child, id, &mut path));
     path
+}
+
+/// `SettingsEditor2.SUGGESTIONS`: the search box's `@` completions.
+const SEARCH_SUGGESTIONS: &[&str] = &[
+    "@modified",
+    "@tag:notebookLayout",
+    "@tag:notebookOutputLayout",
+    "@tag:requireTrustedWorkspace",
+    "@tag:workspaceTrust",
+    "@tag:sync",
+    "@tag:usesOnlineServices",
+    "@tag:telemetry",
+    "@tag:accessibility",
+    "@tag:preview",
+    "@tag:experimental",
+    "@tag:expassigned",
+    "@tag:agentMerge",
+    "@tag:chatPermissions",
+    "@tag:advanced",
+    "@id:",
+    "@ext:",
+    "@feature:scm",
+    "@feature:explorer",
+    "@feature:search",
+    "@feature:debug",
+    "@feature:extensions",
+    "@feature:terminal",
+    "@feature:task",
+    "@feature:problems",
+    "@feature:output",
+    "@feature:comments",
+    "@feature:remote",
+    "@feature:timeline",
+    "@feature:notebook",
+    "@feature:chat",
+    "@hasPolicy",
+];
+
+/// `provideResults` of the search box: languages after `@lang:`, extensions after `@ext:`, else the tags not yet in the query.
+pub fn search_suggestions(query: &str, language_ids: &[&str], extension_ids: &[&str]) -> Vec<String> {
+    let last = query.split(char::is_whitespace).last().unwrap_or_default();
+    let unused_sorted = |prefix: &str, ids: &[&str]| {
+        let mut tags: Vec<String> = ids.iter().map(|id| format!("{prefix}{id} ")).collect();
+        tags.sort();
+        tags.retain(|tag| !query.contains(tag.as_str()));
+        tags
+    };
+    if last.starts_with("@lang:") {
+        return unused_sorted("@lang:", language_ids);
+    }
+    if last.starts_with("@ext:") {
+        return unused_sorted("@ext:", extension_ids);
+    }
+    if !query.is_empty() && !last.starts_with('@') {
+        return Vec::new();
+    }
+    let unused = SEARCH_SUGGESTIONS.iter().filter(|tag| !query.contains(**tag));
+    unused.map(|tag| if tag.ends_with(':') { tag.to_string() } else { format!("{tag} ") }).collect()
 }

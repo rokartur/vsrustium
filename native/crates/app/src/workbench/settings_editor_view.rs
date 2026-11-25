@@ -2,6 +2,8 @@
 //! preferencesWidgets.ts and settingsSearchMenu.ts) in the modal editor part, styled as media/settingsEditor2.css,
 //! media/settingsWidgets.css and the modern UI overrides draw it.
 
+mod list_widget;
+mod search_suggest;
 #[cfg(test)]
 mod tests;
 
@@ -11,31 +13,38 @@ use std::time::Duration;
 
 use config::service::Target;
 use gpui::{
-    AnyElement, ClipboardItem, Context, FocusHandle, FontWeight, HighlightStyle, InteractiveText, KeyDownEvent, ListAlignment, ListState, MouseButton, MouseDownEvent, Rgba, StyledText, Task,
-    Window, anchored, deferred, div, list, point, prelude::*, px,
+    AnyElement, ClipboardItem, Context, FocusHandle, FontWeight, InteractiveText, KeyDownEvent, ListAlignment, ListState, MouseButton, MouseDownEvent, Rgba, StyledText, Task,
+    MouseMoveEvent, MouseUpEvent, TextRun, Window, anchored, canvas, deferred, div, font, list, point, prelude::*, px,
 };
 use serde_json::{Value, json};
 
 use super::Workbench;
+use super::find_widget::HISTORY_LIMIT;
 use super::hover::{HoverContent, HoverOptions};
 use super::input_box_view::{InputId, InputLook, InputView};
-use super::keybindings_editor_view::ModalHeader;
+use super::keybindings_editor_view::{ModalHeader, SASH_HOVER_DELAY, SASH_SIZE};
 use crate::commands::Outcome;
 use crate::default_settings::{SettingsGroup, registered_groups};
+use crate::history::HistoryNavigator;
 use crate::input_box::InputBox;
 use crate::menus::MenuAction;
+use crate::split_view::{SplitView, View};
 use crate::settings_editor::{
     self as model, Filters, Inspection, MarkdownRun, Model, Row, TocRow, ValueType, inspect_setting, markdown_runs, parse_query, setting_key_to_display_format, tree_rows, value_type,
 };
+use crate::settings_editor::validation::{invalid_type_error, js_string_to_number, validate};
 
 const SEARCH_DELAY: Duration = Duration::from_millis(200);
 /// `SETTING_UPDATE_SLOW_DEBOUNCE`: typed text and numbers write 1s after the last key.
 const SLOW_UPDATE_DELAY: Duration = Duration::from_millis(1000);
-const TOC_WIDTH: f32 = 200.;
+const TOC_MIN_WIDTH: f32 = 100.;
+const TOC_RESET_WIDTH: f32 = 200.;
 const EDITOR_MIN_WIDTH: f32 = 500.;
-const NARROW_TOTAL_WIDTH: f32 = TOC_WIDTH + EDITOR_MIN_WIDTH;
+const NARROW_TOTAL_WIDTH: f32 = TOC_RESET_WIDTH + EDITOR_MIN_WIDTH;
+const SPLIT_VIEW_WIDTH_KEY: &str = "settingsEditor2.splitViewWidth";
 const TOC_ROW_HEIGHT: f32 = 22.;
 const SEARCH_BOX_LABEL: &str = "Search settings";
+const SEARCH_HISTORY_KEY: &str = "settingsEditor2.searchHistory";
 
 /// settingsSearchMenu.ts `getActions`: id, label, the query word, and how it applies (`Append` triggers suggest upstream).
 enum FilterKind {
@@ -86,6 +95,9 @@ pub struct SettingsEditor {
     pub search: InputBox,
     pub search_view: InputView,
     pub search_focus: FocusHandle,
+    history: HistoryNavigator,
+    pub list: list_widget::ListEditor,
+    suggest: Option<search_suggest::Suggest>,
     /// The text or number control being edited: the setting and its value.
     pub value: Option<(usize, InputBox)>,
     pub value_view: InputView,
@@ -96,6 +108,10 @@ pub struct SettingsEditor {
     modal_focus: FocusHandle,
     tree: ListState,
     toc_list: ListState,
+    /// The TOC and the tree side by side; the TOC width persists under `settingsEditor2.splitViewWidth`.
+    split: Option<SplitView>,
+    sash_hovered: bool,
+    sash_hover: Option<Task<()>>,
     searching: Option<Task<()>>,
     writing: Option<Task<()>>,
     previous_focus: Option<FocusHandle>,
@@ -122,6 +138,9 @@ impl SettingsEditor {
             search: InputBox::default(),
             search_view: InputView::default(),
             search_focus: cx.focus_handle(),
+            history: HistoryNavigator::new(Vec::new(), HISTORY_LIMIT),
+            list: list_widget::ListEditor::new(cx),
+            suggest: None,
             value: None,
             value_view: InputView::default(),
             value_focus: cx.focus_handle(),
@@ -131,6 +150,9 @@ impl SettingsEditor {
             modal_focus: cx.focus_handle(),
             tree: ListState::new(0, ListAlignment::Top, px(400.)),
             toc_list: ListState::new(0, ListAlignment::Top, px(200.)),
+            split: None,
+            sash_hovered: false,
+            sash_hover: None,
             searching: None,
             writing: None,
             previous_focus: None,
@@ -176,18 +198,21 @@ pub fn apply_filter_action(query: &str, id: &str) -> String {
     }
 }
 
-/// The value a typed text control writes: a number type parses, an empty nullable number is null.
-pub fn parse_typed_value(kind: ValueType, text: &str) -> Result<Value, &'static str> {
+/// The value a typed text control writes once the setting's validator (`renderValidations`) accepts it:
+/// a number type parses as `parseInt` or `parseFloat`, an empty nullable number is null.
+pub fn parse_typed_value(schema: &Value, kind: ValueType, text: &str) -> Result<Value, String> {
+    let error = validate(schema, &Value::String(text.to_string()));
+    if !error.is_empty() {
+        return Err(error);
+    }
     let nullable = matches!(kind, ValueType::NullableInteger | ValueType::NullableNumber);
-    if nullable && text.trim().is_empty() {
+    if nullable && text.is_empty() {
         return Ok(Value::Null);
     }
+    let number = || js_string_to_number(text).ok_or_else(|| "Value must be a number.".to_string());
     match kind {
-        ValueType::Integer | ValueType::NullableInteger => text.trim().parse::<i64>().map(Value::from).map_err(|_| "Value must be an integer."),
-        ValueType::Number | ValueType::NullableNumber => {
-            let number: f64 = text.trim().parse().map_err(|_| "Value must be a number.")?;
-            Ok(serde_json::Number::from_f64(number).map(Value::Number).ok_or("Value must be a number.")?)
-        }
+        ValueType::Integer | ValueType::NullableInteger => Ok(Value::from(number()?.trunc() as i64)),
+        ValueType::Number | ValueType::NullableNumber => serde_json::Number::from_f64(number()?).map(Value::Number).ok_or_else(|| "Value must be a number.".to_string()),
         _ => Ok(Value::String(text.to_string())),
     }
 }
@@ -202,6 +227,7 @@ pub fn setting_as_json(key: &str, value: &Value) -> String {
 
 impl Workbench {
     pub(super) fn register_settings_editor_commands(&mut self) {
+        self.register_settings_suggest_commands();
         let commands = &mut self.commands;
         // preferences.contribution.ts: the UI editor unless `workbench.settings.editor` is `json`.
         commands.register("workbench.action.openSettings", |workbench, args, window, cx| {
@@ -237,7 +263,30 @@ impl Workbench {
             workbench.focus_settings_search(false, window, cx);
             Outcome::done()
         });
-        for id in ["settings.action.focusSettingsFromSearch", "settings.action.focusSettingsFromSearchOnEnter", "settings.action.focusSettingsList"] {
+        // navigateSearchHistoryNextOrFocusSettings: Down walks the history forward while the input shows an entry of it.
+        commands.register("settings.action.focusSettingsFromSearch", |workbench, _, window, cx| {
+            let editor = &mut workbench.settings_editor;
+            if !editor.history.is_nowhere() {
+                let value = editor.history.show_next_value(&editor.search.value);
+                workbench.set_settings_search(value, window, cx);
+                return Outcome::done();
+            }
+            // focusFirstSettingFromSearch: nothing while the results lag behind the input.
+            if editor.searching.is_none() {
+                let row = editor.focused.unwrap_or(0);
+                workbench.focus_settings_tree(Some(row), window, cx);
+            }
+            Outcome::done()
+        });
+        commands.register("settings.action.showPreviousSearch", |workbench, _, window, cx| {
+            let editor = &mut workbench.settings_editor;
+            if let Some(value) = editor.history.show_previous_value(&editor.search.value) {
+                workbench.set_settings_search(value, window, cx);
+                workbench.settings_editor.search.select(0, 0);
+            }
+            Outcome::done()
+        });
+        for id in ["settings.action.focusSettingsFromSearchOnEnter", "settings.action.focusSettingsList"] {
             commands.register(id, |workbench, _, window, cx| {
                 workbench.flush_settings_search(cx);
                 workbench.focus_settings_tree(Some(workbench.settings_editor.focused.unwrap_or(0)), window, cx);
@@ -260,7 +309,7 @@ impl Workbench {
         });
         commands.register("settings.action.focusLevelUp", |workbench, _, window, cx| {
             let editor = &workbench.settings_editor;
-            if editor.value_focus.is_focused(window) || editor.control_focus.is_focused(window) {
+            if editor.value_focus.is_focused(window) || editor.control_focus.is_focused(window) || editor.list.is_focused(window) {
                 workbench.settings_write_now(cx);
                 workbench.focus_settings_tree(editor_focused(workbench), window, cx);
             } else if workbench.settings_editor.tree_focus.is_focused(window) {
@@ -353,6 +402,9 @@ impl Workbench {
             editor.focused = None;
             editor.toc_focused = None;
             editor.expanded.clear();
+            let stored = self.profile_storage.lock().unwrap().get(SEARCH_HISTORY_KEY).and_then(|raw| serde_json::from_str::<Vec<String>>(raw).ok());
+            self.settings_editor.history = HistoryNavigator::new(stored.unwrap_or_default(), HISTORY_LIMIT);
+            self.settings_editor.split = None;
         }
         if let Some((target, folder)) = target {
             let has_workspace = self.settings.lock().unwrap().workspace.is_some();
@@ -367,6 +419,10 @@ impl Workbench {
             self.set_settings_search(query, window, cx);
             self.flush_settings_search(cx);
         } else if opening {
+            // Initial category: the first one (Commonly Used), focused and selected in the TOC.
+            let editor = &mut self.settings_editor;
+            editor.category = editor.model.root.children.first().map(|group| group.id.clone());
+            editor.toc_focused = editor.category.as_ref().map(|_| 0);
             self.render_settings(cx);
         }
         self.focus_settings_search(false, window, cx);
@@ -382,6 +438,8 @@ impl Workbench {
         editor.searching = None;
         editor.dropdown = None;
         editor.value = None;
+        editor.list.reset();
+        editor.suggest = None;
         editor.search_view.reset();
         editor.value_view.reset();
         if let Some(focus) = editor.previous_focus.take() {
@@ -393,7 +451,8 @@ impl Workbench {
     pub(super) fn settings_editor_focused(&self, window: &Window) -> bool {
         let editor = &self.settings_editor;
         editor.open
-            && [&editor.modal_focus, &editor.search_focus, &editor.value_focus, &editor.control_focus, &editor.tree_focus, &editor.toc_focus].into_iter().any(|focus| focus.is_focused(window))
+            && ([&editor.modal_focus, &editor.search_focus, &editor.value_focus, &editor.control_focus, &editor.tree_focus, &editor.toc_focus].into_iter().any(|focus| focus.is_focused(window))
+                || editor.list.is_focused(window))
     }
 
     /// The context keys of the modal part and of the Settings editor (`inSettingsEditor` and its widgets').
@@ -412,6 +471,9 @@ impl Workbench {
         context.insert("activeEditor".into(), json!("workbench.editor.settings2"));
         context.insert("inSettingsEditor".into(), json!(true));
         context.insert("inSettingsSearch".into(), json!(search));
+        if search {
+            self.settings_suggest_context(context);
+        }
         context.insert("settingRowFocus".into(), json!(tree && editor.focused_setting().is_some()));
         context.insert("settingFirstRowFocus".into(), json!(tree && editor.focused == Some(0)));
         context.insert("settingsTocRowFocus".into(), json!(toc && toc_row.is_some()));
@@ -422,7 +484,7 @@ impl Workbench {
             context.insert("treeElementCanExpand".into(), json!(row.has_children && !expanded));
             context.insert("treeElementHasParent".into(), json!(row.level > 1));
         }
-        if search || editor.value_focus.is_focused(window) {
+        if search || editor.value_focus.is_focused(window) || editor.list.key_focus.is_focused(window) || editor.list.value_focus.is_focused(window) {
             context.insert("inputFocus".into(), json!(true));
         }
     }
@@ -454,9 +516,8 @@ impl Workbench {
         let editor = &mut self.settings_editor;
         let raw_query = editor.search.value.trim().replace('\u{203A}', " ");
         let parsed = parse_query(&raw_query);
-        let configured: Vec<bool> = editor.inspections.iter().map(|inspection| inspection.is_configured).collect();
         let always_show_advanced = self.settings.lock().unwrap().get_value(Some("workbench.settings.alwaysShowAdvancedSettings"), &Default::default()) == Some(json!(true));
-        let filters = Filters { parsed: &parsed, raw_query: &raw_query, target: editor.target, configured: &configured, always_show_advanced };
+        let filters = Filters { parsed: &parsed, raw_query: &raw_query, target: editor.target, inspections: &editor.inspections, always_show_advanced };
         let inspections = &editor.inspections;
         let value_of = |key: &str| editor.model.index_of(key).map(|index| inspections[index].value.clone());
         editor.results = model::search(&editor.model, &editor.groups, &filters, value_of, |language| languages.is_registered(language));
@@ -492,6 +553,10 @@ impl Workbench {
         if editor.search.value == before {
             return;
         }
+        let caret = editor.search.selection.1;
+        let typed = (editor.search.len() == before.chars().count() + 1).then(|| editor.search.value.chars().nth(caret.wrapping_sub(1))).flatten();
+        self.update_settings_search_suggest(typed);
+        let editor = &mut self.settings_editor;
         editor.searching = Some(cx.spawn_in(window, async move |workbench, cx| {
             cx.background_executor().timer(SEARCH_DELAY).await;
             let _ = workbench.update(cx, |workbench, cx| workbench.search_settings_now(cx));
@@ -510,14 +575,32 @@ impl Workbench {
         editor.category = None;
         editor.focused = None;
         editor.toc_focused = None;
+        // A filter model expands the whole TOC; leaving search mode collapses it.
+        editor.expanded.clear();
+        if !editor.search.value.trim().is_empty() {
+            model::collect_group_ids(&editor.model.root, &mut editor.expanded);
+            editor.history.add_to_history(&editor.search.value, false);
+            self.save_settings_search_history();
+        }
         self.render_settings(cx);
         self.settings_editor.tree.scroll_to(gpui::ListOffset::default());
+    }
+
+    fn save_settings_search_history(&self) {
+        let history = self.settings_editor.history.elements();
+        let mut storage = self.profile_storage.lock().unwrap();
+        match history.is_empty() {
+            true => storage.delete(SEARCH_HISTORY_KEY),
+            false => storage.set(SEARCH_HISTORY_KEY, serde_json::to_string(history).expect("strings serialize")),
+        }
     }
 
     fn focus_settings_tree(&mut self, row: Option<usize>, window: &mut Window, cx: &mut Context<Self>) {
         let editor = &mut self.settings_editor;
         editor.value = None;
         editor.dropdown = None;
+        editor.list.reset();
+        editor.suggest = None;
         editor.focused = row.filter(|&row| row < editor.rows.len());
         if let Some(row) = editor.focused {
             editor.tree.scroll_to_reveal_item(row);
@@ -532,6 +615,10 @@ impl Workbench {
         let Some(index) = self.settings_editor.focused_setting() else { return };
         let editor = &mut self.settings_editor;
         let kind = value_type(&editor.model.settings[index]);
+        if is_list_control(kind) {
+            self.focus_list_widget(index, window, cx);
+            return;
+        }
         if is_text_control(kind) {
             let text = text_of(&editor.inspections[index].value);
             let mut input = InputBox::new(text);
@@ -568,8 +655,8 @@ impl Workbench {
             return;
         }
         let Some((index, input)) = &self.settings_editor.value else { return };
-        let kind = value_type(&self.settings_editor.model.settings[*index]);
-        if let Ok(value) = parse_typed_value(kind, &input.value) {
+        let setting = &self.settings_editor.model.settings[*index];
+        if let Ok(value) = parse_typed_value(&setting.schema, value_type(setting), &input.value) {
             let index = *index;
             self.write_setting_value(index, Some(value), false, cx);
         }
@@ -734,9 +821,8 @@ impl Workbench {
     }
 
     fn show_setting_context_menu(&mut self, index: usize, anchor: gpui::Bounds<gpui::Pixels>, window: &mut Window, cx: &mut Context<Self>) {
-        let configured = self.settings_editor.inspections[index].is_configured;
         let actions = vec![
-            MenuAction::Command { id: "settings.resetSetting".into(), title: "Reset Setting".into(), enabled: configured, checked: false, alt: None },
+            MenuAction::Command { id: "settings.resetSetting".into(), title: "Reset Setting".into(), enabled: true, checked: false, alt: None },
             MenuAction::Separator,
             MenuAction::Command { id: "settings.copySettingId".into(), title: "Copy Setting ID".into(), enabled: true, checked: false, alt: None },
             MenuAction::Command { id: "settings.copySettingAsJSON".into(), title: "Copy Setting as JSON".into(), enabled: true, checked: false, alt: None },
@@ -785,17 +871,26 @@ impl Workbench {
     /// `.settings-editor`: the header with the search and the target tabs, then the TOC and the tree.
     fn settings_editor_pane(&mut self, width: f32, height: f32, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let narrow = width < NARROW_TOTAL_WIDTH;
+        let body_width = width.min(1400.);
         let no_results = self.settings_editor.results.as_ref().is_some_and(Vec::is_empty);
         let body = if no_results {
             div().mt(px(20.)).px(px(24.)).child("No Settings Found").into_any_element()
+        } else if narrow {
+            div().flex_1().min_h_0().flex().mt(px(14.)).child(self.settings_tree(narrow, window, cx)).into_any_element()
         } else {
+            let toc_width = self.layout_settings_split(body_width);
             div()
+                .relative()
+                .w(px(body_width))
+                .mx_auto()
                 .flex_1()
                 .min_h_0()
                 .flex()
                 .mt(px(14.))
-                .when(!narrow, |body| body.child(self.settings_toc(window, cx)))
+                .child(self.settings_toc(toc_width, window, cx))
                 .child(self.settings_tree(narrow, window, cx))
+                .child(self.settings_sash(toc_width, cx))
+                .when(self.settings_editor.split.as_ref().is_some_and(|split| split.dragged_sash().is_some()), |body| body.child(self.settings_sash_drag(cx)))
                 .into_any_element()
         };
         div()
@@ -826,12 +921,13 @@ impl Workbench {
             1 => "1 Setting Found".to_string(),
             count => format!("{count} Settings Found"),
         });
+        // actionbar.css: a disabled codicon action-label takes disabledForeground.
+        let clear_color = if has_value { foreground } else { self.color("disabledForeground") };
         let clear = self
-            .icon("clear-all", 16., 16., foreground)
+            .icon("clear-all", 16., 16., clear_color)
             .id("settings.action.clearSearchResults")
             .p(px(3.))
             .rounded(px(5.))
-            .when(!has_value, |clear| clear.opacity(0.4))
             .when(has_value, |clear| {
                 clear.cursor_pointer().hover(|clear| clear.bg(self.color("toolbar.hoverBackground"))).on_click(cx.listener(|workbench, _, window, cx| {
                     workbench.set_settings_search(String::new(), window, cx);
@@ -861,13 +957,13 @@ impl Workbench {
             .flex()
             .items_center()
             .when_some(count, |widgets, count| {
-                widgets.child(div().mr(px(3.)).px(px(8.)).pb(px(3.)).text_size(px(11.)).text_color(self.color("descriptionForeground")).child(count))
+                widgets.child(div().mr(px(3.)).px(px(3.)).pt(px(2.)).pb(px(3.)).rounded(px(2.)).text_size(px(11.)).text_color(self.color("descriptionForeground")).child(count))
             })
             .child(clear)
             .child(filter);
         div()
             .relative()
-            .h(px(30.))
+            .py(px(2.))
             .flex()
             .items_center()
             .rounded(px(4.))
@@ -880,6 +976,7 @@ impl Workbench {
                 cx,
             )))
             .child(widgets)
+            .children(self.settings_suggest_widget(7., window, cx))
     }
 
     /// `SettingsTargetsWidget` under modern UI: rounded tabs, the checked one on `modernTab.activeBackground`.
@@ -935,20 +1032,124 @@ impl Workbench {
             })
     }
 
-    /// `.settings-toc-wrapper`: the TOC tree, 200px, rows 22px with their counts in search mode.
-    fn settings_toc(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    /// `.settings-toc-wrapper`: the TOC tree at the split's first view width, rows 22px with their counts in search mode.
+    fn settings_toc(&self, width: f32, window: &Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let focused = self.settings_editor.toc_focus.is_focused(window);
         let rows = list(self.settings_editor.toc_list.clone(), cx.processor(move |workbench: &mut Workbench, index: usize, _, cx| workbench.toc_row(index, focused, cx))).size_full();
         div()
             .id("settings-toc")
-            .w(px(TOC_WIDTH))
+            .w(px(width))
             .flex_none()
             .h_full()
             .pl(px(24.))
             .track_focus(&self.settings_editor.toc_focus)
-            .border_r_1()
-            .border_color(self.theme.color("settings.sashBorder").unwrap_or(transparent()))
             .child(rows)
+    }
+
+    /// Lays the TOC and tree split out over `width`, the TOC first at its stored width; returns the TOC width.
+    fn layout_settings_split(&mut self, width: f32) -> f32 {
+        let split = match self.settings_editor.split.take() {
+            Some(mut split) => {
+                if split.size() != width {
+                    split.layout(width);
+                }
+                split
+            }
+            None => {
+                let stored = self.profile_storage.lock().unwrap().get(SPLIT_VIEW_WIDTH_KEY).and_then(|raw| raw.parse::<f32>().ok());
+                let toc = stored.unwrap_or(TOC_RESET_WIDTH).clamp(TOC_MIN_WIDTH, width - EDITOR_MIN_WIDTH);
+                let toc_view = View { size: toc, minimum: TOC_MIN_WIDTH, maximum: f32::INFINITY };
+                let tree_view = View { size: width - toc, minimum: EDITOR_MIN_WIDTH, maximum: f32::INFINITY };
+                SplitView::new(width, vec![toc_view, tree_view])
+            }
+        };
+        let toc_width = split.sizes()[0];
+        self.settings_editor.split = Some(split);
+        toc_width
+    }
+
+    /// The split view's sash over the TOC edge with its `settings.sashBorder` separator; a double click resets the
+    /// TOC to 200px (`onDidSashReset`).
+    fn settings_sash(&self, toc_width: f32, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let editor = &self.settings_editor;
+        let dragging = editor.split.as_ref().is_some_and(|split| split.dragged_sash().is_some());
+        let separator = self.theme.color("settings.sashBorder").unwrap_or(transparent());
+        let hover = self.theme.color("sash.hoverBorder").unwrap_or(self.color("focusBorder"));
+        div()
+            .id("settings-sash")
+            .debug_selector(|| "settings-sash".into())
+            .absolute()
+            .top_0()
+            .bottom_0()
+            .left(px(toc_width - SASH_SIZE / 2.))
+            .w(px(SASH_SIZE))
+            .cursor(gpui::CursorStyle::ResizeColumn)
+            .child(div().absolute().top_0().bottom_0().left(px(SASH_SIZE / 2.)).w(px(1.)).bg(separator))
+            .when(editor.sash_hovered || dragging, |sash| sash.bg(hover))
+            .on_hover(cx.listener(|workbench, hovered: &bool, window, cx| {
+                let editor = &mut workbench.settings_editor;
+                editor.sash_hovered = false;
+                editor.sash_hover = hovered.then(|| {
+                    cx.spawn_in(window, async move |workbench, cx| {
+                        cx.background_executor().timer(SASH_HOVER_DELAY).await;
+                        let _ = workbench.update(cx, |workbench, cx| {
+                            workbench.settings_editor.sash_hovered = true;
+                            cx.notify();
+                        });
+                    })
+                });
+                cx.notify();
+            }))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|workbench, event: &MouseDownEvent, _, cx| {
+                    cx.stop_propagation();
+                    let Some(split) = workbench.settings_editor.split.as_mut() else { return };
+                    if event.click_count == 2 {
+                        let total: f32 = split.sizes().iter().sum();
+                        split.resize_view(0, TOC_RESET_WIDTH);
+                        split.resize_view(1, total - TOC_RESET_WIDTH);
+                        workbench.store_settings_split_width();
+                    } else {
+                        split.start_sash_drag(0, f32::from(event.position.x), event.modifiers.alt);
+                    }
+                    cx.notify();
+                }),
+            )
+    }
+
+    /// Follows the pointer anywhere in the window while the sash drags; `onDidSashChange` stores the TOC width.
+    fn settings_sash_drag(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let workbench = cx.entity();
+        canvas(
+            |_, _, _| (),
+            move |_, _, window, _| {
+                let moved = workbench.clone();
+                window.on_mouse_event(move |event: &MouseMoveEvent, _, _, cx| {
+                    moved.update(cx, |workbench, cx| {
+                        let Some(split) = workbench.settings_editor.split.as_mut() else { return };
+                        split.drag_sash(f32::from(event.position.x), event.modifiers.alt);
+                        workbench.store_settings_split_width();
+                        cx.notify();
+                    });
+                });
+                let released = workbench.clone();
+                window.on_mouse_event(move |_: &MouseUpEvent, _, _, cx| {
+                    released.update(cx, |workbench, cx| {
+                        if let Some(split) = workbench.settings_editor.split.as_mut() {
+                            split.end_sash_drag();
+                        }
+                        cx.notify();
+                    });
+                });
+            },
+        )
+        .size_0()
+    }
+
+    fn store_settings_split_width(&mut self) {
+        let Some(split) = &self.settings_editor.split else { return };
+        self.profile_storage.lock().unwrap().set(SPLIT_VIEW_WIDTH_KEY, split.sizes()[0].to_string());
     }
 
     fn toc_row(&mut self, index: usize, list_focused: bool, cx: &mut Context<Self>) -> AnyElement {
@@ -965,13 +1166,19 @@ impl Workbench {
             .h(px(TOC_ROW_HEIGHT))
             .flex()
             .items_center()
-            .pl(px(8. * (row.level - 1) as f32))
             .cursor_default()
             .text_color(foreground)
             .when(!selected, |row| row.opacity(0.9))
             .when(focused, |row| row.border_1().border_color(self.color("list.focusOutline")))
             .hover(|row| row.text_color(self.color("settings.settingsHeaderHoverForeground")))
-            .child(div().w(px(16.)).flex_none().when(row.has_children, |twistie| twistie.child(self.icon(chevron, 16., 16., self.foreground_or("icon.foreground")))))
+            // tree.css `.monaco-tl-twistie`: padding-left 8px per depth, 16px wide, padding-right 6px, shifted 3px right.
+            .child(
+                div()
+                    .flex_none()
+                    .pl(px(8. * row.level as f32))
+                    .pr(px(6.))
+                    .child(div().w(px(16.)).ml(px(3.)).mr(px(-3.)).when(row.has_children, |twistie| twistie.child(self.icon(chevron, 16., 16., self.foreground_or("icon.foreground"))))),
+            )
             .child(div().truncate().line_height(px(TOC_ROW_HEIGHT)).when(selected, |label| label.font_weight(FontWeight::BOLD)).child(row.label.clone()))
             .when(search_mode, |entry| entry.child(div().ml(px(3.)).opacity(0.8).child(format!("({})", row.count))))
             .on_click(cx.listener(move |workbench, _, window, cx| {
@@ -1014,6 +1221,8 @@ impl Workbench {
                     .p(px(10.))
                     .pl(px(15.))
                     .text_size(px(size))
+                    // CSS `line-height: normal` of the system font, where GPUI defaults to phi.
+                    .line_height(gpui::relative(1.2))
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(self.color("settings.headerForeground"))
                     .when(focused, |title| title.border_1().border_color(self.color("settings.focusedRowBorder")))
@@ -1053,7 +1262,7 @@ impl Workbench {
         let inspection = &editor.inspections[index];
         let kind = value_type(setting);
         let is_bool = kind == ValueType::Boolean;
-        let is_list = matches!(kind, ValueType::Array | ValueType::Exclude | ValueType::Include | ValueType::Object | ValueType::BooleanObject);
+        let is_list = is_list_control(kind);
         let focused = list_focused && editor.focused == Some(row);
         let hovered = editor.hovered == Some(row);
         let (category, label) = setting_key_to_display_format(&setting.key, group, !setting.overrides.is_empty());
@@ -1066,7 +1275,7 @@ impl Workbench {
             .child(div().font_weight(FontWeight::SEMIBOLD).opacity(0.9).when(!category.is_empty(), |category_label| category_label.child(format!("{category}: "))))
             .child(div().mr(px(7.)).font_weight(FontWeight::SEMIBOLD).text_color(header).child(label))
             .children(indicators);
-        let description = self.setting_description(index, cx);
+        let description = self.setting_description(index, window, cx);
         let deprecation = setting.deprecation_message.clone();
         let mut contents = div()
             .relative()
@@ -1113,8 +1322,11 @@ impl Workbench {
         contents = if is_bool {
             contents.child(self.bool_control(index, inspection.value == json!(true), description, cx))
         } else {
+            let read_only = inspection.has_policy_value;
             let control = self.setting_control(index, kind, window, cx);
-            contents.child(description).child(div().mt(px(9.)).flex().child(control))
+            // shortcut: a disabled select or input box takes Chromium's disabled look; the port only blocks the mouse.
+            let control = if read_only { div().occlude().child(control).into_any_element() } else { control };
+            contents.child(description).child(div().mt(px(9.)).flex().when(is_list, |control_box| control_box.w_full()).child(control))
         };
         contents = contents.when_some(deprecation, |contents, message| {
             contents.child(div().mt(px(3.)).flex().gap(px(4.)).text_color(self.color("errorForeground")).child(self.icon("error", 16., 14., self.color("errorForeground"))).child(message))
@@ -1146,7 +1358,22 @@ impl Workbench {
         if setting.restricted {
             notes.push("Requires workspace trust".to_string());
         }
-        if !inspection.overridden_scopes.is_empty() {
+        if inspection.has_policy_value {
+            // shortcut: the hover lacks the "View policy settings" action; type `@hasPolicy` in the search box instead.
+            let hover = HoverContent::Text("This setting is managed by your organization and its actual value cannot be changed.".into());
+            indicators.push(
+                div()
+                    .relative()
+                    .flex()
+                    .items_center()
+                    .italic()
+                    .opacity(0.9)
+                    .child(self.icon("briefcase", 16., 14., self.foreground_or("foreground")))
+                    .child("Managed by your organization")
+                    .child(div().absolute().inset_0().child(self.hover_target(gpui::ElementId::Name(format!("setting-policy-{}", setting.key).into()), hover, HoverOptions::mouse())))
+                    .into_any_element(),
+            );
+        } else if !inspection.overridden_scopes.is_empty() {
             let scopes: Vec<String> = inspection.overridden_scopes.iter().map(|scope| scope_label(scope)).collect();
             let prefix = if inspection.is_configured { "Also modified in" } else { "Modified in" };
             notes.push(format!("{prefix}: {}", scopes.join(", ")));
@@ -1160,33 +1387,51 @@ impl Workbench {
         indicators
     }
 
-    /// `renderSettingMarkdown` or the plain description: code spans on `textPreformat`, links open their target.
-    fn setting_description(&self, index: usize, cx: &mut Context<Self>) -> AnyElement {
+    /// `renderSettingMarkdown` or the plain description: code spans in the monospace font on `textPreformat`, links open their target.
+    fn setting_description(&self, index: usize, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let setting = &self.settings_editor.model.settings[index];
         let source = setting.description.join("\n");
-        let (text, runs) = if setting.description_is_markdown { markdown_runs(&source) } else { (source, Vec::new()) };
-        let link = self.color("textLink.foreground");
-        let code = self.color("textPreformat.foreground");
-        let code_background = self.color("textPreformat.background");
-        let mut highlights = Vec::new();
+        let (text, runs) = if setting.description_is_markdown { markdown_runs(&model::fix_setting_links(&source, true)) } else { (source, Vec::new()) };
+        let foreground = self.color("foreground");
+        let base = window.text_style().to_run(0);
+        let plain = TextRun { color: foreground.into(), ..base.clone() };
+        let link = TextRun { color: self.color("textLink.foreground").into(), ..base.clone() };
+        let code = TextRun {
+            font: font("Menlo"),
+            color: self.color("textPreformat.foreground").into(),
+            background_color: Some(self.color("textPreformat.background").into()),
+            ..base
+        };
+        let mut text_runs = Vec::new();
         let mut links = Vec::new();
         let mut hrefs = Vec::new();
+        let mut end = 0;
         for (range, run) in runs {
-            match run {
-                MarkdownRun::Code => highlights.push((range, HighlightStyle { color: Some(code.into()), background_color: Some(code_background.into()), ..Default::default() })),
-                MarkdownRun::Link(href) => {
-                    highlights.push((range.clone(), HighlightStyle { color: Some(link.into()), ..Default::default() }));
-                    links.push(range);
-                    hrefs.push(href);
-                }
+            if range.start > end {
+                text_runs.push(TextRun { len: range.start - end, ..plain.clone() });
             }
+            let style = match run {
+                MarkdownRun::Code => &code,
+                MarkdownRun::Link(href) => {
+                    links.push(range.clone());
+                    hrefs.push(href);
+                    &link
+                }
+            };
+            text_runs.push(TextRun { len: range.len(), ..style.clone() });
+            end = range.end;
+        }
+        if text.len() > end {
+            text_runs.push(TextRun { len: text.len() - end, ..plain });
         }
         let weak = cx.entity().downgrade();
-        let text = InteractiveText::new(("setting-description", index), StyledText::new(text).with_highlights(highlights)).on_click(links, move |link, window, cx| {
+        let text = InteractiveText::new(("setting-description", index), StyledText::new(text).with_runs(text_runs)).on_click(links, move |link, window, cx| {
             let href = hrefs[link].clone();
             let _ = weak.update(cx, |workbench, cx| workbench.open_setting_link(&href, window, cx));
         });
-        div().mt(px(-1.)).opacity(0.9).text_color(self.color("foreground")).child(text).into_any_element()
+        // `.monaco-list-row` line-height 1.4em. shortcut: GPUI text runs carry no font size, so code spans keep 13px
+        // where settingsEditor2.css sets 11px.
+        div().mt(px(-1.)).line_height(gpui::relative(1.4)).opacity(0.9).child(text).into_any_element()
     }
 
     /// `onDidClickSettingLink` for `#key` links, the opener service otherwise.
@@ -1209,14 +1454,14 @@ impl Workbench {
             .border_color(border)
             .bg(self.color("settings.checkboxBackground"))
             .when(checked, |checkbox| checkbox.child(self.icon("check", 16., 16., self.color("settings.checkboxForeground"))));
-        div()
-            .id(("setting-bool", index))
-            .mt(px(9.))
-            .flex()
-            .cursor_pointer()
-            .on_click(cx.listener(move |workbench, _, _, cx| workbench.write_setting(index, Some(json!(!checked)), false, cx)))
-            .child(checkbox)
-            .child(description)
+        let row = div().id(("setting-bool", index)).mt(px(9.)).flex();
+        // `.monaco-custom-toggle.disabled` under a policy: dimmed, the row does not toggle it.
+        let row = match self.settings_editor.inspections[index].has_policy_value {
+            true => row.child(checkbox.opacity(0.4)),
+            false => row.cursor_pointer().on_click(cx.listener(move |workbench, _, _, cx| workbench.write_setting(index, Some(json!(!checked)), false, cx))).child(checkbox),
+        };
+        row
+            .child(div().flex_1().min_w_0().child(description))
     }
 
     /// The control of a non-boolean setting: a select, a text input, a list of values, or Edit in settings.json.
@@ -1224,20 +1469,19 @@ impl Workbench {
         match kind {
             ValueType::Enum => self.enum_control(index, cx),
             kind if is_text_control(kind) => self.text_control(index, kind, window, cx),
-            ValueType::Array | ValueType::Exclude | ValueType::Include | ValueType::Object | ValueType::BooleanObject => {
-                let rows = list_rows(&self.settings_editor.inspections[index].value);
-                div().flex().flex_col().w_full().children(rows.into_iter().map(|(key, value)| {
-                    div().flex().h(px(24.)).items_center().child(div().w(px(if value.is_some() { 240. } else { 400. })).truncate().child(key)).when_some(value, |row, value| row.child(div().truncate().child(value)))
-                })).child(self.edit_in_settings_json(index, cx)).into_any_element()
-            }
-            _ => self.edit_in_settings_json(index, cx).into_any_element(),
+            kind if is_list_control(kind) => self.list_widget(index, kind, window, cx),
+            _ => self.edit_in_settings_json(index, cx),
         }
     }
 
     /// `.edit-in-settings-button`: opens the target's settings.json at the setting.
-    fn edit_in_settings_json(&self, index: usize, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let key = self.settings_editor.model.settings[index].key.clone();
-        div()
+    /// `SettingComplexRenderer.renderValidations`: a configured value of the wrong type shows its error.
+    fn edit_in_settings_json(&self, index: usize, cx: &mut Context<Self>) -> AnyElement {
+        let setting = &self.settings_editor.model.settings[index];
+        let inspection = &self.settings_editor.inspections[index];
+        let error = inspection.is_configured.then(|| invalid_type_error(&inspection.value, &setting.schema["type"])).flatten();
+        let key = setting.key.clone();
+        let link = div()
             .id(("edit-in-settings", index))
             .mt(px(9.))
             .text_color(self.color("textLink.foreground"))
@@ -1252,7 +1496,9 @@ impl Workbench {
                 workbench.close_settings_editor(window, cx);
                 let outcome = workbench.execute_command(command, vec![json!({ "revealSetting": { "key": key, "edit": true } })], window, cx);
                 super::keyboard::report_failure(outcome, cx);
-            }))
+            }));
+        let message = error.map(|error| self.validation_message(error).w(px(420.)));
+        div().relative().child(link).children(message.map(|message| deferred(anchored().position_mode(gpui::AnchoredPositionMode::Local).offset(point(px(0.), px(31.))).child(message)).with_priority(1))).into_any_element()
     }
 
     /// `SettingEnumRenderer`: a 320px select box; its dropdown lists the options with the highlighted one's description.
@@ -1333,6 +1579,17 @@ impl Workbench {
         window.focus(&control, cx);
     }
 
+    /// `.setting-item-validation-message` of an `invalid-input` setting.
+    pub(super) fn validation_message(&self, error: String) -> gpui::Div {
+        div()
+            .p(px(5.))
+            .bg(self.color("inputValidation.errorBackground"))
+            .text_color(self.foreground_or("inputValidation.errorForeground"))
+            .border_1()
+            .border_color(self.color("inputValidation.errorBorder"))
+            .child(error)
+    }
+
     /// `SettingTextRenderer` (420px) and `SettingNumberRenderer` (200px min), with the validation message.
     fn text_control(&self, index: usize, kind: ValueType, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let editor = &self.settings_editor;
@@ -1343,8 +1600,10 @@ impl Workbench {
         };
         let editing = editor.value.as_ref().filter(|(editing, _)| *editing == index);
         let focused = editing.is_some() && editor.value_focus.is_focused(window);
-        let error = editing.and_then(|(_, input)| parse_typed_value(kind, &input.value).err());
-        let border = match (error, focused) {
+        let schema = &editor.model.settings[index].schema;
+        let shown = editing.map_or_else(|| text_of(&editor.inspections[index].value), |(_, input)| input.value.clone());
+        let error = parse_typed_value(schema, kind, &shown).err();
+        let border = match (&error, focused) {
             (Some(_), _) => self.color("inputValidation.errorBorder"),
             (None, true) => self.color("focusBorder"),
             (None, false) => self.theme.color(border).unwrap_or(transparent()),
@@ -1374,12 +1633,13 @@ impl Workbench {
                 workbench.focus_setting_control(window, cx);
             }))
             .child(text);
+        // settingsEditor2.css: the message is absolute under the input, over the next row.
         div()
-            .flex()
-            .flex_col()
+            .relative()
             .child(input)
             .when_some(error, |control, error| {
-                control.child(div().w(px(if number { 200. } else { 420. })).px(px(4.)).py(px(2.)).bg(self.color("inputValidation.errorBackground")).border_1().border_color(self.color("inputValidation.errorBorder")).child(error))
+                let message = self.validation_message(error).w(px(if number { 200. } else { 420. }));
+                control.child(deferred(anchored().position_mode(gpui::AnchoredPositionMode::Local).offset(point(px(0.), px(25.))).child(message)).with_priority(1))
             })
             .into_any_element()
     }
@@ -1449,12 +1709,8 @@ fn text_of(value: &Value) -> String {
 }
 
 /// The rows of a list setting's widget: array items, or object keys with their values.
-fn list_rows(value: &Value) -> Vec<(String, Option<String>)> {
-    match value {
-        Value::Array(items) => items.iter().map(|item| (text_of(item), None)).collect(),
-        Value::Object(entries) => entries.iter().map(|(key, value)| (key.clone(), Some(text_of(value)))).collect(),
-        _ => Vec::new(),
-    }
+fn is_list_control(kind: ValueType) -> bool {
+    matches!(kind, ValueType::Array | ValueType::Exclude | ValueType::Include | ValueType::Object | ValueType::BooleanObject)
 }
 
 /// `getLabel` of an overridden scope: `User`, `Workspace`, or `<language> > <scope>`.

@@ -34,9 +34,11 @@ pub enum InputId {
     OutputFilter,
     SettingsSearch,
     SettingsValue,
+    SettingsListKey,
+    SettingsListValue,
 }
 
-const INPUTS: [InputId; 10] = [
+const INPUTS: [InputId; 12] = [
     InputId::QuickInput,
     InputId::Explorer,
     InputId::ExplorerFind,
@@ -47,6 +49,8 @@ const INPUTS: [InputId; 10] = [
     InputId::OutputFilter,
     InputId::SettingsSearch,
     InputId::SettingsValue,
+    InputId::SettingsListKey,
+    InputId::SettingsListValue,
 ];
 
 /// The view state of one input element.
@@ -81,6 +85,14 @@ impl InputView {
         self.blink = None;
         self.text = Rc::default();
     }
+
+    /// The x of the char at `index` of `value` from the input's left edge, as last painted.
+    pub fn x_of_char(&self, value: &str, index: usize) -> f32 {
+        let text = self.text.borrow();
+        let Some(line) = &text.line else { return 0. };
+        let byte = value.char_indices().nth(index).map_or(value.len(), |(byte, _)| byte);
+        f32::from(line.x_for_index(byte)) - text.scroll
+    }
 }
 
 /// What the input element draws besides its value.
@@ -105,6 +117,8 @@ impl Workbench {
             InputId::OutputFilter => &self.output_view.filter_view,
             InputId::SettingsSearch => &self.settings_editor.search_view,
             InputId::SettingsValue => &self.settings_editor.value_view,
+            InputId::SettingsListKey => &self.settings_editor.list.key_view,
+            InputId::SettingsListValue => &self.settings_editor.list.value_view,
         }
     }
 
@@ -122,6 +136,8 @@ impl Workbench {
             InputId::OutputFilter => &mut self.output_view.filter_view,
             InputId::SettingsSearch => &mut self.settings_editor.search_view,
             InputId::SettingsValue => &mut self.settings_editor.value_view,
+            InputId::SettingsListKey => &mut self.settings_editor.list.key_view,
+            InputId::SettingsListValue => &mut self.settings_editor.list.value_view,
         }
     }
 
@@ -139,6 +155,8 @@ impl Workbench {
             InputId::OutputFilter => &self.output_view.filter_focus,
             InputId::SettingsSearch => &self.settings_editor.search_focus,
             InputId::SettingsValue => &self.settings_editor.value_focus,
+            InputId::SettingsListKey => &self.settings_editor.list.key_focus,
+            InputId::SettingsListValue => &self.settings_editor.list.value_focus,
         }
     }
 
@@ -156,6 +174,8 @@ impl Workbench {
             InputId::OutputFilter => Some(&self.output_view.filter),
             InputId::SettingsSearch => Some(&self.settings_editor.search),
             InputId::SettingsValue => self.settings_editor.value.as_ref().map(|(_, input)| input),
+            InputId::SettingsListKey => Some(&self.settings_editor.list.key),
+            InputId::SettingsListValue => Some(&self.settings_editor.list.value),
         }
     }
 
@@ -212,6 +232,10 @@ impl Workbench {
             }
             InputId::SettingsValue => {
                 self.edit_settings_value(edit, window, cx);
+                Outcome::done()
+            }
+            InputId::SettingsListKey | InputId::SettingsListValue => {
+                self.edit_settings_list_input(id == InputId::SettingsListKey, edit, cx);
                 Outcome::done()
             }
         }
@@ -286,6 +310,10 @@ impl Workbench {
             return;
         }
         if id == InputId::ExplorerFind && self.explorer_find_input_key(keystroke, window, cx) {
+            cx.stop_propagation();
+            return;
+        }
+        if matches!(id, InputId::SettingsListKey | InputId::SettingsListValue) && self.settings_list_input_key(keystroke, window, cx) {
             cx.stop_propagation();
             return;
         }
@@ -397,6 +425,8 @@ impl Workbench {
                 InputId::OutputFilter => "output-filter-text".into(),
                 InputId::SettingsSearch => "settings-search-text".into(),
                 InputId::SettingsValue => "settings-value-text".into(),
+                InputId::SettingsListKey => "settings-list-key-text".into(),
+                InputId::SettingsListValue => "settings-list-value-text".into(),
             })
             .flex_1()
             .h_full()

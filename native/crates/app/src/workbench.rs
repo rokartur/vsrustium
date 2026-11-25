@@ -5,6 +5,7 @@
 mod actions;
 mod bulk_text_edits;
 mod configuration;
+mod configuration_resolver;
 mod context_menu;
 mod define_keybinding;
 mod diagnostics;
@@ -101,6 +102,7 @@ pub struct Workbench {
     pub keybindings_editor: keybindings_editor_view::KeybindingsEditor,
     pub settings_editor: settings_editor_view::SettingsEditor,
     keybinding_marks: define_keybinding::KeybindingMarks,
+    unsupported_settings_render: Option<Task<()>>,
     diagnostics: diagnostics::Diagnostics,
     /// Context keys set with the `setContext` command.
     context_keys: HashMap<String, Value>,
@@ -246,6 +248,7 @@ impl Workbench {
             keybindings_editor: keybindings_editor_view::KeybindingsEditor::new(cx),
             settings_editor: settings_editor_view::SettingsEditor::new(cx),
             keybinding_marks: Default::default(),
+            unsupported_settings_render: None,
             diagnostics: Default::default(),
             context_keys: HashMap::new(),
             output: Default::default(),
@@ -397,6 +400,7 @@ impl Workbench {
         self.load_search_editor_widget();
         self.find_editor_changed();
         self.schedule_keybinding_marks(cx);
+        self.schedule_unsupported_settings_markers(cx);
         self.update_marker_decorations(None);
         self.sync_webview_panels();
         self.host.send_changes(&self.editors);

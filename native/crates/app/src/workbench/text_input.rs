@@ -54,6 +54,7 @@ impl Workbench {
                 self.search_editor_edited(&path, change);
             }
             self.schedule_keybinding_marks(cx);
+            self.schedule_unsupported_settings_markers(cx);
         }
         if scrolled {
             self.editor_scrolled(cx);
