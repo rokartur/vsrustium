@@ -54,6 +54,7 @@ mod terminal;
 mod tf_idf;
 mod theme;
 mod undo_redo;
+mod variables;
 mod webview;
 mod workbench;
 
