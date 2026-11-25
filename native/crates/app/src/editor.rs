@@ -22,6 +22,7 @@ pub mod auto_indent;
 mod caret_operations;
 pub mod commands;
 pub mod cursor_undo;
+pub mod decoration_types;
 mod comment;
 mod cursor;
 pub mod drag_and_drop;
@@ -508,6 +509,8 @@ pub struct OpenEditor {
     /// The decorations of the model's problem markers.
     pub markers: Vec<marker_decorations::MarkerDecoration>,
     pub view_zones: Vec<view_zones::ViewZone>,
+    /// The extension decorations `$trySetDecorations` set on the editor showing this model.
+    pub text_decorations: Vec<decoration_types::TextDecoration>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -523,7 +526,7 @@ impl OpenEditor {
     fn new(document: TextDocument, preview: bool, model_id: u32) -> Self {
         let indentation = document.indentation;
         let guides = indent_guides(&document.lines, indentation.tab_size, indentation.indent_size(), document.off_side);
-        let mut editor = OpenEditor { document, preview, model_id, selections: vec![Selection::default()], last_added: 0, leftovers: Vec::new(), column_select: None, smart_select: None, cursor_states: Default::default(), version_id: 1, history: History::default(), guides, highlights: Vec::new(), value_set_replacement: None, selection_anchor: None, folding: FoldingModel::default(), sticky_model: Default::default(), scroll: Scroll::default(), max_line_width: 0., host_reference: None, associated_file: false, markers: Vec::new(), view_zones: Vec::new() };
+        let mut editor = OpenEditor { document, preview, model_id, selections: vec![Selection::default()], last_added: 0, leftovers: Vec::new(), column_select: None, smart_select: None, cursor_states: Default::default(), version_id: 1, history: History::default(), guides, highlights: Vec::new(), value_set_replacement: None, selection_anchor: None, folding: FoldingModel::default(), sticky_model: Default::default(), scroll: Scroll::default(), max_line_width: 0., host_reference: None, associated_file: false, markers: Vec::new(), view_zones: Vec::new(), text_decorations: Vec::new() };
         editor.refresh_highlights();
         editor.refresh_folding_ranges();
         editor
@@ -564,6 +567,8 @@ pub struct EditorGroup {
     pub unicode_banner_closed: bool,
     /// The diff editors among `editors`, by their entry's model id: each shows two models found with `model`.
     pub diffs: HashMap<u32, DiffInput>,
+    /// `$registerTextEditorDecorationType` render options by decoration type key.
+    pub decoration_types: HashMap<String, serde_json::Value>,
 }
 
 impl EditorGroup {

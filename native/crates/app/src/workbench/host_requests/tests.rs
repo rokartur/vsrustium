@@ -56,3 +56,23 @@ fn workbench_open_shows_files_and_untitled_files_and_rejects_other_strings(cx: &
     assert_eq!(open(&workbench, vec![json!({ "scheme": "command", "path": "workbench.action.quit" })], cx), Ok(Value::Null));
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[gpui::test]
+fn decoration_types_set_and_remove_editor_decorations(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = workbench_in("decorations", cx);
+    open(&workbench, vec![file_uri(&dir.join("far.js"))], cx).unwrap();
+    let id = workbench.read_with(cx, |workbench, _| crate::host_sync::snapshot_id(workbench.editors.active().unwrap()));
+    let request = |method: &str, args: Vec<Value>, cx: &mut VisualTestContext| workbench.update_in(cx, |workbench, window, cx| workbench.host_request("MainThreadTextEditors", method, &args, window, cx));
+    let options = json!({ "isWholeLine": true, "backgroundColor": { "id": "merge.currentHeaderBackground" }, "after": { "contentText": " (Current Change)" } });
+    request("$registerTextEditorDecorationType", vec![json!("vscode.merge-conflict"), json!("TextEditorDecorationType1"), options], cx).unwrap();
+    request("$trySetDecorationsFast", vec![json!(id), json!("TextEditorDecorationType1"), json!([2, 1, 2, 4])], cx).unwrap();
+    let decorations = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().text_decorations.clone());
+    assert_eq!((decorations.len(), decorations[0].start, decorations[0].end), (1, Position::new(1, 0), Position::new(1, 3)));
+    // A second set replaces the type's decorations; removing the type clears them.
+    request("$trySetDecorations", vec![json!(id), json!("TextEditorDecorationType1"), json!([])], cx).unwrap();
+    assert!(workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().text_decorations.is_empty()));
+    request("$trySetDecorationsFast", vec![json!(id), json!("TextEditorDecorationType1"), json!([1, 1, 1, 2])], cx).unwrap();
+    request("$removeTextEditorDecorationType", vec![json!("TextEditorDecorationType1")], cx).unwrap();
+    assert!(workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().text_decorations.is_empty()));
+    std::fs::remove_dir_all(dir).unwrap();
+}

@@ -21,6 +21,7 @@ pub(super) mod diff_gutter;
 pub(super) mod drag_and_drop;
 pub(super) mod quick_diff;
 pub(super) mod sticky_scroll_view;
+pub(super) mod text_decorations;
 pub(super) mod unchanged_regions_view;
 
 use files::encoding::SUPPORTED_ENCODINGS;
@@ -888,6 +889,7 @@ impl Workbench {
                 let (find_whole_lines, find_matches, find_colors) = self.find_line_decorations(editor, index, char_width, scroll_left);
                 content = content.children(find_whole_lines);
                 content = content.children(self.diff_line_decorations(editor, index, char_width, scroll_left));
+                content = content.children(self.text_decoration_boxes(editor, index, scroll_left, |column| visible_column(text, column, tab_size) as f32 * char_width));
                 content = content.children(self.search_editor_line_decorations(editor, index, char_width));
                 // anchorSelect.css: `.selection-anchor` is a 2px #007ACC bar in every theme, under the word highlights.
                 if let Some(anchor) = editor.selection_anchor
@@ -967,7 +969,8 @@ impl Workbench {
                     content = content.child(whitespace_canvas(marks, char_width, line_height, whitespace_color));
                 }
                 let highlights = editor.document.tokens.highlights(&self.theme, &self.languages, &editor.document.lines, index, tab_size);
-                let runs = gpui::combine_highlights(gpui::combine_highlights(highlights, find_colors), self.marker_text_styles(editor, index, tab_size));
+                let runs = gpui::combine_highlights(gpui::combine_highlights(highlights, self.text_decoration_styles(editor, index, tab_size)), find_colors);
+                let runs = gpui::combine_highlights(runs, self.marker_text_styles(editor, index, tab_size));
                 let mut show_more = None;
                 match line_overflow(text, self.stop_rendering_line_after) {
                     None => content = content.child(div().absolute().top_0().left_0().whitespace_nowrap().child(StyledText::new(expand_tabs(text, tab_size)).with_highlights(runs))),
@@ -1345,6 +1348,7 @@ impl Workbench {
         let [(info_lines, info_color), (error_lines, error_color)] = self.keybinding_ruler_marks(editor);
         let [(marker_info_lines, marker_info), (marker_warning_lines, marker_warning), (marker_error_lines, marker_error)] = self.marker_ruler_lines(editor);
         let quick_diff = self.quick_diff_ruler_lines(editor);
+        let decoration_marks = self.text_decoration_ruler_marks(editor);
         let border = self.theme.color("editorOverviewRuler.border");
         let Viewport { top_whitespace, line_height, .. } = self.editors.viewport;
         let zones: Vec<(usize, f32)> = editor.view_zones.iter().map(|zone| (zone.anchor.map_or(0, |anchor| anchor.line + 1), zone.height)).collect();
@@ -1401,6 +1405,18 @@ impl Workbench {
                     if let Some((start, end)) = previous {
                         paint(window, x, start, width, end - start, color);
                     }
+                }
+                // Extension decorations' `overviewRulerColor` in their `OverviewRulerLane`.
+                for (start, end, color, lane) in &decoration_marks {
+                    let (x, width) = match lane {
+                        1 => (lanes.full_x, lanes.center_x - lanes.full_x),
+                        2 => center,
+                        4 => (lanes.right_x, lanes.right_width),
+                        _ => (lanes.full_x, lanes.full_width),
+                    };
+                    let y1 = (line_top(*start) * ratio).floor();
+                    let y2 = ((line_top(*end) + line_height) * ratio).floor().max(y1 + min_height);
+                    paint(window, x, y1, width, y2 - y1, *color);
                 }
                 // quickDiffDecorator.ts: `OverviewRulerLane.Left`, each change its own mark.
                 for (start, end, color) in quick_diff.iter().filter_map(|(start, end, color)| Some((*start, *end, (*color)?))) {
