@@ -29,25 +29,38 @@ pub(super) struct Suggest {
     top: usize,
 }
 
+#[derive(Clone, Copy)]
+enum SuggestCommand {
+    Accept,
+    Hide,
+    Select(isize, bool),
+}
+
 impl Workbench {
-    pub(super) fn register_settings_suggest_commands(&mut self) {
-        let commands = &mut self.commands;
-        commands.register("acceptSelectedSuggestion", |workbench, _, window, cx| {
-            workbench.accept_settings_search_suggestion(None, window, cx);
-            Outcome::done()
-        });
-        commands.register("hideSuggestWidget", |workbench, _, _, cx| {
-            workbench.settings_editor.suggest = None;
-            cx.notify();
-            Outcome::done()
-        });
+    /// The suggest commands run on the Settings search box while its widget shows, else on the editor's
+    /// SuggestController registered before.
+    pub(in crate::workbench) fn register_settings_suggest_commands(&mut self) {
         let page = MAX_VISIBLE as isize - 1;
-        for (id, delta, wrap) in [("selectNextSuggestion", 1, true), ("selectPrevSuggestion", -1, true), ("selectNextPageSuggestion", page, false), ("selectPrevPageSuggestion", -page, false)] {
-            commands.register(id, move |workbench, _, _, cx| {
-                if let Some(suggest) = &mut workbench.settings_editor.suggest {
-                    suggest.select(delta, wrap);
-                    cx.notify();
+        let commands = [
+            ("acceptSelectedSuggestion", SuggestCommand::Accept),
+            ("hideSuggestWidget", SuggestCommand::Hide),
+            ("selectNextSuggestion", SuggestCommand::Select(1, true)),
+            ("selectPrevSuggestion", SuggestCommand::Select(-1, true)),
+            ("selectNextPageSuggestion", SuggestCommand::Select(page, false)),
+            ("selectPrevPageSuggestion", SuggestCommand::Select(-page, false)),
+        ];
+        for (id, command) in commands {
+            let editor_handler = self.commands.get(id);
+            self.commands.register(id, move |workbench, args, window, cx| {
+                if workbench.settings_editor.suggest.is_none() {
+                    return editor_handler.as_ref().map_or_else(Outcome::done, |handler| handler(workbench, args, window, cx));
                 }
+                match command {
+                    SuggestCommand::Accept => workbench.accept_settings_search_suggestion(None, window, cx),
+                    SuggestCommand::Hide => workbench.settings_editor.suggest = None,
+                    SuggestCommand::Select(delta, wrap) => workbench.settings_editor.suggest.as_mut().expect("checked above").select(delta, wrap),
+                }
+                cx.notify();
                 Outcome::done()
             });
         }

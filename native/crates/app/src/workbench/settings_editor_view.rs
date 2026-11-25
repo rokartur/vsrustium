@@ -227,7 +227,6 @@ pub fn setting_as_json(key: &str, value: &Value) -> String {
 
 impl Workbench {
     pub(super) fn register_settings_editor_commands(&mut self) {
-        self.register_settings_suggest_commands();
         let commands = &mut self.commands;
         // preferences.contribution.ts: the UI editor unless `workbench.settings.editor` is `json`.
         commands.register("workbench.action.openSettings", |workbench, args, window, cx| {

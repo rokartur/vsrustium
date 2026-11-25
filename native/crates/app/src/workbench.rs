@@ -485,6 +485,7 @@ impl Workbench {
         workbench.register_editor_message_commands();
         workbench.register_content_hover_commands();
         workbench.register_suggest();
+        workbench.register_settings_suggest_commands();
         workbench.register_parameter_hints();
         workbench.register_code_actions();
         workbench.register_code_lens();
