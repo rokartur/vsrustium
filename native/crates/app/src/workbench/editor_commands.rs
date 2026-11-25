@@ -14,7 +14,7 @@ use crate::editor::{CaseTransform, ContentChanged, Copied, LineCommentKind, Open
 type EditorCommand = fn(&mut OpenEditor) -> Option<ContentChanged>;
 
 /// Cursor and edit commands: `EditorCommand`s, which run on the focused editor or else the active one.
-const EDITOR_COMMANDS: [(&str, EditorCommand); 36] = [
+const EDITOR_COMMANDS: [(&str, EditorCommand); 44] = [
     ("cursorLeft", |editor| { editor.move_horizontally(false, false); None }),
     ("cursorLeftSelect", |editor| { editor.move_horizontally(false, true); None }),
     ("cursorRight", |editor| { editor.move_horizontally(true, false); None }),
@@ -27,6 +27,13 @@ const EDITOR_COMMANDS: [(&str, EditorCommand); 36] = [
     ("cursorWordLeftSelect", |editor| { editor.move_word(false, true); None }),
     ("cursorWordEndRight", |editor| { editor.move_word(true, false); None }),
     ("cursorWordEndRightSelect", |editor| { editor.move_word(true, true); None }),
+    ("cursorWordPartLeft", |editor| { editor.move_word_part(false, false); None }),
+    ("cursorWordPartLeftSelect", |editor| { editor.move_word_part(false, true); None }),
+    // wordPartOperations.ts registerCommandAlias: the previous ids of the two above.
+    ("cursorWordPartStartLeft", |editor| { editor.move_word_part(false, false); None }),
+    ("cursorWordPartStartLeftSelect", |editor| { editor.move_word_part(false, true); None }),
+    ("cursorWordPartRight", |editor| { editor.move_word_part(true, false); None }),
+    ("cursorWordPartRightSelect", |editor| { editor.move_word_part(true, true); None }),
     ("cursorHome", |editor| { editor.move_to_line_edge(false, false); None }),
     ("cursorHomeSelect", |editor| { editor.move_to_line_edge(false, true); None }),
     ("cursorEnd", |editor| { editor.move_to_line_edge(true, false); None }),
@@ -39,6 +46,8 @@ const EDITOR_COMMANDS: [(&str, EditorCommand); 36] = [
     ("deleteRight", OpenEditor::delete_right),
     ("deleteWordLeft", OpenEditor::delete_word_left),
     ("deleteWordRight", OpenEditor::delete_word_right),
+    ("deleteWordPartLeft", OpenEditor::delete_word_part_left),
+    ("deleteWordPartRight", OpenEditor::delete_word_part_right),
     ("deleteAllLeft", OpenEditor::delete_all_left),
     ("deleteAllRight", OpenEditor::delete_all_right),
     ("editor.action.copyLinesUpAction", |editor| editor.copy_lines(false)),

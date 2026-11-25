@@ -281,7 +281,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | editor/contrib/unusualLineTerminators | src/vs/editor/contrib | todo |  |
 | editor/contrib/wordHighlighter | src/vs/editor/contrib | ported | textual provider only (USUAL_WORD_SEPARATORS, whole words) on cursor move; cargo test -p app (editor::tests word highlight); pixel-check file window |
 | editor/contrib/wordOperations | src/vs/editor/contrib | ported | word moves, selects and deletes with USUAL_WORD_SEPARATORS: cargo test -p app (editor::cursor::tests, editor::edit::tests) |
-| editor/contrib/wordPartOperations | src/vs/editor/contrib | todo |  |
+| editor/contrib/wordPartOperations | src/vs/editor/contrib | verified | cursorWordPart(Left/Right)(Select), deleteWordPart(Left/Right), aliases cursorWordPartStartLeft(Select); cargo test -p app word_part (upstream cases); ui-pair Ctrl+Alt arrows, Ctrl+Alt+Backspace/Delete |
 | editor/contrib/zoneWidget | src/vs/editor/contrib | todo |  |
 | workbench/parts/activitybar | workbench part | ported | view icons with Explorer active when a folder is open, settings gear; no badges or clicks; pixel-check (port/results/pixels.md): same geometry, codicon edge pixels and active background rounding only |
 | workbench/parts/auxiliarybar | workbench part | todo |  |

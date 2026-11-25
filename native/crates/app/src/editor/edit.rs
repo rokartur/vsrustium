@@ -276,6 +276,11 @@ impl OpenEditor {
         self.move_cursors(select, |lines, selection, _| (if right { cursor::word_right(lines, selection.head) } else { cursor::word_left(lines, selection.head) }, 0));
     }
 
+    /// `cursorWordPartLeft`/`cursorWordPartRight` from the head (wordPartOperations.ts).
+    pub fn move_word_part(&mut self, right: bool, select: bool) {
+        self.move_cursors(select, |lines, selection, _| (if right { cursor::word_part_right(lines, selection.head, super::WORD_SEPARATORS) } else { cursor::word_part_left(lines, selection.head, super::WORD_SEPARATORS) }, 0));
+    }
+
     /// `cursorHome`/`cursorEnd`; Home toggles between the first non-blank character and column 0.
     pub fn move_to_line_edge(&mut self, end: bool, select: bool) {
         self.move_cursors(select, |lines, selection, _| (if end { cursor::line_end(lines, selection.head) } else { cursor::line_start(lines, selection.head) }, 0));
@@ -435,6 +440,14 @@ impl OpenEditor {
 
     pub fn delete_word_right(&mut self) -> Option<ContentChanged> {
         self.delete(cursor::delete_word_right_range, None, command("deleteWordRight"))
+    }
+
+    pub fn delete_word_part_left(&mut self) -> Option<ContentChanged> {
+        self.delete(|lines, selection| cursor::delete_word_part_left_range(lines, selection, super::WORD_SEPARATORS), None, command("deleteWordPartLeft"))
+    }
+
+    pub fn delete_word_part_right(&mut self) -> Option<ContentChanged> {
+        self.delete(|lines, selection| cursor::delete_word_part_right_range(lines, selection, super::WORD_SEPARATORS), None, command("deleteWordPartRight"))
     }
 
     /// Deletes each cursor's range. Consecutive char deletes (`kind`) in one direction undo together
