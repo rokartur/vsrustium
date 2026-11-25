@@ -1,10 +1,8 @@
 //! Debuggers contributed by extensions (debugger.ts `Debugger` and its `merge`), the launch configurations of
 //! launch.json (debugConfigurationManager.ts `Launch`), and the `${command:...}` and `${input:...}` references
-//! configurationResolver.ts resolves interactively.
-// shortcut: the interactive resolver is the minimum debug needs (commands, promptString, pickString and command
-// inputs); the full workbench/services/configurationResolver is milestone 10's and replaces it when it lands.
+//! configurationResolver.ts resolves interactively (workbench/configuration_resolver.rs).
 
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
 use exthost::scan::ScannedExtension;
 
@@ -33,11 +31,6 @@ impl Debugger {
 
     pub fn hidden_when(&self) -> Option<&str> {
         self.contribution["hiddenWhen"].as_str()
-    }
-
-    /// The command a `${command:name}` names through the debugger's `variables`, else the name itself.
-    pub fn variable_command<'a>(&'a self, name: &'a str) -> &'a str {
-        self.contribution["variables"][name].as_str().unwrap_or(name)
     }
 
     pub fn has_initial_configuration(&self) -> bool {
@@ -214,11 +207,6 @@ pub fn replace_variables(value: &mut Value, resolved: &[(String, String)]) {
     }
 }
 
-/// `inputs` entry by id.
-pub fn input<'a>(inputs: &'a [Value], id: &str) -> Option<&'a Map<String, Value>> {
-    inputs.iter().find(|input| input["id"] == id).and_then(Value::as_object)
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -253,7 +241,7 @@ mod tests {
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].label(), "Node.js");
         assert!(found[0].interested_in_language("javascript"));
-        assert_eq!(found[0].variable_command("PickProcess"), "extension.pickNodeProcess");
+        assert_eq!(found[0].contribution["variables"]["PickProcess"], "extension.pickNodeProcess");
         assert_eq!(found[0].extension_id, "b.extra");
     }
 

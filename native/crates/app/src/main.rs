@@ -292,6 +292,7 @@ fn main() -> anyhow::Result<()> {
                 host.configuration_scopes = development.is_some();
                 host.send_color_theme(theme.kind);
                 perf::mark("code/willCreateWorkbenchContributions/1");
+                host.send_language_ids(&languages);
                 let mut workbench = Workbench::new(theme, app_root.clone(), workspace.clone(), languages, settings.clone(), host, cx);
                 perf::mark("code/didCreateWorkbench");
                 perf::mark("code/didCreateWorkbenchContributions/2");
@@ -305,6 +306,7 @@ fn main() -> anyhow::Result<()> {
                 workbench.extension_development = development.is_some();
                 workbench.load_keybindings(keybindings::default_keybindings(&extensions), keybindings_file.clone(), cx);
                 workbench.watch_settings_files(cx);
+                workbench.watch_policies(cx);
                 workbench.start_file_watcher(cx);
                 workbench.start_system_wide_keybindings(window, cx);
                 workbench.register_update_actions(window, cx);

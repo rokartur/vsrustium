@@ -186,6 +186,11 @@ impl Languages {
         best.map(|(_, id)| id.to_string())
     }
 
+    /// `getRegisteredLanguageIds`.
+    pub fn ids(&self) -> &[String] {
+        &self.ids
+    }
+
     pub fn is_registered(&self, id: &str) -> bool {
         self.ids.iter().any(|known| known == id)
     }

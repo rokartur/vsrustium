@@ -696,12 +696,12 @@ impl Workbench {
                     continue;
                 }
                 let call_args = vec![json!(registration.handle), document_uri.clone(), position.clone(), context.clone()];
-                calls.push((registration.handle, supports_resolve, self.host.call("ExtHostLanguageFeatures", "$provideCompletionItems", call_args)));
+                calls.push((registration.handle, supports_resolve, self.host.call_cancellable("ExtHostLanguageFeatures", "$provideCompletionItems", call_args)));
             }
             groups.push(calls);
         }
         let (sender, receiver) = oneshot::channel();
-        let host_call = |workbench: &gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp, method: &'static str, args: Vec<Value>| workbench.update(cx, |workbench, _| workbench.host.call("ExtHostLanguageFeatures", method, args)).ok();
+        let host_call = |workbench: &gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp, method: &'static str, args: Vec<Value>| workbench.update(cx, |workbench, _| workbench.host.call_cancellable("ExtHostLanguageFeatures", method, args)).ok();
         cx.spawn(async move |workbench, cx| {
                 let mut suggestions = Vec::new();
                 let mut incomplete = false;

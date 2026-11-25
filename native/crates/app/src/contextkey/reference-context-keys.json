@@ -1,0 +1,5574 @@
+[
+	{
+		"key": "~remote.forwardedPorts.active",
+		"type": "boolean"
+	},
+	{
+		"key": "~remote.forwardedPorts.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "~remote.forwardedPorts.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "~remote.forwardedPorts.visible",
+		"type": "boolean"
+	},
+	{
+		"key": "~remote.forwardedPortsContainer.defaultViewContainerLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "acceptSuggestionOnEnter",
+		"description": "Whether suggestions are inserted when pressing Enter",
+		"type": "boolean"
+	},
+	{
+		"key": "accessibilityModeEnabled",
+		"type": "boolean"
+	},
+	{
+		"key": "accessibleDiffViewerVisible",
+		"description": "Whether the accessible diff viewer is visible",
+		"type": "boolean"
+	},
+	{
+		"key": "accessibleViewContainsCodeBlocks"
+	},
+	{
+		"key": "accessibleViewCurrentProviderId"
+	},
+	{
+		"key": "accessibleViewHasAssignedKeybindings"
+	},
+	{
+		"key": "accessibleViewHasUnassignedKeybindings"
+	},
+	{
+		"key": "accessibleViewInCodeBlock"
+	},
+	{
+		"key": "activeAuxiliary",
+		"description": "The identifier of the active auxiliary panel",
+		"type": "string"
+	},
+	{
+		"key": "activeCompareEditorCanSwap",
+		"description": "Whether the active compare editor can swap sides",
+		"type": "boolean"
+	},
+	{
+		"description": "Whether the position at the active cursor has a comment",
+		"type": "boolean",
+		"key": "activeCursorHasComment"
+	},
+	{
+		"description": "Whether the position at the active cursor has a commenting range",
+		"type": "boolean",
+		"key": "activeCursorHasCommentingRange"
+	},
+	{
+		"key": "activeCustomEditorDiffCanToggleLayout",
+		"description": "Whether the active custom editor diff can toggle between inline and side by side layout",
+		"type": "boolean"
+	},
+	{
+		"type": "string",
+		"description": "The viewType of the currently active custom editor.",
+		"key": "activeCustomEditorId"
+	},
+	{
+		"key": "activeCustomEditorTextDiff",
+		"description": "Whether the active custom editor diff is backed by text documents",
+		"type": "boolean"
+	},
+	{
+		"type": "string",
+		"description": "The identifier of the active editor",
+		"key": "activeEditor"
+	},
+	{
+		"key": "activeEditorAvailableEditorIds",
+		"description": "The available editor identifiers that are usable for the active editor",
+		"type": "string"
+	},
+	{
+		"key": "activeEditorCannotClose",
+		"description": "Whether the active editor cannot be closed through standard user actions",
+		"type": "boolean"
+	},
+	{
+		"key": "activeEditorCanRevert",
+		"description": "Whether the active editor can revert",
+		"type": "boolean"
+	},
+	{
+		"key": "activeEditorCanSplitInGroup",
+		"type": "boolean"
+	},
+	{
+		"key": "activeEditorCanToggleReadonly",
+		"description": "Whether the active editor can toggle between being read-only or writeable",
+		"type": "boolean"
+	},
+	{
+		"key": "activeEditorGroupEmpty",
+		"description": "Whether the active editor group is empty",
+		"type": "boolean"
+	},
+	{
+		"key": "activeEditorGroupIndex",
+		"description": "The index of the active editor group",
+		"type": "number"
+	},
+	{
+		"key": "activeEditorGroupLast",
+		"description": "Whether the active editor group is the last group",
+		"type": "boolean"
+	},
+	{
+		"key": "activeEditorGroupLocked",
+		"description": "Whether the active editor group is locked",
+		"type": "boolean"
+	},
+	{
+		"description": "Whether the active editor has a commenting range",
+		"type": "boolean",
+		"key": "activeEditorHasCommentingRange"
+	},
+	{
+		"key": "activeEditorIsDirty",
+		"description": "Whether the active editor has unsaved changes",
+		"type": "boolean"
+	},
+	{
+		"key": "activeEditorIsFirstInGroup",
+		"description": "Whether the active editor is the first one in its group",
+		"type": "boolean"
+	},
+	{
+		"key": "activeEditorIsLastInGroup",
+		"description": "Whether the active editor is the last one in its group",
+		"type": "boolean"
+	},
+	{
+		"key": "activeEditorIsNotPreview",
+		"description": "Whether the active editor is not in preview mode",
+		"type": "boolean"
+	},
+	{
+		"key": "activeEditorIsPinned",
+		"description": "Whether the active editor is pinned",
+		"type": "boolean"
+	},
+	{
+		"key": "activeEditorIsReadonly",
+		"description": "Whether the active editor is read-only",
+		"type": "boolean"
+	},
+	{
+		"key": "activeImagePreview",
+		"description": "Whether the active editor, or the focused side of the active diff editor, is an image preview",
+		"type": "boolean"
+	},
+	{
+		"key": "activeLogOutput",
+		"type": "boolean"
+	},
+	{
+		"key": "activeLogOutput.isLog",
+		"type": "boolean"
+	},
+	{
+		"key": "activeLogOutput.level",
+		"type": "string"
+	},
+	{
+		"key": "activeLogOutput.levelIsDefault",
+		"type": "boolean"
+	},
+	{
+		"key": "activeLogOutput.levelSettable",
+		"type": "boolean"
+	},
+	{
+		"key": "activeOutputChannel",
+		"type": "string"
+	},
+	{
+		"key": "activePanel",
+		"description": "The identifier of the active panel",
+		"type": "string"
+	},
+	{
+		"key": "activeSessions",
+		"description": "The identifier of the active sessions panel",
+		"type": "string"
+	},
+	{
+		"key": "activeViewlet",
+		"description": "The identifier of the active viewlet",
+		"type": "string"
+	},
+	{
+		"type": "string",
+		"description": "The viewType of the currently active webview panel.",
+		"key": "activeWebviewPanelId"
+	},
+	{
+		"type": "boolean",
+		"description": "Whether Agent Host features are available and AI features are enabled in this window.",
+		"key": "agentHostEnabled"
+	},
+	{
+		"type": "boolean",
+		"description": "Whether existing Agent Host sessions in the main VS Code window show the current harness as a disabled picker.",
+		"key": "agentHostExistingSessionHarnessPickerEnabled"
+	},
+	{
+		"key": "agentHostProfileState",
+		"type": "string"
+	},
+	{
+		"key": "agentPluginsUpdating",
+		"type": "boolean"
+	},
+	{
+		"key": "agentSessionChildCanArchive",
+		"type": "boolean"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the current agent session item has changes.",
+		"key": "agentSessionHasChanges"
+	},
+	{
+		"type": "boolean",
+		"description": "True when multiple agent sessions are selected.",
+		"key": "agentSessionHasMultipleSelected"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the agent session item is archived.",
+		"key": "agentSessionIsArchived"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the current agent session item is a child chat.",
+		"key": "agentSessionIsChild"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the agent session item is pinned.",
+		"key": "agentSessionIsPinned"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the agent session item is read.",
+		"key": "agentSessionIsRead"
+	},
+	{
+		"key": "agentSessionsDesktopChangesEditorTransition",
+		"description": "Whether the desktop Changes editor is being replaced during a session switch",
+		"type": "boolean"
+	},
+	{
+		"key": "agentSessionsDesktopDiffEditorInputActive",
+		"description": "Whether the active desktop editor input is a diff, independent of the editor used to render it",
+		"type": "boolean"
+	},
+	{
+		"key": "agentSessionsDesktopLayout",
+		"description": "Whether the Agents window is using the desktop layout",
+		"type": "boolean"
+	},
+	{
+		"type": "string",
+		"description": "The section of the current agent session section item.",
+		"key": "agentSessionSection"
+	},
+	{
+		"type": "boolean",
+		"description": "If the agent sessions view in the chat view is focused.",
+		"key": "agentSessionsViewerFocused"
+	},
+	{
+		"type": "number",
+		"description": "Orientation of the agent sessions view in the chat view.",
+		"key": "agentSessionsViewerOrientation"
+	},
+	{
+		"type": "number",
+		"description": "Position of the agent sessions view in the chat view.",
+		"key": "agentSessionsViewerPosition"
+	},
+	{
+		"type": "boolean",
+		"description": "Visibility of the agent sessions view in the chat view.",
+		"key": "agentSessionsViewerVisible"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the chat agent supports attachments.",
+		"key": "agentSupportsAttachments"
+	},
+	{
+		"key": "agentsVoiceConnected",
+		"type": "boolean"
+	},
+	{
+		"key": "agentsVoiceConnecting",
+		"type": "boolean"
+	},
+	{
+		"key": "agentsVoiceEntitled",
+		"type": "boolean"
+	},
+	{
+		"key": "agentsVoiceListening",
+		"type": "boolean"
+	},
+	{
+		"key": "agentsVoiceMuted",
+		"type": "boolean"
+	},
+	{
+		"key": "agentsVoiceReconnecting",
+		"type": "boolean"
+	},
+	{
+		"key": "agentsVoiceWidgetFocused",
+		"type": "boolean"
+	},
+	{
+		"key": "aiCustomizationManagementEditorFocused",
+		"description": "Whether the Agent Customizations editor is focused",
+		"type": "boolean"
+	},
+	{
+		"key": "aiResultsRequested",
+		"type": "boolean"
+	},
+	{
+		"key": "aiResultsTitle",
+		"type": "boolean"
+	},
+	{
+		"key": "aiSettingResultsAvailable",
+		"type": "boolean"
+	},
+	{
+		"key": "allWalkthroughsHidden",
+		"type": "boolean"
+	},
+	{
+		"key": "applyingChatEditsFailed",
+		"type": "boolean"
+	},
+	{
+		"type": "boolean",
+		"description": "A context key that is true when at the end of a word. Note that this is only defined when tab-completions are enabled",
+		"key": "atEndOfWord"
+	},
+	{
+		"key": "auxiliaryBarFocus",
+		"description": "Whether the auxiliary bar has keyboard focus",
+		"type": "boolean"
+	},
+	{
+		"key": "auxiliaryBarMaximized",
+		"description": "Whether the auxiliary bar is maximized",
+		"type": "boolean"
+	},
+	{
+		"key": "auxiliaryBarVisible",
+		"description": "Whether the auxiliary bar is visible",
+		"type": "boolean"
+	},
+	{
+		"key": "bannerFocused",
+		"description": "Whether the banner has keyboard focus",
+		"type": "boolean"
+	},
+	{
+		"key": "breadcrumbsActive",
+		"description": "Whether breadcrumbs have focus",
+		"type": "boolean"
+	},
+	{
+		"key": "breadcrumbsHasSymbols",
+		"description": "Whether breadcrumbs contain symbol items",
+		"type": "boolean"
+	},
+	{
+		"key": "breadcrumbsPossible",
+		"description": "Whether the editor can show breadcrumbs",
+		"type": "boolean"
+	},
+	{
+		"key": "breadcrumbsVisible",
+		"description": "Whether breadcrumbs are currently visible",
+		"type": "boolean"
+	},
+	{
+		"type": "boolean",
+		"description": "Whether the breakpoint has multiple modes it can switch to.",
+		"key": "breakpointHasModes"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the input box has focus in the BREAKPOINTS view.",
+		"key": "breakpointInputFocused"
+	},
+	{
+		"type": "boolean",
+		"description": "Whether the breakpoint item is a data breakpoint on a byte range.",
+		"key": "breakpointItemBytes"
+	},
+	{
+		"type": "string",
+		"description": "Represents the item type of the focused element in the BREAKPOINTS view. For example: 'breakpoint', 'exceptionBreakpoint', 'functionBreakpoint', 'dataBreakpoint'",
+		"key": "breakpointItemType"
+	},
+	{
+		"type": "boolean",
+		"description": "True when at least one breakpoint exists.",
+		"key": "breakpointsExist"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the BREAKPOINTS view is focused, false otherwise.",
+		"key": "breakpointsFocused"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the focused breakpoint supports conditions.",
+		"key": "breakpointSupportsCondition"
+	},
+	{
+		"type": "boolean",
+		"description": "True when breakpoint editor zone widget is visible, false otherwise.",
+		"key": "breakpointWidgetVisible"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the focused session supports to break when value changes.",
+		"key": "breakWhenValueChangesSupported"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the focused breakpoint supports to break when value is accessed.",
+		"key": "breakWhenValueIsAccessedSupported"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the focused breakpoint supports to break when value is read.",
+		"key": "breakWhenValueIsReadSupported"
+	},
+	{
+		"key": "browserAreaSelectionActive",
+		"description": "Whether area selection is currently active",
+		"type": "boolean"
+	},
+	{
+		"key": "browserCanGoBack",
+		"description": "Whether the browser can go back",
+		"type": "boolean"
+	},
+	{
+		"key": "browserCanGoForward",
+		"description": "Whether the browser can go forward",
+		"type": "boolean"
+	},
+	{
+		"key": "browserCanZoomIn",
+		"description": "Whether the browser can zoom in further",
+		"type": "boolean"
+	},
+	{
+		"key": "browserCanZoomOut",
+		"description": "Whether the browser can zoom out further",
+		"type": "boolean"
+	},
+	{
+		"key": "browserDevToolsOpen",
+		"description": "Whether developer tools are open for the current browser view",
+		"type": "boolean"
+	},
+	{
+		"key": "browserEditorOpen",
+		"description": "Whether any browser editor is currently open",
+		"type": "boolean"
+	},
+	{
+		"key": "browserElementSelectionMode",
+		"description": "The active element selection mode"
+	},
+	{
+		"key": "browserEmulationHasUserAgent",
+		"description": "Whether the browser emulation has a custom user agent",
+		"type": "boolean"
+	},
+	{
+		"key": "browserEmulationIsMobile",
+		"description": "Whether the browser emulation is in mobile mode",
+		"type": "boolean"
+	},
+	{
+		"key": "browserEmulationToolbarVisible",
+		"description": "Whether the browser emulation toolbar is visible",
+		"type": "boolean"
+	},
+	{
+		"key": "browserFindWidgetFocused",
+		"description": "Whether the browser find widget is focused",
+		"type": "boolean"
+	},
+	{
+		"key": "browserFindWidgetVisible",
+		"description": "Whether the browser find widget is visible",
+		"type": "boolean"
+	},
+	{
+		"key": "browserFocused",
+		"description": "Whether the browser editor is focused",
+		"type": "boolean"
+	},
+	{
+		"key": "browserHasError",
+		"description": "Whether the browser has a load error",
+		"type": "boolean"
+	},
+	{
+		"key": "browserHasUrl",
+		"description": "Whether the browser has a URL loaded",
+		"type": "boolean"
+	},
+	{
+		"key": "browserStorageScope",
+		"description": "The storage scope of the current browser view",
+		"type": "string"
+	},
+	{
+		"key": "browserUrlIsFavorited",
+		"description": "Whether the current browser URL is a favorite",
+		"type": "boolean"
+	},
+	{
+		"key": "builtInExtensions",
+		"type": "boolean"
+	},
+	{
+		"type": "string",
+		"description": "Whether call hierarchy shows incoming or outgoing calls",
+		"key": "callHierarchyDirection"
+	},
+	{
+		"key": "callHierarchyVisible",
+		"description": "Whether call hierarchy peek is currently showing",
+		"type": "boolean"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the CALLSTACK view is focused, false otherwise.",
+		"key": "callStackFocused"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the focused item in the CALL STACK is stopped. Used internally for inline menus in the CALL STACK view.",
+		"key": "callStackItemStopped"
+	},
+	{
+		"type": "string",
+		"description": "Represents the item type of the focused element in the CALL STACK view. For example: 'session', 'thread', 'stackFrame'",
+		"key": "callStackItemType"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the focused session in the CALL STACK view has exactly one thread. Used internally for inline menus in the CALL STACK view.",
+		"key": "callStackSessionHasOneThread"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the session in the CALL STACK view is attach, false otherwise. Used internally for inline menus in the CALL STACK view.",
+		"key": "callStackSessionIsAttach"
+	},
+	{
+		"key": "cancellableOperation",
+		"description": "Whether the editor runs a cancellable operation, e.g. like 'Peek References'",
+		"type": "boolean"
+	},
+	{
+		"key": "canNavigateBack",
+		"description": "Whether it is possible to navigate back in editor history",
+		"type": "boolean"
+	},
+	{
+		"key": "canNavigateBackInEditLocations",
+		"description": "Whether it is possible to navigate back in editor edit locations history",
+		"type": "boolean"
+	},
+	{
+		"key": "canNavigateBackInNavigationLocations",
+		"description": "Whether it is possible to navigate back in editor navigation locations history",
+		"type": "boolean"
+	},
+	{
+		"key": "canNavigateForward",
+		"description": "Whether it is possible to navigate forward in editor history",
+		"type": "boolean"
+	},
+	{
+		"key": "canNavigateForwardInEditLocations",
+		"description": "Whether it is possible to navigate forward in editor edit locations history",
+		"type": "boolean"
+	},
+	{
+		"key": "canNavigateForwardInNavigationLocations",
+		"description": "Whether it is possible to navigate forward in editor navigation locations history",
+		"type": "boolean"
+	},
+	{
+		"key": "canNavigateToLastEditLocation",
+		"description": "Whether it is possible to navigate to the last editor edit location",
+		"type": "boolean"
+	},
+	{
+		"key": "canNavigateToLastNavigationLocation",
+		"description": "Whether it is possible to navigate to the last editor navigation location",
+		"type": "boolean"
+	},
+	{
+		"key": "canReopenClosedEditor",
+		"description": "Whether it is possible to reopen the last closed editor",
+		"type": "boolean"
+	},
+	{
+		"key": "canvasesPinnedToSidebar",
+		"description": "The editor resources of the canvases that are pinned to the Agents window sidebar",
+		"type": "object"
+	},
+	{
+		"type": "boolean",
+		"description": "Indicates whether the item in the view has an associated memory reference.",
+		"key": "canViewMemory"
+	},
+	{
+		"key": "chat.customizationExtensionNotInstalled",
+		"type": "boolean"
+	},
+	{
+		"type": "boolean",
+		"description": "True when account policy or managed-settings enforcement prevents this client from using AI features.",
+		"key": "chatAccountPolicyGateActive"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the multi-root Folder picker should be shown for this Agent Host session (revealed by the harness decision).",
+		"key": "chatAgentHostFolderPickerVisible"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the locked Agent Host provider pins an immutable primary working directory.",
+		"key": "chatAgentHostHasImmutablePrimaryWorkingDirectory"
+	},
+	{
+		"type": "string",
+		"description": "The Agent Host provider ID when the chat widget is locked to an Agent Host session.",
+		"key": "chatAgentHostProviderId"
+	},
+	{
+		"type": "string",
+		"description": "The 'kind' of the current agent.",
+		"key": "chatAgentKind"
+	},
+	{
+		"type": "boolean",
+		"description": "True when agent mode is disabled by organization policy.",
+		"key": "chatAgentModeDisabledByPolicy"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the default Agent picker is in Add Context instead of the toolbar.",
+		"key": "chatAgentPickerInAttachContext"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the window shows the Agents view, whose chat part replaces the Chat view.",
+		"key": "chatAgentsViewActive"
+	},
+	{
+		"type": "URI",
+		"description": "The full value of the chat attachment resource, including scheme and path",
+		"key": "chatAttachmentResource"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the chat Automations feature is enabled via the chat.automations.enabled setting.",
+		"key": "chatAutomationsEnabled"
+	},
+	{
+		"type": "boolean",
+		"description": "Whether the chat context menu link can be opened with an alternate editor.",
+		"key": "chatContextMenuHasAvailableEditors"
+	},
+	{
+		"type": "boolean",
+		"description": "Whether the chat context menu was opened on a link.",
+		"key": "chatContextMenuHasLink"
+	},
+	{
+		"type": "boolean",
+		"description": "Whether the chat context menu has selected assistant response text.",
+		"key": "chatContextMenuHasResponseSelection"
+	},
+	{
+		"type": "boolean",
+		"description": "Whether the chat context menu was opened from the transcript background rather than chat item content.",
+		"key": "chatContextMenuIsBackground"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the user has opened the context window usage details.",
+		"key": "chatContextUsageHasBeenOpened"
+	},
+	{
+		"key": "chatCursorAtTop",
+		"type": "boolean"
+	},
+	{
+		"key": "chatCustomizationSection",
+		"description": "The currently selected section in the Agent Customizations editor",
+		"type": "string"
+	},
+	{
+		"key": "chatCustomizationSessionType",
+		"description": "The active harness (session type) in the Agent Customizations editor",
+		"type": "string"
+	},
+	{
+		"key": "chatCustomizationsLocation",
+		"type": "string"
+	},
+	{
+		"key": "chatDebug.activeSessionIsAgentHost",
+		"type": "boolean"
+	},
+	{
+		"key": "chatDebug.hasActiveSession",
+		"type": "boolean"
+	},
+	{
+		"key": "chatDebug.kindModelTurn",
+		"type": "boolean"
+	},
+	{
+		"key": "chatDebug.kindPromptDiscovery",
+		"type": "boolean"
+	},
+	{
+		"key": "chatDebug.kindSubagent",
+		"type": "boolean"
+	},
+	{
+		"key": "chatDebug.kindToolCall",
+		"type": "boolean"
+	},
+	{
+		"key": "chatDebugFilterActive",
+		"type": "boolean"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the chat text edits have been applied.",
+		"key": "chatEditApplied"
+	},
+	{
+		"key": "chatEditingAgentSupportsReadonlyReferences",
+		"description": "Whether the chat editing agent supports readonly references (temporary)"
+	},
+	{
+		"type": "boolean",
+		"description": "True when it is possible to redo an interaction in the editing panel.",
+		"key": "chatEditingCanRedo"
+	},
+	{
+		"type": "boolean",
+		"description": "True when it is possible to undo an interaction in the editing panel.",
+		"key": "chatEditingCanUndo"
+	},
+	{
+		"key": "chatEditingResource"
+	},
+	{
+		"type": "string",
+		"description": "The type of the current editing request.",
+		"key": "chatEditingSentRequest"
+	},
+	{
+		"key": "chatEditingWidgetFileState",
+		"description": "The current state of the file in the chat editing widget"
+	},
+	{
+		"key": "chatEdits.cursorInChangeRange",
+		"description": "The cursor is inside a change range made by chat editing.",
+		"type": "boolean"
+	},
+	{
+		"key": "chatEdits.hasEditorModifications",
+		"description": "The current editor contains chat modifications"
+	},
+	{
+		"key": "chatEdits.isCurrentlyBeingModified",
+		"description": "The current editor is currently being modified"
+	},
+	{
+		"key": "chatEdits.isGlobalEditingSession",
+		"description": "The current editor is part of the global edit session"
+	},
+	{
+		"key": "chatEdits.isRequestInProgress",
+		"description": "The current editor shows a file from an edit session which is still in progress",
+		"type": "boolean"
+	},
+	{
+		"key": "chatEdits.isReviewModeEnabled",
+		"description": "Review mode for chat changes is enabled",
+		"type": "boolean"
+	},
+	{
+		"key": "chatEdits.requestCount",
+		"description": "The number of turns the editing session in this editor has",
+		"type": "number"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the installed chat extension is invalid and needs to be updated.",
+		"key": "chatExtensionInvalid"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the chat transcript Find widget's input box has focus.",
+		"key": "chatFindInputFocused"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the chat widget hosting the current focus supports transcript Find.",
+		"key": "chatFindSupported"
+	},
+	{
+		"type": "boolean",
+		"description": "True when any part of the chat transcript Find widget has focus.",
+		"key": "chatFindWidgetFocused"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the chat transcript Find widget is visible.",
+		"key": "chatFindWidgetVisible"
+	},
+	{
+		"type": "boolean",
+		"description": "The chat item is the first request in the session.",
+		"key": "chatFirstRequest"
+	},
+	{
+		"type": "number",
+		"description": "The number of foreground chat sessions visible across chat surfaces.",
+		"key": "chatForegroundSessionCount"
+	},
+	{
+		"type": "boolean",
+		"description": "True when there are chat session providers with delegation support available.",
+		"key": "chatHasCanDelegateProviders"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the user has created at least one session in the Agents Window.",
+		"key": "chatHasCreatedSessionInAgentsWindow"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the chat has custom agents available.",
+		"key": "chatHasCustomAgents"
+	},
+	{
+		"type": "boolean",
+		"description": "True when a chat elicitation request is pending.",
+		"key": "chatHasElicitationRequest"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the chat has file attachments.",
+		"key": "chatHasFileAttachments"
+	},
+	{
+		"type": "boolean",
+		"description": "True when a delegation (continue in) target is selected but the request has not been submitted yet.",
+		"key": "chatHasPendingDelegationTarget"
+	},
+	{
+		"type": "boolean",
+		"description": "True when there are pending requests in the queue.",
+		"key": "chatHasPendingRequests"
+	},
+	{
+		"type": "boolean",
+		"description": "True when a question carousel is rendered in the chat input.",
+		"key": "chatHasQuestionCarousel"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the chat input has additional send actions.",
+		"key": "chatHasSecondaryExecuteActions"
+	},
+	{
+		"type": "boolean",
+		"description": "True when a tool confirmation is present.",
+		"key": "chatHasToolConfirmation"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the user has used any of the /create-* slash commands.",
+		"key": "chatHasUsedCreateSlashCommands"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the workbench is in agent session projection mode for reviewing an agent session.",
+		"key": "chatInAgentSessionProjection"
+	},
+	{
+		"type": "boolean",
+		"description": "True when sending to the current chat is temporarily blocked.",
+		"key": "chatInputBlocked"
+	},
+	{
+		"key": "chatInputHasAgent",
+		"type": "boolean"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the chat input has focus.",
+		"key": "chatInputHasFocus"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the chat input has text or file attachments that can be sent.",
+		"key": "chatInputHasSendableContent"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the chat input has text.",
+		"key": "chatInputHasText"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the cursor in the chat input is right after an attachment shown inline with the prompt, which Enter opens.",
+		"key": "chatInputInlineAttachmentActive"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the chat widget shows a session chat, as the Agents Window does.",
+		"key": "chatInSessionsChat"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the chat widget is locked to an Agent Host session.",
+		"key": "chatIsAgentHostSession"
+	},
+	{
+		"type": "boolean",
+		"description": "True when chat is enabled because a default chat participant is activated with an implementation.",
+		"key": "chatIsEnabled"
+	},
+	{
+		"type": "boolean",
+		"description": "True when focusing a KaTeX math element.",
+		"key": "chatIsKatexMathElement"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the chat shown in the widget is read-only (non-interactive).",
+		"key": "chatIsReadonly"
+	},
+	{
+		"type": "string",
+		"description": "The id of the chat item.",
+		"key": "chatItemId"
+	},
+	{
+		"type": "string",
+		"description": "The id of the last chat item.",
+		"key": "chatLastItemId"
+	},
+	{
+		"type": "boolean",
+		"description": "True when an on-device model is active.",
+		"key": "chatLocalModelActive"
+	},
+	{
+		"type": "boolean",
+		"description": "True when an on-device model can be set up.",
+		"key": "chatLocalModelCanSetUp"
+	},
+	{
+		"type": "boolean",
+		"description": "True when an on-device model operation failed.",
+		"key": "chatLocalModelHasFailedOperation"
+	},
+	{
+		"type": "boolean",
+		"description": "True when an on-device model is installed.",
+		"key": "chatLocalModelHasInstalled"
+	},
+	{
+		"type": "boolean",
+		"description": "True when an on-device model operation is running or paused.",
+		"key": "chatLocalModelHasOperation"
+	},
+	{
+		"type": "boolean",
+		"description": "True when an on-device model operation is paused.",
+		"key": "chatLocalModelHasPausedOperation"
+	},
+	{
+		"type": "boolean",
+		"description": "True when an installed on-device model has an update.",
+		"key": "chatLocalModelHasUpdate"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the current chat runs on the local agent host and it lists on-device models.",
+		"key": "chatLocalModelVisible"
+	},
+	{
+		"key": "chatLocation"
+	},
+	{
+		"key": "chatModelComparisonAvailable",
+		"type": "boolean"
+	},
+	{
+		"key": "chatModelComparisonPickerFocused",
+		"type": "boolean"
+	},
+	{
+		"type": "string",
+		"description": "The short id of the currently selected chat model (for example 'gpt-4.1').",
+		"key": "chatModelId"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the chat model can be selected manually by the user.",
+		"key": "chatModelsAreUserSelectable"
+	},
+	{
+		"type": "string",
+		"description": "The name of the current chat mode (e.g. 'Plan' for custom modes).",
+		"key": "chatModeName"
+	},
+	{
+		"type": "string",
+		"description": "The icon variant for the new chat button, controlled by experiment. Values: 'copilot', 'new-session', 'comment', or empty for default.",
+		"key": "chatNewChatButtonExperimentIcon"
+	},
+	{
+		"type": "boolean",
+		"description": "True when a user-selectable chat model from a non-Copilot vendor is available.",
+		"key": "chatNonCopilotModelsAreUserSelectable"
+	},
+	{
+		"type": "boolean",
+		"description": "True when a default chat participant is registered for the panel from an extension.",
+		"key": "chatPanelExtensionParticipantRegistered"
+	},
+	{
+		"type": "number",
+		"description": "The location of the chat panel.",
+		"key": "chatPanelLocation"
+	},
+	{
+		"type": "boolean",
+		"description": "True when a default chat participant is registered for the panel.",
+		"key": "chatPanelParticipantRegistered"
+	},
+	{
+		"type": "string",
+		"description": "The current permission level for tool auto-approval.",
+		"key": "chatPermissionLevel"
+	},
+	{
+		"key": "chatPetAchievementsFocused",
+		"description": "Whether the Blobby customization modal is focused",
+		"type": "boolean"
+	},
+	{
+		"key": "chatPetEnabled",
+		"description": "Whether the VS Code pet is enabled",
+		"type": "boolean"
+	},
+	{
+		"key": "chatPetJumpGameFocused",
+		"description": "Whether Blobby's jump game is focused",
+		"type": "boolean"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the chat question carousel was triggered by a terminal and has a terminal to focus.",
+		"key": "chatQuestionCarouselHasTerminal"
+	},
+	{
+		"type": "boolean",
+		"description": "True when a remote coding agent job is being created.",
+		"key": "chatRemoteJobCreating"
+	},
+	{
+		"type": "boolean",
+		"description": "The chat item is a request",
+		"key": "chatRequest"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the chat request item is pending in the queue.",
+		"key": "chatRequestIsPending"
+	},
+	{
+		"type": "boolean",
+		"description": "The chat item is a response.",
+		"key": "chatResponse"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the current chat response supports issue reporting.",
+		"key": "chatResponseSupportsIssueReporting"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the current request is being edited.",
+		"key": "chatSessionCurrentlyEditing"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the current request input at the bottom is being edited.",
+		"key": "chatSessionCurrentlyEditingInput"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the current chat response has not completed, regardless of intermediate states like tool calls or elicitations.",
+		"key": "chatSessionHasActiveRequest"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the chat session has a customAgentTarget defined to filter modes.",
+		"key": "chatSessionHasCustomAgentTarget"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the current chat session has debug log data.",
+		"key": "chatSessionHasDebugData"
+	},
+	{
+		"type": "boolean",
+		"description": "True when debug tools are enabled in the current chat session.",
+		"key": "chatSessionHasDebugTools"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the chat is in a contributed chat session that has available 'models' to display.",
+		"key": "chatSessionHasModels"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the chat session has language models that target it via targetChatSessionType.",
+		"key": "chatSessionHasTargetedModels"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the current chat session has no requests.",
+		"key": "chatSessionIsEmpty"
+	},
+	{
+		"type": "boolean",
+		"description": "True when all selected session options exist in their respective option group items.",
+		"key": "chatSessionOptionsValid"
+	},
+	{
+		"type": "string",
+		"description": "Whether the current agent session item has an associated pull request: 'available' or 'none'. Unset when the pull request state is unknown.",
+		"key": "chatSessionPullRequest"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the current request is still in progress.",
+		"key": "chatSessionRequestInProgress"
+	},
+	{
+		"type": "boolean",
+		"description": "When the agent or command was automatically detected",
+		"key": "chatSessionResponseDetectedAgentOrCommand"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the chat response resulted in an error.",
+		"key": "chatSessionResponseError"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the inline model feedback survey is showing for the chat response.",
+		"key": "chatSessionResponseFeedbackSurveyOpen"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the chat response was filtered out by the server.",
+		"key": "chatSessionResponseFiltered"
+	},
+	{
+		"type": "boolean",
+		"description": "True when an inline model feedback survey is offered for the chat response, which replaces the helpful and unhelpful actions.",
+		"key": "chatSessionResponseHasFeedbackSurvey"
+	},
+	{
+		"type": "string",
+		"description": "When the response has been voted up, is set to 'up'. When voted down, is set to 'down'. Otherwise an empty string.",
+		"key": "chatSessionResponseVote"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the current session type supports delegation.",
+		"key": "chatSessionSupportsDelegation"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the current chat session provider supports forking conversations.",
+		"key": "chatSessionSupportsFork"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the current chat session supports renaming.",
+		"key": "chatSessionSupportsRename"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the current chat session provider supports side chats.",
+		"key": "chatSessionSupportsSideChat"
+	},
+	{
+		"type": "string",
+		"description": "The type of the current chat session.",
+		"key": "chatSessionType"
+	},
+	{
+		"type": "string",
+		"description": "The type of the current agent session item.",
+		"key": "chatSessionType"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the session of the session working set supports undoing its changes to single files, false otherwise.",
+		"key": "chatSessionWorkingSetHasUndo"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the session working set can keep changes now, false otherwise.",
+		"key": "chatSessionWorkingSetKeepEnabled"
+	},
+	{
+		"type": "boolean",
+		"description": "Whether Keep and Undo are shown in the session working set.",
+		"key": "chatSessionWorkingSetReviewEnabled"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the session working set can undo changes now, false otherwise.",
+		"key": "chatSessionWorkingSetUndoEnabled"
+	},
+	{
+		"key": "chatSetupDialogVisible",
+		"type": "boolean"
+	},
+	{
+		"type": "boolean",
+		"description": "True when speech-to-text is available for dictating into the chat input.",
+		"key": "chatSpeechToTextConfigured"
+	},
+	{
+		"type": "boolean",
+		"description": "True while the selected speech-to-text backend is preparing.",
+		"key": "chatSpeechToTextPreparing"
+	},
+	{
+		"type": "boolean",
+		"description": "True while the chat input is recording audio for speech-to-text transcription.",
+		"key": "chatSpeechToTextRecording"
+	},
+	{
+		"type": "boolean",
+		"description": "True when dictation uses the MAI cloud transcription backend.",
+		"key": "chatSpeechToTextUsesMai"
+	},
+	{
+		"key": "chatTerminalToolCanContinueInBackground",
+		"type": "boolean"
+	},
+	{
+		"key": "chatTerminalToolHasInstance",
+		"type": "boolean"
+	},
+	{
+		"key": "chatTerminalToolHasOutput",
+		"type": "boolean"
+	},
+	{
+		"key": "chatTerminalToolIsHiddenTerminal",
+		"type": "boolean"
+	},
+	{
+		"key": "chatTerminalToolOutputExpanded",
+		"type": "boolean"
+	},
+	{
+		"key": "chatTerminalToolUsesCollapsible",
+		"type": "boolean"
+	},
+	{
+		"type": "boolean",
+		"description": "True while cancellable transcript preparation is running.",
+		"key": "chatTranscriptProgressActive"
+	},
+	{
+		"type": "string",
+		"description": "The currently selected voice input mode in the chat input (dictation or voice).",
+		"key": "chatVoiceInputMode"
+	},
+	{
+		"key": "codeActionMenuFilterFocused",
+		"description": "Whether the action widget filter input is focused",
+		"type": "boolean"
+	},
+	{
+		"key": "codeActionMenuVisible",
+		"description": "Whether the action widget list is visible",
+		"type": "boolean"
+	},
+	{
+		"type": "string",
+		"description": "The context value of the comment",
+		"key": "comment"
+	},
+	{
+		"type": "string",
+		"description": "The comment controller id associated with a comment thread",
+		"key": "commentController"
+	},
+	{
+		"key": "commentEditorFocused",
+		"type": "boolean"
+	},
+	{
+		"type": "boolean",
+		"description": "Set when the comment is focused",
+		"key": "commentFocused"
+	},
+	{
+		"description": "Whether commenting functionality is enabled",
+		"type": "boolean",
+		"key": "commentingEnabled"
+	},
+	{
+		"type": "boolean",
+		"description": "Set when the comment has no input",
+		"key": "commentIsEmpty"
+	},
+	{
+		"key": "commentsFilterFocus",
+		"type": "boolean"
+	},
+	{
+		"key": "commentsView.commentFocused",
+		"type": "boolean"
+	},
+	{
+		"key": "commentsView.hasComments",
+		"type": "boolean"
+	},
+	{
+		"key": "commentsView.showResolvedFilter",
+		"type": "boolean"
+	},
+	{
+		"key": "commentsView.showUnResolvedFilter",
+		"type": "boolean"
+	},
+	{
+		"key": "commentsView.someCommentsExpanded",
+		"type": "boolean"
+	},
+	{
+		"key": "commentsView.sortBy",
+		"type": "string"
+	},
+	{
+		"type": "string",
+		"description": "The context value of the comment thread",
+		"key": "commentThread"
+	},
+	{
+		"type": "boolean",
+		"description": "Set when the comment thread has no comments",
+		"key": "commentThreadIsEmpty"
+	},
+	{
+		"type": "boolean",
+		"description": "Set when a comment widget is visible in the editor",
+		"key": "commentWidgetVisible"
+	},
+	{
+		"key": "comparingMovedCode",
+		"description": "Whether a moved code block is selected for comparison",
+		"type": "boolean"
+	},
+	{
+		"type": "string",
+		"description": "Controller ID of the current test item",
+		"key": "controllerId"
+	},
+	{
+		"key": "currentProfile",
+		"type": "string"
+	},
+	{
+		"key": "cursorAtEndOfQuickInputBox",
+		"description": "Whether the cursor in the quick input is at the end of the input box",
+		"type": "boolean"
+	},
+	{
+		"key": "cursorAtInlineEdit",
+		"description": "Whether the cursor is at an inline edit",
+		"type": "boolean"
+	},
+	{
+		"key": "cursorBeforeGhostText",
+		"description": "Whether the cursor is at ghost text",
+		"type": "boolean"
+	},
+	{
+		"key": "cursorInIndentation",
+		"description": "Whether the cursor is in indentation",
+		"type": "boolean"
+	},
+	{
+		"key": "customExecutionSupported",
+		"description": "Whether CustomExecution tasks are supported. Consider using in the when clause of a 'taskDefinition' contribution.",
+		"type": "boolean"
+	},
+	{
+		"key": "customTreeView",
+		"type": "boolean"
+	},
+	{
+		"type": "string",
+		"description": "Debug type of the selected launch configuration. For example 'python'.",
+		"key": "debugConfigurationType"
+	},
+	{
+		"type": "boolean",
+		"description": "True when there is at least one debug extension installed and enabled.",
+		"key": "debugExtensionAvailable"
+	},
+	{
+		"key": "debuggerInterestedInActiveEditor",
+		"type": "boolean"
+	},
+	{
+		"type": "boolean",
+		"description": "True when there is at least one debug extensions active.",
+		"key": "debuggersAvailable"
+	},
+	{
+		"type": "string",
+		"description": "Represents the context the debug adapter sets on the focused variable in the VARIABLES view.",
+		"key": "debugProtocolVariableMenuContext"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the focused session supports 'getBreakpointInfo' request on an address.",
+		"key": "debugSetDataBreakpointAddressSupported"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the focused session supports 'setExpression' request.",
+		"key": "debugSetExpressionSupported"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the focused session supports 'setVariable' request.",
+		"key": "debugSetVariableSupported"
+	},
+	{
+		"key": "debugStartLanguage"
+	},
+	{
+		"type": "string",
+		"description": "State that the focused debug session is in. One of the following: 'inactive', 'initializing', 'stopped' or 'running'.",
+		"key": "debugState"
+	},
+	{
+		"type": "string",
+		"description": "Debug type of the active debug session. For example 'python'.",
+		"key": "debugType"
+	},
+	{
+		"type": "string",
+		"description": "Debug UX state. When there are no debug configurations it is 'simple', otherwise 'default'. Used to decide when to show welcome views in the debug viewlet.",
+		"key": "debugUx"
+	},
+	{
+		"key": "decidedChatEditingResource",
+		"type": "object"
+	},
+	{
+		"key": "defaultAccountStatus",
+		"type": "string"
+	},
+	{
+		"key": "defaultExtensionViews",
+		"type": "boolean"
+	},
+	{
+		"key": "diffEditorAutomaticRenderSideBySide",
+		"description": "Whether automatic diff editor layout would render side by side",
+		"type": "boolean"
+	},
+	{
+		"key": "diffEditorHasChanges",
+		"description": "Whether the diff editor has changes",
+		"type": "boolean"
+	},
+	{
+		"key": "diffEditorInlineMode",
+		"description": "Whether inline mode is active",
+		"type": "boolean"
+	},
+	{
+		"key": "diffEditorModifiedUri",
+		"description": "The uri of the modified document",
+		"type": "string"
+	},
+	{
+		"key": "diffEditorModifiedWritable",
+		"description": "Whether modified is writable in the diff editor",
+		"type": "boolean"
+	},
+	{
+		"key": "diffEditorOriginalUri",
+		"description": "The uri of the original document",
+		"type": "string"
+	},
+	{
+		"key": "diffEditorOriginalWritable",
+		"description": "Whether modified is writable in the diff editor",
+		"type": "boolean"
+	},
+	{
+		"key": "diffEditorRenderSideBySideInlineBreakpointReached",
+		"description": "Whether the diff editor render side by side inline breakpoint is reached",
+		"type": "boolean"
+	},
+	{
+		"key": "diffEditorTemporaryInlineMode",
+		"description": "Whether inline mode is temporarily active after manually resizing the diff editor",
+		"type": "boolean"
+	},
+	{
+		"key": "dirtyDiffVisible",
+		"type": "boolean"
+	},
+	{
+		"key": "dirtyEditorFocusedInOpenEditors",
+		"type": "boolean"
+	},
+	{
+		"key": "dirtyWorkingCopies",
+		"description": "Whether there are any working copies with unsaved changes",
+		"type": "boolean"
+	},
+	{
+		"key": "dirtyWorkingCopies",
+		"type": "string"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the focused sessions supports disassemble request.",
+		"key": "disassembleRequestSupported"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the Disassembly View is focused.",
+		"key": "disassemblyViewFocus"
+	},
+	{
+		"key": "dropWidgetVisible",
+		"description": "Whether the drop widget is showing",
+		"type": "boolean"
+	},
+	{
+		"key": "editor.hasSelection",
+		"description": "Whether the editor has a selection",
+		"type": "boolean"
+	},
+	{
+		"key": "editorAreaFocus",
+		"description": "Whether the editor area (any editor part) has keyboard focus",
+		"type": "boolean"
+	},
+	{
+		"key": "editorColumnSelection",
+		"description": "Whether `editor.columnSelection` is enabled",
+		"type": "boolean"
+	},
+	{
+		"key": "editorDictation.inProgress",
+		"type": "boolean"
+	},
+	{
+		"key": "editorFocus",
+		"description": "Whether the editor or an editor widget has focus (e.g. focus is in the find widget)",
+		"type": "boolean"
+	},
+	{
+		"key": "editorGroupLockActionsHidden",
+		"description": "Whether the editor group hides the actions that lock and unlock it, as its owner keeps it locked",
+		"type": "boolean"
+	},
+	{
+		"key": "editorHasCallHierarchyProvider",
+		"description": "Whether a call hierarchy provider is available",
+		"type": "boolean"
+	},
+	{
+		"key": "editorHasCodeActionsProvider",
+		"description": "Whether the editor has a code actions provider",
+		"type": "boolean"
+	},
+	{
+		"key": "editorHasCodeLensProvider",
+		"description": "Whether the editor has a code lens provider",
+		"type": "boolean"
+	},
+	{
+		"key": "editorHasCompletionItemProvider",
+		"description": "Whether the editor has a completion item provider",
+		"type": "boolean"
+	},
+	{
+		"key": "editorHasDeclarationProvider",
+		"description": "Whether the editor has a declaration provider",
+		"type": "boolean"
+	},
+	{
+		"key": "editorHasDefinitionProvider",
+		"description": "Whether the editor has a definition provider",
+		"type": "boolean"
+	},
+	{
+		"key": "editorHasDocumentFormattingProvider",
+		"description": "Whether the editor has a document formatting provider",
+		"type": "boolean"
+	},
+	{
+		"key": "editorHasDocumentHighlightProvider",
+		"description": "Whether the editor has a document highlight provider",
+		"type": "boolean"
+	},
+	{
+		"key": "editorHasDocumentSelectionFormattingProvider",
+		"description": "Whether the editor has a document selection formatting provider",
+		"type": "boolean"
+	},
+	{
+		"key": "editorHasDocumentSymbolProvider",
+		"description": "Whether the editor has a document symbol provider",
+		"type": "boolean"
+	},
+	{
+		"key": "editorHasHoverProvider",
+		"description": "Whether the editor has a hover provider",
+		"type": "boolean"
+	},
+	{
+		"key": "editorHasImplementationProvider",
+		"description": "Whether the editor has an implementation provider",
+		"type": "boolean"
+	},
+	{
+		"key": "editorHasInlayHintsProvider",
+		"description": "Whether the editor has an inline hints provider",
+		"type": "boolean"
+	},
+	{
+		"key": "editorHasMultipleDocumentFormattingProvider",
+		"description": "Whether the editor has multiple document formatting providers",
+		"type": "boolean"
+	},
+	{
+		"key": "editorHasMultipleDocumentSelectionFormattingProvider",
+		"description": "Whether the editor has multiple document selection formatting providers",
+		"type": "boolean"
+	},
+	{
+		"key": "editorHasMultipleSelections",
+		"description": "Whether the editor has multiple selections",
+		"type": "boolean"
+	},
+	{
+		"key": "editorHasReferenceProvider",
+		"description": "Whether the editor has a reference provider",
+		"type": "boolean"
+	},
+	{
+		"key": "editorHasRenameProvider",
+		"description": "Whether the editor has a rename provider",
+		"type": "boolean"
+	},
+	{
+		"key": "editorHasSelection",
+		"description": "Whether the editor has text selected",
+		"type": "boolean"
+	},
+	{
+		"key": "editorHasSignatureHelpProvider",
+		"description": "Whether the editor has a signature help provider",
+		"type": "boolean"
+	},
+	{
+		"key": "editorHasTypeDefinitionProvider",
+		"description": "Whether the editor has a type definition provider",
+		"type": "boolean"
+	},
+	{
+		"key": "editorHasTypeHierarchyProvider",
+		"description": "Whether a type hierarchy provider is available",
+		"type": "boolean"
+	},
+	{
+		"key": "editorHoverFocused",
+		"description": "Whether the editor hover is focused",
+		"type": "boolean"
+	},
+	{
+		"key": "editorHoverVisible",
+		"description": "Whether the editor hover is visible",
+		"type": "boolean"
+	},
+	{
+		"key": "editorIsOpen",
+		"description": "Whether an editor is open",
+		"type": "boolean"
+	},
+	{
+		"key": "editorLangId",
+		"description": "The language identifier of the editor",
+		"type": "string"
+	},
+	{
+		"key": "editorPartInPartGrid",
+		"description": "Whether the editor part is one of the parts of a window that arranges its parts in a grid, where parts move and editors go into new parts",
+		"type": "boolean"
+	},
+	{
+		"key": "editorPartMaximizedEditorGroup",
+		"description": "Editor Part has a maximized group",
+		"type": "boolean"
+	},
+	{
+		"key": "editorPartModal",
+		"description": "Whether focus is in a modal editor part",
+		"type": "boolean"
+	},
+	{
+		"key": "editorPartModalCanMoveToEditorArea",
+		"description": "Whether the modal editor can move into an editor area",
+		"type": "boolean"
+	},
+	{
+		"key": "editorPartModalMaximized",
+		"description": "Whether the modal editor part is maximized",
+		"type": "boolean"
+	},
+	{
+		"key": "editorPartModalNavigation",
+		"description": "Whether the modal editor part has navigation context",
+		"type": "boolean"
+	},
+	{
+		"key": "editorPartModalSidebar",
+		"description": "Whether the modal editor part has a sidebar",
+		"type": "boolean"
+	},
+	{
+		"key": "editorPartModalSidebarVisible",
+		"description": "Whether the modal editor part sidebar is visible",
+		"type": "boolean"
+	},
+	{
+		"key": "editorPartModalVisible",
+		"description": "Whether a modal editor part is visible",
+		"type": "boolean"
+	},
+	{
+		"key": "editorPartMultipleEditorGroups",
+		"description": "Whether there are multiple editor groups opened in an editor part",
+		"type": "boolean"
+	},
+	{
+		"key": "editorReadonly",
+		"description": "Whether the editor is read-only",
+		"type": "boolean"
+	},
+	{
+		"key": "editorSelectionHasDiagnostics",
+		"description": "Whether any diagnostic is present in the current editor selection",
+		"type": "boolean"
+	},
+	{
+		"key": "editorTabMovesFocus",
+		"description": "Whether `Tab` will move focus out of the editor",
+		"type": "boolean"
+	},
+	{
+		"key": "editorTabsVisible",
+		"description": "Whether editor tabs are visible",
+		"type": "boolean"
+	},
+	{
+		"key": "editorTextFocus",
+		"description": "Whether the editor text has focus (cursor is blinking)",
+		"type": "boolean"
+	},
+	{
+		"key": "editorWordWrap",
+		"description": "Whether the editor is currently using word wrapping.",
+		"type": "boolean"
+	},
+	{
+		"key": "editSessionsCount",
+		"type": "number"
+	},
+	{
+		"key": "editSessionsPending",
+		"type": "boolean"
+	},
+	{
+		"key": "editSessionsShowView",
+		"type": "boolean"
+	},
+	{
+		"key": "editSessionsSignedIn",
+		"type": "boolean"
+	},
+	{
+		"key": "embedderIdentifier",
+		"description": "The identifier of the embedder according to the product service, if one is defined"
+	},
+	{
+		"key": "emptyEditorHintActionsVisible",
+		"description": "Whether the empty editor hint shows its list of actions",
+		"type": "boolean"
+	},
+	{
+		"key": "enableRemoteCodingAgentPromptFileOverlay",
+		"description": "Whether the remote coding agent prompt file overlay feature is enabled",
+		"type": "boolean"
+	},
+	{
+		"key": "enableSyncActivityViews",
+		"type": "boolean"
+	},
+	{
+		"key": "enableSyncConflictsView",
+		"type": "boolean"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the exception widget is visible.",
+		"key": "exceptionWidgetVisible"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the explorer tree is using the explorer find provider.",
+		"key": "explorerFindProviderActive"
+	},
+	{
+		"key": "explorerResourceAvailableEditorIds",
+		"type": "string"
+	},
+	{
+		"type": "boolean",
+		"description": "True when an item in the EXPLORER has been cut for cut and paste.",
+		"key": "explorerResourceCut"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the focused item in the EXPLORER is a folder.",
+		"key": "explorerResourceIsFolder"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the focused item in the EXPLORER is a root folder.",
+		"key": "explorerResourceIsRoot"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the focused item in the EXPLORER can be moved to trash.",
+		"key": "explorerResourceMoveableToTrash"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the focused item in the EXPLORER's parent is read-only.",
+		"key": "explorerResourceParentReadonly"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the focused item in the EXPLORER is read-only.",
+		"key": "explorerResourceReadonly"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the focus is inside a compact item's first part in the EXPLORER view.",
+		"key": "explorerViewletCompressedFirstFocus"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the focused item in the EXPLORER view is a compact item.",
+		"key": "explorerViewletCompressedFocus"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the focus is inside a compact item's last part in the EXPLORER view.",
+		"key": "explorerViewletCompressedLastFocus"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the focus is inside the EXPLORER viewlet.",
+		"key": "explorerViewletFocus"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the EXPLORER viewlet is visible.",
+		"key": "explorerViewletVisible"
+	},
+	{
+		"type": "boolean",
+		"description": "True when an expression input box is open in either the WATCH or the VARIABLES view, false otherwise.",
+		"key": "expressionSelected"
+	},
+	{
+		"key": "extensionHostProfileRecorded",
+		"type": "boolean"
+	},
+	{
+		"key": "extensionResultListFocused ",
+		"type": "boolean"
+	},
+	{
+		"key": "extensions.recommendedList.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "extensions.recommendedList.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "extensionSearchHasText",
+		"type": "boolean"
+	},
+	{
+		"key": "extensionsGalleryStatus",
+		"type": "string"
+	},
+	{
+		"key": "extensionsSearchValue",
+		"type": "string"
+	},
+	{
+		"key": "extensionsSortByValue",
+		"type": "string"
+	},
+	{
+		"key": "fileCopied",
+		"type": "boolean"
+	},
+	{
+		"key": "fileMatchFocus",
+		"type": "boolean"
+	},
+	{
+		"key": "fileMatchOrFolderMatchFocus",
+		"type": "boolean"
+	},
+	{
+		"key": "fileMatchOrFolderMatchWithResourceFocus",
+		"type": "boolean"
+	},
+	{
+		"key": "fileMatchOrMatchFocus",
+		"type": "boolean"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the chat widget is within a file with an edit session.",
+		"key": "filePartOfEditSession"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the focus is inside the EXPLORER view.",
+		"key": "filesExplorerFocus"
+	},
+	{
+		"key": "findInputFocussed",
+		"type": "boolean"
+	},
+	{
+		"key": "findWidgetFocused",
+		"type": "boolean"
+	},
+	{
+		"key": "findWidgetVisible",
+		"type": "boolean"
+	},
+	{
+		"key": "firstMatchFocus",
+		"type": "boolean"
+	},
+	{
+		"key": "focusedCustomEditorIsEditable",
+		"type": "boolean"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the focused session is 'attach'.",
+		"key": "focusedSessionIsAttach"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the focused session is run without debugging.",
+		"key": "focusedSessionIsNoDebug"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the focused stack frame has instruction pointer reference.",
+		"key": "focusedStackFrameHasInstructionReference"
+	},
+	{
+		"key": "focusedView",
+		"description": "The identifier of the view that has keyboard focus",
+		"type": "string"
+	},
+	{
+		"key": "folderMatchFocus",
+		"type": "boolean"
+	},
+	{
+		"key": "folderMatchWithResourceFocus",
+		"type": "boolean"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the FOLDERS view (the file tree within the explorer view container) is visible.",
+		"key": "foldersViewVisible"
+	},
+	{
+		"key": "foldingEnabled",
+		"type": "boolean"
+	},
+	{
+		"key": "forwardedPortsViewEnabled",
+		"description": "Whether the Ports view is enabled.",
+		"type": "boolean"
+	},
+	{
+		"key": "forwardedPortsViewOnlyEnabled",
+		"description": "Whether the Ports view is enabled.",
+		"type": "boolean"
+	},
+	{
+		"key": "galleryAllPrivateRepositorySigned",
+		"type": "boolean"
+	},
+	{
+		"key": "galleryAllPublicRepositorySigned",
+		"type": "boolean"
+	},
+	{
+		"key": "galleryFilterCapabilities",
+		"type": "string"
+	},
+	{
+		"key": "galleryHasExtensionLink",
+		"type": "boolean"
+	},
+	{
+		"key": "gallerySortCapabilities",
+		"type": "string"
+	},
+	{
+		"key": "githubEnvironmentsAvailable",
+		"type": "boolean"
+	},
+	{
+		"key": "groupEditorsCount",
+		"description": "The number of opened editor groups",
+		"type": "number"
+	},
+	{
+		"key": "groupFocusedInOpenEditors",
+		"type": "boolean"
+	},
+	{
+		"key": "hasAIResultProviderKey",
+		"type": "boolean"
+	},
+	{
+		"key": "hasAppliedChatEdits",
+		"type": "boolean"
+	},
+	{
+		"key": "hasChatTerminals",
+		"description": "Whether there are any chat terminals.",
+		"type": "boolean"
+	},
+	{
+		"key": "hasConflicts",
+		"type": "boolean"
+	},
+	{
+		"type": "boolean",
+		"description": "True when a debug session has been started at least once, false otherwise.",
+		"key": "hasDebugged"
+	},
+	{
+		"key": "hasGallery",
+		"type": "boolean"
+	},
+	{
+		"key": "hasHiddenChatTerminals",
+		"description": "Whether there are any hidden chat terminals.",
+		"type": "boolean"
+	},
+	{
+		"key": "hasHiddenOutputs",
+		"type": "boolean"
+	},
+	{
+		"key": "hasInstalledAgentPlugins",
+		"type": "boolean"
+	},
+	{
+		"key": "hasInstalledExtensions",
+		"type": "boolean"
+	},
+	{
+		"key": "hasInstalledMcpServers",
+		"type": "boolean"
+	},
+	{
+		"key": "hasLocalServer",
+		"type": "boolean"
+	},
+	{
+		"key": "hasMultipleNewFileEntries",
+		"type": "boolean"
+	},
+	{
+		"key": "hasNextTabstop",
+		"description": "Whether there is a next tab stop when in snippet mode",
+		"type": "boolean"
+	},
+	{
+		"key": "hasOtherSuggestions",
+		"type": "boolean"
+	},
+	{
+		"key": "hasOutdatedExtensions",
+		"type": "boolean"
+	},
+	{
+		"key": "hasPrevTabstop",
+		"description": "Whether there is a previous tab stop when in snippet mode",
+		"type": "boolean"
+	},
+	{
+		"key": "hasProfiles",
+		"type": "boolean"
+	},
+	{
+		"key": "hasRemoteCodingAgent",
+		"description": "Whether any remote coding agent is available",
+		"type": "boolean"
+	},
+	{
+		"key": "hasRemoteServer",
+		"type": "boolean"
+	},
+	{
+		"key": "hasSearchResult",
+		"type": "boolean"
+	},
+	{
+		"key": "hasSnippetCompletions"
+	},
+	{
+		"type": "boolean",
+		"description": "A speech provider is registered to the speech service.",
+		"key": "hasSpeechProvider"
+	},
+	{
+		"key": "hasSymbols",
+		"description": "Whether there are symbol locations that can be navigated via keyboard-only.",
+		"type": "boolean"
+	},
+	{
+		"key": "hasUndecidedChatEditingResource",
+		"type": "boolean"
+	},
+	{
+		"key": "hasWebServer",
+		"type": "boolean"
+	},
+	{
+		"key": "hasWordHighlights",
+		"type": "boolean"
+	},
+	{
+		"key": "iconSelectBoxFocus",
+		"type": "boolean"
+	},
+	{
+		"key": "iconSelectBoxInputEmpty",
+		"type": "boolean"
+	},
+	{
+		"key": "iconSelectBoxInputFocus",
+		"type": "boolean"
+	},
+	{
+		"key": "imageCarouselMarkingUp",
+		"description": "Whether the Images Preview shows the markup of an image",
+		"type": "boolean"
+	},
+	{
+		"key": "inAutomation",
+		"description": "Whether VS Code is running under automation/smoke test",
+		"type": "boolean"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the chat input is within the automations dialog.",
+		"key": "inAutomationsDialog"
+	},
+	{
+		"type": "boolean",
+		"description": "True when focus is in the breakpoint editor zone widget, false otherwise.",
+		"key": "inBreakpointWidget"
+	},
+	{
+		"type": "boolean",
+		"description": "True when focus is in the chat widget, false otherwise.",
+		"key": "inChat"
+	},
+	{
+		"type": "boolean",
+		"description": "True when focus is in a background shell's output in the Background Shells details.",
+		"key": "inChatBackgroundShellOutput"
+	},
+	{
+		"type": "boolean",
+		"description": "True when focus is in an Agents window chat composer or one of the notices above it.",
+		"key": "inChatComposer"
+	},
+	{
+		"key": "inChatEditingSession"
+	},
+	{
+		"type": "boolean",
+		"description": "Whether focus is in a chat editor.",
+		"key": "inChatEditor"
+	},
+	{
+		"type": "boolean",
+		"description": "True when focus is in the chat input, false otherwise.",
+		"key": "inChatInput"
+	},
+	{
+		"type": "boolean",
+		"description": "True when focus is in the chat question carousel.",
+		"key": "inChatQuestionCarousel"
+	},
+	{
+		"type": "boolean",
+		"description": "True when focus is in the session working set, false otherwise.",
+		"key": "inChatSessionWorkingSet"
+	},
+	{
+		"type": "boolean",
+		"description": "True when focus is in the chat terminal output region.",
+		"key": "inChatTerminalToolOutput"
+	},
+	{
+		"type": "boolean",
+		"description": "True when focus is in a chat tip.",
+		"key": "inChatTip"
+	},
+	{
+		"type": "boolean",
+		"description": "True when focus is in the chat todo list.",
+		"key": "inChatTodoList"
+	},
+	{
+		"key": "inCompositeEditor",
+		"description": "Whether the editor is part of a larger editor (e.g. notebooks)"
+	},
+	{
+		"type": "boolean",
+		"description": "True when debugging, false otherwise.",
+		"key": "inDebugMode"
+	},
+	{
+		"type": "boolean",
+		"description": "True when focus is in the debug console, false otherwise.",
+		"key": "inDebugRepl"
+	},
+	{
+		"key": "inDiffEditor",
+		"description": "Whether the context is a diff editor",
+		"type": "boolean"
+	},
+	{
+		"key": "inInlineEditsPreviewEditor",
+		"description": "Whether the current code editor is showing an inline edits preview",
+		"type": "boolean"
+	},
+	{
+		"key": "inKeybindings",
+		"type": "boolean"
+	},
+	{
+		"key": "inKeybindingsSearch",
+		"type": "boolean"
+	},
+	{
+		"key": "inlineChatAffordanceVisible",
+		"description": "Whether an inline chat affordance widget is visible",
+		"type": "boolean"
+	},
+	{
+		"key": "inlineChatEditing",
+		"description": "Whether the user is currently editing or generating code in the inline chat",
+		"type": "boolean"
+	},
+	{
+		"key": "inlineChatEmpty",
+		"description": "Whether the interactive editor input is empty",
+		"type": "boolean"
+	},
+	{
+		"key": "inlineChatFileBelongsToChat",
+		"description": "Whether the current file belongs to a chat editing session",
+		"type": "boolean"
+	},
+	{
+		"key": "inlineChatFocused",
+		"description": "Whether the interactive editor input is focused",
+		"type": "boolean"
+	},
+	{
+		"key": "inlineChatHasEditsAgent",
+		"description": "Whether an agent for inline chat in interactive editors exists",
+		"type": "boolean"
+	},
+	{
+		"key": "inlineChatHasNotebookAgent",
+		"description": "Whether an agent for notebook cells exists",
+		"type": "boolean"
+	},
+	{
+		"key": "inlineChatHasNotebookInline",
+		"description": "Whether an agent for notebook cells exists",
+		"type": "boolean"
+	},
+	{
+		"key": "inlineChatHasStatus",
+		"type": "boolean"
+	},
+	{
+		"key": "inlineChatOuterCursorPosition",
+		"description": "Whether the cursor of the outer editor is above or below the interactive editor input",
+		"type": "string"
+	},
+	{
+		"key": "inlineChatPossible",
+		"description": "Whether a provider for inline chat exists and whether an editor for inline chat is open",
+		"type": "boolean"
+	},
+	{
+		"key": "inlineChatRequestInProgress",
+		"description": "Whether an inline chat request is currently in progress",
+		"type": "boolean"
+	},
+	{
+		"key": "inlineChatResponseFocused",
+		"description": "Whether the interactive widget's response is focused",
+		"type": "boolean"
+	},
+	{
+		"key": "inlineChatTerminated",
+		"description": "Whether the current inline chat session is terminated",
+		"type": "boolean"
+	},
+	{
+		"key": "inlineChatVisible",
+		"description": "Whether the interactive editor input is visible",
+		"type": "boolean"
+	},
+	{
+		"key": "inlineCompletions.snoozed",
+		"description": "Whether inline completions are currently snoozed",
+		"type": "boolean"
+	},
+	{
+		"key": "inlineEditIsVisible",
+		"description": "Whether an inline edit is visible",
+		"type": "boolean"
+	},
+	{
+		"key": "inlineSuggestionAlternativeActionVisible",
+		"description": "Whether an alternative action for the inline suggestion is visible.",
+		"type": "boolean"
+	},
+	{
+		"key": "inlineSuggestionHasIndentation",
+		"description": "Whether the inline suggestion starts with whitespace",
+		"type": "boolean"
+	},
+	{
+		"key": "inlineSuggestionHasIndentationLessThanTabSize",
+		"description": "Whether the inline suggestion starts with whitespace that is less than what would be inserted by tab",
+		"type": "boolean"
+	},
+	{
+		"key": "inlineSuggestionSuppressSuggestions",
+		"description": "Whether suggestions should be suppressed for the current suggestion"
+	},
+	{
+		"key": "inlineSuggestionVisible",
+		"description": "Whether an inline suggestion is visible",
+		"type": "boolean"
+	},
+	{
+		"key": "inModelsEditor",
+		"type": "boolean"
+	},
+	{
+		"key": "inModelsSearch",
+		"type": "boolean"
+	},
+	{
+		"key": "inMultiDiffEditor",
+		"description": "Whether the context is a multi diff editor",
+		"type": "boolean"
+	},
+	{
+		"key": "inOutput",
+		"type": "boolean"
+	},
+	{
+		"key": "inPreferencesSearch",
+		"type": "boolean"
+	},
+	{
+		"key": "inputBoxFocus",
+		"type": "boolean"
+	},
+	{
+		"key": "inputFocus",
+		"description": "Whether keyboard focus is inside an input box",
+		"type": "boolean"
+	},
+	{
+		"key": "inQuickInput",
+		"description": "Whether keyboard focus is inside the quick input control",
+		"type": "boolean"
+	},
+	{
+		"key": "inQuickOpen",
+		"description": "Whether keyboard focus is inside the quick open control",
+		"type": "boolean"
+	},
+	{
+		"key": "inReferenceSearchEditor",
+		"description": "Whether the current code editor is embedded inside peek",
+		"type": "boolean"
+	},
+	{
+		"key": "inSearchEditor",
+		"type": "boolean"
+	},
+	{
+		"key": "inSessionHostScope",
+		"description": "Whether the context is that of a session host's scope.",
+		"type": "boolean"
+	},
+	{
+		"key": "inSettingsEditor",
+		"type": "boolean"
+	},
+	{
+		"key": "inSettingsJSONEditor",
+		"type": "boolean"
+	},
+	{
+		"key": "inSettingsSearch",
+		"type": "boolean"
+	},
+	{
+		"key": "inSnippetChoice",
+		"description": "Whether the current snippet tab stop is a choice",
+		"type": "boolean"
+	},
+	{
+		"key": "inSnippetMode",
+		"description": "Whether the editor in current in snippet mode",
+		"type": "boolean"
+	},
+	{
+		"key": "installedExtensions",
+		"type": "boolean"
+	},
+	{
+		"key": "interactiveInputCursorAtBoundary",
+		"type": "string"
+	},
+	{
+		"key": "interactivePlaygroundFocus",
+		"type": "boolean"
+	},
+	{
+		"key": "interactiveWindowOpen",
+		"type": "boolean"
+	},
+	{
+		"key": "inTerminalRunCommandPicker",
+		"description": "Whether the terminal run command picker is currently open.",
+		"type": "boolean"
+	},
+	{
+		"key": "inTreeView",
+		"type": "boolean"
+	},
+	{
+		"key": "inWelcome",
+		"type": "boolean"
+	},
+	{
+		"key": "inZenMode",
+		"description": "Whether Zen mode is enabled",
+		"type": "boolean"
+	},
+	{
+		"key": "isAuxiliaryWindow",
+		"description": "Window is an auxiliary window",
+		"type": "boolean"
+	},
+	{
+		"key": "isAuxiliaryWindowFocusedContext",
+		"description": "Whether an auxiliary window is focused",
+		"type": "boolean"
+	},
+	{
+		"key": "isCenteredLayout",
+		"description": "Whether centered layout is enabled for the main editor",
+		"type": "boolean"
+	},
+	{
+		"key": "isChromeOS",
+		"description": "Whether the operating system is ChromeOS",
+		"type": "boolean"
+	},
+	{
+		"key": "isCompactTitleBar",
+		"description": "Title bar is in compact mode",
+		"type": "boolean"
+	},
+	{
+		"key": "isComposing",
+		"description": "Whether the editor is in the composition mode",
+		"type": "boolean"
+	},
+	{
+		"key": "isCompositeNotebook",
+		"type": "boolean"
+	},
+	{
+		"key": "isEditableItem",
+		"type": "boolean"
+	},
+	{
+		"key": "isEmbeddedDiffEditor",
+		"description": "Whether the context is an embedded diff editor",
+		"type": "boolean"
+	},
+	{
+		"key": "isExtensionBisectActive",
+		"type": "boolean"
+	},
+	{
+		"type": "boolean",
+		"description": "Whether the resource is backed by a file system provider",
+		"key": "isFileSystemResource"
+	},
+	{
+		"key": "isFullscreen",
+		"description": "Whether the main window is in fullscreen mode",
+		"type": "boolean"
+	},
+	{
+		"key": "isIOS",
+		"description": "Whether the operating system is iOS",
+		"type": "boolean"
+	},
+	{
+		"key": "isIssueTroubleshootActive",
+		"type": "boolean"
+	},
+	{
+		"key": "isLinux",
+		"description": "Whether the operating system is Linux",
+		"type": "boolean"
+	},
+	{
+		"key": "isMac",
+		"description": "Whether the operating system is macOS",
+		"type": "boolean"
+	},
+	{
+		"key": "isMacNative",
+		"description": "Whether the operating system is macOS on a non-browser platform",
+		"type": "boolean"
+	},
+	{
+		"type": "boolean",
+		"description": "The editor is a merge editor",
+		"key": "isMergeEditor"
+	},
+	{
+		"type": "boolean",
+		"description": "The editor is a the result editor of a merge editor.",
+		"key": "isMergeResultEditor"
+	},
+	{
+		"key": "isMobile",
+		"description": "Whether the platform is a mobile web browser",
+		"type": "boolean"
+	},
+	{
+		"key": "isNewChatSession",
+		"type": "boolean"
+	},
+	{
+		"key": "isNotebookMultiSelect",
+		"type": "boolean"
+	},
+	{
+		"key": "isQuickChatSession",
+		"description": "Whether the session in scope is a workspace-less quick chat, or, where a chat of the session is shown, whether that chat is one; a chat of a quick chat that works in a folder of its own is not",
+		"type": "boolean"
+	},
+	{
+		"type": "boolean",
+		"description": "Whether the current line and its inlay hints are currently focused",
+		"key": "isReadingLineWithInlayHints"
+	},
+	{
+		"key": "isRunningUnificationExperiment",
+		"type": "boolean"
+	},
+	{
+		"key": "isSessionsWindow",
+		"description": "Whether the current window is a agent sessions window.",
+		"type": "boolean"
+	},
+	{
+		"key": "issueReporterOpen",
+		"type": "boolean"
+	},
+	{
+		"key": "isTopRightEditorGroup",
+		"description": "Whether the editor group is the top right editor group in the editor part",
+		"type": "boolean"
+	},
+	{
+		"key": "isWeb",
+		"description": "Whether the platform is a web browser",
+		"type": "boolean"
+	},
+	{
+		"key": "isWindowAlwaysOnTop",
+		"description": "Whether the window is always on top",
+		"type": "boolean"
+	},
+	{
+		"key": "isWindows",
+		"description": "Whether the operating system is Windows",
+		"type": "boolean"
+	},
+	{
+		"key": "isWorkspaceTrusted",
+		"description": "Whether the current workspace has been trusted by the user.",
+		"type": "boolean"
+	},
+	{
+		"key": "isWorkspaceTrustEnabled",
+		"description": "Whether the workspace trust feature is enabled.",
+		"type": "boolean"
+	},
+	{
+		"key": "jsBrowserBreakpoints.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "jsBrowserBreakpoints.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "jsDebugNetworkTree.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "jsDebugNetworkTree.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "jsExcludedCallers.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "jsExcludedCallers.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the focused session supports 'jumpToCursor' request.",
+		"key": "jumpToCursorSupported"
+	},
+	{
+		"key": "kernelHasVariableProvider",
+		"type": "boolean"
+	},
+	{
+		"key": "keybindingFocus",
+		"type": "boolean"
+	},
+	{
+		"key": "keybindingsSearchHasValue",
+		"type": "boolean"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the language in the current editor supports disassemble request.",
+		"key": "languageSupportsDisassembleRequest"
+	},
+	{
+		"type": "string",
+		"description": "How the window shows its chat and its editor parts, either 'chatOnly', 'editorOnly', 'stacked' or 'sideBySide'. Unset in windows without layout modes.",
+		"key": "layoutMode"
+	},
+	{
+		"key": "LinkedEditingInputVisible",
+		"type": "boolean"
+	},
+	{
+		"key": "listDoubleSelection",
+		"type": "boolean"
+	},
+	{
+		"key": "listFocus",
+		"type": "boolean"
+	},
+	{
+		"key": "listHasSelectionOrFocus",
+		"type": "boolean"
+	},
+	{
+		"key": "listMultiSelection",
+		"type": "boolean"
+	},
+	{
+		"key": "listScrollAtBoundary",
+		"type": "string"
+	},
+	{
+		"key": "listSelectionNavigation",
+		"type": "boolean"
+	},
+	{
+		"key": "listSupportsFind",
+		"type": "boolean"
+	},
+	{
+		"key": "listSupportsMultiselect",
+		"type": "boolean"
+	},
+	{
+		"type": "string",
+		"description": "Represents the item type of the focused element in the LOADED SCRIPTS view.",
+		"key": "loadedScriptsItemType"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the focused sessions supports the LOADED SCRIPTS view",
+		"key": "loadedScriptsSupported"
+	},
+	{
+		"type": "string",
+		"description": "The agent ID when the chat widget is locked to a coding agent session.",
+		"key": "lockedCodingAgentId"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the chat widget is locked to the coding agent session.",
+		"key": "lockedToCodingAgent"
+	},
+	{
+		"key": "logLevel",
+		"type": "string"
+	},
+	{
+		"key": "mainEditorAreaVisible",
+		"description": "Whether the editor area in the main window is visible",
+		"type": "boolean"
+	},
+	{
+		"key": "majorMinorUpdateAvailable",
+		"type": "boolean"
+	},
+	{
+		"key": "managedSettingsUpdateRequired",
+		"type": "boolean"
+	},
+	{
+		"key": "markersNavigationVisible",
+		"type": "boolean"
+	},
+	{
+		"key": "matchFocus",
+		"type": "boolean"
+	},
+	{
+		"type": "boolean",
+		"description": "Indicates whether there are any MCP servers with errors.",
+		"key": "mcp.hasServersWithErrors"
+	},
+	{
+		"type": "boolean",
+		"description": "Indicates whether there are MCP servers with unknown tools.",
+		"key": "mcp.hasUnknownTools"
+	},
+	{
+		"type": "number",
+		"description": "Context key that has the number of registered MCP servers",
+		"key": "mcp.serverCount"
+	},
+	{
+		"type": "number",
+		"description": "Context key that has the number of registered MCP tools",
+		"key": "mcp.toolsCount"
+	},
+	{
+		"key": "mcpServerConfigurationFormFocus",
+		"description": "Whether focus is in an MCP server configuration form",
+		"type": "boolean"
+	},
+	{
+		"key": "mcpServersGalleryStatus",
+		"type": "string"
+	},
+	{
+		"type": "string",
+		"description": "The uri of the baser of a merge editor",
+		"key": "mergeEditorBaseUri"
+	},
+	{
+		"type": "string",
+		"description": "The layout mode of a merge editor",
+		"key": "mergeEditorLayout"
+	},
+	{
+		"type": "string",
+		"description": "The uri of the result of a merge editor",
+		"key": "mergeEditorResultUri"
+	},
+	{
+		"type": "boolean",
+		"description": "If the merge editor shows the base version",
+		"key": "mergeEditorShowBase"
+	},
+	{
+		"type": "boolean",
+		"description": "If base should be shown at the top",
+		"key": "mergeEditorShowBaseAtTop"
+	},
+	{
+		"type": "boolean",
+		"description": "If the merge editor shows non-conflicting changes",
+		"key": "mergeEditorShowNonConflictingChanges"
+	},
+	{
+		"key": "messageVisible",
+		"description": "Whether the editor is currently showing an inline message",
+		"type": "boolean"
+	},
+	{
+		"key": "mostRecentReplEditor"
+	},
+	{
+		"key": "multiCursorModifier",
+		"type": "string"
+	},
+	{
+		"key": "multiDiffEditorAllCollapsed",
+		"description": "Whether all files in multi diff editor are collapsed"
+	},
+	{
+		"key": "multiDiffEditorFileListAvailable",
+		"description": "Whether the active multi diff editor supports the changed files list",
+		"type": "boolean"
+	},
+	{
+		"key": "multiDiffEditorFileListEnabled",
+		"description": "Whether the changed files list is enabled in the active multi diff editor",
+		"type": "boolean"
+	},
+	{
+		"key": "multiDiffEditorFileListFocus",
+		"description": "Whether focus is in the multi diff editor changed files list",
+		"type": "boolean"
+	},
+	{
+		"key": "multiDiffEditorFileListPosition",
+		"description": "The position of the multi diff editor file list",
+		"type": "string"
+	},
+	{
+		"key": "multiDiffEditorFileListViewMode",
+		"description": "Whether the multi diff editor file list shows the files as a flat list or as a tree of folders",
+		"type": "string"
+	},
+	{
+		"key": "multiDiffEditorFileListVisible",
+		"description": "Whether the multi diff editor shows the list of changed files",
+		"type": "boolean"
+	},
+	{
+		"key": "multiDiffEditorItemAllUnchangedRegionsShown",
+		"description": "Whether all unchanged regions of a multi diff editor file are revealed",
+		"type": "boolean"
+	},
+	{
+		"key": "multiDiffEditorRenderSideBySide",
+		"description": "Whether the multi diff editor renders diffs side by side instead of inline",
+		"type": "boolean"
+	},
+	{
+		"type": "boolean",
+		"description": "True when there are multiple chat tips available.",
+		"key": "multipleChatTips"
+	},
+	{
+		"key": "multipleEditorGroups",
+		"description": "Whether there are multiple editor groups opened",
+		"type": "boolean"
+	},
+	{
+		"key": "multipleEditorsSelectedInGroup",
+		"description": "Whether multiple editors have been selected in an editor group",
+		"type": "boolean"
+	},
+	{
+		"key": "multipleSessionsVisible",
+		"description": "Whether more than one session is visible in the sessions part's grid",
+		"type": "boolean"
+	},
+	{
+		"type": "boolean",
+		"description": "True when there is more than 1 active debug session.",
+		"key": "multiSessionDebug"
+	},
+	{
+		"type": "boolean",
+		"description": "True when there is more than 1 debug console.",
+		"key": "multiSessionRepl"
+	},
+	{
+		"key": "navigableContainerFocused",
+		"type": "boolean"
+	},
+	{
+		"key": "newSessionComposerFocus",
+		"description": "Whether focus is within the new-session composer or its pickers",
+		"type": "boolean"
+	},
+	{
+		"key": "newSessionCreationProviderId",
+		"description": "The provider selected for new session creation before a draft exists",
+		"type": "string"
+	},
+	{
+		"key": "notebook.diffEditor.allCollapsed",
+		"description": "Whether all cells in notebook diff editor are collapsed"
+	},
+	{
+		"key": "notebook.diffEditor.cell.ignoreWhitespace",
+		"type": "boolean"
+	},
+	{
+		"key": "notebook.diffEditor.cell.inputChanged",
+		"type": "boolean"
+	},
+	{
+		"key": "notebook.diffEditor.cell.property.changed",
+		"type": "boolean"
+	},
+	{
+		"key": "notebook.diffEditor.cell.property.expanded",
+		"type": "boolean"
+	},
+	{
+		"key": "notebook.diffEditor.hasUnchangedCells",
+		"description": "Whether there are unchanged cells in the notebook diff editor"
+	},
+	{
+		"key": "notebook.diffEditor.item.kind",
+		"description": "The kind of item in the notebook diff editor, Cell, Metadata or Output"
+	},
+	{
+		"key": "notebook.diffEditor.item.state",
+		"description": "The diff state of item in the notebook diff editor, delete, insert, modified or unchanged"
+	},
+	{
+		"key": "notebook.diffEditor.metadataChanged",
+		"type": "boolean"
+	},
+	{
+		"key": "notebook.diffEditor.unchangedCellsAreHidden",
+		"description": "Whether the unchanged cells in the notebook diff editor are hidden"
+	},
+	{
+		"key": "notebookBreakpointMargin",
+		"type": "boolean"
+	},
+	{
+		"key": "notebookCellEditable",
+		"type": "boolean"
+	},
+	{
+		"key": "notebookCellEditorFocused",
+		"type": "boolean"
+	},
+	{
+		"key": "notebookCellExecuting",
+		"type": "boolean"
+	},
+	{
+		"key": "notebookCellExecutionState"
+	},
+	{
+		"key": "notebookCellFocused",
+		"type": "boolean"
+	},
+	{
+		"key": "notebookCellFoldingState",
+		"type": "number"
+	},
+	{
+		"key": "notebookCellHasChildren",
+		"type": "boolean"
+	},
+	{
+		"key": "notebookCellHasErrorDiagnostics",
+		"type": "boolean"
+	},
+	{
+		"key": "notebookCellHasHeader",
+		"type": "boolean"
+	},
+	{
+		"key": "notebookCellHasOutputs",
+		"type": "boolean"
+	},
+	{
+		"key": "notebookCellInputIsCollapsed",
+		"type": "boolean"
+	},
+	{
+		"key": "notebookCellIsFirstOutput",
+		"type": "boolean"
+	},
+	{
+		"key": "notebookCellKind"
+	},
+	{
+		"key": "notebookCellLineNumbers",
+		"type": "string"
+	},
+	{
+		"key": "notebookCellListFocused",
+		"type": "boolean"
+	},
+	{
+		"key": "notebookCellMarkdownEditMode",
+		"type": "boolean"
+	},
+	{
+		"key": "notebookCellOutputIsCollapsed",
+		"type": "boolean"
+	},
+	{
+		"key": "notebookCellOutputMimeType"
+	},
+	{
+		"key": "notebookCellOutputMimeTypeListForChat",
+		"type": "object"
+	},
+	{
+		"key": "notebookCellResource",
+		"type": "string"
+	},
+	{
+		"key": "notebookCellToolbarLocation",
+		"type": "string"
+	},
+	{
+		"key": "notebookCellType"
+	},
+	{
+		"key": "notebookChatAgentRegistered",
+		"description": "Whether a chat agent for notebook is registered",
+		"type": "boolean"
+	},
+	{
+		"key": "notebookCursorNavigationMode",
+		"type": "boolean"
+	},
+	{
+		"key": "notebookEditable",
+		"type": "boolean"
+	},
+	{
+		"key": "notebookEditorCursorAtBoundary",
+		"type": "string"
+	},
+	{
+		"key": "notebookEditorCursorAtLineBoundary",
+		"type": "string"
+	},
+	{
+		"key": "notebookEditorFocused",
+		"type": "boolean"
+	},
+	{
+		"key": "notebookFindWidgetFocused",
+		"type": "boolean"
+	},
+	{
+		"key": "notebookHasOutputs",
+		"type": "boolean"
+	},
+	{
+		"key": "notebookHasRunningCell",
+		"type": "boolean"
+	},
+	{
+		"key": "notebookHasSomethingRunning",
+		"type": "boolean"
+	},
+	{
+		"key": "notebookInterruptibleKernel",
+		"type": "boolean"
+	},
+	{
+		"key": "notebookKernel"
+	},
+	{
+		"key": "notebookKernelCount",
+		"type": "number"
+	},
+	{
+		"key": "notebookKernelSelected",
+		"type": "boolean"
+	},
+	{
+		"key": "notebookKernelSourceCount",
+		"type": "number"
+	},
+	{
+		"key": "notebookLastCellFailed",
+		"type": "boolean"
+	},
+	{
+		"key": "notebookMissingKernelExtension",
+		"type": "boolean"
+	},
+	{
+		"key": "notebookMultiSelectCursorState",
+		"type": "number"
+	},
+	{
+		"key": "notebookOutlineElementTarget"
+	},
+	{
+		"key": "notebookOutputFocused",
+		"type": "boolean"
+	},
+	{
+		"key": "notebookOutputInputFocused",
+		"type": "boolean"
+	},
+	{
+		"key": "notebookType"
+	},
+	{
+		"key": "notebookUseConsolidatedOutputButton",
+		"type": "boolean"
+	},
+	{
+		"key": "notebookVariableViewEnabled",
+		"type": "boolean"
+	},
+	{
+		"key": "notificationCenterVisible",
+		"description": "Whether the notifications center is visible",
+		"type": "boolean"
+	},
+	{
+		"key": "notificationFocus",
+		"description": "Whether a notification has keyboard focus",
+		"type": "boolean"
+	},
+	{
+		"key": "notificationToastsVisible",
+		"description": "Whether a notification toast is visible",
+		"type": "boolean"
+	},
+	{
+		"key": "npm.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "npm.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the focus is inside the OPEN EDITORS view.",
+		"key": "openEditorsFocus"
+	},
+	{
+		"key": "openEditorsSelectedFileOrUntitled",
+		"type": "boolean"
+	},
+	{
+		"key": "openPreviewEnabled",
+		"type": "boolean"
+	},
+	{
+		"key": "outline.active",
+		"type": "boolean"
+	},
+	{
+		"key": "outline.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "outline.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "outline.visible",
+		"type": "boolean"
+	},
+	{
+		"key": "outlineAllCollapsed",
+		"type": "boolean"
+	},
+	{
+		"key": "outlineFiltersOnType",
+		"type": "boolean"
+	},
+	{
+		"key": "outlineFocused",
+		"type": "boolean"
+	},
+	{
+		"key": "outlineFollowsCursor",
+		"type": "boolean"
+	},
+	{
+		"key": "outlineSortMode",
+		"type": "number"
+	},
+	{
+		"key": "output.filter.categories",
+		"type": "string"
+	},
+	{
+		"key": "output.filter.debug",
+		"type": "boolean"
+	},
+	{
+		"key": "output.filter.error",
+		"type": "boolean"
+	},
+	{
+		"key": "output.filter.info",
+		"type": "boolean"
+	},
+	{
+		"key": "output.filter.trace",
+		"type": "boolean"
+	},
+	{
+		"key": "output.filter.warning",
+		"type": "boolean"
+	},
+	{
+		"key": "outputFilterFocus",
+		"type": "boolean"
+	},
+	{
+		"key": "outputView.scrollLock",
+		"type": "boolean"
+	},
+	{
+		"key": "panelAlignment",
+		"description": "The alignment of the panel, either 'center', 'left', 'right' or 'justify'",
+		"type": "string"
+	},
+	{
+		"key": "panelFocus",
+		"description": "Whether the panel has keyboard focus",
+		"type": "boolean"
+	},
+	{
+		"key": "panelMaximized",
+		"description": "Whether the panel is maximized",
+		"type": "boolean"
+	},
+	{
+		"key": "panelPosition",
+		"description": "The position of the panel, always 'bottom'",
+		"type": "string"
+	},
+	{
+		"key": "panelVisible",
+		"description": "Whether the panel is visible",
+		"type": "boolean"
+	},
+	{
+		"key": "parameterHintsMultipleSignatures",
+		"type": "boolean"
+	},
+	{
+		"key": "parameterHintsVisible",
+		"type": "boolean"
+	},
+	{
+		"key": "pasteWidgetVisible",
+		"description": "Whether the paste widget is showing",
+		"type": "boolean"
+	},
+	{
+		"key": "patternExcludesInputBoxFocus",
+		"type": "boolean"
+	},
+	{
+		"key": "patternIncludesInputBoxFocus",
+		"type": "boolean"
+	},
+	{
+		"type": "string",
+		"description": "Type of the item in the output peek view. Either a \"test\", \"message\", \"task\", or \"result\".",
+		"key": "peekItemType"
+	},
+	{
+		"key": "pinnedCanvasConnected",
+		"description": "Whether the targeted pinned canvas is connected to its live canvas",
+		"type": "boolean"
+	},
+	{
+		"key": "planReviewFeedback.hasFeedback",
+		"type": "boolean"
+	},
+	{
+		"key": "problemFocus",
+		"type": "boolean"
+	},
+	{
+		"key": "problems.filter.activeFile",
+		"type": "boolean"
+	},
+	{
+		"key": "problems.filter.errors",
+		"type": "boolean"
+	},
+	{
+		"key": "problems.filter.excludedFiles",
+		"type": "boolean"
+	},
+	{
+		"key": "problems.filter.info",
+		"type": "boolean"
+	},
+	{
+		"key": "problems.filter.warnings",
+		"type": "boolean"
+	},
+	{
+		"key": "problemsFilterFocus",
+		"type": "boolean"
+	},
+	{
+		"key": "problemsViewMode",
+		"type": "string"
+	},
+	{
+		"key": "problemsVisibility",
+		"type": "boolean"
+	},
+	{
+		"key": "processExecutionSupported",
+		"description": "Whether ProcessExecution tasks are supported. Consider using in the when clause of a 'taskDefinition' contribution.",
+		"type": "boolean"
+	},
+	{
+		"key": "productQualityType",
+		"description": "Quality type of VS Code",
+		"type": "string"
+	},
+	{
+		"key": "profileSessionState",
+		"type": "string"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the quick chat UI has focus, false otherwise.",
+		"key": "quickChatHasFocus"
+	},
+	{
+		"key": "quickDiffDecorationCount",
+		"type": "number"
+	},
+	{
+		"key": "quickInputAlignment",
+		"description": "The alignment of the quick input",
+		"type": "string"
+	},
+	{
+		"key": "quickInputType",
+		"description": "The type of the currently visible quick input"
+	},
+	{
+		"key": "readonlyEditorFocusedInOpenEditors",
+		"type": "boolean"
+	},
+	{
+		"key": "recommendedExtensions",
+		"type": "boolean"
+	},
+	{
+		"key": "refactorPreview.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "refactorPreview.defaultViewContainerLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "refactorPreview.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "refactorPreview.enabled",
+		"type": "boolean"
+	},
+	{
+		"key": "refactorPreview.groupByFile",
+		"type": "boolean"
+	},
+	{
+		"key": "refactorPreview.hasCategories",
+		"type": "boolean"
+	},
+	{
+		"key": "refactorPreview.hasCheckedChanges",
+		"type": "boolean"
+	},
+	{
+		"key": "references-view.tree.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "references-view.tree.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "referenceSearchVisible",
+		"description": "Whether reference peek is visible, like 'Peek References' or 'Peek Definition'",
+		"type": "boolean"
+	},
+	{
+		"key": "relatedInformationFocus",
+		"type": "boolean"
+	},
+	{
+		"key": "remoteConnectionState",
+		"type": "string"
+	},
+	{
+		"key": "remoteFileDialogVisible",
+		"type": "boolean"
+	},
+	{
+		"key": "remoteName",
+		"description": "The name of the remote the window is connected to or an empty string if not connected to any remote",
+		"type": "string"
+	},
+	{
+		"key": "remoteTunnelConnection",
+		"type": "string"
+	},
+	{
+		"key": "remoteTunnelHasLink",
+		"type": "boolean"
+	},
+	{
+		"key": "renameInputFocused",
+		"description": "Whether the rename input widget is focused",
+		"type": "boolean"
+	},
+	{
+		"key": "renameInputVisible",
+		"description": "Whether the rename input widget is visible",
+		"type": "boolean"
+	},
+	{
+		"key": "replaceActive",
+		"type": "boolean"
+	},
+	{
+		"key": "replaceInputBoxFocus",
+		"type": "boolean"
+	},
+	{
+		"key": "replaceInputFocussed",
+		"type": "boolean"
+	},
+	{
+		"type": "URI",
+		"description": "The full value of the resource including scheme and path",
+		"key": "resource"
+	},
+	{
+		"type": "string",
+		"description": "The folder name the resource is contained in",
+		"key": "resourceDirname"
+	},
+	{
+		"type": "string",
+		"description": "The extension name of the resource",
+		"key": "resourceExtname"
+	},
+	{
+		"type": "string",
+		"description": "The file name of the resource",
+		"key": "resourceFilename"
+	},
+	{
+		"type": "string",
+		"description": "The language identifier of the resource",
+		"key": "resourceLangId"
+	},
+	{
+		"type": "string",
+		"description": "The full path of the resource",
+		"key": "resourcePath"
+	},
+	{
+		"type": "string",
+		"description": "The scheme of the resource",
+		"key": "resourceScheme"
+	},
+	{
+		"key": "resourceSelectedForCompare",
+		"type": "boolean"
+	},
+	{
+		"type": "boolean",
+		"description": "Whether a resource is present or not",
+		"key": "resourceSet"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the focused session supports 'restartFrame' requests.",
+		"key": "restartFrameSupported"
+	},
+	{
+		"key": "scmActiveRepositoryBranchName",
+		"type": "string"
+	},
+	{
+		"key": "scmActiveRepositoryName",
+		"type": "string"
+	},
+	{
+		"key": "scmActiveResourceHasChanges",
+		"description": "Whether the active resource has changes",
+		"type": "boolean"
+	},
+	{
+		"key": "scmActiveResourceRepository",
+		"description": "The active resource's repository"
+	},
+	{
+		"key": "scmCurrentHistoryItemRefHasBase",
+		"type": "boolean"
+	},
+	{
+		"key": "scmCurrentHistoryItemRefHasRemote",
+		"type": "boolean"
+	},
+	{
+		"key": "scmCurrentHistoryItemRefInFilter",
+		"type": "boolean"
+	},
+	{
+		"key": "scmHistoryItemCount",
+		"type": "number"
+	},
+	{
+		"key": "scmHistoryViewMode",
+		"type": "string"
+	},
+	{
+		"key": "scmInputHasValidationMessage",
+		"type": "boolean"
+	},
+	{
+		"key": "scmProvider"
+	},
+	{
+		"key": "scmProviderHasRootUri"
+	},
+	{
+		"key": "scmProviderRootUri"
+	},
+	{
+		"key": "scmRepositoryCount",
+		"type": "number"
+	},
+	{
+		"key": "scmRepositorySelectionMode",
+		"type": "string"
+	},
+	{
+		"key": "scmRepositorySortKey",
+		"type": "string"
+	},
+	{
+		"key": "scmRepositoryVisibleCount",
+		"type": "number"
+	},
+	{
+		"key": "scmViewAreAllRepositoriesCollapsed",
+		"type": "boolean"
+	},
+	{
+		"key": "scmViewHasStructuralDiffProvider",
+		"type": "boolean"
+	},
+	{
+		"key": "scmViewIsAnyRepositoryCollapsible",
+		"type": "boolean"
+	},
+	{
+		"key": "scmViewMode",
+		"type": "string"
+	},
+	{
+		"key": "scmViewShowStructuralDiff",
+		"type": "boolean"
+	},
+	{
+		"key": "scmViewSortKey",
+		"type": "string"
+	},
+	{
+		"type": "boolean",
+		"description": "Defined as a location where voice recording from microphone is in progress for voice chat. This key is only defined scoped, per chat context.",
+		"key": "scopedChatSynthesisInProgress"
+	},
+	{
+		"type": "boolean",
+		"description": "True when getting ready for receiving voice input from the microphone for voice chat. This key is only defined scoped, per chat context.",
+		"key": "scopedVoiceChatGettingReady"
+	},
+	{
+		"type": "string",
+		"description": "Defined as a location where voice recording from microphone is in progress for voice chat. This key is only defined scoped, per chat context.",
+		"key": "scopedVoiceChatInProgress"
+	},
+	{
+		"key": "screenshotToolActive",
+		"description": "Whether the screenshot tool is capturing or marking up a screenshot",
+		"type": "boolean"
+	},
+	{
+		"key": "searchAgentPlugins",
+		"type": "boolean"
+	},
+	{
+		"key": "searchBuiltInExtensions",
+		"type": "boolean"
+	},
+	{
+		"key": "searchDeprecatedExtensions",
+		"type": "boolean"
+	},
+	{
+		"key": "searchDisabledExtensions",
+		"type": "boolean"
+	},
+	{
+		"key": "searchEnabledExtensions",
+		"type": "boolean"
+	},
+	{
+		"key": "searchExtensionUpdates",
+		"type": "boolean"
+	},
+	{
+		"key": "searchInputBoxFocus",
+		"type": "boolean"
+	},
+	{
+		"key": "searchInstalledExtensions",
+		"type": "boolean"
+	},
+	{
+		"key": "searchMarketplaceExtensions",
+		"type": "boolean"
+	},
+	{
+		"key": "searchMcpServers",
+		"type": "boolean"
+	},
+	{
+		"key": "searchOutdatedExtensions",
+		"type": "boolean"
+	},
+	{
+		"key": "searchRecentlyUpdatedExtensions",
+		"type": "boolean"
+	},
+	{
+		"key": "searchRestartRequiredExtensions",
+		"type": "boolean"
+	},
+	{
+		"key": "searchResultHeaderFocused",
+		"type": "boolean"
+	},
+	{
+		"key": "searchResultListFocused",
+		"type": "boolean"
+	},
+	{
+		"key": "searchState",
+		"type": "number"
+	},
+	{
+		"key": "searchUnsupportedWorkspaceExtensions",
+		"type": "boolean"
+	},
+	{
+		"key": "searchViewletFocus",
+		"type": "boolean"
+	},
+	{
+		"key": "searchViewletVisible",
+		"type": "boolean"
+	},
+	{
+		"key": "secondarySideBarVisible",
+		"description": "Whether the layout surface representing the secondary side bar is visible",
+		"type": "boolean"
+	},
+	{
+		"key": "SelectedEditorsInGroupFileOrUntitledResourceContextKey",
+		"description": "Whether all selected editors in a group have a file or untitled resource associated",
+		"type": "boolean"
+	},
+	{
+		"key": "selectedRemoteInExplorer",
+		"type": "string"
+	},
+	{
+		"key": "selectionAnchorSet",
+		"type": "boolean"
+	},
+	{
+		"key": "serverlessWebContext",
+		"description": "True when in the web with no remote authority.",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionActiveChatCanArchive",
+		"description": "Whether the active chat can be archived or marked as done",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionActiveChatCanvasReferenceKeys",
+		"description": "The live Canvas references owned by the chat represented by the session view",
+		"type": "object"
+	},
+	{
+		"key": "sessionActiveChatHasSideChats",
+		"description": "Whether the chat represented by the session or chat header has side chats",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionActiveChatIsClosable",
+		"description": "Whether the active chat surface can be closed, either by hiding a non-main chat or by removing a side-by-side chat group",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionActiveChatIsDeletable",
+		"description": "Whether the session's active chat can be permanently deleted from the tab strip, i.e. it is a real, user-created non-main chat (not the main chat and not a tool-spawned subagent chat, which are transient children). Used to scope the delete-chat keybinding",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionActiveChatIsUntitled",
+		"description": "Whether the active chat is an untitled nested session draft",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionActiveChatResource",
+		"description": "The resource of the chat represented by the session or chat header",
+		"type": "string"
+	},
+	{
+		"key": "sessionActivityBarSize",
+		"type": "string"
+	},
+	{
+		"key": "sessionAgentMergeEnabled",
+		"description": "True when Agent Merge is enabled for the active agent session",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionArtifactIntegrationsEnabled",
+		"description": "Whether artifact integrations are enabled and supported for the active session",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionBranchPickerVisible",
+		"description": "Whether the new-session view's branch picker is visible",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionCanvasFocused",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionChatsPickerVisible",
+		"description": "Whether the chats picker (chats within the active session) is visible",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionEnvironmentPickerVisible",
+		"description": "Whether the new-session view's environment picker is visible",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionFocusedChatIsRenameTarget",
+		"description": "Whether the focused chat group's visible chat is a non-main chat that should receive the chat-specific rename command instead of the session rename command",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionHarnessPickerVisible",
+		"description": "Whether the new-session view's harness (session type) picker is visible — it is hidden when at most one harness can serve the selected workspace",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionHasCachedChanges",
+		"description": "Whether the session view's session has remembered changes from the last time its changes pill was shown, while it has not reported its own changes yet. Used to render the changes pill optimistically when a session opens",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionHasChanges",
+		"description": "Whether the session view's session has pending changes (insertions or deletions)",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionHasGitRepository",
+		"description": "Whether the session has a usable git repository",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionHasIssues",
+		"description": "Whether the session view's session references at least one GitHub issue",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionHasMultipleCommittedChats",
+		"description": "Whether the session view's session has more than one committed (non-draft) chat, which drives the Chats dropdown visibility",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionHasMultipleOpenChats",
+		"description": "Whether the session view's session has more than one open chat (the tabs shown in the strip, including in-composer drafts). Used to scope chat-to-chat navigation (next/previous chat, the Ctrl+Tab chat switcher)",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionHasOpenPullRequest",
+		"description": "Whether the active session's branch has an open pull request",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionHasPullRequest",
+		"description": "Whether the session view's session is associated with a GitHub pull request",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionHasWorkspace",
+		"description": "Whether the session view's session has an associated workspace folder",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionHeaderActiveChatIsPinned",
+		"description": "Whether the chat represented by a side-by-side chat group header is pinned",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionHeaderShowsChat",
+		"description": "Whether the session-style header represents one chat in a side-by-side chat group rather than the whole session",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionHeaderTargetsChat",
+		"description": "Whether nested-session lifecycle actions in the session-style header target the represented chat rather than the whole session",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionId",
+		"description": "The identifier of the session in scope (the active session globally, or a specific session within an isolated component such as the session view or a context menu overlay)",
+		"type": "string"
+	},
+	{
+		"key": "sessionInChatEditor",
+		"description": "Whether the session shows in a chat editor, scoped to its chat, rather than in the main window's grid",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionIsActive",
+		"description": "Whether the session in scope is in progress or needs attention",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionIsArchived",
+		"description": "Whether the session in scope is archived/marked as done (the active session globally, or a specific session within an isolated component such as the session view or a context menu overlay)",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionIsCreated",
+		"description": "Whether the session view's session has been created (chat view shown, not new-session view)",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionIsMaximized",
+		"description": "Whether the session view is currently maximized in the sessions part's grid",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionIsolationPickerVisible",
+		"description": "Whether the new-session view's isolation picker is visible — it is shown only when the isolation option is enabled and the workspace has a git repository",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionIsRead",
+		"description": "Whether the session's main chat has been marked as read",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionIsSticky",
+		"description": "Whether the session view's session is sticky in the grid",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionItem.isMultiSelection",
+		"description": "Whether multiple sessions are selected in the sessions list",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionPrimaryPullRequestOperation",
+		"description": "The id of the first pull request operation advertised for the active session, or empty when there is none",
+		"type": "string"
+	},
+	{
+		"key": "sessionProviderId",
+		"description": "The provider ID of the session in scope (the active session globally, or a specific session within an isolated component such as the session view or a context menu overlay)",
+		"type": "string"
+	},
+	{
+		"key": "sessionsCanGoBack",
+		"description": "Whether there is a previous session in the navigation history",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionsCanGoForward",
+		"description": "Whether there is a next session in the navigation history",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionsChatBackgroundAvailable",
+		"description": "Whether chat background customization is available for the current color theme",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionsChatBackgroundConfigured",
+		"description": "Whether a chat background is configured for the current color theme",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionsChatBackgroundImageConfigured",
+		"description": "Whether a chat background image is configured for the current color theme",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionsChatInputCanSchedule",
+		"description": "Whether the chat input supports sending later",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionsChatInputSupportsBackground",
+		"description": "Whether the chat input supports sending in the background",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionsCommandCenterDropdownVisible",
+		"description": "Whether the sessions dropdown is open from the command center in the sessions titlebar",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionsDiffViewMode",
+		"description": "The preferred layout mode for diffs in the Agents window",
+		"type": "string"
+	},
+	{
+		"key": "sessionsFocus",
+		"description": "Whether the sessions part has keyboard focus",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionsHasClosedItem",
+		"description": "Whether a chat or session was closed recently and can be reopened with the Reopen Closed Chat or Session command",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionShouldShowChatTabs",
+		"description": "Whether the session view's chat tab strip is shown, i.e. the session has more than one chat actually showing as a tab. A single visible tab always hides the strip",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionsIsPhoneLayout",
+		"description": "Whether the current layout is the phone layout",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionsListPromoteNewChatAction",
+		"description": "Whether New Nested Session replaces Pin or Unpin as the primary action on session rows (A/B experiment)",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionsListRearrange",
+		"description": "Whether the sessions list uses the experimental navigation arrangement",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionsPickerVisible",
+		"description": "Whether the sessions picker is visible",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionSupportsDelete",
+		"description": "Whether the session can be deleted",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionSupportsFork",
+		"description": "Whether the session view's session supports forking a chat from a turn into a new peer chat",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionSupportsMultipleChats",
+		"description": "Whether the session view's session supports multiple chats",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionSupportsRename",
+		"description": "Whether the session can be renamed",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionSupportsSideChat",
+		"description": "Whether the session view's session supports creating a side chat from a turn (via /btw)",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionsVisible",
+		"description": "Whether the sessions part is visible",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionsWelcomeVisible",
+		"description": "Whether the sessions welcome overlay is visible",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionSyncActionVisible",
+		"description": "Whether the new-session view's sync action is visible",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionToolbarShowsSession",
+		"description": "Whether the session toolbar represents the whole session rather than a side-by-side chat group",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionType",
+		"description": "The session type of the session in scope (the active session globally, or a specific session within an isolated component such as the session view or a context menu overlay)",
+		"type": "string"
+	},
+	{
+		"key": "sessionUsesCombinedConfigPicker",
+		"description": "Whether the session's provider offers a combined mode and model configuration picker (used on phone layouts in place of the standalone pickers)",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionUsesExperimentalComposerLayout",
+		"description": "Whether the session chat input uses the experimental composer layout",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionWorkspaceIsVirtual",
+		"description": "Whether the session's workspace is virtual",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionWorkspacePickerGroup",
+		"description": "The currently active group tab in the session workspace picker",
+		"type": "string"
+	},
+	{
+		"key": "sessionWorkspacePickerVisible",
+		"description": "Whether the new-session view's workspace picker is rendered (as opposed to being replaced by the no-agent-host empty state)",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionWorktreeCleanupEditorFocused",
+		"description": "Whether the Open worktree cleanup editor is focused",
+		"type": "boolean"
+	},
+	{
+		"key": "sessionWorktreePickerVisible",
+		"description": "Whether the new-session view's worktree picker is visible",
+		"type": "boolean"
+	},
+	{
+		"key": "settingFirstRowFocus",
+		"type": "boolean"
+	},
+	{
+		"key": "settingRowFocus",
+		"type": "boolean"
+	},
+	{
+		"key": "settingsTocRowFocus",
+		"type": "boolean"
+	},
+	{
+		"key": "shareProviderCount",
+		"description": "The number of available share providers",
+		"type": "number"
+	},
+	{
+		"key": "shellExecutionSupported",
+		"description": "Whether ShellExecution tasks are supported. Consider using in the when clause of a 'taskDefinition' contribution.",
+		"type": "boolean"
+	},
+	{
+		"key": "showPreReleaseVersion",
+		"type": "boolean"
+	},
+	{
+		"key": "sideBarFocus",
+		"description": "Whether the sidebar has keyboard focus",
+		"type": "boolean"
+	},
+	{
+		"key": "sideBarVisible",
+		"description": "Whether the sidebar is visible",
+		"type": "boolean"
+	},
+	{
+		"key": "sideBySideEditorActive",
+		"description": "Whether a side by side editor is active",
+		"type": "boolean"
+	},
+	{
+		"key": "simpleSuggestWidgetExplicitlyInvoked",
+		"description": "Whether the simple suggestion widget was explicitly invoked",
+		"type": "boolean"
+	},
+	{
+		"key": "simpleSuggestWidgetFirstSuggestionFocused",
+		"description": "Whether the first simple suggestion is focused",
+		"type": "boolean"
+	},
+	{
+		"key": "simpleSuggestWidgetHasFocusedSuggestion",
+		"description": "Whether any simple suggestion is focused",
+		"type": "boolean"
+	},
+	{
+		"key": "simpleSuggestWidgetHasNavigated",
+		"description": "Whether the simple suggestion widget has been navigated downwards",
+		"type": "boolean"
+	},
+	{
+		"key": "sortByUpdateDate",
+		"type": "boolean"
+	},
+	{
+		"type": "boolean",
+		"description": "A speech-to-text session is in progress.",
+		"key": "speechToTextInProgress"
+	},
+	{
+		"key": "splitEditorsVertically",
+		"description": "Whether editors split vertically",
+		"type": "boolean"
+	},
+	{
+		"type": "string",
+		"description": "How the window arranges its chat and its editor parts while both show, or as they will next show together, either 'stacked' or 'sideBySide'. Unset in windows without layout modes.",
+		"key": "splitLayout"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the focused stack frame supports 'restartFrame'.",
+		"key": "stackFrameSupportsRestart"
+	},
+	{
+		"key": "standaloneColorPickerFocused",
+		"description": "Whether the standalone color picker is focused",
+		"type": "boolean"
+	},
+	{
+		"key": "standaloneColorPickerVisible",
+		"description": "Whether the standalone color picker is visible",
+		"type": "boolean"
+	},
+	{
+		"key": "statusBarFocused",
+		"description": "Whether the status bar has keyboard focus",
+		"type": "boolean"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the focused session supports 'stepBack' requests.",
+		"key": "stepBackSupported"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the focused session supports 'stepIntoTargets' request.",
+		"key": "stepIntoTargetsSupported"
+	},
+	{
+		"key": "stickyScrollFocused",
+		"description": "Whether the sticky scroll is focused",
+		"type": "boolean"
+	},
+	{
+		"key": "stickyScrollVisible",
+		"description": "Whether the sticky scroll is visible",
+		"type": "boolean"
+	},
+	{
+		"key": "suggestionCanResolve",
+		"description": "Whether the current suggestion supports to resolve further details",
+		"type": "boolean"
+	},
+	{
+		"key": "suggestionHasInsertAndReplaceRange",
+		"description": "Whether the current suggestion has insert and replace behaviour",
+		"type": "boolean"
+	},
+	{
+		"type": "string",
+		"description": "Whether the default behaviour is to insert or replace",
+		"key": "suggestionInsertMode"
+	},
+	{
+		"key": "suggestionMakesTextEdit",
+		"description": "Whether inserting the current suggestion yields in a change or has everything already been typed",
+		"type": "boolean"
+	},
+	{
+		"key": "suggestWidgetDetailsFocused",
+		"description": "Whether the details pane of the suggest widget has focus",
+		"type": "boolean"
+	},
+	{
+		"key": "suggestWidgetDetailsVisible",
+		"description": "Whether suggestion details are visible",
+		"type": "boolean"
+	},
+	{
+		"key": "suggestWidgetHasFocusedSuggestion",
+		"description": "Whether any suggestion is focused",
+		"type": "boolean"
+	},
+	{
+		"key": "suggestWidgetMultipleSuggestions",
+		"description": "Whether there are multiple suggestions to pick from",
+		"type": "boolean"
+	},
+	{
+		"key": "suggestWidgetVisible",
+		"description": "Whether suggestion are visible",
+		"type": "boolean"
+	},
+	{
+		"key": "supportedCodeAction",
+		"type": "string"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the focused session supports the suspend debuggee capability.",
+		"key": "suspendDebuggeeSupported"
+	},
+	{
+		"key": "syncEnabled",
+		"type": "boolean"
+	},
+	{
+		"key": "syncStatus",
+		"type": "string"
+	},
+	{
+		"key": "tabShouldAcceptInlineEdit",
+		"description": "Whether tab should accept the inline edit.",
+		"type": "boolean"
+	},
+	{
+		"key": "tabShouldJumpToInlineEdit",
+		"description": "Whether tab should jump to an inline edit.",
+		"type": "boolean"
+	},
+	{
+		"key": "taskCommandsRegistered",
+		"description": "Whether the task commands have been registered yet",
+		"type": "boolean"
+	},
+	{
+		"key": "taskRunning",
+		"description": "Whether a task is currently running.",
+		"type": "boolean"
+	},
+	{
+		"key": "tasksAvailable",
+		"description": "Whether any tasks are available in the workspace.",
+		"type": "boolean"
+	},
+	{
+		"key": "taskTerminalActive",
+		"description": "Whether the active terminal is a task terminal.",
+		"type": "boolean"
+	},
+	{
+		"key": "temporaryWorkspace",
+		"description": "The scheme of the current workspace is from a temporary file system.",
+		"type": "boolean"
+	},
+	{
+		"key": "terminal.active",
+		"type": "boolean"
+	},
+	{
+		"key": "terminal.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "terminal.defaultViewContainerLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "terminal.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "terminal.visible",
+		"type": "boolean"
+	},
+	{
+		"key": "terminalAltBufferActive",
+		"description": "Whether the terminal's alt buffer is active.",
+		"type": "boolean"
+	},
+	{
+		"key": "terminalChatActiveRequest",
+		"description": "Whether there is an active chat request.",
+		"type": "boolean"
+	},
+	{
+		"key": "terminalChatAgentRegistered",
+		"description": "Whether a chat agent is registered for the terminal location.",
+		"type": "boolean"
+	},
+	{
+		"key": "terminalChatFocus",
+		"description": "Whether the chat view is focused.",
+		"type": "boolean"
+	},
+	{
+		"key": "terminalChatInputHasText",
+		"description": "Whether the chat input has text.",
+		"type": "boolean"
+	},
+	{
+		"key": "terminalChatResponseContainsCodeBlock",
+		"description": "Whether the chat response contains a code block.",
+		"type": "boolean"
+	},
+	{
+		"key": "terminalChatResponseContainsMultipleCodeBlocks",
+		"description": "Whether the chat response contains multiple code blocks.",
+		"type": "boolean"
+	},
+	{
+		"key": "terminalChatUsesAgentHost",
+		"description": "Whether the terminal chat session is backed by the Agent Host.",
+		"type": "boolean"
+	},
+	{
+		"key": "terminalChatVisible",
+		"description": "Whether the chat view is visible.",
+		"type": "boolean"
+	},
+	{
+		"key": "terminalCount",
+		"description": "The current number of terminals.",
+		"type": "number"
+	},
+	{
+		"key": "terminalDictationInProgress",
+		"type": "boolean"
+	},
+	{
+		"key": "terminalEditorFocus",
+		"description": "Whether a terminal in the editor area is focused.",
+		"type": "boolean"
+	},
+	{
+		"key": "terminalFocus",
+		"description": "Whether the terminal is focused.",
+		"type": "boolean"
+	},
+	{
+		"key": "terminalFocusInAny",
+		"description": "Whether any terminal is focused, including detached terminals used in other UI.",
+		"type": "boolean"
+	},
+	{
+		"key": "terminalProcessSupported",
+		"description": "Whether terminal processes can be launched in the current workspace.",
+		"type": "boolean"
+	},
+	{
+		"key": "terminalShellIntegrationEnabled",
+		"description": "Whether shell integration is enabled in the active terminal",
+		"type": "boolean"
+	},
+	{
+		"type": "string",
+		"description": "The shell type of the active terminal, this is set if the type can be detected.",
+		"key": "terminalShellType"
+	},
+	{
+		"key": "terminalSplitPaneActive",
+		"description": "Whether the active terminal is a split pane.",
+		"type": "boolean"
+	},
+	{
+		"key": "terminalSplitTerminal",
+		"description": "Whether the focused tab's terminal is a split terminal.",
+		"type": "boolean"
+	},
+	{
+		"type": "string",
+		"description": "Where the part that holds the window's terminals sits, either 'underChat', 'underEditor' or 'fullWidth'. Unset in windows without such a part.",
+		"key": "terminalsPosition"
+	},
+	{
+		"key": "terminalSuggestWidgetVisible",
+		"description": "Whether the terminal's suggest widget is visible.",
+		"type": "boolean"
+	},
+	{
+		"type": "boolean",
+		"description": "Whether the window shows the part that holds its terminals. Unset in windows without such a part.",
+		"key": "terminalsVisible"
+	},
+	{
+		"key": "terminalTabsFocus",
+		"description": "Whether the terminal tabs widget is focused.",
+		"type": "boolean"
+	},
+	{
+		"key": "terminalTabsSingularSelection",
+		"description": "Whether one terminal is selected in the terminal tabs list.",
+		"type": "boolean"
+	},
+	{
+		"key": "terminalTextSelected",
+		"description": "Whether text is selected in the active terminal.",
+		"type": "boolean"
+	},
+	{
+		"key": "terminalTextSelectedInFocused",
+		"description": "Whether text is selected in a focused terminal.",
+		"type": "boolean"
+	},
+	{
+		"key": "terminalViewShowing",
+		"description": "Whether the terminal view is showing",
+		"type": "boolean"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the focused session supports the terminate debuggee capability.",
+		"key": "terminateDebuggeeSupported"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the focused session supports the terminate threads capability.",
+		"key": "terminateThreadsSupported"
+	},
+	{
+		"type": "string",
+		"description": "ID of the current test item, set when creating or opening menus on test items",
+		"key": "testId"
+	},
+	{
+		"type": "boolean",
+		"description": "Indicates whether any tests are present in the current editor",
+		"key": "testing.activeEditorHasTests"
+	},
+	{
+		"type": "boolean",
+		"description": "Whether a controller implements a capability to find code related to a test",
+		"key": "testing.canGoToRelatedCode"
+	},
+	{
+		"type": "boolean",
+		"description": "Whether a controller implements a capability to find tests related to code",
+		"key": "testing.canGoToRelatedTest"
+	},
+	{
+		"type": "boolean",
+		"description": "Indicates whether any test controller has an attached refresh handler.",
+		"key": "testing.canRefresh"
+	},
+	{
+		"type": "boolean",
+		"description": "Indicates whether the coverage toolbar is enabled",
+		"key": "testing.coverageToolbarEnabled"
+	},
+	{
+		"type": "boolean",
+		"description": "Whether the cursor is currently inside a test range",
+		"key": "testing.cursorInsideTestRange"
+	},
+	{
+		"key": "testing.explorerViewMode",
+		"type": "string"
+	},
+	{
+		"key": "testing.explorerViewSorting",
+		"type": "string"
+	},
+	{
+		"key": "testing.hasAnyResults",
+		"type": "boolean"
+	},
+	{
+		"type": "boolean",
+		"description": "Indicates whether any test configuration can be configured",
+		"key": "testing.hasConfigurableProfile"
+	},
+	{
+		"type": "boolean",
+		"description": "Indicates whether any test controller has registered a coverage configuration",
+		"key": "testing.hasCoverableTests"
+	},
+	{
+		"type": "boolean",
+		"description": "Indicates coverage has been reported in the current editor.",
+		"key": "testing.hasCoverageInFile"
+	},
+	{
+		"type": "boolean",
+		"description": "Indicates whether any test controller has registered a debug configuration",
+		"key": "testing.hasDebuggableTests"
+	},
+	{
+		"type": "boolean",
+		"description": "Indicates whether detailed per-line coverage is available for inline display",
+		"key": "testing.hasInlineCoverageDetails"
+	},
+	{
+		"type": "boolean",
+		"description": "Indicates whether any test controller has registered a non-default configuration",
+		"key": "testing.hasNonDefaultProfile"
+	},
+	{
+		"type": "boolean",
+		"description": "Indicates whether per-test coverage is available",
+		"key": "testing.hasPerTestCoverage"
+	},
+	{
+		"type": "boolean",
+		"description": "Indicates whether any test controller has registered a run configuration",
+		"key": "testing.hasRunnableTests"
+	},
+	{
+		"type": "boolean",
+		"description": "Indicates whether inline coverage is shown",
+		"key": "testing.inlineCoverageEnabled"
+	},
+	{
+		"type": "boolean",
+		"description": "Indicates whether continuous test mode is on.",
+		"key": "testing.isContinuousModeOn"
+	},
+	{
+		"type": "boolean",
+		"description": "Indicates whether coverage has been filtered to a single test",
+		"key": "testing.isCoverageFilteredToTest"
+	},
+	{
+		"key": "testing.isInPeek",
+		"type": "boolean"
+	},
+	{
+		"type": "boolean",
+		"description": "Indicates whether the parent of a test is continuously running, set in the menu context of test items",
+		"key": "testing.isParentRunningContinuously"
+	},
+	{
+		"key": "testing.isPeekVisible",
+		"type": "boolean"
+	},
+	{
+		"type": "boolean",
+		"description": "Indicates whether any test controller is currently refreshing tests.",
+		"key": "testing.isRefreshing"
+	},
+	{
+		"key": "testing.isRunning",
+		"type": "boolean"
+	},
+	{
+		"type": "boolean",
+		"description": "Indicates whether a test coverage report is open",
+		"key": "testing.isTestCoverageOpen"
+	},
+	{
+		"type": "boolean",
+		"description": "Whether the message shown in a peek view has a stack trace",
+		"key": "testing.peekHasStack"
+	},
+	{
+		"type": "string",
+		"description": "Type of menu where the configure testing profile submenu exists. Either \"run\", \"debug\", or \"coverage\"",
+		"key": "testing.profile.context.group"
+	},
+	{
+		"key": "testing.providerCount",
+		"type": "number"
+	},
+	{
+		"type": "boolean",
+		"description": "Indicates whether continuous test running is supported",
+		"key": "testing.supportsContinuousRun"
+	},
+	{
+		"type": "boolean",
+		"description": "Boolean indicating whether the test item has a URI defined",
+		"key": "testing.testItemHasUri"
+	},
+	{
+		"type": "boolean",
+		"description": "Boolean indicating whether the test item is hidden",
+		"key": "testing.testItemIsHidden"
+	},
+	{
+		"type": "string",
+		"description": "Value set in `testMessage.contextValue`, available in editor/content and testing/message/context",
+		"key": "testMessage"
+	},
+	{
+		"type": "boolean",
+		"description": "Value available in editor/content and testing/message/context when the result is outdated",
+		"key": "testResultOutdated"
+	},
+	{
+		"type": "string",
+		"description": "Value available testing/item/result indicating the state of the item.",
+		"key": "testResultState"
+	},
+	{
+		"key": "textCompareEditorActive",
+		"description": "Whether a text compare editor is active",
+		"type": "boolean"
+	},
+	{
+		"key": "textCompareEditorVisible",
+		"description": "Whether a text compare editor is visible",
+		"type": "boolean"
+	},
+	{
+		"key": "textInputFocus",
+		"description": "Whether an editor or a rich text input has focus (cursor is blinking)",
+		"type": "boolean"
+	},
+	{
+		"type": "boolean",
+		"description": "A text-to-speech session is in progress.",
+		"key": "textToSpeechInProgress"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the target thread has more than one stack frame.",
+		"key": "threadHasMultipleStackFrames"
+	},
+	{
+		"key": "timeline.active",
+		"type": "boolean"
+	},
+	{
+		"key": "timeline.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "timeline.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "timeline.visible",
+		"type": "boolean"
+	},
+	{
+		"key": "timelineCanCompareSelection",
+		"type": "boolean"
+	},
+	{
+		"key": "timelineFocused",
+		"type": "boolean"
+	},
+	{
+		"key": "timelineForWorkspace",
+		"description": "Whether the Timeline view shows the workspace timeline instead of the timeline of a file or folder.",
+		"type": "boolean"
+	},
+	{
+		"key": "timelineHasProvider",
+		"type": "boolean"
+	},
+	{
+		"key": "timelineHasWorkspaceProvider",
+		"type": "boolean"
+	},
+	{
+		"key": "titleBarStyle",
+		"description": "Style of the window title bar",
+		"type": "string"
+	},
+	{
+		"key": "titleBarVisible",
+		"description": "Whether the title bar is visible",
+		"type": "boolean"
+	},
+	{
+		"type": "number",
+		"description": "The count of tools available in the chat.",
+		"key": "toolsCount"
+	},
+	{
+		"key": "treeElementCanCollapse",
+		"type": "boolean"
+	},
+	{
+		"key": "treeElementCanExpand",
+		"type": "boolean"
+	},
+	{
+		"key": "treeElementHasChild",
+		"type": "boolean"
+	},
+	{
+		"key": "treeElementHasParent",
+		"type": "boolean"
+	},
+	{
+		"key": "treeFindOpen",
+		"type": "boolean"
+	},
+	{
+		"key": "treestickyScrollFocused",
+		"type": "boolean"
+	},
+	{
+		"key": "tunnelHostSharing",
+		"type": "boolean"
+	},
+	{
+		"key": "tunnelViewFocus",
+		"description": "Whether the Ports view has focus.",
+		"type": "boolean"
+	},
+	{
+		"key": "twoEditorsSelectedInGroup",
+		"description": "Whether exactly two editors have been selected in an editor group",
+		"type": "boolean"
+	},
+	{
+		"type": "string",
+		"description": "whether type hierarchy shows super types or subtypes",
+		"key": "typeHierarchyDirection"
+	},
+	{
+		"key": "typeHierarchyVisible",
+		"description": "Whether type hierarchy peek is currently showing",
+		"type": "boolean"
+	},
+	{
+		"key": "updateState",
+		"type": "string"
+	},
+	{
+		"key": "updateTitleBar",
+		"type": "boolean"
+	},
+	{
+		"key": "updateTitleBarChatRequestInProgress",
+		"type": "boolean"
+	},
+	{
+		"key": "userDataSyncAccountStatus",
+		"type": "string"
+	},
+	{
+		"key": "userDataSyncTurningOn",
+		"type": "boolean"
+	},
+	{
+		"key": "userHasOpenedNotebook",
+		"type": "boolean"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the focused variable has an 'evaluateName' field set.",
+		"key": "variableEvaluateNamePresent"
+	},
+	{
+		"type": "string",
+		"description": "Extension ID of the variable source, present for debug visualization clauses.",
+		"key": "variableExtensionId"
+	},
+	{
+		"type": "array",
+		"description": "Any interfaces or contracts that the variable satisfies, present for debug visualization clauses.",
+		"key": "variableInterfaces"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the focused variable is read-only.",
+		"key": "variableIsReadonly"
+	},
+	{
+		"type": "string",
+		"description": "Language of the variable source, present for debug visualization clauses.",
+		"key": "variableLanguage"
+	},
+	{
+		"type": "string",
+		"description": "Name of the variable, present for debug visualization clauses.",
+		"key": "variableName"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the VARIABLES views is focused, false otherwise",
+		"key": "variablesFocused"
+	},
+	{
+		"type": "string",
+		"description": "Type of the variable, present for debug visualization clauses.",
+		"key": "variableType"
+	},
+	{
+		"type": "string",
+		"description": "Value of the variable, present for debug visualization clauses.",
+		"key": "variableValue"
+	},
+	{
+		"key": "viewHasFilePattern",
+		"type": "boolean"
+	},
+	{
+		"key": "viewHasReplacePattern",
+		"type": "boolean"
+	},
+	{
+		"key": "viewHasSearchPattern",
+		"type": "boolean"
+	},
+	{
+		"type": "boolean",
+		"description": "True when a workspace in the EXPLORER view has some collapsible root child.",
+		"key": "viewHasSomeCollapsibleItem"
+	},
+	{
+		"key": "viewHasSomeCollapsibleResult",
+		"type": "boolean"
+	},
+	{
+		"key": "virtualWorkspace",
+		"description": "The scheme of the current workspace is from a virtual file system or an empty string.",
+		"type": "string"
+	},
+	{
+		"type": "boolean",
+		"description": "A speech-to-text session is in progress for chat.",
+		"key": "voiceChatInProgress"
+	},
+	{
+		"key": "voiceTranscripts.showView",
+		"type": "boolean"
+	},
+	{
+		"type": "boolean",
+		"description": "True when at least one watch expression exists, false otherwise.",
+		"key": "watchExpressionsExist"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the WATCH view is focused, false otherwise.",
+		"key": "watchExpressionsFocused"
+	},
+	{
+		"type": "string",
+		"description": "Represents the item type of the focused element in the WATCH view. For example: 'expression', 'variable'",
+		"key": "watchItemType"
+	},
+	{
+		"key": "webviewFindWidgetEnabled",
+		"type": "boolean"
+	},
+	{
+		"key": "webviewFindWidgetFocused",
+		"type": "boolean"
+	},
+	{
+		"key": "webviewFindWidgetVisible",
+		"type": "boolean"
+	},
+	{
+		"key": "whenFocus",
+		"type": "boolean"
+	},
+	{
+		"type": "boolean",
+		"description": "True when the chat widget dispatches to the edit session chat.",
+		"key": "withinEditSessionDiff"
+	},
+	{
+		"key": "workbench.debug.breakPointsView.active",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.debug.breakPointsView.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.debug.breakPointsView.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.debug.breakPointsView.visible",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.debug.callStackView.active",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.debug.callStackView.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.debug.callStackView.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.debug.callStackView.visible",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.debug.loadedScriptsView.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.debug.loadedScriptsView.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.debug.variablesView.active",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.debug.variablesView.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.debug.variablesView.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.debug.variablesView.visible",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.debug.watchExpressionsView.active",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.debug.watchExpressionsView.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.debug.watchExpressionsView.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.debug.watchExpressionsView.visible",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.debug.welcome.active",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.debug.welcome.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.debug.welcome.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.debug.welcome.visible",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.explorer.emptyView.active",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.explorer.emptyView.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.explorer.emptyView.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.explorer.emptyView.visible",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.explorer.openEditorsView.active",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.explorer.openEditorsView.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.explorer.openEditorsView.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.panel.chat.defaultViewContainerLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.panel.chat.updateRequired.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.panel.chat.updateRequired.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.panel.chat.view.copilot.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.panel.chat.view.copilot.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.panel.markers.defaultViewContainerLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.panel.markers.view.active",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.panel.markers.view.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.panel.markers.view.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.panel.markers.view.visible",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.panel.output.active",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.panel.output.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.panel.output.defaultViewContainerLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.panel.output.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.panel.output.visible",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.panel.repl.defaultViewContainerLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.panel.repl.view.active",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.panel.repl.view.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.panel.repl.view.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.panel.repl.view.visible",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.panel.testResults.defaultViewContainerLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.panel.testResults.view.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.panel.testResults.view.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.scm.active",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.scm.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.scm.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.scm.history.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.scm.history.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.scm.repositories.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.scm.repositories.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.scm.visible",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.view.debug.defaultViewContainerLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.view.explorer.defaultViewContainerLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.view.extension.references-view.defaultViewContainerLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.view.extension.test.defaultViewContainerLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.view.extensions.defaultViewContainerLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.view.remote.defaultViewContainerLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.view.scm.defaultViewContainerLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.view.search.active",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.view.search.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.view.search.defaultViewContainerLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.view.search.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.view.search.visible",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.view.testCoverage.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.view.testCoverage.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.view.testing.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.view.testing.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.view.voiceTranscripts.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.view.voiceTranscripts.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.view.voiceTranscriptsContainer.defaultViewContainerLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.agentPlugins.installed.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.agentPlugins.installed.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.agentPlugins.marketplace.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.agentPlugins.marketplace.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.extensions.builtinFeatureExtensions.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.extensions.builtinFeatureExtensions.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.extensions.builtinProgrammingLanguageExtensions.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.extensions.builtinProgrammingLanguageExtensions.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.extensions.builtinThemeExtensions.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.extensions.builtinThemeExtensions.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.extensions.deprecatedExtensions.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.extensions.deprecatedExtensions.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.extensions.disabled.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.extensions.disabled.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.extensions.enabled.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.extensions.enabled.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.extensions.installed.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.extensions.installed.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.extensions.marketplace.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.extensions.marketplace.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.extensions.marketplaceAccess.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.extensions.marketplaceAccess.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.extensions.otherRecommendations.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.extensions.otherRecommendations.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.extensions.popular.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.extensions.popular.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.extensions.restartRequired.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.extensions.restartRequired.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.extensions.searchBuiltin.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.extensions.searchBuiltin.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.extensions.searchDisabled.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.extensions.searchDisabled.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.extensions.searchEnabled.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.extensions.searchEnabled.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.extensions.searchInstalled.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.extensions.searchInstalled.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.extensions.searchOutdated.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.extensions.searchOutdated.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.extensions.searchRecentlyUpdated.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.extensions.searchRecentlyUpdated.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.extensions.searchWorkspaceUnsupported.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.extensions.searchWorkspaceUnsupported.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.extensions.untrustedPartiallySupportedExtensions.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.extensions.untrustedPartiallySupportedExtensions.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.extensions.untrustedUnsupportedExtensions.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.extensions.untrustedUnsupportedExtensions.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.extensions.virtualPartiallySupportedExtensions.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.extensions.virtualPartiallySupportedExtensions.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.extensions.virtualUnsupportedExtensions.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.extensions.virtualUnsupportedExtensions.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.extensions.workspaceRecommendations.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.extensions.workspaceRecommendations.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.mcp.installed.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.mcp.installed.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.mcp.marketplace.canMove",
+		"type": "boolean"
+	},
+	{
+		"key": "workbench.views.mcp.marketplace.defaultViewLocation",
+		"type": "boolean"
+	},
+	{
+		"type": "string",
+		"description": "The kind of workspace opened in the window, either 'empty' (no workspace), 'folder' (single folder) or 'workspace' (multi-root workspace)",
+		"key": "workbenchState"
+	},
+	{
+		"key": "workspaceFolderCount",
+		"description": "The number of root folders in the workspace",
+		"type": "number"
+	},
+	{
+		"description": "Whether the open workspace has either comments or commenting ranges.",
+		"type": "boolean",
+		"key": "workspaceHasCommenting"
+	},
+	{
+		"key": "workspacePlatform",
+		"description": "The platform of the current workspace, which in remote or serverless contexts may be different from the platform of the UI"
+	}
+]

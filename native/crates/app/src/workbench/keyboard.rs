@@ -181,7 +181,7 @@ impl Workbench {
             return;
         }
         // The menu's own key handlers run before the window's keybindings.
-        if self.context_menu_key(keystroke, window, cx) || self.custom_dialog_key(keystroke, cx) || self.accessible_view_key(keystroke, window, cx) {
+        if self.context_menu_key(keystroke, window, cx) || self.custom_dialog_key(keystroke, cx) || self.accessible_view_key(keystroke, window, cx) || self.icon_select_box_key(keystroke, window, cx) {
             cx.stop_propagation();
             return;
         }
@@ -488,6 +488,8 @@ impl Workbench {
             workbench.context_keys.insert(key, args.next().unwrap_or(Value::Null));
             Outcome::done()
         });
+        // contextKeyService.ts `getContextKeyInfo`: the reference's RawContextKey.all() (port/tools/ref-commands).
+        self.commands.register("getContextKeyInfo", |_, _, _, _| Outcome::Ready(Ok(serde_json::from_str(include_str!("../contextkey/reference-context-keys.json")).expect("valid JSON"))));
         // mainThreadLogService.ts: `loggerService.setLogLevel(parseLogLevel(level))` and `logService.getLevel()`.
         self.commands.register("_extensionTests.setLogLevel", |workbench, args, _, _| {
             if let Some(level) = args.first().and_then(Value::as_str).and_then(crate::output::log_levels::parse_log_level) {

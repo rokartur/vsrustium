@@ -8,6 +8,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const out = process.argv[2] ?? 'native/crates/app/src/command_palette/reference-commands.json';
+// contextkey.ts `getContextKeyInfo`: RawContextKey.all() sorted by key, the context key descriptions keybindings.json completes.
+const contextKeysOut = process.argv[3] ?? 'native/crates/app/src/contextkey/reference-context-keys.json';
 const ref = process.env.REF ?? join(process.env.HOME!, 'Developer/vscode-ref');
 const electron = join(ref, '.build/electron/Code - OSS.app/Contents/MacOS/Code - OSS');
 const port = 9338;
@@ -37,6 +39,7 @@ try {
 		const load = path => import(out + path);
 		const { MenuRegistry, MenuId, isIMenuItem } = await load('/vs/platform/actions/common/actions.js');
 		const { EditorExtensionsRegistry } = await load('/vs/editor/browser/editorExtensions.js');
+		const { RawContextKey } = await load('/vs/platform/contextkey/common/contextkey.js');
 		const text = value => typeof value === 'string' ? value : value?.value;
 		const label = command => command.category ? text(command.category) + ': ' + text(command.title) : text(command.title);
 		// KeybindingsEditor.getActionsLabels, then toKeybindingEntry's MenuRegistry.getCommand first.
@@ -57,9 +60,13 @@ try {
 				labels[id] = label(command);
 			}
 		}
-		return { labels, commandPalette };
+		const contextKeys = [...RawContextKey.all()].sort((a, b) => a.key.localeCompare(b.key));
+		return { labels, commandPalette, contextKeys };
 	})()`);
-	writeFileSync(out, JSON.stringify(dump, null, '\t') + '\n');
+	const { contextKeys, ...commands } = dump;
+	writeFileSync(out, JSON.stringify(commands, null, '\t') + '\n');
+	writeFileSync(contextKeysOut, JSON.stringify(contextKeys, null, '\t') + '\n');
+	console.log(`${contextKeys.length} context keys: ${contextKeysOut}`);
 	console.log(`${Object.keys(dump.labels).length} labels, ${dump.commandPalette.length} palette items: ${out}`);
 } finally {
 	app.kill('SIGKILL');

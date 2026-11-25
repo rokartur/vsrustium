@@ -39,6 +39,8 @@ mod extension_management;
 pub(crate) mod extension_host_restart;
 mod user_data_profile;
 mod profiles_editor_view;
+mod icon_select_box;
+mod document_links;
 mod settings_import;
 pub use profiles_editor_view::NEW_WINDOW_PROFILE_SETTING;
 mod explorer_find;
@@ -629,6 +631,7 @@ impl Workbench {
         workbench.register_parameter_hints();
         workbench.register_code_actions();
         workbench.register_code_lens();
+        workbench.register_document_links();
         workbench.register_inlay_hints();
         workbench.register_rename();
         workbench.register_links();
@@ -972,10 +975,11 @@ impl Workbench {
                     .children(self.testing_activity_item(hover, inactive, cx)),
             )
             .child(
-                self.icon("settings-gear", 36., 24., inactive)
+                self.icon(self.manage_activity_icon(), 36., 24., inactive)
                     .cursor_pointer()
+                    .children(self.profile_badge())
                     .child(output_view::bounds_tracker(self.manage_bounds.clone()))
-                    .child(self.hover_target("manage", HoverContent::Text("Manage".into()), hover))
+                    .child(self.hover_target("manage", HoverContent::Text(self.manage_activity_title()), hover))
                     // globalCompositeBar.ts: a left mouse down opens MenuId.GlobalActivity beside the button.
                     .on_mouse_down(MouseButton::Left, cx.listener(|workbench, _, window, cx| {
                         let context = workbench.key_context(window);

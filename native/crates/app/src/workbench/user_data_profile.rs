@@ -27,8 +27,8 @@ pub struct UserDataProfiles {
     /// `registerProfilesActions`: the `profileEntry` and `openProfile` command of each profile, by command id.
     registrations: Vec<(String, Registration)>,
     pub editor: super::profiles_editor_view::ProfilesEditor,
-    /// The gallery extensions of an applied template, installed once the window runs the new profile.
-    pub pending_installs: Vec<String>,
+    /// The gallery extensions of an applied template by profile id, installed once the window runs that profile.
+    pub pending_installs: std::collections::HashMap<String, Vec<String>>,
 }
 
 impl Workbench {
@@ -61,6 +61,47 @@ impl Workbench {
         self.user_data_profiles.state = Some(state);
         self.user_data_profiles.editor.name_focus = Some(cx.focus_handle());
         self.profiles_changed(cx);
+    }
+
+    /// globalCompositeBar.ts `GlobalActivityActionViewItem`: the current profile's icon, the settings gear by default.
+    pub(super) fn manage_activity_icon(&self) -> &str {
+        let icon = self.user_data_profiles.state.as_ref().and_then(|state| state.current.icon.as_deref());
+        super::icon_select_box::profile_icon_file(icon)
+    }
+
+    /// `computeTitle`: "Manage", or "Manage {0} (Profile)" in a profile that is not the default one.
+    pub(super) fn manage_activity_title(&self) -> String {
+        match self.user_data_profiles.state.as_ref().map(|state| &state.current).filter(|current| !current.is_default) {
+            Some(current) => format!("Manage {} (Profile)", current.name),
+            None => "Manage".into(),
+        }
+    }
+
+    /// `updateProfileBadge`: the first two letters of a profile that is not the default one and has no icon of its
+    /// own, as activityaction.css `.profile-text-overlay` draws them with the modern UI's 16px top.
+    pub(super) fn profile_badge(&self) -> Option<gpui::Div> {
+        use gpui::{ParentElement, Styled, div, px};
+        let current = &self.user_data_profiles.state.as_ref()?.current;
+        if current.is_default || current.icon.as_deref().is_some_and(|icon| icon != super::icon_select_box::DEFAULT_ICON) {
+            return None;
+        }
+        let letters: String = current.name.chars().take(2).collect::<String>().to_uppercase();
+        let badge = div()
+            .absolute()
+            .top(px(16.))
+            .right(px(6.))
+            .px(px(3.))
+            .py(px(2.))
+            .rounded(px(7.))
+            .border_2()
+            .border_color(self.color("activityBar.background"))
+            .bg(self.color("profileBadge.background"))
+            .text_color(self.color("profileBadge.foreground"))
+            .text_size(px(9.))
+            .line_height(px(10.))
+            .font_weight(gpui::FontWeight::SEMIBOLD)
+            .child(letters);
+        Some(badge)
     }
 
     /// `onDidChangeProfiles`: the context keys, the Profiles menus and the commands of each profile.
@@ -256,7 +297,7 @@ impl Workbench {
         }
         // `ExtensionsResource.apply`: the template's extensions the profile does not have yet.
         let installed: Vec<String> = self.extensions.iter().map(|extension| extension.id.to_lowercase()).collect();
-        for id in std::mem::take(&mut self.user_data_profiles.pending_installs) {
+        for id in self.user_data_profiles.pending_installs.remove(&profile.id).unwrap_or_default() {
             if !installed.contains(&id) {
                 drop(self.install_from_gallery(id, None, false, cx));
             }

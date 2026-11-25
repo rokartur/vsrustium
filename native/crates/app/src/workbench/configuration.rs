@@ -29,6 +29,34 @@ impl Workbench {
         .detach();
     }
 
+    /// nativePolicyService.ts `_onDidPolicyChange`: a managed preferences change reads the policies again and applies
+    /// the ones that changed.
+    pub fn watch_policies(&self, cx: &mut Context<Self>) {
+        let (sender, mut receiver) = futures::channel::mpsc::unbounded();
+        crate::policy::watch_policy_changes(crate::policy::MANAGED_PREFERENCES, move || {
+            let _ = sender.unbounded_send(());
+        });
+        cx.spawn(async move |workbench, cx| {
+            while futures::StreamExt::next(&mut receiver).await.is_some() {
+                if workbench.update(cx, |workbench, cx| workbench.reload_policies(cx)).is_err() {
+                    return;
+                }
+            }
+        })
+        .detach();
+    }
+
+    pub(super) fn reload_policies(&mut self, cx: &mut Context<Self>) {
+        let before = self.model_creation_options();
+        let mut settings = self.settings.lock().unwrap();
+        let values = crate::policy::read_native_policies(&settings.registry, crate::policy::BUNDLE_IDENTIFIER);
+        let change = settings.set_policy_values(values);
+        drop(settings);
+        if !change.is_empty() {
+            self.configuration_changed(&change, before, cx);
+        }
+    }
+
     /// Reloads the settings files that changed on disk and applies the change.
     pub fn reload_changed_settings_files(&mut self, cx: &mut Context<Self>) {
         let before = self.model_creation_options();
