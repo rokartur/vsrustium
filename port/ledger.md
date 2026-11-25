@@ -109,7 +109,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | base/test | src/vs/base | n/a | upstream test infrastructure; the port tests with cargo test and port/tools |
 | platform/accessibility | src/vs/platform | todo |  |
 | platform/accessibilitySignal | src/vs/platform | todo |  |
-| platform/action | src/vs/platform | todo |  |
+| platform/action | src/vs/platform | ported | types only upstream (ICommandAction, ILocalizedString, toggle info, Categories): command_palette.rs `MenuItem` (id, title, category, precondition, source; `{ value }` titles read as `isLocalizedString`) and menus.rs `Entry::Command` (precondition, toggled); the Categories come resolved in the 1.147.0 dump (reference-commands.json); cargo test -p app command_palette menus |
 | platform/actionWidget | src/vs/platform | todo |  |
 | platform/actions | src/vs/platform | ported | menus.rs: MenuRegistry rows with group, order, when, precondition, toggled and submenus, sorted as menuService.ts; cargo test -p app menus (the menuService.test.ts sorting cases); command_palette.rs keeps the CommandPalette menu, built from the 1.147.0 dump of `MenuRegistry` titles and CommandPalette items (port/tools/ref-commands, command_palette/reference-commands.json); no context menus yet |
 | platform/agentHost | src/vs/platform | removed | no sign-in/AI by decision (port/notes.md); not ported |
