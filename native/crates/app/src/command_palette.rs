@@ -328,6 +328,8 @@ pub const EDITOR_ACTIONS: &[(&str, &str, Option<&str>)] = &[
     ("editor.action.selectHighlights", "Select All Occurrences of Find Match", None),
     ("editor.action.changeAll", "Change All Occurrences", Some("!editorReadonly && editorTextFocus")),
     ("editor.action.rename", "Rename Symbol", Some("!editorReadonly && editorHasRenameProvider")),
+    ("editor.action.linkedEditing", "Start Linked Editing", Some("!editorReadonly && editorHasRenameProvider")),
+    ("editor.inlayHints.Reset", "Reset Language Status Interaction Counter", None),
     ("editor.action.formatDocument", "Format Document", Some("!inCompositeEditor && !editorReadonly && editorHasDocumentFormattingProvider")),
     ("editor.action.formatSelection", "Format Selection", Some("!editorReadonly && editorHasDocumentSelectionFormattingProvider")),
     ("editor.action.formatDocument.multiple", "Format Document With...", Some("!editorReadonly && editorHasMultipleDocumentFormattingProvider")),

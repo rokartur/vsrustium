@@ -16,7 +16,7 @@ use crate::theme::ThemeKind;
 use scope_matcher::{ScopeMatcher, create_matchers};
 
 pub use provider_styling::{
-    InvalidSemanticTokensEdit, SemanticTokensDto, SemanticTokensEdit, SemanticTokensLegend, SemanticTokensProviderStyling, StyledRange, apply_semantic_tokens_edits,
+    SemanticTokensDto, SemanticTokensLegend, SemanticTokensProviderStyling, apply_semantic_tokens_edits,
     decode_semantic_tokens_dto, to_multiline_tokens,
 };
 

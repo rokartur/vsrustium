@@ -60,6 +60,7 @@ impl Workbench {
                 self.search_editor_edited(&path, change);
                 self.format_on_type_content_changed(change);
                 self.links_content_changed(change, cx);
+                self.semantic_tokens_content_changed(change, cx);
             }
             // untitledTextEditorModel.ts `onDidChangeName`: the first line names the tab.
             if scheme == "untitled" {
@@ -80,6 +81,7 @@ impl Workbench {
         if change.is_some() {
             self.code_lens_content_changed(cx);
         }
+        self.linked_editing_editor_changed(change.as_ref(), moved || change.is_some(), cx);
         cx.notify();
     }
 

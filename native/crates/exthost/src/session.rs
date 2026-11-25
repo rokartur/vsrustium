@@ -381,7 +381,11 @@ impl Session {
     pub fn reply(&mut self, req: u32, result: Result<Value, Value>) {
         let message = match result {
             Ok(Value::Null) => Message::ReplyOk { req, value: Reply::Empty },
-            Ok(value) => Message::ReplyOk { req, value: Reply::Json(value) },
+            // A command answering a `VSBuffer` (`_provideDocumentSemanticTokens`) replies with the buffer itself.
+            Ok(value) => match value.get(VSBUFFER_KEY).and_then(Value::as_str).and_then(|encoded| STANDARD.decode(encoded).ok()) {
+                Some(bytes) => Message::ReplyOk { req, value: Reply::Buffer(bytes) },
+                None => Message::ReplyOk { req, value: Reply::Json(value) },
+            },
             Err(error) => Message::ReplyErr { req, error: Some(error) },
         };
         self.host.send(rpc::encode(&message));
@@ -391,6 +395,7 @@ impl Session {
     pub fn take_result(&mut self, req: u32) -> Option<Result<Value, Value>> {
         Some(match self.results.remove(&req)? {
             CallResult::Ok(Reply::Json(value) | Reply::JsonWithBuffers { json: value, .. }) => Ok(value),
+            CallResult::Ok(Reply::Buffer(bytes)) => Ok(json!(bytes)),
             CallResult::Ok(_) => Ok(Value::Null),
             CallResult::Err(error) => Err(error.unwrap_or(Value::Null)),
         })

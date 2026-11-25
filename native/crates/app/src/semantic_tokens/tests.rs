@@ -2,6 +2,7 @@ use std::path::Path;
 
 use serde_json::{Value, json};
 
+use super::provider_styling::{InvalidSemanticTokensEdit, SemanticTokensEdit, StyledRange};
 use super::*;
 
 const UNDEFINED_STYLE: [Option<bool>; 3] = [None, None, None];

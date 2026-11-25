@@ -101,6 +101,9 @@ mod code_lens;
 mod inlay_hints;
 mod rename;
 mod links;
+mod semantic_tokens;
+mod linked_editing;
+mod language_status;
 mod format;
 mod snippet_completions;
 mod snippet_controller;
@@ -232,6 +235,9 @@ pub struct Workbench {
     code_lenses: code_lens::CodeLenses,
     rename: rename::Rename,
     links: links::Links,
+    semantic_tokens: semantic_tokens::SemanticTokens,
+    linked_editing: linked_editing::LinkedEditing,
+    language_status: language_status::LanguageStatus,
     formatting: format::Formatting,
     snippet_files: snippet_completions::SnippetFiles,
     /// The snippet choice the controller last showed the suggest widget for.
@@ -452,6 +458,9 @@ impl Workbench {
             code_lenses: Default::default(),
             rename: rename::Rename::new(cx),
             links: links::Links::default(),
+            semantic_tokens: Default::default(),
+            linked_editing: Default::default(),
+            language_status: Default::default(),
             formatting: Default::default(),
             snippet_files: Default::default(),
             snippet_choice_shown: None,
@@ -560,6 +569,9 @@ impl Workbench {
         workbench.register_inlay_hints();
         workbench.register_rename();
         workbench.register_links();
+        workbench.register_linked_editing();
+        workbench.register_language_status();
+        workbench.register_semantic_tokens();
         workbench.register_format();
         workbench.register_snippet_completions();
         workbench.register_snippet_commands();
@@ -678,6 +690,9 @@ impl Workbench {
         self.code_actions_model_changed(cx);
         self.code_lens_model_changed(cx);
         self.links_model_changed(cx);
+        self.linked_editing_reinitialize(true, cx);
+        self.semantic_tokens_model_changed(cx);
+        self.refresh_language_status(cx);
         self.sync_webview_panels();
         self.text_files_editors_changed();
         self.host.send_changes(&self.editors);

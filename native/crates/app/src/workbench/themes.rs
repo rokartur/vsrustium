@@ -224,8 +224,10 @@ impl Workbench {
         let settings = self.settings.lock().unwrap();
         let value = |key| settings.get_value(Some(key), &Default::default()).unwrap_or_default();
         let (colors, token_colors) = (value("workbench.colorCustomizations"), value("editor.tokenColorCustomizations"));
+        let semantic_colors = value("editor.semanticTokenColorCustomizations");
         drop(settings);
         self.theme.set_customizations(&colors, &token_colors);
+        self.theme.set_semantic_customizations(&token_colors, &semantic_colors);
         for editor in &mut self.editors.editors {
             editor.document.tokens.theme_changed();
         }
@@ -272,6 +274,7 @@ impl Workbench {
             };
             self.theme = theme;
             self.customize_theme();
+            self.semantic_tokens_settings_changed(cx);
             self.host.send_color_theme(self.theme.kind);
             cx.notify();
         }

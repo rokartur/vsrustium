@@ -216,6 +216,8 @@ impl Workbench {
             "$registerCodeLensSupport" => self.code_lens_registrations_changed(cx),
             "$registerFoldingRangeProvider" => self.trigger_folding_model_changed(cx),
             "$registerDocumentLinkProvider" => self.links_model_changed(cx),
+            "$registerLinkedEditingRangeProvider" => self.linked_editing_reinitialize(false, cx),
+            "$registerDocumentSemanticTokensProvider" | "$registerDocumentRangeSemanticTokensProvider" => self.semantic_tokens_providers_changed(cx),
             "$registerDocumentFormattingSupport" | "$registerRangeFormattingSupport" => self.formatters_changed(),
             _ => {}
         }

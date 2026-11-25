@@ -367,7 +367,7 @@ impl Workbench {
     }
 
     /// A setting for the model's resource and language.
-    fn language_setting(&self, editor: &OpenEditor, key: &str) -> Value {
+    pub(super) fn language_setting(&self, editor: &OpenEditor, key: &str) -> Value {
         let overrides = config::configuration::Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
         self.settings.lock().unwrap().get_value(Some(key), &overrides).unwrap_or(Value::Null)
     }

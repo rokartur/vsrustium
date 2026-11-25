@@ -9,6 +9,8 @@ use exthost::scan::ScannedExtension;
 use gpui::Rgba;
 use serde_json::Value;
 
+use crate::semantic_tokens::{SemanticTheme, SemanticTokenRule, TokenClassificationRegistry, read_semantic_token_customizations, read_theme_file_semantics, semantic_highlighting};
+
 mod debug_colors;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -42,6 +44,13 @@ pub struct Theme {
     token_rules: Vec<Value>,
     /// The TextMate theme of the token colors (`ColorThemeData.tokenColors`).
     pub tokens: textmate::Theme,
+    /// The theme file's `semanticTokenColors` and `semanticHighlighting`, before the settings' customizations.
+    semantic_rules: Vec<SemanticTokenRule>,
+    file_semantic_highlighting: bool,
+    /// `ColorThemeData.getTokenStyleMetadata` with `editor.semanticTokenColorCustomizations` applied.
+    pub semantic: SemanticTheme,
+    /// The `ColorThemeData.semanticHighlighting` getter.
+    pub semantic_highlighting: bool,
 }
 
 /// A contributed color theme before its file is read (`ColorThemeData.fromExtensionTheme`).
@@ -58,9 +67,23 @@ pub struct ColorThemeEntry {
 impl ColorThemeEntry {
     pub fn load(&self) -> anyhow::Result<Theme> {
         let (mut colors, mut token_colors) = (HashMap::new(), Vec::new());
-        read_colors(&self.path, &mut colors, &mut token_colors)?;
-        let mut theme = Theme { kind: self.kind, settings_id: self.settings_id.clone(), colors, custom_colors: HashMap::new(), token_rules: token_colors, tokens: textmate::Theme::new(&[]) };
+        let (mut semantic_rules, mut file_semantic_highlighting) = (Vec::new(), false);
+        read_colors(&self.path, &mut colors, &mut token_colors, &mut semantic_rules, &mut file_semantic_highlighting)?;
+        let semantic = SemanticTheme::new(TokenClassificationRegistry::new(), self.kind, semantic_rules.clone(), &[]);
+        let mut theme = Theme {
+            kind: self.kind,
+            settings_id: self.settings_id.clone(),
+            colors,
+            custom_colors: HashMap::new(),
+            token_rules: token_colors,
+            tokens: textmate::Theme::new(&[]),
+            semantic_rules,
+            file_semantic_highlighting,
+            semantic,
+            semantic_highlighting: file_semantic_highlighting,
+        };
         theme.tokens = crate::syntax::token_theme(&theme, &theme.token_rules);
+        theme.set_semantic_customizations(&Value::Null, &Value::Null);
         Ok(theme)
     }
 }
@@ -101,12 +124,13 @@ pub fn load_theme(extensions: &[ScannedExtension], settings_id: &str) -> anyhow:
 
 /// Merges the included file first, so the including theme wins, as `_loadColorTheme` does.
 /// shortcut: `tokenColors` as a path to a .tmTheme file is not read; no built-in theme uses one, port it with theme extensions from the Marketplace.
-fn read_colors(path: &Path, colors: &mut HashMap<String, Rgba>, token_colors: &mut Vec<Value>) -> anyhow::Result<()> {
+fn read_colors(path: &Path, colors: &mut HashMap<String, Rgba>, token_colors: &mut Vec<Value>, semantic_rules: &mut Vec<SemanticTokenRule>, semantic_highlighting: &mut bool) -> anyhow::Result<()> {
     let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     let theme: Value = serde_json::from_str(&strip_jsonc(&text)).with_context(|| format!("parsing {}", path.display()))?;
     if let Some(include) = theme["include"].as_str() {
-        read_colors(&path.parent().unwrap().join(include), colors, token_colors)?;
+        read_colors(&path.parent().unwrap().join(include), colors, token_colors, semantic_rules, semantic_highlighting)?;
     }
+    read_theme_file_semantics(&theme, semantic_rules, semantic_highlighting);
     token_colors.extend(theme["tokenColors"].as_array().into_iter().flatten().cloned());
     if let Some(entries) = theme["colors"].as_object() {
         for (key, value) in entries {
@@ -161,6 +185,18 @@ impl Theme {
             custom_token_rules(&customizations, &mut rules);
         }
         self.tokens = crate::syntax::token_theme(self, &rules);
+    }
+
+    /// `setCustomSemanticTokenColors`: `editor.semanticTokenColorCustomizations` after the theme's rules, over the
+    /// customized token colors; call after `set_customizations`.
+    pub fn set_semantic_customizations(&mut self, token_colors: &Value, semantic_colors: &Value) {
+        let mut rules = self.semantic_rules.clone();
+        let theme_specific = self.theme_specific(semantic_colors);
+        let enabled = read_semantic_token_customizations(semantic_colors, theme_specific.as_ref(), &mut rules);
+        let theme_specific_deprecated = self.theme_specific(token_colors).and_then(|colors| colors["semanticHighlighting"].as_bool());
+        let deprecated = theme_specific_deprecated.or(token_colors["semanticHighlighting"].as_bool());
+        self.semantic_highlighting = semantic_highlighting(enabled, deprecated, self.file_semantic_highlighting);
+        self.semantic = SemanticTheme::new(TokenClassificationRegistry::new(), self.kind, rules, self.tokens.rules());
     }
 
     /// `getThemeSpecificColors`: the merged values of the `[id]` keys (`[a][b]`, `*` wildcards at either end) matching
@@ -878,6 +914,7 @@ fn quick_input_default(key: &str) -> (ColorValue, ColorValue, ColorValue) {
         "editorLightBulb.foreground" => (Hex("#FFCC00"), Hex("#DDB100"), Hex("#FFCC00")),
         "editorCodeLens.foreground" => (Hex("#999999"), Hex("#919191"), Hex("#999999")),
         "editorLink.activeForeground" => (Hex("#4E94CE"), Hex("#0000FF"), Hex("#00FFFF")),
+        "editor.linkedEditingBackground" => (Transparent(&Hex("#FF0000"), 0.3), Transparent(&Hex("#FF0000"), 0.3), Transparent(&Hex("#FF0000"), 0.3)),
         "editorLightBulbAutoFix.foreground" => (Hex("#75BEFF"), Hex("#007ACC"), Hex("#75BEFF")),
         "editorLightBulbAi.foreground" => (Key("editorLightBulb.foreground"), Key("editorLightBulb.foreground"), Key("editorLightBulb.foreground")),
         // `lighten(editorHoverBackground, 0.2)` is a darken by -0.2: both scale the lightness by the factor.
@@ -1002,6 +1039,7 @@ fn quick_input_default_hc_light(key: &str) -> ColorValue {
         "editorHoverWidget.highlightForeground" => Key("list.highlightForeground"),
         "editorLightBulb.foreground" | "editorLightBulbAutoFix.foreground" => Hex("#007ACC"),
         "editorCodeLens.foreground" | "editorLink.activeForeground" => Hex("#292929"),
+        "editor.linkedEditingBackground" => Hex("#FFFFFF"),
         "editorLightBulbAi.foreground" => Key("editorLightBulb.foreground"),
         "textCodeBlock.background" => Hex("#F2F2F2"),
         "textLink.foreground" | "textLink.activeForeground" => Hex("#0F4A85"),

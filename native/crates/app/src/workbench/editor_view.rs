@@ -1114,7 +1114,9 @@ impl Workbench {
                     let colored: Vec<_> = matched.map(|(_, bytes)| (expanded(bytes.start)..expanded(bytes.end), gpui::Hsla::from(color))).collect();
                     highlights = crate::syntax::overlay_colors(highlights, &colored);
                 }
+                let highlights = super::semantic_tokens::overlay_semantic_styles(highlights, &self.semantic_token_styles(editor, index, tab_size));
                 let highlights = gpui::combine_highlights(highlights, self.link_styles(editor, index, tab_size));
+                let highlights = gpui::combine_highlights(highlights, self.linked_editing_styles(editor, index, tab_size));
                 let runs = gpui::combine_highlights(gpui::combine_highlights(highlights, find_colors), self.marker_text_styles(editor, index, tab_size));
                 let mut show_more = None;
                 match line_overflow(text, self.stop_rendering_line_after) {
@@ -1639,8 +1641,9 @@ impl Workbench {
         let text_width = |label: &str| window.text_system().shape_line(label.to_owned().into(), px(12.), &[style.to_run(label.len())], None).width;
         // A search editor's input supports neither encodings nor language changes (toEditorWithEncodingSupport, toEditorWithLanguageSupport).
         let search_editor = self.editors.active().is_some_and(|editor| editor.document.scheme == SEARCH_EDITOR_SCHEME);
-        let items = items.into_iter().filter(|(_, _, command)| !search_editor || !matches!(*command, "workbench.action.editor.changeEncoding" | "workbench.action.editor.changeLanguageMode"));
-        let items = items.enumerate().map(|(index, (label, tooltip, command))| {
+        let items: Vec<_> = items.into_iter().filter(|(_, _, command)| !search_editor || !matches!(*command, "workbench.action.editor.changeEncoding" | "workbench.action.editor.changeLanguageMode")).collect();
+        let language_index = items.iter().position(|(_, _, command)| *command == "workbench.action.editor.changeLanguageMode");
+        let items = items.into_iter().enumerate().map(|(index, (label, tooltip, command))| {
             // The media preview's dimensions and file size entries have neither tooltip nor command.
             let hover = (!tooltip.is_empty()).then(|| self.hover_target(tooltip, super::hover::HoverContent::Text(tooltip.into()), super::hover::HoverOptions::status_bar()));
             let item = div()
@@ -1670,6 +1673,15 @@ impl Workbench {
             // cornerRadius.small (4px).
             div().h_full().flex_none().rounded(px(4.)).text_color(prominent.1).when_some(prominent.0, |container, background| container.bg(background)).child(item).into_any_element()
         });
+        let mut items: Vec<gpui::AnyElement> = items.collect();
+        // languageStatus.ts: the combined entry sits left of the language entry, the pinned ones right of it.
+        if let Some(language_index) = language_index {
+            let (combined, pinned) = self.language_status_items(foreground, cx);
+            items.splice(language_index + 1..language_index + 1, pinned);
+            if let Some(combined) = combined {
+                items.insert(language_index, combined);
+            }
+        }
         div().h_full().flex().text_color(foreground).children(items)
     }
 
