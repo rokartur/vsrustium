@@ -41,3 +41,25 @@ Differences, fixed after the pairs: the body lines were 2px short (18px per line
 ## TypeScript in src/main.ts
 
 The default fixture, `FILE=src/main.ts`, steps `steps-main.json` (a new line `const x: string = 1;`, then `mai`). Pair `main-pair.png`: same suggest widget with `main` and its detail `function main(): number`, the error squiggles under `x` and `mai`, `2` errors in the status bar, the tab and the Explorer. Left: the port's Explorer shows the NPM Scripts view, which the reference hides; the reference's Explorer icon has the dirty-file badge.
+
+## HTML and CSS
+
+`FOLDER` a copy of port/fixtures/language-features. `FILE=a.html`, steps `steps-html.json` (`<di` on line 2): pair `html-pair.png`, the same four tag completions (`dialog`, `div`, `details`, `datalist`) and breadcrumbs `a.html > body > di`. The reference's title bar has the Show Preview and "Text Editor" items of other contributions. `FILE=b.css`, steps `steps-css.json` (`col` in a rule): pair `css-pair.png`, the same property list with `columns: ;` as Emmet Abbreviation, the same 2 errors.
+
+## References view
+
+Steps `steps-references.json` (cursor on `add`, Shift+Alt+F12). Pair `references-pair.png`: the reference shows the References view with 2 results; the port does nothing, `references-view.tree.focus` is not a command since the extension's views container is not drawn (milestone 11).
+
+## Paste with providers
+
+`FOLDER` a copy of port/fixtures/language-features, `FILE=d.md`, steps `steps-paste.json` (copy `https://example.com`, select `word`, paste, then Cmd+.). Pair `paste-pair.png`: the markdown extension's "Insert Markdown Link" edit applied as a snippet with `word` selected, the lightbulb and the post-paste widget at the end of the pasted text. Pair `paste-menu-pair.png`: the same menu with Insert Markdown Link checked, Insert Plain Text and the "Configure preferred paste action..." bar. Fixed after the first pair: the widget sat at the cursor, not at the end of the pasted range, and the menu had no configure bar. Left: the menu is 2px higher and 6px narrower.
+
+Drop into the editor (Shift while dragging files) is checked by `cargo test -p app paste_edits` only: ui-pair cannot drag files from the Finder.
+
+## PHP
+
+`FILE=c.php`, steps `steps-php.json` (`str_re` on line 2). Pair `php-pair.png`: the same twelve completions with `str_repeat`'s signature detail.
+
+## Extension manifests
+
+`FOLDER` port/fixtures/language-features/manifest, `FILE=package.json`, steps `steps-manifest.json`. Pair `manifest-pair.png`: extension-editing's "SVGs are not a valid image source." warning under `images/icon.svg` and in Problems, as in the reference. Left, outside milestone 13: the NPM Scripts view and the Terminal tab show in the port only.

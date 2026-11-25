@@ -1,0 +1,1 @@
+[{"wait": 9000}, {"click": [600, 300]}, {"hotkey": ["cmd", "up"]}, {"hotkey": ["shift", "end"]}, {"hotkey": ["cmd", "c"]}, {"key": "down"}, {"key": "home"}, {"hotkey": ["shift", "end"]}, {"hotkey": ["cmd", "v"]}, {"wait": 2500}, {"shot": "paste"}, {"hotkey": ["cmd", "."]}, {"wait": 1000}, {"shot": "paste-menu"}, {"key": "escape"}]
