@@ -31,6 +31,8 @@ use crate::notifications::{Action, Notification, Run, Severity};
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod untitled_tests;
 
 /// `ITextFileSaveOptions`: `force` writes a clean model too; `unlock` makes a write locked file writable first;
 /// `elevated` writes as the superuser.
@@ -131,20 +133,26 @@ impl Workbench {
         when_saved(vec![saved], |_| Value::Null, cx)
     }
 
-    /// `editorService.openEditor({ resource: undefined, options: { pinned: true }, languageId })`: a new untitled model
-    /// in `languageId`, else `files.defaultLanguage` (`${activeEditorLanguage}` the active editor's language).
+    /// `editorService.openEditor({ resource: undefined, options: { pinned: true }, languageId })`: a new untitled model.
     pub(super) fn open_untitled(&mut self, language: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
         let path = (1..).map(|n| PathBuf::from(format!("Untitled-{n}"))).find(|path| self.editors.model("untitled", path).is_none()).expect("a free name");
+        let language = self.untitled_language(language);
+        let document = TextDocument::untitled(&path, "", language.as_deref(), &self.languages, &self.settings.lock().unwrap());
+        self.editors.open(document, false);
+        window.focus(&self.editor_focus, cx);
+        self.editors_changed(cx);
+    }
+
+    /// untitledTextEditorService.ts `massageOptions` for a model without an associated file: `language`, else
+    /// `files.defaultLanguage` (`${activeEditorLanguage}` the active editor's language); unknown ids are plain text.
+    pub(super) fn untitled_language(&self, language: Option<String>) -> Option<String> {
         let configured = || self.settings.lock().unwrap().get_value(Some("files.defaultLanguage"), &Overrides::default()).and_then(|value| value.as_str().map(str::to_string));
         let language = language.or_else(configured).filter(|language| !language.is_empty());
         let language = match language.as_deref() {
             Some("${activeEditorLanguage}") => self.editors.active().map(|editor| editor.document.language_id.clone()),
             _ => language,
         };
-        let document = TextDocument::untitled(&path, "", language.as_deref().filter(|id| self.languages.is_registered(id)), &self.languages, &self.settings.lock().unwrap());
-        self.editors.open(document, false);
-        window.focus(&self.editor_focus, cx);
-        self.editors_changed(cx);
+        language.filter(|id| self.languages.is_registered(id))
     }
 
     /// A file's model from disk, its stat kept for the save conflict check.

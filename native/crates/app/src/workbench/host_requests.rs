@@ -214,11 +214,11 @@ impl Workbench {
     }
 
     /// `$tryCreateDocument`: a new untitled model named `Untitled-<n>` with the first free n.
-    // shortcut: `files.defaultLanguage` is not read; an untitled model without a language is plain text.
     fn try_create_document(&mut self, options: &Value, cx: &mut Context<Self>) -> HostResult {
         let path = (1..).map(|n| PathBuf::from(format!("Untitled-{n}"))).find(|path| self.editors.model("untitled", path).is_none()).expect("a free name");
         let content = options["content"].as_str().unwrap_or_default();
-        let mut document = TextDocument::untitled(&path, content, options["language"].as_str(), &self.languages, &self.settings.lock().unwrap());
+        let language = self.untitled_language(options["language"].as_str().map(str::to_string));
+        let mut document = TextDocument::untitled(&path, content, language.as_deref(), &self.languages, &self.settings.lock().unwrap());
         document.encoding = options["encoding"].as_str().map_or(document.encoding, str::to_string);
         let uri = document.uri();
         let index = self.editors.open_model(document);
