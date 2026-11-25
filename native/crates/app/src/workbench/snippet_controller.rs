@@ -9,7 +9,7 @@ use super::host_requests::snippet_edits;
 use super::suggest_controller::TriggerOptions;
 use crate::commands::Outcome;
 use crate::editor::snippet_session::{Inserted, SnippetSession, starts_after_edits};
-use crate::editor::{EditReason, OpenEditor, Position, visible_column};
+use crate::editor::{EditReason, OpenEditor, Position};
 
 /// The handle of the choice completions the controller registers while a choice is active.
 pub(super) const SNIPPET_CHOICE_PROVIDER: u64 = u64::MAX - 1;
@@ -168,13 +168,12 @@ impl Workbench {
     pub(super) fn snippet_placeholder_highlights(&self, editor: &OpenEditor, index: usize, char_width: f32) -> Vec<Div> {
         let Some(session) = editor.snippet_session.as_ref() else { return Vec::new() };
         let text = &editor.document().lines[index];
-        let tab_size = editor.document().indentation.tab_size;
         let mut highlights = Vec::new();
         for (placeholder, _) in session.placeholders().filter(|(placeholder, _)| placeholder.start.line <= index && placeholder.end.line >= index) {
             let from = if placeholder.start.line == index { placeholder.start.column } else { 0 };
             let to = if placeholder.end.line == index { placeholder.end.column } else { text.chars().count() };
-            let left = visible_column(text, from, tab_size) as f32 * char_width;
-            let width = (visible_column(text, to, tab_size) as f32 * char_width - left).max(if placeholder.is_final { 0. } else { 2. });
+            let (left, right) = editor.line_layout(index).range(from, to);
+            let (left, width) = (left * char_width, ((right - left) * char_width).max(if placeholder.is_final { 0. } else { 2. }));
             let (background, border) = match placeholder.is_final {
                 true => ("editor.snippetFinalTabstopHighlightBackground", "editor.snippetFinalTabstopHighlightBorder"),
                 false => ("editor.snippetTabstopHighlightBackground", "editor.snippetTabstopHighlightBorder"),

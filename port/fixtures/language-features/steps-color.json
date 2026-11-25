@@ -1,0 +1,1 @@
+[{"wait":9000},{"hover":[490,170]},{"wait":2000},{"shot":"picker"},{"hover":[300,300]},{"wait":1500},{"click":[440,170]},{"hotkey":["cmd","shift","p"]},{"wait":800},{"type":"standalone color"},{"wait":800},{"key":"return"},{"wait":1500},{"shot":"standalone"},{"key":"escape"}]

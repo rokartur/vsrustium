@@ -12,7 +12,7 @@ use textmate::StandardTokenType;
 use super::Workbench;
 use super::content_hover::{code_point_to_hex, format_code_point_markdown};
 use super::editor_status::{StatusPick, label_item};
-use crate::editor::{OpenEditor, visible_column};
+use crate::editor::OpenEditor;
 use crate::editor::unicode_highlighter::{CodePointHighlighter, HighlightReason, UnicodeHighlighterOptions, UnicodeHighlights, compute_unicode_highlights, is_invisible_character};
 use crate::quick_input::{Entry, Kind, QuickInput};
 
@@ -90,7 +90,6 @@ impl Workbench {
         let Some((options, highlights)) = unicode else { return Vec::new() };
         let document = &editor.document();
         let text = &document.lines[line];
-        let tab_size = document.indentation.tab_size;
         let first = highlights.ranges.partition_point(|(start, _)| start.line < line);
         let mut boxes = Vec::new();
         for (start, end) in highlights.ranges[first..].iter().take_while(|(start, _)| start.line == line) {
@@ -103,8 +102,8 @@ impl Workbench {
             if hidden {
                 continue;
             }
-            let left = visible_column(text, start.column, tab_size) as f32 * char_width;
-            let right = visible_column(text, end.column, tab_size) as f32 * char_width;
+            let (left, right) = editor.line_layout(line).range(start.column, end.column);
+            let (left, right) = (left * char_width, right * char_width);
             let mut mark = div().absolute().top_0().h_full().left(px(left)).w(px(right - left)).border_1().border_color(self.color("editorUnicodeHighlight.border"));
             if let Some(background) = self.theme.color("editorUnicodeHighlight.background") {
                 mark = mark.bg(background);

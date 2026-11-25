@@ -252,7 +252,7 @@ fn the_github_share_items_fill_the_share_submenus() {
 #[test]
 fn the_manage_menu_lists_the_global_activity_items() {
     let actions = menu_actions(&workbench_menus(), MenuId::GlobalActivity, &no_context());
-    assert_eq!(ids(&actions), ["workbench.action.showCommands", "-", "workbench.action.openGlobalKeybindings", "Themes"]);
+    assert_eq!(ids(&actions), ["workbench.action.showCommands", "-", "workbench.action.openGlobalKeybindings", "workbench.action.openSnippets", "Themes"]);
 }
 
 #[test]

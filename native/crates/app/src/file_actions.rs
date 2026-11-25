@@ -149,7 +149,7 @@ pub fn validate_file_name(parent: &Path, editing: Option<&str>, name: &str) -> O
 }
 
 /// `isValidBasename` of base/common/extpath.ts on macOS.
-fn is_valid_basename(name: &str) -> bool {
+pub fn is_valid_basename(name: &str) -> bool {
     !name.trim().is_empty() && !name.contains('/') && name != "." && name != ".." && name.encode_utf16().count() <= 255
 }
 

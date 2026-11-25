@@ -327,10 +327,8 @@ impl Workbench {
     /// goToDefinitionAtPosition.css `cursor: pointer` over the link.
     pub(super) fn definition_link_cursor(&self, editor: &OpenEditor, line: usize, char_width: f32) -> Option<Div> {
         let decoration = self.definition_link.decoration.as_ref().filter(|decoration| decoration.model_id == editor.model_id && decoration.line == line)?;
-        let text = &editor.document().lines[line];
-        let tab_size = editor.document().indentation.tab_size;
-        let left = visible_column(text, decoration.columns.start, tab_size) as f32 * char_width;
-        let right = visible_column(text, decoration.columns.end, tab_size) as f32 * char_width;
+        let (left, right) = editor.line_layout(line).range(decoration.columns.start, decoration.columns.end);
+        let (left, right) = (left * char_width, right * char_width);
         Some(div().absolute().top_0().h_full().left(px(left)).w(px(right - left)).cursor_pointer())
     }
 

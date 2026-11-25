@@ -348,7 +348,7 @@ fn hsla(color: Rgba) -> (f64, f64, f64, f64) {
 }
 
 /// `HSLA.toRGBA`, each channel rounded to a byte.
-fn from_hsla(h: f64, s: f64, l: f64, a: f64) -> Rgba {
+pub(crate) fn from_hsla(h: f64, s: f64, l: f64, a: f64) -> Rgba {
     let hue = |p: f64, q: f64, mut t: f64| {
         if t < 0. {
             t += 1.;
@@ -1039,6 +1039,12 @@ fn quick_input_default(key: &str) -> (ColorValue, ColorValue, ColorValue) {
         "editorLightBulb.foreground" => (Hex("#FFCC00"), Hex("#DDB100"), Hex("#FFCC00")),
         "editorCodeLens.foreground" => (Hex("#999999"), Hex("#919191"), Hex("#999999")),
         "editorLink.activeForeground" => (Hex("#4E94CE"), Hex("#0000FF"), Hex("#00FFFF")),
+        "editorInlayHint.foreground" => (Hex("#969696"), Hex("#969696"), Hex("#FFFFFF")),
+        "editorGhostText.foreground" => (Hex("#ffffff56"), Hex("#0007"), None),
+        "editorGhostText.border" => (None, None, Transparent(&Hex("#FFFFFF"), 0.8)),
+        "editorInlayHint.background" => (Transparent(&Key("badge.background"), 0.1), Transparent(&Key("badge.background"), 0.1), Transparent(&Hex("#FFFFFF"), 0.1)),
+        "editorInlayHint.typeForeground" | "editorInlayHint.parameterForeground" => (Key("editorInlayHint.foreground"), Key("editorInlayHint.foreground"), Key("editorInlayHint.foreground")),
+        "editorInlayHint.typeBackground" | "editorInlayHint.parameterBackground" => (Key("editorInlayHint.background"), Key("editorInlayHint.background"), Key("editorInlayHint.background")),
         "editor.linkedEditingBackground" => (Transparent(&Hex("#FF0000"), 0.3), Transparent(&Hex("#FF0000"), 0.3), Transparent(&Hex("#FF0000"), 0.3)),
         "editorLightBulbAutoFix.foreground" => (Hex("#75BEFF"), Hex("#007ACC"), Hex("#75BEFF")),
         "editorLightBulbAi.foreground" => (Key("editorLightBulb.foreground"), Key("editorLightBulb.foreground"), Key("editorLightBulb.foreground")),
@@ -1170,6 +1176,11 @@ fn quick_input_default_hc_light(key: &str) -> ColorValue {
         "editorHoverWidget.highlightForeground" => Key("list.highlightForeground"),
         "editorLightBulb.foreground" | "editorLightBulbAutoFix.foreground" => Hex("#007ACC"),
         "editorCodeLens.foreground" | "editorLink.activeForeground" => Hex("#292929"),
+        "editorInlayHint.foreground" => Hex("#000000"),
+        "editorGhostText.border" => Transparent(&Hex("#292929"), 0.8),
+        "editorInlayHint.background" => Transparent(&Key("badge.background"), 0.1),
+        "editorInlayHint.typeForeground" | "editorInlayHint.parameterForeground" => Key("editorInlayHint.foreground"),
+        "editorInlayHint.typeBackground" | "editorInlayHint.parameterBackground" => Key("editorInlayHint.background"),
         "editor.linkedEditingBackground" => Hex("#FFFFFF"),
         "editorLightBulbAi.foreground" => Key("editorLightBulb.foreground"),
         "textCodeBlock.background" => Hex("#F2F2F2"),

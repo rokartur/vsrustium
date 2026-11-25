@@ -203,9 +203,14 @@ impl Workbench {
         let language = editor.document().language_id.clone();
         let candidate = Candidate { uri: &uri, language: &language };
         let providers = self.language_features.ordered(REGISTER, &candidate);
-        context.insert("editorHasCodeActionsProvider".into(), json!(!providers.is_empty()));
+        let snippets = self.snippet_code_actions_enabled(editor);
+        context.insert("editorHasCodeActionsProvider".into(), json!(!providers.is_empty() || snippets));
         if self.active_editor_readonly().is_none() {
-            let kinds: Vec<&str> = providers.iter().flat_map(|registration| provided_kinds(&registration.args)).collect();
+            let mut kinds: Vec<&str> = providers.iter().flat_map(|registration| provided_kinds(&registration.args)).collect();
+            // `FileTemplateCodeActionProvider.providedCodeActionKinds`.
+            if snippets {
+                kinds.push("refactor.surround");
+            }
             context.insert("supportedCodeAction".into(), json!(kinds.join(" ")));
         }
     }
@@ -215,6 +220,8 @@ impl Workbench {
         match method {
             REGISTER => self.code_actions_model_changed(cx),
             "$registerCodeLensSupport" => self.code_lens_registrations_changed(cx),
+            "$registerInlayHintsProvider" => self.inlay_hints_registrations_changed(cx),
+            "$registerDocumentColorProvider" => self.color_providers_changed(cx),
             "$registerFoldingRangeProvider" => self.trigger_folding_model_changed(cx),
             "$registerDocumentLinkProvider" => self.links_model_changed(cx),
             "$registerLinkedEditingRangeProvider" => self.linked_editing_reinitialize(false, cx),
@@ -283,11 +290,13 @@ impl Workbench {
     /// `CodeActionOracle.trigger` and the model's handler: the selection, unless the light bulb settings rule it
     /// out, goes to the providers.
     fn trigger_code_actions(&mut self, trigger: Trigger, cx: &mut Context<Self>) {
+        self.refresh_snippet_files();
         let Some(editor) = self.editors.active() else { return };
         let uri = editor.document().uri();
         let language = editor.document().language_id.clone();
         let candidate = Candidate { uri: &uri, language: &language };
-        if self.language_features.ordered(REGISTER, &candidate).is_empty() || self.active_editor_readonly().is_some() {
+        let no_providers = self.language_features.ordered(REGISTER, &candidate).is_empty() && !self.snippet_code_actions_enabled(editor);
+        if no_providers || self.active_editor_readonly().is_some() {
             return;
         }
         let lightbulb = self.suggest_setting(editor, "editor.lightbulb.enabled");
@@ -362,6 +371,12 @@ impl Workbench {
             let call = self.host.call_cancellable("ExtHostLanguageFeatures", "$provideCodeActions", args);
             let documentation = registration.args.get(2).map(|metadata| metadata["documentation"].clone()).unwrap_or_default();
             calls.push((registration.handle, call, documentation));
+        }
+        // snippetCodeActionProvider.ts registers its two providers for `*` at startup, so they come last.
+        for (handle, list) in self.snippet_code_actions(editor, &range) {
+            let (sender, receiver) = oneshot::channel();
+            let _ = sender.send(Ok(list));
+            calls.push((handle, receiver, Value::Null));
         }
         calls
     }
@@ -791,7 +806,7 @@ impl Workbench {
             parts.sort_by_key(|part| (part.participant, part.ordinal));
             parts.into_iter().find_map(|part| match &part.content {
                 super::content_hover::PartContent::Marker(marker) => Some(marker.clone()),
-                super::content_hover::PartContent::Markdown(_) => None,
+                super::content_hover::PartContent::Markdown(_) | super::content_hover::PartContent::ColorPicker => None,
             })
         });
         let fixes = &mut self.code_actions.marker_fixes;
@@ -840,6 +855,16 @@ impl Workbench {
         }));
     }
 
+    /// markersTreeViewer.ts `MarkerViewModel.getCodeActions`: the quick fixes of the marker's range, triggered from
+    /// the Problems view.
+    pub(super) fn request_marker_quick_fixes(&self, editor: &OpenEditor, marker: &Marker) -> impl std::future::Future<Output = CodeActionSet> + use<> {
+        let range = json!({ "startLineNumber": marker.start_line, "startColumn": marker.start_column, "endLineNumber": marker.end_line, "endColumn": marker.end_column });
+        let filter = Filter { include: Some(QUICK_FIX.to_owned()), ..Default::default() };
+        let trigger = Trigger { kind: INVOKE, source: Source::QuickFix, filter: filter.clone(), auto_apply: None, not_available: None, window: None };
+        let calls = self.code_action_calls(editor, range, &trigger);
+        async move { collect_code_actions(calls, &filter, &Rc::new(RefCell::new(Vec::new()))).await }
+    }
+
     /// The status bar's quick fix entry for `marker`: "Quick Fix..." once fixes came, else a placeholder.
     // shortcut: no AI code action entry and no menu-contributed hover actions; neither has a provider in the port.
     pub(super) fn marker_quick_fix_status(&self, marker: &Marker) -> QuickFixStatus {
@@ -855,16 +880,6 @@ impl Workbench {
             QuickFixStatus::Text("No quick fixes available")
         } else if fixes.checking {
             QuickFixStatus::Text("Checking for quick fixes...")
-    /// markersTreeViewer.ts `MarkerViewModel.getCodeActions`: the quick fixes of the marker's range, triggered from
-    /// the Problems view.
-    pub(super) fn request_marker_quick_fixes(&self, editor: &OpenEditor, marker: &Marker) -> impl std::future::Future<Output = CodeActionSet> + use<> {
-        let range = json!({ "startLineNumber": marker.start_line, "startColumn": marker.start_column, "endLineNumber": marker.end_line, "endColumn": marker.end_column });
-        let filter = Filter { include: Some(QUICK_FIX.to_owned()), ..Default::default() };
-        let trigger = Trigger { kind: INVOKE, source: Source::QuickFix, filter: filter.clone(), auto_apply: None, not_available: None, window: None };
-        let calls = self.code_action_calls(editor, range, &trigger);
-        async move { collect_code_actions(calls, &filter, &Rc::new(RefCell::new(Vec::new()))).await }
-    }
-
         } else {
             QuickFixStatus::Text("\u{a0}")
         }
@@ -890,7 +905,6 @@ impl Workbench {
             (None, None) => return Vec::new(),
         };
         let text = &editor.document().lines[index];
-        let tab_size = editor.document().indentation.tab_size;
         let border = self.theme.color("editor.findMatchHighlightBorder");
         let mut highlights = Vec::new();
         for range in ranges {
@@ -901,8 +915,8 @@ impl Workbench {
             }
             let from = if index == start_line { char_column(text, number("startColumn")) } else { 0 };
             let to = if index == end_line { char_column(text, number("endColumn")) } else { text.chars().count() };
-            let left = visible_column(text, from, tab_size) as f32 * char_width;
-            let right = visible_column(text, to, tab_size) as f32 * char_width;
+            let (left, right) = editor.line_layout(index).range(from, to);
+            let (left, right) = (left * char_width, right * char_width);
             let mut highlight = div().absolute().top_0().h_full().left(px(left)).w(px(right - left)).bg(self.color("editor.findMatchHighlightBackground"));
             if let Some(border) = border {
                 highlight = highlight.border_1().border_color(border);

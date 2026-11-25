@@ -83,11 +83,22 @@ impl Workbench {
         self.parameter_hints_editor_changed(source, cx);
         if moved || change.is_some() {
             self.code_actions_cursor_changed(change.is_some(), cx);
+            self.standalone_color_picker_cursor_changed(cx);
         }
         if change.is_some() {
             self.code_lens_content_changed(cx);
+            self.inlay_hints_content_changed(cx);
+            self.color_detector_content_changed(cx);
+            self.color_picker_content_changed(cx);
+            self.language_detection_content_changed(cx);
         }
         self.linked_editing_editor_changed(change.as_ref(), moved || change.is_some(), cx);
+        // inlineCompletionsController.ts: typing (and the keyboard's deletes and Tab) triggers, other moves stop.
+        match change.is_some() && source == "keyboard" {
+            true => self.inline_completions_typed(cx),
+            false if moved || change.is_some() => self.inline_completions_cursor_changed(change.is_some(), cx),
+            false => {}
+        }
         cx.notify();
     }
 

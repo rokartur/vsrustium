@@ -224,6 +224,8 @@ const WORKBENCH_MENUS: &[Row] = &[
     // comment.ts
     (MenuId::MenubarEditMenu, None, "editor.action.commentLine", "&&Toggle Line Comment", "5_insert", 1., None, Some("!editorReadonly")),
     (MenuId::MenubarEditMenu, None, "editor.action.blockComment", "Toggle &&Block Comment", "5_insert", 2., None, Some("!editorReadonly")),
+    // expandAbbreviation.ts.
+    (MenuId::MenubarEditMenu, None, "editor.emmet.action.expandAbbreviation", "Emmet: E&&xpand Abbreviation", "5_insert", 3., Some("!isSessionsWindow"), Some("!editorReadonly")),
     (MenuId::MenubarSelectionMenu, None, "editor.action.selectAll", "&&Select All", "1_basic", 1., None, None),
     // smartSelect.ts
     (MenuId::MenubarSelectionMenu, None, "editor.action.smartSelect.expand", "&&Expand Selection", "1_basic", 2., None, None),
@@ -273,11 +275,14 @@ const WORKBENCH_MENUS: &[Row] = &[
     (MenuId::MenubarHelpMenu, None, "workbench.action.openProcessExplorer", "Open &&Process Explorer", "5_tools", 2., None, None),
     // preferences.contribution.ts
     (MenuId::MenubarPreferencesMenu, None, "workbench.action.openGlobalKeybindings", "Keyboard Shortcuts", "2_configuration", 4., None, None),
+    // configureSnippets.ts `ConfigureSnippetsAction`; the native menu shows the title, as the reference does.
+    (MenuId::MenubarPreferencesMenu, None, "workbench.action.openSnippets", "Configure Snippets", "2_configuration", 5., None, None),
     // themes.contribution.ts
     (MenuId::MenubarPreferencesMenu, Some(MenuId::ThemesSubMenu), "", "&&Themes", "2_configuration", 7., None, None),
     // The activity bar's Manage menu (quickAccess, preferences and themes contributions).
     (MenuId::GlobalActivity, None, "workbench.action.showCommands", "Command Palette...", "1_command", 1., None, None),
     (MenuId::GlobalActivity, None, "workbench.action.openGlobalKeybindings", "Keyboard Shortcuts", "2_configuration", 4., None, None),
+    (MenuId::GlobalActivity, None, "workbench.action.openSnippets", "Snippets", "2_configuration", 5., None, None),
     (MenuId::GlobalActivity, Some(MenuId::ThemesSubMenu), "", "Themes", "2_configuration", 7., None, None),
     // clipboard.ts, editor.contribution.ts: the Copy As and Share submenus, shown once an extension fills them.
     (MenuId::MenubarEditMenu, Some(MenuId::MenubarCopy), "", "Copy As", "2_ccp", 3., None, None),

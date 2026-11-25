@@ -136,7 +136,7 @@ impl Workbench {
             return None;
         }
         let view_line = editor.position_view_line(message.position, false);
-        let anchor_left = editor.segment_visible_column(editor.segment(view_line), message.position.column) as f32 * char_width;
+        let anchor_left = editor.segment_visible_column(editor.segment(view_line), message.position.column) * char_width;
         let anchor_top = editor.line_top(view_line, self.editors.viewport) - editor.scroll.top;
         let text: String = message.parts.iter().map(|part| part.text.as_str()).collect();
         let run = TextRun { len: text.len(), font: gpui::font(UI_FONT), color: gpui::black(), background_color: None, underline: None, strikethrough: None };

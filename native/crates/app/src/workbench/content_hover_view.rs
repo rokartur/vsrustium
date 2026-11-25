@@ -13,7 +13,7 @@ use super::Workbench;
 use super::content_hover::{MouseTarget, Part, PartContent, Shown};
 use super::editor_message::horizontal_in_page;
 use super::markdown_view::MarkdownStyle;
-use crate::editor::{LINE_HEIGHT, OpenEditor, Position, visible_column};
+use crate::editor::{LINE_HEIGHT, OpenEditor, Position};
 use crate::markdown::{MarkdownString, parse, plain_text};
 use crate::markers::{ERROR, HINT, INFO, Marker, WARNING};
 
@@ -21,7 +21,7 @@ const UI_FONT: &str = ".SystemUIFont";
 const EDITOR_FONT: &str = "Menlo";
 const EDITOR_FONT_SIZE: f32 = 12.;
 /// cornerRadius-large.
-const RADIUS: f32 = 8.;
+pub(super) const RADIUS: f32 = 8.;
 /// resizableContentWidget.ts TOP_HEIGHT and BOTTOM_HEIGHT.
 const TOP_HEIGHT: f32 = 30.;
 const BOTTOM_HEIGHT: f32 = 24.;
@@ -36,11 +36,10 @@ impl Workbench {
             return None;
         }
         let text = &editor.document().lines[index];
-        let tab_size = editor.document().indentation.tab_size;
         let from = if index == start.line { start.column } else { 0 };
         let to = if index == end.line { end.column } else { text.chars().count() };
-        let left = visible_column(text, from, tab_size) as f32 * char_width;
-        let right = visible_column(text, to, tab_size) as f32 * char_width;
+        let (left, right) = editor.line_layout(index).range(from, to);
+        let (left, right) = (left * char_width, right * char_width);
         Some(div().absolute().top_0().h_full().left(px(left)).w(px(right - left)).bg(self.color("editor.hoverHighlightBackground")))
     }
 
@@ -58,8 +57,8 @@ impl Workbench {
         }
         let view_line = editor.position_view_line(Position::new(anchor.line, anchor.start), false);
         let segment = editor.segment(view_line);
-        let primary_left = editor.segment_visible_column(segment, anchor.start) as f32 * char_width;
-        let secondary_left = editor.segment_visible_column(segment, secondary.max(segment.start)) as f32 * char_width;
+        let primary_left = editor.segment_visible_column(segment, anchor.start) * char_width;
+        let secondary_left = editor.segment_visible_column(segment, secondary.max(segment.start)) * char_width;
         // The measuring canvas fills the padding box: add the 1px border on each side.
         let measured = self.content_hover.widget_bounds.get().map(|bounds| Size { width: bounds.size.width + 2., height: bounds.size.height + 2. });
         let mut size = measured.unwrap_or(Size { width: 0., height: 0. });
@@ -150,12 +149,16 @@ impl Workbench {
             let (row, copy_text) = match &part.content {
                 PartContent::Marker(marker) => (self.marker_hover_row(marker, index, cx), marker_accessible_content(marker)),
                 PartContent::Markdown(contents) => self.markdown_hover_row(contents, index, max_width, &editor.document().language_id, cx),
+                PartContent::ColorPicker => {
+                    rows.push(div().child(self.color_picker_row(cx)));
+                    continue;
+                }
             };
             rows.push(self.hover_row_with_copy(row, index, copy_text, cx));
         }
         let first_marker = parts.iter().find_map(|part| match &part.content {
             PartContent::Marker(marker) => Some(marker.clone()),
-            PartContent::Markdown(_) => None,
+            PartContent::Markdown(_) | PartContent::ColorPicker => None,
         });
         if let Some(marker) = first_marker {
             rows.push(self.marker_hover_status_bar(marker, window, cx));

@@ -1,0 +1,1 @@
+[{"wait":6000},{"click":[400,116]},{"type":"ul"},{"wait":2500},{"shot":"ghost"},{"key":"tab"},{"wait":1000},{"shot":"accepted"}]

@@ -249,9 +249,9 @@ impl OpenEditor {
             let text = &self.document().lines[position.line];
             let x = match super::line_overflow(text, viewport.stop_rendering_line_after) {
                 // Past the cut the position is the end of the "Show more" span.
-                _ if self.wraps() => self.segment_visible_column(self.segment(self.position_view_line(position, false)), position.column) as f32 * viewport.char_width,
+                _ if self.wraps() => self.segment_visible_column(self.segment(self.position_view_line(position, false)), position.column) * viewport.char_width,
                 Some((limit, _, label)) if position.column > limit => super::visible_column(text, limit, tab_size) as f32 * viewport.char_width + super::show_more_width(&label, viewport.char_width),
-                _ => super::visible_column(text, position.column, tab_size) as f32 * viewport.char_width,
+                _ => self.line_layout(position.line).x(position.column) * viewport.char_width,
             };
             x.round()
         };

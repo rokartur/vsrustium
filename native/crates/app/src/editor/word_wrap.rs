@@ -8,7 +8,8 @@ use std::ops::Range;
 use std::rc::Rc;
 
 use super::cursor::{self, Position, Selection};
-use super::{OpenEditor, folding, minimap::is_full_width_character, visible_column};
+use super::injected_text::InjectedText;
+use super::{OpenEditor, folding, minimap::is_full_width_character};
 
 /// The `wordWrapBreakBeforeCharacters` and `wordWrapBreakAfterCharacters` defaults (editorOptions.ts); they have no
 /// settings schema, so no setting changes them.
@@ -92,8 +93,8 @@ impl Classifier {
     }
 }
 
-/// `ModelLineProjectionData` without injected text: the char offsets where each view line ends (the last one is
-/// the line's length), their visible columns, and the indent of every view line after the first.
+/// `ModelLineProjectionData`: the char offsets where each view line ends (the last one is the line's length), their
+/// visible columns with the injected text before them, and the indent of every view line after the first.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LineBreaks {
     pub offsets: Vec<usize>,
@@ -115,12 +116,16 @@ impl LineBreaks {
 /// `createLineBreaks` of monospaceLineBreaksComputer.ts. Upstream measures in pixels because injected text can
 /// ask for any width; without injected text a char's pixel width is its column width times
 /// `typicalHalfwidthCharacterWidth`, so this measures in columns. Offsets count chars, where upstream counts
-/// UTF-16 units: a char past U+FFFF is one char here and two units there, and both never split it.
-pub fn line_breaks(classifier: &Classifier, text: &str, options: &WrapOptions) -> Option<LineBreaks> {
+/// UTF-16 units: a char past U+FFFF is one char here and two units there, and both never split it. `injections`
+/// are (char column, width in columns) of the injected text, by column.
+// shortcut: an injected text breaks only before itself, never inside, where upstream breaks the text with its
+// injections as one string; a hint wider than the wrapping column overflows its view line.
+pub fn line_breaks(classifier: &Classifier, text: &str, options: &WrapOptions, injections: &[(usize, f32)]) -> Option<LineBreaks> {
     let chars: Vec<char> = text.chars().collect();
-    if chars.len() <= 1 {
+    if chars.len() <= 1 && injections.is_empty() {
         return None;
     }
+    let injected_at = |column: usize| -> f64 { injections.iter().filter(|(at, _)| *at == column).map(|(_, width)| *width as f64).sum() };
     let tab_size = options.tab_size as f64;
     let full_width = if options.two_cell_full_width { 2. } else { options.columns_for_full_width_char };
     let char_width = |c: char, visible: f64| -> f64 {
@@ -146,11 +151,16 @@ pub fn line_breaks(classifier: &Classifier, text: &str, options: &WrapOptions) -
     let mut break_offset = 0;
     let mut break_visible = 0.;
     let mut breaking_width = first_break_column;
-    let mut visible = char_width(chars[0], 0.);
-    let mut prev_class = class_of(chars[0]);
+    let Some(&first) = chars.first() else { return None };
+    // Tab stops leave the injected widths out, as `LineLayout` does.
+    let mut injected = injected_at(0);
+    let mut visible = injected + char_width(first, 0.);
+    let mut prev_class = class_of(first);
     for (i, &c) in chars.iter().enumerate().skip(1) {
         let class = class_of(c);
-        let width = char_width(c, visible);
+        let injected_here = injected_at(i);
+        injected += injected_here;
+        let width = injected_here + char_width(c, visible + injected_here - injected);
         let mut escaped_line_feed = false;
         if options.wrap_on_escaped_line_feeds && is_escaped_line_break_at(&chars, i) {
             (break_offset, break_visible) = (i, visible);
@@ -173,12 +183,18 @@ pub fn line_breaks(classifier: &Classifier, text: &str, options: &WrapOptions) -
         }
         prev_class = class;
     }
+    visible += injected_at(chars.len());
     if offsets.is_empty() {
         return None;
     }
     offsets.push(chars.len());
     visible_columns.push(visible);
     Some(LineBreaks { offsets, visible_columns, wrapped_indent })
+}
+
+/// The (column, width) of the injected texts on `line`, from all of them by position.
+fn line_injections(injected: &[InjectedText], line: usize) -> Vec<(usize, f32)> {
+    injected.iter().filter(|injection| injection.position.line == line).map(|injection| (injection.position.column, injection.columns)).collect()
 }
 
 /// `isEscapedLineBreakAtPosition`: `\n` written with an odd number of backslashes ends right before `i`.
@@ -272,7 +288,7 @@ impl WordWrap {
     }
 
     /// `setWrappingSettings`: breaks every line again when the options changed. Returns whether they did.
-    pub fn configure(&mut self, options: Option<WrapOptions>, lines: &[String]) -> bool {
+    pub fn configure(&mut self, options: Option<WrapOptions>, lines: &[String], injected: &[InjectedText]) -> bool {
         if self.options == options && options.as_ref().is_none_or(|_| self.breaks.len() == lines.len()) {
             return false;
         }
@@ -282,7 +298,7 @@ impl WordWrap {
                 Some(classifier) if self.options.as_ref().is_some_and(|old| (&old.break_before, &old.break_after) == (&options.break_before, &options.break_after)) => classifier,
                 _ => Classifier::new(&options.break_before, &options.break_after),
             };
-            self.breaks = lines.iter().map(|line| line_breaks(&classifier, line, options)).collect();
+            self.breaks = lines.iter().enumerate().map(|(index, line)| line_breaks(&classifier, line, options, &line_injections(injected, index))).collect();
             self.classifier = Some(classifier);
         }
         self.options = options;
@@ -293,17 +309,24 @@ impl WordWrap {
 
     /// `onModelLinesDeleted`/`onModelLinesInserted`/`onModelLineChanged`: lines `start..=end` became `inserted` lines,
     /// already in `lines`.
-    pub fn lines_replaced(&mut self, lines: &[String], start: usize, end: usize, inserted: usize) {
+    pub fn lines_replaced(&mut self, lines: &[String], start: usize, end: usize, inserted: usize, injected: &[InjectedText]) {
         let (Some(options), Some(classifier)) = (&self.options, &self.classifier) else { return };
-        let new: Vec<_> = lines[start..start + inserted].iter().map(|line| line_breaks(classifier, line, options)).collect();
+        let new: Vec<_> = (start..start + inserted).map(|index| line_breaks(classifier, &lines[index], options, &line_injections(injected, index))).collect();
         self.breaks.splice(start..=end, new);
         self.starts.take();
     }
 
     /// Another editor of the shared model changed its lines (`sync_with_model`): every line breaks again.
-    pub fn lines_changed_elsewhere(&mut self, lines: &[String]) {
+    pub fn lines_changed_elsewhere(&mut self, lines: &[String], injected: &[InjectedText]) {
         self.breaks.clear();
-        self.configure(self.options.clone(), lines);
+        self.configure(self.options.clone(), lines, injected);
+    }
+
+    /// `onModelDecorationsChanged` with injected text: line `line` breaks again.
+    pub fn line_injections_changed(&mut self, lines: &[String], line: usize, injected: &[InjectedText]) {
+        let (Some(options), Some(classifier)) = (&self.options, &self.classifier) else { return };
+        self.breaks[line] = line_breaks(classifier, &lines[line], options, &line_injections(injected, line));
+        self.starts.take();
     }
 
     fn view_line_count_of(&self, line: usize) -> usize {
@@ -401,21 +424,20 @@ impl OpenEditor {
         self.position_view_line(self.selections[index].head, self.head_at_row_end(index))
     }
 
-    /// The x of column `column` of model line `line` within view line `segment`, in columns from the text's left.
-    pub fn segment_visible_column(&self, segment: Segment, column: usize) -> usize {
-        let text = &self.document().lines[segment.line];
-        let tab_size = self.document().indentation.tab_size;
-        segment.indent + visible_column(text, column, tab_size) - visible_column(text, segment.start, tab_size)
+    /// The x of column `column` of model line `line` within view line `segment`, in columns from the text's left;
+    /// the injected text at the segment's start is on it.
+    pub fn segment_visible_column(&self, segment: Segment, column: usize) -> f32 {
+        let layout = self.line_layout(segment.line);
+        segment.indent as f32 + layout.x(column) - layout.x(segment.start)
     }
 
-    /// The column at visible column `visible` of view line `view_line`, kept inside it, and whether it is the
-    /// view line's end before a wrap point.
-    pub fn segment_column(&self, view_line: usize, visible: usize) -> (Position, bool) {
+    /// The column at x `visible` of view line `view_line`, kept inside it, and whether it is the view line's end
+    /// before a wrap point.
+    pub fn segment_column(&self, view_line: usize, visible: f32) -> (Position, bool) {
         let segment = self.segment(view_line);
-        let text = &self.document().lines[segment.line];
-        let tab_size = self.document().indentation.tab_size;
-        let model_visible = visible.saturating_sub(segment.indent) + visible_column(text, segment.start, tab_size);
-        let column = cursor::column_from_visible(text, model_visible, tab_size).clamp(segment.start, segment.end);
+        let layout = self.line_layout(segment.line);
+        let model_x = (visible - segment.indent as f32).max(0.) + layout.x(segment.start);
+        let column = layout.column_at(model_x).clamp(segment.start, segment.end);
         (Position::new(segment.line, column), !segment.last && column == segment.end)
     }
 
@@ -424,16 +446,16 @@ impl OpenEditor {
     fn vertical_in_view(&self, position: Position, row_end: bool, leftover: isize, down: bool) -> (Position, isize, bool) {
         let view_line = self.position_view_line(position, row_end);
         let segment = self.segment(view_line);
-        let visible = self.segment_visible_column(segment, position.column) as isize + leftover;
+        let visible = self.segment_visible_column(segment, position.column).round() as isize + leftover;
         let last = self.last_shown_position();
         let was_at_edge = if down { position == last } else { position == Position::default() };
         let (moved, moved_end) = match (down, view_line) {
             (true, line) if line + 1 >= self.view_line_count() => (last, false),
             (false, 0) => (Position::default(), false),
-            _ => self.segment_column(if down { view_line + 1 } else { view_line - 1 }, visible.max(0) as usize),
+            _ => self.segment_column(if down { view_line + 1 } else { view_line - 1 }, visible.max(0) as f32),
         };
         let moved_view_line = self.position_view_line(moved, moved_end);
-        let moved_visible = self.segment_visible_column(self.segment(moved_view_line), moved.column) as isize;
+        let moved_visible = self.segment_visible_column(self.segment(moved_view_line), moved.column).round() as isize;
         (moved, if was_at_edge { 0 } else { visible - moved_visible }, moved_end)
     }
 
@@ -540,12 +562,16 @@ impl OpenEditor {
     }
 
     /// The line breaks' widest view line in columns, the indent included, or `None` without wrapping.
-    pub fn wrapped_line_width(&self, view_line: usize) -> Option<usize> {
+    pub fn wrapped_line_width(&self, view_line: usize) -> Option<f32> {
         if !self.wraps() {
             return None;
         }
         let segment = self.segment(view_line);
-        Some(self.segment_visible_column(segment, segment.end))
+        let end_x = match segment.last {
+            true => self.line_layout(segment.line).width() - self.line_layout(segment.line).x(segment.start) + segment.indent as f32,
+            false => self.segment_visible_column(segment, segment.end),
+        };
+        Some(end_x)
     }
 }
 

@@ -56,9 +56,8 @@ impl Workbench {
             return clip.right_0();
         }
         let editor = self.editors.active().expect("a wrapped view line has an editor");
-        let text = &editor.document().lines[segment.line];
-        let tab_size = editor.document().indentation.tab_size;
-        let width = (visible_column(text, segment.end, tab_size) - visible_column(text, segment.start, tab_size)) as f32 * char_width;
+        let layout = editor.line_layout(segment.line);
+        let width = (layout.x(segment.end) - layout.x(segment.start)) * char_width;
         clip.w(px(width + 1.))
     }
 
@@ -96,7 +95,7 @@ impl Workbench {
         let options = if in_diff { None } else { self.wrap_options(editor, viewport) };
         let editor = self.editors.active_mut().expect("checked above");
         let model = editor.model.clone();
-        let changed = editor.word_wrap.configure(options, &model.borrow().document.lines);
+        let changed = editor.word_wrap.configure(options, &model.borrow().document.lines, &editor.injected_text);
         changed
     }
 

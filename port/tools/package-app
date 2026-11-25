@@ -100,8 +100,9 @@ for (const extension of shippedBuiltins(extensionsDir)) {
 for (const [name, path] of copyDependencies(extensionsDir, ['typescript'])) {
 	link(path, join(app, 'extensions/node_modules', name));
 }
-// The extension host bundle keeps its packages external; codicons and ripgrep are read by the workbench and search.
-const hostPackages = ['@vscode/proxy-agent', '@vscode/ripgrep-universal', '@vscode/spdlog', 'http-proxy-agent', 'https-proxy-agent', 'kerberos', 'minimist', 'undici', 'vscode-regexpp', '@vscode/codicons'];
+// The extension host bundle keeps its packages external; codicons and ripgrep are read by the workbench and search,
+// vscode-languagedetection by the language detection worker.
+const hostPackages = ['@vscode/proxy-agent', '@vscode/ripgrep-universal', '@vscode/spdlog', 'http-proxy-agent', 'https-proxy-agent', 'kerberos', 'minimist', 'undici', 'vscode-regexpp', '@vscode/codicons', '@vscode/vscode-languagedetection'];
 for (const [name, path] of copyDependencies(root, hostPackages)) {
 	link(path, join(app, 'node_modules', name));
 }

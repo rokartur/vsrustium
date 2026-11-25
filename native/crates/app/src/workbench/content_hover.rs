@@ -76,9 +76,17 @@ enum State {
     Idle,
 }
 
+/// `HoverStartSource`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum HoverSource {
+    Mouse,
+    Click,
+    Keyboard,
+}
+
 struct Operation {
     anchor: Anchor,
-    keyboard: bool,
+    source: HoverSource,
     insist: bool,
     initial_mouse: Option<Point<f32>>,
     state: State,
@@ -92,6 +100,7 @@ struct Operation {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum Participant {
     Marker,
+    ColorPicker,
     Markdown,
     Unicode,
 }
@@ -110,6 +119,8 @@ pub(super) enum PartContent {
     Marker(Arc<Marker>),
     /// The `IMarkdownString`s of one hover.
     Markdown(Vec<Value>),
+    /// The color picker of `ColorDetector.picker`.
+    ColorPicker,
 }
 
 /// `ContentHoverResult` as shown, with the widget's `_visibleData` for `isMouseGettingCloser`.
@@ -211,7 +222,7 @@ impl Workbench {
                 MouseTarget::Text { line, visible } => anchor_at(editor, line, visible),
                 MouseTarget::Widget | MouseTarget::Other => None,
             };
-            if self.start_showing_or_update_hover(anchor, Mode::Delayed, false, Some(mouse.position), cx) {
+            if self.start_showing_or_update_hover(anchor, Mode::Delayed, HoverSource::Mouse, Some(mouse.position), cx) {
                 return;
             }
         }
@@ -297,20 +308,27 @@ impl Workbench {
         let Some(editor) = self.editors.active() else { return };
         let head = editor.selection().head;
         let anchor = Anchor { model_id: editor.model_id, line: head.line, start: head.column, end: head.column };
-        self.start_showing_or_update_hover(Some(anchor), Mode::Immediate, true, None, cx);
+        self.start_showing_or_update_hover(Some(anchor), Mode::Immediate, HoverSource::Keyboard, None, cx);
+    }
+
+    /// `showContentHover` at `position` with `Immediate` mode (hoverColorPickerContribution.ts on a click).
+    pub(super) fn show_content_hover_at(&mut self, position: Position, source: HoverSource, cx: &mut Context<Self>) {
+        let Some(editor) = self.editors.active() else { return };
+        let anchor = Anchor { model_id: editor.model_id, line: position.line, start: position.column, end: position.column };
+        self.start_showing_or_update_hover(Some(anchor), Mode::Immediate, source, None, cx);
     }
 
     /// `_startShowingOrUpdateHover`: whether the hover shows or will show for `anchor`.
-    fn start_showing_or_update_hover(&mut self, anchor: Option<Anchor>, mode: Mode, keyboard: bool, mouse: Option<Point<f32>>, cx: &mut Context<Self>) -> bool {
+    fn start_showing_or_update_hover(&mut self, anchor: Option<Anchor>, mode: Mode, source: HoverSource, mouse: Option<Point<f32>>, cx: &mut Context<Self>) -> bool {
         if self.content_hover.shown.is_none() {
             let Some(anchor) = anchor else { return false };
-            self.start_hover_operation(anchor, mode, keyboard, false, mouse, cx);
+            self.start_hover_operation(anchor, mode, source, false, mouse, cx);
             return true;
         }
         let sticky = self.editors.active().is_some_and(|editor| self.hover_settings(editor).sticky);
         if sticky && mouse.is_some_and(|mouse| self.mouse_getting_closer(mouse)) {
             if let Some(anchor) = anchor {
-                self.start_hover_operation(anchor, mode, keyboard, true, mouse, cx);
+                self.start_hover_operation(anchor, mode, source, true, mouse, cx);
             }
             return true;
         }
@@ -325,14 +343,14 @@ impl Workbench {
         // HoverRangeAnchor.canAdoptVisibleHover: the parts still covering the anchor on the same line stay.
         if shown.anchor.model_id != anchor.model_id || shown.anchor.line != anchor.line {
             self.set_content_hover_result(None, cx);
-            self.start_hover_operation(anchor, mode, keyboard, false, mouse, cx);
+            self.start_hover_operation(anchor, mode, source, false, mouse, cx);
             return true;
         }
         let parts = shown.parts.iter().filter(|part| part.start.column <= anchor.start && part.end.column >= anchor.end).cloned().collect();
         let complete = shown.complete;
         let scroll = self.editor_scroll();
-        self.set_content_hover_result(Some(Shown { anchor, parts, complete, keyboard, initial_mouse: mouse, closest_distance: None, scroll }), cx);
-        self.start_hover_operation(anchor, mode, keyboard, false, mouse, cx);
+        self.set_content_hover_result(Some(Shown { anchor, parts, complete, keyboard: source == HoverSource::Keyboard, initial_mouse: mouse, closest_distance: None, scroll }), cx);
+        self.start_hover_operation(anchor, mode, source, false, mouse, cx);
         true
     }
 
@@ -356,8 +374,8 @@ impl Workbench {
     }
 
     /// `_startHoverOperationIfNecessary` and `HoverOperation.start`.
-    fn start_hover_operation(&mut self, anchor: Anchor, mode: Mode, keyboard: bool, insist: bool, mouse: Option<Point<f32>>, cx: &mut Context<Self>) {
-        if self.content_hover.operation.as_ref().is_some_and(|operation| operation.anchor == anchor && operation.keyboard == keyboard) {
+    fn start_hover_operation(&mut self, anchor: Anchor, mode: Mode, source: HoverSource, insist: bool, mouse: Option<Point<f32>>, cx: &mut Context<Self>) {
+        if self.content_hover.operation.as_ref().is_some_and(|operation| operation.anchor == anchor && operation.source == source) {
             return;
         }
         let Some(editor) = self.editors.active() else { return };
@@ -365,7 +383,7 @@ impl Workbench {
         self.content_hover.serial += 1;
         let serial = self.content_hover.serial;
         let state = if mode == Mode::Delayed { State::FirstWait } else { State::WaitingForAsync };
-        self.content_hover.operation = Some(Operation { anchor, keyboard, insist, initial_mouse: mouse, state, pending_providers: 0, parts: Vec::new(), serial, _tasks: Vec::new() });
+        self.content_hover.operation = Some(Operation { anchor, source, insist, initial_mouse: mouse, state, pending_providers: 0, parts: Vec::new(), serial, _tasks: Vec::new() });
         if mode == Mode::Immediate {
             self.trigger_async_hover(serial, cx);
             self.trigger_sync_hover(serial, cx);
@@ -396,8 +414,9 @@ impl Workbench {
     /// `_triggerAsyncComputation`: markdownHoverParticipant.ts `computeAsync`, each provider's `$provideHover` in
     /// `ordered` order; a dropped operation cancels the calls still out.
     fn trigger_async_hover(&mut self, serial: usize, cx: &mut Context<Self>) {
-        let Some(anchor) = self.operation(serial).map(|operation| operation.anchor) else { return };
+        let Some((anchor, source)) = self.operation(serial).map(|operation| (operation.anchor, operation.source)) else { return };
         let mut calls = Vec::new();
+        let mut color_hover = None;
         if let Some(editor) = self.editors.active().filter(|editor| editor.model_id == anchor.model_id) {
             let uri = editor.document().uri();
             let language = editor.document().language_id.clone();
@@ -408,12 +427,25 @@ impl Workbench {
                 let args = vec![json!(registration.handle), uri.clone(), position.clone(), json!({})];
                 calls.push((ordinal, self.host.call_cancellable("ExtHostLanguageFeatures", "$provideHover", args)));
             }
+            // hoverColorPickerParticipant.ts `computeAsync`: the color decoration at the anchor.
+            let position = Position::new(anchor.line, anchor.start);
+            if self.color_hover_allowed(editor, source)
+                && let Some(data) = self.color_data_at(position).cloned()
+            {
+                color_hover = Some((data.start, data.end, self.create_color_hover(editor, &data, cx)));
+            }
         }
         let mut tasks = Vec::new();
         for (ordinal, call) in calls {
             tasks.push(cx.spawn(async move |workbench, cx| {
                 let answer = call.await;
                 let _ = workbench.update(cx, |workbench, cx| workbench.hover_provider_answered(serial, ordinal, answer, cx));
+            }));
+        }
+        if let Some((start, end, pending)) = color_hover {
+            tasks.push(cx.spawn(async move |workbench, cx| {
+                let picker = pending.await.ok();
+                let _ = workbench.update(cx, |workbench, cx| workbench.color_hover_answered(serial, picker.map(|picker| (start, end, picker)), cx));
             }));
         }
         let Some(operation) = self.operation(serial) else { return };
@@ -435,6 +467,28 @@ impl Workbench {
             }
             _ => None,
         };
+        let operation = self.operation(serial).expect("checked above");
+        operation.pending_providers -= 1;
+        if let Some(part) = part {
+            operation.parts.push(part);
+            self.fire_hover_result(serial, cx);
+        }
+        let operation = self.operation(serial).expect("checked above");
+        if operation.pending_providers == 0 && matches!(operation.state, State::WaitingForAsync | State::WaitingForAsyncShowingLoading) {
+            operation.state = State::Idle;
+            self.fire_hover_result(serial, cx);
+        }
+    }
+
+    /// The color participant's answer: the picker becomes the hover's color picker part.
+    fn color_hover_answered(&mut self, serial: usize, answer: Option<(Position, Position, super::color_picker::HoverColorPicker)>, cx: &mut Context<Self>) {
+        if self.operation(serial).is_none() {
+            return;
+        }
+        let part = answer.map(|(start, end, picker)| {
+            self.color_detector.picker = Some(picker);
+            Part { participant: Participant::ColorPicker, ordinal: 0, start, end, content: PartContent::ColorPicker }
+        });
         let operation = self.operation(serial).expect("checked above");
         operation.pending_providers -= 1;
         if let Some(part) = part {
@@ -488,7 +542,7 @@ impl Workbench {
             parts.push(Part { participant: Participant::Markdown, ordinal: LOADING_ORDINAL, start, end, content: PartContent::Markdown(vec![json!({ "value": "Loading..." })]) });
         }
         let complete = operation.state == State::Idle;
-        let (insist, keyboard, initial_mouse) = (operation.insist, operation.keyboard, operation.initial_mouse);
+        let (insist, keyboard, initial_mouse) = (operation.insist, operation.source == HoverSource::Keyboard, operation.initial_mouse);
         let scroll = self.editor_scroll();
         let result = || Shown { anchor, parts: parts.clone(), complete, keyboard, initial_mouse, closest_distance: None, scroll };
         if !self.content_hover.shown.as_ref().is_some_and(|shown| shown.complete) {
@@ -514,6 +568,10 @@ impl Workbench {
         }
         if result.is_none() {
             self.content_hover.widget_bounds.set(None);
+        }
+        // `handleHide`: the picker goes with a hover that no longer shows it.
+        if !result.as_ref().is_some_and(|result| result.parts.iter().any(|part| part.participant == Participant::ColorPicker)) {
+            self.color_detector.picker = None;
         }
         self.content_hover.shown = result;
         self.code_actions_hover_changed(cx);

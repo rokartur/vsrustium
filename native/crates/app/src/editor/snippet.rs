@@ -192,6 +192,23 @@ fn fill(markers: &mut [Marker], values: &HashMap<u32, Vec<Marker>>) {
     }
 }
 
+/// The variables of a template, for snippetsFile.ts `SnippetBodyInsights`: like upstream, a variable's default is
+/// not searched.
+pub fn variable_names(template: &str) -> Vec<String> {
+    let chars: Vec<char> = template.chars().collect();
+    let mut position = 0;
+    let mut names = Vec::new();
+    let mut stack = parse(&chars, &mut position, false);
+    while let Some(marker) = stack.pop() {
+        match marker {
+            Marker::Variable { name, .. } => names.push(name),
+            Marker::Placeholder { children, .. } => stack.extend(children),
+            Marker::Text(_) | Marker::Choice(_) => {}
+        }
+    }
+    names
+}
+
 fn has_placeholders(markers: &[Marker]) -> bool {
     markers.iter().any(|marker| match marker {
         Marker::Placeholder { .. } => true,

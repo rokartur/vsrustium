@@ -137,6 +137,10 @@ impl Workbench {
                 self.semantic_tokens_event(arg(0).as_u64().unwrap_or_default(), cx);
                 Outcome::done()
             }
+            ("MainThreadLanguageFeatures", "$emitInlayHintsEvent") => {
+                self.inlay_hints_provider_changed(arg(0).as_u64().unwrap_or_default(), cx);
+                Outcome::done()
+            }
             ("MainThreadLanguageFeatures", "$emitCodeLensEvent") => {
                 self.code_lens_provider_changed(arg(0).as_u64().unwrap_or_default(), cx);
                 Outcome::done()

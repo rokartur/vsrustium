@@ -96,6 +96,12 @@ impl Workbench {
         if affects(change, "problems.visibility") || affects(change, "problems.decorations.enabled") {
             self.update_markers_file_decorations();
         }
+        if ["editor.colorDecorators", "editor.defaultColorDecorators", "editor.colorDecoratorsLimit"].iter().any(|key| affects(change, key)) {
+            self.color_providers_changed(cx);
+        }
+        if affects(change, "editor.inlayHints") {
+            self.inlay_hints_registrations_changed(cx);
+        }
         if affects(change, "editor.defaultFormatter") {
             self.refresh_language_status(cx);
         }

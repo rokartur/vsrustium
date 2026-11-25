@@ -51,7 +51,7 @@ impl Case {
             break_before: self.before.into(),
             break_after: self.after.into(),
         };
-        line_breaks(&Classifier::new(self.before, self.after), text, &options)
+        line_breaks(&Classifier::new(self.before, self.after), text, &options, &[])
     }
 
     fn annotated(&self, column: isize, text: &str) -> String {
@@ -310,7 +310,7 @@ fn editor(text: &str, column: usize) -> EditorGroup {
         break_after: BREAK_AFTER.into(),
     };
     let lines = editor.document().lines.clone();
-    editor.word_wrap.configure(Some(options), &lines);
+    editor.word_wrap.configure(Some(options), &lines, &[]);
     group
 }
 

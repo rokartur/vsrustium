@@ -122,6 +122,13 @@ mod parameter_hints;
 mod action_widget;
 mod code_actions;
 mod code_lens;
+mod color_detector;
+mod inline_completions;
+mod language_detection;
+pub mod snippet_actions;
+mod emmet;
+mod color_picker;
+mod standalone_color_picker;
 mod inlay_hints;
 mod rename;
 mod links;
@@ -271,6 +278,10 @@ pub struct Workbench {
     code_actions: code_actions::CodeActions,
     action_widget: action_widget::ActionWidget,
     code_lenses: code_lens::CodeLenses,
+    inlay_hints: inlay_hints::InlayHints,
+    color_detector: color_detector::ColorDetector,
+    inline_completions: inline_completions::InlineCompletions,
+    language_detection: language_detection::LanguageDetection,
     rename: rename::Rename,
     links: links::Links,
     semantic_tokens: semantic_tokens::SemanticTokens,
@@ -367,6 +378,7 @@ pub struct Workbench {
     debug_view: debug_view::DebugView,
     debug_console: debug_console::DebugConsole,
     problems: problems_view::ProblemsView,
+    problems_quick_fixes: problems_quick_fix::ProblemsQuickFixes,
     problems_focus: FocusHandle,
     breakpoint_widget: Option<breakpoint_widget::BreakpointWidget>,
     pub testing: testing_service::TestingService,
@@ -378,7 +390,6 @@ impl Render for Workbench {
         // Cursors move and editors switch on many paths; every one of them renders.
         self.close_editor_message_on_cursor_change(cx);
         self.stop_inspect_tokens_on_model_change();
-    problems_quick_fixes: problems_quick_fix::ProblemsQuickFixes,
         self.follow_marker_navigation_cursor();
         self.follow_references_peek_editor();
         self.follow_hierarchy_peek_editor(window, cx);
@@ -528,6 +539,10 @@ impl Workbench {
             code_actions: Default::default(),
             action_widget: Default::default(),
             code_lenses: Default::default(),
+            inlay_hints: Default::default(),
+            color_detector: Default::default(),
+            inline_completions: Default::default(),
+            language_detection: Default::default(),
             rename: rename::Rename::new(cx),
             links: links::Links::default(),
             semantic_tokens: Default::default(),
@@ -660,6 +675,10 @@ impl Workbench {
         workbench.register_code_actions();
         workbench.register_code_lens();
         workbench.register_inlay_hints();
+        workbench.register_color_detector();
+        workbench.register_standalone_color_picker();
+        workbench.register_inline_completions();
+        workbench.register_language_detection();
         workbench.register_rename();
         workbench.register_links();
         workbench.register_linked_editing();
@@ -668,6 +687,8 @@ impl Workbench {
         workbench.register_semantic_tokens();
         workbench.register_format();
         workbench.register_snippet_completions();
+        workbench.register_snippet_actions();
+        workbench.register_emmet();
         workbench.register_snippet_commands();
         workbench.register_marker_navigation_commands();
         workbench.register_quick_diff_commands();
@@ -812,6 +833,10 @@ impl Workbench {
         self.update_marker_decorations(None);
         self.code_actions_model_changed(cx);
         self.code_lens_model_changed(cx);
+        self.inlay_hints_model_changed(cx);
+        self.color_detector_model_changed(cx);
+        self.inline_completions_model_changed(cx);
+        self.language_detection_model_changed(cx);
         self.links_model_changed(cx);
         self.linked_editing_reinitialize(true, cx);
         self.semantic_tokens_model_changed(cx);

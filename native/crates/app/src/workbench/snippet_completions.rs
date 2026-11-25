@@ -44,7 +44,7 @@ impl Workbench {
 
     /// `SnippetUsageTimestamps.updateUsageTimestamp`: the snippet moves to the end with the current time; the last
     /// 100 are kept.
-    fn update_snippet_usage(&mut self, id: &str) {
+    pub(super) fn update_snippet_usage(&mut self, id: &str) {
         let mut storage = self.profile_storage.lock().unwrap();
         let mut usages: Vec<(String, i64)> = storage.get(USAGE_KEY).and_then(|raw| serde_json::from_str(raw).ok()).unwrap_or_default();
         usages.retain(|(other, _)| other != id);
@@ -52,6 +52,54 @@ impl Workbench {
         usages.push((id.to_string(), now));
         let start = usages.len().saturating_sub(100);
         storage.set(USAGE_KEY, json!(usages[start..]).to_string());
+    }
+
+    /// `SnippetsService.getSnippets`: the snippets of `language` (every language's with `None`) for the file at
+    /// `path`, filtered and sorted as `_filterAndSortSnippets`.
+    pub(super) fn get_snippets(&mut self, language: Option<&str>, path: Option<&str>, options: SnippetGetOptions) -> Vec<Snippet> {
+        self.refresh_snippet_files();
+        self.read_snippets(language, path, options)
+    }
+
+    /// `get_snippets` over the files as last read.
+    pub(super) fn read_snippets(&self, language: Option<&str>, path: Option<&str>, options: SnippetGetOptions) -> Vec<Snippet> {
+        let mut bucket: Vec<&Snippet> = Vec::new();
+        for (_, _, file) in &self.snippet_files.files {
+            match language {
+                Some(language) if self.languages.is_registered(language) => file.select(language, &mut bucket),
+                Some(_) => {}
+                None => bucket.extend(&file.data),
+            }
+        }
+        let storage = self.profile_storage.lock().unwrap();
+        let ignored: HashSet<String> = storage.get(IGNORED_KEY).and_then(|raw| serde_json::from_str(raw).ok()).unwrap_or_default();
+        let usages: Vec<(String, i64)> = storage.get(USAGE_KEY).and_then(|raw| serde_json::from_str(raw).ok()).unwrap_or_default();
+        drop(storage);
+        let usages: HashMap<String, i64> = usages.into_iter().collect();
+        filter_and_sort_snippets(bucket, path, options, &ignored, &usages).into_iter().cloned().collect()
+    }
+
+    /// The snippet files `getSnippetFiles` answers.
+    pub(super) fn snippet_files(&mut self) -> &[(PathBuf, Option<SystemTime>, SnippetFile)] {
+        self.refresh_snippet_files();
+        &self.snippet_files.files
+    }
+
+    /// `isEnabled`: not in `snippets.ignoredSnippets`.
+    pub(super) fn snippet_enabled(&self, snippet: &Snippet) -> bool {
+        let ignored: HashSet<String> = self.profile_storage.lock().unwrap().get(IGNORED_KEY).and_then(|raw| serde_json::from_str(raw).ok()).unwrap_or_default();
+        !ignored.contains(&snippet.snippet_identifier)
+    }
+
+    /// `updateEnablement`: the identifier leaves or joins `snippets.ignoredSnippets`.
+    pub(super) fn set_snippet_enabled(&mut self, snippet: &Snippet, enabled: bool) {
+        let mut storage = self.profile_storage.lock().unwrap();
+        let mut ignored: Vec<String> = storage.get(IGNORED_KEY).and_then(|raw| serde_json::from_str(raw).ok()).unwrap_or_default();
+        ignored.retain(|id| *id != snippet.snippet_identifier);
+        if !enabled {
+            ignored.push(snippet.snippet_identifier.clone());
+        }
+        storage.set(IGNORED_KEY, json!(ignored).to_string());
     }
 
     /// The files `_initExtensionSnippets`, `_initUserSnippets` and `_initWorkspaceSnippets` track.
@@ -80,7 +128,7 @@ impl Workbench {
     }
 
     /// The snippet files, read again where their modification time changed (the file watchers of upstream).
-    fn refresh_snippet_files(&mut self) {
+    pub(super) fn refresh_snippet_files(&mut self) {
         let mut files = Vec::new();
         for source in self.snippet_file_sources() {
             let modified = std::fs::metadata(&source.location).and_then(|metadata| metadata.modified()).ok();
@@ -141,7 +189,7 @@ fn folder_sources(folder: &Path, source: SnippetSource) -> Vec<FileSource> {
 }
 
 /// `_getLanguageIdAtPosition`: the embedded language at the cursor when it is a known one, else the model's.
-fn snippet_language(editor: &OpenEditor, line: usize, column: usize, languages: &crate::languages::Languages) -> String {
+pub(super) fn snippet_language(editor: &OpenEditor, line: usize, column: usize, languages: &crate::languages::Languages) -> String {
     let document = editor.document();
     let text = &document.lines[line];
     let offset = text.char_indices().nth(column).map_or(text.len(), |(offset, _)| offset);

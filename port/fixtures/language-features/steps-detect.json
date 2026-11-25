@@ -1,0 +1,1 @@
+[{"wait": 6000}, {"hotkey": ["cmd", "n"]}, {"wait": 1000}, {"type": "import os"}, {"key": "return"}, {"type": "def main():"}, {"key": "return"}, {"type": "print(os.getcwd())"}, {"key": "return"}, {"wait": 3000}, {"shot": "detected"}]

@@ -34,6 +34,7 @@ pub mod drag_and_drop;
 mod edit;
 pub mod find;
 pub mod folding;
+pub mod injected_text;
 pub(crate) mod in_place_replace;
 mod folding_controller;
 mod graphemes;
@@ -49,7 +50,7 @@ mod multicursor;
 pub mod section_headers;
 pub mod smart_select;
 pub mod smooth_scroll;
-mod snippet;
+pub(crate) mod snippet;
 pub mod snippet_session;
 pub mod sticky_scroll;
 pub mod unicode_highlighter;
@@ -591,6 +592,8 @@ pub struct OpenEditor {
     /// The snippet session of snippetController2.ts, its placeholders tracked through edits.
     pub snippet_session: Option<snippet_session::SnippetSession>,
     pub word_wrap: word_wrap::WordWrap,
+    /// The text this editor injects between the model's chars (inlay hints, color boxes), by position.
+    pub injected_text: Vec<injected_text::InjectedText>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -616,7 +619,7 @@ impl OpenEditor {
             let model = model.borrow();
             (model.version_id, word_wrap::WordWrap::new(&model.document.lines, model.document.too_large_for_tokenization))
         };
-        let mut editor = OpenEditor { seen_version, model, preview, model_id, selections: vec![Selection::default()], last_added: 0, leftovers: Vec::new(), column_select: None, smart_select: None, cursor_states: Default::default(), highlights: Vec::new(), value_set_replacement: None, selection_anchor: None, folding: FoldingModel::default(), syntax_folding: false, folded_imports: false, sticky_model: Default::default(), scroll: Scroll::default(), max_line_width: 0., view_zones: Vec::new(), snippet_session: None, word_wrap, text_decorations: Vec::new() };
+        let mut editor = OpenEditor { seen_version, model, preview, model_id, selections: vec![Selection::default()], last_added: 0, leftovers: Vec::new(), column_select: None, smart_select: None, cursor_states: Default::default(), highlights: Vec::new(), value_set_replacement: None, selection_anchor: None, folding: FoldingModel::default(), syntax_folding: false, folded_imports: false, sticky_model: Default::default(), scroll: Scroll::default(), max_line_width: 0., view_zones: Vec::new(), snippet_session: None, word_wrap, text_decorations: Vec::new(), injected_text: Vec::new() };
         editor.refresh_highlights();
         editor.refresh_folding_ranges();
         editor

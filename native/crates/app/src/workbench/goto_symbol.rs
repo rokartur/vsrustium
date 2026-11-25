@@ -9,7 +9,7 @@ use super::Workbench;
 use super::editor_message::MessagePart;
 use super::host_requests::uri_parts;
 use crate::commands::Outcome;
-use crate::editor::{OpenEditor, Position, utf16_column, visible_column, word_at};
+use crate::editor::{OpenEditor, Position, utf16_column, word_at};
 use crate::language_features::Candidate;
 use crate::references_model::{Location, ReferencesModel};
 
@@ -339,11 +339,10 @@ impl Workbench {
             return None;
         }
         let text = &editor.document().lines[index];
-        let tab_size = editor.document().indentation.tab_size;
         let from = if start.line == index { start.column } else { 0 };
         let to = if end.line == index { end.column } else { text.chars().count() };
-        let left = visible_column(text, from, tab_size) as f32 * char_width;
-        let width = visible_column(text, to, tab_size) as f32 * char_width - left;
+        let (left, right) = editor.line_layout(index).range(from, to);
+        let (left, width) = (left * char_width, (right - left) * char_width);
         let mut highlight = div().absolute().top_0().h_full().left(px(left)).w(px(width));
         if let Some(background) = self.theme.color("editor.symbolHighlightBackground") {
             highlight = highlight.bg(background);

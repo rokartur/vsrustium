@@ -375,9 +375,22 @@ impl Workbench {
             }
             StatusPick::AutoDetectLanguage => {
                 let Some(editor) = self.editors.active() else { return };
-                // shortcut: no languageDetection model (workbench/services/languageDetection is todo); a document no association matches keeps its language.
-                let Some(language_id) = self.languages.guess_language(&editor.document().path, &editor.document().lines[0]).map(str::to_string) else { return };
-                self.set_active_language(&language_id, cx);
+                let (scheme, path) = (editor.document().scheme.clone(), editor.document().path.clone());
+                let guessed = self.languages.guess_language(&path, &editor.document().lines[0]).map(str::to_string);
+                if let Some(language_id) = guessed {
+                    return self.set_active_language(&language_id, cx);
+                }
+                let detection = self.detect_language(&scheme, &path);
+                cx.spawn(async move |workbench, cx| {
+                    let detection = detection.await;
+                    let _ = workbench.update(cx, |workbench, cx| {
+                        let Some(language_id) = workbench.detected_language(detection) else { return };
+                        if workbench.editors.active().is_some_and(|editor| editor.document().scheme == scheme && editor.document().path == path) {
+                            workbench.set_active_language(&language_id, cx);
+                        }
+                    });
+                })
+                .detach();
             }
             StatusPick::Language(language_id) => self.set_active_language(&language_id, cx),
             StatusPick::ConfigureFileAssociation => self.show_file_association_picker(window, cx),

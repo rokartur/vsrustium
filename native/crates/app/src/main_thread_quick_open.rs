@@ -62,6 +62,10 @@ pub enum Owner {
     AccessibilitySignals(crate::workbench::accessibility::SignalHelp),
     /// Accessibility Help Configure (Un)assigned Keybindings.
     AccessibleViewKeybindings(crate::workbench::accessible_view::KeybindingPick),
+    /// `pickSnippet` of Insert Snippet and Surround with Snippet.
+    Snippets(crate::workbench::snippet_actions::SnippetPicker),
+    /// The snippet file name input of Configure Snippets.
+    SnippetFileName(crate::workbench::snippet_actions::SnippetFileInput),
     /// File > New File...
     NewFile(crate::workbench::new_file::NewFilePicker),
     /// Configure Metered Connection.
@@ -262,6 +266,8 @@ impl Workbench {
             Owner::Tasks(_) => self.task_pick_event(id, event, window, cx),
             Owner::TaskTemplates(_) => self.task_template_event(id, event, window, cx),
             Owner::ProfileTemplateImport => self.profile_template_import_event(id, event, window, cx),
+            Owner::Snippets(_) => self.snippet_picker_event(id, event, window, cx),
+            Owner::SnippetFileName(_) => self.snippet_file_name_event(id, event, window, cx),
         }
     }
 

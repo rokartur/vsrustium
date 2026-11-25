@@ -666,7 +666,7 @@ impl Workbench {
 
         let text = &editor.document().lines[index];
         let tab_size = editor.document().indentation.tab_size;
-        let x = |column: usize| visible_column(text, column, tab_size) as f32 * char_width;
+        let layout = editor.line_layout(index);
         let byte = |column: usize| expand_tabs(&text.chars().take(column).collect::<String>(), tab_size).len();
         let first = model.matches.partition_point(|range| range.end.line < index);
         let mut current = None;
@@ -674,8 +674,9 @@ impl Workbench {
             let Some((start, end, line_break)) = selected_columns(Selection { anchor: range.start, head: range.end }, index, text) else { continue };
             let is_current = model.highlighted == Some(match_index);
             // `linesVisibleRangesForRange` includes the line break for `findMatch` only.
-            let right = x(end) + if line_break && !is_current { char_width } else { 0. };
-            let decoration = div().absolute().top_0().h_full().left(px(x(start))).w(px(right - x(start)));
+            let (left, right) = layout.range(start, end);
+            let (left, right) = (left * char_width, right * char_width + if line_break && !is_current { char_width } else { 0. });
+            let decoration = div().absolute().top_0().h_full().left(px(left)).w(px(right - left));
             let (decoration, foreground) = match is_current {
                 true => (bordered(decoration, self.theme.color("editor.findMatchBackground"), self.theme.color("editor.findMatchBorder"), 2.), "editor.findMatchForeground"),
                 false => (bordered(decoration, self.theme.color("editor.findMatchHighlightBackground"), self.theme.color("editor.findMatchHighlightBorder"), 1.), "editor.findMatchHighlightForeground"),

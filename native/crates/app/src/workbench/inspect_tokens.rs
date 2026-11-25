@@ -87,7 +87,7 @@ impl Workbench {
             return None;
         }
         let view_line = editor.position_view_line(position, false);
-        let anchor_left = editor.segment_visible_column(editor.segment(view_line), position.column) as f32 * char_width;
+        let anchor_left = editor.segment_visible_column(editor.segment(view_line), position.column) * char_width;
         let anchor_top = editor.line_top(view_line, self.editors.viewport) - editor.scroll.top;
         let measured = self.inspect_tokens.widget_bounds.get().map(|bounds| bounds.size);
         let size = measured.unwrap_or(Size { width: 0., height: 0. });

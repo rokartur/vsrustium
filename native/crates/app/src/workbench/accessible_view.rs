@@ -309,6 +309,7 @@ impl Workbench {
             texts.push(match &part.content {
                 PartContent::Marker(marker) => super::content_hover_view::marker_accessible_content(marker),
                 PartContent::Markdown(contents) => contents.iter().filter(|content| !crate::markdown::is_empty(content)).map(|content| plain_text(&parse(&MarkdownString::from_value(content)))).collect::<Vec<_>>().join("\n"),
+                PartContent::ColorPicker => "There is a color picker here.".to_owned(),
             });
         }
         Some(texts.join("\n\n"))

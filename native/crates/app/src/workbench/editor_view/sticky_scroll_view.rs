@@ -153,7 +153,7 @@ impl Workbench {
             numbers.push(number);
             let text = &editor.document().lines[line - 1];
             // stickyScrollWidget.ts renders the line's first view line only.
-            let wrapped_width = editor.wraps().then(|| editor.wrapped_line_width(editor.view_line(line - 1)).unwrap_or_default() as f32 * metrics.char_width);
+            let wrapped_width = editor.wraps().then(|| editor.wrapped_line_width(editor.view_line(line - 1)).unwrap_or_default() * metrics.char_width);
             let highlights = editor.document().tokens.highlights(&self.theme, &self.languages, &editor.document().lines, line - 1, tab_size);
             let span_starts = editor.document().tokens.span_starts(&self.theme, &self.languages, &editor.document().lines, line - 1);
             let column_at = move |workbench: &Workbench, event: &ClickEvent| {

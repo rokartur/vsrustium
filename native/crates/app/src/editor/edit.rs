@@ -1069,6 +1069,9 @@ impl OpenEditor {
                 selection.anchor = folding::tracked(selection.anchor, start, end, new_end, false);
                 selection.head = folding::tracked(selection.head, start, end, new_end, false);
             }
+            for injection in &mut self.injected_text {
+                injection.position = folding::tracked(injection.position, start, end, new_end, injection.at_range_start);
+            }
         }
         let lines = &model.document.lines;
         let clamp = |position: Position| {
@@ -1078,7 +1081,12 @@ impl OpenEditor {
         for selection in &mut selections {
             *selection = Selection { anchor: clamp(selection.anchor), head: clamp(selection.head) };
         }
-        self.word_wrap.lines_changed_elsewhere(lines);
+        for injection in &mut self.injected_text {
+            let line = injection.position.line.min(lines.len() - 1);
+            injection.position = Position::new(line, injection.position.column.min(cursor::line_len(lines, line)));
+        }
+        self.injected_text.sort_by_key(|injection| injection.position);
+        self.word_wrap.lines_changed_elsewhere(lines, &self.injected_text);
         drop(model);
         self.seen_version = version;
         self.selections = selections;
@@ -1133,6 +1141,7 @@ impl OpenEditor {
         drop(model);
         self.track_markers(start, end, text);
         self.track_view_zones(start, end, text);
+        self.track_injected_text(start, end, text);
         if let Some(session) = self.snippet_session.as_mut() {
             session.track(start, end, text);
         }
@@ -1142,7 +1151,7 @@ impl OpenEditor {
         let suffix: String = lines[end.line].chars().skip(end.column).collect();
         let joined = prefix + text + &suffix;
         lines.splice(start.line..=end.line, joined.split('\n').map(String::from));
-        self.word_wrap.lines_replaced(lines, start.line, end.line, text.split('\n').count());
+        self.word_wrap.lines_replaced(lines, start.line, end.line, text.split('\n').count(), &self.injected_text);
         model.document.tokens.invalidate_from(start.line);
         drop(model);
         change

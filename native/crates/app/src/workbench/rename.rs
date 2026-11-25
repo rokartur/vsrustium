@@ -376,7 +376,7 @@ impl Workbench {
         let viewport = self.editors.viewport;
         let view_line = editor.position_view_line(widget.start, false);
         let segment = editor.segment(view_line);
-        let left = editor.segment_visible_column(segment, widget.start.column) as f32 * char_width - editor.scroll.left + content_left;
+        let left = editor.segment_visible_column(segment, widget.start.column) * char_width - editor.scroll.left + content_left;
         let line_top = editor.line_top(view_line, viewport) - editor.scroll.top;
         let editor_bounds = self.text_area_bounds.get();
         let window_size = window.viewport_size().map(f32::from);

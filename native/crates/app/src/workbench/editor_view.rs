@@ -19,6 +19,7 @@ use gpui::{
 pub(super) mod diff_editor_view;
 pub(super) mod diff_gutter;
 pub(super) mod drag_and_drop;
+pub(super) mod injected_text_view;
 pub(super) mod merge_editor_view;
 pub(super) mod multi_diff_editor_view;
 pub(super) mod quick_diff;
@@ -392,7 +393,7 @@ impl Workbench {
         let head = editor.selection().head;
         let viewport = self.editors.viewport;
         let view_line = editor.head_view_line(0);
-        let left = metrics.content_left() + editor.segment_visible_column(editor.segment(view_line), head.column) as f32 * metrics.char_width - editor.scroll.left;
+        let left = metrics.content_left() + editor.segment_visible_column(editor.segment(view_line), head.column) * metrics.char_width - editor.scroll.left;
         let top = editor.line_top(view_line, viewport) - editor.scroll.top + metrics.line_height;
         let origin = self.text_area_bounds.get().origin;
         Some(point(px(origin.x + left), px(origin.y + top)))
@@ -470,6 +471,7 @@ impl Workbench {
                 workbench.content_hover_modifiers_changed(event.modifiers, cx);
                 workbench.links_modifiers_changed(event.modifiers, cx);
                 workbench.definition_link_modifiers_changed(event.modifiers, cx);
+                workbench.inlay_hints_modifiers_changed(event.modifiers, cx);
             }))
             .on_hover(cx.listener(|workbench, hovered: &bool, window, cx| {
                 workbench.scrollbars.mouse_over = *hovered;
@@ -591,6 +593,8 @@ impl Workbench {
                         shifted
                             .children(self.editor_message_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
                             .children(self.content_hover_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
+                            .children(self.standalone_color_picker_widget(editor, metrics.content_left(), metrics.char_width, cx))
+                            .children(self.ghost_text_lines(editor, metrics.content_left()))
                             .children(self.inspect_tokens_widget(editor, metrics.content_left(), metrics.char_width, window))
                     }),
             )
@@ -706,8 +710,8 @@ impl Workbench {
             let text = &document.lines[editor.model_line(view_line)];
             let tab_size = editor.document().indentation.tab_size;
             let width = match line_overflow(text, self.stop_rendering_line_after) {
-                _ if editor.wraps() => editor.wrapped_line_width(view_line).unwrap_or_default() as f32 * viewport.char_width,
-                None => visible_column(text, text.chars().count(), tab_size) as f32 * viewport.char_width,
+                _ if editor.wraps() => editor.wrapped_line_width(view_line).unwrap_or_default() * viewport.char_width,
+                None => editor.line_layout(editor.model_line(view_line)).width() * viewport.char_width,
                 Some((limit, _, label)) => visible_column(text, limit, tab_size) as f32 * viewport.char_width + show_more_width(&label, viewport.char_width),
             };
             drop(document);
@@ -767,6 +771,7 @@ impl Workbench {
         self.reveal_scrollbars(cx);
         self.minimap_scrolled(cx);
         self.code_lens_scrolled(cx);
+        self.inlay_hints_scrolled(cx);
         cx.notify();
     }
 
@@ -986,8 +991,10 @@ impl Workbench {
             if start > end || (start == end && !line_break && !segment.first) {
                 return None;
             }
-            let left = editor.segment_visible_column(segment, start) as f32 * char_width;
-            Some((left, editor.segment_visible_column(segment, end) as f32 * char_width + if line_break { char_width } else { 0. }))
+            let layout = editor.line_layout(segment.line);
+            let (left, right) = layout.range(start, end);
+            let segment_left = segment.indent as f32 - layout.x(segment.start);
+            Some(((segment_left + left) * char_width, (segment_left + right) * char_width + if line_break { char_width } else { 0. }))
         };
         let mut fold_starts = HashMap::new();
         for (range, decoration) in editor.folding.regions.ranges().iter().zip(editor.folding.decorations()) {
@@ -1000,8 +1007,9 @@ impl Workbench {
                 let segment = editor.segment(view_line);
                 let index = segment.line;
                 let text = &editor.document().lines[index];
+                let layout = editor.line_layout(index);
                 // The x of the segment's first char in the model line's x, which the line's decorations use.
-                let shift = (visible_column(text, segment.start, tab_size) as f32 - segment.indent as f32) * char_width;
+                let shift = (layout.x(segment.start) - segment.indent as f32) * char_width;
                 let collapsed = fold_starts.get(&index).copied().filter(|_| segment.first);
                 // lineNumbers.ts marks only the primary cursor's line active.
                 let number = div()
@@ -1089,13 +1097,13 @@ impl Workbench {
                 let (find_whole_lines, find_matches, find_colors) = self.find_line_decorations(editor, index, char_width, scroll_left);
                 content = content.children(find_whole_lines);
                 content = content.children(self.diff_line_decorations(editor, index, char_width, scroll_left));
-                content = content.children(self.text_decoration_boxes(editor, index, scroll_left, |column| visible_column(text, column, tab_size) as f32 * char_width));
+                content = content.children(self.text_decoration_boxes(editor, index, scroll_left, |column| layout.x(column) * char_width));
                 content = content.children(self.search_editor_line_decorations(editor, index, char_width));
                 // anchorSelect.css: `.selection-anchor` is a 2px #007ACC bar in every theme, under the word highlights.
                 if let Some(anchor) = editor.selection_anchor
                     && anchor.line == index
                 {
-                    let left = visible_column(text, anchor.column, tab_size) as f32 * char_width;
+                    let left = layout.x(anchor.column) * char_width;
                     content = content.child(div().absolute().top_0().h_full().left(px(left)).w(px(2.)).bg(rgb(0x007ACC)));
                 }
                 // highlightDecorations.css: `.focused .selectionHighlight`, drawn under the word highlights.
@@ -1103,8 +1111,8 @@ impl Workbench {
                 let first = selection_highlights.partition_point(|range| range.end.line < index);
                 let on_line = selection_highlights[first..].iter().take_while(|range| range.start.line <= index);
                 for (start, end, _) in on_line.filter_map(|range| selected_columns(Selection { anchor: range.start, head: range.end }, index, text)) {
-                    let start = visible_column(text, start, tab_size) as f32 * char_width;
-                    let end = visible_column(text, end, tab_size) as f32 * char_width;
+                    let (start, end) = layout.range(start, end);
+                    let (start, end) = (start * char_width, end * char_width);
                     let mut highlight = div().absolute().top_0().h_full().left(px(start)).w(px(end - start));
                     if let Some(background) = colors.selection_highlight {
                         highlight = highlight.bg(background);
@@ -1116,8 +1124,8 @@ impl Workbench {
                     content = content.child(highlight);
                 }
                 for (_, columns) in editor.highlights.iter().filter(|(line, _)| *line == index) {
-                    let start = visible_column(text, columns.start, tab_size) as f32 * char_width;
-                    let end = visible_column(text, columns.end, tab_size) as f32 * char_width;
+                    let (start, end) = layout.range(columns.start, columns.end);
+                    let (start, end) = (start * char_width, end * char_width);
                     let mut highlight = div().absolute().top_0().h_full().left(px(start)).w(px(end - start));
                     let (word_background, word_border) = self.word_highlight_colors(index, columns);
                     if let Some(background) = word_background {
@@ -1136,8 +1144,8 @@ impl Workbench {
                 content = content.children(self.definition_link_cursor(editor, index, char_width));
                 // bracketMatching.css .bracket-match: background and a 1px border inside the bracket's box.
                 for (_, bytes) in bracket_matches.iter().flat_map(|(pair, _)| pair).filter(|(line, _)| *line == index) {
-                    let start = visible_column(text, text[..bytes.start].chars().count(), tab_size) as f32 * char_width;
-                    let end = visible_column(text, text[..bytes.end].chars().count(), tab_size) as f32 * char_width;
+                    let (start, end) = layout.range(text[..bytes.start].chars().count(), text[..bytes.end].chars().count());
+                    let (start, end) = (start * char_width, end * char_width);
                     let mut bracket = div().absolute().top_0().h_full().left(px(start)).w(px(end - start));
                     if let Some(background) = bracket_box.0 {
                         bracket = bracket.bg(background);
@@ -1148,8 +1156,8 @@ impl Workbench {
                     content = content.child(bracket);
                 }
                 content = content.children(self.unicode_highlight_boxes(editor, index, unicode.as_ref(), char_width));
-                content = content.children(self.keybinding_mark_boxes(editor, index, |column| visible_column(text, column, tab_size) as f32 * char_width));
-                content = content.children(self.marker_line_decorations(editor, index, char_width, |column| visible_column(text, column, tab_size) as f32 * char_width));
+                content = content.children(self.keybinding_mark_boxes(editor, index, |column| layout.x(column) * char_width));
+                content = content.children(self.marker_line_decorations(editor, index, char_width, |column| layout.x(column) * char_width));
                 content = content.children(find_matches);
                 // inPlaceReplace.css: .valueSetReplacement only in the light theme (`.monaco-editor.vs`), a 2px outline.
                 if let Some((_, line, columns)) = &editor.value_set_replacement
@@ -1157,8 +1165,8 @@ impl Workbench {
                     && self.theme.kind == ThemeKind::Light
                     && let Some(border) = bracket_box.1
                 {
-                    let start = visible_column(text, columns.start, tab_size) as f32 * char_width;
-                    let end = visible_column(text, columns.end, tab_size) as f32 * char_width;
+                    let (start, end) = layout.range(columns.start, columns.end);
+                    let (start, end) = (start * char_width, end * char_width);
                     content = content.child(div().absolute().top(px(-2.)).bottom(px(-2.)).left(px(start - 2.)).w(px(end - start + 4.)).border_2().border_color(border));
                 }
                 let selected: Vec<_> = selections
@@ -1170,7 +1178,7 @@ impl Workbench {
                 let rendered_len = line_overflow(text, self.stop_rendering_line_after).map_or(text.chars().count(), |(limit, _, _)| limit);
                 let marks = whitespace_marks(text, render_whitespace, &selected, rendered_len);
                 if !marks.is_empty() {
-                    let marks: Vec<_> = marks.into_iter().map(|mark| (visible_column(text, mark, tab_size) as f32 * char_width, text.chars().nth(mark) == Some('\t'))).collect();
+                    let marks: Vec<_> = marks.into_iter().map(|mark| (layout.char_x(mark) * char_width, text.chars().nth(mark) == Some('\t'))).collect();
                     content = content.child(whitespace_canvas(marks, char_width, line_height, whitespace_color));
                 }
                 let mut highlights = editor.document().tokens.highlights(&self.theme, &self.languages, &editor.document().lines, index, tab_size);
@@ -1189,7 +1197,7 @@ impl Workbench {
                 let runs = gpui::combine_highlights(runs, self.definition_link_styles(editor, index, tab_size));
                 let mut show_more = None;
                 match line_overflow(text, self.stop_rendering_line_after) {
-                    None => content = content.child(div().absolute().top_0().left_0().whitespace_nowrap().child(StyledText::new(expand_tabs(text, tab_size)).with_highlights(runs))),
+                    None => content = content.children(injected_text_view::line_text_pieces(expand_tabs(text, tab_size), runs.collect(), text, &layout, tab_size, char_width)),
                     Some((limit, byte, label)) => {
                         // viewLineRenderer.ts: the first `stopRenderingLineAfter` chars, then the .mtkoverflow "Show more" span.
                         let rendered = expand_tabs(&text[..byte], tab_size);
@@ -1199,7 +1207,7 @@ impl Workbench {
                         let foreground = self.theme.color("button.foreground").unwrap_or(colors.text);
                         let span = div()
                             .absolute()
-                            .left(px(visible_column(text, limit, tab_size) as f32 * char_width - scroll_left))
+                            .left(px(layout.x(limit) * char_width - scroll_left))
                             .w(px(show_more_width(&label, char_width)))
                             .h_full()
                             .rounded(px(2.))
@@ -1216,12 +1224,13 @@ impl Workbench {
                         show_more = Some(div().absolute().left(px(metrics.content_left())).right_0().top(px(-3.)).h(px(24.)).overflow_hidden().child(span));
                     }
                 }
+                content = content.children(self.injected_text_elements(editor, index, &layout, &metrics, cx));
                 if render_control_characters {
-                    content = content.children(self.control_character_boxes(text, tab_size, char_width, rendered_len));
+                    content = content.children(self.control_character_boxes(text, &layout, tab_size, char_width, rendered_len));
                 }
                 // folding.css .inline-folded:after: an ellipsis 0.2em after the line's last char.
                 if collapsed == Some(true) && segment.last {
-                    let end = visible_column(text, text.chars().count(), tab_size) as f32 * char_width + 0.2 * metrics.font_size;
+                    let end = layout.width() * char_width + 0.2 * metrics.font_size;
                     content = content.child(div().absolute().top_0().left(px(end)).text_color(fold_placeholder).cursor_pointer().child("\u{22EF}"));
                 }
                 for (cursor_index, selection) in selections.iter().enumerate().filter(|(cursor_index, _)| focused && editor.head_view_line(*cursor_index) == view_line) {
@@ -1235,7 +1244,7 @@ impl Workbench {
                     if self.stop_rendering_line_after.is_some_and(|limit| selection.head.column > limit) {
                         continue;
                     }
-                    let x = visible_column(text, selection.head.column, tab_size) as f32 * char_width;
+                    let x = layout.x(selection.head.column) * char_width;
                     if block_cursor {
                         // viewCursor.ts block: one char wide (a tab too), the char under it in `editorCursor.background`,
                         // else the caret color's opposite (viewCursors.ts).
@@ -1249,10 +1258,14 @@ impl Workbench {
                     content = content.child(div().absolute().top_0().left(px(left)).w(px(2.)).h_full().bg(color));
                 }
                 if let Some(target) = self.text_drag.as_ref().and_then(|drag| drag.target).filter(|target| target.line == index) {
-                    content = content.child(self.drop_target_marker(visible_column(text, target.column, tab_size) as f32 * char_width));
+                    content = content.child(self.drop_target_marker(layout.x(target.column) * char_width));
                 }
-                let segment_columns = (visible_column(text, segment.start, tab_size) as f32, if segment.last { f32::MAX } else { visible_column(text, segment.end, tab_size) as f32 });
-                let visible_at = move |workbench: &Workbench, x: gpui::Pixels| ((f32::from(x) - workbench.text_area_left.get() - metrics.content_left() + scroll_left + shift) / char_width).clamp(segment_columns.0, segment_columns.1);
+                let segment_columns = (layout.x(segment.start), if segment.last { f32::MAX } else { layout.x(segment.end) });
+                // The click handlers take the model text's visible column; the injected text's x is left out here.
+                let visible_at = move |workbench: &Workbench, x: gpui::Pixels| {
+                    let x = ((f32::from(x) - workbench.text_area_left.get() - metrics.content_left() + scroll_left + shift) / char_width).clamp(segment_columns.0, segment_columns.1);
+                    workbench.editors.active().map_or(x, |editor| editor.line_layout(index).model_visible(x))
+                };
                 let content = div()
                     .relative()
                     .flex_1()
@@ -1772,7 +1785,7 @@ impl Workbench {
         });
         let mut items: Vec<gpui::AnyElement> = items.collect();
         if let Some(language_index) = language_index {
-            items.splice(language_index + 1..language_index + 1, pinned);
+            items.splice(language_index + 1..language_index + 1, self.language_detection_status_item(foreground, cx).into_iter().chain(pinned));
             if let Some(combined) = combined {
                 items.insert(language_index, combined);
             }

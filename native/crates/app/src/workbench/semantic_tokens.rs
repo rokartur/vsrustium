@@ -627,7 +627,7 @@ fn encode_full_tokens(data: &[u32]) -> Value {
 
 /// `getVisibleRangesPlusViewportAboveBelow`: the completely visible view lines and a viewport (20 lines at least)
 /// above and below, as model line ranges around the folded lines.
-fn visible_ranges_plus_viewport_above_below(editor: &OpenEditor, viewport: crate::editor::Viewport) -> Vec<(usize, usize)> {
+pub(super) fn visible_ranges_plus_viewport_above_below(editor: &OpenEditor, viewport: crate::editor::Viewport) -> Vec<(usize, usize)> {
     let lines = editor.completely_visible_lines(viewport);
     let around = ((viewport.height / viewport.line_height).round() as usize).max(20);
     let start = lines.start.saturating_sub(around);

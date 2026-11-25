@@ -83,6 +83,11 @@ impl Registry {
         );
     }
 
+    /// The scope name of the last grammar contributed for `language`.
+    pub fn scope_name(&self, language: &str) -> Option<&str> {
+        self.language_to_scope.get(language).map(String::as_str)
+    }
+
     pub fn has_grammar(&self, language: &str) -> bool {
         self.language_to_scope.contains_key(language)
     }

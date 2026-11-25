@@ -38,6 +38,16 @@ pub struct Snippet {
 }
 
 impl Snippet {
+    /// `usesSelectionVariable`: the body has `$SELECTION` or `$TM_SELECTED_TEXT`.
+    pub fn uses_selection(&self) -> bool {
+        crate::editor::snippet::variable_names(&self.body).iter().any(|name| name == "SELECTION" || name == "TM_SELECTED_TEXT")
+    }
+
+    /// `needsClipboard`: the body has `$CLIPBOARD`.
+    pub fn needs_clipboard(&self) -> bool {
+        crate::editor::snippet::variable_names(&self.body).iter().any(|name| name == "CLIPBOARD")
+    }
+
     /// `Snippet.isFileIncluded`: exclude globs first, then include globs, case-insensitive; a pattern with a '/'
     /// matches the whole path, any other the file name.
     pub fn is_file_included(&self, path: &str) -> bool {

@@ -5,10 +5,13 @@
 use gpui::{Div, ParentElement, Styled, div, px, rgb};
 
 use super::Workbench;
-use crate::editor::{char_columns, is_bidi_format_character, visible_column};
+use crate::editor::injected_text::LineLayout;
+use crate::editor::{char_columns, is_bidi_format_character};
+#[cfg(test)]
+use crate::editor::visible_column;
 
 impl Workbench {
-    pub(super) fn control_character_boxes(&self, text: &str, tab_size: usize, char_width: f32, rendered_len: usize) -> Vec<Div> {
+    pub(super) fn control_character_boxes(&self, text: &str, layout: &LineLayout, tab_size: usize, char_width: f32, rendered_len: usize) -> Vec<Div> {
         let mut boxes = Vec::new();
         for (column, c) in text.chars().take(rendered_len).enumerate() {
             let label = match control_picture(c) {
@@ -17,7 +20,7 @@ impl Workbench {
                 None if is_bidi_format_character(c) => format!("[U+{:04X}]", c as u32),
                 None => continue,
             };
-            let left = visible_column(text, column, tab_size) as f32 * char_width;
+            let left = layout.char_x(column) * char_width;
             let width = char_columns(c, 0, tab_size) as f32 * char_width;
             boxes.push(div().absolute().top_0().h_full().left(px(left)).w(px(width)).bg(rgb(0x960000)).text_color(rgb(0xffffff)).whitespace_nowrap().child(label));
         }
