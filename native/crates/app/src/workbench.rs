@@ -5,6 +5,7 @@
 mod actions;
 mod bulk_text_edits;
 mod context_menu;
+pub mod custom_editors;
 mod define_keybinding;
 mod diagnostics;
 mod editor_commands;
@@ -46,6 +47,8 @@ mod title_bar_actions;
 mod unicode_highlight;
 mod unusual_line_terminators;
 mod url_handlers;
+mod webview_views;
+mod media_preview;
 mod webview_panels;
 
 use std::cell::Cell;
@@ -150,6 +153,7 @@ pub struct Workbench {
     pub search_editor_widget: search_editor_widget::SearchEditorWidget,
     pub webview_panels: webview_panels::WebviewPanels,
     url_handlers: url_handlers::UrlHandlers,
+    webview_views: webview_views::WebviewViews,
     /// `MenuRegistry`.
     pub menus: Vec<crate::menus::MenuItem>,
     pub(crate) context_menu: Option<context_menu::ContextMenu>,
@@ -283,6 +287,7 @@ impl Workbench {
             search_editor_widget: search_editor_widget::SearchEditorWidget::new(cx),
             webview_panels: Default::default(),
             url_handlers: Default::default(),
+            webview_views: Default::default(),
             menus: crate::menus::workbench_menus(),
             context_menu: None,
             context_menus_shown: 0,
@@ -295,6 +300,7 @@ impl Workbench {
         };
         crate::main_thread_commands::register_commands_documentation(&mut workbench);
         workbench.register_workbench_actions();
+        workbench.register_media_preview_commands();
         workbench.register_editor_commands();
         workbench.register_find_commands();
         workbench.register_sticky_scroll_commands();
@@ -357,6 +363,11 @@ impl Workbench {
         }
         if path.to_string_lossy().ends_with(crate::search_editor::SEARCH_EDITOR_EXT) {
             return self.open_search_editor_file(path, pinned, window, cx);
+        }
+        if let Some(view_type) = self.custom_editor_for("file", &path) {
+            let options = serde_json::json!({ "pinned": pinned, "preserveFocus": !pinned });
+            drop(self.open_with_resolver(&exthost::scan::file_uri(&path), Some(&view_type), options, window, cx));
+            return;
         }
         match self.editors.find(&path) {
             Some(index) => {
@@ -787,6 +798,7 @@ impl Workbench {
                 ).children(self.explorer_find_widget(window, cx))))
             .child(self.section_header("Outline", false, true))
             .child(self.section_header("Timeline", false, true))
+            .children(self.webview_view_panes(cx))
             // The pane view is laid out 5px shorter than the side bar content.
             .child(div().h(px(5.)).flex_none())
     }

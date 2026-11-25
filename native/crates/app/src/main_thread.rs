@@ -112,6 +112,10 @@ impl MainThread for WorkbenchMainThread {
                 let json = (0..buffers.len()).map(|index| json!({ "$$ref$$": index })).collect();
                 args.push(Arg::JsonWithBuffers { json, buffers });
             }
+            // webviewViewPane.ts passes the title it was never given as `undefined`, which the view's getter returns.
+            if (message.proxy, message.method) == ("ExtHostWebviewViews", "$resolveWebviewView") && matches!(args.get(2), Some(Arg::Json(Value::Null))) {
+                args[2] = Arg::Undefined;
+            }
             let req = session.send_request(message.proxy, message.method, args);
             if let Some(reply) = message.reply {
                 self.waiting.push((req, reply));

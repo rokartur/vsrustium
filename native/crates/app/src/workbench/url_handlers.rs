@@ -58,7 +58,7 @@ impl Workbench {
                 None => return,
             },
         };
-        let trusted = trusted_extensions(&self.profile_storage.lock().unwrap().get(USER_TRUSTED_EXTENSIONS_STORAGE_KEY).unwrap_or("[]")).contains(&id);
+        let trusted = trusted_extensions(self.profile_storage.lock().unwrap().get(USER_TRUSTED_EXTENSIONS_STORAGE_KEY).unwrap_or("[]")).contains(&id);
         if trusted {
             self.handle_url_by_extension(id, uri);
             return;
@@ -77,7 +77,7 @@ impl Workbench {
                 .update(cx, |workbench, _| {
                     if remember {
                         let mut storage = workbench.profile_storage.lock().unwrap();
-                        let mut ids = trusted_extensions(&storage.get(USER_TRUSTED_EXTENSIONS_STORAGE_KEY).unwrap_or("[]"));
+                        let mut ids = trusted_extensions(storage.get(USER_TRUSTED_EXTENSIONS_STORAGE_KEY).unwrap_or("[]"));
                         ids.push(id.clone());
                         storage.set(USER_TRUSTED_EXTENSIONS_STORAGE_KEY, json!(ids).to_string());
                     }

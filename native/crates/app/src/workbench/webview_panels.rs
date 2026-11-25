@@ -12,6 +12,9 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use super::Workbench;
+use super::custom_editors::{CustomEditor, CustomEditors};
+use super::media_preview::MediaPreview;
+use super::webview_views::WEBVIEW_VIEW_SCHEME;
 use crate::commands::Outcome;
 use crate::editor::{OpenEditor, TextDocument};
 use crate::host_sync::WebviewTab;
@@ -23,7 +26,8 @@ pub const WEBVIEW_PANEL_SCHEME: &str = "webview-panel";
 
 #[derive(Default)]
 pub struct WebviewPanels {
-    panels: Vec<WebviewPanel>,
+    pub(super) panels: Vec<WebviewPanel>,
+    pub(super) custom_editors: CustomEditors,
     events: Option<UnboundedSender<WebviewEvent>>,
     /// `$registerSerializer` view types.
     serializers: HashSet<String>,
@@ -31,26 +35,31 @@ pub struct WebviewPanels {
     active: Option<String>,
 }
 
-struct WebviewPanel {
-    handle: String,
-    /// The editor's model path: `webview-panel/webview-<providerId>-<resourceId>` (webviewEditorInput.ts).
-    path: PathBuf,
+pub(super) struct WebviewPanel {
+    pub(super) handle: String,
+    /// The scheme and path of the editor's model: `webview-panel/webview-<providerId>-<resourceId>`
+    /// (webviewEditorInput.ts), or a custom text editor's resource.
+    pub(super) scheme: String,
+    pub(super) path: PathBuf,
     /// The extension's view type; the editor id is `mainThreadWebview-<viewType>` (`WebviewViewTypeTransformer`).
-    view_type: String,
-    title: String,
+    pub(super) view_type: String,
+    pub(super) title: String,
     extension_id: String,
     /// `webviewOriginStore.getOrigin`: one origin per view type and extension, so its storage persists.
     origin: String,
-    html: String,
+    pub(super) html: String,
     /// `IWebviewContentOptions`.
     content_options: Value,
     retain_context_when_hidden: bool,
     /// `do-update-state`: what `vscode.setState` stored, given back when a released webview loads again.
-    state: Value,
+    pub(super) state: Value,
     /// `$setIconPath`: the light and the dark theme's icon file.
     icon: Option<(PathBuf, PathBuf)>,
     /// Created when the editor first shows; released while hidden unless `retainContextWhenHidden`.
-    webview: Option<Webview>,
+    pub(super) webview: Option<Webview>,
+    pub(super) custom: Option<CustomEditor>,
+    /// A built-in media preview's page, which talks to the workbench instead of an extension.
+    pub(super) media: Option<MediaPreview>,
 }
 
 impl Workbench {
@@ -129,23 +138,12 @@ impl Workbench {
     // shortcut: one editor group, so every view column opens in it; ViewColumn.Beside needs the editor groups row.
     fn create_webview_panel(&mut self, args: &[Value], window: &mut Window, cx: &mut Context<Self>) {
         let (extension, handle, view_type, init, show) = (&args[0], args[1].as_str().unwrap_or_default(), args[2].as_str().unwrap_or_default(), &args[3], &args[4]);
-        let extension_id = extension["id"]["value"].as_str().or(extension["id"].as_str()).unwrap_or_default().to_owned();
         let path = PathBuf::from(format!("webview-panel/webview-undefined-{handle}"));
         let document = TextDocument::from_text(WEBVIEW_PANEL_SCHEME, &path, "", "utf8".into(), None, &self.languages, &self.settings.lock().unwrap());
-        self.webview_panels.panels.push(WebviewPanel {
-            handle: handle.to_owned(),
-            path,
-            view_type: view_type.to_owned(),
-            title: init["title"].as_str().unwrap_or_default().to_owned(),
-            origin: webview_origin(view_type, &extension_id),
-            extension_id,
-            html: String::new(),
-            content_options: init["webviewOptions"].clone(),
-            retain_context_when_hidden: init["panelOptions"]["retainContextWhenHidden"] == true,
-            state: Value::Null,
-            icon: None,
-            webview: None,
-        });
+        let title = init["title"].as_str().unwrap_or_default().to_owned();
+        let retain = init["panelOptions"]["retainContextWhenHidden"] == true;
+        let panel = WebviewPanel::new(handle.to_owned(), WEBVIEW_PANEL_SCHEME.into(), path, view_type, title, extension, init["webviewOptions"].clone(), retain, None);
+        self.webview_panels.panels.push(panel);
         self.editors.open(document, false);
         self.editors_changed(cx);
         if show["preserveFocus"] != true {
@@ -153,9 +151,19 @@ impl Workbench {
         }
     }
 
+    /// The editor is a webview panel's or a custom editor's, which draws a webview in place of the text.
+    pub(super) fn shows_webview(&self, editor: &OpenEditor) -> bool {
+        self.webview_panels.panels.iter().any(|panel| panel.shows(editor))
+    }
+
     /// The body of a webview editor: an empty box the native view is placed over once laid out.
     pub(super) fn webview_editor_body(&self, editor: &OpenEditor) -> Div {
-        let view = self.webview_panel(&editor.document.path).and_then(|panel| panel.webview.as_ref()).map(Webview::view);
+        self.webview_body(|panel| panel.shows(editor))
+    }
+
+    /// The box the webview of the first matching panel is placed over.
+    pub(super) fn webview_body(&self, matches: impl Fn(&WebviewPanel) -> bool) -> Div {
+        let view = self.webview_panels.panels.iter().find(|panel| matches(panel)).and_then(|panel| panel.webview.as_ref()).map(Webview::view);
         div().flex_1().min_h_0().child(
             canvas(
                 move |bounds, window, _| {
@@ -172,14 +180,19 @@ impl Workbench {
     /// Runs each render: the active panel's webview exists, the others hide or are released, and a webview
     /// gives the keyboard back once GPUI focused one of its own elements.
     pub(super) fn update_webview_panels(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let active = self.editors.active().map(|editor| editor.document.path.clone());
+        self.update_webview_views();
+        let visible_views = self.visible_webview_views();
+        let active = self.editors.active().map(|editor| (editor.document.scheme.clone(), editor.document.path.clone()));
         // Native views draw over GPUI's layer: a quick input or menu on top of the webview would be hidden.
         // shortcut: the webview hides under these overlays, where Electron draws them over its iframe.
         let covered = self.quick_inputs.current().is_some() || self.keybindings_editor.open || self.context_menu.is_some();
         let gpui_focused = window.focused(cx).is_some();
         let mut created = Vec::new();
         for panel in &mut self.webview_panels.panels {
-            let shown = active.as_deref() == Some(panel.path.as_path());
+            let shown = match panel.scheme == WEBVIEW_VIEW_SCHEME {
+                true => visible_views.contains(&panel.path),
+                false => active.as_ref().is_some_and(|(scheme, path)| panel.scheme == *scheme && panel.path == *path),
+            };
             if shown && panel.webview.is_none() {
                 created.push(panel.handle.clone());
             }
@@ -235,11 +248,21 @@ impl Workbench {
                     webview.did_become_ready();
                 }
             }
+            "onmessage" if panel.media.is_some() => {
+                let message = data["message"].as_str().and_then(|text| serde_json::from_str(text).ok()).unwrap_or_default();
+                self.handle_media_preview_message(&event.id, &message, window, cx);
+            }
             "onmessage" => {
                 // serializeWebviewMessage ran in the host page's bridge: JSON text, the ArrayBuffers as base64.
                 self.host.send("ExtHostWebviews", "$onMessage", vec![json!(event.id), data["message"].clone(), data["buffers"].clone()]);
             }
-            "do-update-state" => panel.state = data,
+            "do-update-state" => {
+                panel.state = data.clone();
+                if panel.scheme == WEBVIEW_VIEW_SCHEME {
+                    let view_id = panel.view_type.clone();
+                    self.save_webview_view_state(&view_id, &data);
+                }
+            }
             "no-csp-found" => {
                 let extension_id = panel.extension_id.clone();
                 self.host.send("ExtHostWebviews", "$onMissingCsp", vec![json!(event.id), json!(extension_id)]);
@@ -289,7 +312,7 @@ impl Workbench {
     }
 
     /// Focuses the panel's webview, or does once it is created on the next render.
-    fn focus_webview_panel(&mut self, handle: &str, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn focus_webview_panel(&mut self, handle: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.update_webview_panels(window, cx);
         window.blur(cx);
         if let Some(webview) = self.webview_panel_mut(handle).and_then(|panel| panel.webview.as_mut()) {
@@ -302,30 +325,46 @@ impl Workbench {
     pub(super) fn sync_webview_panels(&mut self) {
         let editors = &self.editors;
         let (open, closed): (Vec<WebviewPanel>, Vec<WebviewPanel>) =
-            std::mem::take(&mut self.webview_panels.panels).into_iter().partition(|panel| editors.editors.iter().any(|editor| editor.document.is(WEBVIEW_PANEL_SCHEME, &panel.path)));
+            std::mem::take(&mut self.webview_panels.panels).into_iter().partition(|panel| panel.scheme == WEBVIEW_VIEW_SCHEME || editors.editors.iter().any(|editor| panel.shows(editor)));
         self.webview_panels.panels = open;
-        for panel in closed {
+        for panel in closed.into_iter().filter(|panel| panel.media.is_none()) {
             self.host.send("ExtHostWebviewPanels", "$onDidDisposeWebviewPanel", vec![json!(panel.handle)]);
+            // The custom document's last editor closed: its model reference is released.
+            let Some(custom) = panel.custom.filter(|custom| custom.resolved && panel.scheme == WEBVIEW_PANEL_SCHEME) else { continue };
+            let open = self.webview_panels.panels.iter().any(|other| other.view_type == panel.view_type && other.custom.as_ref().is_some_and(|other| other.resource == custom.resource));
+            if !open {
+                self.host.send("ExtHostCustomEditors", "$disposeCustomDocument", vec![custom.resource, json!(panel.view_type)]);
+            }
         }
         self.host.webview_tabs = self
             .webview_panels
             .panels
             .iter()
-            .map(|panel| (panel.path.clone(), WebviewTab { label: panel.title.clone(), view_type: format!("mainThreadWebview-{}", panel.view_type) }))
+            .filter(|panel| panel.scheme != WEBVIEW_VIEW_SCHEME)
+            .map(|panel| {
+                let tab = match &panel.custom {
+                    Some(custom) => WebviewTab {
+                        label: panel.title.clone(),
+                        view_type: panel.view_type.clone(),
+                        custom_resource: Some(custom.resource.clone()),
+                        custom_text: panel.scheme != WEBVIEW_PANEL_SCHEME,
+                    },
+                    None => WebviewTab { label: panel.title.clone(), view_type: format!("mainThreadWebview-{}", panel.view_type), custom_resource: None, custom_text: false },
+                };
+                (panel.path.clone(), tab)
+            })
             .collect();
-        let active_path = self.editors.active().map(|editor| editor.document.path.clone());
-        let active = self.webview_panels.panels.iter().find(|panel| active_path.as_ref() == Some(&panel.path)).map(|panel| panel.handle.clone());
+        let active_editor = self.editors.active();
+        let active = self.webview_panels.panels.iter().find(|panel| active_editor.is_some_and(|editor| panel.shows(editor))).map(|panel| panel.handle.clone());
         if active == self.webview_panels.active {
             return;
         }
         self.webview_panels.active = active.clone();
-        if self.webview_panels.panels.is_empty() {
+        let editor_panels = self.webview_panels.panels.iter().filter(|panel| panel.scheme != WEBVIEW_VIEW_SCHEME && panel.media.is_none());
+        if editor_panels.clone().next().is_none() {
             return;
         }
-        let states: serde_json::Map<String, Value> = self
-            .webview_panels
-            .panels
-            .iter()
+        let states: serde_json::Map<String, Value> = editor_panels
             .map(|panel| {
                 let shown = active.as_ref() == Some(&panel.handle);
                 (panel.handle.clone(), json!({ "visible": shown, "active": shown, "position": 1 }))
@@ -365,19 +404,45 @@ impl Workbench {
         self.webview_panels.panels.iter().find(|panel| panel.path == path)
     }
 
-    fn webview_panel_mut(&mut self, handle: &str) -> Option<&mut WebviewPanel> {
+    pub(super) fn webview_panel_mut(&mut self, handle: &str) -> Option<&mut WebviewPanel> {
         self.webview_panels.panels.iter_mut().find(|panel| panel.handle == handle)
     }
 
-    fn webview_editor_index(&self, handle: &str) -> Option<usize> {
+    pub(super) fn webview_editor_index(&self, handle: &str) -> Option<usize> {
         let panel = self.webview_panels.panels.iter().find(|panel| panel.handle == handle)?;
-        self.editors.editors.iter().position(|editor| editor.document.is(WEBVIEW_PANEL_SCHEME, &panel.path))
+        self.editors.editors.iter().position(|editor| panel.shows(editor))
     }
 }
 
 impl WebviewPanel {
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn new(handle: String, scheme: String, path: PathBuf, view_type: &str, title: String, extension: &Value, content_options: Value, retain_context_when_hidden: bool, custom: Option<CustomEditor>) -> Self {
+        let extension_id = extension["id"]["value"].as_str().or(extension["id"].as_str()).unwrap_or_default().to_owned();
+        WebviewPanel {
+            handle,
+            scheme,
+            path,
+            view_type: view_type.to_owned(),
+            title,
+            origin: webview_origin(view_type, &extension_id),
+            extension_id,
+            html: String::new(),
+            content_options,
+            retain_context_when_hidden,
+            state: Value::Null,
+            icon: None,
+            webview: None,
+            custom,
+            media: None,
+        }
+    }
+
+    fn shows(&self, editor: &OpenEditor) -> bool {
+        editor.document.is(&self.scheme, &self.path)
+    }
+
     /// webviewElement.ts `doUpdateContent`.
-    fn update_content(&mut self) {
+    pub(super) fn update_content(&mut self) {
         let Some(webview) = &mut self.webview else { return };
         let allow_scripts = self.content_options["enableScripts"] == true;
         let allow_forms = self.content_options["enableForms"].as_bool().unwrap_or(allow_scripts);

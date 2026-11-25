@@ -36,6 +36,10 @@ pub enum Owner {
     ResizeColumn(Option<usize>),
     /// A picker of output channels, with what accepting each item does.
     Output(Vec<crate::workbench::output_actions::OutputPick>),
+    /// The `workbench.action.reopenWithEditor` picker.
+    OpenWith(crate::workbench::custom_editors::OpenWithPicker),
+    /// The `imagePreview.selectZoomLevel` picker.
+    ImageZoom,
 }
 
 impl Workbench {
@@ -208,6 +212,8 @@ impl Workbench {
             Owner::EditorStatus(_) => self.editor_status_event(id, event, window, cx),
             Owner::ResizeColumn(_) => self.resize_column_event(id, event, window, cx),
             Owner::Output(_) => self.output_pick_event(id, event, window, cx),
+            Owner::OpenWith(_) => self.open_with_picker_event(id, event, window, cx),
+            Owner::ImageZoom => self.image_zoom_picker_event(id, event, window, cx),
         }
     }
 

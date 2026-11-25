@@ -167,6 +167,7 @@ fn main() -> anyhow::Result<()> {
                 workbench.file_icons = file_icons;
                 workbench.color_themes = color_themes;
                 workbench.extensions = extensions.clone();
+                workbench.register_webview_view_commands();
                 workbench.restore_profile_state(storage.profile.clone());
                 workbench.restore_workspace_state(storage.workspace.clone());
                 workbench.watch_editor_focus(window, cx);
@@ -315,7 +316,7 @@ fn run_extension_host(
             MainThreadSecretState::in_memory()
         }),
     });
-    session.forward(&["MainThreadCommands", "MainThreadDiagnostics", "MainThreadEditorTabs", "MainThreadLogger", "MainThreadMessageService", "MainThreadOutputService", "MainThreadProgress", "MainThreadQuickOpen", "MainThreadStatusBar", "MainThreadUrls", "MainThreadWebviewPanels", "MainThreadWebviews", "MainThreadWorkspace"], move |request| {
+    session.forward(&["MainThreadCommands", "MainThreadCustomEditors", "MainThreadDiagnostics", "MainThreadEditorTabs", "MainThreadLogger", "MainThreadMessageService", "MainThreadOutputService", "MainThreadProgress", "MainThreadQuickOpen", "MainThreadStatusBar", "MainThreadUrls", "MainThreadWebviewPanels", "MainThreadWebviewViews", "MainThreadWebviews", "MainThreadWorkspace"], move |request| {
         let _ = workbench_requests.unbounded_send(request);
     }, workbench_replies);
     session.main_thread = Some(Box::new(main_thread));

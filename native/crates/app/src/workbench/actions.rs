@@ -3,7 +3,7 @@
 
 use futures::channel::oneshot;
 use gpui::{Context, PromptLevel, Window};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use super::Workbench;
 use super::host_requests::uri_parts;
@@ -36,7 +36,28 @@ impl Workbench {
             }
             Outcome::done()
         });
-        self.commands.register("_workbench.open", |workbench, args, window, cx| Outcome::Ready(workbench.api_open_editor(&args, window, cx)));
+        self.commands.register("_workbench.open", |workbench, args, window, cx| match &args[..] {
+            [resource @ Value::Object(_), rest @ ..] => {
+                let options = rest.first().map_or(Value::Null, |column_and_options| column_and_options[1].clone());
+                let override_id = options["override"].as_str().map(str::to_owned);
+                workbench.open_with_resolver(resource, override_id.as_deref(), options, window, cx)
+            }
+            _ => Outcome::Ready(workbench.api_open_editor(&args, window, cx)),
+        });
+        self.commands.register("_workbench.openWith", |workbench, args, window, cx| {
+            // `{ pinned: true, ...optionsArg }`
+            let mut options = json!({ "pinned": true });
+            if let Some(Value::Object(given)) = args.get(2).map(|column_and_options| &column_and_options[1]) {
+                options.as_object_mut().expect("an object").extend(given.clone());
+            }
+            let resource = args.first().cloned().unwrap_or(Value::Null);
+            let view_type = args.get(1).and_then(Value::as_str).unwrap_or("default").to_owned();
+            workbench.open_with_resolver(&resource, Some(&view_type), options, window, cx)
+        });
+        self.commands.register("reopenActiveEditorWith", |workbench, args, window, cx| {
+            workbench.reopen_active_editor_with(args.first().and_then(Value::as_str).map(str::to_owned), window, cx)
+        });
+        self.commands.register("workbench.action.reopenWithEditor", |workbench, _, window, cx| workbench.reopen_active_editor_with(None, window, cx));
         self.commands.register("vscode.open", |workbench, args, window, cx| workbench.execute_command("_workbench.open", args.into_iter().take(1).collect(), window, cx));
         self.commands.register("_workbench.revertAllDirty", |workbench, _, _, cx| {
             let dirty = workbench.dirty_editors();

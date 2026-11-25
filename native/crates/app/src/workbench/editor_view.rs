@@ -71,13 +71,16 @@ impl Workbench {
             .child(self.tab_strip(cx))
             .map(|part| match editor.document.scheme.as_str() {
                 // A webview editor has no breadcrumbs: its resource has no file system provider.
-                WEBVIEW_PANEL_SCHEME => part.child(self.webview_editor_body(editor)),
+                WEBVIEW_PANEL_SCHEME => part,
                 // searchEditor.ts draws its query widget where a text editor has its breadcrumbs.
                 SEARCH_EDITOR_SCHEME => part.child(self.search_editor_query(window, cx)),
                 crate::output::OUTPUT_SCHEME => part.child(self.output_title_actions(window, cx)),
                 _ => part.child(self.breadcrumbs(editor)),
             })
-            .when(editor.document.scheme != WEBVIEW_PANEL_SCHEME, |part| part.children(self.unicode_banner(editor, cx)).child(self.text_area(editor, window, cx)))
+            .map(|part| match self.shows_webview(editor) {
+                true => part.child(self.webview_editor_body(editor)),
+                false => part.children(self.unicode_banner(editor, cx)).child(self.text_area(editor, window, cx)),
+            })
             // The active tab reaches into the part's top border, which Chrome still draws over it.
             .child(div().absolute().inset(px(-1.)).border_1().rounded(px(8.)).border_color(self.color("surface.border")))
     }
@@ -1386,9 +1389,10 @@ impl Workbench {
         }
         let prominent_items = items.len();
         // A webview editor shows no editor status entries.
-        if let Some(editor) = self.editors.active().filter(|editor| editor.document.scheme != WEBVIEW_PANEL_SCHEME) {
+        if let Some(editor) = self.editors.active().filter(|editor| !self.shows_webview(editor)) {
             items.extend(Self::editor_status_entries(editor, &self.languages));
         }
+        items.extend(self.media_preview_status_entries());
         let prominent = (self.theme.color("statusBarItem.prominentBackground"), self.color("statusBarItem.prominentForeground"));
         // GPUI rounds a text box up to a whole px, Chrome keeps the fraction: the shaped width keeps the items in place.
         let mut style = window.text_style();
@@ -1398,7 +1402,8 @@ impl Workbench {
         let search_editor = self.editors.active().is_some_and(|editor| editor.document.scheme == SEARCH_EDITOR_SCHEME);
         let items = items.into_iter().filter(|(_, _, command)| !search_editor || !matches!(*command, "workbench.action.editor.changeEncoding" | "workbench.action.editor.changeLanguageMode"));
         let items = items.enumerate().map(|(index, (label, tooltip, command))| {
-            let hover = self.hover_target(tooltip, super::hover::HoverContent::Text(tooltip.into()), super::hover::HoverOptions::status_bar());
+            // The media preview's dimensions and file size entries have neither tooltip nor command.
+            let hover = (!tooltip.is_empty()).then(|| self.hover_target(tooltip, super::hover::HoverContent::Text(tooltip.into()), super::hover::HoverOptions::status_bar()));
             let item = div()
                 .id(("editor-status", index))
                 .relative()
@@ -1410,14 +1415,15 @@ impl Workbench {
                 .flex()
                 .items_center()
                 .whitespace_nowrap()
-                .cursor_pointer()
                 .child(label)
-                .child(hover)
+                .children(hover)
                 // statusbarItem.ts executeCommand on click.
-                .on_click(cx.listener(move |workbench, _, window, cx| {
-                    let outcome = workbench.execute_command(command, Vec::new(), window, cx);
-                    super::quick_access::show_failure(command.to_owned(), outcome, window, cx);
-                }));
+                .when(!command.is_empty(), |item| {
+                    item.cursor_pointer().on_click(cx.listener(move |workbench, _, window, cx| {
+                        let outcome = workbench.execute_command(command, Vec::new(), window, cx);
+                        super::quick_access::show_failure(command.to_owned(), outcome, window, cx);
+                    }))
+                });
             if index >= prominent_items {
                 return item.into_any_element();
             }

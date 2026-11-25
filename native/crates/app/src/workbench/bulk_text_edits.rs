@@ -125,6 +125,7 @@ impl Workbench {
                 2 => {
                     if let Ok((source_scheme, ref source)) = uri_parts(&pair["source"]) {
                         changed |= self.move_models(source_scheme, source, scheme, target);
+                        self.move_custom_editors(source_scheme, source, scheme, target);
                     }
                 }
                 _ => {}
@@ -133,6 +134,7 @@ impl Workbench {
         if changed {
             self.editors_changed(cx);
         }
+        self.resolve_custom_editors(cx);
     }
 
     fn move_models(&mut self, source_scheme: &str, source: &Path, target_scheme: &str, target: &Path) -> bool {
