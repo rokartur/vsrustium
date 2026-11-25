@@ -45,7 +45,7 @@ impl Workbench {
 
     /// A wrapped view line shows its segment of the model line's content: the content moves left by the
     /// segment's x and is clipped from the wrapped indent to the segment's end, 1px wider on each side for a
-    /// cursor at either end (viewCursor.ts draws it 1px left of its column, 2px wide).
+    /// cursor at either end (viewCursor.ts draws it 1px left of its column); 2px on the right shows the next glyph.
     pub(super) fn wrapped_segment_clip(&self, content: Div, segment: Segment, shift: f32, scroll_left: f32, char_width: f32) -> Div {
         if segment.first && segment.last {
             return content;
@@ -59,7 +59,7 @@ impl Workbench {
         let text = &editor.document.lines[segment.line];
         let tab_size = editor.document.indentation.tab_size;
         let width = (visible_column(text, segment.end, tab_size) - visible_column(text, segment.start, tab_size)) as f32 * char_width;
-        clip.w(px(width + 2.))
+        clip.w(px(width + 1.))
     }
 
     /// wordWrapIndicator.ts: `editor.wordWrapIndicator` puts U+21A9 at the wrapping column of every view line
