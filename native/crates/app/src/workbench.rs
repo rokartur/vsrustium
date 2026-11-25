@@ -698,6 +698,7 @@ impl Workbench {
         workbench.register_emmet();
         workbench.register_tab_completion();
         workbench.register_outline_actions();
+        workbench.register_folding_providers();
         workbench.register_inlay_hints_accessibility();
         workbench.register_snippet_commands();
         workbench.register_marker_navigation_commands();

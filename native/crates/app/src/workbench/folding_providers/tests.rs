@@ -12,11 +12,11 @@ use crate::languages::Languages;
 use crate::theme::load_theme;
 use crate::workbench::Workbench;
 
-fn workbench_with<'a>(cx: &'a mut TestAppContext) -> (gpui::Entity<Workbench>, &'a mut VisualTestContext, Receiver<HostMessage>, std::path::PathBuf) {
+fn workbench_with<'a>(name: &str, cx: &'a mut TestAppContext) -> (gpui::Entity<Workbench>, &'a mut VisualTestContext, Receiver<HostMessage>, std::path::PathBuf) {
     let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
-    let dir = std::env::temp_dir().join(format!("vsrustium-folding-providers-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("vsrustium-folding-providers-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.txt"), "import a\nimport b\nimport c\nx\n  y\n  z").unwrap();
@@ -60,7 +60,7 @@ fn regions(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext) -> V
 
 #[gpui::test]
 fn extension_providers_fold_the_model_and_indentation_is_the_fallback(cx: &mut TestAppContext) {
-    let (workbench, cx, receiver, dir) = workbench_with(cx);
+    let (workbench, cx, receiver, dir) = workbench_with("fold", cx);
     assert_eq!(regions(&workbench, cx), [(4, 6, false)], "indentation folds first");
     request(&workbench, cx, "$registerFoldingRangeProvider", json!([1, [{ "language": "plaintext" }], { "value": "ext.one" }, 7]));
     request(&workbench, cx, "$registerFoldingRangeProvider", json!([2, [{ "language": "markdown" }], { "value": "ext.two" }, null]));
@@ -80,5 +80,26 @@ fn extension_providers_fold_the_model_and_indentation_is_the_fallback(cx: &mut T
     request(&workbench, cx, "$unregister", json!([1]));
     assert_eq!(answer(&receiver, cx, &[]), Vec::<u64>::new());
     assert_eq!(regions(&workbench, cx), [(4, 6, false)]);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// folding.ts `_executeFoldingRangeProvider`: a provider's ranges with their kind, the indentation ranges without one.
+#[gpui::test]
+fn execute_folding_range_provider_answers_the_ranges(cx: &mut TestAppContext) {
+    let (workbench, cx, receiver, dir) = workbench_with("execute", cx);
+    let uri = json!({ "scheme": "file", "path": dir.join("a.txt").to_string_lossy() });
+    let execute = |cx: &mut VisualTestContext| {
+        let outcome = workbench.update_in(cx, |workbench, window, cx| workbench.execute_command("_executeFoldingRangeProvider", vec![uri.clone()], window, cx));
+        let crate::commands::Outcome::Pending(mut receiver) = outcome else { panic!("the ranges come later") };
+        cx.run_until_parked();
+        receiver.try_recv().unwrap().unwrap().unwrap()
+    };
+    assert_eq!(execute(cx), json!([{ "start": 4, "end": 6 }]));
+    request(&workbench, cx, "$registerFoldingRangeProvider", json!([1, [{ "language": "plaintext" }], { "value": "ext.one" }, 7]));
+    answer(&receiver, cx, &[]);
+    let outcome = workbench.update_in(cx, |workbench, window, cx| workbench.execute_command("_executeFoldingRangeProvider", vec![uri.clone()], window, cx));
+    answer(&receiver, cx, &[(1, json!([{ "start": 1, "end": 3, "kind": { "value": "imports" } }]))]);
+    let crate::commands::Outcome::Pending(mut ranges) = outcome else { panic!("the provider answers later") };
+    assert_eq!(ranges.try_recv().unwrap().unwrap().unwrap(), json!([{ "start": 1, "end": 3, "kind": { "value": "imports" } }]));
     std::fs::remove_dir_all(dir).unwrap();
 }
