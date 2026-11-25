@@ -38,7 +38,7 @@ impl Workbench {
     }
 
     /// `onDidChangeConfiguration` listeners of the workbench for a change already in the settings model.
-    fn configuration_changed(&mut self, change: &Change, before: Vec<CreationOptions>, cx: &mut Context<Self>) {
+    pub(super) fn configuration_changed(&mut self, change: &Change, before: Vec<CreationOptions>, cx: &mut Context<Self>) {
         self.host.send_configuration_change(&self.settings.lock().unwrap(), change);
         if affects(change, "workbench.colorTheme") {
             let configured = self.settings.lock().unwrap().get_value(Some("workbench.colorTheme"), &Default::default());
@@ -48,10 +48,11 @@ impl Workbench {
             }
         }
         self.update_model_options(before);
+        self.settings_editor_configuration_changed(cx);
         cx.notify();
     }
 
-    fn model_creation_options(&self) -> Vec<CreationOptions> {
+    pub(super) fn model_creation_options(&self) -> Vec<CreationOptions> {
         let settings = self.settings.lock().unwrap();
         let models = self.editors.editors.iter().chain(&self.editors.models);
         models.map(|model| creation_options(&settings.configuration, &model.document.path, &model.document.language_id)).collect()

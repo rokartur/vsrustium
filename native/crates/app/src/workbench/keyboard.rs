@@ -324,6 +324,7 @@ impl Workbench {
             SideBarView::Search => self.search_context(window, &mut context),
         }
         self.keybindings_editor_context(window, &mut context);
+        self.settings_editor_context(window, &mut context);
         self.search_editor_context(window, &mut context);
         self.output_context(window, &mut context);
         context

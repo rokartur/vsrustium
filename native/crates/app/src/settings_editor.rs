@@ -7,7 +7,10 @@ mod tests;
 
 use std::cmp::Ordering;
 use std::collections::HashSet;
+use std::path::Path;
 
+use config::configuration::{Configuration, Overrides};
+use config::model::ConfigurationModel;
 use config::registry::{APPLICATION_SCOPES, FOLDER_SCOPES, Scope, WORKSPACE_SCOPES};
 use config::service::Target;
 use serde_json::Value;
@@ -17,7 +20,7 @@ use crate::default_settings::{Setting, SettingsGroup};
 use crate::filters::{matches_base_contiguous_sub_string, matches_contiguous_sub_string, matches_contiguous_words, matches_sub_string, matches_words};
 
 pub const MODIFIED_SETTING_TAG: &str = "modified";
-const ADVANCED_SETTING_TAG: &str = "advanced";
+pub const ADVANCED_SETTING_TAG: &str = "advanced";
 const POLICY_SETTING_TAG: &str = "hasPolicy";
 const REQUIRE_TRUSTED_WORKSPACE_SETTING_TAG: &str = "requireTrustedWorkspace";
 
@@ -382,7 +385,6 @@ pub fn has_tag(setting: &Setting, tag: &str) -> bool {
 /// `SettingValueType`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ValueType {
-    Null,
     Enum,
     String,
     MultilineString,
@@ -894,13 +896,92 @@ pub fn toc_order(model: &Model) -> Vec<Option<usize>> {
 }
 
 /// A setting's state in the selected scope: what `SettingsTreeSettingElement.update` derives from `inspect`.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Inspection {
     pub value: Value,
     pub default_value: Value,
     pub is_configured: bool,
-    /// `overriddenScopeList`: "user:" or "workspace:" where another scope sets it.
-    pub overridden_scopes: Vec<&'static str>,
+    /// `overriddenScopeList`: `user:` or `workspace:`, then `<scope>:<language>`, where another scope sets it.
+    pub overridden_scopes: Vec<String>,
+    /// `overriddenDefaultsLanguageList`: the languages whose default overrides set it.
+    pub overridden_default_languages: Vec<String>,
+}
+
+/// `inspectSetting` then `update`: the value shown in `target`'s tab, whether that scope sets it, and the scopes
+/// and language blocks that also set it. `folder` is the folder of the Folder tab.
+// shortcut: the `@lang:` filter's language selector is not applied to the value; the filter only narrows the list.
+pub fn inspect_setting(configuration: &Configuration, key: &str, target: Target, folder: Option<&Path>) -> Inspection {
+    let inspected = configuration.inspect(key, &Overrides { resource: folder, override_identifier: None });
+    let selected = match target {
+        Target::Workspace => &inspected.workspace,
+        Target::WorkspaceFolder => &inspected.workspace_folder,
+        _ => &inspected.user_local,
+    };
+    let is_configured = selected.value.is_some();
+    let default_value = inspected.default_value.clone().unwrap_or(Value::Null);
+    let value = selected.value.clone().unwrap_or_else(|| default_value.clone());
+    let mut overridden_scopes = Vec::new();
+    if target != Target::Workspace && inspected.workspace.value.is_some() {
+        overridden_scopes.push("workspace:".to_string());
+    }
+    if !matches!(target, Target::UserLocal | Target::User | Target::Application) && inspected.user_local.value.is_some() {
+        overridden_scopes.push("user:".to_string());
+    }
+    let language_blocks = |model: &ConfigurationModel| -> Vec<String> {
+        let blocks = model.overrides.iter().filter(|block| block.keys.iter().any(|block_key| block_key == key));
+        blocks.flat_map(|block| block.identifiers.iter().cloned()).collect()
+    };
+    let overridden_default_languages = language_blocks(&configuration.defaults);
+    let workspace = if configuration.has_workspace { language_blocks(&configuration.workspace) } else { Vec::new() };
+    let user = language_blocks(&configuration.local_user);
+    overridden_scopes.extend(workspace.iter().map(|language| format!("workspace:{language}")));
+    overridden_scopes.extend(user.iter().map(|language| format!("user:{language}")));
+    Inspection { value, default_value, is_configured, overridden_scopes, overridden_default_languages }
+}
+
+/// One run of `renderSettingMarkdown`'s inline markdown: a code span or a link with its href.
+#[derive(Clone, Debug, PartialEq)]
+pub enum MarkdownRun {
+    Code,
+    Link(String),
+}
+
+/// The plain text of a setting description and its code and link runs, as byte ranges of that text.
+// shortcut: inline code and links only; emphasis, lists and fenced blocks show their source text. Upgrade with a
+// markdown renderer shared with hovers.
+pub fn markdown_runs(markdown: &str) -> (String, Vec<(std::ops::Range<usize>, MarkdownRun)>) {
+    let mut text = String::new();
+    let mut runs = Vec::new();
+    let mut rest = markdown;
+    while let Some(start) = rest.find(['`', '[']) {
+        text.push_str(&rest[..start]);
+        let after = &rest[start + 1..];
+        if rest[start..].starts_with('`')
+            && let Some(end) = after.find('`')
+        {
+            let code = &after[..end];
+            runs.push((text.len()..text.len() + code.len(), MarkdownRun::Code));
+            text.push_str(code);
+            rest = &after[end + 1..];
+            continue;
+        }
+        if rest[start..].starts_with('[')
+            && let Some(close) = after.find("](")
+            && let Some(end) = after[close + 2..].find(')')
+        {
+            let label = &after[..close];
+            let target = &after[close + 2..close + 2 + end];
+            let href = target.split_once(" \"").map_or(target, |(href, _)| href);
+            runs.push((text.len()..text.len() + label.len(), MarkdownRun::Link(href.to_string())));
+            text.push_str(label);
+            rest = &after[close + 2 + end + 1..];
+            continue;
+        }
+        text.push_str(&rest[start..start + 1]);
+        rest = after;
+    }
+    text.push_str(rest);
+    (text, runs)
 }
 
 /// `matchesAllTags` with the setting's `tags` set: its schema tags and `modified` when configured.
@@ -984,4 +1065,154 @@ pub fn should_show_setting(setting: &Setting, parsed: &ParsedQuery, raw_query: &
 /// `canShowAdvancedSettings`.
 pub fn can_show_advanced(always_show: bool, parsed: &ParsedQuery) -> bool {
     always_show || parsed.tags.iter().any(|tag| tag == ADVANCED_SETTING_TAG || tag == "expassigned")
+}
+
+/// One row of the settings tree: a group title at its depth (1 for the top level), or a setting with the id of the
+/// group it shows under (`searchResultModel` in search results), which trims its category.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Row {
+    Group { id: String, label: String, level: usize },
+    Setting(usize, String),
+}
+
+/// One row of the table of contents: a group with its count of shown settings.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TocRow {
+    pub id: String,
+    pub label: String,
+    pub level: usize,
+    pub count: usize,
+    pub has_children: bool,
+}
+
+/// The parts of `ISettingsEditorViewState` the filters read.
+pub struct Filters<'a> {
+    pub parsed: &'a ParsedQuery,
+    pub raw_query: &'a str,
+    pub target: Target,
+    /// Whether each setting is set in the target, by setting index.
+    pub configured: &'a [bool],
+    pub always_show_advanced: bool,
+}
+
+/// `triggerSearch`: the settings found, in result order; `None` without a query or a filter, where the tree browses.
+/// `value_of` reads a setting's current value, `is_language` tells a known language id.
+pub fn search(model: &Model, groups: &[SettingsGroup], filters: &Filters, value_of: impl Fn(&str) -> Option<Value>, is_language: impl Fn(&str) -> bool) -> Option<Vec<usize>> {
+    let parsed = filters.parsed;
+    let has_query = !parsed.query.is_empty() && parsed.query != "@";
+    if !has_query && !parsed.has_filters() {
+        return None;
+    }
+    let show_advanced = can_show_advanced(filters.always_show_advanced, parsed);
+    // `createFilterModel` keeps every setting; `triggerFilterPreferences` keeps the local matches.
+    let mut matches = match has_query {
+        true => local_search(&parsed.query, model, groups, value_of).map_or_else(Vec::new, |(matches, _)| matches),
+        false => (0..model.settings.len()).map(|index| SettingMatch { index, match_type: match_type::NONE, key_match_score: 0 }).collect(),
+    };
+    matches.retain(|found| show_advanced || should_show_setting(&model.settings[found.index], parsed, filters.raw_query));
+    sort_results(&mut matches, &toc_order(model), has_query);
+    // `SearchResultModel.updateChildren`.
+    let shown = matches.into_iter().map(|found| found.index).filter(|&index| {
+        let setting = &model.settings[index];
+        matches_all_tags(setting, filters.configured[index], &parsed.tags)
+            && matches_scope(setting, filters.target)
+            && matches_any_extension(setting, &parsed.extension_filters)
+            && matches_any_id(setting, &parsed.id_filters)
+            && matches_any_feature(setting, &parsed.feature_filters)
+            && matches_all_languages(setting, parsed.language_filter.as_deref(), &is_language)
+    });
+    Some(shown.collect())
+}
+
+pub fn find_group<'a>(group: &'a Group, id: &str) -> Option<&'a Group> {
+    if group.id == id {
+        return Some(group);
+    }
+    group.children.iter().find_map(|child| find_group(child, id))
+}
+
+fn contains_setting(group: &Group, index: usize) -> bool {
+    group.settings.contains(&index) || group.children.iter().any(|child| contains_setting(child, index))
+}
+
+/// `SettingsTreeFilter` on the tree: with a category, its titles and its ancestors' and only its settings;
+/// settings the target cannot write are hidden, and so are groups left without settings.
+pub fn tree_rows(model: &Model, search: Option<&[usize]>, category: Option<&str>, target: Target) -> Vec<Row> {
+    let category = category.and_then(|id| find_group(&model.root, id));
+    let in_category = |index: usize| category.is_none_or(|category| contains_setting(category, index));
+    if let Some(found) = search {
+        return found.iter().copied().filter(|&index| in_category(index)).map(|index| Row::Setting(index, "searchResultModel".into())).collect();
+    }
+    let visible = |index: usize| in_category(index) && matches_scope(&model.settings[index], target);
+    let mut rows = Vec::new();
+    for child in &model.root.children {
+        push_group_rows(child, 1, &visible, &mut rows);
+    }
+    rows
+}
+
+fn push_group_rows(group: &Group, level: usize, visible: &impl Fn(usize) -> bool, rows: &mut Vec<Row>) {
+    let start = rows.len();
+    rows.push(Row::Group { id: group.id.clone(), label: group.label.clone(), level });
+    rows.extend(group.settings.iter().copied().filter(|&index| visible(index)).map(|index| Row::Setting(index, group.id.clone())));
+    for child in &group.children {
+        push_group_rows(child, level + 1, visible, rows);
+    }
+    if rows.len() == start + 1 {
+        rows.truncate(start);
+    }
+}
+
+/// `TOCTreeModel.updateGroupCount` and the TOC's filter: groups with shown settings, children of `expanded` ones.
+pub fn toc_rows(model: &Model, search: Option<&[usize]>, target: Target, expanded: &HashSet<String>) -> Vec<TocRow> {
+    let counted = |index: usize| search.is_none_or(|found| found.contains(&index)) && matches_scope(&model.settings[index], target);
+    let mut rows = Vec::new();
+    for child in &model.root.children {
+        push_toc_rows(child, 1, &counted, expanded, &mut rows);
+    }
+    rows
+}
+
+fn group_count(group: &Group, counted: &impl Fn(usize) -> bool) -> usize {
+    group.settings.iter().filter(|&&index| counted(index)).count() + group.children.iter().map(|child| group_count(child, counted)).sum::<usize>()
+}
+
+fn push_toc_rows(group: &Group, level: usize, counted: &impl Fn(usize) -> bool, expanded: &HashSet<String>, rows: &mut Vec<TocRow>) {
+    let count = group_count(group, counted);
+    if count == 0 {
+        return;
+    }
+    let has_children = group.children.iter().any(|child| group_count(child, counted) > 0);
+    rows.push(TocRow { id: group.id.clone(), label: group.label.clone(), level, count, has_children });
+    if has_children && expanded.contains(&group.id) {
+        for child in &group.children {
+            push_toc_rows(child, level + 1, counted, expanded, rows);
+        }
+    }
+}
+
+/// The TOC entry of a setting for `onDidClickSetting`: the deepest group holding it, Commonly Used last.
+pub fn group_of(model: &Model, index: usize) -> Option<&Group> {
+    fn deepest(group: &Group, index: usize) -> Option<&Group> {
+        group.children.iter().find_map(|child| deepest(child, index)).or_else(|| group.settings.contains(&index).then_some(group))
+    }
+    model.root.children.iter().skip(1).find_map(|child| deepest(child, index)).or_else(|| model.root.children.first().filter(|common| common.settings.contains(&index)))
+}
+
+/// The ancestors of the group `id`, outermost first, for expanding the TOC to it.
+pub fn group_path(model: &Model, id: &str) -> Vec<String> {
+    fn walk(group: &Group, id: &str, path: &mut Vec<String>) -> bool {
+        if group.id == id {
+            return true;
+        }
+        path.push(group.id.clone());
+        if group.children.iter().any(|child| walk(child, id, path)) {
+            return true;
+        }
+        path.pop();
+        false
+    }
+    let mut path = Vec::new();
+    model.root.children.iter().any(|child| walk(child, id, &mut path));
+    path
 }

@@ -164,3 +164,38 @@ fn filters_match_tags_ids_and_extensions() {
     assert!(!should_show_setting(hidden, &parse_query("rarely"), "rarely"));
     assert!(should_show_setting(hidden, &parse_query("@id:sample.hidden"), "@id:sample.hidden"));
 }
+
+fn model(json: serde_json::Value) -> config::model::ConfigurationModel {
+    config::model::parse_content(&json.to_string(), None, &config::model::ParseFilter::default()).model
+}
+
+#[test]
+fn inspect_setting_reads_the_selected_scope_and_lists_the_others() {
+    let configuration = config::configuration::Configuration {
+        defaults: model(json!({ "editor.tabSize": 4, "[makefile]": { "editor.tabSize": 8 } })),
+        local_user: model(json!({ "editor.tabSize": 2 })),
+        workspace: model(json!({ "editor.tabSize": 3, "[go]": { "editor.tabSize": 5 } })),
+        folders: Vec::new(),
+        has_workspace: true,
+    };
+    let user = inspect_setting(&configuration, "editor.tabSize", Target::UserLocal, None);
+    assert_eq!(user.value, json!(2));
+    assert!(user.is_configured);
+    assert_eq!(user.default_value, json!(4));
+    assert_eq!(user.overridden_scopes, ["workspace:", "workspace:go"]);
+    assert_eq!(user.overridden_default_languages, ["makefile"]);
+    let workspace = inspect_setting(&configuration, "editor.tabSize", Target::Workspace, None);
+    assert_eq!(workspace.value, json!(3));
+    assert_eq!(workspace.overridden_scopes, ["user:", "workspace:go"]);
+    let unset = inspect_setting(&configuration, "editor.insertSpaces", Target::UserLocal, None);
+    assert!(!unset.is_configured);
+    assert_eq!(unset.value, serde_json::Value::Null);
+}
+
+#[test]
+fn markdown_runs_keep_code_and_links_and_drop_their_syntax() {
+    let (text, runs) = markdown_runs("Set `afterDelay` in [Files: Auto Save](#files.autoSave \"files.autoSave\") or [x] here.");
+    assert_eq!(text, "Set afterDelay in Files: Auto Save or [x] here.");
+    assert_eq!(runs, [(4..14, MarkdownRun::Code), (18..34, MarkdownRun::Link("#files.autoSave".into()))]);
+    assert_eq!(markdown_runs("a `b").0, "a `b");
+}

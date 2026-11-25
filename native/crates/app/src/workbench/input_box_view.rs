@@ -32,9 +32,22 @@ pub enum InputId {
     KeybindingsWhen,
     SearchEditor(SearchField),
     OutputFilter,
+    SettingsSearch,
+    SettingsValue,
 }
 
-const INPUTS: [InputId; 8] = [InputId::QuickInput, InputId::Explorer, InputId::ExplorerFind, InputId::Find, InputId::Replace, InputId::KeybindingsSearch, InputId::KeybindingsWhen, InputId::OutputFilter];
+const INPUTS: [InputId; 10] = [
+    InputId::QuickInput,
+    InputId::Explorer,
+    InputId::ExplorerFind,
+    InputId::Find,
+    InputId::Replace,
+    InputId::KeybindingsSearch,
+    InputId::KeybindingsWhen,
+    InputId::OutputFilter,
+    InputId::SettingsSearch,
+    InputId::SettingsValue,
+];
 
 /// The view state of one input element.
 pub struct InputView {
@@ -90,6 +103,8 @@ impl Workbench {
             InputId::KeybindingsWhen => &self.keybindings_editor.when_view,
             InputId::SearchEditor(field) => &self.search_editor_widget.view.input(field).view,
             InputId::OutputFilter => &self.output_view.filter_view,
+            InputId::SettingsSearch => &self.settings_editor.search_view,
+            InputId::SettingsValue => &self.settings_editor.value_view,
         }
     }
 
@@ -105,6 +120,8 @@ impl Workbench {
             InputId::KeybindingsWhen => &mut self.keybindings_editor.when_view,
             InputId::SearchEditor(field) => &mut self.search_editor_widget.view.input_mut(field).view,
             InputId::OutputFilter => &mut self.output_view.filter_view,
+            InputId::SettingsSearch => &mut self.settings_editor.search_view,
+            InputId::SettingsValue => &mut self.settings_editor.value_view,
         }
     }
 
@@ -120,6 +137,8 @@ impl Workbench {
             InputId::KeybindingsWhen => &self.keybindings_editor.when_focus,
             InputId::SearchEditor(field) => &self.search_editor_widget.view.input(field).focus,
             InputId::OutputFilter => &self.output_view.filter_focus,
+            InputId::SettingsSearch => &self.settings_editor.search_focus,
+            InputId::SettingsValue => &self.settings_editor.value_focus,
         }
     }
 
@@ -135,6 +154,8 @@ impl Workbench {
             InputId::KeybindingsWhen => self.keybindings_editor.when.as_ref().map(|when| &when.input),
             InputId::SearchEditor(field) => Some(&self.search_editor_widget.view.input(field).value),
             InputId::OutputFilter => Some(&self.output_view.filter),
+            InputId::SettingsSearch => Some(&self.settings_editor.search),
+            InputId::SettingsValue => self.settings_editor.value.as_ref().map(|(_, input)| input),
         }
     }
 
@@ -183,6 +204,14 @@ impl Workbench {
             }
             InputId::OutputFilter => {
                 self.edit_output_filter(edit, window, cx);
+                Outcome::done()
+            }
+            InputId::SettingsSearch => {
+                self.edit_settings_search(edit, window, cx);
+                Outcome::done()
+            }
+            InputId::SettingsValue => {
+                self.edit_settings_value(edit, window, cx);
                 Outcome::done()
             }
         }
@@ -366,6 +395,8 @@ impl Workbench {
                 InputId::KeybindingsWhen => "keybindings-when-text".into(),
                 InputId::SearchEditor(field) => ("search-editor-input-text", field as usize).into(),
                 InputId::OutputFilter => "output-filter-text".into(),
+                InputId::SettingsSearch => "settings-search-text".into(),
+                InputId::SettingsValue => "settings-value-text".into(),
             })
             .flex_1()
             .h_full()

@@ -39,6 +39,7 @@ mod search_actions;
 mod search_editor_view;
 mod search_editor_widget;
 mod search_view;
+mod settings_editor_view;
 mod status_entries;
 use status_entries::{EDITOR_STATUS_PRIORITY, PROBLEMS_PRIORITY};
 pub mod themes;
@@ -98,6 +99,7 @@ pub struct Workbench {
     pub skip_dialogs: bool,
     pub keybindings: keyboard::Keybindings,
     pub keybindings_editor: keybindings_editor_view::KeybindingsEditor,
+    pub settings_editor: settings_editor_view::SettingsEditor,
     keybinding_marks: define_keybinding::KeybindingMarks,
     diagnostics: diagnostics::Diagnostics,
     /// Context keys set with the `setContext` command.
@@ -200,7 +202,7 @@ impl Render for Workbench {
                     .child(if self.editors.active().is_some() { self.text_editor_part(window, cx) } else { self.editor_part() }),
             )
             .child(self.status_bar(window, cx));
-        let modal_editor = self.keybindings_editor_widget(window, cx);
+        let modal_editor = self.keybindings_editor_widget(window, cx).or_else(|| self.settings_editor_widget(window, cx));
         let quick_input = self.quick_input_widget(window, cx);
         let notifications = self.notifications_widget(viewport, window, cx);
         let context_menu = self.context_menu_widget(cx);
@@ -242,6 +244,7 @@ impl Workbench {
             skip_dialogs: false,
             keybindings: keyboard::Keybindings::default(),
             keybindings_editor: keybindings_editor_view::KeybindingsEditor::new(cx),
+            settings_editor: settings_editor_view::SettingsEditor::new(cx),
             keybinding_marks: Default::default(),
             diagnostics: Default::default(),
             context_keys: HashMap::new(),
@@ -311,6 +314,7 @@ impl Workbench {
         workbench.register_search_editor_widget_actions();
         workbench.register_file_participant_commands();
         workbench.register_keybindings_editor_commands();
+        workbench.register_settings_editor_commands();
         workbench.register_readonly_commands();
         workbench.register_preferences_commands();
         workbench.register_editor_message_commands();
@@ -353,7 +357,7 @@ impl Workbench {
     pub fn open_file(&mut self, path: PathBuf, pinned: bool, window: &mut Window, cx: &mut Context<Self>) {
         // editorGroupFinder.ts `handleModalEditorPart`: an editor opened without preserveFocus closes the modal.
         if pinned {
-            self.close_keybindings_editor(window, cx);
+            self.close_modal_editor(window, cx);
         }
         if path.to_string_lossy().ends_with(crate::search_editor::SEARCH_EDITOR_EXT) {
             return self.open_search_editor_file(path, pinned, window, cx);

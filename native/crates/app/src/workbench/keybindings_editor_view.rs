@@ -101,9 +101,18 @@ const MODAL_ALLOWED_COMMANDS: &[&str] = &[
     "workbench.action.toggleModalEditorSidebar",
 ];
 
+/// The editor a modal editor part shows: its title bar icon and title, and its "Open ... (JSON)" action.
+pub(super) struct ModalHeader {
+    pub icon: &'static str,
+    pub title: &'static str,
+    pub json_title: &'static str,
+    pub json_command: &'static str,
+}
+
 pub struct KeybindingsEditor {
     pub open: bool,
-    maximized: bool,
+    /// The modal editor part's maximized state, which the Settings editor in it shares.
+    pub(super) maximized: bool,
     model: Model,
     /// The `Keybindings::generation` the rows were built from.
     model_generation: u64,
@@ -263,12 +272,13 @@ impl Workbench {
             Outcome::done()
         });
         commands.register(CLOSE_MODAL_COMMAND, |workbench, _, window, cx| {
-            workbench.close_keybindings_editor(window, cx);
+            workbench.close_modal_editor(window, cx);
             Outcome::done()
         });
         commands.register("workbench.action.toggleModalEditorMaximized", |workbench, _, _, cx| {
+            let open = workbench.keybindings_editor.open || workbench.settings_editor.open;
             let editor = &mut workbench.keybindings_editor;
-            editor.maximized = editor.open && !editor.maximized;
+            editor.maximized = open && !editor.maximized;
             cx.notify();
             Outcome::done()
         });
@@ -423,6 +433,7 @@ impl Workbench {
 
     /// `openGlobalKeybindingSettings(false, { query })`: shows the editor, focusing its search, and searches `query`.
     pub(super) fn open_keybindings_editor(&mut self, query: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_settings_editor(window, cx);
         let editor = &mut self.keybindings_editor;
         if !editor.open {
             editor.previous_focus = window.focused(cx);
@@ -607,7 +618,7 @@ impl Workbench {
     /// focus is in the modal, unless `workbench.editor.useModal` is `all`.
     pub(super) fn modal_blocks_command(&self, resolution: &Resolution, window: &Window) -> bool {
         let Resolution::KbFound { command, .. } = resolution else { return false };
-        self.keybindings_editor_focused(window) && command.starts_with("workbench.") && !MODAL_ALLOWED_COMMANDS.contains(&command.as_str()) && self.setting("workbench.editor.useModal") != json!("all")
+        (self.keybindings_editor_focused(window) || self.settings_editor_focused(window)) && command.starts_with("workbench.") && !MODAL_ALLOWED_COMMANDS.contains(&command.as_str()) && self.setting("workbench.editor.useModal") != json!("all")
     }
 
     fn keybindings_editor_focused(&self, window: &Window) -> bool {
@@ -836,6 +847,20 @@ impl Workbench {
         if !self.keybindings_editor.open {
             return None;
         }
+        let header = ModalHeader { icon: "record-keys", title: "Keyboard Shortcuts", json_title: "Open Keyboard Shortcuts (JSON)", json_command: "workbench.action.openGlobalKeybindingsFile" };
+        let focus = self.keybindings_editor.modal_focus.clone();
+        Some(self.modal_editor_part(header, &focus, window, cx, |workbench, width, height, window, cx| workbench.keybindings_editor_pane(width, height, window, cx).into_any_element()))
+    }
+
+    /// The modal editor part around `editor`, which gets the size inside the dialog's border and header.
+    pub(super) fn modal_editor_part(
+        &mut self,
+        header: ModalHeader,
+        focus: &FocusHandle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        editor: impl FnOnce(&mut Self, f32, f32, &mut Window, &mut Context<Self>) -> AnyElement,
+    ) -> AnyElement {
         let viewport = window.viewport_size();
         let (window_width, window_height) = (f32::from(viewport.width), f32::from(viewport.height));
         let available_height = (window_height - TITLE_BAR_HEIGHT).max(0.);
@@ -847,10 +872,10 @@ impl Workbench {
         let left = ((window_width - width) / 2.).round();
         let top = ((window_height - height) / 2.).max(TITLE_BAR_HEIGHT).round();
         let editor_height = height - 2. - MODAL_HEADER_HEIGHT - 1.;
-        let editor = self.keybindings_editor_pane(width - 2., editor_height, window, cx);
+        let editor = editor(self, width - 2., editor_height, window, cx);
         let modal = div()
             .id("modal-editor")
-            .track_focus(&self.keybindings_editor.modal_focus)
+            .track_focus(focus)
             .absolute()
             .left(px(left))
             .top(px(top))
@@ -866,7 +891,7 @@ impl Workbench {
             // --vscode-shadow-xl blurs 20px; GPUI's blur_radius is the sigma, half the CSS blur.
             .shadow(vec![BoxShadow { color: rgba(0x00000026).into(), offset: point(px(0.), px(0.)), blur_radius: px(10.), spread_radius: px(0.), inset: false }])
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(self.modal_header(cx))
+            .child(self.modal_header(header, cx))
             .child(editor);
         let block = div()
             .id("modal-editor-block")
@@ -875,13 +900,19 @@ impl Workbench {
             .bg(rgba(0x00000080))
             .occlude()
             // A press outside the dialog closes the modal.
-            .on_mouse_down(MouseButton::Left, cx.listener(|workbench, _, window, cx| workbench.close_keybindings_editor(window, cx)))
+            .on_mouse_down(MouseButton::Left, cx.listener(|workbench, _, window, cx| workbench.close_modal_editor(window, cx)))
             .child(modal);
-        Some(block.into_any_element())
+        block.into_any_element()
+    }
+
+    /// `workbench.action.closeModalEditor`: the modal part closes with the editor it shows.
+    pub(super) fn close_modal_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_keybindings_editor(window, cx);
+        self.close_settings_editor(window, cx);
     }
 
     /// `.modal-editor-header`: the editor's icon and title, and the `ModalEditorTitle` actions.
-    fn modal_header(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    fn modal_header(&self, header: ModalHeader, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let foreground = self.foreground_or("titleBar.activeForeground");
         let action = |name: &'static str, title: &'static str, command: &'static str| {
             self.icon(name, 22., 16., foreground)
@@ -916,10 +947,10 @@ impl Workbench {
                     cx.notify();
                 }
             }))
-            .child(self.icon("record-keys", 16., 16., foreground).mr(px(6.)))
-            .child(div().flex_1().text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).truncate().child("Keyboard Shortcuts"))
+            .child(self.icon(header.icon, 16., 16., foreground).mr(px(6.)))
+            .child(div().flex_1().text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).truncate().child(header.title))
             // `ModalEditorEditorTitle`, then a separator and `ModalEditorTitle`, 4px apart.
-            .child(action("go-to-file", "Open Keyboard Shortcuts (JSON)", "workbench.action.openGlobalKeybindingsFile"))
+            .child(action("go-to-file", header.json_title, header.json_command))
             .child(div().mx(px(4.)).w(px(1.)).h(px(16.)).bg(foreground).opacity(0.3))
             // shortcut: Open Modal Editor in Main Window is drawn disabled: the port's editor area only hosts text editors; upgrade with the editor pane registry.
             .child(self.icon("open-in-product", 22., 16., foreground).opacity(0.4))
