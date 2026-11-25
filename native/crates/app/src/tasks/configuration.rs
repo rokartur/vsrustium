@@ -79,7 +79,7 @@ impl Task {
         }
         let identifier = create_task_identifier(&definition_value, definition).ok()?;
         let source = &dto["source"];
-        let id = match (custom, dto["_id"].as_str()) {
+        let id = match (custom, dto["_id"].as_str().filter(|id| !id.is_empty())) {
             (true, Some(id)) => id.to_owned(),
             _ => format!("{}.{}", source["extensionId"].as_str().unwrap_or_default(), identifier["_key"].as_str().unwrap_or_default()),
         };

@@ -268,11 +268,19 @@ impl Workbench {
             return;
         };
         let custom = execution["customExecution"] == "customExecution";
-        let launch = match custom {
-            true => ShellLaunchConfig { name: Some(task.name.clone()), extension_pty: true, is_feature_terminal: true, cwd: self.terminal_initial_cwd(), ..Default::default() },
+        let (launch, echo) = match custom {
+            true => (ShellLaunchConfig { name: Some(task.name.clone()), extension_pty: true, is_feature_terminal: true, cwd: self.terminal_initial_cwd(), ..Default::default() }, task.label.clone()),
             false => self.task_launch_config(&task, &execution),
         };
         let terminal = self.add_terminal(launch, None, window, cx);
+        // `initialText`: `formatMessageForTerminal` of 'Executing task: {0}' unless the presentation does not echo.
+        if task.presentation["echo"] != false {
+            let colors = crate::terminal::colors::TerminalColors::new(&self.theme);
+            if let Some(instance) = self.terminal_view.instance_mut(terminal) {
+                let message = format!("\x1b[0m\x1b[7m * \x1b[0m Executing task: {echo} \x1b[0m\n\r");
+                let _ = instance.process(message.as_bytes(), &colors);
+            }
+        }
         self.show_terminal_tab(window, cx);
         let execution_dto = json!({ "id": task.id, "task": task.to_dto() });
         let start_id = custom.then(exthost::main_thread_storage::generate_uuid);
@@ -296,7 +304,7 @@ impl Workbench {
     }
 
     /// `_createShellLaunchConfig` for macOS: the automation shell (`-c` and the command line) or the process.
-    fn task_launch_config(&self, task: &Task, execution: &Value) -> ShellLaunchConfig {
+    fn task_launch_config(&self, task: &Task, execution: &Value) -> (ShellLaunchConfig, String) {
         let options = &execution["options"];
         let cwd = options["cwd"].as_str().map(PathBuf::from).or_else(|| task.workspace_folder.clone()).unwrap_or_else(|| self.terminal_initial_cwd());
         let env: HashMap<String, Option<String>> = options["env"].as_object().into_iter().flatten().map(|(key, value)| (key.clone(), value.as_str().map(str::to_owned))).collect();
@@ -321,9 +329,7 @@ impl Workbench {
                 (executable, args, command_line)
             }
         };
-        // `formatMessageForTerminal` of 'Executing task: {0}' when the presentation echoes (the default).
-        let _ = echo;
-        ShellLaunchConfig {
+        let launch = ShellLaunchConfig {
             name: Some(task.name.clone()),
             executable,
             args,
@@ -331,7 +337,8 @@ impl Workbench {
             env: self.terminal_environment(&env),
             is_feature_terminal: true,
             ..Default::default()
-        }
+        };
+        (launch, echo)
     }
 
     /// The task's problem matchers by name or inline, `None` without any.
