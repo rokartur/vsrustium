@@ -155,7 +155,7 @@ fn word_ranges(lines: &[String], word_pattern: Option<&onig::Regex>, position: P
 
 /// `getWordAtText` with a language's `wordPattern`: the first match that touches char `column`, in chars.
 /// shortcut: matches over the whole line, where upstream scans a 50-char window back from the cursor (`windowSize`).
-fn pattern_word_at(pattern: &onig::Regex, line: &str, column: usize) -> Option<std::ops::Range<usize>> {
+pub(super) fn pattern_word_at(pattern: &onig::Regex, line: &str, column: usize) -> Option<std::ops::Range<usize>> {
     let chars = |offset: usize| line[..offset].chars().count();
     pattern.find_iter(line).map(|(start, end)| chars(start)..chars(end)).filter(|word| !word.is_empty()).find(|word| word.start <= column && column <= word.end)
 }

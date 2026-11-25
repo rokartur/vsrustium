@@ -225,7 +225,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | editor/test | src/vs/editor | n/a | upstream test infrastructure; the port tests with cargo test and port/tools |
 | editor/contrib/anchorSelect | src/vs/editor/contrib | todo |  |
 | editor/contrib/bracketMatching | src/vs/editor/contrib | ported | bracket pair colors and match boxes with overview ruler lane (brackets.rs); cargo test -p app brackets::tests; no Go to Bracket / Select to Bracket commands until keybindings |
-| editor/contrib/caretOperations | src/vs/editor/contrib | todo |  |
+| editor/contrib/caretOperations | src/vs/editor/contrib | verified | Move Selected Text Left/Right (palette), Transpose Letters (Ctrl+T): cargo test -p app caret_operations (moveCarretCommand.test.ts); ui-pair notes.txt Ctrl+T and both palette actions |
 | editor/contrib/clipboard | src/vs/editor/contrib | ported | Cmd+C/X/V with whole-line copy metadata: cargo test -p app keys_and_typed_text_edit_the_focused_editor_and_reach_the_host |
 | editor/contrib/codeAction | src/vs/editor/contrib | todo |  |
 | editor/contrib/codelens | src/vs/editor/contrib | todo |  |
@@ -247,13 +247,13 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | editor/contrib/gotoSymbol | src/vs/editor/contrib | todo |  |
 | editor/contrib/gpu | src/vs/editor/contrib | removed | Artur: internal infrastructure or developer tool with no 1:1 counterpart in the native port |
 | editor/contrib/hover | src/vs/editor/contrib | todo |  |
-| editor/contrib/inPlaceReplace | src/vs/editor/contrib | todo |  |
+| editor/contrib/inPlaceReplace | src/vs/editor/contrib | verified | Replace with Previous/Next Value (Shift+Cmd+, and ., palette): number step and value sets of `navigateValueSet`, 350 ms outline in light themes; cargo test -p app editor::in_place_replace (upstream has no test); ui-pair light theme `x = true; y = 41; z = 1.5` from the palette |
 | editor/contrib/indentation | src/vs/editor/contrib | ported | indentation.ts actions (indent using spaces/tabs, tab display size, detect, convert to spaces/tabs) and trimTrailingWhitespaceCommand.ts with their upstream tests, auto-indent on Enter and on type (`editor.autoIndent`), Reindent Lines and Reindent Selected Lines: cargo test -p app indentation editor_status editor::auto_indent (cursor.test.ts indent cases, Auto Indent On Type - TypeScript/JavaScript, shiftCommand.test.ts doc block cases); no auto-indent on paste (`editor.autoIndentOnPaste`, default off), not the Ruby, PHP, Go, CPP, HTML, Visual Basic, Latex and Lua suites |
 | editor/contrib/inlayHints | src/vs/editor/contrib | todo |  |
 | editor/contrib/inlineCompletions | src/vs/editor/contrib | todo |  |
 | editor/contrib/inlineProgress | src/vs/editor/contrib | todo |  |
 | editor/contrib/insertFinalNewLine | src/vs/editor/contrib | todo |  |
-| editor/contrib/lineSelection | src/vs/editor/contrib | todo |  |
+| editor/contrib/lineSelection | src/vs/editor/contrib | verified | Expand Line Selection (Cmd+L, palette): cargo test -p app expand_line_selection (lineSelection.test.ts); ui-pair notes.txt Cmd+L twice and on the last line |
 | editor/contrib/linesOperations | src/vs/editor/contrib | verified | `editor/lines_operations.rs`: copy, move, duplicate, sort, delete duplicates, reverse, delete, indent/outdent, insert line above/below, delete all left/right, join, transpose and the seven case transforms, with their keys, Selection menu rows and palette entries; cargo test -p app editor::lines_operations line_operation_keys (copyLinesCommand, moveLinesCommand, sortLinesCommand and linesOperations tests); ui-pair Alt+Down, Shift+Alt+Down, Ctrl+J match the reference; moved lines reindent by the indentation and onEnter rules (`editor.autoIndent`) |
 | editor/contrib/linkedEditing | src/vs/editor/contrib | todo |  |
 | editor/contrib/links | src/vs/editor/contrib | todo |  |
@@ -281,7 +281,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | editor/contrib/unusualLineTerminators | src/vs/editor/contrib | todo |  |
 | editor/contrib/wordHighlighter | src/vs/editor/contrib | ported | textual provider only (USUAL_WORD_SEPARATORS, whole words) on cursor move; cargo test -p app (editor::tests word highlight); pixel-check file window |
 | editor/contrib/wordOperations | src/vs/editor/contrib | ported | word moves, selects and deletes with USUAL_WORD_SEPARATORS: cargo test -p app (editor::cursor::tests, editor::edit::tests) |
-| editor/contrib/wordPartOperations | src/vs/editor/contrib | todo |  |
+| editor/contrib/wordPartOperations | src/vs/editor/contrib | verified | cursorWordPart(Left/Right)(Select), deleteWordPart(Left/Right), aliases cursorWordPartStartLeft(Select); cargo test -p app word_part (upstream cases); ui-pair Ctrl+Alt arrows, Ctrl+Alt+Backspace/Delete |
 | editor/contrib/zoneWidget | src/vs/editor/contrib | todo |  |
 | workbench/parts/activitybar | workbench part | ported | view icons with Explorer active when a folder is open, settings gear; no badges or clicks; pixel-check (port/results/pixels.md): same geometry, codicon edge pixels and active background rounding only |
 | workbench/parts/auxiliarybar | workbench part | todo |  |

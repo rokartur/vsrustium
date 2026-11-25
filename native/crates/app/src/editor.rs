@@ -16,6 +16,7 @@ use crate::languages::Languages;
 use crate::syntax::Tokenization;
 
 pub mod auto_indent;
+mod caret_operations;
 pub mod commands;
 pub mod cursor_undo;
 mod comment;
@@ -23,6 +24,7 @@ mod cursor;
 mod edit;
 pub mod find;
 pub mod folding;
+mod in_place_replace;
 mod folding_controller;
 mod indentation;
 mod lines_operations;
@@ -412,6 +414,8 @@ pub struct OpenEditor {
     pub guides: Vec<usize>,
     /// Occurrences of the word at the cursor, by line and char range.
     pub highlights: Vec<(usize, Range<usize>)>,
+    /// inPlaceReplace.ts `valueSetReplacement`: the replaced value's line and char range, under the version that made it.
+    pub value_set_replacement: Option<(u32, usize, Range<usize>)>,
     /// The folding regions, their collapse state and the lines it hides.
     pub folding: FoldingModel,
     /// The sticky scroll scopes of the indentation and marker regions, without the folding model's manual ones.
@@ -440,7 +444,7 @@ impl OpenEditor {
     fn new(document: TextDocument, preview: bool, model_id: u32) -> Self {
         let indentation = document.indentation;
         let guides = indent_guides(&document.lines, indentation.tab_size, indentation.indent_size(), document.off_side);
-        let mut editor = OpenEditor { document, preview, model_id, selections: vec![Selection::default()], last_added: 0, leftovers: Vec::new(), column_select: None, smart_select: None, cursor_states: Default::default(), version_id: 1, history: History::default(), guides, highlights: Vec::new(), folding: FoldingModel::default(), sticky_model: Default::default(), scroll: Scroll::default(), max_line_width: 0., host_reference: None, associated_file: false };
+        let mut editor = OpenEditor { document, preview, model_id, selections: vec![Selection::default()], last_added: 0, leftovers: Vec::new(), column_select: None, smart_select: None, cursor_states: Default::default(), version_id: 1, history: History::default(), guides, highlights: Vec::new(), value_set_replacement: None, folding: FoldingModel::default(), sticky_model: Default::default(), scroll: Scroll::default(), max_line_width: 0., host_reference: None, associated_file: false };
         editor.refresh_highlights();
         editor.refresh_folding_ranges();
         editor
@@ -729,6 +733,12 @@ mod tests {
         assert_eq!(editor.highlights, [(1, 0..4)]);
         editor.move_to(Position::new(1, 4), true);
         editor.selections[0].anchor = Position::new(0, 0);
+        editor.refresh_highlights();
+        assert!(editor.highlights.is_empty());
+        editor.selections[0] = Selection { anchor: Position::new(1, 0), head: Position::new(1, 4) };
+        editor.refresh_highlights();
+        assert_eq!(editor.highlights, [(1, 0..4)]);
+        editor.selections[0].head = Position::new(1, 5);
         editor.refresh_highlights();
         assert!(editor.highlights.is_empty());
     }

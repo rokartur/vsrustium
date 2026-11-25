@@ -276,6 +276,11 @@ impl OpenEditor {
         self.move_cursors(select, |lines, selection, _| (if right { cursor::word_right(lines, selection.head) } else { cursor::word_left(lines, selection.head) }, 0));
     }
 
+    /// `cursorWordPartLeft`/`cursorWordPartRight` from the head (wordPartOperations.ts).
+    pub fn move_word_part(&mut self, right: bool, select: bool) {
+        self.move_cursors(select, |lines, selection, _| (if right { cursor::word_part_right(lines, selection.head, super::WORD_SEPARATORS) } else { cursor::word_part_left(lines, selection.head, super::WORD_SEPARATORS) }, 0));
+    }
+
     /// `cursorHome`/`cursorEnd`; Home toggles between the first non-blank character and column 0.
     pub fn move_to_line_edge(&mut self, end: bool, select: bool) {
         self.move_cursors(select, |lines, selection, _| (if end { cursor::line_end(lines, selection.head) } else { cursor::line_start(lines, selection.head) }, 0));
@@ -291,11 +296,31 @@ impl OpenEditor {
         self.set_selections(vec![Selection { anchor: Position::default(), head: cursor::last_position(&self.document.lines) }]);
     }
 
-    /// The word highlights at the primary head; a multi-line selection has none (wordHighlighter.ts `_onPositionChanged`).
+    /// `CursorMoveCommands.expandLineSelection`: each selection from its start line's start to the start of the line
+    /// after its end, or to the end of the last line.
+    pub fn expand_line_selection(&mut self) {
+        let lines = &self.document.lines;
+        let selections = self
+            .selections
+            .iter()
+            .map(|selection| {
+                let end = selection.end().line;
+                let head = if end == lines.len() - 1 { cursor::last_position(lines) } else { Position::new(end + 1, 0) };
+                Selection { anchor: Position::new(selection.start().line, 0), head }
+            })
+            .collect();
+        self.push_undo_stop();
+        self.set_selections(selections);
+    }
+
+    /// The word highlights of the primary selection (wordHighlighter.ts `_run`): none for a multi-line selection
+    /// or one that reaches past the word at its start.
     pub fn refresh_highlights(&mut self) {
-        let Selection { anchor, head } = self.selection();
-        let text = &self.document.lines[head.line];
-        self.highlights = match super::word_at(text, head.column).filter(|_| anchor.line == head.line) {
+        let selection = self.selection();
+        let (start, end) = (selection.start(), selection.end());
+        let text = &self.document.lines[start.line];
+        let word = super::word_at(text, start.column).filter(|word| start.line == end.line && word.start <= start.column && end.column <= word.end);
+        self.highlights = match word {
             Some(range) => super::word_occurrences(&self.document.lines, &text.chars().skip(range.start).take(range.len()).collect::<String>()),
             None => Vec::new(),
         };
@@ -432,6 +457,14 @@ impl OpenEditor {
 
     pub fn delete_word_right(&mut self) -> Option<ContentChanged> {
         self.delete(cursor::delete_word_right_range, None, command("deleteWordRight"))
+    }
+
+    pub fn delete_word_part_left(&mut self) -> Option<ContentChanged> {
+        self.delete(|lines, selection| cursor::delete_word_part_left_range(lines, selection, super::WORD_SEPARATORS), None, command("deleteWordPartLeft"))
+    }
+
+    pub fn delete_word_part_right(&mut self) -> Option<ContentChanged> {
+        self.delete(|lines, selection| cursor::delete_word_part_right_range(lines, selection, super::WORD_SEPARATORS), None, command("deleteWordPartRight"))
     }
 
     /// Deletes each cursor's range. Consecutive char deletes (`kind`) in one direction undo together
@@ -1370,6 +1403,21 @@ pub(super) mod tests {
         overlapping.delete_word_left();
         assert_eq!(text(&overlapping), "ab d");
         assert_eq!(overlapping.selections, [Selection::caret(at(0, 3)), Selection::caret(at(0, 4))]);
+    }
+
+    /// lineSelection.test.ts (columns 0-based here).
+    #[test]
+    fn expand_line_selection_grows_by_whole_lines() {
+        let mut editor = editor("    \tMy First Line\t \n\tMy Second Line\n    Third Line🐶\n\n1", "\n");
+        for column in [0, 1, 4, 18, 19, 20] {
+            editor.set_selections(vec![Selection::caret(at(0, column))]);
+            editor.expand_line_selection();
+            assert_eq!(editor.selections, [range((0, 0), (1, 0))]);
+        }
+        for expected in [at(2, 0), at(3, 0), at(4, 0), at(4, 1), at(4, 1)] {
+            editor.expand_line_selection();
+            assert_eq!(editor.selections, [Selection { anchor: at(0, 0), head: expected }]);
+        }
     }
 
     #[test]

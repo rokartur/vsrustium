@@ -30,7 +30,13 @@ impl Chord {
     /// The chord GPUI reports for a key down; GPUI's key names are VS Code's user settings labels.
     pub fn from_keystroke(keystroke: &gpui::Keystroke) -> Chord {
         let modifiers = keystroke.modifiers;
-        Chord { ctrl: modifiers.control, shift: modifiers.shift, alt: modifiers.alt, meta: modifiers.platform, key: key_from_user_settings(&keystroke.key) }
+        // GPUI reports Cmd+Shift+. as Cmd+> without Shift; keybindings name the unshifted US key, as upstream's key codes do.
+        let shifted = US_SHIFTED_SYMBOLS.chars().position(|symbol| keystroke.key == symbol.to_string());
+        let (key, shift) = match shifted {
+            Some(index) => (US_UNSHIFTED_SYMBOLS.chars().nth(index).unwrap().to_string(), true),
+            None => (keystroke.key.clone(), modifiers.shift),
+        };
+        Chord { ctrl: modifiers.control, shift, alt: modifiers.alt, meta: modifiers.platform, key: key_from_user_settings(&key) }
     }
 
     /// `isModifierKey`: such a chord cannot be dispatched in the keydown phase.
@@ -104,6 +110,9 @@ impl Chord {
         parts.join(separator)
     }
 }
+
+const US_SHIFTED_SYMBOLS: &str = "~!@#$%^&*()_+{}|:\"<>?";
+const US_UNSHIFTED_SYMBOLS: &str = "`1234567890-=[]\\;',./";
 
 /// `KeyCodeUtils.fromUserSettings`: the US labels first, then the general ones; a later key code wins a shared label.
 fn key_from_user_settings(label: &str) -> usize {

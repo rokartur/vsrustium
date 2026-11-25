@@ -345,3 +345,12 @@ fn default_table_binds_the_editor_and_palette_keys() {
     assert_eq!(command(&context(&[("inQuickOpen", json!(true)), ("inFilesPicker", json!(true))]), "cmd+p"), "workbench.action.quickOpenNavigateNextInFilePicker");
     assert_eq!(resolver.resolve(&context(&[]), &[], chord("cmd+k")), Resolution::MoreChordsNeeded);
 }
+
+#[test]
+fn a_shifted_symbol_keystroke_resolves_to_its_us_key_with_shift() {
+    let keystroke = |key: &str, shift| gpui::Keystroke { modifiers: gpui::Modifiers { platform: true, shift, ..Default::default() }, key: key.into(), key_char: None };
+    assert_eq!(super::Chord::from_keystroke(&keystroke(">", false)), chord("shift+cmd+."));
+    assert_eq!(super::Chord::from_keystroke(&keystroke("<", false)), chord("shift+cmd+,"));
+    assert_eq!(super::Chord::from_keystroke(&keystroke("p", true)), chord("shift+cmd+p"));
+    assert_eq!(super::Chord::from_keystroke(&keystroke(".", false)), chord("cmd+."));
+}

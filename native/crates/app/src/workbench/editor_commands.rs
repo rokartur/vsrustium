@@ -2,6 +2,8 @@
 //! linesOperations.ts, clipboard.ts, multicursor.ts, folding.ts), so keybindings and
 //! `vscode.commands.executeCommand` run them.
 
+use std::time::Duration;
+
 use config::configuration::Overrides;
 use gpui::{ClipboardEntry, ClipboardItem, Context, Window};
 use serde_json::{Value, json};
@@ -14,7 +16,7 @@ use crate::editor::{CaseTransform, ContentChanged, Copied, LineCommentKind, Open
 type EditorCommand = fn(&mut OpenEditor) -> Option<ContentChanged>;
 
 /// Cursor and edit commands: `EditorCommand`s, which run on the focused editor or else the active one.
-const EDITOR_COMMANDS: [(&str, EditorCommand); 36] = [
+const EDITOR_COMMANDS: [(&str, EditorCommand); 48] = [
     ("cursorLeft", |editor| { editor.move_horizontally(false, false); None }),
     ("cursorLeftSelect", |editor| { editor.move_horizontally(false, true); None }),
     ("cursorRight", |editor| { editor.move_horizontally(true, false); None }),
@@ -27,6 +29,13 @@ const EDITOR_COMMANDS: [(&str, EditorCommand); 36] = [
     ("cursorWordLeftSelect", |editor| { editor.move_word(false, true); None }),
     ("cursorWordEndRight", |editor| { editor.move_word(true, false); None }),
     ("cursorWordEndRightSelect", |editor| { editor.move_word(true, true); None }),
+    ("cursorWordPartLeft", |editor| { editor.move_word_part(false, false); None }),
+    ("cursorWordPartLeftSelect", |editor| { editor.move_word_part(false, true); None }),
+    // wordPartOperations.ts registerCommandAlias: the previous ids of the two above.
+    ("cursorWordPartStartLeft", |editor| { editor.move_word_part(false, false); None }),
+    ("cursorWordPartStartLeftSelect", |editor| { editor.move_word_part(false, true); None }),
+    ("cursorWordPartRight", |editor| { editor.move_word_part(true, false); None }),
+    ("cursorWordPartRightSelect", |editor| { editor.move_word_part(true, true); None }),
     ("cursorHome", |editor| { editor.move_to_line_edge(false, false); None }),
     ("cursorHomeSelect", |editor| { editor.move_to_line_edge(false, true); None }),
     ("cursorEnd", |editor| { editor.move_to_line_edge(true, false); None }),
@@ -35,10 +44,13 @@ const EDITOR_COMMANDS: [(&str, EditorCommand); 36] = [
     ("cursorTopSelect", |editor| { editor.move_to_document_edge(false, true); None }),
     ("cursorBottom", |editor| { editor.move_to_document_edge(true, false); None }),
     ("cursorBottomSelect", |editor| { editor.move_to_document_edge(true, true); None }),
+    ("expandLineSelection", |editor| { editor.expand_line_selection(); None }),
     ("deleteLeft", OpenEditor::delete_left),
     ("deleteRight", OpenEditor::delete_right),
     ("deleteWordLeft", OpenEditor::delete_word_left),
     ("deleteWordRight", OpenEditor::delete_word_right),
+    ("deleteWordPartLeft", OpenEditor::delete_word_part_left),
+    ("deleteWordPartRight", OpenEditor::delete_word_part_right),
     ("deleteAllLeft", OpenEditor::delete_all_left),
     ("deleteAllRight", OpenEditor::delete_all_right),
     ("editor.action.copyLinesUpAction", |editor| editor.copy_lines(false)),
@@ -51,6 +63,9 @@ const EDITOR_COMMANDS: [(&str, EditorCommand); 36] = [
     ("editor.action.deleteLines", OpenEditor::delete_lines),
     ("editor.action.joinLines", OpenEditor::join_lines),
     ("editor.action.transpose", OpenEditor::transpose),
+    ("editor.action.moveCarretLeftAction", |editor| editor.move_selected_text(true)),
+    ("editor.action.moveCarretRightAction", |editor| editor.move_selected_text(false)),
+    ("editor.action.transposeLetters", OpenEditor::transpose_letters),
 ];
 
 type IndentingCommand = fn(&mut OpenEditor, AutoIndent) -> Option<ContentChanged>;
@@ -121,6 +136,9 @@ impl Workbench {
         // `editor.action.smartSelect.grow` is the expand command's old id (registerCommandAlias).
         for (id, forward) in [("editor.action.smartSelect.expand", true), ("editor.action.smartSelect.grow", true), ("editor.action.smartSelect.shrink", false)] {
             self.commands.register(id, move |workbench, _, _, cx| workbench.run_smart_select(forward, cx));
+        }
+        for (id, up) in [("editor.action.inPlaceReplace.up", false), ("editor.action.inPlaceReplace.down", true)] {
+            self.commands.register(id, move |workbench, _, _, cx| workbench.run_in_place_replace(up, cx));
         }
         self.commands.register("cursorUndo", |workbench, _, _, cx| workbench.run_cursor_undo(false, cx));
         self.commands.register("cursorRedo", |workbench, _, _, cx| workbench.run_cursor_undo(true, cx));
@@ -206,6 +224,28 @@ impl Workbench {
         let selections_before = editor.selections.clone();
         editor.smart_select(forward, &self.languages, options);
         self.editor_command_ran(None, selections_before, cx)
+    }
+
+    /// inPlaceReplace.ts `InPlaceReplaceController.run`: the replaced value stays outlined for 350 ms.
+    fn run_in_place_replace(&mut self, up: bool, cx: &mut Context<Self>) -> Outcome {
+        let Some(editor) = self.editors.active_mut() else { return Outcome::done() };
+        let selections_before = editor.selections.clone();
+        let Some((change, (line, range))) = editor.in_place_replace(up, &self.languages) else { return Outcome::done() };
+        let version = editor.version_id;
+        editor.value_set_replacement = Some((version, line, range));
+        let (scheme, path) = (editor.document.scheme.clone(), editor.document.path.clone());
+        cx.spawn(async move |workbench, cx| {
+            cx.background_executor().timer(Duration::from_millis(350)).await;
+            let _ = workbench.update(cx, |workbench, cx| {
+                let Some(editor) = workbench.editors.model_mut(&scheme, &path) else { return };
+                if editor.value_set_replacement.as_ref().is_some_and(|(set_at, ..)| *set_at == version) {
+                    editor.value_set_replacement = None;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+        self.editor_command_ran(Some(change), selections_before, cx)
     }
 
     /// comment.ts `CommentLineAction` and `BlockCommentAction` with the `editor.comments` options, on the

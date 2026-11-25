@@ -2,9 +2,11 @@
 //! and the code editor's view parts (margin, current line, word highlights, indent guides, text, cursor,
 //! decorationsOverviewRuler.ts). Sizes are the reference's CSS pixels with editor.fontSize 12 and lineHeight 18.
 
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::ops::Range;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use std::time::{Duration, Instant};
@@ -321,18 +323,26 @@ impl Workbench {
     /// `onDidFocusEditorText` runs the query from the selection again. The find widget and sticky lines are inside the widget.
     pub fn watch_editor_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let focus = self.editor_focus.clone();
-        let blur = cx.on_focus_out(&focus, window, |workbench, _, window, cx| {
-            // GPUI reports a window deactivation as focus out; the DOM keeps the focus there.
-            if workbench.editor_focus.contains_focused(window, cx) {
-                return;
+        let blurred_at = Rc::new(Cell::new(None));
+        let blur = cx.on_focus_out(&focus, window, {
+            let blurred_at = blurred_at.clone();
+            move |workbench, _, window, cx| {
+                // GPUI reports a window deactivation as focus out; the DOM keeps the focus there.
+                if workbench.editor_focus.contains_focused(window, cx) {
+                    return;
+                }
+                if let Some(editor) = workbench.editors.active_mut() {
+                    editor.highlights.clear();
+                    blurred_at.set(Some((editor.model_id, editor.version_id)));
+                }
+                cx.notify();
             }
-            if let Some(editor) = workbench.editors.active_mut() {
-                editor.highlights.clear();
-            }
-            cx.notify();
         });
-        let text_focus = cx.on_focus(&focus, window, |workbench, _, cx| {
-            if let Some(editor) = workbench.editors.active_mut() {
+        let text_focus = cx.on_focus(&focus, window, move |workbench, _, cx| {
+            let Some(editor) = workbench.editors.active_mut() else { return };
+            // A picked command runs before GPUI reports the restored focus; upstream's delayed query, started on
+            // focus, is cancelled by that command's edit (`onDidChangeModelContent` stops it).
+            if blurred_at.take().is_none_or(|(model, version)| model != editor.model_id || version == editor.version_id) {
                 editor.refresh_highlights();
             }
             cx.notify();
@@ -628,6 +638,16 @@ impl Workbench {
                     content = content.child(bracket);
                 }
                 content = content.children(find_matches);
+                // inPlaceReplace.css: .valueSetReplacement only in the light theme (`.monaco-editor.vs`), a 2px outline.
+                if let Some((_, line, columns)) = &editor.value_set_replacement
+                    && *line == index
+                    && self.theme.kind == ThemeKind::Light
+                    && let Some(border) = bracket_box.1
+                {
+                    let start = visible_column(text, columns.start, tab_size) as f32 * char_width;
+                    let end = visible_column(text, columns.end, tab_size) as f32 * char_width;
+                    content = content.child(div().absolute().top(px(-2.)).bottom(px(-2.)).left(px(start - 2.)).w(px(end - start + 4.)).border_2().border_color(border));
+                }
                 let highlights = editor.document.tokens.highlights(&self.theme, &self.languages, &editor.document.lines, index, tab_size);
                 let text_runs = StyledText::new(expand_tabs(text, tab_size)).with_highlights(gpui::combine_highlights(highlights, find_colors));
                 content = content.child(div().absolute().top_0().left_0().whitespace_nowrap().child(text_runs));
