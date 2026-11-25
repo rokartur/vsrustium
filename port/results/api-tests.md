@@ -164,3 +164,7 @@ On the Studio, the working tree of the Search view commit. Combined grep of the 
 ## M12 `_workbench.open`
 
 On the Studio, the working tree of the `_workbench.open` commit. Combined grep of the baseline: api-folder 134/2/2/264 (exit 1 after 13s) against 133/2/3, api-workspace 4/0/0. `MOCHA_GREP='vscode API - workspace'`: api-folder 107/2/0/293 (exit 0 after 13s), api-workspace 4/0/0, unchanged. `MOCHA_GREP='vscode API - commands'`: 4 passing, 2 failing; `vscode.open with untitled supports associated resource (#138925)` passes now. Left: `api-command: vscode.open` fails at `tabGroups.all.length` 1 !== 2 after `ViewColumn.Two` (one editor group), `api-command: vscode.diff` with "command '_workbench.diff' not found" (no diff editor, milestone 14).
+
+## M10 settings and storage
+
+On the Studio at 1ed0e932 (settings.json reload in the workbench, `.vsrustium` folders). `MOCHA_GREP="vscode API - configuration|vscode API - globalState" SUITE_TIMEOUT=300 port/tools/api-tests`: api-folder 5/0/0/397 (exit 0 after 1s), api-workspace 0/0/0/4. All three `configuration` tests and both `globalState / workspaceState` tests pass.

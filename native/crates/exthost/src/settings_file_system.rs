@@ -5,7 +5,7 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use config::json_schema::{compressed_content, settings_schemas};
+use config::json_schema::{REFERENCED_SCHEMAS, compressed_content, settings_schemas};
 use config::service::Settings;
 use files::{FILE, FILE_NOT_FOUND, PROVIDER_READONLY, READONLY, Resource, Stat};
 
@@ -17,7 +17,10 @@ const SCHEMA_ASSOCIATIONS: &str = "vscode://schemas-associations/schemas-associa
 pub fn read_file(settings: &Settings, resource: &Resource) -> files::Result<Vec<u8>> {
     let content = match resource.authority.as_str() {
         // `getSchemaContent`: an unregistered schema is the empty schema.
-        "schemas" => schema(settings, resource).map_or_else(|| "{}".to_string(), |schema| compressed_content(&schema)),
+        "schemas" => match referenced_schema(resource) {
+            Some(content) => content.to_string(),
+            None => schema(settings, resource).map_or_else(|| "{}".to_string(), |schema| compressed_content(&schema)),
+        },
         // Only chat registers schema associations, and the port has no chat.
         "schemas-associations" => r#"{"schemas":[]}"#.to_string(),
         _ => return Err(not_found(resource)),
@@ -26,7 +29,7 @@ pub fn read_file(settings: &Settings, resource: &Resource) -> files::Result<Vec<
 }
 
 pub fn stat(settings: &Settings, resource: &Resource) -> files::Result<Stat> {
-    if schema(settings, resource).is_none() && uri_string(resource) != SCHEMA_ASSOCIATIONS {
+    if referenced_schema(resource).is_none() && schema(settings, resource).is_none() && uri_string(resource) != SCHEMA_ASSOCIATIONS {
         return Err(not_found(resource));
     }
     let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("after 1970").as_millis() as u64;
@@ -37,6 +40,11 @@ fn schema(settings: &Settings, resource: &Resource) -> Option<serde_json::Value>
     let uri = uri_string(resource);
     let in_workspace = settings.workspace.as_ref().is_some_and(|workspace| workspace.file.is_some());
     settings_schemas(&settings.registry, in_workspace).into_iter().find(|(id, _)| *id == uri).map(|(_, schema)| schema)
+}
+
+fn referenced_schema(resource: &Resource) -> Option<&'static str> {
+    let uri = uri_string(resource);
+    REFERENCED_SCHEMAS.iter().find(|(id, _)| *id == uri).map(|(_, content)| *content)
 }
 
 fn uri_string(resource: &Resource) -> String {

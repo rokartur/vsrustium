@@ -9,6 +9,16 @@ use serde_json::{Map, Value, json};
 use crate::model::is_override_key;
 use crate::registry::{Registry, Scope};
 
+/// The schemas the settings schemas `$ref`, as the reference serves them (compressed), dumped by port/tools/dump-settings.
+// shortcut: built from the reference's color, token, size and debugger registries with its built-in extensions, so an
+// installed extension's colors or debuggers are missing; upgrade when those registries are ported.
+pub const REFERENCED_SCHEMAS: [(&str, &str); 5] = [
+    ("vscode://schemas/workbench-colors", include_str!("../schemas/workbench-colors.json")),
+    ("vscode://schemas/token-styling", include_str!("../schemas/token-styling.json")),
+    ("vscode://schemas/textmate-colors", include_str!("../schemas/textmate-colors.json")),
+    ("vscode://schemas/size-customizations", include_str!("../schemas/size-customizations.json")),
+    ("vscode://schemas/launch", include_str!("../schemas/launch.json")),
+];
 /// `getCompressedContent`: the schema as JSON with each subschema that occurs more than once, and is 30 characters or
 /// longer, moved to `$defs` and replaced by a `$ref`. Subschemas are found by `traverseNodes`, and the first one
 /// found, in its stack order, is the one kept.

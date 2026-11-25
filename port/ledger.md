@@ -501,7 +501,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | extension/bat | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/clojure | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/coffeescript | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
-| extension/configuration-editing | built-in extension | todo |  |
+| extension/configuration-editing | built-in extension | todo | its jsonValidation (plus `/.vsrustium/*.json`, port decision) maps settings, launch, tasks, mcp and extensions files to the vscode:// schemas; its completions and links wait for MainThreadLanguageFeatures (milestone 13) |
 | extension/copilot | built-in extension | removed | scan.rs REMOVED_BUILTINS; cargo test -p exthost skips_removed_builtins |
 | extension/cpp | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/csharp | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
@@ -534,7 +534,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | extension/java | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/javascript | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/json | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
-| extension/json-language-features | built-in extension | todo |  |
+| extension/json-language-features | built-in extension | ported | validates settings files against vscode://schemas/settings/* and the referenced schemas (exthost settings_file_system.rs, config json_schema.rs): port/tools/settings-check preferences, `editor.fontSize: "big"` in .vscode/settings.json gives `Incorrect type. Expected "number".` as in the reference; squiggles wait for MainThreadDiagnostics (milestone 13) |
 | extension/julia | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/latex | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/less | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
