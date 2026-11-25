@@ -357,7 +357,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/path | workbench service | todo |  |
 | workbench/services/policies | workbench service | todo |  |
 | workbench/services/power | workbench service | todo |  |
-| workbench/services/preferences | workbench service | todo |  |
+| workbench/services/preferences | workbench service | todo | keybindingsEditorModel.ts and keybindingsEditorInput.ts ported as keybindings_editor.rs with keybindingsEditorModel.test.ts (cargo test -p app keybindings_editor); openGlobalKeybindingSettings opens the Keyboard Shortcuts editor (cargo test -p app keybindings_editor_view); preferencesService.ts settings parts, preferencesModels.ts and preferencesValidation.ts wait for the Settings editor (milestone 10) |
 | workbench/services/process | workbench service | todo |  |
 | workbench/services/progress | workbench service | todo |  |
 | workbench/services/quickinput | workbench service | ported | quick_input_view.rs with header drag (cargo test -p app dragging); api-tests quick input 11/11; view state in application storage (cargo test -p app dragging) |
@@ -454,7 +454,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/output | workbench contribution | todo |  |
 | workbench/contrib/performance | workbench contribution | todo |  |
 | workbench/contrib/policyExport | workbench contribution | todo |  |
-| workbench/contrib/preferences | workbench contribution | todo |  |
+| workbench/contrib/preferences | workbench contribution | todo | keybindingsEditor.ts, keybindingWidgets.ts and the keybindings actions of preferences.contribution.ts ported as workbench/keybindings_editor_view.rs (cargo test -p app keybindings_editor_view, port/results/keybindings-editor.md); keybindingsEditorContribution.ts (the keybindings.json define overlay and decorations), keyboardLayoutPicker.ts and the Settings editor (milestone 10) not ported |
 | workbench/contrib/processExplorer | workbench contribution | todo |  |
 | workbench/contrib/quickaccess | workbench contribution | ported | commandsQuickAccess.ts as quick_access.rs and command_palette.rs; cargo test -p app quick_access command_palette tf_idf, history in profile storage; viewQuickAccess.ts not ported |
 | workbench/contrib/relauncher | workbench contribution | todo |  |
