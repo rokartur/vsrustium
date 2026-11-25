@@ -361,7 +361,7 @@ impl Workbench {
                 }
             }
             // A model without an editor, as a search replace leaves it, keeps its text.
-            None => match self.editors.models.iter().position(|model| model.document.is("file", &path)) {
+            None => match self.editors.models.iter().position(|model| model.document.is_file(&path)) {
                 Some(index) => self.editors.show_model(index, !pinned),
                 None => match TextDocument::read(&path, &self.languages, &self.settings.lock().unwrap()) {
                     Ok(document) => self.editors.open(document, !pinned),

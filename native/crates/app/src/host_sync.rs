@@ -445,6 +445,16 @@ mod tests {
         receiver.try_iter().collect()
     }
 
+    /// uriIdentityService.test.ts 'extUri (isEqual)' with the disk's path casing ignored.
+    #[test]
+    fn a_file_in_another_case_finds_the_editor_opened_first() {
+        let mut group = EditorGroup::default();
+        group.open(document("/w/Readme.md", "markdown"), false);
+        assert_eq!(group.find(std::path::Path::new("/w/README.md")), Some(0));
+        assert_eq!(group.find(std::path::Path::new("/w/Readme.md")), Some(0));
+        assert_eq!(group.find(std::path::Path::new("/W2/readme.md")), None);
+    }
+
     #[test]
     fn sends_documents_editors_tabs_and_language_activation_as_they_change() {
         let (sender, receiver) = channel();

@@ -205,7 +205,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/tunnel | src/vs/platform | removed | no remote or tunnels by decision (port/notes.md); one local extension host |
 | platform/undoRedo | src/vs/platform | ported | workspace elements across resources with sources, confirmBeforeUndo and flush on conflict (undo_redo.rs): cargo test -p app undo_redo, explorer_actions; text editors keep their own history (editor::edit::tests); no resource elements or undo groups |
 | platform/update | src/vs/platform | todo |  |
-| platform/uriIdentity | src/vs/platform | todo |  |
+| platform/uriIdentity | src/vs/platform | ported | asCanonicalUri for open models: $tryOpenDocument answers the casing opened first where the provider has no PathCaseSensitive (api-tests MOCHA_GREP="vscode API - workspace" openTextDocument, actual casing first), workbench editors find a file in any case (cargo test -p app a_file_in_another_case); no cache of unopened URIs |
 | platform/url | src/vs/platform | todo |  |
 | platform/userData | src/vs/platform | todo |  |
 | platform/userDataProfile | src/vs/platform | todo |  |
