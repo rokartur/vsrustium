@@ -85,7 +85,10 @@ impl Workbench {
             return;
         }
         editor.open = true;
-        editor.selected = self.user_data_profiles.state.as_ref().map(|state| state.current.id.clone());
+        let current = self.user_data_profiles.state.as_ref().map(|state| state.current.clone());
+        let editor = &mut self.user_data_profiles.editor;
+        editor.selected = current.as_ref().map(|profile| profile.id.clone());
+        editor.name = InputBox::new(current.map(|profile| profile.name).unwrap_or_default());
         let focus = editor.focus.get_or_insert_with(|| cx.focus_handle()).clone();
         editor.name_focus.get_or_insert_with(|| cx.focus_handle());
         window.focus(&focus, cx);
@@ -115,11 +118,36 @@ impl Workbench {
         cx.notify();
     }
 
+    /// The Name input: the new profile's name, or a rename of the selected profile once the name is valid
+    /// (`ProfileNameRenderer`'s validation, then `updateProfile`).
     pub(super) fn edit_profile_name(&mut self, edit: impl FnOnce(&mut InputBox), cx: &mut Context<Self>) {
-        edit(&mut self.user_data_profiles.editor.name);
-        if let Some(new_profile) = &mut self.user_data_profiles.editor.new_profile {
+        let editor = &mut self.user_data_profiles.editor;
+        edit(&mut editor.name);
+        if let Some(new_profile) = &mut editor.new_profile {
             new_profile.error = None;
+            return cx.notify();
         }
+        let name = editor.name.value.trim().to_owned();
+        let (Some(id), Some(state)) = (editor.selected.clone(), self.user_data_profiles.state.as_mut()) else { return };
+        let taken = state.profiles.profiles().iter().any(|profile| profile.name == name && profile.id != id);
+        if !name.is_empty() && !taken {
+            let update = storage::profiles::UpdateOptions { name: Some(name), ..Default::default() };
+            if let Ok((renamed, _)) = state.edit(|profiles, storage| profiles.update_profile(&id, update, storage)) {
+                if state.current.id == renamed.id {
+                    state.current = renamed;
+                }
+                self.profiles_changed(cx);
+            }
+        }
+        cx.notify();
+    }
+
+    fn select_profile(&mut self, profile: &Profile, cx: &mut Context<Self>) {
+        let editor = &mut self.user_data_profiles.editor;
+        editor.selected = Some(profile.id.clone());
+        editor.new_profile = None;
+        editor.name = InputBox::new(profile.name.clone());
+        editor.name_view.reset();
         cx.notify();
     }
 
@@ -301,7 +329,7 @@ impl Workbench {
         let contents = match (&self.user_data_profiles.editor.new_profile, &self.user_data_profiles.editor.selected) {
             (Some(_), _) => self.new_profile_contents(&profiles, window, cx).into_any_element(),
             (None, Some(id)) => match profiles.iter().find(|profile| profile.id == *id) {
-                Some(profile) => self.profile_contents(profile, &current, cx).into_any_element(),
+                Some(profile) => self.profile_contents(profile, &current, window, cx).into_any_element(),
                 None => div().into_any_element(),
             },
             (None, None) => div().into_any_element(),
@@ -381,7 +409,7 @@ impl Workbench {
     fn profile_row(&self, profile: &Profile, active: bool, selected: bool, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let foreground = if selected { self.foreground_or("list.activeSelectionForeground") } else { self.color("foreground") };
         let description = active.then(|| div().ml(px(2.)).flex().items_center().text_size(px(11.7)).opacity(0.7).child(self.icon("check", 16., 14., foreground)).child("Active"));
-        let id = profile.id.clone();
+        let select = profile.clone();
         let menu_profile = profile.clone();
         let switch_to = profile.clone();
         let open_name = profile.name.clone();
@@ -408,18 +436,21 @@ impl Workbench {
             .text_color(foreground)
             .when(selected, |row| row.bg(self.color("list.activeSelectionBackground")))
             .when(!selected, |row| row.hover(|row| row.bg(self.color("list.hoverBackground"))))
-            .on_click(cx.listener(move |workbench, _, _, cx| {
-                workbench.user_data_profiles.editor.selected = Some(id.clone());
-                workbench.user_data_profiles.editor.new_profile = None;
-                cx.notify();
-            }))
+            .on_click(cx.listener(move |workbench, _, _, cx| workbench.select_profile(&select, cx)))
             .child(self.icon(profile_icon(profile.icon.as_deref()), 22., 16., foreground))
             .child(div().ml(px(5.)).truncate().child(profile.name.clone()))
             .children(description)
             .when(selected || active, |row| row.child(actions))
     }
 
-    fn profile_contents(&self, profile: &Profile, current: &Profile, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    fn profile_name_input(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let editor = &self.user_data_profiles.editor;
+        let focused = editor.name_focus.as_ref().is_some_and(|focus| focus.is_focused(window));
+        let border = if focused { self.color("focusBorder") } else { self.theme.color("input.border").unwrap_or_default() };
+        div().w(px(400.)).h(px(26.)).flex().items_center().px(px(6.)).border_1().border_color(border).bg(self.color("input.background")).child(self.input_text(InputId::ProfileName, InputLook { password: false, placeholder: Some("Profile Name".into()), focused }, cx))
+    }
+
+    fn profile_contents(&self, profile: &Profile, current: &Profile, window: &Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let new_window_profile = self.setting(NEW_WINDOW_PROFILE_SETTING);
         let is_new_window = new_window_profile.as_str() == Some(profile.name.as_str());
         let title = div()
@@ -450,15 +481,14 @@ impl Workbench {
         let add_folder_profile = profile.clone();
         let add_folder = self.text_button("profile-add-folder", "Add Folder", cx, move |workbench, window, cx| workbench.add_profile_folder(add_folder_profile.clone(), window, cx));
         let folders = self.profile_row_container("Folders & Workspaces", div().flex().flex_col().child(div().line_height(px(18.)).opacity(0.9).child(description)).child(table).child(div().mt(px(8.)).flex().child(add_folder)));
-        div().flex().flex_col().child(title).child(div().mt(px(15.)).ml(px(28.)).children(use_for_current).child(use_for_new).child(contents).child(folders))
+        let name = (!profile.is_default).then(|| self.profile_row_container("Name", self.profile_name_input(window, cx)));
+        div().flex().flex_col().child(title).child(div().mt(px(15.)).ml(px(28.)).children(name).children(use_for_current).child(use_for_new).child(contents).child(folders))
     }
 
     fn new_profile_contents(&self, profiles: &[Profile], window: &Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let editor = &self.user_data_profiles.editor;
         let new_profile = editor.new_profile.as_ref().expect("the new profile form is shown");
-        let focused = editor.name_focus.as_ref().is_some_and(|focus| focus.is_focused(window));
-        let border = if focused { self.color("focusBorder") } else { self.theme.color("input.border").unwrap_or_default() };
-        let name = div().w(px(400.)).h(px(26.)).flex().items_center().px(px(6.)).border_1().border_color(border).bg(self.color("input.background")).child(self.input_text(InputId::ProfileName, InputLook { password: false, placeholder: Some("Profile Name".into()), focused }, cx));
+        let name = self.profile_name_input(window, cx);
         let error = new_profile.error.clone().map(|error| div().w(px(400.)).px(px(6.)).py(px(4.)).border_1().border_color(self.color("inputValidation.errorBorder")).bg(self.color("inputValidation.errorBackground")).child(error));
         let copy_from_name = match (&new_profile.template, &new_profile.copy_from) {
             (Some(template), _) => template["name"].as_str().unwrap_or_default().to_owned(),
