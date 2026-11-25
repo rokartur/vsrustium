@@ -41,9 +41,8 @@ impl Default for Keybindings {
 impl Workbench {
     /// Sets the default and user keybindings, and reloads the user's file when it changes on disk.
     pub fn load_keybindings(&mut self, defaults: Vec<Item>, user_file: PathBuf, cx: &mut Context<Self>) {
-        let resource = crate::editor::uri_string("file", &user_file);
-        self.keybindings.defaults = defaults.into_iter().map(|item| Item { when: keybindings::with_keybindings_resource(item.when, &resource), ..item }).collect();
         self.keybindings.user_file = Some(user_file.clone());
+        self.set_default_keybindings(defaults);
         let menu = std::mem::take(&mut self.quick_access.menu);
         self.set_command_palette_menu(menu);
         self.set_user_keybindings(keybindings::user_keybindings(&user_file));
@@ -69,6 +68,12 @@ impl Workbench {
             }
         })
         .detach();
+    }
+
+    /// The keybindings the core and extensions contribute; `set_user_keybindings` puts them in the resolver.
+    pub fn set_default_keybindings(&mut self, defaults: Vec<Item>) {
+        let resource = self.keybindings.user_file.as_ref().map(|file| crate::editor::uri_string("file", file)).unwrap_or_default();
+        self.keybindings.defaults = defaults.into_iter().map(|item| Item { when: keybindings::with_keybindings_resource(item.when, &resource), ..item }).collect();
     }
 
     /// The Command Palette's items, whose `resource ==` clauses of the reference's profile name the port's

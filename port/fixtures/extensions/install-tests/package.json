@@ -1,0 +1,6 @@
+{
+	"name": "install-tests",
+	"publisher": "port",
+	"version": "0.0.1",
+	"engines": { "vscode": "^1.90.0" }
+}

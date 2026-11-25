@@ -1,7 +1,7 @@
 //! Main-thread side of one extension host session: init data, the startup calls the
 //! workbench's MainThread* actors make, and a dispatcher for requests from the host.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -134,6 +134,8 @@ pub struct SessionLog {
     /// Extension id -> activation error message.
     pub activation_errors: BTreeMap<String, String>,
     pub activated: Vec<String>,
+    /// Lowercase ids of extensions whose activation started (`$onWillActivateExtension`).
+    pub activation_started: HashSet<String>,
     pub console: Vec<String>,
 }
 
@@ -144,6 +146,10 @@ pub struct Session {
     pub log: SessionLog,
     /// `IExtensionDescription`s by lowercase id, for `$getExtension`.
     extensions: HashMap<String, Value>,
+    /// `ExtensionDescriptionRegistry` version the host has, raised by each `$deltaExtensions`.
+    extensions_version: u64,
+    /// `_allRequestedActivateEvents`.
+    requested_activation_events: HashSet<String>,
     extension_tests_req: Option<u32>,
     /// The window's settings; without it the host gets the registered defaults and writes are ignored.
     pub configuration: Option<MainThreadConfiguration>,
@@ -186,6 +192,8 @@ impl Session {
             results: HashMap::new(),
             log: SessionLog::default(),
             extensions: HashMap::new(),
+            extensions_version: 1,
+            requested_activation_events: HashSet::new(),
             extension_tests_req: None,
             configuration: None,
             storage: None,
@@ -217,6 +225,74 @@ impl Session {
         });
         self.call("ExtHostExtensionService", "$startExtensionHost", vec![Arg::Json(delta)], Duration::from_secs(60))?;
         Ok(())
+    }
+
+    /// The part of a delta `_deltaExtensions` applies: `canRemoveExtension` drops ids that are unknown or whose
+    /// activation started, `canAddExtension` drops extensions the host already runs and keeps no removal for.
+    pub fn applicable_delta<'a>(&self, to_add: &'a [ScannedExtension], to_remove: &[String]) -> (Vec<&'a ScannedExtension>, Vec<String>) {
+        let to_remove: Vec<String> = to_remove
+            .iter()
+            .map(|id| id.to_lowercase())
+            .filter(|id| self.extensions.contains_key(id) && !self.log.activation_started.contains(id))
+            .collect();
+        let to_add = to_add
+            .iter()
+            .filter(|extension| {
+                let id = extension.id.to_lowercase();
+                !self.extensions.contains_key(&id) || to_remove.contains(&id)
+            })
+            .collect();
+        (to_add, to_remove)
+    }
+
+    /// `_updateExtensionsOnExtHosts` with a delta from `applicable_delta`, then `_activateAddedExtensionIfNeeded`.
+    pub fn delta_extensions(&mut self, to_add: &[&ScannedExtension], to_remove: &[String]) -> anyhow::Result<()> {
+        if to_add.is_empty() && to_remove.is_empty() {
+            return Ok(());
+        }
+        let removed: Vec<Value> = to_remove.iter().map(|id| self.extensions.remove(id).expect("applicable_delta keeps known ids")["identifier"].clone()).collect();
+        let mut activation_events = serde_json::Map::new();
+        for extension in to_add {
+            self.extensions.insert(extension.id.to_lowercase(), extension.description.clone());
+            let events = crate::activation_events::read_activation_events(&extension.id, &extension.description);
+            if !events.is_empty() {
+                activation_events.insert(extension.id.to_lowercase(), json!(events));
+            }
+        }
+        self.extensions_version += 1;
+        let added: Vec<Value> = to_add.iter().map(|extension| extension_identifier(&extension.id)).collect();
+        let descriptions: Vec<&Value> = to_add.iter().map(|extension| &extension.description).collect();
+        let delta = json!({
+            "versionId": self.extensions_version, "toRemove": removed, "toAdd": descriptions, "addActivationEvents": activation_events,
+            "myToRemove": removed, "myToAdd": added,
+        });
+        self.call("ExtHostExtensionService", "$deltaExtensions", vec![Arg::Json(delta)], Duration::from_secs(60))?;
+        for extension in to_add {
+            if let Some(event) = self.activation_event_of_added(extension) {
+                let reason = json!({ "startup": false, "extensionId": extension_identifier(&extension.id), "activationEvent": event });
+                self.notify("ExtHostExtensionService", "$activate", vec![extension_identifier(&extension.id), reason]);
+            }
+        }
+        Ok(())
+    }
+
+    /// `_activateAddedExtensionIfNeeded` with workspaceContains.ts `checkActivateWorkspaceContainsExtension`.
+    fn activation_event_of_added(&self, extension: &ScannedExtension) -> Option<String> {
+        let events = crate::activation_events::read_activation_events(&extension.id, &extension.description);
+        if let Some(event) = events.iter().find(|event| self.requested_activation_events.contains(*event) || *event == "*" || *event == "onStartupFinished") {
+            return Some(event.clone());
+        }
+        let workspace = self.workspace.as_ref()?;
+        let mut globs = Vec::new();
+        for event in &events {
+            let Some(file_name_or_glob) = event.strip_prefix("workspaceContains:") else { continue };
+            if file_name_or_glob.contains(['*', '?']) {
+                globs.push(file_name_or_glob.to_owned());
+            } else if workspace.folders().iter().any(|folder| folder.join(file_name_or_glob).exists()) {
+                return Some(event.clone());
+            }
+        }
+        (!globs.is_empty() && workspace.glob_file_exists(&globs)).then(|| format!("workspaceContains:{}", globs.join(",")))
     }
 
     /// Starts the test runner named in init data (`extensionTestsLocationURI`); `pump` returns false once it is done.
@@ -306,6 +382,9 @@ impl Session {
     fn send(&mut self, proxy: &str, method: &str, args: Vec<Arg>, cancellable: bool) -> u32 {
         self.next_req += 1;
         let req = self.next_req;
+        if let ("$activateByEvent", Some(Arg::Json(Value::String(event)))) = (method, args.first()) {
+            self.requested_activation_events.insert(event.clone());
+        }
         let message = Message::Request { req, rpc_id: proxy_id(proxy), method: method.into(), args, cancellable };
         self.host.send(rpc::encode(&message));
         req
@@ -545,6 +624,9 @@ impl Session {
             }
             // The port has no browser: a URI is already what the host can load.
             ("MainThreadExtensionService", "$asBrowserUri") => return Reply::Json(arg(0)),
+            ("MainThreadExtensionService", "$onWillActivateExtension") => {
+                self.log.activation_started.insert(arg(0)["value"].as_str().unwrap_or_default().to_lowercase());
+            }
             ("MainThreadExtensionService", "$onDidActivateExtension") => {
                 self.log.activated.push(arg(0)["value"].as_str().unwrap_or_default().to_owned());
             }

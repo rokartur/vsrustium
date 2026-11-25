@@ -200,6 +200,7 @@ dependencies = [
  "raw-window-handle",
  "regex",
  "search",
+ "serde",
  "serde_json",
  "storage",
  "textmate",
@@ -1067,6 +1068,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "core_detect"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f8f80099a98041a3d1622845c271458a2d73e688351bf3cb999266764b81d48"
+
+[[package]]
 name = "core_maths"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1340,6 +1347,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "encoding_rs"
+version = "0.8.44"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "89253175e704ab869b04f9db224d38630e0211a53841a79181deae0889e169f5"
+dependencies = [
+ "cfg-if",
+ "core_detect",
+ "multiversion_no_op",
+ "rustversion",
+ "scopeguard",
+ "simdutf8",
+]
+
+[[package]]
 name = "endi"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1487,9 +1508,11 @@ dependencies = [
  "base64",
  "config",
  "files",
+ "flate2",
  "md-5",
  "search",
  "security-framework",
+ "semver",
  "serde_json",
  "storage",
 ]
@@ -1534,6 +1557,8 @@ dependencies = [
 name = "files"
 version = "0.1.0"
 dependencies = [
+ "config",
+ "encoding_rs",
  "notify",
  "regex",
  "serde_json",
@@ -3225,6 +3250,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "multiversion_no_op"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "743fb55ba31b18fb1ecef6bdc9aa2743314978ac084044301a7eee33fb99a20d"
+
+[[package]]
 name = "naga"
 version = "29.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4881,6 +4912,12 @@ checksum = "95890f873bec569a0362c235787f3aca6e1e887302ba4840839bcc6459c42da6"
 dependencies = [
  "quote",
 ]
+
+[[package]]
+name = "simdutf8"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
 
 [[package]]
 name = "simplecss"

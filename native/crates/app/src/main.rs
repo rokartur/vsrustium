@@ -58,6 +58,7 @@ use config::registry::Registry;
 use config::service::Settings;
 use config::workspace::Workspace;
 use exthost::extension_development::ExtensionDevelopment;
+use exthost::extension_management::{UserExtensions, WindowExtensions, add_user_extensions};
 use exthost::main_thread_configuration::MainThreadConfiguration;
 use exthost::main_thread_files::MainThreadFiles;
 use exthost::main_thread_secret_state::MainThreadSecretState;
@@ -92,7 +93,7 @@ fn main() -> anyhow::Result<()> {
     let screenshot_input = flag_value("--screenshot-input").unwrap_or_default();
     // Typed before the capture, as port/tools/ref-screenshot types KEYS into the reference.
     let screenshot_keys: Vec<Keystroke> = flag_value("--screenshot-keys").unwrap_or_default().split_whitespace().map(Keystroke::parse).collect::<Result<_, _>>()?;
-    let value_flags = ["--user-data-dir", "--screenshot", "--screenshot-keys", "--screenshot-input", "--theme"];
+    let value_flags = ["--user-data-dir", "--extensions-dir", "--screenshot", "--screenshot-keys", "--screenshot-input", "--theme"];
     let positional: Vec<&String> = args.iter().enumerate().skip(1).filter(|(i, arg)| !arg.starts_with("--") && !value_flags.contains(&args[i - 1].as_str())).map(|(_, arg)| arg).collect();
     let canonical = |path: &String| std::fs::canonicalize(path).with_context(|| format!("opening {path}"));
     let workspace = positional.first().map(|path| canonical(path)).transpose()?.map(Workspace::open);
@@ -101,10 +102,16 @@ fn main() -> anyhow::Result<()> {
 
     let app_root = std::env::current_dir()?;
     let extensions_dir = std::env::var_os("VSCODE_GPUI_EXTENSIONS").map(PathBuf::from).unwrap_or_else(|| app_root.join("extensions"));
-    let mut extensions = scan_builtin_extensions(&extensions_dir)?;
+    let builtins = scan_builtin_extensions(&extensions_dir)?;
+    // shortcut: user extensions default to <user data>/extensions, not ~/.vscode-oss/extensions, so the port never shares them with Code - OSS.
+    let user_extensions = UserExtensions { folder: flag_value("--extensions-dir").map_or_else(|| user_data.join("extensions"), PathBuf::from), product_version: VERSION.into() };
+    user_extensions.clean_up()?;
+    let mut extensions = builtins.clone();
+    add_user_extensions(&mut extensions, user_extensions.scan()?);
     if let Some(development) = &development {
         development.add_extension(&mut extensions)?;
     }
+    let window_extensions = WindowExtensions { builtins, user: user_extensions, running: extensions.clone() };
     let described: Vec<(&str, &serde_json::Value)> = extensions.iter().map(|extension| (extension.id.as_str(), &extension.description)).collect();
     let settings = Settings::load(Registry::with_extensions(&described), user_data.join("User"), workspace.clone());
     let theme = match flag_value("--theme") {
@@ -137,7 +144,7 @@ fn main() -> anyhow::Result<()> {
                 let (request_sender, mut requests) = unbounded::<ForwardedRequest>();
                 let (reply_sender, replies) = channel::<(u32, Result<serde_json::Value, serde_json::Value>)>();
                 let (main_thread_sender, mut main_thread_requests) = unbounded::<HostRequest>();
-                let main_thread = WorkbenchMainThread { requests: main_thread_sender, messages: host_receiver, waiting: Vec::new(), content_providers: Vec::new() };
+                let main_thread = WorkbenchMainThread { requests: main_thread_sender, messages: host_receiver, waiting: Vec::new(), content_providers: Vec::new(), extensions: window_extensions };
                 let languages = Languages::new(&extensions);
                 let mut host = HostSync::new(host_sender);
                 host.configuration_scopes = development.is_some();
@@ -151,6 +158,7 @@ fn main() -> anyhow::Result<()> {
                 workbench.status_entries = main_thread_status_bar::static_entries(&extensions);
                 workbench.file_icons = file_icons;
                 workbench.color_themes = color_themes;
+                workbench.extensions = extensions.clone();
                 workbench.restore_profile_state(storage.profile.clone());
                 workbench.restore_workspace_state(storage.workspace.clone());
                 workbench.watch_editor_focus(window, cx);
@@ -270,7 +278,7 @@ fn run_extension_host(
 ) -> anyhow::Result<()> {
     let paths = SessionPaths { app_root: &app_root, user_data: &user_data, workspace: workspace.as_ref() };
     let extension_tests = development.as_ref().is_some_and(|development| development.tests_path.is_some());
-    let mut init = init_data(&paths, &extensions, "1.147.0");
+    let mut init = init_data(&paths, &extensions, VERSION);
     init["telemetryInfo"] = storage.telemetry_info();
     if let Some(development) = &development {
         development.add_to_init_data(&mut init);
@@ -326,6 +334,9 @@ fn run_extension_host(
     let _ = status.unbounded_send("extension host exited".into());
     Ok(())
 }
+
+/// package.json `version`.
+const VERSION: &str = "1.147.0";
 
 const ACTIVATED_PREFIX: &str = "eager extensions activated: ";
 

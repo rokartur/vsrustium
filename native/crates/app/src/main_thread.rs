@@ -4,6 +4,7 @@
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::Duration;
 
+use exthost::extension_management::WindowExtensions;
 use exthost::main_thread::{MainThread, serialized_error};
 use exthost::main_thread_files::{Providers, resource};
 use exthost::rpc::{Arg, Reply};
@@ -30,6 +31,7 @@ pub struct WorkbenchMainThread {
     pub waiting: Vec<(u32, oneshot::Sender<Result<Value, Value>>)>,
     /// `$registerTextContentProvider` handles and schemes, newest first as textModelResolverService.ts keeps them.
     pub content_providers: Vec<(Value, String)>,
+    pub extensions: WindowExtensions,
 }
 
 impl MainThread for WorkbenchMainThread {
@@ -94,6 +96,10 @@ impl MainThread for WorkbenchMainThread {
         for message in self.messages.try_iter() {
             if let Some(work) = message.files {
                 work.run(&mut Providers { session: &mut *session });
+                continue;
+            }
+            if let Some((job, reply)) = message.extensions {
+                let _ = reply.send(self.extensions.run(session, job).map_err(|error| format!("{error:#}")));
                 continue;
             }
             let req = session.notify(message.proxy, message.method, message.args);

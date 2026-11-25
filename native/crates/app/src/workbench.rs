@@ -13,6 +13,7 @@ mod editor_message;
 pub mod editor_status;
 mod editor_view;
 mod explorer_actions;
+mod extension_management;
 mod explorer_find;
 mod file_participants;
 mod find_widget;
@@ -73,6 +74,8 @@ pub struct Workbench {
     pub theme: Theme,
     /// The contributed color themes the theme picker offers.
     pub color_themes: Vec<ColorThemeEntry>,
+    /// The extensions the host runs, whose contributions the workbench reads.
+    pub extensions: Vec<exthost::scan::ScannedExtension>,
     /// The repo root: codicon SVGs and the letterpress are read from upstream's own files under it.
     pub app_root: PathBuf,
     /// The opened folder; `None` is the empty window.
@@ -211,6 +214,7 @@ impl Workbench {
         let mut workbench = Workbench {
             theme,
             color_themes: Vec::new(),
+            extensions: Vec::new(),
             app_root,
             folder: workspace.map(|workspace| FileTree::new(workspace, settings.clone())),
             languages,
@@ -289,6 +293,7 @@ impl Workbench {
         workbench.register_marker_navigation_commands();
         workbench.register_define_keybinding_command();
         workbench.register_notifications_commands();
+        workbench.register_extension_management_commands();
         // Keybindings resolve before the focused element sees the key, and with nothing focused too.
         let entity = cx.entity().downgrade();
         cx.intercept_keystrokes(move |event, window, cx| {

@@ -40,6 +40,23 @@ impl MainThreadWorkspace {
         MainThreadWorkspace { folders, settings, rg: search::ripgrep::rg_path(app_root), searches: HashMap::new(), sender, receiver }
     }
 
+    pub fn folders(&self) -> &[PathBuf] {
+        &self.folders
+    }
+
+    /// workspaceContains.ts `checkGlobFileExists`, given up after `WORKSPACE_CONTAINS_TIMEOUT` (7 s).
+    pub fn glob_file_exists(&self, includes: &[String]) -> bool {
+        let query = search::query::file_query(&self.folders, &json!({ "includePattern": includes, "exists": true }), &|folder, key| self.setting(folder, key));
+        let cancellation = Arc::new(Cancellation::default());
+        let timer = cancellation.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(7));
+            timer.cancel();
+        });
+        let limit_hit = search::file_search::search(&query, &self.rg, &cancellation, &mut |_, _| {});
+        !cancellation.is_cancelled() && limit_hit == Ok(true)
+    }
+
     /// The methods this module answers; other MainThreadWorkspace calls keep their default reply.
     pub fn serves(method: &str) -> bool {
         matches!(method, "$startFileSearch" | "$startTextSearch" | "$resolveDecoding" | "$validateDetectedEncoding" | "$resolveEncoding")

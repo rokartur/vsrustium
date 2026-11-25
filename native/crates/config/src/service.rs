@@ -11,7 +11,7 @@ use crate::configuration::{Configuration, Overrides};
 use crate::indentation::{creation_options, model_indentation};
 use crate::json::{self, ParseOptions, Segment};
 use crate::json_edit::{FormattingOptions, set_property};
-use crate::model::{Change, ConfigurationModel, ParseFilter, is_override_key, key_from_override_identifiers, merge_changes, parse_content, parse_raw, to_values_tree};
+use crate::model::{Change, ConfigurationModel, ParseFilter, compare, is_override_key, key_from_override_identifiers, merge_changes, parse_content, parse_raw, to_values_tree};
 use crate::registry::{APPLICATION_SCOPES, FOLDER_SCOPES, Registry, Scope, WORKSPACE_SCOPES};
 use crate::workspace::Workspace;
 
@@ -78,6 +78,15 @@ impl Settings {
         settings.configuration.workspace = settings.load_workspace();
         settings.stamps = settings.watched_files().into_iter().map(|path| (path.clone(), stamp(&path))).collect();
         settings
+    }
+
+    /// `onDefaultConfigurationChanged` after extensions were added or removed: the defaults of the new registry.
+    pub fn set_registry(&mut self, registry: Registry) -> Change {
+        let defaults = registry.default_model();
+        let change = compare(Some(&self.configuration.defaults), Some(&defaults));
+        self.configuration.defaults = defaults;
+        self.registry = registry;
+        change
     }
 
     /// `<user data>/User`, `environmentService.userRoamingDataHome`.
