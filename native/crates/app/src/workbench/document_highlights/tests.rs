@@ -22,6 +22,22 @@ fn highlights(workbench: &gpui::Entity<Workbench>, cx: &mut gpui::VisualTestCont
     workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().highlights.clone())
 }
 
+/// wordHighlighter.ts `_run` without text focus and without a query: a cursor moved from elsewhere (the Outline, a
+/// tree) highlights nothing; with the focus back the word under it is highlighted.
+#[gpui::test]
+fn a_cursor_moved_without_text_focus_highlights_nothing(cx: &mut TestAppContext) {
+    let (workbench, cx, _, _) = open(cx, "highlights-focus", "foo\n\nfoo\n");
+    run(&workbench, cx, "cursorDown");
+    assert!(highlights(&workbench, cx).is_empty(), "no word on the empty line");
+    workbench.update_in(cx, |workbench, window, cx| window.focus(&workbench.explorer.focus, cx));
+    cx.run_until_parked();
+    run(&workbench, cx, "cursorDown");
+    assert!(highlights(&workbench, cx).is_empty());
+    workbench.update_in(cx, |workbench, window, cx| window.focus(&workbench.editor_focus, cx));
+    cx.run_until_parked();
+    assert_eq!(highlights(&workbench, cx), [(0, 0..3), (2, 0..3)]);
+}
+
 /// wordHighlighter.ts with a provider: its occurrences replace the textual ones, Write drawn strong.
 #[gpui::test]
 fn a_document_highlight_provider_replaces_the_textual_highlights(cx: &mut TestAppContext) {

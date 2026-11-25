@@ -279,7 +279,7 @@ impl Render for Workbench {
         self.follow_symbol_navigation();
         self.follow_definition_link(cx);
         self.refresh_selection_highlights(window);
-        self.refresh_document_highlights(cx);
+        self.refresh_document_highlights(window, cx);
         self.refresh_outline_pane(cx);
         self.update_webview_panels(window, cx);
         self.update_diff_editor();

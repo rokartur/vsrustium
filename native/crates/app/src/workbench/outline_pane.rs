@@ -181,14 +181,15 @@ impl Workbench {
         };
         let content = match (row.group, row.element) {
             (Some(label), _) => div().child(label.to_string()),
-            (None, Some(element)) => self.outline_element_label(element),
+            (None, Some(element)) => self.outline_element_label(element, (tree_focused && selected).then(|| self.list_selection_icon_color())),
             (None, None) => div(),
         };
         let (selection, selection_foreground) = match tree_focused {
             true => (self.color("list.activeSelectionBackground"), self.theme.color("list.activeSelectionForeground")),
             false => (self.color("list.inactiveSelectionBackground"), self.theme.color("list.inactiveSelectionForeground")),
         };
-        let focus_outline = self.theme.color("list.focusOutline").or(self.theme.color("focusBorder")).filter(|_| tree_focused && selected);
+        // listWidget.ts: the focused row is the selected one here, so `listFocusAndSelectionOutline` (high contrast only).
+        let focus_outline = self.theme.color("list.focusAndSelectionOutline").or(self.theme.color("contrastActiveBorder")).filter(|_| tree_focused && selected);
         let clicked = id.clone();
         div()
             .id(("outline-row", index))
@@ -198,20 +199,24 @@ impl Workbench {
             .flex()
             .items_center()
             .cursor_pointer()
-            .pl(px(indent * row.depth as f32 + 8.))
+            .mx(px(4.))
+            .rounded(px(4.))
+            // monaco-tl-twistie: 3px row inset and 8px base indent, then the indent per level.
+            .pl(px(11. + indent * row.depth as f32))
             .when(!selected, |row| row.hover(|row| row.bg(self.color("list.hoverBackground"))))
             .when(selected, |row| row.bg(selection).when_some(selection_foreground, |row, color| row.text_color(color)))
-            .when_some(focus_outline, |row, color| row.child(div().absolute().inset_0().border_1().border_color(color)))
+            .when_some(focus_outline, |row, color| row.child(div().absolute().inset_0().rounded(px(4.)).border_1().border_color(color)))
             .child(twistie)
-            .child(content.flex_1().min_w_0().flex().items_center().ml(px(4.)))
+            .child(content.flex_1().min_w_0().flex().items_center())
             .on_click(cx.listener(move |workbench, event: &ClickEvent, window, cx| workbench.outline_row_clicked(&clicked, event.click_count() > 1, window, cx)))
             .into_any_element()
     }
 
-    fn outline_element_label(&self, element: &OutlineElement) -> Div {
+    /// `icon_color` overrides the symbol color on a selected row of the focused tree.
+    fn outline_element_label(&self, element: &OutlineElement, icon_color: Option<gpui::Rgba>) -> Div {
         let symbol = &element.symbol;
         let codicon = crate::symbol_icons::codicon(symbol.kind);
-        let icon_color = crate::symbol_icons::color_key(codicon).and_then(|key| self.theme.color(key)).unwrap_or(self.color("foreground"));
+        let icon_color = icon_color.or_else(|| crate::symbol_icons::color_key(codicon).and_then(|key| self.theme.color(key))).unwrap_or(self.color("foreground"));
         let problems = element.marker.filter(|_| self.setting("problems.visibility") != false);
         let problem_color = problems.map(|(_, severity)| self.color(if severity == ERROR { "list.errorForeground" } else { "list.warningForeground" }));
         let label_color = problem_color.filter(|_| self.setting("outline.problems.colors") != false);
@@ -226,7 +231,7 @@ impl Workbench {
         div()
             .overflow_hidden()
             .whitespace_nowrap()
-            .when(self.setting("outline.icons") != false, |label| label.child(self.icon(codicon, 16., 16., icon_color).pr(px(6.)).flex_none()))
+            .when(self.setting("outline.icons") != false, |label| label.child(self.icon(codicon, 16., 16., icon_color).mr(px(6.)).flex_none()))
             .child(div().flex_none().when_some(label_color, |name, color| name.text_color(color)).when(deprecated, |name| name.line_through().opacity(0.66)).child(symbol.name.replace('\n', "⏎")))
             .when(!symbol.detail.is_empty(), |label| label.child(div().ml(px(6.5)).text_size(px(11.7)).opacity(0.7).min_w_0().overflow_hidden().text_ellipsis().child(symbol.detail.clone())))
             .children(badge)
@@ -262,6 +267,12 @@ impl Workbench {
             symbols.drain(..symbols.len().saturating_sub(1));
         }
         symbols
+    }
+
+    /// listWidget.ts `.monaco-list:focus .monaco-list-row.selected .codicon`: `list.activeSelectionIconForeground`,
+    /// unset in the default themes, so the row's foreground.
+    pub(super) fn list_selection_icon_color(&self) -> gpui::Rgba {
+        self.theme.color("list.activeSelectionIconForeground").or(self.theme.color("list.activeSelectionForeground")).unwrap_or(self.color("foreground"))
     }
 
     fn toggle_outline_row(&mut self, model_id: u32, id: &str, cx: &mut Context<Self>) {

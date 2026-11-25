@@ -5,7 +5,7 @@
 use std::ops::Range;
 
 use futures::channel::oneshot;
-use gpui::{Context, Rgba, Task};
+use gpui::{Context, Rgba, Task, Window};
 use serde_json::{Value, json};
 
 use super::Workbench;
@@ -25,6 +25,9 @@ pub(super) struct DocumentHighlights {
     key: Option<(u32, u32, Position)>,
     /// The providers' occurrences of the model: line, char columns and `DocumentHighlightKind`.
     ranges: Vec<(usize, Range<usize>, u64)>,
+    /// Whether the last refresh left a query running or highlights shown (`WordHighlighter.query`); a blur of the
+    /// editor clears them (`editor_widget_blurred`).
+    has_query: bool,
     _request: Option<Task<()>>,
 }
 
@@ -82,7 +85,13 @@ impl Workbench {
 
     /// Run on every render after the editor's textual highlights: a new word query asks the providers; a cursor
     /// inside the shown occurrences keeps them (`_run`).
-    pub(super) fn refresh_document_highlights(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn refresh_document_highlights(&mut self, window: &Window, cx: &mut Context<Self>) {
+        self.run_document_highlights(window, cx);
+        let shown = self.editors.active().is_some_and(|editor| !editor.highlights.is_empty());
+        self.document_highlights.has_query = shown || self.document_highlights._request.is_some();
+    }
+
+    fn run_document_highlights(&mut self, window: &Window, cx: &mut Context<Self>) {
         let Some(editor) = self.editors.active() else { return };
         let head = editor.selection().head;
         let key = Some((editor.model_id, editor.version_id, head));
@@ -90,6 +99,15 @@ impl Workbench {
             return;
         }
         self.document_highlights.key = key;
+        let focused = self.editor_focus.is_focused(window);
+        // `_run` without text focus and without a query (the cursor moved from the Outline): nothing highlighted.
+        if !focused && !self.document_highlights.has_query {
+            self.editors.active_mut().expect("checked above").highlights.clear();
+            self.document_highlights.ranges.clear();
+            self.document_highlights._request = None;
+            return;
+        }
+        let editor = self.editors.active().expect("checked above");
         // No textual word at the cursor: the query is cleared (`_stopAll`).
         if editor.highlights.is_empty() {
             self.document_highlights.ranges.clear();

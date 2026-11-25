@@ -78,7 +78,9 @@ struct HierarchyWidget {
     state: State,
     roots: Vec<HierarchyItem>,
     tree: Option<HierarchyTree>,
+    /// The tree's focus (the keys move it and the preview follows) and its selection (a click).
     focused: Option<usize>,
+    selected: Option<usize>,
     tree_scroll: f32,
     preview_scroll: f32,
     documents: Vec<TextDocument>,
@@ -189,6 +191,7 @@ impl Workbench {
             roots: Vec::new(),
             tree: None,
             focused: None,
+            selected: None,
             tree_scroll: 0.,
             preview_scroll: 0.,
             documents: Vec::new(),
@@ -222,7 +225,7 @@ impl Workbench {
     fn show_hierarchy_model(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let widget = self.hierarchy_peek.widget.as_mut().expect("shown with a widget");
         widget.tree = Some(HierarchyTree::new(widget.direction, widget.roots.clone()));
-        widget.focused = None;
+        (widget.focused, widget.selected) = (None, None);
         widget.tree_scroll = 0.;
         self.expand_hierarchy_node(0, window, cx);
     }
@@ -444,7 +447,8 @@ impl Workbench {
         let preview = widget.tree.as_ref().zip(widget.focused).map(|(tree, focused)| tree.preview(focused));
         let document = preview.as_ref().and_then(|(uri, ..)| self.peek_document(uri, &widget.documents));
         let marks: Vec<(usize, usize, usize, usize)> = preview.iter().flat_map(|(_, _, ranges)| ranges).map(|range| (range.start.0 - 1, range.start.1 - 1, range.end.0 - 1, range.end.1 - 1)).collect();
-        let cursor_line = marks.first().map_or(usize::MAX, |mark| mark.0);
+        // The preview only reveals the marks (`revealRangeInCenter`); its cursor stays on the first line.
+        let cursor_line = 0;
         let line_count = document.map_or(0, |document| document.lines.len());
         self.peek_preview_lines("hierarchy-peek-preview", document, &marks, cursor_line, widget.preview_scroll, width, height, char_width, window)
             .on_scroll_wheel(cx.listener(move |workbench, event: &ScrollWheelEvent, _, cx| {
@@ -502,6 +506,7 @@ impl Workbench {
         let entry = &tree.nodes[node];
         let item = &entry.item;
         let is_focused = widget.focused == Some(node);
+        let is_selected = widget.selected == Some(node);
         // AsyncDataTree: every row may have children until asked; an empty answer drops the twistie.
         let twistie = match (&entry.children, entry.expanded) {
             (Some(children), _) if children.is_empty() => None,
@@ -520,12 +525,19 @@ impl Workbench {
             None => div().id(("hierarchy-twistie", index)).size(px(16.)).flex_none(),
         };
         let codicon = crate::symbol_icons::codicon(item.kind);
-        let icon_color = crate::symbol_icons::color_key(codicon).and_then(|key| self.theme.color(key)).unwrap_or(self.color("foreground"));
+        let icon_color = match tree_focused && is_selected {
+            true => self.list_selection_icon_color(),
+            false => crate::symbol_icons::color_key(codicon).and_then(|key| self.theme.color(key)).unwrap_or(self.color("foreground")),
+        };
         let selection = match tree_focused {
             true => self.theme.color("peekViewResult.selectionBackground"),
             false => self.theme.color("list.inactiveSelectionBackground"),
         };
-        let focus_outline = self.theme.color("list.focusOutline").or(self.theme.color("focusBorder")).filter(|_| tree_focused && is_focused);
+        let focus_outline = match is_selected {
+            true => self.theme.color("list.focusAndSelectionOutline").or(self.theme.color("contrastActiveBorder")),
+            false => self.theme.color("list.focusOutline").or(self.theme.color("focusBorder")),
+        };
+        let focus_outline = focus_outline.filter(|_| tree_focused && is_focused);
         let label = div()
             .flex_1()
             .min_w_0()
@@ -533,7 +545,7 @@ impl Workbench {
             .items_center()
             .overflow_hidden()
             .whitespace_nowrap()
-            .child(self.icon(codicon, 16., 16., icon_color).pr(px(6.)).flex_none())
+            .child(self.icon(codicon, 16., 16., icon_color).mr(px(6.)).flex_none())
             .child(div().flex_none().when(item.deprecated, |name| name.line_through()).child(item.name.replace('\n', "\u{23ce}")))
             .when(!item.detail.is_empty(), |label| label.child(div().ml(px(6.5)).text_size(px(11.7)).opacity(0.7).min_w_0().overflow_hidden().text_ellipsis().child(item.detail.clone())));
         div()
@@ -547,8 +559,8 @@ impl Workbench {
             .flex()
             .items_center()
             .pl(px(self.tree_indent() * entry.depth as f32 + 4.))
-            .when(!is_focused, |row| row.hover(|row| row.bg(self.color("list.hoverBackground"))))
-            .when(is_focused, |row| row.when_some(selection, |row, color| row.bg(color)).when(tree_focused, |row| row.text_color(self.color("peekViewResult.selectionForeground"))))
+            .when(!is_selected, |row| row.hover(|row| row.bg(self.color("list.hoverBackground"))))
+            .when(is_selected, |row| row.when_some(selection, |row, color| row.bg(color)).when(tree_focused, |row| row.text_color(self.color("peekViewResult.selectionForeground"))))
             .when_some(focus_outline, |row, color| row.child(div().absolute().inset_0().border_1().border_color(color)))
             .child(twistie)
             .child(label.ml(px(6.)))
@@ -556,7 +568,12 @@ impl Workbench {
                 window.focus(&workbench.hierarchy_peek.tree_focus, cx);
                 match event.click_count() {
                     2 => workbench.open_hierarchy_item(node, window, cx),
-                    _ => workbench.focus_hierarchy_row(node, cx),
+                    _ => {
+                        if let Some(widget) = workbench.hierarchy_peek.widget.as_mut() {
+                            widget.selected = Some(node);
+                        }
+                        workbench.focus_hierarchy_row(node, cx);
+                    }
                 }
             }))
             .into_any_element()
