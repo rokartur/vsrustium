@@ -113,6 +113,8 @@ impl ExtensionHost {
             .arg("--skipWorkspaceStorageLock")
             .env("VSCODE_EXTHOST_IPC_HOOK", &socket_path)
             .env("VSCODE_HANDLES_UNCAUGHT_ERRORS", "true")
+            // Bun uploads crash reports to bun.report unless DO_NOT_TRACK is set; the port sends nothing.
+            .env("DO_NOT_TRACK", "1")
             .envs(options.extra_env);
         let child = command.spawn()?;
 

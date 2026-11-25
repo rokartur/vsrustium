@@ -41,7 +41,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | mainthread/MainThreadQuickOpen | MainThread* shape (Rust side) | verified | api-tests MOCHA_GREP="vscode API - quick input": 11 passing, 0 failing |
 | mainthread/MainThreadStatusBar | MainThread* shape (Rust side) | ported | main_thread_status_bar.rs: $setEntry/$disposeEntry, static `statusBarItems` sent with $acceptStaticEntries (api-tests createStatusBar cases) |
 | mainthread/MainThreadStorage | MainThread* shape (Rust side) | verified | api-tests globalState / workspaceState 2/2; port/tools/settings-check state (restart, state.vscdb rows) same as the reference |
-| mainthread/MainThreadTelemetry | MainThread* shape (Rust side) | stub | session.rs answers undefined |
+| mainthread/MainThreadTelemetry | MainThread* shape (Rust side) | verified | port/tools/privacy-check (Bun and Node, 5/5 each: isTelemetryEnabled false, TelemetryLogger never calls its sender, inert @vscode/extension-telemetry and vscode-tas-client); $publicLog/$publicLog2 dropped as NullTelemetryService (no enableTelemetry in product.json) |
 | mainthread/MainThreadEditorInsets | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadEditorTabs | MainThread* shape (Rust side) | ported | host_sync.rs sends $acceptTabOperation per tab change (cargo test -p app host_sync); $moveTab inside the group (pins the tab, an index past the tabs moves it last), $closeTab and $closeGroup through the save prompt, answering whether every tab closed (workbench/actions.rs): cargo test -p app the_host_moves_and_closes_tabs; the upstream window.test.ts tab tests are commented out; a move to another view column waits for editor groups (milestone 11) |
 | mainthread/MainThreadWebviews | MainThread* shape (Rust side) | verified | api-tests `MOCHA_GREP="vscode API - webview"` webview.test passes as in the reference (625 local resources, postMessage both ways); cargo test -p app webview; ArrayBuffer messages and `vscode:` links not relayed (port/notes.md milestone 17) |
@@ -198,7 +198,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/sign | src/vs/platform | todo |  |
 | platform/state | src/vs/platform | ported | storage/src/state.rs FileStorage (stateService.ts, immediate saves) with state.test.ts cases (cargo test -p storage state); User/globalStorage/storage.json keeps machineId and devDeviceId |
 | platform/storage | src/vs/platform | ported | cargo test -p storage (storage.integrationTest.ts cases); profile and workspace scopes only, storageService tests not ported |
-| platform/telemetry | src/vs/platform | todo |  |
+| platform/telemetry | src/vs/platform | verified | product without enableTelemetry: supportsTelemetry false, NullTelemetryService, nothing sent (port/notes.md milestone 19); port/tools/privacy-check (Bun and Node, 5/5 each: isTelemetryEnabled false, TelemetryLogger never calls its sender, inert @vscode/extension-telemetry and vscode-tas-client); port/tools/telemetry-source-check |
 | platform/terminal | src/vs/platform | todo |  |
 | platform/test | src/vs/platform | n/a | upstream test infrastructure; the port tests with cargo test and port/tools |
 | platform/theme | src/vs/platform | ported | registry defaults for dark, light, hcDark, hcLight (theme.rs); cargo test -p app theme::tests |
@@ -370,7 +370,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/statusbar | workbench service | ported | ExtensionStatusBarItemService entries and sort (main_thread_status_bar.rs); statusbar hiding per entry not ported |
 | workbench/services/storage | workbench service | ported | port/tools/settings-check state; no application scope or flush on shutdown, writes are synchronous |
 | workbench/services/suggest | workbench service | todo |  |
-| workbench/services/telemetry | workbench service | todo |  |
+| workbench/services/telemetry | workbench service | verified | NullTelemetryService of the built product without enableTelemetry; telemetryInfo ids in init data (seam/init-data); port/tools/privacy-check (Bun and Node, 5/5 each: isTelemetryEnabled false, TelemetryLogger never calls its sender, inert @vscode/extension-telemetry and vscode-tas-client) |
 | workbench/services/terminal | workbench service | todo |  |
 | workbench/services/textMate | workbench service | verified | textmate crate (vscode-textmate 9.3.2, onig); cargo test -p textmate; colorize test 109/109 fixtures; pixel-check main window |
 | workbench/services/textfile | workbench service | stub | Cmd+S writes the model's encoding (files::encoding, port of encoding.ts with iconv-lite DOS code pages; cargo test -p files encoding) and clears dirty state (cargo test -p app keys_and_typed_text_edit_the_focused_editor_and_reach_the_host); save participants: the extensions' for extension saves, trim trailing whitespace, insert final newline and trim final newlines for every save (cargo test -p app save_participants), an auto save sparing the cursor lines; auto save (editorAutoSave.ts): after delay, on focus change, on window change, a delay restarted by each edit, saves held back by error markers, a dirty tab with a short delay drawn clean (`isSaving`) (cargo test -p app auto_save); no Save As, no Save without Formatting, no conflict check, no files.autoGuessEncoding (jschardet) |
@@ -477,7 +477,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/surveys | workbench contribution | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | workbench/contrib/tags | workbench contribution | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | workbench/contrib/tasks | workbench contribution | todo |  |
-| workbench/contrib/telemetry | workbench contribution | todo |  |
+| workbench/contrib/telemetry | workbench contribution | verified | the contribution logs to the NullTelemetryService and registers Show Telemetry only when supportsTelemetry, false in the built product: nothing to port; port/tools/telemetry-source-check no endpoint in 18370 shipped files (SELF_TEST finds 9 in the inert packages) |
 | workbench/contrib/terminal | workbench contribution | todo |  |
 | workbench/contrib/terminalContrib | workbench contribution | todo |  |
 | workbench/contrib/testing | workbench contribution | todo |  |
@@ -593,8 +593,8 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | extension/vscode-test-resolver | built-in extension | removed | no remote or tunnels by decision (port/notes.md); one local extension host |
 | extension/xml | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/yaml | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
-| telemetry/source-search | cross-cutting check | todo |  |
-| telemetry/network-capture | cross-cutting check | todo |  |
+| telemetry/source-search | cross-cutting check | verified | port/tools/telemetry-source-check: no telemetry or experimentation endpoint in the release binary, out-exthost and the 86 shipped built-ins with their 339 resolved packages (18370 files); SELF_TEST=1 finds 9 files in the inert packages |
+| telemetry/network-capture | cross-cutting check | verified | port/tools/network-capture, 600 s with no user action, fresh user data: folder window (eager git, npm, github activated) and empty window, no outbound traffic from the app's process tree; the control curl is seen each run. An earlier folder run with traffic was another session's keystrokes opening JSON files (json-language-features schema downloads), so runs take the Studio GUI lock |
 | gallery/open-vsx | cross-cutting check | todo |  |
 | port/settings-import | port feature | todo | Artur: import settings from VS Code, Cursor and VSCodium (roadmap milestone 10) |
 | look/screenshot-diff | cross-cutting check | verified | port/tools/pixel-check: CDP reference capture and Metal readback in 3 themes, pixeldiff reference vs itself 0 different; baseline in port/results/pixels.md |

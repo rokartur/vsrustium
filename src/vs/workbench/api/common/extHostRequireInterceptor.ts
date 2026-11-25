@@ -18,6 +18,7 @@ import { ExtensionPaths, IExtHostExtensionService } from './extHostExtensionServ
 import { ILogService } from '../../../platform/log/common/log.js';
 import { ExtHostGitHub, InternalGitHubModuleFactory } from './extHostGitHub.js';
 import { escapeRegExpCharacters } from '../../../base/common/strings.js';
+import { InertTelemetryModuleFactory } from './extHostInertModules.js';
 
 
 interface LoadFunction {
@@ -64,6 +65,7 @@ export abstract class RequireInterceptor {
 		this.register(new VSCodeNodeModuleFactory(this._apiFactory, extensionPaths, this._extensionRegistry, configProvider, this._logService));
 		this.register(new InternalGitHubModuleFactory(extensionPaths, new ExtHostGitHub(this._rpcService.getProxy(MainContext.MainThreadGitHub))));
 		this.register(this._instaService.createInstance(NodeModuleAliasingModuleFactory));
+		this.register(new InertTelemetryModuleFactory());
 		if (this._initData.remote.isRemote) {
 			this.register(this._instaService.createInstance(OpenNodeModuleFactory, extensionPaths, this._initData.environment.appUriScheme));
 		}
