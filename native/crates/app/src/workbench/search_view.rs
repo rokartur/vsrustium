@@ -30,6 +30,8 @@ pub enum SideBarView {
     Extensions,
     Debug,
     Testing,
+    /// A container of `viewsContainers.activitybar`, by its `workbench.view.extension.<id>` id.
+    Contributed(&'static str),
 }
 
 /// The search view's inputs, in their tab order.

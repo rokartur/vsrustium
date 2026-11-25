@@ -43,9 +43,10 @@ pub enum InputId {
     DebugConsole,
     TerminalFind,
     ProfileName,
+    ProblemsFilter,
 }
 
-const INPUTS: [InputId; 19] = [
+const INPUTS: [InputId; 20] = [
     InputId::QuickInput,
     InputId::Explorer,
     InputId::ExplorerFind,
@@ -65,6 +66,7 @@ const INPUTS: [InputId; 19] = [
     InputId::DebugConsole,
     InputId::TerminalFind,
     InputId::ProfileName,
+    InputId::ProblemsFilter,
 ];
 
 /// The view state of one input element.
@@ -140,6 +142,7 @@ impl Workbench {
             InputId::BreakpointWidget => &self.debug_view.widget_view,
             InputId::DebugConsole => &self.debug_console.input_view,
             InputId::TerminalFind => &self.terminal_view.find.view,
+            InputId::ProblemsFilter => &self.problems.filter.view,
         }
     }
 
@@ -166,6 +169,7 @@ impl Workbench {
             InputId::BreakpointWidget => &mut self.debug_view.widget_view,
             InputId::DebugConsole => &mut self.debug_console.input_view,
             InputId::TerminalFind => &mut self.terminal_view.find.view,
+            InputId::ProblemsFilter => &mut self.problems.filter.view,
         }
     }
 
@@ -192,6 +196,7 @@ impl Workbench {
             InputId::BreakpointWidget => &self.debug_view.widget_focus,
             InputId::DebugConsole => &self.debug_console.input_focus,
             InputId::TerminalFind => &self.terminal_view.find.focus,
+            InputId::ProblemsFilter => &self.problems.filter.focus,
         }
     }
 
@@ -218,6 +223,7 @@ impl Workbench {
             InputId::BreakpointWidget => self.breakpoint_widget.as_ref().map(|widget| &widget.input),
             InputId::DebugConsole => Some(&self.debug_console.input),
             InputId::TerminalFind => Some(&self.terminal_view.find.input),
+            InputId::ProblemsFilter => Some(&self.problems.filter.input),
         }
     }
 
@@ -306,6 +312,10 @@ impl Workbench {
             }
             InputId::TerminalFind => {
                 self.edit_terminal_find_input(edit, cx);
+                Outcome::done()
+            }
+            InputId::ProblemsFilter => {
+                self.edit_problems_filter(edit, window, cx);
                 Outcome::done()
             }
         }
@@ -504,6 +514,7 @@ impl Workbench {
                 InputId::BreakpointWidget => "breakpoint-widget-input-text".into(),
                 InputId::DebugConsole => "debug-console-input-text".into(),
                 InputId::TerminalFind => "terminal-find-text".into(),
+                InputId::ProblemsFilter => "problems-filter-text".into(),
             })
             .flex_1()
             .h_full()

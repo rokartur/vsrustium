@@ -18,7 +18,10 @@ mod context_menu;
 pub mod custom_editors;
 mod debug_commands;
 mod debug_console;
+mod problems_filter;
+mod problems_table;
 mod problems_view;
+mod view_containers;
 mod debug_toolbar;
 pub(crate) mod debug_service;
 mod debug_view;
@@ -554,7 +557,7 @@ impl Workbench {
             debug: Default::default(),
             debug_view: debug_view::DebugView::new(cx),
             debug_console: debug_console::DebugConsole::new(cx),
-            problems: problems_view::ProblemsView::default(),
+            problems: problems_view::ProblemsView::new(cx),
             problems_focus: cx.focus_handle(),
             breakpoint_widget: None,
             testing: Default::default(),
@@ -932,7 +935,8 @@ impl Workbench {
                     .flex_col()
                     .gap(px(8.))
                     .children(items)
-                    .children(self.testing_activity_item(hover, inactive, cx)),
+                    .children(self.testing_activity_item(hover, inactive, cx))
+                    .children(self.contributed_activity_items(hover, inactive, cx)),
             )
             .child(
                 self.icon("settings-gear", 36., 24., inactive)
@@ -974,8 +978,11 @@ impl Workbench {
     /// The Explorer: title, then the folder's view with its tree, Outline and Timeline as panes.
     fn side_bar_view(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         let foreground = self.foreground_or("sideBar.foreground");
+        if let SideBarView::Contributed(id) = self.side_bar_view {
+            return self.contributed_side_bar(id, window, cx);
+        }
         if self.side_bar_view == SideBarView::Scm {
-            return self.scm_side_bar(window, cx);
+            return self.scm_side_bar(window, cx).children(self.contributed_sections_of("scm", window, cx));
         }
         if self.side_bar_view == SideBarView::Extensions {
             let title = self.side_bar_title_text(self.extensions_title()).child(self.extensions_title_actions(cx));
@@ -986,10 +993,10 @@ impl Workbench {
             return self.side_bar_frame().text_color(foreground).child(title).child(self.search_view(window, cx));
         }
         if self.side_bar_view == SideBarView::Debug {
-            return self.debug_side_bar(window, cx);
+            return self.debug_side_bar(window, cx).children(self.contributed_sections_of("debug", window, cx));
         }
         if self.side_bar_view == SideBarView::Testing {
-            return self.testing_side_bar(cx);
+            return self.testing_side_bar(cx).children(self.contributed_sections_of("test", window, cx));
         }
         let title = self
             .side_bar_title("Explorer")

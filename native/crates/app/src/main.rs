@@ -56,6 +56,7 @@ mod main_thread_status_bar;
 mod markdown;
 mod markers;
 mod menus;
+mod markers_filter;
 mod nls;
 mod outline_model;
 mod metered_connection;

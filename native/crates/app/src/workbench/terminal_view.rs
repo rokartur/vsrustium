@@ -343,7 +343,9 @@ impl Workbench {
     pub(super) fn register_terminal_panel_view(&mut self) {
         self.register_panel_view(PanelView {
             id: TERMINAL_VIEW_ID,
+            view_id: "terminal",
             title: "Terminal",
+            open: |workbench, window, cx| drop(workbench.execute_command("workbench.action.terminal.focus", Vec::new(), window, cx)),
             render: |workbench, window, cx| {
                 // terminalView.ts `_initializeTerminal`: the view made visible without terminals creates one.
                 if workbench.terminal_view.instances.is_empty() {
