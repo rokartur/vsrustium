@@ -388,14 +388,6 @@ impl OpenEditor {
         self.delete(cursor::delete_word_right_range, None, command("deleteWordRight"))
     }
 
-    pub fn delete_all_left(&mut self) -> Option<ContentChanged> {
-        self.delete(cursor::delete_all_left_range, None, EditReason::Unknown("deleteAllLeft"))
-    }
-
-    pub fn delete_all_right(&mut self) -> Option<ContentChanged> {
-        self.delete(cursor::delete_all_right_range, None, EditReason::Unknown("deleteAllRight"))
-    }
-
     /// Deletes each cursor's range. Consecutive char deletes (`kind`) in one direction undo together
     /// until one crosses a line break; the other deletes are undo steps of their own.
     fn delete(&mut self, range: impl Fn(&[String], Selection) -> (Position, Position), kind: Option<EditKind>, reason: EditReason) -> Option<ContentChanged> {
@@ -716,7 +708,11 @@ impl OpenEditor {
         let replaces = edits.into_iter().map(|(start, end, text, _)| Replace { start, end, text: normalize_line_breaks(&text) }).collect();
         let change = self.apply(replaces, self.selections.clone(), reason)?;
         let selections = match end {
-            EndSelections::Given(selections) => selections,
+            // `Cursor.setStates` validates the computed states, so a cursor past the deleted lines lands on the last.
+            EndSelections::Given(selections) => selections
+                .into_iter()
+                .map(|selection| Selection { anchor: valid_position(&self.document.lines, selection.anchor), head: valid_position(&self.document.lines, selection.head) })
+                .collect(),
             EndSelections::Tracked { selections: tracked, collapse_grown_carets } => tracked
                 .iter()
                 .zip(markers)
@@ -1015,6 +1011,14 @@ pub fn utf16_column(line: &str, column: usize) -> usize {
 }
 
 /// The text from `start` to `end`, lines joined by "\n".
+/// `TextModel.validatePosition`: a line past the document becomes the end of the last line.
+fn valid_position(lines: &[String], position: Position) -> Position {
+    if position.line >= lines.len() {
+        return cursor::last_position(lines);
+    }
+    Position::new(position.line, position.column.min(cursor::line_len(lines, position.line)))
+}
+
 pub fn text_between(lines: &[String], start: Position, end: Position) -> String {
     if start.line == end.line {
         return lines[start.line].chars().skip(start.column).take(end.column - start.column).collect();

@@ -8,12 +8,12 @@ use serde_json::{Value, json};
 
 use super::Workbench;
 use crate::commands::Outcome;
-use crate::editor::{ContentChanged, Copied, LineCommentKind, OpenEditor, Selection, commands};
+use crate::editor::{CaseTransform, ContentChanged, Copied, LineCommentKind, OpenEditor, Selection, commands};
 
 type EditorCommand = fn(&mut OpenEditor) -> Option<ContentChanged>;
 
 /// Cursor and edit commands: `EditorCommand`s, which run on the focused editor or else the active one.
-const EDITOR_COMMANDS: [(&str, EditorCommand); 28] = [
+const EDITOR_COMMANDS: [(&str, EditorCommand); 44] = [
     ("cursorLeft", |editor| { editor.move_horizontally(false, false); None }),
     ("cursorLeftSelect", |editor| { editor.move_horizontally(false, true); None }),
     ("cursorRight", |editor| { editor.move_horizontally(true, false); None }),
@@ -42,6 +42,22 @@ const EDITOR_COMMANDS: [(&str, EditorCommand); 28] = [
     ("deleteAllRight", OpenEditor::delete_all_right),
     ("tab", OpenEditor::tab),
     ("outdent", OpenEditor::outdent),
+    ("editor.action.copyLinesUpAction", |editor| editor.copy_lines(false)),
+    ("editor.action.copyLinesDownAction", |editor| editor.copy_lines(true)),
+    ("editor.action.duplicateSelection", OpenEditor::duplicate_selection),
+    ("editor.action.moveLinesUpAction", |editor| editor.move_lines(false)),
+    ("editor.action.moveLinesDownAction", |editor| editor.move_lines(true)),
+    ("editor.action.sortLinesAscending", |editor| editor.sort_lines(false)),
+    ("editor.action.sortLinesDescending", |editor| editor.sort_lines(true)),
+    ("editor.action.removeDuplicateLines", OpenEditor::delete_duplicate_lines),
+    ("editor.action.reverseLines", OpenEditor::reverse_lines),
+    ("editor.action.deleteLines", OpenEditor::delete_lines),
+    ("editor.action.indentLines", OpenEditor::indent_lines),
+    ("editor.action.outdentLines", OpenEditor::outdent),
+    ("editor.action.insertLineBefore", OpenEditor::insert_line_before),
+    ("editor.action.insertLineAfter", OpenEditor::insert_line_after),
+    ("editor.action.joinLines", OpenEditor::join_lines),
+    ("editor.action.transpose", OpenEditor::transpose),
 ];
 
 /// Commands of the editor with text focus only (`MultiCommand`s and `EditorHandlerCommand`s): elsewhere they
@@ -81,6 +97,9 @@ impl Workbench {
                 }
                 Outcome::done()
             });
+        }
+        for (id, transform) in CaseTransform::ALL {
+            self.commands.register(id, move |workbench, _, _, cx| workbench.run_on_active_editor(|editor: &mut OpenEditor| editor.transform_case(transform), cx));
         }
         let comment_actions = [
             ("editor.action.commentLine", Some(LineCommentKind::Toggle)),

@@ -916,6 +916,38 @@ mod tests {
     }
 
     #[gpui::test]
+    fn line_operation_keys_edit_the_lines(cx: &mut TestAppContext) {
+        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
+        let theme = load_theme(&[themes], "Dark Modern").unwrap();
+        let dir = std::env::temp_dir().join(format!("code-gpui-line-keys-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("a.txt");
+        std::fs::write(&file, "one\ntwo\nthree").unwrap();
+        let (sender, _receiver) = std::sync::mpsc::channel();
+        let (workbench, cx) = cx.add_window_view(|window, cx| {
+            let mut workbench = Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), crate::default_settings(), HostSync::new(sender), cx);
+            workbench.load_keybindings(crate::keybindings::default_keybindings(&[]), dir.join("keybindings.json"), cx);
+            workbench.open_file(file.clone(), true, window, cx);
+            workbench
+        });
+        cx.run_until_parked();
+        let lines = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document.lines.clone());
+
+        cx.simulate_keystrokes("alt-down");
+        assert_eq!(lines(cx), ["two", "one", "three"], "editor.action.moveLinesDownAction");
+        cx.simulate_keystrokes("shift-alt-down");
+        assert_eq!(lines(cx), ["two", "one", "one", "three"], "editor.action.copyLinesDownAction");
+        cx.simulate_keystrokes("ctrl-j");
+        assert_eq!(lines(cx), ["two", "one", "one three"], "editor.action.joinLines");
+        cx.simulate_keystrokes("shift-cmd-k");
+        assert_eq!(lines(cx), ["two", "one"], "editor.action.deleteLines");
+        cx.simulate_keystrokes("cmd-]");
+        assert_eq!(lines(cx), ["two", "    one"], "editor.action.indentLines");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[gpui::test]
     fn the_find_widget_searches_what_its_inputs_hold(cx: &mut TestAppContext) {
         let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
         let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();

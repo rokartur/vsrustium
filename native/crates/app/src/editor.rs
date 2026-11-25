@@ -23,6 +23,7 @@ pub mod find;
 pub mod folding;
 mod folding_controller;
 mod indentation;
+mod lines_operations;
 pub mod minimap;
 mod multicursor;
 pub mod section_headers;
@@ -31,6 +32,7 @@ pub mod sticky_scroll;
 mod view;
 
 pub use comment::LineCommentKind;
+pub use lines_operations::CaseTransform;
 pub use cursor::{Position, Selection, column_from_visible};
 use folding::{FoldingMarkers, FoldingModel};
 pub use edit::{ContentChanged, Copied, CursorEdit, EditReason, History, Replace, char_column, end_of, selections_after, text_between, utf16_column};

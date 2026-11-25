@@ -254,7 +254,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | editor/contrib/inlineProgress | src/vs/editor/contrib | todo |  |
 | editor/contrib/insertFinalNewLine | src/vs/editor/contrib | todo |  |
 | editor/contrib/lineSelection | src/vs/editor/contrib | todo |  |
-| editor/contrib/linesOperations | src/vs/editor/contrib | todo |  |
+| editor/contrib/linesOperations | src/vs/editor/contrib | ported | `editor/lines_operations.rs`: copy, move, duplicate, sort, delete duplicates, reverse, delete, indent/outdent, insert line above/below, delete all left/right, join, transpose and the seven case transforms, with their keys, Selection menu rows and palette entries; cargo test -p app editor::lines_operations line_operation_keys (copyLinesCommand, moveLinesCommand, sortLinesCommand and linesOperations tests); ui-pair Alt+Down, Shift+Alt+Down, Ctrl+J match the reference; not the 3 moveLinesCommand tests that need indentation and onEnter rules (moved lines keep their indentation) |
 | editor/contrib/linkedEditing | src/vs/editor/contrib | todo |  |
 | editor/contrib/links | src/vs/editor/contrib | todo |  |
 | editor/contrib/longLinesHelper | src/vs/editor/contrib | todo |  |
