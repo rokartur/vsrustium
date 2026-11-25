@@ -1067,6 +1067,12 @@ impl Workbench {
         let (Some(bounds), Some(metrics)) = (self.terminal_view.pane_bounds.get(&id).copied(), self.terminal_view.metrics.clone()) else { return };
         let Some(instance) = self.terminal_view.instance_mut(id) else { return };
         let (row, column, side) = grid::cell_at(bounds, event.position, instance, &metrics);
+        // `editor.multiCursorModifier` alt (the default) makes Cmd the link modifier.
+        let link_modifier = if self.setting("editor.multiCursorModifier") == "ctrlCmd" { event.modifiers.alt } else { event.modifiers.platform };
+        if event.button == MouseButton::Left && link_modifier && self.open_terminal_link(id, row, column, window, cx) {
+            return;
+        }
+        let Some(instance) = self.terminal_view.instance_mut(id) else { return };
         let mode = *instance.term.mode();
         let button = match event.button {
             MouseButton::Left => mouse::MouseButton::Left,

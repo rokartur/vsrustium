@@ -251,8 +251,15 @@ impl Workbench {
     /// `run`: dependencies first, then the task; the receiver gets its exit code once it ends.
     pub(super) fn run_task(&mut self, task: Task, window: &mut Window, cx: &mut Context<Self>) -> oneshot::Receiver<Option<i32>> {
         let (reply, receiver) = oneshot::channel();
+        // `CustomExecutionAccepted` (`reserveCustomExecution`): the host keeps a custom execution's callback from
+        // the moment the run is accepted, before its dependencies, until `$OnDidEndTask` with the start id.
+        let custom = task.execution.as_ref().is_some_and(|execution| execution["customExecution"] == "customExecution");
+        let start_id = custom.then(exthost::main_thread_storage::generate_uuid);
+        if let Some(start_id) = &start_id {
+            self.host.send("ExtHostTask", "$onWillStartTask", vec![json!(task.id), json!(start_id)]);
+        }
         if task.depends_on.is_empty() {
-            self.start_task(task, reply, window, cx);
+            self.start_task(task, start_id, reply, window, cx);
             return receiver;
         }
         let fetched = self.fetch_tasks(None, cx);
@@ -261,18 +268,22 @@ impl Workbench {
             let dependencies: Vec<Task> = task.depends_on.iter().filter_map(|reference| find_task(&all, reference)).collect();
             let ok = run_dependencies(&workbench, cx, dependencies, task.depends_in_sequence).await;
             if !ok {
-                // `executeTask` resolves with no exit code when a dependency failed.
+                // `executeTask` resolves with no exit code when a dependency failed; `CustomExecutionFinished`.
+                if let Some(start_id) = start_id {
+                    let execution = json!({ "id": task.id, "task": task.to_dto() });
+                    let _ = workbench.update(cx, |workbench, _| workbench.host.send("ExtHostTask", "$OnDidEndTask", vec![execution, json!(start_id)]));
+                }
                 let _ = reply.send(None);
                 return;
             }
-            let _ = workbench.update_in(cx, |workbench, window, cx| workbench.start_task(task, reply, window, cx));
+            let _ = workbench.update_in(cx, |workbench, window, cx| workbench.start_task(task, start_id, reply, window, cx));
         })
         .detach();
         receiver
     }
 
     /// terminalTaskSystem.ts `_executeInTerminal`: a terminal named after the task runs it.
-    fn start_task(&mut self, task: Task, reply: oneshot::Sender<Option<i32>>, window: &mut Window, cx: &mut Context<Self>) {
+    fn start_task(&mut self, task: Task, start_id: Option<String>, reply: oneshot::Sender<Option<i32>>, window: &mut Window, cx: &mut Context<Self>) {
         // `run`: past `runOptions.instanceLimit` (1 by default) the task does not start again; the caller waits for the
         // newest instance and `_handleInstancePolicy` applies.
         let instances: Vec<usize> = (0..self.tasks.active.len()).filter(|&index| self.tasks.active[index].task.id == task.id).collect();
@@ -280,6 +291,9 @@ impl Workbench {
         if task.execution.is_some() && instances.len() >= limit {
             let newest = *instances.last().expect("the limit is at least one instance");
             self.tasks.active[newest].waiters.push(reply);
+            if let Some(start_id) = start_id {
+                self.host.send("ExtHostTask", "$OnDidEndTask", vec![json!({ "id": task.id, "task": task.to_dto() }), json!(start_id)]);
+            }
             self.handle_instance_policy(&task, instances, window, cx);
             return;
         }
@@ -316,11 +330,9 @@ impl Workbench {
         }
         self.show_terminal_tab(window, cx);
         let execution_dto = json!({ "id": task.id, "task": task.to_dto() });
-        let start_id = custom.then(exthost::main_thread_storage::generate_uuid);
-        if let Some(start_id) = &start_id {
-            self.host.send("ExtHostTask", "$onWillStartTask", vec![json!(task.id), json!(start_id)]);
-        }
-        self.host.send("ExtHostTask", "$onDidStartTask", vec![execution_dto.clone(), json!(terminal), task.definition.clone(), json!(start_id)]);
+        // `resolvedDefinition`: the definition with its variables resolved, as the custom execution callback sees it.
+        let resolved_definition = self.resolve_variables(&task.definition, task.workspace_folder.clone()).unwrap_or_else(|_| task.definition.clone());
+        self.host.send("ExtHostTask", "$onDidStartTask", vec![execution_dto.clone(), json!(terminal), resolved_definition, json!(start_id)]);
         let pid = self.terminal_view.instance(terminal).and_then(|instance| instance.pid);
         if let Some(pid) = pid {
             self.host.send("ExtHostTask", "$onDidStartTaskProcess", vec![json!({ "id": task.id, "processId": pid })]);
