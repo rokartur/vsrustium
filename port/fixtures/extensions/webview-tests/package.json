@@ -1,0 +1,7 @@
+{
+	"name": "webview-tests",
+	"publisher": "port",
+	"version": "0.0.1",
+	"main": "./extension.js",
+	"engines": { "vscode": "^1.90.0" }
+}

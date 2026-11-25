@@ -58,8 +58,8 @@ impl ScmView {
 }
 
 impl Workbench {
-    // shortcut: the Changes header is drawn here, not as a view pane of view_panes.rs; move it there with the Graph and Repositories views.
-    fn section_header(&self, title: &str, expanded: bool, separated: bool) -> Div {
+    // shortcut: the SCM Changes and webview view headers are drawn here, not as view panes of view_panes.rs; milestone 11 moves them.
+    pub(super) fn section_header(&self, title: &str, expanded: bool, separated: bool) -> Div {
         let foreground = self.foreground_or("sideBarSectionHeader.foreground");
         let border = self.theme.color("sideBarSectionHeader.border").filter(|_| separated);
         div()

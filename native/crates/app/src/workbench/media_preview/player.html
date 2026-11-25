@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; media-src {{csp_source}} blob:; connect-src {{csp_source}}; script-src 'nonce-{{nonce}}'; style-src 'nonce-{{nonce}}';">
+	<style nonce="{{nonce}}">
+		html, body {
+			width: 100%;
+			height: 100%;
+			margin: 0;
+			overflow: hidden;
+		}
+		body {
+			box-sizing: border-box;
+			padding: 5px 10px;
+			display: flex;
+			flex-direction: column;
+			justify-content: center;
+			align-items: center;
+			text-align: center;
+			-webkit-user-select: none;
+			user-select: none;
+		}
+		video {
+			max-width: 100%;
+			max-height: 100%;
+			min-height: 0;
+		}
+		.codec-warning {
+			flex-shrink: 0;
+			max-width: 600px;
+			display: flex;
+			flex-direction: column;
+			align-items: center;
+			gap: var(--vscode-spacing-size120);
+		}
+		/* Separates the warning from media that still plays, such as a video whose audio can't be played */
+		body:not(.error) .codec-warning:has(.codec-warning-message:not(:empty)) {
+			margin-bottom: var(--vscode-spacing-size120);
+		}
+		.codec-warning-actions {
+			display: flex;
+			flex-wrap: wrap;
+			justify-content: center;
+			gap: var(--vscode-spacing-size80);
+		}
+		.codec-warning-actions:empty {
+			display: none;
+		}
+		.codec-warning-actions button {
+			padding: var(--vscode-spacing-size40) var(--vscode-spacing-size80);
+			border: var(--vscode-strokeThickness) solid var(--vscode-button-border, transparent);
+			border-radius: var(--vscode-cornerRadius-small);
+			color: var(--vscode-button-foreground);
+			background-color: var(--vscode-button-background);
+			font-family: inherit;
+			font-size: var(--vscode-fontSize-label1);
+			line-height: 16px;
+			cursor: pointer;
+		}
+		.codec-warning-actions button:hover {
+			background-color: var(--vscode-button-hoverBackground);
+		}
+		.codec-warning-actions button.secondary {
+			border-color: var(--vscode-button-secondaryBorder, var(--vscode-button-border, transparent));
+			color: var(--vscode-button-secondaryForeground);
+			background-color: var(--vscode-button-secondaryBackground);
+		}
+		.codec-warning-actions button.secondary:hover {
+			background-color: var(--vscode-button-secondaryHoverBackground);
+		}
+		.codec-warning-actions button:focus-visible {
+			outline: var(--vscode-strokeThickness) solid var(--vscode-focusBorder);
+			outline-offset: 2px;
+		}
+		.load-error {
+			display: none;
+		}
+		body.error audio,
+		body.error video {
+			display: none;
+		}
+		body.error .load-error {
+			display: block;
+		}
+		/* Media whose own kind of track can't be played fails to load, which the codec warning already explains */
+		body.error.unsupported-codec .load-error {
+			display: none;
+		}
+	</style>
+</head>
+<body data-vscode-context='{ "preventDefaultContextMenuItems": true }'>
+	<div class="codec-warning">
+		<div class="codec-warning-message" role="status"></div>
+		<div class="codec-warning-actions"></div>
+	</div>
+	{{media}}
+	<div class="load-error">
+		<p class="load-error-message">{{error_message}}</p>
+		<a href="#" class="open-in-text-editor">{{open_in_text_editor}}</a>
+	</div>
+	<script nonce="{{nonce}}">
+		(function () {
+			const vscode = acquireVsCodeApi();
+			const media = document.querySelector('audio, video');
+			const showError = () => document.body.classList.add('error');
+
+			// Browsers don't explain why a file fails to load and silently drop audio tracks they can't
+			// decode, so warn about codecs that can't be played instead of letting the file seem broken
+			const showCodecWarning = ({ warning, actions }) => {
+				document.querySelector('.codec-warning-message').textContent = warning;
+				document.querySelector('.codec-warning-actions').replaceChildren(...actions.map(({ label, message }, index) => {
+					const button = document.createElement('button');
+					button.textContent = label;
+					// The first action is the main one
+					button.classList.toggle('secondary', index > 0);
+					button.addEventListener('click', () => vscode.postMessage({ type: message }));
+					return button;
+				}));
+			};
+			const checkCodecs = ({ video, audio }) => {
+				if (!media) {
+					return;
+				}
+				const canPlay = type => media.canPlayType(type) !== '' || (typeof MediaSource !== 'undefined' && MediaSource.isTypeSupported(type));
+				const isUnsupported = codecs => codecs && !codecs.mimeTypes.some(canPlay);
+				// The audio of a video that can't be played doesn't matter
+				const unsupported = isUnsupported(video) ? video : isUnsupported(audio) ? audio : undefined;
+				if (unsupported) {
+					showCodecWarning(unsupported);
+					document.body.classList.toggle('unsupported-codec', unsupported === (media instanceof HTMLVideoElement ? video : audio));
+				}
+			};
+
+			// Some Electron builds ship an FFmpeg without the WebM container, so a WebM file
+			// cannot be opened directly. Media Source Extensions parse WebM in Chromium itself.
+			// Remove this fallback once the shipped FFmpeg supports WebM:
+			// https://github.com/microsoft/vscode/issues/195758
+			const maxMediaSourceBytes = {{max_media_source_size}};
+			let resolveWebmType;
+			const getWebmType = () => new Promise(resolve => {
+				resolveWebmType = resolve;
+				vscode.postMessage({ type: 'get-webm-type' });
+			});
+			const concat = (chunks, size) => {
+				const bytes = new Uint8Array(size);
+				let offset = 0;
+				for (const chunk of chunks) {
+					bytes.set(chunk, offset);
+					offset += chunk.length;
+				}
+				return bytes;
+			};
+			// Streams the file so that oversized files are rejected without reading them completely
+			const readMedia = async url => {
+				const response = await fetch(url);
+				if (!response.ok || !response.body) {
+					throw new Error('Failed to load media: ' + response.status);
+				}
+				if (Number(response.headers.get('Content-Length')) > maxMediaSourceBytes) {
+					throw new Error('Media too large');
+				}
+				const reader = response.body.getReader();
+				const chunks = [];
+				let size = 0;
+				try {
+					while (true) {
+						const { done, value } = await reader.read();
+						if (done) {
+							break;
+						}
+						chunks.push(value);
+						size += value.length;
+						if (size > maxMediaSourceBytes) {
+							throw new Error('Media too large');
+						}
+					}
+				} finally {
+					reader.cancel().catch(() => { });
+				}
+				return concat(chunks, size);
+			};
+			const playWithMediaSource = async video => {
+				// Get the type first, so that other formats are rejected without reading them
+				const type = await getWebmType();
+				if (!type || typeof MediaSource === 'undefined' || !MediaSource.isTypeSupported(type)) {
+					throw new Error('Unsupported media');
+				}
+				const bytes = await readMedia(video.currentSrc || video.src);
+				const source = new MediaSource();
+				const url = URL.createObjectURL(source);
+				const opened = new Promise(resolve => source.addEventListener('sourceopen', resolve, { once: true }));
+				video.src = url;
+				await opened;
+				URL.revokeObjectURL(url);
+				const buffer = source.addSourceBuffer(type);
+				await new Promise((resolve, reject) => {
+					buffer.addEventListener('updateend', resolve, { once: true });
+					buffer.addEventListener('error', reject, { once: true });
+					buffer.appendBuffer(bytes);
+				});
+				source.endOfStream();
+			};
+
+			window.addEventListener('message', e => {
+				if (e.data?.type === 'codecs') {
+					checkCodecs(e.data);
+				} else if (e.data?.type === 'webm-type') {
+					resolveWebmType?.(e.data.mimeType);
+				}
+			});
+			vscode.postMessage({ type: 'get-codecs' });
+
+			let triedMediaSource = false;
+			media?.addEventListener('error', () => {
+				if (media instanceof HTMLVideoElement && !triedMediaSource && media.error?.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED) {
+					triedMediaSource = true;
+					playWithMediaSource(media).catch(showError);
+					return;
+				}
+				showError();
+			});
+			document.querySelector('.open-in-text-editor').addEventListener('click', e => {
+				e.preventDefault();
+				vscode.postMessage({ type: 'reopen-as-text' });
+			});
+		}());
+	</script>
+</body>
+</html>

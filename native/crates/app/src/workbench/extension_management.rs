@@ -221,6 +221,7 @@ impl Workbench {
             Err(error) => eprintln!("[extensions] reading color themes: {error:#}"),
         }
         self.extensions = running;
+        self.register_webview_view_commands();
         cx.notify();
     }
 }

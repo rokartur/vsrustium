@@ -118,7 +118,12 @@ impl Workbench {
             self.commands.register(id, move |workbench, _, window, cx| match workbench.editor_focus.is_focused(window) {
                 true if edit && workbench.edit_blocked(false, cx) => Outcome::done(),
                 true => workbench.run_on_active_editor(command, cx),
-                false => workbench.input_text_command(id, window, cx).or_else(|| workbench.explorer_undo(id, window, cx)).unwrap_or(Outcome::done()),
+                // The implementations' priorities: DOM input 1000, explorer 110, custom editor 105.
+                false => workbench
+                    .input_text_command(id, window, cx)
+                    .or_else(|| workbench.explorer_undo(id, window, cx))
+                    .or_else(|| workbench.custom_text_editor_undo(id, command, cx))
+                    .unwrap_or(Outcome::done()),
             });
         }
         self.commands.register("type", |workbench, args, window, cx| {

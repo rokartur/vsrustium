@@ -8,6 +8,7 @@ mod configuration;
 mod content_hover;
 mod content_hover_view;
 mod context_menu;
+pub mod custom_editors;
 mod define_keybinding;
 mod diagnostics;
 mod editor_commands;
@@ -64,6 +65,9 @@ mod title_bar_actions;
 mod unicode_highlight;
 mod unusual_line_terminators;
 mod scm_view;
+mod url_handlers;
+mod webview_views;
+mod media_preview;
 mod webview_panels;
 
 use std::cell::Cell;
@@ -184,6 +188,8 @@ pub struct Workbench {
     quick_diffs: editor_view::quick_diff::QuickDiffs,
     /// `contributes.commands` icons, for the view toolbars.
     pub command_icons: HashMap<String, crate::menus::CommandIcon>,
+    url_handlers: url_handlers::UrlHandlers,
+    webview_views: webview_views::WebviewViews,
     /// `MenuRegistry`.
     pub menus: Vec<crate::menus::MenuItem>,
     pub(crate) context_menu: Option<context_menu::ContextMenu>,
@@ -326,6 +332,8 @@ impl Workbench {
             scm: scm_view::ScmView::new(cx),
             quick_diffs: Default::default(),
             command_icons: HashMap::new(),
+            url_handlers: Default::default(),
+            webview_views: Default::default(),
             menus: crate::menus::workbench_menus(),
             context_menu: None,
             context_menus_shown: 0,
@@ -347,6 +355,7 @@ impl Workbench {
         workbench.register_scm_commands();
         workbench.register_text_file_commands();
         workbench.register_large_file_commands();
+        workbench.register_media_preview_commands();
         workbench.register_editor_commands();
         workbench.register_find_commands();
         workbench.register_sticky_scroll_commands();
@@ -419,6 +428,11 @@ impl Workbench {
         }
         if path.to_string_lossy().ends_with(crate::search_editor::SEARCH_EDITOR_EXT) {
             return self.open_search_editor_file(path, pinned, window, cx);
+        }
+        if let Some(view_type) = self.custom_editor_for("file", &path) {
+            let options = serde_json::json!({ "pinned": pinned, "preserveFocus": !pinned });
+            drop(self.open_with_resolver(&exthost::scan::file_uri(&path), Some(&view_type), options, window, cx));
+            return;
         }
         match self.editors.find(&path) {
             Some(index) => {
@@ -845,6 +859,8 @@ impl Workbench {
                     .children(rows)
                     .child(self.explorer_empty_area(cx)),
                 ).children(self.explorer_find_widget(window, cx)).into_any_element() }, window, cx))
+            // shortcut: extension webview views sit below the Explorer's panes, not in view_panes.rs; milestone 11 moves them in.
+            .children(self.webview_view_panes(cx))
             // The pane view is laid out 5px shorter than the side bar content.
             .child(div().h(px(5.)).flex_none())
     }

@@ -117,7 +117,9 @@ impl HostSync {
     /// and editor delta, then the tab model.
     pub fn send_changes(&mut self, group: &EditorGroup) {
         let is_text = |editor: &&OpenEditor| !self.webview_tabs.contains_key(&editor.document.path) && editor.document.scheme != DIFF_EDITOR_SCHEME;
-        let open: Vec<&OpenEditor> = group.editors.iter().chain(&group.models).filter(is_text).collect();
+        // A custom text editor's model stays a document, without a text editor (customTextEditorModel.ts).
+        let is_document = |editor: &&OpenEditor| self.webview_tabs.get(&editor.document.path).is_none_or(|tab| tab.custom_text) && editor.document.scheme != DIFF_EDITOR_SCHEME;
+        let open: Vec<&OpenEditor> = group.editors.iter().chain(&group.models).filter(is_document).collect();
         let added: Vec<&OpenEditor> = open.iter().copied().filter(|editor| !self.documents.iter().any(|(uri, _)| *uri == editor.document.uri_string())).collect();
         let removed: Vec<(String, Value)> =
             self.documents.iter().filter(|(uri, _)| !open.iter().any(|editor| editor.document.uri_string() == *uri)).cloned().collect();
@@ -461,12 +463,15 @@ fn tab_dto(editor: &OpenEditor, active: bool, sync: &HostSync) -> Value {
         tab["input"] = json!({ "kind": 0 });
         tab["editorId"] = json!(type_id);
     }
-    // mainThreadEditorTabs.ts: TabInputKind.WebviewEditorInput, its editor id is the view type.
+    // mainThreadEditorTabs.ts: TabInputKind.WebviewEditorInput or CustomEditorInput, its editor id is the view type.
     if let Some(webview) = webview_tabs.get(&editor.document.path) {
-        let type_id = "workbench.editors.webviewInput";
+        let type_id = if webview.custom_resource.is_some() { "workbench.editors.webviewEditor" } else { "workbench.editors.webviewInput" };
         tab["id"] = json!(format!("0~{}-{type_id}-{} ", webview.view_type, editor.document.uri_string()));
         tab["label"] = json!(webview.label);
-        tab["input"] = json!({ "kind": 7, "viewType": webview.view_type });
+        tab["input"] = match &webview.custom_resource {
+            Some(uri) => json!({ "kind": 6, "viewType": webview.view_type, "uri": uri }),
+            None => json!({ "kind": 7, "viewType": webview.view_type }),
+        };
         tab["editorId"] = json!(webview.view_type);
     }
     tab
@@ -499,8 +504,12 @@ pub struct SearchTab {
 
 pub struct WebviewTab {
     pub label: String,
-    /// `mainThreadWebview-<viewType>`.
+    /// `mainThreadWebview-<viewType>`, a custom editor's own view type.
     pub view_type: String,
+    /// A custom editor's resource.
+    pub custom_resource: Option<Value>,
+    /// A custom text editor, whose tab is its resource's text model.
+    pub custom_text: bool,
 }
 
 

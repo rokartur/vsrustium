@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant, SystemTime};
 
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use config::configuration::Configuration;
 use config::registry::Registry;
 use config::workspace::Workspace;
@@ -534,7 +536,10 @@ impl Session {
                 self.host.send(rpc::encode(&Message::Acknowledged { req }));
                 if let Some(forward) = self.forward.as_mut().filter(|forward| forward.proxies.contains(&proxy_name(rpc_id))) {
                     *self.log.host_calls.entry(format!("{}.{method}", proxy_name(rpc_id))).or_default() += 1;
-                    let args = args.into_iter().map(arg_value).collect();
+                    if std::env::var_os("EXTHOST_TRACE").is_some() {
+                        eprintln!("forward> {}.{method} {args:?}", proxy_name(rpc_id));
+                    }
+                    let args = args.into_iter().map(forwarded_arg).collect();
                     (forward.send)(ForwardedRequest { req, proxy: proxy_name(rpc_id), method, args });
                     return Ok(true);
                 }
@@ -673,10 +678,10 @@ impl Session {
 }
 
 /// product.json `urlProtocol`.
-const URL_PROTOCOL: &str = "vsrustium";
+pub const URL_PROTOCOL: &str = "vsrustium";
 
 /// urlService.ts `NativeURLService.create`: the uri with the product's scheme.
-fn app_uri(uri: &Value) -> Value {
+pub fn app_uri(uri: &Value) -> Value {
     let text = |key: &str| uri[key].as_str().unwrap_or_default().to_owned();
     let (authority, mut path) = (text("authority"), text("path"));
     // URI validation requires a path if there is an authority
@@ -692,6 +697,17 @@ fn arg_value(arg: Arg) -> Value {
         Arg::Buffer(_) | Arg::Undefined => Value::Null,
     }
 }
+
+/// A forwarded request's argument; a `VSBuffer` (mainThreadWebviews.ts `$postMessage` buffers) travels as
+/// `{"$vsbuffer": <base64>}` in the JSON the app reads.
+fn forwarded_arg(arg: Arg) -> Value {
+    match arg {
+        Arg::Buffer(bytes) => json!({ VSBUFFER_KEY: STANDARD.encode(bytes) }),
+        arg => arg_value(arg),
+    }
+}
+
+pub const VSBUFFER_KEY: &str = "$vsbuffer";
 
 /// A `SerializedError` (or any thrown value) as one string: its stack, else its message.
 fn error_text(error: &Value) -> String {

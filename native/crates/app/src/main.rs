@@ -184,6 +184,7 @@ fn main() -> anyhow::Result<()> {
                 workbench.file_icons = file_icons;
                 workbench.color_themes = color_themes;
                 workbench.extensions = extensions.clone();
+                workbench.register_webview_view_commands();
                 if let Some(folder) = &export_default_keybindings {
                     match workbench.export_default_keybindings(folder) {
                         Ok(path) => eprintln!("[workbench.contrib.keybindingsExport] Wrote {}", path.display()),
@@ -345,7 +346,7 @@ fn run_extension_host(
             MainThreadSecretState::in_memory()
         }),
     });
-    session.forward(&["MainThreadCommands", "MainThreadDiagnostics", "MainThreadDownloadService", "MainThreadEditorTabs", "MainThreadLanguageFeatures", "MainThreadLogger", "MainThreadMessageService", "MainThreadOutputService", "MainThreadProgress", "MainThreadQuickOpen", "MainThreadSCM", "MainThreadStatusBar", "MainThreadWebviewPanels", "MainThreadWebviews", "MainThreadWorkspace"], move |request| {
+    session.forward(&["MainThreadCommands", "MainThreadCustomEditors", "MainThreadDiagnostics", "MainThreadDownloadService", "MainThreadEditorTabs", "MainThreadLanguageFeatures", "MainThreadLogger", "MainThreadMessageService", "MainThreadOutputService", "MainThreadProgress", "MainThreadQuickOpen", "MainThreadSCM", "MainThreadStatusBar", "MainThreadUrls", "MainThreadWebviewPanels", "MainThreadWebviewViews", "MainThreadWebviews", "MainThreadWorkspace"], move |request| {
         let _ = workbench_requests.unbounded_send(request);
     }, workbench_replies);
     session.main_thread = Some(Box::new(main_thread));

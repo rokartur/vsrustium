@@ -40,6 +40,10 @@ pub enum Owner {
     FolderSettings(Vec<std::path::PathBuf>),
     /// The terminal profile picker or rename input.
     Terminal(crate::workbench::terminal_view::TerminalInput),
+    /// The `workbench.action.reopenWithEditor` picker.
+    OpenWith(crate::workbench::custom_editors::OpenWithPicker),
+    /// The `imagePreview.selectZoomLevel` picker.
+    ImageZoom,
 }
 
 impl Workbench {
@@ -214,6 +218,8 @@ impl Workbench {
             Owner::Output(_) => self.output_pick_event(id, event, window, cx),
             Owner::FolderSettings(_) => self.folder_settings_pick_event(id, event, window, cx),
             Owner::Terminal(_) => self.terminal_input_event(id, event, window, cx),
+            Owner::OpenWith(_) => self.open_with_picker_event(id, event, window, cx),
+            Owner::ImageZoom => self.image_zoom_picker_event(id, event, window, cx),
         }
     }
 

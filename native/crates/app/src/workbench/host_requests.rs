@@ -290,7 +290,7 @@ impl Workbench {
     }
 
     /// `$tryShowTextDocument`: opens the model in the group, preview unless pinned, and returns the editor's id.
-    fn try_show_text_document(&mut self, uri: &Value, options: &Value, window: &mut Window, cx: &mut Context<Self>) -> HostResult {
+    pub(super) fn try_show_text_document(&mut self, uri: &Value, options: &Value, window: &mut Window, cx: &mut Context<Self>) -> HostResult {
         let (scheme, ref path) = uri_parts(uri)?;
         let pinned = options["pinned"] == json!(true);
         if let Some(index) = self.editors.editors.iter().position(|editor| editor.document.is(scheme, path)) {
