@@ -196,3 +196,40 @@ fn keep_scroll_position_keeps_the_list_where_it_is(cx: &mut TestAppContext) {
     update(cx, false, &|input| input.set_items(items.clone()));
     assert_eq!(scroll_top(cx), 0);
 }
+
+/// quickinput.test.ts "close motion requires modern UI with motion enabled", "finishes closing when the close
+/// animation finishes" and "reopening discards the previous close animation callbacks and timeout".
+#[gpui::test]
+fn the_close_animation_ends_after_150ms_and_reopening_discards_it(cx: &mut TestAppContext) {
+    use crate::main_thread_quick_open::Owner;
+    use crate::quick_input::{Kind, QuickInput};
+
+    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
+    let theme = load_theme(&[themes], "Default High Contrast").unwrap();
+    let (workbench, cx) = cx.add_window_view(|_, cx| Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), crate::default_settings(), HostSync::new(std::sync::mpsc::channel().0), cx));
+    let id = workbench.update_in(cx, |workbench, window, cx| {
+        let id = workbench.quick_inputs.add(QuickInput::new(0, Kind::QuickPick), Owner::Session(1));
+        workbench.show_quick_input(id, window, cx);
+        workbench.hide_quick_input_by_id(id, window, cx);
+        id
+    });
+    let state = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| (workbench.quick_inputs.closing.is_some(), workbench.quick_inputs.current().is_some()));
+    assert_eq!(state(cx), (true, false), "closing, not visible");
+    cx.executor().advance_clock(std::time::Duration::from_millis(149));
+    cx.run_until_parked();
+    assert_eq!(state(cx), (true, false));
+    cx.executor().advance_clock(std::time::Duration::from_millis(1));
+    cx.run_until_parked();
+    assert_eq!(state(cx), (false, false), "the animation ended");
+
+    workbench.update_in(cx, |workbench, window, cx| {
+        workbench.show_quick_input(id, window, cx);
+        workbench.hide_quick_input_by_id(id, window, cx);
+        workbench.show_quick_input(id, window, cx);
+    });
+    assert_eq!(state(cx), (false, true), "reopened");
+    cx.executor().advance_clock(std::time::Duration::from_millis(150));
+    cx.run_until_parked();
+    assert_eq!(state(cx), (false, true), "the old close timer changes nothing");
+}

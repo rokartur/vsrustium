@@ -331,6 +331,11 @@ impl QuickInput {
         }
     }
 
+    /// `QuickInput.update` `titleBarVisible`: a title, a step or a title bar button (one not next to or inside the input).
+    pub fn shows_title_bar(&self) -> bool {
+        !self.title_text().is_empty() || self.buttons.iter().any(|button| button.location.is_none_or(|location| location <= 1))
+    }
+
     /// The title bar text: `getTitle()`, the title with its step.
     pub fn title_text(&self) -> String {
         let steps = match (self.step, self.total_steps) {

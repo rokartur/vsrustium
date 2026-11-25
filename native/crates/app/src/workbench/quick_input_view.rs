@@ -356,7 +356,6 @@ impl Workbench {
             Some((top, left)) => (top.map_or(TOP, |top| (f32::from(viewport.height) * top).round()), (f32::from(viewport.width) * left.unwrap_or(0.5) - width / 2.).round()),
             None => (TOP, ((f32::from(viewport.width) - width) / 2.).round()),
         };
-        let has_title = !input.title_text().is_empty() || !input.buttons.iter().all(|button| button.location.is_some_and(|location| location > 1));
         let widget = div()
             .id("quick-input-widget")
             .absolute()
@@ -378,7 +377,7 @@ impl Workbench {
             // --vscode-shadow-xl blurs 20px; GPUI's blur_radius is the sigma, half the CSS blur.
             .shadow(vec![BoxShadow { color: rgba(0x00000026).into(), offset: point(px(0.), px(0.)), blur_radius: px(10.), spread_radius: px(0.), inset: false }])
             .when(interactive, |widget| widget.on_mouse_down_out(cx.listener(|workbench, _, window, cx| workbench.quick_input_focus_lost(window, cx))))
-            .when(has_title, |widget| widget.child(self.quick_input_title(&input, cx)))
+            .when(input.shows_title_bar(), |widget| widget.child(self.quick_input_title(&input, cx)))
             .when(input.description.as_ref().is_some_and(|description| !description.is_empty()), |widget| {
                 widget.child(div().mx(px(11.)).my(px(6.)).mr(px(6.)).child(input.description.clone().unwrap_or_default()))
             })
