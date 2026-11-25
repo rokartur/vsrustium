@@ -3,9 +3,11 @@
 
 use std::ops::Range;
 
+use super::cursor::normalize_indentation;
+use super::edit::{end_of, text_between};
 use super::folding::tracked;
-use super::{Position, Selection};
-use super::edit::end_of;
+use super::snippet::Transform;
+use super::{Indentation, Position, Selection};
 
 #[cfg(test)]
 mod tests;
@@ -18,6 +20,9 @@ pub struct Placeholder {
     pub is_final: bool,
     /// Whether it held text when inserted: one that collapsed since is skipped by a move.
     had_text: bool,
+    transform: Option<Transform>,
+    /// `_snippetLineLeadingWhitespace`: the insert line's indentation, for a transformed value's lines.
+    line_indent: String,
 }
 
 /// The placeholders of one index across the snippets, and its choice options.
@@ -59,34 +64,52 @@ pub struct Inserted<'a> {
     pub text: &'a str,
     pub stops: &'a [(u32, Range<usize>)],
     pub choices: &'a [(u32, Vec<String>)],
+    /// The transforms by their position in `stops`.
+    pub transforms: &'a [(usize, Transform)],
+    pub line_indent: &'a str,
 }
 
 impl SnippetSession {
-    /// `groupBy(placeholders, Placeholder.compareByIndex)`: ascending indexes, the final tab stop last.
     pub fn new(snippets: &[Inserted], version: u32) -> Self {
-        let mut indexes: Vec<u32> = snippets.iter().flat_map(|snippet| snippet.stops.iter().map(|(index, _)| *index)).collect();
-        indexes.sort_by_key(|index| if *index == 0 { u32::MAX } else { *index });
-        indexes.dedup();
-        let groups = indexes
-            .into_iter()
-            .map(|index| {
-                let mut placeholders = Vec::new();
-                let mut choice = None;
-                for snippet in snippets {
-                    let position = |chars: usize| end_of(snippet.start, &snippet.text.chars().take(chars).collect::<String>());
-                    for (_, range) in snippet.stops.iter().filter(|(stop, _)| *stop == index) {
-                        placeholders.push(Placeholder { start: position(range.start), end: position(range.end), is_final: index == 0, had_text: !range.is_empty() });
-                    }
-                    choice = choice.or_else(|| snippet.choices.iter().find(|(stop, _)| *stop == index).map(|(_, options)| options.clone()));
-                }
-                Group { placeholders, choice }
-            })
-            .collect();
-        SnippetSession { groups, current: None, version }
+        SnippetSession { groups: groups(snippets), current: None, version }
+    }
+
+    /// `merge`: when every placeholder of the current group gets one of `nested` (in the same order), their
+    /// placeholders take the group's place, ordered after the ones before it, and the first is current. `false`
+    /// leaves the session as it was.
+    pub fn merge(&mut self, nested: &[Inserted]) -> bool {
+        let Some(current) = self.current else { return false };
+        if nested.len() != self.groups[current].placeholders.len() {
+            return false;
+        }
+        // The nested `$0` is an ordinary stop after the nested ones (`placeholder.index + (last + 1) / nestingLevel`).
+        let nested_groups = groups(nested).into_iter().map(|group| Group { placeholders: group.placeholders.into_iter().map(|placeholder| Placeholder { is_final: false, ..placeholder }).collect(), ..group });
+        self.groups.splice(current..=current, nested_groups);
+        true
     }
 
     pub fn has_placeholder(&self) -> bool {
         !self.groups.is_empty()
+    }
+
+    /// `move`'s first step: each placeholder of the group being left that has a transform gets its text
+    /// transformed, the lines after the first in the insert line's indentation.
+    pub fn transform_edits(&self, lines: &[String], indentation: Indentation) -> Vec<(Position, Position, String)> {
+        let Some(current) = self.current else { return Vec::new() };
+        let mut edits = Vec::new();
+        for placeholder in &self.groups[current].placeholders {
+            let Some(transform) = &placeholder.transform else { continue };
+            let value = transform.resolve(&text_between(lines, placeholder.start, placeholder.end));
+            let normalized = value.replace("\r\n", "\n").replace('\r', "\n");
+            let mut value_lines = normalized.split('\n');
+            let mut text = value_lines.next().unwrap_or_default().to_owned();
+            for line in value_lines {
+                text.push('\n');
+                text.push_str(&normalize_indentation(&format!("{}{line}", placeholder.line_indent), indentation));
+            }
+            edits.push((placeholder.start, placeholder.end, text));
+        }
+        edits
     }
 
     /// `move`: the next (or previous) group's ranges as selections; a group whose text was deleted is skipped.
@@ -111,7 +134,7 @@ impl SnippetSession {
         self.selections()
     }
 
-    fn selections(&self) -> Vec<Selection> {
+    pub fn selections(&self) -> Vec<Selection> {
         let Some(current) = self.current else { return Vec::new() };
         self.groups[current].placeholders.iter().map(|placeholder| Selection { anchor: placeholder.start, head: placeholder.end }).collect()
     }
@@ -157,4 +180,28 @@ impl SnippetSession {
             }
         }
     }
+}
+
+/// `groupBy(placeholders, Placeholder.compareByIndex)`: ascending indexes, the final tab stop last.
+fn groups(snippets: &[Inserted]) -> Vec<Group> {
+    let mut indexes: Vec<u32> = snippets.iter().flat_map(|snippet| snippet.stops.iter().map(|(index, _)| *index)).collect();
+    indexes.sort_by_key(|index| if *index == 0 { u32::MAX } else { *index });
+    indexes.dedup();
+    indexes
+        .into_iter()
+        .map(|index| {
+            let mut placeholders = Vec::new();
+            let mut choice = None;
+            for snippet in snippets {
+                let position = |chars: usize| end_of(snippet.start, &snippet.text.chars().take(chars).collect::<String>());
+                for (stop, (_, range)) in snippet.stops.iter().enumerate().filter(|(_, (stop, _))| *stop == index) {
+                    let transform = snippet.transforms.iter().find(|(transformed, _)| *transformed == stop).map(|(_, transform)| transform.clone());
+                    let line_indent = snippet.line_indent.to_owned();
+                    placeholders.push(Placeholder { start: position(range.start), end: position(range.end), is_final: index == 0, had_text: !range.is_empty(), transform, line_indent });
+                }
+                choice = choice.or_else(|| snippet.choices.iter().find(|(stop, _)| *stop == index).map(|(_, options)| options.clone()));
+            }
+            Group { placeholders, choice }
+        })
+        .collect()
 }

@@ -9,7 +9,7 @@ use super::host_requests::snippet_edits;
 use super::suggest_controller::TriggerOptions;
 use crate::commands::Outcome;
 use crate::editor::snippet_session::{Inserted, SnippetSession, starts_after_edits};
-use crate::editor::{EditReason, OpenEditor, Position};
+use crate::editor::{EditReason, OpenEditor, Position, Selection, end_of};
 
 /// The handle of the choice completions the controller registers while a choice is active.
 pub(super) const SNIPPET_CHOICE_PROVIDER: u64 = u64::MAX - 1;
@@ -46,9 +46,8 @@ impl Workbench {
     }
 
     /// `_doInsert`: the templates replace their ranges in one edit and a session starts on their placeholders.
-    /// Text without placeholders inside a running session is written into it, as `SnippetSession.merge` of a trivial
-    /// snippet. shortcut: a snippet with placeholders ends the running session instead of merging into it; port the
-    /// merge for nested snippet completions.
+    /// Inside a running session the snippet is merged into the current placeholders (`SnippetSession.merge`); a
+    /// trivial one, or one that does not match them, leaves the cursors at the end of the inserted text.
     pub(super) fn insert_snippets(&mut self, insert: SnippetInsert, cx: &mut Context<Self>) {
         let Some(editor) = self.editors.active_mut() else { return };
         if insert.undo_stop_before {
@@ -56,33 +55,52 @@ impl Workbench {
         }
         let version = editor.alternative_version_id();
         let (edits, selections, texts) = snippet_edits(editor, insert.snippets, insert.clipboard);
-        let has_placeholders = texts.iter().any(|text| !text.stops.is_empty());
-        if has_placeholders {
-            editor.snippet_session = None;
-        }
+        let trivial = texts.iter().all(|text| text.stops.iter().all(|(index, _)| *index == 0));
+        let merging = editor.snippet_session.is_some();
         let change = editor.execute_edits(edits, Some(selections), EditReason::Unknown(insert.reason));
-        if insert.undo_stop_after {
-            editor.push_undo_stop();
-        }
         let replaced: Vec<(Position, Position, &str)> = insert.snippets.iter().zip(&texts).map(|(snippet, text)| (snippet.0, snippet.1, text.text.as_str())).collect();
         let starts = starts_after_edits(&replaced);
-        let inserted: Vec<Inserted> = texts.iter().zip(starts).map(|(text, start)| Inserted { start, text: &text.text, stops: &text.stops, choices: &text.choices }).collect();
-        let mut session = SnippetSession::new(&inserted, version);
-        if has_placeholders {
+        let inserted: Vec<Inserted> = texts
+            .iter()
+            .zip(&starts)
+            .map(|(text, start)| Inserted { start: *start, text: &text.text, stops: &text.stops, choices: &text.choices, transforms: &text.transforms, line_indent: &text.line_indent })
+            .collect();
+        if merging {
+            let session = editor.snippet_session.as_mut().expect("checked above");
+            let selections = match !trivial && session.merge(&inserted) {
+                true => session.selections(),
+                false => inserted.iter().map(|snippet| Selection::caret(end_of(snippet.start, snippet.text))).collect(),
+            };
+            editor.set_selections(selections);
+        } else if !texts.iter().all(|text| text.stops.is_empty()) {
+            let mut session = SnippetSession::new(&inserted, version);
             let selections = session.move_to(true);
             editor.set_selections(selections);
             editor.snippet_session = Some(session);
+        }
+        if insert.undo_stop_after {
+            editor.push_undo_stop();
         }
         self.editor_edited(change, true, "snippet", cx);
     }
 
     fn move_snippet(&mut self, forward: bool, cx: &mut Context<Self>) {
         let Some(editor) = self.editors.active_mut() else { return };
-        let Some(session) = editor.snippet_session.as_mut() else { return };
+        let Some(session) = editor.snippet_session.as_ref() else { return };
         let before = editor.selections.clone();
+        let transforms = session.transform_edits(&editor.document().lines, editor.document().indentation);
+        let change = match transforms.is_empty() {
+            true => None,
+            false => editor.execute_edits(transforms.into_iter().map(|(start, end, text)| (start, end, text, false)).collect(), None, EditReason::Unknown("snippet")),
+        };
+        let session = editor.snippet_session.as_mut().expect("checked above");
         let selections = session.move_to(forward);
         editor.set_selections(selections);
-        self.cursors_changed(before, crate::editor::Reveal::All, "keyboard", cx);
+        if change.is_some() {
+            self.editor_edited(change, true, "snippet", cx);
+        } else {
+            self.cursors_changed(before, crate::editor::Reveal::All, "keyboard", cx);
+        }
         self.snippet_state_changed(cx);
     }
 

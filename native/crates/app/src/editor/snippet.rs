@@ -1,20 +1,22 @@
 //! The text a snippet inserts and its first tab stop (snippetParser.ts, snippetSession.ts `adjustWhitespace`),
 //! for snippet_session.rs.
-// shortcut: no placeholder or variable transforms (`${1/(.*)/${1:/upcase}/}` is inserted as text); port
-// `Transform` when an extension's snippets need it.
 
 use std::collections::HashMap;
 use std::ops::Range;
 
 use super::Indentation;
 
+mod transform;
+
+pub use transform::Transform;
+
 #[derive(Clone, Debug, PartialEq)]
 enum Marker {
     Text(String),
     /// A choice's options: the first is inserted as is, never re-indented.
     Choice(Vec<String>),
-    Placeholder { index: u32, children: Vec<Marker> },
-    Variable { name: String, children: Vec<Marker> },
+    Placeholder { index: u32, children: Vec<Marker>, transform: Option<Transform> },
+    Variable { name: String, children: Vec<Marker>, transform: Option<Transform> },
 }
 
 /// What inserting a snippet writes, the char range in it the cursor selects, every placeholder's index and char
@@ -25,6 +27,10 @@ pub struct SnippetText {
     pub selection: Range<usize>,
     pub stops: Vec<(u32, Range<usize>)>,
     pub choices: Vec<(u32, Vec<String>)>,
+    /// The transforms of placeholders, by their position in `stops`, applied when a move leaves them.
+    pub transforms: Vec<(usize, Transform)>,
+    /// The insert line's leading whitespace, which the lines of a transformed value take.
+    pub line_indent: String,
 }
 
 /// `SnippetParser.parse(template, true)` then `adjustWhitespace` and `resolveVariables`: unknown variables insert their
@@ -36,14 +42,14 @@ pub fn expand(template: &str, line_indent: &str, adjust_indentation: bool, inden
     let mut markers = parse(&chars, &mut position, false);
     fill_in_placeholders(&mut markers);
     if has_placeholders(&markers) && !has_final_tabstop(&markers) {
-        markers.push(Marker::Placeholder { index: 0, children: Vec::new() });
+        markers.push(Marker::Placeholder { index: 0, children: Vec::new(), transform: None });
     }
-    let mut out = Output { text: String::new(), length: 0, stops: Vec::new(), choices: Vec::new(), line_indent, adjust_indentation, indentation, variable: &variable };
+    let mut out = Output { text: String::new(), length: 0, stops: Vec::new(), choices: Vec::new(), transforms: Vec::new(), line_indent, adjust_indentation, indentation, variable: &variable };
     out.write(&markers);
     // snippetSession.ts `_move(true)`: the lowest index first, the final tab stop last; none puts the cursor at the end.
     let first = out.stops.iter().min_by_key(|(index, _)| if *index == 0 { u32::MAX } else { *index });
     let selection = first.map_or(out.length..out.length, |(_, range)| range.clone());
-    SnippetText { text: out.text, selection, stops: out.stops, choices: out.choices }
+    SnippetText { text: out.text, selection, stops: out.stops, choices: out.choices, transforms: out.transforms, line_indent: line_indent.to_owned() }
 }
 
 fn parse(chars: &[char], position: &mut usize, nested: bool) -> Vec<Marker> {
@@ -79,7 +85,8 @@ fn parse(chars: &[char], position: &mut usize, nested: bool) -> Vec<Marker> {
     markers
 }
 
-/// `$1`, `$name`, `${1}`, `${1:default}`, `${1|one,two|}`, `${name}`, `${name:default}`; `None` leaves the `$` as text.
+/// `$1`, `$name`, `${1}`, `${1:default}`, `${1|one,two|}`, `${name}`, `${name:default}`, `${1/regex/format/}`,
+/// `${name/regex/format/}`; `None` leaves the `$` as text.
 fn parse_dollar(chars: &[char], position: &mut usize) -> Option<Marker> {
     *position += 1;
     let braced = chars.get(*position) == Some(&'{');
@@ -94,30 +101,35 @@ fn parse_dollar(chars: &[char], position: &mut usize) -> Option<Marker> {
     if index.is_empty() && !name.starts_with(|c: char| c == '_' || c.is_ascii_alphabetic()) {
         return None;
     }
-    let new_marker = |children| match index.parse() {
-        Ok(index) => Marker::Placeholder { index, children },
-        Err(_) => Marker::Variable { name: name.clone(), children },
+    let new_marker = |children, transform| match index.parse() {
+        Ok(index) => Marker::Placeholder { index, children, transform },
+        Err(_) => Marker::Variable { name: name.clone(), children, transform },
     };
     if !braced {
-        return Some(new_marker(Vec::new()));
+        return Some(new_marker(Vec::new(), None));
     }
     match chars.get(*position)? {
         '}' => {
             *position += 1;
-            Some(new_marker(Vec::new()))
+            Some(new_marker(Vec::new(), None))
+        }
+        '/' => {
+            *position += 1;
+            let transform = transform::parse(chars, position)?;
+            Some(new_marker(Vec::new(), Some(transform)))
         }
         ':' => {
             *position += 1;
             let children = parse(chars, position, true);
             (chars.get(*position) == Some(&'}')).then(|| {
                 *position += 1;
-                new_marker(children)
+                new_marker(children, None)
             })
         }
         '|' if !index.is_empty() => {
             *position += 1;
             let options = parse_choice(chars, position)?;
-            Some(new_marker(vec![Marker::Choice(options)]))
+            Some(new_marker(vec![Marker::Choice(options)], None))
         }
         _ => None,
     }
@@ -166,7 +178,7 @@ fn fill_in_placeholders(markers: &mut [Marker]) {
 fn collect_values(markers: &[Marker], values: &mut HashMap<u32, Vec<Marker>>) {
     for marker in markers {
         match marker {
-            Marker::Placeholder { index, children } => {
+            Marker::Placeholder { index, children, .. } => {
                 if *index != 0 && !children.is_empty() {
                     values.entry(*index).or_insert_with(|| children.clone());
                 }
@@ -181,7 +193,7 @@ fn collect_values(markers: &[Marker], values: &mut HashMap<u32, Vec<Marker>>) {
 fn fill(markers: &mut [Marker], values: &HashMap<u32, Vec<Marker>>) {
     for marker in markers {
         match marker {
-            Marker::Placeholder { index, children } if children.is_empty() => {
+            Marker::Placeholder { index, children, .. } if children.is_empty() => {
                 if let Some(value) = values.get(index) {
                     *children = value.clone();
                 }
@@ -231,6 +243,7 @@ struct Output<'a> {
     length: usize,
     stops: Vec<(u32, Range<usize>)>,
     choices: Vec<(u32, Vec<String>)>,
+    transforms: Vec<(usize, Transform)>,
     line_indent: &'a str,
     adjust_indentation: bool,
     indentation: Indentation,
@@ -246,17 +259,22 @@ impl Output<'_> {
                     self.push(&text);
                 }
                 Marker::Choice(options) => self.push(&options[0]),
-                Marker::Placeholder { index, children } => {
+                Marker::Placeholder { index, children, transform } => {
                     let start = self.length;
                     if let [Marker::Choice(options)] = children.as_slice() {
                         self.choices.push((*index, options.clone()));
                     }
                     self.write(children);
+                    if let Some(transform) = transform {
+                        self.transforms.push((self.stops.len(), transform.clone()));
+                    }
                     self.stops.push((*index, start..self.length));
                 }
-                Marker::Variable { name, children } => match (self.variable)(name) {
-                    Some(value) => self.push(&value),
-                    None => self.write(children),
+                // `Variable.resolve`: a transform also turns an unknown variable's empty value into text.
+                Marker::Variable { name, children, transform } => match (transform, (self.variable)(name)) {
+                    (Some(transform), value) => self.push(&transform.resolve(&value.unwrap_or_default())),
+                    (None, Some(value)) => self.push(&value),
+                    (None, None) => self.write(children),
                 },
             }
         }
@@ -337,6 +355,15 @@ mod tests {
     fn variables_resolve_or_insert_their_default() {
         assert_eq!(plain("running: $CLIPBOARD").0, "running: clip");
         assert_eq!(plain("${UNKNOWN:fallback} ${NOPE}").0, "fallback ");
+    }
+
+    #[test]
+    fn variable_transforms_resolve_and_placeholder_transforms_wait_for_the_move() {
+        let snippet = expand("${TM_FILENAME/(.*)\\..+$/$1/} ${1:a} ${1/(.*)/${1:/upcase}/} ${NOPE/^$/empty/}", "  ", true, SPACES, |name| (name == "TM_FILENAME").then(|| "main.test.ts".into()));
+        assert_eq!(snippet.text, "main.test a a empty");
+        assert_eq!(snippet.stops[1], (1, 12..13));
+        assert_eq!(snippet.transforms.iter().map(|(stop, transform)| (*stop, transform.resolve("ab"))).collect::<Vec<_>>(), [(1, "AB".to_owned())]);
+        assert_eq!(snippet.line_indent, "  ");
     }
 
     #[test]
