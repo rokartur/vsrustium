@@ -172,6 +172,8 @@ const OVERRIDE_PROPERTY_PATTERN: &str = r"^(\[([^\]]+)\])+$";
 /// `in_workspace` is a multi-root workspace (`WorkbenchState.WORKSPACE`), whose folders take resource settings only.
 // The port has no workspace trust, so `checkAndFilterPropertiesRequiringTrust` keeps every property.
 pub const KEYBINDINGS_SCHEMA_ID: &str = "vscode://schemas/keybindings";
+/// commands.ts `providerIdSchemaUri`, which the keybindings schema references for `providerId` args.
+pub const INLINE_COMPLETION_PROVIDERS_SCHEMA_ID: &str = "vscode://schemas/inlineCompletionProviderIdArgs";
 
 /// keybindingService.ts `KeybindingsJsonSchema.updateSchema`: the reference's schema for its core commands, dumped by
 /// port/tools/dump-settings, with the extensions' commands added to the command names and

@@ -17,7 +17,7 @@ use crate::editor::{EditReason, OpenEditor, Position, char_column, utf16_column}
 use crate::ghost_text::{GhostText, GhostTextMode, Replacement, compute_ghost_text, inline_completion_is_visible};
 use crate::language_features::Candidate;
 
-const REGISTER: &str = "$registerInlineCompletionsSupport";
+pub(super) const REGISTER: &str = "$registerInlineCompletionsSupport";
 /// `InlineCompletionsDebounce` of the feature debounce service (`min: 50, max: 50`).
 const DEBOUNCE: Duration = Duration::from_millis(50);
 /// `InlineCompletionEndOfLifeReasonKind`.
@@ -56,6 +56,25 @@ struct Item {
 }
 
 impl Workbench {
+    /// `InlineCompletionSchemaContribution`: the `providerId` enum of the keybindings schema, each provider's
+    /// `extensionId:groupId` and `extensionId:*` (`inlineCompletionProviderGetMatcher`).
+    pub(super) fn inline_completion_providers_changed(&mut self) {
+        let mut matchers = Vec::new();
+        for registration in self.language_features.all(REGISTER) {
+            let extension = registration.args[3].as_str().unwrap_or_default();
+            let exact = match registration.args[5].as_str() {
+                Some(group) => format!("{extension}:{group}"),
+                None => extension.to_owned(),
+            };
+            for matcher in [exact, format!("{extension}:*")] {
+                if !matchers.contains(&matcher) {
+                    matchers.push(matcher);
+                }
+            }
+        }
+        self.settings.lock().unwrap().registry.inline_completion_providers = matchers;
+    }
+
     pub(super) fn register_inline_completions(&mut self) {
         self.commands.register("editor.action.inlineSuggest.trigger", |workbench, _, _, cx| {
             workbench.trigger_inline_completions(true, cx);

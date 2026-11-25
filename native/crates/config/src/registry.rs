@@ -81,6 +81,8 @@ pub struct Registry {
     pub extension_commands: Vec<(String, String)>,
     /// codeActionsContribution.ts `_allProvidedCodeActionKinds`, for the keybindings schema's `kind` suggestions.
     pub code_action_kinds: Vec<String>,
+    /// inlineCompletions.contribution.ts: `inlineCompletionProviderGetMatcher` of every inline completion provider.
+    pub inline_completion_providers: Vec<String>,
 }
 
 /// The core settings of VS Code 1.147.0 as its registry holds them, dumped with port/tools/dump-settings.

@@ -5,7 +5,7 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use config::json_schema::{KEYBINDINGS_SCHEMA_ID, REFERENCED_SCHEMAS, compressed_content, keybindings_schema, settings_schemas};
+use config::json_schema::{INLINE_COMPLETION_PROVIDERS_SCHEMA_ID, KEYBINDINGS_SCHEMA_ID, REFERENCED_SCHEMAS, compressed_content, keybindings_schema, settings_schemas};
 use config::service::Settings;
 use files::{FILE, FILE_NOT_FOUND, PROVIDER_READONLY, READONLY, Resource, Stat};
 
@@ -20,6 +20,7 @@ pub fn read_file(settings: &Settings, resource: &Resource) -> files::Result<Vec<
         "schemas" => match referenced_schema(resource) {
             Some(content) => content.to_string(),
             None if uri_string(resource) == KEYBINDINGS_SCHEMA_ID => keybindings_schema(&settings.registry).to_string(),
+            None if uri_string(resource) == INLINE_COMPLETION_PROVIDERS_SCHEMA_ID => serde_json::json!({ "enum": settings.registry.inline_completion_providers }).to_string(),
             None => schema(settings, resource).map_or_else(|| "{}".to_string(), |schema| compressed_content(&schema)),
         },
         // Only chat registers schema associations, and the port has no chat.
@@ -31,7 +32,7 @@ pub fn read_file(settings: &Settings, resource: &Resource) -> files::Result<Vec<
 
 pub fn stat(settings: &Settings, resource: &Resource) -> files::Result<Stat> {
     let uri = uri_string(resource);
-    if referenced_schema(resource).is_none() && schema(settings, resource).is_none() && uri != SCHEMA_ASSOCIATIONS && uri != KEYBINDINGS_SCHEMA_ID {
+    if referenced_schema(resource).is_none() && schema(settings, resource).is_none() && uri != SCHEMA_ASSOCIATIONS && uri != KEYBINDINGS_SCHEMA_ID && uri != INLINE_COMPLETION_PROVIDERS_SCHEMA_ID {
         return Err(not_found(resource));
     }
     let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("after 1970").as_millis() as u64;

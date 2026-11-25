@@ -224,6 +224,7 @@ impl Workbench {
                 self.code_actions_model_changed(cx);
             }
             "$registerCodeLensSupport" => self.code_lens_registrations_changed(cx),
+            super::inline_completions::REGISTER => self.inline_completion_providers_changed(),
             super::document_symbols::REGISTER => self.outline_providers_changed(cx),
             "$registerInlayHintsProvider" => self.inlay_hints_registrations_changed(cx),
             "$registerDocumentColorProvider" => self.color_providers_changed(cx),
