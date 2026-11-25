@@ -9,6 +9,8 @@ use exthost::scan::ScannedExtension;
 use gpui::Rgba;
 use serde_json::Value;
 
+mod debug_colors;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ThemeKind {
     Dark,
@@ -364,6 +366,14 @@ const MINIMAP_SELECTION: ColorValue = ColorValue::Key("editor.selectionBackgroun
 fn registry_default(key: &str, kind: ThemeKind) -> ColorValue {
     use ColorValue::*;
     if let Some([dark, light, hc, hc_light]) = crate::symbol_icons::color_default(key) {
+        return match kind {
+            ThemeKind::Dark => dark,
+            ThemeKind::Light => light,
+            ThemeKind::HighContrastDark => hc,
+            ThemeKind::HighContrastLight => hc_light,
+        };
+    }
+    if let Some([dark, light, hc, hc_light]) = debug_colors::debug_default(key) {
         return match kind {
             ThemeKind::Dark => dark,
             ThemeKind::Light => light,

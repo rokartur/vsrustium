@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Downloads product.json `builtInExtensions` (js-debug, js-debug-companion, vscode-js-profile-table) from Open VSX into
+# .build/builtInExtensions, where the app scans them as upstream's dev build does. All three are MIT (port/notes.md).
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+mkdir -p .build/builtInExtensions
+jq -r '.builtInExtensions[] | "\(.name) \(.version)"' product.json | while read -r name version; do
+  target=.build/builtInExtensions/$name
+  if [[ "$(jq -r .version "$target/package.json" 2>/dev/null)" == "$version" ]]; then
+    continue
+  fi
+  publisher=${name%%.*}
+  extension=${name#*.}
+  vsix=$(mktemp)
+  curl -sfL -o "$vsix" "https://open-vsx.org/api/$publisher/$extension/$version/file/$name-$version.vsix"
+  unpacked=$(mktemp -d)
+  unzip -q "$vsix" 'extension/*' -d "$unpacked"
+  rm -rf "$target"
+  mv "$unpacked/extension" "$target"
+  rm -rf "$vsix" "$unpacked"
+  echo "$name $version"
+done

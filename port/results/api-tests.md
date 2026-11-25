@@ -9,6 +9,10 @@ Not reached: tests of the reference run (402 folder, 4 workspace) the port did n
 | api-folder | 35 | 41 | 133 | 193 | timed out after 1800s |
 | api-workspace | 0 | 0 | 4 | 0 | exit 1 after 0s |
 
+## Milestone 16: debug and testing
+
+`MOCHA_GREP="vscode API - debug|createTestController" SUITE_TIMEOUT=600 port/tools/api-tests` on the Studio at e032c3f1-dirty. Before: `vscode API - debug` 2 passing, 1 failing (`start debugging failure`). After: api-folder 4 passing, 2 pending, 0 failing: `breakpoints`, `function breakpoint`, `start debugging failure`, `no rpc, createTestController(...)`. The 2 pending are `test.skip` upstream, as in the reference run.
+
 ## Milestone 11: notifications, progress, status bar
 
 `MOCHA_GREP="vscode API - window" SUITE_TIMEOUT=900 port/tools/api-tests` on the Studio, same setup. Before (f8bd4a40 plus notifications): api-folder 27 passing, 13 failing. After the extension status bar entries: 29 passing, 0 pending, 11 failing; `createStatusBar - static` and `createStatusBar - static, CANNOT change some props` now pass. The 11 failing need editor groups (view columns, tabs) and `showWorkspaceFolderPick`. window.test.ts has no message or progress cases.

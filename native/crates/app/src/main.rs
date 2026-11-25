@@ -12,6 +12,7 @@ mod clipboard;
 mod command_palette;
 mod commands;
 mod contextkey;
+mod debug;
 mod default_settings;
 mod diff_editor;
 mod dialog;
@@ -72,6 +73,7 @@ mod suggest;
 mod symbol_icons;
 mod syntax;
 mod terminal;
+mod testing;
 mod tf_idf;
 mod theme;
 mod trusted_domains;
@@ -166,8 +168,9 @@ fn main() -> anyhow::Result<()> {
     nls::init(&resolved);
     exthost::language_packs::set_nls(&user_data, resolved);
     let extensions_dir = std::env::var_os("VSCODE_GPUI_EXTENSIONS").map(PathBuf::from).unwrap_or_else(|| app_root.join("extensions"));
-    let builtins = scan_builtin_extensions(&extensions_dir)?;
+    let mut builtins = scan_builtin_extensions(&extensions_dir)?;
     perf::mark("code/didScanExtensions");
+    builtins.extend(exthost::scan::scan_dev_system_extensions(&app_root)?);
     // Artur: user extensions live in ~/.vsrustium/extensions, the default user data dir's extensions folder.
     let user_extensions = UserExtensions { folder: flag_value("--extensions-dir").map_or_else(|| user_data.join("extensions"), PathBuf::from), product_version: VERSION.into() };
     user_extensions.clean_up()?;
@@ -448,7 +451,7 @@ fn run_extension_host(
             MainThreadSecretState::in_memory()
         }),
     });
-    session.forward(&["MainThreadCommands", "MainThreadCustomEditors", "MainThreadDiagnostics", "MainThreadDownloadService", "MainThreadEditorTabs", "MainThreadLanguageFeatures", "MainThreadLogger", "MainThreadMessageService", "MainThreadOutputService", "MainThreadProgress", "MainThreadQuickOpen", "MainThreadSCM", "MainThreadStatusBar", "MainThreadUriOpeners", "MainThreadUrls", "MainThreadUrls.$registerUriHandler", "MainThreadUrls.$unregisterUriHandler", "MainThreadWebviewPanels", "MainThreadWebviewViews", "MainThreadWebviews", "MainThreadWindow.$openUri", "MainThreadWorkspace"], move |request| {
+    session.forward(&["MainThreadCommands", "MainThreadCustomEditors", "MainThreadDebugService", "MainThreadDiagnostics", "MainThreadDownloadService", "MainThreadEditorTabs", "MainThreadLanguageFeatures", "MainThreadLogger", "MainThreadMessageService", "MainThreadOutputService", "MainThreadProgress", "MainThreadQuickOpen", "MainThreadSCM", "MainThreadStatusBar", "MainThreadTesting", "MainThreadUriOpeners", "MainThreadUrls", "MainThreadUrls.$registerUriHandler", "MainThreadUrls.$unregisterUriHandler", "MainThreadWebviewPanels", "MainThreadWebviewViews", "MainThreadWebviews", "MainThreadWindow.$openUri", "MainThreadWorkspace"], move |request| {
         let _ = workbench_requests.unbounded_send(request);
     }, workbench_replies);
     session.main_thread = Some(Box::new(main_thread));

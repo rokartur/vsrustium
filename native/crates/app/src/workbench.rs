@@ -6,6 +6,7 @@ pub mod accessibility;
 pub mod accessible_view;
 pub mod new_file;
 mod actions;
+mod breakpoint_widget;
 mod bulk_text_edits;
 mod configuration;
 mod content_hover;
@@ -13,7 +14,15 @@ mod content_hover_view;
 mod configuration_resolver;
 mod context_menu;
 pub mod custom_editors;
+mod debug_commands;
+mod debug_console;
+mod debug_toolbar;
+pub(crate) mod debug_service;
+mod debug_view;
+pub(crate) mod testing_service;
+mod testing_view;
 mod define_keybinding;
+mod exception_widget;
 mod floating_menu;
 mod diagnostics;
 mod dialog_view;
@@ -283,6 +292,12 @@ pub struct Workbench {
     recently_opened: crate::recently_opened::RecentlyOpened,
     /// Custom dialogs, the shown one first.
     dialogs: Vec<dialog_view::ShownDialog>,
+    pub debug: debug_service::DebugService,
+    debug_view: debug_view::DebugView,
+    debug_console: debug_console::DebugConsole,
+    breakpoint_widget: Option<breakpoint_widget::BreakpointWidget>,
+    pub testing: testing_service::TestingService,
+    testing_view: testing_view::TestingView,
 }
 
 impl Render for Workbench {
@@ -336,6 +351,11 @@ impl Render for Workbench {
             .text_color(self.color("foreground"))
             .text_size(px(13.))
             .child(grid)
+            .children(self.debug_toolbar(window, cx))
+            .when(self.debug_view.toolbar_drag.is_some(), |root| {
+                root.on_mouse_move(cx.listener(|workbench, event, window, cx| workbench.drag_debug_toolbar(event, window, cx)))
+                    .on_mouse_up(gpui::MouseButton::Left, cx.listener(|workbench, _, _, _| workbench.end_debug_toolbar_drag()))
+            })
             .children(modal_editor)
             // The quick input lives in the workbench container, inside the window border as the grid.
             .children(quick_input.map(|widget| div().absolute().left(px(inset)).top(px(inset)).child(widget)))
@@ -464,6 +484,12 @@ impl Workbench {
             shared_storage: Arc::new(Mutex::new(Storage::in_memory())),
             recently_opened: Default::default(),
             dialogs: Vec::new(),
+            debug: Default::default(),
+            debug_view: debug_view::DebugView::new(cx),
+            debug_console: debug_console::DebugConsole::new(cx),
+            breakpoint_widget: None,
+            testing: Default::default(),
+            testing_view: Default::default(),
         };
         crate::main_thread_commands::register_commands_documentation(&mut workbench);
         workbench.editors.disposed.settings = Some(workbench.settings.clone());
@@ -530,6 +556,10 @@ impl Workbench {
         workbench.register_workspace_recommendations_commands();
         workbench.register_localization_commands();
         workbench.register_new_file_commands();
+        workbench.register_debug_commands();
+        workbench.register_debug_console_commands();
+        workbench.register_breakpoint_widget_commands();
+        workbench.register_testing_commands();
         // Keybindings resolve before the focused element sees the key, and with nothing focused too.
         let entity = cx.entity().downgrade();
         cx.intercept_keystrokes(move |event, window, cx| {
@@ -788,7 +818,8 @@ impl Workbench {
                     .flex()
                     .flex_col()
                     .gap(px(8.))
-                    .children(items),
+                    .children(items)
+                    .children(self.testing_activity_item(hover, inactive, cx)),
             )
             .child(
                 self.icon("settings-gear", 36., 24., inactive)
@@ -802,6 +833,17 @@ impl Workbench {
                         workbench.show_context_menu_beside(actions, &context, workbench.manage_bounds.get(), window, cx);
                     })),
             )
+    }
+
+    /// The Testing container shows once a controller registers (testing.contribution.ts `TestingContextKeys.providerCount`).
+    fn testing_activity_item(&self, hover: HoverOptions, inactive: Rgba, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+        if self.testing.controllers.is_empty() {
+            return None;
+        }
+        let active = self.side_bar_view == SideBarView::Testing && self.side_bar_visible();
+        let icon = if active { self.active_view_icon("beaker") } else { self.icon("beaker", 36., 24., inactive) };
+        let command = "workbench.view.testing";
+        Some(icon.id(command).cursor_pointer().child(self.action_hover("Testing", command, hover)).on_click(cx.listener(move |workbench, event: &ClickEvent, window, cx| workbench.activity_item_clicked(active, command, event, window, cx))))
     }
 
     /// The checked view: a 32px rounded indicator behind the icon (activityaction.css); High Contrast
@@ -829,6 +871,12 @@ impl Workbench {
         if self.side_bar_view == SideBarView::Search {
             let title = self.side_bar_title("Search").child(self.search_title_actions(cx));
             return self.side_bar_frame().text_color(foreground).child(title).child(self.search_view(window, cx));
+        }
+        if self.side_bar_view == SideBarView::Debug {
+            return self.debug_side_bar(window, cx);
+        }
+        if self.side_bar_view == SideBarView::Testing {
+            return self.testing_side_bar(cx);
         }
         let title = self
             .side_bar_title("Explorer")
@@ -1103,6 +1151,7 @@ impl Workbench {
 
     fn status_bar(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         let (foreground, background) = match self.folder {
+            _ if self.statusbar_in_debug_mode() => (self.color("statusBar.debuggingForeground"), self.color("statusBar.debuggingBackground")),
             Some(_) => (self.color("statusBar.foreground"), self.color("statusBar.background")),
             None => (self.color("statusBar.noFolderForeground"), self.color("statusBar.noFolderBackground")),
         };

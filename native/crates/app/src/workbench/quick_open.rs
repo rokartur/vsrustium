@@ -58,6 +58,7 @@ impl Workbench {
         self.restore_search_history();
         self.restore_explorer_view_state();
         self.restore_editor_view_states();
+        self.restore_debug_state();
     }
 
     /// `handleActiveEditorChangeInHistory`. Upstream saves on shutdown only; the port saves on each change, as its

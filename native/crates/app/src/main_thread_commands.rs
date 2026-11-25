@@ -27,6 +27,8 @@ impl Workbench {
             ("MainThreadStatusBar", "$disposeEntry") => self.dispose_extension_status_entry(&request.args, cx),
             ("MainThreadOutputService" | "MainThreadLogger", _) => self.handle_output_request(request, window, cx),
             ("MainThreadConsole" | "MainThreadErrors" | "MainThreadExtensionService", _) => self.handle_observed_request(&request),
+            ("MainThreadDebugService", _) => self.handle_debug_request(request, window, cx),
+            ("MainThreadTesting", _) => self.handle_testing_request(request, cx),
             ("MainThreadCommands", "$registerCommand") => {
                 let id = arg(0).as_str().unwrap_or_default().to_owned();
                 let handler_id = id.clone();

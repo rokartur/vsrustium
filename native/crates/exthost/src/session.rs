@@ -415,6 +415,11 @@ impl Session {
         self.send(proxy, method, args, false)
     }
 
+    /// A request whose host method's last parameter is a `CancellationToken`: the host appends the token.
+    pub fn send_cancellable_request(&mut self, proxy: &str, method: &str, args: Vec<Arg>) -> u32 {
+        self.send(proxy, method, args, true)
+    }
+
     fn send(&mut self, proxy: &str, method: &str, args: Vec<Arg>, cancellable: bool) -> u32 {
         self.next_req += 1;
         let req = self.next_req;
@@ -719,10 +724,28 @@ pub fn app_uri(uri: &Value) -> Value {
     json!({ "$mid": 1, "scheme": URL_PROTOCOL, "authority": authority, "path": path, "query": text("query"), "fragment": text("fragment") })
 }
 
+/// A forwarded argument as JSON: a `VSBuffer` becomes the array of its bytes, also where a `{"$$ref$$": i}` stands for one.
 fn arg_value(arg: Arg) -> Value {
     match arg {
-        Arg::Json(value) | Arg::JsonWithBuffers { json: value, .. } => value,
-        Arg::Buffer(_) | Arg::Undefined => Value::Null,
+        Arg::Json(value) => value,
+        Arg::JsonWithBuffers { mut json, buffers } => {
+            restore_buffer_refs(&mut json, &buffers);
+            json
+        }
+        Arg::Buffer(buffer) => json!(buffer),
+        Arg::Undefined => Value::Null,
+    }
+}
+
+fn restore_buffer_refs(value: &mut Value, buffers: &[Vec<u8>]) {
+    if let Some(buffer) = value.get("$$ref$$").and_then(Value::as_u64).and_then(|index| buffers.get(index as usize)) {
+        *value = json!(buffer);
+        return;
+    }
+    match value {
+        Value::Object(map) => map.values_mut().for_each(|value| restore_buffer_refs(value, buffers)),
+        Value::Array(items) => items.iter_mut().for_each(|value| restore_buffer_refs(value, buffers)),
+        _ => {}
     }
 }
 
@@ -767,6 +790,13 @@ mod tests {
         assert_eq!(workspace_id(&workspace), "e36736311be12ff6d695feefe415b3e8");
         let upper = Workspace { file: Some(PathBuf::from("/Hello/Test")), ..workspace };
         assert_eq!(workspace_id(&upper), "e36736311be12ff6d695feefe415b3e8", "macOS paths are compared ignoring case");
+    }
+
+    #[test]
+    fn forwarded_buffers_become_byte_arrays() {
+        let arg = Arg::JsonWithBuffers { json: json!([{ "type": "output", "output": {"$$ref$$": 0} }]), buffers: vec![vec![104, 105]] };
+        assert_eq!(arg_value(arg), json!([{ "type": "output", "output": [104, 105] }]));
+        assert_eq!(arg_value(Arg::Buffer(vec![1])), json!([1]));
     }
 
     #[test]

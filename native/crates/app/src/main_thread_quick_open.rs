@@ -66,6 +66,8 @@ pub enum Owner {
     NewFile(crate::workbench::new_file::NewFilePicker),
     /// Configure Metered Connection.
     MeteredConnection,
+    /// A pick or input of the debug start flow, answered with the picked handle or the typed value.
+    Debug(Option<futures::channel::oneshot::Sender<Option<String>>>),
 }
 
 impl Workbench {
@@ -253,6 +255,7 @@ impl Workbench {
             Owner::Choose(_) => self.choose_event(id, event, window, cx),
             Owner::ExtensionsFolder(_) => self.extensions_folder_pick_event(id, event, window, cx),
             Owner::DisplayLanguage(_) => self.display_language_pick_event(id, event, window, cx),
+            Owner::Debug(_) => self.debug_pick_event(id, event, window, cx),
         }
     }
 

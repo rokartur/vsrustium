@@ -541,6 +541,8 @@ impl Workbench {
             .children(self.find_options_widget(minimap_width, cx))
             .children(self.floating_menu(editor, viewport.height, minimap_width, window, cx))
             .children(self.define_keybinding_overlay(editor, self.editors.viewport.width + metrics.content_left() + minimap_width, viewport.height, window, cx))
+            .children(self.breakpoint_widget_element(editor, metrics.content_left(), window, cx))
+            .children(self.exception_widget_element(editor, metrics.content_left(), cx))
     }
 
     /// wordHighlighter.ts: `onDidBlurEditorWidget` stops the highlights once no code editor has the focus,
@@ -1178,6 +1180,7 @@ impl Workbench {
                     .h_full()
                     .overflow_hidden()
                     .text_color(colors.text)
+                    .children(self.stack_frame_line(editor, index))
                     .child(current_line)
                     .child(self.wrapped_segment_clip(content, segment, shift, scroll_left, char_width))
                     .children(self.word_wrap_indicator(editor, segment, scroll_left, char_width))
@@ -1244,7 +1247,13 @@ impl Workbench {
                     .flex()
                     .children(self.diff_margin(editor, index, metrics))
                     .children(self.quick_diff_glyph(editor, index, metrics))
-                    .child(self.gutter_mouse(div().w(px(metrics.glyph_margin_width())).h_full().flex_none().children(self.lightbulb_glyph(editor, index, metrics.line_height, cx)), index, cx))
+                    .child(
+                        div()
+                            .relative()
+                            .flex_none()
+                            .child(self.breakpoint_glyph_margin(editor, index, metrics.glyph_margin_width(), metrics.line_height, cx))
+                            .children(self.lightbulb_glyph(editor, index, metrics.line_height, cx).map(|lightbulb| lightbulb.absolute().top_0().left_0())),
+                    )
                     .child(self.gutter_mouse(number, index, cx))
                     .child(self.fold_control(index, collapsed, metrics, fold_control_color, fold_controls, cx))
                     .child(content)

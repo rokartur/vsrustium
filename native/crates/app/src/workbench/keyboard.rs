@@ -400,8 +400,10 @@ impl Workbench {
             SideBarView::Search => self.search_context(window, &mut context),
             SideBarView::Scm => {}
             SideBarView::Extensions => self.extensions_context(window, &mut context),
+            SideBarView::Debug | SideBarView::Testing => {}
         }
         self.scm_key_context(window, &mut context);
+        self.debug_context(window, &mut context);
         self.keybindings_editor_context(window, &mut context);
         self.settings_editor_context(window, &mut context);
         self.search_editor_context(window, &mut context);

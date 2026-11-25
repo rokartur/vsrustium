@@ -27,6 +27,8 @@ pub enum SideBarView {
     Search,
     Scm,
     Extensions,
+    Debug,
+    Testing,
 }
 
 /// The search view's inputs, in their tab order.

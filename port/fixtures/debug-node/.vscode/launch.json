@@ -1,0 +1,28 @@
+{
+	"version": "0.2.0",
+	"configurations": [
+		{
+			"type": "node",
+			"request": "launch",
+			"name": "Launch server.js",
+			"program": "${workspaceFolder}/server.js",
+			"serverReadyAction": {
+				"pattern": "listening on port ([0-9]+)",
+				"action": "startDebugging",
+				"name": "Launch app.js"
+			}
+		},
+		{
+			"type": "node",
+			"request": "launch",
+			"name": "Launch app.js",
+			"program": "${workspaceFolder}/app.js"
+		},
+		{
+			"type": "node",
+			"request": "launch",
+			"name": "Launch throw.js",
+			"program": "${workspaceFolder}/throw.js"
+		}
+	]
+}

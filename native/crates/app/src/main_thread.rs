@@ -137,7 +137,10 @@ impl MainThread for WorkbenchMainThread {
                 if (message.proxy, message.method) == ("ExtHostWebviewViews", "$resolveWebviewView") && matches!(args.get(2), Some(Arg::Json(Value::Null))) {
                     args[2] = Arg::Undefined;
                 }
-                session.send_request(message.proxy, message.method, args)
+                match TOKEN_METHODS.contains(&(message.proxy, message.method)) {
+                    true => session.send_cancellable_request(message.proxy, message.method, args),
+                    false => session.send_request(message.proxy, message.method, args),
+                }
             };
             if let Some(reply) = message.reply {
                 self.waiting.push((req, message.cancellable, reply));
@@ -217,6 +220,21 @@ impl WorkbenchMainThread {
 
 /// The time `$provideTextDocumentContent` gets, as main_thread_files.rs gives a file system provider.
 const PROVIDER_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Workbench calls whose host method ends with a `CancellationToken` (extHost.protocol.ts): rpcProtocol.ts sends
+/// them as requests with cancellation, so the host passes a token instead of `undefined`.
+const TOKEN_METHODS: [(&str, &str); 10] = [
+    ("ExtHostDebugService", "$provideDebugConfigurations"),
+    ("ExtHostDebugService", "$resolveDebugConfiguration"),
+    ("ExtHostDebugService", "$resolveDebugConfigurationWithSubstitutedVariables"),
+    ("ExtHostTesting", "$runControllerTests"),
+    ("ExtHostTesting", "$startContinuousRun"),
+    ("ExtHostTesting", "$getCoverageDetails"),
+    ("ExtHostTesting", "$refreshTests"),
+    ("ExtHostTesting", "$getTestsRelatedToCode"),
+    ("ExtHostTesting", "$getCodeRelatedToTest"),
+    ("ExtHostTesting", "$provideTestFollowups"),
+];
 
 /// mainThreadSaveParticipant.ts: the host's `onWillSaveTextDocument` listeners apply their edits through
 /// `$tryApplyWorkspaceEdit` while this waits; a failed or late listener is logged and the save goes on.

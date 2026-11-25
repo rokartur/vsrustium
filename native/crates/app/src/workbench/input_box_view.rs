@@ -38,9 +38,12 @@ pub enum InputId {
     SettingsValue,
     SettingsListKey,
     SettingsListValue,
+    DebugView,
+    BreakpointWidget,
+    DebugConsole,
 }
 
-const INPUTS: [InputId; 14] = [
+const INPUTS: [InputId; 17] = [
     InputId::QuickInput,
     InputId::Explorer,
     InputId::ExplorerFind,
@@ -55,6 +58,9 @@ const INPUTS: [InputId; 14] = [
     InputId::SettingsValue,
     InputId::SettingsListKey,
     InputId::SettingsListValue,
+    InputId::DebugView,
+    InputId::BreakpointWidget,
+    InputId::DebugConsole,
 ];
 
 /// The view state of one input element.
@@ -125,6 +131,9 @@ impl Workbench {
             InputId::SettingsValue => &self.settings_editor.value_view,
             InputId::SettingsListKey => &self.settings_editor.list.key_view,
             InputId::SettingsListValue => &self.settings_editor.list.value_view,
+            InputId::DebugView => &self.debug_view.input_view,
+            InputId::BreakpointWidget => &self.debug_view.widget_view,
+            InputId::DebugConsole => &self.debug_console.input_view,
         }
     }
 
@@ -146,6 +155,9 @@ impl Workbench {
             InputId::SettingsValue => &mut self.settings_editor.value_view,
             InputId::SettingsListKey => &mut self.settings_editor.list.key_view,
             InputId::SettingsListValue => &mut self.settings_editor.list.value_view,
+            InputId::DebugView => &mut self.debug_view.input_view,
+            InputId::BreakpointWidget => &mut self.debug_view.widget_view,
+            InputId::DebugConsole => &mut self.debug_console.input_view,
         }
     }
 
@@ -167,6 +179,9 @@ impl Workbench {
             InputId::SettingsValue => &self.settings_editor.value_focus,
             InputId::SettingsListKey => &self.settings_editor.list.key_focus,
             InputId::SettingsListValue => &self.settings_editor.list.value_focus,
+            InputId::DebugView => &self.debug_view.input_focus,
+            InputId::BreakpointWidget => &self.debug_view.widget_focus,
+            InputId::DebugConsole => &self.debug_console.input_focus,
         }
     }
 
@@ -188,6 +203,9 @@ impl Workbench {
             InputId::SettingsValue => self.settings_editor.value.as_ref().map(|(_, input)| input),
             InputId::SettingsListKey => Some(&self.settings_editor.list.key),
             InputId::SettingsListValue => Some(&self.settings_editor.list.value),
+            InputId::DebugView => self.debug_view.editing.as_ref().map(|_| &self.debug_view.input),
+            InputId::BreakpointWidget => self.breakpoint_widget.as_ref().map(|widget| &widget.input),
+            InputId::DebugConsole => Some(&self.debug_console.input),
         }
     }
 
@@ -256,6 +274,18 @@ impl Workbench {
             }
             InputId::SettingsListKey | InputId::SettingsListValue => {
                 self.edit_settings_list_input(id == InputId::SettingsListKey, edit, cx);
+                Outcome::done()
+            }
+            InputId::DebugView => {
+                self.edit_debug_view_input(edit, cx);
+                Outcome::done()
+            }
+            InputId::BreakpointWidget => {
+                self.edit_breakpoint_widget_input(edit, cx);
+                Outcome::done()
+            }
+            InputId::DebugConsole => {
+                self.edit_debug_console_input(edit, cx);
                 Outcome::done()
             }
         }
@@ -449,6 +479,9 @@ impl Workbench {
                 InputId::SettingsValue => "settings-value-text".into(),
                 InputId::SettingsListKey => "settings-list-key-text".into(),
                 InputId::SettingsListValue => "settings-list-value-text".into(),
+                InputId::DebugView => "debug-view-input-text".into(),
+                InputId::BreakpointWidget => "breakpoint-widget-input-text".into(),
+                InputId::DebugConsole => "debug-console-input-text".into(),
             })
             .flex_1()
             .h_full()
