@@ -16,7 +16,7 @@ impl Workbench {
     /// `tryUpdateReservedSpace`: the model has threads or commenting ranges.
     pub(super) fn editor_has_comment_threads(&self, editor: &OpenEditor) -> bool {
         let uri = editor.document().uri();
-        self.comment_threads_of(&uri).next().is_some() || self.editor_has_commenting_ranges(editor)
+        !self.comments.commenting_disabled && (self.comment_threads_of(&uri).next().is_some() || self.editor_has_commenting_ranges(editor))
     }
 
     fn comment_threads_of<'a>(&'a self, uri: &'a serde_json::Value) -> impl Iterator<Item = &'a crate::workbench::comments::Thread> {
@@ -25,6 +25,9 @@ impl Workbench {
     }
 
     pub(in crate::workbench) fn comment_glyph(&self, editor: &OpenEditor, index: usize, metrics: EditorMetrics, cx: &mut Context<Self>) -> Option<Div> {
+        if self.comments.commenting_disabled {
+            return None;
+        }
         let uri = editor.document().uri();
         let thread = self.comments.controllers.iter().flat_map(|controller| controller.threads.iter().map(move |thread| (controller.handle, thread))).find(|(_, thread)| {
             let end = thread.range.as_ref().and_then(|range| range["endLineNumber"].as_u64());

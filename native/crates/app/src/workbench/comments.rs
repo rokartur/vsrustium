@@ -21,6 +21,8 @@ pub(super) struct Comments {
     pub(super) reply_focus: FocusHandle,
     pub(super) view: super::comments_view::ViewState,
     pub(super) commenting: super::commenting_ranges::CommentingRanges,
+    /// Toggle Editor Commenting turned commenting off (`commentingEnabled` false): no glyphs, ranges or threads show.
+    pub(super) commenting_disabled: bool,
     /// The `reaction.command.<label>` commands of the last reaction picker.
     pub(super) reaction_commands: Vec<(String, crate::commands::Registration)>,
 }
@@ -29,7 +31,7 @@ impl Comments {
     pub(super) fn new(cx: &mut Context<Workbench>) -> Comments {
         let reply_focus = cx.focus_handle();
         let view = super::comments_view::ViewState::new(cx);
-        Comments { controllers: Vec::new(), collapsed: Default::default(), widgets: Vec::new(), reply: None, reply_view: InputView::default(), reply_focus, view, commenting: Default::default(), reaction_commands: Vec::new() }
+        Comments { controllers: Vec::new(), collapsed: Default::default(), widgets: Vec::new(), reply: None, reply_view: InputView::default(), reply_focus, view, commenting: Default::default(), commenting_disabled: false, reaction_commands: Vec::new() }
     }
 }
 
@@ -83,8 +85,17 @@ impl Workbench {
                 let range = Some(arg(4)).filter(|range| !range.is_null());
                 let comments = arg(5).as_array().cloned().unwrap_or_default();
                 // `MainThreadCommentThread`: a new thread is collapsed and can be replied to.
-                let thread = Thread { handle: arg(1).as_u64().unwrap_or_default(), resource: arg(3), range, label: None, context_value: None, comments, collapse_state: 0, can_reply: Value::Bool(true), state: None, is_template: arg(7) == true };
+                let mut thread = Thread { handle: arg(1).as_u64().unwrap_or_default(), resource: arg(3), range, label: None, context_value: None, comments, collapse_state: 0, can_reply: Value::Bool(true), state: None, is_template: arg(7) == true };
+                // commentsController.ts `shouldReveal`: a new template without comments shows, its reply form focused.
+                let reveal = thread.is_template && thread.comments.is_empty();
+                if reveal {
+                    thread.collapse_state = 1;
+                }
+                let thread_handle = thread.handle;
                 controller.threads.push(thread);
+                if reveal {
+                    self.expand_comment_reply(handle, thread_handle, window, cx);
+                }
             }
             "$updateCommentThread" => {
                 let Some(controller) = self.comment_controller_mut(handle) else { return Outcome::done() };
@@ -116,23 +127,9 @@ impl Workbench {
             _ => {}
         }
         self.sync_comment_widgets();
-        self.reveal_comment_template(window, cx);
         self.select_first_comment_thread();
         cx.notify();
         Outcome::done()
-    }
-
-    /// commentsController.ts `shouldReveal`: an expanded template without comments that can be replied to opens its
-    /// reply form, focused.
-    fn reveal_comment_template(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.comments.reply.is_some() {
-            return;
-        }
-        let threads = self.comments.controllers.iter().flat_map(|controller| controller.threads.iter().map(move |thread| (controller.handle, thread)));
-        let template = threads.filter(|(_, thread)| thread.is_template && thread.comments.is_empty() && thread.can_reply != false && thread.collapse_state == 1).last();
-        if let Some((controller, thread)) = template.map(|(controller, thread)| (controller, thread.handle)) {
-            self.expand_comment_reply(controller, thread, window, cx);
-        }
     }
 
     fn comment_controller_mut(&mut self, handle: u64) -> Option<&mut Controller> {
@@ -146,6 +143,7 @@ impl Workbench {
 
     /// `revealCommentThread` for a document thread: its file opens at the start of its range.
     pub(super) fn reveal_comment_thread(&mut self, controller: u64, thread: u64, window: &mut Window, cx: &mut Context<Self>) {
+        self.comments.commenting_disabled = false;
         let thread = self.comments.controllers.iter().find(|candidate| candidate.handle == controller).and_then(|controller| controller.threads.iter().find(|candidate| candidate.handle == thread));
         let Some(thread) = thread else { return };
         let mut target = thread.range.clone().unwrap_or_else(|| serde_json::json!({ "startLineNumber": 1, "startColumn": 1 }));

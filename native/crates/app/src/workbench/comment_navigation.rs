@@ -1,5 +1,6 @@
-//! commentsEditorContribution.ts: Collapse All, Expand All and Expand Unresolved Comments, Dismiss Comment, and the
-//! controller's next and previous comment thread (Alt+F9, Shift+Alt+F9) and commenting range. shortcut: the thread
+//! commentsEditorContribution.ts: Collapse All, Expand All and Expand Unresolved Comments, Dismiss Comment, Toggle
+//! Editor Commenting, Focus Comment on Current Line, and the controller's next and previous comment thread (Alt+F9,
+//! Shift+Alt+F9), commented range (Alt+F10, Shift+Alt+F10) and commenting range. shortcut: the thread
 //! reached expands and is selected, but focus stays in the editor (`CommentWidgetFocus.Widget` has no focusable
 //! comment here); commenting ranges are whole lines, so a range is reached at its first or last line's start.
 
@@ -32,6 +33,28 @@ impl Workbench {
         });
         self.commands.register("editor.action.previousCommentThreadAction", |workbench, _, window, cx| {
             workbench.reveal_nearest_comment_thread(true, window, cx);
+            Outcome::done()
+        });
+        // `nextCommentThread(false)`: the same move without focusing the widget, which the port never focuses.
+        self.commands.register("editor.action.nextCommentedRangeAction", |workbench, _, window, cx| {
+            workbench.reveal_nearest_comment_thread(false, window, cx);
+            Outcome::done()
+        });
+        self.commands.register("editor.action.previousCommentedRangeAction", |workbench, _, window, cx| {
+            workbench.reveal_nearest_comment_thread(true, window, cx);
+            Outcome::done()
+        });
+        self.commands.register("workbench.action.toggleCommenting", |workbench, _, _, cx| {
+            workbench.comments.commenting_disabled = !workbench.comments.commenting_disabled;
+            workbench.sync_comment_widgets();
+            cx.notify();
+            Outcome::done()
+        });
+        self.commands.register("workbench.action.focusCommentOnCurrentLine", |workbench, _, _, cx| {
+            if !workbench.expand_comment_thread_at_cursor() {
+                workbench.notify_error("The cursor must be on a line with a comment to focus the comment");
+            }
+            cx.notify();
             Outcome::done()
         });
         self.commands.register("editor.action.nextCommentingRange", |workbench, _, window, cx| {
@@ -107,6 +130,20 @@ impl Workbench {
         }
         window.focus(&self.editor_focus, cx);
         cx.notify();
+    }
+
+    /// `getCommentsAtLine` then `revealCommentThread`: the first thread whose range holds the cursor's line expands.
+    fn expand_comment_thread_at_cursor(&mut self) -> bool {
+        let Some(editor) = self.editors.active() else { return false };
+        let uri = editor.document().uri();
+        let line = editor.selection().head.line as u64 + 1;
+        let holds = |range: &Value| range["startLineNumber"].as_u64().is_some_and(|start| start <= line) && range["endLineNumber"].as_u64().is_some_and(|end| line <= end);
+        let threads = self.comments.controllers.iter_mut().flat_map(|controller| &mut controller.threads);
+        let mut threads = threads.filter(|thread| thread.resource["path"] == uri["path"] && thread.resource["scheme"] == uri["scheme"]);
+        let Some(thread) = threads.find(|thread| thread.range.as_ref().is_some_and(holds)) else { return false };
+        thread.collapse_state = EXPANDED;
+        self.sync_comment_widgets();
+        true
     }
 
     /// The active editor selects `range` (an `IRange`, 1-based), revealed in the center when outside the viewport.

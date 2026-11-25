@@ -51,4 +51,12 @@ fn dismissing_a_reply_collapses_its_thread(cx: &mut gpui::TestAppContext) {
     assert_eq!(state(cx), (EXPANDED, true, Position::new(0, 0)));
     workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("workbench.action.hideComment", Vec::new(), window, cx)));
     assert_eq!(state(cx), (COLLAPSED, false, Position::new(1, 0)));
+
+    let zones = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.comments.widgets.len());
+    workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("workbench.action.focusCommentOnCurrentLine", Vec::new(), window, cx)));
+    assert_eq!((state(cx).0, zones(cx)), (EXPANDED, 1));
+    workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("workbench.action.toggleCommenting", Vec::new(), window, cx)));
+    assert_eq!(zones(cx), 0);
+    workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("workbench.action.toggleCommenting", Vec::new(), window, cx)));
+    assert_eq!(zones(cx), 1);
 }

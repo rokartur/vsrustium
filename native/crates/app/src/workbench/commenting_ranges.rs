@@ -71,6 +71,7 @@ impl Workbench {
     /// `activeCursorHasComment`.
     pub(super) fn commenting_context(&self, context: &mut std::collections::HashMap<String, Value>) {
         context.insert("workspaceHasCommenting".into(), json!(self.comments_view_registered()));
+        context.insert("commentingEnabled".into(), json!(!self.comments.commenting_disabled));
         let Some(editor) = self.editors.active() else { return };
         let line = editor.selection().head.line;
         let ranges = self.commenting_ranges_of(editor);

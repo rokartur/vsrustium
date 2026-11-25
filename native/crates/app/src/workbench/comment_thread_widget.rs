@@ -60,7 +60,9 @@ impl Workbench {
     pub(super) fn sync_comment_widgets(&mut self) {
         let line_height = self.editors.viewport.line_height;
         let mut wanted = Vec::new();
-        for controller in &self.comments.controllers {
+        // `removeCommentWidgetsAndStoreCache` while commenting is off.
+        let controllers = if self.comments.commenting_disabled { &[][..] } else { &self.comments.controllers[..] };
+        for controller in controllers {
             for thread in controller.threads.iter().filter(|thread| thread.collapse_state == EXPANDED) {
                 let Some(range) = thread.range.as_ref() else { continue };
                 let reply = self.comments.reply.as_ref().filter(|reply| reply.controller == controller.handle && reply.thread == thread.handle);
