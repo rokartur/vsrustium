@@ -241,7 +241,7 @@ impl Workbench {
         // `_getMaximumHeightInLines`: max(12, 80% of the editor).
         let height_in_lines = (3 + message_lines(&marker).min(17)) as f32;
         let height_in_lines = height_in_lines.min(12f32.max(viewport.height / viewport.line_height * 0.8));
-        let zone_id = editor.add_view_zone(position, height_in_lines * viewport.line_height);
+        let zone_id = editor.add_view_zone(Some(position), height_in_lines * viewport.line_height);
         session.widget = Some(MarkerWidget { zone_id, marker, index, total, stale: false });
         editor.set_selections(vec![Selection::caret(position)]);
         // `_showImpl.revealRange`: the line and the zone below it, the last line near the top.
@@ -298,7 +298,7 @@ impl Workbench {
         let Some(widget) = session.widget.as_mut() else { return };
         let Some(editor) = self.editors.editors.iter().find(|editor| editor.model_id == session.model_id) else { return };
         let Some(zone) = editor.view_zone(widget.zone_id) else { return };
-        match session.list.find(&editor.document.uri_string(), marker_position(editor, zone.anchor)) {
+        match session.list.find(&editor.document.uri_string(), marker_position(editor, zone.anchor.expect("marker zones follow a line"))) {
             Some((marker, index, total)) => (widget.marker, widget.index, widget.total, widget.stale) = (marker, index, total, false),
             None => widget.stale = true,
         }
@@ -325,8 +325,9 @@ impl Workbench {
         };
         let frame = self.color(frame_key);
         // zoneWidget.ts `show`: the arrow is not pretty at column 1 and moves to column 2.
-        let line = &editor.document.lines[zone.anchor.line];
-        let arrow_column = zone.anchor.column.max(1).min(line.chars().count().max(1));
+        let anchor = zone.anchor.expect("marker zones follow a line");
+        let line = &editor.document.lines[anchor.line];
+        let arrow_column = anchor.column.max(1).min(line.chars().count().max(1));
         let arrow_x = content_left + visible_column(line, arrow_column, editor.document.indentation.tab_size) as f32 * char_width - editor.scroll.left;
         let arrow = canvas(
             |_, _, _| (),

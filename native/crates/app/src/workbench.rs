@@ -156,6 +156,7 @@ pub struct Workbench {
     pub search_editor_widget: search_editor_widget::SearchEditorWidget,
     pub webview_panels: webview_panels::WebviewPanels,
     pub scm: scm_view::ScmView,
+    quick_diffs: editor_view::quick_diff::QuickDiffs,
     /// `contributes.commands` icons, for the view toolbars.
     pub command_icons: HashMap<String, crate::menus::CommandIcon>,
     /// `MenuRegistry`.
@@ -183,6 +184,7 @@ impl Render for Workbench {
         self.refresh_selection_highlights(window);
         self.update_webview_panels(window, cx);
         self.update_diff_editor();
+        self.update_quick_diff(cx);
         self.auto_save_models_changed(cx);
         let viewport = window.viewport_size();
         let window_border = self.theme.color("window.activeBorder");
@@ -295,6 +297,7 @@ impl Workbench {
             search_editor_widget: search_editor_widget::SearchEditorWidget::new(cx),
             webview_panels: Default::default(),
             scm: scm_view::ScmView::new(cx),
+            quick_diffs: Default::default(),
             command_icons: HashMap::new(),
             menus: crate::menus::workbench_menus(),
             context_menu: None,

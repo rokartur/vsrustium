@@ -18,6 +18,7 @@ use gpui::{
 
 pub(super) mod diff_editor_view;
 pub(super) mod drag_and_drop;
+pub(super) mod quick_diff;
 pub(super) mod sticky_scroll_view;
 
 use files::encoding::SUPPORTED_ENCODINGS;
@@ -309,8 +310,9 @@ impl Workbench {
         let minimap_enabled = !in_diff && self.setting("editor.minimap.enabled") != json!(false);
         let viewport = self.editors.viewport;
         let lines = editor.visible_lines(viewport);
-        let lines_top = editor.line_top(lines.start, viewport) - editor.scroll.top;
         let zones = editor.zones_between(lines.clone());
+        let zones_above: f32 = zones.iter().filter(|zone| zone.0 == lines.start).map(|zone| zone.1).sum();
+        let lines_top = editor.line_top(lines.start, viewport) - zones_above - editor.scroll.top;
         let first_line = lines.start;
         let mut rows = Vec::new();
         for (index, row) in self.editor_lines(editor, lines, metrics, window, cx).into_iter().enumerate() {
@@ -1054,6 +1056,7 @@ impl Workbench {
                     .relative()
                     .flex()
                     .children(self.diff_margin(editor, index, metrics))
+                    .children(self.quick_diff_glyph(editor, index, metrics))
                     .child(div().w(px(metrics.glyph_margin_width())).flex_none())
                     .child(number)
                     .child(self.fold_control(index, collapsed, metrics, fold_control_color, fold_controls, cx))
@@ -1303,9 +1306,10 @@ impl Workbench {
         }
         let [(info_lines, info_color), (error_lines, error_color)] = self.keybinding_ruler_marks(editor);
         let [(marker_info_lines, marker_info), (marker_warning_lines, marker_warning), (marker_error_lines, marker_error)] = self.marker_ruler_lines(editor);
+        let quick_diff = self.quick_diff_ruler_lines(editor);
         let border = self.theme.color("editorOverviewRuler.border");
         let Viewport { top_whitespace, line_height, .. } = self.editors.viewport;
-        let zones: Vec<(usize, f32)> = editor.view_zones.iter().map(|zone| (zone.anchor.line + 1, zone.height)).collect();
+        let zones: Vec<(usize, f32)> = editor.view_zones.iter().map(|zone| (zone.anchor.map_or(0, |anchor| anchor.line + 1), zone.height)).collect();
         let line_top = move |line: usize| top_whitespace + line as f32 * line_height + zones.iter().filter(|zone| zone.0 <= line).map(|zone| zone.1).sum::<f32>();
         canvas(
             |_, _, _| {},
@@ -1359,6 +1363,12 @@ impl Workbench {
                     if let Some((start, end)) = previous {
                         paint(window, x, start, width, end - start, color);
                     }
+                }
+                // quickDiffDecorator.ts: `OverviewRulerLane.Left`, each change its own mark.
+                for (start, end, color) in quick_diff.iter().filter_map(|(start, end, color)| Some((*start, *end, (*color)?))) {
+                    let y1 = (line_top(start) * ratio).floor();
+                    let y2 = ((line_top(end) + line_height) * ratio).floor().max(y1 + min_height);
+                    paint(window, lanes.full_x, y1, lanes.center_x - lanes.full_x, y2 - y1, color);
                 }
                 // Cursors sorted by line; touching marks of one color paint as one.
                 let height = (2. * scale).floor();

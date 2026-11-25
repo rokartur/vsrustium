@@ -82,6 +82,9 @@ impl Workbench {
     /// One `MainThreadSCM` request.
     pub(crate) fn handle_scm_request(&mut self, method: &str, args: &[Value], window: &mut Window, cx: &mut Context<Self>) -> Outcome {
         let change = self.scm.model.apply(method, args);
+        if !method.starts_with("$setInput") && !method.starts_with("$showValidation") {
+            self.quick_diffs.generation += 1;
+        }
         match change {
             ScmChange::None => return Outcome::done(),
             ScmChange::Registered(handle) => self.scm_registered(handle, args.get(7).cloned().unwrap_or(Value::Null), cx),

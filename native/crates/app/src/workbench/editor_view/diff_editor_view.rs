@@ -173,8 +173,9 @@ impl Workbench {
                 input.zones = view_zones(&computed.diff, &alignments, side_by_side);
                 let line_height = self.editors.viewport.line_height;
                 let modified = self.editors.model_mut(&input.modified.scheme, &input.modified.path).expect("found above");
-                for zone in input.zones.iter().filter(|zone| zone.side == ZoneSide::Modified && zone.after_line > 0) {
-                    let id = modified.add_view_zone(Position::new(zone.after_line - 1, 0), zone.lines as f32 * line_height);
+                for zone in input.zones.iter().filter(|zone| zone.side == ZoneSide::Modified) {
+                    let anchor = zone.after_line.checked_sub(1).map(|line| Position::new(line, 0));
+                    let id = modified.add_view_zone(anchor, zone.lines as f32 * line_height);
                     input.placed_zones.push((id, zone.clone()));
                 }
             }
@@ -491,11 +492,13 @@ impl Workbench {
 
     /// style.css `.gutter-insert`, `.gutter-delete`: the margin of a changed line.
     fn margin_background(&self, side: ZoneSide, width: f32) -> Option<Div> {
-        let keys: [&str; 3] = match side {
-            ZoneSide::Modified => ["diffEditorGutter.insertedLineBackground", "diffEditor.insertedLineBackground", "diffEditor.insertedTextBackground"],
-            ZoneSide::Original => ["diffEditorGutter.removedLineBackground", "diffEditor.removedLineBackground", "diffEditor.removedTextBackground"],
+        // style.css `var(--gutter, var(--line), var(--text))`: the fallback "line, text" is no color, so only the
+        // gutter key paints.
+        let key = match side {
+            ZoneSide::Modified => "diffEditorGutter.insertedLineBackground",
+            ZoneSide::Original => "diffEditorGutter.removedLineBackground",
         };
-        let color = keys.into_iter().find_map(|key| self.theme.color(key))?;
+        let color = self.theme.color(key)?;
         Some(div().absolute().top_0().left_0().h_full().w(px(width)).bg(color))
     }
 
