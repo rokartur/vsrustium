@@ -1,0 +1,10 @@
+{
+	"name": "type-hierarchy",
+	"publisher": "port",
+	"displayName": "Port Type Hierarchy",
+	"version": "0.0.1",
+	"description": "A type hierarchy provider for TypeScript for port/tools/ui-pair: `add` has two supertypes.",
+	"engines": { "vscode": "^1.100.0" },
+	"main": "./extension.js",
+	"activationEvents": ["onStartupFinished"]
+}

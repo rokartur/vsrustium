@@ -6,7 +6,7 @@ use gpui::{AnyElement, ClickEvent, Context, Div, FocusHandle, MouseButton, Mouse
 use serde_json::{Value, json};
 
 use super::Workbench;
-use super::peek_view::{LayoutStorage, PeekKind, PeekLayout};
+use super::peek_view::{LayoutStorage, PeekKind, PeekLayout, UI_FONT};
 use crate::commands::Outcome;
 use crate::editor::{LINE_HEIGHT, OpenEditor, Position, TextDocument, VerticalReveal, utf16_column};
 use crate::hierarchy_model::{Direction, HierarchyItem, HierarchyKind, HierarchyTree};
@@ -258,7 +258,10 @@ impl Workbench {
         if node == 0 {
             let children = tree.nodes[0].children.clone().unwrap_or_default();
             match children.first() {
-                None => widget.state = State::Message(direction.empty_message(&tree.root().name)),
+                None => {
+                    widget.state = State::Message(direction.empty_message(&tree.root().name));
+                    window.focus(&self.hierarchy_peek.tree_focus, cx);
+                }
                 Some(&first) => {
                     widget.state = State::Data;
                     widget.focused = Some(first);
@@ -435,7 +438,12 @@ impl Workbench {
         let head = self.peek_head(title, actions);
         self.peek_zone(PeekKind::Hierarchy, editor, content_left, char_width, head, |preview_width, body_height, cx| match &widget.state {
             State::Loading => (div().into_any_element(), false),
-            State::Message(message) => (self.peek_message(message.clone()), false),
+            // callHierarchy.css `.message`: centered; `_message.focus()` draws the focus outline.
+            State::Message(message) => {
+                let focused = self.hierarchy_peek.tree_focus.is_focused(window);
+                let message = div().track_focus(&self.hierarchy_peek.tree_focus).size_full().flex().items_center().justify_center().text_size(px(13.)).font_family(UI_FONT).child(message.clone());
+                (message.when(focused, |message| message.border_1().border_color(self.color("focusBorder"))).into_any_element(), false)
+            }
             State::Data => {
                 let preview = self.hierarchy_preview(widget, preview_width, body_height, char_width, window, cx);
                 (div().size_full().flex().child(preview).child(self.hierarchy_tree(widget, body_height, window, cx)).into_any_element(), true)
