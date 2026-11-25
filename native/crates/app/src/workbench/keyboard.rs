@@ -201,6 +201,11 @@ impl Workbench {
             cx.stop_propagation();
             return;
         }
+        // The list's own keydown listener runs before the window's keybindings.
+        if !in_chord_mode && self.explorer_type_navigation(keystroke, resolution == Resolution::NoMatchingKb, window, cx) {
+            cx.stop_propagation();
+            return;
+        }
         if self.editor_focus.is_focused(window) {
             self.content_hover_key_down(&resolution, cx);
         }

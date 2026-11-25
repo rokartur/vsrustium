@@ -49,6 +49,7 @@ pub struct ExplorerState {
     pub find: ExplorerFind,
     /// paneview.css `.pane:hover`: the folder section shows its title actions.
     pub pane_hovered: bool,
+    pub type_navigation: super::type_navigation::TypeNavigation,
 }
 
 pub struct ExplorerEdit {
@@ -63,7 +64,7 @@ pub struct ExplorerEdit {
 
 impl ExplorerState {
     pub fn new(cx: &mut gpui::App) -> Self {
-        ExplorerState { focus: cx.focus_handle(), input: InputView::default(), input_focus: cx.focus_handle(), edit: None, drop_target: None, expand_timer: None, undo: UndoRedo::default(), scroll: ScrollHandle::new(), find: ExplorerFind::new(cx), pane_hovered: false }
+        ExplorerState { focus: cx.focus_handle(), input: InputView::default(), input_focus: cx.focus_handle(), edit: None, drop_target: None, expand_timer: None, undo: UndoRedo::default(), scroll: ScrollHandle::new(), find: ExplorerFind::new(cx), pane_hovered: false, type_navigation: Default::default() }
     }
 }
 

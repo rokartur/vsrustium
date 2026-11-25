@@ -72,6 +72,7 @@ mod large_file;
 mod gutter_mouse;
 mod text_input;
 mod title_bar_actions;
+mod type_navigation;
 mod unicode_highlight;
 mod unusual_line_terminators;
 mod scm_view;
@@ -411,6 +412,7 @@ impl Workbench {
         workbench.register_explorer_actions();
         workbench.register_explorer_keyboard_commands();
         workbench.register_explorer_find_commands();
+        workbench.register_type_navigation_commands();
         workbench.register_search_actions();
         workbench.register_layout_actions();
         workbench.register_search_editor_actions();
