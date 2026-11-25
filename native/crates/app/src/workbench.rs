@@ -54,6 +54,7 @@ mod timeline_view;
 mod title_bar_actions;
 mod unicode_highlight;
 mod unusual_line_terminators;
+pub(crate) mod scm_actions;
 mod scm_graph_view;
 mod scm_tree;
 mod scm_view;
@@ -355,6 +356,7 @@ impl Workbench {
         workbench.register_multi_diff_editor_commands();
         workbench.register_timeline_commands();
         workbench.register_scm_commands();
+        workbench.register_scm_actions();
         workbench.register_editor_commands();
         workbench.register_find_commands();
         workbench.register_sticky_scroll_commands();

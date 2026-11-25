@@ -21,6 +21,7 @@ impl Workbench {
             ("MainThreadProgress", "$progressEnd") => self.end_progress(&request.args, window, cx),
             ("MainThreadWebviews" | "MainThreadWebviewPanels", method) => self.handle_webview_request(method, &request.args, window, cx),
             ("MainThreadSCM", method) => self.handle_scm_request(method, &request.args, window, cx),
+            ("MainThreadQuickDiff", method) => self.handle_quick_diff_request(method, &request.args, cx),
             ("MainThreadTimeline", method) => self.handle_timeline_request(method, &request.args, cx),
             ("MainThreadGitHub", method) => self.handle_github_request(method, &request.args, cx),
             ("MainThreadStatusBar", "$setEntry") => self.set_extension_status_entry(&request.args, cx),

@@ -312,7 +312,15 @@ impl Workbench {
             decorations.push((MinimapRange { start: view(start.line, start.column), end: view(end.line, end.column) }, color));
         }
         let tab_size = editor.document.indentation.tab_size;
-        decoration_fills(info, layout, self.theme.color("minimap.selectionHighlight"), &selections, &decorations, tab_size, |view_line| editor.document.lines[editor.model_line(view_line - 1)].as_str())
+        let mut fills = decoration_fills(info, layout, self.theme.color("minimap.selectionHighlight"), &selections, &decorations, tab_size, |view_line| editor.document.lines[editor.model_line(view_line - 1)].as_str());
+        // minimap.ts `_renderDecorationsHighlights` for `MinimapPosition.Gutter` (the quick diff's): 2px at x 2.
+        for (start, end, color) in self.quick_diff_minimap_lines(editor) {
+            let Some((first, last)) = layout.intersect_with_viewport(view(start, 0).0, view(end, 0).0) else { continue };
+            for line in first..=last {
+                fills.push(crate::editor::minimap::Fill { x: 2., y: layout.y_for_line_number(line, info.line_height), width: 2., height: info.line_height, color });
+            }
+        }
+        fills
     }
 
     /// sectionHeaders.ts `SectionHeaderDetector` and `getSectionHeaderDecorationsInViewport`: the headers from a font

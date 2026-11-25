@@ -396,6 +396,9 @@ impl Session {
     }
 
     fn send(&mut self, proxy: &str, method: &str, args: Vec<Arg>, cancellable: bool) -> u32 {
+        if std::env::var_os("EXTHOST_TRACE").is_some() {
+            eprintln!("main> {proxy}.{method} {args:?}");
+        }
         self.next_req += 1;
         let req = self.next_req;
         if let ("$activateByEvent", Some(Arg::Json(Value::String(event)))) = (method, args.first()) {
@@ -532,7 +535,10 @@ impl Session {
                 self.host.send(rpc::encode(&Message::Acknowledged { req }));
                 if let Some(forward) = self.forward.as_mut().filter(|forward| forward.proxies.contains(&proxy_name(rpc_id))) {
                     *self.log.host_calls.entry(format!("{}.{method}", proxy_name(rpc_id))).or_default() += 1;
-                    let args = args.into_iter().map(arg_value).collect();
+                    let args: Vec<Value> = args.into_iter().map(arg_value).collect();
+                    if std::env::var_os("EXTHOST_TRACE").is_some() {
+                        eprintln!("host> {}.{method} {args:?}", proxy_name(rpc_id));
+                    }
                     (forward.send)(ForwardedRequest { req, proxy: proxy_name(rpc_id), method, args });
                     return Ok(true);
                 }

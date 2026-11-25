@@ -37,7 +37,7 @@ impl Workbench {
                 });
             }
         }
-        for (id, key) in [("workbench.scm.action.setSortKeyToName", "name"), ("workbench.scm.action.setSortKeyToPath", "path"), ("workbench.scm.action.setSortKeyToStatus", "status")] {
+        for (id, key) in [("workbench.scm.action.setSortKey.name", "name"), ("workbench.scm.action.setSortKey.path", "path"), ("workbench.scm.action.setSortKey.status", "status")] {
             self.commands.register(id, move |workbench, _, _, cx| {
                 workbench.workspace_storage.lock().unwrap().set(VIEW_SORT_KEY, key.to_string());
                 cx.notify();

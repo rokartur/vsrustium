@@ -62,6 +62,12 @@ impl Workbench {
             cx.notify();
             Outcome::done()
         });
+        // shortcut: the original pane has no cursor (one code editor per group), so the modified side opens and
+        // `diffEditor.switchSide`, `compareEditor.focus*Side` are missing; add them when diff panes get editors.
+        self.commands.register("workbench.action.compareEditor.openSide", |workbench, _, window, cx| {
+            let Some(modified) = workbench.editors.active_diff().map(|diff| crate::editor::uri_value(&diff.modified.scheme, &diff.modified.path)) else { return Outcome::done() };
+            workbench.execute_command("vscode.open", vec![modified], window, cx)
+        });
         self.commands.register("diffEditor.toggleCollapseUnchangedRegions", |workbench, _, _, cx| {
             let enabled = workbench.setting("diffEditor.hideUnchangedRegions.enabled") == json!(true);
             workbench.update_setting("diffEditor.hideUnchangedRegions.enabled", json!(!enabled));

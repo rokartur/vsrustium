@@ -43,13 +43,14 @@ pub struct ScmView {
     /// Collapsed tree-mode folders: provider, group and the folder relative to the root.
     pub(super) collapsed_folders: HashSet<(u64, u64, std::path::PathBuf)>,
     /// scmViewService.ts: the focused repository, whose input the input box edits.
-    focused: Option<u64>,
+    pub(super) focused: Option<u64>,
     /// `activeRepository`: the last changed of the active editor's repository and the focused one.
     active: Option<u64>,
     /// The active editor the active repository last followed.
     active_editor: Option<(String, std::path::PathBuf)>,
     /// Collapsed repository rows, by provider handle.
-    collapsed_repositories: HashSet<u64>,
+    pub(super) collapsed_repositories: HashSet<u64>,
+    pub(super) input_histories: super::scm_actions::InputHistories,
 }
 
 impl ScmView {
@@ -69,6 +70,7 @@ impl ScmView {
             active: None,
             active_editor: None,
             collapsed_repositories: HashSet::new(),
+            input_histories: Default::default(),
         }
     }
 }
@@ -97,6 +99,7 @@ impl Workbench {
 
     /// One `MainThreadSCM` request.
     pub(crate) fn handle_scm_request(&mut self, method: &str, args: &[Value], window: &mut Window, cx: &mut Context<Self>) -> Outcome {
+        self.record_scm_input_value(method, args);
         let change = self.scm.model.apply(method, args);
         if !method.starts_with("$setInput") && !method.starts_with("$showValidation") {
             self.quick_diffs.generation += 1;
@@ -150,6 +153,7 @@ impl Workbench {
         if visible && self.focused_scm_provider().is_none_or(|focused| focused.hidden || self.scm.focused.is_none()) {
             self.focus_scm_repository(Some(handle));
         }
+        self.restore_scm_input(handle, cx);
     }
 
     /// scmViewService.ts `visibleRepositories`: every repository but hidden ones (selection mode `multiple`; only the
@@ -166,7 +170,7 @@ impl Workbench {
 
     /// scmViewService.ts `focus`: the focused repository's input is the one the input box edits, the host hears of it
     /// (mainThreadSCM.ts `onDidFocusRepository`) and it becomes the active repository.
-    fn focus_scm_repository(&mut self, handle: Option<u64>) {
+    pub(super) fn focus_scm_repository(&mut self, handle: Option<u64>) {
         if self.scm.focused == handle {
             return;
         }
@@ -187,7 +191,7 @@ impl Workbench {
         root.file_name().map_or_else(|| provider.label.clone(), |name| name.to_string_lossy().into_owned())
     }
 
-    fn focused_scm_provider(&self) -> Option<&Provider> {
+    pub(super) fn focused_scm_provider(&self) -> Option<&Provider> {
         self.scm.focused.and_then(|handle| self.scm.model.provider(handle))
     }
 
@@ -274,7 +278,7 @@ impl Workbench {
         }
     }
 
-    fn focus_scm_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn focus_scm_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let focus = self.scm.input_focus.clone();
         window.focus(&focus, cx);
         self.blink_caret(InputId::ScmInput, window, cx);
@@ -297,7 +301,7 @@ impl Workbench {
         cx.notify();
     }
 
-    fn sync_scm_input_model(&mut self, handle: u64, value: &str, cx: &mut Context<Self>) {
+    pub(super) fn sync_scm_input_model(&mut self, handle: u64, value: &str, cx: &mut Context<Self>) {
         let Some((scheme, path)) = self.scm.input_models.get(&handle).cloned() else { return };
         self.replace_model_text(&scheme, &path, value.to_string(), true, cx);
     }
@@ -317,7 +321,7 @@ impl Workbench {
 
     /// The context keys of a resource or group row (`scmProvider`, `scmProviderRootUri`, `scmProviderHasRootUri`,
     /// `scmResourceGroup`, `scmResourceState`), on top of the workbench's.
-    fn scm_context(&self, provider: &Provider, group: Option<&Group>, resource: Option<&Resource>, window: &Window) -> HashMap<String, Value> {
+    pub(super) fn scm_context(&self, provider: &Provider, group: Option<&Group>, resource: Option<&Resource>, window: &Window) -> HashMap<String, Value> {
         let mut context = self.key_context(window);
         context.insert("scmProvider".into(), json!(provider.id));
         context.insert("scmProviderRootUri".into(), json!(provider.root_uri["path"]));
@@ -339,6 +343,9 @@ impl Workbench {
         if self.scm.input_focus.is_focused(window) {
             context.insert("scmRepository".into(), json!(true));
             context.insert("scmInputHasValidationMessage".into(), json!(provider.input.validation.is_some()));
+            // scmInput.ts: the caret at line 1 column 1, or at the end of the last line.
+            context.insert("scmInputIsInFirstPosition".into(), json!(self.scm.input.selection.1 == 0));
+            context.insert("scmInputIsInLastPosition".into(), json!(self.scm.input.selection.1 == self.scm.input.len()));
         }
         if self.side_bar_view == super::search_view::SideBarView::Scm {
             context.insert("activeViewlet".into(), json!("workbench.view.scm"));
@@ -354,7 +361,7 @@ impl Workbench {
         json!({ "$mid": 4, "sourceControlHandle": provider.handle, "groupHandle": group.handle })
     }
 
-    fn provider_arg(provider: &Provider) -> Value {
+    pub(super) fn provider_arg(provider: &Provider) -> Value {
         json!({ "$mid": 5, "handle": provider.handle })
     }
 
@@ -362,20 +369,21 @@ impl Workbench {
     /// show a row per repository with its children below it (scmViewPane.ts `SCMTreeDataSource.getChildren`).
     pub(in crate::workbench) fn scm_side_bar(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         let foreground = self.foreground_or("sideBar.foreground");
-        let title = self.side_bar_title("Source Control").child(self.icon("ellipsis", 22., 16., foreground).cursor_pointer());
-        let frame = self.side_bar_frame().text_color(foreground).child(title);
         let providers = self.visible_scm_providers();
+        let show_repositories = providers.len() > 1 || self.setting("scm.alwaysShowRepositories") == json!(true);
+        // `updateScmProviderContextKeys` and `getActionsContext`: the title sees a repository only when it is the only row.
+        let (mut context, args) = match (show_repositories, providers.first()) {
+            (false, Some(provider)) => (self.scm_context(provider, None, None, window), vec![Self::provider_arg(provider)]),
+            _ => (self.key_context(window), Vec::new()),
+        };
+        self.scm_view_context(&mut context);
+        let title = self.side_bar_title("Source Control").child(self.scm_more_actions(context.clone(), args.clone(), foreground, cx));
+        let frame = self.side_bar_frame().text_color(foreground).child(title);
         if providers.is_empty() {
             // scmViewPane.ts: no repository shows the welcome content of `views.welcome` (git's "open a folder"
             // messages need git's context keys; the empty pane stands for them).
             return frame.child(self.section_header("Changes", true, false));
         }
-        let show_repositories = providers.len() > 1 || self.setting("scm.alwaysShowRepositories") == json!(true);
-        // `updateScmProviderContextKeys` and `getActionsContext`: the title sees a repository only when it is the only row.
-        let (context, args) = match show_repositories {
-            false => (self.scm_context(providers[0], None, None, window), vec![Self::provider_arg(providers[0])]),
-            true => (self.key_context(window), Vec::new()),
-        };
         let title_actions = self.inline_actions(MenuId::ScmTitle, &context, args, foreground, cx);
         let header = self.section_header("Changes", true, false).child(div().ml_auto().mr(px(4.)).flex().child(title_actions));
         let mut rows: Vec<gpui::AnyElement> = Vec::new();
@@ -389,7 +397,7 @@ impl Workbench {
             self.push_scm_repository_children(&mut rows, provider, providers.len(), usize::from(show_repositories), window, cx);
         }
         let list = div().id("scm-list").flex_1().min_h_0().overflow_y_scroll().track_focus(&self.scm.list_focus).children(rows);
-        let graph = self.active_scm_provider().filter(|provider| provider.has_history_provider).map(|provider| self.scm_graph_section(provider, cx));
+        let graph = self.active_scm_provider().filter(|provider| provider.has_history_provider).map(|provider| self.scm_graph_section(provider, window, cx));
         frame.child(header).child(list).children(graph)
     }
 
@@ -517,6 +525,7 @@ impl Workbench {
                 }
                 cx.notify();
             }))
+            .on_mouse_down(MouseButton::Right, cx.listener(move |workbench, event: &MouseDownEvent, window, cx| workbench.show_scm_source_control_menu(handle, event.position, window, cx)))
             .child(self.icon(if collapsed { "chevron-right" } else { "chevron-down" }, TWISTIE, 16., foreground))
             .child(self.icon(icon, 18., 16., foreground).pr(px(2.)))
             .child(div().flex_none().min_w_0().overflow_hidden().whitespace_nowrap().font_weight(gpui::FontWeight::BOLD).child(name))

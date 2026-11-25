@@ -37,6 +37,13 @@ pub enum MenuId {
     ScmResourceGroupContext,
     ScmResourceStateContext,
     ScmInputBox,
+    /// `MenuId.SCMSourceControl`: a repository row's context menu.
+    ScmSourceControl,
+    /// scmViewPane.ts `Menus.ViewSort`: the View & Sort submenu.
+    ScmViewSort,
+    ScmHistoryTitle,
+    ScmHistoryItemContext,
+    ScmHistoryItemChangeContext,
     ScmChangeContext,
     DiffEditorHunkToolbar,
     /// `MenuId.MultiDiffEditorFileToolbar`: a multi diff editor file header's toolbar.
@@ -232,12 +239,13 @@ pub fn workbench_menus() -> Vec<MenuItem> {
             items.push(MenuItem { menu, entry, title: title.to_string(), group: "2_config".into(), order, when: Expr::deserialize(when) });
         }
     }
+    items.extend(crate::workbench::scm_actions::menu_items());
     items
 }
 
 /// menusExtensionPoint.ts `apiMenus`: the `contributes.menus` keys of the menus the port shows. `commandPalette`
 /// is read by `command_palette::menu`.
-const API_MENUS: [(&str, MenuId); 11] = [
+const API_MENUS: [(&str, MenuId); 14] = [
     ("editor/context", MenuId::EditorContext),
     ("explorer/context", MenuId::ExplorerContext),
     ("editor/title/context", MenuId::EditorTitleContext),
@@ -249,11 +257,14 @@ const API_MENUS: [(&str, MenuId); 11] = [
     ("diffEditor/gutter/hunk", MenuId::DiffEditorHunkToolbar),
     ("multiDiffEditor/resource/title", MenuId::MultiDiffEditorFileToolbar),
     ("editor/title", MenuId::EditorTitle),
+    ("scm/sourceControl", MenuId::ScmSourceControl),
+    ("scm/history/title", MenuId::ScmHistoryTitle),
+    ("scm/historyItem/context", MenuId::ScmHistoryItemContext),
 ];
 
 /// The `icon` of each `contributes.commands` entry with one: a `$(codicon)` name, or the light and dark image paths.
 pub fn command_icons(extensions: &[ScannedExtension]) -> std::collections::HashMap<String, CommandIcon> {
-    let mut icons = std::collections::HashMap::new();
+    let mut icons = crate::workbench::scm_actions::command_icons();
     for extension in extensions {
         let commands = match &extension.description["contributes"]["commands"] {
             Value::Array(commands) => commands.iter().collect(),

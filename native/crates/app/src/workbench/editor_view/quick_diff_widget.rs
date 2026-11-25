@@ -23,6 +23,8 @@ pub(in crate::workbench) struct PeekWidget {
     model_id: u32,
     zone_id: u32,
     index: usize,
+    /// `providerId`: the quick diff of the shown change, an index into the entry's quick diffs.
+    provider: usize,
     /// The original lines (`QuickDiffModel.originalTextModels`) and the inline diff the embedded editor computes.
     diff: diff::LinesDiff,
     scroll_top: f32,
@@ -80,16 +82,25 @@ fn line_intersects(line: usize, change: &QuickDiffChange) -> bool {
     line >= change.start && line <= if change.end == 0 { change.start } else { change.end }
 }
 
-/// quickDiffModel.ts `findNextClosestChange`.
-fn next_closest(changes: &[QuickDiffChange], line: usize, inclusive: bool) -> usize {
-    let found = changes.iter().position(|change| if inclusive { modified_end_line(change) >= line } else { change.start > line });
+/// quickDiffModel.ts `findNextClosestChange` over the changes `eligible` keeps (of the provider, of visible quick
+/// diffs).
+fn next_closest(changes: &[QuickDiffChange], line: usize, inclusive: bool, eligible: impl Fn(&QuickDiffChange) -> bool) -> usize {
+    let found = changes.iter().position(|change| eligible(change) && if inclusive { modified_end_line(change) >= line } else { change.start > line });
     found.unwrap_or(0)
 }
 
 /// quickDiffModel.ts `findPreviousClosestChange`.
-fn previous_closest(changes: &[QuickDiffChange], line: usize, inclusive: bool) -> usize {
-    let found = changes.iter().rposition(|change| if inclusive { change.start <= line } else { modified_end_line(change) < line });
+fn previous_closest(changes: &[QuickDiffChange], line: usize, inclusive: bool, eligible: impl Fn(&QuickDiffChange) -> bool) -> usize {
+    let found = changes.iter().rposition(|change| eligible(change) && if inclusive { change.start <= line } else { modified_end_line(change) < line });
     found.unwrap_or(changes.len() - 1)
+}
+
+/// `rot` within `quickDiffChanges.get(providerId)`: the provider's change after or before `index`.
+fn step_in_provider(changes: &[QuickDiffChange], index: usize, provider: usize, forward: bool) -> usize {
+    let provider_changes: Vec<usize> = (0..changes.len()).filter(|&at| changes[at].provider == provider).collect();
+    let position = provider_changes.iter().position(|&at| at == index).map_or(-1, |position| position as isize);
+    let next = (position + if forward { 1 } else { -1 }).rem_euclid(provider_changes.len() as isize);
+    provider_changes[next as usize]
 }
 
 /// The `IChange` the git extension's change commands take.
@@ -104,6 +115,7 @@ fn change_json(change: &QuickDiffChange) -> Value {
 
 impl Workbench {
     pub(in crate::workbench) fn register_quick_diff_commands(&mut self) {
+        self.register_quick_diff_visibility_commands();
         for (id, forward) in [("editor.action.dirtydiff.next", true), ("editor.action.dirtydiff.previous", false)] {
             self.commands.register(id, move |workbench, _, window, cx| {
                 if workbench.quick_diff_can_navigate() {
@@ -132,14 +144,20 @@ impl Workbench {
         self.quick_diffs.widget.is_some()
     }
 
-    /// `quickDiffDecorationCount` of the active editor.
+    /// `quickDiffDecorationCount` of the active editor: the changes of visible quick diffs.
     pub(in crate::workbench) fn quick_diff_decoration_count(&self) -> usize {
-        self.editors.active().map_or(0, |editor| self.quick_diff_changes(editor).len())
+        let Some(entry) = self.editors.active().and_then(|editor| self.quick_diff_entry(editor)) else { return 0 };
+        entry.changes.iter().filter(|change| self.quick_diff_provider_visible(&entry.quick_diffs[change.provider].id)).count()
+    }
+
+    /// Whether a change's quick diff is visible.
+    fn quick_diff_change_visible(&self, editor: &OpenEditor, change: &QuickDiffChange) -> bool {
+        self.quick_diff_entry(editor).is_some_and(|entry| self.quick_diff_provider_visible(&entry.quick_diffs[change.provider].id))
     }
 
     /// `QuickDiffEditorController.canNavigate`.
     fn quick_diff_can_navigate(&self) -> bool {
-        self.quick_diffs.widget.is_none() || self.quick_diff_decoration_count() > 1
+        self.quick_diffs.widget.is_none() || self.editors.active().is_some_and(|editor| self.quick_diff_changes(editor).len() > 1)
     }
 
     /// `QuickDiffEditorController.next` and `previous`: from a line (a gutter click) or a new widget, the closest
@@ -150,12 +168,14 @@ impl Workbench {
         if changes.is_empty() {
             return self.close_quick_diff(cx);
         }
-        let shown = self.quick_diffs.widget.as_ref().filter(|widget| widget.model_id == editor.model_id).map(|widget| widget.index);
+        let shown = self.quick_diffs.widget.as_ref().filter(|widget| widget.model_id == editor.model_id).map(|widget| (widget.index, widget.provider));
         let index = match (shown, line) {
-            (Some(index), None) => (index as isize + if forward { 1 } else { -1 }).rem_euclid(changes.len() as isize) as usize,
-            (_, line) => {
+            (Some((index, provider)), None) => step_in_provider(&changes, index, provider, forward),
+            (shown, line) => {
                 let line = line.unwrap_or(editor.selection().head.line + 1);
-                if forward { next_closest(&changes, line, true) } else { previous_closest(&changes, line, true) }
+                let provider = shown.map(|shown| shown.1);
+                let eligible = |change: &QuickDiffChange| provider.is_none_or(|provider| change.provider == provider) && self.quick_diff_change_visible(editor, change);
+                if forward { next_closest(&changes, line, true, eligible) } else { previous_closest(&changes, line, true, eligible) }
             }
         };
         self.show_quick_diff_change(index, true, cx);
@@ -171,7 +191,8 @@ impl Workbench {
             return;
         }
         let line = editor.selection().head.line + 1;
-        let index = if forward { next_closest(&changes, line, false) } else { previous_closest(&changes, line, false) };
+        let eligible = |change: &QuickDiffChange| self.quick_diff_change_visible(editor, change);
+        let index = if forward { next_closest(&changes, line, false, eligible) } else { previous_closest(&changes, line, false, eligible) };
         let editor = self.editors.active_mut().expect("checked above");
         let position = Position::new(changes[index].start.max(1) - 1, 0);
         editor.set_selections(vec![Selection::caret(position)]);
@@ -189,7 +210,8 @@ impl Workbench {
         let Some(editor) = self.editors.active() else { return };
         let key = (editor.document.scheme.clone(), editor.document.path.clone());
         let Some(entry) = self.quick_diffs.entries.get(&key) else { return };
-        let (Some(change), Some(original)) = (entry.changes.get(index).copied(), entry.original.as_ref()) else { return };
+        let Some(change) = entry.changes.get(index).copied() else { return };
+        let original = &entry.quick_diffs[change.provider].original;
         let Some(original) = self.editors.model(&original.scheme, &original.path) else { return };
         // The embedded diff editor's options: `ignoreTrimWhitespace` false, the advanced algorithm.
         let options = diff::DiffOptions { ignore_trim_whitespace: false, max_computation_time_ms: 5000, compute_moves: false, extend_to_subwords: false };
@@ -213,7 +235,15 @@ impl Workbench {
         let body_height = height - 2. * ARROW_HEIGHT - 2. * FRAME_WIDTH - HEAD_HEIGHT;
         let rows = inline_rows(&diff, editor.document.lines.len());
         let scroll_top = reveal_change_scroll(&rows, &change, body_height, viewport.line_height);
-        self.quick_diffs.widget = Some(PeekWidget { model_id, zone_id, index, diff, scroll_top });
+        // The picker's items: one command per quick diff of the model (`QuickDiffPickerBaseAction`).
+        let quick_diff_count = self.quick_diffs.entries.get(&key).map_or(0, |entry| entry.quick_diffs.len());
+        for provider in 0..quick_diff_count {
+            self.commands.register(&format!("_quickDiff.switchProvider.{provider}"), move |workbench, _, _, cx| {
+                workbench.switch_quick_diff(provider, cx);
+                Outcome::done()
+            });
+        }
+        self.quick_diffs.widget = Some(PeekWidget { model_id, zone_id, index, provider: change.provider, diff, scroll_top });
         if use_position {
             let editor = self.editors.active_mut().expect("checked above");
             editor.set_selections(vec![Selection::caret(position)]);
@@ -245,13 +275,49 @@ impl Workbench {
         if changes.is_empty() {
             return self.close_quick_diff(cx);
         }
-        let index = widget.index;
+        let (index, provider) = (widget.index, widget.provider);
         let first_difference = (0..old_changes.len().max(changes.len())).find(|&at| old_changes.get(at) != changes.get(at));
         match first_difference {
             None => {}
-            Some(start) if start <= index => self.show_quick_diff_change((index + 1) % changes.len(), true, cx),
+            Some(start) if start <= index => {
+                let provider = if changes.iter().any(|change| change.provider == provider) { provider } else { changes[0].provider };
+                self.show_quick_diff_change(step_in_provider(&changes, index.min(changes.len() - 1), provider, true), true, cx)
+            }
             Some(_) => self.show_quick_diff_change(index, false, cx),
         }
+    }
+
+    /// `QuickDiffWidget.switchQuickDiff`: the other provider's change closest to the shown one, by last modified line.
+    fn switch_quick_diff(&mut self, provider: usize, cx: &mut Context<Self>) {
+        let Some(widget) = &self.quick_diffs.widget else { return };
+        let Some(editor) = self.editors.active().filter(|editor| editor.model_id == widget.model_id) else { return };
+        let changes = self.quick_diff_changes(editor);
+        let index = widget.index;
+        if provider == changes[index].provider {
+            return;
+        }
+        let count = changes.len();
+        let mut greater = if index < count - 1 { index + 1 } else { 0 };
+        let mut at = greater;
+        while at != index {
+            if changes[at].provider == provider {
+                greater = at;
+                break;
+            }
+            at = if at < count - 1 { at + 1 } else { 0 };
+        }
+        let mut lesser = if index > 0 { index - 1 } else { count - 1 };
+        let mut at = lesser;
+        while at != index {
+            if changes[at].provider == provider {
+                lesser = at;
+                break;
+            }
+            at = if at > 0 { at - 1 } else { count - 1 };
+        }
+        let distance = |at: usize| changes[at].end.abs_diff(changes[index].end);
+        let closest = if distance(greater) < distance(lesser) { greater } else { lesser };
+        self.show_quick_diff_change(closest, false, cx);
     }
 
     /// `onEditorMouseUp` on a change's glyph with `scm.diffDecorationsGutterAction` `diff`: the shown change closes
@@ -306,8 +372,16 @@ impl Workbench {
         .w(px(2. * ARROW_HEIGHT))
         .h(px(ARROW_HEIGHT));
         let container_height = zone.height - 2. * ARROW_HEIGHT - 2. * FRAME_WIDTH;
+        // `renderTitle`: the position among the provider's changes; the label when no picker shows it.
+        let provider_changes: Vec<usize> = (0..changes.len()).filter(|&at| changes[at].provider == widget.provider).collect();
+        let provider_index = provider_changes.iter().position(|&at| at == widget.index).unwrap_or(0) + 1;
         let noun = if changes.len() > 1 { "changes" } else { "change" };
-        let detail = format!("{} - {} of {} {noun}", entry.label, widget.index + 1, changes.len());
+        let pickable = self.quick_diffs_containing(editor, change);
+        let detail = match pickable.len() > 1 {
+            false => format!("{} - {provider_index} of {} {noun}", entry.quick_diffs[widget.provider].label, provider_changes.len()),
+            true => format!("{provider_index} of {} {noun}", provider_changes.len()),
+        };
+        let picker = (pickable.len() > 1).then(|| self.quick_diff_picker(&entry.quick_diffs[widget.provider].label, pickable, widget.provider, cx));
         let title = div()
             .ml(px(20.))
             .min_w_0()
@@ -315,6 +389,7 @@ impl Workbench {
             .flex()
             .items_baseline()
             .text_size(px(13.))
+            .children(picker)
             .child(div().whitespace_nowrap().text_color(self.color("peekViewTitleLabel.foreground")).child(editor.document.name()))
             .child(div().whitespace_nowrap().ml(px(0.5 * 0.9 * 13.)).text_size(px(0.9 * 13.)).text_color(self.color("peekViewTitleDescription.foreground")).child(detail));
         let head = div()
@@ -326,7 +401,7 @@ impl Workbench {
             .font_family(".SystemUIFont")
             .when_some(self.theme.color("peekViewTitle.background"), |head, color| head.bg(color))
             .child(title)
-            .child(self.quick_diff_actions(editor, entry, widget.index, window, cx));
+            .child(self.quick_diff_actions(editor, entry, widget, window, cx));
         let body = self.quick_diff_body(editor, widget, container_height - HEAD_HEIGHT, metrics, cx);
         let container = div()
             .absolute()
@@ -354,17 +429,64 @@ impl Workbench {
         Some(widget.into_any_element())
     }
 
+    /// `getQuickDiffsContainingChange`: the visible quick diffs with a change touching the shown one's lines, in the
+    /// model's order, as indices.
+    fn quick_diffs_containing(&self, editor: &OpenEditor, change: &QuickDiffChange) -> Vec<usize> {
+        let Some(entry) = self.quick_diff_entry(editor) else { return Vec::new() };
+        let touching: Vec<usize> = entry.changes.iter().filter(|other| change.modified.start <= other.modified.end && other.modified.start <= change.modified.end).map(|other| other.provider).collect();
+        (0..entry.quick_diffs.len()).filter(|index| touching.contains(index) && self.quick_diff_provider_visible(&entry.quick_diffs[*index].id)).collect()
+    }
+
+    /// `QuickDiffPickerViewItem`: a select box before the title naming the shown change's quick diff; picking another
+    /// shows that one's closest change.
+    fn quick_diff_picker(&self, label: &str, providers: Vec<usize>, shown: usize, cx: &mut Context<Self>) -> impl IntoElement {
+        let bounds = std::rc::Rc::new(std::cell::Cell::new(gpui::Bounds::default()));
+        let foreground = self.foreground_or("select.foreground");
+        let key = self.editors.active().map(|editor| (editor.document.scheme.clone(), editor.document.path.clone()));
+        let tracked = bounds.clone();
+        div()
+            .id("quick-diff-picker")
+            .relative()
+            .self_center()
+            .mr(px(8.))
+            .h(px(20.))
+            .flex()
+            .items_center()
+            .pl(px(6.))
+            .pr(px(22.))
+            .border_1()
+            .rounded(px(4.))
+            .cursor_pointer()
+            .text_size(px(11.))
+            .whitespace_nowrap()
+            .bg(self.color("select.background"))
+            .border_color(self.color("select.border"))
+            .text_color(foreground)
+            .child(label.to_string())
+            .child(self.icon("chevron-down", 16., 16., foreground).absolute().right(px(3.)))
+            .child(canvas(move |bounds, _, _| tracked.set(bounds), |_, _, _, _| ()).absolute().inset_0())
+            .on_mouse_down(gpui::MouseButton::Left, cx.listener(move |workbench, _: &gpui::MouseDownEvent, window, cx| {
+                cx.stop_propagation();
+                let Some(entry) = key.as_ref().and_then(|key| workbench.quick_diffs.entries.get(key)) else { return };
+                let actions = providers.iter().map(|&provider| MenuAction::Command { id: format!("_quickDiff.switchProvider.{provider}"), title: entry.quick_diffs[provider].label.clone(), enabled: true, checked: provider == shown, alt: None }).collect();
+                let context = workbench.key_context(window);
+                workbench.show_context_menu_actions(actions, &context, bounds.get(), Vec::new(), window, cx);
+            }))
+    }
+
     /// `updateActions`: the `scm/change/title` menu reversed, then next, previous and close. A menu action runs with
     /// `[uri, changes, index]` and closes the widget (`QuickDiffWidgetActionRunner`).
-    fn quick_diff_actions(&self, editor: &OpenEditor, entry: &super::quick_diff::Entry, index: usize, window: &Window, cx: &mut Context<Self>) -> Div {
+    fn quick_diff_actions(&self, editor: &OpenEditor, entry: &super::quick_diff::Entry, widget: &PeekWidget, window: &Window, cx: &mut Context<Self>) -> Div {
         let foreground = self.foreground_or("icon.foreground");
         let hover = self.color("toolbar.hoverBackground");
         let mut context = self.key_context(window);
-        if let Some(original) = &entry.original {
-            context.insert("originalResource".into(), json!(crate::editor::uri_string(&original.scheme, &original.path)));
-            context.insert("originalResourceScheme".into(), json!(original.scheme));
-        }
-        let args = vec![editor.document.uri(), Value::Array(entry.changes.iter().map(change_json).collect()), json!(index)];
+        let original = &entry.quick_diffs[widget.provider].original;
+        context.insert("originalResource".into(), json!(crate::editor::uri_string(&original.scheme, &original.path)));
+        context.insert("originalResourceScheme".into(), json!(original.scheme));
+        // The context is the provider's changes and the shown one's index among them.
+        let provider_changes: Vec<&QuickDiffChange> = entry.changes.iter().filter(|change| change.provider == widget.provider).collect();
+        let context_index = entry.changes[..widget.index].iter().filter(|change| change.provider == widget.provider).count();
+        let args = vec![editor.document.uri(), Value::Array(provider_changes.into_iter().map(change_json).collect()), json!(context_index)];
         let mut bar = div().flex_1().flex().justify_end().items_center().pr(px(2.));
         let mut commands: Vec<(String, String)> = Vec::new();
         for action in crate::menus::menu_actions(&self.menus, MenuId::ScmChangeContext, &context) {
@@ -403,7 +525,7 @@ impl Workbench {
     // editor when editors can be embedded.
     fn quick_diff_body(&self, editor: &OpenEditor, widget: &PeekWidget, height: f32, metrics: EditorMetrics, cx: &mut Context<Self>) -> impl IntoElement {
         let key = (editor.document.scheme.clone(), editor.document.path.clone());
-        let original = self.quick_diffs.entries.get(&key).and_then(|entry| entry.original.as_ref()).and_then(|side| self.editors.model(&side.scheme, &side.path));
+        let original = self.quick_diffs.entries.get(&key).and_then(|entry| entry.quick_diffs.get(widget.provider)).and_then(|quick_diff| self.editors.model(&quick_diff.original.scheme, &quick_diff.original.path));
         let line_height = metrics.line_height;
         let rows = inline_rows(&widget.diff, editor.document.lines.len());
         let first = (widget.scroll_top / line_height).floor() as usize;
@@ -521,16 +643,21 @@ mod tests {
 
     #[test]
     fn quick_diff_peek_finds_closest_changes_as_quick_diff_model() {
-        let change = |start, end| QuickDiffChange { kind: ChangeKind::Modify, start, end, original_start: start, original_end: end };
-        let changes = [change(3, 4), change(10, 10)];
-        assert_eq!(next_closest(&changes, 4, true), 0);
-        assert_eq!(next_closest(&changes, 4, false), 1);
-        assert_eq!(next_closest(&changes, 11, true), 0);
-        assert_eq!(previous_closest(&changes, 3, true), 0);
-        assert_eq!(previous_closest(&changes, 3, false), 1);
+        let change = |start, end, provider| QuickDiffChange { kind: ChangeKind::Modify, start, end, original_start: start, original_end: end, provider, modified: diff::LineRange { start, end: end + 1 } };
+        let changes = [change(3, 4, 0), change(6, 6, 1), change(10, 10, 0)];
+        let any = |_: &QuickDiffChange| true;
+        let first_provider = |change: &QuickDiffChange| change.provider == 0;
+        assert_eq!(next_closest(&changes, 4, true, any), 0);
+        assert_eq!(next_closest(&changes, 4, false, any), 1);
+        assert_eq!(next_closest(&changes, 4, false, first_provider), 2);
+        assert_eq!(next_closest(&changes, 11, true, any), 0);
+        assert_eq!(previous_closest(&changes, 3, true, any), 0);
+        assert_eq!(previous_closest(&changes, 3, false, any), 2);
+        assert_eq!(step_in_provider(&changes, 2, 0, true), 0);
+        assert_eq!(step_in_provider(&changes, 0, 0, false), 2);
         assert!(line_intersects(4, &changes[0]));
         assert!(!line_intersects(5, &changes[0]));
-        let deletion = QuickDiffChange { kind: ChangeKind::Delete, start: 0, end: 0, original_start: 1, original_end: 2 };
+        let deletion = QuickDiffChange { kind: ChangeKind::Delete, start: 0, end: 0, original_start: 1, original_end: 2, provider: 0, modified: diff::LineRange { start: 1, end: 1 } };
         assert!(line_intersects(1, &deletion));
         assert_eq!((change_height(&deletion), modified_end_line(&deletion)), (2, 1));
         assert_eq!(change_height(&changes[0]), 4);
@@ -538,6 +665,7 @@ mod tests {
 
     #[gpui::test]
     fn quick_diff_peek_shows_next_changes_and_closes(cx: &mut gpui::TestAppContext) {
+        use super::super::quick_diff::{QuickDiff, QuickDiffKind};
         use std::path::Path;
         let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
         let themes = exthost::scan::scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
@@ -552,11 +680,16 @@ mod tests {
         let (workbench, cx) = cx.add_window_view(|_, cx| Workbench::new(theme, app_root.clone(), None, crate::languages::Languages::new(&[]), settings, crate::host_sync::HostSync::new(sender), cx));
         workbench.update_in(cx, |workbench, window, cx| {
             workbench.open_file(file.clone(), true, window, cx);
-            let original = json!({ "scheme": "git", "path": file.to_string_lossy(), "query": "{\"ref\":\"\"}" });
-            workbench.try_open_document(&original, &Value::Null, &json!("one\ntwo\nthree\nfour\nfive\nsix\nseven\neight"), false, cx).unwrap();
-            let (scheme, path) = crate::workbench::host_requests::uri_parts(&original).map(|(scheme, path)| (scheme.to_string(), path)).unwrap();
+            // The index (primary) has the staged `TWO`; HEAD (secondary) still has `two`. Both have `eight`.
+            let mut quick_diffs = Vec::new();
+            for (reference, text, kind, id) in [("", "one\nTWO\nthree\nfour\nfive\nsix\nseven\neight", QuickDiffKind::Primary, "git.quickDiffProvider"), ("HEAD", "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight", QuickDiffKind::Secondary, "git.secondaryQuickDiffProvider")] {
+                let original = json!({ "scheme": "git", "path": file.to_string_lossy(), "query": format!("{{\"ref\":\"{reference}\"}}") });
+                workbench.try_open_document(&original, &Value::Null, &json!(text), false, cx).unwrap();
+                let (scheme, path) = crate::workbench::host_requests::uri_parts(&original).map(|(scheme, path)| (scheme.to_string(), path)).unwrap();
+                quick_diffs.push(QuickDiff { id: id.into(), label: "Git".into(), kind, original: crate::diff_editor::Side { scheme, path } });
+            }
             let generation = Some(workbench.quick_diffs.generation);
-            let entry = super::super::quick_diff::Entry { original: Some(crate::diff_editor::Side { scheme, path }), label: "Git".into(), generation, ..Default::default() };
+            let entry = super::super::quick_diff::Entry { quick_diffs, generation, ..Default::default() };
             workbench.quick_diffs.entries.insert(("file".into(), file.clone()), entry);
             workbench.update_quick_diff(cx);
         });
@@ -568,15 +701,25 @@ mod tests {
                 Some((widget.index, editor.view_zone(widget.zone_id).unwrap().anchor.unwrap().line, editor.selection().head.line))
             })
         };
+        // HEAD's line 8 change repeats the index's, so the changes are HEAD's line 2 and the index's line 8.
+        let changes = workbench.read_with(cx, |workbench, _| workbench.quick_diff_changes(workbench.editors.active().unwrap()).iter().map(|change| (change.start, change.provider)).collect::<Vec<_>>());
+        assert_eq!(changes, [(2, 1), (8, 0)]);
         assert_eq!(workbench.read_with(cx, |workbench, _| workbench.quick_diff_decoration_count()), 2);
         // From the cursor on line 1 the closest change is line 2; the zone sits below it and the cursor moves there.
         assert_eq!(run("editor.action.dirtydiff.next", cx), Some((0, 1, 1)));
-        assert_eq!(run("editor.action.dirtydiff.next", cx), Some((1, 7, 7)));
+        // Next stays among the shown quick diff's changes; the picker switches to the other one.
         assert_eq!(run("editor.action.dirtydiff.next", cx), Some((0, 1, 1)));
-        assert_eq!(run("editor.action.dirtydiff.previous", cx), Some((1, 7, 7)));
+        assert_eq!(run("_quickDiff.switchProvider.0", cx), Some((1, 1, 1)));
+        assert_eq!(run("closeQuickDiff", cx), None);
+        assert_eq!(run("editor.action.dirtydiff.previous", cx), Some((0, 1, 1)));
+        assert_eq!(run("closeQuickDiff", cx), None);
+        workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("_quickDiff.toggleProviderVisibility", vec![json!("git.secondaryQuickDiffProvider")], window, cx)));
+        assert_eq!(workbench.read_with(cx, |workbench, _| workbench.quick_diff_decoration_count()), 1);
+        assert_eq!(run("editor.action.dirtydiff.next", cx), Some((1, 7, 7)));
         assert_eq!(run("closeQuickDiff", cx), None);
         assert!(workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().view_zones.is_empty()));
+        // From line 8 the only visible earlier change is hidden, so it falls back to the last change, as upstream.
         assert_eq!(run("workbench.action.editor.previousChange", cx), None);
-        assert_eq!(workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().selection().head.line), 1);
+        assert_eq!(workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().selection().head.line), 7);
     }
 }

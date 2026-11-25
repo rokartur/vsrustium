@@ -25,6 +25,9 @@ pub struct Provider {
     pub status_bar_commands: Vec<Value>,
     pub context_value: Option<String>,
     pub has_quick_diff_provider: bool,
+    pub has_secondary_quick_diff_provider: bool,
+    pub quick_diff_label: Option<String>,
+    pub secondary_quick_diff_label: Option<String>,
     pub has_history_provider: bool,
     pub groups: Vec<Group>,
     /// `$onDidChangeHistoryProviderCurrentHistoryItemRefs`: the current, remote and base refs.
@@ -200,6 +203,9 @@ fn update_features(provider: &mut Provider, features: &Value) {
             "statusBarCommands" => provider.status_bar_commands = value.as_array().cloned().unwrap_or_default(),
             "contextValue" => provider.context_value = value.as_str().map(str::to_string),
             "hasQuickDiffProvider" => provider.has_quick_diff_provider = *value == true,
+            "hasSecondaryQuickDiffProvider" => provider.has_secondary_quick_diff_provider = *value == true,
+            "quickDiffLabel" => provider.quick_diff_label = value.as_str().map(str::to_string),
+            "secondaryQuickDiffLabel" => provider.secondary_quick_diff_label = value.as_str().map(str::to_string),
             "hasHistoryProvider" => provider.has_history_provider = *value == true,
             _ => {}
         }

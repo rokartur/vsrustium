@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use gpui::{Bounds, ClickEvent, Context, Div, FontWeight, PathBuilder, Pixels, Point, Rgba, Window, canvas, div, point, prelude::*, px, size};
+use gpui::{Bounds, ClickEvent, Context, Div, FontWeight, MouseButton, MouseDownEvent, PathBuilder, Pixels, Point, Rgba, Window, canvas, div, point, prelude::*, px, size};
 use serde_json::{Value, json};
 
 use super::Workbench;
@@ -28,16 +28,19 @@ type CurrentRefs = [Option<HistoryItemRef>; 3];
 pub struct ScmGraph {
     collapsed: bool,
     /// The provider handle and the `$onDidChangeHistoryProviderCurrentHistoryItemRefs` values the items belong to.
-    loaded_for: Option<(u64, [Option<Value>; 3])>,
+    pub(super) loaded_for: Option<(u64, [Option<Value>; 3])>,
     /// Bumped on every reload, so answers to an older one are dropped.
     generation: u64,
     loading: bool,
-    refs: CurrentRefs,
+    pub(super) refs: CurrentRefs,
     history_items: Vec<HistoryItem>,
-    merge_base: Option<String>,
-    view_models: Vec<HistoryItemViewModel>,
+    pub(super) merge_base: Option<String>,
+    pub(super) view_models: Vec<HistoryItemViewModel>,
     /// The expanded history items with their `SCMHistoryItemChangeDto`s, `None` while they load.
-    changes: HashMap<String, Option<Vec<Value>>>,
+    pub(super) changes: HashMap<String, Option<Vec<Value>>>,
+    /// The selected history item's id.
+    pub(super) selected: Option<String>,
+    pub(super) scroll: gpui::ScrollHandle,
 }
 
 impl ScmGraph {
@@ -179,9 +182,10 @@ impl Workbench {
     }
 
     /// The Graph pane: its header, then the history items with their expanded changes and "Load More".
-    pub(super) fn scm_graph_section(&self, provider: &Provider, cx: &mut Context<Self>) -> Div {
+    pub(super) fn scm_graph_section(&self, provider: &Provider, window: &Window, cx: &mut Context<Self>) -> Div {
         let graph = &self.scm_graph;
-        let header = self.section_header("Graph", !graph.collapsed, true).id("scm-graph-header").on_click(cx.listener(|workbench, _: &ClickEvent, _, cx| {
+        let title_actions = (!graph.collapsed).then(|| self.scm_graph_title_actions(provider, window, cx));
+        let header = self.section_header("Graph", !graph.collapsed, true).id("scm-graph-header").children(title_actions).on_click(cx.listener(|workbench, _: &ClickEvent, _, cx| {
             workbench.scm_graph.collapsed = !workbench.scm_graph.collapsed;
             cx.notify();
         }));
@@ -201,7 +205,7 @@ impl Workbench {
         if let Some(last) = graph.view_models.last().filter(|_| has_more(&graph.view_models)) {
             rows.push(self.scm_graph_load_more_row(handle, last, cx).into_any_element());
         }
-        section.flex_1().min_h_0().child(div().id("scm-graph-list").flex_1().min_h_0().overflow_y_scroll().children(rows))
+        section.flex_1().min_h_0().child(div().id("scm-graph-list").flex_1().min_h_0().overflow_y_scroll().track_scroll(&graph.scroll).children(rows))
     }
 
     /// `HistoryItemRenderer.renderElement`: the graph, the subject with the author as description, the badges.
@@ -229,6 +233,7 @@ impl Workbench {
             .child(div().flex_none().when(is_head, |name| name.font_weight(FontWeight::SEMIBOLD)).child(history_item.subject.clone()))
             .children(history_item.author.clone().map(|author| div().ml(px(6.)).text_size(px(12.)).opacity(0.7).child(author)));
         let badges = badges(&history_item.references, all_badges).into_iter().filter_map(|(reference, count, show_name)| self.scm_history_badge(reference, count, show_name));
+        let selected = self.scm_graph.selected.as_ref() == Some(&history_item.id);
         div()
             .id(("scm-history-item", index))
             .h(px(ROW_HEIGHT))
@@ -237,7 +242,9 @@ impl Workbench {
             .items_center()
             .cursor_pointer()
             .hover(|row| row.bg(self.color("list.hoverBackground")))
+            .when(selected, |row| row.bg(self.color("list.inactiveSelectionBackground")))
             .on_click(cx.listener(move |workbench, _: &ClickEvent, _, cx| workbench.toggle_scm_history_item(handle, index, cx)))
+            .on_mouse_down(MouseButton::Right, cx.listener(move |workbench, event: &MouseDownEvent, window, cx| workbench.show_scm_history_item_menu(handle, index, event.position, window, cx)))
             .child(graph_canvas(self.resolve_paths(&paths), Some(circle), SWIMLANE_WIDTH * (lanes + 1) as f32))
             .child(label)
             .child(div().flex_none().ml(px(4.)).flex().gap(px(4.)).children(badges))
@@ -280,6 +287,7 @@ impl Workbench {
         let placeholder = graph_canvas(self.resolve_paths(&placeholder_paths(columns, Some(history_item_index(view_model)))), None, graph_width);
         let history_item = view_model.history_item.clone();
         let opened = change.clone();
+        let (menu_item, menu_change) = (history_item.clone(), change.clone());
         div()
             .id(gpui::SharedString::from(format!("scm-history-change-{}-{change_index}", history_item.id)))
             .h(px(ROW_HEIGHT))
@@ -289,6 +297,7 @@ impl Workbench {
             .cursor_pointer()
             .hover(|row| row.bg(self.color("list.hoverBackground")))
             .on_click(cx.listener(move |workbench, _: &ClickEvent, window, cx| workbench.open_scm_history_change(&history_item, &opened, window, cx)))
+            .on_mouse_down(MouseButton::Right, cx.listener(move |workbench, event: &MouseDownEvent, window, cx| workbench.show_scm_history_change_menu(&menu_item, &menu_change, event.position, window, cx)))
             .child(placeholder)
             .child(icon.ml(px(16.)).mr(px(6.)))
             .child(div().flex_none().whitespace_nowrap().child(name))
