@@ -216,6 +216,34 @@ fn extension_submenus() {
     assert_eq!(actions, [MenuAction::Submenu { title: "More".into(), actions: vec![one], checked: false }]);
 }
 
+/// clipboard.ts and menusExtensionPoint.ts: the github extension's share items fill the Share submenus of the
+/// Explorer and editor context menus; Copy As stays hidden while nothing fills it.
+#[test]
+fn the_github_share_items_fill_the_share_submenus() {
+    let app_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let github = exthost::scan::scan_extension(&app_root.join("extensions/github"), true).unwrap();
+    let mut registry = workbench_menus();
+    registry.extend(extension_menus(&[github]));
+    let context = HashMap::from([("github.hasGitHubRepo".to_string(), json!(true)), ("resourceScheme".to_string(), json!("file")), ("editorTextFocus".to_string(), json!(true))]);
+    let share = |menu| {
+        let actions = menu_actions(&registry, menu, &context);
+        let submenu = actions.iter().find(|action| matches!(action, MenuAction::Submenu { .. })).cloned();
+        (ids(&actions).contains(&"Copy As"), submenu)
+    };
+    let link = |id: &str, title: &str| Some(MenuAction::Submenu { title: "Share".into(), actions: vec![MenuAction::Command { id: id.into(), title: title.into(), enabled: true, checked: false, alt: None }], checked: false });
+    assert_eq!(share(MenuId::ExplorerContext), (false, link("github.copyVscodeDevLinkWithoutRange", "Copy vscode.dev Link")));
+    assert_eq!(share(MenuId::EditorContext), (false, link("github.copyVscodeDevLink", "Copy vscode.dev Link")));
+    assert_eq!(share(MenuId::EditorTitleContext), (false, link("github.copyVscodeDevLinkWithoutRange", "Copy vscode.dev Link")));
+    assert!(!ids(&menu_actions(&registry, MenuId::ExplorerContext, &no_context())).contains(&"Share"), "no repository, no Share");
+}
+
+/// The activity bar's Manage menu: the reference's items whose commands the port has, in its groups.
+#[test]
+fn the_manage_menu_lists_the_global_activity_items() {
+    let actions = menu_actions(&workbench_menus(), MenuId::GlobalActivity, &no_context());
+    assert_eq!(ids(&actions), ["workbench.action.showCommands", "-", "workbench.action.openGlobalKeybindings", "Themes"]);
+}
+
 #[test]
 fn mnemonic_menu_label_drops_mnemonics() {
     assert_eq!(mnemonic_menu_label("Save A&&ll"), "Save All");

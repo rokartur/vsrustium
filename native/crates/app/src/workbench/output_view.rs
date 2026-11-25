@@ -384,6 +384,6 @@ impl Workbench {
 }
 
 /// Records where its parent painted.
-fn bounds_tracker(bounds: Rc<Cell<Bounds<Pixels>>>) -> impl IntoElement {
+pub(super) fn bounds_tracker(bounds: Rc<Cell<Bounds<Pixels>>>) -> impl IntoElement {
     canvas(move |painted, _, _| bounds.set(painted), |_, _, _, _| {}).absolute().size_full()
 }

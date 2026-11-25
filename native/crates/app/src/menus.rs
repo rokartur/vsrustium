@@ -27,10 +27,17 @@ pub enum MenuId {
     MenubarHelpMenu,
     MenubarPreferencesMenu,
     ThemesSubMenu,
+    GlobalActivity,
+    MenubarCopy,
+    MenubarShare,
     ExplorerContext,
+    ExplorerContextShare,
     SearchContext,
     EditorContext,
+    EditorContextCopy,
+    EditorContextShare,
     EditorTitleContext,
+    EditorTitleContextShare,
     TitleBarContext,
     TitleBarTitleContext,
     /// A `contributes.submenus` entry, `MenuId.for('api:<id>')`, by registration order.
@@ -146,6 +153,17 @@ const WORKBENCH_MENUS: &[Row] = &[
     (MenuId::MenubarPreferencesMenu, None, "workbench.action.openGlobalKeybindings", "Keyboard Shortcuts", "2_configuration", 4., None, None),
     // themes.contribution.ts
     (MenuId::MenubarPreferencesMenu, Some(MenuId::ThemesSubMenu), "", "&&Themes", "2_configuration", 7., None, None),
+    // The activity bar's Manage menu (quickAccess, preferences and themes contributions).
+    (MenuId::GlobalActivity, None, "workbench.action.showCommands", "Command Palette...", "1_command", 1., None, None),
+    (MenuId::GlobalActivity, None, "workbench.action.openGlobalKeybindings", "Keyboard Shortcuts", "2_configuration", 4., None, None),
+    (MenuId::GlobalActivity, Some(MenuId::ThemesSubMenu), "", "Themes", "2_configuration", 7., None, None),
+    // clipboard.ts, editor.contribution.ts: the Copy As and Share submenus, shown once an extension fills them.
+    (MenuId::MenubarEditMenu, Some(MenuId::MenubarCopy), "", "Copy As", "2_ccp", 3., None, None),
+    (MenuId::MenubarFileMenu, Some(MenuId::MenubarShare), "", "Share", "45_share", 1., Some("!isSessionsWindow"), None),
+    (MenuId::EditorContext, Some(MenuId::EditorContextCopy), "", "Copy As", "9_cutcopypaste", 3., None, None),
+    (MenuId::EditorContext, Some(MenuId::EditorContextShare), "", "Share", "11_share", -1., Some("resourceScheme != 'output' && editorTextFocus"), None),
+    (MenuId::ExplorerContext, Some(MenuId::ExplorerContextShare), "", "Share", "11_share", -1., None, None),
+    (MenuId::EditorTitleContext, Some(MenuId::EditorTitleContextShare), "", "Share", "11_share", -1., Some("!multipleEditorsSelectedInGroup"), None),
     // multicursor.ts, clipboard.ts and quickAccess.contribution.ts: the EditorContext items of the commands the port has.
     (MenuId::EditorContext, None, "editor.action.changeAll", "Change All Occurrences", "1_modification", 1.2, Some("!editorReadonly && editorTextFocus"), None),
     (MenuId::EditorContext, None, "editor.action.clipboardCutAction", "Cut", "9_cutcopypaste", 1., Some("!editorReadonly"), None),
@@ -247,8 +265,17 @@ pub fn workbench_menus() -> Vec<MenuItem> {
 
 /// menusExtensionPoint.ts `apiMenus`: the `contributes.menus` keys of the menus the port shows. `commandPalette`
 /// is read by `command_palette::menu`.
-const API_MENUS: [(&str, MenuId); 3] =
-    [("editor/context", MenuId::EditorContext), ("explorer/context", MenuId::ExplorerContext), ("editor/title/context", MenuId::EditorTitleContext)];
+const API_MENUS: [(&str, MenuId); 9] = [
+    ("editor/context", MenuId::EditorContext),
+    ("editor/context/copy", MenuId::EditorContextCopy),
+    ("editor/context/share", MenuId::EditorContextShare),
+    ("explorer/context", MenuId::ExplorerContext),
+    ("explorer/context/share", MenuId::ExplorerContextShare),
+    ("editor/title/context", MenuId::EditorTitleContext),
+    ("editor/title/context/share", MenuId::EditorTitleContextShare),
+    ("file/share", MenuId::MenubarShare),
+    ("menuBar/edit/copy", MenuId::MenubarCopy),
+];
 
 /// menusExtensionPoint.ts, the `submenus` and `menus` handlers: every extension's `contributes.menus` items of the
 /// port's menus and of contributed submenus, with their command's title and enablement from `contributes.commands`.

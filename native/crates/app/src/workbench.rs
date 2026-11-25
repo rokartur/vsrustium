@@ -157,6 +157,8 @@ pub struct Workbench {
     /// `MenuRegistry`.
     pub menus: Vec<crate::menus::MenuItem>,
     pub(crate) context_menu: Option<context_menu::ContextMenu>,
+    /// The activity bar's Manage button, the anchor of its menu.
+    manage_bounds: Rc<Cell<gpui::Bounds<gpui::Pixels>>>,
     context_menus_shown: usize,
     pub(crate) notifications: notifications_view::NotificationsUi,
     /// Extension status bar entries, in statusbarModel.ts order.
@@ -292,6 +294,7 @@ impl Workbench {
             webview_panels: Default::default(),
             menus: crate::menus::workbench_menus(),
             context_menu: None,
+            manage_bounds: Rc::default(),
             context_menus_shown: 0,
             notifications: notifications_view::NotificationsUi::new(cx),
             status_entries: Vec::new(),
@@ -579,7 +582,18 @@ impl Workbench {
                     .child(search.child(self.action_hover("Search", "workbench.view.search", hover)))
                     .children(views.map(|(name, title, command)| self.icon(name, 36., 24., inactive).cursor_pointer().child(self.action_hover(title, command, hover)))),
             )
-            .child(self.icon("settings-gear", 36., 24., inactive).cursor_pointer().child(self.hover_target("manage", HoverContent::Text("Manage".into()), hover)))
+            .child(
+                self.icon("settings-gear", 36., 24., inactive)
+                    .cursor_pointer()
+                    .child(output_view::bounds_tracker(self.manage_bounds.clone()))
+                    .child(self.hover_target("manage", HoverContent::Text("Manage".into()), hover))
+                    // globalCompositeBar.ts: a left mouse down opens MenuId.GlobalActivity beside the button.
+                    .on_mouse_down(MouseButton::Left, cx.listener(|workbench, _, window, cx| {
+                        let context = workbench.key_context(window);
+                        let actions = crate::menus::menu_actions(&workbench.menus, MenuId::GlobalActivity, &context);
+                        workbench.show_context_menu_beside(actions, &context, workbench.manage_bounds.get(), window, cx);
+                    })),
+            )
     }
 
     /// The checked view: a 32px rounded indicator behind the icon (activityaction.css); High Contrast
