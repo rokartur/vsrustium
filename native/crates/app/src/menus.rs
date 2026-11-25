@@ -194,8 +194,8 @@ const WORKBENCH_MENUS: &[Row] = &[
     (MenuId::SearchContext, None, "search.action.revealInSideBar", "Reveal in Explorer View", "search_3", 1., Some("fileMatchFocus && hasSearchResult"), None),
 ];
 
-/// themes.contribution.ts: `ThemesSubMenu` items; the icon theme pickers are not ported.
-const THEMES_SUBMENU: [(&str, &str, f64); 1] = [("workbench.action.selectTheme", "Color Theme", 1.)];
+/// themes.contribution.ts: `ThemesSubMenu` items; the product icon theme picker is not ported.
+const THEMES_SUBMENU: [(&str, &str, f64); 2] = [("workbench.action.selectTheme", "Color Theme", 1.), ("workbench.action.selectIconTheme", "File Icon Theme", 2.)];
 
 /// titlebarActions.ts `ToggleTitleBarConfigAction`s of the title bar parts the port draws: setting, title, order,
 /// `when`. Editor Actions, Notifications and Integrated Browser toggle parts the port has not.
