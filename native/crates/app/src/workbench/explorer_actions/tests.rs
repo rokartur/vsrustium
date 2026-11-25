@@ -196,7 +196,7 @@ fn rename_copy_paste_cut_delete_and_undo(cx: &mut TestAppContext) {
 fn menu_titles(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<String> {
     workbench.read_with(cx, |workbench, _| {
         let menu = workbench.context_menu.as_ref().expect("a context menu shows");
-        menu.actions
+        menu.levels[0].actions
             .iter()
             .map(|action| match action {
                 MenuAction::Command { title, enabled: true, .. } => title.clone(),
@@ -218,7 +218,7 @@ fn the_context_menu_selects_the_row_and_runs_its_items_with_keys_and_clicks(cx: 
     assert_eq!(workbench.read_with(cx, |workbench, _| workbench.folder.as_ref().unwrap().selected.clone()), [dir.join("a.txt")]);
 
     // The pointer focuses the item under it; Down goes on from there and skips the separator; Enter runs it.
-    let focused = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.context_menu.as_ref().unwrap().focused);
+    let focused = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.context_menu.as_ref().unwrap().levels[0].focused);
     cx.simulate_mouse_move(point(px(150.), px(148.)), None, Modifiers::none());
     assert_eq!(focused(cx), Some(0));
     cx.simulate_mouse_move(point(px(150.), px(400.)), None, Modifiers::none());
@@ -244,7 +244,7 @@ fn the_context_menu_selects_the_row_and_runs_its_items_with_keys_and_clicks(cx: 
     // A click runs the item only 100ms after the menu showed; with Alt, Delete is Delete Permanently.
     // Items are 24px from the border and the 4px padding, the separators 11px.
     cx.simulate_mouse_down(file_row, MouseButton::Right, Modifiers::none());
-    let top = workbench.read_with(cx, |workbench, _| f32::from(workbench.context_menu.as_ref().unwrap().origin.y));
+    let top = workbench.read_with(cx, |workbench, _| f32::from(workbench.context_menu.as_ref().unwrap().levels[0].origin.y));
     let delete = point(px(150.), px(top + 5. + 24. * 6. + 11. * 3. + 12.));
     cx.simulate_mouse_down(delete, MouseButton::Left, Modifiers::alt());
     cx.simulate_mouse_up(delete, MouseButton::Left, Modifiers::alt());

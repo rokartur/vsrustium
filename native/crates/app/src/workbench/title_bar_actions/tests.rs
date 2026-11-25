@@ -24,7 +24,7 @@ fn the_title_menu_reveals_each_folder_of_the_file_from_the_file_up() {
 fn menu_titles(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<String> {
     workbench.read_with(cx, |workbench, _| {
         let Some(menu) = workbench.context_menu.as_ref() else { return Vec::new() };
-        menu.actions
+        menu.levels[0].actions
             .iter()
             .map(|action| match action {
                 MenuAction::Command { title, checked: true, .. } => format!("{title} [x]"),

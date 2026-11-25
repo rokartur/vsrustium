@@ -39,7 +39,7 @@ fn workbench_with<'a>(name: &str, files: &[&str], cx: &'a mut TestAppContext) ->
 fn menu_titles(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<String> {
     workbench.read_with(cx, |workbench, _| {
         let menu = workbench.context_menu.as_ref().expect("a context menu shows");
-        menu.actions
+        menu.levels[0].actions
             .iter()
             .map(|action| match action {
                 MenuAction::Command { title, enabled: true, .. } => title.clone(),
