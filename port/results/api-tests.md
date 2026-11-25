@@ -35,6 +35,8 @@ Run with `MOCHA_GREP` on the Mac Studio at f598f3a9 (the full folder suite does 
 
 Failing: `editorCommand with extra args`, `api-command: vscode.diff`, `api-command: vscode.open`, `vscode.open with untitled supports associated resource (#138925)`; they need milestone 8 editor groups and a diff editor (port/notes.md).
 
+At port-integrate 472a393b2b5 (the onCommand activation wait and keybindings export merged), run by the coordinator on the Studio with `MOCHA_GREP="vscode API - commands|vscode API - quick input|showInputBox|#7013" SUITE_TIMEOUT=900`: api-folder 23 passing, 0 pending, 2 failing (baseline 21/0/4: quick input 11/0/0 and commands|showInputBox|#7013 10/0/4); api-workspace 0/0/0. The 2 left are `api-command: vscode.open` (a second editor group, milestone 11) and `api-command: vscode.diff` (`_workbench.diff`, milestone 14). `vscode API - editors` 13/0/0 and `vscode API - window` 29/0/11, unchanged.
+
 After the command history, quick input position and theme picker commits, one run with `vscode API - quick input|vscode API - commands|showInputBox|#7013|vscode API - configuration`: 24 passing, 0 pending, the same 4 failing.
 
 After Quick Open's file picks (`vscode API - quick input|vscode API - commands|showInputBox|#7013|vscode API - configuration|vscode API - globalState|vscode API - workspace-fs|vscode API - workspace events|vscode API - workspace `, SUITE_TIMEOUT=900): api-folder 59 passing, 2 pending, 77 failing, the same counts as before the change; api-workspace 0/0/4 as in M12 (multi-root).
