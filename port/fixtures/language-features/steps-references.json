@@ -1,0 +1,1 @@
+[{"wait": 9000}, {"click": [456, 98]}, {"wait": 1000}, {"hotkey": ["shift", "alt", "f12"]}, {"wait": 4000}, {"shot": "references"}]

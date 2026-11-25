@@ -1,0 +1,7 @@
+{
+	"name": "sample",
+	"publisher": "port",
+	"version": "0.0.1",
+	"engines": { "vscode": "^1.100.0" },
+	"icon": "images/icon.svg"
+}
