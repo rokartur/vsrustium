@@ -8,6 +8,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use futures::channel::oneshot;
 use gpui::{App, Context, Window, WindowHandle};
+use objc2_app_kit::{NSFloatingWindowLevel, NSNormalWindowLevel};
+use objc2_foundation::NSString;
 use serde_json::Value;
 
 use super::Workbench;
@@ -28,6 +30,18 @@ impl Workbench {
             open_new_window(None, cx);
             Outcome::done()
         });
+        // windowActions.ts `ToggleFullScreenAction` (Ctrl+Cmd+F, View > Appearance > Full Screen).
+        self.commands.register("workbench.action.toggleFullScreen", |_, _, window, _| {
+            window.toggle_fullscreen();
+            Outcome::done()
+        });
+        // electron-browser windowActions.ts `ToggleWindowAlwaysOnTopAction`: Electron's floating window level.
+        self.commands.register("workbench.action.toggleWindowAlwaysOnTop", |_, _, window, _| {
+            let ns_window = crate::dialog::ns_window(window);
+            let level = if ns_window.level() == NSFloatingWindowLevel { NSNormalWindowLevel } else { NSFloatingWindowLevel };
+            ns_window.setLevel(level);
+            Outcome::done()
+        });
         self.commands.register("workbench.action.switchWindow", |workbench, _, window, cx| {
             workbench.show_switch_window(window, cx);
             Outcome::done()
@@ -36,6 +50,11 @@ impl Workbench {
             workbench.show_switch_window(window, cx);
             Outcome::done()
         });
+    }
+
+    /// contextkeys.ts `IsMainWindowFullscreenContext`.
+    pub(super) fn host_context(&self, window: &Window, context: &mut std::collections::HashMap<String, Value>) {
+        context.insert("isFullscreen".into(), Value::Bool(window.is_fullscreen()));
     }
 
     /// The window's extension host session ends once the workbench is released (its window closed); `ended` answers
@@ -68,12 +87,25 @@ impl Workbench {
 
     /// The window's title on its NSWindow, as Electron sets the document title on the BrowserWindow: the Window menu
     /// and the window switcher show it.
+    /// window.ts `updateDocumentEdited` and `updateRepresentedFilename` on macOS too: the close button's dot while
+    /// a working copy is dirty, and the active editor's file as the window's represented file.
     pub(super) fn sync_window_title(&mut self, window: &mut Window) {
         let title = self.window_title();
         if self.lifecycle.title != title {
             window.set_window_title(&title);
             self.lifecycle.title = title;
         }
+        let edited = !self.dirty_editors().is_empty();
+        let represented = self.editors.active().filter(|editor| editor.document.scheme == "file").map(|editor| editor.document.path.clone());
+        if self.lifecycle.document_edited == edited && self.lifecycle.represented_filename == represented {
+            return;
+        }
+        if let Some(ns_window) = crate::dialog::app_kit_window(window) {
+            ns_window.setDocumentEdited(edited);
+            ns_window.setRepresentedFilename(&NSString::from_str(&represented.as_deref().map(|path| path.to_string_lossy()).unwrap_or_default()));
+        }
+        self.lifecycle.document_edited = edited;
+        self.lifecycle.represented_filename = represented;
     }
 
     /// windowActions.ts `BaseSwitchWindow`: the open windows by title, this one described as the current window and

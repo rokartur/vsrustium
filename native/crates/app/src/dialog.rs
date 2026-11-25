@@ -77,9 +77,14 @@ pub fn show_message_box(window: &Window, level: PromptLevel, message: &str, deta
 }
 
 pub(crate) fn ns_window(window: &Window) -> Retained<NSWindow> {
-    let handle = HasWindowHandle::window_handle(window).expect("an open window has a handle");
-    let RawWindowHandle::AppKit(handle) = handle.as_raw() else { unreachable!("macOS windows are AppKit windows") };
+    app_kit_window(window).expect("macOS windows are AppKit windows")
+}
+
+/// The window's NSWindow; none on GPUI's test platform.
+pub(crate) fn app_kit_window(window: &Window) -> Option<Retained<NSWindow>> {
+    let handle = HasWindowHandle::window_handle(window).ok()?;
+    let RawWindowHandle::AppKit(handle) = handle.as_raw() else { return None };
     // SAFETY: GPUI's AppKit handle points at the window's content NSView, alive while the window is.
     let view: &NSView = unsafe { handle.ns_view.cast().as_ref() };
-    view.window().expect("the content view is in its window")
+    view.window()
 }

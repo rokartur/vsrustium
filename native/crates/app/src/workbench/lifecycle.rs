@@ -34,8 +34,10 @@ pub struct Lifecycle {
     pub(super) backups: super::backup_tracker::BackupTracker,
     /// Answers once the window's extension host session let go of its storage (host.rs).
     pub(super) session_ended: Option<oneshot::Receiver<()>>,
-    /// The title last set on the window.
+    /// The title, document edited state and represented file last set on the window.
     pub(super) title: String,
+    pub(super) document_edited: bool,
+    pub(super) represented_filename: Option<std::path::PathBuf>,
 }
 
 /// `ConfirmResult` of `showSaveConfirm`.

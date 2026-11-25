@@ -328,6 +328,7 @@ impl Workbench {
         context.insert("textInputFocus".into(), json!(editor_focused));
         self.notifications_context(window, &mut context);
         self.banner_context(window, &mut context);
+        self.host_context(window, &mut context);
         self.layout_context(&mut context);
         self.list_scroll_context(window, &mut context);
         context.insert("editorIsOpen".into(), json!(self.editors.active().is_some()));
