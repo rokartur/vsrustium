@@ -17,6 +17,7 @@ mod extension_management;
 mod explorer_find;
 mod file_participants;
 mod find_widget;
+mod auto_save;
 mod hover;
 pub(crate) mod host_requests;
 mod input_box_view;
@@ -110,6 +111,7 @@ pub struct Workbench {
     minimap: minimap_view::Minimap,
     unicode_highlight: unicode_highlight::UnicodeHighlight,
     unusual_line_terminators: unusual_line_terminators::UnusualLineTerminators,
+    auto_save: auto_save::AutoSave,
     find: find_widget::FindWidget,
     /// The line and whether on its folding control a press may toggle a fold (folding.ts `mouseDownInfo`).
     fold_mouse_down: Option<(usize, bool)>,
@@ -172,6 +174,7 @@ impl Render for Workbench {
         self.follow_marker_navigation_cursor();
         self.refresh_selection_highlights(window);
         self.update_webview_panels(window, cx);
+        self.auto_save_models_changed(cx);
         let viewport = window.viewport_size();
         let window_border = self.theme.color("window.activeBorder");
         // The reference lays the grid out at the full window size and shifts it inside the 1px window border.
@@ -252,6 +255,7 @@ impl Workbench {
             minimap: Default::default(),
             unicode_highlight: Default::default(),
             unusual_line_terminators: Default::default(),
+            auto_save: Default::default(),
             find: find_widget::FindWidget::new(cx),
             fold_mouse_down: None,
             text_area_left: Rc::default(),

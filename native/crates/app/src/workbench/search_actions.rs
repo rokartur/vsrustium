@@ -15,6 +15,7 @@ use search::text_search::SearchRange;
 use serde_json::{Value, json};
 
 use super::Workbench;
+use super::auto_save::SaveReason;
 use super::explorer_actions::confirm;
 use super::find_widget::HISTORY_LIMIT;
 use super::input_box_view::InputId;
@@ -1257,7 +1258,7 @@ impl Workbench {
             return;
         }
         for (scheme, path) in paths {
-            drop(self.save_model(scheme.to_string(), path, cx));
+            drop(self.save_model(scheme.to_string(), path, SaveReason::Explicit, cx));
         }
     }
 

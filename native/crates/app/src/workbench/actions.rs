@@ -30,6 +30,11 @@ impl Workbench {
                 when_saved(saves, |_| Value::Null, cx)
             });
         }
+        self.commands.register("workbench.action.toggleAutoSave", |workbench, _, _, cx| {
+            workbench.toggle_auto_save();
+            cx.notify();
+            Outcome::done()
+        });
         self.commands.register("workbench.action.files.revert", |workbench, _, _, cx| {
             if let Some(index) = workbench.editors.active_index() {
                 workbench.revert_and_close_untitled(vec![index], cx);

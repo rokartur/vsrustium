@@ -198,6 +198,9 @@ pub fn workbench_menus() -> Vec<MenuItem> {
         };
         items.push(MenuItem { menu, entry, title: title.to_string(), group: group.to_string(), order, when: when.and_then(Expr::deserialize) });
     }
+    // fileActions.contribution.ts: checked unless `files.autoSave` is `off`.
+    let entry = Entry::Command { id: "workbench.action.toggleAutoSave".into(), precondition: None, toggled: Expr::deserialize("config.files.autoSave != 'off'"), alt: None };
+    items.push(MenuItem { menu: MenuId::MenubarFileMenu, entry, title: "A&&uto Save".into(), group: "5_autosave".into(), order: 1., when: None });
     // toggleColumnSelection.ts: checked while `config.editor.columnSelection` is true.
     let entry = Entry::Command { id: "editor.action.toggleColumnSelection".into(), precondition: None, toggled: Some(Expr::has("config.editor.columnSelection")), alt: None };
     items.push(MenuItem { menu: MenuId::MenubarSelectionMenu, entry, title: "Column &&Selection Mode".into(), group: "4_config".into(), order: 2., when: None });
