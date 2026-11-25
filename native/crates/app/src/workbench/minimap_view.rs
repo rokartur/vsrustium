@@ -20,7 +20,7 @@ use crate::editor::minimap::{
 };
 use crate::editor::folding::FoldDecoration;
 use crate::editor::section_headers::{FindOptions, MARK_SECTION_HEADER_REGEX, SectionHeader, find_section_headers, fit_section_header};
-use crate::editor::{OpenEditor, VERTICAL_SCROLLBAR_WIDTH, Viewport};
+use crate::editor::{OpenEditor, Position, VERTICAL_SCROLLBAR_WIDTH, Viewport};
 use crate::theme::relative_luminance;
 
 /// minimap.css `.minimap-slider` opacity transition, and `_hideSliderAfterScrollScheduler`.
@@ -256,7 +256,7 @@ impl Workbench {
         let renderer = CharRenderer::prebaked(info.scale);
         let mut image = render_lines(info, layout, &renderer, &colors, tab_size, |view_line| {
             let index = editor.model_line(view_line - 1);
-            (document.lines[index].as_str(), document.tokens.minimap_runs(&self.theme, &document.lines, index))
+            editor.view_line_minimap_data(view_line - 1, document.tokens.minimap_runs(&self.theme, &document.lines, index))
         });
         // RenderImage holds BGRA.
         for pixel in image.data.chunks_exact_mut(4) {
@@ -280,8 +280,13 @@ impl Workbench {
     fn minimap_decorations(&self, editor: &OpenEditor, info: &MinimapLayoutInfo, layout: &MinimapLayout) -> Vec<crate::editor::minimap::Fill> {
         // convertModelPositionToViewPosition: a hidden position shows at the end of its fold line.
         let view = |line: usize, column: usize| {
-            let view_line = editor.view_line(line);
-            let column = if editor.folding.is_hidden(line) { editor.document.lines[editor.model_line(view_line)].chars().count() } else { column };
+            if editor.folding.is_hidden(line) {
+                let view_line = editor.view_line(line);
+                let fold_line = editor.segment(view_line).line;
+                let (view_line, column) = editor.view_column(Position::new(fold_line, editor.document.lines[fold_line].chars().count()));
+                return (view_line + 1, column);
+            }
+            let (view_line, column) = editor.view_column(Position::new(line, column));
             (view_line + 1, column)
         };
         let mut selections: Vec<MinimapRange> = editor.selections.iter().map(|selection| MinimapRange { start: view(selection.start().line, selection.start().column), end: view(selection.end().line, selection.end().column) }).collect();
@@ -312,7 +317,7 @@ impl Workbench {
             decorations.push((MinimapRange { start: view(start.line, start.column), end: view(end.line, end.column) }, color));
         }
         let tab_size = editor.document.indentation.tab_size;
-        decoration_fills(info, layout, self.theme.color("minimap.selectionHighlight"), &selections, &decorations, tab_size, |view_line| editor.document.lines[editor.model_line(view_line - 1)].as_str())
+        decoration_fills(info, layout, self.theme.color("minimap.selectionHighlight"), &selections, &decorations, tab_size, |view_line| editor.view_line_text(view_line - 1))
     }
 
     /// sectionHeaders.ts `SectionHeaderDetector` and `getSectionHeaderDecorationsInViewport`: the headers from a font

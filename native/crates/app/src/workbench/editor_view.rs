@@ -341,8 +341,9 @@ impl Workbench {
         let metrics = self.editor_metrics(editor, window);
         let head = editor.selection().head;
         let viewport = self.editors.viewport;
-        let left = metrics.content_left() + visible_column(&editor.document.lines[head.line], head.column, editor.document.indentation.tab_size) as f32 * metrics.char_width - editor.scroll.left;
-        let top = editor.line_top(editor.view_line(head.line), viewport) - editor.scroll.top + metrics.line_height;
+        let view_line = editor.head_view_line(0);
+        let left = metrics.content_left() + editor.segment_visible_column(editor.segment(view_line), head.column) as f32 * metrics.char_width - editor.scroll.left;
+        let top = editor.line_top(view_line, viewport) - editor.scroll.top + metrics.line_height;
         let origin = self.text_area_bounds.get().origin;
         Some(point(px(origin.x + left), px(origin.y + top)))
     }
@@ -570,6 +571,7 @@ impl Workbench {
         let minimap_changed = self.minimap.info != minimap;
         self.editors.viewport = viewport;
         self.minimap.info = minimap;
+        let rewrapped = self.configure_word_wrap();
         let editor = self.editors.active_mut().expect("laid out only with an editor open");
         let scroll_width = editor.scroll_width(viewport);
         let visible_lines = editor.visible_lines(viewport);
@@ -581,6 +583,7 @@ impl Workbench {
             let text = &editor.document.lines[editor.model_line(view_line)];
             let tab_size = editor.document.indentation.tab_size;
             let width = match line_overflow(text, self.stop_rendering_line_after) {
+                _ if editor.wraps() => editor.wrapped_line_width(view_line).unwrap_or_default() as f32 * viewport.char_width,
                 None => visible_column(text, text.chars().count(), tab_size) as f32 * viewport.char_width,
                 Some((limit, _, label)) => visible_column(text, limit, tab_size) as f32 * viewport.char_width + show_more_width(&label, viewport.char_width),
             };
@@ -591,7 +594,7 @@ impl Workbench {
         if resized || moved {
             self.host.send_visible_ranges(&self.editors);
         }
-        if resized || moved || widened || minimap_changed {
+        if resized || moved || widened || minimap_changed || rewrapped {
             cx.notify();
         }
     }
@@ -827,12 +830,18 @@ impl Workbench {
         let editor_background = self.color("editor.background");
         let view_line_count = editor.view_line_count();
         // viewLines.ts linesVisibleRangesForRange: a selected line break is one typicalHalfwidthCharacterWidth wide.
+        // With word wrap each view line gets the part of the selection on its segment, in the view line's x.
         let selection_range = |selection: Selection, view_line: usize| {
-            let line = editor.model_line(view_line);
-            let text = &editor.document.lines[line];
-            let (start, end, line_break) = selected_columns(selection, line, text)?;
-            let left = visible_column(text, start, tab_size) as f32 * char_width;
-            Some((left, visible_column(text, end, tab_size) as f32 * char_width + if line_break { char_width } else { 0. }))
+            let segment = editor.segment(view_line);
+            let text = &editor.document.lines[segment.line];
+            let (start, end, line_break) = selected_columns(selection, segment.line, text)?;
+            let line_break = line_break && segment.last;
+            let (start, end) = (start.max(segment.start), end.min(segment.end));
+            if start > end || (start == end && !line_break && !segment.first) {
+                return None;
+            }
+            let left = editor.segment_visible_column(segment, start) as f32 * char_width;
+            Some((left, editor.segment_visible_column(segment, end) as f32 * char_width + if line_break { char_width } else { 0. }))
         };
         let mut fold_starts = HashMap::new();
         for (range, decoration) in editor.folding.regions.ranges().iter().zip(editor.folding.decorations()) {
@@ -842,29 +851,33 @@ impl Workbench {
         }
         range
             .map(|view_line| {
-                let index = editor.model_line(view_line);
+                let segment = editor.segment(view_line);
+                let index = segment.line;
                 let text = &editor.document.lines[index];
-                let collapsed = fold_starts.get(&index).copied();
+                // The x of the segment's first char in the model line's x, which the line's decorations use.
+                let shift = (visible_column(text, segment.start, tab_size) as f32 - segment.indent as f32) * char_width;
+                let collapsed = fold_starts.get(&index).copied().filter(|_| segment.first);
                 // lineNumbers.ts marks only the primary cursor's line active.
                 let number = div()
                     .w(px(metrics.line_numbers_width))
                     .flex_none()
                     .text_right()
                     .text_color(if index == primary_line { colors.active_number } else { colors.number })
-                    .when(metrics.line_numbers_width > 0., |number| number.child((index + 1).to_string()));
+                    .when(metrics.line_numbers_width > 0. && segment.first, |number| number.child((index + 1).to_string()));
                 let mut current_line = div().absolute().inset_0();
-                if line_highlight && all_empty && selections.iter().any(|selection| selection.head.line == index) {
+                if line_highlight && all_empty && (0..selections.len()).any(|cursor_index| editor.head_view_line(cursor_index) == view_line) {
                     current_line = current_line.border(px(line_border_width)).border_color(colors.line_border);
                 }
                 // The text scrolls left under the fixed margin and current line border.
-                let mut content = div().absolute().top_0().bottom_0().right_0().left(px(-scroll_left));
+                let mut content = div().absolute().top_0().bottom_0().right_0().left(px(-scroll_left - shift));
                 // selections.ts: inner corner pieces of every selection go before the rest (issue #77777).
                 let mut inner_corners = Vec::new();
                 let mut pieces = Vec::new();
                 for selection in selections {
-                    let Some((left, right)) = selection_range(*selection, view_line) else { continue };
-                    let above = view_line.checked_sub(1).and_then(|above| selection_range(*selection, above));
-                    let below = if view_line + 1 < view_line_count { selection_range(*selection, view_line + 1) } else { None };
+                    let in_line_x = |(left, right): (f32, f32)| (left + shift, right + shift);
+                    let Some((left, right)) = selection_range(*selection, view_line).map(in_line_x) else { continue };
+                    let above = view_line.checked_sub(1).and_then(|above| selection_range(*selection, above)).map(in_line_x);
+                    let below = if view_line + 1 < view_line_count { selection_range(*selection, view_line + 1).map(in_line_x) } else { None };
                     // `hasMultipleSelections` insets the first line by 1px at the top, the last (not also first) at the bottom.
                     let multiple = selections.len() > 1;
                     let top = if multiple && above.is_none() { 1. } else { 0. };
@@ -1036,11 +1049,11 @@ impl Workbench {
                     content = content.children(self.control_character_boxes(text, tab_size, char_width, rendered_len));
                 }
                 // folding.css .inline-folded:after: an ellipsis 0.2em after the line's last char.
-                if collapsed == Some(true) {
+                if collapsed == Some(true) && segment.last {
                     let end = visible_column(text, text.chars().count(), tab_size) as f32 * char_width + 0.2 * metrics.font_size;
                     content = content.child(div().absolute().top_0().left(px(end)).text_color(fold_placeholder).cursor_pointer().child("\u{22EF}"));
                 }
-                for (cursor_index, selection) in selections.iter().enumerate().filter(|(_, selection)| focused && selection.head.line == index) {
+                for (cursor_index, selection) in selections.iter().enumerate().filter(|(cursor_index, _)| focused && editor.head_view_line(*cursor_index) == view_line) {
                     // shortcut: the cursor does not blink (editor.cursorBlinking "blink" hides it every 500ms).
                     let color = match (selections.len(), cursor_index) {
                         (1, _) => colors.cursor,
@@ -1067,7 +1080,8 @@ impl Workbench {
                 if let Some(target) = self.text_drag.as_ref().and_then(|drag| drag.target).filter(|target| target.line == index) {
                     content = content.child(self.drop_target_marker(visible_column(text, target.column, tab_size) as f32 * char_width));
                 }
-                let visible_at = move |workbench: &Workbench, x: gpui::Pixels| (f32::from(x) - workbench.text_area_left.get() - metrics.content_left() + scroll_left) / char_width;
+                let segment_columns = (visible_column(text, segment.start, tab_size) as f32, if segment.last { f32::MAX } else { visible_column(text, segment.end, tab_size) as f32 });
+                let visible_at = move |workbench: &Workbench, x: gpui::Pixels| ((f32::from(x) - workbench.text_area_left.get() - metrics.content_left() + scroll_left + shift) / char_width).clamp(segment_columns.0, segment_columns.1);
                 let content = div()
                     .relative()
                     .flex_1()
@@ -1075,7 +1089,8 @@ impl Workbench {
                     .overflow_hidden()
                     .text_color(colors.text)
                     .child(current_line)
-                    .child(content)
+                    .child(self.wrapped_segment_clip(content, segment, shift, scroll_left, char_width))
+                    .children(self.word_wrap_indicator(editor, segment, scroll_left, char_width))
                     .on_mouse_down(MouseButton::Left, cx.listener(move |workbench, event: &MouseDownEvent, window, cx| {
                         window.focus(&workbench.editor_focus, cx);
                         let modifiers = event.modifiers;
@@ -1086,6 +1101,7 @@ impl Workbench {
                         workbench.selecting_text = true;
                         workbench.fold_mouse_down = workbench.at_line_end(index, visible).then_some((index, false));
                         workbench.click_text(index, visible, modifiers, modifiers.shift, event.click_count, cx);
+                        workbench.keep_click_at_row_end(view_line, visible);
                         workbench.show_long_line(index, visible, char_width, cx);
                     }))
                     .on_mouse_down(MouseButton::Right, cx.listener(move |workbench, event: &MouseDownEvent, window, cx| {
@@ -1122,7 +1138,11 @@ impl Workbench {
                         match event.pressed_button {
                             Some(MouseButton::Left) if workbench.line_select_start.is_some() => workbench.gutter_line_select_drag(index, cx),
                             Some(MouseButton::Left) if workbench.text_drag.is_some() => workbench.drag_text(index, visible_at(workbench, event.position.x), event.modifiers.alt, cx),
-                            Some(MouseButton::Left) if workbench.selecting_text => workbench.click_text(index, visible_at(workbench, event.position.x), event.modifiers, true, 1, cx),
+                            Some(MouseButton::Left) if workbench.selecting_text => {
+                                let visible = visible_at(workbench, event.position.x);
+                                workbench.click_text(index, visible, event.modifiers, true, 1, cx);
+                                workbench.keep_click_at_row_end(view_line, visible);
+                            }
                             Some(MouseButton::Middle) if workbench.selecting_text => workbench.column_select_text(index, visible_at(workbench, event.position.x), true, cx),
                             _ => {}
                         }

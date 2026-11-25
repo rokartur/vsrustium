@@ -609,7 +609,7 @@ impl Workbench {
             return false;
         }
         let (start, end) = (selection.start(), selection.end());
-        let start_top = editor.line_top(editor.view_line(start.line), self.editors.viewport) - editor.scroll.top;
+        let start_top = editor.line_top(editor.position_view_line(start, false), self.editors.viewport) - editor.scroll.top;
         if start_top >= FIND_INPUT_AREA_HEIGHT {
             return false;
         }

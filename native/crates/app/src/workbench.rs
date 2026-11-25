@@ -59,6 +59,7 @@ mod text_files;
 mod control_characters;
 mod large_file;
 mod gutter_mouse;
+mod word_wrap;
 mod text_input;
 mod title_bar_actions;
 mod unicode_highlight;
@@ -347,6 +348,7 @@ impl Workbench {
         workbench.register_scm_commands();
         workbench.register_text_file_commands();
         workbench.register_large_file_commands();
+        workbench.register_word_wrap_commands();
         workbench.register_editor_commands();
         workbench.register_find_commands();
         workbench.register_sticky_scroll_commands();

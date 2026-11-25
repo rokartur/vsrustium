@@ -47,6 +47,7 @@ pub mod unicode_highlighter;
 pub mod unusual_line_terminators;
 mod view;
 pub mod whitespace;
+pub mod word_wrap;
 pub mod zoom;
 
 pub use comment::LineCommentKind;
@@ -534,6 +535,7 @@ pub struct OpenEditor {
     /// The decorations of the model's problem markers.
     pub markers: Vec<marker_decorations::MarkerDecoration>,
     pub view_zones: Vec<view_zones::ViewZone>,
+    pub word_wrap: word_wrap::WordWrap,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -549,7 +551,8 @@ impl OpenEditor {
     fn new(document: TextDocument, preview: bool, model_id: u32) -> Self {
         let indentation = document.indentation;
         let guides = indent_guides(&document.lines, indentation.tab_size, indentation.indent_size(), document.off_side);
-        let mut editor = OpenEditor { document, preview, model_id, selections: vec![Selection::default()], last_added: 0, leftovers: Vec::new(), column_select: None, smart_select: None, cursor_states: Default::default(), version_id: 1, history: History::default(), guides, highlights: Vec::new(), value_set_replacement: None, selection_anchor: None, folding: FoldingModel::default(), syntax_folding: false, folded_imports: false, sticky_model: Default::default(), scroll: Scroll::default(), max_line_width: 0., host_reference: None, associated_file: false, markers: Vec::new(), view_zones: Vec::new() };
+        let word_wrap = word_wrap::WordWrap::new(&document.lines, document.too_large_for_tokenization);
+        let mut editor = OpenEditor { document, preview, model_id, selections: vec![Selection::default()], last_added: 0, leftovers: Vec::new(), column_select: None, smart_select: None, cursor_states: Default::default(), version_id: 1, history: History::default(), guides, highlights: Vec::new(), value_set_replacement: None, selection_anchor: None, folding: FoldingModel::default(), syntax_folding: false, folded_imports: false, sticky_model: Default::default(), scroll: Scroll::default(), max_line_width: 0., host_reference: None, associated_file: false, markers: Vec::new(), view_zones: Vec::new(), word_wrap };
         editor.refresh_highlights();
         editor.refresh_folding_ranges();
         editor

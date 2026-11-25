@@ -508,7 +508,7 @@ pub struct LinesColors {
 
 /// `InnerMinimap.renderLines` drawn whole, without reusing the rows of the last frame: the lines of `layout`, 1-based
 /// view lines, below `top_padding_line_count` empty rows. `line` gives a line's text and its color runs.
-pub fn render_lines<'a>(info: &MinimapLayoutInfo, layout: &MinimapLayout, renderer: &CharRenderer, colors: &LinesColors, tab_size: usize, line: impl Fn(usize) -> (&'a str, Vec<(usize, [u8; 3])>)) -> MinimapImage {
+pub fn render_lines<'a>(info: &MinimapLayoutInfo, layout: &MinimapLayout, renderer: &CharRenderer, colors: &LinesColors, tab_size: usize, line: impl Fn(usize) -> (std::borrow::Cow<'a, str>, Vec<(usize, [u8; 3])>)) -> MinimapImage {
     let mut image = MinimapImage::new(info.canvas_inner_width as usize, info.canvas_inner_height as usize, colors.background);
     let base_char_height = if info.render_characters { BASE_CHAR_HEIGHT } else { BASE_CHAR_HEIGHT + 1 };
     let render_line_height = (base_char_height * info.scale) as f64;
@@ -534,7 +534,7 @@ pub fn render_lines<'a>(info: &MinimapLayoutInfo, layout: &MinimapLayout, render
     let mut dy = layout.top_padding_line_count * line_height;
     for line_number in layout.start_line_number..=layout.end_line_number {
         let (text, runs) = line(line_number);
-        render_line(&mut image, &style, dy + inner_line_padding, text, &runs);
+        render_line(&mut image, &style, dy + inner_line_padding, &text, &runs);
         dy += line_height;
     }
     image
@@ -561,7 +561,7 @@ pub struct Fill {
 /// per line, the selection's first, then the selections and decorations over their columns. `selections` sort by
 /// start, `decorations` by z-index; `line` gives a view line's text.
 #[allow(clippy::too_many_arguments)]
-pub fn decoration_fills<'a>(info: &MinimapLayoutInfo, layout: &MinimapLayout, selection_color: Option<Rgba>, selections: &[MinimapRange], decorations: &[(MinimapRange, Rgba)], tab_size: usize, line: impl Fn(usize) -> &'a str) -> Vec<Fill> {
+pub fn decoration_fills<'a>(info: &MinimapLayoutInfo, layout: &MinimapLayout, selection_color: Option<Rgba>, selections: &[MinimapRange], decorations: &[(MinimapRange, Rgba)], tab_size: usize, line: impl Fn(usize) -> std::borrow::Cow<'a, str>) -> Vec<Fill> {
     let selection_color = selection_color.filter(|color| color.a > 0.);
     let line_height = info.line_height;
     let canvas_width = info.canvas_inner_width;
@@ -608,8 +608,8 @@ pub fn decoration_fills<'a>(info: &MinimapLayoutInfo, layout: &MinimapLayout, se
         let start_column = if range.start.0 == line_number { range.start.1 } else { 0 };
         let end_column = if range.end.0 == line_number { range.end.1 } else { text.chars().count() };
         let char_width = (BASE_CHAR_WIDTH * info.scale) as f64;
-        let x1 = x_offset_for_column(text, start_column, tab_size, char_width, canvas_width);
-        let x2 = x_offset_for_column(text, end_column, tab_size, char_width, canvas_width);
+        let x1 = x_offset_for_column(&text, start_column, tab_size, char_width, canvas_width);
+        let x2 = x_offset_for_column(&text, end_column, tab_size, char_width, canvas_width);
         fills.push(Fill { x: x1, y, width: x2 - x1, height: line_height, color });
     };
     let colored = selections.iter().filter_map(|range| selection_color.map(|color| (range, color))).chain(decorations.iter().filter(|(_, color)| color.a > 0.).map(|(range, color)| (range, *color)));

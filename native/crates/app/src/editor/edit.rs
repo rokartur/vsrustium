@@ -272,6 +272,9 @@ impl OpenEditor {
 
     /// `cursorUp`/`cursorDown`: from a selection's start or end, keeping the visible column through short lines.
     pub fn move_vertically(&mut self, down: bool, select: bool) {
+        if self.wraps() {
+            return self.move_vertically_in_view(down, select);
+        }
         let tab_size = self.document.indentation.tab_size;
         let hidden = self.folding.hidden().to_vec();
         self.move_cursors(select, |lines, selection, leftover| {
@@ -296,6 +299,9 @@ impl OpenEditor {
 
     /// `cursorHome`/`cursorEnd`; Home toggles between the first non-blank character and column 0.
     pub fn move_to_line_edge(&mut self, end: bool, select: bool) {
+        if self.wraps() {
+            return self.move_to_line_edge_in_view(end, select);
+        }
         self.move_cursors(select, |lines, selection, _| (if end { cursor::line_end(lines, selection.head) } else { cursor::line_start(lines, selection.head) }, 0));
     }
 
@@ -983,6 +989,7 @@ impl OpenEditor {
         let suffix: String = lines[end.line].chars().skip(end.column).collect();
         let joined = prefix + text + &suffix;
         lines.splice(start.line..=end.line, joined.split('\n').map(String::from));
+        self.word_wrap.lines_replaced(&self.document.lines, start.line, end.line, text.split('\n').count());
         self.document.tokens.invalidate_from(start.line);
         change
     }

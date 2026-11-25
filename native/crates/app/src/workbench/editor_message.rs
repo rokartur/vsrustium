@@ -9,7 +9,7 @@ use gpui::{Animation, AnimationExt, Bounds, Context, Div, InteractiveElement, In
 use serde_json::Value;
 
 use super::Workbench;
-use crate::editor::{OpenEditor, Position, VerticalReveal, visible_column};
+use crate::editor::{OpenEditor, Position, VerticalReveal};
 
 pub struct MessagePart {
     text: &'static str,
@@ -135,9 +135,9 @@ impl Workbench {
         if message.model_id != editor.model_id || editor.folding.is_hidden(message.position.line) {
             return None;
         }
-        let text = &editor.document.lines[message.position.line];
-        let anchor_left = visible_column(text, message.position.column, editor.document.indentation.tab_size) as f32 * char_width;
-        let anchor_top = editor.line_top(editor.view_line(message.position.line), self.editors.viewport) - editor.scroll.top;
+        let view_line = editor.position_view_line(message.position, false);
+        let anchor_left = editor.segment_visible_column(editor.segment(view_line), message.position.column) as f32 * char_width;
+        let anchor_top = editor.line_top(view_line, self.editors.viewport) - editor.scroll.top;
         let text: String = message.parts.iter().map(|part| part.text).collect();
         let run = TextRun { len: text.len(), font: gpui::font(UI_FONT), color: gpui::black(), background_color: None, underline: None, strikethrough: None };
         let text_width = f32::from(window.text_system().shape_line(text.into(), px(13.), &[run], None).width);

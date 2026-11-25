@@ -290,6 +290,7 @@ impl Workbench {
         context.insert("dirtyWorkingCopies".into(), json!(self.editors.editors.iter().any(|editor| editor.is_dirty())));
         // toggleMultiCursorModifier.ts `MultiCursorModifierContextKeyController`.
         context.insert("multiCursorModifier".into(), json!(if self.multi_cursor_modifier_is_cmd() { "ctrlCmd" } else { "altKey" }));
+        self.word_wrap_context(&mut context);
         // viewDescriptorService.ts: the Explorer and Search containers always hold their view.
         for (container, view) in [("workbench.view.explorer", "workbench.explorer.fileView"), ("workbench.view.search", "workbench.view.search")] {
             context.insert(format!("viewContainer.{container}.enabled"), json!(true));
