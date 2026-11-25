@@ -20,6 +20,7 @@ use crate::contextkey::{Context, Expr};
 pub enum MenuId {
     MenubarMainMenu,
     MenubarFileMenu,
+    MenubarRecentMenu,
     MenubarEditMenu,
     MenubarSelectionMenu,
     MenubarViewMenu,
@@ -69,7 +70,7 @@ pub enum MenuAction {
 /// The workbench's registrations of the features the port has: menu, submenu or command id, title, group, order,
 /// `when`, and the command's precondition.
 type Row = (MenuId, Option<MenuId>, &'static str, &'static str, &'static str, f64, Option<&'static str>, Option<&'static str>);
-const WORKBENCH_MENUS: [Row; 67] = [
+const WORKBENCH_MENUS: [Row; 75] = [
     // menubar.contribution.ts
     (MenuId::MenubarMainMenu, Some(MenuId::MenubarFileMenu), "", "&&File", "", 1., None, None),
     (MenuId::MenubarMainMenu, Some(MenuId::MenubarEditMenu), "", "&&Edit", "", 2., None, None),
@@ -78,6 +79,15 @@ const WORKBENCH_MENUS: [Row; 67] = [
     (MenuId::MenubarMainMenu, Some(MenuId::MenubarGoMenu), "", "&&Go", "", 5., None, None),
     (MenuId::MenubarMainMenu, Some(MenuId::MenubarHelpMenu), "", "&&Help", "", 8., None, None),
     (MenuId::MenubarMainMenu, Some(MenuId::MenubarPreferencesMenu), "", "&&Preferences", "", 9., Some("isMacNative"), None),
+    // workspaceActions.ts, windowActions.ts and editor.contribution.ts
+    (MenuId::MenubarFileMenu, None, "workbench.action.files.openFileFolder", "&&Open...", "2_open", 1., Some("isMacNative && openFolderWorkspaceSupport"), Some("isMacNative && openFolderWorkspaceSupport")),
+    (MenuId::MenubarFileMenu, None, "workbench.action.files.openFolder", "Open &&Folder...", "2_open", 2., Some("openFolderWorkspaceSupport"), Some("openFolderWorkspaceSupport")),
+    (MenuId::MenubarFileMenu, None, "workbench.action.openWorkspace", "Open Wor&&kspace from File...", "2_open", 3., Some("enterMultiRootWorkspaceSupport"), Some("enterMultiRootWorkspaceSupport")),
+    (MenuId::MenubarFileMenu, Some(MenuId::MenubarRecentMenu), "", "Open &&Recent", "2_open", 4., None, None),
+    (MenuId::MenubarFileMenu, None, "workbench.action.closeFolder", "Close &&Folder", "6_close", 3., Some("workbenchState == 'folder' && emptyWorkspaceSupport && !isSessionsWindow"), Some("workbenchState != 'empty' && emptyWorkspaceSupport && !isSessionsWindow")),
+    (MenuId::MenubarFileMenu, None, "workbench.action.closeFolder", "Close &&Workspace", "6_close", 3., Some("workbenchState == 'workspace' && emptyWorkspaceSupport && !isSessionsWindow"), Some("workbenchState != 'empty' && emptyWorkspaceSupport && !isSessionsWindow")),
+    (MenuId::MenubarRecentMenu, None, "workbench.action.openRecent", "&&More...", "y_more", 1., None, None),
+    (MenuId::MenubarRecentMenu, None, "workbench.action.clearRecentFiles", "&&Clear Recently Opened...", "z_clear", 1., None, None),
     // fileActions.contribution.ts
     (MenuId::MenubarFileMenu, None, "workbench.action.files.save", "&&Save", "4_save", 1., None, Some("activeEditor || foldersViewVisible && sideBarFocus")),
     (MenuId::MenubarFileMenu, None, "saveAll", "Save A&&ll", "4_save", 3., None, Some("dirtyWorkingCopies")),

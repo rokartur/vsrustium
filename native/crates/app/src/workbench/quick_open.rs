@@ -76,6 +76,12 @@ impl Workbench {
         }
     }
 
+    /// historyService.ts `clearRecentlyOpened`.
+    pub(super) fn clear_editor_history(&mut self) {
+        self.quick_access.editor_history.entries.clear();
+        self.save_editor_history();
+    }
+
     fn save_editor_history(&self) {
         let serialized = self.quick_access.editor_history.serialize();
         self.workspace_storage.lock().unwrap().set(HISTORY_STORAGE_KEY, serialized);

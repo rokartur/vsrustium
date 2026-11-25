@@ -34,6 +34,8 @@ pub enum Owner {
     EditorStatus(Vec<crate::workbench::editor_status::StatusPick>),
     /// `list.resizeColumn`: the column pick, then the input box of the picked column's percentage.
     ResizeColumn(Option<usize>),
+    /// `workbench.action.openRecent`: the recently opened entry of each item by handle.
+    RecentlyOpened(Vec<Value>),
 }
 
 impl Workbench {
@@ -205,6 +207,7 @@ impl Workbench {
             Owner::GoToMatch => self.go_to_match_event(id, event, window, cx),
             Owner::EditorStatus(_) => self.editor_status_event(id, event, window, cx),
             Owner::ResizeColumn(_) => self.resize_column_event(id, event, window, cx),
+            Owner::RecentlyOpened(_) => self.recently_opened_event(id, event, window, cx),
         }
     }
 

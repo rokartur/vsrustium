@@ -236,6 +236,16 @@ impl Workbench {
         self.notifications_context(window, &mut context);
         context.insert("editorIsOpen".into(), json!(self.editors.active().is_some()));
         context.insert("dirtyWorkingCopies".into(), json!(self.editors.editors.iter().any(|editor| editor.is_dirty())));
+        // contextkeys.ts WorkbenchContextKeysHandler: the desktop build supports every workspace kind.
+        let workbench_state = match self.workspace() {
+            None => "empty",
+            Some(workspace) if workspace.file.is_some() => "workspace",
+            Some(_) => "folder",
+        };
+        context.insert("workbenchState".into(), json!(workbench_state));
+        for key in ["openFolderWorkspaceSupport", "enterMultiRootWorkspaceSupport", "emptyWorkspaceSupport"] {
+            context.insert(key.into(), json!(true));
+        }
         // viewDescriptorService.ts: the Explorer and Search containers always hold their view.
         for (container, view) in [("workbench.view.explorer", "workbench.explorer.fileView"), ("workbench.view.search", "workbench.view.search")] {
             context.insert(format!("viewContainer.{container}.enabled"), json!(true));

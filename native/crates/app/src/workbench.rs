@@ -43,6 +43,7 @@ mod text_input;
 mod title_bar_actions;
 mod unicode_highlight;
 mod unusual_line_terminators;
+mod workspace_actions;
 mod workspace_trust_view;
 
 use std::cell::Cell;
@@ -152,6 +153,10 @@ pub struct Workbench {
     /// StorageScope.WORKSPACE of the opened folder, shared with the extension host's MainThreadStorage.
     workspace_storage: Arc<Mutex<Storage>>,
     pub workspace_trust: crate::workspace_trust::WorkspaceTrust,
+    /// The APPLICATION_SHARED storage: trust and the recently opened list.
+    pub shared_storage: Arc<Mutex<Storage>>,
+    /// The recently opened list as last read, which the menu bar shows.
+    recently_opened: crate::recently_opened::RecentlyOpened,
     /// Custom dialogs, the shown one first.
     dialogs: Vec<dialog_view::ShownDialog>,
 }
@@ -274,6 +279,8 @@ impl Workbench {
             profile_storage: Arc::new(Mutex::new(Storage::in_memory())),
             workspace_storage: Arc::new(Mutex::new(Storage::in_memory())),
             workspace_trust: Default::default(),
+            shared_storage: Arc::new(Mutex::new(Storage::in_memory())),
+            recently_opened: Default::default(),
             dialogs: Vec::new(),
         };
         crate::main_thread_commands::register_commands_documentation(&mut workbench);
@@ -302,6 +309,7 @@ impl Workbench {
         workbench.register_notifications_commands();
         workbench.register_workspace_trust_commands();
         workbench.register_host_commands();
+        workbench.register_workspace_commands();
         // Keybindings resolve before the focused element sees the key, and with nothing focused too.
         let entity = cx.entity().downgrade();
         cx.intercept_keystrokes(move |event, window, cx| {

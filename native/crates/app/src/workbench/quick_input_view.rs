@@ -757,10 +757,11 @@ impl Workbench {
                         let icon = self.file_icons.as_ref()?.language_icon(language, self.theme.kind, 13., ROW_HEIGHT, icon_color)?;
                         Some(icon.mr(px(6.)))
                     }))
-                    .child(self.highlighted_label(&row.item.label, &row.label_highlights, highlight, 16., icon_color))
+                    // A long description is cut, not the name (monaco-icon-label-container's overflow).
+                    .child(div().flex_none().child(self.highlighted_label(&row.item.label, &row.label_highlights, highlight, 16., icon_color)))
                     .children(row.item.description.as_ref().filter(|description| !description.is_empty()).map(|description| {
                         // monaco-icon-label: .label-description at 0.9em, 0.7 opacity, 0.5em of its own 11.7px after the name.
-                        div().ml(px(5.85)).text_size(px(11.7)).opacity(if focused { 1. } else { 0.7 }).child(self.highlighted_label(description, &row.description_highlights, highlight, 14., icon_color))
+                        div().ml(px(5.85)).min_w_0().overflow_hidden().text_size(px(11.7)).opacity(if focused { 1. } else { 0.7 }).child(self.highlighted_label(description, &row.description_highlights, highlight, 14., icon_color))
                     })),
             )
             .children(row.item.detail.as_ref().filter(|detail| !detail.is_empty()).map(|detail| {

@@ -12,18 +12,13 @@ use crate::commands::Outcome;
 impl Workbench {
     pub(super) fn register_host_commands(&mut self) {
         self.commands.register("workbench.action.reloadWindow", |workbench, _, window, cx| {
-            let folder = workbench.workspace().map(|workspace| workspace.file.clone().unwrap_or_else(|| workspace.folders[0].path.clone()));
+            let folder = workbench.workspace_location();
             workbench.relaunch(folder, window, cx)
         });
     }
 
     /// Closes the editors, asking to save dirty ones, then starts the app on `folder` and quits this one.
     pub(super) fn relaunch(&mut self, folder: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
-        let mut args: Vec<String> = std::env::args().collect();
-        for index in crate::positional_indexes(&args).into_iter().rev() {
-            args.remove(index);
-        }
-        args.extend(folder.map(|folder| folder.to_string_lossy().into_owned()));
         let closed = self.close_all_editors(window, cx);
         cx.spawn(async move |workbench, cx| {
             if let Outcome::Pending(pending) = closed {
@@ -33,9 +28,8 @@ impl Workbench {
                 if !workbench.editors.editors.is_empty() {
                     return;
                 }
-                let started = std::env::current_exe().and_then(|exe| std::process::Command::new(exe).args(&args[1..]).spawn());
-                match started {
-                    Ok(_) => cx.quit(),
+                match open_new_window(folder) {
+                    Ok(()) => cx.quit(),
                     Err(error) => workbench.notify_error(&format!("Failed to reload the window: {error}")),
                 }
             });
@@ -43,4 +37,15 @@ impl Workbench {
         .detach();
         Outcome::done()
     }
+}
+
+/// Starts another app process on `folder` with this one's flags: the port's window of its own.
+pub(super) fn open_new_window(folder: Option<PathBuf>) -> std::io::Result<()> {
+    let mut args: Vec<String> = std::env::args().collect();
+    for index in crate::positional_indexes(&args).into_iter().rev() {
+        args.remove(index);
+    }
+    args.extend(folder.map(|folder| folder.to_string_lossy().into_owned()));
+    std::process::Command::new(std::env::current_exe()?).args(&args[1..]).spawn()?;
+    Ok(())
 }

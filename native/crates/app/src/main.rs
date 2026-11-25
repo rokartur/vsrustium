@@ -38,6 +38,7 @@ mod markers;
 mod menus;
 mod notifications;
 mod quick_input;
+mod recently_opened;
 mod search_editor;
 mod search_model;
 mod smart_snippet_inserter;
@@ -49,7 +50,7 @@ mod undo_redo;
 mod workbench;
 mod workspace_trust;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, channel};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -100,9 +101,10 @@ fn main() -> anyhow::Result<()> {
     // Typed before the capture, as port/tools/ref-screenshot types KEYS into the reference.
     let screenshot_keys: Vec<Keystroke> = flag_value("--screenshot-keys").unwrap_or_default().split_whitespace().map(Keystroke::parse).collect::<Result<_, _>>()?;
     let positional: Vec<&String> = positional_indexes(&args).into_iter().map(|index| &args[index]).collect();
-    let canonical = |path: &String| std::fs::canonicalize(path).with_context(|| format!("opening {path}"));
-    let workspace = positional.first().map(|path| canonical(path)).transpose()?.map(Workspace::open);
-    let file = positional.get(1).map(|path| canonical(path)).transpose()?;
+    // windowsMainService.ts keeps the path as given (no realpath), so /var stays /var on macOS.
+    let resolve = |path: &String| std::fs::metadata(path).and_then(|_| std::path::absolute(path)).with_context(|| format!("opening {path}"));
+    let workspace = positional.first().map(|path| resolve(path)).transpose()?.map(Workspace::open);
+    let file = positional.get(1).map(|path| resolve(path)).transpose()?;
     let development = ExtensionDevelopment::from_args(&args)?;
 
     let app_root = std::env::current_dir()?;
@@ -127,7 +129,8 @@ fn main() -> anyhow::Result<()> {
         false => Arc::new(Mutex::new(open_shared_storage(flag_value("--shared-data-dir").map(PathBuf::from))?)),
     };
     let setting = |key: &str| settings.get_value(Some(key), &Overrides::default());
-    let workspace_trust = workspace_trust::WorkspaceTrust::new(shared_storage, workspace_trust::Startup {
+    add_recently_opened(&mut shared_storage.lock().unwrap(), workspace.as_ref(), file.as_deref());
+    let workspace_trust = workspace_trust::WorkspaceTrust::new(shared_storage.clone(), workspace_trust::Startup {
         // workspaceTrust.ts isWorkspaceTrustEnabled: only an explicit false turns the setting off.
         enabled: !args.iter().any(|arg| arg == "--disable-workspace-trust") && setting("security.workspace.trust.enabled") != Some(json!(false)),
         workspace: workspace.as_ref(),
@@ -185,6 +188,8 @@ fn main() -> anyhow::Result<()> {
                 workbench.restore_workspace_state(storage.workspace.clone());
                 let workspace_trusted = workspace_trust.is_trusted();
                 workbench.workspace_trust = workspace_trust;
+                workbench.shared_storage = shared_storage;
+                workbench.watch_recently_opened(window, cx);
                 workbench.watch_editor_focus(window, cx);
                 workbench.show_trust_modal_on_start(window, cx);
                 if let Some(file) = file {
@@ -430,6 +435,21 @@ fn icon_theme_follows_workbench_icon_theme() {
     assert!(!icons_with(r#"{ "workbench.iconTheme": null }"#));
     assert!(icons_with(r#"{ "workbench.iconTheme": "no-such-theme" }"#));
     std::fs::remove_dir_all(&user_home).unwrap();
+}
+
+/// windowsMainService.ts `open` with `addRecentlyOpened`: the window's folder or workspace and its file.
+fn add_recently_opened(shared: &mut storage::Storage, workspace: Option<&Workspace>, file: Option<&Path>) {
+    let mut opened = Vec::new();
+    if let Some(workspace) = workspace {
+        opened.push(match &workspace.file {
+            Some(file) => recently_opened::entry(recently_opened::Kind::Workspace, file, None),
+            None => recently_opened::entry(recently_opened::Kind::Folder, &workspace.folders[0].path, None),
+        });
+    }
+    opened.extend(file.map(|file| recently_opened::entry(recently_opened::Kind::File, file, None)));
+    if !opened.is_empty() {
+        recently_opened::add(shared, opened);
+    }
 }
 
 /// The APPLICATION_SHARED storage, `sharedStorage/state.vscdb` in `--shared-data-dir`, else in
