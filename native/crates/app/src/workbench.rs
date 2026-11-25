@@ -212,6 +212,8 @@ pub struct Workbench {
     /// `MenuRegistry`.
     pub menus: Vec<crate::menus::MenuItem>,
     pub(crate) context_menu: Option<context_menu::ContextMenu>,
+    /// The activity bar's Manage button, the anchor of its menu.
+    manage_bounds: Rc<Cell<gpui::Bounds<gpui::Pixels>>>,
     context_menus_shown: usize,
     pub(crate) notifications: notifications_view::NotificationsUi,
     /// Extension status bar entries, in statusbarModel.ts order.
@@ -288,6 +290,7 @@ impl Render for Workbench {
             .children(context_menu)
             .children(dialog)
             .children(hover)
+            .on_modifiers_changed(cx.listener(|workbench, event: &gpui::ModifiersChangedEvent, _, cx| workbench.hover_modifiers_changed(event.modifiers.alt, cx)))
             // style.css: .macos-tahoe windows round 16px, older macOS 10px.
             .when_some(window_border, |root, border| root.child(div().absolute().inset_0().border_1().rounded(px(if is_tahoe_or_newer() { 16. } else { 10. })).border_color(border)))
     }
@@ -370,6 +373,7 @@ impl Workbench {
             extension_editors: Vec::new(),
             menus: crate::menus::workbench_menus(),
             context_menu: None,
+            manage_bounds: Rc::default(),
             context_menus_shown: 0,
             notifications: notifications_view::NotificationsUi::new(cx),
             status_entries: Vec::new(),
@@ -685,7 +689,18 @@ impl Workbench {
                     .gap(px(8.))
                     .children(items),
             )
-            .child(self.icon("settings-gear", 36., 24., inactive).cursor_pointer().child(self.hover_target("manage", HoverContent::Text("Manage".into()), hover)))
+            .child(
+                self.icon("settings-gear", 36., 24., inactive)
+                    .cursor_pointer()
+                    .child(output_view::bounds_tracker(self.manage_bounds.clone()))
+                    .child(self.hover_target("manage", HoverContent::Text("Manage".into()), hover))
+                    // globalCompositeBar.ts: a left mouse down opens MenuId.GlobalActivity beside the button.
+                    .on_mouse_down(MouseButton::Left, cx.listener(|workbench, _, window, cx| {
+                        let context = workbench.key_context(window);
+                        let actions = crate::menus::menu_actions(&workbench.menus, MenuId::GlobalActivity, &context);
+                        workbench.show_context_menu_beside(actions, &context, workbench.manage_bounds.get(), window, cx);
+                    })),
+            )
     }
 
     /// The checked view: a 32px rounded indicator behind the icon (activityaction.css); High Contrast
@@ -784,7 +799,7 @@ impl Workbench {
                 }
                 false => icons.file_icon(&icon_path, self.languages.language_of(&icon_path, ""), self.theme.kind, 13., label_line, foreground),
             });
-            let indent = 8. * (row.depth - 1) as f32;
+            let indent = self.tree_indent() * (row.depth - 1) as f32;
             let has_nests = row.has_nests;
             let (twistie_path, row_expanded) = (path.clone(), row.expanded);
             let twistie_element = |chevron| {
@@ -873,17 +888,21 @@ impl Workbench {
                     }))
                     .on_click(cx.listener(move |workbench, event: &ClickEvent, window, cx| {
                         let modifiers = event.modifiers();
+                        let mode = workbench.list_click_mode();
+                        let multi_select = if mode.alt_multi_select { modifiers.alt } else { modifiers.platform };
+                        let double_click = event.click_count() == 2;
                         window.focus(&workbench.explorer.focus.clone(), cx);
                         let tree = workbench.folder.as_mut().expect("rows exist only with a folder");
-                        tree.click_select(&path, modifiers.platform, modifiers.shift);
+                        tree.click_select(&path, multi_select, modifiers.shift);
                         cx.notify();
-                        if modifiers.platform || modifiers.shift {
+                        if multi_select || modifiers.shift {
                             return;
                         }
-                        if is_dir {
-                            tree.toggle(&path);
-                        } else {
-                            workbench.open_file(path.clone(), event.click_count() == 2, window, cx);
+                        match is_dir {
+                            true if mode.expand_on_double_click && !double_click => {}
+                            true => tree.toggle(&path),
+                            false if mode.open_on_double_click && !double_click => {}
+                            false => workbench.open_file(path.clone(), double_click, window, cx),
                         }
                     }))
                 })

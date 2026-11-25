@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use gpui::{
-    Animation, AnimationExt, AnyElement, Bounds, BoxShadow, Context, FocusHandle, Keystroke, ModifiersChangedEvent, MouseButton, MouseUpEvent, Pixels, Point, Size, Subscription,
+    Animation, AnimationExt, AnyElement, Bounds, BoxShadow, Context, FocusHandle, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseUpEvent, Pixels, Point, Size, Subscription,
     Task, TextRun, Window, div, point, prelude::*, px, rgba,
 };
 use serde_json::Value;
@@ -31,12 +31,28 @@ const MIN_WIDTH: f32 = 160.;
 const RADIUS: f32 = 8.;
 const ITEM_RADIUS: f32 = 6.;
 
-pub struct ContextMenu {
+/// The submenu indicator: a 16px chevron in `padding: 0 1.8em` of its 16px font, pulled 20px right.
+const SUBMENU_INDICATOR_WIDTH: f32 = 2. * 1.8 * 16. + 16. - 20.;
+/// `SubmenuMenuActionViewItem`'s `showScheduler` and `hideScheduler`.
+const SUBMENU_SHOW_DELAY: Duration = Duration::from_millis(250);
+const SUBMENU_HIDE_DELAY: Duration = Duration::from_millis(750);
+
+/// One open menu: the root, then each open submenu, opened from item `parent` of the level before it.
+pub(super) struct MenuLevel {
     pub(super) actions: Vec<MenuAction>,
+    pub(super) origin: Point<Pixels>,
+    width: f32,
+    pub(super) focused: Option<usize>,
+    parent: Option<usize>,
+}
+
+pub struct ContextMenu {
+    /// The root menu and its open submenus; keys go to the last.
+    pub(super) levels: Vec<MenuLevel>,
     /// Each command's keybinding label, looked up when the menu showed.
     keybindings: HashMap<String, String>,
-    pub(super) origin: Point<Pixels>,
-    pub(super) focused: Option<usize>,
+    /// The pending submenu show or hide.
+    submenu_timer: Option<Task<()>>,
     /// `keyboard-navigation`: the last input was a key, so the focused item shows its selection border.
     keyboard_navigation: bool,
     /// `ModifierKeyEmitter.keyStatus.altKey`: items with an `alt` command show it instead.
@@ -68,14 +84,7 @@ impl Workbench {
             return;
         }
         let mut keybindings = HashMap::new();
-        for action in &actions {
-            let MenuAction::Command { id, alt, .. } = action else { continue };
-            for id in std::iter::once(id).chain(alt.as_ref().map(|(id, _)| id)) {
-                if let Some(item) = self.keybindings.resolver.lookup_primary_keybinding(id, context) {
-                    keybindings.insert(id.clone(), keybindings::label(&item.keybinding));
-                }
-            }
-        }
+        self.collect_menu_keybindings(&actions, context, &mut keybindings);
         let width = menu_width(&actions, &keybindings, window);
         let viewport = window.viewport_size();
         let origin = layout2d(Size { width: f32::from(viewport.width), height: f32::from(viewport.height) }, Size { width, height: menu_height(&actions) }, anchor_rect(anchor), LayoutAnchorPosition::Before);
@@ -99,10 +108,9 @@ impl Workbench {
         });
         self.context_menus_shown += 1;
         self.context_menu = Some(ContextMenu {
-            actions,
+            levels: vec![MenuLevel { actions, origin, width, focused: None, parent: None }],
             keybindings,
-            origin,
-            focused: None,
+            submenu_timer: None,
             keyboard_navigation: false,
             alt: window.modifiers().alt,
             mouse_up_enabled: false,
@@ -115,6 +123,105 @@ impl Workbench {
             _window_deactivated: window_deactivated,
         });
         cx.notify();
+    }
+
+    fn collect_menu_keybindings(&self, actions: &[MenuAction], context: &HashMap<String, Value>, keybindings: &mut HashMap<String, String>) {
+        for action in actions {
+            match action {
+                MenuAction::Command { id, alt, .. } => {
+                    for id in std::iter::once(id).chain(alt.as_ref().map(|(id, _)| id)) {
+                        if let Some(item) = self.keybindings.resolver.lookup_primary_keybinding(id, context) {
+                            keybindings.insert(id.clone(), keybindings::label(&item.keybinding));
+                        }
+                    }
+                }
+                MenuAction::Submenu { actions, .. } => self.collect_menu_keybindings(actions, context, keybindings),
+                MenuAction::Separator => {}
+            }
+        }
+    }
+
+    /// `SubmenuMenuActionViewItem.createSubmenu`: the submenu of item `index` of `level` opens beside it, placed by
+    /// `calculateSubmenuMenuLayout`, replacing any submenu open from that level.
+    fn open_context_submenu(&mut self, level: usize, index: usize, select_first: bool, window: &Window, cx: &mut Context<Self>) {
+        let Some(menu) = self.context_menu.as_mut() else { return };
+        menu.submenu_timer = None;
+        // `Menu.trigger`: the submenu's item keeps the focus in its menu.
+        menu.levels[level].focused = Some(index);
+        if menu.levels.get(level + 1).is_some_and(|open| open.parent == Some(index)) {
+            menu.levels.truncate(level + 2);
+            if select_first && menu.levels[level + 1].focused.is_none() {
+                let submenu = &mut menu.levels[level + 1];
+                submenu.focused = focus_next(&submenu.actions, submenu.actions.len() - 1);
+            }
+            cx.notify();
+            return;
+        }
+        let parent = &menu.levels[level];
+        let MenuAction::Submenu { actions, .. } = &parent.actions[index] else { return };
+        let actions = actions.clone();
+        let item_top: f32 = parent.actions[..index].iter().map(row_height).sum();
+        // The entry box: the item's row across the menu, grown by the bar's padding above and below.
+        let entry = Bounds {
+            origin: point(f32::from(parent.origin.x) + 1., f32::from(parent.origin.y) + 1. + item_top),
+            size: Size { width: parent.width - 2., height: ITEM_HEIGHT + 2. * BAR_PADDING },
+        };
+        let width = menu_width(&actions, &menu.keybindings, window);
+        let viewport = window.viewport_size();
+        let viewport = Size { width: f32::from(viewport.width), height: f32::from(viewport.height) };
+        let origin = submenu_layout(viewport, Size { width, height: menu_height(&actions) }, entry);
+        let focused = if select_first { focus_next(&actions, actions.len() - 1) } else { None };
+        menu.levels.truncate(level + 1);
+        menu.levels.push(MenuLevel { actions, origin, width, focused, parent: Some(index) });
+        cx.notify();
+    }
+
+    /// The pointer reached item `index` of `level`, or left the menus (`None`): a submenu item opens its submenu
+    /// after 250ms if the pointer stays, any other move closes the submenu of that level after 750ms unless the
+    /// pointer went back to its item.
+    fn context_menu_hover(&mut self, level: usize, index: Option<usize>, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(menu) = self.context_menu.as_mut() else { return };
+        menu.keyboard_navigation = false;
+        for (at, open) in menu.levels.iter_mut().enumerate() {
+            if at >= level {
+                open.focused = None;
+            }
+        }
+        menu.levels[level].focused = index;
+        cx.notify();
+        let opens = index.filter(|index| matches!(menu.levels[level].actions[*index], MenuAction::Submenu { .. }));
+        let delay = match (opens, menu.levels.len() > level + 1) {
+            (Some(_), _) => SUBMENU_SHOW_DELAY,
+            (None, true) => SUBMENU_HIDE_DELAY,
+            (None, false) => return,
+        };
+        menu.submenu_timer = Some(cx.spawn_in(window, async move |workbench, cx| {
+            cx.background_executor().timer(delay).await;
+            let _ = workbench.update_in(cx, |workbench, window, cx| {
+                let Some(menu) = workbench.context_menu.as_mut() else { return };
+                let still = menu.levels.get(level).is_some_and(|open| open.focused == index) && !menu.keyboard_navigation;
+                match opens {
+                    Some(index) if still => workbench.open_context_submenu(level, index, false, window, cx),
+                    Some(_) => {}
+                    None if menu.levels.get(level + 1).is_some_and(|open| menu.levels[level].focused != open.parent) => {
+                        menu.levels.truncate(level + 1);
+                        cx.notify();
+                    }
+                    None => {}
+                }
+            });
+        }));
+    }
+
+    /// A menu beside `anchor` (`AnchorAxisAlignment.HORIZONTAL`, `AnchorAlignment.RIGHT`): right of it, top aligned
+    /// with it, or bottom aligned where it does not fit below, as the activity bar's global activity menus open.
+    pub(super) fn show_context_menu_beside(&mut self, actions: Vec<MenuAction>, context: &HashMap<String, Value>, anchor: Bounds<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_context_menu_actions(actions, context, anchor, Vec::new(), window, cx);
+        let Some(menu) = self.context_menu.as_mut() else { return };
+        let root = &mut menu.levels[0];
+        let viewport = window.viewport_size();
+        let viewport = Size { width: f32::from(viewport.width), height: f32::from(viewport.height) };
+        root.origin = layout2d_beside(viewport, Size { width: root.width, height: menu_height(&root.actions) }, anchor_rect(anchor));
     }
 
     /// `hideContextView`: focus goes back to where it was if the menu still has it.
@@ -134,20 +241,44 @@ impl Workbench {
         let Some(menu) = self.context_menu.as_mut() else { return false };
         menu.keyboard_navigation = true;
         cx.notify();
+        // The last open submenu has the focus.
+        let level = menu.levels.len() - 1;
+        let open = &mut menu.levels[level];
+        let trigger_key = matches!(keystroke.key.as_str(), "enter" | "space");
+        // `isTriggerKeyEvent`: Alt+Enter and Alt+Space run the focused item's alt command when it shows one.
+        if trigger_key && keystroke.modifiers == (Modifiers { alt: true, ..Default::default() }) {
+            let Some(index) = open.focused else { return false };
+            if !matches!(&open.actions[index], MenuAction::Command { enabled: true, alt: Some(_), .. }) {
+                return false;
+            }
+            self.run_context_menu_item(level, index, true, window, cx);
+            return true;
+        }
         if keystroke.modifiers.modified() {
             return false;
         }
-        let last = menu.actions.len() - 1;
+        let last = open.actions.len() - 1;
+        let on_submenu = open.focused.is_some_and(|index| matches!(open.actions[index], MenuAction::Submenu { .. }));
         match keystroke.key.as_str() {
-            "up" => menu.focused = focus_previous(&menu.actions, menu.focused.unwrap_or(0)),
-            "down" => menu.focused = focus_next(&menu.actions, menu.focused.unwrap_or(last)),
-            "home" | "pageup" => menu.focused = focus_next(&menu.actions, last),
-            "end" | "pagedown" => menu.focused = focus_previous(&menu.actions, 0),
+            "up" => open.focused = focus_previous(&open.actions, open.focused.unwrap_or(0)),
+            "down" => open.focused = focus_next(&open.actions, open.focused.unwrap_or(last)),
+            "home" | "pageup" => open.focused = focus_next(&open.actions, last),
+            "end" | "pagedown" => open.focused = focus_previous(&open.actions, 0),
+            // A submenu's Left and Escape close it, back to its item.
+            "left" | "escape" if level > 0 => {
+                menu.levels.pop();
+                menu.submenu_timer = None;
+            }
             "escape" => self.hide_context_menu(window, cx),
-            // `triggerKeys` on macOS: Enter and Space on key down run the focused item, without its alt command.
+            // Right, Enter and Space on a submenu item open it with its first item focused.
+            "right" | "enter" | "space" if on_submenu => {
+                let index = open.focused.unwrap_or_default();
+                self.open_context_submenu(level, index, true, window, cx);
+            }
+            // `triggerKeys` on macOS: Enter and Space on key down run the focused item.
             "enter" | "space" => {
-                if let Some(index) = menu.focused {
-                    self.run_context_menu_item(index, false, window, cx);
+                if let Some(index) = open.focused {
+                    self.run_context_menu_item(level, index, false, window, cx);
                 }
             }
             // Menus stop tab navigation.
@@ -158,9 +289,13 @@ impl Workbench {
     }
 
     /// `ActionRunner.run`: a disabled item does nothing; else the menu hides and the command runs with its args.
-    fn run_context_menu_item(&mut self, index: usize, alt: bool, window: &mut Window, cx: &mut Context<Self>) {
+    fn run_context_menu_item(&mut self, level: usize, index: usize, alt: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some(menu) = self.context_menu.as_ref() else { return };
-        let MenuAction::Command { id, enabled: true, alt: alt_command, .. } = &menu.actions[index] else { return };
+        if matches!(menu.levels[level].actions[index], MenuAction::Submenu { .. }) {
+            // `SubmenuMenuActionViewItem.onClick`: a click opens the submenu.
+            return self.open_context_submenu(level, index, true, window, cx);
+        }
+        let MenuAction::Command { id, enabled: true, alt: alt_command, .. } = &menu.levels[level].actions[index] else { return };
         let id = match alt_command {
             Some((alt_id, _)) if alt => alt_id.clone(),
             _ => id.clone(),
@@ -174,15 +309,33 @@ impl Workbench {
     /// The menu over a block that takes every mouse down outside it and hides the menu (`blockMouse`).
     pub(super) fn context_menu_widget(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let menu = self.context_menu.as_ref()?;
+        let panels: Vec<_> = (0..menu.levels.len()).map(|level| self.context_menu_panel(menu, level, cx)).collect();
+        let block = div()
+            .id("context-view-block")
+            .absolute()
+            .inset_0()
+            .occlude()
+            // The pointer leaving the menus unfocuses their items (`MOUSE_OUT`); `on_hover` would also fire on key presses.
+            .on_mouse_move(cx.listener(|workbench, _, window, cx| {
+                if workbench.context_menu.as_ref().is_some_and(|menu| menu.levels[0].focused.is_some() && !menu.keyboard_navigation) {
+                    workbench.context_menu_hover(0, None, window, cx);
+                }
+            }))
+            .on_any_mouse_down(cx.listener(|workbench, _, window, cx| workbench.hide_context_menu(window, cx)));
+        Some(div().absolute().inset_0().child(block).children(panels).into_any_element())
+    }
+
+    fn context_menu_panel(&self, menu: &ContextMenu, level: usize, cx: &mut Context<Self>) -> AnyElement {
+        let open = &menu.levels[level];
         let high_contrast = self.theme.kind.is_high_contrast();
         let border = self.theme.color("menu.border").or(self.theme.color("editorWidget.border"));
-        let rows: Vec<_> = menu.actions.iter().enumerate().map(|(index, action)| self.context_menu_item(menu, index, action, cx)).collect();
+        let rows: Vec<_> = open.actions.iter().enumerate().map(|(index, action)| self.context_menu_item(menu, level, index, action, cx)).collect();
         let panel = div()
-            .id("context-menu")
-            .track_focus(&menu.focus)
+            .id(("context-menu", level))
+            .when(level == 0, |panel| panel.track_focus(&menu.focus))
             .absolute()
-            .left(menu.origin.x)
-            .top(menu.origin.y)
+            .left(open.origin.x)
+            .top(open.origin.y)
             // `min-width: 160px` holds for the content box, inside the 1px border.
             .min_w(px(MIN_WIDTH + 2.))
             .py(px(BAR_PADDING))
@@ -204,40 +357,27 @@ impl Workbench {
                 }
             }))
             .children(rows);
-        // Frosted glass menus open with a 0.97 scale animation and no fade.
+        // Frosted glass menus open with a 0.97 scale animation and no fade; submenus have neither (`:not(.monaco-submenu)`).
         // shortcut: GPUI has no element transforms, so frosted glass menus open without their scale animation.
-        let panel = match high_contrast {
+        match high_contrast && level == 0 {
             true => panel.with_animation(("context-menu-open", menu.shown), Animation::new(Duration::from_millis(83)), |panel, delta| panel.opacity(delta)).into_any_element(),
             false => panel.into_any_element(),
-        };
-        let block = div()
-            .id("context-view-block")
-            .absolute()
-            .inset_0()
-            .occlude()
-            // The pointer leaving the menu unfocuses the item (`MOUSE_OUT`); `on_hover` would also fire on key presses.
-            .on_mouse_move(cx.listener(|workbench, _, _, cx| {
-                if let Some(menu) = workbench.context_menu.as_mut().filter(|menu| menu.focused.is_some() && !menu.keyboard_navigation) {
-                    menu.focused = None;
-                    cx.notify();
-                }
-            }))
-            .on_any_mouse_down(cx.listener(|workbench, _, window, cx| workbench.hide_context_menu(window, cx)));
-        Some(div().absolute().inset_0().child(block).child(panel).into_any_element())
+        }
     }
 
-    fn context_menu_item(&self, menu: &ContextMenu, index: usize, action: &MenuAction, cx: &mut Context<Self>) -> AnyElement {
-        let MenuAction::Command { id, title, enabled, checked, alt } = action else {
-            // `.action-label.separator`: the bar's full width, 5px margins and a 1px bottom border.
-            return div().my(px(5.)).border_b_1().border_color(self.color("menu.separatorBackground")).into_any_element();
+    fn context_menu_item(&self, menu: &ContextMenu, level: usize, index: usize, action: &MenuAction, cx: &mut Context<Self>) -> AnyElement {
+        // A submenu item is always enabled: native menus do not observe enablement on submenus (`updateEnabled`).
+        let (id, title, enabled, checked, submenu) = match action {
+            // `getActionForAltMode`: an enabled item shows its alt command while Alt is held.
+            MenuAction::Command { alt: Some((alt_id, alt_title)), enabled: true, checked, .. } if menu.alt => (Some(alt_id), alt_title, true, *checked, false),
+            MenuAction::Command { id, title, enabled, checked, .. } => (Some(id), title, *enabled, *checked, false),
+            MenuAction::Submenu { title, checked, .. } => (None, title, true, *checked, true),
+            MenuAction::Separator => {
+                // `.action-label.separator`: the bar's full width, 5px margins and a 1px bottom border.
+                return div().my(px(5.)).border_b_1().border_color(self.color("menu.separatorBackground")).into_any_element();
+            }
         };
-        // `getActionForAltMode`: an enabled item shows its alt command while Alt is held.
-        let (id, title) = match alt {
-            Some((alt_id, alt_title)) if menu.alt && *enabled => (alt_id, alt_title),
-            _ => (id, title),
-        };
-        let enabled = *enabled;
-        let selected = enabled && menu.focused == Some(index);
+        let selected = enabled && menu.levels[level].focused == Some(index);
         let selection_border = self.theme.color("menu.selectionBorder").filter(|_| selected);
         let high_contrast = self.theme.kind.is_high_contrast();
         // Only keyboard focus shows the selection border, except in high contrast, where the pointer's is dashed.
@@ -254,11 +394,21 @@ impl Workbench {
             (true, true) => 1.,
             (true, false) => 0.7,
         };
+        let foreground = match selected {
+            true => self.theme.color("list.hoverForeground"),
+            false => None,
+        }
+        .unwrap_or_else(|| self.foreground_or("menu.foreground"));
+        let trailing = match submenu {
+            // `.submenu-indicator`: the `menu-submenu` chevron at 0.7 opacity, 8.8px from the item's right edge.
+            true => div().flex_1().flex().justify_end().pr(px(1.8 * 16. - 20.)).opacity(0.7).child(self.icon("chevron-right", 16., 16., foreground)).into_any_element(),
+            false => div().px(px(LABEL_PADDING)).line_height(px(FONT_SIZE)).opacity(keybinding_opacity).child(id.and_then(|id| menu.keybindings.get(id).cloned()).unwrap_or_default()).into_any_element(),
+        };
         let run = |alt_held: fn(&MouseUpEvent) -> bool| {
             cx.listener(move |workbench: &mut Workbench, event: &MouseUpEvent, window, cx| {
                 cx.stop_propagation();
                 if workbench.context_menu.as_ref().is_some_and(|menu| menu.mouse_up_enabled) {
-                    workbench.run_context_menu_item(index, alt_held(event), window, cx);
+                    workbench.run_context_menu_item(level, index, alt_held(event), window, cx);
                 }
             })
         };
@@ -275,13 +425,7 @@ impl Workbench {
             .when(selected && !high_contrast, |item| item.bg(self.color("list.hoverBackground")).when_some(self.theme.color("list.hoverForeground"), |item, color| item.text_color(color)))
             .children(outline)
             // `.menu-item-check`: the `menu-selection` codicon centered in the label's left 2em padding.
-            .when(*checked, |item| {
-                let color = match selected {
-                    true => self.theme.color("list.hoverForeground"),
-                    false => None,
-                };
-                item.child(self.icon("check", LABEL_PADDING, FONT_SIZE, color.unwrap_or_else(|| self.foreground_or("menu.foreground"))).absolute().left_0().top_0().h_full())
-            })
+            .when(checked, |item| item.child(self.icon("check", LABEL_PADDING, FONT_SIZE, foreground).absolute().left_0().top_0().h_full()))
             .child(
                 div()
                     .flex_1()
@@ -290,12 +434,10 @@ impl Workbench {
                     .when(!enabled, |label| label.text_color(self.color("disabledForeground")))
                     .child(mnemonic_menu_label(title)),
             )
-            .child(div().px(px(LABEL_PADDING)).line_height(px(FONT_SIZE)).opacity(keybinding_opacity).child(menu.keybindings.get(id).cloned().unwrap_or_default()))
-            .on_mouse_move(cx.listener(move |workbench, _, _, cx| {
-                if let Some(menu) = workbench.context_menu.as_mut().filter(|menu| menu.focused != Some(index) || menu.keyboard_navigation) {
-                    menu.keyboard_navigation = false;
-                    menu.focused = Some(index);
-                    cx.notify();
+            .child(trailing)
+            .on_mouse_move(cx.listener(move |workbench, _, window, cx| {
+                if workbench.context_menu.as_ref().is_some_and(|menu| menu.levels[level].focused != Some(index) || menu.keyboard_navigation) {
+                    workbench.context_menu_hover(level, Some(index), window, cx);
                 }
             }))
             // The click runs the item's alt command when Alt is held (`BaseActionViewItem.onClick`).
@@ -310,9 +452,13 @@ impl Workbench {
 fn menu_width(actions: &[MenuAction], keybindings: &HashMap<String, String>, window: &Window) -> f32 {
     let mut content = MIN_WIDTH;
     for action in actions {
-        let MenuAction::Command { id, title, .. } = action else { continue };
-        let keybinding = keybindings.get(id).map_or(0., |label| text_width(label, window));
-        content = content.max(text_width(&mnemonic_menu_label(title), window) + keybinding + 4. * LABEL_PADDING + 2. * ITEM_MARGIN);
+        let trailing = match action {
+            MenuAction::Command { id, .. } => keybindings.get(id).map_or(0., |label| text_width(label, window)) + 2. * LABEL_PADDING,
+            MenuAction::Submenu { .. } => SUBMENU_INDICATOR_WIDTH,
+            MenuAction::Separator => continue,
+        };
+        let (MenuAction::Command { title, .. } | MenuAction::Submenu { title, .. }) = action else { continue };
+        content = content.max(text_width(&mnemonic_menu_label(title), window) + 2. * LABEL_PADDING + trailing + 2. * ITEM_MARGIN);
     }
     content + 2.
 }
@@ -324,8 +470,42 @@ fn text_width(text: &str, window: &Window) -> f32 {
 
 /// The border, the bar's padding, the items and the separators.
 fn menu_height(actions: &[MenuAction]) -> f32 {
-    let items: f32 = actions.iter().map(|action| if *action == MenuAction::Separator { SEPARATOR_HEIGHT } else { ITEM_HEIGHT }).sum();
-    2. + 2. * BAR_PADDING + items
+    2. + 2. * BAR_PADDING + actions.iter().map(row_height).sum::<f32>()
+}
+
+fn row_height(action: &MenuAction) -> f32 {
+    if *action == MenuAction::Separator { SEPARATOR_HEIGHT } else { ITEM_HEIGHT }
+}
+
+/// layout.ts `layout2d` with `AnchorAxisAlignment.HORIZONTAL` and `AnchorAlignment.RIGHT`: after the anchor on the
+/// horizontal axis, then aligned with it below, unless the view overlaps it and has to move aside.
+pub(super) fn layout2d_beside(viewport: Size<f32>, view: Size<f32>, anchor: Bounds<f32>) -> Point<Pixels> {
+    let horizontal = LayoutAnchor { offset: anchor.origin.x, size: anchor.size.width, mode: LayoutAnchorMode::Avoid, position: LayoutAnchorPosition::After };
+    let left = layout(viewport.width, view.width, &horizontal);
+    let overlaps = left < horizontal.offset + horizontal.size && horizontal.offset < left + view.width;
+    let mode = if overlaps { LayoutAnchorMode::Avoid } else { LayoutAnchorMode::Align };
+    let vertical = LayoutAnchor { offset: anchor.origin.y, size: anchor.size.height, mode, position: LayoutAnchorPosition::Before };
+    point(px(left), px(layout(viewport.height, view.height, &vertical)))
+}
+
+/// `SubmenuMenuActionViewItem.calculateSubmenuMenuLayout` expanding right and below: beside the entry, else on its
+/// other side, else over the menu 10px in; then from the entry's top down, or up so its bottom meets the entry's.
+fn submenu_layout(viewport: Size<f32>, submenu: Size<f32>, mut entry: Bounds<f32>) -> Point<Pixels> {
+    let horizontal = LayoutAnchor { offset: entry.origin.x, size: entry.size.width, mode: LayoutAnchorMode::Avoid, position: LayoutAnchorPosition::Before };
+    let mut left = layout(viewport.width, submenu.width, &horizontal);
+    if left >= entry.origin.x && left < entry.origin.x + entry.size.width {
+        if entry.origin.x + 10. + submenu.width <= viewport.width {
+            left = entry.origin.x + 10.;
+        }
+        entry.origin.y += 10.;
+        entry.size.height = 0.;
+    }
+    let vertical = LayoutAnchor { offset: entry.origin.y, size: 0., mode: LayoutAnchorMode::Avoid, position: LayoutAnchorPosition::Before };
+    let mut top = layout(viewport.height, submenu.height, &vertical);
+    if top + submenu.height == entry.origin.y && top + entry.size.height + submenu.height <= viewport.height {
+        top += entry.size.height;
+    }
+    point(px(left), px(top))
 }
 
 /// `getAnchorRect` of a mouse event: the pointer as a 2px block, so the menu does not open under it.

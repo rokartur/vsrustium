@@ -588,7 +588,7 @@ impl Workbench {
             false => (self.color("list.inactiveSelectionBackground"), self.theme.color("list.inactiveSelectionForeground")),
         };
         let focus_outline = self.theme.color("list.focusOutline").or(self.theme.color("focusBorder")).filter(|_| tree_focused && is_focused);
-        let indent = 8. * (row.depth - 1) as f32;
+        let indent = self.tree_indent() * (row.depth - 1) as f32;
         let (content, collapsed) = match &row.kind {
             RowKind::Folder { label, files, collapsed } => (self.search_folder_row(&row.key, label, files, *collapsed, is_focused, is_selected, foreground, cx), Some(*collapsed)),
             RowKind::File { file, collapsed } => (self.search_file_row(&row.key, *file, is_focused, is_selected, foreground, cx), Some(*collapsed)),

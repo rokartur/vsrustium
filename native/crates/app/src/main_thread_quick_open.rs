@@ -195,7 +195,7 @@ impl Workbench {
                 "matchOnLabel" => input.match_on_label = value.as_bool().unwrap_or(true),
                 "sortByLabel" => input.sort_by_label = value.as_bool().unwrap_or(true),
                 "hideInput" => input.hide_input = flag(),
-                // keepScrollPosition: the list keeps its scroll position on every update already.
+                "keepScrollPosition" => input.keep_scroll_position = flag(),
                 _ => {}
             }
             if let Some(input) = self.quick_inputs.get_mut(id) {

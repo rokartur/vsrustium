@@ -418,6 +418,20 @@ impl Workbench {
         path.ancestors().skip(1).take_while(|folder| *folder != root.path).any(|folder| excluded(folder, None))
     }
 
+    /// listService.ts `workbench.list.multiSelectModifier`, `workbench.list.openMode` and `workbench.tree.expandMode`.
+    pub(super) fn list_click_mode(&self) -> ListClickMode {
+        ListClickMode {
+            alt_multi_select: self.setting("workbench.list.multiSelectModifier") == "alt",
+            open_on_double_click: self.setting("workbench.list.openMode") == "doubleClick",
+            expand_on_double_click: self.setting("workbench.tree.expandMode") == "doubleClick",
+        }
+    }
+
+    /// `workbench.tree.indent`, clamped to 0..40 as abstractTree.ts `updateOptions` does; 8 without a number.
+    pub(super) fn tree_indent(&self) -> f32 {
+        tree_indent(&self.setting("workbench.tree.indent"))
+    }
+
     /// `openExplorerAndCreate`: the new item's row with the name editor, in the focused folder or the focused
     /// file's folder.
     fn new_explorer_item(&mut self, is_dir: bool, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
@@ -1344,4 +1358,16 @@ fn file_name(path: &Path) -> String {
 
 fn resource(path: &Path) -> Resource {
     Resource::file(path.to_string_lossy())
+}
+
+/// How clicks act on list rows; the defaults are Cmd for multi-selection and single clicks to open and expand.
+pub(super) struct ListClickMode {
+    pub(super) alt_multi_select: bool,
+    pub(super) open_on_double_click: bool,
+    pub(super) expand_on_double_click: bool,
+}
+
+/// `workbench.tree.indent` per level: clamped to 0..40 as abstractTree.ts `updateOptions` does, 8 when not a number.
+fn tree_indent(value: &Value) -> f32 {
+    value.as_f64().map_or(8., |indent| indent.clamp(0., 40.)) as f32
 }

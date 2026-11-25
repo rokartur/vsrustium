@@ -31,6 +31,7 @@ mod keybinding_editing;
 mod keybindings;
 mod keybindings_editor;
 mod keyboard_layout;
+mod keyboard_mapper;
 mod system_wide_keybindings;
 mod language_features;
 mod languages;
@@ -232,6 +233,7 @@ fn main() -> anyhow::Result<()> {
                 let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
                 workbench.start_logs(output::log_levels::argv_file(&home), window_logs.parent().expect("a session folder").to_path_buf(), cx);
                 workbench.skip_dialogs = development.as_ref().is_some_and(|development| development.tests_path.is_some());
+                workbench.refresh_keyboard_mapper();
                 workbench.load_keybindings(keybindings::default_keybindings(&extensions), keybindings_file.clone(), cx);
                 workbench.watch_settings_files(cx);
                 workbench.start_file_watcher(cx);

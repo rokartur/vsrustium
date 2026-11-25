@@ -245,8 +245,8 @@ fn keybindings_troubleshooting_logs_to_the_window_log(cx: &mut TestAppContext) {
     };
     press(&workbench, cx);
     let lines = std::fs::read_to_string(&log).unwrap();
-    assert!(lines.contains("[info] [KeybindingService]: / Received  keydown event - modifiers: [meta], key: k"), "{lines}");
-    assert!(lines.contains("[KeybindingService]: | Resolving cmd+k\n"), "{lines}");
+    assert!(lines.contains("[info] [KeybindingService]: / Received  keydown event - modifiers: [meta], code: , key: k"), "{lines}");
+    assert!(lines.contains("[KeybindingService]: | Resolving meta+K\n"), "{lines}");
     assert!(lines.contains("[KeybindingService]: \\ No keybinding entries.\n"), "{lines}");
 
     run(&workbench, cx, "workbench.action.toggleKeybindingsLog");

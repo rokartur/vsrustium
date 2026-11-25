@@ -196,7 +196,7 @@ fn rename_copy_paste_cut_delete_and_undo(cx: &mut TestAppContext) {
 fn menu_titles(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<String> {
     workbench.read_with(cx, |workbench, _| {
         let menu = workbench.context_menu.as_ref().expect("a context menu shows");
-        menu.actions
+        menu.levels[0].actions
             .iter()
             .map(|action| match action {
                 MenuAction::Command { title, enabled: true, .. } => title.clone(),
@@ -218,7 +218,7 @@ fn the_context_menu_selects_the_row_and_runs_its_items_with_keys_and_clicks(cx: 
     assert_eq!(workbench.read_with(cx, |workbench, _| workbench.folder.as_ref().unwrap().selected.clone()), [dir.join("a.txt")]);
 
     // The pointer focuses the item under it; Down goes on from there and skips the separator; Enter runs it.
-    let focused = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.context_menu.as_ref().unwrap().focused);
+    let focused = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.context_menu.as_ref().unwrap().levels[0].focused);
     cx.simulate_mouse_move(point(px(150.), px(148.)), None, Modifiers::none());
     assert_eq!(focused(cx), Some(0));
     cx.simulate_mouse_move(point(px(150.), px(400.)), None, Modifiers::none());
@@ -244,7 +244,7 @@ fn the_context_menu_selects_the_row_and_runs_its_items_with_keys_and_clicks(cx: 
     // A click runs the item only 100ms after the menu showed; with Alt, Delete is Delete Permanently.
     // Items are 24px from the border and the 4px padding, the separators 11px.
     cx.simulate_mouse_down(file_row, MouseButton::Right, Modifiers::none());
-    let top = workbench.read_with(cx, |workbench, _| f32::from(workbench.context_menu.as_ref().unwrap().origin.y));
+    let top = workbench.read_with(cx, |workbench, _| f32::from(workbench.context_menu.as_ref().unwrap().levels[0].origin.y));
     let delete = point(px(150.), px(top + 5. + 24. * 6. + 11. * 3. + 12.));
     cx.simulate_mouse_down(delete, MouseButton::Left, Modifiers::alt());
     cx.simulate_mouse_up(delete, MouseButton::Left, Modifiers::alt());
@@ -252,6 +252,23 @@ fn the_context_menu_selects_the_row_and_runs_its_items_with_keys_and_clicks(cx: 
     cx.executor().advance_clock(std::time::Duration::from_millis(100));
     cx.simulate_mouse_down(delete, MouseButton::Left, Modifiers::alt());
     cx.simulate_mouse_up(delete, MouseButton::Left, Modifiers::alt());
+    cx.run_until_parked();
+    assert_eq!(names(&dir), ["sub"]);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// menuEntryActionViewItem.test.ts 'Alt at open: false, Alt at activation: true': Alt+Enter runs the focused item's
+/// alt command, Delete Permanently for Delete.
+#[gpui::test]
+fn alt_enter_runs_the_alt_command_of_the_focused_item(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = explorer("explorer-context-menu-alt-enter", cx);
+    let file_row = point(px(120.), px(129.));
+    cx.simulate_mouse_down(file_row, MouseButton::Right, Modifiers::none());
+    cx.simulate_mouse_up(file_row, MouseButton::Right, Modifiers::none());
+    cx.run_until_parked();
+    cx.simulate_keystrokes("end shift-enter");
+    assert!(workbench.read_with(cx, |workbench, _| workbench.context_menu.is_some()), "Shift is no alt key on macOS");
+    cx.simulate_keystrokes("alt-enter");
     cx.run_until_parked();
     assert_eq!(names(&dir), ["sub"]);
     std::fs::remove_dir_all(&dir).unwrap();
@@ -550,4 +567,44 @@ fn new_file_creates_the_picked_file_next_to_the_last_active_file(cx: &mut TestAp
     let active = workbench.read_with(cx, |workbench, _| workbench.editors.active().map(|editor| (editor.document.path.clone(), editor.preview)));
     assert_eq!(active, Some((created, false)), "the new file opens pinned");
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn tree_indent_is_clamped_and_defaults_to_8() {
+    use serde_json::json;
+    let indents: Vec<f32> = [json!(null), json!("12"), json!(12), json!(100), json!(-3)].iter().map(super::tree_indent).collect();
+    assert_eq!(indents, [8., 8., 12., 40., 0.]);
+}
+
+/// listService.ts: `workbench.list.openMode` and `workbench.tree.expandMode` `doubleClick` need a double click to
+/// open a file or expand a folder; `workbench.list.multiSelectModifier` `alt` adds rows with Alt instead of Cmd.
+#[gpui::test]
+fn list_click_settings_change_what_clicks_do(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = explorer("list-click-settings", cx);
+    let user = dir.join("../list-click-settings-user");
+    std::fs::create_dir_all(&user).unwrap();
+    std::fs::write(user.join("settings.json"), r#"{ "workbench.list.openMode": "doubleClick", "workbench.tree.expandMode": "doubleClick", "workbench.list.multiSelectModifier": "alt" }"#).unwrap();
+    workbench.update(cx, |workbench, _| {
+        workbench.settings = std::sync::Arc::new(std::sync::Mutex::new(config::service::Settings::load(config::registry::Registry::with_extensions(&[]), user.clone(), None)));
+    });
+    let (sub_row, file_row) = (point(px(120.), px(107.)), point(px(120.), px(129.)));
+    let state = |cx: &mut VisualTestContext| {
+        workbench.read_with(cx, |workbench, _| {
+            let tree = workbench.folder.as_ref().unwrap();
+            (workbench.editors.active().is_some(), tree.is_expanded(&dir.join("sub")), tree.selected.len())
+        })
+    };
+
+    cx.simulate_click(file_row, Modifiers::none());
+    assert_eq!(state(cx), (false, false, 1), "a single click only selects the file");
+    cx.simulate_click(sub_row, Modifiers::none());
+    assert_eq!(state(cx), (false, false, 1), "a single click only selects the folder");
+    cx.simulate_click(file_row, Modifiers::alt());
+    assert_eq!(state(cx).2, 2, "Alt adds the file to the selection");
+    cx.simulate_click(sub_row, Modifiers::none());
+    cx.simulate_event(gpui::MouseDownEvent { position: sub_row, modifiers: Modifiers::none(), button: MouseButton::Left, click_count: 2, first_mouse: false });
+    cx.simulate_event(gpui::MouseUpEvent { position: sub_row, modifiers: Modifiers::none(), button: MouseButton::Left, click_count: 2 });
+    assert!(state(cx).1, "a double click expands the folder");
+    std::fs::remove_dir_all(user).unwrap();
+    std::fs::remove_dir_all(dir).unwrap();
 }

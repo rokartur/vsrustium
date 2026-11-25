@@ -569,7 +569,7 @@ impl Workbench {
             if closes {
                 return false;
             }
-            match key {
+            match key.as_str() {
                 "Enter" if plain => self.accept_define(window, cx),
                 "Escape" if plain => self.clear_or_hide_define(window, cx),
                 _ => self.record_define_chord(chord, cx),

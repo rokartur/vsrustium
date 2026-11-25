@@ -1,6 +1,7 @@
 //! Quick access (platform/quickinput/browser/quickAccess.ts): one quick pick whose value prefix picks the
 //! provider. `>` is the Command Palette (commandsQuickAccess.ts over pickerQuickAccess.ts), no prefix Quick Open
-//! (anythingQuickAccess.ts), `:` and `::` Go to Line/Column and Go to Offset (gotoLineQuickAccess.ts).
+//! (anythingQuickAccess.ts), `:` and `::` Go to Line/Column and Go to Offset (gotoLineQuickAccess.ts), `?` the
+//! providers (helpQuickAccess.ts).
 
 use config::configuration::Overrides;
 use gpui::{Context, PromptLevel, Window};
@@ -16,6 +17,7 @@ use crate::main_thread_quick_open::Owner;
 use crate::quick_input::{Button, Entry, Event, Item, Kind, QuickInput};
 
 const COMMANDS_PREFIX: &str = ">";
+const HELP_PREFIX: &str = "?";
 /// `CommandsHistory.PREF_KEY_CACHE` and `PREF_KEY_COUNTER`, in StorageScope.PROFILE.
 const HISTORY_CACHE_KEY: &str = "commandPalette.mru.cache";
 const HISTORY_COUNTER_KEY: &str = "commandPalette.mru.counter";
@@ -52,10 +54,19 @@ pub enum Accept {
 }
 
 /// `getHelpPicks`: the help entries with a `commandCenterOrder`, by that order, of the providers the port has
-/// (Search for Text, Go to Symbol, Start Debugging, Run Task and More wait for theirs).
-const HELP_ENTRIES: [(&str, Provider, &str); 2] = [
-    ("Go to File", Provider::Files, "workbench.action.quickOpen"),
-    ("Show and Run Commands", Provider::Commands, "workbench.action.showCommands"),
+/// (Search for Text, Go to Symbol, Start Debugging and Run Task wait for theirs), with `commandCenterLabel`.
+const HELP_ENTRIES: [(&str, Provider, Option<&str>); 3] = [
+    ("Go to File", Provider::Files, Some("workbench.action.quickOpen")),
+    ("Show and Run Commands", Provider::Commands, Some("workbench.action.showCommands")),
+    ("More", Provider::Help, None),
+];
+
+/// The `helpEntries` of each provider the port has, as the `?` picker lists them: provider, description, command.
+const PROVIDER_HELP: [(Provider, &str, &str); 4] = [
+    (Provider::Files, "Go to File", "workbench.action.quickOpen"),
+    (Provider::GotoLine, "Go to Line/Column", "workbench.action.gotoLine"),
+    (Provider::GotoOffset, "Go to Offset", "workbench.action.gotoOffset"),
+    (Provider::Commands, "Show and Run Commands", "workbench.action.showCommands"),
 ];
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -64,6 +75,7 @@ enum Provider {
     Files,
     GotoLine,
     GotoOffset,
+    Help,
 }
 
 impl Provider {
@@ -74,6 +86,7 @@ impl Provider {
             _ if value.starts_with(goto_line::GO_TO_OFFSET_PREFIX) => Provider::GotoOffset,
             _ if value.starts_with(goto_line::GO_TO_LINE_PREFIX) => Provider::GotoLine,
             _ if value.starts_with(COMMANDS_PREFIX) => Provider::Commands,
+            _ if value.starts_with(HELP_PREFIX) => Provider::Help,
             _ => Provider::Files,
         }
     }
@@ -84,6 +97,7 @@ impl Provider {
             Provider::Files => "",
             Provider::GotoLine => goto_line::GO_TO_LINE_PREFIX,
             Provider::GotoOffset => goto_line::GO_TO_OFFSET_PREFIX,
+            Provider::Help => HELP_PREFIX,
         }
     }
 
@@ -92,6 +106,7 @@ impl Provider {
             Provider::Commands => Some("Type the name of a command to run.".into()),
             Provider::Files => Some(quick_open::PLACEHOLDER.into()),
             Provider::GotoLine | Provider::GotoOffset => Some(goto_line::PLACEHOLDER.into()),
+            Provider::Help => Some("Type '?' to get help on the actions you can take from here.".into()),
         }
     }
 }
@@ -199,6 +214,16 @@ impl Workbench {
             self.dispose_goto_line(cx);
         }
         let picks = match provider {
+            // helpQuickAccess.ts: the exact prefix of another provider after `?` shows that provider.
+            Provider::Help if Provider::for_value(&filter) != Provider::Files => {
+                let prefix = Provider::for_value(&filter).prefix();
+                cx.defer_in(window, move |workbench, window, cx| workbench.show_quick_access(prefix, true, false, window, cx));
+                None
+            }
+            Provider::Help => {
+                let (entries, accepts) = self.provider_help_picks(&filter, window);
+                Some((entries, accepts, false))
+            }
             Provider::Commands => {
                 let (entries, accepts) = self.command_picks(&filter, window);
                 Some((entries, accepts, false))
@@ -228,7 +253,7 @@ impl Workbench {
         }
         let context = self.key_context(window);
         for (label, provider, command) in HELP_ENTRIES {
-            let keybinding = self.keybindings.resolver.lookup_primary_keybinding(command, &context);
+            let keybinding = command.and_then(|command| self.keybindings.resolver.lookup_primary_keybinding(command, &context));
             entries.push(Entry::Item(Item {
                 handle: accepts.len() as i64,
                 label: label.into(),
@@ -239,6 +264,32 @@ impl Workbench {
             }));
             accepts.push(Accept::Show { prefix: provider.prefix(), include_help: provider != Provider::Files });
         }
+    }
+
+    /// `HelpQuickAccessProvider.getQuickAccessProviders`: the help entries by prefix, each labelled with its prefix
+    /// (`…` for Quick Open's empty one) and showing that provider on accept. The list filters on the label.
+    fn provider_help_picks(&self, filter: &str, window: &Window) -> (Vec<Entry>, Vec<Accept>) {
+        let context = self.key_context(window);
+        let mut providers = PROVIDER_HELP.to_vec();
+        providers.sort_by(|a, b| command_palette::locale_compare(a.0.prefix(), b.0.prefix()));
+        let (mut entries, mut accepts) = (Vec::new(), Vec::new());
+        for (provider, description, command) in providers {
+            let label = if provider.prefix().is_empty() { "\u{2026}" } else { provider.prefix() };
+            if !label.contains(filter) {
+                continue;
+            }
+            let keybinding = self.keybindings.resolver.lookup_primary_keybinding(command, &context);
+            entries.push(Entry::Item(Item {
+                handle: accepts.len() as i64,
+                label: label.into(),
+                description: Some(description.into()),
+                pickable: true,
+                keybinding: keybinding.map(|item| item.keybinding.iter().map(|chord| chord.key_caps()).collect()).unwrap_or_default(),
+                ..Item::default()
+            }));
+            accepts.push(Accept::Show { prefix: provider.prefix(), include_help: false });
+        }
+        (entries, accepts)
     }
 
     /// `AbstractCommandsQuickAccessProvider._getPicks` and `toCommandPick`, with "No matching commands" for an empty result.

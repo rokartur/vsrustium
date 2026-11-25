@@ -1,0 +1,21 @@
+{
+	"name": "submenus",
+	"publisher": "port",
+	"version": "0.0.1",
+	"description": "A contributed submenu in the Explorer context menu, for port/tools/ui-pair (port/results/contextmenu.md).",
+	"engines": { "vscode": "^1.90.0" },
+	"contributes": {
+		"commands": [
+			{ "command": "port.submenus.first", "title": "First Item" },
+			{ "command": "port.submenus.second", "title": "Second Item With a Longer Title" }
+		],
+		"submenus": [{ "id": "port.submenus.more", "label": "Port Submenu" }],
+		"menus": {
+			"explorer/context": [{ "submenu": "port.submenus.more", "group": "navigation@-1000" }],
+			"port.submenus.more": [
+				{ "command": "port.submenus.first", "group": "1_first" },
+				{ "command": "port.submenus.second", "group": "2_second" }
+			]
+		}
+	}
+}

@@ -9,7 +9,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use gpui::{
-    Animation, AnimationExt, AnyElement, App, Bounds, BoxShadow, ClickEvent, DispatchPhase, Context, Div, FocusHandle, FontWeight, HighlightStyle, ListAlignment, ListState,
+    Animation, AnimationExt, AnyElement, App, Bounds, BoxShadow, ClickEvent, DispatchPhase, Context, Div, FocusHandle, FontWeight, HighlightStyle, ListAlignment, ListOffset, ListState,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Rgba, StyledText, Subscription, Task, Window, canvas, div, fill, list, point, prelude::*, px, rgba,
 };
 use serde_json::Value;
@@ -41,8 +41,8 @@ pub struct QuickInputs {
     previous_focus: Option<FocusHandle>,
     focus_out: Option<Subscription>,
     list: ListState,
-    /// The input and the row order the list was last reset to, and the row it last revealed.
-    listed: (Option<i64>, Vec<usize>),
+    /// The input, its row order and `list_updates` the list was last laid out for, and the row it last revealed.
+    listed: (Option<i64>, Vec<usize>, u64),
     revealed: Option<usize>,
     hovered: Option<usize>,
     /// The hidden input, drawn while the close animation runs.
@@ -71,7 +71,7 @@ impl QuickInputs {
             previous_focus: None,
             focus_out: None,
             list: ListState::new(0, ListAlignment::Top, px(200.)),
-            listed: (None, Vec::new()),
+            listed: (None, Vec::new(), 0),
             revealed: None,
             hovered: None,
             closing: None,
@@ -356,7 +356,6 @@ impl Workbench {
             Some((top, left)) => (top.map_or(TOP, |top| (f32::from(viewport.height) * top).round()), (f32::from(viewport.width) * left.unwrap_or(0.5) - width / 2.).round()),
             None => (TOP, ((f32::from(viewport.width) - width) / 2.).round()),
         };
-        let has_title = !input.title_text().is_empty() || !input.buttons.iter().all(|button| button.location.is_some_and(|location| location > 1));
         let widget = div()
             .id("quick-input-widget")
             .absolute()
@@ -378,7 +377,7 @@ impl Workbench {
             // --vscode-shadow-xl blurs 20px; GPUI's blur_radius is the sigma, half the CSS blur.
             .shadow(vec![BoxShadow { color: rgba(0x00000026).into(), offset: point(px(0.), px(0.)), blur_radius: px(10.), spread_radius: px(0.), inset: false }])
             .when(interactive, |widget| widget.on_mouse_down_out(cx.listener(|workbench, _, window, cx| workbench.quick_input_focus_lost(window, cx))))
-            .when(has_title, |widget| widget.child(self.quick_input_title(&input, cx)))
+            .when(input.shows_title_bar(), |widget| widget.child(self.quick_input_title(&input, cx)))
             .when(input.description.as_ref().is_some_and(|description| !description.is_empty()), |widget| {
                 widget.child(div().mx(px(11.)).my(px(6.)).mr(px(6.)).child(input.description.clone().unwrap_or_default()))
             })
@@ -692,19 +691,30 @@ impl Workbench {
 
     /// `.quick-input-list`: the visible rows, at most the layout's height, with 7px below them.
     fn quick_input_list(&mut self, input: &QuickInput, interactive: bool, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let heights: Vec<f32> = input.order.iter().map(|row| row_height(&input.rows[*row])).collect();
+        let height = heights.iter().sum::<f32>().min(self.quick_input_list_max_height(window)).min(20. * ROW_HEIGHT);
         let inputs = &mut self.quick_inputs;
-        if inputs.listed.0 != Some(input.id) || inputs.listed.1 != input.order {
-            inputs.list.reset(input.order.len());
-            inputs.listed = (Some(input.id), input.order.clone());
-            inputs.revealed = None;
-        }
         let focused_position = input.focused.and_then(|row| input.order.iter().position(|shown| *shown == row));
-        if interactive && focused_position.is_some() && inputs.revealed != focused_position {
-            inputs.list.scroll_to_reveal_item(focused_position.unwrap_or_default());
+        let same_input = inputs.listed.0 == Some(input.id);
+        if !same_input || inputs.listed.1 != input.order || inputs.listed.2 != input.list_updates {
+            // quickInput.ts `update`: the scroll goes back to the top, and the focused row is revealed, unless kept.
+            let scroll_top = inputs.list.logical_scroll_top();
+            if !same_input || inputs.listed.1 != input.order {
+                inputs.list.reset(input.order.len());
+            }
+            if same_input && input.keep_scroll_position {
+                inputs.list.scroll_to(scroll_top);
+                inputs.revealed = focused_position;
+            } else {
+                inputs.list.scroll_to(ListOffset::default());
+                inputs.revealed = None;
+            }
+            inputs.listed = (Some(input.id), input.order.clone(), input.list_updates);
+        }
+        if interactive && let Some(position) = focused_position.filter(|position| inputs.revealed != Some(*position)) {
+            reveal_row(&inputs.list, &heights, position, height + 7.);
             inputs.revealed = focused_position;
         }
-        let content: f32 = input.order.iter().map(|row| row_height(&input.rows[*row])).sum();
-        let height = content.min(self.quick_input_list_max_height(window)).min(20. * ROW_HEIGHT);
         let rows = list(self.quick_inputs.list.clone(), cx.processor(move |workbench: &mut Workbench, position: usize, window, cx| workbench.quick_input_row(position, interactive, window, cx)))
             .size_full();
         // .monaco-list: 7px bottom padding the rows scroll under; .monaco-scrollable-element: 6px on the sides.
@@ -930,6 +940,30 @@ pub(super) fn infinite_progress_bit(id: &'static str, color: Rgba) -> impl IntoE
         let (offset, scale) = if delta < 0.5 { (delta * 2. * 25., 1. + delta * 4.) } else { (25. + (delta - 0.5) * 2. * 24., 3. - (delta - 0.5) * 4.) };
         bit.left(gpui::relative(offset * 0.02)).w(gpui::relative(0.02 * scale))
     })
+}
+
+/// `list.reveal`: scrolls a row above the viewport to its top, one below it to its bottom. The rows' heights are
+/// known here, where GPUI's `scroll_to_reveal_item` would read them from a layout that has not run for new rows.
+fn reveal_row(list: &ListState, heights: &[f32], position: usize, viewport: f32) {
+    let current = list.logical_scroll_top();
+    let current_top = heights[..current.item_ix.min(heights.len())].iter().sum::<f32>() + f32::from(current.offset_in_item);
+    let row_top: f32 = heights[..position].iter().sum();
+    let row_bottom = row_top + heights[position];
+    let top = if row_top < current_top {
+        row_top
+    } else if row_bottom > current_top + viewport {
+        row_bottom - viewport
+    } else {
+        return;
+    };
+    let mut item_top = 0.;
+    for (item_ix, item_height) in heights.iter().enumerate() {
+        if item_top + item_height > top {
+            list.scroll_to(ListOffset { item_ix, offset_in_item: px(top - item_top) });
+            return;
+        }
+        item_top += item_height;
+    }
 }
 
 fn row_height(row: &Row) -> f32 {

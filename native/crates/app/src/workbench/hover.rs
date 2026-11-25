@@ -116,6 +116,10 @@ pub struct Hovers {
     hiding: Option<Task<()>>,
     /// WorkbenchHoverDelegate's `lastHoverHideTime`.
     last_hide: Option<Instant>,
+    /// `HoverWidget.isLocked`: Alt is held, so the hover stays when the pointer leaves for it.
+    locked: bool,
+    /// `HoverWidget.isMouseIn`.
+    mouse_in_hover: bool,
 }
 
 impl Hovers {
@@ -217,7 +221,7 @@ impl Workbench {
         self.hovers.hiding = Some(cx.spawn(async move |workbench, cx| {
             cx.background_executor().timer(MOUSE_OUT_DELAY).await;
             let _ = workbench.update(cx, |workbench, cx| {
-                if workbench.hovers.shown.as_ref().is_some_and(|shown| shown.serial == serial) {
+                if !workbench.hovers.locked && workbench.hovers.shown.as_ref().is_some_and(|shown| shown.serial == serial) {
                     workbench.hovers.shown = None;
                     cx.notify();
                 }
@@ -231,14 +235,34 @@ impl Workbench {
         self.hovers.hiding = None;
         self.hovers.shown_count += 1;
         let text = self.hover_text(&target.content, window);
+        // showInstantHover: no hover for empty content.
+        if text.is_empty() {
+            return;
+        }
         self.hovers.shown = Some(ShownHover { target, text, fade_in, serial: self.hovers.shown_count });
         cx.notify();
+    }
+
+    /// hoverService.ts `_keyDown` and `_keyUp` of Alt: Alt locks the shown hover; releasing it hides the hover
+    /// unless the pointer is on it or its target.
+    pub(super) fn hover_modifiers_changed(&mut self, alt: bool, cx: &mut Context<Self>) {
+        if self.hovers.shown.is_none() || alt == self.hovers.locked {
+            return;
+        }
+        self.hovers.locked = alt;
+        if !alt && !self.hovers.mouse_in_hover && self.hovers.target.is_none() {
+            self.hovers.shown = None;
+            self.hovers.last_hide = Some(cx.background_executor().now());
+            cx.notify();
+        }
     }
 
     /// `hideHover` on mouse down, and `hideOnKeyDown` for a key no keybinding takes.
     pub(super) fn dismiss_hover(&mut self, cx: &mut Context<Self>) {
         self.hovers.pending = None;
         self.hovers.dismissed = self.hovers.target.is_some();
+        self.hovers.locked = false;
+        self.hovers.mouse_in_hover = false;
         if self.hovers.shown.take().is_some() {
             self.hovers.last_hide = Some(cx.background_executor().now());
             cx.notify();
@@ -325,15 +349,17 @@ impl Workbench {
                             }));
                         row.child(" (").child(div().italic().child("preview")).child(" ").child(gear).child(")")
                     }),
-            ))
-            // hideOnHover is off for markdown with a link: the pointer may move onto the hover to click it.
-            .when(preview || markdown, |panel| {
-                panel.on_hover(cx.listener(|workbench, hovered: &bool, _, cx| match hovered {
-                    true => workbench.hovers.hiding = None,
-                    false if workbench.hovers.target.is_none() => workbench.hide_hover_later(cx),
-                    false => {}
-                }))
-            });
+            )
+            // hideOnHover is off for markdown with a link: the pointer may move onto the hover to click it. A locked
+            // hover tracks the pointer too (`_lockMouseTracker`), to hide once Alt is up and the pointer leaves.
+            .on_hover(cx.listener(move |workbench, hovered: &bool, _, cx| {
+                workbench.hovers.mouse_in_hover = *hovered;
+                match hovered {
+                    true if preview || markdown || workbench.hovers.locked => workbench.hovers.hiding = None,
+                    false if workbench.hovers.target.is_none() && !workbench.hovers.locked => workbench.hide_hover_later(cx),
+                    _ => {}
+                }
+            }));
         let caret = layout.pointer.map(|offset| self.hover_pointer(layout.side, layout.origin, size, offset));
         let widget = div().absolute().inset_0().child(panel).children(caret);
         let element = match hover.fade_in {
