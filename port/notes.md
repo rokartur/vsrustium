@@ -475,6 +475,12 @@ Scope (roadmap section 18): extension management on disk with VSIX install and u
 - Panels (`workbench/webview_panels.rs`, mainThreadWebviews.ts, mainThreadWebviewPanels.ts): a panel is an editor of the one group with scheme `webview-panel`; `$createWebviewPanel`, `$reveal`, `$disposeWebview`, `$setTitle`, `$setHtml`, `$setOptions`, `$postMessage`, serializers, view states, dispose on close, the `WebviewEditorInput` tab (kind 7). Hidden webviews are released unless `retainContextWhenHidden`. Links: http/https/mailto open in the browser, `command:` with `enableCommandUris`. The tab draws `$setIconPath`'s dark icon in dark and high contrast themes, the light one otherwise (webviewIconManager.ts); the status bar has no editor items while a panel is active. Shortcuts: `vscode:` links are dropped (no URL handler service); `ViewColumn.Beside` opens in the single group.
 - Markdown preview: `markdown.showPreview` from the Command Palette opens the README's preview panel; `port/tools/ui-pair` with FILE=README.md shows the same heading, rule and paragraph as the reference. Cmd+Shift+V is `markdown.reopenAsPreview` upstream, which reopens the file in the `vscode.markdown.preview.editor` custom editor (MainThreadCustomEditors).
 - Checks: `cargo test -p app webview`; api-tests `MOCHA_GREP="vscode API - webview"` (625 local resources through the scheme handler, reply over postMessage) passes as in the reference.
+
+## Milestones 5 to 7: the remaining rows
+
+- Word operations (`editor/word_operations.rs`) port cursorWordOperations.ts whole: the four `WordNavigation`s, the 16 `cursorWord*` moves, the 8 `deleteWord*` deletes and Delete Word (`deleteInsideWord` with `onlyWord`), read with the editor's `editor.wordSeparators` (the accessibility moves keep the default) and `editor.wordSegmenterLocales`. `Intl.Segmenter` words come from `icu_segmenter`'s dictionary word segmenter, the ICU rules V8 runs. shortcut: a well-formed locale tag counts as supported, where V8 also drops tags ICU has no data for.
+- `deleteWordLeft` deletes an auto-closing pair around the cursor as upstream (`editor.autoClosingDelete`, the language's `autoClosingPairs`); with the default `auto` the pair must have been auto-closed, and the port does not auto-close typed brackets yet, so only `always` deletes one.
+
 ## Benchmarks
 
 - `port/tools/bench`: Wu's `script/memory-benchmark` method generalized to N apps (`APPS="name=cmd;..."`), plus an extension host line per app.

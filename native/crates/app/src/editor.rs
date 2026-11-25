@@ -43,6 +43,7 @@ pub mod unicode_highlighter;
 pub mod unusual_line_terminators;
 mod view;
 pub mod whitespace;
+pub mod word_operations;
 pub mod zoom;
 
 pub use comment::LineCommentKind;

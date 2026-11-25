@@ -7,6 +7,7 @@ use std::cmp::Reverse;
 
 use super::auto_indent::{AutoIndent, Model};
 use super::cursor::{self, Position, Selection};
+use super::word_operations::{self, AutoClosing, DeleteWordContext, WordClassifier, WordDelete, WordDeleteKind, WordNavigation};
 use super::{OpenEditor, anchor_select, folding, indent_guides};
 
 /// `EditOperationType`: what the last edit was, which decides where undo stops go.
@@ -273,14 +274,22 @@ impl OpenEditor {
         });
     }
 
-    /// `cursorWordStartLeft`/`cursorWordEndRight` from the head.
-    pub fn move_word(&mut self, right: bool, select: bool) {
-        self.move_cursors(select, |lines, selection, _| (if right { cursor::word_right(lines, selection.head) } else { cursor::word_left(lines, selection.head) }, 0));
+    /// wordOperations.ts `MoveWordCommand`: every cursor's head by word; without `select` the cursor collapses there.
+    pub fn move_word(&mut self, classifier: &WordClassifier, navigation: WordNavigation, right: bool, select: bool) {
+        let has_multicursor = self.selections.len() > 1;
+        self.move_cursors(select, |lines, selection, _| match right {
+            true => (word_operations::move_word_right(classifier, lines, selection.head, navigation), 0),
+            false => (word_operations::move_word_left(classifier, lines, selection.head, navigation, has_multicursor), 0),
+        });
     }
 
-    /// `cursorWordPartLeft`/`cursorWordPartRight` from the head (wordPartOperations.ts).
-    pub fn move_word_part(&mut self, right: bool, select: bool) {
-        self.move_cursors(select, |lines, selection, _| (if right { cursor::word_part_right(lines, selection.head, super::WORD_SEPARATORS) } else { cursor::word_part_left(lines, selection.head, super::WORD_SEPARATORS) }, 0));
+    /// wordPartOperations.ts `CursorWordPartLeft` and `CursorWordPartRight`.
+    pub fn move_word_part(&mut self, classifier: &WordClassifier, right: bool, select: bool) {
+        let has_multicursor = self.selections.len() > 1;
+        self.move_cursors(select, |lines, selection, _| match right {
+            true => (word_operations::move_word_part_right(classifier, lines, selection.head), 0),
+            false => (word_operations::move_word_part_left(classifier, lines, selection.head, has_multicursor), 0),
+        });
     }
 
     /// `cursorHome`/`cursorEnd`; Home toggles between the first non-blank character and column 0.
@@ -496,20 +505,25 @@ impl OpenEditor {
         self.delete(cursor::delete_right_range, Some(EditKind::DeletingRight), command("deleteRight"))
     }
 
-    pub fn delete_word_left(&mut self) -> Option<ContentChanged> {
-        self.delete(cursor::delete_word_left_range, None, command("deleteWordLeft"))
+    /// wordOperations.ts and wordPartOperations.ts `DeleteWordCommand`s: each cursor's range of `word_delete`,
+    /// or nothing at the document edge, between undo stops.
+    pub fn delete_word(&mut self, classifier: &WordClassifier, auto_closing: &AutoClosing, word_delete: WordDelete, id: &'static str) -> Option<ContentChanged> {
+        let range = |lines: &[String], selection: Selection| {
+            let ctx = DeleteWordContext { classifier, lines, selection, whitespace_heuristics: word_delete.whitespace_heuristics, auto_closing };
+            let range = match word_delete.kind {
+                WordDeleteKind::Left(navigation) => word_operations::delete_word_left(&ctx, navigation),
+                WordDeleteKind::Right(navigation) => word_operations::delete_word_right(&ctx, navigation),
+                WordDeleteKind::PartLeft => word_operations::delete_word_part_left(&ctx),
+                WordDeleteKind::PartRight => Some(word_operations::delete_word_part_right(&ctx)),
+            };
+            range.unwrap_or((selection.head, selection.head))
+        };
+        self.delete(range, None, command(id))
     }
 
-    pub fn delete_word_right(&mut self) -> Option<ContentChanged> {
-        self.delete(cursor::delete_word_right_range, None, command("deleteWordRight"))
-    }
-
-    pub fn delete_word_part_left(&mut self) -> Option<ContentChanged> {
-        self.delete(|lines, selection| cursor::delete_word_part_left_range(lines, selection, super::WORD_SEPARATORS), None, command("deleteWordPartLeft"))
-    }
-
-    pub fn delete_word_part_right(&mut self) -> Option<ContentChanged> {
-        self.delete(|lines, selection| cursor::delete_word_part_right_range(lines, selection, super::WORD_SEPARATORS), None, command("deleteWordPartRight"))
+    /// wordOperations.ts `DeleteInsideWord` (Delete Word).
+    pub fn delete_inside_word(&mut self, classifier: &WordClassifier, only_word: bool) -> Option<ContentChanged> {
+        self.delete(|lines, selection| word_operations::delete_inside_word(classifier, lines, selection, only_word), None, command("deleteInsideWord"))
     }
 
     /// Deletes each cursor's range. Consecutive char deletes (`kind`) in one direction undo together
@@ -1494,7 +1508,8 @@ pub(super) mod tests {
         // Overlapping deletes: the later cursor loses its edit (`_getLoserCursorMap`) and only follows the text.
         let mut overlapping = editor("ab cd", "\n");
         overlapping.set_selections(vec![range((0, 4), (0, 4)), range((0, 5), (0, 5))]);
-        overlapping.delete_word_left();
+        let (_, delete_word_left) = word_operations::DELETE_COMMANDS[2];
+        overlapping.delete_word(&WordClassifier::new(word_operations::DEFAULT_WORD_SEPARATORS, &[]), &AutoClosing { delete: "auto", brackets: "languageDefined", quotes: "languageDefined", pairs: &[], auto_closed: &[] }, delete_word_left, "deleteWordLeft");
         assert_eq!(text(&overlapping), "ab d");
         assert_eq!(overlapping.selections, [Selection::caret(at(0, 3)), Selection::caret(at(0, 4))]);
     }

@@ -11,12 +11,13 @@ use serde_json::{Value, json};
 use super::Workbench;
 use crate::commands::Outcome;
 use crate::editor::auto_indent::{AutoIndent, Strategy};
+use crate::editor::word_operations::{self, AutoClosing, WordClassifier, WordDelete};
 use crate::editor::{CaseTransform, ContentChanged, Copied, LineCommentKind, OpenEditor, Selection, commands, smart_select};
 
 type EditorCommand = fn(&mut OpenEditor) -> Option<ContentChanged>;
 
 /// Cursor and edit commands: `EditorCommand`s, which run on the focused editor or else the active one.
-const EDITOR_COMMANDS: [(&str, EditorCommand); 48] = [
+const EDITOR_COMMANDS: [(&str, EditorCommand); 34] = [
     ("cursorLeft", |editor| { editor.move_horizontally(false, false); None }),
     ("cursorLeftSelect", |editor| { editor.move_horizontally(false, true); None }),
     ("cursorRight", |editor| { editor.move_horizontally(true, false); None }),
@@ -25,17 +26,6 @@ const EDITOR_COMMANDS: [(&str, EditorCommand); 48] = [
     ("cursorUpSelect", |editor| { editor.move_vertically(false, true); None }),
     ("cursorDown", |editor| { editor.move_vertically(true, false); None }),
     ("cursorDownSelect", |editor| { editor.move_vertically(true, true); None }),
-    ("cursorWordLeft", |editor| { editor.move_word(false, false); None }),
-    ("cursorWordLeftSelect", |editor| { editor.move_word(false, true); None }),
-    ("cursorWordEndRight", |editor| { editor.move_word(true, false); None }),
-    ("cursorWordEndRightSelect", |editor| { editor.move_word(true, true); None }),
-    ("cursorWordPartLeft", |editor| { editor.move_word_part(false, false); None }),
-    ("cursorWordPartLeftSelect", |editor| { editor.move_word_part(false, true); None }),
-    // wordPartOperations.ts registerCommandAlias: the previous ids of the two above.
-    ("cursorWordPartStartLeft", |editor| { editor.move_word_part(false, false); None }),
-    ("cursorWordPartStartLeftSelect", |editor| { editor.move_word_part(false, true); None }),
-    ("cursorWordPartRight", |editor| { editor.move_word_part(true, false); None }),
-    ("cursorWordPartRightSelect", |editor| { editor.move_word_part(true, true); None }),
     ("cursorHome", |editor| { editor.move_to_line_edge(false, false); None }),
     ("cursorHomeSelect", |editor| { editor.move_to_line_edge(false, true); None }),
     ("cursorEnd", |editor| { editor.move_to_line_edge(true, false); None }),
@@ -47,10 +37,6 @@ const EDITOR_COMMANDS: [(&str, EditorCommand); 48] = [
     ("expandLineSelection", |editor| { editor.expand_line_selection(); None }),
     ("deleteLeft", OpenEditor::delete_left),
     ("deleteRight", OpenEditor::delete_right),
-    ("deleteWordLeft", OpenEditor::delete_word_left),
-    ("deleteWordRight", OpenEditor::delete_word_right),
-    ("deleteWordPartLeft", OpenEditor::delete_word_part_left),
-    ("deleteWordPartRight", OpenEditor::delete_word_part_right),
     ("deleteAllLeft", OpenEditor::delete_all_left),
     ("deleteAllRight", OpenEditor::delete_all_right),
     ("editor.action.copyLinesUpAction", |editor| editor.copy_lines(false)),
@@ -105,6 +91,7 @@ impl Workbench {
                 workbench.run_on_active_editor(command, cx)
             });
         }
+        self.register_word_commands();
         for (id, command) in INDENTING_EDITOR_COMMANDS {
             self.commands.register(id, move |workbench, _, _, cx| {
                 if workbench.edit_blocked(false, cx) {
@@ -285,6 +272,70 @@ impl Workbench {
             true => self.run_on_active_editor(OpenEditor::cut, cx),
             false => Outcome::done(),
         }
+    }
+
+    /// wordOperations.ts and wordPartOperations.ts.
+    fn register_word_commands(&mut self) {
+        for (id, word_move) in word_operations::MOVE_COMMANDS {
+            self.commands.register(id, move |workbench, _, _, cx| {
+                let Some(classifier) = workbench.word_classifier(word_move.default_separators) else { return Outcome::done() };
+                workbench.run_on_active_editor(|editor| { editor.move_word(&classifier, word_move.navigation, word_move.right, word_move.select); None }, cx)
+            });
+        }
+        // cursorWordPartStartLeft and its Select are registerCommandAlias ids of the left moves.
+        let part_moves = [("cursorWordPartLeft", false, false), ("cursorWordPartLeftSelect", false, true), ("cursorWordPartStartLeft", false, false), ("cursorWordPartStartLeftSelect", false, true), ("cursorWordPartRight", true, false), ("cursorWordPartRightSelect", true, true)];
+        for (id, right, select) in part_moves {
+            self.commands.register(id, move |workbench, _, _, cx| {
+                let Some(classifier) = workbench.word_classifier(false) else { return Outcome::done() };
+                workbench.run_on_active_editor(|editor| { editor.move_word_part(&classifier, right, select); None }, cx)
+            });
+        }
+        for (id, word_delete) in word_operations::DELETE_COMMANDS {
+            self.commands.register(id, move |workbench, _, _, cx| {
+                if workbench.edit_blocked(false, cx) {
+                    return Outcome::done();
+                }
+                workbench.run_word_delete(word_delete, id, cx)
+            });
+        }
+        self.commands.register("deleteInsideWord", |workbench, args, _, cx| {
+            if workbench.edit_blocked(false, cx) {
+                return Outcome::done();
+            }
+            let only_word = args.first().is_some_and(|args| args["onlyWord"] == json!(true));
+            let Some(classifier) = workbench.word_classifier(false) else { return Outcome::done() };
+            workbench.run_on_active_editor(|editor| editor.delete_inside_word(&classifier, only_word), cx)
+        });
+    }
+
+    /// `getMapForWordSeparators` with the active editor's `editor.wordSeparators` (or the default one) and
+    /// `editor.wordSegmenterLocales`.
+    fn word_classifier(&self, default_separators: bool) -> Option<WordClassifier> {
+        let editor = self.editors.active()?;
+        let overrides = Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
+        let settings = self.settings.lock().unwrap();
+        let configured = settings.get_value(Some("editor.wordSeparators"), &overrides);
+        let separators = match configured.as_ref().and_then(Value::as_str) {
+            Some(separators) if !default_separators => separators,
+            _ => word_operations::DEFAULT_WORD_SEPARATORS,
+        };
+        let locales = word_operations::segmenter_locales(settings.get_value(Some("editor.wordSegmenterLocales"), &overrides).as_ref());
+        Some(WordClassifier::new(separators, &locales))
+    }
+
+    /// `DeleteWordCommand.runEditorCommand` with the auto-closing settings and pairs of the editor's language.
+    /// The port does not auto-close typed brackets, so no cursor has auto-closed characters.
+    fn run_word_delete(&mut self, word_delete: WordDelete, id: &'static str, cx: &mut Context<Self>) -> Outcome {
+        let Some(classifier) = self.word_classifier(false) else { return Outcome::done() };
+        let editor = self.editors.active().expect("word_classifier found it");
+        let overrides = Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
+        let settings = self.settings.lock().unwrap();
+        let setting = |key| settings.get_value(Some(key), &overrides).and_then(|value| value.as_str().map(str::to_string)).unwrap_or_default();
+        let (delete, brackets, quotes) = (setting("editor.autoClosingDelete"), setting("editor.autoClosingBrackets"), setting("editor.autoClosingQuotes"));
+        drop(settings);
+        let pairs = self.languages.rules(&editor.document.language_id).map(|rules| rules.auto_closing_pairs.clone()).unwrap_or_default();
+        let auto_closing = AutoClosing { delete: &delete, brackets: &brackets, quotes: &quotes, pairs: &pairs, auto_closed: &[] };
+        self.run_on_active_editor(|editor| editor.delete_word(&classifier, &auto_closing, word_delete, id), cx)
     }
 
     /// Runs an editor command, then tells the host and scrolls the cursor into view as a key press does.
