@@ -352,7 +352,8 @@ impl Workbench {
                 .flex()
                 .items_center()
                 .font_family("Menlo")
-                .font_weight(gpui::FontWeight::SEMIBOLD)
+                // review.css asks 600; the reference draws Menlo, which has no semibold, at its regular weight.
+                .font_weight(gpui::FontWeight::MEDIUM)
                 .whitespace_nowrap()
                 .bg(self.color("editorCommentsWidget.replyInputBackground"))
                 .text_color(self.foreground_or("editor.foreground"))
