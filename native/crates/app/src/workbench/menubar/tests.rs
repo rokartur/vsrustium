@@ -48,7 +48,7 @@ fn a_menu_click_runs_its_command_with_from_menu_in_the_active_window(cx: &mut Te
             crate::commands::Outcome::Ready(Ok(serde_json::Value::Null))
         });
     });
-    cx.update(|window, cx| install(window.window_handle().downcast().unwrap(), cx));
+    cx.update(|_, cx| install(cx));
     cx.dispatch_action(RunMenuCommand { id: "port.menu".into() });
     cx.run_until_parked();
     assert_eq!(*runs.borrow(), [vec![json!({ "from": "menu" })]]);

@@ -62,24 +62,42 @@ pub struct Menubar {
 const MAX_MENU_RECENT_ENTRIES: usize = 10;
 const MAX_MENU_RECENT_LABEL_LENGTH: usize = 120;
 
-/// Runs the menu actions in `window`, the only window of the app.
-pub fn install(window: WindowHandle<Workbench>, cx: &mut App) {
+/// Runs the menu actions in the window `menu_window` picks.
+pub fn install(cx: &mut App) {
     cx.on_action(move |action: &RunMenuCommand, cx| {
         // With the window active, GPUI calls this inside its `window.update`, where a nested update fails.
         let id = action.id.clone();
         cx.defer(move |cx| {
-            let _ = window.update(cx, |workbench, window, cx| workbench.run_menu_command(&id, window, cx));
+            // menubar.ts `runActionInRenderer`: the focused window runs it; with no window Quit quits and the
+            // others open an empty window first.
+            match menu_window(cx) {
+                Some(window) => drop(window.update(cx, |workbench, window, cx| workbench.run_menu_command(&id, window, cx))),
+                None if id == "workbench.action.quit" => cx.quit(),
+                None => {
+                    let Ok(window) = crate::open_window(crate::WindowRequest::default(), cx) else { return };
+                    let _ = window.update(cx, |workbench, window, cx| workbench.run_menu_command(&id, window, cx));
+                }
+            }
         });
     });
     cx.on_action(move |action: &OpenRecentMenuEntry, cx| {
         let index = action.index;
         cx.defer(move |cx| {
+            let Some(window) = menu_window(cx) else { return };
             let _ = window.update(cx, |workbench, window, cx| workbench.open_recent_menu_entry(index, window, cx));
         });
     });
     cx.on_action(|_: &Hide, cx| cx.hide());
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
     cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
+}
+
+/// The window menu actions go to: the active window, else the frontmost workbench window, else any (a platform
+/// without a window stack).
+fn menu_window(cx: &App) -> Option<WindowHandle<Workbench>> {
+    let active = cx.active_window().and_then(|window| window.downcast::<Workbench>());
+    let frontmost = || cx.window_stack().unwrap_or_else(|| cx.windows()).into_iter().find_map(|window| window.downcast::<Workbench>());
+    active.or_else(frontmost)
 }
 
 impl Workbench {
@@ -116,6 +134,12 @@ impl Workbench {
 
     /// Sets the application menu when what it shows changed, as `updateMenubar` does on menu changes.
     pub(super) fn update_menubar(&mut self, window: &Window, cx: &mut Context<Self>) {
+        // The application menu is the focused window's (menubar.ts `onDidChangeWindowFocus`); a window in the
+        // background installs its menu again once it comes to the front.
+        if !window.is_window_active() && cx.windows().len() > 1 {
+            self.installed_menubar = None;
+            return;
+        }
         let menubar = self.menubar(window);
         if self.installed_menubar.as_ref() == Some(&menubar) {
             return;

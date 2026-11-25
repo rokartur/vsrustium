@@ -3,13 +3,14 @@
 //! then the "Do you want to save" confirm), the Quit menu's `confirmBeforeQuit` (menubar.ts), then the shutdown.
 
 use futures::channel::oneshot;
-use gpui::{AsyncWindowContext, Context, PromptLevel, WeakEntity, Window};
+use gpui::{App, AsyncWindowContext, Context, PromptLevel, WeakEntity, Window, WindowHandle};
 use serde_json::{Value, json};
 
 use super::Workbench;
 use super::actions::{file_names_message, save_confirm_text};
 use crate::commands::Outcome;
 use crate::dialog;
+use crate::windows_state::{self, WindowState};
 
 /// `ShutdownReason`.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -24,13 +25,23 @@ pub enum ShutdownReason {
     Load,
 }
 
+/// windowsStateHandler.ts `lastClosedState`: the last window closed, the last active one of a quit without windows;
+/// forgotten once another window opens.
+struct LastClosedWindow(Option<WindowState>);
+
+impl gpui::Global for LastClosedWindow {}
+
 #[derive(Default)]
 pub struct Lifecycle {
     /// A shutdown waits for its vetoes.
     shutting_down: bool,
     /// The window passed its vetoes and closes now.
-    window_closed: bool,
+    pub(super) window_closed: bool,
     pub(super) backups: super::backup_tracker::BackupTracker,
+    /// Answers once the window's extension host session let go of its storage (host.rs).
+    pub(super) session_ended: Option<oneshot::Receiver<()>>,
+    /// The title last set on the window.
+    pub(super) title: String,
 }
 
 /// `ConfirmResult` of `showSaveConfirm`.
@@ -51,7 +62,7 @@ impl Workbench {
                 if from_menu && !confirm_before_quit(&workbench, keyboard, cx).await {
                     return;
                 }
-                let _ = workbench.update_in(cx, |workbench, window, cx| workbench.shutdown(ShutdownReason::Quit, window, cx, |_, _, cx| cx.quit()));
+                quit_all_windows(cx).await;
             })
             .detach();
             Outcome::done()
@@ -65,6 +76,7 @@ impl Workbench {
 
     /// The window's close button asks the lifecycle first, as Electron's `close` event does in windowImpl.ts.
     pub fn watch_window_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        cx.set_global(LastClosedWindow(None));
         let workbench = cx.entity().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
             let _ = workbench.update(cx, |workbench, cx| {
@@ -78,29 +90,55 @@ impl Workbench {
     }
 
     fn close_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.shutdown(ShutdownReason::Close, window, cx, |workbench, window, _| {
+        self.shutdown(ShutdownReason::Close, window, cx, |workbench, window, cx| {
+            if cx.windows().len() == 1 {
+                let state = workbench.window_state(window, cx);
+                cx.set_global(LastClosedWindow(Some(state)));
+            }
             workbench.lifecycle.window_closed = true;
             window.remove_window();
         });
     }
 
-    /// `lifecycleService.shutdown`: the `onBeforeShutdown` vetoes, then `then` unless one vetoed. One shutdown runs at a time.
+    /// `lifecycleService.shutdown`: the `onBeforeShutdown` vetoes, then `then` unless one vetoed.
     pub(super) fn shutdown(&mut self, reason: ShutdownReason, window: &mut Window, cx: &mut Context<Self>, then: impl FnOnce(&mut Workbench, &mut Window, &mut Context<Self>) + 'static) {
+        let veto = self.veto_shutdown(reason, window, cx);
+        cx.spawn_in(window, async move |workbench, cx| {
+            if veto.await == Ok(false) {
+                let _ = workbench.update_in(cx, |workbench, window, cx| then(workbench, window, cx));
+            }
+        })
+        .detach();
+    }
+
+    /// The `onBeforeShutdown` vetoes of this window: true when one vetoed. A shutdown asked while another runs is
+    /// vetoed, one runs at a time.
+    fn veto_shutdown(&mut self, reason: ShutdownReason, window: &mut Window, cx: &mut Context<Self>) -> oneshot::Receiver<bool> {
+        let (sender, receiver) = oneshot::channel();
         if self.lifecycle.shutting_down {
-            return;
+            let _ = sender.send(true);
+            return receiver;
         }
         self.lifecycle.shutting_down = true;
         let keyboard = window.modifiers().modified();
         cx.spawn_in(window, async move |workbench, cx| {
             let veto = before_shutdown(&workbench, reason, keyboard, cx).await;
-            let _ = workbench.update_in(cx, |workbench, window, cx| {
-                workbench.lifecycle.shutting_down = false;
-                if !veto {
-                    then(workbench, window, cx);
-                }
-            });
+            let _ = workbench.update(cx, |workbench, _| workbench.lifecycle.shutting_down = false);
+            let _ = sender.send(veto);
         })
         .detach();
+        receiver
+    }
+
+    /// `toWindowState`.
+    fn window_state(&self, window: &Window, cx: &App) -> WindowState {
+        let workspace = self.workspace();
+        WindowState {
+            workspace: workspace.and_then(|workspace| workspace.file.clone()),
+            folder: workspace.filter(|workspace| workspace.file.is_none()).map(|workspace| workspace.folders[0].path.clone()),
+            backup_path: self.lifecycle.backups.home.clone(),
+            ui: Some(windows_state::ui_state(window, cx)),
+        }
     }
 
     /// `showSaveConfirm`: Save (Save All for more than one), Don't Save, Cancel; Don't Save without a dialog while
@@ -126,6 +164,51 @@ impl Workbench {
             .detach();
         receiver
     }
+}
+
+/// lifecycleMainService.ts `quit`: every window's `onBeforeShutdown` for quit in turn; the app quits unless one vetoes.
+async fn quit_all_windows(cx: &mut AsyncWindowContext) {
+    let windows = cx.update(|_, cx| {
+        let mut windows: Vec<WindowHandle<Workbench>> = cx.windows().into_iter().filter_map(|handle| handle.downcast::<Workbench>()).collect();
+        windows.sort_by_key(|handle| handle.window_id().as_u64());
+        windows
+    });
+    for handle in windows.unwrap_or_default() {
+        let Ok(veto) = handle.update(cx, |workbench, window, cx| workbench.veto_shutdown(ShutdownReason::Quit, window, cx)) else { continue };
+        if veto.await.unwrap_or(true) {
+            return;
+        }
+    }
+    let _ = cx.update(|_, cx| {
+        save_windows_state(cx);
+        cx.quit();
+    });
+}
+
+/// windowsStateHandler.ts `saveWindowsState`: the last window closed, else the active window, else the first; all
+/// windows when there are two or more.
+fn save_windows_state(cx: &mut App) {
+    let mut last_active = cx.try_global::<LastClosedWindow>().and_then(|closed| closed.0.clone());
+    let mut active = None;
+    let mut opened = Vec::new();
+    for handle in cx.windows().into_iter().filter_map(|handle| handle.downcast::<Workbench>()) {
+        let _ = handle.update(cx, |workbench, window, cx| {
+            if workbench.extension_development {
+                return;
+            }
+            let state = workbench.window_state(window, cx);
+            if window.is_window_active() {
+                active = Some(state.clone());
+            }
+            opened.push(state);
+        });
+    }
+    last_active = last_active.or(active).or_else(|| opened.first().cloned());
+    if opened.len() < 2 {
+        opened.clear();
+    }
+    let user_data = cx.global::<crate::AppState>().user_data.clone();
+    windows_state::save(&user_data, last_active.as_ref(), &opened);
 }
 
 /// The `onBeforeShutdown` participants in order; true when one vetoes.

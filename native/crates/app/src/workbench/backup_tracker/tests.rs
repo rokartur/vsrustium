@@ -43,7 +43,7 @@ fn open<'a>(cx: &'a mut TestAppContext, dir: &Path, settings_json: &str) -> (gpu
     let user_data = dir.join("user");
     let (workbench, cx) = cx.add_window_view(|window, cx| {
         let mut workbench = Workbench::new(theme, app_root.clone(), Some(workspace), Languages::new(&[]), settings, HostSync::new(std::sync::mpsc::channel().0), cx);
-        workbench.start_backups(&user_data, cx);
+        workbench.start_backups(&user_data, None, cx);
         workbench.open_file(folder.join("a.txt"), true, window, cx);
         workbench
     });

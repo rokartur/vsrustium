@@ -23,7 +23,7 @@ const BACKUP_DELAY: Duration = Duration::from_millis(1000);
 #[derive(Default)]
 pub struct BackupTracker {
     /// `environmentService.backupPath`: `Backups/<workspace id>`; none while developing an extension.
-    home: Option<PathBuf>,
+    pub(super) home: Option<PathBuf>,
     /// The alternative version each backed up model had when its backup was written.
     backed_up: HashMap<(String, PathBuf), u32>,
     /// The pending backup of each model and the version it is for.
@@ -36,8 +36,9 @@ pub struct BackupTracker {
 enum BackupWorkspace<'a> {
     Workspace { id: &'a str, config: &'a Path },
     Folder { id: &'a str, folder: &'a Path },
-    /// An empty window takes the first empty window backup of the last session, else a new folder.
-    Empty,
+    /// An empty window takes its restored backup folder, else the first empty window backup of the last session,
+    /// else a new folder.
+    Empty(Option<String>),
 }
 
 /// `registerWorkspaceBackup`, `registerFolderBackup` and `registerEmptyWindowBackup`: the backup folder of the
@@ -46,13 +47,13 @@ fn backup_home(user_data: &Path, workspace: BackupWorkspace) -> PathBuf {
     let (key, entry, folder) = match workspace {
         BackupWorkspace::Workspace { id, config } => ("rootURIWorkspaces", json!({ "workspace": { "id": id, "configURIPath": file_uri(config) } }), id.to_owned()),
         BackupWorkspace::Folder { id, folder } => ("folders", json!({ "folderUri": file_uri(folder) }), id.to_owned()),
-        BackupWorkspace::Empty => {
+        BackupWorkspace::Empty(restored) => {
             // `createEmptyWorkspaceIdentifier`: `Date.now()` plus up to a second at random.
             let new_id = || {
                 let millis = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |since| since.as_millis());
                 (millis + u128::from(rand_below_1000())).to_string()
             };
-            let folder = backups::empty_window_backups(user_data).into_iter().next().unwrap_or_else(new_id);
+            let folder = restored.or_else(|| backups::empty_window_backups(user_data).into_iter().next()).unwrap_or_else(new_id);
             ("emptyWindows", json!({ "backupFolder": folder }), folder)
         }
     };
@@ -71,7 +72,7 @@ fn file_uri(path: &Path) -> String {
 impl Workbench {
     /// Starts tracking with the window's backup folder in `user_data` (none while developing an extension, as
     /// `doOpenInBrowserWindow` registers none) and opens the backups the last session left in it.
-    pub fn start_backups(&mut self, user_data: &Path, cx: &mut Context<Self>) {
+    pub fn start_backups(&mut self, user_data: &Path, restored_folder: Option<PathBuf>, cx: &mut Context<Self>) {
         if self.extension_development {
             return;
         }
@@ -81,7 +82,7 @@ impl Workbench {
                 Some(config) => BackupWorkspace::Workspace { id, config },
                 None => BackupWorkspace::Folder { id, folder: &workspace.folders[0].path },
             },
-            _ => BackupWorkspace::Empty,
+            _ => BackupWorkspace::Empty(restored_folder.and_then(|folder| folder.file_name().map(|name| name.to_string_lossy().into_owned()))),
         };
         self.lifecycle.backups.home = Some(backup_home(user_data, backup_workspace));
         self.restore_backups(cx);

@@ -23,10 +23,11 @@ pub fn show_message_box(window: &Window, level: PromptLevel, message: &str, deta
     let sender = Rc::new(Cell::new(Some(sender)));
     let mtm = MainThreadMarker::new().expect("dialogs open on the main thread");
     let alert = NSAlert::new(mtm);
-    // Electron's message_box_mac.mm: warning and error types draw the warning style, the others informational.
+    // Electron's message_box_mac.mm: warning and error types take the critical style, the caution icon with an app
+    // icon badge (the warning style draws the app icon alone); the others informational.
     alert.setAlertStyle(match level {
         PromptLevel::Info => NSAlertStyle::Informational,
-        PromptLevel::Warning | PromptLevel::Critical => NSAlertStyle::Warning,
+        PromptLevel::Warning | PromptLevel::Critical => NSAlertStyle::Critical,
     });
     alert.setMessageText(&NSString::from_str(message));
     if let Some(detail) = detail {

@@ -88,6 +88,7 @@ mod untitled;
 mod variables;
 mod webview;
 mod uri;
+mod windows_state;
 mod workbench;
 mod workspace_trust;
 
@@ -182,12 +183,110 @@ fn main() -> anyhow::Result<()> {
     // Artur: user extensions live in ~/.vsrustium/extensions, the default user data dir's extensions folder.
     let user_extensions = UserExtensions { folder: flag_value("--extensions-dir").map_or_else(|| user_data.join("extensions"), PathBuf::from), product_version: VERSION.into() };
     user_extensions.clean_up()?;
+    // storageMainService.ts: no storage during extension tests, so each test run starts empty.
+    let extension_tests = development.as_ref().is_some_and(|development| development.tests_path.is_some());
+    let shared_storage = match extension_tests {
+        true => Arc::new(Mutex::new(storage::Storage::in_memory())),
+        false => Arc::new(Mutex::new(open_shared_storage(flag_value("--shared-data-dir").map(PathBuf::from))?)),
+    };
+    // windowsMainService.ts: a start without paths, or any start with `preserve`, opens the last session's windows.
+    let restored = match (development.is_some() || screenshot.is_some() || export_default_keybindings.is_some() || open_url.is_some(), positional.is_empty()) {
+        (true, _) => Vec::new(),
+        (false, no_paths) => {
+            let user_settings = Settings::load(Registry::with_extensions(&[]), user_data.join("User"), None);
+            let setting = user_settings.get_value(Some("window.restoreWindows"), &Overrides::default()).and_then(|value| value.as_str().map(str::to_owned)).unwrap_or_else(|| "all".into());
+            let restore_fullscreen = user_settings.get_value(Some("window.restoreFullscreen"), &Overrides::default()) == Some(json!(true));
+            let (last_active, opened) = windows_state::load(&user_data);
+            let mut windows = match no_paths || setting == "preserve" {
+                true => windows_state::to_restore(&setting, last_active, opened),
+                false => Vec::new(),
+            };
+            // windowsStateHandler.ts `getNewWindowState`: fullscreen comes back only with `window.restoreFullscreen`.
+            for ui in windows.iter_mut().filter_map(|window| window.ui.as_mut()).filter(|ui| ui.mode == windows_state::FULLSCREEN && !restore_fullscreen) {
+                ui.mode = windows_state::NORMAL;
+            }
+            windows
+        }
+    };
+    let app = AppState { args: args.clone(), runtime, user_data, app_root, builtins, user_extensions_folder: user_extensions.folder, shared_storage };
+    let startup = (!positional.is_empty() || restored.is_empty()).then(|| WindowRequest { workspace, file, development, open_url, screenshot, screenshot_keys, screenshot_input, export_default_keybindings, ..WindowRequest::default() });
+    let application = application();
+    // A click on the Dock icon without a window opens an empty one, as `app.on('activate')` does in app.ts.
+    application.on_reopen(|cx| {
+        if cx.windows().is_empty() {
+            open_window_or_log(WindowRequest::default(), cx);
+        }
+    });
+    application.run(move |cx: &mut App| {
+        cx.set_global(app);
+        for window in restored {
+            let workspace = window.workspace.clone().or(window.folder.clone()).map(Workspace::open);
+            open_window_or_log(WindowRequest { workspace, backup_folder: window.backup_path, ui: window.ui, ..WindowRequest::default() }, cx);
+        }
+        if let Some(startup) = startup
+            && let Err(error) = open_window(startup, cx)
+        {
+            eprintln!("{error:#}");
+            std::process::exit(1);
+        }
+        workbench::menubar::install(cx);
+        cx.activate(true);
+    });
+    Ok(())
+}
+
+/// What every window shares: the command line, the folders, the built-in extensions scanned at startup and the
+/// application storage.
+pub(crate) struct AppState {
+    args: Vec<String>,
+    runtime: Runtime,
+    pub user_data: PathBuf,
+    app_root: PathBuf,
+    builtins: Vec<ScannedExtension>,
+    user_extensions_folder: PathBuf,
+    shared_storage: Arc<Mutex<storage::Storage>>,
+}
+
+impl gpui::Global for AppState {}
+
+/// A window to open: its folder or workspace and file; the first window also takes the command line's extension
+/// development, URL, capture and export flags.
+#[derive(Default)]
+pub(crate) struct WindowRequest {
+    pub workspace: Option<Workspace>,
+    pub file: Option<PathBuf>,
+    development: Option<ExtensionDevelopment>,
+    open_url: Option<String>,
+    screenshot: Option<PathBuf>,
+    screenshot_keys: Vec<Keystroke>,
+    screenshot_input: String,
+    export_default_keybindings: Option<PathBuf>,
+    /// The empty window backup folder of a restored window.
+    pub backup_folder: Option<PathBuf>,
+    /// The size, place and mode of a restored window.
+    pub ui: Option<windows_state::UiState>,
+}
+
+/// `open_window` from a window's command: a failure is logged, the other windows stay.
+pub(crate) fn open_window_or_log(request: WindowRequest, cx: &mut App) {
+    if let Err(error) = open_window(request, cx) {
+        eprintln!("[windows] opening a window: {error:#}");
+    }
+}
+
+/// windowsMainService.ts `openInBrowserWindow`: a window with its own settings, storage, trust, extension host and
+/// workbench, as each reference window has.
+pub(crate) fn open_window(request: WindowRequest, cx: &mut App) -> anyhow::Result<gpui::WindowHandle<Workbench>> {
+    let WindowRequest { workspace, file, development, open_url, screenshot, screenshot_keys, screenshot_input, export_default_keybindings, backup_folder, ui } = request;
+    let app = cx.global::<AppState>();
+    let (args, runtime, user_data, app_root, builtins, shared_storage) = (app.args.clone(), app.runtime, app.user_data.clone(), app.app_root.clone(), app.builtins.clone(), app.shared_storage.clone());
+    let user_extensions = UserExtensions { folder: app.user_extensions_folder.clone(), product_version: VERSION.into() };
+    let flag_value = |flag: &str| args.iter().position(|arg| arg == flag).and_then(|i| args.get(i + 1)).cloned();
     let mut extensions = builtins.clone();
     add_user_extensions(&mut extensions, user_extensions.scan()?);
     if let Some(development) = &development {
         development.add_extension(&mut extensions)?;
     }
-    // storageMainService.ts: no storage during extension tests, so each test run starts empty.
     let extension_tests = development.as_ref().is_some_and(|development| development.tests_path.is_some());
     let storage = match extension_tests {
         true => MainThreadStorage::in_memory(),
@@ -209,10 +308,6 @@ fn main() -> anyhow::Result<()> {
         settings
     };
     let mut settings = load_settings(&extensions);
-    let shared_storage = match extension_tests {
-        true => Arc::new(Mutex::new(storage::Storage::in_memory())),
-        false => Arc::new(Mutex::new(open_shared_storage(flag_value("--shared-data-dir").map(PathBuf::from))?)),
-    };
     let setting = |key: &str| settings.get_value(Some(key), &Overrides::default());
     add_recently_opened(&mut shared_storage.lock().unwrap(), workspace.as_ref(), file.as_deref());
     let workspace_trust = workspace_trust::WorkspaceTrust::new(shared_storage.clone(), workspace_trust::Startup {
@@ -240,16 +335,18 @@ fn main() -> anyhow::Result<()> {
     let color_themes = theme::color_themes(&extensions)?;
     let settings = Arc::new(Mutex::new(settings));
     let keybindings_file = user_data.join("User/keybindings.json");
+    let session_closed = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
-    application().run(move |cx: &mut App| {
-        // Same size as the reference capture in port/tools/ref-screenshot, so pixel diffs line up.
-        let mut bounds = Bounds::centered(None, size(px(1024.), px(768.)), cx);
-        // A half-point origin (an odd display height, e.g. 1650 px over screen sharing) makes the drawable 1 point taller.
-        bounds.origin = point(bounds.origin.x.round(), bounds.origin.y.round());
-        // The workbench draws its own title bar, as the reference does with window.titleBarStyle custom.
-        let titlebar = TitlebarOptions { title: None, appears_transparent: true, traffic_light_position: Some(point(px(10.), px(10.))) };
-        let options = WindowOptions { window_bounds: Some(WindowBounds::Windowed(bounds)), titlebar: Some(titlebar), app_owns_titlebar_drag: true, ..Default::default() };
-        let window = cx.open_window(options, |window, cx| {
+    // Same size as the reference capture in port/tools/ref-screenshot, so pixel diffs line up.
+    let mut bounds = Bounds::centered(None, size(px(1024.), px(768.)), cx);
+    // A half-point origin (an odd display height, e.g. 1650 px over screen sharing) makes the drawable 1 point taller.
+    bounds.origin = point(bounds.origin.x.round(), bounds.origin.y.round());
+    // The workbench draws its own title bar, as the reference does with window.titleBarStyle custom.
+    let titlebar = TitlebarOptions { title: None, appears_transparent: true, traffic_light_position: Some(point(px(10.), px(10.))) };
+    let (display_id, window_bounds) = ui.and_then(|ui| windows_state::window_bounds(ui, cx)).map_or((None, WindowBounds::Windowed(bounds)), |(display, bounds)| (Some(display), bounds));
+    let options = WindowOptions { window_bounds: Some(window_bounds), display_id, titlebar: Some(titlebar), app_owns_titlebar_drag: true, ..Default::default() };
+    let window = {
+        cx.open_window(options, |window, cx| {
             cx.new(|cx| {
                 let (sender, mut receiver) = unbounded::<String>();
                 let (host_sender, host_receiver) = channel();
@@ -305,24 +402,27 @@ fn main() -> anyhow::Result<()> {
                 workbench.start_terminal_host();
                 workbench.watch_editor_focus(window, cx);
                 workbench.show_trust_modal_on_start(window, cx);
-                workbench.start_backups(&user_data, cx);
+                workbench.start_backups(&user_data, backup_folder, cx);
                 if let Some(file) = file {
                     workbench.open_file(file, true, window, cx);
                 }
                 if let Some(url) = &open_url {
                     workbench.open_protocol_url(url, window, cx);
                 }
+                let (session_ended, ended) = futures::channel::oneshot::channel::<()>();
+                workbench.watch_session_end(session_closed.clone(), ended, cx);
                 std::thread::Builder::new()
                     .name("exthost-session".into())
                     .spawn(move || {
                         let runs_tests = development.as_ref().is_some_and(|development| development.tests_path.is_some());
-                        if let Err(error) = run_extension_host(runtime, app_root, extensions, settings, storage, workspace_trusted, user_data, workspace, development, main_thread, request_sender, replies, &sender) {
+                        if let Err(error) = run_extension_host(runtime, app_root, extensions, settings, storage, workspace_trusted, user_data, workspace, development, main_thread, request_sender, replies, &sender, &session_closed) {
                             if runs_tests {
                                 eprintln!("extension host failed: {error:#}");
                                 std::process::exit(1);
                             }
                             let _ = sender.unbounded_send(format!("extension host failed: {error:#}"));
                         }
+                        let _ = session_ended.send(());
                     })
                     .expect("spawn exthost session thread");
                 cx.spawn_in(window, async move |workbench, cx| {
@@ -401,12 +501,9 @@ fn main() -> anyhow::Result<()> {
                 .detach();
                 workbench
             })
-        })
-        .unwrap();
-        workbench::menubar::install(window, cx);
-        cx.activate(true);
-    });
-    Ok(())
+        })?
+    };
+    Ok(window)
 }
 
 /// Owns the session for the life of the app: handshake, one call each way, then serves host requests and
@@ -427,6 +524,7 @@ fn run_extension_host(
     workbench_requests: UnboundedSender<ForwardedRequest>,
     workbench_replies: Receiver<(u32, Result<serde_json::Value, serde_json::Value>)>,
     status: &UnboundedSender<String>,
+    window_closed: &std::sync::atomic::AtomicBool,
 ) -> anyhow::Result<()> {
     let paths = SessionPaths { app_root: &app_root, user_data: &user_data, workspace: workspace.as_ref() };
     let extension_tests = development.as_ref().is_some_and(|development| development.tests_path.is_some());
@@ -480,6 +578,10 @@ fn run_extension_host(
     }
     // The short pump timeout bounds how long a workbench change waits before the host hears of it.
     loop {
+        // A closed window's host goes with its session (ExtensionHost's drop terminates it).
+        if window_closed.load(std::sync::atomic::Ordering::Relaxed) {
+            return Ok(());
+        }
         session.flush_main_thread();
         if !session.pump(Duration::from_millis(20))? {
             break;

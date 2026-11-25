@@ -27,6 +27,7 @@ mod floating_menu;
 mod diagnostics;
 mod dialog_view;
 mod backup_tracker;
+mod banner;
 mod dialogs;
 mod lifecycle;
 mod editor_commands;
@@ -309,6 +310,7 @@ pub struct Workbench {
     /// Custom dialogs, the shown one first.
     dialogs: Vec<dialog_view::ShownDialog>,
     lifecycle: lifecycle::Lifecycle,
+    banner: banner::Banner,
     pub debug: debug_service::DebugService,
     debug_view: debug_view::DebugView,
     debug_console: debug_console::DebugConsole,
@@ -349,7 +351,7 @@ impl Render for Workbench {
             .flex()
             .flex_col()
             .child(self.title_bar(f32::from(viewport.width), cx))
-            .children(self.restricted_mode_banner(cx))
+            .children(self.banner_part(window, cx))
             .child(self.middle_section(viewport, editor, window, cx))
             .child(self.status_bar(window, cx));
         let modal_editor = self.keybindings_editor_widget(window, cx).or_else(|| self.settings_editor_widget(window, cx));
@@ -361,6 +363,7 @@ impl Render for Workbench {
         let dialog = self.custom_dialog_widget(window, cx);
         let accessible_view = self.accessible_view_widget(window, cx);
         self.update_menubar(window, cx);
+        self.sync_window_title(window);
         div()
             .relative()
             .size_full()
@@ -458,6 +461,7 @@ impl Workbench {
             urls: url_handler::Urls::default(),
             editor_focus: cx.focus_handle(),
             unicode_banner_focus: cx.focus_handle(),
+            banner: banner::Banner::new(cx),
             status_bar_focus: cx.focus_handle(),
             tab_focus_toggle: None,
             overtype: false,
@@ -573,6 +577,7 @@ impl Workbench {
         workbench.register_workspace_commands();
         workbench.register_dialog_commands();
         workbench.register_lifecycle_commands();
+        workbench.register_banner_commands();
         workbench.register_url_commands();
         workbench.register_local_history_commands();
         workbench.register_extensions_view_commands();

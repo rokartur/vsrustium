@@ -78,9 +78,7 @@ impl Workbench {
                 let _ = dialog::show_message_box(window, PromptLevel::Critical, "The active editor must contain an openable resource.", None, &["OK"], None, cx);
                 return Outcome::done();
             };
-            if let Err(error) = super::host::open_new_window(Some(file)) {
-                workbench.notify_error(&format!("Failed to open a new window: {error}"));
-            }
+            super::host::open_new_window(Some(file), cx);
             Outcome::done()
         });
     }
@@ -94,13 +92,15 @@ impl Workbench {
     /// opens with `forceNewWindow: false`.
     fn pick_and_open(&mut self, pick: Pick, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
         let picked = self.pick_to_open(pick, cx);
+        // `window.openFoldersInNewWindow`: `on` opens what the dialog picked in a new window, `default` and `off` here.
+        let force_new_window = self.setting("window.openFoldersInNewWindow") == "on";
         cx.spawn_in(window, async move |workbench, cx| {
             let Ok(paths) = picked.await else { return };
             if paths.is_empty() {
                 return;
             }
             let _ = workbench.update_in(cx, |workbench, window, cx| {
-                workbench.open_window(paths.into_iter().map(Openable::of).collect(), false, window, cx);
+                workbench.open_window(paths.into_iter().map(Openable::of).collect(), force_new_window, window, cx);
             });
         })
         .detach();
@@ -145,8 +145,8 @@ impl Workbench {
             if reuse_window {
                 reuse_window = false;
                 self.relaunch(ShutdownReason::Load, Some(path), window, cx);
-            } else if let Err(error) = super::host::open_new_window(Some(path)) {
-                self.notify_error(&format!("Failed to open a new window: {error}"));
+            } else {
+                super::host::open_new_window(Some(path), cx);
             }
         }
         cx.notify();

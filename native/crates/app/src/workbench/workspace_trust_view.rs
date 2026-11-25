@@ -2,10 +2,11 @@
 //! window, and the Workspaces trust commands.
 
 use futures::channel::oneshot;
-use gpui::{ClickEvent, Context, Div, InteractiveElement, MouseButton, ParentElement, Rgba, Stateful, StatefulInteractiveElement, Styled, Window, div, px};
+use gpui::{Context, Div, ParentElement, Rgba, Stateful, Window};
 use serde_json::{Value, json};
 
 use super::Workbench;
+use super::banner::BannerItem;
 use super::dialog_view::{CustomDialog, DialogButton, DialogResult};
 use super::host_requests::uri_parts;
 use super::hover::{HoverContent, HoverOptions};
@@ -208,9 +209,9 @@ impl Workbench {
         Some(item.child(self.hover_target("status.workspaceTrust", HoverContent::Markdown(tooltip), HoverOptions::status_bar())))
     }
 
-    /// `getBannerItem` shown by bannerPart.ts: 26px under the title bar while the window is untrusted, unless
-    /// `security.workspace.trust.banner` hides it or it was closed with `untilDismissed`.
-    pub(super) fn restricted_mode_banner(&self, cx: &mut Context<Self>) -> Option<Div> {
+    /// `getBannerItem`: while the window is untrusted, unless `security.workspace.trust.banner` hides it or it was
+    /// closed with `untilDismissed`.
+    pub(super) fn restricted_mode_banner(&self) -> Option<BannerItem> {
         if self.workspace_trust.is_trusted() || self.workspace_trust.startup_prompt_open {
             return None;
         }
@@ -219,50 +220,14 @@ impl Workbench {
         if setting == "never" || (setting == "untilDismissed" && dismissed) {
             return None;
         }
-        let foreground = self.color("banner.foreground");
-        let message = format!("Restricted Mode is intended for safe code browsing. Trust this {} to enable all features.", self.trust_target());
-        let action = |id: &'static str, label: &'static str, href: &'static str| {
-            div()
-                .id(id)
-                .ml(px(12.))
-                .p(px(3.))
-                .underline()
-                .cursor_pointer()
-                .child(label)
-                .on_click(cx.listener(move |workbench, _, window, cx| workbench.open_notification_link(href, window, cx)))
-        };
-        let close = self
-            .icon("close", 22., 16., foreground)
-            .id("banner.close")
-            .rounded(px(5.))
-            .cursor_pointer()
-            .hover(|button| button.bg(self.color("toolbar.hoverBackground")))
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(cx.listener(|workbench, _: &ClickEvent, _, cx| workbench.close_restricted_mode_banner(cx)))
-            .child(self.hover_target("banner.close", HoverContent::Text("Close Banner".into()), HoverOptions::mouse()));
-        Some(
-            div()
-                .h(px(26.))
-                .flex_none()
-                .flex()
-                .bg(self.color("banner.background"))
-                .text_color(foreground)
-                .text_size(px(12.))
-                .line_height(px(26.))
-                .child(div().flex().flex_none().items_center().pl(px(10.)).pr(px(6.)).child(self.icon("shield", 16., 16., self.color("banner.iconForeground"))))
-                .child(div().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().child(message))
-                .child(
-                    div()
-                        .flex_grow(1.)
-                        .flex_shrink_0()
-                        .flex()
-                        .items_center()
-                        .whitespace_nowrap()
-                        .child(action("banner.manage", "Manage", "command:workbench.trust.manage"))
-                        .child(action("banner.learnMore", "Learn More", LEARN_MORE_URL)),
-                )
-                .child(div().flex().items_center().pl(px(6.)).pr(px(10.)).child(close)),
-        )
+        Some(BannerItem {
+            id: "workbench.banner.restrictedMode",
+            icon: "shield",
+            message: format!("Restricted Mode is intended for safe code browsing. Trust this {} to enable all features.", self.trust_target()),
+            actions: vec![("Manage", "command:workbench.trust.manage"), ("Learn More", LEARN_MORE_URL)],
+            on_close: Some(Workbench::close_restricted_mode_banner),
+            priority: 0,
+        })
     }
 
     /// The banner's `onClose`: dismissed for this workspace in Restricted Mode.
