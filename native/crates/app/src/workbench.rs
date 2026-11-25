@@ -837,6 +837,25 @@ mod tests {
     }
 
     #[gpui::test]
+    fn inspect_key_mappings_json_opens_pinned_untitled_editors_with_the_layout(cx: &mut TestAppContext) {
+        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
+        let theme = load_theme(&[themes], "Dark Modern").unwrap();
+        let host = HostSync::new(std::sync::mpsc::channel().0);
+        let (workbench, cx) = cx.add_window_view(|_, cx| Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), crate::default_settings(), host, cx));
+        for _ in 0..2 {
+            workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("workbench.action.inspectKeyMappingsJSON", Vec::new(), window, cx)));
+        }
+        cx.run_until_parked();
+
+        let editors = workbench.read_with(cx, |workbench, _| {
+            workbench.editors.editors.iter().map(|editor| (editor.document.uri_string(), editor.preview, editor.document.lines[..2].join("\n"))).collect::<Vec<_>>()
+        });
+        let expected = |name: &str| (format!("untitled:{name}"), false, "{\n\t\"layout\": {".to_string());
+        assert_eq!(editors, [expected("Untitled-1"), expected("Untitled-2")]);
+    }
+
+    #[gpui::test]
     fn keys_and_typed_text_edit_the_focused_editor_and_reach_the_host(cx: &mut TestAppContext) {
         let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
         let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();

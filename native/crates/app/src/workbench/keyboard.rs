@@ -12,6 +12,7 @@ use serde_json::{Value, json};
 use super::Workbench;
 use super::search_view::SideBarView;
 use crate::commands::Outcome;
+use crate::editor::TextDocument;
 use crate::keybindings::{self, Chord, Item, Resolution, Resolver};
 
 /// The keybindings and the dispatch state of `AbstractKeybindingService`.
@@ -244,9 +245,22 @@ impl Workbench {
         Outcome::done()
     }
 
+    /// `editorService.openEditor({ resource: undefined, contents, options: { pinned: true } })` of inspectKeybindings.ts.
+    pub(super) fn open_untitled_with_contents(&mut self, contents: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let path = (1..).map(|n| PathBuf::from(format!("Untitled-{n}"))).find(|path| self.editors.model("untitled", path).is_none()).expect("a free name");
+        let document = TextDocument::untitled(&path, contents, None, &self.languages, &self.settings.lock().unwrap());
+        self.editors.open(document, false);
+        window.focus(&self.editor_focus, cx);
+        self.editors_changed(cx);
+    }
+
     /// The `_setContext` command (extensions call it as `setContext`): `createKey(String(key), value)`.
     pub(super) fn register_context_commands(&mut self) {
         self.commands.register("workbench.action.openGlobalKeybindingsFile", |workbench, _, window, cx| workbench.open_keybindings_file(window, cx));
+        self.commands.register("workbench.action.inspectKeyMappingsJSON", |workbench, _, window, cx| {
+            workbench.open_untitled_with_contents(&crate::keyboard_layout::dump_debug_info_json(), window, cx);
+            Outcome::done()
+        });
         self.commands.register("_setContext", |workbench, args, _, _| {
             let mut args = args.into_iter();
             let key = match args.next() {

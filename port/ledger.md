@@ -158,7 +158,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/ipc | src/vs/platform | n/a | Electron process, IPC or DOM layer; replaced by the single-process Rust/GPUI architecture (port/notes.md) |
 | platform/jsonschemas | src/vs/platform | todo |  |
 | platform/keybinding | src/vs/platform | ported | cargo test -p app keybindings (keybindingResolver and label tests) |
-| platform/keyboardLayout | src/vs/platform | todo |  |
+| platform/keyboardLayout | src/vs/platform | ported | keyboard_layout.rs: layout info and raw mapping as native-keymap reads them, Developer: Inspect Key Mappings (JSON) (cargo test -p app keyboard_layout inspect_key_mappings; output byte-identical to native-keymap on the Studio); the picker is web-only; the scan-code mapper of Inspect Key Mappings not ported |
 | platform/label | src/vs/platform | todo |  |
 | platform/languagePacks | src/vs/platform | todo |  |
 | platform/launch | src/vs/platform | todo |  |

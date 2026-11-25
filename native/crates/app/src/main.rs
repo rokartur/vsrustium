@@ -22,6 +22,7 @@ mod input_box;
 mod keybinding_editing;
 mod keybindings;
 mod keybindings_editor;
+mod keyboard_layout;
 mod languages;
 mod main_thread;
 mod main_thread_commands;
