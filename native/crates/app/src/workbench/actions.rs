@@ -10,7 +10,6 @@ use super::host_requests::uri_parts;
 use super::search_editor_view::SEARCH_EDITOR_SCHEME;
 use crate::commands::Outcome;
 use crate::host_sync::tab_id;
-use crate::editor::{EditReason, Position, TextDocument};
 
 /// `MAX_CONFIRM_FILES` of platform/dialogs/common/dialogs.ts.
 const MAX_CONFIRM_FILES: usize = 10;
@@ -176,7 +175,7 @@ impl Workbench {
 
     /// `AbstractCloseAllAction.run` and `handleDirtyClosing`: dirty editors among `indices` ask to save first;
     /// Cancel keeps every editor open.
-    fn close_editors(&mut self, indices: Vec<usize>, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
+    pub(super) fn close_editors(&mut self, indices: Vec<usize>, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
         let dirty: Vec<usize> = indices.iter().copied().filter(|index| self.editors.editors[*index].is_dirty()).collect();
         // showSaveConfirm answers Don't Save without a dialog while extension tests run.
         if dirty.is_empty() || self.skip_dialogs {
@@ -234,54 +233,32 @@ impl Workbench {
         self.editors_changed(cx);
     }
 
-    /// The text goes back to the file's content and the editor is clean again. An untitled editor is emptied
-    /// instead (untitledTextEditorModel.ts `revert`) and answers true: its input is disposed, so the caller closes it.
-    /// shortcut: one whole-text edit plus a save of the same bytes, since `editor/` has no revert yet; move to an `OpenEditor::revert` that flushes the model like `setValue` once it does.
+    /// `editorService.revert` of one editor: a file's model reads its file again and is clean; an untitled model
+    /// is emptied and answers true: its input is disposed (untitledTextEditorInput.ts), so the caller closes it.
     pub(super) fn revert_editor(&mut self, index: usize, cx: &mut Context<Self>) -> bool {
-        if self.editors.editors[index].document.scheme == SEARCH_EDITOR_SCHEME {
-            self.revert_search_editor(index, cx);
-            return false;
-        }
-        let editor = &mut self.editors.editors[index];
-        let untitled = editor.document.scheme == "untitled";
-        let text = match untitled {
-            true => String::new(),
-            false => match TextDocument::read(&editor.document.path, &self.languages, &self.settings.lock().unwrap()) {
-                Ok(document) => document.lines.join("\n"),
-                Err(error) => {
-                    eprintln!("reverting {}: {error}", editor.document.path.display());
-                    return false;
-                }
-            },
-        };
-        let was_dirty = editor.is_dirty();
-        let lines = &editor.document.lines;
-        let end = Position::new(lines.len() - 1, lines[lines.len() - 1].chars().count());
-        let change = editor.execute_edits(vec![(Position::new(0, 0), end, text, false)], None, EditReason::Unknown("revert"));
-        editor.associated_file = false;
-        match &change {
-            Some(change) => {
-                if self.editors.active_index() == Some(index) {
-                    self.find_editor_edited(Some(change));
-                }
-                self.host.send_content_change(&self.editors, index, change);
-                let document = &self.editors.editors[index].document;
-                let (scheme, path) = (document.scheme.clone(), document.path.clone());
-                self.search_model_changed(&scheme, &path);
+        let document = &self.editors.editors[index].document;
+        let (scheme, path) = (document.scheme.clone(), document.path.clone());
+        match scheme.as_str() {
+            SEARCH_EDITOR_SCHEME => {
+                self.revert_search_editor(index, cx);
+                false
             }
-            None if untitled && was_dirty => self.host.send_dirty_state(&self.editors, &self.editors.editors[index], false),
-            None => {}
+            "untitled" => {
+                self.revert_untitled(&path);
+                true
+            }
+            _ => {
+                if let Err(error) = self.revert_text_file(&scheme, &path, cx) {
+                    self.notify_error(error);
+                }
+                false
+            }
         }
-        if untitled {
-            return true;
-        }
-        drop(self.save_editor(index, cx));
-        false
     }
 }
 
 /// The command's answer once every save is done; `answer` gets whether all of them succeeded.
-fn when_saved(saves: Vec<oneshot::Receiver<bool>>, answer: impl FnOnce(bool) -> Value + Send + 'static, cx: &mut Context<Workbench>) -> Outcome {
+pub(super) fn when_saved(saves: Vec<oneshot::Receiver<bool>>, answer: impl FnOnce(bool) -> Value + Send + 'static, cx: &mut Context<Workbench>) -> Outcome {
     let (sender, receiver) = oneshot::channel();
     cx.background_executor()
         .spawn(async move {

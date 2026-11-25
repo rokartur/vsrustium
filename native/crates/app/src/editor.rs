@@ -28,14 +28,16 @@ pub mod drag_and_drop;
 mod edit;
 pub mod find;
 pub mod folding;
-mod in_place_replace;
+pub(crate) mod in_place_replace;
 mod folding_controller;
 mod indentation;
 mod lines_operations;
 pub mod marker_decorations;
 pub mod save_participants;
 pub mod view_zones;
+pub mod view_state;
 pub mod minimap;
+pub mod model_service;
 mod multicursor;
 pub mod section_headers;
 pub mod smart_select;
@@ -74,6 +76,8 @@ pub struct TextDocument {
     /// `comments.blockComment` start and end tokens of the language.
     pub block_comment: Option<(String, String)>,
     pub tokens: Tokenization,
+    /// `TextModel.isTooLargeForTokenization`, decided at creation: no tokens, folding, word highlights or sticky scroll.
+    pub too_large_for_tokenization: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -127,8 +131,9 @@ impl TextDocument {
         let block_comment = languages.block_comment(&language_id).map(|(start, end)| (start.to_string(), end.to_string()));
         let indentation = creation_indentation(&lines, settings, path, &language_id);
         let eol = found_eol.unwrap_or_else(|| default_eol(settings, path, &language_id));
-        let tokens = Tokenization::new(languages.grammars.grammar(&language_id));
-        TextDocument { scheme: scheme.to_string(), path: path.to_path_buf(), lines, eol, encoding, language_id, indentation, off_side, folding_markers, block_comment, tokens }
+        let too_large_for_tokenization = too_large_for_tokenization(text, lines.len(), settings, path, &language_id);
+        let tokens = Tokenization::new(languages.grammars.grammar(&language_id).filter(|_| !too_large_for_tokenization));
+        TextDocument { scheme: scheme.to_string(), path: path.to_path_buf(), lines, eol, encoding, language_id, indentation, off_side, folding_markers, block_comment, tokens, too_large_for_tokenization }
     }
 
     pub fn uri_string(&self) -> String {
@@ -194,7 +199,7 @@ fn default_eol(settings: &Settings, path: &Path, language_id: &str) -> &'static 
 
 /// Lines split at `\r\n`, `\r` or `\n`; the EOL is CRLF when most line breaks hold a CR, else LF, and none for a
 /// text without line breaks (PieceTreeTextBufferBuilder `_getEOL`).
-fn split_lines(text: &str) -> (Vec<String>, Option<&'static str>) {
+pub(crate) fn split_lines(text: &str) -> (Vec<String>, Option<&'static str>) {
     let (mut lines, mut line) = (Vec::new(), String::new());
     let (mut breaks, mut with_cr) = (0, 0);
     let mut chars = text.chars().peekable();
@@ -446,7 +451,21 @@ pub fn column_at_visible(line: &str, target: f32, tab_size: usize) -> usize {
     line.chars().count()
 }
 
-/// The line as drawn: tabs become spaces up to the next tab stop; the whitespace marks are drawn apart (`editor::whitespace`).
+/// textModel.ts `LARGE_FILE_SIZE_THRESHOLD` (UTF-16 units) and `LARGE_FILE_LINE_COUNT_THRESHOLD`, with
+/// `editor.largeFileOptimizations` on.
+fn too_large_for_tokenization(text: &str, line_count: usize, settings: &Settings, path: &Path, language_id: &str) -> bool {
+    const LARGE_FILE_SIZE_THRESHOLD: usize = 20 * 1024 * 1024;
+    const LARGE_FILE_LINE_COUNT_THRESHOLD: usize = 300 * 1000;
+    let overrides = Overrides { resource: Some(path), override_identifier: Some(language_id) };
+    if settings.get_value(Some("editor.largeFileOptimizations"), &overrides) == Some(serde_json::Value::Bool(false)) {
+        return false;
+    }
+    // A UTF-16 length is at most the UTF-8 one, so only a long text needs counting.
+    line_count > LARGE_FILE_LINE_COUNT_THRESHOLD || (text.len() > LARGE_FILE_SIZE_THRESHOLD && text.encode_utf16().count() > LARGE_FILE_SIZE_THRESHOLD)
+}
+
+/// The line as drawn: tabs become spaces up to the next tab stop, control characters a space under their picture;
+/// the whitespace marks and control pictures are drawn apart (`editor::whitespace`, `workbench::control_characters`).
 pub fn expand_tabs(line: &str, tab_size: usize) -> String {
     let mut out = String::with_capacity(line.len());
     let mut visible = 0;
@@ -455,6 +474,9 @@ pub fn expand_tabs(line: &str, tab_size: usize) -> String {
             let width = tab_size - visible % tab_size;
             out.extend(std::iter::repeat_n(' ', width));
             visible += width;
+        } else if c.is_ascii_control() {
+            out.push(' ');
+            visible += 1;
         } else {
             out.push(c);
             visible += 1;
@@ -494,6 +516,10 @@ pub struct OpenEditor {
     pub selection_anchor: Option<Position>,
     /// The folding regions, their collapse state and the lines it hides.
     pub folding: FoldingModel,
+    /// Extension `FoldingRangeProvider`s fold the model (`SyntaxRangeProvider`), not its indentation.
+    pub syntax_folding: bool,
+    /// folding.ts `_currentModelHasFoldedImports`: `editor.foldingImportsByDefault` already collapsed the imports.
+    pub folded_imports: bool,
     /// The sticky scroll scopes of the indentation and marker regions, without the folding model's manual ones.
     pub sticky_model: sticky_scroll::StickyElement,
     /// The editor's scroll position in pixels, kept with the editor like its view state.
@@ -523,7 +549,7 @@ impl OpenEditor {
     fn new(document: TextDocument, preview: bool, model_id: u32) -> Self {
         let indentation = document.indentation;
         let guides = indent_guides(&document.lines, indentation.tab_size, indentation.indent_size(), document.off_side);
-        let mut editor = OpenEditor { document, preview, model_id, selections: vec![Selection::default()], last_added: 0, leftovers: Vec::new(), column_select: None, smart_select: None, cursor_states: Default::default(), version_id: 1, history: History::default(), guides, highlights: Vec::new(), value_set_replacement: None, selection_anchor: None, folding: FoldingModel::default(), sticky_model: Default::default(), scroll: Scroll::default(), max_line_width: 0., host_reference: None, associated_file: false, markers: Vec::new(), view_zones: Vec::new() };
+        let mut editor = OpenEditor { document, preview, model_id, selections: vec![Selection::default()], last_added: 0, leftovers: Vec::new(), column_select: None, smart_select: None, cursor_states: Default::default(), version_id: 1, history: History::default(), guides, highlights: Vec::new(), value_set_replacement: None, selection_anchor: None, folding: FoldingModel::default(), syntax_folding: false, folded_imports: false, sticky_model: Default::default(), scroll: Scroll::default(), max_line_width: 0., host_reference: None, associated_file: false, markers: Vec::new(), view_zones: Vec::new() };
         editor.refresh_highlights();
         editor.refresh_folding_ranges();
         editor
@@ -539,7 +565,7 @@ impl OpenEditor {
         document.off_side = languages.off_side(language_id);
         document.folding_markers = languages.folding_markers(language_id);
         document.block_comment = languages.block_comment(language_id).map(|(start, end)| (start.to_string(), end.to_string()));
-        document.tokens = Tokenization::new(languages.grammars.grammar(language_id));
+        document.tokens = Tokenization::new(languages.grammars.grammar(language_id).filter(|_| !document.too_large_for_tokenization));
         let indentation = match (old == new, new.detect_indentation) {
             (true, _) => document.indentation,
             (false, true) => guess_indentation(&document.lines, Indentation { tab_size: new.tab_size, indent_size: None, insert_spaces: new.insert_spaces }),
@@ -564,6 +590,8 @@ pub struct EditorGroup {
     pub unicode_banner_closed: bool,
     /// The diff editors among `editors`, by their entry's model id: each shows two models found with `model`.
     pub diffs: HashMap<u32, DiffInput>,
+    pub disposed: model_service::DisposedModels,
+    pub view_states: view_state::ViewStates,
 }
 
 impl EditorGroup {
@@ -624,29 +652,44 @@ impl EditorGroup {
 
     /// Opens a document right of the active editor, or in place of the preview editor when this open is a preview too.
     pub fn open(&mut self, document: TextDocument, preview: bool) {
-        self.next_model_id += 1;
-        let editor = OpenEditor::new(document, preview, self.next_model_id);
+        let editor = self.create_model(document, preview);
         self.insert(editor, preview);
     }
 
     /// Shows `document` in the editor at `index`, in place of the model it showed, and activates it.
     pub fn replace(&mut self, index: usize, document: TextDocument) {
-        self.next_model_id += 1;
-        let editor = OpenEditor::new(document, false, self.next_model_id);
+        let mut editor = self.create_model(document, false);
+        self.restore_view_state(&mut editor);
         let replaced = std::mem::replace(&mut self.editors[index], editor);
         self.recent.retain(|id| *id != replaced.model_id);
         self.diffs.remove(&replaced.model_id);
-        if replaced.host_reference.is_some() {
-            self.models.push(replaced);
-        }
+        self.keep_or_dispose(replaced);
         self.activate(index);
     }
 
     /// Creates a text model with no editor, as `$tryOpenDocument` does; returns its index in `models`.
     pub fn open_model(&mut self, document: TextDocument) -> usize {
-        self.next_model_id += 1;
-        self.models.push(OpenEditor::new(document, false, self.next_model_id));
+        let model = self.create_model(document, false);
+        self.models.push(model);
         self.models.len() - 1
+    }
+
+    /// `ModelService.createModel`, with the undo stack a closed model of the same text left.
+    fn create_model(&mut self, document: TextDocument, preview: bool) -> OpenEditor {
+        self.next_model_id += 1;
+        let mut model = OpenEditor::new(document, preview, self.next_model_id);
+        self.disposed.restore(&mut model);
+        model
+    }
+
+    /// A model whose editor went: its file's view state is kept; the extension host may still hold it, else it
+    /// is disposed.
+    fn keep_or_dispose(&mut self, model: OpenEditor) {
+        self.save_view_state(&model);
+        match model.host_reference {
+            Some(_) => self.models.push(model),
+            None => self.disposed.insert(model),
+        }
     }
 
     /// The model of `scheme`/`path`, in an editor or not.
@@ -669,10 +712,17 @@ impl EditorGroup {
     pub fn release_models(&mut self, now: Instant) {
         let diffs = &self.diffs;
         let shown_in_diff = |model: &OpenEditor| diffs.values().any(|diff| [&diff.original, &diff.modified].iter().any(|side| model.document.is(&side.scheme, &side.path)));
-        self.models.retain(|model| model.is_dirty() || shown_in_diff(model) || model.host_reference.is_some_and(|opened| now.duration_since(opened) < HOST_REFERENCE_AGE));
+        let (kept, released) = std::mem::take(&mut self.models)
+            .into_iter()
+            .partition(|model| model.is_dirty() || shown_in_diff(model) || model.host_reference.is_some_and(|opened| now.duration_since(opened) < HOST_REFERENCE_AGE));
+        self.models = kept;
+        for model in released {
+            self.disposed.insert(model);
+        }
     }
 
-    fn insert(&mut self, editor: OpenEditor, preview: bool) {
+    fn insert(&mut self, mut editor: OpenEditor, preview: bool) {
+        self.restore_view_state(&mut editor);
         let preview_index = self.editors.iter().position(|editor| editor.preview).filter(|_| preview);
         let index = match preview_index {
             Some(index) => {
@@ -680,9 +730,7 @@ impl EditorGroup {
                 self.recent.retain(|id| *id != replaced_id);
                 let replaced = std::mem::replace(&mut self.editors[index], editor);
                 self.diffs.remove(&replaced.model_id);
-                if replaced.host_reference.is_some() {
-                    self.models.push(replaced);
-                }
+                self.keep_or_dispose(replaced);
                 index
             }
             None => {
@@ -717,6 +765,23 @@ impl EditorGroup {
         }
     }
 
+    /// `updateEditorViewState` of a file editor (`tracksEditorViewState`: `FileEditorInput` only).
+    pub fn save_view_state(&mut self, editor: &OpenEditor) {
+        if editor.document.scheme == "file" {
+            self.view_states.save(&editor.document.uri_string(), editor.view_state(self.viewport));
+        }
+    }
+
+    /// `loadEditorViewState` for an editor new in the group: not with `workbench.editor.restoreViewState` off.
+    fn restore_view_state(&mut self, editor: &mut OpenEditor) {
+        if editor.document.scheme != "file" || !self.disposed.setting_enabled("workbench.editor.restoreViewState", &editor.document.path) {
+            return;
+        }
+        if let Some(state) = self.view_states.load(&editor.document.uri_string()) {
+            editor.restore_view_state(&state, self.viewport);
+        }
+    }
+
     pub fn pin(&mut self, index: usize) {
         self.editors[index].preview = false;
     }
@@ -738,9 +803,7 @@ impl EditorGroup {
         let shown = self.recent.first().copied();
         self.recent.retain(|id| *id != closed.model_id);
         self.shown_model_changed(shown);
-        if closed.host_reference.is_some() {
-            self.models.push(closed);
-        }
+        self.keep_or_dispose(closed);
     }
 }
 
@@ -872,6 +935,7 @@ mod tests {
             folding_markers: None,
             block_comment: None,
             tokens: Tokenization::default(),
+            too_large_for_tokenization: false,
         };
         let names = |group: &EditorGroup| group.editors.iter().map(|editor| editor.document.name()).collect::<Vec<_>>();
         let mut group = EditorGroup::default();
@@ -901,6 +965,7 @@ mod tests {
             folding_markers: None,
             block_comment: None,
             tokens: Tokenization::default(),
+            too_large_for_tokenization: false,
         };
         group.open(document, false);
         let editor = group.active_mut().unwrap();

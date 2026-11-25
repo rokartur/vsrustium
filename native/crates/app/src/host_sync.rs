@@ -95,6 +95,8 @@ pub struct HostSync {
     pub installed_extensions_registered: bool,
     /// `configurationScopes` go to the host in a development build only (`MainThreadConfiguration.send_scopes`).
     pub configuration_scopes: bool,
+    /// `workbench.editor.untitled.labelFormat` is `content`: untitled tabs take their first line's words.
+    pub untitled_names_from_content: bool,
 }
 
 /// `TabModelOperationKind`.
@@ -108,7 +110,7 @@ const CODE_EDITOR_ID: &str = "vs.editor.ICodeEditor:1";
 
 impl HostSync {
     pub fn new(sender: Sender<HostMessage>) -> Self {
-        HostSync { sender, documents: Vec::new(), editor: None, visible_lines: None, tabs: Vec::new(), search_tabs: HashMap::new(), webview_tabs: HashMap::new(), activations: HashMap::new(), installed_extensions_registered: false, configuration_scopes: false }
+        HostSync { sender, documents: Vec::new(), editor: None, visible_lines: None, tabs: Vec::new(), search_tabs: HashMap::new(), webview_tabs: HashMap::new(), activations: HashMap::new(), installed_extensions_registered: false, configuration_scopes: false, untitled_names_from_content: true }
     }
 
     /// Sends what changed in `group` since the last call: activation for new languages, the document
@@ -168,7 +170,7 @@ impl HostSync {
             .enumerate()
             .map(|(index, editor)| match group.diffs.get(&editor.model_id) {
                 Some(diff) => diff_tab_dto(editor, diff, group.active_index() == Some(index), group.tab_model(index).is_dirty()),
-                None => tab_dto(editor, group.active_index() == Some(index), &self.search_tabs, &self.webview_tabs),
+                None => tab_dto(editor, group.active_index() == Some(index), self),
             })
             .collect();
         let mut sent = std::mem::take(&mut self.tabs);
@@ -433,11 +435,16 @@ pub fn tab_id(editor: &OpenEditor) -> String {
     format!("0~default-{type_id}-{} ", editor.document.uri_string())
 }
 
-fn tab_dto(editor: &OpenEditor, active: bool, search_tabs: &HashMap<PathBuf, SearchTab>, webview_tabs: &HashMap<PathBuf, WebviewTab>) -> Value {
+fn tab_dto(editor: &OpenEditor, active: bool, sync: &HostSync) -> Value {
+    let (search_tabs, webview_tabs) = (&sync.search_tabs, &sync.webview_tabs);
     let uri = editor.document.uri();
+    let label = match editor.document.scheme.as_str() {
+        "untitled" => crate::untitled::name(editor, sync.untitled_names_from_content),
+        _ => editor.document.name(),
+    };
     let mut tab = json!({
         "id": tab_id(editor),
-        "label": editor.document.name(),
+        "label": label,
         // TabInputKind.TextInput
         "input": { "kind": 1, "uri": uri },
         "editorId": "default",
@@ -517,6 +524,7 @@ mod tests {
             off_side: false,
             folding_markers: None,
             block_comment: None,
+            too_large_for_tokenization: false,
             tokens: Default::default(),
         }
     }

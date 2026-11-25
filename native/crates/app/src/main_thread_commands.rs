@@ -84,10 +84,18 @@ impl Workbench {
             }
             ("MainThreadLanguageFeatures", "$unregister") => {
                 self.language_features.unregister(arg(0).as_u64().unwrap_or_default());
+                self.trigger_folding_model_changed(cx);
+                Outcome::done()
+            }
+            ("MainThreadLanguageFeatures", "$emitFoldingRangeEvent") => {
+                self.folding_range_event(&arg(0), cx);
                 Outcome::done()
             }
             ("MainThreadLanguageFeatures", method) if method.starts_with("$register") => {
                 self.language_features.register(method, request.args.clone());
+                if method == "$registerFoldingRangeProvider" {
+                    self.trigger_folding_model_changed(cx);
+                }
                 Outcome::done()
             }
             ("MainThreadCommands", "$getCommands") => Outcome::Ready(Ok(json!(self.commands.ids().collect::<Vec<_>>()))),

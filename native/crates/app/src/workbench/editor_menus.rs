@@ -23,6 +23,36 @@ impl Workbench {
         self.show_context_menu(MenuId::EditorContext, &context, point_anchor(pointer), vec![uri], window, cx);
     }
 
+    /// `ShowContextMenu` (Shift+F10): `MenuId.EditorContext` below the cursor, which stays where it is; not with
+    /// `editor.contextmenu` off.
+    pub(super) fn show_editor_context_menu_at_cursor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.setting("editor.contextmenu") == json!(false) {
+            return;
+        }
+        let Some(anchor) = self.cursor_anchor(window) else { return };
+        let uri = document_uri(self.editors.active().expect("an anchor needs an editor"));
+        let context = self.key_context(window);
+        self.show_context_menu(MenuId::EditorContext, &context, point_anchor(anchor), vec![uri], window, cx);
+    }
+
+    /// editorLineNumberMenu.ts `doShow`: `MenuId.EditorLineNumberContext` with `editorLineNumber` and the
+    /// `{ lineNumber, uri }` argument; a click on a line no selection touches selects that line first.
+    pub(super) fn show_line_number_context_menu(&mut self, line: usize, pointer: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
+        let editor = self.editors.active_mut().expect("the gutter is clickable only with an editor open");
+        let line_end = Position::new(line, editor.document.lines[line].chars().count());
+        let touched = editor.selections.iter().any(|selection| !selection.is_empty() && selection.start() <= line_end && Position::new(line, 0) <= selection.end());
+        if !touched {
+            let before = editor.selections.clone();
+            editor.set_selections(vec![crate::editor::Selection { anchor: Position::new(line, 0), head: line_end }]);
+            self.cursors_changed(before, crate::editor::Reveal::Nothing, "api", cx);
+        }
+        let editor = self.editors.active().expect("checked above");
+        let mut context = self.key_context(window);
+        context.insert("editorLineNumber".into(), json!(line + 1));
+        let arg = json!({ "lineNumber": line + 1, "uri": document_uri(editor) });
+        self.show_context_menu(MenuId::EditorLineNumberContext, &context, point_anchor(pointer), vec![arg], window, cx);
+    }
+
     /// `onTabContextMenu`: `MenuId.EditorTitleContext` with the context keys of the right-clicked editor, which
     /// stays inactive; the commands get its resource and `{ groupId, editorIndex }`. Focus goes back to the group.
     pub(super) fn show_tab_context_menu(&mut self, index: usize, pointer: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {

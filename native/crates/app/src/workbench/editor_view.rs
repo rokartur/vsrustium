@@ -80,6 +80,8 @@ impl Workbench {
                 SEARCH_EDITOR_SCHEME => part.child(self.search_editor_query(window, cx)),
                 crate::output::OUTPUT_SCHEME => part.child(self.output_title_actions(window, cx)),
                 TERMINAL_SCHEME => part.child(self.terminal_title_actions(cx)).child(self.terminal_body(cx)),
+                // breadcrumbsControl.ts `update`: no breadcrumbs for a resource without a file system provider.
+                "untitled" => part,
                 _ => part.child(self.breadcrumbs(editor)),
             })
             .map(|part| match self.editors.active_diff() {
@@ -168,10 +170,15 @@ impl Workbench {
     fn tab_hover(&self, index: usize) -> impl IntoElement {
         let editor = &self.editors.editors[index];
         // `getTitle(Verbosity.LONG)`: a search editor's and a webview's is its name.
-        let title = match (self.editors.diffs.get(&editor.model_id), matches!(editor.document.scheme.as_str(), SEARCH_EDITOR_SCHEME | WEBVIEW_PANEL_SCHEME | TERMINAL_SCHEME)) {
+        let title = match (self.editors.diffs.get(&editor.model_id), editor.document.scheme.as_str()) {
             (Some(diff), _) => diff.title(|side| crate::quick_input::path_label(crate::editor::split_query(&side.scheme, &side.path).0, None)),
-            (None, true) => self.editor_name(editor),
-            (None, false) => crate::quick_input::path_label(&editor.document.path, None),
+            (None, SEARCH_EDITOR_SCHEME | WEBVIEW_PANEL_SCHEME | TERMINAL_SCHEME) => self.editor_name(editor),
+            // labels.ts: an untitled label's title is its name and its path.
+            (None, "untitled") if !editor.associated_file => match self.untitled_description(editor) {
+                Some(path) => format!("{} \u{2022} {path}", self.editor_name(editor)),
+                None => self.editor_name(editor),
+            },
+            (None, _) => crate::quick_input::path_label(&editor.document.path, None),
         };
         let content = if editor.preview { super::hover::HoverContent::Preview(title) } else { super::hover::HoverContent::Text(title) };
         self.hover_target(("tab-hover", index), content, super::hover::HoverOptions::mouse())
@@ -185,13 +192,23 @@ impl Workbench {
         // tabs.css colors `.tab-label:not(.monaco-decoration-itemColor)`: a decorated label (read-only, no color of its
         // own) inherits the tab's color from multieditortabscontrol.css, `tab.activeForeground` when active.
         let foreground = if active && readonly { self.foreground_or("tab.activeForeground") } else { action_foreground };
+        // textFileService.ts decorations: a deleted file's label is struck through in `list.errorForeground`.
+        let orphaned = editor.document.scheme == "file" && self.text_files.orphaned.contains(&editor.document.path);
         let label = div()
             .mt(px(3.5))
             .h(px(24.))
             .line_height(px(24.))
             .whitespace_nowrap()
+            .flex()
+            .items_baseline()
             .when(editor.preview, |label| label.italic())
-            .child(self.editor_name(editor));
+            .when(orphaned, |label| label.line_through().text_color(self.foreground_or("list.errorForeground")))
+            .child(self.editor_name(editor))
+            .children(self.untitled_description(editor).map(|description| {
+                // iconlabel.css `.label-description`: 0.9em at 0.7 opacity (0.95 in light themes), 0.5em after the name.
+                let opacity = if self.theme.kind == ThemeKind::Light { 0.95 } else { 0.7 };
+                div().ml(px(6.5)).text_size(px(11.7)).opacity(opacity).child(description)
+            }));
         let file_icon = self.document_icon(self.editors.tab_model(index), 24., foreground);
         // textFileService.ts decorations: a read-only file's label ends in the lockSmall badge at 0.75 opacity. The
         // iconlabel.css `::after` font-size 90% (11.7px) wins over the decoration rule's 16px, which loads first.
@@ -199,10 +216,9 @@ impl Workbench {
         // A dirty tab shows a filled circle where the close action goes, also when inactive (tabstitlecontrol.css).
         let dirty = editor.is_dirty() && !self.editor_is_saving(editor);
         let close_icon = if dirty { "circle-filled" } else { "close-small" };
-        let close = self.icon(close_icon, 20., 16., action_foreground).id(("close", index)).rounded(px(4.)).on_click(cx.listener(move |workbench, _, _, cx| {
+        let close = self.icon(close_icon, 20., 16., action_foreground).id(("close", index)).rounded(px(4.)).on_click(cx.listener(move |workbench, _, window, cx| {
             cx.stop_propagation();
-            workbench.editors.close(index);
-            workbench.editors_changed(cx);
+            drop(workbench.close_editors(vec![index], window, cx));
         }));
         let tab = div()
             .id(("tab", index))
@@ -306,17 +322,34 @@ impl Workbench {
             .when_some(title_border, |crumbs, color| crumbs.child(div().absolute().bottom_0().left_0().right_0().h(px(1.)).bg(color)))
     }
 
-    fn text_area(&self, editor: &OpenEditor, window: &mut Window, cx: &mut Context<Self>) -> Stateful<Div> {
+    fn editor_metrics(&self, editor: &OpenEditor, window: &mut Window) -> EditorMetrics {
         let overrides = config::configuration::Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
         // shortcut: only "off" applies; "relative" and "interval" number every line as "on" does.
         // outputView.ts `OutputEditor.getConfigurationOverrides`: output editors hide line numbers.
         let line_numbers = editor.document.scheme != crate::output::OUTPUT_SCHEME && self.settings.lock().unwrap().get_value(Some("editor.lineNumbers"), &overrides) != Some(serde_json::Value::from("off"));
         let mut metrics = EditorMetrics::measure(window, editor.document.lines.len(), line_numbers, self.editor_zoom.multiplier());
-        let in_diff = self.editors.active_diff().is_some();
         // diffEditorEditors.ts `_adjustOptionsForSubEditor`: no folding and no minimap in either side.
-        if in_diff {
+        if self.editors.active_diff().is_some() {
             metrics.decorations_width = diff_editor_view::diff_decorations_width(metrics.char_width);
         }
+        metrics
+    }
+
+    /// contextmenu.ts `_doShowContextMenu` without a mouse event: below the cursor (`getScrolledVisiblePosition`).
+    pub(super) fn cursor_anchor(&self, window: &mut Window) -> Option<gpui::Point<Pixels>> {
+        let editor = self.editors.active()?;
+        let metrics = self.editor_metrics(editor, window);
+        let head = editor.selection().head;
+        let viewport = self.editors.viewport;
+        let left = metrics.content_left() + visible_column(&editor.document.lines[head.line], head.column, editor.document.indentation.tab_size) as f32 * metrics.char_width - editor.scroll.left;
+        let top = editor.line_top(editor.view_line(head.line), viewport) - editor.scroll.top + metrics.line_height;
+        let origin = self.text_area_bounds.get().origin;
+        Some(point(px(origin.x + left), px(origin.y + top)))
+    }
+
+    fn text_area(&self, editor: &OpenEditor, window: &mut Window, cx: &mut Context<Self>) -> Stateful<Div> {
+        let metrics = self.editor_metrics(editor, window);
+        let in_diff = self.editors.active_diff().is_some();
         let area_left = self.text_area_left.clone();
         let area_bounds = self.text_area_bounds.clone();
         let focus = self.editor_focus.clone();
@@ -394,10 +427,12 @@ impl Workbench {
             }))
             .on_mouse_up(MouseButton::Left, cx.listener(|workbench, _, _, cx| {
                 workbench.selecting_text = false;
+                workbench.line_select_start = None;
                 workbench.cancel_text_drag(cx);
             }))
             .on_mouse_up_out(MouseButton::Left, cx.listener(|workbench, _, _, cx| {
                 workbench.selecting_text = false;
+                workbench.line_select_start = None;
                 workbench.cancel_text_drag(cx);
             }))
             .child(
@@ -784,6 +819,7 @@ impl Workbench {
         let rounded_selection = self.setting("editor.roundedSelection") != json!(false);
         let render_whitespace = self.setting("editor.renderWhitespace");
         let render_whitespace = render_whitespace.as_str().unwrap_or_default();
+        let render_control_characters = self.setting("editor.renderControlCharacters") != serde_json::Value::Bool(false);
         let whitespace_color = self.color("editorWhitespace.foreground");
         let line_height = metrics.line_height;
         // selections.css: high contrast themes square the corners.
@@ -996,6 +1032,9 @@ impl Workbench {
                         show_more = Some(div().absolute().left(px(metrics.content_left())).right_0().top(px(-3.)).h(px(24.)).overflow_hidden().child(span));
                     }
                 }
+                if render_control_characters {
+                    content = content.children(self.control_character_boxes(text, tab_size, char_width, rendered_len));
+                }
                 // folding.css .inline-folded:after: an ellipsis 0.2em after the line's last char.
                 if collapsed == Some(true) {
                     let end = visible_column(text, text.chars().count(), tab_size) as f32 * char_width + 0.2 * metrics.font_size;
@@ -1081,6 +1120,7 @@ impl Workbench {
                         workbench.editor_message_mouse_moved(index, cx);
                         workbench.content_hover.row_target = Some((index, visible_at(workbench, event.position.x)));
                         match event.pressed_button {
+                            Some(MouseButton::Left) if workbench.line_select_start.is_some() => workbench.gutter_line_select_drag(index, cx),
                             Some(MouseButton::Left) if workbench.text_drag.is_some() => workbench.drag_text(index, visible_at(workbench, event.position.x), event.modifiers.alt, cx),
                             Some(MouseButton::Left) if workbench.selecting_text => workbench.click_text(index, visible_at(workbench, event.position.x), event.modifiers, true, 1, cx),
                             Some(MouseButton::Middle) if workbench.selecting_text => workbench.column_select_text(index, visible_at(workbench, event.position.x), true, cx),
@@ -1094,8 +1134,8 @@ impl Workbench {
                     .flex()
                     .children(self.diff_margin(editor, index, metrics))
                     .children(self.quick_diff_glyph(editor, index, metrics))
-                    .child(div().w(px(metrics.glyph_margin_width())).flex_none())
-                    .child(number)
+                    .child(self.gutter_mouse(div().w(px(metrics.glyph_margin_width())).h_full().flex_none(), index, cx))
+                    .child(self.gutter_mouse(number, index, cx))
                     .child(self.fold_control(index, collapsed, metrics, fold_control_color, fold_controls, cx))
                     .child(content)
                     .children(show_more)

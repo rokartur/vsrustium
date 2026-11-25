@@ -8,18 +8,16 @@ use std::time::UNIX_EPOCH;
 use gpui::{Bounds, Context, EntityInputHandler, KeyDownEvent, Pixels, UTF16Selection, Window};
 
 use config::configuration::Overrides;
-use exthost::main_thread_files::resource;
 use futures::channel::oneshot;
 
 use super::Workbench;
 use super::auto_save::SaveReason;
-use super::search_editor_view::SEARCH_EDITOR_SCHEME;
+use super::text_files::SaveOptions;
 use serde_json::json;
 
 use crate::editor::save_participants::SaveParticipants;
 use crate::editor::{ContentChanged, Position, uri_string, utf16_column};
 use crate::local_history;
-use crate::host_sync::FileJob;
 
 impl Workbench {
     /// Enter reaches the editor as typed text, the line break the browser's textarea would insert. codeEditorWidget.ts
@@ -56,6 +54,10 @@ impl Workbench {
             if let Some(change) = &change {
                 self.search_editor_edited(&path, change);
             }
+            // untitledTextEditorModel.ts `onDidChangeName`: the first line names the tab.
+            if scheme == "untitled" {
+                self.host.send_tabs(&self.editors);
+            }
             self.schedule_keybinding_marks(cx);
         }
         if scrolled {
@@ -64,42 +66,16 @@ impl Workbench {
         cx.notify();
     }
 
-    /// Writes the editor's model, clean or not, and tells the host it was saved; a model of an extension's file
-    /// system provider is written through the host thread. The receiver answers whether the write succeeded.
-    /// shortcut: no `$participateInSave` (only `$trySaveDocument` runs it), no format on save or code actions on save,
-    /// no conflict check against the file on disk.
+    /// fileCommands.ts `save`: the editor's model, also when clean (`force`).
     pub(super) fn save_editor(&mut self, index: usize, cx: &mut Context<Self>) -> oneshot::Receiver<bool> {
         let document = &self.editors.tab_model(index).document;
         let (scheme, path) = (document.scheme.clone(), document.path.clone());
-        self.save_model(scheme, path, SaveReason::Explicit, cx)
+        self.save_model_with(scheme, path, SaveReason::Explicit, SaveOptions { force: true, ..SaveOptions::default() }, cx)
     }
 
-    /// `save_editor` for any open model, one without an editor too.
+    /// `textFileService.save` of any open model, one without an editor too.
     pub(super) fn save_model(&mut self, scheme: String, path: PathBuf, reason: SaveReason, cx: &mut Context<Self>) -> oneshot::Receiver<bool> {
-        if scheme == SEARCH_EDITOR_SCHEME {
-            return self.save_search_editor(path, cx);
-        }
-        self.run_save_participants(&scheme, &path, reason);
-        let (sender, receiver) = oneshot::channel();
-        let editor = self.editors.model(&scheme, &path).expect("saving an open model");
-        let version = editor.alternative_version_id();
-        let bytes = editor.saved_bytes();
-        if scheme == "file" {
-            let written = std::fs::write(&path, bytes).map_err(|error| error.to_string());
-            let _ = sender.send(self.finish_save(&scheme, &path, version, written, cx));
-            return receiver;
-        }
-        let write = self.host.run_files(FileJob::Write(resource(&editor.document.uri()), bytes));
-        cx.spawn(async move |workbench, cx| {
-            let written = match write.await {
-                Ok(result) => result.map(drop).map_err(|error| error.to_string()),
-                Err(_) => Err("Canceled".to_string()),
-            };
-            let saved = workbench.update(cx, |workbench, cx| workbench.finish_save(&scheme, &path, version, written, cx));
-            let _ = sender.send(saved.unwrap_or(false));
-        })
-        .detach();
-        receiver
+        self.save_model_with(scheme, path, reason, SaveOptions::default(), cx)
     }
 
     /// saveParticipants.ts: the text participants of the model's language and resource, their changes sent to the host.
@@ -131,34 +107,10 @@ impl Workbench {
         }
     }
 
-    /// The model is clean up to the version that was written, and the host hears it was saved.
-    pub(super) fn finish_save(&mut self, scheme: &str, path: &Path, version: u32, written: Result<(), String>, cx: &mut Context<Self>) -> bool {
-        if let Err(error) = written {
-            // shortcut: textFileSaveErrorHandler.ts's generic error without its Retry, Save As and Revert actions.
-            let name = path.file_name().unwrap_or(path.as_os_str()).to_string_lossy();
-            self.notify_error(format!("Failed to save '{name}': {error}"));
-            cx.notify();
-            return false;
-        }
-        // An editor closed while its model was written has nothing left to mark.
-        let Some(model) = self.editors.model_mut(scheme, path) else { return true };
-        let was_dirty = model.is_dirty();
-        model.mark_saved_at(version);
-        let became_clean = was_dirty && !model.is_dirty();
-        let model = self.editors.model(scheme, path).expect("found above");
-        self.host.send_saved(&self.editors, model, became_clean);
-        // storedFileWorkingCopy.ts saves only a dirty model, and only those saves reach the history tracker.
-        if scheme == "file" && was_dirty {
-            self.add_local_history_entry(path, cx);
-        }
-        cx.notify();
-        true
-    }
-
     /// workingCopyHistoryTracker.ts `onDidSave`: the saved file goes into the local history with its modification
     /// time. shortcut: every save has the "File Saved" source; the undo stack's label as the source
     /// (`resolveSourceFromUndoRedo`) shows only in the Timeline, which is not ported.
-    fn add_local_history_entry(&self, path: &Path, cx: &mut Context<Self>) {
+    pub(super) fn add_local_history_entry(&self, path: &Path, cx: &mut Context<Self>) {
         let Ok(metadata) = std::fs::metadata(path) else { return };
         let settings = self.settings.lock().unwrap();
         let Some(limits) = local_history::tracked(&settings, path, metadata.len()) else { return };

@@ -245,7 +245,8 @@ pub struct SelectionHighlightQuery {
 /// `SelectionHighlighter._createState`: the session's search, or the one a new session would make, unless the
 /// selection is empty, blank, too long, or the shown find widget highlights the same matches.
 pub fn selection_highlight_query(find: &FindController, editor: &OpenEditor, context: &MultiCursorContext, options: SelectionHighlightOptions) -> Option<SelectionHighlightQuery> {
-    if !options.enabled {
+    // multicursor.ts `_update`: searching the whole of a model too large for tokenization would block the UI.
+    if !options.enabled || editor.document.too_large_for_tokenization {
         return None;
     }
     let selection = editor.selection();

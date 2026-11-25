@@ -147,6 +147,7 @@ impl Workbench {
             cx.stop_propagation();
             return;
         }
+        self.find_input_key_down(keystroke, window, cx);
         if chord.is_modifier_key() {
             self.log_keybinding("\\ Keyboard event cannot be dispatched in keydown phase.");
             return;

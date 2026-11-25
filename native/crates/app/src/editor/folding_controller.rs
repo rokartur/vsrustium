@@ -9,10 +9,44 @@ use super::{OpenEditor, Reveal};
 
 impl OpenEditor {
     /// `triggerFoldingModelChanged`: the indentation provider's regions merged into the model, then the
-    /// cursors leave the lines it hides.
+    /// cursors leave the lines it hides. While extension providers fold the model their regions stay, moved by
+    /// the edits, until the workbench applies their next answer (`apply_syntax_folding`).
     pub fn refresh_folding_ranges(&mut self) {
+        // folding.ts `onModelChanged`: a model too large for tokenization gets no folding model.
+        if self.document.too_large_for_tokenization {
+            return;
+        }
+        if self.syntax_folding {
+            return self.adjust_selections_to_folds();
+        }
         let document = &self.document;
         let regions = compute_ranges(&document.lines, document.indentation.tab_size, document.off_side, document.folding_markers.as_deref());
+        self.sticky_model = super::sticky_scroll::from_folding_regions(&regions);
+        let lines = self.selection_start_lines();
+        self.folding.update(regions, self.document.lines.len(), Some(&lines));
+        self.adjust_selections_to_folds();
+    }
+
+    /// The end of `triggerFoldingModelChanged` with a `SyntaxRangeProvider`: the providers' regions, or `None` when
+    /// none answered with an array, which falls back to the indentation provider. With `editor.foldingImportsByDefault`
+    /// the first regions of kind `imports` collapse.
+    pub fn apply_syntax_folding(&mut self, regions: Option<FoldingRegions>, fold_imports: bool) {
+        if self.document.too_large_for_tokenization {
+            return;
+        }
+        let Some(mut regions) = regions else {
+            self.syntax_folding = false;
+            return self.refresh_folding_ranges();
+        };
+        self.syntax_folding = true;
+        if fold_imports && !self.folded_imports {
+            for index in 0..regions.len() {
+                if regions.get(index).kind.as_deref() == Some("imports") {
+                    regions.set_collapsed(index, true);
+                    self.folded_imports = true;
+                }
+            }
+        }
         self.sticky_model = super::sticky_scroll::from_folding_regions(&regions);
         let lines = self.selection_start_lines();
         self.folding.update(regions, self.document.lines.len(), Some(&lines));

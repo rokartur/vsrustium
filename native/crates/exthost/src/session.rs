@@ -122,7 +122,9 @@ pub fn workspace_id(workspace: &Workspace) -> String {
 pub fn configuration_init_data(extensions: &[ScannedExtension]) -> Value {
     let described: Vec<(&str, &Value)> = extensions.iter().map(|extension| (extension.id.as_str(), &extension.description)).collect();
     let registry = Registry::with_extensions(&described);
-    let mut data = Configuration { defaults: registry.default_model(), ..Configuration::default() }.to_data();
+    let mut configuration = Configuration::default();
+    configuration.defaults = registry.default_model();
+    let mut data = configuration.to_data();
     data["configurationScopes"] = registry.scopes();
     data
 }

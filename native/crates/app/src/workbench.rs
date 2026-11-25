@@ -20,6 +20,7 @@ mod extension_management;
 mod explorer_find;
 mod file_participants;
 mod find_widget;
+mod folding_providers;
 mod auto_save;
 mod hover;
 pub(crate) mod host_requests;
@@ -54,6 +55,10 @@ mod status_entries;
 use status_entries::{EDITOR_STATUS_PRIORITY, PROBLEMS_PRIORITY};
 pub mod themes;
 mod quick_input_view;
+mod text_files;
+mod control_characters;
+mod large_file;
+mod gutter_mouse;
 mod text_input;
 mod title_bar_actions;
 mod unicode_highlight;
@@ -78,7 +83,7 @@ use serde_json::Value;
 use crate::commands::Commands;
 use crate::contextkey;
 use crate::menus::MenuId;
-use crate::editor::{EditorGroup, TextDocument};
+use crate::editor::EditorGroup;
 use crate::explorer::FileTree;
 use explorer_actions::DraggedItems;
 use hover::{HoverContent, HoverOptions, HoverPosition};
@@ -128,6 +133,7 @@ pub struct Workbench {
     unicode_highlight: unicode_highlight::UnicodeHighlight,
     unusual_line_terminators: unusual_line_terminators::UnusualLineTerminators,
     auto_save: auto_save::AutoSave,
+    text_files: text_files::TextFiles,
     find: find_widget::FindWidget,
     /// The line and whether on its folding control a press may toggle a fold (folding.ts `mouseDownInfo`).
     fold_mouse_down: Option<(usize, bool)>,
@@ -142,6 +148,7 @@ pub struct Workbench {
     content_hover: content_hover::ContentHover,
     /// The providers extensions registered through MainThreadLanguageFeatures.
     pub(crate) language_features: crate::language_features::LanguageFeatures,
+    folding_providers: folding_providers::FoldingProviders,
     readonly_overrides: readonly::SessionOverrides,
     pub editor_focus: FocusHandle,
     /// bannerController.ts: the banner element is focusable (`tabIndex = 0`) inside the editor's DOM node.
@@ -158,6 +165,8 @@ pub struct Workbench {
     marked_text: Option<Range<usize>>,
     /// A left button press in the text is held, so moves extend the selection.
     selecting_text: bool,
+    /// The line range a gutter press selected, which a drag extends (`selectionStart` of a line selection).
+    line_select_start: Option<(crate::editor::Position, crate::editor::Position)>,
     text_drag: Option<editor_view::drag_and_drop::TextDrag>,
     /// editorOptions.ts `stopRenderingLineAfter` (10000) of the group's code editor; longLinesHelper.ts clears it.
     stop_rendering_line_after: Option<usize>,
@@ -206,6 +215,7 @@ impl Render for Workbench {
         self.update_quick_diff(cx);
         self.auto_save_models_changed(cx);
         self.follow_content_hover_editor();
+        self.folding_model_changed(cx);
         let viewport = window.viewport_size();
         let window_border = self.theme.color("window.activeBorder");
         // The reference lays the grid out at the full window size and shifts it inside the 1px window border.
@@ -279,6 +289,7 @@ impl Workbench {
             unicode_highlight: Default::default(),
             unusual_line_terminators: Default::default(),
             auto_save: Default::default(),
+            text_files: Default::default(),
             find: find_widget::FindWidget::new(cx),
             fold_mouse_down: None,
             text_area_left: Rc::default(),
@@ -288,6 +299,7 @@ impl Workbench {
             marker_navigation: Default::default(),
             content_hover: Default::default(),
             language_features: Default::default(),
+            folding_providers: Default::default(),
             readonly_overrides: Default::default(),
             editor_focus: cx.focus_handle(),
             unicode_banner_focus: cx.focus_handle(),
@@ -298,6 +310,7 @@ impl Workbench {
             input_carets_hidden: false,
             marked_text: None,
             selecting_text: false,
+            line_select_start: None,
             text_drag: None,
             stop_rendering_line_after: Some(10_000),
             editor_zoom: Default::default(),
@@ -327,10 +340,13 @@ impl Workbench {
             explorer_panes: view_panes::ExplorerPanes::default(),
         };
         crate::main_thread_commands::register_commands_documentation(&mut workbench);
+        workbench.editors.disposed.settings = Some(workbench.settings.clone());
         workbench.register_workbench_actions();
         workbench.register_diff_editor_commands();
         workbench.register_diff_gutter_commands();
         workbench.register_scm_commands();
+        workbench.register_text_file_commands();
+        workbench.register_large_file_commands();
         workbench.register_editor_commands();
         workbench.register_find_commands();
         workbench.register_sticky_scroll_commands();
@@ -369,10 +385,15 @@ impl Workbench {
         .detach();
         cx.on_app_quit(|workbench, _| {
             workbench.store_explorer_view_state();
+            workbench.store_editor_view_states();
             async {}
         })
         .detach();
-        cx.on_release(|workbench, _| workbench.store_explorer_view_state()).detach();
+        cx.on_release(|workbench, _| {
+            workbench.store_explorer_view_state();
+            workbench.store_editor_view_states();
+        })
+        .detach();
         workbench
     }
 
@@ -409,7 +430,7 @@ impl Workbench {
             // A model without an editor, as a search replace leaves it, keeps its text.
             None => match self.editors.models.iter().position(|model| model.document.is("file", &path)) {
                 Some(index) => self.editors.show_model(index, !pinned),
-                None => match TextDocument::read(&path, &self.languages, &self.settings.lock().unwrap()) {
+                None => match self.read_document(&path) {
                     Ok(document) => self.editors.open(document, !pinned),
                     // shortcut: a read error is logged, not shown as the reference's editor error placeholder.
                     Err(error) => eprintln!("opening {}: {error}", path.display()),
@@ -436,6 +457,7 @@ impl Workbench {
         self.schedule_keybinding_marks(cx);
         self.update_marker_decorations(None);
         self.sync_webview_panels();
+        self.text_files_editors_changed();
         self.host.send_changes(&self.editors);
         cx.notify();
     }

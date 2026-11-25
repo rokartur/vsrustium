@@ -117,6 +117,7 @@ impl Workbench {
             Some(search_editor) => search_editor_name(search_editor.backing_file.as_deref(), &search_editor.config.query),
             None if editor.document.scheme == crate::output::OUTPUT_SCHEME => "Output".into(),
             None if editor.document.scheme == super::terminal_view::TERMINAL_SCHEME => "Terminal".into(),
+            None if editor.document.scheme == "untitled" => crate::untitled::name(editor, self.untitled_names_from_content()),
             None => super::preferences::editor_label(&editor.document)
                 .or_else(|| self.webview_title(&editor.document.path))
                 .or_else(|| self.diff_name(editor))
@@ -270,7 +271,7 @@ impl Workbench {
         let version = model.alternative_version_id();
         let contents = serialize_search_configuration(&search_editor.config) + "\n" + &model.document.lines.join("\n");
         if let Some(file) = search_editor.backing_file.clone() {
-            let written = std::fs::write(&file, contents).map_err(|error| error.to_string());
+            let written = std::fs::write(&file, contents).map_err(|error| super::text_files::SaveError::Other(error.to_string()));
             let _ = sender.send(self.finish_save(SEARCH_EDITOR_SCHEME, &path, version, written, cx));
             return receiver;
         }
@@ -282,7 +283,7 @@ impl Workbench {
                 let _ = sender.send(false);
                 return;
             };
-            let written = std::fs::write(&file, contents).map_err(|error| error.to_string());
+            let written = std::fs::write(&file, contents).map_err(|error| super::text_files::SaveError::Other(error.to_string()));
             let saved = workbench.update(cx, |workbench, cx| {
                 // The editor can have closed while the dialog was open; the file is written all the same.
                 if let Some(editor) = workbench.search_editors.get_mut(&path).filter(|_| written.is_ok()) {

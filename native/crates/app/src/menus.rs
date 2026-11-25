@@ -31,6 +31,7 @@ pub enum MenuId {
     SearchContext,
     EditorContext,
     EditorTitleContext,
+    EditorLineNumberContext,
     TitleBarContext,
     TitleBarTitleContext,
     ScmTitle,
@@ -85,7 +86,9 @@ const WORKBENCH_MENUS: &[Row] = &[
     (MenuId::MenubarMainMenu, Some(MenuId::MenubarHelpMenu), "", "&&Help", "", 8., None, None),
     (MenuId::MenubarMainMenu, Some(MenuId::MenubarPreferencesMenu), "", "&&Preferences", "", 9., Some("isMacNative"), None),
     // fileActions.contribution.ts
+    (MenuId::MenubarFileMenu, None, "workbench.action.files.newUntitledFile", "&&New Text File", "1_new", 1., None, None),
     (MenuId::MenubarFileMenu, None, "workbench.action.files.save", "&&Save", "4_save", 1., None, Some("activeEditor || foldersViewVisible && sideBarFocus")),
+    (MenuId::MenubarFileMenu, None, "workbench.action.files.saveAs", "Save &&As...", "4_save", 2., None, Some("activeEditor || foldersViewVisible && sideBarFocus")),
     (MenuId::MenubarFileMenu, None, "saveAll", "Save A&&ll", "4_save", 3., None, Some("dirtyWorkingCopies")),
     (
         MenuId::MenubarFileMenu,
@@ -232,10 +235,11 @@ pub fn workbench_menus() -> Vec<MenuItem> {
 
 /// menusExtensionPoint.ts `apiMenus`: the `contributes.menus` keys of the menus the port shows. `commandPalette`
 /// is read by `command_palette::menu`.
-const API_MENUS: [(&str, MenuId); 9] = [
+const API_MENUS: [(&str, MenuId); 10] = [
     ("editor/context", MenuId::EditorContext),
     ("explorer/context", MenuId::ExplorerContext),
     ("editor/title/context", MenuId::EditorTitleContext),
+    ("editor/lineNumber/context", MenuId::EditorLineNumberContext),
     ("scm/title", MenuId::ScmTitle),
     ("scm/resourceGroup/context", MenuId::ScmResourceGroupContext),
     ("scm/resourceState/context", MenuId::ScmResourceStateContext),

@@ -194,6 +194,38 @@ impl Languages {
         self.names.get(id).map_or(id, String::as_str)
     }
 
+    /// textFileService.ts `suggestFilename`: an untitled name keeps an extension of the language, else takes the
+    /// language's first extension in place of its own, else its first file name; an unnamed language keeps it.
+    pub fn suggest_file_name(&self, id: &str, untitled_name: &str) -> String {
+        if !self.names.contains_key(id) {
+            return untitled_name.to_string();
+        }
+        let of_language = |pick: fn(&Association) -> Option<&String>| -> Vec<&str> {
+            let mut values: Vec<&str> = Vec::new();
+            for value in self.associations.iter().filter(|association| association.id == id).filter_map(pick) {
+                if !values.contains(&value.as_str()) {
+                    values.push(value);
+                }
+            }
+            values
+        };
+        let extensions = of_language(|association| association.extension.as_ref());
+        // path.extname: from the last dot that does not start the name.
+        let extension = untitled_name.rfind('.').filter(|dot| *dot > 0).map_or("", |dot| &untitled_name[dot..]);
+        if extensions.contains(&extension) {
+            return untitled_name.to_string();
+        }
+        if let Some(primary) = extensions.first() {
+            let stem = if extension.is_empty() { untitled_name } else { &untitled_name[..untitled_name.find(extension).expect("found above")] };
+            return format!("{stem}{primary}");
+        }
+        let filenames = of_language(|association| association.filename.as_ref());
+        if filenames.contains(&untitled_name) {
+            return untitled_name.to_string();
+        }
+        filenames.first().map_or(untitled_name, |name| name).to_string()
+    }
+
     /// `getSortedRegisteredLanguageNames`: each name with its language, the last language registered under a name,
     /// sorted ignoring case.
     pub fn sorted_names(&self) -> Vec<(&str, &str)> {

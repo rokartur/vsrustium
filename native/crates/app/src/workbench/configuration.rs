@@ -48,6 +48,12 @@ impl Workbench {
             }
         }
         self.update_model_options(before);
+        if ["editor.folding", "editor.foldingStrategy", "editor.foldingMaximumRegions", "editor.defaultFoldingRangeProvider"].iter().any(|key| affects(change, key)) {
+            self.trigger_folding_model_changed(cx);
+        }
+        if affects(change, "files.associations") {
+            self.files_associations_changed(cx);
+        }
         cx.notify();
     }
 

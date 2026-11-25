@@ -55,6 +55,7 @@ mod terminal;
 mod tf_idf;
 mod theme;
 mod undo_redo;
+mod untitled;
 mod webview;
 mod workbench;
 
@@ -174,6 +175,7 @@ fn main() -> anyhow::Result<()> {
                 workbench.skip_dialogs = development.as_ref().is_some_and(|development| development.tests_path.is_some());
                 workbench.load_keybindings(keybindings::default_keybindings(&extensions), keybindings_file.clone(), cx);
                 workbench.watch_settings_files(cx);
+                workbench.start_file_watcher(cx);
                 workbench.start_system_wide_keybindings(window, cx);
                 workbench.set_command_palette_menu(command_palette::menu(&extensions));
                 workbench.menus.extend(menus::extension_menus(&extensions));
