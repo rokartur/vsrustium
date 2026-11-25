@@ -116,6 +116,7 @@ impl Workbench {
         host.untitled_names_from_content = self.host.untitled_names_from_content;
         host.search_tabs = std::mem::take(&mut self.host.search_tabs);
         host.send_color_theme(self.theme.kind);
+        host.send_language_ids(&self.languages);
         self.host = host;
         self.host.send_changes(&self.editors);
 

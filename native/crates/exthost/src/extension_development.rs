@@ -26,10 +26,14 @@ impl ExtensionDevelopment {
         }
     }
 
-    /// Adds the extension under development; it replaces a built-in with the same id.
+    /// Adds the extension under development; it replaces a built-in with the same id and keeps its type
+    /// (`scanExtensionsUnderDevelopment`), so a built-in's copy stays built-in.
     pub fn add_extension(&self, extensions: &mut Vec<ScannedExtension>) -> anyhow::Result<()> {
         let mut extension = scan_extension(&self.extension_path, false)?;
         extension.description["isUnderDevelopment"] = json!(true);
+        if let Some(existing) = extensions.iter().find(|other| other.id.eq_ignore_ascii_case(&extension.id)) {
+            extension.description["isBuiltin"] = existing.description["isBuiltin"].clone();
+        }
         extensions.retain(|other| !other.id.eq_ignore_ascii_case(&extension.id));
         extensions.push(extension);
         Ok(())
@@ -72,11 +76,14 @@ mod tests {
         let mut extensions = vec![scan_extension(&dir, true).unwrap()];
         let development = ExtensionDevelopment { extension_path: dir.clone(), tests_path: Some(dir.join("out")) };
         development.add_extension(&mut extensions).unwrap();
+        let mut user = vec![];
+        development.add_extension(&mut user).unwrap();
         let mut init = json!({ "environment": {} });
         development.add_to_init_data(&mut init);
         std::fs::remove_dir_all(&dir).unwrap();
         assert_eq!(extensions.len(), 1);
-        assert_eq!((&extensions[0].description["isBuiltin"], &extensions[0].description["isUnderDevelopment"]), (&json!(false), &json!(true)));
+        assert_eq!((&extensions[0].description["isBuiltin"], &extensions[0].description["isUnderDevelopment"]), (&json!(true), &json!(true)));
+        assert_eq!(user[0].description["isBuiltin"], json!(false));
         assert_eq!(init["environment"]["extensionTestsLocationURI"]["path"], json!(dir.join("out").to_string_lossy()));
     }
 }

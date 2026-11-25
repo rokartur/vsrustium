@@ -271,6 +271,7 @@ fn main() -> anyhow::Result<()> {
                 let mut host = HostSync::new(host_sender);
                 host.configuration_scopes = development.is_some();
                 host.send_color_theme(theme.kind);
+                host.send_language_ids(&languages);
                 let mut workbench = Workbench::new(theme, app_root.clone(), workspace.clone(), languages, settings.clone(), host, cx);
                 perf::mark("code/didCreateWorkbench");
                 cx.observe_window_appearance(window, |workbench, _, cx| workbench.host_color_scheme_changed(cx)).detach();

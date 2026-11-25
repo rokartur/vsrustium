@@ -26,7 +26,7 @@ impl Workbench {
         // `providers.ordered(model).reverse()`: the best provider's links are merged last and win.
         let mut providers: Vec<(u64, bool)> = self.language_features.ordered(REGISTER, &candidate).iter().map(|registration| (registration.handle, registration.args.get(2) == Some(&json!(true)))).collect();
         providers.reverse();
-        let calls: Vec<_> = providers.iter().map(|&(handle, resolves)| (handle, resolves, self.host.call("ExtHostLanguageFeatures", "$provideDocumentLinks", vec![json!(handle), uri.clone()]))).collect();
+        let calls: Vec<_> = providers.iter().map(|&(handle, resolves)| (handle, resolves, self.host.call_cancellable("ExtHostLanguageFeatures", "$provideDocumentLinks", vec![json!(handle), uri.clone()]))).collect();
         let resolve_count = args.get(1).and_then(Value::as_u64).unwrap_or(0) as usize;
         let (sender, receiver) = oneshot::channel();
         cx.spawn(async move |workbench, cx| {
@@ -47,7 +47,7 @@ impl Workbench {
                 if !link.dto["url"].is_null() || !link.resolves || cache_id.is_null() {
                     continue;
                 }
-                let Ok(call) = workbench.update(cx, |workbench, _| workbench.host.call("ExtHostLanguageFeatures", "$resolveDocumentLink", vec![json!(link.handle), cache_id])) else { return };
+                let Ok(call) = workbench.update(cx, |workbench, _| workbench.host.call_cancellable("ExtHostLanguageFeatures", "$resolveDocumentLink", vec![json!(link.handle), cache_id])) else { return };
                 if let Ok(Ok(resolved)) = call.await
                     && resolved.is_object()
                 {

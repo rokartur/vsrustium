@@ -312,6 +312,11 @@ impl HostSync {
         self.send("ExtHostTheming", "$onColorThemeChange", vec![json!(scheme)]);
     }
 
+    /// mainThreadLanguages.ts: `$acceptLanguageIds` with the registered languages, what `getLanguages` answers.
+    pub fn send_language_ids(&self, languages: &crate::languages::Languages) {
+        self.send("ExtHostLanguages", "$acceptLanguageIds", vec![json!(languages.ids())]);
+    }
+
     /// `send` for callbacks that outlive a borrow of the workbench (a terminal's input).
     pub fn notifier(&self) -> impl Fn(&'static str, &'static str, Vec<Value>) + 'static {
         let sender = self.sender.clone();
@@ -736,6 +741,15 @@ mod tests {
         let sent = drain(&receiver);
         assert_eq!((sent[0].proxy, sent[0].method), ("ExtHostTheming", "$onColorThemeChange"));
         assert_eq!(sent[0].args, [json!("hcLight")]);
+    }
+
+    #[test]
+    fn sends_the_registered_language_ids_plaintext_first() {
+        let (sender, receiver) = channel();
+        HostSync::new(sender).send_language_ids(&crate::languages::Languages::new(&[]));
+        let sent = drain(&receiver);
+        assert_eq!((sent[0].proxy, sent[0].method), ("ExtHostLanguages", "$acceptLanguageIds"));
+        assert_eq!(sent[0].args[0][0], json!("plaintext"));
     }
 
     #[test]
