@@ -126,5 +126,14 @@ fn the_word_highlight_stops_while_the_quick_input_has_the_focus(cx: &mut TestApp
     assert_eq!(highlights(cx), 0);
     cx.simulate_keystrokes("escape");
     assert_eq!(highlights(cx), 2, "onDidFocusEditorText");
+
+    // A picked command edits before GPUI reports the restored focus; the edit stops upstream's pending query.
+    cx.simulate_keystrokes("cmd-p");
+    workbench.update_in(cx, |workbench, window, cx| {
+        workbench.editors.active_mut().unwrap().type_text("x");
+        window.focus(&workbench.editor_focus.clone(), cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(highlights(cx), 0, "onDidChangeModelContent");
     std::fs::remove_dir_all(dir).unwrap();
 }
