@@ -3,7 +3,7 @@
 //! (`$acceptTabOperation`), mainThreadEditors.ts (`$acceptEditorPropertiesChanged`) and the
 //! `onLanguage` activation languageService.ts sends when a model of a new language is created.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 
@@ -90,6 +90,8 @@ pub struct HostSync {
     /// The webview panels' tabs by their editor's path; no text model backs them.
     pub webview_tabs: HashMap<PathBuf, WebviewTab>,
     activations: HashMap<String, Activation>,
+    /// The activation events the running extensions declare (`ExtensionDescriptionRegistry`'s activation map).
+    pub activation_events: HashSet<String>,
     /// `whenInstalledExtensionsRegistered`: set once the host's handshake is done; until then commands do not wait for
     /// their `onCommand` activation.
     pub installed_extensions_registered: bool,
@@ -110,7 +112,7 @@ const CODE_EDITOR_ID: &str = "vs.editor.ICodeEditor:1";
 
 impl HostSync {
     pub fn new(sender: Sender<HostMessage>) -> Self {
-        HostSync { sender, documents: Vec::new(), editor: None, visible_lines: None, tabs: Vec::new(), search_tabs: HashMap::new(), webview_tabs: HashMap::new(), activations: HashMap::new(), installed_extensions_registered: false, configuration_scopes: false, untitled_names_from_content: true }
+        HostSync { sender, documents: Vec::new(), editor: None, visible_lines: None, tabs: Vec::new(), search_tabs: HashMap::new(), webview_tabs: HashMap::new(), activations: HashMap::new(), activation_events: HashSet::new(), installed_extensions_registered: false, configuration_scopes: false, untitled_names_from_content: true }
     }
 
     /// Sends what changed in `group` since the last call: activation for new languages, the document
@@ -338,6 +340,11 @@ impl HostSync {
             unsent.0.files.expect("the message carries file work").run(&mut files::disk::Disk);
         }
         receiver
+    }
+
+    /// Reads the activation events of the extensions the host runs.
+    pub fn set_running_extensions(&mut self, extensions: &[ScannedExtension]) {
+        self.activation_events = extensions.iter().flat_map(|extension| exthost::activation_events::read_activation_events(&extension.id, &extension.description)).collect();
     }
 
     /// `ExtensionHostManager.activateByEvent`: one request per event; a repeat shares the first one's answer.

@@ -296,6 +296,7 @@ fn main() -> anyhow::Result<()> {
                 workbench.urls.extensions = extensions.iter().map(|extension| (extension.id.to_lowercase(), extension.description["displayName"].as_str().unwrap_or(&extension.id).to_owned())).collect();
                 workbench.file_icons = file_icons;
                 workbench.color_themes = color_themes;
+                workbench.host.set_running_extensions(&extensions);
                 workbench.extensions = extensions.clone();
                 workbench.register_webview_view_commands();
                 workbench.start_tasks();
