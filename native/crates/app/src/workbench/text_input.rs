@@ -12,6 +12,7 @@ use exthost::main_thread_files::resource;
 use futures::channel::oneshot;
 
 use super::Workbench;
+use super::auto_save::SaveReason;
 use super::search_editor_view::SEARCH_EDITOR_SCHEME;
 use serde_json::json;
 
@@ -68,15 +69,15 @@ impl Workbench {
     pub(super) fn save_editor(&mut self, index: usize, cx: &mut Context<Self>) -> oneshot::Receiver<bool> {
         let document = &self.editors.editors[index].document;
         let (scheme, path) = (document.scheme.clone(), document.path.clone());
-        self.save_model(scheme, path, cx)
+        self.save_model(scheme, path, SaveReason::Explicit, cx)
     }
 
     /// `save_editor` for any open model, one without an editor too.
-    pub(super) fn save_model(&mut self, scheme: String, path: PathBuf, cx: &mut Context<Self>) -> oneshot::Receiver<bool> {
+    pub(super) fn save_model(&mut self, scheme: String, path: PathBuf, reason: SaveReason, cx: &mut Context<Self>) -> oneshot::Receiver<bool> {
         if scheme == SEARCH_EDITOR_SCHEME {
             return self.save_search_editor(path, cx);
         }
-        self.run_save_participants(&scheme, &path);
+        self.run_save_participants(&scheme, &path, reason);
         let (sender, receiver) = oneshot::channel();
         let editor = self.editors.model(&scheme, &path).expect("saving an open model");
         let version = editor.alternative_version_id();
@@ -100,8 +101,14 @@ impl Workbench {
     }
 
     /// saveParticipants.ts: the text participants of the model's language and resource, their changes sent to the host.
-    pub(super) fn run_save_participants(&mut self, scheme: &str, path: &Path) {
+    pub(super) fn run_save_participants(&mut self, scheme: &str, path: &Path, reason: SaveReason) {
+        // `findEditor`: only the group's one code editor, showing the active model, has cursors.
+        let shown = self.editors.active().is_some_and(|editor| editor.document.is(scheme, path));
         let model = self.editors.model_mut(scheme, path).expect("saving an open model");
+        let spared_cursors = match reason == SaveReason::Auto && shown {
+            true => model.selections.iter().map(|selection| selection.head).collect(),
+            false => Vec::new(),
+        };
         let settings = self.settings.lock().unwrap();
         let overrides = Overrides { resource: Some(path), override_identifier: Some(&model.document.language_id) };
         let on = |key: &str| settings.get_value(Some(key), &overrides) == Some(json!(true));
@@ -110,6 +117,7 @@ impl Workbench {
             trim_in_regex_and_strings: settings.get_value(Some("files.trimTrailingWhitespaceInRegexAndStrings"), &overrides) != Some(json!(false)),
             insert_final_newline: on("files.insertFinalNewline"),
             trim_final_newlines: on("files.trimFinalNewlines"),
+            spared_cursors,
         };
         drop(settings);
         let changes = model.run_save_participants(&participants);

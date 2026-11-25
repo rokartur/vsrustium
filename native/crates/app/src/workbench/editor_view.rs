@@ -172,7 +172,8 @@ impl Workbench {
         // iconlabel.css `::after` font-size 90% (11.7px) wins over the decoration rule's 16px, which loads first.
         let lock = readonly.then(|| self.icon("lock-small", 11.7, 11.7, foreground).mt(px(9.5)).ml(px(5.)).opacity(0.75));
         // A dirty tab shows a filled circle where the close action goes, also when inactive (tabstitlecontrol.css).
-        let close_icon = if editor.is_dirty() { "circle-filled" } else { "close-small" };
+        let dirty = editor.is_dirty() && !self.editor_is_saving(editor);
+        let close_icon = if dirty { "circle-filled" } else { "close-small" };
         let close = self.icon(close_icon, 20., 16., action_foreground).id(("close", index)).rounded(px(4.)).on_click(cx.listener(move |workbench, _, _, cx| {
             cx.stop_propagation();
             workbench.editors.close(index);
@@ -200,7 +201,7 @@ impl Workbench {
             }))
             .on_mouse_down(MouseButton::Right, cx.listener(move |workbench, event: &MouseDownEvent, window, cx| workbench.show_tab_context_menu(index, event.position, window, cx)))
             .child(self.tab_hover(index))
-            .when(active || editor.is_dirty(), |tab| tab.child(div().absolute().top(px(5.5)).right(px(6.5)).child(close)));
+            .when(active || dirty, |tab| tab.child(div().absolute().top(px(5.5)).right(px(6.5)).child(close)));
         if !active {
             return div().h_full().flex_none().child(tab).mr(px(8.));
         }
@@ -461,7 +462,12 @@ impl Workbench {
             }
             cx.notify();
         });
-        self.editor_focus_listeners = vec![blur, banner_blur, text_blur, text_focus];
+        let window_deactivated = cx.observe_window_activation(window, |workbench, window, cx| {
+            if !window.is_window_active() {
+                workbench.window_lost_focus_auto_save(cx);
+            }
+        });
+        self.editor_focus_listeners = vec![blur, banner_blur, text_blur, text_focus, window_deactivated];
     }
 
     fn editor_widget_blurred(&mut self, blurred_at: &Cell<Option<(u32, u32)>>, cx: &mut Context<Self>) {
@@ -470,6 +476,7 @@ impl Workbench {
             editor.highlights.clear();
             blurred_at.set(Some((editor.model_id, editor.version_id)));
         }
+        self.editor_blurred_auto_save(cx);
         cx.notify();
     }
 

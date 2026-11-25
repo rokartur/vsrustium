@@ -13,6 +13,7 @@ use gpui::{ClipboardItem, Context, Window};
 use serde_json::{Value, json};
 
 use super::Workbench;
+use super::auto_save::SaveReason;
 use super::bulk_text_edits::document_end;
 use crate::editor::{
     CursorEdit, EditReason, OpenEditor, Position, Replace, Selection, TextDocument, VerticalReveal, char_column, end_of, expand_snippet,
@@ -265,7 +266,7 @@ impl Workbench {
         if !model.is_dirty() {
             return Ok(json!(true));
         }
-        self.run_save_participants(scheme, path);
+        self.run_save_participants(scheme, path, SaveReason::Explicit);
         let model = self.editors.model_mut(scheme, path).expect("participants keep the model");
         model.save().map_err(|error| serialized_error(&format!("Unable to write file '{}' ({error})", path.display())))?;
         let model = self.editors.model(scheme, path).expect("just saved");
@@ -280,7 +281,7 @@ impl Workbench {
         match self.editors.model(scheme, path) {
             None => return Ok(json!(false)),
             Some(model) if !model.is_dirty() => return Ok(json!(true)),
-            Some(_) => self.run_save_participants(scheme, path),
+            Some(_) => self.run_save_participants(scheme, path, SaveReason::Explicit),
         }
         Ok(json!(self.editors.model(scheme, path).expect("participants keep the model").saved_bytes()))
     }
