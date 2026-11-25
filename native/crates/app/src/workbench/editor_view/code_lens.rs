@@ -136,7 +136,7 @@ impl Workbench {
         let left = content_left + indent as f32 * self.editors.viewport.char_width - editor.scroll.left;
         // codelensWidget.css: an empty `editor.codeLensFontFamily` leaves the workbench's UI font.
         let family = self.setting("editor.codeLensFontFamily").as_str().filter(|family| !family.is_empty()).unwrap_or(".SystemUIFont").to_string();
-        let mut row = div().absolute().top_0().left(px(left)).h(px(height)).flex().items_center().whitespace_nowrap().font_family(family).text_size(px(font_size)).text_color(foreground).pr(px(font_size * 0.5));
+        let mut row = div().absolute().top_0().left(px(left)).h(px(height)).flex().items_center().whitespace_nowrap().font(gpui::font(family)).text_size(px(font_size)).text_color(foreground).pr(px(font_size * 0.5));
         let commands: Vec<&Value> = lenses.iter().map(|lens| &lens.symbol["command"]).filter(|command| command.is_object()).collect();
         if commands.is_empty() {
             return Some(div().relative().flex_none().h(px(height)).child(row.child("no commands")));
