@@ -361,6 +361,45 @@ impl OpenEditor {
     /// `compositionType`: at every empty cursor the text replaces `previous` chars before it and `next`
     /// after it, as IME composition does with its marked text; a selection is replaced whole.
     pub fn type_replacing(&mut self, text: &str, previous: usize, next: usize, kind: &'static str) -> Option<ContentChanged> {
+        let line_len = |line| cursor::line_len(&self.document.lines, line);
+        let ranges: Vec<_> = self
+            .selections
+            .iter()
+            .map(|selection| {
+                let (mut start, mut end) = (selection.start(), selection.end());
+                if selection.is_empty() {
+                    start.column = start.column.saturating_sub(previous);
+                    end.column = (end.column + next).min(line_len(end.line));
+                }
+                (start, end)
+            })
+            .collect();
+        self.type_into(text, ranges, kind)
+    }
+
+    /// `SimpleCharacterTypeOperation` in overtype input mode (`ReplaceOvertypeCommand`): the text also replaces as many
+    /// chars after each selection, up to its line's end.
+    pub fn type_overtyping(&mut self, text: &str) -> Option<ContentChanged> {
+        let text = normalize_line_breaks(text);
+        let ranges = self.selections.iter().map(|selection| (selection.start(), overtype_end(&self.document.lines, *selection, &text))).collect();
+        self.type_into(&text, ranges, "type")
+    }
+
+    /// `CompositionEndOvertypeOperation`: in overtype input mode the text an IME composed then removes as many chars
+    /// after each cursor, up to its line's end.
+    pub fn overtype_composed(&mut self, composed: &str) -> Option<ContentChanged> {
+        let count = composed.chars().count();
+        let lines = &self.document.lines;
+        let edits = self.each_cursor(|selection| {
+            let head = selection.head;
+            let end = Position::new(head.line, (head.column + count).min(cursor::line_len(lines, head.line)));
+            CursorEdit::replace(head, end, String::new(), head)
+        });
+        self.apply_cursor_edits(edits, TYPED)
+    }
+
+    /// The typed text replaces `ranges`, one per selection; spaces and other text group into undo steps as upstream does.
+    fn type_into(&mut self, text: &str, ranges: Vec<(Position, Position)>, kind: &'static str) -> Option<ContentChanged> {
         let text = normalize_line_breaks(text);
         let last_kind = self.history.last_kind;
         let typing = match text.as_str() {
@@ -371,15 +410,7 @@ impl OpenEditor {
         if stop_between(last_kind, typing) {
             self.push_undo_stop();
         }
-        let line_len = |line| cursor::line_len(&self.document.lines, line);
-        let edits = self.each_cursor(|selection| {
-            let (mut start, mut end) = (selection.start(), selection.end());
-            if selection.is_empty() {
-                start.column = start.column.saturating_sub(previous);
-                end.column = (end.column + next).min(line_len(end.line));
-            }
-            CursorEdit::replace(start, end, text.clone(), end_of(start, &text))
-        });
+        let edits = ranges.into_iter().map(|(start, end)| CursorEdit::replace(start, end, text.clone(), end_of(start, &text))).collect();
         let change = self.apply_cursor_edits(edits, EditReason::Cursor { kind, detailed_source: "keyboard" });
         self.history.last_kind = typing;
         change
@@ -388,7 +419,7 @@ impl OpenEditor {
     /// `type` from the keyboard: `typeWithInterceptors` per char, so a line break goes through Enter, a char
     /// the indentation rules outdent reindents its line, and a closing bracket takes its opening line's indent.
     /// Each char is its own model change, as upstream.
-    pub fn type_keyboard(&mut self, text: &str, auto: AutoIndent) -> Vec<ContentChanged> {
+    pub fn type_keyboard(&mut self, text: &str, auto: AutoIndent, overtype: bool) -> Vec<ContentChanged> {
         let mut changes = Vec::new();
         for ch in normalize_line_breaks(text).chars() {
             let ch = ch.to_string();
@@ -396,6 +427,7 @@ impl OpenEditor {
                 "\n" => self.enter(auto),
                 _ => match self.auto_indent_type(&ch, auto).or_else(|| self.electric_type(&ch, auto)) {
                     Some(change) => change,
+                    None if overtype => self.type_overtyping(&ch),
                     None => self.type_text(&ch),
                 },
             };
@@ -529,8 +561,9 @@ impl OpenEditor {
 
     /// `paste`: text replaces each selection. A whole line copied from an empty selection goes in above
     /// each empty cursor (`pasteOnNewLine`); with as many pieces or lines as cursors, each cursor gets one
-    /// (`multiCursorPaste` "spread").
-    pub fn paste(&mut self, text: &str, from_empty_selection: bool, multicursor_text: Option<&[String]>) -> Option<ContentChanged> {
+    /// (`multiCursorPaste` "spread"). With `overtype` (overtype input mode and `editor.overtypeOnPaste`) the text also
+    /// replaces as many chars after the selection.
+    pub fn paste(&mut self, text: &str, from_empty_selection: bool, multicursor_text: Option<&[String]>, overtype: bool) -> Option<ContentChanged> {
         let text = normalize_line_breaks(text);
         let reason = EditReason::Cursor { kind: "paste", detailed_source: "keyboard" };
         if let Some(pieces) = self.distributed_paste(&text, from_empty_selection, multicursor_text) {
@@ -539,7 +572,8 @@ impl OpenEditor {
             let mut edits = vec![CursorEdit::new(Vec::new(), Selection::default()); order.len()];
             for (index, piece) in order.into_iter().zip(pieces) {
                 let selection = self.selections[index];
-                edits[index] = CursorEdit::replace(selection.start(), selection.end(), piece.clone(), end_of(selection.start(), &piece));
+                let end = if overtype { overtype_end(&self.document.lines, selection, &piece) } else { selection.end() };
+                edits[index] = CursorEdit::replace(selection.start(), end, piece.clone(), end_of(selection.start(), &piece));
             }
             return self.apply_between_stops(edits, reason);
         }
@@ -550,7 +584,8 @@ impl OpenEditor {
                 let start = Position::new(head.line, 0);
                 return CursorEdit::replace(start, start, text.clone(), Position::new(head.line + 1, head.column));
             }
-            CursorEdit::replace(selection.start(), selection.end(), text.clone(), end_of(selection.start(), &text))
+            let end = if overtype { overtype_end(&self.document.lines, selection, &text) } else { selection.end() };
+            CursorEdit::replace(selection.start(), end, text.clone(), end_of(selection.start(), &text))
         });
         self.apply_between_stops(edits, reason)
     }
@@ -1120,6 +1155,14 @@ pub fn text_between(lines: &[String], start: Position, end: Position) -> String 
 }
 
 /// Where text inserted at `start` ends.
+/// replaceCommand.ts `ReplaceOvertypeCommand`: the selection's end moved past as many chars as `text` has (one
+/// fewer for a selection), never past its line's end.
+fn overtype_end(lines: &[String], selection: Selection, text: &str) -> Position {
+    let end = selection.end();
+    let delta = (text.chars().count() + usize::from(selection.is_empty())).saturating_sub(1);
+    Position::new(end.line, (end.column + delta).min(cursor::line_len(lines, end.line)))
+}
+
 pub fn end_of(start: Position, text: &str) -> Position {
     match text.rsplit_once('\n') {
         Some((before, last)) => Position::new(start.line + before.matches('\n').count() + 1, last.chars().count()),
@@ -1325,7 +1368,7 @@ pub(super) mod tests {
         editor.cut();
         assert_eq!((text(&editor), editor.selection().head), ("one\nthree".into(), at(1, 0)));
         editor.move_to(at(1, 2), false);
-        editor.paste(&copied.text, copied.from_empty_selection, None);
+        editor.paste(&copied.text, copied.from_empty_selection, None, false);
         assert_eq!((text(&editor), editor.selection().head), ("one\ntwo\nthree".into(), at(2, 2)));
         editor.move_to(at(2, 5), false);
         editor.cut();
@@ -1355,7 +1398,7 @@ pub(super) mod tests {
         // cursor.test.ts issue #4996: multicursorText pieces go one per cursor.
         let mut pieces = editor("line1\nline2\nline3", "\n");
         pieces.set_selections(vec![range((0, 0), (0, 0)), range((1, 0), (1, 0))]);
-        pieces.paste("a\nb\nc\nd", false, Some(&["a\nb".into(), "c\nd".into()]));
+        pieces.paste("a\nb\nc\nd", false, Some(&["a\nb".into(), "c\nd".into()]), false);
         assert_eq!(text(&pieces), "a\nbline1\nc\ndline2\nline3");
         // multiCursorPasteCases: as many lines as cursors spread, a trailing line break ignored; other counts paste whole.
         let cases: [(&str, &[Selection], &str, &str); 4] = [
@@ -1367,9 +1410,39 @@ pub(super) mod tests {
         for (before, selections, pasted, expected) in cases {
             let mut lines = editor(before, "\n");
             lines.set_selections(selections.to_vec());
-            lines.paste(pasted, false, None);
+            lines.paste(pasted, false, None, false);
             assert_eq!(text(&lines), expected, "pasting {pasted:?}");
         }
+    }
+
+    #[test]
+    fn overtype_mode_replaces_the_characters_after_the_cursor_up_to_the_line_end() {
+        // cursor.test.ts suite 'Overtype Mode'.
+        let typed = |selection, typed: &str| {
+            let mut editor = editor("123456789\n123456789", "\n");
+            editor.set_selections(vec![selection]);
+            editor.type_keyboard(typed, no_rules(Strategy::None), true);
+            text(&editor)
+        };
+        assert_eq!(typed(range((0, 2), (0, 2)), "a"), "12a456789\n123456789");
+        assert_eq!(typed(range((0, 8), (0, 8)), "bbb"), "12345678bbb\n123456789");
+        assert_eq!(typed(range((0, 4), (1, 2)), "cc"), "1234cc456789");
+        let pasted = |selection, pasted: &str| {
+            let mut editor = editor("123456789\n123456789", "\n");
+            editor.set_selections(vec![selection]);
+            editor.paste(pasted, false, None, true);
+            text(&editor)
+        };
+        assert_eq!(pasted(range((0, 4), (0, 4)), "cc"), "1234cc789\n123456789");
+        assert_eq!(pasted(range((0, 4), (0, 4)), "dddddddd"), "1234dddddddd\n123456789");
+        assert_eq!(pasted(range((0, 4), (1, 2)), "cc"), "1234cc456789");
+        assert_eq!(pasted(range((0, 4), (0, 4)), "aaaaaaa\nbbbbbbb"), "1234aaaaaaa\nbbbbbbb\n123456789");
+        let mut composed = editor("123456789\n123456789", "\n");
+        composed.set_selections(vec![range((0, 4), (0, 4))]);
+        composed.type_replacing("セ", 0, 0, "type");
+        assert_eq!(text(&composed), "1234セ56789\n123456789");
+        composed.overtype_composed("セ");
+        assert_eq!(text(&composed), "1234セ6789\n123456789");
     }
 
     #[test]

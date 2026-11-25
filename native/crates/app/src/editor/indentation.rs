@@ -78,7 +78,7 @@ fn indentation_edits(lines: &[String], tab_size: usize, to_spaces: bool) -> Vec<
 
 /// `trimTrailingWhitespace`: deletes each line's trailing whitespace, not left of a cursor on the line (the last
 /// cursor of a line counts), and not where `keep(line, byte offset)` holds.
-fn trim_trailing_whitespace_edits(lines: &[String], cursors: &[Position], keep: impl Fn(usize, usize) -> bool) -> Vec<(Position, Position, String)> {
+pub(super) fn trim_trailing_whitespace_edits(lines: &[String], cursors: &[Position], keep: impl Fn(usize, usize) -> bool) -> Vec<(Position, Position, String)> {
     let mut edits = Vec::new();
     for (line, text) in lines.iter().enumerate() {
         let length = text.chars().count();

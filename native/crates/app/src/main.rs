@@ -291,7 +291,7 @@ fn run_extension_host(
             MainThreadSecretState::in_memory()
         }),
     });
-    session.forward(&["MainThreadCommands", "MainThreadQuickOpen", "MainThreadWorkspace"], move |request| {
+    session.forward(&["MainThreadCommands", "MainThreadQuickOpen", "MainThreadWorkspace", "MainThreadEditorTabs"], move |request| {
         let _ = workbench_requests.unbounded_send(request);
     }, workbench_replies);
     session.main_thread = Some(Box::new(main_thread));

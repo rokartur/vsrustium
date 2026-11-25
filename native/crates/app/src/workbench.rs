@@ -107,6 +107,8 @@ pub struct Workbench {
     status_bar_focus: FocusHandle,
     /// `editor.tabFocusMode` when Toggle Tab Key Moves Focus last ran, and the mode it set.
     tab_focus_toggle: Option<(bool, bool)>,
+    /// inputMode.ts `InputMode` is `overtype` instead of `insert`: one mode for every editor, starting in insert.
+    overtype: bool,
     editor_focus_listeners: Vec<gpui::Subscription>,
     /// `--screenshot` hides the input carets, as ref-screenshot does in the reference, so the blink phase drops out.
     pub(crate) input_carets_hidden: bool,
@@ -142,6 +144,7 @@ impl Render for Workbench {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Cursors move and editors switch on many paths; every one of them renders.
         self.close_editor_message_on_cursor_change(cx);
+        self.refresh_selection_highlights(window);
         let viewport = window.viewport_size();
         let window_border = self.theme.color("window.activeBorder");
         // The reference lays the grid out at the full window size and shifts it inside the 1px window border.
@@ -226,6 +229,7 @@ impl Workbench {
             unicode_banner_focus: cx.focus_handle(),
             status_bar_focus: cx.focus_handle(),
             tab_focus_toggle: None,
+            overtype: false,
             editor_focus_listeners: Vec::new(),
             input_carets_hidden: false,
             marked_text: None,
@@ -936,6 +940,41 @@ mod tests {
         let methods: Vec<_> = receiver.try_iter().map(|message| message.method).collect();
         assert_eq!(methods.iter().filter(|method| **method == "$acceptModelChanged").count(), 6);
         assert_eq!(methods.last(), Some(&"$acceptModelSaved"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[gpui::test]
+    fn saving_runs_the_text_save_participants_of_the_settings(cx: &mut TestAppContext) {
+        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
+        let theme = load_theme(&[themes], "Dark Modern").unwrap();
+        let dir = std::env::temp_dir().join(format!("code-gpui-save-participants-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("a.txt");
+        std::fs::write(&file, "ab  \ncd\n\n\n").unwrap();
+        std::fs::create_dir_all(dir.join("User")).unwrap();
+        let settings = std::sync::Arc::new(std::sync::Mutex::new(config::service::Settings::load(config::registry::Registry::with_extensions(&[]), dir.join("User"), None)));
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let (workbench, cx) = cx.add_window_view(|window, cx| {
+            let mut workbench = Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), settings, HostSync::new(sender), cx);
+            workbench.load_keybindings(crate::keybindings::default_keybindings(&[]), dir.join("keybindings.json"), cx);
+            workbench.open_file(file.clone(), true, window, cx);
+            workbench
+        });
+        cx.run_until_parked();
+        workbench.update(cx, |workbench, _| {
+            workbench.update_setting("files.trimTrailingWhitespace", json!(true));
+            workbench.update_setting("files.trimFinalNewlines", json!(true));
+        });
+        receiver.try_iter().count();
+
+        cx.simulate_keystrokes("cmd-s");
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "ab\ncd\n");
+        assert!(workbench.read_with(cx, |workbench, _| !workbench.editors.active().unwrap().is_dirty()));
+        let methods: Vec<_> = receiver.try_iter().map(|message| message.method).collect();
+        assert_eq!(methods.iter().filter(|method| **method == "$acceptModelChanged").count(), 2);
+        cx.simulate_keystrokes("cmd-z");
+        assert_eq!(workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document.lines.join("\n")), "ab  \ncd\n\n\n");
         std::fs::remove_dir_all(dir).unwrap();
     }
 

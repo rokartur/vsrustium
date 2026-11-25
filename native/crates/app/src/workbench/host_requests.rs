@@ -250,6 +250,8 @@ impl Workbench {
         if !model.is_dirty() {
             return Ok(json!(true));
         }
+        self.run_save_participants(scheme, path);
+        let model = self.editors.model_mut(scheme, path).expect("participants keep the model");
         model.save().map_err(|error| serialized_error(&format!("Unable to write file '{}' ({error})", path.display())))?;
         let model = self.editors.model(scheme, path).expect("just saved");
         self.host.send_saved(&self.editors, model, true);
@@ -258,13 +260,14 @@ impl Workbench {
     }
 
     /// First half of `$trySaveDocument` through a provider: false without a model, true when clean, else the bytes to write.
-    fn provider_save_bytes(&self, uri: &Value) -> HostResult {
+    fn provider_save_bytes(&mut self, uri: &Value) -> HostResult {
         let (scheme, ref path) = uri_parts(uri)?;
-        Ok(match self.editors.model(scheme, path) {
-            None => json!(false),
-            Some(model) if !model.is_dirty() => json!(true),
-            Some(model) => json!(model.saved_bytes()),
-        })
+        match self.editors.model(scheme, path) {
+            None => return Ok(json!(false)),
+            Some(model) if !model.is_dirty() => return Ok(json!(true)),
+            Some(_) => self.run_save_participants(scheme, path),
+        }
+        Ok(json!(self.editors.model(scheme, path).expect("participants keep the model").saved_bytes()))
     }
 
     /// Second half: the provider wrote the bytes, so the model is clean.

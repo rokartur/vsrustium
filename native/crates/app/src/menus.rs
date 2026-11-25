@@ -69,7 +69,7 @@ pub enum MenuAction {
 /// The workbench's registrations of the features the port has: menu, submenu or command id, title, group, order,
 /// `when`, and the command's precondition.
 type Row = (MenuId, Option<MenuId>, &'static str, &'static str, &'static str, f64, Option<&'static str>, Option<&'static str>);
-const WORKBENCH_MENUS: [Row; 61] = [
+const WORKBENCH_MENUS: &[Row] = &[
     // menubar.contribution.ts
     (MenuId::MenubarMainMenu, Some(MenuId::MenubarFileMenu), "", "&&File", "", 1., None, None),
     (MenuId::MenubarMainMenu, Some(MenuId::MenubarEditMenu), "", "&&Edit", "", 2., None, None),
@@ -111,6 +111,13 @@ const WORKBENCH_MENUS: [Row; 61] = [
     (MenuId::MenubarSelectionMenu, None, "editor.action.moveLinesUpAction", "Mo&&ve Line Up", "2_line", 3., None, Some("!editorReadonly")),
     (MenuId::MenubarSelectionMenu, None, "editor.action.moveLinesDownAction", "Move &&Line Down", "2_line", 4., None, Some("!editorReadonly")),
     (MenuId::MenubarSelectionMenu, None, "editor.action.duplicateSelection", "&&Duplicate Selection", "2_line", 5., None, Some("!editorReadonly")),
+    // multicursor.ts
+    (MenuId::MenubarSelectionMenu, None, "editor.action.insertCursorAbove", "&&Add Cursor Above", "3_multi", 2., None, None),
+    (MenuId::MenubarSelectionMenu, None, "editor.action.insertCursorBelow", "A&&dd Cursor Below", "3_multi", 3., None, None),
+    (MenuId::MenubarSelectionMenu, None, "editor.action.insertCursorAtEndOfEachLineSelected", "Add C&&ursors to Line Ends", "3_multi", 4., None, None),
+    (MenuId::MenubarSelectionMenu, None, "editor.action.addSelectionToNextFindMatch", "Add &&Next Occurrence", "3_multi", 5., None, None),
+    (MenuId::MenubarSelectionMenu, None, "editor.action.addSelectionToPreviousFindMatch", "Add P&&revious Occurrence", "3_multi", 6., None, None),
+    (MenuId::MenubarSelectionMenu, None, "editor.action.selectHighlights", "Select All &&Occurrences", "3_multi", 7., None, None),
     // quickAccess.contribution.ts
     (MenuId::MenubarViewMenu, None, "workbench.action.showCommands", "&&Command Palette...", "1_open", 1., None, None),
     (MenuId::MenubarHelpMenu, None, "workbench.action.showCommands", "Show All Commands", "1_welcome", 2., None, None),
@@ -118,7 +125,8 @@ const WORKBENCH_MENUS: [Row; 61] = [
     (MenuId::MenubarPreferencesMenu, None, "workbench.action.openGlobalKeybindings", "Keyboard Shortcuts", "2_configuration", 4., None, None),
     // themes.contribution.ts
     (MenuId::MenubarPreferencesMenu, Some(MenuId::ThemesSubMenu), "", "&&Themes", "2_configuration", 7., None, None),
-    // clipboard.ts and quickAccess.contribution.ts: the EditorContext items of the commands the port has.
+    // multicursor.ts, clipboard.ts and quickAccess.contribution.ts: the EditorContext items of the commands the port has.
+    (MenuId::EditorContext, None, "editor.action.changeAll", "Change All Occurrences", "1_modification", 1.2, Some("!editorReadonly && editorTextFocus"), None),
     (MenuId::EditorContext, None, "editor.action.clipboardCutAction", "Cut", "9_cutcopypaste", 1., Some("!editorReadonly"), None),
     (MenuId::EditorContext, None, "editor.action.clipboardCopyAction", "Copy", "9_cutcopypaste", 2., None, None),
     (MenuId::EditorContext, None, "editor.action.clipboardPasteAction", "Paste", "9_cutcopypaste", 4., Some("!editorReadonly"), None),
@@ -169,7 +177,7 @@ pub const TITLE_BAR_TOGGLES: [(&str, &str, f64, &str); 3] = [
 /// `MenuRegistry` with the workbench's items.
 pub fn workbench_menus() -> Vec<MenuItem> {
     let mut items = Vec::new();
-    for (menu, submenu, id, title, group, order, when, precondition) in WORKBENCH_MENUS {
+    for (menu, submenu, id, title, group, order, when, precondition) in WORKBENCH_MENUS.iter().copied() {
         let entry = match submenu {
             Some(submenu) => Entry::Submenu(submenu),
             None => {
@@ -179,6 +187,15 @@ pub fn workbench_menus() -> Vec<MenuItem> {
             }
         };
         items.push(MenuItem { menu, entry, title: title.to_string(), group: group.to_string(), order, when: when.and_then(Expr::deserialize) });
+    }
+    // toggleColumnSelection.ts: checked while `config.editor.columnSelection` is true.
+    let entry = Entry::Command { id: "editor.action.toggleColumnSelection".into(), precondition: None, toggled: Some(Expr::has("config.editor.columnSelection")), alt: None };
+    items.push(MenuItem { menu: MenuId::MenubarSelectionMenu, entry, title: "Column &&Selection Mode".into(), group: "4_config".into(), order: 2., when: None });
+    // toggleMultiCursorModifier.ts: the item names the modifier the toggle switches to.
+    for (title, current) in [("Switch to Alt+Click for Multi-Cursor", "ctrlCmd"), ("Switch to Cmd+Click for Multi-Cursor", "altKey")] {
+        let entry = Entry::Command { id: "workbench.action.toggleMultiCursorModifier".into(), precondition: None, toggled: None, alt: None };
+        let when = Expr::deserialize(&format!("multiCursorModifier == '{current}'"));
+        items.push(MenuItem { menu: MenuId::MenubarSelectionMenu, entry, title: title.into(), group: "4_config".into(), order: 1., when });
     }
     for (id, title, order) in THEMES_SUBMENU {
         let entry = Entry::Command { id: id.to_string(), precondition: None, toggled: None, alt: None };

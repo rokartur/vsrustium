@@ -379,12 +379,17 @@ fn utf16_len(text: &str) -> usize {
     text.encode_utf16().count()
 }
 
-fn tab_dto(editor: &OpenEditor, active: bool) -> Value {
-    let uri = editor.document.uri();
+/// The tab's id in `$acceptTabOperation`, which `$moveTab` and `$closeTab` name a tab by.
+pub fn tab_id(editor: &OpenEditor) -> String {
     // Every scheme the file service reads opens as a file editor input; untitled text has its own.
     let type_id = if editor.document.scheme == "untitled" { "workbench.editors.untitledEditorInput" } else { "workbench.editors.files.fileEditorInput" };
+    format!("0~default-{type_id}-{} ", editor.document.uri_string())
+}
+
+fn tab_dto(editor: &OpenEditor, active: bool) -> Value {
+    let uri = editor.document.uri();
     json!({
-        "id": format!("0~default-{type_id}-{} ", editor.document.uri_string()),
+        "id": tab_id(editor),
         "label": editor.document.name(),
         // TabInputKind.TextInput
         "input": { "kind": 1, "uri": uri },

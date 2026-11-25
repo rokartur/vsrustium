@@ -30,6 +30,7 @@ mod in_place_replace;
 mod folding_controller;
 mod indentation;
 mod lines_operations;
+pub mod save_participants;
 pub mod minimap;
 mod multicursor;
 pub mod section_headers;
@@ -39,6 +40,7 @@ pub mod sticky_scroll;
 pub mod unicode_highlighter;
 pub mod unusual_line_terminators;
 mod view;
+pub mod whitespace;
 pub mod zoom;
 
 pub use comment::LineCommentKind;
@@ -111,7 +113,7 @@ impl TextDocument {
     }
 
     pub fn from_text(scheme: &str, path: &Path, text: &str, encoding: String, language_id: Option<&str>, languages: &Languages, settings: &Settings) -> Self {
-        let (lines, eol) = split_lines(text);
+        let (lines, found_eol) = split_lines(text);
         let associations = settings.get_value(Some("files.associations"), &Overrides::default()).unwrap_or_default();
         let configured = Languages::configured_language(&associations, path);
         let language_id = language_id.or(configured.as_deref()).unwrap_or_else(|| languages.language_of(path, lines[0].as_str())).to_string();
@@ -119,6 +121,7 @@ impl TextDocument {
         let folding_markers = languages.folding_markers(&language_id);
         let block_comment = languages.block_comment(&language_id).map(|(start, end)| (start.to_string(), end.to_string()));
         let indentation = creation_indentation(&lines, settings, path, &language_id);
+        let eol = found_eol.unwrap_or_else(|| default_eol(settings, path, &language_id));
         let tokens = Tokenization::new(languages.grammars.grammar(&language_id));
         TextDocument { scheme: scheme.to_string(), path: path.to_path_buf(), lines, eol, encoding, language_id, indentation, off_side, folding_markers, block_comment, tokens }
     }
@@ -158,9 +161,19 @@ fn creation_indentation(lines: &[String], settings: &Settings, path: &Path, lang
     }
 }
 
-/// Lines split at `\r\n`, `\r` or `\n`; the EOL is CRLF when most line breaks hold a CR, else LF,
-/// and LF for a file with none (PieceTreeTextBufferBuilder `_getEOL`, `files.eol: auto` on macOS).
-fn split_lines(text: &str) -> (Vec<String>, &'static str) {
+/// modelService.ts `_getEOL` and `_readModelOptions`: the language's `files.eol` when it is `\n` or `\r\n`, else LF
+/// as `auto` gives on macOS. textResourcePropertiesService.ts reads it with the resource too.
+fn default_eol(settings: &Settings, path: &Path, language_id: &str) -> &'static str {
+    let overrides = Overrides { resource: Some(path), override_identifier: Some(language_id) };
+    match settings.get_value(Some("files.eol"), &overrides) {
+        Some(eol) if eol == "\r\n" => "\r\n",
+        _ => "\n",
+    }
+}
+
+/// Lines split at `\r\n`, `\r` or `\n`; the EOL is CRLF when most line breaks hold a CR, else LF, and none for a
+/// text without line breaks (PieceTreeTextBufferBuilder `_getEOL`).
+fn split_lines(text: &str) -> (Vec<String>, Option<&'static str>) {
     let (mut lines, mut line) = (Vec::new(), String::new());
     let (mut breaks, mut with_cr) = (0, 0);
     let mut chars = text.chars().peekable();
@@ -180,7 +193,11 @@ fn split_lines(text: &str) -> (Vec<String>, &'static str) {
         }
     }
     lines.push(line);
-    let eol = if with_cr * 2 > breaks { "\r\n" } else { "\n" };
+    let eol = match breaks {
+        0 => None,
+        _ if with_cr * 2 > breaks => Some("\r\n"),
+        _ => Some("\n"),
+    };
     (lines, eol)
 }
 
@@ -399,7 +416,7 @@ pub fn column_at_visible(line: &str, target: f32, tab_size: usize) -> usize {
     line.chars().count()
 }
 
-/// The line as drawn: tabs become spaces up to the next tab stop (`renderWhitespace: selection` draws no glyph for them).
+/// The line as drawn: tabs become spaces up to the next tab stop; the whitespace marks are drawn apart (`editor::whitespace`).
 pub fn expand_tabs(line: &str, tab_size: usize) -> String {
     let mut out = String::with_capacity(line.len());
     let mut visible = 0;
@@ -618,6 +635,17 @@ impl EditorGroup {
         self.editors[index].preview = false;
     }
 
+    /// editorGroupModel.ts `moveEditor` then `pin`, as a move inside the group does; `to` is clamped to the tabs.
+    pub fn move_editor(&mut self, from: usize, to: usize) {
+        let to = to.min(self.editors.len() - 1);
+        if from == to {
+            return;
+        }
+        let editor = self.editors.remove(from);
+        self.editors.insert(to, editor);
+        self.pin(to);
+    }
+
     pub fn close(&mut self, index: usize) {
         let closed = self.editors.remove(index);
         let shown = self.recent.first().copied();
@@ -669,10 +697,23 @@ mod tests {
 
     #[test]
     fn splits_lines_and_picks_the_eol_of_most_breaks() {
-        assert_eq!(split_lines("a\nb\n"), (vec!["a".into(), "b".into(), "".into()], "\n"));
-        assert_eq!(split_lines("a\r\nb\r\nc\n"), (vec!["a".into(), "b".into(), "c".into(), "".into()], "\r\n"));
-        assert_eq!(split_lines("a\rb"), (vec!["a".into(), "b".into()], "\r\n"));
-        assert_eq!(split_lines("one line"), (vec!["one line".into()], "\n"));
+        assert_eq!(split_lines("a\nb\n"), (vec!["a".into(), "b".into(), "".into()], Some("\n")));
+        assert_eq!(split_lines("a\r\nb\r\nc\n"), (vec!["a".into(), "b".into(), "c".into(), "".into()], Some("\r\n")));
+        assert_eq!(split_lines("a\rb"), (vec!["a".into(), "b".into()], Some("\r\n")));
+        assert_eq!(split_lines("one line"), (vec!["one line".into()], None));
+    }
+
+    #[test]
+    fn a_text_without_line_breaks_takes_the_languages_files_eol() {
+        let dir = std::env::temp_dir().join(format!("code-gpui-eol-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("User")).unwrap();
+        std::fs::write(dir.join("User/settings.json"), r#"{ "files.eol": "\r\n", "[shellscript]": { "files.eol": "\n" } }"#).unwrap();
+        let settings = Settings::load(config::registry::Registry::core(), dir.join("User"), None);
+        let eol = |text: &str, language: &str| TextDocument::untitled(Path::new("Untitled-1"), text, Some(language), &Languages::new(&[]), &settings).eol;
+        assert_eq!(eol("", "plaintext"), "\r\n");
+        assert_eq!(eol("", "shellscript"), "\n");
+        assert_eq!(eol("a\nb", "plaintext"), "\n");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

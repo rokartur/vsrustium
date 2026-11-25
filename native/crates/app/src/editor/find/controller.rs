@@ -3,6 +3,7 @@
 //! The widget owns focus and tells the controller whether the find input has it.
 
 use super::model::FindModel;
+use super::multicursor::MultiCursorSession;
 use super::search::escape_regexp_characters;
 use super::state::{FindState, FindStateChanged, NewFindState};
 use crate::editor::cursor::line_len;
@@ -108,19 +109,22 @@ pub struct FindController {
     pub options: FindOptions,
     /// `findInputFocussed`, set by the widget.
     pub find_input_focused: bool,
+    /// The `MultiCursorSelectionController` session of Cmd+D and Select All Occurrences.
+    pub multicursor: Option<MultiCursorSession>,
 }
 
 impl FindController {
     /// The controller with the stored query options (`loadQueryState`).
     pub fn new(options: FindOptions, query: QueryOptions) -> Self {
-        let mut controller = FindController { state: FindState::default(), model: None, options, find_input_focused: false };
+        let mut controller = FindController { state: FindState::default(), model: None, options, find_input_focused: false, multicursor: None };
         controller.state.change(query_change(query), false, true);
         controller
     }
 
     /// The options to persist after a change (`saveQueryState`).
     pub fn query_options(&self) -> QueryOptions {
-        QueryOptions { match_case: self.state.match_case, whole_word: self.state.whole_word, is_regex: self.state.is_regex, preserve_case: self.state.preserve_case }
+        let (is_regex, whole_word, match_case) = self.state.actual_options();
+        QueryOptions { match_case, whole_word, is_regex, preserve_case: self.state.preserve_case }
     }
 
     /// `state.change` and its listeners: the model researches, and a hidden widget drops the model.

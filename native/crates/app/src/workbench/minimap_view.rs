@@ -11,6 +11,7 @@ use gpui::{
     Task, TextRun, Window, canvas, div, fill, font, point, prelude::*, px, size,
 };
 use image::{Frame, RgbaImage};
+use serde_json::json;
 
 use super::Workbench;
 use crate::editor::minimap::{
@@ -30,9 +31,6 @@ const SLIDER_SCROLLING_TIMEOUT: Duration = Duration::from_millis(500);
 const SHADOW_STRIP_WIDTH: f32 = 6.;
 const SHADOW_ALPHA: f32 = 0.08;
 const SHADOW_SIGMA: f32 = 3.;
-/// editorOptions.ts `sectionHeaderFontSize` and `sectionHeaderLetterSpacing` defaults; the spacing is in canvas pixels.
-const SECTION_HEADER_FONT_SIZE: f64 = 9.;
-const SECTION_HEADER_LETTER_SPACING: f64 = 1.;
 
 #[derive(Default)]
 pub(super) struct Minimap {
@@ -53,8 +51,8 @@ pub(super) struct Minimap {
     slider_shown: bool,
     /// When `slider_shown` last flipped, and the opacity the transition started from.
     changed: Option<(Instant, f32)>,
-    /// The section headers of a model version.
-    section_headers: RefCell<Option<((u32, u32), Rc<Vec<SectionHeader>>)>>,
+    /// The section headers of a model version and the find options they were found with.
+    section_headers: RefCell<Option<(SectionHeaderKey, Rc<Vec<SectionHeader>>)>>,
 }
 
 /// A section header in the minimap's lines: its view line (1-based), label and separator line.
@@ -125,7 +123,8 @@ impl Workbench {
         let layout = self.minimap_layout(editor, info, pixel_ratio, viewport);
         let image = self.minimap_image(editor, &info, &layout);
         let fills = self.minimap_decorations(editor, &info, &layout);
-        let labels = self.minimap_section_labels(editor, &info, pixel_ratio, &layout);
+        let label_options = self.section_header_options();
+        let labels = self.minimap_section_labels(editor, &info, pixel_ratio, &layout, &label_options);
         let background = self.minimap_background();
         let label_background = Rgba { a: 0.7, ..background };
         let label_foreground = Rgba { a: 1., ..self.theme.color("editor.foreground").unwrap_or_else(|| Rgba::try_from(self.theme.tokens.color_map()[1].as_str()).expect("the token color map holds hex colors")) };
@@ -150,7 +149,7 @@ impl Workbench {
                     let origin = bounds.origin + point(device(decoration.x), device(decoration.y));
                     window.paint_quad(fill(Bounds::new(origin, size(device(decoration.width), device(decoration.height))), decoration.color));
                 }
-                paint_section_labels(&labels, &info, pixel_ratio, &layout, label_background, label_foreground, bounds.origin, window);
+                paint_section_labels(&labels, &label_options, &info, pixel_ratio, &layout, label_background, label_foreground, bounds.origin, window);
                 let Some(drag) = drag else { return };
                 let workbench_moved = workbench.clone();
                 window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, cx| {
@@ -312,22 +311,22 @@ impl Workbench {
         decoration_fills(info, layout, self.theme.color("minimap.selectionHighlight"), &selections, &decorations, tab_size, |view_line| editor.document.lines[editor.model_line(view_line - 1)].as_str())
     }
 
-    /// sectionHeaders.ts `SectionHeaderDetector` with `showRegionSectionHeaders` and `showMarkSectionHeaders` on, and
-    /// `getSectionHeaderDecorationsInViewport`: the headers from a font size above the first line to the last.
+    /// sectionHeaders.ts `SectionHeaderDetector` and `getSectionHeaderDecorationsInViewport`: the headers from a font
+    /// size above the first line to the last.
     // shortcut: found again on the UI thread for each new model version, where upstream asks the editor worker 250ms
     // after the last edit and moves the old headers with the text meanwhile; upgrade when large files lag on typing.
-    fn minimap_section_labels(&self, editor: &OpenEditor, info: &MinimapLayoutInfo, pixel_ratio: f64, layout: &MinimapLayout) -> Vec<SectionLabel> {
-        let key = (editor.model_id, editor.version_id);
+    fn minimap_section_labels(&self, editor: &OpenEditor, info: &MinimapLayoutInfo, pixel_ratio: f64, layout: &MinimapLayout, options: &SectionHeaderOptions) -> Vec<SectionLabel> {
+        let key = (editor.model_id, editor.version_id, options.show_region, options.mark_regex.clone());
         let mut cached = self.minimap.section_headers.borrow_mut();
         let headers = match cached.as_ref().filter(|(cached_key, _)| *cached_key == key) {
             Some((_, headers)) => headers.clone(),
             None => {
-                let headers = Rc::new(section_headers(editor));
+                let headers = Rc::new(section_headers(editor, options));
                 *cached = Some((key, headers.clone()));
                 headers
             }
         };
-        let header_lines = SECTION_HEADER_FONT_SIZE * pixel_ratio / info.line_height;
+        let header_lines = options.font_size * pixel_ratio / info.line_height;
         let first_line = (layout.start_line_number as f64 - header_lines).max(1.).floor() as usize;
         let mut labels: Vec<SectionLabel> = headers
             .iter()
@@ -412,12 +411,37 @@ impl Workbench {
     }
 }
 
+type SectionHeaderKey = (u32, u32, bool, Option<String>);
+
+/// The `editor.minimap` section header options as editorOptions.ts `EditorMinimap.validate` reads them.
+pub(super) struct SectionHeaderOptions {
+    show_region: bool,
+    /// `markSectionHeaderRegex` when `showMarkSectionHeaders` is on; one that does not compile falls back to the default.
+    mark_regex: Option<String>,
+    font_size: f64,
+    letter_spacing: f64,
+}
+
+impl Workbench {
+    pub(super) fn section_header_options(&self) -> SectionHeaderOptions {
+        let float = |key: &str, default: f64, min: f64, max: f64| self.setting(key).as_f64().unwrap_or(default).clamp(min, max);
+        let mark_regex = self.setting("editor.minimap.markSectionHeaderRegex");
+        let mark_regex = mark_regex.as_str().filter(|pattern| onig::Regex::new(pattern).is_ok()).unwrap_or(MARK_SECTION_HEADER_REGEX);
+        SectionHeaderOptions {
+            show_region: self.setting("editor.minimap.showRegionSectionHeaders") != json!(false),
+            mark_regex: (self.setting("editor.minimap.showMarkSectionHeaders") != json!(false)).then(|| mark_regex.to_string()),
+            font_size: float("editor.minimap.sectionHeaderFontSize", 9., 4., 32.),
+            letter_spacing: float("editor.minimap.sectionHeaderLetterSpacing", 1., 0., 5.),
+        }
+    }
+}
+
 /// `findSectionHeaders` then `updateDecorations`: a mark header stays only when it starts in a comment token.
-fn section_headers(editor: &OpenEditor) -> Vec<SectionHeader> {
+fn section_headers(editor: &OpenEditor, options: &SectionHeaderOptions) -> Vec<SectionHeader> {
     let document = &editor.document;
     let options = FindOptions {
-        region_start: document.folding_markers.as_deref().map(|markers| &markers.start_with_flags),
-        mark_regex: Some(MARK_SECTION_HEADER_REGEX),
+        region_start: document.folding_markers.as_deref().map(|markers| &markers.start_with_flags).filter(|_| options.show_region),
+        mark_regex: options.mark_regex.as_deref(),
         block_comment: document.block_comment.as_ref().map(|(start, end)| (start.as_str(), end.as_str())),
     };
     let mut headers = find_section_headers(&document.lines, &options);
@@ -429,10 +453,11 @@ fn section_headers(editor: &OpenEditor) -> Vec<SectionHeader> {
     headers
 }
 
-/// `_renderSectionHeaders`: each label on a 70% minimap background, in `500 9px` system font with 1 canvas pixel
-/// between letters; labels of nearby lines stack below one another. Canvas pixels are `pixel_ratio` per point.
-fn paint_section_labels(labels: &[SectionLabel], info: &MinimapLayoutInfo, pixel_ratio: f64, layout: &MinimapLayout, background: Rgba, foreground: Rgba, origin: Point<Pixels>, window: &mut Window) {
-    let font_size = SECTION_HEADER_FONT_SIZE * pixel_ratio;
+/// `_renderSectionHeaders`: each label on a 70% minimap background, in the `500` system font at `sectionHeaderFontSize`
+/// with `sectionHeaderLetterSpacing` canvas pixels between letters; labels of nearby lines stack below one another.
+/// Canvas pixels are `pixel_ratio` per point.
+fn paint_section_labels(labels: &[SectionLabel], options: &SectionHeaderOptions, info: &MinimapLayoutInfo, pixel_ratio: f64, layout: &MinimapLayout, background: Rgba, foreground: Rgba, origin: Point<Pixels>, window: &mut Window) {
+    let font_size = options.font_size * pixel_ratio;
     let background_height = font_size * 1.5;
     let label_width = info.canvas_inner_width;
     let point_at = |x: f64, y: f64| origin + point(px((x / pixel_ratio) as f32), px((y / pixel_ratio) as f32));
@@ -442,7 +467,7 @@ fn paint_section_labels(labels: &[SectionLabel], info: &MinimapLayoutInfo, pixel
     let run = |len: usize| TextRun { len, font: label_font.clone(), color: foreground.into(), background_color: None, underline: None, strikethrough: None };
     let shape = |text: &str| text_system.shape_line(SharedString::from(text.to_string()), px(font_size as f32), &[run(text.len())], None);
     // Glyph advances, not CoreText line positions: Chrome's canvas skips the font's `trak` tracking.
-    let advance = |text: &str| text.chars().map(|ch| f64::from(f32::from(text_system.advance(font_id, px(font_size as f32), ch).map_or_else(|_| shape(&ch.to_string()).width, |size| size.width))) + SECTION_HEADER_LETTER_SPACING).sum::<f64>();
+    let advance = |text: &str| text.chars().map(|ch| f64::from(f32::from(text_system.advance(font_id, px(font_size as f32), ch).map_or_else(|_| shape(&ch.to_string()).width, |size| size.width))) + options.letter_spacing).sum::<f64>();
     let measure = |text: &str| advance(text);
     let mut next_label_y = f64::NEG_INFINITY;
     for label in labels {
@@ -458,7 +483,7 @@ fn paint_section_labels(labels: &[SectionLabel], info: &MinimapLayoutInfo, pixel
                 for glyph in &shaped_run.glyphs {
                     let x = advance(&text[..glyph.index]);
                     let glyph_origin = baseline + point(px((x / pixel_ratio) as f32), glyph.position.y / pixel_ratio as f32);
-                    window.paint_glyph(glyph_origin, shaped_run.font_id, glyph.id, px(SECTION_HEADER_FONT_SIZE as f32), foreground.into()).expect("the system font paints its glyphs");
+                    window.paint_glyph(glyph_origin, shaped_run.font_id, glyph.id, px(options.font_size as f32), foreground.into()).expect("the system font paints its glyphs");
                 }
             }
         }

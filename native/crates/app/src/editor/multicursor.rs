@@ -80,6 +80,17 @@ impl OpenEditor {
         Reveal::Nothing
     }
 
+    /// `FocusNextCursor`/`FocusPreviousCursor`: the cursors rotate, so the next or the previous one becomes primary.
+    pub fn focus_next_cursor(&mut self, next: bool) -> Reveal {
+        let mut selections = self.selections.clone();
+        match next {
+            true => selections.rotate_left(1),
+            false => selections.rotate_right(1),
+        }
+        self.set_selections(selections);
+        Reveal::Position(self.selection().head)
+    }
+
     /// `removeSecondaryCursors` (Escape with several cursors): only the primary one stays.
     pub fn remove_secondary_cursors(&mut self) -> Option<Reveal> {
         if self.selections.len() < 2 {
@@ -217,6 +228,21 @@ impl OpenEditor {
         self.column_select(data)
     }
 
+    /// toggleColumnSelection.ts after `editor.columnSelection` flipped: turned on, the primary selection becomes a
+    /// column selection from its anchor to its head; turned off, the column selection's corners become one selection.
+    pub fn column_selection_mode_changed(&mut self, on: bool) -> Reveal {
+        if on {
+            self.column_select = None;
+            return self.column_select(self.column_select_data());
+        }
+        let data = self.column_select_data();
+        let tab_size = self.document.indentation.tab_size;
+        let position = |line: usize, visible: usize| Position::new(line, cursor::column_from_visible(&self.document.lines[line], visible, tab_size));
+        let selection = Selection { anchor: position(data.from_line, data.from_visible), head: position(data.to_line, data.to_visible) };
+        self.set_selections(vec![selection]);
+        Reveal::Nothing
+    }
+
     /// `columnSelect` from the mouse (Shift+Alt+click, Shift+Alt+drag, middle button): the block from where
     /// the last column selection started, or with `extend` false from the pointer, to the pointer.
     pub fn column_select_to_pointer(&mut self, line: usize, visible: usize, extend: bool) -> Reveal {
@@ -245,6 +271,27 @@ mod tests {
 
     fn range(anchor: (usize, usize), head: (usize, usize)) -> Selection {
         Selection { anchor: at(anchor.0, anchor.1), head: at(head.0, head.1) }
+    }
+
+    #[test]
+    fn focus_next_and_previous_cursor_rotate_the_primary_cursor() {
+        let mut lines = editor("a\nb\nc");
+        let carets = [Selection::caret(at(0, 0)), Selection::caret(at(1, 0)), Selection::caret(at(2, 0))];
+        lines.set_selections(carets.to_vec());
+        assert_eq!(lines.focus_next_cursor(true), Reveal::Position(at(1, 0)));
+        assert_eq!(lines.selections, [carets[1], carets[2], carets[0]]);
+        assert_eq!(lines.focus_next_cursor(false), Reveal::Position(at(0, 0)));
+        assert_eq!(lines.selections, carets);
+    }
+
+    #[test]
+    fn column_selection_mode_turns_the_selection_into_a_block_and_back() {
+        let mut lines = editor("abcd\nab\nabcd");
+        lines.set_selections(vec![range((0, 1), (2, 3))]);
+        assert_eq!(lines.column_selection_mode_changed(true), Reveal::Position(at(2, 3)));
+        assert_eq!(lines.selections, [range((0, 1), (0, 3)), range((1, 1), (1, 2)), range((2, 1), (2, 3))]);
+        assert_eq!(lines.column_selection_mode_changed(false), Reveal::Nothing);
+        assert_eq!(lines.selections, [range((0, 1), (2, 3))]);
     }
 
     #[test]

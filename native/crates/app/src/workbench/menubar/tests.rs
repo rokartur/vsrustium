@@ -13,8 +13,13 @@ fn workbench<'a>(file: Option<&Path>, cx: &'a mut TestAppContext) -> (gpui::Enti
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
     let keybindings = std::env::temp_dir().join(format!("code-gpui-menubar-{}.json", std::process::id()));
+    // A fresh writable User folder, so commands that toggle a setting can write it.
+    let user = std::env::temp_dir().join(format!("code-gpui-menubar-user-{}-{:?}", std::process::id(), std::thread::current().id()));
+    let _ = std::fs::remove_dir_all(&user);
+    std::fs::create_dir_all(&user).unwrap();
+    let settings = std::sync::Arc::new(std::sync::Mutex::new(config::service::Settings::load(config::registry::Registry::with_extensions(&[]), user, None)));
     cx.add_window_view(|window, cx| {
-        let mut workbench = Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), crate::default_settings(), HostSync::new(std::sync::mpsc::channel().0), cx);
+        let mut workbench = Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), settings, HostSync::new(std::sync::mpsc::channel().0), cx);
         workbench.load_keybindings(crate::keybindings::default_keybindings(&[]), keybindings, cx);
         if let Some(file) = file {
             workbench.open_file(file.to_path_buf(), true, window, cx);
@@ -75,6 +80,20 @@ fn an_open_file_enables_save_and_revert(cx: &mut TestAppContext) {
     assert!(enabled(command(&menubar, "File", "workbench.action.files.revert")));
     assert!(!enabled(command(&menubar, "File", "saveAll")));
     std::fs::remove_file(&file).unwrap();
+}
+
+#[gpui::test]
+fn the_selection_menu_names_the_multi_cursor_modifier_it_switches_to(cx: &mut TestAppContext) {
+    let (workbench, cx) = workbench(None, cx);
+    let title = |cx: &mut gpui::VisualTestContext| {
+        let menubar = cx.update(|window, cx| workbench.read(cx).menubar(window));
+        let MenuAction::Command { title, .. } = command(&menubar, "Selection", "workbench.action.toggleMultiCursorModifier") else { unreachable!() };
+        title.clone()
+    };
+    assert_eq!(title(cx), "Switch to Cmd+Click for Multi-Cursor");
+    cx.update(|window, cx| workbench.update(cx, |workbench, cx| workbench.execute_command("workbench.action.toggleMultiCursorModifier", Vec::new(), window, cx)));
+    assert_eq!(workbench.read_with(cx, |workbench, _| workbench.setting("editor.multiCursorModifier")), json!("ctrlCmd"));
+    assert_eq!(title(cx), "Switch to Alt+Click for Multi-Cursor");
 }
 
 #[gpui::test]

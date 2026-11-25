@@ -1,5 +1,5 @@
 //! findState.ts: what the find widget searches for and how, and the match count it shows.
-//! The option overrides, `isSearching` and `filters` are left out: only notebooks and the search
+//! `isSearching`, `filters` and the preserve case override are left out: only notebooks and the search
 //! editor set them.
 
 use std::ops::Range;
@@ -13,10 +13,13 @@ pub struct FindState {
     pub replace_string: String,
     pub is_revealed: bool,
     pub is_replace_revealed: bool,
+    /// The effective options, the overrides applied (the `isRegex`, `wholeWord`, `matchCase` getters).
     pub is_regex: bool,
     pub whole_word: bool,
     pub match_case: bool,
     pub preserve_case: bool,
+    /// The user's (is_regex, whole_word, match_case) while a multi-cursor session overrides them.
+    overridden: Option<(bool, bool, bool)>,
     pub search_scope: Option<Vec<Range<Position>>>,
     /// The 1-based index of the current match, 0 when the selection is on none.
     pub matches_position: usize,
@@ -37,6 +40,7 @@ impl Default for FindState {
             whole_word: false,
             match_case: false,
             preserve_case: false,
+            overridden: None,
             search_scope: None,
             matches_position: 0,
             matches_count: 0,
@@ -60,6 +64,9 @@ pub struct NewFindState {
     /// `Some(None)` clears the scope.
     pub search_scope: Option<Option<Vec<Range<Position>>>>,
     pub is_loop: Option<bool>,
+    /// The overrides a multi-cursor session sets (`isRegexOverride` false, `wholeWordOverride` and
+    /// `matchCaseOverride` true); any change without them clears them.
+    pub override_options: bool,
 }
 
 /// `FindReplaceStateChangedEvent`: what a change touched.
@@ -90,9 +97,15 @@ impl FindState {
         set_if_changed(&mut self.replace_string, new.replace_string, &mut changed.replace_string);
         set_if_changed(&mut self.is_revealed, new.is_revealed, &mut changed.is_revealed);
         set_if_changed(&mut self.is_replace_revealed, new.is_replace_revealed, &mut changed.is_replace_revealed);
-        set_if_changed(&mut self.is_regex, new.is_regex, &mut changed.is_regex);
-        set_if_changed(&mut self.whole_word, new.whole_word, &mut changed.whole_word);
-        set_if_changed(&mut self.match_case, new.match_case, &mut changed.match_case);
+        let (mut is_regex, mut whole_word, mut match_case) = self.actual_options();
+        is_regex = new.is_regex.unwrap_or(is_regex);
+        whole_word = new.whole_word.unwrap_or(whole_word);
+        match_case = new.match_case.unwrap_or(match_case);
+        self.overridden = new.override_options.then_some((is_regex, whole_word, match_case));
+        let effective = if new.override_options { (false, true, true) } else { (is_regex, whole_word, match_case) };
+        set_if_changed(&mut self.is_regex, Some(effective.0), &mut changed.is_regex);
+        set_if_changed(&mut self.whole_word, Some(effective.1), &mut changed.whole_word);
+        set_if_changed(&mut self.match_case, Some(effective.2), &mut changed.match_case);
         set_if_changed(&mut self.preserve_case, new.preserve_case, &mut changed.preserve_case);
         if let Some(scope) = new.search_scope {
             // Upstream's check: a new scope counts as unchanged only when each of its ranges differs from some old one.
@@ -105,6 +118,11 @@ impl FindState {
         set_if_changed(&mut self.is_loop, new.is_loop, &mut changed.is_loop);
         let nothing = FindStateChanged { move_cursor, update_history, ..Default::default() };
         (changed != nothing).then_some(changed)
+    }
+
+    /// (`actualIsRegex`, `actualWholeWord`, `actualMatchCase`): the options without the overrides.
+    pub fn actual_options(&self) -> (bool, bool, bool) {
+        self.overridden.unwrap_or((self.is_regex, self.whole_word, self.match_case))
     }
 
     /// `changeMatchInfo`: `current_match` `None` keeps the current match.

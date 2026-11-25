@@ -17,6 +17,7 @@ use super::editor_view::selected_columns;
 use super::input_box_view::{InputId, InputLook, InputView};
 use crate::commands::Outcome;
 use crate::editor::find::controller::{AutoFindInSelection, FindController, FindOptions, FocusAction, QueryOptions, SeedFromSelection};
+use crate::editor::find::multicursor::{self, MultiCursorContext, SelectionHighlightOptions, SelectionHighlightQuery};
 use crate::editor::find::state::{MATCHES_LIMIT, NewFindState};
 use crate::editor::{ContentChanged, OpenEditor, Position, Selection, VERTICAL_SCROLLBAR_WIDTH, Viewport, expand_tabs, visible_column};
 use crate::history::HistoryNavigator;
@@ -81,7 +82,12 @@ pub struct FindWidget {
     pub replace_history: HistoryNavigator,
     /// `_updateHistoryDelayer`: the histories take the inputs' values 500 ms after the last state change.
     history_update: Option<Task<()>>,
+    /// multicursor.ts `SelectionHighlighter`: the matches of the selected text and what they were found for.
+    pub selection_highlights: Option<(SelectionHighlightKey, Vec<Range<Position>>)>,
 }
+
+/// The model, its version, the selections and the search the selection highlights were found for.
+type SelectionHighlightKey = (u32, u32, Vec<Selection>, SelectionHighlightQuery);
 
 impl FindWidget {
     pub fn new(cx: &mut Context<Workbench>) -> Self {
@@ -105,6 +111,7 @@ impl FindWidget {
             find_history: HistoryNavigator::new(Vec::new(), HISTORY_LIMIT),
             replace_history: HistoryNavigator::new(Vec::new(), HISTORY_LIMIT),
             history_update: None,
+            selection_highlights: None,
         }
     }
 }
@@ -144,6 +151,36 @@ impl Workbench {
                 if id == "editor.action.selectAllMatches" {
                     window.focus(&workbench.editor_focus, cx);
                 }
+                Outcome::done()
+            });
+        }
+        // multicursor.ts: (id, next, add).
+        for (id, next, add) in [
+            ("editor.action.addSelectionToNextFindMatch", true, true),
+            ("editor.action.addSelectionToPreviousFindMatch", false, true),
+            ("editor.action.moveSelectionToNextFindMatch", true, false),
+            ("editor.action.moveSelectionToPreviousFindMatch", false, false),
+        ] {
+            self.commands.register(id, move |workbench, _, window, cx| {
+                let context = workbench.multicursor_context(window);
+                workbench.run_find(window, cx, |find, editor, viewport| {
+                    multicursor::selection_to_find_match(find, editor, viewport, &context, next, add);
+                    (FocusAction::NoFocusChange, None)
+                });
+                Outcome::done()
+            });
+        }
+        for id in ["editor.action.selectHighlights", "editor.action.changeAll"] {
+            self.commands.register(id, move |workbench, _, window, cx| {
+                // `CompatChangeAll` precondition: a writable editor; its keybinding and palette entry check the text focus.
+                if id == "editor.action.changeAll" && workbench.active_editor_readonly().is_some() {
+                    return Outcome::done();
+                }
+                let context = workbench.multicursor_context(window);
+                workbench.run_find(window, cx, |find, editor, viewport| {
+                    multicursor::select_all(find, editor, viewport, &context);
+                    (FocusAction::NoFocusChange, None)
+                });
                 Outcome::done()
             });
         }
@@ -228,6 +265,7 @@ impl Workbench {
         self.find_editor_changed();
         let top_whitespace = self.editors.viewport.top_whitespace;
         let viewport = self.editors.viewport;
+        let match_mode = self.selected_text_match_mode();
         let Some(editor) = self.editors.active_mut() else { return };
         let find = &mut self.find;
         let (selections, scroll, revealed) = (editor.selections.clone(), editor.scroll, find.controller.state.is_revealed);
@@ -238,6 +276,7 @@ impl Workbench {
             false => Some(editor.highlights.first().map(|(line, columns)| editor.document.lines[*line].chars().skip(columns.start).take(columns.len()).collect::<String>())),
         };
         let (focus, change) = action(&mut find.controller, editor, viewport);
+        multicursor::end_session_if_stale(&mut find.controller, editor, viewport, &match_mode);
         // An edit's cursor change stops the highlights; only a later find selection (source "api", which
         // refreshed them) runs the query again, so Replace All leaves none.
         let rerun = change.is_none() || !editor.highlights.is_empty();
@@ -467,13 +506,58 @@ impl Workbench {
     }
 
     /// An edit the find did not make: its matches follow the text, and the next search starts at the cursor.
+    /// The multi-cursor session ends unless it made the cursor change.
     pub(super) fn find_editor_edited(&mut self, change: Option<&ContentChanged>) {
         let viewport = self.editors.viewport;
+        let match_mode = self.selected_text_match_mode();
         let Some(editor) = self.editors.active_mut() else { return };
         if let Some(change) = change {
             self.find.controller.content_changed(editor, viewport, change);
         }
         self.find.controller.cursor_moved(editor);
+        multicursor::end_session_if_stale(&mut self.find.controller, editor, viewport, &match_mode);
+    }
+
+    fn selected_text_match_mode(&self) -> String {
+        self.setting("editor.selectedTextMatchMode").as_str().unwrap_or("findOptions").to_string()
+    }
+
+    /// `SelectionHighlighter._update`, run on every render; the matches are searched again only when the query, the
+    /// model version or the selections changed. Upstream waits 300 ms after an edit or an explicit empty cursor.
+    pub(super) fn refresh_selection_highlights(&mut self, window: &Window) {
+        let Some(editor) = self.editors.active() else {
+            self.find.selection_highlights = None;
+            return;
+        };
+        let options = SelectionHighlightOptions {
+            enabled: self.setting("editor.selectionHighlight").as_bool().unwrap_or(true),
+            multiline: self.setting("editor.selectionHighlightMultiline").as_bool().unwrap_or(false),
+            max_length: self.setting("editor.selectionHighlightMaxLength").as_u64().unwrap_or(200) as usize,
+        };
+        let query = multicursor::selection_highlight_query(&self.find.controller, editor, &self.multicursor_context(window), options);
+        let key = query.map(|query| (editor.model_id, editor.version_id, editor.selections.clone(), query));
+        if self.find.selection_highlights.as_ref().map(|(key, _)| key) == key.as_ref() {
+            return;
+        }
+        self.find.selection_highlights = key.map(|key| {
+            let ranges = multicursor::selection_highlight_ranges(editor, &key.3);
+            (key, ranges)
+        });
+    }
+
+    fn multicursor_context(&self, window: &Window) -> MultiCursorContext {
+        MultiCursorContext { text_focused: self.editor_focus.is_focused(window), match_mode: self.selected_text_match_mode() }
+    }
+
+    /// multicursor.ts: a text blur ends the session, and so does a text focus unless it matches with the find options.
+    pub(super) fn multicursor_text_focus_changed(&mut self, focused: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.find.controller.multicursor.is_none() || (focused && self.selected_text_match_mode() == "findOptions") {
+            return;
+        }
+        self.run_find(window, cx, |find, editor, viewport| {
+            multicursor::end_session(find, editor, viewport);
+            (FocusAction::NoFocusChange, None)
+        });
     }
 
     /// `_showViewZone` and `_removeViewZone`: with `editor.find.addExtraSpaceOnTop`, whitespace as tall as the

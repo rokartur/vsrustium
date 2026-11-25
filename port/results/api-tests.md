@@ -107,6 +107,7 @@ New passes against the M12 run, none lost: editorCommand with extra args; encodi
 - After multi-cursor (ea71708c): the same three runs give the same counts, editors 13/0/0, window 20/0/20, workspace 18/2/76.
 - After folding, with the scroll position truncated to whole pixels: editors 13/0/0.
 - workspace: openTextDocument, eol, the open/change/save events and openTextDocument with selection pass; the failures are untitled documents, content providers, WorkspaceEdit and file events, none in milestone 8 scope.
+- After the tab host requests (`$moveTab`, `$closeTab`, `$closeGroup`), save participants and overtype, uncommitted on top of 33ddd203: editors 13/0/0, window 27/0/13, the counts the merge section above gives. Tabs - Move Tab and Tabs - Close Tabs are commented out in 1.147.0's window.test.ts, so the host requests count in neither.
 ## M12 Explorer checked against the reference
 
 Same `MOCHA_GREP` and setup as the bulk file edits section, on the Studio, the working tree of the Explorer reference-comparison commit.

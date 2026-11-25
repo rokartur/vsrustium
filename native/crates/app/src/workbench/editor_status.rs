@@ -92,6 +92,11 @@ impl Workbench {
             cx.notify();
             Outcome::done()
         });
+        self.commands.register("editor.action.toggleOvertypeInsertMode", |workbench, _, _, cx| {
+            workbench.overtype = !workbench.overtype;
+            cx.notify();
+            Outcome::done()
+        });
         self.commands.register("workbench.action.editor.changeEOL", |workbench, _, window, cx| {
             workbench.show_eol_picker(window, cx);
             Outcome::done()

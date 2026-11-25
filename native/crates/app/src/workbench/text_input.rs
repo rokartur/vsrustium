@@ -6,12 +6,14 @@ use std::path::{Path, PathBuf};
 
 use gpui::{Bounds, Context, EntityInputHandler, KeyDownEvent, Pixels, UTF16Selection, Window};
 
+use config::configuration::Overrides;
 use exthost::main_thread_files::resource;
 use futures::channel::oneshot;
 
 use super::Workbench;
 use serde_json::json;
 
+use crate::editor::save_participants::SaveParticipants;
 use crate::editor::{ContentChanged, Position, utf16_column};
 use crate::host_sync::FileJob;
 
@@ -54,7 +56,7 @@ impl Workbench {
 
     /// Writes the editor's model, clean or not, and tells the host it was saved; a model of an extension's file
     /// system provider is written through the host thread. The receiver answers whether the write succeeded.
-    /// shortcut: no save participants (`$participateInSave`, only `$trySaveDocument` runs them), no format on save,
+    /// shortcut: no `$participateInSave` (only `$trySaveDocument` runs it), no format on save or code actions on save,
     /// no conflict check against the file on disk.
     pub(super) fn save_editor(&mut self, index: usize, cx: &mut Context<Self>) -> oneshot::Receiver<bool> {
         let document = &self.editors.editors[index].document;
@@ -64,6 +66,7 @@ impl Workbench {
 
     /// `save_editor` for any open model, one without an editor too.
     pub(super) fn save_model(&mut self, scheme: String, path: PathBuf, cx: &mut Context<Self>) -> oneshot::Receiver<bool> {
+        self.run_save_participants(&scheme, &path);
         let (sender, receiver) = oneshot::channel();
         let editor = self.editors.model(&scheme, &path).expect("saving an open model");
         let version = editor.alternative_version_id();
@@ -84,6 +87,28 @@ impl Workbench {
         })
         .detach();
         receiver
+    }
+
+    /// saveParticipants.ts: the text participants of the model's language and resource, their changes sent to the host.
+    pub(super) fn run_save_participants(&mut self, scheme: &str, path: &Path) {
+        let model = self.editors.model_mut(scheme, path).expect("saving an open model");
+        let settings = self.settings.lock().unwrap();
+        let overrides = Overrides { resource: Some(path), override_identifier: Some(&model.document.language_id) };
+        let on = |key: &str| settings.get_value(Some(key), &overrides) == Some(json!(true));
+        let participants = SaveParticipants {
+            trim_trailing_whitespace: on("files.trimTrailingWhitespace"),
+            trim_in_regex_and_strings: settings.get_value(Some("files.trimTrailingWhitespaceInRegexAndStrings"), &overrides) != Some(json!(false)),
+            insert_final_newline: on("files.insertFinalNewline"),
+            trim_final_newlines: on("files.trimFinalNewlines"),
+        };
+        drop(settings);
+        let changes = model.run_save_participants(&participants);
+        for change in &changes {
+            self.send_model_edit(scheme, path, change);
+        }
+        if !changes.is_empty() {
+            self.host.send_visible_ranges(&self.editors);
+        }
     }
 
     /// The model is clean up to the version that was written, and the host hears it was saved.
@@ -167,12 +192,18 @@ impl EntityInputHandler for Workbench {
         }
         let range = range.or(self.marked_text.take()).map(|range| self.input_range(range));
         let Some((previous, next)) = range else {
-            self.run_indenting(|editor, auto| editor.type_keyboard(text, auto), cx);
+            let overtype = self.overtype;
+            self.run_indenting(|editor, auto| editor.type_keyboard(text, auto, overtype), cx);
             return;
         };
         let editor = self.editors.active_mut().expect("input goes to the active editor");
         let change = editor.type_replacing(text, previous, next, "type");
         self.editor_edited(change, false, "keyboard", cx);
+        if self.overtype {
+            let editor = self.editors.active_mut().expect("input goes to the active editor");
+            let change = editor.overtype_composed(text);
+            self.editor_edited(change, false, "keyboard", cx);
+        }
     }
 
     /// IME composition: the marked text replaces the previous one and stays marked.
