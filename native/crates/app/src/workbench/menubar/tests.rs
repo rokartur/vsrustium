@@ -61,7 +61,8 @@ fn menus_follow_the_reference_order_and_enablement(cx: &mut TestAppContext) {
     }
     assert!(enabled(command(&menubar, "Edit", "undo")));
     let (_, edit) = menubar.menus.iter().find(|(title, _)| title == "Edit").unwrap();
-    assert_eq!(edit.iter().filter(|action| **action == MenuAction::Separator).count(), 1);
+    assert_eq!(edit.iter().filter(|action| **action == MenuAction::Separator).count(), 2);
+    assert!(enabled(command(&menubar, "Edit", "editor.action.commentLine")));
 }
 
 #[gpui::test]

@@ -288,7 +288,7 @@ pub fn enabled_commands(menu: &[MenuItem], context: &dyn Context) -> Vec<Command
 }
 
 /// The `EditorAction`s of the active editor this port runs, by id, label and precondition (findController.ts,
-/// folding.ts, multicursor.ts, linesOperations.ts, indentation.ts).
+/// folding.ts, multicursor.ts, linesOperations.ts, indentation.ts, comment.ts).
 const EDITOR_ACTIONS: &[(&str, &str, Option<&str>)] = &[
     ("editor.unfold", "Unfold", Some("foldingEnabled")),
     ("editor.unfoldRecursively", "Unfold Recursively", Some("foldingEnabled")),
@@ -339,6 +339,10 @@ const EDITOR_ACTIONS: &[(&str, &str, Option<&str>)] = &[
     ("editor.action.nextSelectionMatchFindAction", "Find Next Selection", None),
     ("editor.action.previousSelectionMatchFindAction", "Find Previous Selection", None),
     ("editor.action.startFindReplaceAction", "Replace", Some("editorFocus || editorIsOpen")),
+    ("editor.action.commentLine", "Toggle Line Comment", Some("!editorReadonly")),
+    ("editor.action.addCommentLine", "Add Line Comment", Some("!editorReadonly")),
+    ("editor.action.removeCommentLine", "Remove Line Comment", Some("!editorReadonly")),
+    ("editor.action.blockComment", "Toggle Block Comment", Some("!editorReadonly")),
 ];
 
 /// `getCodeEditorCommandPicks`: the active editor's supported actions, those whose precondition holds.

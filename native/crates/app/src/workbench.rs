@@ -874,6 +874,48 @@ mod tests {
     }
 
     #[gpui::test]
+    fn comment_keys_toggle_the_comments_of_the_file_language(cx: &mut TestAppContext) {
+        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
+        let theme = load_theme(&[themes], "Dark Modern").unwrap();
+        let typescript = scan_extension(&app_root.join("extensions/typescript-basics"), true).unwrap();
+        let dir = std::env::temp_dir().join(format!("code-gpui-comment-keys-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("a.ts");
+        std::fs::write(&file, "let a = 1;\n    let b = 2;").unwrap();
+        let (sender, _receiver) = std::sync::mpsc::channel();
+        let (workbench, cx) = cx.add_window_view(|window, cx| {
+            let mut workbench = Workbench::new(theme, app_root.clone(), None, Languages::new(&[typescript]), crate::default_settings(), HostSync::new(sender), cx);
+            workbench.load_keybindings(crate::keybindings::default_keybindings(&[]), dir.join("keybindings.json"), cx);
+            workbench.open_file(file.clone(), true, window, cx);
+            workbench
+        });
+        cx.run_until_parked();
+        let lines = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document.lines.clone());
+
+        cx.simulate_keystrokes("cmd-/");
+        assert_eq!(lines(cx), ["// let a = 1;", "    let b = 2;"], "editor.action.commentLine");
+        cx.simulate_keystrokes("cmd-/");
+        assert_eq!(lines(cx), ["let a = 1;", "    let b = 2;"], "editor.action.commentLine removes");
+        cx.simulate_keystrokes("cmd-a cmd-k cmd-c");
+        assert_eq!(lines(cx), ["// let a = 1;", "//     let b = 2;"], "editor.action.addCommentLine");
+        cx.simulate_keystrokes("cmd-k cmd-u");
+        assert_eq!(lines(cx), ["let a = 1;", "    let b = 2;"], "editor.action.removeCommentLine");
+        cx.simulate_keystrokes("shift-alt-a");
+        assert_eq!(lines(cx), ["/* let a = 1;", "    let b = 2; */"], "editor.action.blockComment");
+        cx.simulate_keystrokes("cmd-z");
+        assert_eq!(lines(cx), ["let a = 1;", "    let b = 2;"], "undo");
+
+        let second = dir.join("b.ts");
+        std::fs::write(&second, "export function main() {\n\treturn 42;\n}\n").unwrap();
+        cx.update(|window, cx| workbench.update(cx, |workbench, cx| workbench.open_file(second.clone(), true, window, cx)));
+        cx.run_until_parked();
+        cx.simulate_keystrokes("down end cmd-/ shift-alt-a cmd-a cmd-k cmd-c");
+        assert_eq!(lines(cx), ["// export function main() {", "// \t// return 42;/*  */", "// }", ""], "the reference's steps");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[gpui::test]
     fn the_find_widget_searches_what_its_inputs_hold(cx: &mut TestAppContext) {
         let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
         let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();

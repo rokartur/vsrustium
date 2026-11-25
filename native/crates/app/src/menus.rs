@@ -64,7 +64,7 @@ pub enum MenuAction {
 /// The workbench's registrations of the features the port has: menu, submenu or command id, title, group, order,
 /// `when`, and the command's precondition.
 type Row = (MenuId, Option<MenuId>, &'static str, &'static str, &'static str, f64, Option<&'static str>, Option<&'static str>);
-const WORKBENCH_MENUS: [Row; 38] = [
+const WORKBENCH_MENUS: [Row; 40] = [
     // menubar.contribution.ts
     (MenuId::MenubarMainMenu, Some(MenuId::MenubarFileMenu), "", "&&File", "", 1., None, None),
     (MenuId::MenubarMainMenu, Some(MenuId::MenubarEditMenu), "", "&&Edit", "", 2., None, None),
@@ -93,6 +93,9 @@ const WORKBENCH_MENUS: [Row; 38] = [
     (MenuId::MenubarEditMenu, None, "editor.action.clipboardCutAction", "Cu&&t", "2_ccp", 1., None, None),
     (MenuId::MenubarEditMenu, None, "editor.action.clipboardCopyAction", "&&Copy", "2_ccp", 2., None, None),
     (MenuId::MenubarEditMenu, None, "editor.action.clipboardPasteAction", "&&Paste", "2_ccp", 4., None, None),
+    // comment.ts
+    (MenuId::MenubarEditMenu, None, "editor.action.commentLine", "&&Toggle Line Comment", "5_insert", 1., None, Some("!editorReadonly")),
+    (MenuId::MenubarEditMenu, None, "editor.action.blockComment", "Toggle &&Block Comment", "5_insert", 2., None, Some("!editorReadonly")),
     (MenuId::MenubarSelectionMenu, None, "editor.action.selectAll", "&&Select All", "1_basic", 1., None, None),
     // quickAccess.contribution.ts
     (MenuId::MenubarViewMenu, None, "workbench.action.showCommands", "&&Command Palette...", "1_open", 1., None, None),
