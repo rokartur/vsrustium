@@ -450,7 +450,7 @@ mod tests {
         let (sender, receiver) = channel();
         let mut sync = HostSync::new(sender);
         let mut group = EditorGroup::default();
-        group.viewport = Viewport { width: 400., height: 360., char_width: 7.2, sticky_scroll_lines: 5, top_whitespace: 0. };
+        group.viewport = Viewport { width: 400., height: 360., char_width: 7.2, sticky_scroll_lines: 5, top_whitespace: 0., stop_rendering_line_after: None };
 
         group.open(document("/w/a b.txt", "plaintext"), false);
         sync.send_changes(&group);

@@ -5,7 +5,7 @@ use crate::editor::edit::tests::editor;
 use crate::editor::find::state::NewFindState;
 use crate::editor::LINE_HEIGHT;
 
-const VIEWPORT: Viewport = Viewport { width: 800., height: 600., char_width: 7.2, sticky_scroll_lines: 0, top_whitespace: 0. };
+const VIEWPORT: Viewport = Viewport { width: 800., height: 600., char_width: 7.2, sticky_scroll_lines: 0, top_whitespace: 0., stop_rendering_line_after: None };
 
 const TEXT: &str = "// my cool header
 #include \"cool.h\"

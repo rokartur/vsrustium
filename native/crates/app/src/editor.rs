@@ -356,6 +356,28 @@ pub fn word_occurrences(lines: &[String], word: &str) -> Vec<(usize, Range<usize
     found
 }
 
+/// viewLineRenderer.ts: a line longer than `stopRenderingLineAfter` chars draws that many, then a "Show more"
+/// span. The char limit, its byte offset and the span's label.
+pub fn line_overflow(text: &str, limit: Option<usize>) -> Option<(usize, usize, String)> {
+    let limit = limit.filter(|limit| text.len() > *limit)?;
+    let (byte, _) = text.char_indices().nth(limit)?;
+    Some((limit, byte, format!("Show more ({})", overflowing_char_count(text[byte..].chars().count()))))
+}
+
+/// viewLines.css .mtkoverflow: the label in the editor font, 4px padding and a 1px border on both sides.
+pub fn show_more_width(label: &str, char_width: f32) -> f32 {
+    label.chars().count() as f32 * char_width + 10.
+}
+
+/// viewLineRenderer.ts `renderOverflowingCharCount`.
+fn overflowing_char_count(count: usize) -> String {
+    match count {
+        0..1024 => format!("{count} chars"),
+        1024..1_048_576 => format!("{:.1} KB", count as f64 / 1024.),
+        _ => format!("{:.1} MB", count as f64 / 1024. / 1024.),
+    }
+}
+
 /// The visible column of char `column`, with tabs expanded to the next tab stop.
 pub fn visible_column(line: &str, column: usize, tab_size: usize) -> usize {
     line.chars().take(column).fold(0, |visible, c| if c == '\t' { visible + tab_size - visible % tab_size } else { visible + 1 })
@@ -604,6 +626,19 @@ mod tests {
 
     fn lines(text: &str) -> Vec<String> {
         split_lines(text).0
+    }
+
+    #[test]
+    fn long_lines_stop_rendering_after_the_limit() {
+        // viewLineRenderer.test.ts 'overflow': "Hello " then "Show more (6 chars)".
+        assert_eq!(line_overflow("Hello world!", Some(6)), Some((6, 6, "Show more (6 chars)".to_string())));
+        assert_eq!(line_overflow("\u{e9}\u{e9}\u{e9}", Some(2)).map(|(limit, byte, _)| (limit, byte)), Some((2, 4)));
+        assert_eq!(line_overflow("abcd", Some(4)), None);
+        assert_eq!(line_overflow("\u{e9}\u{e9}", Some(3)), None);
+        assert_eq!(line_overflow("abcdef", None), None);
+        assert_eq!(overflowing_char_count(1023), "1023 chars");
+        assert_eq!(overflowing_char_count(1024), "1.0 KB");
+        assert_eq!(overflowing_char_count(1_572_864), "1.5 MB");
     }
 
     #[test]

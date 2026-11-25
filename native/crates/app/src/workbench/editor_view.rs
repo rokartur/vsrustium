@@ -28,7 +28,7 @@ use crate::brackets::BracketRange;
 use crate::editor::minimap::MinimapLayoutInfo;
 use crate::editor::{
     HORIZONTAL_SCROLLBAR_HEIGHT, Indentation, LINE_HEIGHT, OpenEditor, Position, Reveal, Scrollbar, Selection, VERTICAL_SCROLLBAR_WIDTH, VerticalReveal, Viewport, column_at_visible, commands,
-    expand_tabs, visible_column, word_at,
+    expand_tabs, line_overflow, show_more_width, visible_column, word_at,
 };
 use crate::editor::folding::FoldDecoration;
 use crate::theme::ThemeKind;
@@ -148,7 +148,11 @@ impl Workbench {
     /// A tab sized to its label (tab.sizing fit): 8px before the label, 30.5px after it for the close action.
     fn tab(&self, index: usize, active: bool, cx: &mut Context<Self>) -> Div {
         let editor = &self.editors.editors[index];
-        let foreground = if active { self.foreground_or("modernTab.activeForeground") } else { self.foreground_or("tab.inactiveForeground") };
+        let readonly = self.readonly(&editor.document.scheme, &editor.document.path).is_some();
+        let action_foreground = if active { self.foreground_or("modernEditorTab.activeForeground") } else { self.foreground_or("tab.inactiveForeground") };
+        // tabs.css colors `.tab-label:not(.monaco-decoration-itemColor)`: a decorated label (read-only, no color of its
+        // own) inherits the tab's color from multieditortabscontrol.css, `tab.activeForeground` when active.
+        let foreground = if active && readonly { self.foreground_or("tab.activeForeground") } else { action_foreground };
         let label = div()
             .mt(px(3.5))
             .h(px(24.))
@@ -159,10 +163,10 @@ impl Workbench {
         let file_icon = self.document_icon(editor, 24., foreground);
         // textFileService.ts decorations: a read-only file's label ends in the lockSmall badge at 0.75 opacity. The
         // iconlabel.css `::after` font-size 90% (11.7px) wins over the decoration rule's 16px, which loads first.
-        let lock = self.readonly(&editor.document.scheme, &editor.document.path).map(|_| self.icon("lock-small", 11.7, 11.7, foreground).mt(px(9.5)).ml(px(5.)).opacity(0.75));
+        let lock = readonly.then(|| self.icon("lock-small", 11.7, 11.7, foreground).mt(px(9.5)).ml(px(5.)).opacity(0.75));
         // A dirty tab shows a filled circle where the close action goes, also when inactive (tabstitlecontrol.css).
         let close_icon = if editor.is_dirty() { "circle-filled" } else { "close-small" };
-        let close = self.icon(close_icon, 20., 16., foreground).id(("close", index)).rounded(px(4.)).on_click(cx.listener(move |workbench, _, _, cx| {
+        let close = self.icon(close_icon, 20., 16., action_foreground).id(("close", index)).rounded(px(4.)).on_click(cx.listener(move |workbench, _, _, cx| {
             cx.stop_propagation();
             workbench.editors.close(index);
             workbench.editors_changed(cx);
@@ -277,6 +281,7 @@ impl Workbench {
         let view_line_count = editor.view_line_count();
         let sticky_scroll_lines = self.sticky_scroll_lines();
         let top_whitespace = self.editors.viewport.top_whitespace;
+        let stop_rendering_line_after = self.stop_rendering_line_after;
         let viewport = self.editors.viewport;
         let lines = editor.visible_lines(viewport);
         let lines_top = viewport.line_top(lines.start) - editor.scroll.top;
@@ -286,6 +291,10 @@ impl Workbench {
         if self.scrollbars.in_transition(now) || self.fold_controls.in_transition(now) || self.minimap.in_transition(now) {
             window.request_animation_frame();
         }
+        let editor_origin = self.text_area_bounds.get().origin;
+        let middle_scroll_dot = self.middle_scroll_dot(point(px(editor_origin.x), px(editor_origin.y)));
+        let middle_scrolling = middle_scroll_dot.is_some();
+        let scrolled = cx.entity();
         div()
             .id("text-area")
             .flex_1()
@@ -305,6 +314,13 @@ impl Workbench {
                     false => workbench.hide_scrollbars(cx),
                 }
             }))
+            .capture_any_mouse_down(cx.listener(|workbench, event: &MouseDownEvent, _, cx| {
+                if workbench.middle_scroll_mouse_down(event.button == MouseButton::Middle, event.position, cx) {
+                    cx.stop_propagation();
+                }
+            }))
+            .capture_any_mouse_up(cx.listener(|workbench, _, _, cx| workbench.middle_scroll_mouse_up(cx)))
+            .capture_key_down(cx.listener(|workbench, _, _, cx| workbench.end_middle_scroll(cx)))
             .on_mouse_up(MouseButton::Left, cx.listener(|workbench, _, _, _| workbench.selecting_text = false))
             .on_mouse_up_out(MouseButton::Left, cx.listener(|workbench, _, _, _| workbench.selecting_text = false))
             .child(
@@ -316,10 +332,21 @@ impl Workbench {
                         let pixel_ratio = window.scale_factor();
                         let minimap = minimap_info(width, height, metrics.content_left(), metrics.char_width, view_line_count, pixel_ratio);
                         // editorOptions.ts: contentWidth = remainingWidth - minimapWidth.
-                        let viewport = Viewport { width: width - metrics.content_left() - minimap.width as f32, height, char_width: metrics.char_width, sticky_scroll_lines, top_whitespace };
+                        let viewport = Viewport { width: width - metrics.content_left() - minimap.width as f32, height, char_width: metrics.char_width, sticky_scroll_lines, top_whitespace, stop_rendering_line_after };
                         laid_out.update(cx, |workbench, cx| workbench.editor_laid_out(viewport, (minimap, pixel_ratio as f64), cx));
                     },
-                    move |bounds, _, window, cx| window.handle_input(&focus, ElementInputHandler::new(bounds, workbench), cx),
+                    move |bounds, _, window, cx| {
+                        window.handle_input(&focus, ElementInputHandler::new(bounds, workbench), cx);
+                        if middle_scrolling && scrolled.update(cx, |workbench, cx| workbench.middle_scroll_frame(cx)) {
+                            // observeWindowMousePos: the pointer anywhere in the window steers the session.
+                            window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, cx| {
+                                if phase == DispatchPhase::Bubble {
+                                    scrolled.update(cx, |workbench, _| workbench.middle_scroll_mouse_moved(event.position));
+                                }
+                            });
+                            window.request_animation_frame();
+                        }
+                    },
                 )
                 .absolute()
                 .inset_0(),
@@ -346,6 +373,7 @@ impl Workbench {
             .child(self.scrollbars_canvas(editor, metrics, cx).absolute().inset_0())
             .when(editor.scroll.top > 0., |area| area.child(div().absolute().top_0().left_0().right(px(VERTICAL_SCROLLBAR_WIDTH)).h(px(SCROLL_SHADOW_HEIGHT)).cursor_default().child(self.scroll_shadow().size_full())))
             .children(self.minimap(editor, cx))
+            .children(middle_scroll_dot)
             .children(self.sticky_scroll_widget(editor, metrics, window, cx))
             .children(self.find_widget(self.editors.viewport.width + metrics.content_left() + minimap_width, metrics.content_left(), minimap_width, window, cx))
             .children(self.editor_message_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
@@ -411,9 +439,19 @@ impl Workbench {
         self.minimap.info = Some(minimap);
         let editor = self.editors.active_mut().expect("laid out only with an editor open");
         let scroll_width = editor.scroll_width(viewport);
-        for view_line in editor.visible_lines(viewport) {
+        let visible_lines = editor.visible_lines(viewport);
+        // viewLines.ts `_updateLineWidths`: with every line drawn, their widest is the content width.
+        if visible_lines == (0..editor.view_line_count()) {
+            editor.forget_line_widths();
+        }
+        for view_line in visible_lines {
             let text = &editor.document.lines[editor.model_line(view_line)];
-            editor.saw_line_width(visible_column(text, text.chars().count(), editor.document.indentation.tab_size) as f32 * viewport.char_width);
+            let tab_size = editor.document.indentation.tab_size;
+            let width = match line_overflow(text, self.stop_rendering_line_after) {
+                None => visible_column(text, text.chars().count(), tab_size) as f32 * viewport.char_width,
+                Some((limit, _, label)) => visible_column(text, limit, tab_size) as f32 * viewport.char_width + show_more_width(&label, viewport.char_width),
+            };
+            editor.saw_line_width(width);
         }
         let moved = editor.set_scroll(editor.scroll.top, editor.scroll.left, viewport);
         let widened = editor.scroll_width(viewport) != scroll_width;
@@ -764,8 +802,36 @@ impl Workbench {
                     content = content.child(div().absolute().top(px(-2.)).bottom(px(-2.)).left(px(start - 2.)).w(px(end - start + 4.)).border_2().border_color(border));
                 }
                 let highlights = editor.document.tokens.highlights(&self.theme, &self.languages, &editor.document.lines, index, tab_size);
-                let text_runs = StyledText::new(expand_tabs(text, tab_size)).with_highlights(gpui::combine_highlights(highlights, find_colors));
-                content = content.child(div().absolute().top_0().left_0().whitespace_nowrap().child(text_runs));
+                let runs = gpui::combine_highlights(highlights, find_colors);
+                let mut show_more = None;
+                match line_overflow(text, self.stop_rendering_line_after) {
+                    None => content = content.child(div().absolute().top_0().left_0().whitespace_nowrap().child(StyledText::new(expand_tabs(text, tab_size)).with_highlights(runs))),
+                    Some((limit, byte, label)) => {
+                        // viewLineRenderer.ts: the first `stopRenderingLineAfter` chars, then the .mtkoverflow "Show more" span.
+                        let rendered = expand_tabs(&text[..byte], tab_size);
+                        let len = rendered.len();
+                        let runs: Vec<_> = runs.filter(|(range, _)| range.start < len).map(|(range, style)| (range.start..range.end.min(len), style)).collect();
+                        content = content.child(div().absolute().top_0().left_0().whitespace_nowrap().child(StyledText::new(rendered).with_highlights(runs)));
+                        let foreground = self.theme.color("button.foreground").unwrap_or(colors.text);
+                        let span = div()
+                            .absolute()
+                            .left(px(visible_column(text, limit, tab_size) as f32 * char_width - scroll_left))
+                            .w(px(show_more_width(&label, char_width)))
+                            .h_full()
+                            .rounded(px(2.))
+                            .border_1()
+                            // An unset `--vscode-contrastBorder` leaves the border `currentColor`.
+                            .border_color(self.theme.color("contrastBorder").unwrap_or(foreground))
+                            .bg(self.theme.color("button.background").unwrap_or(editor_background))
+                            .text_color(foreground)
+                            .when_some(self.theme.color("button.hoverBackground"), |span, hover| span.hover(move |span| span.bg(hover)))
+                            .cursor_pointer()
+                            .child(div().absolute().top(px(2.)).left(px(4.)).line_height(px(LINE_HEIGHT)).whitespace_nowrap().child(label));
+                        // The inline span's box reaches 3px above the line and 2px below it (reference pixels), past the
+                        // line's own clip, so it gets a clip of its own over the text area.
+                        show_more = Some(div().absolute().left(px(metrics.content_left())).right_0().top(px(-3.)).h(px(24.)).overflow_hidden().child(span));
+                    }
+                }
                 // folding.css .inline-folded:after: an ellipsis 0.2em after the line's last char.
                 if collapsed == Some(true) {
                     let end = visible_column(text, text.chars().count(), tab_size) as f32 * char_width + 0.2 * EDITOR_FONT_SIZE;
@@ -778,6 +844,10 @@ impl Workbench {
                         (_, 0) => colors.primary_cursor,
                         _ => colors.secondary_cursor,
                     };
+                    // A cursor past the cut is not drawn.
+                    if self.stop_rendering_line_after.is_some_and(|limit| selection.head.column > limit) {
+                        continue;
+                    }
                     let x = visible_column(text, selection.head.column, tab_size) as f32 * char_width;
                     content = content.child(div().absolute().top_0().left(px(x)).w(px(2.)).h_full().bg(color));
                 }
@@ -797,9 +867,12 @@ impl Workbench {
                         let visible = visible_at(workbench, event.position.x);
                         workbench.fold_mouse_down = workbench.at_line_end(index, visible).then_some((index, false));
                         workbench.click_text(index, visible, modifiers, modifiers.shift, event.click_count, cx);
+                        workbench.show_long_line(index, visible, char_width, cx);
                     }))
                     .on_mouse_down(MouseButton::Right, cx.listener(move |workbench, event: &MouseDownEvent, window, cx| {
-                        workbench.show_editor_context_menu(index, visible_at(workbench, event.position.x), event.position, window, cx);
+                        let visible = visible_at(workbench, event.position.x);
+                        workbench.show_editor_context_menu(index, visible, event.position, window, cx);
+                        workbench.show_long_line(index, visible, char_width, cx);
                     }))
                     .on_mouse_down(MouseButton::Middle, cx.listener(move |workbench, event: &MouseDownEvent, window, cx| {
                         window.focus(&workbench.editor_focus, cx);
@@ -807,6 +880,7 @@ impl Workbench {
                         let visible = visible_at(workbench, event.position.x);
                         workbench.fold_mouse_down = workbench.at_line_end(index, visible).then_some((index, false));
                         workbench.column_select_text(index, visible, event.modifiers.shift, cx);
+                        workbench.show_long_line(index, visible, char_width, cx);
                     }))
                     .on_mouse_up(MouseButton::Left, cx.listener(move |workbench, event: &MouseUpEvent, window, cx| {
                         let visible = visible_at(workbench, event.position.x);
@@ -836,6 +910,7 @@ impl Workbench {
                     .child(number)
                     .child(self.fold_control(index, collapsed, metrics, fold_control_color, fold_controls, cx))
                     .child(content)
+                    .children(show_more)
             })
             .collect()
     }
@@ -913,10 +988,29 @@ impl Workbench {
     /// a click adds or removes a cursor, a drag extends the cursor added last, a double or triple click
     /// selects its word or line, and with Shift too it selects a column.
     /// shortcut: a drag selects only while the pointer is over the lines, and by chars, not by the words or lines it started with.
+    /// longLinesHelper.ts: a press on the text at or past the cut renders every line whole from then on.
+    fn show_long_line(&mut self, line: usize, visible: f32, char_width: f32, cx: &mut Context<Self>) {
+        let editor = self.editors.active().expect("text is clickable only with an editor open");
+        let text = &editor.document.lines[line];
+        let Some((limit, _, label)) = line_overflow(text, self.stop_rendering_line_after) else { return };
+        let tab_size = editor.document.indentation.tab_size;
+        // The "Show more" span is text too; a press right of it is empty content.
+        let span_end = visible_column(text, limit, tab_size) as f32 + show_more_width(&label, char_width) / char_width;
+        if column_at_visible(text, visible, tab_size) + 1 >= limit && visible < span_end {
+            self.stop_rendering_line_after = None;
+            cx.notify();
+        }
+    }
+
     fn click_text(&mut self, line: usize, visible: f32, modifiers: gpui::Modifiers, select: bool, click_count: usize, cx: &mut Context<Self>) {
         let editor = self.editors.active_mut().expect("text is clickable only with an editor open");
         let text = &editor.document.lines[line];
-        let column = column_at_visible(text, visible, editor.document.indentation.tab_size);
+        let tab_size = editor.document.indentation.tab_size;
+        let column = match line_overflow(text, self.stop_rendering_line_after) {
+            // The reference puts a press on the "Show more" span before the last drawn char.
+            Some((limit, _, _)) if visible >= visible_column(text, limit, tab_size) as f32 => limit - 1,
+            _ => column_at_visible(text, visible, tab_size),
+        };
         let position = Position::new(line, column);
         let before = editor.selections.clone();
         if modifiers.alt && click_count < 4 {
