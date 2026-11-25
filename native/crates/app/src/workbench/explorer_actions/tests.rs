@@ -221,6 +221,30 @@ fn the_context_menu_selects_the_row_and_runs_its_items_with_keys_and_clicks(cx: 
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// `contributes.menus` `explorer/context` items show by the right-clicked row's resource keys.
+#[gpui::test]
+fn extension_items_follow_the_right_clicked_rows_resource(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = explorer("explorer-extension-menu", cx);
+    let extension = exthost::scan::ScannedExtension {
+        id: "test.text".into(),
+        location: dir.clone(),
+        description: serde_json::json!({ "contributes": {
+            "commands": [{ "command": "text.preview", "title": "Open Text Preview" }],
+            "menus": { "explorer/context": [{ "command": "text.preview", "group": "navigation", "when": "resourceExtname == .txt && resourceFilename == a.txt" }] }
+        } }),
+    };
+    workbench.update(cx, |workbench, _| workbench.menus.extend(crate::menus::extension_menus(&[extension])));
+    let file_row = point(px(120.), px(129.));
+    cx.simulate_mouse_down(file_row, MouseButton::Right, Modifiers::none());
+    cx.run_until_parked();
+    assert_eq!(menu_titles(&workbench, cx), ["Open Text Preview", "---", "Cut", "Copy", "---", "Rename...", "Delete"]);
+    cx.simulate_keystrokes("escape");
+    let folder_row = point(px(120.), px(107.));
+    cx.simulate_mouse_down(folder_row, MouseButton::Right, Modifiers::none());
+    cx.run_until_parked();
+    assert!(!menu_titles(&workbench, cx).contains(&"Open Text Preview".to_string()));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
 #[gpui::test]
 fn closing_the_window_stores_the_tree_view_state_for_the_next_open(cx: &mut TestAppContext) {
     let (dir, workbench, window_cx) = explorer("explorer-view-state", cx);

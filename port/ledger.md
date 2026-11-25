@@ -299,7 +299,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/parts/views | workbench part | stub | pane headers drawn statically (workbench.rs section_header): no collapse, resize or view actions |
 | workbench/services/accessibility | workbench service | todo |  |
 | workbench/services/accounts | workbench service | removed | no sign-in/AI by decision (port/notes.md); not ported |
-| workbench/services/actions | workbench service | todo |  |
+| workbench/services/actions | workbench service | verified | contributes.menus and contributes.submenus for editor/context, explorer/context, editor/title/context (menus::extension_menus): cargo test -p app menus explorer_actions; ui-pair README.md Explorer menu (port/results/contextmenu.md); other menu ids wait for their views |
 | workbench/services/activity | workbench service | todo |  |
 | workbench/services/agentEditorComments | workbench service | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/services/agentHost | workbench service | removed | no sign-in/AI by decision (port/notes.md); not ported |

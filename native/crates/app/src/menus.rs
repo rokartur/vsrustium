@@ -8,7 +8,9 @@ mod tests;
 use std::cmp::Ordering;
 use std::sync::LazyLock;
 
+use exthost::scan::ScannedExtension;
 use regex::Regex;
+use serde_json::Value;
 
 use crate::command_palette::locale_compare;
 use crate::contextkey::{Context, Expr};
@@ -31,6 +33,8 @@ pub enum MenuId {
     EditorTitleContext,
     TitleBarContext,
     TitleBarTitleContext,
+    /// A `contributes.submenus` entry, `MenuId.for('api:<id>')`, by registration order.
+    Api(usize),
     #[cfg(test)]
     Test,
 }
@@ -188,6 +192,84 @@ pub fn workbench_menus() -> Vec<MenuItem> {
         }
     }
     items
+}
+
+/// menusExtensionPoint.ts `apiMenus`: the `contributes.menus` keys of the menus the port shows. `commandPalette`
+/// is read by `command_palette::menu`.
+const API_MENUS: [(&str, MenuId); 3] =
+    [("editor/context", MenuId::EditorContext), ("explorer/context", MenuId::ExplorerContext), ("editor/title/context", MenuId::EditorTitleContext)];
+
+/// menusExtensionPoint.ts, the `submenus` and `menus` handlers: every extension's `contributes.menus` items of the
+/// port's menus and of contributed submenus, with their command's title and enablement from `contributes.commands`.
+/// An item of a command or submenu nobody contributes is skipped, as is a menu whose items are not all valid.
+pub fn extension_menus(extensions: &[ScannedExtension]) -> Vec<MenuItem> {
+    let commands: Vec<_> = extensions.iter().flat_map(crate::command_palette::contributed_commands).collect();
+    // MenuRegistry.addCommand: the last registration of an id wins.
+    let find_command = |id: &str| commands.iter().rev().find(|command| command.id == id);
+    let submenus = contributed_submenus(extensions);
+    let mut items = Vec::new();
+    let mut submenu_items: Vec<(MenuId, MenuId)> = Vec::new();
+    for extension in extensions {
+        let Some(menus) = extension.description["contributes"]["menus"].as_object() else { continue };
+        for (key, entries) in menus {
+            let Some(entries) = entries.as_array().filter(|entries| entries.iter().all(is_valid_item)) else { continue };
+            let api_menu = API_MENUS.iter().find(|(api_key, _)| api_key == key).map(|(_, menu)| *menu);
+            let Some(menu) = api_menu.or_else(|| submenus.iter().find(|(id, ..)| id == key).map(|(_, menu, _)| *menu)) else { continue };
+            for entry in entries {
+                let (entry_value, title) = match entry["command"].as_str() {
+                    Some(id) => {
+                        let Some(command) = find_command(id) else { continue };
+                        let alt = entry["alt"].as_str().and_then(find_command).map(|alt| (alt.id.clone(), alt.title.clone()));
+                        (Entry::Command { id: command.id.clone(), precondition: command.precondition.clone(), toggled: None, alt }, command.title.clone())
+                    }
+                    None => {
+                        let Some((_, submenu, label)) = submenus.iter().find(|(id, ..)| entry["submenu"] == **id) else { continue };
+                        if submenu_items.contains(&(menu, *submenu)) {
+                            continue;
+                        }
+                        submenu_items.push((menu, *submenu));
+                        (Entry::Submenu(*submenu), label.clone())
+                    }
+                };
+                let (group, order) = group_and_order(entry["group"].as_str().unwrap_or_default());
+                let when = entry["when"].as_str().and_then(Expr::deserialize);
+                items.push(MenuItem { menu, entry: entry_value, title, group, order, when });
+            }
+        }
+    }
+    items
+}
+
+/// `contributes.submenus`: id, menu id and label; the first registration of an id wins. Icons are not kept: they
+/// show in toolbars (`editor/title`, view titles), which the port has no menus for yet.
+fn contributed_submenus(extensions: &[ScannedExtension]) -> Vec<(String, MenuId, String)> {
+    let mut submenus: Vec<(String, MenuId, String)> = Vec::new();
+    for extension in extensions {
+        for submenu in extension.description["contributes"]["submenus"].as_array().into_iter().flatten() {
+            let (Some(id), Some(label)) = (submenu["id"].as_str(), submenu["label"].as_str()) else { continue };
+            if id.is_empty() || label.is_empty() || submenus.iter().any(|(known, ..)| known == id) {
+                continue;
+            }
+            submenus.push((id.to_string(), MenuId::Api(submenus.len()), label.to_string()));
+        }
+    }
+    submenus
+}
+
+/// `schema.isValidMenuItem` and `isValidSubmenuItem`: `command` or `submenu` a string, `alt`, `when` and
+/// `group` absent or strings.
+fn is_valid_item(item: &Value) -> bool {
+    let optional_string = |value: &Value| value.is_string() || value.is_null() || *value == false || *value == 0 || *value == "";
+    let required = if item["command"].is_string() { optional_string(&item["alt"]) } else { item["submenu"].is_string() };
+    required && optional_string(&item["when"]) && optional_string(&item["group"])
+}
+
+/// `group@order`: the order after the last `@` (0 when it is not a number), the group alone otherwise.
+fn group_and_order(group: &str) -> (String, f64) {
+    match group.rfind('@') {
+        Some(index) if index > 0 => (group[..index].to_string(), group[index + 1..].trim().parse().ok().filter(|order: &f64| !order.is_nan()).unwrap_or(0.)),
+        _ => (group.to_string(), 0.),
+    }
 }
 
 /// `getFlatContextMenuActions(menu.getActions())`: the items of `menu` whose `when` holds, in groups joined by

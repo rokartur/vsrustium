@@ -139,6 +139,7 @@ fn main() -> anyhow::Result<()> {
                 workbench.load_keybindings(keybindings::default_keybindings(&extensions), keybindings_file.clone(), cx);
                 workbench.start_system_wide_keybindings(window, cx);
                 workbench.quick_access.menu = command_palette::menu(&extensions);
+                workbench.menus.extend(menus::extension_menus(&extensions));
                 workbench.file_icons = file_icons;
                 workbench.color_themes = color_themes;
                 workbench.restore_profile_state(storage.profile.clone());
