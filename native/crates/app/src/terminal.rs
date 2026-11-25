@@ -103,6 +103,8 @@ pub struct TerminalInstance {
     pub cell_size: (f32, f32),
     /// Text the process asked to put on the clipboard (OSC 52).
     pub clipboard_requests: Vec<String>,
+    /// OSC 52 `?` queries, each formatting the clipboard text into its reply.
+    pub clipboard_loads: Vec<std::sync::Arc<dyn Fn(&str) -> String + Sync + Send>>,
     /// The bell rang since it was last read.
     pub bell: bool,
     launched: Instant,
@@ -152,6 +154,7 @@ impl TerminalInstance {
             spawn_error: None,
             cell_size: (0., 0.),
             clipboard_requests: Vec::new(),
+            clipboard_loads: Vec::new(),
             bell: false,
             launched: Instant::now(),
             killed_by_user: false,
@@ -239,6 +242,7 @@ impl TerminalInstance {
                 Event::ResetTitle => self.sequence_title = None,
                 Event::Bell => self.bell = true,
                 Event::ClipboardStore(_, text) => self.clipboard_requests.push(text),
+                Event::ClipboardLoad(_, format) => self.clipboard_loads.push(format),
                 Event::ColorRequest(index, format) => {
                     let color = match index {
                         0..256 => colors.palette[index],
@@ -334,6 +338,13 @@ impl TerminalInstance {
     pub fn paste(&mut self, text: &str) {
         let data = paste_data(text, self.term.mode().contains(TermMode::BRACKETED_PASTE));
         self.input(&data);
+    }
+
+    /// Answers the OSC 52 queries with the clipboard's text.
+    pub fn answer_clipboard_loads(&mut self, text: &str) {
+        for format in std::mem::take(&mut self.clipboard_loads) {
+            self.write_to_pty(format(text).as_bytes());
+        }
     }
 
     fn write_to_pty(&mut self, data: &[u8]) {

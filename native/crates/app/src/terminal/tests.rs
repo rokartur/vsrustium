@@ -79,6 +79,21 @@ fn paste_uses_carriage_returns_and_bracketed_paste_markers() {
 }
 
 #[test]
+fn osc_52_stores_and_reads_the_clipboard() {
+    let launch = ShellLaunchConfig { extension_pty: true, cwd: std::env::temp_dir(), ..Default::default() };
+    let (mut instance, _receiver) = TerminalInstance::new(1, launch, 20, 3, Config { osc52: alacritty_terminal::term::Osc52::CopyPaste, ..Config::default() });
+    let written = Rc::new(RefCell::new(String::new()));
+    let sink = written.clone();
+    instance.process_input = Some(Box::new(move |data: &str| sink.borrow_mut().push_str(data)));
+    let colors = dark_colors();
+    instance.process(b"\x1b]52;c;aGk=\x07\x1b]52;c;?\x07", &colors);
+    assert_eq!(instance.clipboard_requests, ["hi"]);
+    instance.answer_clipboard_loads("hey");
+    assert_eq!(*written.borrow(), "\x1b]52;c;aGV5\x07");
+    assert!(instance.clipboard_loads.is_empty());
+}
+
+#[test]
 fn clear_keeps_the_cursor_line_as_the_first_line() {
     let launch = ShellLaunchConfig { executable: "/bin/cat".into(), cwd: std::env::temp_dir(), ..Default::default() };
     let colors = dark_colors();

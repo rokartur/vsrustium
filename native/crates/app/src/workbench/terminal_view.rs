@@ -48,6 +48,8 @@ pub const TERMINAL_SCHEME: &str = "vscode-terminal";
 
 /// terminalInstance.ts `_setupTitlePolling`: node-pty's process title is read every 200 ms on macOS.
 const TITLE_POLL_INTERVAL: Duration = Duration::from_millis(200);
+/// xterm.js CursorBlinkStateManager `BLINK_INTERVAL`.
+const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(600);
 /// terminalTabsList.ts `TerminalTabsListSizes`.
 const TAB_HEIGHT: f32 = 22.;
 const TABS_DEFAULT_WIDTH: f32 = 120.;
@@ -71,6 +73,10 @@ pub struct TerminalView {
     /// The wheel's fraction of a line not scrolled yet.
     scroll_remainder: f32,
     title_polling: bool,
+    /// The focused cursor blinks (`cursorBlinking` or a program's DECSCUSR) and is in its hidden phase.
+    cursor_blinking: bool,
+    cursor_blink_off: bool,
+    cursor_blink_running: bool,
     /// Set once a terminal was created: `terminalHasBeenCreated`.
     has_been_created: bool,
     /// What the extension host was told (mainThreadTerminalService.ts): the active terminal and the events it asked for.
@@ -118,6 +124,9 @@ impl TerminalView {
             selecting: None,
             scroll_remainder: 0.,
             title_polling: false,
+            cursor_blinking: false,
+            cursor_blink_off: false,
+            cursor_blink_running: false,
             has_been_created: false,
             host: HostTerminals::default(),
         }
@@ -390,6 +399,7 @@ impl Workbench {
         }
         self.terminal_opened(id, cx);
         self.start_title_poll(cx);
+        self.start_cursor_blink(cx);
         cx.notify();
         id
     }
@@ -482,10 +492,13 @@ impl Workbench {
         let colors = TerminalColors::new(&self.theme);
         let Some(instance) = self.terminal_view.instance_mut(id) else { return };
         let processed = instance.process(bytes, &colors);
-        // xtermTerminal.ts loads ClipboardAddon: OSC 52 writes go to the clipboard.
-        // shortcut: the OSC 52 `?` query that reads the clipboard back to the process is not answered.
+        // xtermTerminal.ts loads ClipboardAddon: OSC 52 writes go to the clipboard and `?` reads it back.
         if let Some(text) = instance.clipboard_requests.drain(..).last() {
             cx.write_to_clipboard(ClipboardItem::new_string(text));
+        }
+        if !instance.clipboard_loads.is_empty() {
+            let text = cx.read_from_clipboard().and_then(|item| item.text()).unwrap_or_default();
+            instance.answer_clipboard_loads(&text);
         }
         instance.bell = false;
         self.task_output(id, &processed.text, cx);
@@ -555,6 +568,32 @@ impl Workbench {
             window.focus(&self.terminal_view.focus, cx);
         }
         cx.notify();
+    }
+
+    /// xterm.js `CursorBlinkStateManager`: the cursor toggles every 600 ms while the focused terminal blinks.
+    fn start_cursor_blink(&mut self, cx: &mut Context<Self>) {
+        if self.terminal_view.cursor_blink_running {
+            return;
+        }
+        self.terminal_view.cursor_blink_running = true;
+        cx.spawn(async move |workbench, cx| {
+            loop {
+                cx.background_executor().timer(CURSOR_BLINK_INTERVAL).await;
+                let running = workbench.update(cx, |workbench, cx| {
+                    let view = &mut workbench.terminal_view;
+                    view.cursor_blink_off = view.cursor_blinking && !view.cursor_blink_off;
+                    if view.cursor_blinking {
+                        cx.notify();
+                    }
+                    view.cursor_blink_running = !view.instances.is_empty();
+                    view.cursor_blink_running
+                });
+                if !matches!(running, Ok(true)) {
+                    break;
+                }
+            }
+        })
+        .detach();
     }
 
     fn start_title_poll(&mut self, cx: &mut Context<Self>) {
@@ -740,6 +779,8 @@ impl Workbench {
         if !self.terminal_view.focus.is_focused(window) {
             return false;
         }
+        // `restartBlinkAnimation` on a key: the cursor shows.
+        self.terminal_view.cursor_blink_off = false;
         match resolution {
             Resolution::MoreChordsNeeded if self.setting("terminal.integrated.allowChords") == true && !keystroke.modifiers.alt => return false,
             Resolution::KbFound { command, .. } if self.setting("terminal.integrated.sendKeybindingsToShell") != true && self.skips_shell(command) => return false,
@@ -891,10 +932,16 @@ impl Workbench {
         let scrollbar_width = if self.setting("workbench.experimental.modernUI") == true { SCROLLBAR_WIDTH_MODERN } else { SCROLLBAR_WIDTH };
         let colors = TerminalColors::new(&self.theme);
         let cursor_inactive_style = self.setting("terminal.integrated.cursorStyleInactive");
+        let focused = self.terminal_view.focus.is_focused(window) && self.terminal_view.active_instance_id() == Some(id);
+        if focused {
+            // `cursorBlinking` is the default style's; a program's DECSCUSR overrides it.
+            self.terminal_view.cursor_blinking = self.terminal_view.instance(id).is_some_and(|instance| instance.term.cursor_style().blinking);
+        }
         let look = Look {
             colors: &colors,
             metrics: &metrics,
-            focused: self.terminal_view.focus.is_focused(window) && self.terminal_view.active_instance_id() == Some(id),
+            focused,
+            cursor_blink_off: self.terminal_view.cursor_blinking && self.terminal_view.cursor_blink_off,
             cursor_inactive_style: cursor_inactive_style.as_str().unwrap_or("outline"),
             cursor_width: self.setting("terminal.integrated.cursorWidth").as_f64().unwrap_or(1.) as f32,
             minimum_contrast_ratio: self.setting("terminal.integrated.minimumContrastRatio").as_f64().unwrap_or(4.5),
@@ -918,7 +965,6 @@ impl Workbench {
 
     /// The xterm.js options the settings set: `scrollback`, `wordSeparator` and `cursorStyle`, which a program's
     /// DECSCUSR overrides.
-    // shortcut: `terminal.integrated.cursorBlinking` is not applied, the cursor does not blink.
     fn terminal_config(&self) -> Config {
         let shape = match self.setting("terminal.integrated.cursorStyle").as_str() {
             Some("line") => CursorShape::Beam,
@@ -928,7 +974,8 @@ impl Workbench {
         Config {
             scrolling_history: self.setting("terminal.integrated.scrollback").as_u64().unwrap_or(1000) as usize,
             semantic_escape_chars: self.setting("terminal.integrated.wordSeparators").as_str().unwrap_or_default().to_owned(),
-            default_cursor_style: CursorStyle { shape, blinking: false },
+            default_cursor_style: CursorStyle { shape, blinking: self.setting("terminal.integrated.cursorBlinking") == true },
+            osc52: alacritty_terminal::term::Osc52::CopyPaste,
             ..Config::default()
         }
     }

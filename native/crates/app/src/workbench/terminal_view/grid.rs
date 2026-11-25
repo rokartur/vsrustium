@@ -90,6 +90,8 @@ pub struct Look<'a> {
     pub colors: &'a TerminalColors,
     pub metrics: &'a CellMetrics,
     pub focused: bool,
+    /// The blinking cursor's hidden phase.
+    pub cursor_blink_off: bool,
     /// `terminal.integrated.cursorStyle` and `cursorStyleInactive`.
     pub cursor_inactive_style: &'a str,
     pub cursor_width: f32,
@@ -139,7 +141,8 @@ pub fn paint(bounds: Bounds<Pixels>, instance: &TerminalInstance, look: &Look, w
     };
     let cursor = content.cursor;
     let cursor_row = cursor.point.line.0 + offset;
-    let block_cursor = look.focused && cursor.shape == CursorShape::Block;
+    let cursor_shown = cursor.shape != CursorShape::Hidden && !(look.focused && look.cursor_blink_off);
+    let block_cursor = look.focused && cursor_shown && cursor.shape == CursorShape::Block;
     let mut contrast_cache: HashMap<([u32; 4], [u32; 4]), Option<Rgba>> = HashMap::new();
     let mut rows_text: Vec<RowText> = (0..rows).map(|_| RowText::default()).collect();
     let cell = |column: usize, row: usize| Bounds::new(origin + point(px(column as f32 * metrics.cell_width), px(row as f32 * metrics.cell_height)), size(px(metrics.cell_width), px(metrics.cell_height)));
@@ -224,7 +227,7 @@ pub fn paint(bounds: Bounds<Pixels>, instance: &TerminalInstance, look: &Look, w
         paint_row_text(line, origin.x, baseline(row), metrics, window);
     }
 
-    if cursor.shape != CursorShape::Hidden && (0..rows as i32).contains(&cursor_row) {
+    if cursor_shown && (0..rows as i32).contains(&cursor_row) {
         let bounds = cell(cursor.point.column.0.min(cols - 1), cursor_row as usize);
         let thickness = px(look.cursor_width.max(1.));
         let shape = if look.focused { Some(cursor.shape) } else { inactive_shape(look.cursor_inactive_style) };
