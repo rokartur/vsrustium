@@ -77,6 +77,10 @@ pub struct Registry {
     pub override_identifiers: Vec<String>,
     /// `getExcludedConfigurationProperties`: the schemas of `included: false` properties, which only policies read.
     pub excluded: HashMap<String, Value>,
+    /// The extensions' `contributes.commands`, id and title, which keybindings.json may name.
+    pub extension_commands: Vec<(String, String)>,
+    /// codeActionsContribution.ts `_allProvidedCodeActionKinds`, for the keybindings schema's `kind` suggestions.
+    pub code_action_kinds: Vec<String>,
 }
 
 /// The core settings of VS Code 1.147.0 as its registry holds them, dumped with port/tools/dump-settings.
@@ -123,6 +127,14 @@ impl Registry {
             for language in description["contributes"]["languages"].as_array().into_iter().flatten() {
                 if let Some(id) = language["id"].as_str().filter(|id| !registry.override_identifiers.iter().any(|known| known == id)) {
                     registry.override_identifiers.push(id.into());
+                }
+            }
+        }
+        for (_, description) in extensions {
+            for command in description["contributes"]["commands"].as_array().into_iter().flatten() {
+                let title = command["title"].as_str().or(command["title"]["value"].as_str()).unwrap_or_default();
+                if let Some(id) = command["command"].as_str() {
+                    registry.extension_commands.push((id.into(), title.into()));
                 }
             }
         }

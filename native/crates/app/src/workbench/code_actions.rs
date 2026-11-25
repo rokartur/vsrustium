@@ -242,8 +242,12 @@ impl Workbench {
     /// `CodeActionsContribution.updateConfigurationSchema` on a provider change.
     fn code_actions_on_save_kinds_changed(&mut self) {
         let registrations: Vec<_> = self.language_features.all(REGISTER).collect();
-        let source_kinds: Vec<&str> = registrations.iter().flat_map(|registration| provided_kinds(&registration.args)).filter(|kind| contains(SOURCE, kind)).collect();
-        self.settings.lock().unwrap().registry.list_code_actions_on_save(&source_kinds);
+        let mut kinds: Vec<&str> = registrations.iter().flat_map(|registration| provided_kinds(&registration.args)).collect();
+        kinds.dedup();
+        let source_kinds: Vec<&str> = kinds.iter().copied().filter(|kind| contains(SOURCE, kind)).collect();
+        let registry = &mut self.settings.lock().unwrap().registry;
+        registry.list_code_actions_on_save(&source_kinds);
+        registry.code_action_kinds = kinds.into_iter().map(str::to_owned).collect();
     }
 
     /// `CodeActionModel._update` on another model: the state empties and an automatic request runs at once.

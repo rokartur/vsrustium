@@ -1,7 +1,28 @@
 use serde_json::{Value, json};
 
-use super::{RESOURCE_LANGUAGE_SETTINGS_SCHEMA_ID, compressed_content, settings_schemas};
+use super::{RESOURCE_LANGUAGE_SETTINGS_SCHEMA_ID, compressed_content, keybindings_schema, settings_schemas};
 use crate::registry::Registry;
+
+/// keybindingService.ts `updateSchema`: an extension's command is a command name and a removal; the code action
+/// commands suggest the provided kinds of their family.
+#[test]
+fn the_keybindings_schema_adds_extension_commands_and_code_action_kinds() {
+    let description = json!({ "contributes": { "commands": [{ "command": "port.hello", "title": "Hello" }] } });
+    let mut registry = Registry::with_extensions(&[("port.ext", &description)]);
+    registry.code_action_kinds = vec!["quickfix".into(), "refactor.extract".into(), "source.organizeImports".into()];
+    let schema = keybindings_schema(&registry);
+    let definitions = &schema["definitions"];
+    assert!(definitions["commandNames"]["enum"].as_array().unwrap().contains(&json!("port.hello")));
+    assert!(definitions["commandType"]["anyOf"][1]["enum"].as_array().unwrap().contains(&json!("-port.hello")));
+    let kinds = |command: &str| {
+        let all_of = definitions["commandsSchemas"]["allOf"].as_array().unwrap();
+        let addition = all_of.iter().rev().find(|entry| entry["if"]["properties"]["command"]["const"] == command).unwrap();
+        addition["then"]["properties"]["args"]["properties"]["kind"]["anyOf"][0]["enum"].clone()
+    };
+    assert_eq!(kinds("editor.action.codeAction"), json!(["quickfix", "refactor.extract", "source.organizeImports"]));
+    assert_eq!(kinds("editor.action.refactor"), json!(["refactor.extract"]));
+    assert_eq!(kinds("editor.action.sourceAction"), json!(["source.organizeImports"]));
+}
 
 /// The five `getCompressedContent` cases of base/test/common/jsonSchema.test.ts, as JSON.
 const CASES: &str = include_str!("compressed-content-cases.json");

@@ -171,6 +171,40 @@ const OVERRIDE_PROPERTY_PATTERN: &str = r"^(\[([^\]]+)\])+$";
 /// The settings schemas by id, as `registerConfigurationSchemas` and configurationRegistry.ts register them.
 /// `in_workspace` is a multi-root workspace (`WorkbenchState.WORKSPACE`), whose folders take resource settings only.
 // The port has no workspace trust, so `checkAndFilterPropertiesRequiringTrust` keeps every property.
+pub const KEYBINDINGS_SCHEMA_ID: &str = "vscode://schemas/keybindings";
+
+/// keybindingService.ts `KeybindingsJsonSchema.updateSchema`: the reference's schema for its core commands, dumped by
+/// port/tools/dump-settings, with the extensions' commands added to the command names and
+/// codeActionsContribution.ts `getKeybindingSchemaAdditions` built from the provided code action kinds.
+pub fn keybindings_schema(registry: &Registry) -> Value {
+    let mut schema: Value = serde_json::from_str(include_str!("../schemas/keybindings.json")).expect("keybindings.json is JSON");
+    let definitions = &mut schema["definitions"];
+    for (id, title) in &registry.extension_commands {
+        let names = definitions["commandNames"]["enum"].as_array_mut().expect("commandNames has an enum");
+        if id.starts_with('_') || names.iter().any(|name| name == id) {
+            continue;
+        }
+        names.push(json!(id));
+        if let Some(descriptions) = definitions["commandNames"]["enumDescriptions"].as_array_mut() {
+            descriptions.push(json!(title));
+        }
+        if let Some(removals) = definitions["commandType"]["anyOf"][1]["enum"].as_array_mut() {
+            removals.push(json!(format!("-{id}")));
+        }
+    }
+    let kind_commands = [("editor.action.codeAction", ""), ("editor.action.refactor", "refactor"), ("editor.action.sourceAction", "source")];
+    // The dump has no additions: the contribution reports its kinds once code action providers register.
+    let all_of = definitions["commandsSchemas"]["allOf"].as_array_mut().expect("commandsSchemas has allOf");
+    for (command, of_kind) in kind_commands {
+        let kinds: Vec<&String> = registry.code_action_kinds.iter().filter(|kind| of_kind.is_empty() || *kind == of_kind || kind.starts_with(&format!("{of_kind}."))).collect();
+        all_of.push(json!({
+            "if": { "required": ["command"], "properties": { "command": { "const": command } } },
+            "then": { "properties": { "args": { "required": ["kind"], "properties": { "kind": { "anyOf": [{ "enum": kinds }, { "type": "string" }] } } } } },
+        }));
+    }
+    schema
+}
+
 pub fn settings_schemas(registry: &Registry, in_workspace: bool) -> Vec<(&'static str, Value)> {
     let language_override = json!({
         "type": "object",
