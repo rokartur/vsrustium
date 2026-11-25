@@ -47,6 +47,7 @@ mod output;
 mod quick_input;
 mod search_editor;
 mod search_model;
+mod shell_env;
 mod smart_snippet_inserter;
 mod split_view;
 mod syntax;
@@ -111,6 +112,7 @@ fn main() -> anyhow::Result<()> {
     let workspace = positional.first().map(|path| canonical(path)).transpose()?.map(Workspace::open);
     let file = positional.get(1).map(|path| canonical(path)).transpose()?;
     let development = ExtensionDevelopment::from_args(&args)?;
+    apply_shell_env(args.iter().any(|arg| arg == "--force-disable-user-env"));
 
     let app_root = std::env::current_dir()?;
     // main.ts: `--export-default-keybindings [folder]`, a folder relative to the working directory, else `<appRoot>/doc`.
@@ -443,6 +445,23 @@ fn icon_theme_follows_workbench_icon_theme() {
     assert!(!icons_with(r#"{ "workbench.iconTheme": null }"#));
     assert!(icons_with(r#"{ "workbench.iconTheme": "no-such-theme" }"#));
     std::fs::remove_dir_all(&user_home).unwrap();
+}
+
+/// main.ts `resolveShellEnv` merged into `process.env`: a Dock launch gets the login shell's PATH for the host,
+/// terminals and tasks. Runs before any thread starts, so changing the environment is sound.
+// shortcut: the timeout is the 10 s default, `application.shellEnvironmentResolutionTimeout` is read later than this; read it here once settings load first.
+fn apply_shell_env(force_disable: bool) {
+    let env: std::collections::HashMap<String, String> = std::env::vars_os().filter_map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?))).collect();
+    match shell_env::resolve_shell_env(&env, force_disable, std::time::Duration::from_secs(10)) {
+        Some(Ok(resolved)) => {
+            for (key, value) in resolved {
+                // SAFETY: called from main before the host, the UI or any other thread starts.
+                unsafe { std::env::set_var(key, value) };
+            }
+        }
+        Some(Err(message)) => eprintln!("[shellEnv] {message}"),
+        None => {}
+    }
 }
 
 fn default_user_data() -> anyhow::Result<PathBuf> {
