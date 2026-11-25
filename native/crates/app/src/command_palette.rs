@@ -332,6 +332,7 @@ pub const EDITOR_ACTIONS: &[(&str, &str, Option<&str>)] = &[
     ("cursorRedo", "Cursor Redo", None),
     ("editor.action.reindentselectedlines", "Reindent Selected Lines", Some("!editorReadonly")),
     ("editor.action.trimTrailingWhitespace", "Trim Trailing Whitespace", Some("!editorReadonly")),
+    ("editor.action.insertFinalNewLine", "Insert Final New Line", Some("!editorReadonly")),
     ("deleteAllLeft", "Delete All Left", Some("!editorReadonly")),
     ("deleteAllRight", "Delete All Right", Some("!editorReadonly")),
     ("editor.action.copyLinesUpAction", "Copy Line Up", Some("!editorReadonly")),

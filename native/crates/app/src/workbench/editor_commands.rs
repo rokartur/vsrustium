@@ -206,6 +206,7 @@ impl Workbench {
             }
             Outcome::done()
         });
+        self.commands.register("editor.action.insertFinalNewLine", |workbench, _, _, cx| workbench.run_on_active_editor(OpenEditor::insert_final_new_line, cx));
         let zooms: [(&str, fn(f32) -> f32); 3] = [
             ("editor.action.fontZoomIn", |level| level + 1.),
             ("editor.action.fontZoomOut", |level| level - 1.),
