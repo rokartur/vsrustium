@@ -574,7 +574,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | extension/theme-abyss | built-in extension | ported | loads with token colors: cargo test -p app theme::tests::every_builtin_theme_loads_with_token_colors; no reference colorize results for it |
 | extension/theme-defaults | built-in extension | verified | cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (all 10 default themes incl. hc_light) and theme::tests; pixel-check dark, light, hc, hclight |
 | extension/theme-kimbie-dark | built-in extension | ported | loads with token colors: cargo test -p app theme::tests::every_builtin_theme_loads_with_token_colors; no reference colorize results for it |
-| extension/theme-modern-icons | built-in extension | todo |  |
+| extension/theme-modern-icons | built-in extension | ported | file_icons.rs reads its SVG image icons, usesCurrentColor and folder, folderExpanded and rootFolder selectors (cargo test -p app image_themes_give_folders_their_icons); ui-pair with workbench.iconTheme vscode-modern-icons: Explorer closed, opened and Search frames under 0.08% pixels off in dark and light |
 | extension/theme-monokai | built-in extension | ported | loads with token colors: cargo test -p app theme::tests::every_builtin_theme_loads_with_token_colors; no reference colorize results for it |
 | extension/theme-monokai-dimmed | built-in extension | ported | loads with token colors: cargo test -p app theme::tests::every_builtin_theme_loads_with_token_colors; no reference colorize results for it |
 | extension/theme-quietlight | built-in extension | ported | loads with token colors: cargo test -p app theme::tests::every_builtin_theme_loads_with_token_colors; no reference colorize results for it |

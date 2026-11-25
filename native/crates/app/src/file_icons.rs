@@ -1,14 +1,14 @@
 //! The file icon theme, as fileIconThemeData.ts turns it into CSS: each file gets the icon definition of the most
 //! specific matching association (file name, then extensions, then language, then the default file icon).
-//! Only font icon themes are drawn; the glyph outlines are read from the theme's woff font and drawn as SVG.
+//! Font glyph outlines are read from the theme's woff font and drawn as SVG; image icons are drawn from their file.
 
 use std::collections::HashMap;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 use exthost::scan::ScannedExtension;
-use gpui::{Div, Rgba, div, prelude::*, px, svg};
+use gpui::{AnyElement, Div, Rgba, div, img, prelude::*, px, svg};
 use serde_json::Value;
 
 use crate::theme::{ThemeKind, parse_hex};
@@ -23,11 +23,21 @@ pub struct FileIconTheme {
     definitions: HashMap<String, IconDefinition>,
     /// The first font's `size`, relative to the label's font size (150% when unset).
     font_scale: f32,
+    /// `usesCurrentColor`: image icons are masks filled with the label color.
+    uses_current_color: bool,
 }
 
 #[derive(Default)]
 struct Associations {
     file: Option<String>,
+    folder: Option<String>,
+    folder_expanded: Option<String>,
+    root_folder: Option<String>,
+    root_folder_expanded: Option<String>,
+    folder_names: HashMap<String, String>,
+    folder_names_expanded: HashMap<String, String>,
+    root_folder_names: HashMap<String, String>,
+    root_folder_names_expanded: HashMap<String, String>,
     file_extensions: HashMap<String, String>,
     file_names: HashMap<String, String>,
     language_ids: HashMap<String, String>,
@@ -36,7 +46,16 @@ struct Associations {
 struct IconDefinition {
     /// The glyph outline as an SVG path in font units (y up), with its units per em.
     outline: Option<(String, f32)>,
+    /// `iconPath`, resolved against the theme file's folder.
+    image: Option<PathBuf>,
     color: Option<Rgba>,
+}
+
+/// The folder a row shows, as getIconClasses.ts names it.
+pub struct FolderIcon<'a> {
+    pub name: &'a str,
+    pub is_root: bool,
+    pub expanded: bool,
 }
 
 impl FileIconTheme {
@@ -63,8 +82,9 @@ impl FileIconTheme {
         for (name, definition) in document["iconDefinitions"].as_object().into_iter().flatten() {
             let character = definition["fontCharacter"].as_str().and_then(font_character);
             let outline = character.zip(face.as_ref()).and_then(|(character, face)| glyph_outline(face, character));
+            let image = definition["iconPath"].as_str().map(|image| folder.join(image));
             let color = definition["fontColor"].as_str().and_then(parse_hex);
-            definitions.insert(name.clone(), IconDefinition { outline, color });
+            definitions.insert(name.clone(), IconDefinition { outline, image, color });
         }
         Ok(FileIconTheme {
             base: Associations::read(&document),
@@ -72,6 +92,7 @@ impl FileIconTheme {
             high_contrast: Associations::read(&document["highContrast"]),
             definitions,
             font_scale,
+            uses_current_color: document["usesCurrentColor"] == true,
         })
     }
 
@@ -79,16 +100,29 @@ impl FileIconTheme {
     /// sitting on the baseline of a line of `font_size` text. `None` when the theme has no glyph for the file.
     pub fn file_icon(&self, path: &Path, language_id: &str, kind: ThemeKind, font_size: f32, line_height: f32, foreground: Rgba) -> Option<Div> {
         let name = path.file_name()?.to_string_lossy().to_lowercase();
-        self.icon(&name, language_id, kind, font_size, line_height, foreground)
+        self.icon(self.definition_id(&name, language_id, kind)?, font_size, line_height, foreground)
+    }
+
+    /// fileIconThemeData.ts `hasFolderIcons`: the explorer then draws an icon after each folder's twistie and
+    /// stops aligning file icons with twisties.
+    pub fn has_folder_icons(&self) -> bool {
+        [&self.base, &self.light, &self.high_contrast].into_iter().any(Associations::has_folder_icons)
+    }
+
+    pub fn folder_icon(&self, folder: FolderIcon, kind: ThemeKind, font_size: f32, line_height: f32, foreground: Rgba) -> Option<Div> {
+        self.icon(self.folder_definition_id(folder, kind)?, font_size, line_height, foreground)
     }
 
     /// `getIconClassesForLanguageId`: the icon of the language alone, no file name or extension.
     pub fn language_icon(&self, language_id: &str, kind: ThemeKind, font_size: f32, line_height: f32, foreground: Rgba) -> Option<Div> {
-        self.icon("", language_id, kind, font_size, line_height, foreground)
+        self.icon(self.definition_id("", language_id, kind)?, font_size, line_height, foreground)
     }
 
-    fn icon(&self, name: &str, language_id: &str, kind: ThemeKind, font_size: f32, line_height: f32, foreground: Rgba) -> Option<Div> {
-        let definition = self.definitions.get(self.definition_id(name, language_id, kind)?)?;
+    fn icon(&self, id: &str, font_size: f32, line_height: f32, foreground: Rgba) -> Option<Div> {
+        let definition = &self.definitions[id];
+        if let Some(image) = &definition.image {
+            return Some(div().relative().w(px(16.)).h(px(line_height)).flex_none().child(self.image_icon(image, line_height, foreground)));
+        }
         let (outline, units_per_em) = definition.outline.as_ref()?;
         let glyph_size = font_size * self.font_scale;
         // Chrome rounds the font's ascent (1em for icon fonts, no descent) to whole pixels and centers it in the line.
@@ -104,16 +138,44 @@ impl FileIconTheme {
         Some(div().relative().w(px(16.)).h(px(line_height)).flex_none().child(glyph))
     }
 
+    /// iconlabel.css `::before`: a 16px image at the left, centered in the line.
+    fn image_icon(&self, image: &Path, line_height: f32, foreground: Rgba) -> AnyElement {
+        let top = px((line_height - 16.) / 2.);
+        match self.uses_current_color {
+            true => svg().external_path(image.to_string_lossy().into_owned()).absolute().top(top).left_0().size(px(16.)).text_color(foreground).into_any_element(),
+            false => img(image.to_path_buf()).absolute().top(top).left_0().size(px(16.)).into_any_element(),
+        }
+    }
+
+    /// Specificity as in `definition_id`; `expanded` is `.monaco-tl-twistie.collapsible:not(.collapsed) + .monaco-tl-contents`.
+    fn folder_definition_id(&self, folder: FolderIcon, kind: ThemeKind) -> Option<&str> {
+        let name = folder.name.to_lowercase();
+        let mut candidates: Vec<(usize, &String)> = Vec::new();
+        for (section, qualifier) in self.sections(kind) {
+            let (plain, expanded, plain_named, expanded_named) = match folder.is_root {
+                true => (
+                    section.root_folder.as_ref().or(section.folder.as_ref()),
+                    section.root_folder_expanded.as_ref().or(section.folder_expanded.as_ref()),
+                    section.root_folder_names.get(&name),
+                    section.root_folder_names_expanded.get(&name),
+                ),
+                false => (section.folder.as_ref(), section.folder_expanded.as_ref(), section.folder_names.get(&name), section.folder_names_expanded.get(&name)),
+            };
+            candidates.extend(plain.map(|id| (2 + qualifier, id)));
+            candidates.extend(plain_named.map(|id| (3 + qualifier, id)));
+            if folder.expanded {
+                candidates.extend(expanded.map(|id| (6 + qualifier, id)));
+                candidates.extend(expanded_named.map(|id| (7 + qualifier, id)));
+            }
+        }
+        self.most_specific(candidates)
+    }
+
     /// The highest CSS specificity wins; on a tie the rule written later, so the light and high contrast sections
     /// (collected after the base one) and within a section file names over extensions over languages.
     fn definition_id(&self, name: &str, language_id: &str, kind: ThemeKind) -> Option<&str> {
-        let sections = match kind {
-            ThemeKind::Dark => vec![(&self.base, 0)],
-            ThemeKind::Light => vec![(&self.base, 0), (&self.light, 1)],
-            ThemeKind::HighContrastDark | ThemeKind::HighContrastLight => vec![(&self.base, 0), (&self.high_contrast, 1)],
-        };
         let mut candidates: Vec<(usize, &String)> = Vec::new();
-        for (section, qualifier) in sections {
+        for (section, qualifier) in self.sections(kind) {
             // `.show-file-icons` (+ `.vs` / `.hc-black`) then the classes each selector lists.
             if let Some(id) = &section.file {
                 candidates.push((2 + qualifier, id));
@@ -132,6 +194,18 @@ impl FileIconTheme {
                 candidates.push((5 + name.matches('.').count() + qualifier, id));
             }
         }
+        self.most_specific(candidates)
+    }
+
+    fn sections(&self, kind: ThemeKind) -> Vec<(&Associations, usize)> {
+        match kind {
+            ThemeKind::Dark => vec![(&self.base, 0)],
+            ThemeKind::Light => vec![(&self.base, 0), (&self.light, 1)],
+            ThemeKind::HighContrastDark | ThemeKind::HighContrastLight => vec![(&self.base, 0), (&self.high_contrast, 1)],
+        }
+    }
+
+    fn most_specific<'a>(&self, candidates: Vec<(usize, &'a String)>) -> Option<&'a str> {
         let mut best: Option<(usize, &String)> = None;
         for (specificity, id) in candidates {
             if self.definitions.contains_key(id) && best.is_none_or(|(best_specificity, _)| specificity >= best_specificity) {
@@ -143,6 +217,11 @@ impl FileIconTheme {
 }
 
 impl Associations {
+    fn has_folder_icons(&self) -> bool {
+        let names = [&self.folder_names, &self.folder_names_expanded, &self.root_folder_names, &self.root_folder_names_expanded];
+        [&self.folder, &self.folder_expanded, &self.root_folder, &self.root_folder_expanded].iter().any(|id| id.is_some()) || names.iter().any(|names| !names.is_empty())
+    }
+
     /// shortcut: keys with a parent folder (`dir/name`, handleParentFolder) never match; Seti has none.
     fn read(section: &Value) -> Self {
         let map = |key: &str| -> HashMap<String, String> {
@@ -150,6 +229,14 @@ impl Associations {
         };
         Associations {
             file: section["file"].as_str().map(str::to_string),
+            folder: section["folder"].as_str().map(str::to_string),
+            folder_expanded: section["folderExpanded"].as_str().map(str::to_string),
+            root_folder: section["rootFolder"].as_str().map(str::to_string),
+            root_folder_expanded: section["rootFolderExpanded"].as_str().map(str::to_string),
+            folder_names: map("folderNames"),
+            folder_names_expanded: map("folderNamesExpanded"),
+            root_folder_names: map("rootFolderNames"),
+            root_folder_names_expanded: map("rootFolderNamesExpanded"),
             file_extensions: map("fileExtensions"),
             file_names: map("fileNames"),
             language_ids: section["languageIds"].as_object().into_iter().flatten().filter_map(|(id, icon)| Some((id.clone(), icon.as_str()?.to_string()))).collect(),
@@ -257,5 +344,21 @@ mod tests {
         assert_eq!(color("_json"), Some([203, 203, 65]));
         assert_eq!(color("_info_light"), Some([73, 139, 167]));
         assert!(theme.definitions["_default"].outline.is_some());
+        assert!(!theme.has_folder_icons());
+    }
+
+    #[test]
+    fn image_themes_give_folders_their_icons() {
+        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let modern = scan_extension(&app_root.join("extensions/theme-modern-icons"), true).unwrap();
+        let theme = FileIconTheme::load(&[modern], "vscode-modern-icons").unwrap();
+        assert!(theme.has_folder_icons() && theme.uses_current_color);
+        let folder = |name, is_root, expanded| theme.folder_definition_id(FolderIcon { name, is_root, expanded }, ThemeKind::Dark);
+        assert_eq!(folder("src", false, false), Some("_folder"));
+        assert_eq!(folder("src", false, true), Some("_folderOpen"));
+        // rootFolder falls back to folder (fileIconThemeData.ts `associations.rootFolder || associations.folder`).
+        assert_eq!(folder("workspace", true, true), Some("_folderOpen"));
+        assert_eq!(theme.definition_id("main.ts", "typescript", ThemeKind::Dark), Some("_typescript"));
+        assert!(theme.definitions["_folder"].image.as_ref().is_some_and(|image| image.ends_with("images/folder.svg") && image.exists()));
     }
 }

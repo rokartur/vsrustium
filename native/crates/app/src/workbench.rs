@@ -55,7 +55,7 @@ use crate::explorer::FileTree;
 use explorer_actions::DraggedItems;
 use hover::{HoverContent, HoverOptions, HoverPosition};
 use search_view::SideBarView;
-use crate::file_icons::FileIconTheme;
+use crate::file_icons::{FileIconTheme, FolderIcon};
 use crate::host_sync::HostSync;
 use crate::languages::Languages;
 use crate::theme::{ColorThemeEntry, Theme, ThemeKind};
@@ -540,6 +540,7 @@ impl Workbench {
         // listWidget.ts: a selected row gets a 1px dotted listSelectionOutline (activeContrastBorder) inside it.
         let selection_outline = self.theme.color("contrastActiveBorder");
         let folder_name = tree.workspace.label();
+        let has_folder_icons = self.file_icons.as_ref().is_some_and(FileIconTheme::has_folder_icons);
         let rows = tree_rows.into_iter().enumerate().map(|(index, row)| {
             let twistie = match (row.is_dir || row.has_nests, row.expanded) {
                 (true, true) => Some("chevron-down"),
@@ -570,8 +571,13 @@ impl Workbench {
                 Some(edit) => PathBuf::from(&edit.input.value),
                 None => path.clone(),
             };
-            let file_icon = self.file_icons.as_ref().filter(|_| !is_dir).and_then(|icons| {
-                icons.file_icon(&icon_path, self.languages.language_of(&icon_path, ""), self.theme.kind, 13., label_line, foreground)
+            let file_icon = self.file_icons.as_ref().and_then(|icons| match is_dir {
+                true => {
+                    let name = path.file_name().map(|name| name.to_string_lossy()).unwrap_or_default();
+                    let folder = FolderIcon { name: &name, is_root: tree.is_root(&path), expanded: row.expanded };
+                    icons.folder_icon(folder, self.theme.kind, 13., label_line, foreground)
+                }
+                false => icons.file_icon(&icon_path, self.languages.language_of(&icon_path, ""), self.theme.kind, 13., label_line, foreground),
             });
             let indent = 8. * (row.depth - 1) as f32;
             let has_nests = row.has_nests;
@@ -596,22 +602,20 @@ impl Workbench {
                 .flex()
                 .items_center()
                 .rounded(px(4.))
-                .map(|row| match (file_icon, twistie) {
-                    (Some(icon), Some(chevron)) => row
-                        .pl(px(11. + indent))
-                        .child(twistie_element(chevron))
-                        .child(icon.self_start().ml(px(3.)))
-                        .child(div().self_start().flex_1().ml(px(6.)).line_height(px(label_line)).child(name)),
-                    (Some(icon), None) => row.pl(px(8. + indent)).child(icon.self_start()).child(div().self_start().flex_1().ml(px(6.)).line_height(px(label_line)).child(name)),
+                .map(|row| match (file_icon, twistie.is_some() || has_folder_icons) {
+                    (Some(icon), false) => row.pl(px(8. + indent)).child(icon.self_start()).child(div().self_start().flex_1().ml(px(6.)).line_height(px(label_line)).child(name)),
                     // monaco-tl-twistie: 3px row inset, 8px base indent plus 8px per level, a 16px icon, 6px before the label.
-                    (None, _) => row
-                        .pl(px(11. + indent))
+                    (icon, _) => {
+                        let label_margin = if icon.is_some() { 6. } else { 3. };
+                        row.pl(px(11. + indent))
                         .child(match twistie {
                             Some(chevron) if has_nests => twistie_element(chevron).into_any_element(),
                             Some(chevron) => self.icon(chevron, 16., 16., foreground).into_any_element(),
                             None => div().size(px(16.)).flex_none().into_any_element(),
                         })
-                        .child(div().self_start().flex_1().ml(px(3.)).line_height(px(label_line)).child(name)),
+                        .children(icon.map(|icon| icon.self_start().ml(px(3.))))
+                            .child(div().self_start().flex_1().ml(px(label_margin)).line_height(px(label_line)).child(name))
+                    }
                 })
                 // explorerviewlet.css: .explorer-item.cut is at half opacity. Its 0.3 for the other rows while a name is
                 // edited needs `.explorer-folders-view` twice in the ancestry, which the reference DOM never has.
