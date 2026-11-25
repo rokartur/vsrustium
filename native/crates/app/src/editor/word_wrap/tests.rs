@@ -5,9 +5,6 @@
 use super::*;
 use crate::editor::{EditorGroup, TextDocument};
 
-const BREAK_BEFORE: &str = "([{\u{2018}\u{201C}\u{3008}\u{300A}\u{300C}\u{300E}\u{3010}\u{3014}\u{FF08}\u{FF3B}\u{FF5B}\u{FF62}\u{A3}\u{A5}\u{FF04}\u{FFE1}\u{FFE5}+\u{FF0B}";
-const BREAK_AFTER: &str = " \t})]?|/&.,;\u{A2}\u{B0}\u{2032}\u{2033}\u{2030}\u{2103}\u{3001}\u{3002}\u{FF61}\u{FF64}\u{FFE0}\u{FF0C}\u{FF0E}\u{FF1A}\u{FF1B}\u{FF1F}\u{FF01}\u{FF05}\u{30FB}\u{FF65}\u{309D}\u{309E}\u{30FD}\u{30FE}\u{30FC}\u{30A1}\u{30A3}\u{30A5}\u{30A7}\u{30A9}\u{30C3}\u{30E3}\u{30E5}\u{30E7}\u{30EE}\u{30F5}\u{30F6}\u{3041}\u{3043}\u{3045}\u{3047}\u{3049}\u{3063}\u{3083}\u{3085}\u{3087}\u{308E}\u{3095}\u{3096}\u{31F0}\u{31F1}\u{31F2}\u{31F3}\u{31F4}\u{31F5}\u{31F6}\u{31F7}\u{31F8}\u{31F9}\u{31FA}\u{31FB}\u{31FC}\u{31FD}\u{31FE}\u{31FF}\u{3005}\u{303B}\u{FF67}\u{FF68}\u{FF69}\u{FF6A}\u{FF6B}\u{FF6C}\u{FF6D}\u{FF6E}\u{FF6F}\u{FF70}\u{201D}\u{3009}\u{300B}\u{300D}\u{300F}\u{3011}\u{3015}\u{FF09}\u{FF3D}\u{FF5D}\u{FF63}";
-
 struct Case {
     before: &'static str,
     after: &'static str,

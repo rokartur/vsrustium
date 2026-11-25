@@ -10,7 +10,7 @@ use super::Workbench;
 use crate::commands::Outcome;
 use gpui::{Div, ParentElement, Styled, div, px};
 
-use crate::editor::word_wrap::{Segment, WrapOptions, WrappingIndent};
+use crate::editor::word_wrap::{BREAK_AFTER, BREAK_BEFORE, Segment, WrapOptions, WrappingIndent};
 use crate::editor::{OpenEditor, VERTICAL_SCROLLBAR_WIDTH, Viewport, visible_column};
 
 impl Workbench {
@@ -135,8 +135,8 @@ impl Workbench {
             // shortcut: the font's full-width advance is not measured (fontInfo.ts `typicalFullwidthCharacterWidth`), CJK counts two columns; measure it when CJK text needs exact wrapping.
             columns_for_full_width_char: 2.,
             two_cell_full_width: string("editor.fullwidthCharacterWidth") == "twoCells",
-            break_before: string("editor.wordWrapBreakBeforeCharacters"),
-            break_after: string("editor.wordWrapBreakAfterCharacters"),
+            break_before: BREAK_BEFORE.into(),
+            break_after: BREAK_AFTER.into(),
         })
     }
 }
