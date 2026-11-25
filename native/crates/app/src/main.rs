@@ -3,6 +3,8 @@
 //! [--screenshot-keys "<keystroke> ..."] [--screenshot-input <steps>] [--node]
 //!   [--extensionDevelopmentPath=<dir> [--extensionTestsPath=<path>]]: the app exits with the test runner's code.
 
+#[cfg_attr(not(test), expect(dead_code, reason = "the code action menu of milestone 13 is its first desktop caller"))]
+mod action_list;
 mod anything_quick_access;
 mod brackets;
 mod command_palette;
@@ -137,6 +139,7 @@ fn main() -> anyhow::Result<()> {
                 workbench.load_keybindings(keybindings::default_keybindings(&extensions), keybindings_file.clone(), cx);
                 workbench.start_system_wide_keybindings(window, cx);
                 workbench.quick_access.menu = command_palette::menu(&extensions);
+                workbench.menus.extend(menus::extension_menus(&extensions));
                 workbench.file_icons = file_icons;
                 workbench.color_themes = color_themes;
                 workbench.restore_profile_state(storage.profile.clone());

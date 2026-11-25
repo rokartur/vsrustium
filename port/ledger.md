@@ -110,7 +110,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/accessibility | src/vs/platform | todo |  |
 | platform/accessibilitySignal | src/vs/platform | todo |  |
 | platform/action | src/vs/platform | ported | types only upstream (ICommandAction, ILocalizedString, toggle info, Categories): command_palette.rs `MenuItem` (id, title, category, precondition, source; `{ value }` titles read as `isLocalizedString`) and menus.rs `Entry::Command` (precondition, toggled); the Categories come resolved in the 1.147.0 dump (reference-commands.json); cargo test -p app command_palette menus |
-| platform/actionWidget | src/vs/platform | todo |  |
+| platform/actionWidget | src/vs/platform | ported | list model (action_list.rs: filter, sections, focus, height, width): cargo test -p app action_list, 19 upstream cases; the view and ActionWidgetService come with the code action menu (port/notes.md milestone 9) |
 | platform/actions | src/vs/platform | ported | menus.rs: MenuRegistry rows with group, order, when, precondition, toggled and submenus, sorted as menuService.ts; cargo test -p app menus (the menuService.test.ts sorting cases); command_palette.rs keeps the CommandPalette menu, built from the 1.147.0 dump of `MenuRegistry` titles and CommandPalette items (port/tools/ref-commands, command_palette/reference-commands.json); no context menus yet |
 | platform/agentHost | src/vs/platform | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | platform/agentPlugins | src/vs/platform | removed | no sign-in/AI by decision (port/notes.md); not ported |
@@ -299,7 +299,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/parts/views | workbench part | stub | pane headers drawn statically (workbench.rs section_header): no collapse, resize or view actions |
 | workbench/services/accessibility | workbench service | todo |  |
 | workbench/services/accounts | workbench service | removed | no sign-in/AI by decision (port/notes.md); not ported |
-| workbench/services/actions | workbench service | todo |  |
+| workbench/services/actions | workbench service | verified | contributes.menus and contributes.submenus for editor/context, explorer/context, editor/title/context (menus::extension_menus): cargo test -p app menus explorer_actions; ui-pair README.md Explorer menu (port/results/contextmenu.md); other menu ids wait for their views |
 | workbench/services/activity | workbench service | todo |  |
 | workbench/services/agentEditorComments | workbench service | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/services/agentHost | workbench service | removed | no sign-in/AI by decision (port/notes.md); not ported |
@@ -406,7 +406,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/chatWindow | workbench contribution | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/contrib/codeActions | workbench contribution | todo |  |
 | workbench/contrib/codeEditor | workbench contribution | stub | quickaccess/gotoLineQuickAccess (Go to Line/Column, Go to Offset) ported; the rest todo |
-| workbench/contrib/commands | workbench contribution | todo |  |
+| workbench/contrib/commands | workbench contribution | verified | runCommands (commands.rs register_run_commands): cargo test -p app commands::, argument checks, spread args, order, stop at a failure; the notifications are logged until notifications are ported |
 | workbench/contrib/comments | workbench contribution | todo |  |
 | workbench/contrib/customEditor | workbench contribution | todo |  |
 | workbench/contrib/debug | workbench contribution | todo |  |
@@ -431,7 +431,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/interactive | workbench contribution | todo |  |
 | workbench/contrib/issue | workbench contribution | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | workbench/contrib/keybindings | workbench contribution | stub | systemWideKeybindings.ts selection and contribution warnings ported in system_wide_keybindings.rs (cargo test -p app system_wide); Toggle Keyboard Shortcuts Troubleshooting waits for the Window output channel (workbench/contrib/output) |
-| workbench/contrib/keybindingsExport | workbench contribution | todo |  |
+| workbench/contrib/keybindingsExport | workbench contribution | n/a | docs build tool of non-stable builds (`--export-default-keybindings` writes doc.keybindings.{win,osx,linux}.json); the port's keybindings/default-macos.json is generated from the reference's own export (keybindings.rs DEFAULT_KEYBINDINGS) |
 | workbench/contrib/languageDetection | workbench contribution | todo |  |
 | workbench/contrib/languageStatus | workbench contribution | todo |  |
 | workbench/contrib/limitIndicator | workbench contribution | todo |  |

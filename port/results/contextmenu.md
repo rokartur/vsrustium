@@ -24,3 +24,10 @@ Reference: `port/tools/ref-contextmenu editor tab titlebar` on `port/fixtures/wo
 - Tab (`raw/contextmenu/tab-key.png`): Close [⌘W], Close Others [⌥⌘T, disabled], Close to the Right [disabled], Close Saved [⌘K U], Close All [⌘K W] | Keep Open [⌘K Enter, disabled], at the same place with the same enablement. ArrowDown after the pointer focuses Close Saved in both. The reference's other groups (Copy Path to Copy into New Window) are missing: the port has none of those commands. The port's menu is narrower since its longest row is shorter.
 - Title bar: not done (port/notes.md).
 - `cargo test -p app`: 396 passed, 1 ignored (editor_menus: menu items, cursor move and selection kept, focus back on Escape, the close commands on a right-clicked tab, Close Saved keeping a dirty editor, Close All asking for it).
+
+## Milestone 9: extension menu items (contributes.menus)
+
+Reference: `FOLDER=port/fixtures/workspace port/tools/ref-contextmenu /tmp/ref-md README.md src`. Port and reference side by side: `port/tools/ui-pair` with a right click at 93,195 (the README.md row), Dark Modern (`raw/contextmenu/folder-readme-extension.png`, reference left).
+
+- README.md: the port shows markdown-language-features' Open Preview (`navigation`) and Find File References (`4_search`) at the reference's places, then Cut, Copy | Rename..., Delete. The reference's other items (Open to the Side, Open With..., Reveal in Finder, Open in Integrated Terminal, Select for Compare, Open Timeline, Copy Path, Copy Relative Path) are core commands the port does not have yet.
+- `cargo test -p app`: 846 passed, 1 ignored.

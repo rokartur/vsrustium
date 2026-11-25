@@ -249,7 +249,7 @@ pub fn menu(extensions: &[ScannedExtension]) -> Vec<MenuItem> {
 }
 
 /// `contributes.commands` as `MenuRegistry.addCommand` gets them: the `enablement` is the precondition.
-fn contributed_commands(extension: &ScannedExtension) -> Vec<MenuItem> {
+pub fn contributed_commands(extension: &ScannedExtension) -> Vec<MenuItem> {
     let commands = match &extension.description["contributes"]["commands"] {
         Value::Array(commands) => commands.iter().collect(),
         command @ Value::Object(_) => vec![command],

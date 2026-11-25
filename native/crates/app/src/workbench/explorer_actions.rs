@@ -126,6 +126,28 @@ impl Workbench {
         context.insert("explorerResourceMoveableToTrash".into(), json!(tree.focused.is_some() && self.setting("files.enableTrash") == json!(true)));
         context.insert("explorerResourceCut".into(), json!(tree.cut && !tree.clipboard.is_empty()));
         context.insert("fileCopied".into(), json!(!tree.clipboard.is_empty()));
+        if focused {
+            self.explorer_resource_context(tree.focused.as_deref(), context);
+        }
+    }
+
+    /// explorerView.ts `resourceContext` (contextkeys.ts `ResourceContextKey`) of the focused row, in the view's scope:
+    /// while the Explorer has focus it replaces the editor's resource keys, and no focused row clears them.
+    fn explorer_resource_context(&self, stat: Option<&Path>, context: &mut HashMap<String, Value>) {
+        let keys = ["resource", "resourceScheme", "resourceFilename", "resourceDirname", "resourcePath", "resourceLangId", "resourceExtname", "hasResource", "isFileSystemResource"];
+        for key in keys {
+            context.remove(key);
+        }
+        let Some(stat) = stat else { return };
+        context.insert("resource".into(), json!(crate::editor::uri_string("file", stat)));
+        context.insert("resourceScheme".into(), json!("file"));
+        context.insert("resourceFilename".into(), json!(stat.file_name().map(|name| name.to_string_lossy()).unwrap_or_default()));
+        context.insert("resourceDirname".into(), json!(stat.parent().map(|parent| parent.to_string_lossy().into_owned()).unwrap_or_default()));
+        context.insert("resourcePath".into(), json!(stat.to_string_lossy()));
+        context.insert("resourceLangId".into(), json!(self.languages.guess_language(stat, "")));
+        context.insert("resourceExtname".into(), json!(stat.extension().map(|ext| format!(".{}", ext.to_string_lossy())).unwrap_or_default()));
+        context.insert("hasResource".into(), json!(true));
+        context.insert("isFileSystemResource".into(), json!(true));
     }
 
     /// explorerView.ts `onContextMenu`: the ExplorerContext menu for the right-clicked row, or for the space

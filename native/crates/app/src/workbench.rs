@@ -218,6 +218,7 @@ impl Workbench {
         workbench.register_find_commands();
         workbench.register_sticky_scroll_commands();
         workbench.register_context_commands();
+        workbench.register_run_commands();
         workbench.register_quick_input_commands();
         workbench.register_quick_access_commands();
         workbench.register_theme_commands();
