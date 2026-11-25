@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 // Captures the reference VS Code workbench through CDP (Page.captureScreenshot), so no Screen Recording permission is needed.
-// Usage: port/tools/ref-screenshot <out-dir> [dark|light|hc ...]   (env REF = reference checkout, default ~/Developer/vscode-ref;
+// Usage: port/tools/ref-screenshot <out-dir> [dark|light|hc|hclight|abyss|... (the keys of `themes`)]   (env REF = reference checkout, default ~/Developer/vscode-ref;
 // env FOLDER = folder to open, default none; env FILE = file to open in that window, default none;
 // env KEYS = keystrokes to type into it first, GPUI style: "cmd-down up alt-cmd-["; env SETTINGS = a JSON object of
 // extra user settings)
@@ -11,8 +11,12 @@ import { referenceArgs, referenceUserData } from './ref-user-data.ts';
 const outDir = process.argv[2] ?? 'port/results/screenshots/reference';
 const ref = process.env.REF ?? join(process.env.HOME!, 'Developer/vscode-ref');
 const electron = join(ref, '.build/electron/Code - OSS.app/Contents/MacOS/Code - OSS');
-const themes: Record<string, string> = { dark: 'Default Dark Modern', light: 'Default Light Modern', hc: 'Default High Contrast', hclight: 'Default High Contrast Light' };
-const selected = process.argv.length > 3 ? process.argv.slice(3) : Object.keys(themes);
+const themes: Record<string, string> = {
+	dark: 'Default Dark Modern', light: 'Default Light Modern', hc: 'Default High Contrast', hclight: 'Default High Contrast Light',
+	abyss: 'Abyss', kimbie: 'Kimbie Dark', monokai: 'Monokai', dimmed: 'Monokai Dimmed', quiet: 'Quiet Light', red: 'Red',
+	sdark: 'Solarized Dark', slight: 'Solarized Light', tnb: 'Tomorrow Night Blue',
+};
+const selected = process.argv.length > 3 ? process.argv.slice(3) : ['dark', 'light', 'hc', 'hclight'];
 const width = 1024;
 const height = 768;
 const port = 9333;

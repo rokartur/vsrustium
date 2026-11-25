@@ -711,7 +711,12 @@ impl Workbench {
             number: self.color("editorLineNumber.foreground"),
             active_number: self.color("editorLineNumber.activeForeground"),
             text: self.color("editor.foreground"),
-            line_border: self.color("editor.lineHighlightBorder"),
+            // currentLineHighlight.ts theming participant: the border only without a visible background, or when the theme sets it.
+            line_background: self.theme.color(if focused { "editor.lineHighlightBackground" } else { "editor.inactiveLineHighlightBackground" }),
+            line_border: match self.theme.color("editor.lineHighlightBackground").is_none_or(|color| color.a == 0.) || self.theme.defines("editor.lineHighlightBorder") {
+                true => self.theme.color("editor.lineHighlightBorder"),
+                false => None,
+            },
             word: self.theme.color("editor.wordHighlightTextBackground"),
             word_border: self.theme.color("editor.wordHighlightTextBorder"),
             selection_highlight: self.theme.color("editor.selectionHighlightBackground"),
@@ -771,7 +776,12 @@ impl Workbench {
                     .when(metrics.line_numbers_width > 0., |number| number.child((index + 1).to_string()));
                 let mut current_line = div().absolute().inset_0();
                 if line_highlight && all_empty && selections.iter().any(|selection| selection.head.line == index) {
-                    current_line = current_line.border(px(line_border_width)).border_color(colors.line_border);
+                    if let Some(background) = colors.line_background {
+                        current_line = current_line.bg(background);
+                    }
+                    if let Some(border) = colors.line_border {
+                        current_line = current_line.border(px(line_border_width)).border_color(border);
+                    }
                 }
                 // The text scrolls left under the fixed margin and current line border.
                 let mut content = div().absolute().top_0().bottom_0().right_0().left(px(-scroll_left));
@@ -1505,7 +1515,8 @@ struct LineColors {
     number: Rgba,
     active_number: Rgba,
     text: Rgba,
-    line_border: Rgba,
+    line_background: Option<Rgba>,
+    line_border: Option<Rgba>,
     word: Option<Rgba>,
     word_border: Option<Rgba>,
     selection_highlight: Option<Rgba>,

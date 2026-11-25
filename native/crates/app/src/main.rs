@@ -157,6 +157,7 @@ fn main() -> anyhow::Result<()> {
                 host.configuration_scopes = development.is_some();
                 host.send_color_theme(theme.kind);
                 let mut workbench = Workbench::new(theme, app_root.clone(), workspace.clone(), languages, settings.clone(), host, cx);
+                cx.observe_window_appearance(window, |workbench, _, cx| workbench.host_color_scheme_changed(cx)).detach();
                 let window_logs = exthost::session::window_logs_path(&user_data);
                 workbench.register_window_log(window_logs.join("renderer.log"));
                 let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
@@ -382,13 +383,14 @@ fn save_screenshot(_window: &Window, _path: &std::path::Path) -> anyhow::Result<
     anyhow::bail!("built without the screenshot feature: cargo build --features screenshot")
 }
 
-/// `workbench.colorTheme`; a theme no extension contributes falls back to the default, as ThemeService does.
+/// The color theme setting for the host scheme (`getColorThemeSettingId`); a theme no extension contributes falls back to the default, as ThemeService does.
 fn settings_theme(extensions: &[ScannedExtension], settings: &Settings) -> anyhow::Result<theme::Theme> {
-    let id = settings.get_value(Some("workbench.colorTheme"), &Overrides::default());
+    let key = workbench::themes::color_theme_setting_id(settings, workbench::themes::host_color_scheme());
+    let id = settings.get_value(Some(key), &Overrides::default());
     if let Some(theme) = id.as_ref().and_then(|id| id.as_str()).and_then(|id| load_theme(extensions, id).ok()) {
         return Ok(theme);
     }
-    let default = &settings.registry.property("workbench.colorTheme").expect("workbench.colorTheme is registered").default;
+    let default = &settings.registry.property(key).expect("the color theme settings are registered").default;
     load_theme(extensions, default.as_str().expect("the default theme is a settings id"))
 }
 

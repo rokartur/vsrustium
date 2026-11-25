@@ -97,6 +97,7 @@ pub struct Workbench {
     pub commands: Commands,
     /// Extension tests run: dialogs answer their default without showing (abstractFileDialogService.ts skipDialogs).
     pub skip_dialogs: bool,
+    pub host_colors: themes::HostColorScheme,
     /// `IEnvironmentService.isExtensionDevelopment`.
     pub extension_development: bool,
     /// workbench.ts `setUnexpectedErrorHandler(createUnexpectedErrorHandler(logService))`.
@@ -203,7 +204,7 @@ impl Render for Workbench {
                     .px(px(4.))
                     .pb(px(4.))
                     // The side bar meets the activity bar flush; the bar draws the seam (floatingPanels.css).
-                    .child(div().flex().child(self.activity_bar(cx)).when(self.side_bar_visible(), |row| row.child(self.side_bar(window, cx))))
+                    .child(div().flex().child(self.activity_bar(window, cx)).when(self.side_bar_visible(), |row| row.child(self.side_bar(window, cx))))
                     .child(if self.editors.active().is_some() { self.text_editor_part(window, cx) } else { self.editor_part() }),
             )
             .child(self.status_bar(window, cx));
@@ -247,6 +248,7 @@ impl Workbench {
             host,
             commands: Commands::default(),
             skip_dialogs: false,
+            host_colors: themes::host_color_scheme(),
             extension_development: false,
             unexpected_errors: Default::default(),
             keybindings: keyboard::Keybindings::default(),
@@ -342,6 +344,7 @@ impl Workbench {
         })
         .detach();
         cx.on_release(|workbench, _| workbench.store_explorer_view_state()).detach();
+        workbench.customize_theme();
         workbench
     }
 
@@ -542,7 +545,7 @@ impl Workbench {
         }
     }
 
-    fn activity_bar(&self, cx: &mut Context<Self>) -> Div {
+    fn activity_bar(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         let views = [
             ("source-control", "Source Control", "workbench.view.scm"),
             ("debug-alt", "Run and Debug", "workbench.view.debug"),
@@ -570,8 +573,9 @@ impl Workbench {
             .border_1()
             .when(self.side_bar_visible(), |bar| bar.rounded_l(px(8.)))
             .when(!self.side_bar_visible(), |bar| bar.rounded(px(8.)))
-            .bg(self.color("activityBar.background"))
-            .border_color(self.color("surface.border"))
+            // activitybarPart.ts `updateStyles` with the modern UI: the inactive background while the window is not focused.
+            .bg(self.color(if window.is_window_active() { "modernActivityBar.background" } else { "modernActivityBar.inactiveBackground" }))
+            .border_color(self.color("modernActivityBar.border"))
             .child(
                 div()
                     .flex()
@@ -830,10 +834,11 @@ impl Workbench {
             .child(div().self_start().pl(px(8.)).line_height(px(32.)).text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).text_color(self.foreground_or("sideBarTitle.foreground")).child(name))
     }
 
-    /// A pane header (paneview.ts): 28px, sideBarSectionHeader colors, a top border on every section but the first.
+    /// A pane header (paneview.ts) as modernUI/paneHeaders.css draws it: 28px, the side bar's background, an inset
+    /// separator on every section but the first.
     fn section_header(&self, title: &str, expanded: bool, separated: bool) -> Div {
         let foreground = self.foreground_or("sideBarSectionHeader.foreground");
-        let border = self.theme.color("sideBarSectionHeader.border").filter(|_| separated);
+        let border = self.theme.color("sideBarSectionHeader.border").or(self.theme.color("surface.border")).filter(|_| separated);
         div()
             .relative()
             .h(px(28.))
@@ -845,9 +850,10 @@ impl Workbench {
             .flex()
             .items_center()
             .rounded(px(4.))
-            .bg(self.color("sideBarSectionHeader.background"))
+            .bg(self.color("sideBar.background"))
+            .hover(|header| header.bg(self.color("list.hoverBackground")))
             .text_color(foreground)
-            .when_some(border, |header, border| header.child(div().absolute().top_0().left_0().right_0().h(px(1.)).bg(border)))
+            .when_some(border, |header, border| header.child(div().absolute().top_0().left(px(4.)).right(px(4.)).h(px(1.)).bg(border)))
             .child(self.icon(if expanded { "chevron-down" } else { "chevron-right" }, 16., 16., foreground).mx(px(2.)))
             .child(div().text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).child(title.to_string()))
     }

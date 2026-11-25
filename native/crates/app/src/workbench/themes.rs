@@ -4,6 +4,7 @@
 use std::time::Duration;
 
 use gpui::{Context, Task, Window};
+use config::service::Settings;
 use serde_json::json;
 
 use super::Workbench;
@@ -20,6 +21,33 @@ const DEFAULT_DARK: &str = "Dark 2026";
 const DEFAULT_LIGHT: &str = "Light 2026";
 /// `selectTheme`: a theme is previewed once the focus rested on it this long.
 const PREVIEW_DELAY: Duration = Duration::from_millis(200);
+
+/// `IHostColorSchemeService`: the system's dark appearance and its Increase Contrast accessibility setting.
+#[derive(Clone, Copy, PartialEq, Debug, Default)]
+pub struct HostColorScheme {
+    pub dark: bool,
+    pub high_contrast: bool,
+}
+
+/// Electron's `nativeTheme.shouldUseDarkColors` and `shouldUseHighContrastColors` on macOS.
+pub fn host_color_scheme() -> HostColorScheme {
+    let defaults = objc2_foundation::NSUserDefaults::standardUserDefaults();
+    let style = defaults.stringForKey(&objc2_foundation::NSString::from_str("AppleInterfaceStyle"));
+    let high_contrast = objc2_app_kit::NSWorkspace::sharedWorkspace().accessibilityDisplayShouldIncreaseContrast();
+    HostColorScheme { dark: style.is_some_and(|style| style.to_string() == "Dark"), high_contrast }
+}
+
+/// themeConfiguration.ts `getColorThemeSettingId`: the setting that names the color theme for this host scheme.
+pub fn color_theme_setting_id(settings: &Settings, host: HostColorScheme) -> &'static str {
+    let enabled = |key| settings.get_value(Some(key), &Default::default()) == Some(json!(true));
+    if enabled("window.autoDetectHighContrast") && host.high_contrast {
+        return if host.dark { "workbench.preferredHighContrastColorTheme" } else { "workbench.preferredHighContrastLightColorTheme" };
+    }
+    if enabled("window.autoDetectColorScheme") {
+        return if host.dark { "workbench.preferredDarkColorTheme" } else { "workbench.preferredLightColorTheme" };
+    }
+    COLOR_THEME_SETTING
+}
 
 /// `ThemeSettingTarget`: `Preview` shows the theme without writing `workbench.colorTheme`.
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -120,6 +148,44 @@ impl Workbench {
         }
     }
 
+    /// `ThemeConfiguration`'s `workbench.colorCustomizations` and `editor.tokenColorCustomizations` on the current theme.
+    pub(crate) fn customize_theme(&mut self) {
+        let settings = self.settings.lock().unwrap();
+        let value = |key| settings.get_value(Some(key), &Default::default()).unwrap_or_default();
+        let (colors, token_colors) = (value("workbench.colorCustomizations"), value("editor.tokenColorCustomizations"));
+        drop(settings);
+        self.theme.set_customizations(&colors, &token_colors);
+        for editor in &mut self.editors.editors {
+            editor.document.tokens.theme_changed();
+        }
+        self.restyle_webviews();
+    }
+
+    /// `restoreColorTheme`: applies the theme the settings name for the host scheme, without writing it back.
+    pub(crate) fn restore_color_theme(&mut self, cx: &mut Context<Self>) {
+        let settings = self.settings.lock().unwrap();
+        let configured = settings.get_value(Some(color_theme_setting_id(&settings, self.host_colors)), &Default::default());
+        drop(settings);
+        if let Some(id) = configured.as_ref().and_then(|id| id.as_str()) {
+            self.set_color_theme(id, SettingTarget::Preview, cx);
+        }
+    }
+
+    /// `hostColorService.onDidChangeColorScheme` with `isPreferredColorSchemeChange`.
+    pub fn host_color_scheme_changed(&mut self, cx: &mut Context<Self>) {
+        let (previous, current) = (self.host_colors, host_color_scheme());
+        self.host_colors = current;
+        let settings = self.settings.lock().unwrap();
+        let enabled = |key| settings.get_value(Some(key), &Default::default()) == Some(json!(true));
+        let dark_changed = previous.dark != current.dark;
+        let restore = (enabled("window.autoDetectColorScheme") && dark_changed)
+            || (enabled("window.autoDetectHighContrast") && (previous.high_contrast != current.high_contrast || (current.high_contrast && dark_changed)));
+        drop(settings);
+        if restore {
+            self.restore_color_theme(cx);
+        }
+    }
+
     /// `WorkbenchThemeService.setColorTheme`: applies the theme, tells the extension host its kind, and writes
     /// `workbench.colorTheme` unless previewing (`ThemeConfiguration.writeConfiguration`). A theme that fails to
     /// load leaves the current one, as the picker's error path does.
@@ -134,21 +200,19 @@ impl Workbench {
                 }
             };
             self.theme = theme;
-            for editor in &mut self.editors.editors {
-                editor.document.tokens.theme_changed();
-            }
+            self.customize_theme();
             self.host.send_color_theme(self.theme.kind);
-            self.restyle_webviews();
             cx.notify();
         }
         if target == SettingTarget::Preview {
             return;
         }
         let mut settings = self.settings.lock().unwrap();
-        match settings.update_value_derived(COLOR_THEME_SETTING, Some(&json!(settings_id))) {
+        let key = color_theme_setting_id(&settings, self.host_colors);
+        match settings.update_value_derived(key, Some(&json!(settings_id))) {
             Ok(change) if !change.is_empty() => self.host.send_configuration_change(&settings, &change),
             Ok(_) => {}
-            Err(error) => eprintln!("writing {COLOR_THEME_SETTING}: {error}"),
+            Err(error) => eprintln!("writing {key}: {error}"),
         }
     }
 }

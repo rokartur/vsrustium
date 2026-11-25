@@ -34,6 +34,10 @@ pub struct Theme {
     /// `IWorkbenchColorTheme.settingsId`, the `workbench.colorTheme` value.
     pub settings_id: String,
     colors: HashMap<String, Rgba>,
+    /// `workbench.colorCustomizations` for this theme; `None` is `"default"`, the registry default over the theme's color.
+    custom_colors: HashMap<String, Option<Rgba>>,
+    /// The theme file's `tokenColors`, before `editor.tokenColorCustomizations` is appended.
+    token_rules: Vec<Value>,
     /// The TextMate theme of the token colors (`ColorThemeData.tokenColors`).
     pub tokens: textmate::Theme,
 }
@@ -53,8 +57,8 @@ impl ColorThemeEntry {
     pub fn load(&self) -> anyhow::Result<Theme> {
         let (mut colors, mut token_colors) = (HashMap::new(), Vec::new());
         read_colors(&self.path, &mut colors, &mut token_colors)?;
-        let mut theme = Theme { kind: self.kind, settings_id: self.settings_id.clone(), colors, tokens: textmate::Theme::new(&[]) };
-        theme.tokens = crate::syntax::token_theme(&theme, &token_colors);
+        let mut theme = Theme { kind: self.kind, settings_id: self.settings_id.clone(), colors, custom_colors: HashMap::new(), token_rules: token_colors, tokens: textmate::Theme::new(&[]) };
+        theme.tokens = crate::syntax::token_theme(&theme, &theme.token_rules);
         Ok(theme)
     }
 }
@@ -116,10 +120,80 @@ fn read_colors(path: &Path, colors: &mut HashMap<String, Rgba>, token_colors: &m
 impl Theme {
     /// The theme's color, else the registry default; `None` where upstream resolves to no color.
     pub fn color(&self, key: &str) -> Option<Rgba> {
-        if let Some(color) = self.colors.get(key) {
-            return Some(*color);
+        match self.custom_colors.get(key) {
+            Some(Some(color)) => return Some(*color),
+            Some(None) => {}
+            None => {
+                if let Some(color) = self.colors.get(key) {
+                    return Some(*color);
+                }
+            }
         }
         self.evaluate(&registry_default(key, self.kind))
+    }
+
+    /// `ColorThemeData.defines`: the theme file or a customization sets the color, `"default"` unsets it.
+    pub fn defines(&self, key: &str) -> bool {
+        match self.custom_colors.get(key) {
+            Some(color) => color.is_some(),
+            None => self.colors.contains_key(key),
+        }
+    }
+
+    /// `ColorThemeData.setCustomColors` and `setCustomTokenColors`: the settings' values, then those of every
+    /// `[theme id]` block matching this theme, with the token rules appended after the theme's own.
+    pub fn set_customizations(&mut self, colors: &Value, token_colors: &Value) {
+        self.custom_colors.clear();
+        for colors in [Some(colors.clone()), self.theme_specific(colors)].into_iter().flatten() {
+            for (key, value) in colors.as_object().into_iter().flatten() {
+                match value.as_str() {
+                    Some("default") => self.custom_colors.insert(key.clone(), None),
+                    // Color.fromHex: an unparsable value is red.
+                    Some(hex) => self.custom_colors.insert(key.clone(), Some(parse_hex(hex).unwrap_or(Rgba { r: 1., g: 0., b: 0., a: 1. }))),
+                    None => continue,
+                };
+            }
+        }
+        let mut rules = self.token_rules.clone();
+        for customizations in [Some(token_colors.clone()), self.theme_specific(token_colors)].into_iter().flatten() {
+            custom_token_rules(&customizations, &mut rules);
+        }
+        self.tokens = crate::syntax::token_theme(self, &rules);
+    }
+
+    /// `getThemeSpecificColors`: the merged values of the `[id]` keys (`[a][b]`, `*` wildcards at either end) matching
+    /// this theme; arrays of several blocks concatenate.
+    fn theme_specific(&self, colors: &Value) -> Option<Value> {
+        let mut merged: Option<serde_json::Map<String, Value>> = None;
+        for (key, scoped) in colors.as_object().into_iter().flatten() {
+            if !(key.starts_with('[') && key.ends_with(']')) || !scoped.is_object() {
+                continue;
+            }
+            // themeScopeRegex `/\[(.+?)\]/g`
+            for theme_id in key[1..key.len() - 1].split("][").filter(|id| !id.is_empty()) {
+                if !self.is_theme_scope_match(theme_id) {
+                    continue;
+                }
+                let merged = merged.get_or_insert_default();
+                for (subkey, value) in scoped.as_object().unwrap() {
+                    match (merged.get_mut(subkey), value) {
+                        (Some(Value::Array(original)), Value::Array(more)) => original.extend(more.iter().cloned()),
+                        (_, Value::Null | Value::Bool(false)) => {}
+                        _ => _ = merged.insert(subkey.clone(), value.clone()),
+                    }
+                }
+            }
+        }
+        merged.map(Value::Object)
+    }
+
+    fn is_theme_scope_match(&self, theme_id: &str) -> bool {
+        let id = &self.settings_id;
+        let (starts, ends) = (theme_id.starts_with('*'), theme_id.ends_with('*'));
+        theme_id == id
+            || (starts && ends && theme_id.len() >= 2 && id.contains(&theme_id[1..theme_id.len() - 1]))
+            || (ends && id.starts_with(&theme_id[..theme_id.len() - 1]))
+            || (starts && id.ends_with(&theme_id[1..]))
     }
 
     fn evaluate(&self, value: &ColorValue) -> Option<Rgba> {
@@ -128,6 +202,7 @@ impl Theme {
             ColorValue::Hex(hex) => Some(parse_hex(hex).expect("registry hex")),
             ColorValue::Key(key) => self.color(key),
             ColorValue::Transparent(inner, factor) => self.evaluate(inner).map(|color| Rgba { a: color.a * factor, ..color }),
+            ColorValue::Opacity(inner, opacity) => self.evaluate(inner).map(|color| Rgba { a: *opacity, ..color }),
             ColorValue::Darken(inner, factor) => self.evaluate(inner).map(|color| darken(color, *factor)),
             ColorValue::Lighten(inner, factor) => self.evaluate(inner).map(|color| lighten(color, *factor)),
             ColorValue::Opaque(inner, background) => {
@@ -145,6 +220,30 @@ impl Theme {
             }
         }
     }
+}
+
+/// `addCustomTokenColors`: the groups (`comments`, `strings`, ...) as their scopes first, so `textMateRules` override them.
+fn custom_token_rules(customizations: &Value, rules: &mut Vec<Value>) {
+    const GROUPS: [(&str, &[&str]); 7] = [
+        ("comments", &["comment", "punctuation.definition.comment"]),
+        ("strings", &["string", "meta.embedded.assembly"]),
+        ("keywords", &["keyword - keyword.operator", "keyword.control", "storage", "storage.type"]),
+        ("numbers", &["constant.numeric"]),
+        ("types", &["entity.name.type", "entity.name.class", "support.type", "support.class"]),
+        ("functions", &["entity.name.function", "support.function"]),
+        ("variables", &["variable", "entity.name.variable"]),
+    ];
+    for (group, scopes) in GROUPS {
+        let settings = match &customizations[group] {
+            Value::String(color) if !color.is_empty() => serde_json::json!({ "foreground": color }),
+            Value::Object(settings) => Value::Object(settings.clone()),
+            _ => continue,
+        };
+        for scope in scopes {
+            rules.push(serde_json::json!({ "scope": scope, "settings": settings }));
+        }
+    }
+    rules.extend(customizations["textMateRules"].as_array().into_iter().flatten().cloned());
 }
 
 /// `Color.getRelativeLuminance`, rounded to 4 decimals as upstream does.
@@ -238,6 +337,8 @@ enum ColorValue {
     Hex(&'static str),
     Key(&'static str),
     Transparent(&'static ColorValue, f32),
+    /// `withOpacity`: the color with this alpha.
+    Opacity(&'static ColorValue, f32),
     Darken(&'static ColorValue, f32),
     Lighten(&'static ColorValue, f32),
     Opaque(&'static ColorValue, &'static ColorValue),
@@ -245,7 +346,7 @@ enum ColorValue {
     LessProminent(&'static ColorValue, &'static ColorValue, f32, f32),
 }
 
-const MINIMAP_FIND_MATCH: ColorValue = ColorValue::Transparent(&ColorValue::Key("editorOverviewRuler.findMatchForeground"), 0.8);
+const MINIMAP_FIND_MATCH: ColorValue = ColorValue::Opacity(&ColorValue::Key("editorOverviewRuler.findMatchForeground"), 0.8);
 const MINIMAP_SLIDER: ColorValue = ColorValue::Transparent(&ColorValue::Key("scrollbarSlider.background"), 0.5);
 const MINIMAP_SLIDER_HOVER: ColorValue = ColorValue::Transparent(&ColorValue::Key("scrollbarSlider.hoverBackground"), 0.5);
 const MINIMAP_SLIDER_ACTIVE: ColorValue = ColorValue::Transparent(&ColorValue::Key("scrollbarSlider.activeBackground"), 0.5);
@@ -310,6 +411,9 @@ fn registry_default(key: &str, kind: ThemeKind) -> ColorValue {
         "modernTab.activeForeground" => (Key("foreground"), Key("foreground"), Key("foreground")),
         "modernEditorTab.activeForeground" => (Key("modernTab.activeForeground"), Key("modernTab.activeForeground"), Key("modernTab.activeForeground")),
         "modernActivityBarItem.activeBackground" => (Key("modernTab.activeBackground"), Key("modernTab.activeBackground"), Key("modernTab.activeBackground")),
+        "modernActivityBar.background" => (Key("activityBar.background"), Key("activityBar.background"), Key("activityBar.background")),
+        "modernActivityBar.inactiveBackground" => (Key("modernActivityBar.background"), Key("modernActivityBar.background"), Key("modernActivityBar.background")),
+        "modernActivityBar.border" => (Key("surface.border"), Key("surface.border"), Key("surface.border")),
         "modernActivityBarItem.activeForeground" => (Key("modernTab.activeForeground"), Key("modernTab.activeForeground"), Key("modernTab.activeForeground")),
         "editor.foreground" => (Hex("#BBBBBB"), Hex("#333333"), Hex("#FFFFFF")),
         "editorLineNumber.foreground" => (Hex("#858585"), Hex("#237893"), Hex("#FFFFFF")),
@@ -327,6 +431,7 @@ fn registry_default(key: &str, kind: ThemeKind) -> ColorValue {
             Transparent(&Key("editor.selectionBackground"), 0.7),
         ),
         "editor.lineHighlightBorder" => (Hex("#282828"), Hex("#eeeeee"), Hex("#f38518")),
+        "editor.inactiveLineHighlightBackground" => (Key("editor.lineHighlightBackground"), Key("editor.lineHighlightBackground"), Key("editor.lineHighlightBackground")),
         "editorCursor.foreground" => (Hex("#AEAFAD"), Hex("#000000"), Hex("#FFFFFF")),
         "editorMultiCursor.primary.foreground" => (Key("editorCursor.foreground"), Key("editorCursor.foreground"), Key("editorCursor.foreground")),
         "editorMultiCursor.secondary.foreground" => (Key("editorCursor.foreground"), Key("editorCursor.foreground"), Key("editorCursor.foreground")),
@@ -553,12 +658,16 @@ fn hc_light_default(key: &str) -> ColorValue {
         "modernTab.activeForeground" => Key("foreground"),
         "modernEditorTab.activeForeground" => Key("modernTab.activeForeground"),
         "modernActivityBarItem.activeBackground" => Key("modernTab.activeBackground"),
+        "modernActivityBar.background" => Key("activityBar.background"),
+        "modernActivityBar.inactiveBackground" => Key("modernActivityBar.background"),
+        "modernActivityBar.border" => Key("surface.border"),
         "modernActivityBarItem.activeForeground" => Key("modernTab.activeForeground"),
         "editor.foreground" => Key("foreground"),
         "editorLineNumber.foreground" => Hex("#292929"),
         "editorActiveLineNumber.foreground" => Key("contrastActiveBorder"),
         "editorLineNumber.activeForeground" => Key("editorActiveLineNumber.foreground"),
         "editor.lineHighlightBorder" => Key("contrastBorder"),
+        "editor.inactiveLineHighlightBackground" => Key("editor.lineHighlightBackground"),
         "editorCursor.foreground" => Hex("#0F4A85"),
         "editorMultiCursor.primary.foreground" => Key("editorCursor.foreground"),
         "editorMultiCursor.secondary.foreground" => Key("editorCursor.foreground"),
@@ -653,20 +762,17 @@ fn quick_input_default(key: &str) -> (ColorValue, ColorValue, ColorValue) {
         "button.background" => (Hex("#0E639C"), Hex("#007ACC"), Hex("#000000")),
         "button.foreground" => (Hex("#FFFFFF"), Hex("#FFFFFF"), Hex("#FFFFFF")),
         "button.border" => (Key("contrastBorder"), Key("contrastBorder"), Key("contrastBorder")),
-        "checkbox.background" => (Key("select.background"), Key("select.background"), Key("select.background")),
-        "checkbox.foreground" => (Key("select.foreground"), Key("select.foreground"), Key("select.foreground")),
-        "checkbox.border" => (Key("select.border"), Key("select.border"), Key("select.border")),
-        "select.background" => (Hex("#3C3C3C"), Hex("#FFFFFF"), Hex("#000000")),
-        "select.foreground" => (Hex("#F0F0F0"), Key("foreground"), Hex("#FFFFFF")),
-        "select.border" => (Hex("#3C3C3C"), Hex("#CECECE"), Key("contrastBorder")),
-        "toolbar.hoverBackground" => (Hex("#5a5d5e50"), Hex("#b8b8b850"), None),
+        "checkbox.background" => (Key("dropdown.background"), Key("dropdown.background"), Key("dropdown.background")),
+        "checkbox.foreground" => (Key("dropdown.foreground"), Key("dropdown.foreground"), Key("dropdown.foreground")),
+        "checkbox.border" => (Key("dropdown.border"), Key("dropdown.border"), Key("dropdown.border")),
         "dropdown.background" => (Hex("#3C3C3C"), Hex("#FFFFFF"), Hex("#000000")),
         "dropdown.foreground" => (Hex("#F0F0F0"), Key("foreground"), Hex("#FFFFFF")),
         "dropdown.border" => (Key("dropdown.background"), Hex("#CECECE"), Key("contrastBorder")),
+        "toolbar.hoverBackground" => (Hex("#5a5d5e50"), Hex("#b8b8b850"), None),
         // menuColors.ts and editorWidget.border, the menu's fallback border (defaultStyles.ts defaultMenuStyles).
         "menu.border" => (None, None, Key("contrastBorder")),
-        "menu.foreground" => (Key("select.foreground"), Key("select.foreground"), Key("select.foreground")),
-        "menu.background" => (Key("select.background"), Key("select.background"), Key("select.background")),
+        "menu.foreground" => (Key("dropdown.foreground"), Key("dropdown.foreground"), Key("dropdown.foreground")),
+        "menu.background" => (Key("dropdown.background"), Key("dropdown.background"), Key("dropdown.background")),
         "menu.selectionBorder" => (None, None, Key("contrastActiveBorder")),
         "menu.separatorBackground" => (Transparent(&Key("foreground"), 0.2), Transparent(&Key("foreground"), 0.2), Key("contrastBorder")),
         // editorColors.ts, for the workbench hover (hover.css).
@@ -730,18 +836,15 @@ fn quick_input_default_hc_light(key: &str) -> ColorValue {
         "button.background" => Hex("#0F4A85"),
         "button.foreground" => Hex("#FFFFFF"),
         "button.border" => Key("contrastBorder"),
-        "checkbox.background" => Key("select.background"),
-        "checkbox.foreground" => Key("select.foreground"),
-        "checkbox.border" => Key("select.border"),
-        "select.background" => Hex("#FFFFFF"),
-        "select.foreground" => Key("foreground"),
-        "select.border" => Key("contrastBorder"),
+        "checkbox.background" => Key("dropdown.background"),
+        "checkbox.foreground" => Key("dropdown.foreground"),
+        "checkbox.border" => Key("dropdown.border"),
         "dropdown.background" => Hex("#FFFFFF"),
         "dropdown.foreground" => Key("foreground"),
         "dropdown.border" => Key("contrastBorder"),
         "menu.border" | "menu.separatorBackground" => Key("contrastBorder"),
-        "menu.foreground" => Key("select.foreground"),
-        "menu.background" => Key("select.background"),
+        "menu.foreground" => Key("dropdown.foreground"),
+        "menu.background" => Key("dropdown.background"),
         "menu.selectionBorder" => Key("contrastActiveBorder"),
         "editorHoverWidget.background" => Key("editorWidget.background"),
         "editorHoverWidget.foreground" => Key("editorWidget.foreground"),
@@ -888,7 +991,7 @@ mod tests {
             ("Dark Modern", "editorOverviewRuler.errorForeground", "#ff1212b3"),
             ("Dark Modern", "editorOverviewRuler.infoForeground", "#59a4f9ff"),
             ("Default High Contrast", "editorOverviewRuler.infoForeground", "#59a4f9cc"),
-            ("Dark Modern", "minimap.findMatchHighlight", "#d1861665"),
+            ("Dark Modern", "minimap.findMatchHighlight", "#d18616cc"),
             ("Default High Contrast", "editorOverviewRuler.findMatchForeground", "#ab5a00ff"),
             ("Default High Contrast", "minimap.findMatchHighlight", "#f38518ff"),
             ("Dark Modern", "modernEditorTab.activeForeground", "#ccccccff"),
@@ -905,6 +1008,78 @@ mod tests {
         assert_eq!(builtin_theme("Default High Contrast").color("modernActivityBarItem.activeBackground"), None);
         assert_eq!(builtin_theme("Default High Contrast").color("editor.wordHighlightTextBackground"), None);
         assert_eq!(builtin_theme("Default High Contrast").color("editorGroupHeader.connectedTabsBackground"), None);
+    }
+
+    // colorThemeData.test.ts has no customization cases; expected values follow setCustomColors,
+    // setCustomTokenColors and isThemeScopeMatch.
+    #[test]
+    fn customizations_override_the_theme_and_its_scoped_blocks_match_by_id() {
+        let mut theme = builtin_theme("Dark Modern");
+        let colors = serde_json::json!({
+            "editor.background": "#102030",
+            "statusBar.background": "default",
+            "[Dark*]": { "editor.background": "#405060" },
+            "[Light Modern][*Modern]": { "tab.activeForeground": "#abc" },
+            "[Abyss]": { "editor.background": "#000000" },
+        });
+        let token_colors = serde_json::json!({
+            "comments": "#111111",
+            "textMateRules": [{ "scope": "comment.line", "settings": { "foreground": "#222222" } }],
+            "[*Dark Modern]": { "strings": { "foreground": "#333333", "fontStyle": "italic" } },
+        });
+        theme.set_customizations(&colors, &token_colors);
+        assert_eq!(theme.color("editor.background").map(hex).as_deref(), Some("#405060ff"));
+        assert_eq!(theme.color("tab.activeForeground").map(hex).as_deref(), Some("#aabbccff"));
+        // "default": the registry's statusBar.background, not Dark Modern's #181818.
+        assert_eq!(theme.color("statusBar.background").map(hex).as_deref(), Some("#007accff"));
+        let color = |theme: &Theme, names: &[&str]| theme.tokens.color_map()[theme.tokens.style(&textmate::ScopeStack::from_names(names)).foreground].clone();
+        assert_eq!(color(&theme, &["source.ts", "comment.block"]), "#111111");
+        assert_eq!(color(&theme, &["source.ts", "comment.line"]), "#222222");
+        assert_eq!(color(&theme, &["source.ts", "string.quoted"]), "#333333");
+        // The default rule follows the customized editor colors.
+        assert_eq!(theme.tokens.color_map()[theme.tokens.defaults().background], "#405060");
+        theme.set_customizations(&Value::Null, &Value::Null);
+        assert_eq!(theme.color("editor.background").map(hex).as_deref(), Some("#1f1f1fff"));
+        assert_ne!(color(&theme, &["source.ts", "comment.block"]), "#111111");
+    }
+
+    /// `Color.toString`: `#rrggbb` when opaque, else `rgba(r, g, b, a)`.
+    fn parse_css_color(text: &str) -> Option<Rgba> {
+        let Some(channels) = text.strip_prefix("rgba(").and_then(|rest| rest.strip_suffix(')')) else { return parse_hex(text) };
+        let values: Vec<f32> = channels.split(',').map(|value| value.trim().parse().ok()).collect::<Option<_>>()?;
+        let [r, g, b, a] = values[..] else { return None };
+        Some(Rgba { r: r / 255., g: g / 255., b: b / 255., a })
+    }
+
+    // port/fixtures/theme-colors: the reference workbench's --vscode-* variables per theme (`port/tools/ref-dom colors:<key>`).
+    // Each color the port resolves must equal the reference's; ids the port leaves unresolved are not painted by it.
+    #[test]
+    fn resolved_colors_match_the_reference_workbench_variables() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let extensions = exthost::scan::scan_builtin_extensions(&root.join("extensions")).unwrap();
+        let themes = [
+            ("dark", "Dark Modern"), ("light", "Light Modern"), ("hc", "Default High Contrast"), ("hclight", "Default High Contrast Light"),
+            ("abyss", "Abyss"), ("kimbie", "Kimbie Dark"), ("monokai", "Monokai"), ("dimmed", "Monokai Dimmed"), ("quiet", "Quiet Light"),
+            ("red", "Red"), ("sdark", "Solarized Dark"), ("slight", "Solarized Light"), ("tnb", "Tomorrow Night Blue"),
+        ];
+        let mut mismatches = Vec::new();
+        for (key, id) in themes {
+            let fixture = std::fs::read_to_string(root.join(format!("port/fixtures/theme-colors/{key}.json"))).unwrap();
+            let reference: serde_json::Map<String, Value> = serde_json::from_str(&fixture).unwrap();
+            let theme = load_theme(&extensions, id).unwrap();
+            for color_id in include_str!("webview/color_ids.txt").lines() {
+                let Some(color) = theme.color(color_id) else { continue };
+                let variable = format!("--vscode-{}", color_id.replace('.', "-"));
+                let expected = reference.get(&variable).and_then(Value::as_str).and_then(parse_css_color);
+                // rgba() prints the alpha with two decimals, so it may be one step of 255 off.
+                let same = expected.is_some_and(|expected| hex(expected)[..7] == hex(color)[..7] && (expected.a - color.a).abs() <= 1.5 / 255.);
+                if !same {
+                    let expected = expected.map(hex);
+                    mismatches.push(format!("{id} {color_id}: port {} reference {expected:?}", hex(color)));
+                }
+            }
+        }
+        assert!(mismatches.is_empty(), "{} mismatches:\n{}", mismatches.len(), mismatches.join("\n"));
     }
 
     #[test]

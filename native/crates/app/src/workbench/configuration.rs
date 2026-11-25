@@ -10,7 +10,6 @@ use gpui::Context;
 
 use crate::editor::{Indentation, guess_indentation};
 use crate::workbench::Workbench;
-use crate::workbench::themes::SettingTarget;
 
 /// Upstream batches settings file watcher events by 100 ms.
 const SETTINGS_CHECK_INTERVAL: Duration = Duration::from_millis(100);
@@ -40,12 +39,20 @@ impl Workbench {
     /// `onDidChangeConfiguration` listeners of the workbench for a change already in the settings model.
     fn configuration_changed(&mut self, change: &Change, before: Vec<CreationOptions>, cx: &mut Context<Self>) {
         self.host.send_configuration_change(&self.settings.lock().unwrap(), change);
-        if affects(change, "workbench.colorTheme") {
-            let configured = self.settings.lock().unwrap().get_value(Some("workbench.colorTheme"), &Default::default());
-            if let Some(id) = configured.as_ref().and_then(|id| id.as_str()) {
-                // ThemeService `restoreColorTheme`: applied without writing the setting back.
-                self.set_color_theme(id, SettingTarget::Preview, cx);
+        let theme_keys = ["workbench.colorTheme", "workbench.preferredDarkColorTheme", "workbench.preferredLightColorTheme", "workbench.preferredHighContrastColorTheme", "workbench.preferredHighContrastLightColorTheme", "window.autoDetectColorScheme", "window.autoDetectHighContrast"];
+        if theme_keys.iter().any(|key| affects(change, key)) {
+            self.restore_color_theme(cx);
+        }
+        // `restoreFileIconTheme`
+        if affects(change, "workbench.iconTheme") {
+            let file_icons = crate::settings_file_icons(&self.extensions, &self.settings.lock().unwrap());
+            match file_icons {
+                Ok(file_icons) => self.file_icons = file_icons,
+                Err(error) => eprintln!("loading the file icon theme: {error:#}"),
             }
+        }
+        if affects(change, "workbench.colorCustomizations") || affects(change, "editor.tokenColorCustomizations") {
+            self.customize_theme();
         }
         self.update_model_options(before);
         cx.notify();
