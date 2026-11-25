@@ -108,3 +108,18 @@ fn the_current_line_command_picks_among_its_lenses(cx: &mut TestAppContext) {
         assert_eq!(labels, ["run", "debug"]);
     });
 }
+
+#[gpui::test]
+fn the_execute_command_sends_cancellable_requests(cx: &mut TestAppContext) {
+    let (workbench, cx, receiver) = open(cx);
+    receiver.try_iter().for_each(drop);
+    let uri = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document().uri());
+    workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("_executeCodeLensProvider", vec![uri, json!(1)], window, cx)));
+    cx.run_until_parked();
+    let provide = receiver.try_iter().find(|message| message.method == "$provideCodeLenses").unwrap();
+    assert!(provide.cancellable, "providers read the token");
+    let _ = provide.reply.unwrap().send(Ok(json!({ "cacheId": 4, "lenses": [lens(1, 1, None)] })));
+    cx.run_until_parked();
+    let resolve = receiver.try_iter().find(|message| message.method == "$resolveCodeLens").unwrap();
+    assert!(resolve.cancellable);
+}

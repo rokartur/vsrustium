@@ -20,10 +20,23 @@ impl Workbench {
             ("MainThreadProgress", "$progressReport") => self.report_progress(&request.args, window, cx),
             ("MainThreadProgress", "$progressEnd") => self.end_progress(&request.args, window, cx),
             ("MainThreadWebviews" | "MainThreadWebviewPanels", method) => self.handle_webview_request(method, &request.args, window, cx),
+            ("MainThreadDecorations", method) => self.handle_decorations_request(method, &request.args, cx),
+            ("MainThreadTreeViews", method) => self.handle_tree_view_request(method, &request.args, window, cx),
             ("MainThreadSCM", method) => self.handle_scm_request(method, &request.args, window, cx),
+            ("MainThreadQuickDiff", method) => self.handle_quick_diff_request(method, &request.args, cx),
+            ("MainThreadTimeline", method) => self.handle_timeline_request(method, &request.args, cx),
+            ("MainThreadGitHub", method) => self.handle_github_request(method, &request.args, cx),
             ("MainThreadWebviewViews", method) => self.handle_webview_views_request(method, &request.args, window, cx),
             ("MainThreadCustomEditors", method) => self.handle_custom_editors_request(method, &request.args, window, cx),
             ("MainThreadStatusBar", "$setEntry") => self.set_extension_status_entry(&request.args, cx),
+            ("MainThreadLanguages", "$setLanguageStatus") => {
+                self.set_language_status(request.args[0].as_u64().unwrap_or_default(), request.args[1].clone(), cx);
+                Outcome::done()
+            }
+            ("MainThreadLanguages", "$removeLanguageStatus") => {
+                self.remove_language_status(request.args[0].as_u64().unwrap_or_default(), cx);
+                Outcome::done()
+            }
             ("MainThreadStatusBar", "$disposeEntry") => self.dispose_extension_status_entry(&request.args, cx),
             ("MainThreadOutputService" | "MainThreadLogger", _) => self.handle_output_request(request, window, cx),
             ("MainThreadConsole" | "MainThreadErrors" | "MainThreadExtensionService", _) => self.handle_observed_request(&request),
@@ -109,6 +122,7 @@ impl Workbench {
                 self.clear_markers(arg(0).as_str().unwrap_or_default(), cx);
                 Outcome::done()
             }
+            // codelensController.ts: `codeLensProvider.onDidChange` asks for the lenses again.
             ("MainThreadLanguageFeatures", "$unregister") => {
                 if let Some(method) = self.language_features.unregister(arg(0).as_u64().unwrap_or_default()) {
                     self.language_providers_changed(&method, cx);
@@ -117,6 +131,10 @@ impl Workbench {
             }
             ("MainThreadLanguageFeatures", "$emitFoldingRangeEvent") => {
                 self.folding_range_event(&arg(0), cx);
+                Outcome::done()
+            }
+            ("MainThreadLanguageFeatures", "$emitDocumentSemanticTokensEvent" | "$emitDocumentRangeSemanticTokensEvent") => {
+                self.semantic_tokens_event(arg(0).as_u64().unwrap_or_default(), cx);
                 Outcome::done()
             }
             ("MainThreadLanguageFeatures", "$emitCodeLensEvent") => {

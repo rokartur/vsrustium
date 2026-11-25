@@ -92,7 +92,7 @@ impl Untitled<'_> {
     }
 
     fn language(&mut self, path: &str) -> String {
-        self.read(|workbench| workbench.editors.model("untitled", Path::new(path)).unwrap().document.language_id.clone())
+        self.read(|workbench| workbench.editors.model("untitled", Path::new(path)).unwrap().document().language_id.clone())
     }
 
     fn name(&mut self, path: impl AsRef<Path>) -> String {
@@ -143,7 +143,7 @@ fn new_untitled_models_are_clean_until_edited_and_a_revert_disposes_them(cx: &mu
     untitled.new_untitled_file(None);
     assert!(untitled.exists("Untitled-1") && untitled.exists("Untitled-2"));
     assert!(untitled.read(|workbench| workbench.editors.model("file", Path::new("testing")).is_none()));
-    assert!(untitled.read(|workbench| !workbench.editors.model("untitled", Path::new("Untitled-1")).unwrap().associated_file));
+    assert!(untitled.read(|workbench| !workbench.editors.model("untitled", Path::new("Untitled-1")).unwrap().text_model().associated_file));
     assert!(!untitled.is_dirty("Untitled-2"));
     untitled.host_messages();
     untitled.set_value("Untitled-2", "foo bar");
@@ -161,7 +161,7 @@ fn new_untitled_models_are_clean_until_edited_and_a_revert_disposes_them(cx: &mu
 fn an_untitled_model_with_an_associated_file_is_dirty_from_the_start(cx: &mut TestAppContext) {
     let mut untitled = untitled("associated-dirty", "{}", cx);
     let path = untitled.create_associated("file.txt");
-    assert!(untitled.read(|workbench| workbench.editors.model("untitled", &path).unwrap().associated_file));
+    assert!(untitled.read(|workbench| workbench.editors.model("untitled", &path).unwrap().text_model().associated_file));
     assert!(untitled.is_dirty(&path));
     assert!(untitled.host_messages().contains(&"$acceptDirtyStateChanged"));
 }
@@ -186,12 +186,12 @@ fn create_options_set_the_initial_value_resource_and_associated_file(cx: &mut Te
     untitled.set_value(&first, "");
     assert!(!untitled.is_dirty(&first));
     let second = untitled.create(json!({ "content": "Hello World" }));
-    assert_eq!(untitled.read(|workbench| workbench.editors.model("untitled", &second).unwrap().document.lines.clone()), ["Hello World"]);
+    assert_eq!(untitled.read(|workbench| workbench.editors.model("untitled", &second).unwrap().document().lines.clone()), ["Hello World"]);
     let models = untitled.read(|workbench| workbench.editors.models.len());
     let uri = untitled.host_request("MainThreadDocuments", "$tryOpenDocument", &[json!({ "scheme": "untitled", "path": first })]);
     assert_eq!((uri["path"].as_str(), untitled.read(|workbench| workbench.editors.models.len())), (Some(first.as_str()), models), "an existing untitled resource gives its model");
     let associated = untitled.create_associated("file44.txt");
-    assert!(untitled.read(|workbench| workbench.editors.model("untitled", &associated).unwrap().associated_file));
+    assert!(untitled.read(|workbench| workbench.editors.model("untitled", &associated).unwrap().text_model().associated_file));
     assert!(untitled.is_dirty(&associated));
 }
 
@@ -276,7 +276,7 @@ fn setting_an_untitled_models_encoding_tells_the_host_once(cx: &mut TestAppConte
     untitled.host_messages();
     untitled.set_encoding("Untitled-1", "utf16le");
     assert_eq!(untitled.count("$acceptEncodingChanged"), 1);
-    assert_eq!(untitled.read(|workbench| workbench.editors.model("untitled", Path::new("Untitled-1")).unwrap().document.encoding.clone()), "utf16le");
+    assert_eq!(untitled.read(|workbench| workbench.editors.model("untitled", Path::new("Untitled-1")).unwrap().document().encoding.clone()), "utf16le");
 }
 
 #[gpui::test]
@@ -302,7 +302,7 @@ fn the_value_of_an_untitled_model_is_its_text(cx: &mut TestAppContext) {
     let mut untitled = untitled("get-value", "{}", cx);
     untitled.new_untitled_file(None);
     untitled.set_value("Untitled-1", "foo bar");
-    assert_eq!(untitled.read(|workbench| workbench.editors.model("untitled", Path::new("Untitled-1")).unwrap().document.lines.join("\n")), "foo bar");
+    assert_eq!(untitled.read(|workbench| workbench.editors.model("untitled", Path::new("Untitled-1")).unwrap().document().lines.join("\n")), "foo bar");
     assert!(untitled.read(|workbench| workbench.editors.model("https", Path::new("/www.microsoft.com")).is_none()));
 }
 

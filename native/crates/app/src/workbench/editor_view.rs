@@ -19,8 +19,13 @@ use gpui::{
 pub(super) mod diff_editor_view;
 pub(super) mod diff_gutter;
 pub(super) mod drag_and_drop;
+pub(super) mod merge_editor_view;
+pub(super) mod multi_diff_editor_view;
 pub(super) mod quick_diff;
+pub(super) mod quick_diff_widget;
 pub(super) mod sticky_scroll_view;
+pub(super) mod text_decorations;
+pub(super) mod unchanged_regions_view;
 
 use files::encoding::SUPPORTED_ENCODINGS;
 use serde_json::json;
@@ -37,11 +42,12 @@ use crate::editor::{
 };
 use crate::editor::folding::FoldDecoration;
 use crate::editor::whitespace::whitespace_marks;
+use crate::multi_diff_editor::MULTI_DIFF_EDITOR_SCHEME;
 use crate::theme::ThemeKind;
 
-const EDITOR_FONT: &str = "Menlo";
+pub(super) const EDITOR_FONT: &str = "Menlo";
 /// `editor.fontSize` at zoom level 0.
-const EDITOR_FONT_SIZE: f32 = 12.;
+pub(super) const EDITOR_FONT_SIZE: f32 = 12.;
 /// lineDecorationsWidth 10 plus 16 for the folding controls (editorOptions.ts layout).
 const DECORATIONS_WIDTH: f32 = 26.;
 /// The workbench text editor sets lineNumbersMinChars to 3 (textEditor.ts).
@@ -59,41 +65,48 @@ const FOLD_CONTROLS_FADE: Duration = Duration::from_millis(500);
 impl Workbench {
     pub(super) fn text_editor_part(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let editor = self.editors.active().expect("text editor part is drawn only with an editor open");
-        self.schedule_unusual_line_terminators_check(editor, window, cx);
+        if !self.editor_groups.drawing_inactive {
+            self.schedule_unusual_line_terminators_check(editor, window, cx);
+        }
         div()
             .flex_1()
-            // A long breadcrumbs path must not widen the part past the window.
             .min_w_0()
+            .min_h_0()
             .relative()
             .flex()
             .flex_col()
-            .border_1()
-            .rounded(px(8.))
-            .bg(self.color("editor.background"))
-            .border_color(self.color("surface.border"))
             .child(self.tab_strip(window, cx))
-            .map(|part| match editor.document.scheme.as_str() {
+            .map(|part| match editor.document().scheme.as_str() {
                 // A webview editor has no breadcrumbs: its resource has no file system provider.
-                WEBVIEW_PANEL_SCHEME | super::debug_console::DEBUG_CONSOLE_SCHEME | super::testing_view::TEST_RESULTS_SCHEME => part,
-                super::extension_editor::EXTENSION_EDITOR_SCHEME => part.child(self.extension_editor_body(&editor.document.path, cx)),
+                WEBVIEW_PANEL_SCHEME => part,
+                super::extension_editor::EXTENSION_EDITOR_SCHEME => part.child(self.extension_editor_body(&editor.document().path, cx)),
+                super::welcome_page::WALKTHROUGH_SCHEME => part.child(self.walkthrough_editor_body(&editor.document().path, window, cx)),
                 // searchEditor.ts draws its query widget where a text editor has its breadcrumbs.
                 SEARCH_EDITOR_SCHEME => part.child(self.search_editor_query(window, cx)),
                 crate::output::OUTPUT_SCHEME => part.child(self.output_title_actions(window, cx)),
+                MULTI_DIFF_EDITOR_SCHEME => part.child(self.multi_diff_editor_body(window, cx)),
                 // breadcrumbsControl.ts `update`: no breadcrumbs for a resource without a file system provider.
                 "untitled" => part,
+                // mergeEditor.ts: the merge editor has no breadcrumbs.
+                _ if self.editors.active_merge().is_some() => part,
                 _ if self.setting("breadcrumbs.enabled") == json!(false) => part,
                 _ => part.child(self.breadcrumbs(editor).opacity(self.unfocused_editor_opacity(window))),
             })
             .map(|part| match self.editors.active_diff() {
                 Some(diff) => part.child(self.diff_editor_body(diff, editor, window, cx)),
-                None if editor.document.scheme == super::extension_editor::EXTENSION_EDITOR_SCHEME => part,
-                None if editor.document.scheme == super::debug_console::DEBUG_CONSOLE_SCHEME => part.child(self.debug_console_body(window, cx)),
-                None if editor.document.scheme == super::testing_view::TEST_RESULTS_SCHEME => part.child(self.test_results_body(cx)),
+                None if matches!(editor.document().scheme.as_str(), super::extension_editor::EXTENSION_EDITOR_SCHEME | super::welcome_page::WALKTHROUGH_SCHEME) => part,
                 None if self.shows_webview(editor) => part.child(self.webview_editor_body(editor)),
-                None => part.children(self.unicode_banner(editor, cx)).child(self.text_area(editor, window, cx).opacity(self.unfocused_editor_opacity(window))),
+                None if editor.document().scheme == MULTI_DIFF_EDITOR_SCHEME => part,
+                None => match self.editors.active_merge() {
+                    Some(merge) => part.child(self.merge_editor_body(merge, editor, window, cx)),
+                    None => part.children(self.unicode_banner(editor, cx)).child(self.text_area(editor, window, cx).opacity(self.unfocused_editor_opacity(window))),
+                },
             })
-            // The active tab reaches into the part's top border, which Chrome still draws over it.
-            .child(div().absolute().inset(px(-1.)).border_1().rounded(px(8.)).border_color(self.color("surface.border")))
+    }
+
+    /// The active tab reaches into the part's top border, which Chrome still draws over it.
+    pub(super) fn part_top_border(&self) -> Div {
+        div().absolute().inset(px(-1.)).border_1().rounded(px(8.)).border_color(self.color("surface.border"))
     }
 
     /// One strip behind every tab; the active tab is an editor-colored fill whose bottom shoulders curve
@@ -117,9 +130,15 @@ impl Workbench {
                     workbench.execute_command("rerunSearchEditorSearch", Vec::new(), window, cx);
                 })))
             })
-            .children(self.editor_title_actions(window, cx))
-            .child(self.icon("split-horizontal", 22., 16., icon_color).cursor_pointer())
-            .child(self.icon("ellipsis", 22., 16., icon_color).cursor_pointer());
+            // A group that is not active shows only the overflow menu.
+            .when(!self.editor_groups.drawing_inactive, |actions| {
+                actions.children(self.editor_title_actions(window, cx)).child(self.icon("split-horizontal", 22., 16., icon_color).id("split-editor").cursor_pointer().on_click(cx.listener(|workbench, _, window, cx| {
+                    workbench.execute_command("workbench.action.splitEditor", Vec::new(), window, cx);
+                })))
+            })
+            .child(self.icon("ellipsis", 22., 16., icon_color).cursor_pointer().when(self.editors.active_merge().is_some(), |more| {
+                more.on_mouse_down(gpui::MouseButton::Left, cx.listener(|workbench, event: &gpui::MouseDownEvent, window, cx| workbench.show_merge_more_actions(event, window, cx)))
+            }));
         // The line under the strip (tabs-border-bottom) runs below the shoulders; the active fill covers it.
         let bottom_line = div().absolute().bottom_0().left_0().right_0().h(px(1.)).bg(self.connected_tab_border());
         // editortabscontrol.css: the whole title, tabs and their close buttons included, is cursor pointer.
@@ -140,7 +159,9 @@ impl Workbench {
     fn editor_title_actions(&self, window: &Window, cx: &mut Context<Self>) -> Vec<gpui::AnyElement> {
         let mut actions = self.diff_title_actions(cx);
         let context = self.key_context(window);
-        let resource = self.editors.active().map(|editor| editor.document.uri()).into_iter().collect::<Vec<_>>();
+        actions.extend(self.multi_diff_title_actions(&context, cx));
+        actions.extend(self.merge_title_actions(cx));
+        let resource = self.editors.active().map(|editor| editor.document().uri()).into_iter().collect::<Vec<_>>();
         let foreground = self.color("icon.foreground");
         for item in self.menus.iter().filter(|item| item.menu == crate::menus::MenuId::EditorTitle && item.group == "navigation" && item.when.as_ref().is_none_or(|when| when.evaluate(&context))) {
             let crate::menus::Entry::Command { id, .. } = &item.entry else { continue };
@@ -174,15 +195,19 @@ impl Workbench {
     fn tab_hover(&self, index: usize) -> impl IntoElement {
         let editor = &self.editors.editors[index];
         // `getTitle(Verbosity.LONG)`: a search editor's and a webview's is its name.
-        let title = match (self.editors.diffs.get(&editor.model_id), editor.document.scheme.as_str()) {
+        let title = match (self.editors.diffs.get(&editor.model_id), editor.document().scheme.as_str()) {
             (Some(diff), _) => diff.title(|side| crate::quick_input::path_label(crate::editor::split_query(&side.scheme, &side.path).0, None)),
-            (None, SEARCH_EDITOR_SCHEME | WEBVIEW_PANEL_SCHEME | super::extension_editor::EXTENSION_EDITOR_SCHEME) => self.editor_name(editor),
+            (None, SEARCH_EDITOR_SCHEME | WEBVIEW_PANEL_SCHEME | super::extension_editor::EXTENSION_EDITOR_SCHEME | super::welcome_page::WALKTHROUGH_SCHEME | MULTI_DIFF_EDITOR_SCHEME) => self.editor_name(editor),
             // labels.ts: an untitled label's title is its name and its path.
-            (None, "untitled") if !editor.associated_file => match self.untitled_description(editor) {
+            (None, "untitled") if !editor.text_model().associated_file => match self.untitled_description(editor) {
                 Some(path) => format!("{} \u{2022} {path}", self.editor_name(editor)),
                 None => self.editor_name(editor),
             },
-            (None, _) => crate::quick_input::path_label(&editor.document.path, None),
+            // `MergeEditorInput` keeps `getTitle` of its result.
+            (None, _) => match self.editors.merges.get(&editor.model_id) {
+                Some(merge) => crate::quick_input::path_label(&merge.result.path, None),
+                None => crate::quick_input::path_label(&editor.document().path, None),
+            },
         };
         let content = if editor.preview { super::hover::HoverContent::Preview(title) } else { super::hover::HoverContent::Text(title) };
         self.hover_target(("tab-hover", index), content, super::hover::HoverOptions::mouse())
@@ -191,13 +216,17 @@ impl Workbench {
     /// A tab sized to its label (tab.sizing fit): 8px before the label, 30.5px after it for the close action.
     fn tab(&self, index: usize, active: bool, cx: &mut Context<Self>) -> Div {
         let editor = &self.editors.editors[index];
-        let readonly = self.readonly(&editor.document.scheme, &editor.document.path).is_some();
+        let readonly = self.readonly(&editor.document().scheme, &editor.document().path).is_some();
         let action_foreground = if active { self.foreground_or("modernEditorTab.activeForeground") } else { self.foreground_or("tab.inactiveForeground") };
         // tabs.css colors `.tab-label:not(.monaco-decoration-itemColor)`: a decorated label (read-only, no color of its
         // own) inherits the tab's color from multieditortabscontrol.css, `tab.activeForeground` when active.
         let foreground = if active && readonly { self.foreground_or("tab.activeForeground") } else { action_foreground };
         // textFileService.ts decorations: a deleted file's label is struck through in `list.errorForeground`.
-        let orphaned = editor.document.scheme == "file" && self.text_files.orphaned.contains(&editor.document.path);
+        let orphaned = editor.document().scheme == "file" && self.text_files.orphaned.contains(&editor.document().path);
+        // multiEditorTabsControl.ts: the label takes the file's decorations per `workbench.editor.decorations`.
+        let decoration = (editor.document().scheme == "file").then(|| self.file_decoration(&editor.document().path, false)).flatten();
+        let decoration_color = self.decoration_color(decoration.as_ref(), self.setting("workbench.editor.decorations.colors") != json!(false));
+        let badge = self.decoration_badge(decoration.as_ref(), foreground).filter(|_| self.setting("workbench.editor.decorations.badges") != json!(false));
         let label = div()
             .mt(px(3.5))
             .h(px(24.))
@@ -206,6 +235,7 @@ impl Workbench {
             .flex()
             .items_baseline()
             .when(editor.preview, |label| label.italic())
+            .when_some(decoration_color, |label, color| label.text_color(color))
             .when(orphaned, |label| label.line_through().text_color(self.foreground_or("list.errorForeground")))
             .child(self.editor_name(editor))
             .children(self.untitled_description(editor).map(|description| {
@@ -237,6 +267,8 @@ impl Workbench {
                 None => tab.pl(px(8.)).child(label),
             })
             .children(lock)
+            .children(badge.map(|badge| badge.mt(px(3.5)).line_height(px(24.))))
+            .map(|tab| self.tab_drag_and_drop(tab, index, cx))
             .on_click(cx.listener(move |workbench, event: &gpui::ClickEvent, _, cx| {
                 workbench.editors.activate(index);
                 if event.click_count() == 2 {
@@ -269,10 +301,14 @@ impl Workbench {
     }
 
     fn document_icon(&self, editor: &OpenEditor, line_height: f32, foreground: Rgba) -> Option<Div> {
-        let document = &editor.document;
+        let document = &editor.document();
         // `SearchEditorInput.getIcon`.
         if document.scheme == SEARCH_EDITOR_SCHEME {
             return Some(self.icon("search", 16., 16., foreground).h(px(line_height)));
+        }
+        // `MultiDiffEditorInput.getIcon`.
+        if document.scheme == MULTI_DIFF_EDITOR_SCHEME {
+            return Some(self.icon("diff-multiple", 16., 16., foreground).h(px(line_height)));
         }
         // `ExtensionsInput.getIcon`.
         if document.scheme == super::extension_editor::EXTENSION_EDITOR_SCHEME {
@@ -287,7 +323,7 @@ impl Workbench {
     /// The file's path below its workspace folder, one item per segment (breadcrumbs.filePath relative), after the
     /// folder's name in a workspace (`BreadcrumbsModel._initFilePathInfo`).
     fn breadcrumbs(&self, editor: &OpenEditor) -> Div {
-        let path = &editor.document.path;
+        let path = &editor.document().path;
         let workspace = self.workspace();
         let folder = workspace.and_then(|workspace| workspace.folder_of(path));
         let relative: PathBuf = match folder {
@@ -299,17 +335,28 @@ impl Workbench {
             segments.insert(0, folder.name.clone());
         }
         let foreground = self.color("breadcrumb.foreground");
-        let last = segments.len() - 1;
-        let items = segments.into_iter().enumerate().map(|(index, segment)| {
+        let file = segments.len() - 1;
+        let symbols = self.breadcrumb_symbols(editor);
+        let last = file + symbols.len();
+        let symbol_items = symbols.into_iter().map(|(kind, name)| {
+            let codicon = kind.map(crate::symbol_icons::codicon);
+            let color = codicon.and_then(crate::symbol_icons::color_key).and_then(|key| self.theme.color(key)).unwrap_or(foreground);
+            let icon = codicon.filter(|_| self.setting("breadcrumbs.icons") != false).map(|codicon| self.icon(codicon, 16., 16., color));
+            (icon, name)
+        });
+        let file_items = segments.into_iter().enumerate().map(|(index, segment)| {
             // The 16px before each item is the item's own ::before; folders have no icon in Seti, the file does.
-            let file_icon = if index == last { self.document_icon(editor, BREADCRUMBS_HEIGHT, foreground) } else { None };
+            let file_icon = if index == file { self.document_icon(editor, BREADCRUMBS_HEIGHT, foreground) } else { None };
+            (file_icon, segment)
+        });
+        let items = file_items.chain(symbol_items).enumerate().map(|(index, (icon, segment))| {
             div()
                 .flex()
                 .items_center()
                 .pl(px(16.))
                 .pr(px(8.))
                 .whitespace_nowrap()
-                .when_some(file_icon, |item, icon| item.child(icon.mr(px(6.))))
+                .when_some(icon, |item, icon| item.child(icon.mr(px(6.))))
                 .child(segment)
                 .when(index < last, |item| item.child(self.icon("chevron-right", 16., 16., foreground).ml(px(8.))))
         });
@@ -331,7 +378,7 @@ impl Workbench {
     }
 
     fn editor_metrics(&self, editor: &OpenEditor, window: &mut Window) -> EditorMetrics {
-        let mut metrics = EditorMetrics::measure(window, editor.document.lines.len(), self.line_numbers(editor), self.editor_zoom.multiplier());
+        let mut metrics = EditorMetrics::measure(window, editor.document().lines.len(), self.line_numbers(editor), self.editor_zoom.multiplier());
         // diffEditorEditors.ts `_adjustOptionsForSubEditor`: no folding and no minimap in either side.
         if self.editors.active_diff().is_some() {
             metrics.decorations_width = diff_editor_view::diff_decorations_width(metrics.char_width);
@@ -354,11 +401,11 @@ impl Workbench {
 
     /// `editor.lineNumbers` of `editor`.
     pub(super) fn line_numbers(&self, editor: &OpenEditor) -> LineNumbers {
-        let overrides = config::configuration::Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
+        let overrides = config::configuration::Overrides { resource: Some(&editor.document().path), override_identifier: Some(&editor.document().language_id) };
         let setting = self.settings.lock().unwrap().get_value(Some("editor.lineNumbers"), &overrides);
         match setting.as_ref().and_then(|value| value.as_str()) {
             // outputView.ts `OutputEditor.getConfigurationOverrides`: output editors hide line numbers.
-            _ if editor.document.scheme == crate::output::OUTPUT_SCHEME => LineNumbers::Off,
+            _ if editor.document().scheme == crate::output::OUTPUT_SCHEME => LineNumbers::Off,
             Some("off") => LineNumbers::Off,
             // gotoLineQuickAccess.ts: relative numbers switch to "on" while the picker previews in this editor.
             Some("relative") if self.quick_access.goto_line.as_ref().is_some_and(|state| state.previews(editor.model_id)) => LineNumbers::On,
@@ -368,7 +415,7 @@ impl Workbench {
         }
     }
 
-    fn text_area(&self, editor: &OpenEditor, window: &mut Window, cx: &mut Context<Self>) -> Stateful<Div> {
+    pub(super) fn text_area(&self, editor: &OpenEditor, window: &mut Window, cx: &mut Context<Self>) -> Stateful<Div> {
         let metrics = self.editor_metrics(editor, window);
         let in_diff = self.editors.active_diff().is_some();
 
@@ -391,7 +438,7 @@ impl Workbench {
         let first_line = lines.start;
         let mut rows = Vec::new();
         for (index, row) in self.editor_lines(editor, lines, metrics, window, cx).into_iter().enumerate() {
-            rows.extend(zones.iter().filter(|zone| zone.0 == first_line + index).map(|zone| self.view_zone_body(editor, zone.2, zone.1, metrics.content_left(), window)));
+            rows.extend(zones.iter().filter(|zone| zone.0 == first_line + index).map(|zone| self.view_zone_body(editor, zone.2, zone.1, metrics.content_left(), cx)));
             rows.push(row);
         }
         let minimap_width = self.minimap.info.as_ref().map_or(0., |(info, _)| info.width as f32);
@@ -405,6 +452,8 @@ impl Workbench {
         let middle_scroll_dot = self.middle_scroll_dot(point(px(editor_origin.x), px(editor_origin.y)));
         let middle_scrolling = middle_scroll_dot.is_some();
         let scrolled = cx.entity();
+        let group = self.editors.id;
+        let inactive = self.editor_groups.drawing_inactive;
         self.editor_accessibility(div().id("text-area"), editor, window)
             .flex_1()
             .relative()
@@ -412,7 +461,7 @@ impl Workbench {
             .font_family(EDITOR_FONT)
             .text_size(px(metrics.font_size))
             .line_height(px(metrics.line_height))
-            .track_focus(&self.editor_focus)
+            .when(!inactive, |area| area.track_focus(&self.editor_focus))
             .on_key_down(cx.listener(Self::editor_key_down))
             .on_key_up(cx.listener(Self::inspect_tokens_key_up))
             .on_scroll_wheel(cx.listener(Self::editor_wheel))
@@ -420,6 +469,8 @@ impl Workbench {
             .on_modifiers_changed(cx.listener(|workbench, event: &gpui::ModifiersChangedEvent, _, cx| {
                 workbench.text_drag_modifiers_changed(event.modifiers, cx);
                 workbench.content_hover_modifiers_changed(event.modifiers, cx);
+                workbench.links_modifiers_changed(event.modifiers, cx);
+                workbench.definition_link_modifiers_changed(event.modifiers, cx);
             }))
             .on_hover(cx.listener(|workbench, hovered: &bool, window, cx| {
                 workbench.scrollbars.mouse_over = *hovered;
@@ -428,12 +479,15 @@ impl Workbench {
                     false => {
                         workbench.hide_scrollbars(cx);
                         workbench.content_hover_mouse_left(window.mouse_position(), cx);
+                        workbench.definition_link_mouse_left();
                     }
                 }
             }))
             // The line's row sets `row_target` first: moves bubble from the row up to the text area.
             .on_mouse_move(cx.listener(|workbench, event: &MouseMoveEvent, _, cx| {
-                let target = match workbench.content_hover.row_target.take() {
+                let row_target = workbench.content_hover.row_target.take();
+                workbench.links_mouse_moved(row_target, event.modifiers, cx);
+                let target = match row_target {
                     Some((line, visible)) => super::content_hover::MouseTarget::Text { line, visible },
                     None => super::content_hover::MouseTarget::Other,
                 };
@@ -446,7 +500,8 @@ impl Workbench {
                 }
             }))
             .capture_any_mouse_up(cx.listener(|workbench, _, _, cx| workbench.middle_scroll_mouse_up(cx)))
-            .capture_key_down(cx.listener(|workbench, _, _, cx| {
+            .capture_key_down(cx.listener(|workbench, event: &gpui::KeyDownEvent, _, cx| {
+                workbench.definition_link_key_down(event.keystroke.modifiers, cx);
                 workbench.end_middle_scroll(cx);
                 workbench.cancel_text_drag(cx);
             }))
@@ -473,10 +528,13 @@ impl Workbench {
                         // editorOptions.ts: contentWidth = remainingWidth - minimapWidth.
                         let minimap_width = minimap.as_ref().map_or(0., |minimap| minimap.width as f32);
                         let viewport = Viewport { width: width - metrics.content_left() - minimap_width, height, char_width: metrics.char_width, line_height: metrics.line_height, sticky_scroll_lines, top_whitespace, stop_rendering_line_after };
-                        laid_out.update(cx, |workbench, cx| workbench.editor_laid_out(viewport, minimap.map(|minimap| (minimap, pixel_ratio as f64)), cx));
+                        let minimap = minimap.map(|minimap| (minimap, pixel_ratio as f64));
+                        laid_out.update(cx, |workbench, cx| workbench.group_laid_out(group, |workbench| workbench.editor_laid_out(viewport, minimap, cx)));
                     },
                     move |bounds, _, window, cx| {
-                        window.handle_input(&focus, ElementInputHandler::new(bounds, workbench), cx);
+                        if !inactive {
+                            window.handle_input(&focus, ElementInputHandler::new(bounds, workbench), cx);
+                        }
                         if middle_scrolling && scrolled.update(cx, |workbench, cx| workbench.middle_scroll_frame(cx)) {
                             // observeWindowMousePos: the pointer anywhere in the window steers the session.
                             window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, cx| {
@@ -499,13 +557,16 @@ impl Workbench {
                         MouseButton::Right,
                         // Below the last line (MouseTargetType.CONTENT_EMPTY): the position is the end of the last line.
                         cx.listener(|workbench, event: &MouseDownEvent, window, cx| {
-                            let last = workbench.editors.active().expect("the text area shows an editor").document.lines.len() - 1;
+                            let last = workbench.editors.active().expect("the text area shows an editor").document().lines.len() - 1;
                             workbench.show_editor_context_menu(last, f32::MAX, event.position, window, cx);
                         }),
                     ))
                     // editorScrollbar.ts clips the lines at contentWidth: the column right of the minimap stays empty.
                     .child(div().absolute().left_0().right(px(minimap_width - margin_shift)).top_0().bottom_0().overflow_hidden().child(div().absolute().left_0().right_0().top(px(lines_top)).children(rows)))
                     .children(self.marker_navigation_widget(editor, metrics.content_left(), metrics.char_width, cx))
+                    .children(self.quick_diff_widget(editor, metrics, window, cx))
+                    .children(self.references_peek_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
+                    .children(self.hierarchy_peek_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
                     .child(
                         div().id("margin").absolute().top_0().bottom_0().left_0().w(px(metrics.content_left())).on_hover(cx.listener(|workbench, hovered: &bool, _, cx| {
                             workbench.fold_controls.set_shown(*hovered, Instant::now());
@@ -526,23 +587,28 @@ impl Workbench {
                 shifted()
                     .children(middle_scroll_dot)
                     .children(self.sticky_scroll_widget(editor, metrics, window, cx))
-                    .children(self.editor_message_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
-                    .children(self.content_hover_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
-                    .children(self.inspect_tokens_widget(editor, metrics.content_left(), metrics.char_width, window)),
+                    // Messages, hovers and the overlay widgets are the focused editor's.
+                    .when(!inactive, |shifted| {
+                        shifted
+                            .children(self.editor_message_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
+                            .children(self.content_hover_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
+                            .children(self.inspect_tokens_widget(editor, metrics.content_left(), metrics.char_width, window))
+                    }),
             )
             // Overlay widgets: placed from the editor's right edge whichever side the minimap is on.
-            .children(self.find_widget(self.editors.viewport.width + metrics.content_left() + minimap_width, metrics.content_left(), minimap_width, window, cx))
-            .children(self.editor_message_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
-            .children(self.content_hover_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
-            .children(self.parameter_hints_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
-            .children(self.lightbulb_widget(editor, metrics.content_left(), metrics.char_width, cx))
-            .children(self.code_lens_widgets(editor, metrics.content_left(), metrics.char_width, cx))
-            .children(self.suggest_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
-            .children(self.find_options_widget(minimap_width, cx))
-            .children(self.floating_menu(editor, viewport.height, minimap_width, window, cx))
-            .children(self.define_keybinding_overlay(editor, self.editors.viewport.width + metrics.content_left() + minimap_width, viewport.height, window, cx))
-            .children(self.breakpoint_widget_element(editor, metrics.content_left(), window, cx))
-            .children(self.exception_widget_element(editor, metrics.content_left(), cx))
+            .when(!inactive, |area| {
+                area.children(self.find_widget(self.editors.viewport.width + metrics.content_left() + minimap_width, metrics.content_left(), minimap_width, window, cx))
+                    .children(self.parameter_hints_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
+                    .children(self.lightbulb_widget(editor, metrics.content_left(), metrics.char_width, cx))
+                    .children(self.code_lens_widgets(editor, metrics.content_left(), metrics.char_width, cx))
+                    .children(self.rename_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
+                    .children(self.suggest_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
+                    .children(self.find_options_widget(minimap_width, cx))
+                    .children(self.floating_menu(editor, viewport.height, minimap_width, window, cx))
+                    .children(self.define_keybinding_overlay(editor, self.editors.viewport.width + metrics.content_left() + minimap_width, viewport.height, window, cx))
+                    .children(self.breakpoint_widget_element(editor, metrics.content_left(), window, cx))
+                    .children(self.exception_widget_element(editor, metrics.content_left(), cx))
+            })
     }
 
     /// wordHighlighter.ts: `onDidBlurEditorWidget` stops the highlights once no code editor has the focus,
@@ -584,7 +650,7 @@ impl Workbench {
             let Some(editor) = workbench.editors.active_mut() else { return };
             // A picked command runs before GPUI reports the restored focus; upstream's delayed query, started on
             // focus, is cancelled by that command's edit (`onDidChangeModelContent` stops it).
-            let returned = blurred_at.take().is_none_or(|(model, version)| model != editor.model_id || version == editor.version_id);
+            let returned = blurred_at.take().is_none_or(|(model, version)| model != editor.model_id || version == editor.text_model().version_id);
             let reactivated = deactivated.take();
             if returned && !reactivated {
                 editor.refresh_highlights();
@@ -606,25 +672,30 @@ impl Workbench {
         self.text_drag = None;
         if let Some(editor) = self.editors.active_mut() {
             editor.highlights.clear();
-            blurred_at.set(Some((editor.model_id, editor.version_id)));
+            blurred_at.set(Some((editor.model_id, editor.text_model().version_id)));
         }
         self.editor_blurred_auto_save(cx);
         self.suggest_editor_blurred(cx);
         self.cancel_parameter_hints(cx);
         self.code_actions_editor_blurred(cx);
+        self.rename_editor_blurred();
         cx.notify();
     }
 
     /// The text area got its size: the group's viewport follows it, which can clamp the scroll position and
     /// change the visible lines; the lines drawn widen the scrollable content (`ViewLines._ensureMaxLineWidth`).
-    fn editor_laid_out(&mut self, viewport: Viewport, minimap: Option<(MinimapLayoutInfo, f64)>, cx: &mut Context<Self>) {
+    pub(super) fn editor_laid_out(&mut self, viewport: Viewport, minimap: Option<(MinimapLayoutInfo, f64)>, cx: &mut Context<Self>) {
         let resized = self.editors.viewport != viewport;
         let font_changed = (self.editors.viewport.char_width, self.editors.viewport.line_height) != (viewport.char_width, viewport.line_height);
         let minimap_changed = self.minimap.info != minimap;
         self.editors.viewport = viewport;
         self.minimap.info = minimap;
+        let reveal = self.editors.reveal_after_layout.take();
         let rewrapped = self.configure_word_wrap();
         let editor = self.editors.active_mut().expect("laid out only with an editor open");
+        if let Some(line) = reveal {
+            editor.reveal_range(line, line, VerticalReveal::CenterIfOutsideViewport, viewport);
+        }
         let scroll_width = editor.scroll_width(viewport);
         let visible_lines = editor.visible_lines(viewport);
         // viewLines.ts `_updateLineWidths`: with every line drawn, their widest is the content width.
@@ -632,13 +703,15 @@ impl Workbench {
             editor.forget_line_widths();
         }
         for view_line in visible_lines {
-            let text = &editor.document.lines[editor.model_line(view_line)];
-            let tab_size = editor.document.indentation.tab_size;
+            let document = editor.document();
+            let text = &document.lines[editor.model_line(view_line)];
+            let tab_size = editor.document().indentation.tab_size;
             let width = match line_overflow(text, self.stop_rendering_line_after) {
                 _ if editor.wraps() => editor.wrapped_line_width(view_line).unwrap_or_default() as f32 * viewport.char_width,
                 None => visible_column(text, text.chars().count(), tab_size) as f32 * viewport.char_width,
                 Some((limit, _, label)) => visible_column(text, limit, tab_size) as f32 * viewport.char_width + show_more_width(&label, viewport.char_width),
             };
+            drop(document);
             editor.saw_line_width(width);
         }
         let moved = editor.set_scroll(editor.scroll.top, editor.scroll.left, viewport);
@@ -653,7 +726,7 @@ impl Workbench {
 
     /// The wheel scrolls the editor in `StandardWheelEvent` units: 40 browser pixels or one line per notch. With
     /// `editor.mouseWheelZoom`, Cmd or Ctrl without Shift and Alt zooms instead (mouseHandler.ts).
-    fn editor_wheel(&mut self, event: &ScrollWheelEvent, _: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn editor_wheel(&mut self, event: &ScrollWheelEvent, _: &mut Window, cx: &mut Context<Self>) {
         let (x, y) = match event.delta {
             ScrollDelta::Pixels(delta) => (f32::from(delta.x) / 40., f32::from(delta.y) / 40.),
             ScrollDelta::Lines(delta) => (delta.x, delta.y),
@@ -855,7 +928,7 @@ impl Workbench {
         let focused = self.editor_focus.is_focused(window);
         let scroll_left = editor.scroll.left;
         let selections = &editor.selections;
-        let tab_size = editor.document.indentation.tab_size;
+        let tab_size = editor.document().indentation.tab_size;
         let primary_line = editor.selection().head.line;
         // currentLineHighlight.ts: every cursor's line, drawn only while all selections are empty.
         let all_empty = selections.iter().all(|selection| selection.is_empty());
@@ -873,8 +946,6 @@ impl Workbench {
                 true => self.theme.color("editor.lineHighlightBorder"),
                 false => None,
             },
-            word: self.theme.color("editor.wordHighlightTextBackground"),
-            word_border: self.theme.color("editor.wordHighlightTextBorder"),
             selection_highlight: self.theme.color("editor.selectionHighlightBackground"),
             selection_highlight_border: self.theme.color("editor.selectionHighlightBorder"),
             guide: self.color("editorIndentGuide.background1"),
@@ -889,7 +960,7 @@ impl Workbench {
         let block_cursor = self.setting(if self.overtype { "editor.overtypeCursorStyle" } else { "editor.cursorStyle" }) == json!("block");
         let cursor_background = self.theme.color("editorCursor.background");
         // outputView.ts `OutputEditor.getConfigurationOverrides`: renderLineHighlight none.
-        let line_highlight = editor.document.scheme != crate::output::OUTPUT_SCHEME;
+        let line_highlight = editor.document().scheme != crate::output::OUTPUT_SCHEME;
         let char_width = metrics.char_width;
         let fold_controls = self.fold_controls.opacity(Instant::now());
         let fold_control_color = self.color("editorGutter.foldingControlForeground");
@@ -909,7 +980,7 @@ impl Workbench {
         // With word wrap each view line gets the part of the selection on its segment, in the view line's x.
         let selection_range = |selection: Selection, view_line: usize| {
             let segment = editor.segment(view_line);
-            let text = &editor.document.lines[segment.line];
+            let text = &editor.document().lines[segment.line];
             let (start, end, line_break) = selected_columns(selection, segment.line, text)?;
             let line_break = line_break && segment.last;
             let (start, end) = (start.max(segment.start), end.min(segment.end));
@@ -929,7 +1000,7 @@ impl Workbench {
             .map(|view_line| {
                 let segment = editor.segment(view_line);
                 let index = segment.line;
-                let text = &editor.document.lines[index];
+                let text = &editor.document().lines[index];
                 // The x of the segment's first char in the model line's x, which the line's decorations use.
                 let shift = (visible_column(text, segment.start, tab_size) as f32 - segment.indent as f32) * char_width;
                 let collapsed = fold_starts.get(&index).copied().filter(|_| segment.first);
@@ -941,7 +1012,7 @@ impl Workbench {
                     .text_color(if index == primary_line { colors.active_number } else { colors.number })
                     // lineNumbers.css `.relative-current-line-number`: the cursor's line number aligns left.
                     .when(metrics.line_numbers == LineNumbers::Relative && index == primary_line, |number| number.text_left())
-                    .children(line_number_label(metrics.line_numbers, index, primary_line, editor.document.lines.len()).filter(|_| segment.first));
+                    .children(line_number_label(metrics.line_numbers, index, primary_line, editor.document().lines.len()).filter(|_| segment.first));
                 let mut current_line = div().absolute().inset_0();
                 if line_highlight && all_empty && (0..selections.len()).any(|cursor_index| editor.head_view_line(cursor_index) == view_line) {
                     if let Some(background) = colors.line_background {
@@ -1008,8 +1079,8 @@ impl Workbench {
                     pieces.push(rest);
                 }
                 content = content.children(inner_corners).children(pieces);
-                for level in 0..editor.guides[index] {
-                    let x = (level * editor.document.indentation.indent_size()) as f32 * char_width;
+                for level in 0..editor.text_model().guides[index] {
+                    let x = (level * editor.document().indentation.indent_size()) as f32 * char_width;
                     content = content.child(div().absolute().top_0().left(px(x)).w(px(1.)).h_full().bg(colors.guide));
                 }
                 // foldingDecorations.ts COLLAPSED_HIGHLIGHTED_VISUAL_DECORATION: .folded-background over the whole line.
@@ -1019,6 +1090,7 @@ impl Workbench {
                 let (find_whole_lines, find_matches, find_colors) = self.find_line_decorations(editor, index, char_width, scroll_left);
                 content = content.children(find_whole_lines);
                 content = content.children(self.diff_line_decorations(editor, index, char_width, scroll_left));
+                content = content.children(self.text_decoration_boxes(editor, index, scroll_left, |column| visible_column(text, column, tab_size) as f32 * char_width));
                 content = content.children(self.search_editor_line_decorations(editor, index, char_width));
                 // anchorSelect.css: `.selection-anchor` is a 2px #007ACC bar in every theme, under the word highlights.
                 if let Some(anchor) = editor.selection_anchor
@@ -1048,11 +1120,12 @@ impl Workbench {
                     let start = visible_column(text, columns.start, tab_size) as f32 * char_width;
                     let end = visible_column(text, columns.end, tab_size) as f32 * char_width;
                     let mut highlight = div().absolute().top_0().h_full().left(px(start)).w(px(end - start));
-                    if let Some(background) = colors.word {
+                    let (word_background, word_border) = self.word_highlight_colors(index, columns);
+                    if let Some(background) = word_background {
                         highlight = highlight.bg(background);
                     }
                     // shortcut: GPUI has no dotted border, so the high contrast word highlight is dashed.
-                    if let Some(border) = colors.word_border {
+                    if let Some(border) = word_border {
                         highlight = highlight.border_1().border_dashed().border_color(border);
                     }
                     content = content.child(highlight);
@@ -1060,6 +1133,8 @@ impl Workbench {
                 content = content.children(self.content_hover_highlight(editor, index, char_width));
                 content = content.children(self.code_action_highlights(editor, index, char_width));
                 content = content.children(self.snippet_placeholder_highlights(editor, index, char_width));
+                content = content.children(self.symbol_highlight(editor, index, char_width));
+                content = content.children(self.definition_link_cursor(editor, index, char_width));
                 // bracketMatching.css .bracket-match: background and a 1px border inside the bracket's box.
                 for (_, bytes) in bracket_matches.iter().flat_map(|(pair, _)| pair).filter(|(line, _)| *line == index) {
                     let start = visible_column(text, text[..bytes.start].chars().count(), tab_size) as f32 * char_width;
@@ -1099,7 +1174,7 @@ impl Workbench {
                     let marks: Vec<_> = marks.into_iter().map(|mark| (visible_column(text, mark, tab_size) as f32 * char_width, text.chars().nth(mark) == Some('\t'))).collect();
                     content = content.child(whitespace_canvas(marks, char_width, line_height, whitespace_color));
                 }
-                let mut highlights = editor.document.tokens.highlights(&self.theme, &self.languages, &editor.document.lines, index, tab_size);
+                let mut highlights = editor.document().tokens.highlights(&self.theme, &self.languages, &editor.document().lines, index, tab_size);
                 // bracketMatching.ts theming participant: `editorBracketMatch.foreground` over the bracket pair colors.
                 if let Some(color) = self.theme.color("editorBracketMatch.foreground") {
                     let expanded = |byte: usize| expand_tabs(&text[..byte], tab_size).len();
@@ -1107,7 +1182,12 @@ impl Workbench {
                     let colored: Vec<_> = matched.map(|(_, bytes)| (expanded(bytes.start)..expanded(bytes.end), gpui::Hsla::from(color))).collect();
                     highlights = crate::syntax::overlay_colors(highlights, &colored);
                 }
-                let runs = gpui::combine_highlights(gpui::combine_highlights(highlights, find_colors), self.marker_text_styles(editor, index, tab_size));
+                let highlights = super::semantic_tokens::overlay_semantic_styles(highlights, &self.semantic_token_styles(editor, index, tab_size));
+                let highlights = gpui::combine_highlights(highlights, self.link_styles(editor, index, tab_size));
+                let highlights = gpui::combine_highlights(highlights, self.linked_editing_styles(editor, index, tab_size));
+                let runs = gpui::combine_highlights(gpui::combine_highlights(highlights, self.text_decoration_styles(editor, index, tab_size)), find_colors);
+                let runs = gpui::combine_highlights(runs, self.marker_text_styles(editor, index, tab_size));
+                let runs = gpui::combine_highlights(runs, self.definition_link_styles(editor, index, tab_size));
                 let mut show_more = None;
                 match line_overflow(text, self.stop_rendering_line_after) {
                     None => content = content.child(div().absolute().top_0().left_0().whitespace_nowrap().child(StyledText::new(expand_tabs(text, tab_size)).with_highlights(runs))),
@@ -1188,6 +1268,7 @@ impl Workbench {
                         window.focus(&workbench.editor_focus, cx);
                         let modifiers = event.modifiers;
                         let visible = visible_at(workbench, event.position.x);
+                        workbench.definition_link_mouse_down(index, modifiers);
                         if workbench.start_text_drag(index, visible, modifiers, event.click_count) {
                             return;
                         }
@@ -1215,12 +1296,19 @@ impl Workbench {
                         if workbench.text_drag.is_some() {
                             return workbench.drop_text(index, visible, event.modifiers, cx);
                         }
+                        if workbench.links_mouse_up(index, visible, event.modifiers, false, window, cx) {
+                            return;
+                        }
                         if workbench.at_line_end(index, visible) {
                             workbench.release_fold_click(index, false, event.modifiers, false, cx);
                         }
                         workbench.search_editor_mouse_up(index, visible, event.click_count, window, cx);
+                        workbench.definition_link_mouse_up(index, visible, event.modifiers, event.click_count, window, cx);
                     }))
-                    .on_mouse_up(MouseButton::Middle, cx.listener(move |workbench, event: &MouseUpEvent, _, cx| {
+                    .on_mouse_up(MouseButton::Middle, cx.listener(move |workbench, event: &MouseUpEvent, window, cx| {
+                        if workbench.links_mouse_up(index, visible_at(workbench, event.position.x), event.modifiers, true, window, cx) {
+                            return;
+                        }
                         if workbench.at_line_end(index, visible_at(workbench, event.position.x)) {
                             workbench.release_fold_click(index, false, event.modifiers, true, cx);
                         }
@@ -1228,6 +1316,7 @@ impl Workbench {
                     .on_mouse_move(cx.listener(move |workbench, event: &MouseMoveEvent, _, cx| {
                         workbench.editor_message_mouse_moved(index, cx);
                         workbench.content_hover.row_target = Some((index, visible_at(workbench, event.position.x)));
+                        workbench.definition_link_mouse_moved(index, visible_at(workbench, event.position.x), event.modifiers, event.pressed_button.is_some(), cx);
                         match event.pressed_button {
                             Some(MouseButton::Left) if workbench.line_select_start.is_some() => workbench.gutter_line_select_drag(index, cx),
                             Some(MouseButton::Left) if workbench.text_drag.is_some() => workbench.drag_text(index, visible_at(workbench, event.position.x), event.modifiers.alt, cx),
@@ -1246,7 +1335,7 @@ impl Workbench {
                     .relative()
                     .flex()
                     .children(self.diff_margin(editor, index, metrics))
-                    .children(self.quick_diff_glyph(editor, index, metrics))
+                    .children(self.quick_diff_glyph(editor, index, metrics, cx))
                     .child(
                         div()
                             .relative()
@@ -1288,8 +1377,8 @@ impl Workbench {
     /// Whether `visible` falls at or after the end of `line`, as a click on a collapsed region's ellipsis does.
     fn at_line_end(&self, line: usize, visible: f32) -> bool {
         let editor = self.editors.active().expect("text is clickable only with an editor open");
-        let text = &editor.document.lines[line];
-        editor.folding.has_hidden() && column_at_visible(text, visible, editor.document.indentation.tab_size) == text.chars().count()
+        let text = &editor.document().lines[line];
+        editor.folding.has_hidden() && column_at_visible(text, visible, editor.document().indentation.tab_size) == text.chars().count()
     }
 
     /// folding.ts `onEditorMouseUp`: a release on the line pressed toggles its region, with Alt the regions around
@@ -1320,16 +1409,16 @@ impl Workbench {
     /// bracketMatching.ts `_recomputeBrackets`: the brackets matched at each empty cursor, none past 100 selections;
     /// `editor.matchBrackets` "near" leaves out the enclosing pairs, "never" matches nothing.
     fn bracket_matches(&self, editor: &OpenEditor) -> Vec<([BracketRange; 2], bool)> {
-        let overrides = config::configuration::Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
+        let overrides = config::configuration::Overrides { resource: Some(&editor.document().path), override_identifier: Some(&editor.document().language_id) };
         let match_brackets = self.settings.lock().unwrap().get_value(Some("editor.matchBrackets"), &overrides);
         if editor.selections.len() > 100 || match_brackets == Some(json!("never")) {
             return Vec::new();
         }
         let near = match_brackets == Some(json!("near"));
-        let lines = &editor.document.lines;
+        let lines = &editor.document().lines;
         let mut matches = Vec::new();
         for selection in editor.selections.iter().filter(|selection| selection.is_empty()) {
-            let found = editor.document.tokens.bracket_match(&self.theme, &self.languages, lines, (selection.head.line, selection.head.column));
+            let found = editor.document().tokens.bracket_match(&self.theme, &self.languages, lines, (selection.head.line, selection.head.column));
             matches.extend(found.filter(|(_, touching)| *touching || !near));
         }
         matches
@@ -1343,9 +1432,9 @@ impl Workbench {
     /// longLinesHelper.ts: a press on the text at or past the cut renders every line whole from then on.
     fn show_long_line(&mut self, line: usize, visible: f32, char_width: f32, cx: &mut Context<Self>) {
         let editor = self.editors.active().expect("text is clickable only with an editor open");
-        let text = &editor.document.lines[line];
+        let text = &editor.document().lines[line];
         let Some((limit, _, label)) = line_overflow(text, self.stop_rendering_line_after) else { return };
-        let tab_size = editor.document.indentation.tab_size;
+        let tab_size = editor.document().indentation.tab_size;
         // The "Show more" span is text too; a press right of it is empty content.
         let span_end = visible_column(text, limit, tab_size) as f32 + show_more_width(&label, char_width) / char_width;
         if column_at_visible(text, visible, tab_size) + 1 >= limit && visible < span_end {
@@ -1362,13 +1451,17 @@ impl Workbench {
             false => (modifiers.alt, modifiers.control || modifiers.platform),
         };
         let editor = self.editors.active_mut().expect("text is clickable only with an editor open");
-        let text = &editor.document.lines[line];
-        let tab_size = editor.document.indentation.tab_size;
+        let document = editor.document();
+        let text = &document.lines[line];
+        let tab_size = document.indentation.tab_size;
         let column = match line_overflow(text, self.stop_rendering_line_after) {
             // The reference puts a press on the "Show more" span before the last drawn char.
             Some((limit, _, _)) if visible >= visible_column(text, limit, tab_size) as f32 => limit - 1,
             _ => column_at_visible(text, visible, tab_size),
         };
+        let word = word_at(text, column).unwrap_or(column..column);
+        let line_end = if line + 1 < document.lines.len() { Position::new(line + 1, 0) } else { Position::new(line, text.chars().count()) };
+        drop(document);
         let position = Position::new(line, column);
         let before = editor.selections.clone();
         if multi_cursor && click_count < 4 {
@@ -1400,14 +1493,12 @@ impl Workbench {
         }
         match click_count {
             2 => {
-                let word = word_at(text, column).unwrap_or(column..column);
                 editor.move_to(Position::new(line, word.start), false);
                 editor.move_to(Position::new(line, word.end), true);
             }
             3.. => {
-                let end = if line + 1 < editor.document.lines.len() { Position::new(line + 1, 0) } else { Position::new(line, text.chars().count()) };
                 editor.move_to(Position::new(line, 0), false);
-                editor.move_to(end, true);
+                editor.move_to(line_end, true);
             }
             _ if select && (column_selection || modifiers.alt) => {
                 let reveal = editor.column_select_to_pointer(line, mouse_column(visible), true);
@@ -1458,6 +1549,7 @@ impl Workbench {
         });
         let moved = self.editors.active().expect("cursors change in the active editor").selections != before;
         if moved {
+            self.record_navigation(Some(crate::navigation::Reason::of_source(source)));
             self.output_cursor_moved();
             self.find_editor_edited(None);
             self.host.send_selection(self.editors.active().expect("still open"), source);
@@ -1471,9 +1563,8 @@ impl Workbench {
     /// decorationsOverviewRuler.ts `_render`, in device pixels: word highlights, matched brackets and find matches in the center lane, the cursor
     /// across all lanes, then the 1px border on the left and top edges.
     fn overview_ruler(&self, editor: &OpenEditor) -> gpui::Canvas<()> {
-        let line_count = editor.document.lines.len();
-        let highlight_lines: Vec<(usize, usize)> = editor.highlights.iter().map(|(line, _)| (*line, *line)).collect();
-        let highlight = self.color("editorOverviewRuler.wordHighlightTextForeground");
+        let line_count = editor.document().lines.len();
+        let [(highlight_lines, highlight), (read_lines, read_color), (write_lines, write_color)] = self.word_highlight_ruler_lines(editor);
         let mut bracket_lines = Vec::new();
         for ([open, close], in_ruler) in self.bracket_matches(editor) {
             if in_ruler {
@@ -1495,7 +1586,7 @@ impl Workbench {
         cursors.sort_by_key(|(line, _)| *line);
         bracket_lines.sort();
         let find_color = self.color("editorOverviewRuler.findMatchForeground");
-        let range_lines: Vec<(usize, usize)> = self.quick_access.goto_line.iter().filter_map(|state| state.highlight(editor.model_id)).map(|position| (position.line, position.line)).collect();
+        let range_lines: Vec<(usize, usize)> = self.quick_access.goto_line.iter().filter_map(|state| state.highlight(editor.model_id)).collect();
         let range_color = self.color("editorOverviewRuler.rangeHighlightForeground");
         let (mut find_lines, mut current_find_lines) = (Vec::new(), Vec::new());
         for mark in self.find_marks(editor, self.editors.viewport.height) {
@@ -1505,6 +1596,7 @@ impl Workbench {
         let [(info_lines, info_color), (error_lines, error_color)] = self.keybinding_ruler_marks(editor);
         let [(marker_info_lines, marker_info), (marker_warning_lines, marker_warning), (marker_error_lines, marker_error)] = self.marker_ruler_lines(editor);
         let quick_diff = self.quick_diff_ruler_lines(editor);
+        let decoration_marks = self.text_decoration_ruler_marks(editor);
         let border = self.theme.color("editorOverviewRuler.border");
         let Viewport { top_whitespace, line_height, .. } = self.editors.viewport;
         let zones: Vec<(usize, f32)> = editor.view_zones.iter().map(|zone| (zone.anchor.map_or(0, |anchor| anchor.line + usize::from(!zone.before)), zone.height)).collect();
@@ -1536,6 +1628,8 @@ impl Workbench {
                     (&marker_warning_lines, marker_warning, (lanes.right_x, lanes.right_width)),
                     (&marker_error_lines, marker_error, (lanes.right_x, lanes.right_width)),
                     (&highlight_lines, highlight, center),
+                    (&read_lines, read_color, center),
+                    (&write_lines, write_color, center),
                     (&bracket_lines, bracket_color, center),
                     (&find_lines, find_color, center),
                     (&current_find_lines, find_color, center),
@@ -1561,6 +1655,18 @@ impl Workbench {
                     if let Some((start, end)) = previous {
                         paint(window, x, start, width, end - start, color);
                     }
+                }
+                // Extension decorations' `overviewRulerColor` in their `OverviewRulerLane`.
+                for (start, end, color, lane) in &decoration_marks {
+                    let (x, width) = match lane {
+                        1 => (lanes.full_x, lanes.center_x - lanes.full_x),
+                        2 => center,
+                        4 => (lanes.right_x, lanes.right_width),
+                        _ => (lanes.full_x, lanes.full_width),
+                    };
+                    let y1 = (line_top(*start) * ratio).floor();
+                    let y2 = ((line_top(*end) + line_height) * ratio).floor().max(y1 + min_height);
+                    paint(window, x, y1, width, y2 - y1, *color);
                 }
                 // quickDiffDecorator.ts: `OverviewRulerLane.Left`, each change its own mark.
                 for (start, end, color) in quick_diff.iter().filter_map(|(start, end, color)| Some((*start, *end, (*color)?))) {
@@ -1613,8 +1719,8 @@ impl Workbench {
             items.push(("OVR".to_string(), "Enable Insert Mode", "editor.action.toggleOvertypeInsertMode"));
         }
         let prominent_items = items.len();
-        // A webview editor shows no editor status entries.
-        if let Some(editor) = self.editors.active().filter(|editor| !self.shows_webview(editor) && editor.document.scheme != super::extension_editor::EXTENSION_EDITOR_SCHEME) {
+        // A webview, extension, walkthrough or multi diff editor shows no editor status entries.
+        if let Some(editor) = self.editors.active().filter(|editor| !self.shows_webview(editor) && !matches!(editor.document().scheme.as_str(), super::extension_editor::EXTENSION_EDITOR_SCHEME | super::welcome_page::WALKTHROUGH_SCHEME | MULTI_DIFF_EDITOR_SCHEME)) {
             items.extend(Self::editor_status_entries(editor, &self.languages));
         }
         items.extend(self.media_preview_status_entries());
@@ -1624,19 +1730,28 @@ impl Workbench {
         style.font_features = FontFeatures(Arc::new(vec![("tnum".into(), 1)]));
         let text_width = |label: &str| window.text_system().shape_line(label.to_owned().into(), px(12.), &[style.to_run(label.len())], None).width;
         // A search editor's input supports neither encodings nor language changes (toEditorWithEncodingSupport, toEditorWithLanguageSupport).
-        let search_editor = self.editors.active().is_some_and(|editor| editor.document.scheme == SEARCH_EDITOR_SCHEME);
-        let items = items.into_iter().filter(|(_, _, command)| !search_editor || !matches!(*command, "workbench.action.editor.changeEncoding" | "workbench.action.editor.changeLanguageMode"));
-        let items = items.enumerate().map(|(index, (label, tooltip, command))| {
+        let search_editor = self.editors.active().is_some_and(|editor| editor.document().scheme == SEARCH_EDITOR_SCHEME);
+        let items: Vec<_> = items.into_iter().filter(|(_, _, command)| !search_editor || !matches!(*command, "workbench.action.editor.changeEncoding" | "workbench.action.editor.changeLanguageMode")).collect();
+        let language_index = items.iter().position(|(_, _, command)| *command == "workbench.action.editor.changeLanguageMode");
+        // languageStatus.ts: the combined entry sits left of the language entry, the pinned ones right of it.
+        let (combined, pinned) = match language_index {
+            Some(_) => self.language_status_items(foreground, cx),
+            None => (None, Vec::new()),
+        };
+        // statusbarpart.css `.compact-left`: the language entry next to the compact combined entry.
+        let compact_language = combined.is_some();
+        let items = items.into_iter().enumerate().map(|(index, (label, tooltip, command))| {
+            let compact = compact_language && Some(index) == language_index;
             // The media preview's dimensions and file size entries have neither tooltip nor command.
             let hover = (!tooltip.is_empty()).then(|| self.hover_target(tooltip, super::hover::HoverContent::Text(tooltip.into()), super::hover::HoverOptions::status_bar()));
             let item = div()
                 .id(("editor-status", index))
                 .relative()
                 .h_full()
-                .w(text_width(&label) + px(10.))
+                .w(text_width(&label) + px(if compact { 6. } else { 10. }))
                 .flex_none()
-                .mx(px(3.))
-                .px(px(5.))
+                .when(!compact, |item| item.mx(px(3.)).px(px(5.)))
+                .when(compact, |item| item.mr(px(5.)).px(px(3.)))
                 .flex()
                 .items_center()
                 .whitespace_nowrap()
@@ -1656,12 +1771,19 @@ impl Workbench {
             // cornerRadius.small (4px).
             div().h_full().flex_none().rounded(px(4.)).text_color(prominent.1).when_some(prominent.0, |container, background| container.bg(background)).child(item).into_any_element()
         });
+        let mut items: Vec<gpui::AnyElement> = items.collect();
+        if let Some(language_index) = language_index {
+            items.splice(language_index + 1..language_index + 1, pinned);
+            if let Some(combined) = combined {
+                items.insert(language_index, combined);
+            }
+        }
         div().h_full().flex().text_color(foreground).children(items)
     }
 
     /// editorStatus.ts entries of the editor: text, tooltip and command.
     fn editor_status_entries(editor: &OpenEditor, languages: &crate::languages::Languages) -> [(String, &'static str, &'static str); 5] {
-        let document = &editor.document;
+        let document = &editor.document();
         let Indentation { tab_size, insert_spaces, .. } = document.indentation;
         let indent_size = document.indentation.indent_size();
         let indentation = match (insert_spaces, tab_size == indent_size) {
@@ -1682,7 +1804,7 @@ impl Workbench {
 }
 
 #[derive(Clone, Copy)]
-struct EditorMetrics {
+pub(super) struct EditorMetrics {
     font_size: f32,
     line_height: f32,
     char_width: f32,
@@ -1719,14 +1841,14 @@ impl EditorMetrics {
         self.line_height
     }
 
-    fn content_left(&self) -> f32 {
+    pub(super) fn content_left(&self) -> f32 {
         self.glyph_margin_width() + self.line_numbers_width + self.decorations_width
     }
 
     /// fontInfo.ts `BareFontInfo._create`: the editor zoom scales the font size and line height; then
     /// `typicalHalfwidthCharacterWidth` and `maxDigitWidth` of that font. The line numbers are as wide as the
     /// longest number, at least lineNumbersMinChars digits, rounded, and 0 wide when off (editorOptions.ts).
-    fn measure(window: &Window, line_count: usize, line_numbers: LineNumbers, zoom: f32) -> Self {
+    pub(super) fn measure(window: &Window, line_count: usize, line_numbers: LineNumbers, zoom: f32) -> Self {
         let (font_size, line_height) = (EDITOR_FONT_SIZE * zoom, LINE_HEIGHT * zoom);
         let text_system = window.text_system();
         let font_id = text_system.resolve_font(&font(EDITOR_FONT));
@@ -1743,8 +1865,6 @@ struct LineColors {
     text: Rgba,
     line_background: Option<Rgba>,
     line_border: Option<Rgba>,
-    word: Option<Rgba>,
-    word_border: Option<Rgba>,
     selection_highlight: Option<Rgba>,
     selection_highlight_border: Option<Rgba>,
     guide: Rgba,
@@ -1757,7 +1877,7 @@ struct LineColors {
 /// editorStatus.ts `getSelectionLabel`: the primary cursor's line and visible column for one cursor, the
 /// count for several, and the chars selected (`getCharacterCountInRange`: code points, a line break as the EOL's length).
 fn selection_label(editor: &OpenEditor) -> String {
-    let document = &editor.document;
+    let document = &editor.document();
     let mut selected = 0;
     for selection in &editor.selections {
         let (start, end) = (selection.start(), selection.end());

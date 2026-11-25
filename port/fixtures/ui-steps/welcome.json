@@ -1,0 +1,13 @@
+[
+	{ "wait": 4000 },
+	{ "shot": "welcome" },
+	{ "click": [25, 56] },
+	{ "wait": 1500 },
+	{ "shot": "explorer" },
+	{ "click": [25, 145] },
+	{ "wait": 2000 },
+	{ "shot": "scm" },
+	{ "click": [800, 300] },
+	{ "wait": 2500 },
+	{ "shot": "walkthrough" }
+]

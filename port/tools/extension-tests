@@ -1,0 +1,26 @@
+#!/bin/bash
+# Runs a built-in extension's integration tests (its out/test, as .vscode-test.js and scripts/test-integration.sh run
+# them on the reference) against vsrustium and prints mocha's summary.
+# Usage, from the repo root on the Studio: port/tools/extension-tests <extension> [workspace folder]
+# The extension and its compiled tests come from the untouched 1.147.0 reference checkout, copied next to the
+# reference's test runner as the tests' `../../../../test/integration/electron/testrunner` import expects; the
+# workspace is a new empty folder unless one is given (.vscode-test.js's `<label>out-<n>` temp folders).
+# MOCHA_GREP=<pattern> runs only the matching tests.
+set -uo pipefail
+extension=$1
+REF=${REF:-$HOME/Developer/vscode-ref}
+OUT=$(cd /tmp && pwd -P)/extension-tests-$extension-$(basename "$PWD")
+rm -rf "$OUT" && mkdir -p "$OUT/tree/extensions" "$OUT/tree/test/integration/electron" "$OUT/workspace"
+cp -cR "$REF/extensions/$extension" "$OUT/tree/extensions/"
+cp "$REF/test/integration/electron/testrunner.js" "$OUT/tree/test/integration/electron/"
+ln -s "$REF/node_modules" "$OUT/tree/node_modules"
+tests=$OUT/tree/extensions/$extension
+workspace=${2:-$OUT/workspace}
+(cd native && cargo build --release -q -p app) || exit 1
+source port/tools/gui-lock.sh
+SHELL=/bin/bash VSCODE_GPUI_EXTENSIONS=$REF/extensions timeout 600 native/target/release/vsrustium "$workspace" \
+  --user-data-dir "$OUT/user-data" --disable-workspace-trust --extensionDevelopmentPath="$tests" --extensionTestsPath="$tests/out/test" >"$OUT/log" 2>&1
+code=$?
+sed $'s/\x1b\\[[0-9;]*m//g' "$OUT/log" | grep -E '^ *([0-9]+ (passing|pending|failing)|✔|[0-9]+\) )' | sed 's/^ *//' | sort -u
+echo "exit $code (log $OUT/log)"
+exit "$code"

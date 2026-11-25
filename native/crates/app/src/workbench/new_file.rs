@@ -190,7 +190,7 @@ mod tests {
         let (entries, scheme) = workbench.update_in(cx, |workbench, window, cx| {
             let entries = workbench.new_file_entries(window);
             drop(workbench.execute_command("welcome.showNewFileEntries", Vec::new(), window, cx));
-            (entries, workbench.editors.active().map(|editor| editor.document.scheme.clone()))
+            (entries, workbench.editors.active().map(|editor| editor.document().scheme.clone()))
         });
         assert_eq!(entries, vec![NewFileItem { command: "workbench.action.files.newUntitledFile".into(), args: None, title: "Text File".into(), from: BUILT_IN.into(), group: "file".into() }]);
         assert_eq!(scheme.as_deref(), Some("untitled"));

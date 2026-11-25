@@ -71,7 +71,7 @@ impl Workbench {
         let viewport = self.editors.viewport;
         let view_height = viewport.height;
         let cursor = modified.selection().head.line + 1;
-        let line_count = modified.document.lines.len();
+        let line_count = modified.document().lines.len();
         let top_of = |line: usize| match line {
             line if line < line_count => modified.line_top(modified.view_line(line), viewport),
             _ => modified.line_top(modified.view_line(line_count - 1), viewport) + viewport.line_height,
@@ -156,11 +156,11 @@ impl Workbench {
     fn revert_block(&mut self, original: diff::LineRange, modified: diff::LineRange, cx: &mut Context<Self>) -> crate::commands::Outcome {
         let Some(input) = self.editors.active_diff() else { return crate::commands::Outcome::done() };
         let Some(original_model) = self.editors.model(&input.original.scheme, &input.original.path) else { return crate::commands::Outcome::done() };
-        let original_lines: Vec<String> = original_model.document.lines[original.start - 1..original.end - 1].to_vec();
+        let original_lines: Vec<String> = original_model.document().lines[original.start - 1..original.end - 1].to_vec();
         self.run_indenting(
             |editor, _| {
-                let eol = editor.document.eol;
-                let (start, end, text) = block_edit(&editor.document.lines, modified, &original_lines, eol);
+                let eol = editor.document().eol;
+                let (start, end, text) = block_edit(&editor.document().lines, modified, &original_lines, eol);
                 editor.execute_edits(vec![(start, end, text, false)], None, EditReason::Unknown("revert")).into_iter().collect()
             },
             cx,
@@ -199,10 +199,10 @@ fn hunk_context(workbench: &Workbench, input: &DiffInput, change: &diff::LineRan
     let range = |range: diff::LineRange| json!({ "startLineNumber": range.start, "endLineNumberExclusive": range.end });
     let staged = match (workbench.editors.model(&input.original.scheme, &input.original.path), workbench.editors.model(&input.modified.scheme, &input.modified.path)) {
         (Some(original), Some(modified)) => {
-            let mut lines = original.document.lines.clone();
-            let replacement = modified.document.lines[change.modified.start - 1..change.modified.end - 1].to_vec();
+            let mut lines = original.document().lines.clone();
+            let replacement = modified.document().lines[change.modified.start - 1..change.modified.end - 1].to_vec();
             lines.splice(change.original.start - 1..change.original.end - 1, replacement);
-            lines.join(original.document.eol)
+            lines.join(original.document().eol)
         }
         _ => String::new(),
     };

@@ -456,7 +456,7 @@ impl Workbench {
 
     /// `loadViewState`: the position stored by the last drag, if any.
     pub(super) fn load_quick_input_view_state(&mut self) {
-        let storage = self.profile_storage.lock().unwrap();
+        let storage = self.application_storage.lock().unwrap();
         let data: Value = storage.get(VIEWSTATE_STORAGE_KEY).and_then(|raw| serde_json::from_str(raw).ok()).unwrap_or_default();
         self.quick_inputs.view_state = match (data["top"].as_f64(), data["left"].as_f64()) {
             (None, None) => None,
@@ -466,7 +466,7 @@ impl Workbench {
 
     /// `saveViewState` in StorageScope.APPLICATION; the default position removes the key.
     fn save_quick_input_view_state(&self) {
-        let mut storage = self.profile_storage.lock().unwrap();
+        let mut storage = self.application_storage.lock().unwrap();
         match self.quick_inputs.view_state {
             Some((top, left)) => {
                 // JSON.stringify leaves out an undefined side.
@@ -774,10 +774,10 @@ impl Workbench {
                         Some(icon.mr(px(6.)))
                     }))
                     // A long description is cut, not the name (monaco-icon-label-container's overflow).
-                    .child(div().flex_none().child(self.highlighted_label(&row.item.label, &row.label_highlights, highlight, 16., icon_color)))
+                    .child(div().flex_none().when(row.item.strikethrough, |label| label.line_through()).child(self.highlighted_label(&row.item.label, &row.label_highlights, highlight, 16., icon_color)))
                     .children(row.item.description.as_ref().filter(|description| !description.is_empty()).map(|description| {
                         // monaco-icon-label: .label-description at 0.9em, 0.7 opacity, 0.5em of its own 11.7px after the name.
-                        div().ml(px(5.85)).min_w_0().overflow_hidden().text_size(px(11.7)).opacity(if focused { 1. } else { 0.7 }).child(self.highlighted_label(description, &row.description_highlights, highlight, 14., icon_color))
+                        div().ml(px(5.85)).min_w_0().overflow_hidden().text_size(px(11.7)).when(row.item.strikethrough, |label| label.line_through()).opacity(if focused { 1. } else { 0.7 }).child(self.highlighted_label(description, &row.description_highlights, highlight, 14., icon_color))
                     })),
             )
             .children(row.item.detail.as_ref().filter(|detail| !detail.is_empty()).map(|detail| {

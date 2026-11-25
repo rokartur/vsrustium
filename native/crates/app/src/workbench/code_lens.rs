@@ -57,8 +57,9 @@ impl Workbench {
     /// `editorHasCodeLensProvider`.
     pub(super) fn code_lens_context(&self, context: &mut std::collections::HashMap<String, Value>) {
         let Some(editor) = self.editors.active() else { return };
-        let uri = editor.document.uri();
-        let candidate = Candidate { uri: &uri, language: &editor.document.language_id };
+        let uri = editor.document().uri();
+        let language = editor.document().language_id.clone();
+        let candidate = Candidate { uri: &uri, language: &language };
         context.insert("editorHasCodeLensProvider".into(), json!(!self.language_features.ordered(REGISTER, &candidate).is_empty()));
     }
 
@@ -112,8 +113,9 @@ impl Workbench {
     /// no provider is left.
     pub(super) fn code_lens_registrations_changed(&mut self, cx: &mut Context<Self>) {
         let Some(editor) = self.editors.active() else { return };
-        let uri = editor.document.uri();
-        let candidate = Candidate { uri: &uri, language: &editor.document.language_id };
+        let uri = editor.document().uri();
+        let language = editor.document().language_id.clone();
+        let candidate = Candidate { uri: &uri, language: &language };
         match self.language_features.ordered(REGISTER, &candidate).is_empty() {
             true => self.dispose_code_lenses(),
             false => self.schedule_code_lenses(cx),
@@ -123,8 +125,9 @@ impl Workbench {
     /// `$emitCodeLensEvent`: a provider of the model changed its lenses.
     pub(crate) fn code_lens_provider_changed(&mut self, event_handle: u64, cx: &mut Context<Self>) {
         let Some(editor) = self.editors.active() else { return };
-        let uri = editor.document.uri();
-        let candidate = Candidate { uri: &uri, language: &editor.document.language_id };
+        let uri = editor.document().uri();
+        let language = editor.document().language_id.clone();
+        let candidate = Candidate { uri: &uri, language: &language };
         if self.language_features.ordered(REGISTER, &candidate).iter().any(|registration| registration.args.get(2) == Some(&json!(event_handle))) {
             self.schedule_code_lenses(cx);
         }
@@ -153,8 +156,9 @@ impl Workbench {
     /// The `RunOnceScheduler` that asks the providers 250ms after the last request for it.
     fn schedule_code_lenses(&mut self, cx: &mut Context<Self>) {
         let Some(editor) = self.editors.active().filter(|editor| Some(editor.model_id) == self.code_lenses.model_id) else { return };
-        let uri = editor.document.uri();
-        let candidate = Candidate { uri: &uri, language: &editor.document.language_id };
+        let uri = editor.document().uri();
+        let language = editor.document().language_id.clone();
+        let candidate = Candidate { uri: &uri, language: &language };
         let handles: Vec<u64> = self.language_features.ordered(REGISTER, &candidate).iter().map(|registration| registration.handle).collect();
         if handles.is_empty() || self.suggest_setting(editor, "editor.codeLens") == json!(false) {
             return;
@@ -185,7 +189,7 @@ impl Workbench {
         let height = self.code_lens_height();
         let mut old = std::mem::take(&mut self.code_lenses.groups);
         let Some(editor) = lens_editor(&mut self.editors, self.code_lenses.model_id) else { return };
-        let line_count = editor.document.lines.len();
+        let line_count = editor.document().lines.len();
         let mut groups: Vec<(usize, Vec<Lens>)> = Vec::new();
         for lens in lenses {
             let line = lens.symbol["range"]["startLineNumber"].as_u64().unwrap_or(0) as usize;
@@ -319,9 +323,9 @@ impl Workbench {
         for group in &self.code_lenses.groups {
             let (Some(shown), Some(zone)) = (&group.shown, editor.view_zone(group.zone_id)) else { continue };
             let Some(top) = editor.view_zone_top(group.zone_id, viewport) else { continue };
-            let text = &editor.document.lines[zone.anchor.expect("code lens zones sit above a line").line];
+            let text = &editor.document().lines[zone.anchor.expect("code lens zones sit above a line").line];
             let first = text.chars().position(|character| !character.is_whitespace()).unwrap_or(text.chars().count());
-            let left = content_left + visible_column(text, first, editor.document.indentation.tab_size) as f32 * char_width - editor.scroll.left;
+            let left = content_left + visible_column(text, first, editor.document().indentation.tab_size) as f32 * char_width - editor.scroll.left;
             let mut widget = div()
                 .absolute()
                 .left(px(left))
@@ -440,13 +444,14 @@ impl Workbench {
         let Some(editor) = super::host_requests::uri_parts(&args.first().cloned().unwrap_or_default()).ok().and_then(|(scheme, path)| self.editors.model(scheme, &path)) else {
             return Outcome::Ready(Err(crate::commands::error_value("Illegal argument")));
         };
-        let uri = editor.document.uri();
-        let candidate = Candidate { uri: &uri, language: &editor.document.language_id };
+        let uri = editor.document().uri();
+        let language = editor.document().language_id.clone();
+        let candidate = Candidate { uri: &uri, language: &language };
         let calls: Vec<_> = self
             .language_features
             .ordered(REGISTER, &candidate)
             .iter()
-            .map(|registration| (registration.handle, self.host.call("ExtHostLanguageFeatures", "$provideCodeLenses", vec![json!(registration.handle), uri.clone()])))
+            .map(|registration| (registration.handle, self.host.call_cancellable("ExtHostLanguageFeatures", "$provideCodeLenses", vec![json!(registration.handle), uri.clone()])))
             .collect();
         let mut resolve_count = args.get(1).and_then(Value::as_u64);
         let (sender, receiver) = oneshot::channel();
@@ -462,7 +467,7 @@ impl Workbench {
                     continue;
                 }
                 resolve_count = Some(count - 1);
-                let Ok(call) = workbench.update(cx, |workbench, _| workbench.host.call("ExtHostLanguageFeatures", "$resolveCodeLens", vec![json!(lens.handle), lens.symbol.clone()])) else { return };
+                let Ok(call) = workbench.update(cx, |workbench, _| workbench.host.call_cancellable("ExtHostLanguageFeatures", "$resolveCodeLens", vec![json!(lens.handle), lens.symbol.clone()])) else { return };
                 let resolved = call.await.ok().and_then(Result::ok).filter(|symbol| !symbol.is_null());
                 result.push(resolved.unwrap_or(lens.symbol));
             }

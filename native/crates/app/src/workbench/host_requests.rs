@@ -20,6 +20,7 @@ use crate::editor::{
     CursorEdit, EditReason, OpenEditor, Position, Replace, Selection, SnippetText, TextDocument, VerticalReveal, char_column, end_of, expand_snippet,
     selections_after, text_between, uri_string, word_at,
 };
+use crate::commands::Outcome;
 use crate::host_sync::snapshot_id;
 
 /// The requests `host_request` answers; every other one stays with the session.
@@ -38,6 +39,10 @@ pub const HOST_REQUESTS: &[(&str, &str)] = &[
     ("MainThreadTextEditors", "$trySetOptions"),
     ("MainThreadTextEditors", "$tryApplyEdits"),
     ("MainThreadTextEditors", "$tryInsertSnippet"),
+    ("MainThreadTextEditors", "$registerTextEditorDecorationType"),
+    ("MainThreadTextEditors", "$removeTextEditorDecorationType"),
+    ("MainThreadTextEditors", "$trySetDecorations"),
+    ("MainThreadTextEditors", "$trySetDecorationsFast"),
     ("MainThreadPower", "$getSystemIdleState"),
     ("MainThreadPower", "$getSystemIdleTime"),
     ("MainThreadPower", "$getCurrentThermalState"),
@@ -76,29 +81,58 @@ impl Workbench {
             ("workbench", "providerSaveText") => self.provider_save_bytes(arg(0)),
             ("workbench", "providerSaved") => self.provider_saved(arg(0), cx),
             ("MainThreadTextEditors", "$tryShowTextDocument") => self.try_show_text_document(arg(0), arg(1), window, cx),
+            ("MainThreadTextEditors", "$registerTextEditorDecorationType") => {
+                self.editors.decoration_types.insert(arg(1).as_str().unwrap_or_default().to_string(), arg(2).clone());
+                cx.notify();
+                Ok(null)
+            }
+            ("MainThreadTextEditors", "$removeTextEditorDecorationType") => {
+                let key = arg(0).as_str().unwrap_or_default();
+                self.editors.decoration_types.remove(key);
+                let others = self.editors.other_groups.iter_mut().flat_map(|group| &mut group.editors);
+                for editor in self.editors.editors.iter_mut().chain(self.editors.models.iter_mut()).chain(others) {
+                    editor.text_decorations.retain(|decoration| decoration.key != key);
+                }
+                cx.notify();
+                Ok(null)
+            }
             ("MainThreadTextEditors", method) => {
                 let id = arg(0).as_str().unwrap_or_default();
-                // The group shows one editor at a time: the active one is the only one the host can address.
-                if self.editors.active().map(snapshot_id).as_deref() != Some(id) {
+                // Each group shows one editor at a time: a group's active editor is the only one the host can address.
+                let groups = self.groups_in_grid_order();
+                let Some(group) = groups.into_iter().find(|&group| self.editors.group_active(group).is_some_and(|(editor, _)| snapshot_id(editor) == id)) else {
                     return Err(serialized_error(&format!("Illegal argument: TextEditor({id})")));
-                }
-                match method {
-                    "$trySetSelections" => self.set_host_selections(arg(1), cx),
-                    "$tryRevealRange" => self.reveal_host_range(arg(1), arg(2), cx),
-                    "$trySetOptions" => self.set_host_options(arg(1), cx),
-                    "$tryApplyEdits" => self.apply_host_edits(arg(1), arg(2), arg(3), cx),
-                    "$tryInsertSnippet" => self.insert_host_snippet(arg(1), arg(2), arg(3), arg(4), window, cx),
+                };
+                self.with_group(group, |workbench| match method {
+                    "$trySetSelections" => workbench.set_host_selections(arg(1), cx),
+                    "$tryRevealRange" => workbench.reveal_host_range(arg(1), arg(2), cx),
+                    "$trySetOptions" => workbench.set_host_options(arg(1), cx),
+                    "$tryApplyEdits" => workbench.apply_host_edits(arg(1), arg(2), arg(3), cx),
+                    "$tryInsertSnippet" => workbench.insert_host_snippet(arg(1), arg(2), arg(3), arg(4), window, cx),
+                    "$trySetDecorations" | "$trySetDecorationsFast" => {
+                        let key = arg(1).as_str().unwrap_or_default();
+                        let decorations = match method {
+                            "$trySetDecorations" => crate::editor::decoration_types::decorations_from_options(key, arg(2)),
+                            _ => crate::editor::decoration_types::decorations_from_numbers(key, arg(2)),
+                        };
+                        let editor = workbench.editors.active_mut().expect("the group's active editor has the id");
+                        editor.text_decorations.retain(|decoration| decoration.key != key);
+                        editor.text_decorations.extend(decorations);
+                        cx.notify();
+                        Ok(Value::Null)
+                    }
                     _ => unreachable!("not in HOST_REQUESTS: {method}"),
-                }
+                })
             }
             _ => unreachable!("not in HOST_REQUESTS: {proxy}.{method}"),
         }
     }
 
     /// `BoundModelReferenceCollection`: models the host opened and no editor shows are disposed after 3 minutes.
-    fn release_host_models(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn release_host_models(&mut self, cx: &mut Context<Self>) {
         let count = self.editors.models.len();
-        self.editors.release_models(Instant::now());
+        let scm_inputs = self.scm_input_models();
+        self.editors.release_models_except(Instant::now(), |model| scm_inputs.iter().any(|(scheme, path)| model.document().is(scheme, path)));
         if self.editors.models.len() != count {
             self.editors_changed(cx);
         }
@@ -113,14 +147,14 @@ impl Workbench {
         if ignore_path_case {
             let lowercase = path.to_string_lossy().to_lowercase();
             let models = self.editors.editors.iter().chain(&self.editors.models);
-            let first_casing = models.map(|model| &model.document).find(|document| document.scheme == scheme && document.path != *path && document.path.to_string_lossy().to_lowercase() == lowercase);
-            if let Some(document) = first_casing {
-                return self.try_open_document(&document.uri(), options, provider_content, false, cx);
+            let first_casing = models.map(|model| model.document()).find(|document| document.scheme == scheme && document.path != *path && document.path.to_string_lossy().to_lowercase() == lowercase).map(|document| document.uri());
+            if let Some(uri) = first_casing {
+                return self.try_open_document(&uri, options, provider_content, false, cx);
             }
         }
         let requested = options["encoding"].as_str();
         if let Some(model) = self.editors.model_mut(scheme, path) {
-            model.host_reference = Some(Instant::now());
+            model.text_model_mut().host_reference = Some(Instant::now());
             if let Some(requested) = requested {
                 self.set_model_encoding(uri, scheme, path, requested, cx)
                     .map_err(|detail| serialized_error(&format!("cannot open {}. Detail: {detail}", uri_string(scheme, path))))?;
@@ -165,8 +199,8 @@ impl Workbench {
         };
         let index = self.editors.open_model(document);
         let model = &mut self.editors.models[index];
-        model.host_reference = Some(Instant::now());
-        model.associated_file = scheme == "untitled";
+        model.text_model_mut().host_reference = Some(Instant::now());
+        model.text_model_mut().associated_file = scheme == "untitled";
         self.editors_changed(cx);
         // `_handleUntitledScheme` ends in `_doCreateUntitled`, which marks the host's document dirty.
         if scheme == "untitled" {
@@ -179,11 +213,11 @@ impl Workbench {
     /// file model is read again in it (`forceResolveFromFile`) and takes the encoding the read settled on.
     pub(super) fn set_model_encoding(&mut self, uri: &Value, scheme: &str, path: &Path, requested: &str, cx: &mut Context<Self>) -> Result<(), String> {
         let model = self.editors.model_mut(scheme, path).expect("the caller found the model");
-        if model.document.encoding == requested {
+        if model.document().encoding == requested {
             return Ok(());
         }
         if scheme == "untitled" {
-            model.document.encoding = requested.to_string();
+            model.document_mut().encoding = requested.to_string();
             self.host.send("ExtHostDocuments", "$acceptEncodingChanged", vec![uri.clone(), json!(requested)]);
             return Ok(());
         }
@@ -197,8 +231,8 @@ impl Workbench {
         };
         let detected = bytes.as_deref().and_then(|bytes| encoding::detect(bytes).encoding);
         let resolved = encoding::read_encoding(&self.settings.lock().unwrap(), (scheme == "file").then_some(path), Some(requested), detected);
-        if model.document.encoding != resolved {
-            model.document.encoding = resolved.clone();
+        if model.document().encoding != resolved {
+            model.document_mut().encoding = resolved.clone();
             self.host.send("ExtHostDocuments", "$acceptEncodingChanged", vec![uri.clone(), json!(resolved)]);
         }
         if let Some(bytes) = bytes {
@@ -231,7 +265,7 @@ impl Workbench {
         document.encoding = options["encoding"].as_str().map_or(document.encoding, str::to_string);
         let uri = document.uri();
         let index = self.editors.open_model(document);
-        self.editors.models[index].host_reference = Some(Instant::now());
+        self.editors.models[index].text_model_mut().host_reference = Some(Instant::now());
         self.editors_changed(cx);
         // mainThreadDocuments.ts `_doCreateUntitled` tells the host the new document is dirty, whatever the model says.
         self.host.send("ExtHostDocuments", "$acceptDirtyStateChanged", vec![uri.clone(), json!(true)]);
@@ -252,7 +286,7 @@ impl Workbench {
     // shortcut: one edit over the whole model where upstream applies computeMoreMinimalEdits; port the diff worker when an extension needs the smaller events.
     pub(super) fn replace_model_text(&mut self, scheme: &str, path: &Path, text: String, clean: bool, cx: &mut Context<Self>) {
         let model = self.editors.model_mut(scheme, path).expect("the caller found the model");
-        let end = document_end(&model.document.lines);
+        let end = document_end(&model.document().lines);
         let change = model.execute_edits(vec![(Position::new(0, 0), end, text, false)], None, EditReason::ApplyEdits);
         if clean {
             model.mark_saved();
@@ -269,7 +303,7 @@ impl Workbench {
         let Some(model) = self.editors.model_mut(scheme, path) else { return Ok(json!(false)) };
         // textFileService.ts `save`: an untitled model saves as its associated file, or as the path the save dialog picks.
         if scheme == "untitled" {
-            if model.associated_file && (self.skip_dialogs || !path.exists()) {
+            if model.text_model().associated_file && (self.skip_dialogs || !path.exists()) {
                 return Ok(json!(self.do_save_as(scheme, path, path.clone(), Default::default(), cx)));
             }
             // shortcut: this request answers on the session thread's wait, which cannot outlast a dialog; the save goes
@@ -287,7 +321,7 @@ impl Workbench {
         match self.editors.model(scheme, path) {
             None => return Ok(json!(false)),
             Some(model) if !model.is_dirty() => return Ok(json!(true)),
-            Some(_) => self.run_save_participants(scheme, path, SaveReason::Explicit),
+            Some(_) => self.run_save_participants(scheme, path, SaveReason::Explicit, super::text_input::SavePhase::All),
         }
         Ok(json!(self.editors.model(scheme, path).expect("participants keep the model").saved_bytes()))
     }
@@ -306,13 +340,14 @@ impl Workbench {
     /// `$tryShowTextDocument`: opens the model in the group, preview unless pinned, and returns the editor's id.
     pub(super) fn try_show_text_document(&mut self, uri: &Value, options: &Value, window: &mut Window, cx: &mut Context<Self>) -> HostResult {
         let (scheme, ref path) = uri_parts(uri)?;
+        self.activate_column(&options["position"]);
         let pinned = options["pinned"] == json!(true);
-        if let Some(index) = self.editors.editors.iter().position(|editor| editor.document.is(scheme, path)) {
+        if let Some(index) = self.editors.editors.iter().position(|editor| editor.document().is(scheme, path)) {
             self.editors.activate(index);
             if pinned {
                 self.editors.pin(index);
             }
-        } else if let Some(index) = self.editors.models.iter().position(|model| model.document.is(scheme, path)) {
+        } else if let Some(index) = self.editors.models.iter().position(|model| model.document().is(scheme, path)) {
             // editorGroupView.ts pins a dirty editor when it opens.
             let preview = !pinned && !self.editors.models[index].is_dirty();
             self.editors.show_model(index, preview);
@@ -329,8 +364,14 @@ impl Workbench {
             let (start, end) = range(editor, &options["selection"]);
             editor.move_to(start, false);
             editor.move_to(end, true);
-            // editorOptions.ts applyTextEditorOptions: no `selectionRevealType` reveals in the center.
-            editor.reveal_range(start, end, VerticalReveal::Center, viewport);
+            // editorOptions.ts applyTextEditorOptions: `TextEditorSelectionRevealType`, the center without one.
+            let reveal = match options["selectionRevealType"].as_u64() {
+                Some(1) => VerticalReveal::CenterIfOutsideViewport,
+                Some(2) => VerticalReveal::NearTop,
+                Some(3) => VerticalReveal::NearTopIfOutsideViewport,
+                _ => VerticalReveal::Center,
+            };
+            editor.reveal_range(start, end, reveal, viewport);
         }
         if options["preserveFocus"] != json!(true) {
             window.focus(&self.editor_focus, cx);
@@ -340,7 +381,32 @@ impl Workbench {
     }
 
     /// editorCommands.ts `_workbench.open`: a resource in the editor group, a web link in the browser.
-    // shortcut: one editor group, so every view column opens in it; ViewColumn.Two needs the editor groups row.
+    /// `api_open_editor` of a resource no model holds yet and no file is: its text comes from the extension host's
+    /// content or file system provider first (textFileEditorModel.ts reads through `fileService`).
+    pub(super) fn api_open_editor_resolving(&mut self, args: Vec<Value>, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
+        let unresolved = match uri_parts(args.first().unwrap_or(&Value::Null)) {
+            Ok((scheme, path)) => !matches!(scheme, "file" | "untitled" | "command") && self.editors.model(scheme, &path).is_none(),
+            Err(_) => false,
+        };
+        if !unresolved {
+            return Outcome::Ready(self.api_open_editor(&args, window, cx));
+        }
+        let content = self.host.call("workbench", "resolveTextContent", vec![args[0].clone()]);
+        let (sender, receiver) = futures::channel::oneshot::channel();
+        cx.spawn_in(window, async move |workbench, cx| {
+            let content = content.await.ok().and_then(Result::ok);
+            let result = workbench.update_in(cx, |workbench, window, cx| {
+                if let Some(content) = content {
+                    workbench.try_open_document(&args[0], &Value::Null, &content, false, cx)?;
+                }
+                workbench.api_open_editor(&args, window, cx)
+            });
+            drop(sender.send(result.unwrap_or_else(|_| Err(serialized_error("Canceled")))));
+        })
+        .detach();
+        Outcome::Pending(receiver)
+    }
+
     pub(super) fn api_open_editor(&mut self, args: &[Value], window: &mut Window, cx: &mut Context<Self>) -> HostResult {
         let resource = args.first().unwrap_or(&Value::Null);
         if let Some(link) = resource.as_str() {
@@ -359,8 +425,13 @@ impl Workbench {
             "untitled" => drop(self.try_open_document(resource, &Value::Null, &Value::Null, false, cx)?),
             _ => {}
         }
-        let options = &args.get(1).unwrap_or(&Value::Null)[1];
-        self.try_show_text_document(resource, options, window, cx)?;
+        let column_and_options = args.get(1).unwrap_or(&Value::Null);
+        let mut options = column_and_options[1].clone();
+        // `_workbench.open` and `_workbench.openWith` carry the column in the options already.
+        if (options.is_object() || options.is_null()) && options["position"].is_null() {
+            options["position"] = column_and_options[0].clone();
+        }
+        self.try_show_text_document(resource, &options, window, cx)?;
         Ok(Value::Null)
     }
 
@@ -408,9 +479,9 @@ impl Workbench {
     // shortcut: cursorStyle and lineNumbers are not applied; the editor draws a line cursor and line numbers only.
     fn set_host_options(&mut self, options: &Value, cx: &mut Context<Self>) -> HostResult {
         let editor = self.editors.active_mut().expect("checked by host_request");
-        let before = editor.document.indentation;
+        let before = editor.document().indentation;
         if options["tabSize"] == json!("auto") || options["insertSpaces"] == json!("auto") {
-            let created = creation_options(&self.settings.lock().unwrap().configuration, &editor.document.path, &editor.document.language_id);
+            let created = creation_options(&self.settings.lock().unwrap().configuration, &editor.document().path, &editor.document().language_id);
             let insert_spaces = options["insertSpaces"].as_bool().unwrap_or(created.insert_spaces);
             let tab_size = options["tabSize"].as_u64().map_or(created.tab_size, |size| size as usize);
             editor.detect_indentation(insert_spaces, tab_size);
@@ -429,7 +500,7 @@ impl Workbench {
             }
             editor.set_indentation(indentation);
         }
-        if editor.document.indentation != before {
+        if editor.document().indentation != before {
             self.host.send_options(editor);
             cx.notify();
         }
@@ -439,7 +510,7 @@ impl Workbench {
     /// mainThreadEditor.ts `applyEdits`: false when the model moved past the host's version.
     fn apply_host_edits(&mut self, version: &Value, edits: &Value, options: &Value, cx: &mut Context<Self>) -> HostResult {
         let editor = self.editors.active_mut().expect("checked by host_request");
-        if version.as_u64() != Some(editor.version_id.into()) {
+        if version.as_u64() != Some(editor.text_model().version_id.into()) {
             return Ok(json!(false));
         }
         if let Some(eol_change) = options["setEndOfLine"].as_u64().and_then(|sequence| editor.push_eol(sequence)) {
@@ -472,7 +543,7 @@ impl Workbench {
     fn insert_host_snippet(&mut self, version: &Value, template: &Value, ranges: &Value, options: &Value, window: &mut Window, cx: &mut Context<Self>) -> HostResult {
         let clipboard = cx.read_from_clipboard().and_then(|item| item.text());
         let editor = self.editors.active_mut().expect("checked by host_request");
-        if version.as_u64() != Some(editor.version_id.into()) {
+        if version.as_u64() != Some(editor.text_model().version_id.into()) {
             return Ok(json!(false));
         }
         window.focus(&self.editor_focus, cx);
@@ -495,8 +566,8 @@ pub(super) fn snippet_edits(editor: &OpenEditor, snippets: &[(Position, Position
     let mut cursor_edits = Vec::new();
     let mut texts = Vec::new();
     for &(start, end, template, keep_whitespace) in snippets {
-        let line_indent: String = editor.document.lines[start.line].chars().take(start.column).take_while(|c| *c == ' ' || *c == '\t').collect();
-        let snippet = expand_snippet(template, &line_indent, !keep_whitespace, editor.document.indentation, |name| snippet_variable(name, editor, start, end, clipboard));
+        let line_indent: String = editor.document().lines[start.line].chars().take(start.column).take_while(|c| *c == ' ' || *c == '\t').collect();
+        let snippet = expand_snippet(template, &line_indent, !keep_whitespace, editor.document().indentation, |name| snippet_variable(name, editor, start, end, clipboard));
         let prefix = |chars: usize| snippet.text.chars().take(chars).collect::<String>();
         let selection = Selection { anchor: end_of(start, &prefix(snippet.selection.start)), head: end_of(start, &prefix(snippet.selection.end)) };
         cursor_edits.push(CursorEdit::new(vec![Replace::new(start, end, snippet.text.clone())], selection));
@@ -510,8 +581,8 @@ pub(super) fn snippet_edits(editor: &OpenEditor, snippets: &[(Position, Position
 
 /// snippetVariables.ts: the selection, model and file variables; the rest insert their default.
 fn snippet_variable(name: &str, editor: &OpenEditor, start: Position, end: Position, clipboard: Option<&str>) -> Option<String> {
-    let lines = &editor.document.lines;
-    let path = &editor.document.path;
+    let lines = &editor.document().lines;
+    let path = &editor.document().path;
     match name {
         "CLIPBOARD" => clipboard.map(str::to_owned),
         "SELECTION" | "TM_SELECTED_TEXT" => Some(text_between(lines, start, end)).filter(|text| !text.is_empty()),
@@ -519,7 +590,7 @@ fn snippet_variable(name: &str, editor: &OpenEditor, start: Position, end: Posit
         "TM_CURRENT_WORD" => word_at(&lines[end.line], end.column).map(|word| lines[end.line].chars().skip(word.start).take(word.len()).collect()),
         "TM_LINE_INDEX" => Some(end.line.to_string()),
         "TM_LINE_NUMBER" => Some((end.line + 1).to_string()),
-        "TM_FILENAME" => Some(editor.document.name()),
+        "TM_FILENAME" => Some(editor.document().name()),
         "TM_FILENAME_BASE" => path.file_stem().map(|stem| stem.to_string_lossy().into_owned()),
         "TM_DIRECTORY" => path.parent().map(|parent| parent.to_string_lossy().into_owned()),
         "TM_FILEPATH" => Some(path.to_string_lossy().into_owned()),
@@ -551,7 +622,7 @@ pub(super) fn range(editor: &OpenEditor, range: &Value) -> (Position, Position) 
 
 /// `validatePosition`: before the first line is its start, after the last line is its end.
 fn position(editor: &OpenEditor, line: &Value, column: &Value) -> Position {
-    let lines = &editor.document.lines;
+    let lines = &editor.document().lines;
     let line_number = line.as_f64().unwrap_or(1.);
     if line_number < 1. {
         return Position::new(0, 0);

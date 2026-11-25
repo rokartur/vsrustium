@@ -21,7 +21,6 @@ use serde_json::{Value, json};
 
 use self::grid::{CellMetrics, GUTTER, Look, SCROLLBAR_WIDTH, SCROLLBAR_WIDTH_MODERN};
 use super::Workbench;
-use super::layout::Part;
 use super::panel::PanelView;
 use crate::commands::Outcome;
 use crate::keybindings::Resolution;
@@ -255,6 +254,12 @@ impl Workbench {
             }
             Outcome::done()
         });
+        self.commands.register("workbench.action.terminal.killEditor", |workbench, _, window, cx| {
+            if let Some(id) = workbench.terminal_view.active_instance_id() {
+                workbench.kill_terminal(id, window, cx);
+            }
+            Outcome::done()
+        });
         self.commands.register("workbench.action.terminal.killAll", |workbench, _, window, cx| {
             let ids: Vec<u32> = workbench.terminal_view.instances.iter().map(|instance| instance.id).collect();
             for id in ids {
@@ -351,7 +356,6 @@ impl Workbench {
         self.register_external_terminal_actions();
         self.register_terminal_contrib_actions();
         self.register_terminal_suggest_actions();
-        self.register_terminal_panel_view();
         self.register_terminal_history_actions();
         self.register_terminal_sticky_scroll_actions();
         self.register_terminal_environment_actions();
@@ -361,16 +365,24 @@ impl Workbench {
 
     /// `isViewVisible(TERMINAL_VIEW_ID)`: the panel shows the Terminal view.
     pub(crate) fn terminal_view_visible(&self) -> bool {
-        self.is_part_visible(Part::Panel) && self.active_panel_view().is_some_and(|view| view.id == TERMINAL_VIEW_ID)
+        self.panel_view_visible(TERMINAL_VIEW_ID)
     }
 
-    /// terminal.contribution.ts `registerTerminalViewContainer`: the Terminal view in the panel.
+    /// terminal.contribution.ts registers the Terminal view container in the panel.
     pub(super) fn register_terminal_panel_view(&mut self) {
         self.register_panel_view(PanelView {
             id: TERMINAL_VIEW_ID,
             title: "Terminal",
-            render: |workbench, window, cx| workbench.terminal_body(window, cx).into_any_element(),
-            actions: Some(|workbench, cx| workbench.terminal_title_actions(cx).into_any_element()),
+            render: |workbench, window, cx| {
+                // terminalView.ts `_initializeTerminal`: the view made visible without terminals creates one.
+                if workbench.terminal_view.instances.is_empty() {
+                    workbench.create_terminal(None, false, window, cx);
+                }
+                workbench.terminal_body(window, cx).into_any_element()
+            },
+            actions: |workbench, _, cx| workbench.terminal_title_actions(cx).into_any_element(),
+            visible: |_| true,
+            badge: |_| None,
         });
     }
 
@@ -391,21 +403,28 @@ impl Workbench {
 
     /// `viewsService.closeView(TERMINAL_VIEW_ID)`: the terminals keep running.
     pub(super) fn close_terminal_view(&mut self, cx: &mut Context<Self>) {
-        if self.terminal_view_visible() {
-            self.hide_panel(cx);
-        }
+        self.close_panel_view(TERMINAL_VIEW_ID, cx);
     }
 
     /// `createTerminal`: a new group, or a pane after the active one with `split`; the split's cwd is its parent's
     /// (`terminal.integrated.splitCwd` inherited).
     fn create_terminal(&mut self, profile: Option<Profile>, split: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.create_terminal_with_cwd(profile, split, None, window, cx);
+    }
+
+    /// `createTerminal({ config: { cwd } })` of externalTerminal.contribution.ts `openInIntegratedTerminal`.
+    pub(super) fn create_terminal_in(&mut self, cwd: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        self.create_terminal_with_cwd(None, false, Some(cwd), window, cx);
+    }
+
+    fn create_terminal_with_cwd(&mut self, profile: Option<Profile>, split: bool, cwd: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) {
         let profile = profile.unwrap_or_else(|| self.default_terminal_profile());
         let parent = self.terminal_view.active_instance_id().filter(|_| split);
         let parent_cwd = match parent {
             Some(id) if self.setting("terminal.integrated.splitCwd") == "inherited" => self.terminal_view.instance(id).and_then(|parent| parent.cwd.clone()),
             _ => None,
         };
-        let cwd = parent_cwd.map(PathBuf::from).unwrap_or_else(|| self.terminal_initial_cwd());
+        let cwd = cwd.or(parent_cwd.map(PathBuf::from)).unwrap_or_else(|| self.terminal_initial_cwd());
         let launch = self.shell_launch_config(&profile, cwd);
         self.add_terminal(launch, parent, window, cx);
         self.show_terminal_tab(window, cx);
@@ -892,9 +911,8 @@ impl Workbench {
         DEFAULT_COMMANDS_TO_SKIP_SHELL.contains(&command) && !configured.iter().any(|entry| entry.strip_prefix('-') == Some(command))
     }
 
-    /// The view's title actions where a text editor has its breadcrumbs (terminalMenus.ts `MenuId.ViewTitle`):
-    /// the active terminal while the tabs list is hidden, New with the profile dropdown, Split and Kill while the
-    /// tabs list is hidden, and Clear.
+    /// The view's title actions in the panel title (terminalMenus.ts `MenuId.ViewTitle`): the active terminal while
+    /// the tabs list is hidden, New with the profile dropdown, Split and Kill while the tabs list is hidden.
     pub(super) fn terminal_title_actions(&self, cx: &mut Context<Self>) -> Div {
         // terminalMenus.ts: the active terminal entry and the inline Split and Kill actions follow
         // `tabs.showActiveTerminal` and `tabs.showActions` (`shouldShowViewInlineActions`) over the group count.
@@ -907,19 +925,12 @@ impl Workbench {
         };
         let show_active_terminal = tabs_enabled && shown_for("terminal.integrated.tabs.showActiveTerminal");
         let show_inline_actions = self.setting("terminal.integrated.tabs.hideCondition") != "never" && (!tabs_enabled || shown_for("terminal.integrated.tabs.showActions"));
-        let title_border = ["editorGroupHeader.border", "contrastBorder"].into_iter().find_map(|key| self.theme.color(key));
         let active_title = self.terminal_view.active_instance_id().and_then(|id| self.terminal_view.instance(id)).map(TerminalInstance::title);
         let foreground = self.foreground_or("icon.foreground");
         div()
-            .relative()
-            .h(px(35.))
-            .flex_none()
             .flex()
             .items_center()
-            .justify_end()
-            .px(px(8.))
             .gap(px(4.))
-            .bg(self.color("breadcrumb.background"))
             .when_some(active_title.filter(|_| show_active_terminal), |actions, title| {
                 actions.child(
                     div()
@@ -941,12 +952,19 @@ impl Workbench {
                         })),
                 )
             })
-            .child(self.search_action("add", "workbench.action.terminal.new", true, cx))
-            .child(self.search_action("chevron-down", "workbench.action.terminal.newWithProfile", true, cx))
+            // dropdown.css `.monaco-dropdown-with-primary`: New Terminal and its 12px profile chevron side by side.
+            .child(div().flex().child(self.search_action("add", "workbench.action.terminal.new", true, cx)).child(self.terminal_profile_chevron(foreground, cx)))
             .when(show_inline_actions, |actions| {
                 actions.child(self.search_action("split-horizontal", "workbench.action.terminal.split", true, cx)).child(self.search_action("trash", "workbench.action.terminal.kill", true, cx))
             })
-            .when_some(title_border, |actions, color| actions.child(div().absolute().bottom_0().left_0().right_0().h(px(1.)).bg(color)))
+    }
+
+    fn terminal_profile_chevron(&self, foreground: gpui::Rgba, cx: &mut Context<Self>) -> gpui::Stateful<Div> {
+        let hover = self.color("toolbar.hoverBackground");
+        self.icon("chevron-down", 16., 12., foreground).id("workbench.action.terminal.newWithProfile").rounded(px(4.)).cursor_pointer().hover(|action| action.bg(hover)).on_click(cx.listener(|workbench, _: &gpui::ClickEvent, window, cx| {
+            cx.stop_propagation();
+            workbench.execute_command("workbench.action.terminal.newWithProfile", Vec::new(), window, cx);
+        }))
     }
 
     fn terminal_tabs_shown(&self) -> bool {

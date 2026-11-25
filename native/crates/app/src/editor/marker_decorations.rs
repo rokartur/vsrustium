@@ -20,16 +20,16 @@ impl OpenEditor {
     /// `MarkerDecorations.update`: markers are compared by identity, so a decoration whose marker is still
     /// there keeps the range it tracked through edits; returns whether anything changed.
     pub fn update_markers(&mut self, markers: &[Arc<Marker>]) -> bool {
-        let before = self.markers.len();
-        self.markers.retain(|decoration| markers.iter().any(|marker| Arc::ptr_eq(marker, &decoration.marker)));
-        let removed = before != self.markers.len();
+        let before = self.text_model().markers.len();
+        self.text_model_mut().markers.retain(|decoration| markers.iter().any(|marker| Arc::ptr_eq(marker, &decoration.marker)));
+        let removed = before != self.text_model().markers.len();
         let mut added = false;
         for marker in markers {
-            if self.markers.iter().any(|decoration| Arc::ptr_eq(&decoration.marker, marker)) {
+            if self.text_model().markers.iter().any(|decoration| Arc::ptr_eq(&decoration.marker, marker)) {
                 continue;
             }
-            let (start, end) = decoration_range(&self.document.lines, marker);
-            self.markers.push(MarkerDecoration { marker: marker.clone(), start, end });
+            let (start, end) = decoration_range(&self.document().lines, marker);
+            self.text_model_mut().markers.push(MarkerDecoration { marker: marker.clone(), start, end });
             added = true;
         }
         removed || added
@@ -38,7 +38,7 @@ impl OpenEditor {
     /// `TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges` through the replace of `start..end` with `text`.
     pub(super) fn track_markers(&mut self, start: Position, end: Position, text: &str) {
         let new_end = end_of(start, text);
-        for decoration in &mut self.markers {
+        for decoration in &mut self.text_model_mut().markers {
             decoration.start = tracked(decoration.start, start, end, new_end, false);
             decoration.end = tracked(decoration.end, start, end, new_end, true).max(decoration.start);
         }

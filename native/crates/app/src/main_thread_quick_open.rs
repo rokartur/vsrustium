@@ -36,8 +36,6 @@ pub enum Owner {
     ResizeColumn(Option<usize>),
     /// A picker of output channels, with what accepting each item does.
     Output(Vec<crate::workbench::output_actions::OutputPick>),
-    /// `_workbench.pickWorkspaceFolder` of Open Folder Settings (JSON): the folders, by item handle.
-    FolderSettings(Vec<std::path::PathBuf>),
     /// The terminal profile picker or rename input.
     Terminal(crate::workbench::terminal_view::TerminalInput),
     /// The `workbench.action.reopenWithEditor` picker.
@@ -56,6 +54,8 @@ pub enum Owner {
     Choose(Reply),
     /// The folder pick of Configure Recommended Extensions (Workspace Folder).
     ExtensionsFolder(Vec<std::path::PathBuf>),
+    /// The Profiles editor's Import Profile...: a template URL as typed, or Select File...
+    ProfileTemplateImport,
     /// Configure Display Language: the languages, by item handle.
     DisplayLanguage(Vec<crate::workbench::localization::LanguageItem>),
     /// Help: List Signal Sounds and Help: List Signal Announcements.
@@ -248,7 +248,6 @@ impl Workbench {
             Owner::EditorStatus(_) => self.editor_status_event(id, event, window, cx),
             Owner::ResizeColumn(_) => self.resize_column_event(id, event, window, cx),
             Owner::Output(_) => self.output_pick_event(id, event, window, cx),
-            Owner::FolderSettings(_) => self.folder_settings_pick_event(id, event, window, cx),
             Owner::Terminal(_) => self.terminal_input_event(id, event, window, cx),
             Owner::OpenWith(_) => self.open_with_picker_event(id, event, window, cx),
             Owner::ImageZoom => self.image_zoom_picker_event(id, event, window, cx),
@@ -262,10 +261,12 @@ impl Workbench {
             Owner::Debug(_) => self.debug_pick_event(id, event, window, cx),
             Owner::Tasks(_) => self.task_pick_event(id, event, window, cx),
             Owner::TaskTemplates(_) => self.task_template_event(id, event, window, cx),
+            Owner::ProfileTemplateImport => self.profile_template_import_event(id, event, window, cx),
         }
     }
 
-    /// `quickInputService.pick` for the workbench: the picked item's handle, or null once the pick hides.
+    /// `quickInputService.pick` for the workbench: the picked item's handle (the checked handles with
+    /// `can_select_many`), or null once the pick hides.
     pub fn choose(&mut self, input: QuickInput, window: &mut Window, cx: &mut Context<Self>) -> oneshot::Receiver<Result<Value, Value>> {
         let (sender, receiver) = oneshot::channel();
         let id = self.quick_inputs.add(input, Owner::Choose(Some(sender)));
@@ -286,7 +287,10 @@ impl Workbench {
 
     fn choose_event(&mut self, id: i64, event: Event, window: &mut Window, cx: &mut Context<Self>) {
         let picked = match event {
-            Event::Accept(_) => self.quick_inputs.get(id).and_then(|input| input.active_handles().first().copied()),
+            Event::Accept(_) => match self.quick_inputs.get(id) {
+                Some(input) if input.can_select_many => Some(json!(input.selected_handles())),
+                input => input.and_then(|input| input.active_handles().first().map(|handle| json!(handle))),
+            },
             Event::Hide => {
                 if let Some(Owner::Choose(reply)) = self.quick_inputs.owner_mut(id) {
                     resolve(reply, Ok(Value::Null));

@@ -128,11 +128,13 @@ pub struct Resource {
     pub scheme: String,
     pub authority: String,
     pub path: String,
+    /// git's `git:` URIs carry the ref here (`toGitUri`).
+    pub query: String,
 }
 
 impl Resource {
     pub fn file(path: impl Into<String>) -> Self {
-        Resource { scheme: "file".into(), authority: String::new(), path: path.into() }
+        Resource { scheme: "file".into(), authority: String::new(), path: path.into(), query: String::new() }
     }
 
     /// `resourceForError`: the file system path of a `file` resource, else `toString(true)`.
@@ -171,7 +173,7 @@ impl Resource {
 
     /// `extUri.isEqual` / `extUriIgnorePathCase.isEqual`.
     pub fn is_equal(&self, other: &Resource, ignore_case: bool) -> bool {
-        self.key(ignore_case) == other.key(ignore_case)
+        self.key(ignore_case) == other.key(ignore_case) && self.query == other.query
     }
 
     /// `isEqualOrParent(self, ancestor)`: `self` is `ancestor` or below it.
@@ -532,7 +534,7 @@ mod tests {
         assert_eq!(host_name(move_or_copy(fs, &dir.join("missing"), &dir.join("other"), Mode::Move, false).unwrap_err()), FILE_NOT_FOUND);
         write_file(fs, &dir.join("folder/file"), b"").unwrap();
         assert_eq!(delete(fs, &dir.join("folder"), false, false).unwrap_err().message, format!("Unable to delete non-empty folder '{}/folder'.", dir.path));
-        let enopro = stat(fs, &Resource { scheme: "foo".into(), authority: String::new(), path: "/bar".into() }).unwrap_err();
+        let enopro = stat(fs, &Resource { scheme: "foo".into(), path: "/bar".into(), ..Resource::file("") }).unwrap_err();
         assert_eq!(enopro.message, "ENOPRO: No file system provider found for resource 'foo:/bar'");
         std::fs::remove_dir_all(&dir.path).unwrap();
     }
@@ -631,10 +633,18 @@ mod tests {
     }
 
     #[test]
+    fn equal_compares_the_query_and_below_ignores_it() {
+        let git = |query: &str| Resource { scheme: "git".into(), query: query.into(), ..Resource::file("/repo/a.txt") };
+        assert!(!git(r#"{"ref":"~"}"#).is_equal(&git(r#"{"ref":"HEAD"}"#), false));
+        assert!(git(r#"{"ref":"~"}"#).is_equal_or_below(&git("").dirname(), false));
+        assert_eq!(git("x").dirname().query, "x");
+    }
+
+    #[test]
     fn crosses_providers_through_read_and_write() {
         let dir = scratch("across");
         let fs = &mut Memory::default();
-        let mem = |path: &str| Resource { scheme: "mem".into(), authority: String::new(), path: path.into() };
+        let mem = |path: &str| Resource { scheme: "mem".into(), ..Resource::file(path) };
         write_file(fs, &mem("/folder/a.txt"), b"a").unwrap();
         assert_eq!(read_dir(fs, &mem("/")).unwrap(), vec![("folder".to_owned(), DIRECTORY)]);
         move_or_copy(fs, &mem("/folder"), &dir.join("copied"), Mode::Copy, false).unwrap();

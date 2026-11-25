@@ -10,6 +10,10 @@ pub struct Provider {
     pub handle: u64,
     pub id: String,
     pub label: String,
+    /// `isHidden`: a repository the views leave out.
+    pub hidden: bool,
+    /// `iconPath` when it is a `ThemeIcon`: its codicon id.
+    pub icon: Option<String>,
     /// `rootUri` as `UriComponents`.
     pub root_uri: Value,
     pub input: Input,
@@ -21,6 +25,9 @@ pub struct Provider {
     pub status_bar_commands: Vec<Value>,
     pub context_value: Option<String>,
     pub has_quick_diff_provider: bool,
+    pub has_secondary_quick_diff_provider: bool,
+    pub quick_diff_label: Option<String>,
+    pub secondary_quick_diff_label: Option<String>,
     pub has_history_provider: bool,
     pub groups: Vec<Group>,
     /// `$onDidChangeHistoryProviderCurrentHistoryItemRefs`: the current, remote and base refs.
@@ -58,7 +65,7 @@ pub struct Group {
 }
 
 /// `SCMRawResource`.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Resource {
     pub handle: u64,
     pub uri: Value,
@@ -114,7 +121,9 @@ impl Scm {
         let text = |index: usize| args.get(index).and_then(Value::as_str).unwrap_or_default().to_string();
         if method == "$registerSourceControl" {
             // `$registerSourceControl(handle, parentHandle, id, label, rootUri, iconPath, isHidden, inputBoxDocumentUri)`.
-            self.providers.push(Provider { handle, id: text(2), label: text(3), root_uri: args.get(4).cloned().unwrap_or(Value::Null), ..Default::default() });
+            let icon = args.get(5).and_then(|icon| icon["id"].as_str()).map(str::to_string);
+            let hidden = args.get(6) == Some(&Value::Bool(true));
+            self.providers.push(Provider { handle, id: text(2), label: text(3), hidden, icon, root_uri: args.get(4).cloned().unwrap_or(Value::Null), ..Default::default() });
             return ScmChange::Registered(handle);
         }
         if method == "$unregisterSourceControl" {
@@ -194,6 +203,9 @@ fn update_features(provider: &mut Provider, features: &Value) {
             "statusBarCommands" => provider.status_bar_commands = value.as_array().cloned().unwrap_or_default(),
             "contextValue" => provider.context_value = value.as_str().map(str::to_string),
             "hasQuickDiffProvider" => provider.has_quick_diff_provider = *value == true,
+            "hasSecondaryQuickDiffProvider" => provider.has_secondary_quick_diff_provider = *value == true,
+            "quickDiffLabel" => provider.quick_diff_label = value.as_str().map(str::to_string),
+            "secondaryQuickDiffLabel" => provider.secondary_quick_diff_label = value.as_str().map(str::to_string),
             "hasHistoryProvider" => provider.has_history_provider = *value == true,
             _ => {}
         }

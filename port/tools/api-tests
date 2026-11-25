@@ -24,7 +24,7 @@ rows=()
 run_suite() { # <suite> <folder or workspace file> <tests folder> <tests in the reference run>
   local log=$OUT/$1.log started=$SECONDS
   SHELL=/bin/bash VSCODE_GPUI_EXTENSIONS=$REF/extensions timeout "$SUITE_TIMEOUT" native/target/release/vsrustium "$2" \
-    --user-data-dir "$(mktemp -d)" --disable-workspace-trust --extensionDevelopmentPath="$tests" --extensionTestsPath="$tests/out/$3" >"$log" 2>&1
+    --user-data-dir "$(mktemp -d)" --skip-welcome --disable-workspace-trust --extensionDevelopmentPath="$tests" --extensionTestsPath="$tests/out/$3" >"$log" 2>&1
   local code=$? seconds=$((SECONDS - started)) text run passing pending failing
   text=$(sed $'s/\x1b\\[[0-9;]*m//g' "$log")
   count() { grep -Eo "^ *[0-9]+ $1" <<<"$text" | grep -Eo '[0-9]+' || echo 0; }

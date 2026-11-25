@@ -7,6 +7,7 @@ APP=${APP:-$PWD/native/target/VSRustium.app}
 source port/tools/gui-lock.sh
 dir=$(mktemp -d)
 cp -R port/fixtures/workspace "$dir/workspace"
+mkdir -p "$dir/user-data/User" && echo '{"workbench.startupEditor":"none"}' >"$dir/user-data/User/settings.json"
 cd "$dir" || exit 1
 env -u VSCODE_GPUI_EXTENSIONS PATH=/usr/bin:/bin "$APP/Contents/MacOS/vsrustium" "$dir/workspace" "$dir/workspace/notes.txt" --user-data-dir "$dir/user-data" >"$dir/log" 2>&1 &
 pid=$!

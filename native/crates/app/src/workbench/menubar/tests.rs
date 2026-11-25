@@ -145,7 +145,7 @@ fn open_recent_lists_folders_then_files_before_more(cx: &mut TestAppContext) {
         MenuItem::Separator => "-".into(),
         _ => "?".into(),
     }).collect();
-    assert_eq!(names[..5], ["/tmp/a&b", "-", "/tmp/one.txt", "-", "More…"]);
+    assert_eq!(names[..7], ["Reopen Closed Editor", "-", "/tmp/a&b", "-", "/tmp/one.txt", "-", "More…"]);
 }
 
 #[test]
@@ -168,7 +168,9 @@ fn assert_menubar_matches_the_reference(reference: &str, folder: Option<&Path>, 
     let settings = std::sync::Arc::new(std::sync::Mutex::new(config::service::Settings::load(config::registry::Registry::with_extensions(&[]), user.clone(), None)));
     let workspace = folder.map(|folder| config::workspace::Workspace::folder(folder.to_path_buf()));
     let (workbench, cx) = cx.add_window_view(|window, cx| {
+        let profile = crate::user_data_profile::ProfileState::resolve(&user.join("data"), &user.join("extensions"), workspace.as_ref(), None, false, false);
         let mut workbench = Workbench::new(theme, app_root.clone(), workspace, Languages::new(&[]), settings, HostSync::new(std::sync::mpsc::channel().0), cx);
+        workbench.set_user_data_profiles(profile, cx);
         workbench.load_keybindings(crate::keybindings::default_keybindings(&[]), user.join("keybindings.json"), cx);
         if let Some(file) = file {
             workbench.open_file(file.to_path_buf(), true, window, cx);

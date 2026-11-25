@@ -30,7 +30,7 @@ fn the_banner_action_takes_the_focus_out_of_the_editor_with_the_banner(cx: &mut 
         workbench.watch_editor_focus(window, cx);
         workbench.open_file(file.clone(), true, window, cx);
         // Languages::new(&[]) knows no TypeScript; any language but plaintext keeps the ambiguous highlight on.
-        workbench.editors.active_mut().unwrap().document.language_id = "typescript".into();
+        workbench.editors.active_mut().unwrap().document_mut().language_id = "typescript".into();
         workbench
     });
     cx.update(|window, _| window.activate_window());

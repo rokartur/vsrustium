@@ -278,7 +278,7 @@ impl Workbench {
         self.schedule_workspace_recommendations_prompt(cx);
     }
 
-    fn rescan_installed_extensions(&mut self) {
+    pub(super) fn rescan_installed_extensions(&mut self) {
         let viewlet = &mut self.extensions_viewlet;
         let mut installed = viewlet.builtins.clone();
         let user = viewlet.user.as_ref().map(|user| user.scan()).transpose();

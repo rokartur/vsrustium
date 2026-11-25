@@ -33,7 +33,7 @@ fn ranges(model: &OpenEditor) -> Vec<Sel> {
 }
 
 fn text_of(model: &OpenEditor) -> String {
-    model.document.lines.join("\n")
+    model.document().lines.join("\n")
 }
 
 const FIVE: [&str; 5] = ["first", "second line", "third line", "fourth line", "fifth"];
@@ -42,7 +42,7 @@ const FIVE: [&str; 5] = ["first", "second line", "third line", "fourth line", "f
 fn run(lines: &[&str], given: Sel, action: impl FnOnce(&mut OpenEditor), expected: &[&str], expected_selection: Sel) {
     let mut model = with_selections(lines, &[given]);
     action(&mut model);
-    assert_eq!(model.document.lines, expected);
+    assert_eq!(model.document().lines, expected);
     assert_eq!(selections(&model), [expected_selection]);
 }
 
@@ -72,7 +72,7 @@ fn copy_lines_command_cases() {
 fn copy_lines_of_two_cursors_on_one_line_copies_it_once() {
     let mut model = with_selections(&FIVE, &[(2, 1, 2, 1), (2, 4, 2, 4)]);
     model.copy_lines(true);
-    assert_eq!(model.document.lines, ["first", "second line", "second line", "third line", "fourth line", "fifth"]);
+    assert_eq!(model.document().lines, ["first", "second line", "second line", "third line", "fourth line", "fifth"]);
     assert_eq!(selections(&model), [(3, 1, 3, 1), (3, 4, 3, 4)]);
 }
 
@@ -80,12 +80,12 @@ fn copy_lines_of_two_cursors_on_one_line_copies_it_once() {
 fn duplicate_selection() {
     let mut model = with_selections(&FIVE, &[(2, 2, 2, 2), (3, 2, 3, 2)]);
     model.duplicate_selection();
-    assert_eq!(model.document.lines, ["first", "second line", "second line", "third line", "third line", "fourth line", "fifth"]);
+    assert_eq!(model.document().lines, ["first", "second line", "second line", "third line", "third line", "fourth line", "fifth"]);
     assert_eq!(ranges(&model), [(3, 2, 3, 2), (5, 2, 5, 2)]);
 
     let mut model = with_selections(&FIVE, &[(2, 1, 2, 4), (3, 1, 3, 4)]);
     model.duplicate_selection();
-    assert_eq!(model.document.lines, ["first", "secsecond line", "thithird line", "fourth line", "fifth"]);
+    assert_eq!(model.document().lines, ["first", "secsecond line", "thithird line", "fourth line", "fifth"]);
     assert_eq!(ranges(&model), [(2, 4, 2, 7), (3, 4, 3, 7)]);
 }
 
@@ -121,9 +121,9 @@ fn move_with_rules(config: serde_json::Value, down: bool, lines: &[&str], given:
     let mut languages = crate::languages::Languages::new(&[]);
     languages.configure("moveLinesMode", &config);
     let mut model = with_selections(lines, &[given]);
-    model.document.language_id = "moveLinesMode".into();
+    model.document_mut().language_id = "moveLinesMode".into();
     model.move_lines(down, AutoIndent { languages: &languages, strategy: Strategy::Full });
-    assert_eq!(model.document.lines, expected);
+    assert_eq!(model.document().lines, expected);
     assert_eq!(selections(&model), [expected_selection]);
 }
 
@@ -172,9 +172,9 @@ fn move_an_empty_line_over_an_empty_line_moves_the_cursor_only() {
 /// `testCommand` with a `SortLinesCommand`, which unlike the action never widens one line to the document.
 fn sort(given: Sel, descending: bool, expected: &[&str], expected_selection: Sel) {
     let mut model = with_selections(&FIVE, &[given]);
-    let made = sort_lines_command(&model.document.lines, model.selections[0], descending);
+    let made = sort_lines_command(&model.document().lines, model.selections[0], descending);
     model.execute_commands(vec![made], command("tests"));
-    assert_eq!(model.document.lines, expected);
+    assert_eq!(model.document().lines, expected);
     assert_eq!(selections(&model), [expected_selection]);
 }
 
@@ -194,31 +194,31 @@ fn sort_lines_command_cases() {
 fn sort_lines_action() {
     let mut model = with_selections(&["omicron", "beta", "alpha"], &[(1, 1, 3, 5)]);
     model.sort_lines(false);
-    assert_eq!(model.document.lines, ["alpha", "beta", "omicron"]);
+    assert_eq!(model.document().lines, ["alpha", "beta", "omicron"]);
     assert_eq!(ranges(&model), [(1, 1, 3, 7)]);
 
     let mut model = with_selections(&["omicron", "beta", "alpha"], &[]);
     model.sort_lines(false);
-    assert_eq!(model.document.lines, ["alpha", "beta", "omicron"]);
+    assert_eq!(model.document().lines, ["alpha", "beta", "omicron"]);
 
     let mut model = with_selections(&["omicron", "beta", "alpha", "", "omicron", "beta", "alpha"], &[(1, 1, 3, 5), (5, 1, 7, 5)]);
     model.sort_lines(false);
-    assert_eq!(model.document.lines, ["alpha", "beta", "omicron", "", "alpha", "beta", "omicron"]);
+    assert_eq!(model.document().lines, ["alpha", "beta", "omicron", "", "alpha", "beta", "omicron"]);
     assert_eq!(ranges(&model), [(1, 1, 3, 7), (5, 1, 7, 7)]);
 
     // applies to whole document when selection is single line
     let mut model = with_selections(&["omicron", "beta", "alpha"], &[(2, 1, 2, 4)]);
     model.sort_lines(false);
-    assert_eq!(model.document.lines, ["alpha", "beta", "omicron"]);
+    assert_eq!(model.document().lines, ["alpha", "beta", "omicron"]);
 
     let mut model = with_selections(&["alpha", "beta", "omicron"], &[(1, 1, 3, 7)]);
     model.sort_lines(true);
-    assert_eq!(model.document.lines, ["omicron", "beta", "alpha"]);
+    assert_eq!(model.document().lines, ["omicron", "beta", "alpha"]);
     assert_eq!(ranges(&model), [(1, 1, 3, 5)]);
 
     let mut model = with_selections(&["alpha", "beta", "omicron", "", "alpha", "beta", "omicron"], &[(1, 1, 3, 7), (5, 1, 7, 7)]);
     model.sort_lines(true);
-    assert_eq!(model.document.lines, ["omicron", "beta", "alpha", "", "omicron", "beta", "alpha"]);
+    assert_eq!(model.document().lines, ["omicron", "beta", "alpha", "", "omicron", "beta", "alpha"]);
     assert_eq!(ranges(&model), [(1, 1, 3, 5), (5, 1, 7, 5)]);
 }
 
@@ -227,23 +227,23 @@ fn delete_duplicate_lines_action() {
     let lines = ["alpha", "beta", "beta", "beta", "alpha", "omicron"];
     let mut model = with_selections(&lines, &[(1, 3, 6, 4)]);
     model.delete_duplicate_lines();
-    assert_eq!(model.document.lines, ["alpha", "beta", "omicron"]);
+    assert_eq!(model.document().lines, ["alpha", "beta", "omicron"]);
     assert_eq!(ranges(&model), [(1, 1, 3, 8)]);
 
     let mut model = with_selections(&lines, &[]);
     model.delete_duplicate_lines();
-    assert_eq!(model.document.lines, ["alpha", "beta", "omicron"]);
+    assert_eq!(model.document().lines, ["alpha", "beta", "omicron"]);
     assert!(model.selection().is_empty());
 
     let mut model = with_selections(&["alpha", "beta", "beta", "omicron", "", "alpha", "alpha", "beta"], &[(1, 2, 4, 3), (6, 2, 8, 3)]);
     model.delete_duplicate_lines();
-    assert_eq!(model.document.lines, ["alpha", "beta", "omicron", "", "alpha", "beta"]);
+    assert_eq!(model.document().lines, ["alpha", "beta", "omicron", "", "alpha", "beta"]);
     assert_eq!(ranges(&model), [(1, 1, 3, 8), (5, 1, 6, 5)]);
 
     // applies to whole document when selection is single line
     let mut model = with_selections(&["alpha", "beta", "alpha", "omicron"], &[(2, 1, 2, 2)]);
     model.delete_duplicate_lines();
-    assert_eq!(model.document.lines, ["alpha", "beta", "omicron"]);
+    assert_eq!(model.document().lines, ["alpha", "beta", "omicron"]);
 }
 
 #[test]
@@ -251,21 +251,21 @@ fn delete_all_left_action() {
     // should delete to the left of the cursor
     let mut model = with_selections(&["one", "two", "three"], &[(1, 2, 1, 2)]);
     model.delete_all_left();
-    assert_eq!(model.document.lines[0], "ne");
+    assert_eq!(model.document().lines[0], "ne");
     set(&mut model, &[(2, 2, 2, 2), (3, 2, 3, 2)]);
     model.delete_all_left();
-    assert_eq!(model.document.lines[1..], ["wo", "hree"]);
+    assert_eq!(model.document().lines[1..], ["wo", "hree"]);
 
     // should jump to the previous line when on first column
     let mut model = with_selections(&["one", "two", "three"], &[(2, 1, 2, 1)]);
     model.delete_all_left();
-    assert_eq!(model.document.lines[0], "onetwo");
+    assert_eq!(model.document().lines[0], "onetwo");
     set(&mut model, &[(1, 1, 1, 1), (2, 1, 2, 1)]);
     model.delete_all_left();
-    assert_eq!(model.document.lines, ["onetwothree"]);
+    assert_eq!(model.document().lines, ["onetwothree"]);
     set(&mut model, &[(1, 1, 1, 1)]);
     model.delete_all_left();
-    assert_eq!(model.document.lines, ["onetwothree"]);
+    assert_eq!(model.document().lines, ["onetwothree"]);
 }
 
 #[test]
@@ -273,10 +273,10 @@ fn delete_all_left_keeps_deleting_lines_in_multi_cursor_mode() {
     let lines = ["hi my name is Carlos Matos", "BCC", "waso waso waso", "my wife doesnt believe in me", "nonononono", "bitconneeeect"];
     let mut model = with_selections(&lines, &[(3, 5, 3, 5), (2, 4, 2, 4), (5, 11, 5, 11)]);
     model.delete_all_left();
-    assert_eq!((model.document.lines[1].as_str(), model.document.lines[2].as_str(), model.document.lines[4].as_str()), ("", " waso waso", ""));
+    assert_eq!((model.document().lines[1].as_str(), model.document().lines[2].as_str(), model.document().lines[4].as_str()), ("", " waso waso", ""));
     assert_eq!(ranges(&model), [(3, 1, 3, 1), (2, 1, 2, 1), (5, 1, 5, 1)]);
     model.delete_all_left();
-    assert_eq!(model.document.lines[0], "hi my name is Carlos Matos waso waso");
+    assert_eq!(model.document().lines[0], "hi my name is Carlos Matos waso waso");
     assert_eq!(ranges(&model), [(1, 27, 1, 27), (2, 29, 2, 29)]);
 }
 
@@ -284,19 +284,19 @@ fn delete_all_left_keeps_deleting_lines_in_multi_cursor_mode() {
 fn delete_all_left_works_in_multi_cursor_mode() {
     let mut model = with_selections(&["hello", "world", "hello world", "hello", "bonjour", "hola", "world", "hello world"], &[(1, 2, 1, 2), (1, 4, 1, 4)]);
     model.delete_all_left();
-    assert_eq!(model.document.lines[0], "lo");
+    assert_eq!(model.document().lines[0], "lo");
     set(&mut model, &[(2, 2, 2, 2), (2, 4, 2, 5)]);
     model.delete_all_left();
-    assert_eq!(model.document.lines[1], "d");
+    assert_eq!(model.document().lines[1], "d");
     set(&mut model, &[(3, 2, 3, 5), (3, 7, 3, 7)]);
     model.delete_all_left();
-    assert_eq!(model.document.lines[2], "world");
+    assert_eq!(model.document().lines[2], "world");
     set(&mut model, &[(4, 3, 4, 3), (4, 5, 5, 4)]);
     model.delete_all_left();
-    assert_eq!(model.document.lines[3], "jour");
+    assert_eq!(model.document().lines[3], "jour");
     set(&mut model, &[(5, 3, 6, 3), (6, 5, 7, 5), (7, 7, 7, 7)]);
     model.delete_all_left();
-    assert_eq!(model.document.lines[4], "world");
+    assert_eq!(model.document().lines[4], "world");
 }
 
 #[test]
@@ -304,11 +304,11 @@ fn delete_all_left_pushes_an_undo_stop() {
     // issue #36234
     let mut model = with_selections(&["one", "two", "three"], &[(1, 1, 1, 1)]);
     model.type_text("Typing some text here on line ");
-    assert_eq!((model.document.lines[0].as_str(), selections(&model)), ("Typing some text here on line one", vec![(1, 31, 1, 31)]));
+    assert_eq!((model.document().lines[0].as_str(), selections(&model)), ("Typing some text here on line one", vec![(1, 31, 1, 31)]));
     model.delete_all_left();
-    assert_eq!((model.document.lines[0].as_str(), selections(&model)), ("one", vec![(1, 1, 1, 1)]));
+    assert_eq!((model.document().lines[0].as_str(), selections(&model)), ("one", vec![(1, 1, 1, 1)]));
     model.undo();
-    assert_eq!((model.document.lines[0].as_str(), selections(&model)), ("Typing some text here on line one", vec![(1, 31, 1, 31)]));
+    assert_eq!((model.document().lines[0].as_str(), selections(&model)), ("Typing some text here on line one", vec![(1, 31, 1, 31)]));
 }
 
 const JOIN: [&str; 11] = ["hello", "world", "hello ", "world", "hello\t\t", "\tworld", "hello   ", "\tworld", "", "", "hello world"];
@@ -326,7 +326,7 @@ fn join_lines_inserts_a_space_if_necessary() {
     for (given, line, expected) in steps {
         set(&mut model, &[given]);
         model.join_lines();
-        assert_eq!((model.document.lines[given.0 - 1].as_str(), ranges(&model)), (line, vec![expected]), "{given:?}");
+        assert_eq!((model.document().lines[given.0 - 1].as_str(), ranges(&model)), (line, vec![expected]), "{given:?}");
     }
 }
 
@@ -335,7 +335,7 @@ fn join_lines_at_the_end_of_document() {
     // #50471
     let mut model = with_selections(&["hello", "world"], &[(2, 1, 2, 1)]);
     model.join_lines();
-    assert_eq!(model.document.lines, ["hello", "world"]);
+    assert_eq!(model.document().lines, ["hello", "world"]);
     assert_eq!(ranges(&model), [(2, 6, 2, 6)]);
 }
 
@@ -351,11 +351,11 @@ fn join_lines_works_in_multi_cursor_mode() {
 fn join_lines_pushes_an_undo_stop() {
     let mut model = with_selections(&["hello", "world"], &[(1, 6, 1, 6)]);
     model.type_text(" my dear");
-    assert_eq!((model.document.lines[0].as_str(), selections(&model)), ("hello my dear", vec![(1, 14, 1, 14)]));
+    assert_eq!((model.document().lines[0].as_str(), selections(&model)), ("hello my dear", vec![(1, 14, 1, 14)]));
     model.join_lines();
-    assert_eq!((model.document.lines[0].as_str(), selections(&model)), ("hello my dear world", vec![(1, 14, 1, 14)]));
+    assert_eq!((model.document().lines[0].as_str(), selections(&model)), ("hello my dear world", vec![(1, 14, 1, 14)]));
     model.undo();
-    assert_eq!((model.document.lines[0].as_str(), selections(&model)), ("hello my dear", vec![(1, 14, 1, 14)]));
+    assert_eq!((model.document().lines[0].as_str(), selections(&model)), ("hello my dear", vec![(1, 14, 1, 14)]));
 }
 
 fn reversed(lines: &[&str], given: &[Sel]) -> OpenEditor {
@@ -366,29 +366,29 @@ fn reversed(lines: &[&str], given: &[Sel]) -> OpenEditor {
 
 #[test]
 fn reverse_lines_action() {
-    assert_eq!(reversed(&["alice", "bob", "charlie"], &[]).document.lines, ["charlie", "bob", "alice"]);
+    assert_eq!(reversed(&["alice", "bob", "charlie"], &[]).document().lines, ["charlie", "bob", "alice"]);
     // excludes empty last line
-    assert_eq!(reversed(&["alice", "bob", "charlie", ""], &[]).document.lines, ["charlie", "bob", "alice", ""]);
+    assert_eq!(reversed(&["alice", "bob", "charlie", ""], &[]).document().lines, ["charlie", "bob", "alice", ""]);
     // updates cursor
     assert_eq!(selections(&reversed(&["alice", "bob", "charlie"], &[(3, 3, 3, 3)])), [(1, 3, 1, 3)]);
     // preserves cursor on empty last line
     assert_eq!(selections(&reversed(&["alice", "bob", "charlie", ""], &[(4, 1, 4, 1)])), [(4, 1, 4, 1)]);
     // preserves selected text when selections do not span lines
     let model = reversed(&["alice", "bob", "charlie", ""], &[(1, 1, 1, 3), (2, 1, 2, 4), (3, 1, 3, 5)]);
-    let selected: Vec<String> = model.selections.iter().map(|s| text_between(&model.document.lines, s.start(), s.end())).collect();
+    let selected: Vec<String> = model.selections.iter().map(|s| text_between(&model.document().lines, s.start(), s.end())).collect();
     assert_eq!(selected, ["al", "bob", "char"]);
     let five = ["line1", "line2", "line3", "line4", "line5"];
-    assert_eq!(reversed(&five, &[(2, 1, 4, 6)]).document.lines, ["line1", "line4", "line3", "line2", "line5"]);
-    assert_eq!(reversed(&five, &[(2, 3, 4, 3)]).document.lines, ["line1", "line4", "line3", "line2", "line5"]);
+    assert_eq!(reversed(&five, &[(2, 1, 4, 6)]).document().lines, ["line1", "line4", "line3", "line2", "line5"]);
+    assert_eq!(reversed(&five, &[(2, 3, 4, 3)]).document().lines, ["line1", "line4", "line3", "line2", "line5"]);
     let six = ["line1", "line2", "line3", "line4", "line5", "line6"];
-    assert_eq!(reversed(&six, &[(1, 1, 2, 6), (4, 1, 5, 6)]).document.lines, ["line2", "line1", "line3", "line5", "line4", "line6"]);
+    assert_eq!(reversed(&six, &[(1, 1, 2, 6), (4, 1, 5, 6)]).document().lines, ["line2", "line1", "line3", "line5", "line4", "line6"]);
     // updates selection positions after reversal
     assert_eq!(ranges(&reversed(&["line1", "line2", "line3", "line4"], &[(1, 2, 3, 3)])), [(1, 3, 3, 2)]);
     // applies to whole document when selection is single line
-    assert_eq!(reversed(&["line1", "line2", "line3"], &[(2, 1, 2, 6)]).document.lines, ["line3", "line2", "line1"]);
+    assert_eq!(reversed(&["line1", "line2", "line3"], &[(2, 1, 2, 6)]).document().lines, ["line3", "line2", "line1"]);
     // excludes end line when selection ends at column 1
-    assert_eq!(reversed(&five, &[(2, 1, 4, 1)]).document.lines, ["line1", "line3", "line2", "line4", "line5"]);
-    assert_eq!(reversed(&["omicron", "beta", "alpha"], &[(2, 1, 2, 4)]).document.lines, ["alpha", "beta", "omicron"]);
+    assert_eq!(reversed(&five, &[(2, 1, 4, 1)]).document().lines, ["line1", "line3", "line2", "line4", "line5"]);
+    assert_eq!(reversed(&["omicron", "beta", "alpha"], &[(2, 1, 2, 4)]).document().lines, ["alpha", "beta", "omicron"]);
 }
 
 #[test]
@@ -404,7 +404,7 @@ fn transpose() {
     for (given, line, text, expected) in steps {
         set(&mut model, &[given]);
         model.transpose();
-        assert_eq!((model.document.lines[line - 1].as_str(), ranges(&model)), (text, vec![expected]), "{given:?}");
+        assert_eq!((model.document().lines[line - 1].as_str(), ranges(&model)), (text, vec![expected]), "{given:?}");
     }
 
     // fix #16633
@@ -418,7 +418,7 @@ fn transpose() {
     for (given, line, text, expected) in steps {
         set(&mut model, &[given]);
         model.transpose();
-        assert_eq!((model.document.lines[line - 1].as_str(), ranges(&model)), (text, vec![expected]), "{given:?}");
+        assert_eq!((model.document().lines[line - 1].as_str(), ranges(&model)), (text, vec![expected]), "{given:?}");
     }
 }
 
@@ -428,7 +428,7 @@ fn case_steps(lines: &[&str], steps: &[(Sel, CaseTransform, &str, Option<Sel>)])
     for &(given, transform, line, expected) in steps {
         set(&mut model, &[given]);
         model.transform_case(transform);
-        assert_eq!(model.document.lines[given.0 - 1], line, "{given:?} {transform:?}");
+        assert_eq!(model.document().lines[given.0 - 1], line, "{given:?} {transform:?}");
         if let Some(expected) = expected {
             assert_eq!(ranges(&model), [expected], "{given:?} {transform:?}");
         }
@@ -490,7 +490,7 @@ fn toggle_case() {
     );
     let mut model = with_selections(&lines, &[(14, 1, 17, 14)]);
     model.transform_case(Snake);
-    assert_eq!(model.document.lines[13..17], ["function hello_world() {", "return some_global_object.print_hello_world(\"en\", \"utf-8\");", "}", "hello_world();"]);
+    assert_eq!(model.document().lines[13..17], ["function hello_world() {", "return some_global_object.print_hello_world(\"en\", \"utf-8\");", "}", "hello_world();"]);
 
     case_steps(
         &["foO baR BaZ", "foO'baR'BaZ", "foO[baR]BaZ", "foO`baR~BaZ", "foO^baR%BaZ", "foO$baR!BaZ", "'physician's assistant'"],
@@ -533,7 +533,7 @@ fn toggle_case() {
     );
     let mut model = with_selections(&camel_lines, &[(9, 1, 11, 2)]);
     model.transform_case(Camel);
-    assert_eq!(model.document.lines[8..11], ["\tfunction helloWorld() {", "\t\treturn someGlobalObject;", "\t}"]);
+    assert_eq!(model.document().lines[8..11], ["\tfunction helloWorld() {", "\t\treturn someGlobalObject;", "\t}"]);
 
     case_steps(
         &["", "   "],
@@ -618,7 +618,7 @@ fn toggle_case() {
     }
     set(&mut model, &[(9, 1, 10, 11)]);
     model.transform_case(Pascal);
-    assert_eq!(model.document.lines[8..10], ["ParseHTML4String", "KebabCase"]);
+    assert_eq!(model.document().lines[8..10], ["ParseHTML4String", "KebabCase"]);
     assert_eq!(ranges(&model), [(9, 1, 10, 10)]);
 }
 
@@ -627,36 +627,36 @@ fn delete_all_right_action() {
     // should be noop on empty
     let mut model = with_selections(&[""], &[]);
     model.delete_all_right();
-    assert_eq!((model.document.lines.clone(), ranges(&model)), (vec![String::new()], vec![(1, 1, 1, 1)]));
+    assert_eq!((model.document().lines.clone(), ranges(&model)), (vec![String::new()], vec![(1, 1, 1, 1)]));
     set(&mut model, &[(1, 1, 1, 1), (1, 1, 1, 1), (1, 1, 1, 1)]);
     model.delete_all_right();
-    assert_eq!((model.document.lines.clone(), ranges(&model)), (vec![String::new()], vec![(1, 1, 1, 1)]));
+    assert_eq!((model.document().lines.clone(), ranges(&model)), (vec![String::new()], vec![(1, 1, 1, 1)]));
 
     // should delete selected range
     let mut model = with_selections(&["hello", "world"], &[(1, 2, 1, 5)]);
     model.delete_all_right();
-    assert_eq!((model.document.lines.clone(), ranges(&model)), (vec!["ho".to_string(), "world".into()], vec![(1, 2, 1, 2)]));
+    assert_eq!((model.document().lines.clone(), ranges(&model)), (vec!["ho".to_string(), "world".into()], vec![(1, 2, 1, 2)]));
     set(&mut model, &[(1, 1, 2, 4)]);
     model.delete_all_right();
-    assert_eq!((model.document.lines.clone(), ranges(&model)), (vec!["ld".to_string()], vec![(1, 1, 1, 1)]));
+    assert_eq!((model.document().lines.clone(), ranges(&model)), (vec!["ld".to_string()], vec![(1, 1, 1, 1)]));
     set(&mut model, &[(1, 1, 1, 3)]);
     model.delete_all_right();
-    assert_eq!((model.document.lines.clone(), ranges(&model)), (vec![String::new()], vec![(1, 1, 1, 1)]));
+    assert_eq!((model.document().lines.clone(), ranges(&model)), (vec![String::new()], vec![(1, 1, 1, 1)]));
 
     // should delete to the right of the cursor
     let mut model = with_selections(&["hello", "world"], &[(1, 3, 1, 3)]);
     model.delete_all_right();
-    assert_eq!((model.document.lines.clone(), ranges(&model)), (vec!["he".to_string(), "world".into()], vec![(1, 3, 1, 3)]));
+    assert_eq!((model.document().lines.clone(), ranges(&model)), (vec!["he".to_string(), "world".into()], vec![(1, 3, 1, 3)]));
     set(&mut model, &[(2, 1, 2, 1)]);
     model.delete_all_right();
-    assert_eq!((model.document.lines.clone(), ranges(&model)), (vec!["he".to_string(), String::new()], vec![(2, 1, 2, 1)]));
+    assert_eq!((model.document().lines.clone(), ranges(&model)), (vec!["he".to_string(), String::new()], vec![(2, 1, 2, 1)]));
 
     // should join two lines, if at the end of the line
     let mut model = with_selections(&["hello", "world"], &[(1, 6, 1, 6)]);
     for expected in ["helloworld", "hello", "hello"] {
         set(&mut model, &[(1, 6, 1, 6)]);
         model.delete_all_right();
-        assert_eq!((model.document.lines.clone(), ranges(&model)), (vec![expected.to_string()], vec![(1, 6, 1, 6)]));
+        assert_eq!((model.document().lines.clone(), ranges(&model)), (vec![expected.to_string()], vec![(1, 6, 1, 6)]));
     }
 }
 
@@ -672,12 +672,12 @@ fn delete_all_right_works_with_multiple_cursors_and_undo() {
     ];
     for (lines, expected) in steps {
         model.delete_all_right();
-        assert_eq!((model.document.lines.clone(), ranges(&model)), (lines.iter().map(|line| line.to_string()).collect(), expected.to_vec()));
+        assert_eq!((model.document().lines.clone(), ranges(&model)), (lines.iter().map(|line| line.to_string()).collect(), expected.to_vec()));
     }
 
     let mut model = with_selections(&["hello", "there", "world"], &[(1, 3, 1, 3), (1, 6, 1, 6), (3, 4, 3, 4)]);
     model.delete_all_right();
-    assert_eq!((model.document.lines.clone(), ranges(&model)), (vec!["hethere".to_string(), "wor".into()], vec![(1, 3, 1, 3), (2, 4, 2, 4)]));
+    assert_eq!((model.document().lines.clone(), ranges(&model)), (vec!["hethere".to_string(), "wor".into()], vec![(1, 3, 1, 3), (2, 4, 2, 4)]));
     model.undo();
     assert_eq!(ranges(&model), [(1, 3, 1, 3), (1, 6, 1, 6), (3, 4, 3, 4)]);
     model.redo();
@@ -695,7 +695,7 @@ fn insert_line_before_and_after() {
     for (line, expected_selection, expected) in before {
         let mut model = with_selections(&text, &[(line, 3, line, 3)]);
         model.insert_line_before(no_rules(Strategy::Full));
-        assert_eq!((model.document.lines.clone(), ranges(&model)), (expected.map(String::from).to_vec(), vec![expected_selection]));
+        assert_eq!((model.document().lines.clone(), ranges(&model)), (expected.map(String::from).to_vec(), vec![expected_selection]));
     }
     let after: [(usize, Sel, [&str; 4]); 3] = [
         (1, (2, 1, 2, 1), ["First line", "", "Second line", "Third line"]),
@@ -705,7 +705,7 @@ fn insert_line_before_and_after() {
     for (line, expected_selection, expected) in after {
         let mut model = with_selections(&text, &[(line, 3, line, 3)]);
         model.insert_line_after(no_rules(Strategy::Full));
-        assert_eq!((model.document.lines.clone(), ranges(&model)), (expected.map(String::from).to_vec(), vec![expected_selection]));
+        assert_eq!((model.document().lines.clone(), ranges(&model)), (expected.map(String::from).to_vec(), vec![expected_selection]));
     }
 }
 
@@ -713,22 +713,22 @@ fn insert_line_before_and_after() {
 fn indent_lines() {
     // Bug 18276: Indentation broken when selection is empty
     let mut model = with_selections(&["function baz() {"], &[(1, 2, 1, 2)]);
-    model.document.indentation.insert_spaces = false;
+    model.document_mut().indentation.insert_spaces = false;
     model.indent_lines(no_rules(Strategy::Full));
-    assert_eq!((model.document.lines[0].as_str(), ranges(&model)), ("\tfunction baz() {", vec![(1, 3, 1, 3)]));
+    assert_eq!((model.document().lines[0].as_str(), ranges(&model)), ("\tfunction baz() {", vec![(1, 3, 1, 3)]));
     model.tab(no_rules(Strategy::Full));
-    assert_eq!(model.document.lines[0], "\tf\tunction baz() {");
+    assert_eq!(model.document().lines[0], "\tf\tunction baz() {");
 
     // issue #80736: the added tab is not selected
     let mut model = with_selections(&["Some text"], &[(1, 1, 1, 1)]);
-    model.document.indentation.insert_spaces = false;
+    model.document_mut().indentation.insert_spaces = false;
     model.indent_lines(no_rules(Strategy::Full));
-    assert_eq!((model.document.lines[0].as_str(), ranges(&model)), ("\tSome text", vec![(1, 2, 1, 2)]));
+    assert_eq!((model.document().lines[0].as_str(), ranges(&model)), ("\tSome text", vec![(1, 2, 1, 2)]));
 
     // Indenting on empty line should move cursor
     let mut model = with_selections(&[""], &[(1, 1, 1, 1)]);
     model.indent_lines(no_rules(Strategy::Full));
-    assert_eq!((model.document.lines[0].as_str(), ranges(&model)), ("    ", vec![(1, 5, 1, 5)]));
+    assert_eq!((model.document().lines[0].as_str(), ranges(&model)), ("    ", vec![(1, 5, 1, 5)]));
 }
 
 fn delete_lines(lines: &[&str], given: &[Sel], expected: &[&str], expected_selections: &[Sel]) {
@@ -777,9 +777,9 @@ fn every_line_action_is_one_undo_step() {
     let mut model = with_selections(&FIVE, &[(2, 1, 2, 1)]);
     model.move_lines(true, no_rules(Strategy::Full));
     model.copy_lines(true);
-    assert_eq!(model.document.lines, ["first", "third line", "second line", "second line", "fourth line", "fifth"]);
+    assert_eq!(model.document().lines, ["first", "third line", "second line", "second line", "fourth line", "fifth"]);
     model.undo();
-    assert_eq!(model.document.lines, ["first", "third line", "second line", "fourth line", "fifth"]);
+    assert_eq!(model.document().lines, ["first", "third line", "second line", "fourth line", "fifth"]);
     model.undo();
-    assert_eq!(model.document.lines, FIVE);
+    assert_eq!(model.document().lines, FIVE);
 }

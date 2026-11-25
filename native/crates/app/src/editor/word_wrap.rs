@@ -300,6 +300,12 @@ impl WordWrap {
         self.starts.take();
     }
 
+    /// Another editor of the shared model changed its lines (`sync_with_model`): every line breaks again.
+    pub fn lines_changed_elsewhere(&mut self, lines: &[String]) {
+        self.breaks.clear();
+        self.configure(self.options.clone(), lines);
+    }
+
     fn view_line_count_of(&self, line: usize) -> usize {
         self.breaks[line].as_ref().map_or(1, |breaks| breaks.offsets.len())
     }
@@ -319,9 +325,9 @@ impl OpenEditor {
         {
             return starts.clone();
         }
-        let mut starts = Vec::with_capacity(self.document.lines.len() + 1);
+        let mut starts = Vec::with_capacity(self.document().lines.len() + 1);
         let mut total = 0;
-        for line in 0..self.document.lines.len() {
+        for line in 0..self.document().lines.len() {
             starts.push(total);
             if folding::hidden_range(hidden, line).is_none() {
                 total += self.word_wrap.view_line_count_of(line);
@@ -345,7 +351,7 @@ impl OpenEditor {
 
     pub(super) fn wrapped_model_line(&self, view_line: usize) -> usize {
         let starts = self.view_starts();
-        let line_count = self.document.lines.len();
+        let line_count = self.document().lines.len();
         let view_line = view_line.min(starts[line_count].saturating_sub(1));
         starts[..line_count].partition_point(|&start| start <= view_line) - 1
     }
@@ -362,7 +368,7 @@ impl OpenEditor {
     /// The model line and chars that view line `view_line` shows.
     pub fn segment(&self, view_line: usize) -> Segment {
         let line = self.model_line(view_line);
-        let whole = Segment { line, start: 0, end: self.document.lines[line].chars().count(), indent: 0, first: true, last: true };
+        let whole = Segment { line, start: 0, end: self.document().lines[line].chars().count(), indent: 0, first: true, last: true };
         if !self.wraps() {
             return whole;
         }
@@ -397,8 +403,8 @@ impl OpenEditor {
 
     /// The x of column `column` of model line `line` within view line `segment`, in columns from the text's left.
     pub fn segment_visible_column(&self, segment: Segment, column: usize) -> usize {
-        let text = &self.document.lines[segment.line];
-        let tab_size = self.document.indentation.tab_size;
+        let text = &self.document().lines[segment.line];
+        let tab_size = self.document().indentation.tab_size;
         segment.indent + visible_column(text, column, tab_size) - visible_column(text, segment.start, tab_size)
     }
 
@@ -406,8 +412,8 @@ impl OpenEditor {
     /// view line's end before a wrap point.
     pub fn segment_column(&self, view_line: usize, visible: usize) -> (Position, bool) {
         let segment = self.segment(view_line);
-        let text = &self.document.lines[segment.line];
-        let tab_size = self.document.indentation.tab_size;
+        let text = &self.document().lines[segment.line];
+        let tab_size = self.document().indentation.tab_size;
         let model_visible = visible.saturating_sub(segment.indent) + visible_column(text, segment.start, tab_size);
         let column = cursor::column_from_visible(text, model_visible, tab_size).clamp(segment.start, segment.end);
         (Position::new(segment.line, column), !segment.last && column == segment.end)
@@ -464,11 +470,11 @@ impl OpenEditor {
             let selection = self.selections[index];
             let head = selection.head;
             let segment = self.segment(self.head_view_line(index));
-            let text = &self.document.lines[head.line];
+            let text = &self.document().lines[head.line];
             let moved = if end {
                 let at_row_end = self.head_at_row_end(index) || (segment.last && head.column == segment.end);
                 match at_row_end || segment.last {
-                    true => cursor::line_end(&self.document.lines, head),
+                    true => cursor::line_end(&self.document().lines, head),
                     false => {
                         row_ends.push(Position::new(head.line, segment.end));
                         Position::new(head.line, segment.end)
@@ -477,7 +483,7 @@ impl OpenEditor {
             } else {
                 let first_non_blank = text.chars().skip(segment.start).take(segment.end - segment.start).position(|c| c != ' ' && c != '\t').map_or(segment.end, |offset| segment.start + offset);
                 match segment.first || head.column == first_non_blank {
-                    true => cursor::line_start(&self.document.lines, head),
+                    true => cursor::line_start(&self.document().lines, head),
                     false => Position::new(head.line, segment.start),
                 }
             };
@@ -495,9 +501,10 @@ impl OpenEditor {
     /// `getViewLineContent`: the wrapped indent's spaces, then the segment's text.
     pub fn view_line_text(&self, view_line: usize) -> Cow<'_, str> {
         let segment = self.segment(view_line);
-        let text = &self.document.lines[segment.line];
+        let document = self.document();
+        let text = &document.lines[segment.line];
         if segment.first && segment.last {
-            return Cow::Borrowed(text);
+            return Cow::Owned(text.clone());
         }
         Cow::Owned(" ".repeat(segment.indent) + &text.chars().skip(segment.start).take(segment.end - segment.start).collect::<String>())
     }
@@ -509,7 +516,7 @@ impl OpenEditor {
         if segment.first && segment.last {
             return (text, runs);
         }
-        let line = &self.document.lines[segment.line];
+        let line = &self.document().lines[segment.line];
         let byte = |column: usize| line.char_indices().nth(column).map_or(line.len(), |(byte, _)| byte);
         let (start, end) = (byte(segment.start), byte(segment.end));
         let mut cut = Vec::new();

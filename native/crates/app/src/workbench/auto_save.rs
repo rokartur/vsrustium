@@ -131,11 +131,11 @@ impl Workbench {
     /// The `files.autoSave` configuration of a resource, or the global one without (`getAutoSaveConfiguration`).
     fn auto_save_configuration(&self, model: Option<&OpenEditor>) -> AutoSaveConfiguration {
         let overrides = match model {
-            Some(model) => Overrides { resource: Some(&model.document.path), override_identifier: Some(&model.document.language_id) },
+            Some(model) => Overrides { resource: Some(&model.document().path), override_identifier: Some(&model.document().language_id) },
             None => Overrides::default(),
         };
         let files = self.settings.lock().unwrap().get_value(Some("files"), &overrides).unwrap_or(Value::Null);
-        let inside_workspace = || model.is_none() || self.workspace().is_some_and(|workspace| workspace.folders.iter().any(|folder| model.unwrap().document.path.starts_with(&folder.path)));
+        let inside_workspace = || model.is_none() || self.workspace().is_some_and(|workspace| workspace.folders.iter().any(|folder| model.unwrap().document().path.starts_with(&folder.path)));
         auto_save_configuration(&files, inside_workspace)
     }
 
@@ -143,7 +143,7 @@ impl Workbench {
         let configuration = self.auto_save_configuration(model);
         let has_errors = || {
             let Some(model) = model else { return false };
-            let resource = model.document.uri_string();
+            let resource = model.document().uri_string();
             !self.diagnostics.service.read(ReadOptions { resource: Some(&resource), severities: Some(ERROR), take: Some(1), ..Default::default() }).is_empty()
         };
         auto_save_mode(&configuration, reason, has_errors)
@@ -156,9 +156,9 @@ impl Workbench {
 
     /// `WorkingCopyCapabilities.Untitled`: never auto saved. A search editor is untitled until it has a file.
     fn untitled_working_copy(&self, model: &OpenEditor) -> bool {
-        match model.document.scheme.as_str() {
+        match model.document().scheme.as_str() {
             "untitled" => true,
-            SEARCH_EDITOR_SCHEME => self.search_editors.get(&model.document.path).is_none_or(|editor| editor.backing_file.is_none()),
+            SEARCH_EDITOR_SCHEME => self.search_editors.get(&model.document().path).is_none_or(|editor| editor.backing_file.is_none()),
             _ => false,
         }
     }
@@ -179,7 +179,7 @@ impl Workbench {
                 self.save_all_dirty_auto_saveables(reason, cx);
             }
         }
-        let active = self.editors.active().map(|editor| (editor.document.scheme.clone(), editor.document.path.clone()));
+        let active = self.editors.active().map(|editor| (editor.document().scheme.clone(), editor.document().path.clone()));
         if active != self.auto_save.active {
             if let Some(previous) = std::mem::replace(&mut self.auto_save.active, active) {
                 self.maybe_trigger_auto_save(SaveReason::FocusChange, Some(previous), cx);
@@ -191,7 +191,7 @@ impl Workbench {
             .iter()
             .chain(&self.editors.models)
             .filter(|model| model.is_dirty() && !self.untitled_working_copy(model))
-            .map(|model| ((model.document.scheme.clone(), model.document.path.clone()), model.version_id))
+            .map(|model| ((model.document().scheme.clone(), model.document().path.clone()), model.text_model().version_id))
             .collect();
         self.auto_save.scheduled.retain(|key, _| dirty.iter().any(|(dirty, _)| dirty == key));
         self.auto_save.waiting.retain(|key, _| dirty.iter().any(|(dirty, _)| dirty == key));
@@ -267,7 +267,7 @@ impl Workbench {
             .iter()
             .chain(&self.editors.models)
             .filter(|model| model.is_dirty() && !self.untitled_working_copy(model))
-            .map(|model| (model.document.scheme.clone(), model.document.path.clone()))
+            .map(|model| (model.document().scheme.clone(), model.document().path.clone()))
             .collect();
         for key in dirty {
             self.auto_save_model(key, reason, cx);
@@ -281,7 +281,7 @@ impl Workbench {
 
     /// `activeEditorPane.onDidBlur`: the focus left the editor.
     pub(super) fn editor_blurred_auto_save(&mut self, cx: &mut Context<Self>) {
-        let active = self.editors.active().map(|editor| (editor.document.scheme.clone(), editor.document.path.clone()));
+        let active = self.editors.active().map(|editor| (editor.document().scheme.clone(), editor.document().path.clone()));
         if active.is_some() {
             self.maybe_trigger_auto_save(SaveReason::FocusChange, active, cx);
         }
@@ -293,7 +293,7 @@ impl Workbench {
         let waiting: Vec<(Key, SaveReason)> = self.auto_save.waiting.iter().map(|(key, reason)| (key.clone(), *reason)).collect();
         for (key, reason) in waiting {
             let Some(model) = self.editors.model(&key.0, &key.1) else { continue };
-            if !resources.contains(&model.document.uri_string()) {
+            if !resources.contains(&model.document().uri_string()) {
                 continue;
             }
             self.auto_save.waiting.remove(&key);

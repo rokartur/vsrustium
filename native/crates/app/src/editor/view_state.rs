@@ -72,7 +72,7 @@ impl OpenEditor {
     /// `ICodeEditorViewState` (`saveViewState`): `saveCursorState`, `ViewModel.saveState` and the folding
     /// contribution's `saveViewState`.
     pub fn view_state(&self, viewport: Viewport) -> Value {
-        let lines = &self.document.lines;
+        let lines = &self.document().lines;
         let position = |position: Position| json!({ "lineNumber": position.line + 1, "column": utf16_column(&lines[position.line], position.column) + 1 });
         let cursor_state: Vec<Value> = self
             .selections
@@ -117,7 +117,7 @@ impl OpenEditor {
         self.folded_imports = folding["foldedImports"].as_bool().unwrap_or(false);
         if let Some(regions) = folding["collapsedRegions"].as_array().filter(|regions| !regions.is_empty()) {
             let regions: Vec<LineMemento> = regions.iter().filter_map(line_memento_from_json).collect();
-            self.folding.apply_memento(&self.document.lines, &regions);
+            self.folding.apply_memento(&self.model.borrow().document.lines, &regions);
         }
         let Some(first_position) = self.position_from_json(&view_state["firstPosition"]) else { return };
         let delta = view_state["firstPositionDeltaTop"].as_f64().unwrap_or(0.) as f32;
@@ -128,7 +128,7 @@ impl OpenEditor {
 
     /// `TextModel.validatePosition` of a 1-based UTF-16 `IPosition`.
     fn position_from_json(&self, position: &Value) -> Option<Position> {
-        let lines = &self.document.lines;
+        let lines = &self.document().lines;
         let line = (position["lineNumber"].as_u64()? as usize).clamp(1, lines.len()) - 1;
         let column = char_column(&lines[line], (position["column"].as_u64()? as usize).max(1) - 1);
         Some(Position::new(line, column))

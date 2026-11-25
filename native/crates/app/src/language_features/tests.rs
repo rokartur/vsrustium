@@ -50,7 +50,8 @@ fn ordered_sorts_by_score_then_builtin_then_newest() {
     let candidate = Candidate { uri: &uri, language: "typescript" };
     let handles = |features: &LanguageFeatures| features.ordered("$registerHoverProvider", &candidate).iter().map(|registration| registration.handle).collect::<Vec<_>>();
     assert_eq!(handles(&features), [4, 3, 2, 1]);
-    features.unregister(4);
+    assert_eq!(features.unregister(4).as_deref(), Some("$registerHoverProvider"));
+    assert_eq!(features.unregister(4), None);
     assert_eq!(handles(&features), [3, 2, 1]);
     features.register("$registerHoverProvider", vec![json!(7), json!([{ "language": "typescript", "exclusive": true }])]);
     assert_eq!(handles(&features), [7]);

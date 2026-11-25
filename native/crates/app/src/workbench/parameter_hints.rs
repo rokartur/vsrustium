@@ -79,8 +79,9 @@ impl Workbench {
         context.insert("parameterHintsVisible".into(), json!(hints.is_some()));
         context.insert("parameterHintsMultipleSignatures".into(), json!(hints.is_some_and(|hints| signatures(hints).len() > 1)));
         let Some(editor) = self.editors.active() else { return };
-        let uri = editor.document.uri();
-        let candidate = Candidate { uri: &uri, language: &editor.document.language_id };
+        let uri = editor.document().uri();
+        let language = editor.document().language_id.clone();
+        let candidate = Candidate { uri: &uri, language: &language };
         context.insert("editorHasSignatureHelpProvider".into(), json!(!self.language_features.ordered(REGISTER, &candidate).is_empty()));
     }
 
@@ -98,8 +99,9 @@ impl Workbench {
     /// `trigger`: the context queues and the throttled delayer runs `doTrigger` after `delay`.
     fn trigger_parameter_hints(&mut self, kind: u64, character: Option<String>, delay: Duration, cx: &mut Context<Self>) {
         let Some(editor) = self.editors.active() else { return };
-        let uri = editor.document.uri();
-        let candidate = Candidate { uri: &uri, language: &editor.document.language_id };
+        let uri = editor.document().uri();
+        let language = editor.document().language_id.clone();
+        let candidate = Candidate { uri: &uri, language: &language };
         if self.language_features.ordered(REGISTER, &candidate).is_empty() {
             return;
         }
@@ -130,10 +132,11 @@ impl Workbench {
         let pending = std::mem::take(&mut self.parameter_hints.pending);
         let Some((kind, character)) = pending.into_iter().reduce(|previous, current| if current.0 == CONTENT_CHANGE { previous } else { current }) else { return };
         let Some(editor) = self.editors.active() else { return };
-        let uri = editor.document.uri();
-        let candidate = Candidate { uri: &uri, language: &editor.document.language_id };
+        let uri = editor.document().uri();
+        let language = editor.document().language_id.clone();
+        let candidate = Candidate { uri: &uri, language: &language };
         let head = editor.selection().head;
-        let position = json!({ "lineNumber": head.line + 1, "column": utf16_column(&editor.document.lines[head.line], head.column) + 1 });
+        let position = json!({ "lineNumber": head.line + 1, "column": utf16_column(&editor.document().lines[head.line], head.column) + 1 });
         let context = json!({ "triggerKind": kind, "triggerCharacter": character, "isRetrigger": is_retrigger, "activeSignatureHelp": active });
         let handles: Vec<u64> = self.language_features.ordered(REGISTER, &candidate).iter().map(|registration| registration.handle).collect();
         let model_id = editor.model_id;
@@ -221,8 +224,9 @@ impl Workbench {
         }
         let Some(last) = text.chars().last() else { return };
         let Some(editor) = self.editors.active() else { return };
-        let uri = editor.document.uri();
-        let candidate = Candidate { uri: &uri, language: &editor.document.language_id };
+        let uri = editor.document().uri();
+        let language = editor.document().language_id.clone();
+        let candidate = Candidate { uri: &uri, language: &language };
         let (mut trigger, mut retrigger) = (false, false);
         for registration in self.language_features.ordered(REGISTER, &candidate) {
             let metadata = registration.args.get(2).unwrap_or(&Value::Null);
@@ -254,8 +258,8 @@ impl Workbench {
         let Some(editor) = super::host_requests::uri_parts(&uri).ok().and_then(|(scheme, path)| self.editors.model(scheme, &path)) else {
             return Outcome::Ready(Err(crate::commands::error_value("model not found")));
         };
-        let document_uri = editor.document.uri();
-        let candidate = Candidate { uri: &document_uri, language: &editor.document.language_id };
+        let document_uri = editor.document().uri();
+        let candidate = Candidate { uri: &document_uri, language: &editor.document().language_id };
         let handles: Vec<u64> = self.language_features.ordered(REGISTER, &candidate).iter().map(|registration| registration.handle).collect();
         let context = json!({ "triggerKind": INVOKE, "isRetrigger": false, "triggerCharacter": args.get(2).cloned().unwrap_or(Value::Null) });
         let request = self.provide_signature_help(handles, document_uri, args.get(1).cloned().unwrap_or_default(), context, cx);
@@ -276,8 +280,8 @@ impl Workbench {
         let active_signature = (hints["activeSignature"].as_u64().unwrap_or(0) as usize).min(signatures.len() - 1);
         let signature = &signatures[active_signature];
         let head = editor.selection().head;
-        let text = &editor.document.lines[head.line];
-        let left = visible_column(text, head.column, editor.document.indentation.tab_size) as f32 * char_width - editor.scroll.left + content_left;
+        let text = &editor.document().lines[head.line];
+        let left = visible_column(text, head.column, editor.document().indentation.tab_size) as f32 * char_width - editor.scroll.left + content_left;
         let anchor_top = editor.line_top(editor.view_line(head.line), self.editors.viewport) - editor.scroll.top;
         let editor_bounds = self.text_area_bounds.get();
         let window_size = window.viewport_size().map(f32::from);
@@ -309,7 +313,7 @@ impl Workbench {
             }
         };
         let style = MarkdownStyle { font_size: EDITOR_FONT_SIZE, line_height: LINE_HEIGHT, foreground: self.foreground_or("editorHoverWidget.foreground") };
-        let language = &editor.document.language_id;
+        let language = &editor.document().language_id;
         let mut docs = Vec::new();
         if let Some(documentation) = active_parameter.map(|parameter| &parameter["documentation"]).filter(|documentation| has_text(documentation)) {
             docs.push(self.parameter_hints_docs("parameter-hints-parameter-docs", documentation, style, language, cx));

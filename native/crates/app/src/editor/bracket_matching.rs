@@ -11,7 +11,8 @@ impl OpenEditor {
     /// the next bracket; a cursor with none collapses where it starts.
     pub fn jump_to_bracket(&mut self, languages: &Languages) {
         let brackets = self.bracket_pairs(languages);
-        let lines = &self.document.lines;
+        let document = self.document();
+        let lines = &document.lines;
         let mut selections = Vec::new();
         for selection in &self.selections {
             let position = selection.start();
@@ -27,6 +28,7 @@ impl OpenEditor {
             };
             selections.push(Selection::caret(target.map_or(position, |bracket| start(lines, bracket))));
         }
+        drop(document);
         self.set_selections(selections);
     }
 
@@ -34,7 +36,8 @@ impl OpenEditor {
     /// bracket; `select_brackets` false leaves the brackets out. Backwards from a closing bracket.
     pub fn select_to_bracket(&mut self, languages: &Languages, select_brackets: bool) {
         let brackets = self.bracket_pairs(languages);
-        let lines = &self.document.lines;
+        let document = self.document();
+        let lines = &document.lines;
         let mut selections = Vec::new();
         for selection in &self.selections {
             let position = selection.start();
@@ -55,6 +58,7 @@ impl OpenEditor {
             }
             selections.push(Selection { anchor: from, head: to });
         }
+        drop(document);
         if !selections.is_empty() {
             self.set_selections(selections);
         }
@@ -65,10 +69,12 @@ impl OpenEditor {
         let mut changes = Vec::new();
         for position in self.selections.iter().map(|selection| selection.head).collect::<Vec<_>>() {
             let brackets = self.bracket_pairs(languages);
-            let lines = &self.document.lines;
+            let document = self.document();
+            let lines = &document.lines;
             let (line, offset) = byte_position(lines, position);
             let Some([open, close]) = brackets.match_bracket(line, offset).or_else(|| brackets.enclosing_brackets(line, offset)) else { continue };
             let edits = [open, close].map(|bracket| (start(lines, bracket), end(lines, bracket), String::new(), false)).into();
+            drop(document);
             self.push_undo_stop();
             changes.extend(self.execute_edits(edits, None, EditReason::Unknown("editor.action.removeBrackets")));
             self.push_undo_stop();
@@ -77,7 +83,7 @@ impl OpenEditor {
     }
 
     fn bracket_pairs(&self, languages: &Languages) -> DocumentBrackets {
-        self.document.tokens.pairs(languages, &self.document.lines, &self.document.language_id)
+        self.document().tokens.pairs(languages, &self.document().lines, &self.document().language_id)
     }
 }
 

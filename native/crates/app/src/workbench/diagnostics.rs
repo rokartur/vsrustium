@@ -15,13 +15,13 @@ use crate::editor::{LINE_HEIGHT, OpenEditor, expand_tabs};
 use crate::markers::{DEPRECATED, ERROR, HINT, INFO, MarkerService, MarkerStatistics, ReadOptions, UNNECESSARY, WARNING};
 
 /// `MainThreadDiagnostics.extHostId`: the window's one extension host is the first.
-const EXT_HOST_ID: &str = "extHost1";
+pub(super) const EXT_HOST_ID: &str = "extHost1";
 
 #[derive(Default)]
 pub struct Diagnostics {
     pub service: MarkerService,
     /// The `UriComponents` of every resource with markers, by `URI.toString()`, for `$acceptMarkersChange`.
-    uris: HashMap<String, Value>,
+    pub(super) uris: HashMap<String, Value>,
 }
 
 impl Workbench {
@@ -87,6 +87,9 @@ impl Workbench {
         for resource in &resources {
             let markers = self.diagnostics.service.read(ReadOptions { resource: Some(resource), ..Default::default() });
             let others: Vec<Value> = markers.iter().filter(|marker| marker.origin.as_deref() != Some(EXT_HOST_ID)).map(|marker| marker.to_data()).collect();
+            if let Some(Ok(("file", path))) = self.diagnostics.uris.get(resource).map(uri_parts) {
+                self.markers_file_decoration_changed(resource, &path);
+            }
             let uri = match markers.is_empty() {
                 true => self.diagnostics.uris.remove(resource),
                 false => self.diagnostics.uris.get(resource).cloned(),
@@ -105,7 +108,7 @@ impl Workbench {
     pub(super) fn update_marker_decorations(&mut self, resources: Option<&[String]>) {
         let service = &self.diagnostics.service;
         for editor in self.editors.editors.iter_mut().chain(&mut self.editors.models) {
-            let resource = editor.document.uri_string();
+            let resource = editor.document().uri_string();
             if resources.is_some_and(|resources| !resources.contains(&resource)) {
                 continue;
             }
@@ -117,9 +120,10 @@ impl Workbench {
     /// The marker decorations' `className`s on model line `line`, lowest z-index first: the squiggles of
     /// codeEditorWidget.ts and editor.css; `x` maps a char column to its left edge.
     pub(super) fn marker_line_decorations(&self, editor: &OpenEditor, line: usize, char_width: f32, x: impl Fn(usize) -> f32) -> Vec<AnyElement> {
-        let mut decorations: Vec<&MarkerDecoration> = editor.markers.iter().filter(|decoration| decoration.start.line <= line && line <= decoration.end.line).collect();
+        let model = editor.text_model();
+        let mut decorations: Vec<&MarkerDecoration> = model.markers.iter().filter(|decoration| decoration.start.line <= line && line <= decoration.end.line).collect();
         decorations.sort_by_key(|decoration| decoration.marker.severity);
-        let line_length = editor.document.lines[line].chars().count();
+        let line_length = editor.document().lines[line].chars().count();
         let mut elements = Vec::new();
         for decoration in decorations {
             let from = if line == decoration.start.line { decoration.start.column } else { 0 };
@@ -150,7 +154,7 @@ impl Workbench {
     /// unnecessary code at `editorUnnecessaryCode.opacity` with `editor.showUnused`, deprecated code struck through
     /// with `editor.showDeprecated`.
     pub(super) fn marker_text_styles(&self, editor: &OpenEditor, line: usize, tab_size: usize) -> Vec<(Range<usize>, HighlightStyle)> {
-        let text = &editor.document.lines[line];
+        let text = &editor.document().lines[line];
         let byte = |column: usize| expand_tabs(&text.chars().take(column).collect::<String>(), tab_size).len();
         let fade = match self.setting("editor.showUnused") != false {
             true => self.theme.color("editorUnnecessaryCode.opacity").map(|opacity| 1. - opacity.a),
@@ -158,7 +162,7 @@ impl Workbench {
         };
         let strikethrough = (self.setting("editor.showDeprecated") != false).then(|| StrikethroughStyle { thickness: px(1.), color: self.theme.color("editor.foreground").map(Into::into) });
         let mut styles = Vec::new();
-        for decoration in editor.markers.iter().filter(|decoration| decoration.start.line <= line && line <= decoration.end.line) {
+        for decoration in editor.text_model().markers.iter().filter(|decoration| decoration.start.line <= line && line <= decoration.end.line) {
             let style = match (decoration.marker.has_tag(DEPRECATED), decoration.marker.has_tag(UNNECESSARY)) {
                 (true, _) => HighlightStyle { strikethrough, ..Default::default() },
                 (false, true) => HighlightStyle { fade_out: fade, ..Default::default() },
@@ -177,7 +181,7 @@ impl Workbench {
     /// The marker decorations' `overviewRuler` line ranges in `OverviewRulerLane.Right` by z-index: infos, warnings, errors.
     pub(super) fn marker_ruler_lines(&self, editor: &OpenEditor) -> [(Vec<(usize, usize)>, Rgba); 3] {
         let lines = |severity: u8| {
-            let mut lines: Vec<(usize, usize)> = editor.markers.iter().filter(|decoration| decoration.marker.severity == severity).map(|decoration| (decoration.start.line, decoration.end.line)).collect();
+            let mut lines: Vec<(usize, usize)> = editor.text_model().markers.iter().filter(|decoration| decoration.marker.severity == severity).map(|decoration| (decoration.start.line, decoration.end.line)).collect();
             lines.sort();
             lines
         };
@@ -193,19 +197,28 @@ impl Workbench {
         let mut ranges = Vec::new();
         for (severity, key) in [(INFO, "minimap.infoHighlight"), (WARNING, "minimap.warningHighlight"), (ERROR, "minimap.errorHighlight")] {
             let Some(color) = self.theme.color(key) else { continue };
-            ranges.extend(editor.markers.iter().filter(|decoration| decoration.marker.severity == severity).map(|decoration| (decoration.start, decoration.end, color)));
+            ranges.extend(editor.text_model().markers.iter().filter(|decoration| decoration.marker.severity == severity).map(|decoration| (decoration.start, decoration.end, color)));
         }
         ranges
     }
 
     /// The `status.problems` entry: `$(error) N $(warning) N`, `$(info) N` only with infos.
-    pub(super) fn problems_status_item(&self, foreground: Rgba) -> Div {
+    pub(super) fn problems_status_item(&self, foreground: Rgba, cx: &mut Context<Self>) -> gpui::Stateful<Div> {
         let stats = self.diagnostics.service.statistics();
         let mut counts = vec![("error", stats.errors), ("warning", stats.warnings)];
         if stats.infos > 0 {
             counts.push(("info", stats.infos));
         }
-        let mut item = div().relative().h_full().cursor_pointer().mx(px(3.)).px(px(5.)).flex().items_center();
+        let mut item = div()
+            .id("status.problems")
+            .relative()
+            .h_full()
+            .cursor_pointer()
+            .mx(px(3.))
+            .px(px(5.))
+            .flex()
+            .items_center()
+            .on_click(cx.listener(|workbench, _, window, cx| drop(workbench.execute_command("workbench.actions.view.toggleProblems", Vec::new(), window, cx))));
         for (index, (icon, count)) in counts.iter().enumerate() {
             let separator = if index + 1 < counts.len() { " " } else { "" };
             item = item.child(self.icon(icon, 16., 16., foreground)).child(format!(" {}{separator}", pack_number(*count)));

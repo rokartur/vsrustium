@@ -172,7 +172,7 @@ impl Workbench {
 
     /// `Create Entry`: an input box for the new entry's source, for the active editor's file.
     fn show_create_local_history_entry(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(file) = self.editors.active().filter(|editor| editor.document.scheme == "file").map(|editor| editor.document.path.clone()) else { return };
+        let Some(file) = self.editors.active().filter(|editor| editor.document().scheme == "file").map(|editor| editor.document().path.clone()) else { return };
         let mut input = QuickInput::new(0, Kind::InputBox);
         input.title = Some("Create Local History Entry".into());
         input.ignore_focus_out = true;

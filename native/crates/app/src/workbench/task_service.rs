@@ -70,7 +70,7 @@ impl Markers for WorkbenchMarkers<'_> {
     }
 
     fn is_open(&self, resource: &PathBuf) -> bool {
-        self.0.editors.editors.iter().any(|editor| editor.document.path == *resource)
+        self.0.editors.editors.iter().any(|editor| editor.document().path == *resource)
     }
 }
 
@@ -315,8 +315,33 @@ impl Workbench {
         receiver
     }
 
-    /// terminalTaskSystem.ts `_executeInTerminal`: a terminal named after the task runs it.
+    /// `_executeCommand`: the task's `${command:...}` and `${input:...}` are asked for first (`_acquireInput`), then it
+    /// runs with them replaced; a cancelled prompt ends the task without running it.
     fn start_task(&mut self, task: Task, start_id: Option<String>, reply: oneshot::Sender<Option<i32>>, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(variables) = super::configuration_resolver::task_interactive_variables(&task) else {
+            return self.launch_task(task, start_id, reply, window, cx);
+        };
+        let inputs = self.task_inputs(task.workspace_folder.as_deref());
+        cx.spawn_in(window, async move |workbench, cx| {
+            let resolved = super::configuration_resolver::resolve_with_interaction(&workbench, cx, &variables, "tasks", inputs.as_deref(), &Default::default()).await;
+            let _ = workbench.update_in(cx, |workbench, window, cx| match resolved {
+                Ok(Some(resolved)) => workbench.launch_task(super::configuration_resolver::task_with_variables(task, &resolved), start_id, reply, window, cx),
+                outcome => {
+                    if let Err(message) = outcome {
+                        workbench.notify_error(message);
+                    }
+                    if let Some(start_id) = start_id {
+                        workbench.host.send("ExtHostTask", "$OnDidEndTask", vec![json!({ "id": task.id, "task": task.to_dto() }), json!(start_id)]);
+                    }
+                    let _ = reply.send(Some(0));
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// terminalTaskSystem.ts `_executeInTerminal`: a terminal named after the task runs it.
+    fn launch_task(&mut self, task: Task, start_id: Option<String>, reply: oneshot::Sender<Option<i32>>, window: &mut Window, cx: &mut Context<Self>) {
         // `run`: past `runOptions.instanceLimit` (1 by default) the task does not start again; the caller waits for the
         // newest instance and `_handleInstancePolicy` applies.
         let instances: Vec<usize> = (0..self.tasks.active.len()).filter(|&index| self.tasks.active[index].task.id == task.id).collect();
@@ -408,12 +433,12 @@ impl Workbench {
     // shortcut: `${selectedText}` stays unresolved, the editor model has no range text accessor here; add it with one.
     pub(super) fn variable_context(&self, folder: Option<PathBuf>) -> crate::variables::VariableContext {
         let folders: Vec<(String, PathBuf)> = self.workspace().map(|workspace| workspace.folders.iter().map(|folder| (folder.name.clone(), folder.path.clone())).collect()).unwrap_or_default();
-        let active = self.editors.active().filter(|editor| editor.document.scheme == "file");
+        let active = self.editors.active().filter(|editor| editor.document().scheme == "file");
         let cursor = active.map(|editor| editor.selections[0].head);
         crate::variables::VariableContext {
             folder: folder.or_else(|| folders.first().map(|(_, path)| path.clone())),
             folders,
-            file: active.map(|editor| editor.document.path.clone()),
+            file: active.map(|editor| editor.document().path.clone()),
             line_number: cursor.map(|position| position.line as u32 + 1),
             column_number: cursor.map(|position| position.column as u32 + 1),
             selected_text: None,

@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Runs port/fixtures/extensions/shell-tests in vsrustium: the power, metered connection and product round trips
+# between the extension host and the workbench. Run on the Studio after a release build. Prints one line per check.
+set -uo pipefail
+cd "$(dirname "$0")/../.."
+REF=${REF:-$HOME/Developer/vscode-ref}
+out=$(mktemp -d)
+source port/tools/gui-lock.sh
+tests=$PWD/port/fixtures/extensions/shell-tests
+SHELL_TESTS_ROOT=$PWD VSCODE_GPUI_EXTENSIONS=$REF/extensions timeout 120 native/target/release/vsrustium --user-data-dir "$out/user-data" --skip-welcome \
+  --extensionDevelopmentPath="$tests" --extensionTestsPath="$tests/tests" >"$out/log" 2>&1
+code=$?
+grep -E '^(ok|FAILED) ' "$out/log" || cat "$out/log"
+echo "exit $code"
+rm -rf "$out"
+exit "$code"

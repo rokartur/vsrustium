@@ -32,10 +32,10 @@ impl Workbench {
     /// `_update` on `onDidChangeModel`: the editor now shows `model_id`.
     pub(super) fn warn_large_file(&mut self) {
         let Some(editor) = self.editors.active() else { return };
-        if !editor.document.too_large_for_tokenization || self.profile_storage.lock().unwrap().get(WARNER_ID) == Some("true") {
+        if !editor.document().too_large_for_tokenization || self.profile_storage.lock().unwrap().get(WARNER_ID) == Some("true") {
             return;
         }
-        let name = editor.document.path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+        let name = editor.document().path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
         let message = format!("{name}: tokenization, wrapping, folding, codelens, word highlighting and sticky scroll have been turned off for this large file in order to reduce memory usage and avoid freezing or crashing.");
         let mut notification = Notification::new(Severity::Info, message);
         notification.primary = vec![
@@ -78,7 +78,7 @@ mod tests {
         open(&large, cx);
         workbench.read_with(cx, |workbench, _| {
             let editor = workbench.editors.active().unwrap();
-            assert!(editor.document.too_large_for_tokenization);
+            assert!(editor.document().too_large_for_tokenization);
             assert_eq!(editor.folding.regions.len(), 0);
             assert!(editor.highlights.is_empty());
         });

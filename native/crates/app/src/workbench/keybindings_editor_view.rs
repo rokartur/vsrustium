@@ -47,7 +47,6 @@ const COLUMN_LABELS: [&str; 4] = ["Command", "Keybinding", "When", "Source"];
 /// `--vscode-sash-size`.
 pub(super) const SASH_SIZE: f32 = 4.;
 /// `workbench.sash.hoverDelay` default.
-pub(super) const SASH_HOVER_DELAY: Duration = Duration::from_millis(300);
 /// The `border-color 0.2s ease-out` transition of the column borders on table hover.
 const TABLE_BORDER_FADE: Duration = Duration::from_millis(200);
 /// `DefineKeybindingWidget.WIDTH` and `HEIGHT`.
@@ -947,6 +946,7 @@ impl Workbench {
     pub(super) fn close_modal_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.close_keybindings_editor(window, cx);
         self.close_settings_editor(window, cx);
+        self.close_profiles_editor(cx);
     }
 
     /// `.modal-editor-header`: the editor's icon and title, and the `ModalEditorTitle` actions.
@@ -988,8 +988,10 @@ impl Workbench {
             .child(self.icon(header.icon, 16., 16., foreground).mr(px(6.)))
             .child(div().flex_1().text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).truncate().child(header.title))
             // `ModalEditorEditorTitle`, then a separator and `ModalEditorTitle`, 4px apart.
-            .child(action("go-to-file", header.json_title, header.json_command))
-            .child(div().mx(px(4.)).w(px(1.)).h(px(16.)).bg(foreground).opacity(0.3))
+            // The Profiles editor has no JSON action and no separator.
+            .when(!header.json_command.is_empty(), |row| {
+                row.child(action("go-to-file", header.json_title, header.json_command)).child(div().mx(px(4.)).w(px(1.)).h(px(16.)).bg(foreground).opacity(0.3))
+            })
             // shortcut: Open Modal Editor in Main Window is drawn disabled: the port's editor area only hosts text editors; upgrade with the editor pane registry.
             .child(self.icon("open-in-product", 22., 16., foreground).opacity(0.4))
             .child(action(if self.keybindings_editor.maximized { "screen-normal" } else { "screen-full" }, maximize_title, "workbench.action.toggleModalEditorMaximized").ml(px(4.)))
@@ -1196,11 +1198,12 @@ impl Workbench {
             _ => gpui::CursorStyle::ResizeColumn,
         })
         .on_hover(cx.listener(move |workbench, hovered: &bool, window, cx| {
+            let delay = workbench.sash_hover_delay();
             let editor = &mut workbench.keybindings_editor;
             editor.sash_hovered = None;
             editor.sash_hover = hovered.then(|| {
                 cx.spawn_in(window, async move |workbench, cx| {
-                    cx.background_executor().timer(SASH_HOVER_DELAY).await;
+                    cx.background_executor().timer(delay).await;
                     let _ = workbench.update(cx, |workbench, cx| {
                         workbench.keybindings_editor.sash_hovered = Some(index);
                         cx.notify();

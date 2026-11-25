@@ -51,6 +51,12 @@ impl LanguageFeatures {
         self.registrations.iter().find(|registration| registration.handle == handle)
     }
 
+    /// The providers registered with `method` in registration order, for registries without a selector
+    /// (`WorkspaceSymbolProviderRegistry`).
+    pub fn all<'a>(&'a self, method: &'a str) -> impl Iterator<Item = &'a Registration> {
+        self.registrations.iter().filter(move |registration| registration.method == method)
+    }
+
     /// `LanguageFeatureRegistry.ordered`: the providers registered with `method` whose selector matches, best score
     /// first, then extension providers before built-in ones, then the newest; an exclusive selector that matches
     /// takes the model alone.

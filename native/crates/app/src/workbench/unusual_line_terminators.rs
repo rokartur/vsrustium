@@ -30,7 +30,7 @@ impl Workbench {
     /// Schedules `_checkForUnusualLineTerminators` from the frame that shows another model, version or setting.
     pub(super) fn schedule_unusual_line_terminators_check(&self, editor: &OpenEditor, window: &mut Window, cx: &mut Context<Self>) {
         let setting = self.unusual_line_terminators_setting(editor);
-        let key = (editor.model_id, editor.version_id, setting);
+        let key = (editor.model_id, editor.text_model().version_id, setting);
         let Some(previous) = self.unusual_line_terminators.checked.replace(Some(key)) else {
             return self.defer_unusual_line_terminators_check(window, cx);
         };
@@ -46,7 +46,8 @@ impl Workbench {
     }
 
     fn unusual_line_terminators_setting(&self, editor: &OpenEditor) -> &'static str {
-        let overrides = Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
+        let (resource, language) = (editor.document().path.clone(), editor.document().language_id.clone());
+        let overrides = Overrides { resource: Some(&resource), override_identifier: Some(&language) };
         let value = self.settings.lock().unwrap().get_value(Some("editor.unusualLineTerminators"), &overrides);
         match value.as_ref().and_then(|value| value.as_str()) {
             Some("auto") => "auto",
@@ -59,8 +60,8 @@ impl Workbench {
     fn check_unusual_line_terminators(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(editor) = self.editors.active() else { return };
         let setting = self.unusual_line_terminators_setting(editor);
-        let resource = (editor.document.scheme.clone(), editor.document.path.clone());
-        if setting == "off" || !has_unusual_line_terminators(&editor.document.lines) || self.unusual_line_terminators.ignored.contains(&resource) {
+        let resource = (editor.document().scheme.clone(), editor.document().path.clone());
+        if setting == "off" || !has_unusual_line_terminators(&editor.document().lines) || self.unusual_line_terminators.ignored.contains(&resource) {
             return;
         }
         if self.readonly(&resource.0, &resource.1).is_some() {
@@ -73,7 +74,7 @@ impl Workbench {
         if self.unusual_line_terminators.presenting_dialog {
             return;
         }
-        let name = editor.document.path.file_name().map_or(String::new(), |name| name.to_string_lossy().into_owned());
+        let name = editor.document().path.file_name().map_or(String::new(), |name| name.to_string_lossy().into_owned());
         let detail = format!(
             "The file '{name}' contains one or more unusual line terminator characters, like Line Separator (LS) or Paragraph Separator (PS).\n\nIt is recommended to remove them from the file. This can be configured via `editor.unusualLineTerminators`."
         );

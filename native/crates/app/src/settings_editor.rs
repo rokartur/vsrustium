@@ -278,6 +278,24 @@ impl Model {
     pub fn index_of(&self, key: &str) -> Option<usize> {
         self.settings.iter().position(|setting| setting.key == key)
     }
+
+    /// settingsTreeModels.ts `createSettingsTreeGroupElement`: a deprecated setting leaves the tree and the TOC
+    /// unless it is configured or shown in settings; search still finds it.
+    pub fn hide_deprecated(&mut self, inspections: &[Inspection]) {
+        let settings = &self.settings;
+        let shown = |index: usize| {
+            let setting = &settings[index];
+            setting.deprecation_message.is_none() || setting.deprecation_show_in_settings || inspections[index].is_configured
+        };
+        retain_settings(&mut self.root, &shown);
+    }
+}
+
+fn retain_settings(group: &mut Group, shown: &impl Fn(usize) -> bool) {
+    group.settings.retain(|&index| shown(index));
+    for child in &mut group.children {
+        retain_settings(child, shown);
+    }
 }
 
 /// `_resolveSettingsTree`: children take their settings first, the node gets what is left of its patterns.

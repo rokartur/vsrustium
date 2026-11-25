@@ -11,6 +11,7 @@ use config::registry::Registry;
 use config::service::Settings;
 use config::workspace::Workspace;
 use exthost::main_thread_configuration::MainThreadConfiguration;
+use exthost::main_thread_workspace::MainThreadWorkspace;
 use exthost::extension_management::{Job, UserExtensions, WindowExtensions};
 use exthost::rpc::{Arg, Reply};
 use exthost::scan::{extension_identifier, scan_builtin_extensions};
@@ -50,8 +51,12 @@ fn main() -> anyhow::Result<()> {
     let handshake_ms = started.elapsed().as_secs_f64() * 1000.0;
     let mut session = Session::new(host);
     let described: Vec<(&str, &Value)> = extensions.iter().map(|extension| (extension.id.as_str(), &extension.description)).collect();
-    let settings = Settings::load(Registry::with_extensions(&described), user_data.join("User"), workspace.clone());
-    session.configuration = Some(MainThreadConfiguration::new(Arc::new(Mutex::new(settings)), false));
+    let settings = Arc::new(Mutex::new(Settings::load(Registry::with_extensions(&described), user_data.join("User"), workspace.clone())));
+    session.configuration = Some(MainThreadConfiguration::new(settings.clone(), false));
+    if let Some(workspace) = &workspace {
+        let folders = workspace.folders.iter().map(|folder| folder.path.clone()).collect();
+        session.workspace = Some(MainThreadWorkspace::new(folders, settings, paths.app_root));
+    }
     session.start(&extensions, workspace.as_ref().map(|workspace| workspace_data(&init, workspace)))?;
     let started_ms = started.elapsed().as_secs_f64() * 1000.0;
 
@@ -91,7 +96,7 @@ fn main() -> anyhow::Result<()> {
 
     let mut window_extensions = WindowExtensions {
         builtins: extensions.clone(),
-        user: UserExtensions { folder: user_data.join("extensions"), product_version: "1.147.0".into() },
+        user: UserExtensions::new(user_data.join("extensions"), "1.147.0"),
         running: extensions.clone(),
     };
     let mut changes = Vec::new();

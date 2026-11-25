@@ -119,10 +119,10 @@ impl Workbench {
                 file.select(&language, &mut bucket);
             }
         }
-        let path = (editor.document.scheme == "file").then(|| editor.document.path.to_string_lossy().into_owned());
+        let path = (editor.document().scheme == "file").then(|| editor.document().path.to_string_lossy().into_owned());
         let snippets = filter_and_sort_snippets(bucket, path.as_deref(), SnippetGetOptions::default(), &ignored, &usages);
         let pairs = self.languages.rules(&language).map(|rules| rules.auto_closing_pairs.clone()).unwrap_or_default();
-        let text = &editor.document.lines[head.line];
+        let text = &editor.document().lines[head.line];
         let mut list = snippet_completions(text, head.line, head.column, trigger_character, &pairs, &snippets);
         for item in list["b"].as_array_mut().into_iter().flatten() {
             let index = item["x"].take().as_u64().unwrap_or(0) as usize;
@@ -142,11 +142,12 @@ fn folder_sources(folder: &Path, source: SnippetSource) -> Vec<FileSource> {
 
 /// `_getLanguageIdAtPosition`: the embedded language at the cursor when it is a known one, else the model's.
 fn snippet_language(editor: &OpenEditor, line: usize, column: usize, languages: &crate::languages::Languages) -> String {
-    let text = &editor.document.lines[line];
+    let document = editor.document();
+    let text = &document.lines[line];
     let offset = text.char_indices().nth(column).map_or(text.len(), |(offset, _)| offset);
-    let embedded = editor.document.tokens.language_at(&editor.document.lines, line, offset.saturating_sub(1));
+    let embedded = document.tokens.language_at(&document.lines, line, offset.saturating_sub(1));
     match embedded {
         Some(language) if languages.is_registered(&language) => language.to_string(),
-        _ => editor.document.language_id.clone(),
+        _ => editor.document().language_id.clone(),
     }
 }

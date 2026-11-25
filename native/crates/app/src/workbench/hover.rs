@@ -21,8 +21,8 @@ const POINTER_SIZE: f32 = 3.;
 const HOVER_BORDER_WIDTH: f32 = 2.;
 const WINDOW_EDGE_MARGIN: f32 = 2.;
 /// `.compact`: 12px text, 19px lines, 2px 8px padding (hover.css).
-const FONT_SIZE: f32 = 12.;
-const LINE_HEIGHT: f32 = 19.;
+pub(super) const FONT_SIZE: f32 = 12.;
+pub(super) const LINE_HEIGHT: f32 = 19.;
 const PADDING_X: f32 = 8.;
 const PADDING_Y: f32 = 2.;
 const MAX_WIDTH: f32 = 700.;
@@ -50,6 +50,8 @@ pub enum HoverContent {
     Preview(String),
     /// A trusted markdown tooltip: paragraphs split by a blank line, each linked text (`[label](href)`).
     Markdown(String),
+    /// languageStatus.ts `_combinedEntryTooltip`: one row per status of the current view model.
+    LanguageStatus,
 }
 
 /// What the target's hover delegate decides.
@@ -79,6 +81,16 @@ impl HoverOptions {
     /// statusbarPart.ts's WorkbenchHoverDelegate, with `maxHeightRatio: 0.9`.
     pub fn status_bar() -> Self {
         HoverOptions { max_height_ratio: 0.9, ..Self::instant() }
+    }
+
+    /// getDefaultHoverDelegate('element'): above the target, after the hover delay.
+    pub fn element() -> Self {
+        HoverOptions { instant: false, ..Self::instant() }
+    }
+
+    /// `showInstantHover` with `HoverPosition.BELOW` and `showPointer`: the profile icon picker.
+    pub fn sticky_below() -> Self {
+        HoverOptions { position: HoverPosition::Below, ..Self::instant() }
     }
 
     /// compositeBarActions.ts: `HoverStyle.Pointer` on the side away from the side bar.
@@ -280,6 +292,7 @@ impl Workbench {
         match content {
             HoverContent::Text(text) | HoverContent::Preview(text) | HoverContent::Markdown(text) => text.clone(),
             HoverContent::Action { title, command } => self.keybindings.resolver.append_keybinding(title, command, &self.key_context(window)),
+            HoverContent::LanguageStatus => self.language_status_hover_text(),
         }
     }
 
@@ -287,6 +300,11 @@ impl Workbench {
         let hover = self.hovers.shown.as_ref()?;
         let preview = matches!(hover.target.content, HoverContent::Preview(_));
         let markdown = matches!(hover.target.content, HoverContent::Markdown(_));
+        let language_status = match &hover.target.content {
+            HoverContent::LanguageStatus => Some(self.language_status_hover(window, cx)),
+            _ => None,
+        };
+        let interactive_rows = language_status.is_some();
         let paragraphs: Vec<Vec<Node>> = match markdown {
             true => hover.text.split("\n\n").map(parse_linked_text).collect(),
             false => vec![vec![Node::Text(hover.text.clone())]],
@@ -298,7 +316,10 @@ impl Workbench {
         }
         let lines = paragraphs.len() as f32;
         // hover.css: a markdown paragraph has an 8px bottom margin except the last.
-        let content_height = lines * LINE_HEIGHT + (lines - 1.) * PARAGRAPH_GAP;
+        let mut content_height = lines * LINE_HEIGHT + (lines - 1.) * PARAGRAPH_GAP;
+        if let Some((content_size, _)) = &language_status {
+            (content_width, content_height) = (content_size.width, content_size.height);
+        }
         let size = Size { width: (content_width + 2. * PADDING_X).min(MAX_WIDTH - HOVER_BORDER_WIDTH) + HOVER_BORDER_WIDTH, height: content_height + 2. * PADDING_Y + HOVER_BORDER_WIDTH };
         let viewport = window.viewport_size();
         let target = hover.target.bounds;
@@ -337,8 +358,9 @@ impl Workbench {
                     inset: false,
                 }])
             })
+            .when_some(language_status.map(|(_, rows)| rows), |panel, rows| panel.child(rows))
             .when(markdown, |panel| panel.child(self.markdown_paragraphs(paragraphs, cx)))
-            .when(!markdown, |panel| panel.child(
+            .when(!markdown && !interactive_rows, |panel| panel.child(
                 div()
                     .relative()
                     .flex()
@@ -362,7 +384,7 @@ impl Workbench {
             .on_hover(cx.listener(move |workbench, hovered: &bool, _, cx| {
                 workbench.hovers.mouse_in_hover = *hovered;
                 match hovered {
-                    true if preview || markdown || workbench.hovers.locked => workbench.hovers.hiding = None,
+                    true if preview || markdown || interactive_rows || workbench.hovers.locked => workbench.hovers.hiding = None,
                     false if workbench.hovers.target.is_none() && !workbench.hovers.locked => workbench.hide_hover_later(cx),
                     _ => {}
                 }
@@ -399,7 +421,7 @@ impl Workbench {
 
     /// `.workbench-hover-pointer:after`: a 6px square turned 45 degrees, centered on the hover's edge, showing the
     /// hover's background and its two outer borders.
-    fn hover_pointer(&self, side: HoverPosition, origin: Point<f32>, size: Size<f32>, offset: f32) -> impl IntoElement {
+    pub(super) fn hover_pointer(&self, side: HoverPosition, origin: Point<f32>, size: Size<f32>, offset: f32) -> impl IntoElement {
         let half = POINTER_SIZE * std::f32::consts::SQRT_2;
         let (center, outward) = match side {
             HoverPosition::Right => (point(origin.x, origin.y + offset), point(-1f32, 0.)),
@@ -453,7 +475,7 @@ fn linked_text_label(nodes: &[Node]) -> String {
     }).collect()
 }
 
-fn text_width(text: &str, italic: bool, window: &Window) -> f32 {
+pub(super) fn text_width(text: &str, italic: bool, window: &Window) -> f32 {
     let mut font = window.text_style().font();
     if italic {
         font.style = gpui::FontStyle::Italic;

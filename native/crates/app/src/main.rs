@@ -12,12 +12,16 @@ mod clipboard;
 mod codicons;
 mod command_palette;
 mod commands;
+mod custom_tree;
+mod decorations;
 mod contextkey;
 mod debug;
 mod default_settings;
 mod diff_editor;
 mod dialog;
 mod editor;
+mod editor_grid;
+mod navigation;
 mod editor_history;
 mod explorer;
 mod extension_enablement;
@@ -28,6 +32,7 @@ mod file_icons;
 mod filters;
 mod history;
 mod fuzzy_scorer;
+mod hierarchy_model;
 mod host_sync;
 mod input_box;
 mod keybinding_editing;
@@ -43,6 +48,7 @@ mod link_computer;
 mod local_history;
 mod main_thread;
 mod main_thread_commands;
+mod main_thread_github;
 mod main_thread_errors;
 mod main_thread_message;
 mod main_thread_output;
@@ -52,27 +58,37 @@ mod main_thread_status_bar;
 mod markdown;
 mod markers;
 mod menus;
+mod merge_editor;
+mod multi_diff_editor;
 mod nls;
+mod outline_model;
 mod metered_connection;
 mod notifications;
 mod output;
 mod perf;
 mod power;
 // The process explorer (milestone 19 handoff) is its first caller; until then only its tests build it.
-#[cfg(test)]
 mod ps;
 mod product;
+mod profile_template;
+mod timer;
+mod walkthroughs;
 mod policy;
 mod quick_input;
 mod recently_opened;
+mod references_model;
 mod search_editor;
 mod scm;
+mod scm_history;
 mod search_model;
+mod semantic_tokens;
 mod settings_editor;
 mod shell_env;
+mod settings_import;
 mod smart_snippet_inserter;
 mod snippets;
 mod split_view;
+mod symbol_kinds;
 mod suggest;
 mod symbol_icons;
 mod syntax;
@@ -81,12 +97,14 @@ mod terminal;
 mod testing;
 mod tf_idf;
 mod theme;
+mod timeline;
 mod trusted_domains;
 mod undo_redo;
 mod untitled;
 mod variables;
 mod webview;
 mod uri;
+mod user_data_profile;
 mod workbench;
 mod workspace_trust;
 
@@ -117,7 +135,6 @@ use gpui_platform::application;
 use serde_json::json;
 use storage::state::FileStorage;
 use anyhow::Context as _;
-use commands::Outcome;
 use host_sync::HostSync;
 use languages::Languages;
 use main_thread::{HostRequest, WorkbenchMainThread};
@@ -125,7 +142,7 @@ use theme::load_theme;
 use workbench::Workbench;
 
 /// The flags followed by a value; the other arguments without `--` are the folder and the file.
-pub const VALUE_FLAGS: [&str; 10] = ["--user-data-dir", "--shared-data-dir", "--extensions-dir", "--locale", "--screenshot", "--screenshot-keys", "--screenshot-input", "--theme", "--open-url", "--export-default-keybindings"];
+pub const VALUE_FLAGS: [&str; 11] = ["--profile", "--user-data-dir", "--shared-data-dir", "--extensions-dir", "--locale", "--screenshot", "--screenshot-keys", "--screenshot-input", "--theme", "--open-url", "--export-default-keybindings"];
 
 /// The indexes of the folder and file arguments: those that are neither a flag nor a flag's value.
 pub(crate) fn positional_indexes(args: &[String]) -> Vec<usize> {
@@ -171,15 +188,20 @@ fn main() -> anyhow::Result<()> {
     // Before any scan: the display language decides the manifests' messages.
     let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
     let locale = nls::user_locale(flag_value("--locale").as_deref(), &output::log_levels::argv_file(&home));
+    perf::mark("code/willGenerateNls");
     let resolved = exthost::language_packs::resolve_nls(&user_data, &locale);
     nls::init(&resolved);
     exthost::language_packs::set_nls(&user_data, resolved);
+    perf::mark("code/didGenerateNls");
     let extensions_dir = std::env::var_os("VSCODE_GPUI_EXTENSIONS").map(PathBuf::from).unwrap_or_else(|| app_root.join("extensions"));
+    perf::mark("code/willLoadExtensions");
     let mut builtins = scan_builtin_extensions(&extensions_dir)?;
     perf::mark("code/didScanExtensions");
     builtins.extend(exthost::scan::scan_dev_system_extensions(&app_root)?);
     // Artur: user extensions live in ~/.vsrustium/extensions, the default user data dir's extensions folder.
-    let user_extensions = UserExtensions { folder: flag_value("--extensions-dir").map_or_else(|| user_data.join("extensions"), PathBuf::from), product_version: VERSION.into() };
+    let extensions_folder = flag_value("--extensions-dir").map_or_else(|| user_data.join("extensions"), PathBuf::from);
+    let profile = user_data_profile::ProfileState::resolve(&user_data, &extensions_folder, workspace.as_ref(), flag_value("--profile").as_deref(), args.iter().any(|arg| arg == "--profile-temp"), development.is_some());
+    let user_extensions = UserExtensions { extensions_file: profile.current.extensions_resource.clone(), profiles_home: Some(profile.profiles.profiles_home.clone()), ..UserExtensions::new(extensions_folder, VERSION) };
     user_extensions.clean_up()?;
     let mut extensions = builtins.clone();
     add_user_extensions(&mut extensions, user_extensions.scan()?);
@@ -188,10 +210,20 @@ fn main() -> anyhow::Result<()> {
     }
     // storageMainService.ts: no storage during extension tests, so each test run starts empty.
     let extension_tests = development.as_ref().is_some_and(|development| development.tests_path.is_some());
+    perf::mark("code/willInitStorage");
     let storage = match extension_tests {
         true => MainThreadStorage::in_memory(),
-        false => MainThreadStorage::open(&SessionPaths { app_root: &app_root, user_data: &user_data, workspace: workspace.as_ref() })?,
+        false => MainThreadStorage::open(&SessionPaths { app_root: &app_root, user_data: &user_data, workspace: workspace.as_ref() }, &profile.current.global_storage_home)?,
     };
+    let application_storage = match extension_tests || profile.current.is_default {
+        true => storage.profile.clone(),
+        false => {
+            let home = &profile.profiles.default_profile().global_storage_home;
+            std::fs::create_dir_all(home)?;
+            Arc::new(Mutex::new(storage::Storage::open(&home.join("state.vscdb"))))
+        }
+    };
+    perf::mark("code/didInitStorage");
     // The extensions the user disabled stay out of the host and the registries (extensionEnablementService.ts).
     let developed: Vec<String> = extensions.iter().filter(|extension| extension.description["isUnderDevelopment"] == true).map(|extension| extension.id.clone()).collect();
     let installed = extensions.clone();
@@ -203,11 +235,13 @@ fn main() -> anyhow::Result<()> {
     extensions.retain(|extension| !disabled.contains(&extension.id));
     let load_settings = |extensions: &[ScannedExtension]| {
         let described: Vec<(&str, &serde_json::Value)> = extensions.iter().map(|extension| (extension.id.as_str(), &extension.description)).collect();
-        let mut settings = Settings::load(Registry::with_extensions(&described), user_data.join("User"), workspace.clone());
+        let mut settings = Settings::load_with_profile(Registry::with_extensions(&described), user_data.join("User"), profile.user_files(), workspace.clone());
         settings.set_policy_values(policy::read_native_policies(&settings.registry, policy::BUNDLE_IDENTIFIER));
         settings
     };
+    perf::mark("code/willInitWorkspaceService");
     let mut settings = load_settings(&extensions);
+    perf::mark("code/didInitWorkspaceService");
     let shared_storage = match extension_tests {
         true => Arc::new(Mutex::new(storage::Storage::in_memory())),
         false => Arc::new(Mutex::new(open_shared_storage(flag_value("--shared-data-dir").map(PathBuf::from))?)),
@@ -230,7 +264,7 @@ fn main() -> anyhow::Result<()> {
         }
         settings.update_workspace_trust(false);
     }
-    let window_extensions = WindowExtensions { builtins: builtins.clone(), user: UserExtensions { folder: user_extensions.folder.clone(), product_version: VERSION.into() }, running: extensions.clone() };
+    let window_extensions = WindowExtensions { builtins: builtins.clone(), user: user_extensions.clone_for_profile(), running: extensions.clone() };
     let theme = match flag_value("--theme") {
         Some(theme_id) => load_theme(&extensions, &theme_id)?,
         None => settings_theme(&extensions, &settings)?,
@@ -238,9 +272,10 @@ fn main() -> anyhow::Result<()> {
     let file_icons = settings_file_icons(&extensions, &settings)?;
     let color_themes = theme::color_themes(&extensions)?;
     let settings = Arc::new(Mutex::new(settings));
-    let keybindings_file = user_data.join("User/keybindings.json");
+    let keybindings_file = profile.current.keybindings_resource.clone();
 
     application().run(move |cx: &mut App| {
+        perf::mark("code/mainAppReady");
         // Same size as the reference capture in port/tools/ref-screenshot, so pixel diffs line up.
         let mut bounds = Bounds::centered(None, size(px(1024.), px(768.)), cx);
         // A half-point origin (an odd display height, e.g. 1650 px over screen sharing) makes the drawable 1 point taller.
@@ -248,20 +283,26 @@ fn main() -> anyhow::Result<()> {
         // The workbench draws its own title bar, as the reference does with window.titleBarStyle custom.
         let titlebar = TitlebarOptions { title: None, appears_transparent: true, traffic_light_position: Some(point(px(10.), px(10.))) };
         let options = WindowOptions { window_bounds: Some(WindowBounds::Windowed(bounds)), titlebar: Some(titlebar), app_owns_titlebar_drag: true, ..Default::default() };
+        perf::mark("code/willOpenNewWindow");
+        perf::mark("code/willCreateCodeWindow");
         let window = cx.open_window(options, |window, cx| {
+            perf::mark("code/willStartWorkbench");
             cx.new(|cx| {
                 let (sender, mut receiver) = unbounded::<String>();
                 let (host_sender, host_receiver) = channel();
-                let (request_sender, mut requests) = unbounded::<ForwardedRequest>();
+                let (request_sender, requests) = unbounded::<ForwardedRequest>();
                 let (reply_sender, replies) = channel::<(u32, Result<serde_json::Value, serde_json::Value>)>();
-                let (main_thread_sender, mut main_thread_requests) = unbounded::<HostRequest>();
+                let (main_thread_sender, main_thread_requests) = unbounded::<HostRequest>();
                 let main_thread = WorkbenchMainThread { requests: main_thread_sender, messages: host_receiver, waiting: Vec::new(), content_providers: Default::default(), extensions: window_extensions };
                 let languages = Languages::new(&extensions);
                 let mut host = HostSync::new(host_sender);
                 host.configuration_scopes = development.is_some();
                 host.send_color_theme(theme.kind);
+                perf::mark("code/willCreateWorkbenchContributions/1");
+                host.send_language_ids(&languages);
                 let mut workbench = Workbench::new(theme, app_root.clone(), workspace.clone(), languages, settings.clone(), host, cx);
                 perf::mark("code/didCreateWorkbench");
+                perf::mark("code/didCreateWorkbenchContributions/2");
                 cx.observe_window_appearance(window, |workbench, _, cx| workbench.host_color_scheme_changed(cx)).detach();
                 let window_logs = exthost::session::window_logs_path(&user_data);
                 workbench.register_window_log(window_logs.join("renderer.log"));
@@ -272,6 +313,7 @@ fn main() -> anyhow::Result<()> {
                 workbench.extension_development = development.is_some();
                 workbench.load_keybindings(keybindings::default_keybindings(&extensions), keybindings_file.clone(), cx);
                 workbench.watch_settings_files(cx);
+                workbench.watch_policies(cx);
                 workbench.start_file_watcher(cx);
                 workbench.start_system_wide_keybindings(window, cx);
                 workbench.register_update_actions(window, cx);
@@ -282,6 +324,8 @@ fn main() -> anyhow::Result<()> {
                 workbench.urls.extensions = extensions.iter().map(|extension| (extension.id.to_lowercase(), extension.description["displayName"].as_str().unwrap_or(&extension.id).to_owned())).collect();
                 workbench.file_icons = file_icons;
                 workbench.color_themes = color_themes;
+                workbench.set_tree_views(&extensions);
+                workbench.host.set_running_extensions(&extensions);
                 workbench.extensions = extensions.clone();
                 workbench.register_webview_view_commands();
                 workbench.start_tasks();
@@ -292,20 +336,26 @@ fn main() -> anyhow::Result<()> {
                     }
                     cx.quit();
                 }
-                workbench.restore_profile_state(storage.profile.clone());
+                workbench.restore_profile_state(storage.profile.clone(), application_storage);
                 workbench.restore_workspace_state(storage.workspace.clone());
                 let workspace_trusted = workspace_trust.is_trusted();
                 workbench.workspace_trust = workspace_trust;
                 workbench.shared_storage = shared_storage;
                 workbench.watch_recently_opened(window, cx);
                 workbench.watch_window_focus(window, cx);
-                workbench.set_installed_extensions(builtins.clone(), UserExtensions { folder: user_extensions.folder.clone(), product_version: VERSION.into() }, developed.clone(), cx);
+                workbench.set_installed_extensions(builtins.clone(), user_extensions.clone_for_profile(), developed.clone(), cx);
+                workbench.set_user_data_profiles(profile, cx);
+                workbench.offer_settings_import(window, cx);
                 workbench.start_terminal_host();
                 workbench.watch_editor_focus(window, cx);
                 workbench.show_trust_modal_on_start(window, cx);
+                perf::mark("code/willRestoreEditors");
                 if let Some(file) = file {
                     workbench.open_file(file, true, window, cx);
                 }
+                workbench.run_startup_page(args.iter().any(|arg| arg == "--skip-welcome"), window, cx);
+                perf::set_startup_editors(workbench.visible_editor_ids());
+                perf::mark("code/didRestoreEditors");
                 if let Some(url) = &open_url {
                     workbench.open_protocol_url(url, window, cx);
                 }
@@ -322,43 +372,14 @@ fn main() -> anyhow::Result<()> {
                         }
                     })
                     .expect("spawn exthost session thread");
-                cx.spawn_in(window, async move |workbench, cx| {
-                    while let Some(request) = requests.next().await {
-                        let req = request.req;
-                        // A cancellation answers nothing itself; the request it cancels gets its answer. An observed call
-                        // was answered by the session.
-                        let cancel = request.method == "$cancel" || req == exthost::session::OBSERVED_REQ;
-                        let Ok(outcome) = workbench.update_in(cx, |workbench, window, cx| workbench.handle_host_request(request, window, cx)) else { break };
-                        let result = match outcome {
-                            _ if cancel => continue,
-                            Outcome::Ready(result) => result,
-                            // Requests from the host may overlap, so a pending answer is awaited off this loop.
-                            Outcome::Pending(pending) => {
-                                let reply_sender = reply_sender.clone();
-                                cx.background_executor()
-                                    .spawn(async move {
-                                        let _ = reply_sender.send((req, pending.await.unwrap_or(Ok(serde_json::Value::Null))));
-                                    })
-                                    .detach();
-                                continue;
-                            }
-                        };
-                        let _ = reply_sender.send((req, result));
-                    }
-                })
-                .detach();
-                cx.spawn_in(window, async move |workbench, cx| {
-                    while let Some(request) = main_thread_requests.next().await {
-                        let result = workbench.update_in(cx, |workbench, window, cx| workbench.host_request(&request.proxy, &request.method, &request.args, window, cx));
-                        let _ = request.reply.send(result.unwrap_or_else(|_| Err(exthost::main_thread::serialized_error("Canceled"))));
-                    }
-                })
-                .detach();
+                workbench::extension_host_restart::serve_host_requests(requests, reply_sender, window, cx);
+                workbench::extension_host_restart::serve_main_thread_requests(main_thread_requests, window, cx);
                 cx.spawn_in(window, async move |workbench, cx| {
                     while let Some(line) = receiver.next().await {
                         eprintln!("{line}");
                         if line.starts_with(HANDSHAKE_PREFIX) {
                             let _ = workbench.update(cx, |workbench, _| workbench.host.installed_extensions_registered = true);
+                            perf::mark("code/didLoadExtensions");
                         }
                         let (true, Some(path)) = (line.starts_with(ACTIVATED_PREFIX), screenshot.as_ref()) else { continue };
                         // Captured once eager extensions are up, so the frame shows the workbench as the host left it.
@@ -396,10 +417,12 @@ fn main() -> anyhow::Result<()> {
                     }
                 })
                 .detach();
+                perf::mark("code/didStartWorkbench");
                 workbench
             })
         })
         .unwrap();
+        perf::mark("code/didCreateCodeWindow");
         workbench::menubar::install(window, cx);
         cx.activate(true);
     });
@@ -460,7 +483,7 @@ fn run_extension_host(
             MainThreadSecretState::in_memory()
         }),
     });
-    session.forward(&["MainThreadCommands", "MainThreadCustomEditors", "MainThreadDebugService", "MainThreadDiagnostics", "MainThreadDownloadService", "MainThreadEditorTabs", "MainThreadLanguageFeatures", "MainThreadLogger", "MainThreadMessageService", "MainThreadOutputService", "MainThreadProgress", "MainThreadQuickOpen", "MainThreadSCM", "MainThreadStatusBar", "MainThreadTask", "MainThreadTerminalService", "MainThreadTerminalShellIntegration", "MainThreadTesting", "MainThreadUriOpeners", "MainThreadUrls", "MainThreadUrls.$registerUriHandler", "MainThreadUrls.$unregisterUriHandler", "MainThreadWebviewPanels", "MainThreadWebviewViews", "MainThreadWebviews", "MainThreadWindow.$openUri", "MainThreadWorkspace"], move |request| {
+    session.forward(&["MainThreadCommands", "MainThreadCustomEditors", "MainThreadDebugService", "MainThreadDecorations", "MainThreadDiagnostics", "MainThreadDownloadService", "MainThreadEditorTabs", "MainThreadGitHub", "MainThreadLanguageFeatures", "MainThreadLanguages.$removeLanguageStatus", "MainThreadLanguages.$setLanguageStatus", "MainThreadLogger", "MainThreadMessageService", "MainThreadOutputService", "MainThreadProgress", "MainThreadQuickDiff", "MainThreadQuickOpen", "MainThreadSCM", "MainThreadStatusBar", "MainThreadTask", "MainThreadTerminalService", "MainThreadTerminalShellIntegration", "MainThreadTesting", "MainThreadTimeline", "MainThreadTreeViews", "MainThreadUriOpeners", "MainThreadUrls", "MainThreadUrls.$registerUriHandler", "MainThreadUrls.$unregisterUriHandler", "MainThreadWebviewPanels", "MainThreadWebviewViews", "MainThreadWebviews", "MainThreadWindow.$openUri", "MainThreadWorkspace"], move |request| {
         let _ = workbench_requests.unbounded_send(request);
     }, workbench_replies);
     session.main_thread = Some(Box::new(main_thread));

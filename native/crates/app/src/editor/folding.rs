@@ -425,8 +425,12 @@ pub enum FoldDecoration {
 #[derive(Clone, Debug, Default)]
 pub struct FoldingModel {
     pub regions: FoldingRegions,
-    /// Hidden model lines, ascending and disjoint: the lines below each outermost collapsed region's first line.
+    /// Hidden model lines, ascending and disjoint: the lines below each outermost collapsed region's first line,
+    /// merged with `other_hidden`.
     hidden: Vec<Range<usize>>,
+    folded: Vec<Range<usize>>,
+    /// `setHiddenAreas` of another source (the diff editor's unchanged regions): whole lines, the first one included.
+    other_hidden: Vec<Range<usize>>,
 }
 
 impl FoldingModel {
@@ -436,6 +440,16 @@ impl FoldingModel {
 
     pub fn hidden(&self) -> &[Range<usize>] {
         &self.hidden
+    }
+
+    /// `ViewModel.setHiddenAreas` for a source other than folding; returns whether the hidden lines changed.
+    pub fn set_hidden_areas(&mut self, ranges: Vec<Range<usize>>) -> bool {
+        if ranges == self.other_hidden {
+            return false;
+        }
+        self.other_hidden = ranges;
+        self.merge_hidden();
+        true
     }
 
     /// `toggleCollapseState`: each region flips once.
@@ -605,7 +619,22 @@ impl FoldingModel {
             }
             hidden.push(lines);
         }
-        self.hidden = hidden;
+        self.folded = hidden;
+        self.merge_hidden();
+    }
+
+    /// viewModelImpl.ts `setHiddenAreas`: the union of every source's ranges, sorted and joined where they touch.
+    fn merge_hidden(&mut self) {
+        let mut ranges: Vec<Range<usize>> = self.folded.iter().chain(&self.other_hidden).filter(|range| !range.is_empty()).cloned().collect();
+        ranges.sort_by_key(|range| range.start);
+        let mut merged: Vec<Range<usize>> = Vec::new();
+        for range in ranges {
+            match merged.last_mut() {
+                Some(last) if range.start <= last.end => last.end = last.end.max(range.end),
+                _ => merged.push(range),
+            }
+        }
+        self.hidden = merged;
     }
 
     /// Whether 0-based model `line` is hidden.
@@ -625,8 +654,9 @@ impl FoldingModel {
             if range.start > line {
                 break;
             }
+            // A range hiding the first line shows its lines on the line after it.
             if line < range.end {
-                return range.start - 1 - hidden_before;
+                return range.start.saturating_sub(1) - hidden_before;
             }
             hidden_before += range.len();
         }
@@ -668,7 +698,7 @@ impl FoldingModel {
     pub fn adjust_selections(&self, lines: &[String], selections: &mut [Selection]) -> bool {
         let mut changed = false;
         let adjust = |position: Position| {
-            hidden_range(&self.hidden, position.line).map(|range| {
+            hidden_range(&self.folded, position.line).map(|range| {
                 let line = range.start - 1;
                 Position::new(line, lines[line].chars().count())
             })
@@ -751,7 +781,10 @@ pub fn shown_neighbour(line_count: usize, hidden: &[Range<usize>], line: usize, 
         return (next < line_count).then_some(next);
     }
     let previous = line.checked_sub(1)?;
-    Some(hidden_range(hidden, previous).map_or(previous, |range| range.start - 1))
+    match hidden_range(hidden, previous) {
+        Some(range) => range.start.checked_sub(1),
+        None => Some(previous),
+    }
 }
 
 /// A cursor that a move left on a hidden line goes where the view would put it: after the folded lines when
@@ -760,7 +793,7 @@ pub fn shown_position(lines: &[String], hidden: &[Range<usize>], position: Posit
     let Some(range) = hidden_range(hidden, position.line) else {
         return position;
     };
-    if forward && range.end < lines.len() {
+    if (forward || range.start == 0) && range.end < lines.len() {
         return Position::new(range.end, 0);
     }
     let line = range.start - 1;

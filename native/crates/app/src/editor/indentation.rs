@@ -7,13 +7,15 @@ use super::{ContentChanged, Indentation, OpenEditor, Position, guess_indentation
 impl OpenEditor {
     /// `model.updateOptions`: the indent guides follow the new sizes.
     pub fn set_indentation(&mut self, indentation: Indentation) {
-        self.document.indentation = indentation;
-        self.guides = indent_guides(&self.document.lines, indentation.tab_size, indentation.indent_size(), self.document.off_side);
+        let mut model = self.text_model_mut();
+        model.document.indentation = indentation;
+        let guides = indent_guides(&model.document.lines, indentation.tab_size, indentation.indent_size(), model.document.off_side);
+        model.guides = guides;
     }
 
     /// `TextModel.detectIndentation`: the guess sets the indent size to the guessed tab size.
     pub fn detect_indentation(&mut self, insert_spaces: bool, tab_size: usize) {
-        let guessed = guess_indentation(&self.document.lines, Indentation { tab_size, indent_size: None, insert_spaces });
+        let guessed = guess_indentation(&self.document().lines, Indentation { tab_size, indent_size: None, insert_spaces });
         self.set_indentation(Indentation { indent_size: Some(guessed.tab_size), ..guessed });
     }
 
@@ -21,24 +23,28 @@ impl OpenEditor {
     /// tabs and `tabSize` spaces between undo stops, the primary selection tracked, then `insertSpaces` set.
     pub fn convert_indentation(&mut self, to_spaces: bool) -> Option<ContentChanged> {
         let id = if to_spaces { "editor.action.indentationToSpaces" } else { "editor.action.indentationToTabs" };
-        let edits = indentation_edits(&self.document.lines, self.document.indentation.tab_size, to_spaces);
+        let document = self.document();
+        let edits = indentation_edits(&document.lines, document.indentation.tab_size, to_spaces);
+        drop(document);
         self.push_undo_stop();
         let change = self.execute_edits_tracking_primary(edits, command(id));
         self.push_undo_stop();
-        self.set_indentation(Indentation { insert_spaces: to_spaces, ..self.document.indentation });
+        let indentation = self.document().indentation;
+        self.set_indentation(Indentation { insert_spaces: to_spaces, ..indentation });
         change
     }
 
     /// `TrimTrailingWhitespaceAction` without `reason: 'auto-save'`: no cursor keeps its whitespace.
     pub fn trim_trailing_whitespace(&mut self, trim_in_regex_and_strings: bool) -> Option<ContentChanged> {
-        let lines = &self.document.lines;
-        let tokens = &self.document.tokens;
+        let document = self.document();
+        let (lines, tokens) = (&document.lines, &document.tokens);
         let in_string_or_regex = |line: usize, offset: usize| {
             use textmate::StandardTokenType::{RegEx, String};
             // shortcut: the line is tokenized when needed, where upstream skips lines without accurate tokens.
             matches!(tokens.token_type_at(lines, line, offset), String | RegEx)
         };
         let edits = trim_trailing_whitespace_edits(lines, &[], |line, offset| !trim_in_regex_and_strings && in_string_or_regex(line, offset));
+        drop(document);
         self.push_undo_stop();
         let change = self.execute_edits_tracking_primary(edits, command("editor.action.trimTrailingWhitespace"));
         self.push_undo_stop();
@@ -47,10 +53,13 @@ impl OpenEditor {
 
     /// insertFinalNewLineCommand.ts: the EOL appended to the last line whether or not it is empty, between undo stops.
     pub fn insert_final_new_line(&mut self) -> Option<ContentChanged> {
-        let last = self.document.lines.len() - 1;
-        let end = Position::new(last, self.document.lines[last].chars().count());
+        let document = self.document();
+        let last = document.lines.len() - 1;
+        let end = Position::new(last, document.lines[last].chars().count());
+        let eol = document.eol.to_string();
+        drop(document);
         self.push_undo_stop();
-        let change = self.execute_edits_tracking_primary(vec![(end, end, self.document.eol.to_string())], command("editor.action.insertFinalNewLine"));
+        let change = self.execute_edits_tracking_primary(vec![(end, end, eol)], command("editor.action.insertFinalNewLine"));
         self.push_undo_stop();
         change
     }
@@ -112,9 +121,9 @@ mod tests {
         model.set_indentation(Indentation { tab_size, indent_size: None, insert_spaces: !to_spaces });
         model.move_to(Position::new(caret.0, caret.1), false);
         model.convert_indentation(to_spaces);
-        assert_eq!(model.document.lines, expected);
+        assert_eq!(model.document().lines, expected);
         assert_eq!(model.selection(), Selection::caret(Position::new(expected_caret.0, expected_caret.1)));
-        assert_eq!(model.document.indentation.insert_spaces, to_spaces);
+        assert_eq!(model.document().indentation.insert_spaces, to_spaces);
     }
 
     #[test]
@@ -172,7 +181,7 @@ mod tests {
         let mut model = editor("a  \nb\t", "\n");
         model.move_to(Position::new(1, 1), false);
         model.trim_trailing_whitespace(true);
-        assert_eq!((model.document.lines.as_slice(), model.selection()), (["a", "b"].map(String::from).as_slice(), Selection::caret(Position::new(1, 1))));
+        assert_eq!((model.document().lines.as_slice(), model.selection()), (["a", "b"].map(String::from).as_slice(), Selection::caret(Position::new(1, 1))));
     }
 
     #[test]
@@ -180,13 +189,13 @@ mod tests {
         let mut model = editor("a\nbc", "\r\n");
         model.move_to(Position::new(1, 2), false);
         model.insert_final_new_line();
-        assert_eq!((model.document.lines.as_slice(), model.selection()), (["a", "bc", ""].map(String::from).as_slice(), Selection::caret(Position::new(1, 2))));
+        assert_eq!((model.document().lines.as_slice(), model.selection()), (["a", "bc", ""].map(String::from).as_slice(), Selection::caret(Position::new(1, 2))));
         // The last line is empty now, and the action still appends another.
         model.set_selections(vec![Selection { anchor: Position::new(0, 0), head: Position::new(2, 0) }]);
         model.insert_final_new_line();
-        assert_eq!(model.document.lines, ["a", "bc", "", ""]);
+        assert_eq!(model.document().lines, ["a", "bc", "", ""]);
         assert_eq!(model.selection(), Selection { anchor: Position::new(0, 0), head: Position::new(2, 0) });
         model.undo();
-        assert_eq!(model.document.lines, ["a", "bc", ""]);
+        assert_eq!(model.document().lines, ["a", "bc", ""]);
     }
 }

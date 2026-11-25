@@ -35,8 +35,8 @@ impl Workbench {
         if index < start.line || index > end.line {
             return None;
         }
-        let text = &editor.document.lines[index];
-        let tab_size = editor.document.indentation.tab_size;
+        let text = &editor.document().lines[index];
+        let tab_size = editor.document().indentation.tab_size;
         let from = if index == start.line { start.column } else { 0 };
         let to = if index == end.line { end.column } else { text.chars().count() };
         let left = visible_column(text, from, tab_size) as f32 * char_width;
@@ -49,7 +49,7 @@ impl Workbench {
     pub(super) fn content_hover_widget(&self, editor: &OpenEditor, content_left: f32, char_width: f32, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         let shown = self.content_hover.shown.as_ref().filter(|shown| shown.anchor.model_id == editor.model_id)?;
         let anchor = shown.anchor;
-        if anchor.line >= editor.document.lines.len() || editor.folding.is_hidden(anchor.line) {
+        if anchor.line >= editor.document().lines.len() || editor.folding.is_hidden(anchor.line) {
             return None;
         }
         let mut secondary = anchor.start;
@@ -149,7 +149,7 @@ impl Workbench {
         for (index, part) in parts.iter().enumerate() {
             let (row, copy_text) = match &part.content {
                 PartContent::Marker(marker) => (self.marker_hover_row(marker, index, cx), marker_accessible_content(marker)),
-                PartContent::Markdown(contents) => self.markdown_hover_row(contents, index, max_width, &editor.document.language_id, cx),
+                PartContent::Markdown(contents) => self.markdown_hover_row(contents, index, max_width, &editor.document().language_id, cx),
             };
             rows.push(self.hover_row_with_copy(row, index, copy_text, cx));
         }

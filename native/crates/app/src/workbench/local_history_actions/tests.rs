@@ -68,10 +68,10 @@ fn create_entry_then_find_it_and_open_its_contents_read_only(cx: &mut TestAppCon
     let label = format!("notes.txt (Before refactor \u{2022} {})", local_history::date_label(entries[0].timestamp));
     workbench.read_with(cx, |workbench, _| {
         let editor = workbench.editors.active().unwrap();
-        assert_eq!(editor.document.scheme, LOCAL_HISTORY_SCHEME);
-        assert_eq!(editor.document.lines, ["saved"]);
+        assert_eq!(editor.document().scheme, LOCAL_HISTORY_SCHEME);
+        assert_eq!(editor.document().lines, ["saved"]);
         assert_eq!(workbench.editor_name(editor), label);
-        assert_eq!(workbench.readonly(&editor.document.scheme, &editor.document.path), Some(Readonly::Provider));
+        assert_eq!(workbench.readonly(&editor.document().scheme, &editor.document().path), Some(Readonly::Provider));
     });
     std::fs::remove_dir_all(file.parent().unwrap()).unwrap();
 }

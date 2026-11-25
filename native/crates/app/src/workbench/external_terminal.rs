@@ -19,7 +19,7 @@ impl Workbench {
     /// folder, else no cwd, which `open` turns into the home directory.
     // shortcut: no folder quick pick in multi-root workspaces, the active editor's folder is used; port it with a multi-root picker.
     fn open_external_terminal(&mut self) {
-        let active = self.editors.active().filter(|editor| editor.document.scheme == "file").map(|editor| editor.document.path.clone());
+        let active = self.editors.active().filter(|editor| editor.document().scheme == "file").map(|editor| editor.document().path.clone());
         let root = self.workspace().and_then(|workspace| {
             let containing = active.as_ref().and_then(|file| workspace.folders.iter().find(|folder| file.starts_with(&folder.path)));
             containing.or(workspace.folders.first()).map(|folder| folder.path.clone())

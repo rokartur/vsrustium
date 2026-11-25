@@ -49,25 +49,25 @@ impl Workbench {
     fn show_exception_widget(&mut self, path: &str, line: u32, info: Value, cx: &mut Context<Self>) {
         self.close_exception_widget(cx);
         let viewport = self.editors.viewport;
-        let Some(editor) = self.editors.editors.iter_mut().find(|editor| editor.document.scheme == "file" && editor.document.path.to_string_lossy() == path) else { return };
+        let Some(editor) = self.editors.editors.iter_mut().find(|editor| editor.document().scheme == "file" && editor.document().path.to_string_lossy() == path) else { return };
         let lines = 1 + info["description"].as_str().map_or(0, |text| text.lines().count()) + info["details"]["stackTrace"].as_str().map_or(0, |text| text.lines().count());
         // exceptionWidget.ts `_doLayout`: the content height plus the 6px paddings, in 11px lines (exceptionWidget.css on mac).
         let height = lines as f32 * (viewport.line_height * 11. / 12.).round() + 12. + 4.;
         let zone_id = editor.add_view_zone(Some(Position::new(line.max(1) as usize - 1, 0)), height);
-        self.debug_view.exception = Some(ExceptionWidget { model_uri: editor.document.uri_string(), zone_id, info });
+        self.debug_view.exception = Some(ExceptionWidget { model_uri: editor.document().uri_string(), zone_id, info });
         cx.notify();
     }
 
     pub(super) fn close_exception_widget(&mut self, cx: &mut Context<Self>) {
         let Some(widget) = self.debug_view.exception.take() else { return };
-        if let Some(editor) = self.editors.editors.iter_mut().find(|editor| editor.document.uri_string() == widget.model_uri) {
+        if let Some(editor) = self.editors.editors.iter_mut().find(|editor| editor.document().uri_string() == widget.model_uri) {
             editor.remove_view_zone(widget.zone_id);
         }
         cx.notify();
     }
 
     pub(super) fn exception_widget_element(&self, editor: &OpenEditor, content_left: f32, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let widget = self.debug_view.exception.as_ref().filter(|widget| widget.model_uri == editor.document.uri_string())?;
+        let widget = self.debug_view.exception.as_ref().filter(|widget| widget.model_uri == editor.document().uri_string())?;
         let viewport = self.editors.viewport;
         let top = editor.view_zone_top(widget.zone_id, viewport)? - editor.scroll.top;
         let height = editor.view_zones.iter().find(|zone| zone.id == widget.zone_id).map(|zone| zone.height)?;

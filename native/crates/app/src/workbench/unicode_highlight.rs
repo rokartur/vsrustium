@@ -32,7 +32,8 @@ impl Workbench {
     /// `_updateHighlighter`'s options for the editor's language: `None` when all three highlights are off.
     fn unicode_highlighter_options(&self, editor: &OpenEditor) -> Option<UnicodeHighlighterOptions> {
         let settings = self.settings.lock().unwrap();
-        let overrides = Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
+        let (resource, language) = (editor.document().path.clone(), editor.document().language_id.clone());
+        let overrides = Overrides { resource: Some(&resource), override_identifier: Some(&language) };
         let value = |key: &str| settings.get_value(Some(&format!("editor.unicodeHighlight.{key}")), &overrides).unwrap_or(Value::Null);
         // shortcut: the port has no workspace trust yet, so `inUntrustedWorkspace` resolves as in a trusted workspace (false).
         let resolved = |key: &str| value(key) == Value::Bool(true);
@@ -59,7 +60,7 @@ impl Workbench {
     // after the last edit and moves the old marks with the text meanwhile; upgrade when large files lag on typing.
     pub(super) fn unicode_highlights(&self, editor: &OpenEditor) -> Option<(UnicodeHighlighterOptions, Rc<UnicodeHighlights>)> {
         let options = self.unicode_highlighter_options(editor)?;
-        let key = (editor.model_id, editor.version_id);
+        let key = (editor.model_id, editor.text_model().version_id);
         let mut cached = self.unicode_highlight.cached.borrow_mut();
         if let Some((cached_key, cached_options, highlights)) = cached.as_ref()
             && *cached_key == key
@@ -67,7 +68,7 @@ impl Workbench {
         {
             return Some((options, highlights.clone()));
         }
-        let highlights = Rc::new(compute_unicode_highlights(&editor.document.lines, 0, &options));
+        let highlights = Rc::new(compute_unicode_highlights(&editor.document().lines, 0, &options));
         *cached = Some((key, options.clone(), highlights.clone()));
         Some((options, highlights))
     }
@@ -87,7 +88,7 @@ impl Workbench {
     /// `hideInStringTokens` drop a mark in a comment or a string unless `includeComments` or `includeStrings`.
     pub(super) fn unicode_highlight_boxes(&self, editor: &OpenEditor, line: usize, unicode: Option<&(UnicodeHighlighterOptions, Rc<UnicodeHighlights>)>, char_width: f32) -> Vec<Div> {
         let Some((options, highlights)) = unicode else { return Vec::new() };
-        let document = &editor.document;
+        let document = &editor.document();
         let text = &document.lines[line];
         let tab_size = document.indentation.tab_size;
         let first = highlights.ranges.partition_point(|(start, _)| start.line < line);

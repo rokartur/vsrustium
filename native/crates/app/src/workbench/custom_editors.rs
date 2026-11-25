@@ -109,7 +109,7 @@ impl Workbench {
             },
             None => {
                 self.detach_custom_editors(resource, None);
-                Outcome::Ready(self.api_open_editor(&[resource.clone(), json!([null, options])], window, cx))
+                self.api_open_editor_resolving(vec![resource.clone(), json!([null, options])], window, cx)
             }
         }
     }
@@ -157,7 +157,7 @@ impl Workbench {
             return None;
         }
         let editor = self.editors.active()?;
-        let custom_text = self.webview_panels.panels.iter().any(|panel| panel.custom.is_some() && panel.scheme != WEBVIEW_PANEL_SCHEME && editor.document.is(&panel.scheme, &panel.path));
+        let custom_text = self.webview_panels.panels.iter().any(|panel| panel.custom.is_some() && panel.scheme != WEBVIEW_PANEL_SCHEME && editor.document().is(&panel.scheme, &panel.path));
         custom_text.then(|| self.run_on_active_editor(command, cx))
     }
 
@@ -165,13 +165,13 @@ impl Workbench {
     /// open with picker.
     pub(super) fn reopen_active_editor_with(&mut self, override_id: Option<String>, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
         let Some(editor) = self.editors.active() else { return Outcome::done() };
-        let (resource, current) = match self.webview_panels.panels.iter().find(|panel| editor.document.is(&panel.scheme, &panel.path)) {
+        let (resource, current) = match self.webview_panels.panels.iter().find(|panel| editor.document().is(&panel.scheme, &panel.path)) {
             Some(panel) => match &panel.custom {
                 Some(custom) => (custom.resource.clone(), panel.view_type.clone()),
                 // A webview panel has no resource to reopen.
                 None => return Outcome::done(),
             },
-            None => (editor.document.uri(), TEXT_EDITOR_ID.to_owned()),
+            None => (editor.document().uri(), TEXT_EDITOR_ID.to_owned()),
         };
         match override_id {
             Some(editor_id) => self.reopen_with(&resource, &current, &editor_id, false, window, cx),
@@ -189,7 +189,7 @@ impl Workbench {
         if current == editor_id {
             return Outcome::done();
         }
-        if let Some(index) = self.editors.active_index().filter(|&index| self.editors.editors[index].document.scheme == WEBVIEW_PANEL_SCHEME) {
+        if let Some(index) = self.editors.active_index().filter(|&index| self.editors.editors[index].document().scheme == WEBVIEW_PANEL_SCHEME) {
             self.editors.close(index);
             self.editors_changed(cx);
         }
@@ -383,7 +383,7 @@ impl Workbench {
     /// created first, once per resource and view type. The host has the text editor's document already, since
     /// `editors_changed` sent it on the same channel.
     pub(super) fn resolve_custom_editors(&mut self, cx: &mut Context<Self>) {
-        let active = self.webview_panels.panels.iter().position(|panel| self.editors.active().is_some_and(|editor| editor.document.is(&panel.scheme, &panel.path)));
+        let active = self.webview_panels.panels.iter().position(|panel| self.editors.active().is_some_and(|editor| editor.document().is(&panel.scheme, &panel.path)));
         let providers = &self.webview_panels.custom_editors.providers;
         let mut resolves = Vec::new();
         for index in 0..self.webview_panels.panels.len() {
@@ -440,7 +440,7 @@ impl Workbench {
             let panel = &self.webview_panels.panels[index];
             let Some(rest) = panel.path.strip_prefix(source).ok().filter(|_| panel.scheme == source_scheme && panel.custom.is_some()) else { continue };
             let path = if rest.as_os_str().is_empty() { target.to_path_buf() } else { target.join(rest) };
-            let Some(resource) = self.editors.editors.iter().find(|editor| editor.document.is(target_scheme, &path)).map(|editor| editor.document.uri()) else { continue };
+            let Some(resource) = self.editors.editors.iter().find(|editor| editor.document().is(target_scheme, &path)).map(|editor| editor.document().uri()) else { continue };
             let supports_move = self.webview_panels.custom_editors.providers.get(&panel.view_type).is_some_and(|provider| provider.supports_move);
             let new_handle = (!supports_move).then(|| self.next_custom_editor_handle());
             let panel = &mut self.webview_panels.panels[index];
