@@ -221,7 +221,7 @@ impl Settings {
             return Some(Ok(path));
         }
         if !path.exists()
-            && let Err(error) = write_file(&path, "{\n}")
+            && let Err(error) = self.write_settings_file(&path, "{\n}")
         {
             return Some(Err(format!("Unable to create '{}' ({error}).", path.display())));
         }
@@ -409,7 +409,7 @@ impl Settings {
             Ok(content) => content,
             Err(_) => {
                 let initial = if operation.standalone == Some("tasks") { TASKS_DEFAULT } else { "{}" };
-                write_file(path, initial).map_err(|error| self.fs_error(editable, &error))?;
+                self.write_settings_file(path, initial).map_err(|error| self.fs_error(editable, &error))?;
                 initial.to_owned()
             }
         };
@@ -428,9 +428,18 @@ impl Settings {
             },
         };
         if new_content != content {
-            write_file(path, &new_content).map_err(|error| self.fs_error(editable, &error))?;
+            self.write_settings_file(path, &new_content).map_err(|error| self.fs_error(editable, &error))?;
         }
         Ok(())
+    }
+
+    /// A profile's settings and tasks files are written atomically (`updateAtomicReadWritesResources`), the rest in place.
+    fn write_settings_file(&self, path: &Path, content: &str) -> std::io::Result<()> {
+        let atomic = path.starts_with(&self.user_home) && path.file_name().is_some_and(|name| name == "settings.json" || name == "tasks.json");
+        match atomic {
+            true => write_user_data_file(path, content.as_bytes()),
+            false => write_file(path, content),
+        }
     }
 
     /// `toErrorMessage` for the API constraint errors `validate` raises.
@@ -538,6 +547,22 @@ fn write_file(path: &Path, content: &str) -> std::io::Result<()> {
     std::fs::write(path, content)
 }
 
+/// fileUserDataProvider.ts `enforceAtomicWriteFile` (`.vsctmp`) through diskFileSystemProvider.ts `doWriteFileAtomic`:
+/// a temporary file renamed over the target; a symbolic link is written in place (`canWriteFileAtomic`).
+pub fn write_user_data_file(path: &Path, content: &[u8]) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    if std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+        return std::fs::write(path, content);
+    }
+    let temporary = PathBuf::from(format!("{}.vsctmp", path.display()));
+    std::fs::write(&temporary, content)?;
+    std::fs::rename(&temporary, path).inspect_err(|_| {
+        let _ = std::fs::remove_file(&temporary);
+    })
+}
+
 /// `getFormattingOptions(model)`: the indentation of the file's text model (language `jsonc`) and its line
 /// break, `\n` on macOS for a file with none.
 pub fn formatting_options(content: &str, configuration: &Configuration, path: &Path) -> FormattingOptions {
@@ -625,6 +650,29 @@ mod tests {
 
     fn parsed(path: &Path) -> Value {
         json::parse(&std::fs::read_to_string(path).unwrap(), &mut Vec::new(), ParseOptions::default()).unwrap()
+    }
+
+    #[test]
+    fn user_settings_are_written_atomically_and_folder_settings_in_place() {
+        use std::os::unix::fs::MetadataExt;
+        let mut fixture = Fixture::new("atomic", true);
+        write_file(&fixture.user("settings.json"), "{}");
+        write_file(&fixture.folder("settings.json"), "{}");
+        let inode = |path: &Path| std::fs::metadata(path).unwrap().ino();
+        let (user, folder) = (inode(&fixture.user("settings.json")), inode(&fixture.folder("settings.json")));
+        fixture.write("configurationEditing.service.testSetting", Some(json!("value")), Target::UserLocal).unwrap();
+        fixture.write("configurationEditing.service.testSetting", Some(json!("value")), Target::Workspace).unwrap();
+        assert_ne!(inode(&fixture.user("settings.json")), user, "renamed over");
+        assert_eq!(inode(&fixture.folder("settings.json")), folder, "written in place");
+        assert!(!fixture.user("settings.json.vsctmp").exists());
+
+        let target = fixture.root.join("linked.json");
+        write_file(&target, "{}");
+        std::fs::remove_file(fixture.user("settings.json")).unwrap();
+        std::os::unix::fs::symlink(&target, fixture.user("settings.json")).unwrap();
+        fixture.write("configurationEditing.service.testSettingTwo", Some(json!("value")), Target::UserLocal).unwrap();
+        assert!(std::fs::symlink_metadata(fixture.user("settings.json")).unwrap().file_type().is_symlink());
+        assert_eq!(parsed(&target)["configurationEditing.service.testSettingTwo"], json!("value"));
     }
 
     #[test]

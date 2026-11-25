@@ -207,7 +207,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/update | src/vs/platform | todo |  |
 | platform/uriIdentity | src/vs/platform | todo |  |
 | platform/url | src/vs/platform | todo |  |
-| platform/userData | src/vs/platform | todo |  |
+| platform/userData | src/vs/platform | verified | fileUserDataProvider.ts's atomic reads and writes of every profile's settings, keybindings, tasks and extensions files (`.vsctmp` renamed over, symbolic links in place) as config::service::write_user_data_file, used by configuration writes, the Keyboard Shortcuts editor and editor saves (cargo test -p config service `user_settings_are_written_atomically_and_folder_settings_in_place`); shortcut: user data files open as `file` URIs, not under the `vscode-userdata` scheme, until the text models and the host's file system take providers per scheme; fileUserDataProvider.test.ts tests that scheme mapping and is not ported |
 | platform/userDataProfile | src/vs/platform | todo |  |
 | platform/userDataSync | src/vs/platform | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | platform/userInteraction | src/vs/platform | todo |  |
@@ -386,7 +386,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/url | workbench service | todo |  |
 | workbench/services/userActivity | workbench service | todo |  |
 | workbench/services/userAttention | workbench service | todo |  |
-| workbench/services/userData | workbench service | todo |  |
+| workbench/services/userData | workbench service | removed | userDataInit.ts initializes a web window's user data from Settings Sync: browser only, and no sync by decision (port/notes.md) |
 | workbench/services/userDataProfile | workbench service | todo |  |
 | workbench/services/userDataSync | workbench service | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/services/utilityProcess | workbench service | todo |  |
@@ -415,7 +415,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/editTelemetry | workbench contribution | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | workbench/contrib/emergencyAlert | workbench contribution | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | workbench/contrib/emmet | workbench contribution | todo |  |
-| workbench/contrib/encryption | workbench contribution | todo |  |
+| workbench/contrib/encryption | workbench contribution | n/a | encryption.contribution.ts only migrates Linux `password-store` argv values to gnome-libsecret; the port runs on macOS and keeps secrets in the Keychain |
 | workbench/contrib/extensions | workbench contribution | todo |  |
 | workbench/contrib/externalTerminal | workbench contribution | todo |  |
 | workbench/contrib/externalUriOpener | workbench contribution | todo |  |

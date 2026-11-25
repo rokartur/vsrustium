@@ -796,7 +796,7 @@ impl Workbench {
         let content = std::fs::read_to_string(&file).ok();
         let options = config::service::formatting_options(content.as_deref().unwrap_or_default(), &self.settings.lock().unwrap().configuration, &file);
         let edited = keybinding_editing::apply(content.as_deref(), &entry.row, change, &options)?;
-        let written = file.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|_| std::fs::write(&file, edited));
+        let written = config::service::write_user_data_file(&file, edited.as_bytes());
         written.map_err(|error| format!("Error '{error}' while editing the keybinding. Please open 'keybindings.json' file and check for errors."))?;
         // The open editor's text model is the file's: it shows the edit.
         if let Some(index) = open_editor {

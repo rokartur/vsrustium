@@ -83,7 +83,13 @@ impl Workbench {
         let version = editor.alternative_version_id();
         let bytes = editor.saved_bytes();
         if scheme == "file" {
-            let written = std::fs::write(&path, bytes).map_err(|error| error.to_string());
+            let user_data = ["settings.json", "keybindings.json", "tasks.json", "extensions.json"].iter().any(|name| path.ends_with(name))
+                && path.starts_with(self.settings.lock().unwrap().user_home());
+            let written = match user_data {
+                true => config::service::write_user_data_file(&path, &bytes),
+                false => std::fs::write(&path, bytes),
+            };
+            let written = written.map_err(|error| error.to_string());
             let _ = sender.send(self.finish_save(&scheme, &path, version, written, cx));
             return receiver;
         }
