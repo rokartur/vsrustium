@@ -159,7 +159,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/jsonschemas | src/vs/platform | todo |  |
 | platform/keybinding | src/vs/platform | ported | cargo test -p app keybindings (keybindingResolver and label tests) |
 | platform/keyboardLayout | src/vs/platform | ported | keyboard_layout.rs: layout info and raw mapping as native-keymap reads them, Developer: Inspect Key Mappings (JSON) (cargo test -p app keyboard_layout inspect_key_mappings; output byte-identical to native-keymap on the Studio); the picker is web-only; the scan-code mapper of Inspect Key Mappings not ported |
-| platform/label | src/vs/platform | todo |  |
+| platform/label | src/vs/platform | ported | the ILabelService interface; the file scheme labels are workbench/services/label |
 | platform/languagePacks | src/vs/platform | todo |  |
 | platform/launch | src/vs/platform | todo |  |
 | platform/layout | src/vs/platform | todo |  |
@@ -179,7 +179,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/onboarding | src/vs/platform | todo |  |
 | platform/opener | src/vs/platform | ported | workbench/opener.rs (openerService.ts open: contributed external openers, validators, folder, url, external, command, editor openers; extractSelection); cargo test -p app opener |
 | platform/otel | src/vs/platform | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
-| platform/path | src/vs/platform | todo |  |
+| platform/path | src/vs/platform | ported | the IPathService interface; see workbench/services/path |
 | platform/policy | src/vs/platform | todo |  |
 | platform/process | src/vs/platform | todo |  |
 | platform/product | src/vs/platform | todo |  |
@@ -337,7 +337,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/inlineCompletions | workbench service | todo |  |
 | workbench/services/integrity | workbench service | todo |  |
 | workbench/services/keybinding | workbench service | ported | keyboard.rs: default-macos.json, contributes.keybindings, keybindings.json reload, chords with the status bar message; cargo test -p app keybindings user_keybindings; pixel-check chord |
-| workbench/services/label | workbench service | todo |  |
+| workbench/services/label | workbench service | ported | file scheme getUriLabel in quick_input.rs path_label and path_label_without_prefix (label.test.ts file scheme, multi-root and explicit separator cases: cargo test -p app path_labels copied_path_labels), tildify (search_view.rs), workspace labels (cargo test -p config labels_a_workspace_file_by_its_name); formatters and URI homes only come from remote resolvers (MainThreadLabelService removed) |
 | workbench/services/language | workbench service | verified | getAssociationByPath plus firstLine detection (languages.rs); cargo test -p app languages::tests |
 | workbench/services/languageDetection | workbench service | todo |  |
 | workbench/services/languageStatus | workbench service | todo |  |
@@ -354,7 +354,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/outline | workbench service | todo |  |
 | workbench/services/output | workbench service | todo |  |
 | workbench/services/panecomposite | workbench service | todo |  |
-| workbench/services/path | workbench service | todo |  |
+| workbench/services/path | workbench service | ported | the user home is $HOME (path_label, tildify), hasValidBasename is file_actions.rs is_valid_basename (cargo test -p app validates_file_names); pathService.test.ts covers only remote path semantics (no remote) |
 | workbench/services/policies | workbench service | todo |  |
 | workbench/services/power | workbench service | todo |  |
 | workbench/services/preferences | workbench service | todo | keybindingsEditorModel.ts and keybindingsEditorInput.ts ported as keybindings_editor.rs with keybindingsEditorModel.test.ts (cargo test -p app keybindings_editor); openGlobalKeybindingSettings opens the Keyboard Shortcuts editor (cargo test -p app keybindings_editor_view); preferencesService.ts settings parts, preferencesModels.ts and preferencesValidation.ts wait for the Settings editor (milestone 10) |
