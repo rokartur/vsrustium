@@ -365,7 +365,7 @@ impl Workbench {
     }
 
     /// `explorerService.select(resource, true)`: revealed, selected and focused.
-    fn select_explorer_item(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn select_explorer_item(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(tree) = self.folder.as_mut() {
             tree.reveal(path);
         }

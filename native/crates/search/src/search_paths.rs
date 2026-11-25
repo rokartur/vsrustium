@@ -98,6 +98,37 @@ pub fn restrict_to_open_editors(query: &mut Query, open_editors: &[PathBuf], wor
     query.using_search_paths = true;
 }
 
+/// `resolveResourcesForSearchIncludes`: the include patterns for folders, `./`-relative where the owning folder's
+/// name is unique, else the absolute path.
+pub fn resolve_resources_for_search_includes(resources: &[PathBuf], workspace: &Workspace) -> Vec<String> {
+    let relative = |folder: &Path, resource: &Path| resource.strip_prefix(folder).ok().map(|rest| rest.to_string_lossy().replace('\\', "/"));
+    let mut folder_paths = Vec::new();
+    let mut seen = Vec::new();
+    for resource in resources {
+        if seen.contains(&resource) {
+            continue;
+        }
+        seen.push(resource);
+        let folder_path = match workspace.single_folder {
+            true => relative(workspace.folders[0].path, resource).filter(|path| !path.is_empty()).map(|path| format!("./{path}")),
+            false => {
+                let owning = workspace.folders.iter().filter(|folder| resource.starts_with(folder.path)).max_by_key(|folder| folder.path.as_os_str().len());
+                owning.map(|folder| match workspace.folders.iter().filter(|other| other.name == folder.name).count() == 1 {
+                    true => match relative(folder.path, resource).unwrap_or_default() {
+                        rest if rest.is_empty() => format!("./{}", folder.name),
+                        rest => format!("./{}/{rest}", folder.name),
+                    },
+                    false => resource.to_string_lossy().into_owned(),
+                })
+            }
+        };
+        if let Some(folder_path) = folder_path {
+            folder_paths.push(escape_glob_pattern(&folder_path));
+        }
+    }
+    folder_paths
+}
+
 /// `escapeGlobPattern`.
 fn escape_glob_pattern(path: &str) -> String {
     let mut escaped = String::new();

@@ -71,7 +71,6 @@ impl HistoryNavigator {
         self.elements.iter().any(|element| element == value)
     }
 
-    #[cfg(test)]
     pub fn clear(&mut self) {
         self.elements.clear();
         self.on_change();

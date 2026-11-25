@@ -15,18 +15,23 @@ use serde_json::{Value, json};
 
 use super::Workbench;
 use super::explorer_actions::confirm;
+use super::find_widget::HISTORY_LIMIT;
 use super::input_box_view::InputId;
 use super::search_view::{MessagePart, RowAction, RowKey, RowKind, SEARCH_FIELDS, SearchField, SearchOption, SearchUiState, SideBarView};
 use crate::anything_quick_access::TextRange;
 use crate::commands::Outcome;
 use crate::editor::char_column;
 use crate::editor::find::search::SearchParams;
+use crate::history::HistoryNavigator;
 use crate::input_box::InputBox;
+use crate::menus::MenuId;
 use crate::search_model::{MessageLink, after_replace_all_message, no_results_message, replace_all_confirmation_message, result_count_message, utf16_len};
 
 #[cfg(test)]
 mod tests;
 
+/// `SearchHistoryService.SEARCH_HISTORY_KEY`, workspace storage.
+const SEARCH_HISTORY_KEY: &str = "workbench.search.history";
 /// `SearchUIState` turns slow after this long (`doSearch`'s slowTimer).
 const SLOW_SEARCH: Duration = Duration::from_secs(2);
 /// `searchMaxResultsWarning`.
@@ -168,7 +173,170 @@ impl Workbench {
             }
             Outcome::done()
         });
+        self.commands.register("search.action.clearHistory", |workbench, _, _, _| {
+            for field in SEARCH_FIELDS {
+                workbench.search.input_mut(field).history.clear();
+            }
+            workbench.workspace_storage.lock().unwrap().delete(SEARCH_HISTORY_KEY);
+            Outcome::done()
+        });
+        self.commands.register("search.action.copyAll", |workbench, _, _, cx| {
+            let files = &workbench.search.result.files;
+            let text: Vec<String> = (0..files.len()).map(|file| workbench.search_file_text(file)).collect();
+            cx.write_to_clipboard(ClipboardItem::new_string(text.join("\n\n")));
+            Outcome::done()
+        });
+        self.commands.register("search.action.revealInSideBar", |workbench, _, window, cx| {
+            if let Some(RowKey::File(path)) = workbench.search.focused.clone() {
+                workbench.execute_command("workbench.view.explorer", Vec::new(), window, cx);
+                workbench.select_explorer_item(&path, window, cx);
+            }
+            Outcome::done()
+        });
+        self.commands.register("search.action.expandRecursively", |workbench, _, _, cx| {
+            if let Some(key) = workbench.search.focused.clone() {
+                workbench.expand_search_row_recursively(&key, cx);
+            }
+            Outcome::done()
+        });
+        for (id, include) in [("search.action.restrictSearchToFolder", true), ("search.action.excludeFromSearch", false)] {
+            self.commands.register(id, move |workbench, _, window, cx| {
+                if let Some(RowKey::Folder(path) | RowKey::File(path)) = workbench.search.focused.clone() {
+                    workbench.search_with_folder(&path, include, window, cx);
+                }
+                Outcome::done()
+            });
+        }
+        for (id, exclude) in [("search.action.excludeFileTypeFromSearch", true), ("search.action.includeFileTypeInSearch", false)] {
+            self.commands.register(id, move |workbench, _, window, cx| {
+                if let Some(RowKey::File(path)) = workbench.search.focused.clone() {
+                    workbench.modify_search_file_type_pattern(&path, exclude, window, cx);
+                }
+                Outcome::done()
+            });
+        }
         self.register_search_list_commands();
+    }
+
+    /// `addToHistory` of the inputs, saved as `_saveSearchHistoryService` does. Upstream saves on shutdown; the port saves
+    /// on each change, as its storage writes synchronously and the app can exit without a shutdown phase.
+    fn add_to_search_history(&mut self, fields: &[SearchField]) {
+        for &field in fields {
+            let input = self.search.input_mut(field);
+            input.history.add_to_history(&input.value.value, false);
+        }
+        self.save_search_history();
+    }
+
+    /// `SearchHistoryService.save`: the non-empty histories under `workbench.search.history`, removed when all are empty.
+    fn save_search_history(&self) {
+        let mut history = serde_json::Map::new();
+        for (key, field) in [("search", SearchField::Query), ("replace", SearchField::Replace), ("exclude", SearchField::Exclude), ("include", SearchField::Include)] {
+            let elements = self.search.input(field).history.elements();
+            if !elements.is_empty() {
+                history.insert(key.into(), json!(elements));
+            }
+        }
+        let mut storage = self.workspace_storage.lock().unwrap();
+        match history.is_empty() {
+            true => storage.delete(SEARCH_HISTORY_KEY),
+            false => storage.set(SEARCH_HISTORY_KEY, Value::Object(history).to_string()),
+        }
+    }
+
+    /// The workspace's storage arrived: `SearchHistoryService.load`, prepended to the inputs' histories (`prependHistory`).
+    pub(super) fn restore_search_history(&mut self) {
+        let stored = self.workspace_storage.lock().unwrap().get(SEARCH_HISTORY_KEY).and_then(|raw| serde_json::from_str::<Value>(raw).ok()).unwrap_or_default();
+        for (key, field) in [("search", SearchField::Query), ("replace", SearchField::Replace), ("exclude", SearchField::Exclude), ("include", SearchField::Include)] {
+            let mut elements: Vec<String> = stored[key].as_array().into_iter().flatten().filter_map(|element| element.as_str().map(str::to_owned)).collect();
+            let history = &mut self.search.input_mut(field).history;
+            elements.extend(history.elements().iter().cloned());
+            *history = HistoryNavigator::new(elements, HISTORY_LIMIT);
+        }
+    }
+
+    /// `history.showPrevious` and `history.showNext` on a Search view input; the new value searches as typing does.
+    pub(super) fn show_search_history_value(&mut self, field: SearchField, previous: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let input = self.search.input_mut(field);
+        let value = match previous {
+            true => input.history.show_previous_value(&input.value.value),
+            false => Some(input.history.show_next_value(&input.value.value)),
+        };
+        self.save_search_history();
+        if let Some(value) = value {
+            self.edit_search_input(field, |input| input.set_value(value), window, cx);
+        }
+    }
+
+    /// searchView.ts `onContextMenu`: the SearchContext menu for the right-clicked row, which takes the focus but not
+    /// the selection.
+    pub(super) fn show_search_context_menu(&mut self, key: &RowKey, position: gpui::Point<gpui::Pixels>, window: &mut Window, cx: &mut Context<Self>) {
+        self.search.focused = Some(key.clone());
+        window.focus(&self.search.focus.clone(), cx);
+        let anchor = gpui::Bounds { origin: position, size: gpui::Size::default() };
+        let context = self.key_context(window);
+        self.show_context_menu(MenuId::SearchContext, &context, anchor, Vec::new(), window, cx);
+    }
+
+    /// `forcedExpandRecursively`: the row and every row below it expanded.
+    fn expand_search_row_recursively(&mut self, key: &RowKey, cx: &mut Context<Self>) {
+        let (RowKey::Folder(folder) | RowKey::File(folder)) = key else { return };
+        self.search.collapsed.insert(key.clone(), false);
+        loop {
+            let collapsed: Vec<RowKey> = self
+                .search
+                .rows(&self.search_folders(), Some(&self.collapse_results()))
+                .into_iter()
+                .filter(|row| matches!(row.kind, RowKind::Folder { collapsed: true, .. } | RowKind::File { collapsed: true, .. }))
+                .filter(|row| matches!(&row.key, RowKey::Folder(path) | RowKey::File(path) if path.starts_with(folder)))
+                .map(|row| row.key)
+                .collect();
+            if collapsed.is_empty() {
+                break;
+            }
+            for key in collapsed {
+                self.search.collapsed.insert(key, false);
+            }
+        }
+        cx.notify();
+    }
+
+    /// searchActionsFind.ts `searchWithFolderCommand` from the results and searchView.ts `_searchWithIncludeOrExclude`:
+    /// the folder of `path` goes into the include or exclude input.
+    fn search_with_folder(&mut self, path: &Path, include: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let folder = match path.is_dir() {
+            true => path.to_path_buf(),
+            false => path.parent().unwrap_or(path).to_path_buf(),
+        };
+        let workspace_folders: Vec<_> = self.workspace().iter().flat_map(|workspace| &workspace.folders).map(|folder| (folder.path.clone(), folder.name.clone())).collect();
+        let folders: Vec<WorkspaceFolder> = workspace_folders.iter().map(|(path, name)| WorkspaceFolder { path, name }).collect();
+        let workspace = search_paths::Workspace { folders: &folders, single_folder: folders.len() == 1 && self.workspace().is_some_and(|workspace| workspace.file.is_none()), home: None };
+        let folder_paths = search_paths::resolve_resources_for_search_includes(&[folder], &workspace);
+        if folder_paths.is_empty() || folder_paths.iter().any(|path| path == ".") {
+            self.search.input_mut(SearchField::Include).value.set_value(String::new());
+            self.focus_search_widget(true, false, window, cx);
+            return;
+        }
+        if !self.search.details_visible {
+            self.toggle_query_details(Some(true), true, window, cx);
+        }
+        let field = if include { SearchField::Include } else { SearchField::Exclude };
+        self.search.input_mut(field).value.set_value(folder_paths.join(", "));
+        self.focus_search_input(SearchField::Query, false, window, cx);
+    }
+
+    /// searchActionsFind.ts `modifySearchFileTypePattern`: `*.ext` of the file added to the exclude or include input.
+    fn modify_search_file_type_pattern(&mut self, path: &Path, exclude: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let file_name = path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+        let field = if exclude { SearchField::Exclude } else { SearchField::Include };
+        let current = self.search.value(field).to_string();
+        let updated = merge_search_pattern_if_not_exists(&current, &extract_search_file_pattern(&file_name));
+        if updated == current {
+            return;
+        }
+        self.search.input_mut(field).value.set_value(updated);
+        self.toggle_query_details(Some(true), false, window, cx);
+        self.trigger_search(false, None, window, cx);
     }
 
     /// The list commands (listCommands.ts) act on the focused list; the results tree is the only list that takes them.
@@ -191,7 +359,7 @@ impl Workbench {
             ("list.collapse", |workbench, window, cx| workbench.expand_search_row(false, window, cx)),
             ("list.collapseAll", |workbench, _, cx| workbench.set_search_rows_collapsed(true, cx)),
             ("list.clear", |workbench, _, cx| {
-                workbench.search.focused = None;
+                workbench.search.focus_and_select(None);
                 cx.notify();
             }),
         ];
@@ -244,6 +412,10 @@ impl Workbench {
         context.insert("patternExcludesInputBoxFocus".into(), json!(input == Some(SearchField::Exclude)));
         if input.is_some() {
             context.insert("inputFocus".into(), json!(true));
+            // contextScopedHistoryWidget.ts: the inputs are history widgets, navigable both ways.
+            context.insert("historyNavigationWidgetFocus".into(), json!(true));
+            context.insert("historyNavigationForwardsEnabled".into(), json!(true));
+            context.insert("historyNavigationBackwardsEnabled".into(), json!(true));
         }
         context.insert("replaceActive".into(), json!(view.replace_active));
         context.insert("hasSearchResult".into(), json!(!view.result.is_empty()));
@@ -300,7 +472,7 @@ impl Workbench {
     fn focus_search_list(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.search.focus.clone(), cx);
         if self.search.focused.is_none() {
-            self.search.focused = self.search.rows(&self.search_folders(), Some(&self.collapse_results())).first().map(|row| row.key.clone());
+            self.search.focus_and_select(self.search.rows(&self.search_folders(), Some(&self.collapse_results())).first().map(|row| row.key.clone()));
         }
         cx.notify();
     }
@@ -405,7 +577,12 @@ impl Workbench {
                     self.trigger_search(true, Some(delay), window, cx);
                 }
             }
-            SearchField::Replace => {}
+            SearchField::Replace => {
+                self.search.replace_history_update = Some(cx.spawn(async |workbench, cx| {
+                    cx.background_executor().timer(Duration::from_millis(500)).await;
+                    let _ = workbench.update(cx, |workbench, _| workbench.add_to_search_history(&[SearchField::Replace]));
+                }));
+            }
             SearchField::Include | SearchField::Exclude => {
                 let delay = self.debounce_period();
                 self.trigger_search(true, Some(delay), window, cx);
@@ -624,6 +801,10 @@ impl Workbench {
             let missing = search_paths::expanded_text_query(&pattern, &workspace, &include, &exclude, &options, &setting).map(|query| query.folder_queries[0].folder.clone());
             return self.show_search_error(format!("Search path not found: {}", missing.unwrap_or_default().display()), cx);
         }
+        self.search.history_update = Some(cx.spawn(async |workbench, cx| {
+            cx.background_executor().timer(Duration::from_secs(2)).await;
+            let _ = workbench.update(cx, |workbench, _| workbench.add_to_search_history(&[SearchField::Query, SearchField::Exclude, SearchField::Include]));
+        }));
         if !preserve_focus {
             self.focus_search_widget(false, false, window, cx);
         }
@@ -632,7 +813,7 @@ impl Workbench {
         }
         self.search.validation = None;
         self.search.state = SearchUiState::Searching;
-        self.search.focused = None;
+        self.search.focus_and_select(None);
         self.search.collapsed.clear();
         self.search.result = Default::default();
         self.search.warnings.clear();
@@ -764,7 +945,7 @@ impl Workbench {
     /// `clearSearchResults`: with `clear_input` the inputs empty too, the include and exclude ones once the others are.
     pub(super) fn clear_search_results(&mut self, clear_input: bool, cx: &mut Context<Self>) {
         self.search.result = Default::default();
-        self.search.focused = None;
+        self.search.focus_and_select(None);
         self.search.message = None;
         self.search.warnings.clear();
         self.search.validation = None;
@@ -801,7 +982,7 @@ impl Workbench {
     /// focused on a double click; a file or folder row expands or collapses.
     pub(super) fn search_row_clicked(&mut self, key: &RowKey, click_count: usize, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.search.focus.clone(), cx);
-        self.search.focused = Some(key.clone());
+        self.search.focus_and_select(Some(key.clone()));
         cx.notify();
         match key {
             RowKey::Match(..) if click_count == 1 => self.open_search_row(key, true, false, window, cx),
@@ -841,7 +1022,7 @@ impl Workbench {
             (true, Some(false)) => self.move_search_focus(1, window, cx),
             (false, _) => {
                 if let Some(parent) = rows[..index].iter().rev().find(|parent| parent.depth < row.depth) {
-                    self.search.focused = Some(parent.key.clone());
+                    self.search.focus_and_select(Some(parent.key.clone()));
                     self.search.scroll.scroll_to_item(rows.iter().position(|known| known.key == parent.key).unwrap_or(0), gpui::ScrollStrategy::Top);
                     cx.notify();
                 }
@@ -866,7 +1047,7 @@ impl Workbench {
             (Some(index), step) => (index as isize + step).clamp(0, last),
         } as usize;
         let key = rows[next].key.clone();
-        self.search.focused = Some(key.clone());
+        self.search.focus_and_select(Some(key.clone()));
         self.search.scroll.scroll_to_item(next, gpui::ScrollStrategy::Top);
         cx.notify();
         if matches!(key, RowKey::Match(..)) {
@@ -899,7 +1080,7 @@ impl Workbench {
                 self.search.collapsed.insert(ancestor.key.clone(), false);
             }
         }
-        self.search.focused = Some(key.clone());
+        self.search.focus_and_select(Some(key.clone()));
         let visible = self.search.rows(&folders, Some(&self.collapse_results()));
         if let Some(index) = visible.iter().position(|row| row.key == key) {
             self.search.scroll.scroll_to_item(index, gpui::ScrollStrategy::Center);
@@ -984,7 +1165,7 @@ impl Workbench {
         self.update_result_count_message();
         let rows = self.search.rows(&folders, Some(&self.collapse_results()));
         if self.search.focused.as_ref() == Some(key) || self.search.focused.is_none() {
-            self.search.focused = position.and_then(|index| rows.get(index.min(rows.len().saturating_sub(1)))).map(|row| row.key.clone());
+            self.search.focus_and_select(position.and_then(|index| rows.get(index.min(rows.len().saturating_sub(1)))).map(|row| row.key.clone()));
         }
         window.focus(&self.search.focus.clone(), cx);
         cx.notify();
@@ -1050,7 +1231,7 @@ impl Workbench {
                 let targets: Vec<(usize, Option<usize>)> = (0..workbench.search.result.files.len()).map(|file| (file, None)).collect();
                 workbench.replace_search_targets(&targets, cx);
                 workbench.search.result = Default::default();
-                workbench.search.focused = None;
+                workbench.search.focus_and_select(None);
                 workbench.search.message = Some(vec![MessagePart::Text(after_replace_all_message(occurrences, files, &replace_value))]);
                 cx.notify();
             });
@@ -1072,20 +1253,43 @@ impl Workbench {
 
     /// `copyMatchCommand`: a match as `line,column: text`, a file as its path and its matches, a folder as its files.
     fn search_row_text(&self, key: &RowKey) -> String {
-        let match_text = |found: &crate::search_model::Match, indent: usize| {
-            let prefix = format!("{},{}", found.range.start_line + 1, found.range.start_column + 1);
-            format!("{}{prefix}: {}", " ".repeat(indent), found.full_match_text(true))
-        };
-        let file_text = |file: usize| {
-            let file_match = &self.search.result.files[file];
-            let rows: Vec<String> = file_match.matches.iter().map(|found| match_text(found, 2)).collect();
-            format!("{}\n{}", self.tildify(&file_match.path), rows.join("\n"))
-        };
         match key {
-            RowKey::Match(..) => self.search_row_match(key).map(|(_, found)| match_text(&found, 0)).unwrap_or_default(),
-            _ => self.search_row_targets(key).iter().map(|&(file, _)| file_text(file)).collect::<Vec<_>>().join("\n\n"),
+            RowKey::Match(..) => self.search_row_match(key).map(|(_, found)| search_match_text(&found, 0)).unwrap_or_default(),
+            _ => self.search_row_targets(key).iter().map(|&(file, _)| self.search_file_text(file)).collect::<Vec<_>>().join("\n\n"),
         }
     }
+
+    /// searchActionsCopy.ts `fileMatchToString`.
+    fn search_file_text(&self, file: usize) -> String {
+        let file_match = &self.search.result.files[file];
+        let rows: Vec<String> = file_match.matches.iter().map(|found| search_match_text(found, 2)).collect();
+        format!("{}\n{}", self.tildify(&file_match.path), rows.join("\n"))
+    }
+}
+
+/// searchActionsCopy.ts `matchToString`.
+fn search_match_text(found: &crate::search_model::Match, indent: usize) -> String {
+    let prefix = format!("{},{}", found.range.start_line + 1, found.range.start_column + 1);
+    format!("{}{prefix}: {}", " ".repeat(indent), found.full_match_text(true))
+}
+
+/// searchActionsFind.ts `extractSearchFilePattern`: `*.` and everything after the name's first dot.
+fn extract_search_file_pattern(file_name: &str) -> String {
+    match file_name.split_once('.') {
+        Some((_, extension)) => format!("*.{extension}"),
+        None => file_name.to_string(),
+    }
+}
+
+/// searchActionsFind.ts `mergeSearchPatternIfNotExists`.
+fn merge_search_pattern_if_not_exists(current: &str, pattern: &str) -> String {
+    if current.trim().is_empty() {
+        return pattern.to_string();
+    }
+    if current.split(',').map(str::trim).any(|existing| existing == pattern) {
+        return current.to_string();
+    }
+    format!("{current}, {pattern}")
 }
 
 fn search_folder_index(folders: &[(PathBuf, String)], path: &Path) -> usize {

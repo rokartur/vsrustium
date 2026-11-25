@@ -32,6 +32,8 @@ impl Workbench {
             }
             Outcome::done()
         });
+        self.commands.register("_workbench.open", |workbench, args, window, cx| Outcome::Ready(workbench.api_open_editor(&args, window, cx)));
+        self.commands.register("vscode.open", |workbench, args, window, cx| workbench.execute_command("_workbench.open", args.into_iter().take(1).collect(), window, cx));
         self.commands.register("_workbench.revertAllDirty", |workbench, _, _, cx| {
             for index in workbench.dirty_editors() {
                 workbench.revert_editor(index, cx);

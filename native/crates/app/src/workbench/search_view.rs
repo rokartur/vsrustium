@@ -8,11 +8,13 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use gpui::{ClickEvent, Context, Div, FocusHandle, Rgba, Task, UniformListScrollHandle, Window, div, prelude::*, px, uniform_list};
+use gpui::{ClickEvent, Context, Div, FocusHandle, MouseButton, MouseDownEvent, Rgba, Task, UniformListScrollHandle, Window, div, prelude::*, px, uniform_list};
 use search::ripgrep::Cancellation;
 
 use super::Workbench;
 use super::input_box_view::{InputId, InputLook, InputView};
+use super::find_widget::HISTORY_LIMIT;
+use crate::history::HistoryNavigator;
 use crate::input_box::InputBox;
 use crate::search_model::{MessageLink, PatternInfo, ReplacePattern, SearchResult, compare_paths};
 
@@ -36,6 +38,7 @@ pub const SEARCH_FIELDS: [SearchField; 4] = [SearchField::Query, SearchField::Re
 
 pub struct SearchInput {
     pub value: InputBox,
+    pub history: HistoryNavigator,
     pub view: InputView,
     pub focus: FocusHandle,
 }
@@ -102,6 +105,10 @@ pub struct SearchView {
     /// The collapse state a row was given by the user or by a collapse or expand action.
     pub collapsed: HashMap<RowKey, bool>,
     pub focused: Option<RowKey>,
+    /// Follows the focus (`selectionNavigation`) except on a right click, which moves only the focus.
+    pub selected: Option<RowKey>,
+    /// The row under the mouse: it shows its actions in place of its count badge.
+    pub hovered: Option<RowKey>,
     pub state: SearchUiState,
     /// The search input's error: an invalid regex, a search path that does not exist.
     pub validation: Option<String>,
@@ -113,11 +120,15 @@ pub struct SearchView {
     pub(super) run: Option<Task<()>>,
     /// `triggerQueryDelayer`: a search typed into the inputs waits for `search.searchOnTypeDebouncePeriod`.
     pub(super) delayed: Option<Task<()>>,
+    /// `addToSearchHistoryDelayer`: a search joins the histories of the search and pattern inputs after 2 seconds.
+    pub(super) history_update: Option<Task<()>>,
+    /// `_replaceHistoryDelayer`: the replace value joins its history 500 ms after it changes.
+    pub(super) replace_history_update: Option<Task<()>>,
 }
 
 impl SearchView {
     pub fn new(cx: &mut Context<Workbench>) -> Self {
-        let input = || SearchInput { value: InputBox::default(), view: InputView::default(), focus: cx.focus_handle() };
+        let input = || SearchInput { value: InputBox::default(), history: HistoryNavigator::new(Vec::new(), HISTORY_LIMIT), view: InputView::default(), focus: cx.focus_handle() };
         let inputs = [input(), input(), input(), input()];
         SearchView {
             inputs,
@@ -137,6 +148,8 @@ impl SearchView {
             pattern: None,
             collapsed: HashMap::new(),
             focused: None,
+            selected: None,
+            hovered: None,
             state: SearchUiState::Idle,
             validation: None,
             message: None,
@@ -144,7 +157,14 @@ impl SearchView {
             cancellation: None,
             run: None,
             delayed: None,
+            history_update: None,
+            replace_history_update: None,
         }
+    }
+
+    pub fn focus_and_select(&mut self, key: Option<RowKey>) {
+        self.selected = key.clone();
+        self.focused = key;
     }
 
     pub fn input(&self, field: SearchField) -> &SearchInput {
@@ -395,9 +415,9 @@ impl Workbench {
                 .flex()
                 .flex_col()
                 .child(heading("files to include"))
-                .child(self.search_input_box(SearchField::Include, "", 25., div().flex().gap(px(2.)).child(changed_files).child(open_editors), window, cx))
+                .child(self.search_input_box(SearchField::Include, "e.g. *.ts, src/**/include", 25., div().flex().gap(px(2.)).child(changed_files).child(open_editors), window, cx))
                 .child(heading("files to exclude"))
-                .child(self.search_input_box(SearchField::Exclude, "", 25., div().child(excludes), window, cx))
+                .child(self.search_input_box(SearchField::Exclude, "e.g. *.ts, src/**/exclude", 25., div().child(excludes), window, cx))
         });
         let query_details = div().relative().ml(px(18.)).min_h(px(13.)).child(more).children(details);
         // searchview.css .search-widgets-container: margin 0 12px 0 2px inside the pane's 4px wider body.
@@ -438,7 +458,14 @@ impl Workbench {
                 .border_color(self.color("inputValidation.errorBorder"))
                 .child(message)
         });
-        let placeholder = Some(placeholder.to_string()).filter(|placeholder| !placeholder.is_empty());
+        // The pattern inputs show their placeholder only while focused (`showPlaceholderOnFocus`); HistoryInputBox
+        // `addSuffix` names the Up and Down keys on a focused input with a history.
+        let pattern = matches!(field, SearchField::Include | SearchField::Exclude);
+        let placeholder = match focused && !self.search.input(field).history.elements().is_empty() {
+            true => format!("{placeholder} (\u{21C5} for history)"),
+            false => placeholder.to_string(),
+        };
+        let placeholder = Some(placeholder).filter(|_| focused || !pattern);
         div()
             .relative()
             .h(px(height))
@@ -516,6 +543,7 @@ impl Workbench {
     fn search_row(&self, row: &ResultRow, index: usize, tree_focused: bool, cx: &mut Context<Self>) -> gpui::AnyElement {
         let foreground = self.foreground_or("sideBar.foreground");
         let is_focused = self.search.focused.as_ref() == Some(&row.key);
+        let is_selected = self.search.selected.as_ref() == Some(&row.key);
         let (selection, selection_foreground) = match tree_focused {
             true => (self.color("list.activeSelectionBackground"), self.theme.color("list.activeSelectionForeground")),
             false => (self.color("list.inactiveSelectionBackground"), self.theme.color("list.inactiveSelectionForeground")),
@@ -523,9 +551,9 @@ impl Workbench {
         let focus_outline = self.theme.color("list.focusOutline").or(self.theme.color("focusBorder")).filter(|_| tree_focused && is_focused);
         let indent = 8. * (row.depth - 1) as f32;
         let (content, collapsed) = match &row.kind {
-            RowKind::Folder { label, files, collapsed } => (self.search_folder_row(&row.key, label, files, is_focused, cx), Some(*collapsed)),
-            RowKind::File { file, collapsed } => (self.search_file_row(&row.key, *file, is_focused, foreground, cx), Some(*collapsed)),
-            RowKind::Match { file, index } => (self.search_match_row(&row.key, *file, *index, is_focused, cx), None),
+            RowKind::Folder { label, files, collapsed } => (self.search_folder_row(&row.key, label, files, is_focused, is_selected, cx), Some(*collapsed)),
+            RowKind::File { file, collapsed } => (self.search_file_row(&row.key, *file, is_focused, is_selected, foreground, cx), Some(*collapsed)),
+            RowKind::Match { file, index } => (self.search_match_row(&row.key, *file, *index, is_focused, is_selected, cx), None),
         };
         let twistie = match collapsed {
             Some(true) => self.icon("chevron-right", 16., 16., foreground),
@@ -535,7 +563,6 @@ impl Workbench {
         let key = row.key.clone();
         let row = div()
             .id(("search-result", index))
-            .group("search-row")
             // list.css: .monaco-list.mouse-support .monaco-list-row is cursor: pointer.
             .cursor_pointer()
             .relative()
@@ -546,30 +573,46 @@ impl Workbench {
             .flex()
             .items_center()
             .rounded(px(4.))
-            .when(!is_focused, |row| row.hover(|row| row.bg(self.color("list.hoverBackground"))))
-            .when(is_focused, |row| row.bg(selection).when_some(selection_foreground, |row, color| row.text_color(color)))
+            .when(!is_focused && !is_selected, |row| row.hover(|row| row.bg(self.color("list.hoverBackground"))))
+            .when(is_focused && !is_selected && tree_focused, |row| row.when_some(self.theme.color("list.focusBackground"), |row, color| row.bg(color)))
+            .when(is_selected, |row| row.bg(selection).when_some(selection_foreground, |row, color| row.text_color(color)))
             .when_some(focus_outline, |row, color| row.child(div().absolute().inset_0().rounded(px(4.)).border_1().border_color(color)))
             .child(twistie)
             .child(content.ml(px(3.)))
-            .on_click(cx.listener(move |workbench, event: &ClickEvent, window, cx| workbench.search_row_clicked(&key, event.click_count(), window, cx)));
+            .on_hover({
+                let key = key.clone();
+                cx.listener(move |workbench, hovered: &bool, _, cx| {
+                    match hovered {
+                        true => workbench.search.hovered = Some(key.clone()),
+                        false if workbench.search.hovered.as_ref() == Some(&key) => workbench.search.hovered = None,
+                        false => return,
+                    }
+                    cx.notify();
+                })
+            })
+            .on_click({
+                let key = key.clone();
+                cx.listener(move |workbench, event: &ClickEvent, window, cx| workbench.search_row_clicked(&key, event.click_count(), window, cx))
+            })
+            .on_mouse_down(MouseButton::Right, cx.listener(move |workbench, event: &MouseDownEvent, window, cx| workbench.show_search_context_menu(&key, event.position, window, cx)));
         // A uniform list sizes its items to their content; the wrapper takes the list's width.
         div().w_full().h(px(22.)).px(px(4.)).flex().child(row).into_any_element()
     }
 
     /// `FolderMatchRenderer`: the folder's name and its count badge.
-    fn search_folder_row(&self, key: &RowKey, label: &str, files: &[usize], focused: bool, cx: &mut Context<Self>) -> Div {
+    fn search_folder_row(&self, key: &RowKey, label: &str, files: &[usize], focused: bool, selected: bool, cx: &mut Context<Self>) -> Div {
         let count = files.iter().map(|&file| self.search.result.files[file].matches.len()).sum();
         let mut actions = Vec::new();
         if self.search.replace_active {
             actions.push(("replace-all", RowAction::Replace));
         }
         actions.push(("close", RowAction::Dismiss));
-        self.search_label_row(key, div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().child(label.to_string()), Some(count), &actions, focused, cx)
+        self.search_label_row(key, div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().child(label.to_string()), Some(count), &actions, focused, selected, cx)
     }
 
     /// `FileMatchRenderer`: the file icon, its name, the folder it is in as the description in the list view, the
     /// badge.
-    fn search_file_row(&self, key: &RowKey, file: usize, focused: bool, foreground: Rgba, cx: &mut Context<Self>) -> Div {
+    fn search_file_row(&self, key: &RowKey, file: usize, focused: bool, selected: bool, foreground: Rgba, cx: &mut Context<Self>) -> Div {
         let file_match = &self.search.result.files[file];
         let label_line = if self.theme.kind.is_high_contrast() { 20. } else { 22. };
         let icon = self.file_icons.as_ref().and_then(|icons| icons.file_icon(&file_match.path, self.languages.language_of(&file_match.path, ""), self.theme.kind, 13., label_line, foreground));
@@ -594,11 +637,11 @@ impl Workbench {
             actions.push(("replace-all", RowAction::Replace));
         }
         actions.push(("close", RowAction::Dismiss));
-        self.search_label_row(key, label, Some(file_match.matches.len()), &actions, focused, cx)
+        self.search_label_row(key, label, Some(file_match.matches.len()), &actions, focused, selected, cx)
     }
 
     /// `MatchRenderer`: the line around the match, the match highlighted, or struck through beside its replacement.
-    fn search_match_row(&self, key: &RowKey, file: usize, index: usize, focused: bool, cx: &mut Context<Self>) -> Div {
+    fn search_match_row(&self, key: &RowKey, file: usize, index: usize, focused: bool, selected: bool, cx: &mut Context<Self>) -> Div {
         let found = &self.search.result.files[file].matches[index];
         let preview = found.preview();
         let high_contrast = self.theme.kind.is_high_contrast();
@@ -636,18 +679,18 @@ impl Workbench {
             .children(line_number)
             .child(div().flex_none().child(preview.before))
             .child(matched)
-            .child(div().min_w_0().overflow_hidden().text_ellipsis().child(preview.after));
+            .child(div().min_w_0().overflow_hidden().text_ellipsis().child(keep_before_ellipsis(&preview.after)));
         let mut actions = Vec::new();
         if self.search.replace_active {
             actions.push(("replace", RowAction::Replace));
         }
         actions.push(("close", RowAction::Dismiss));
-        self.search_label_row(key, text, None, &actions, focused, cx)
+        self.search_label_row(key, text, None, &actions, focused, selected, cx)
     }
 
     /// A row's label with the count badge, hidden while the row is hovered or focused, and the inline actions shown then
     /// (searchview.css `.monaco-action-bar`, `.monaco-count-badge`).
-    fn search_label_row(&self, key: &RowKey, label: Div, count: Option<usize>, actions: &[(&'static str, RowAction)], focused: bool, cx: &mut Context<Self>) -> Div {
+    fn search_label_row(&self, key: &RowKey, label: Div, count: Option<usize>, actions: &[(&'static str, RowAction)], focused: bool, selected: bool, cx: &mut Context<Self>) -> Div {
         let foreground = self.foreground_or("icon.foreground");
         let hover = self.color("toolbar.hoverBackground");
         let actions = actions.iter().map(|&(icon, action)| {
@@ -663,8 +706,10 @@ impl Workbench {
                     workbench.search_row_action(&key, action, window, cx);
                 }))
         });
-        let action_bar = div().pl(px(5.2)).pr(px(10.4)).flex_none().items_center().when(focused, |bar| bar.flex()).when(!focused, |bar| bar.hidden().group_hover("search-row", |bar| bar.flex())).children(actions);
-        let badge = count.filter(|_| !focused).map(|count| {
+        // Hover is tracked in the view, not with group_hover: a display toggled by hover between prepaint and paint panics.
+        let show_actions = focused || selected || self.search.hovered.as_ref() == Some(key);
+        let action_bar = div().pl(px(5.2)).pr(px(10.4)).flex_none().items_center().when(show_actions, |bar| bar.flex()).when(!show_actions, |bar| bar.hidden()).children(actions);
+        let badge = count.filter(|_| !show_actions).map(|count| {
             div()
                 // An inline-block on the 22px line: its top sits 3px below the row's.
                 .self_start()
@@ -682,7 +727,6 @@ impl Workbench {
                 .bg(self.color("badge.background"))
                 .text_color(self.foreground_or("badge.foreground"))
                 .when_some(self.theme.color("contrastBorder"), |badge, border| badge.border_1().border_color(border))
-                .group_hover("search-row", |badge| badge.hidden())
                 .child(count.to_string())
         });
         div().flex_1().min_w_0().h_full().flex().items_center().child(label).children(badge).child(action_bar)
@@ -734,4 +778,17 @@ pub enum SearchOption {
     PreserveCase,
     OnlyOpenEditors,
     UseExcludes,
+}
+
+/// gpui drops whitespace and ASCII punctuation before a truncation "…", CSS `text-overflow` keeps them
+/// ("the …"); a zero-width space after each one ends that trim.
+pub(super) fn keep_before_ellipsis(text: &str) -> String {
+    let mut kept = String::with_capacity(text.len());
+    for c in text.chars() {
+        kept.push(c);
+        if c.is_whitespace() || c.is_ascii_punctuation() {
+            kept.push('\u{200B}');
+        }
+    }
+    kept
 }
