@@ -1238,35 +1238,26 @@ impl Workbench {
         .w(px(OVERVIEW_RULER_WIDTH))
     }
 
-    /// The selection, indentation, encoding, end of line and language items (editorStatus.ts), right to left
-    /// before the notifications bell.
-    pub(super) fn editor_status_items(&self, foreground: Rgba, window: &Window, cx: &mut Context<Self>) -> Option<Div> {
-        let editor = self.editors.active()?;
-        let document = &editor.document;
-        let Indentation { tab_size, insert_spaces, .. } = document.indentation;
-        let indent_size = document.indentation.indent_size();
-        let indentation = match (insert_spaces, tab_size == indent_size) {
-            (true, true) => format!("Spaces: {indent_size}"),
-            (true, false) => format!("Spaces: {indent_size} (Tab Size: {tab_size})"),
-            (false, _) => format!("Tab Size: {tab_size}"),
-        };
-        let encoding = SUPPORTED_ENCODINGS.iter().find(|supported| supported.id == document.encoding).map_or(document.encoding.as_str(), |supported| supported.label_short);
-        let eol = if document.eol == "\r\n" { "CRLF" } else { "LF" };
-        // editorStatus.ts entries: text, tooltip and command.
-        let items = [
-            (selection_label(editor), "Go to Line/Column", "workbench.action.gotoLine"),
-            (indentation, "Select Indentation", super::editor_status::CHANGE_INDENTATION),
-            (encoding.into(), "Select Encoding", "workbench.action.editor.changeEncoding"),
-            (eol.into(), "Select End of Line Sequence", "workbench.action.editor.changeEOL"),
-            (self.languages.name(&document.language_id).to_string(), "Select Language Mode", "workbench.action.editor.changeLanguageMode"),
-        ];
+    /// The tab focus mode item, then with an editor open its selection, indentation, encoding, end of line and
+    /// language items (editorStatus.ts), right to left before the notifications bell.
+    pub(super) fn editor_status_items(&self, foreground: Rgba, window: &Window, cx: &mut Context<Self>) -> Div {
+        // editorStatus.ts `updateTabFocusModeElement`: a prominent entry, shown with or without an editor.
+        let mut items = Vec::new();
+        if self.tab_focus_mode() {
+            items.push(("Tab Moves Focus".to_string(), "Disable Accessibility Mode", "editor.action.toggleTabFocusMode"));
+        }
+        let prominent_items = items.len();
+        if let Some(editor) = self.editors.active() {
+            items.extend(Self::editor_status_entries(editor, &self.languages));
+        }
+        let prominent = (self.theme.color("statusBarItem.prominentBackground"), self.color("statusBarItem.prominentForeground"));
         // GPUI rounds a text box up to a whole px, Chrome keeps the fraction: the shaped width keeps the items in place.
         let mut style = window.text_style();
         style.font_features = FontFeatures(Arc::new(vec![("tnum".into(), 1)]));
         let text_width = |label: &str| window.text_system().shape_line(label.to_owned().into(), px(12.), &[style.to_run(label.len())], None).width;
         let items = items.into_iter().enumerate().map(|(index, (label, tooltip, command))| {
             let hover = self.hover_target(tooltip, super::hover::HoverContent::Text(tooltip.into()), super::hover::HoverOptions::status_bar());
-            div()
+            let item = div()
                 .id(("editor-status", index))
                 .relative()
                 .h_full()
@@ -1284,9 +1275,36 @@ impl Workbench {
                 .on_click(cx.listener(move |workbench, _, window, cx| {
                     let outcome = workbench.execute_command(command, Vec::new(), window, cx);
                     super::quick_access::show_failure(command.to_owned(), outcome, window, cx);
-                }))
+                }));
+            if index >= prominent_items {
+                return item.into_any_element();
+            }
+            // `.prominent-kind` colors the container around the label's 3px margins, with modernUI statusBar.css
+            // cornerRadius.small (4px).
+            div().h_full().flex_none().rounded(px(4.)).text_color(prominent.1).when_some(prominent.0, |container, background| container.bg(background)).child(item).into_any_element()
         });
-        Some(div().h_full().flex().text_color(foreground).children(items))
+        div().h_full().flex().text_color(foreground).children(items)
+    }
+
+    /// editorStatus.ts entries of the editor: text, tooltip and command.
+    fn editor_status_entries(editor: &OpenEditor, languages: &crate::languages::Languages) -> [(String, &'static str, &'static str); 5] {
+        let document = &editor.document;
+        let Indentation { tab_size, insert_spaces, .. } = document.indentation;
+        let indent_size = document.indentation.indent_size();
+        let indentation = match (insert_spaces, tab_size == indent_size) {
+            (true, true) => format!("Spaces: {indent_size}"),
+            (true, false) => format!("Spaces: {indent_size} (Tab Size: {tab_size})"),
+            (false, _) => format!("Tab Size: {tab_size}"),
+        };
+        let encoding = SUPPORTED_ENCODINGS.iter().find(|supported| supported.id == document.encoding).map_or(document.encoding.as_str(), |supported| supported.label_short);
+        let eol = if document.eol == "\r\n" { "CRLF" } else { "LF" };
+        [
+            (selection_label(editor), "Go to Line/Column", "workbench.action.gotoLine"),
+            (indentation, "Select Indentation", super::editor_status::CHANGE_INDENTATION),
+            (encoding.into(), "Select Encoding", "workbench.action.editor.changeEncoding"),
+            (eol.into(), "Select End of Line Sequence", "workbench.action.editor.changeEOL"),
+            (languages.name(&document.language_id).to_string(), "Select Language Mode", "workbench.action.editor.changeLanguageMode"),
+        ]
     }
 }
 

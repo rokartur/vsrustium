@@ -275,7 +275,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | editor/contrib/structuralDiff | src/vs/editor/contrib | todo |  |
 | editor/contrib/suggest | src/vs/editor/contrib | todo |  |
 | editor/contrib/symbolIcons | src/vs/editor/contrib | todo |  |
-| editor/contrib/toggleTabFocusMode | src/vs/editor/contrib | todo |  |
+| editor/contrib/toggleTabFocusMode | src/vs/editor/contrib | verified | `editor.action.toggleTabFocusMode` (Ctrl+Shift+M) in `workbench/editor_status.rs`, `editorTabMovesFocus`, the prominent "Tab Moves Focus" status item, Tab and Shift+Tab between the editor and the status bar: cargo test -p app tab_focus; ui-pair notes.txt |
 | editor/contrib/tokenization | src/vs/editor/contrib | todo |  |
 | editor/contrib/unicodeHighlighter | src/vs/editor/contrib | ported | editor/unicode_highlighter.rs (unicodeTextModelHighlighter.ts, strings.ts confusables and invisibles), workbench/unicode_highlight.rs (marks, banner past 1000), the three Disable actions: cargo test -p app unicode_highlighter, cargo test -p app theme::; ui-pair marks and banner match; no hover reason or exclude options (editor/contrib/hover is todo), no workspace trust |
 | editor/contrib/unusualLineTerminators | src/vs/editor/contrib | ported | editor/unusual_line_terminators.rs (textModel.ts removeUnusualLineTerminators), workbench/unusual_line_terminators.rs (prompt, auto, off, Ignore per resource, no check after undo): cargo test -p app unusual_line_terminators; ui-pair prompt and removal |

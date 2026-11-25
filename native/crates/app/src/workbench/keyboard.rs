@@ -143,6 +143,10 @@ impl Workbench {
                 self.leave_chord_mode(cx);
                 cx.stop_propagation();
             }
+            _ if keystroke.key == "tab" && !(keystroke.modifiers.control || keystroke.modifiers.platform || keystroke.modifiers.alt) && self.move_tab_focus(keystroke.modifiers.shift, window, cx) => {
+                cx.stop_propagation();
+                self.dismiss_hover(cx);
+            }
             // hoverService.ts `_keyDown` with hideOnKeyDown, which every workbench hover delegate sets.
             _ => self.dismiss_hover(cx),
         }
@@ -235,6 +239,7 @@ impl Workbench {
             context.insert("editorHasSelection".into(), json!(editor.selections.iter().any(|selection| !selection.is_empty())));
             context.insert("editorHasMultipleSelections".into(), json!(editor.selections.len() > 1));
             context.insert("selectionAnchorSet".into(), json!(editor.selection_anchor.is_some()));
+            context.insert("editorTabMovesFocus".into(), json!(self.tab_focus_mode()));
             context.insert("editorColumnSelection".into(), self.setting("editor.columnSelection"));
             context.insert("foldingEnabled".into(), self.setting("editor.folding"));
             context.insert("editorLangId".into(), json!(editor.document.language_id));

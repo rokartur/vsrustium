@@ -86,6 +86,12 @@ impl Workbench {
             let trim_in_regex_and_strings = workbench.settings.lock().unwrap().get_value(Some("files.trimTrailingWhitespaceInRegexAndStrings"), &overrides) != Some(json!(false));
             workbench.run_on_active_editor(|editor| editor.trim_trailing_whitespace(trim_in_regex_and_strings), cx)
         });
+        self.commands.register("editor.action.toggleTabFocusMode", |workbench, _, _, cx| {
+            // shortcut: GPUI has no screen reader announcements, so "Pressing Tab will now ..." is not read out; add one with them.
+            workbench.tab_focus_toggle = Some((workbench.tab_focus_configured(), !workbench.tab_focus_mode()));
+            cx.notify();
+            Outcome::done()
+        });
         self.commands.register("workbench.action.editor.changeEOL", |workbench, _, window, cx| {
             workbench.show_eol_picker(window, cx);
             Outcome::done()
@@ -456,6 +462,38 @@ impl Workbench {
         if scheme != "untitled" {
             drop(self.save_editor(index, cx));
         }
+    }
+
+    fn tab_focus_configured(&self) -> bool {
+        self.setting("editor.tabFocusMode") == json!(true)
+    }
+
+    /// `TabFocus` as editorStatus.ts `TabFocusMode` drives it: `editor.tabFocusMode` at start and on each change of
+    /// the setting, Toggle Tab Key Moves Focus in between.
+    pub(super) fn tab_focus_mode(&self) -> bool {
+        let configured = self.tab_focus_configured();
+        match self.tab_focus_toggle {
+            Some((configured_then, mode)) if configured_then == configured => mode,
+            _ => configured,
+        }
+    }
+
+    /// The browser's Tab and Shift+Tab where nothing handles them: with tab focus mode on, Tab leaves the editor's
+    /// text for the status bar, the next focusable part of the workbench, and Shift+Tab comes back.
+    pub(super) fn move_tab_focus(&mut self, backwards: bool, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if self.editor_focus.is_focused(window) && self.tab_focus_mode() {
+            if !backwards {
+                window.focus(&self.status_bar_focus, cx);
+            }
+            return true;
+        }
+        if self.status_bar_focus.is_focused(window) {
+            if backwards {
+                window.focus(&self.editor_focus, cx);
+            }
+            return true;
+        }
+        false
     }
 }
 

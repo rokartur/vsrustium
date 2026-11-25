@@ -362,6 +362,7 @@ pub const EDITOR_ACTIONS: &[(&str, &str, Option<&str>)] = &[
     ("editor.action.selectFromAnchorToCursor", "Select from Anchor to Cursor", Some("selectionAnchorSet")),
     ("editor.action.cancelSelectionAnchor", "Cancel Selection Anchor", Some("selectionAnchorSet")),
     ("editor.action.fontZoomIn", "Increase Editor Font Size", None),
+    ("editor.action.toggleTabFocusMode", "Toggle Tab Key Moves Focus", None),
     ("editor.action.fontZoomOut", "Decrease Editor Font Size", None),
     ("editor.action.fontZoomReset", "Reset Editor Font Size", None),
     ("editor.action.transformToUppercase", "Transform to Uppercase", Some("!editorReadonly")),

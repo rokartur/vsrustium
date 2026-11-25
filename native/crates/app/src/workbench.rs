@@ -104,6 +104,9 @@ pub struct Workbench {
     pub editor_focus: FocusHandle,
     /// bannerController.ts: the banner element is focusable (`tabIndex = 0`) inside the editor's DOM node.
     unicode_banner_focus: FocusHandle,
+    status_bar_focus: FocusHandle,
+    /// `editor.tabFocusMode` when Toggle Tab Key Moves Focus last ran, and the mode it set.
+    tab_focus_toggle: Option<(bool, bool)>,
     editor_focus_listeners: Vec<gpui::Subscription>,
     /// `--screenshot` hides the input carets, as ref-screenshot does in the reference, so the blink phase drops out.
     pub(crate) input_carets_hidden: bool,
@@ -221,6 +224,8 @@ impl Workbench {
             readonly_overrides: Default::default(),
             editor_focus: cx.focus_handle(),
             unicode_banner_focus: cx.focus_handle(),
+            status_bar_focus: cx.focus_handle(),
+            tab_focus_toggle: None,
             editor_focus_listeners: Vec::new(),
             input_carets_hidden: false,
             marked_text: None,
@@ -786,8 +791,10 @@ impl Workbench {
             .child(" 0")
             .child(self.hover_target("status.problems", HoverContent::Text("No Problems".into()), HoverOptions::status_bar()));
         div()
+            .relative()
             .h(px(28.))
             .flex_none()
+            .track_focus(&self.status_bar_focus)
             .flex()
             .justify_between()
             .items_center()
@@ -797,8 +804,13 @@ impl Workbench {
             .text_size(px(12.))
             // statusbarpart.css: font-variant-numeric: tabular-nums.
             .font_features(FontFeatures(Arc::new(vec![("tnum".into(), 1)])))
+            // statusbarpart.css: a 1px `statusBar.focusBorder` outline inside the focused part, its bottom corners rounded on macOS.
+            .when_some(self.theme.color("statusBar.focusBorder").filter(|_| self.status_bar_focus.is_focused(window)), |bar, border| {
+                let radius = px(if is_tahoe_or_newer() { 16. } else { 10. });
+                bar.child(div().absolute().inset_0().border_1().rounded_bl(radius).rounded_br(radius).border_color(border))
+            })
             .child(div().h(px(24.)).flex().child(self.icon("remote", 28., 16., foreground).h_full().cursor_pointer().child(self.hover_target("status.host", HoverContent::Text("Open a Remote Window".into()), HoverOptions::status_bar()))).child(problems).children(self.status_bar_message()))
-            .child(div().h(px(24.)).flex().children(self.editor_status_items(foreground, window, cx)).child(self.icon("bell", 28., 16., foreground).h_full().cursor_pointer().child(self.hover_target("status.notifications", HoverContent::Text("No Notifications".into()), HoverOptions::status_bar()))))
+            .child(div().h(px(24.)).flex().child(self.editor_status_items(foreground, window, cx)).child(self.icon("bell", 28., 16., foreground).h_full().cursor_pointer().child(self.hover_target("status.notifications", HoverContent::Text("No Notifications".into()), HoverOptions::status_bar()))))
     }
 
     /// The `status.message` entry: multi-chord mode, else the latest status message (notificationsStatus.ts).
@@ -840,6 +852,7 @@ mod tests {
     use config::workspace::Workspace;
     use exthost::scan::scan_extension;
     use gpui::{Modifiers, TestAppContext, point, px};
+    use serde_json::json;
 
     use super::Workbench;
     use crate::host_sync::HostSync;
@@ -923,6 +936,42 @@ mod tests {
         let methods: Vec<_> = receiver.try_iter().map(|message| message.method).collect();
         assert_eq!(methods.iter().filter(|method| **method == "$acceptModelChanged").count(), 6);
         assert_eq!(methods.last(), Some(&"$acceptModelSaved"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[gpui::test]
+    fn in_tab_focus_mode_tab_moves_focus_to_the_status_bar_instead_of_indenting(cx: &mut TestAppContext) {
+        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
+        let theme = load_theme(&[themes], "Dark Modern").unwrap();
+        let dir = std::env::temp_dir().join(format!("code-gpui-tab-focus-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("a.txt");
+        std::fs::write(&file, "ab").unwrap();
+        let (workbench, cx) = cx.add_window_view(|window, cx| {
+            let mut workbench = Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), crate::default_settings(), HostSync::new(std::sync::mpsc::channel().0), cx);
+            workbench.load_keybindings(crate::keybindings::default_keybindings(&[]), dir.join("keybindings.json"), cx);
+            workbench.open_file(file.clone(), true, window, cx);
+            workbench.watch_editor_focus(window, cx);
+            workbench
+        });
+        cx.update(|window, _| window.activate_window());
+        cx.run_until_parked();
+        let state = |cx: &mut gpui::VisualTestContext| {
+            workbench.update_in(cx, |workbench, window, _| {
+                let moves_focus = workbench.key_context(window).get("editorTabMovesFocus").cloned();
+                let editor = workbench.editors.active().unwrap();
+                (editor.document.lines.join("\n"), editor.highlights.len(), workbench.status_bar_focus.is_focused(window), moves_focus)
+            })
+        };
+
+        // wordHighlighter.ts stops the highlights once no code editor has the focus.
+        cx.simulate_keystrokes("ctrl-shift-m tab");
+        assert_eq!(state(cx), ("ab".to_string(), 0, true, Some(json!(true))));
+        cx.simulate_keystrokes("shift-tab");
+        assert_eq!(state(cx), ("ab".to_string(), 1, false, Some(json!(true))));
+        cx.simulate_keystrokes("ctrl-shift-m tab");
+        assert_eq!(state(cx), ("    ab".to_string(), 0, false, Some(json!(false))));
         std::fs::remove_dir_all(dir).unwrap();
     }
 
