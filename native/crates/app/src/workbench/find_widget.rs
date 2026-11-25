@@ -135,6 +135,10 @@ impl Workbench {
     pub(super) fn register_find_commands(&mut self) {
         for (id, action) in FIND_COMMANDS {
             self.commands.register(id, move |workbench, _, window, cx| {
+                // findController.ts: StartFindReplaceAction does not run on a read-only editor.
+                if id == "editor.action.startFindReplaceAction" && workbench.active_editor_readonly().is_some() {
+                    return Outcome::done();
+                }
                 workbench.run_find(window, cx, action);
                 // `CommonFindController.selectAllMatches` focuses the editor.
                 if id == "editor.action.selectAllMatches" {
@@ -442,7 +446,7 @@ impl Workbench {
         let modifiers = keystroke.modifiers;
         match keystroke.key.as_str() {
             "down" if modifiers.platform && !modifiers.shift && !modifiers.alt => window.focus(&self.editor_focus, cx),
-            "tab" if id == InputId::Find && !modifiers.shift && self.find.controller.state.is_replace_revealed => self.focus_find_input(InputId::Replace, window, cx),
+            "tab" if id == InputId::Find && !modifiers.shift && self.replace_visible() => self.focus_find_input(InputId::Replace, window, cx),
             "tab" if id == InputId::Replace && modifiers.shift => self.focus_find_input(InputId::Find, window, cx),
             _ => return false,
         }
@@ -480,7 +484,7 @@ impl Workbench {
     fn layout_find_zone(&mut self, adjust: bool) {
         let state = &self.find.controller.state;
         let extra_space = self.setting("editor.find.addExtraSpaceOnTop").as_bool().unwrap_or(true);
-        let height = match (state.is_revealed && extra_space, state.is_replace_revealed) {
+        let height = match (state.is_revealed && extra_space, self.replace_visible()) {
             (false, _) => 0.,
             (true, false) => FIND_INPUT_AREA_HEIGHT,
             (true, true) => REPLACE_AREA_HEIGHT,
@@ -609,7 +613,7 @@ impl Workbench {
         if elapsed < SLIDE {
             window.request_animation_frame();
         }
-        let replace = state.is_replace_revealed;
+        let replace = self.replace_visible();
         let height = if replace { REPLACE_AREA_HEIGHT } else { FIND_INPUT_AREA_HEIGHT };
         // `transform: translateY(calc(-100% - 10px))` when hidden, for the 10px shadow.
         let progress = (elapsed.as_secs_f32() / SLIDE.as_secs_f32()).min(1.);
@@ -782,7 +786,7 @@ impl Workbench {
                         cx.notify();
                     }),
                 )
-                .child(self.replace_toggle(replace, height, cx))
+                .when(self.active_editor_readonly().is_none(), |widget| widget.child(self.replace_toggle(replace, height, cx)))
                 .child(find_part)
                 .children(replace_part)
                 .child(
@@ -926,6 +930,12 @@ impl Workbench {
     }
 
     /// The chevron at the left edge that shows and hides the replace input.
+    /// `_isReplaceVisible`: a read-only editor keeps the replace part hidden and the toggle disabled (`canReplace`),
+    /// which findWidget.css hides.
+    fn replace_visible(&self) -> bool {
+        self.find.controller.state.is_replace_revealed && self.active_editor_readonly().is_none()
+    }
+
     fn replace_toggle(&self, replace: bool, height: f32, cx: &mut Context<Self>) -> Stateful<Div> {
         let icon = if replace { "chevron-down" } else { "chevron-right" };
         let toggle = self

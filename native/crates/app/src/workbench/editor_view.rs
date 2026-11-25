@@ -157,6 +157,9 @@ impl Workbench {
             .when(editor.preview, |label| label.italic())
             .child(self.editor_name(editor));
         let file_icon = self.document_icon(editor, 24., foreground);
+        // textFileService.ts decorations: a read-only file's label ends in the lockSmall badge at 0.75 opacity. The
+        // iconlabel.css `::after` font-size 90% (11.7px) wins over the decoration rule's 16px, which loads first.
+        let lock = self.readonly(&editor.document.scheme, &editor.document.path).map(|_| self.icon("lock-small", 11.7, 11.7, foreground).mt(px(9.5)).ml(px(5.)).opacity(0.75));
         // A dirty tab shows a filled circle where the close action goes, also when inactive (tabstitlecontrol.css).
         let close_icon = if editor.is_dirty() { "circle-filled" } else { "close-small" };
         let close = self.icon(close_icon, 20., 16., foreground).id(("close", index)).rounded(px(4.)).on_click(cx.listener(move |workbench, _, _, cx| {
@@ -176,6 +179,7 @@ impl Workbench {
                 Some(icon) => tab.pl(px(6.)).child(icon.mt(px(3.5))).child(label.ml(px(6.))),
                 None => tab.pl(px(8.)).child(label),
             })
+            .children(lock)
             .on_click(cx.listener(move |workbench, event: &gpui::ClickEvent, _, cx| {
                 workbench.editors.activate(index);
                 if event.click_count() == 2 {
@@ -266,6 +270,7 @@ impl Workbench {
         let line_numbers = self.settings.lock().unwrap().get_value(Some("editor.lineNumbers"), &overrides) != Some(serde_json::Value::from("off"));
         let metrics = EditorMetrics::measure(window, editor.document.lines.len(), line_numbers);
         let area_left = self.text_area_left.clone();
+        let area_bounds = self.text_area_bounds.clone();
         let focus = self.editor_focus.clone();
         let workbench = cx.entity();
         let laid_out = cx.entity();
@@ -306,6 +311,7 @@ impl Workbench {
                 canvas(
                     move |bounds, window, cx| {
                         area_left.set(f32::from(bounds.left()));
+                        area_bounds.set(bounds.map(f32::from));
                         let (width, height) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
                         let pixel_ratio = window.scale_factor();
                         let minimap = minimap_info(width, height, metrics.content_left(), metrics.char_width, view_line_count, pixel_ratio);
@@ -342,37 +348,58 @@ impl Workbench {
             .children(self.minimap(editor, cx))
             .children(self.sticky_scroll_widget(editor, metrics, window, cx))
             .children(self.find_widget(self.editors.viewport.width + metrics.content_left() + minimap_width, metrics.content_left(), minimap_width, window, cx))
+            .children(self.editor_message_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
     }
 
     /// wordHighlighter.ts: `onDidBlurEditorWidget` stops the highlights once no code editor has the focus,
-    /// `onDidFocusEditorText` runs the query from the selection again. The find widget and sticky lines are inside the widget.
+    /// `onDidFocusEditorText` runs the query from the selection again. The find widget, sticky lines and the
+    /// unicode banner are inside the widget.
     pub fn watch_editor_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let focus = self.editor_focus.clone();
         let blurred_at = Rc::new(Cell::new(None));
+        let deactivated = Rc::new(Cell::new(false));
         let blur = cx.on_focus_out(&focus, window, {
-            let blurred_at = blurred_at.clone();
+            let (blurred_at, deactivated) = (blurred_at.clone(), deactivated.clone());
             move |workbench, _, window, cx| {
-                // GPUI reports a window deactivation as focus out; the DOM keeps the focus there.
+                // GPUI reports a window deactivation as focus out; the DOM keeps the focus there, so the
+                // reactivation is no focus event either.
                 if workbench.editor_focus.contains_focused(window, cx) {
-                    return;
+                    return deactivated.set(true);
                 }
-                if let Some(editor) = workbench.editors.active_mut() {
-                    editor.highlights.clear();
-                    blurred_at.set(Some((editor.model_id, editor.version_id)));
+                workbench.editor_message_text_blurred(cx);
+                if !(workbench.unicode_banner_focus.is_focused(window) && workbench.unicode_banner_shown()) {
+                    workbench.editor_widget_blurred(&blurred_at, cx);
                 }
-                cx.notify();
+            }
+        });
+        // The banner holding the focus goes when its action disables the highlights: the focus leaves the editor.
+        let banner_blur = cx.on_blur(&self.unicode_banner_focus, window, {
+            let blurred_at = blurred_at.clone();
+            move |workbench, window, cx| {
+                if window.is_window_active() && !workbench.editor_focus.contains_focused(window, cx) {
+                    workbench.editor_widget_blurred(&blurred_at, cx);
+                }
             }
         });
         let text_focus = cx.on_focus(&focus, window, move |workbench, _, cx| {
             let Some(editor) = workbench.editors.active_mut() else { return };
             // A picked command runs before GPUI reports the restored focus; upstream's delayed query, started on
             // focus, is cancelled by that command's edit (`onDidChangeModelContent` stops it).
-            if blurred_at.take().is_none_or(|(model, version)| model != editor.model_id || version == editor.version_id) {
+            let returned = blurred_at.take().is_none_or(|(model, version)| model != editor.model_id || version == editor.version_id);
+            if returned && !deactivated.take() {
                 editor.refresh_highlights();
             }
             cx.notify();
         });
-        self.editor_focus_listeners = vec![blur, text_focus];
+        self.editor_focus_listeners = vec![blur, banner_blur, text_focus];
+    }
+
+    fn editor_widget_blurred(&mut self, blurred_at: &Cell<Option<(u32, u32)>>, cx: &mut Context<Self>) {
+        if let Some(editor) = self.editors.active_mut() {
+            editor.highlights.clear();
+            blurred_at.set(Some((editor.model_id, editor.version_id)));
+        }
+        cx.notify();
     }
 
     /// The text area got its size: the group's viewport follows it, which can clamp the scroll position and
@@ -794,6 +821,7 @@ impl Workbench {
                         }
                     }))
                     .on_mouse_move(cx.listener(move |workbench, event: &MouseMoveEvent, _, cx| {
+                        workbench.editor_message_mouse_moved(index, cx);
                         match event.pressed_button {
                             Some(MouseButton::Left) if workbench.selecting_text => workbench.click_text(index, visible_at(workbench, event.position.x), event.modifiers, true, 1, cx),
                             Some(MouseButton::Middle) if workbench.selecting_text => workbench.column_select_text(index, visible_at(workbench, event.position.x), true, cx),

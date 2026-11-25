@@ -95,20 +95,34 @@ const FOCUSED_EDITOR_COMMANDS: [(&str, EditorCommand); 3] = [
 impl Workbench {
     pub(super) fn register_editor_commands(&mut self) {
         for (id, command) in EDITOR_COMMANDS {
-            self.commands.register(id, move |workbench, _, _, cx| workbench.run_on_active_editor(command, cx));
+            let edit = !id.starts_with("cursor") && id != "expandLineSelection";
+            let cursor_edit = matches!(id, "deleteLeft" | "deleteRight");
+            self.commands.register(id, move |workbench, _, _, cx| {
+                if edit && workbench.edit_blocked(cursor_edit, cx) {
+                    return Outcome::done();
+                }
+                workbench.run_on_active_editor(command, cx)
+            });
         }
         for (id, command) in INDENTING_EDITOR_COMMANDS {
-            self.commands.register(id, move |workbench, _, _, cx| workbench.run_indenting(|editor, auto| command(editor, auto).into_iter().collect(), cx));
+            self.commands.register(id, move |workbench, _, _, cx| {
+                if workbench.edit_blocked(false, cx) {
+                    return Outcome::done();
+                }
+                workbench.run_indenting(|editor, auto| command(editor, auto).into_iter().collect(), cx)
+            });
         }
         for (id, command) in FOCUSED_EDITOR_COMMANDS {
+            let edit = id != "editor.action.selectAll";
             self.commands.register(id, move |workbench, _, window, cx| match workbench.editor_focus.is_focused(window) {
+                true if edit && workbench.edit_blocked(false, cx) => Outcome::done(),
                 true => workbench.run_on_active_editor(command, cx),
                 false => workbench.input_text_command(id, window, cx).or_else(|| workbench.explorer_undo(id, window, cx)).unwrap_or(Outcome::done()),
             });
         }
         self.commands.register("type", |workbench, args, window, cx| {
             let Some(text) = args.first().and_then(|args| args["text"].as_str()).map(str::to_owned) else { return Outcome::done() };
-            if !workbench.editor_focus.is_focused(window) {
+            if !workbench.editor_focus.is_focused(window) || workbench.edit_blocked(true, cx) {
                 return Outcome::done();
             }
             workbench.run_indenting(|editor, auto| editor.type_keyboard(&text, auto), cx)
@@ -122,7 +136,12 @@ impl Workbench {
             });
         }
         for (id, transform) in CaseTransform::ALL {
-            self.commands.register(id, move |workbench, _, _, cx| workbench.run_on_active_editor(|editor: &mut OpenEditor| editor.transform_case(transform), cx));
+            self.commands.register(id, move |workbench, _, _, cx| {
+                if workbench.edit_blocked(false, cx) {
+                    return Outcome::done();
+                }
+                workbench.run_on_active_editor(|editor: &mut OpenEditor| editor.transform_case(transform), cx)
+            });
         }
         let comment_actions = [
             ("editor.action.commentLine", Some(LineCommentKind::Toggle)),
@@ -131,7 +150,10 @@ impl Workbench {
             ("editor.action.blockComment", None),
         ];
         for (id, kind) in comment_actions {
-            self.commands.register(id, move |workbench, _, _, cx| workbench.run_comment_action(kind, cx));
+            self.commands.register(id, move |workbench, _, _, cx| match workbench.edit_blocked(false, cx) {
+                true => Outcome::done(),
+                false => workbench.run_comment_action(kind, cx),
+            });
         }
         let unicode_highlight_actions = [
             ("editor.action.unicodeHighlight.disableHighlightingOfAmbiguousCharacters", "editor.unicodeHighlight.ambiguousCharacters"),
@@ -150,7 +172,10 @@ impl Workbench {
             self.commands.register(id, move |workbench, _, _, cx| workbench.run_smart_select(forward, cx));
         }
         for (id, up) in [("editor.action.inPlaceReplace.up", false), ("editor.action.inPlaceReplace.down", true)] {
-            self.commands.register(id, move |workbench, _, _, cx| workbench.run_in_place_replace(up, cx));
+            self.commands.register(id, move |workbench, _, _, cx| match workbench.edit_blocked(false, cx) {
+                true => Outcome::done(),
+                false => workbench.run_in_place_replace(up, cx),
+            });
         }
         self.commands.register("cursorUndo", |workbench, _, _, cx| workbench.run_cursor_undo(false, cx));
         self.commands.register("cursorRedo", |workbench, _, _, cx| workbench.run_cursor_undo(true, cx));
@@ -159,6 +184,9 @@ impl Workbench {
         self.commands.register("editor.action.clipboardPasteAction", |workbench, _, window, cx| {
             if !workbench.editor_focus.is_focused(window) {
                 return workbench.input_text_command("editor.action.clipboardPasteAction", window, cx).unwrap_or(Outcome::done());
+            }
+            if workbench.edit_blocked(true, cx) {
+                return Outcome::done();
             }
             let Some(ClipboardEntry::String(clipboard)) = cx.read_from_clipboard().and_then(|item| item.entries().first().cloned()) else { return Outcome::done() };
             let metadata = clipboard.metadata_json::<Value>().unwrap_or_default();
@@ -174,7 +202,7 @@ impl Workbench {
             return self.input_text_command(command, window, cx).unwrap_or(Outcome::done());
         };
         cx.write_to_clipboard(clipboard_item(editor.copy_text()));
-        match cut {
+        match cut && !self.edit_blocked(true, cx) {
             true => self.run_on_active_editor(OpenEditor::cut, cx),
             false => Outcome::done(),
         }

@@ -168,6 +168,10 @@ impl EntityInputHandler for Workbench {
         if let Some(id) = self.focused_input(window) {
             return self.input_replace(id, range, text, false, window, cx);
         }
+        if self.edit_blocked(true, cx) {
+            self.marked_text = None;
+            return;
+        }
         let range = range.or(self.marked_text.take()).map(|range| self.input_range(range));
         let Some((previous, next)) = range else {
             self.run_indenting(|editor, auto| editor.type_keyboard(text, auto), cx);
@@ -183,6 +187,9 @@ impl EntityInputHandler for Workbench {
     fn replace_and_mark_text_in_range(&mut self, range: Option<Range<usize>>, new_text: &str, _: Option<Range<usize>>, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(id) = self.focused_input(window) {
             return self.input_replace(id, range, new_text, true, window, cx);
+        }
+        if self.edit_blocked(true, cx) {
+            return;
         }
         let (previous, next) = range.or(self.marked_text.clone()).map_or((0, 0), |range| self.input_range(range));
         let editor = self.editors.active_mut().expect("input goes to the active editor");

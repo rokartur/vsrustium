@@ -5,13 +5,16 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use config::configuration::Overrides;
-use gpui::{Context, Div, InteractiveElement, MouseButton, ParentElement, StatefulInteractiveElement, Styled, div, px};
+use gpui::{Context, Div, InteractiveElement, MouseButton, ParentElement, Stateful, StatefulInteractiveElement, Styled, div, px};
 use serde_json::Value;
 use textmate::StandardTokenType;
 
 use super::Workbench;
 use crate::editor::{OpenEditor, visible_column};
 use crate::editor::unicode_highlighter::{UnicodeHighlighterOptions, UnicodeHighlights, compute_unicode_highlights};
+
+#[cfg(test)]
+mod tests;
 
 /// bannerController.ts `BANNER_ELEMENT_HEIGHT`.
 const BANNER_HEIGHT: f32 = 26.;
@@ -96,12 +99,18 @@ impl Workbench {
         boxes
     }
 
-    /// `_updateState`: past the cap, a banner names the most frequent reason, until closed for this model.
-    pub(super) fn unicode_banner(&self, editor: &OpenEditor, cx: &mut Context<Self>) -> Option<Div> {
+    fn unicode_banner_highlights(&self, editor: &OpenEditor) -> Option<Rc<UnicodeHighlights>> {
         let (_, highlights) = self.unicode_highlights(editor)?;
-        if !highlights.has_more || self.editors.unicode_banner_closed {
-            return None;
-        }
+        (highlights.has_more && !self.editors.unicode_banner_closed).then_some(highlights)
+    }
+
+    pub(super) fn unicode_banner_shown(&self) -> bool {
+        self.editors.active().is_some_and(|editor| self.unicode_banner_highlights(editor).is_some())
+    }
+
+    /// `_updateState`: past the cap, a banner names the most frequent reason, until closed for this model.
+    pub(super) fn unicode_banner(&self, editor: &OpenEditor, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+        let highlights = self.unicode_banner_highlights(editor)?;
         let max = highlights.ambiguous_character_count.max(highlights.non_basic_ascii_character_count).max(highlights.invisible_character_count);
         let (message, label, command) = if highlights.non_basic_ascii_character_count >= max {
             ("This document contains many non-basic ASCII unicode characters", "Disable Non ASCII Highlight", "editor.action.unicodeHighlight.disableHighlightingOfNonBasicAsciiCharacters")
@@ -113,6 +122,7 @@ impl Workbench {
         let foreground = self.color("banner.foreground");
         let link = div()
             .id("unicode-banner-action")
+            .debug_selector(|| "unicode-banner-action".into())
             .flex_grow(1.)
             .flex_shrink_0()
             .mx(px(4.))
@@ -127,13 +137,18 @@ impl Workbench {
             .cursor_pointer()
             .hover(|close| close.bg(self.color("toolbar.hoverBackground")))
             .child(self.icon("close", 22., 16., foreground))
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(cx.listener(|workbench, _, _, cx| {
                 workbench.editors.unicode_banner_closed = true;
                 cx.notify();
             }));
         Some(
             div()
+                .id("unicode-banner")
+                .track_focus(&self.unicode_banner_focus)
+                .on_mouse_down(MouseButton::Left, cx.listener(|workbench, _, window, cx| {
+                    window.focus(&workbench.unicode_banner_focus, cx);
+                    cx.stop_propagation();
+                }))
                 .h(px(BANNER_HEIGHT))
                 .flex_none()
                 .flex()

@@ -135,5 +135,18 @@ fn the_word_highlight_stops_while_the_quick_input_has_the_focus(cx: &mut TestApp
     });
     cx.run_until_parked();
     assert_eq!(highlights(cx), 0, "onDidChangeModelContent");
+
+    // A window deactivation keeps the DOM focus: the highlights stay, and the reactivation runs no query, so an
+    // edit made meanwhile (a dialog's action) leaves them off.
+    cx.simulate_keystrokes("cmd-z");
+    workbench.update(cx, |workbench, _| workbench.editors.active_mut().unwrap().refresh_highlights());
+    assert_eq!(highlights(cx), 2);
+    cx.deactivate_window();
+    cx.run_until_parked();
+    assert_eq!(highlights(cx), 2);
+    workbench.update(cx, |workbench, _| _ = workbench.editors.active_mut().unwrap().type_text("x"));
+    cx.update(|window, _| window.activate_window());
+    cx.run_until_parked();
+    assert_eq!(highlights(cx), 0);
     std::fs::remove_dir_all(dir).unwrap();
 }
