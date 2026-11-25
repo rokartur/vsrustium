@@ -376,6 +376,7 @@ impl Resolver {
         Some(matching.unwrap_or(last))
     }
 
+    #[cfg(test)]
     pub fn resolve(&self, context: &dyn Context, current_chords: &[Chord], keypress: Chord) -> Resolution {
         self.resolve_logged(context, current_chords, keypress, &mut Vec::new())
     }

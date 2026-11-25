@@ -352,7 +352,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/notebook | workbench service | todo |  |
 | workbench/services/notification | workbench service | todo |  |
 | workbench/services/outline | workbench service | todo |  |
-| workbench/services/output | workbench service | ported | output.rs: channels read from their files from a start offset, Replace/Clear move it, log channels from visible loggers, `OutputViewFilters` and `parseLogEntryAt` (output/filter.rs), the active channel and its log level: cargo test -p app output (11 tests) |
+| workbench/services/output | workbench service | ported | output.rs: channels read from their files from a start offset, Replace/Clear move it, log channels from visible loggers, `OutputViewFilters` and `parseLogEntryAt` (output/filter.rs), the active channel and its log level: cargo test -p app output (14 tests) |
 | workbench/services/panecomposite | workbench service | todo |  |
 | workbench/services/path | workbench service | todo |  |
 | workbench/services/policies | workbench service | todo |  |
