@@ -62,7 +62,7 @@ impl Workbench {
     /// `_handleEditorControlChanged` and `_createOutline`: a new model or version of the active editor asks the
     /// outline again; the previous tree stays until the answer, the loading message shows after 100ms.
     pub(super) fn refresh_outline_pane(&mut self, cx: &mut Context<Self>) {
-        let key = self.editors.active().map(|editor| (editor.model_id, editor.version_id));
+        let key = self.editors.active().map(|editor| (editor.model_id, editor.text_model().version_id));
         if self.outline_pane.key == key {
             return;
         }
@@ -73,7 +73,7 @@ impl Workbench {
             self.outline_pane._request = None;
             return;
         };
-        let name = self.editors.active().expect("checked above").document.name();
+        let name = self.editors.active().expect("checked above").document().name();
         if !matches!(&self.outline_pane.status, Status::Ready { model_id: shown, .. } if *shown == model_id) {
             let name = name.clone();
             self.outline_pane._loading = Some(cx.spawn(async move |workbench, cx| {
@@ -129,6 +129,7 @@ impl Workbench {
         let editor = self.editors.editors.iter().chain(&self.editors.models).find(|editor| editor.model_id == model_id);
         let (Some(editor), true, true) = (editor, self.setting("problems.visibility") != false, self.setting("outline.problems.enabled") != false) else { return outline };
         let markers: Vec<OutlineMarker> = editor
+            .text_model()
             .markers
             .iter()
             .filter(|decoration| decoration.marker.severity >= 4)
@@ -253,7 +254,7 @@ impl Workbench {
             return Vec::new();
         }
         let head = editor.selection().head;
-        let position = (head.line + 1, crate::editor::utf16_column(&editor.document.lines[head.line], head.column) + 1);
+        let position = (head.line + 1, crate::editor::utf16_column(&editor.document().lines[head.line], head.column) + 1);
         let path = outline.item_enclosing_position(position, None).map(|item| outline.path_to(&item.id).expect("an element of the outline")).unwrap_or_default();
         let mut symbols: Vec<(Option<u64>, String)> = path
             .into_iter()

@@ -138,8 +138,8 @@ impl Workbench {
 
     /// The first provider of `kind` for the active editor's model, by score (`ProviderRegistry.ordered(model)[0]`).
     fn hierarchy_provider(&self, kind: HierarchyKind, editor: &OpenEditor) -> Option<u64> {
-        let uri = editor.document.uri();
-        self.language_features.ordered(spec(kind).register, &Candidate { uri: &uri, language: &editor.document.language_id }).first().map(|registration| registration.handle)
+        let uri = editor.document().uri();
+        self.language_features.ordered(spec(kind).register, &Candidate { uri: &uri, language: &editor.document().language_id }).first().map(|registration| registration.handle)
     }
 
     /// `editorHasCallHierarchyProvider`, `callHierarchyVisible` and `callHierarchyDirection`, and the type ones.
@@ -169,8 +169,8 @@ impl Workbench {
         let direction = Direction::from_storage(kind, stored.as_deref());
         self.open_hierarchy_peek(kind, handle, position, direction, cx);
         let editor = self.editors.active().expect("checked above");
-        let position_dto = json!({ "lineNumber": position.line + 1, "column": utf16_column(&editor.document.lines[position.line], position.column) + 1 });
-        let call = self.host.call_cancellable("ExtHostLanguageFeatures", spec(kind).prepare, vec![json!(handle), editor.document.uri(), position_dto]);
+        let position_dto = json!({ "lineNumber": position.line + 1, "column": utf16_column(&editor.document().lines[position.line], position.column) + 1 });
+        let call = self.host.call_cancellable("ExtHostLanguageFeatures", spec(kind).prepare, vec![json!(handle), editor.document().uri(), position_dto]);
         let request = cx.spawn_in(window, async move |workbench, cx| {
             let answer = call.await;
             let _ = workbench.update_in(cx, |workbench, window, cx| workbench.hierarchy_prepared(answer.ok(), window, cx));
@@ -450,7 +450,7 @@ impl Workbench {
         // The preview only reveals the marks (`revealRangeInCenter`); its cursor stays on the first line.
         let cursor_line = 0;
         let line_count = document.map_or(0, |document| document.lines.len());
-        self.peek_preview_lines("hierarchy-peek-preview", document, &marks, cursor_line, widget.preview_scroll, width, height, char_width, window)
+        self.peek_preview_lines("hierarchy-peek-preview", document.as_deref(), &marks, cursor_line, widget.preview_scroll, width, height, char_width, window)
             .on_scroll_wheel(cx.listener(move |workbench, event: &ScrollWheelEvent, _, cx| {
                 let delta = f32::from(event.delta.pixel_delta(px(LINE_HEIGHT)).y);
                 let max = (line_count as f32 * LINE_HEIGHT - height).max(0.);
@@ -583,9 +583,9 @@ impl Workbench {
     /// the position, the session kept for the resolve commands.
     fn api_prepare_hierarchy(&mut self, kind: HierarchyKind, args: &[Value], cx: &mut Context<Self>) -> Outcome {
         let Some((scheme, path)) = args.first().and_then(|uri| super::host_requests::uri_parts(uri).ok()) else { return Outcome::error("Illegal argument") };
-        let Some(editor) = self.editors.editors.iter().chain(&self.editors.models).find(|editor| editor.document.is(scheme, &path)) else { return Outcome::error("Illegal argument") };
+        let Some(editor) = self.editors.editors.iter().chain(&self.editors.models).find(|editor| editor.document().is(scheme, &path)) else { return Outcome::error("Illegal argument") };
         let Some(handle) = self.hierarchy_provider(kind, editor) else { return Outcome::Ready(Ok(json!([]))) };
-        let call = self.host.call_cancellable("ExtHostLanguageFeatures", spec(kind).prepare, vec![json!(handle), editor.document.uri(), args.get(1).cloned().unwrap_or_default()]);
+        let call = self.host.call_cancellable("ExtHostLanguageFeatures", spec(kind).prepare, vec![json!(handle), editor.document().uri(), args.get(1).cloned().unwrap_or_default()]);
         let (sender, receiver) = futures::channel::oneshot::channel();
         cx.spawn(async move |workbench, cx| {
             let roots = match call.await {

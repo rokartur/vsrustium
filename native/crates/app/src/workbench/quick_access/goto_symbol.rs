@@ -73,7 +73,7 @@ impl Workbench {
         let Some(input) = self.quick_inputs.get(id) else { return };
         let cursor = self.editors.active().map(|editor| {
             let head = editor.selection().head;
-            (head.line + 1, crate::editor::utf16_column(&editor.document.lines[head.line], head.column) + 1)
+            (head.line + 1, crate::editor::utf16_column(&editor.document().lines[head.line], head.column) + 1)
         });
         let enclosing = match input.input_box.value[PREFIX.len()..].trim().is_empty() {
             true => match self.quick_inputs.owner(id) {
@@ -110,8 +110,8 @@ impl Workbench {
 
 /// The 1-based UTF-16 position in the editor as a model position, clamped to the text.
 pub fn position_of(editor: &crate::editor::OpenEditor, (line, column): (usize, usize)) -> crate::editor::Position {
-    let line = (line.max(1) - 1).min(editor.document.lines.len() - 1);
-    crate::editor::Position::new(line, crate::editor::char_column(&editor.document.lines[line], column.max(1) - 1))
+    let line = (line.max(1) - 1).min(editor.document().lines.len() - 1);
+    crate::editor::Position::new(line, crate::editor::char_column(&editor.document().lines[line], column.max(1) - 1))
 }
 
 fn label_pick(label: &str) -> (Vec<Entry>, Vec<Accept>, bool) {

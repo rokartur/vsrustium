@@ -131,8 +131,8 @@ impl Workbench {
         let layout = self.open_peek_zone(&LAYOUT, range.start);
         self.reveal_peek_range(range.start, range.end);
         let editor = self.editors.active().expect("the peek opens in the active editor");
-        let uri = editor.document.uri_string();
-        let start = (range.start.line + 1, utf16_column(&editor.document.lines[range.start.line], range.start.column) + 1);
+        let uri = editor.document().uri_string();
+        let start = (range.start.line + 1, utf16_column(&editor.document().lines[range.start.line], range.start.column) + 1);
         let nearest = model.nearest_reference(&uri, start);
         let expanded = vec![false; model.groups.len()];
         self.references_peek.widget = Some(PeekWidget {
@@ -207,7 +207,7 @@ impl Workbench {
         cx.notify();
     }
 
-    fn preview_document(&self, uri: &str) -> Option<&TextDocument> {
+    fn preview_document(&self, uri: &str) -> Option<super::peek_view::PeekDocument<'_>> {
         self.peek_document(uri, &self.references_peek.widget.as_ref()?.documents)
     }
 
@@ -273,8 +273,8 @@ impl Workbench {
         let Some(widget) = &self.references_peek.widget else { return };
         let Some(position) = self.peek_zone_position(&widget.layout) else { return };
         let editor = self.editors.active().expect("the peek's editor is active");
-        let uri = editor.document.uri_string();
-        let position = (position.line + 1, utf16_column(&editor.document.lines[position.line], position.column) + 1);
+        let uri = editor.document().uri_string();
+        let position = (position.line + 1, utf16_column(&editor.document().lines[position.line], position.column) + 1);
         let Some(source) = widget.model.nearest_reference(&uri, position) else { return };
         let target = widget.model.next_or_previous(source, forward);
         let editor_focused = self.editor_focus.is_focused(window);
@@ -421,7 +421,7 @@ impl Workbench {
             None => Vec::new(),
         };
         let cursor_line = location.map_or(0, |(_, location)| location.selection().start.0.saturating_sub(1));
-        self.peek_preview_lines("references-peek-preview", document, &marks, cursor_line, widget.preview_scroll, width, height, char_width, window)
+        self.peek_preview_lines("references-peek-preview", document.as_deref(), &marks, cursor_line, widget.preview_scroll, width, height, char_width, window)
             .on_scroll_wheel(cx.listener(move |workbench, event: &ScrollWheelEvent, _, cx| {
                 let delta = f32::from(event.delta.pixel_delta(px(LINE_HEIGHT)).y);
                 let max = workbench.preview_line_count().map_or(0., |count| (count as f32 * LINE_HEIGHT - height).max(0.));

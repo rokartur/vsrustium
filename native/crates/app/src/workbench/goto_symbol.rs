@@ -156,8 +156,8 @@ impl Workbench {
     pub(super) fn goto_symbol_context(&self, context: &mut std::collections::HashMap<String, Value>) {
         context.insert("hasSymbols".into(), json!(self.goto_symbol.navigation.is_some()));
         let Some(editor) = self.editors.active() else { return };
-        let uri = editor.document.uri();
-        let candidate = Candidate { uri: &uri, language: &editor.document.language_id };
+        let uri = editor.document().uri();
+        let candidate = Candidate { uri: &uri, language: &editor.document().language_id };
         for kind in [DEFINITION, DECLARATION, TYPE_DEFINITION, IMPLEMENTATION, REFERENCES] {
             context.insert(kind.context_key.into(), json!(!self.language_features.ordered(kind.register, &candidate).is_empty()));
         }
@@ -167,8 +167,8 @@ impl Workbench {
     /// the internal schemes of other sources. With `compact`, a references provider giving exactly two is asked
     /// again without the declaration and its single answer kept (`getReferencesAtPosition`).
     pub(super) fn provide_locations(&self, kind: SymbolKind, editor: &OpenEditor, position: Value, compact: bool, cx: &mut Context<Self>) -> Task<Vec<Location>> {
-        let uri = editor.document.uri();
-        let candidate = Candidate { uri: &uri, language: &editor.document.language_id };
+        let uri = editor.document().uri();
+        let candidate = Candidate { uri: &uri, language: &editor.document().language_id };
         let mut calls = Vec::new();
         for registration in self.language_features.ordered(kind.register, &candidate) {
             let mut args = vec![json!(registration.handle), uri.clone(), position.clone()];
@@ -182,7 +182,7 @@ impl Workbench {
             });
             calls.push((self.host.call_cancellable("ExtHostLanguageFeatures", kind.provide, args), second));
         }
-        let scheme = editor.document.scheme.clone();
+        let scheme = editor.document().scheme.clone();
         cx.spawn(async move |workbench, cx| {
             // Every provider was asked above; their answers are taken in provider order.
             let mut all = Vec::new();
@@ -230,8 +230,8 @@ impl Workbench {
     fn run_symbol_navigation(&mut self, action: Action, generic: Option<GenericLocations>, window: &mut Window, cx: &mut Context<Self>) {
         let Some(editor) = self.editors.active() else { return };
         let head = editor.selection().head;
-        let state = (editor.model_id, editor.version_id, head);
-        let position = json!({ "lineNumber": head.line + 1, "column": utf16_column(&editor.document.lines[head.line], head.column) + 1 });
+        let state = (editor.model_id, editor.text_model().version_id, head);
+        let position = json!({ "lineNumber": head.line + 1, "column": utf16_column(&editor.document().lines[head.line], head.column) + 1 });
         let task = match &generic {
             Some(generic) => Task::ready(generic.locations.clone()),
             None => self.provide_locations(action.kind, editor, position, action.compact, cx),
@@ -240,7 +240,7 @@ impl Workbench {
         cx.spawn_in(window, async move |workbench, cx| {
             let links = task.await;
             let _ = workbench.update_in(cx, |workbench, window, cx| {
-                if workbench.editors.active().is_none_or(|editor| (editor.model_id, editor.version_id, editor.selection().head) != state) {
+                if workbench.editors.active().is_none_or(|editor| (editor.model_id, editor.text_model().version_id, editor.selection().head) != state) {
                     return;
                 }
                 workbench.symbol_navigation_result(action, ReferencesModel::new(links, title), generic, window, cx);
@@ -252,7 +252,7 @@ impl Workbench {
     fn symbol_navigation_result(&mut self, action: Action, model: ReferencesModel, generic: Option<GenericLocations>, window: &mut Window, cx: &mut Context<Self>) {
         let editor = self.editors.active().expect("checked by the caller");
         let head = editor.selection().head;
-        let line = &editor.document.lines[head.line];
+        let line = editor.document().lines[head.line].clone();
         if model.references.is_empty() {
             let message = match generic {
                 _ if action.mute_message => return,
@@ -260,14 +260,14 @@ impl Workbench {
                     Some(message) => message,
                     None => return,
                 },
-                None => match word_at(line, head.column) {
+                None => match word_at(&line, head.column) {
                     Some(word) => action.kind.no_result_word.replace("{0}", &line.chars().skip(word.start).take(word.len()).collect::<String>()),
                     None => action.kind.no_result.to_string(),
                 },
             };
             return self.show_editor_message(vec![MessagePart::text(message)], cx);
         }
-        let at_result = model.reference_at(&editor.document.uri_string(), (head.line + 1, utf16_column(line, head.column) + 1)).is_some();
+        let at_result = model.reference_at(&editor.document().uri_string(), (head.line + 1, utf16_column(&line, head.column) + 1)).is_some();
         let alternative = match &generic {
             Some(_) => None,
             None => self.setting(&format!("editor.gotoLocation.alternative{}Command", action.kind.setting)).as_str().and_then(|id| ACTIONS.into_iter().find(|other| other.id == id)),
@@ -338,8 +338,8 @@ impl Workbench {
         if model_id != editor.model_id || index < start.line || index > end.line {
             return None;
         }
-        let text = &editor.document.lines[index];
-        let tab_size = editor.document.indentation.tab_size;
+        let text = &editor.document().lines[index];
+        let tab_size = editor.document().indentation.tab_size;
         let from = if start.line == index { start.column } else { 0 };
         let to = if end.line == index { end.column } else { text.chars().count() };
         let left = visible_column(text, from, tab_size) as f32 * char_width;
@@ -441,8 +441,8 @@ impl Workbench {
         let Some((model, _)) = &self.goto_symbol.navigation else { return };
         let Some(editor) = self.editors.active() else { return };
         let head = editor.selection().head;
-        let uri = editor.document.uri_string();
-        let position = (head.line + 1, utf16_column(&editor.document.lines[head.line], head.column) + 1);
+        let uri = editor.document().uri_string();
+        let position = (head.line + 1, utf16_column(&editor.document().lines[head.line], head.column) + 1);
         if model.reference_at(&uri, position).is_none() {
             self.goto_symbol.navigation = None;
             self.status_message = None;

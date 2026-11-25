@@ -90,7 +90,7 @@ impl Workbench {
         let viewport = self.editors.viewport;
         let editor = self.editors.active_mut().expect("a peek opens in the active editor");
         editor.set_selections(vec![Selection { anchor: start, head: end }]);
-        let last = editor.document.lines.len() - 1;
+        let last = editor.document().lines.len() - 1;
         match end.line == last {
             true => editor.reveal_range(Position::new(last, 0), Position::new(last, 0), VerticalReveal::NearTop, viewport),
             false => editor.reveal_range(Position::new(start.line, 0), Position::new(end.line + 1, 0), VerticalReveal::Simple, viewport),
@@ -122,9 +122,9 @@ impl Workbench {
         let frame = self.color("peekView.border");
         // zoneWidget.ts `show`: the arrow is not pretty at column 1 and moves to column 2.
         let anchor = zone.anchor?;
-        let line = &editor.document.lines[anchor.line];
+        let line = &editor.document().lines[anchor.line];
         let arrow_column = anchor.column.max(1).min(line.chars().count().max(1));
-        let arrow_x = content_left + visible_column(line, arrow_column, editor.document.indentation.tab_size) as f32 * char_width - editor.scroll.left;
+        let arrow_x = content_left + visible_column(line, arrow_column, editor.document().indentation.tab_size) as f32 * char_width - editor.scroll.left;
         let arrow = canvas(
             |_, _, _| (),
             move |bounds, _, window, _| {
@@ -238,9 +238,11 @@ impl Workbench {
             .on_hover(cx.listener(move |workbench, hovered: &bool, window, cx| {
                 let Some(layout) = workbench.peek_layout_mut(kind) else { return };
                 layout.hovered_sash = None;
+                let delay = workbench.sash_hover_delay();
+                let Some(layout) = workbench.peek_layout_mut(kind) else { return };
                 layout.sash_hover = hovered.then(|| {
                     cx.spawn_in(window, async move |workbench, cx| {
-                        cx.background_executor().timer(super::part_grid::SASH_HOVER_DELAY).await;
+                        cx.background_executor().timer(delay).await;
                         let _ = workbench.update(cx, |workbench, cx| {
                             if let Some(layout) = workbench.peek_layout_mut(kind) {
                                 layout.hovered_sash = Some(sash);
@@ -319,9 +321,11 @@ impl Workbench {
     }
 
     /// The file a peek previews: an open model's, else one the peek read.
-    pub(super) fn peek_document<'a>(&'a self, uri: &str, read: &'a [TextDocument]) -> Option<&'a TextDocument> {
-        let open = self.editors.editors.iter().chain(&self.editors.models).map(|editor| &editor.document);
-        open.chain(read).find(|document| document.uri_string() == uri)
+    pub(super) fn peek_document<'a>(&'a self, uri: &str, read: &'a [TextDocument]) -> Option<PeekDocument<'a>> {
+        if let Some(editor) = self.editors.editors.iter().chain(&self.editors.models).find(|editor| editor.document().uri_string() == uri) {
+            return Some(PeekDocument::Open(editor.document()));
+        }
+        read.iter().find(|document| document.uri_string() == uri).map(PeekDocument::Read)
     }
 
     /// `createModelReference`: a file no editor has open read for the preview into `read`.
@@ -410,5 +414,22 @@ impl Workbench {
     fn preview_content_left(&self, line_count: usize, window: &Window) -> f32 {
         let metrics = super::editor_view::EditorMetrics::measure(window, line_count, super::editor_view::LineNumbers::On, self.editor_zoom.multiplier());
         metrics.content_left()
+    }
+}
+
+/// A previewed file: an open model's document, borrowed from its shared model, or one the peek read.
+pub(super) enum PeekDocument<'a> {
+    Open(std::cell::Ref<'a, TextDocument>),
+    Read(&'a TextDocument),
+}
+
+impl std::ops::Deref for PeekDocument<'_> {
+    type Target = TextDocument;
+
+    fn deref(&self) -> &TextDocument {
+        match self {
+            PeekDocument::Open(document) => document,
+            PeekDocument::Read(document) => document,
+        }
     }
 }

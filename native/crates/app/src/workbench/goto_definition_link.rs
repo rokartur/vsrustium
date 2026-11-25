@@ -116,7 +116,7 @@ impl Workbench {
         let selecting = self.definition_link.selection.replace(selection).is_some_and(|last| last != selection) && !selection.is_empty();
         let Some(state) = self.definition_link.state else { return };
         let cursor_moved = self.definition_link.from_cursor.is_some_and(|position| position != selection.head);
-        if (editor.model_id, editor.version_id, editor.scroll.top, editor.scroll.left) != state || selecting || cursor_moved {
+        if (editor.model_id, editor.text_model().version_id, editor.scroll.top, editor.scroll.left) != state || selecting || cursor_moved {
             self.reset_definition_link(cx);
         }
     }
@@ -147,13 +147,14 @@ impl Workbench {
     /// with a definition provider.
     fn link_target(&self, line: usize, visible: f32) -> Option<Position> {
         let editor = self.editors.active()?;
-        let text = editor.document.lines.get(line)?;
-        let tab_size = editor.document.indentation.tab_size;
+        let document = editor.document();
+        let text = document.lines.get(line)?;
+        let tab_size = document.indentation.tab_size;
         if visible >= visible_column(text, text.chars().count(), tab_size) as f32 {
             return None;
         }
-        let uri = editor.document.uri();
-        let candidate = Candidate { uri: &uri, language: &editor.document.language_id };
+        let uri = editor.document().uri();
+        let candidate = Candidate { uri: &uri, language: &editor.document().language_id };
         if self.language_features.ordered(DEFINITION.register, &candidate).is_empty() {
             return None;
         }
@@ -173,7 +174,7 @@ impl Workbench {
     fn start_find_definition(&mut self, position: Position, cx: &mut Context<Self>) -> bool {
         let editor = self.editors.active().expect("the link is in the active editor");
         let line = position.line;
-        let Some(word) = word_at(&editor.document.lines[line], position.column) else {
+        let Some(word) = word_at(&editor.document().lines[line], position.column) else {
             self.cancel_definition_link(cx);
             return false;
         };
@@ -183,9 +184,9 @@ impl Workbench {
         }
         self.definition_link.word = Some(key);
         self.definition_link.decoration = None;
-        let state = (editor.model_id, editor.version_id, editor.scroll.top, editor.scroll.left);
+        let state = (editor.model_id, editor.text_model().version_id, editor.scroll.top, editor.scroll.left);
         self.definition_link.state = Some(state);
-        let text = &editor.document.lines[line];
+        let text = &editor.document().lines[line];
         let dto = json!({ "lineNumber": line + 1, "column": utf16_column(text, position.column) + 1 });
         let request = self.provide_locations(DEFINITION, editor, dto, false, cx);
         self.definition_link._request = Some(cx.spawn(async move |workbench, cx| {
@@ -231,7 +232,7 @@ impl Workbench {
             self.definition_link.decoration = None;
             return cx.notify();
         };
-        let text = &editor.document.lines[line];
+        let text = &editor.document().lines[line];
         let origin = |link: &Location| DtoRange::from_dto(&link.link["originSelectionRange"]);
         let to_columns = |range: DtoRange| char_column(text, range.start.1 - 1)..char_column(text, range.end.1 - 1);
         let mut columns = origin(first).filter(|range| range.start.0 == line + 1 && range.end.0 == line + 1).map_or(word, to_columns);
@@ -257,10 +258,10 @@ impl Workbench {
     /// first) without the common indentation, in a code block of the file's language; `None` when the target cannot
     /// be read or the range starts outside it.
     fn definition_preview(&self, link: &Location) -> Option<Option<String>> {
-        let open = self.editors.editors.iter().chain(&self.editors.models).find(|editor| editor.document.uri_string() == link.uri);
+        let open = self.editors.editors.iter().chain(&self.editors.models).find(|editor| editor.document().uri_string() == link.uri);
         let (_, path) = super::host_requests::uri_parts(&link.resource).ok()?;
         let lines: Vec<String> = match open {
-            Some(editor) => editor.document.lines.clone(),
+            Some(editor) => editor.document().lines.clone(),
             None => std::fs::read_to_string(&path).ok()?.split('\n').map(|line| line.trim_end_matches('\r').to_string()).collect(),
         };
         let range = link.range;
@@ -317,7 +318,7 @@ impl Workbench {
     pub(super) fn definition_link_styles(&self, editor: &OpenEditor, line: usize, tab_size: usize) -> Vec<(Range<usize>, HighlightStyle)> {
         let Some(decoration) = self.definition_link.decoration.as_ref().filter(|decoration| decoration.model_id == editor.model_id && decoration.line == line) else { return Vec::new() };
         let Some(color) = self.theme.color("editorLink.activeForeground").map(Hsla::from) else { return Vec::new() };
-        let text = &editor.document.lines[line];
+        let text = &editor.document().lines[line];
         let byte = |column: usize| expand_tabs(&text.chars().take(column).collect::<String>(), tab_size).len();
         let underline = UnderlineStyle { thickness: px(1.), color: Some(color), wavy: false };
         vec![(byte(decoration.columns.start)..byte(decoration.columns.end), HighlightStyle { color: Some(color), underline: Some(underline), ..Default::default() })]
@@ -326,8 +327,8 @@ impl Workbench {
     /// goToDefinitionAtPosition.css `cursor: pointer` over the link.
     pub(super) fn definition_link_cursor(&self, editor: &OpenEditor, line: usize, char_width: f32) -> Option<Div> {
         let decoration = self.definition_link.decoration.as_ref().filter(|decoration| decoration.model_id == editor.model_id && decoration.line == line)?;
-        let text = &editor.document.lines[line];
-        let tab_size = editor.document.indentation.tab_size;
+        let text = &editor.document().lines[line];
+        let tab_size = editor.document().indentation.tab_size;
         let left = visible_column(text, decoration.columns.start, tab_size) as f32 * char_width;
         let right = visible_column(text, decoration.columns.end, tab_size) as f32 * char_width;
         Some(div().absolute().top_0().h_full().left(px(left)).w(px(right - left)).cursor_pointer())

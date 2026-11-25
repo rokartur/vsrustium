@@ -26,7 +26,7 @@ impl Workbench {
     pub(super) fn register_document_symbol_commands(&mut self) {
         self.commands.register("_executeDocumentSymbolProvider", |workbench, args, _, cx| {
             let Some((scheme, path)) = args.first().and_then(|uri| super::host_requests::uri_parts(uri).ok()) else { return Outcome::error("Illegal argument") };
-            let Some(model_id) = workbench.editors.editors.iter().chain(&workbench.editors.models).find(|editor| editor.document.is(scheme, &path)).map(|editor| editor.model_id) else {
+            let Some(model_id) = workbench.editors.editors.iter().chain(&workbench.editors.models).find(|editor| editor.document().is(scheme, &path)).map(|editor| editor.model_id) else {
                 return Outcome::error("Illegal argument");
             };
             let outline = workbench.outline_model(model_id, cx);
@@ -43,23 +43,23 @@ impl Workbench {
     /// `documentSymbolProvider.has(model)`.
     pub(super) fn has_document_symbol_provider(&self, model_id: u32) -> bool {
         let Some(editor) = self.editors.editors.iter().chain(&self.editors.models).find(|editor| editor.model_id == model_id) else { return false };
-        let uri = editor.document.uri();
-        !self.language_features.ordered(REGISTER, &Candidate { uri: &uri, language: &editor.document.language_id }).is_empty()
+        let uri = editor.document().uri();
+        !self.language_features.ordered(REGISTER, &Candidate { uri: &uri, language: &editor.document().language_id }).is_empty()
     }
 
     /// `OutlineModelService.getOrCreate`: the cached model of this version, else every provider asked in score order
     /// (a failing one gives no symbols), grouped by provider under its display name. `None` for a closed model.
     pub(super) fn outline_model(&mut self, model_id: u32, cx: &mut Context<Self>) -> Task<Option<OutlineModel>> {
         let Some(editor) = self.editors.editors.iter().chain(&self.editors.models).find(|editor| editor.model_id == model_id) else { return Task::ready(None) };
-        let version = editor.version_id;
+        let version = editor.text_model().version_id;
         if let Some(index) = self.document_symbols.cache.iter().position(|(id, cached, _)| *id == model_id && *cached == version) {
             let entry = self.document_symbols.cache.remove(index);
             let outline = entry.2.clone();
             self.document_symbols.cache.push(entry);
             return Task::ready(Some(outline));
         }
-        let uri = editor.document.uri();
-        let candidate = Candidate { uri: &uri, language: &editor.document.language_id };
+        let uri = editor.document().uri();
+        let candidate = Candidate { uri: &uri, language: &editor.document().language_id };
         let mut calls = Vec::new();
         for registration in self.language_features.ordered(REGISTER, &candidate) {
             let label = registration.args.get(2).and_then(Value::as_str).unwrap_or("Unknown Outline Provider").to_string();

@@ -37,7 +37,7 @@ impl Workbench {
         self.commands.register("_executeDocumentHighlights", |workbench, args, _, cx| {
             let (Some(uri), Some(position)) = (args.first(), args.get(1)) else { return Outcome::error("Illegal argument") };
             let Ok((scheme, path)) = super::host_requests::uri_parts(uri) else { return Outcome::error("Illegal argument") };
-            let Some(editor) = workbench.editors.editors.iter().chain(&workbench.editors.models).find(|editor| editor.document.is(scheme, &path)) else {
+            let Some(editor) = workbench.editors.editors.iter().chain(&workbench.editors.models).find(|editor| editor.document().is(scheme, &path)) else {
                 return Outcome::error("Illegal argument");
             };
             let request = workbench.occurrences_at_position(editor, position.clone());
@@ -60,8 +60,8 @@ impl Workbench {
     /// `editor.occurrencesHighlightFromAllProviders` every provider is asked and the answers merged without
     /// duplicate ranges; else the first provider in score order whose answer is an array wins, even an empty one.
     fn occurrences_at_position(&self, editor: &OpenEditor, position: Value) -> Option<impl Future<Output = Option<Vec<Value>>> + use<>> {
-        let uri = editor.document.uri();
-        let candidate = Candidate { uri: &uri, language: &editor.document.language_id };
+        let uri = editor.document().uri();
+        let candidate = Candidate { uri: &uri, language: &editor.document().language_id };
         let handles: Vec<u64> = self.language_features.ordered(REGISTER, &candidate).iter().map(|registration| registration.handle).collect();
         if handles.is_empty() {
             return None;
@@ -94,7 +94,7 @@ impl Workbench {
     fn run_document_highlights(&mut self, window: &Window, cx: &mut Context<Self>) {
         let Some(editor) = self.editors.active() else { return };
         let head = editor.selection().head;
-        let key = Some((editor.model_id, editor.version_id, head));
+        let key = Some((editor.model_id, editor.text_model().version_id, head));
         if self.document_highlights.key == key {
             return;
         }
@@ -120,7 +120,7 @@ impl Workbench {
             self.editors.active_mut().expect("checked above").highlights = ranges;
             return;
         }
-        let position = json!({ "lineNumber": head.line + 1, "column": utf16_column(&editor.document.lines[head.line], head.column) + 1 });
+        let position = json!({ "lineNumber": head.line + 1, "column": utf16_column(&editor.document().lines[head.line], head.column) + 1 });
         let Some(request) = self.occurrences_at_position(editor, position) else {
             self.document_highlights = DocumentHighlights::default();
             return;
@@ -135,12 +135,13 @@ impl Workbench {
     }
 
     fn document_highlights_answered(&mut self, key: Option<(u32, u32, Position)>, highlights: Option<Vec<Value>>, textual: Vec<(usize, Range<usize>)>, cx: &mut Context<Self>) {
-        let Some(editor) = self.editors.active_mut().filter(|editor| Some((editor.model_id, editor.version_id, editor.selection().head)) == key) else { return };
+        let Some(editor) = self.editors.active_mut().filter(|editor| Some((editor.model_id, editor.text_model().version_id, editor.selection().head)) == key) else { return };
         let Some(highlights) = highlights else {
             editor.highlights = textual;
             return cx.notify();
         };
-        let lines = &editor.document.lines;
+        let document = editor.document();
+        let lines = &document.lines;
         let mut ranges = Vec::new();
         for highlight in &highlights {
             let range = &highlight["range"];
@@ -153,6 +154,7 @@ impl Workbench {
                 ranges.push((line, from..to, kind));
             }
         }
+        drop(document);
         editor.highlights = ranges.iter().map(|(line, columns, _)| (*line, columns.clone())).collect();
         self.document_highlights.ranges = ranges;
         cx.notify();
@@ -190,7 +192,7 @@ impl Workbench {
 
 /// textualHighlightProvider.ts: the whole-word occurrences of the word at a 1-based UTF-16 position, kind Text.
 fn textual_highlights(editor: &OpenEditor, position: &Value) -> Vec<Value> {
-    let lines = &editor.document.lines;
+    let lines = &editor.document().lines;
     let line = (position["lineNumber"].as_u64().unwrap_or(1) as usize).saturating_sub(1).min(lines.len() - 1);
     let column = char_column(&lines[line], (position["column"].as_u64().unwrap_or(1) as usize).saturating_sub(1));
     let Some(word) = crate::editor::word_at(&lines[line], column) else { return Vec::new() };
