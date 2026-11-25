@@ -130,6 +130,7 @@ mod emmet;
 mod tab_completion;
 mod outline_actions;
 mod inlay_hints_accessibility;
+mod comment_thread_widget;
 mod comments;
 mod comments_view;
 mod color_picker;
@@ -624,7 +625,7 @@ impl Workbench {
             debug_console: debug_console::DebugConsole::new(cx),
             problems: problems_view::ProblemsView::new(cx),
             problems_quick_fixes: Default::default(),
-            comments: Default::default(),
+            comments: comments::Comments::new(cx),
             problems_focus: cx.focus_handle(),
             breakpoint_widget: None,
             testing: Default::default(),
@@ -846,6 +847,7 @@ impl Workbench {
         self.update_marker_decorations(None);
         self.code_actions_model_changed(cx);
         self.code_lens_model_changed(cx);
+        self.sync_comment_widgets();
         self.inlay_hints_model_changed(cx);
         self.color_detector_model_changed(cx);
         self.inline_completions_model_changed(cx);

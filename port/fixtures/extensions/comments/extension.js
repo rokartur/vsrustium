@@ -17,5 +17,14 @@ exports.activate = async function (context) {
 	controller.createCommentThread(uri, new vscode.Range(3, 0, 4, 5), [
 		{ body: 'Rename total', author: author('Cid'), mode: vscode.CommentMode.Preview },
 	]);
+	context.subscriptions.push(
+		vscode.commands.registerCommand('port-comments.reply', reply => {
+			const comment = { body: reply.text, author: author('Dee'), mode: vscode.CommentMode.Preview };
+			reply.thread.comments = [...reply.thread.comments, comment];
+		}),
+		vscode.commands.registerCommand('port-comments.resolve', thread => {
+			thread.state = vscode.CommentThreadState.Resolved;
+		}),
+	);
 	await vscode.commands.executeCommand('workbench.action.focusCommentsPanel');
 };

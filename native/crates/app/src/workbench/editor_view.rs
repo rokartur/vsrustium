@@ -607,6 +607,7 @@ impl Workbench {
                     .children(self.parameter_hints_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
                     .children(self.lightbulb_widget(editor, metrics.content_left(), metrics.char_width, cx))
                     .children(self.code_lens_widgets(editor, metrics.content_left(), metrics.char_width, cx))
+                    .children(self.comment_thread_widgets(editor, metrics.content_left(), metrics.char_width, window, cx))
                     .children(self.rename_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
                     .children(self.suggest_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
                     .children(self.find_options_widget(minimap_width, cx))
@@ -1351,7 +1352,7 @@ impl Workbench {
                     .flex()
                     .children(self.diff_margin(editor, index, metrics))
                     .children(self.quick_diff_glyph(editor, index, metrics, cx))
-                    .children(self.comment_glyph(editor, index, metrics))
+                    .children(self.comment_glyph(editor, index, metrics, cx))
                     .child(
                         div()
                             .relative()

@@ -46,9 +46,11 @@ pub enum InputId {
     Rename,
     ProfileName,
     IconSelectSearch,
+    CommentReply,
+    CommentsFilter,
 }
 
-const INPUTS: [InputId; 22] = [
+const INPUTS: [InputId; 24] = [
     InputId::QuickInput,
     InputId::Explorer,
     InputId::ExplorerFind,
@@ -71,6 +73,8 @@ const INPUTS: [InputId; 22] = [
     InputId::Rename,
     InputId::ProfileName,
     InputId::IconSelectSearch,
+    InputId::CommentReply,
+    InputId::CommentsFilter,
 ];
 
 /// The view state of one input element.
@@ -146,6 +150,8 @@ impl Workbench {
             InputId::SettingsListValue => &self.settings_editor.list.value_view,
             InputId::DebugView => &self.debug_view.input_view,
             InputId::BreakpointWidget => &self.debug_view.widget_view,
+            InputId::CommentReply => &self.comments.reply_view,
+            InputId::CommentsFilter => &self.comments.view.filter_view,
             InputId::DebugConsole => &self.debug_console.input_view,
             InputId::TerminalFind => &self.terminal_view.find.view,
             InputId::Rename => &self.rename.view,
@@ -178,6 +184,8 @@ impl Workbench {
             InputId::SettingsListValue => &mut self.settings_editor.list.value_view,
             InputId::DebugView => &mut self.debug_view.input_view,
             InputId::BreakpointWidget => &mut self.debug_view.widget_view,
+            InputId::CommentReply => &mut self.comments.reply_view,
+            InputId::CommentsFilter => &mut self.comments.view.filter_view,
             InputId::DebugConsole => &mut self.debug_console.input_view,
             InputId::TerminalFind => &mut self.terminal_view.find.view,
             InputId::Rename => &mut self.rename.view,
@@ -207,6 +215,8 @@ impl Workbench {
             InputId::SettingsListValue => &self.settings_editor.list.value_focus,
             InputId::DebugView => &self.debug_view.input_focus,
             InputId::BreakpointWidget => &self.debug_view.widget_focus,
+            InputId::CommentReply => &self.comments.reply_focus,
+            InputId::CommentsFilter => &self.comments.view.filter_focus,
             InputId::DebugConsole => &self.debug_console.input_focus,
             InputId::TerminalFind => &self.terminal_view.find.focus,
             InputId::Rename => &self.rename.focus,
@@ -236,6 +246,8 @@ impl Workbench {
             InputId::SettingsListValue => Some(&self.settings_editor.list.value),
             InputId::DebugView => self.debug_view.editing.as_ref().map(|_| &self.debug_view.input),
             InputId::BreakpointWidget => self.breakpoint_widget.as_ref().map(|widget| &widget.input),
+            InputId::CommentReply => self.comments.reply.as_ref().map(|reply| &reply.input),
+            InputId::CommentsFilter => Some(&self.comments.view.filter),
             InputId::DebugConsole => Some(&self.debug_console.input),
             InputId::TerminalFind => Some(&self.terminal_view.find.input),
             InputId::Rename => self.rename.widget.as_ref().map(|widget| &widget.input),
@@ -327,6 +339,14 @@ impl Workbench {
             }
             InputId::BreakpointWidget => {
                 self.edit_breakpoint_widget_input(edit, cx);
+                Outcome::done()
+            }
+            InputId::CommentReply => {
+                self.edit_comment_reply_input(edit, cx);
+                Outcome::done()
+            }
+            InputId::CommentsFilter => {
+                self.edit_comments_filter(edit, window, cx);
                 Outcome::done()
             }
             InputId::DebugConsole => {
@@ -540,6 +560,8 @@ impl Workbench {
                 InputId::SettingsListValue => "settings-list-value-text".into(),
                 InputId::DebugView => "debug-view-input-text".into(),
                 InputId::BreakpointWidget => "breakpoint-widget-input-text".into(),
+                InputId::CommentReply => "comment-reply-input-text".into(),
+                InputId::CommentsFilter => "comments-filter-text".into(),
                 InputId::DebugConsole => "debug-console-input-text".into(),
                 InputId::TerminalFind => "terminal-find-text".into(),
                 InputId::Rename => "rename-input-text".into(),

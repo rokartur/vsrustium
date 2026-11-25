@@ -1,25 +1,41 @@
 //! mainThreadComments.ts: the comment controllers extensions register and their threads, kept for the Comments
 //! view (workbench/comments_view.rs).
 
-use gpui::{Context, Window};
+use gpui::{Context, FocusHandle, Window};
 use serde_json::Value;
 
 use super::Workbench;
+use super::comment_thread_widget::{Reply, ThreadWidget};
+use super::input_box_view::InputView;
 use crate::commands::Outcome;
 
 #[cfg(test)]
 mod tests;
 
-#[derive(Default)]
 pub(super) struct Comments {
     pub(super) controllers: Vec<Controller>,
     pub(super) collapsed: std::collections::HashSet<String>,
+    pub(super) widgets: Vec<ThreadWidget>,
+    pub(super) reply: Option<Reply>,
+    pub(super) reply_view: InputView,
+    pub(super) reply_focus: FocusHandle,
+    pub(super) view: super::comments_view::ViewState,
+}
+
+impl Comments {
+    pub(super) fn new(cx: &mut Context<Workbench>) -> Comments {
+        let reply_focus = cx.focus_handle();
+        let view = super::comments_view::ViewState::new(cx);
+        Comments { controllers: Vec::new(), collapsed: Default::default(), widgets: Vec::new(), reply: None, reply_view: InputView::default(), reply_focus, view }
+    }
 }
 
 /// `MainThreadCommentController`.
 pub(super) struct Controller {
     pub(super) handle: u64,
     pub(super) label: String,
+    /// `CommentControllerFeatures.contextValue`, the `commentController` context key.
+    pub(super) context_value: Option<String>,
     /// `updateCommentingRanges` was called, which registers the view upstream.
     has_commenting_ranges: bool,
     pub(super) threads: Vec<Thread>,
@@ -48,7 +64,12 @@ impl Workbench {
         match method {
             "$registerCommentController" => {
                 let text = |index: usize| arg(index).as_str().unwrap_or_default().to_owned();
-                self.comments.controllers.push(Controller { handle, label: text(2), has_commenting_ranges: false, threads: Vec::new() });
+                self.comments.controllers.push(Controller { handle, label: text(2), context_value: None, has_commenting_ranges: false, threads: Vec::new() });
+            }
+            "$updateCommentControllerFeatures" => {
+                if let Some(controller) = self.comment_controller_mut(handle) {
+                    controller.context_value = arg(1)["contextValue"].as_str().map(str::to_owned);
+                }
             }
             "$unregisterCommentController" => self.comments.controllers.retain(|controller| controller.handle != handle),
             "$createCommentThread" => {
@@ -86,6 +107,8 @@ impl Workbench {
             }
             _ => {}
         }
+        self.sync_comment_widgets();
+        self.select_first_comment_thread();
         cx.notify();
         Outcome::done()
     }

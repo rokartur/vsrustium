@@ -1,0 +1,1 @@
+[{"wait": 9000}, {"click": [361, 116]}, {"wait": 1500}, {"shot": "thread"}, {"click": [500, 296]}, {"wait": 800}, {"type": "Agreed"}, {"wait": 800}, {"shot": "reply"}, {"hotkey": ["cmd", "return"]}, {"wait": 1500}, {"shot": "replied"}]

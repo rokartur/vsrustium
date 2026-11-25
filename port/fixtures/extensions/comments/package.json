@@ -6,5 +6,15 @@
 	"description": "A comment controller with two threads on a.ts for port/tools/ui-pair.",
 	"engines": { "vscode": "^1.100.0" },
 	"main": "./extension.js",
-	"activationEvents": ["onStartupFinished"]
+	"activationEvents": ["onStartupFinished"],
+	"contributes": {
+		"commands": [
+			{ "command": "port-comments.reply", "title": "Reply" },
+			{ "command": "port-comments.resolve", "title": "Resolve", "icon": "$(check)" }
+		],
+		"menus": {
+			"comments/commentThread/context": [{ "command": "port-comments.reply", "group": "inline" }],
+			"comments/commentThread/title": [{ "command": "port-comments.resolve", "group": "inline" }]
+		}
+	}
 }
