@@ -45,7 +45,7 @@ impl Workbench {
     pub(super) fn register_testing_commands(&mut self) {
         self.commands.register("workbench.view.testing", |workbench, _, _, cx| {
             workbench.side_bar_view = super::search_view::SideBarView::Testing;
-            cx.notify();
+            workbench.set_part_hidden(super::layout::Part::SideBar, false, cx);
             Outcome::done()
         });
         self.commands.register("workbench.view.extension.test", |workbench, args, window, cx| workbench.execute_command("workbench.view.testing", args, window, cx));

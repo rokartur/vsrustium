@@ -757,7 +757,7 @@ mod tests {
             workbench.debug.sessions.push(session);
             workbench.debug.sessions.push(crate::debug::session::Session::new("c".into(), 2, json!({ "name": "Child", "type": "pwa-node", "request": "launch" }), json!({}), None, json!({ "parentSessionId": "s" })));
             workbench.debug.focus.session = Some("s".into());
-            workbench.side_bar_view = super::super::search_view::SideBarView::Debug;
+            workbench.show_debug_view(cx);
             workbench
         });
         cx.run_until_parked();

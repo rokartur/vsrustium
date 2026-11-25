@@ -1115,7 +1115,7 @@ impl Workbench {
     /// Opens the Run and Debug view in the side bar.
     pub(crate) fn show_debug_view(&mut self, cx: &mut Context<Self>) {
         self.side_bar_view = super::search_view::SideBarView::Debug;
-        cx.notify();
+        self.set_part_hidden(super::layout::Part::SideBar, false, cx);
     }
 }
 
