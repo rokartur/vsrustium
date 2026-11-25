@@ -27,6 +27,10 @@ pub(super) struct ContributedView {
     /// The `contributes.views` key: `explorer`, `scm`, `debug`, `test` or a `viewsContainers` id.
     pub container: String,
     pub when: Option<Expr>,
+    /// `"visibility": "hidden"`: hidden until shown from the container's Views submenu.
+    pub hide_by_default: bool,
+    /// `"visibility": "collapsed"`.
+    pub collapsed: bool,
 }
 
 #[derive(Default)]
@@ -67,7 +71,8 @@ pub(super) fn contributed_views(extensions: &[exthost::scan::ScannedExtension]) 
                 if view["type"] == "webview" {
                     continue;
                 }
-                views.push(ContributedView { id: static_id(id), name: name.to_owned(), container: container.clone(), when: view["when"].as_str().and_then(Expr::deserialize) });
+                let (hide_by_default, collapsed) = super::view_visibility::initial_visibility(view);
+                views.push(ContributedView { id: static_id(id), name: name.to_owned(), container: container.clone(), when: view["when"].as_str().and_then(Expr::deserialize), hide_by_default, collapsed });
             }
         }
     }
@@ -77,6 +82,8 @@ pub(super) fn contributed_views(extensions: &[exthost::scan::ScannedExtension]) 
 impl Workbench {
     pub(crate) fn set_tree_views(&mut self, extensions: &[exthost::scan::ScannedExtension]) {
         self.tree_views.views = contributed_views(extensions);
+        // viewsExtensionPoint.ts `showCollapsed`: the scm and debug containers start every contributed view collapsed.
+        self.tree_views.collapsed = self.tree_views.views.iter().filter(|view| view.collapsed || view.container == "scm" || view.container == "debug").map(|view| view.id).collect();
         self.tree_views.containers = super::view_containers::contributed_view_containers(extensions);
         self.register_view_container_commands();
     }
@@ -86,9 +93,10 @@ impl Workbench {
         self.shown_views_of("explorer")
     }
 
-    /// viewContainerModel.ts `activeViewDescriptors`: the container's contributed views whose `when` holds.
+    /// viewContainerModel.ts `visibleViewDescriptors`: the container's contributed views whose `when` holds and
+    /// that are not hidden.
     pub(super) fn shown_views_of(&self, container: &str) -> Vec<&'static str> {
-        let views = self.tree_views.views.iter().filter(|view| view.container == container && view.when.as_ref().is_none_or(|when| when.evaluate(&self.context_keys)));
+        let views = self.tree_views.views.iter().filter(|view| view.container == container && view.when.as_ref().is_none_or(|when| when.evaluate(&self.context_keys)) && !self.view_hidden(container, view.id));
         views.map(|view| view.id).collect()
     }
 

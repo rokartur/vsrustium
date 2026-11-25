@@ -24,6 +24,7 @@ mod modal_editor_group;
 mod problems_view;
 mod refactor_preview;
 mod view_containers;
+mod view_visibility;
 mod debug_toolbar;
 pub(crate) mod debug_service;
 mod debug_view;
@@ -1010,8 +1011,7 @@ impl Workbench {
         }
         let title = self
             .side_bar_title("Explorer")
-            // actionbar.css: .monaco-action-bar .action-item is cursor: pointer.
-            .child(self.icon("ellipsis", 22., 16., foreground).cursor_pointer());
+            .child(self.view_container_more_actions("explorer", cx));
         let Some(tree) = self.folder.as_ref() else {
             let empty = view_panes::ExplorerPane { id: view_panes::EMPTY_VIEW, title: "No Folder Opened".into(), description: None, actions: None, body: self.empty_view(cx).into_any_element() };
             return self.side_bar_frame().text_color(foreground).child(title).child(self.explorer_pane_view(empty, window, cx)).child(div().h(px(5.)).flex_none());
