@@ -143,6 +143,46 @@ fn go_to_line_previews_the_line_and_restores_the_view_on_escape(cx: &mut TestApp
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+/// helpQuickAccess.ts: `?` lists the providers by prefix, accepting one shows it, typing its prefix too.
+#[gpui::test]
+fn help_lists_the_providers_and_shows_the_picked_one(cx: &mut TestAppContext) {
+    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
+    let theme = load_theme(&[themes], "Dark Modern").unwrap();
+    let dir = std::env::temp_dir().join(format!("code-gpui-help-{}", std::process::id()));
+    let (workbench, cx) = cx.add_window_view(|_, cx| {
+        let mut workbench = Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), crate::default_settings(), HostSync::new(std::sync::mpsc::channel().0), cx);
+        workbench.load_keybindings(crate::keybindings::default_keybindings(&[]), dir.join("keybindings.json"), cx);
+        workbench
+    });
+    cx.run_until_parked();
+    let picker = |cx: &mut gpui::VisualTestContext| {
+        workbench.read_with(cx, |workbench, _| {
+            let input = workbench.quick_inputs.current().unwrap();
+            let rows = input.order.iter().map(|row| &input.rows[*row]).map(|row| format!("{}|{}|{:?}", row.item.label, row.item.description.clone().unwrap_or_default(), row.item.keybinding)).collect::<Vec<_>>();
+            (input.input_box.value.clone(), input.placeholder.clone().unwrap_or_default(), rows)
+        })
+    };
+
+    cx.simulate_keystrokes("cmd-p");
+    cx.simulate_input("?");
+    let (value, placeholder, rows) = picker(cx);
+    assert_eq!((value.as_str(), placeholder.as_str()), ("?", "Type '?' to get help on the actions you can take from here."));
+    assert_eq!(rows, [
+        r#"…|Go to File|[["⌘", "P"]]"#,
+        r#":|Go to Line/Column|[["⌃", "G"]]"#,
+        "::|Go to Offset|[]",
+        r#">|Show and Run Commands|[["⇧", "⌘", "P"]]"#,
+    ]);
+    cx.simulate_keystrokes("down enter");
+    assert_eq!(picker(cx).0, ":", "accept shows the picked provider");
+
+    cx.simulate_keystrokes("escape cmd-p");
+    cx.simulate_input("?>");
+    cx.run_until_parked();
+    assert_eq!(picker(cx).0, ">", "a typed prefix shows its provider");
+}
+
 /// gotoLineQuickAccess.ts `provideWithTextEditor`: relative line numbers show as "on" while the picker is open.
 #[gpui::test]
 fn go_to_line_shows_relative_line_numbers_as_on_while_open(cx: &mut TestAppContext) {
