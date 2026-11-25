@@ -20,6 +20,8 @@ rm -rf "$OUT/workspace" "$OUT/workspace2" "$OUT/folding" && cp -R port/fixtures/
 echo '{ "folders": [{ "path": "workspace" }, { "path": "workspace2", "name": "Second Folder" }] }' >"$OUT/multi.code-workspace"
 (cd native && cargo build --release -q -p app --features screenshot && cargo build --release -q -p pixeldiff) || exit 1
 source port/tools/gui-lock.sh
+# GPUI takes hover from the real pointer on the first frame; the reference window gets no mouse move.
+echo 'import CoreGraphics; CGWarpMouseCursorPosition(.zero)' | swift - || exit 1
 # Runs a capture; one still alive after 120 s gets its stacks sampled into $1, then is killed (exit 124).
 capture() {
   local sample=$1; shift
