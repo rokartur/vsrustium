@@ -1,0 +1,229 @@
+{
+  "extensionId": "2061917f-f76a-458a-8da9-f162de22b97e",
+  "extensionName": "vscode-yaml",
+  "displayName": "YAML",
+  "shortDescription": "YAML Language Support by Red Hat, with built-in Kubernetes syntax support",
+  "publisher": {
+    "displayName": "Red Hat",
+    "publisherId": "1deab481-4801-4170-8a64-801999f5ee73",
+    "publisherName": "redhat",
+    "domain": null,
+    "isDomainVerified": null
+  },
+  "versions": [
+    {
+      "version": "2.1.2026112008",
+      "lastUpdated": "2026-11-20T08:11:26.894036Z",
+      "assetUri": "https://open-vsx.org/vscode/asset/redhat/vscode-yaml/2.1.2026112008",
+      "fallbackAssetUri": "https://open-vsx.org/vscode/asset/redhat/vscode-yaml/2.1.2026112008",
+      "files": [
+        {
+          "assetType": "Microsoft.VisualStudio.Code.Manifest",
+          "source": "https://open-vsx.org/api/redhat/vscode-yaml/2.1.2026112008/file/package.json"
+        },
+        {
+          "assetType": "Microsoft.VisualStudio.Services.Content.Details",
+          "source": "https://open-vsx.org/api/redhat/vscode-yaml/2.1.2026112008/file/readme.md"
+        },
+        {
+          "assetType": "Microsoft.VisualStudio.Services.Content.License",
+          "source": "https://open-vsx.org/api/redhat/vscode-yaml/2.1.2026112008/file/LICENSE.txt"
+        },
+        {
+          "assetType": "Microsoft.VisualStudio.Services.Icons.Default",
+          "source": "https://open-vsx.org/api/redhat/vscode-yaml/2.1.2026112008/file/icon128.png"
+        },
+        {
+          "assetType": "Microsoft.VisualStudio.Services.VSIXPackage",
+          "source": "https://open-vsx.org/api/redhat/vscode-yaml/2.1.2026112008/file/redhat.vscode-yaml-2.1.2026112008.vsix"
+        },
+        {
+          "assetType": "Microsoft.VisualStudio.Services.Content.Changelog",
+          "source": "https://open-vsx.org/api/redhat/vscode-yaml/2.1.2026112008/file/changelog.md"
+        },
+        {
+          "assetType": "Microsoft.VisualStudio.Services.VsixManifest",
+          "source": "https://open-vsx.org/api/redhat/vscode-yaml/2.1.2026112008/file/extension.vsixmanifest"
+        },
+        {
+          "assetType": "Microsoft.VisualStudio.Services.VsixSignature",
+          "source": "https://open-vsx.org/api/redhat/vscode-yaml/2.1.2026112008/file/redhat.vscode-yaml-2.1.2026112008.sigzip"
+        },
+        {
+          "assetType": "Microsoft.VisualStudio.Services.PublicKey",
+          "source": "https://open-vsx.org/api/-/public-key/14ccb407-4e79-41ed-be5a-6d608325c45a"
+        }
+      ],
+      "properties": [
+        {
+          "key": "Microsoft.VisualStudio.Services.Branding.Color",
+          "value": ""
+        },
+        {
+          "key": "Microsoft.VisualStudio.Services.Branding.Theme",
+          "value": ""
+        },
+        {
+          "key": "Microsoft.VisualStudio.Services.Links.Source",
+          "value": "https://github.com/redhat-developer/vscode-yaml.git"
+        },
+        {
+          "key": "Microsoft.VisualStudio.Code.SponsorLink",
+          "value": ""
+        },
+        {
+          "key": "Microsoft.VisualStudio.Code.Engine",
+          "value": "^1.91.0"
+        },
+        {
+          "key": "Microsoft.VisualStudio.Code.ExtensionDependencies",
+          "value": ""
+        },
+        {
+          "key": "Microsoft.VisualStudio.Code.ExtensionPack",
+          "value": ""
+        },
+        {
+          "key": "Microsoft.VisualStudio.Code.LocalizedLanguages",
+          "value": ""
+        },
+        {
+          "key": "Microsoft.VisualStudio.Code.PreRelease",
+          "value": "true"
+        },
+        {
+          "key": "Microsoft.VisualStudio.Code.WebExtension",
+          "value": "true"
+        }
+      ],
+      "targetPlatform": "universal"
+    },
+    {
+      "version": "2.0.0",
+      "lastUpdated": "2026-10-16T01:46:39.843678Z",
+      "assetUri": "https://open-vsx.org/vscode/asset/redhat/vscode-yaml/2.0.0",
+      "fallbackAssetUri": "https://open-vsx.org/vscode/asset/redhat/vscode-yaml/2.0.0",
+      "files": [
+        {
+          "assetType": "Microsoft.VisualStudio.Code.Manifest",
+          "source": "https://open-vsx.org/api/redhat/vscode-yaml/2.0.0/file/package.json"
+        },
+        {
+          "assetType": "Microsoft.VisualStudio.Services.Content.Details",
+          "source": "https://open-vsx.org/api/redhat/vscode-yaml/2.0.0/file/readme.md"
+        },
+        {
+          "assetType": "Microsoft.VisualStudio.Services.Content.License",
+          "source": "https://open-vsx.org/api/redhat/vscode-yaml/2.0.0/file/LICENSE.txt"
+        },
+        {
+          "assetType": "Microsoft.VisualStudio.Services.Icons.Default",
+          "source": "https://open-vsx.org/api/redhat/vscode-yaml/2.0.0/file/icon128.png"
+        },
+        {
+          "assetType": "Microsoft.VisualStudio.Services.VSIXPackage",
+          "source": "https://open-vsx.org/api/redhat/vscode-yaml/2.0.0/file/redhat.vscode-yaml-2.0.0.vsix"
+        },
+        {
+          "assetType": "Microsoft.VisualStudio.Services.Content.Changelog",
+          "source": "https://open-vsx.org/api/redhat/vscode-yaml/2.0.0/file/changelog.md"
+        },
+        {
+          "assetType": "Microsoft.VisualStudio.Services.VsixManifest",
+          "source": "https://open-vsx.org/api/redhat/vscode-yaml/2.0.0/file/extension.vsixmanifest"
+        },
+        {
+          "assetType": "Microsoft.VisualStudio.Services.VsixSignature",
+          "source": "https://open-vsx.org/api/redhat/vscode-yaml/2.0.0/file/redhat.vscode-yaml-2.0.0.sigzip"
+        },
+        {
+          "assetType": "Microsoft.VisualStudio.Services.PublicKey",
+          "source": "https://open-vsx.org/api/-/public-key/14ccb407-4e79-41ed-be5a-6d608325c45a"
+        }
+      ],
+      "properties": [
+        {
+          "key": "Microsoft.VisualStudio.Services.Branding.Color",
+          "value": ""
+        },
+        {
+          "key": "Microsoft.VisualStudio.Services.Branding.Theme",
+          "value": ""
+        },
+        {
+          "key": "Microsoft.VisualStudio.Services.Links.Source",
+          "value": "https://github.com/redhat-developer/vscode-yaml.git"
+        },
+        {
+          "key": "Microsoft.VisualStudio.Code.SponsorLink",
+          "value": ""
+        },
+        {
+          "key": "Microsoft.VisualStudio.Code.Engine",
+          "value": "^1.91.0"
+        },
+        {
+          "key": "Microsoft.VisualStudio.Code.ExtensionDependencies",
+          "value": ""
+        },
+        {
+          "key": "Microsoft.VisualStudio.Code.ExtensionPack",
+          "value": ""
+        },
+        {
+          "key": "Microsoft.VisualStudio.Code.LocalizedLanguages",
+          "value": ""
+        },
+        {
+          "key": "Microsoft.VisualStudio.Code.WebExtension",
+          "value": "true"
+        }
+      ],
+      "targetPlatform": "universal"
+    }
+  ],
+  "statistics": [
+    {
+      "statisticName": "install",
+      "value": 9442034.0
+    },
+    {
+      "statisticName": "averagerating",
+      "value": 5.0
+    },
+    {
+      "statisticName": "ratingcount",
+      "value": 8.0
+    }
+  ],
+  "tags": [
+    "__ext_eyaml",
+    "__ext_eyml",
+    "__ext_yaml",
+    "__ext_yml",
+    "__web_extension",
+    "ansible",
+    "autocompletion",
+    "azure-pipelines",
+    "dockercompose",
+    "github-actions-workflow",
+    "home-assistant",
+    "kubernetes",
+    "manifest-yaml",
+    "spring-boot-properties-yaml",
+    "validation",
+    "yaml",
+    "yaml-textmate",
+    "yaml-tmlanguage"
+  ],
+  "releaseDate": "2020-03-19T19:42:19.786633Z",
+  "publishedDate": "2020-03-19T19:42:19.786633Z",
+  "lastUpdated": "2026-11-20T08:13:08.406277Z",
+  "categories": [
+    "Programming Languages",
+    "Linters",
+    "Snippets",
+    "Formatters"
+  ],
+  "flags": ""
+}

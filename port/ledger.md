@@ -28,7 +28,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | mainthread/MainThreadBulkEdits | MainThread* shape (Rust side) | ported | file edits of workspace.applyEdit (api-tests: rename & ignoreIfExists, delete & ignoreIfNotExists, #111867 1/3 to 3/3, binary files pass); text edits and EOL changes through workbench/bulk_text_edits.rs, api-tests MOCHA_GREP="vscode API - workspace" 94/2/13 with every applyEdit test passing; cell edits fail until milestone 13 |
 | mainthread/MainThreadTextEditors | MainThread* shape (Rust side) | ported | host_requests.rs answers $tryShowTextDocument, $trySetSelections, $tryRevealRange, $trySetOptions, $tryApplyEdits, $tryInsertSnippet; visible ranges and options reach the host: api-tests MOCHA_GREP="vscode API - editors" 13/0/0, window text editor tests without view columns pass; every selection and snippet range applies; one editor group (port/notes.md milestone 8) |
 | mainthread/MainThreadTreeViews | MainThread* shape (Rust side) | stub | session.rs answers undefined |
-| mainthread/MainThreadDownloadService | MainThread* shape (Rust side) | stub | session.rs answers undefined |
+| mainthread/MainThreadDownloadService | stub | verified | `_workbench.downloadResource` copies a file, fetches a URL and rejects a 404 with the upstream message: port/tools/extensions-check |
 | mainthread/MainThreadErrors | MainThread* shape (Rust side) | ported | session.rs writes `$onUnexpectedError` stacks to the port log (code-gpui stderr); seen in port/tools/api-tests api-folder.log |
 | mainthread/MainThreadConsole | MainThread* shape (Rust side) | ported | console.rs formats `$logExtensionHostMessage` like util.format to the port log; cargo test -p exthost console tests; mocha spec output in port/tools/api-tests logs |
 | mainthread/MainThreadLanguageFeatures | MainThread* shape (Rust side) | stub | session.rs answers undefined |
@@ -120,7 +120,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/backup | src/vs/platform | todo |  |
 | platform/browserView | src/vs/platform | todo |  |
 | platform/chat | src/vs/platform | removed | no sign-in/AI by decision (port/notes.md); not ported |
-| platform/checksum | src/vs/platform | todo |  |
+| platform/checksum | todo | n/a | only integrityService uses it, to hash the shipped JS files against product.json `checksums`; the port ships no workbench JS and product.json has no checksums. VSIX sha256 digests are checked by platform/sign |
 | platform/clipboard | src/vs/platform | ported | clipboard.rs: text through GPUI, `writeResources`/`readResources`/`hasResources` as `code/file-list` and `readFindText`/`writeFindText` on NSPasteboard; cargo test -p app clipboard; Explorer copy/paste and globalFindClipboard use it; readImage, triggerPaste not ported |
 | platform/commands | src/vs/platform | ported | commands.rs registry; api-tests commands suite (see MainThreadCommands) |
 | platform/configuration | src/vs/platform | ported | cargo test -p config (json, jsonEdit, configurationModels, configurationRegistry cases); policy, configurationService, configurations, configurationVariables tests not ported |
@@ -135,7 +135,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/dialogs | src/vs/platform | todo |  |
 | platform/dnd | src/vs/platform | todo |  |
 | platform/domWidget | src/vs/platform | n/a | Electron process, IPC or DOM layer; replaced by the single-process Rust/GPUI architecture (port/notes.md) |
-| platform/download | src/vs/platform | todo |  |
+| platform/download | todo | verified | downloadService.ts in workbench/extension_management.rs `download_resource` (file copy, GET, non-200 error): port/tools/extensions-check `_workbench.downloadResource` |
 | platform/editor | src/vs/platform | ported | interfaces only: `TextEditorSelectionRevealType` as `VerticalReveal` (editor/view.rs, cargo test -p app editor::view::tests), `IEditorOptions` pinned, preserveFocus and selection on the open path (workbench.rs `open_file`, host_requests.rs `$tryShowTextDocument`); the modal editor options have no modal editor part to apply to |
 | platform/encryption | src/vs/platform | todo |  |
 | platform/endpoint | src/vs/platform | removed | no remote or tunnels by decision (port/notes.md); one local extension host |
@@ -190,12 +190,12 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/registry | src/vs/platform | n/a | Registry.add/as, a string-keyed registry of registries for the JS module graph; the port passes its typed registries directly (config::registry::Registry, Commands, the menus and keybindings modules), so there is no lookup by id to port |
 | platform/remote | src/vs/platform | removed | no remote or tunnels by decision (port/notes.md); one local extension host |
 | platform/remoteTunnel | src/vs/platform | removed | no sign-in/AI by decision (port/notes.md); not ported |
-| platform/request | src/vs/platform | todo |  |
+| platform/request | todo | ported | exthost/src/request.rs over NSURLSession (system proxy): cargo test -p exthost request; `http.proxy`, `http.proxyStrictSSL`, `http.proxyAuthorization` and the proxy agent settings are not applied |
 | platform/sandbox | src/vs/platform | n/a | Electron process, IPC or DOM layer; replaced by the single-process Rust/GPUI architecture (port/notes.md) |
 | platform/secrets | src/vs/platform | ported | port/tools/settings-check secrets; Keychain items instead of safeStorage encryption, secrets.test not ported |
 | platform/sharedProcess | src/vs/platform | n/a | Electron process, IPC or DOM layer; replaced by the single-process Rust/GPUI architecture (port/notes.md) |
 | platform/shell | src/vs/platform | todo |  |
-| platform/sign | src/vs/platform | todo |  |
+| platform/sign | todo | verified | Open VSX signatures (ed25519 `.signature.sig` over `.signature.manifest`, package and entry sha256 digests; `.signature.p7s` is empty there, so no PKCS#7 chain): cargo test -p exthost sign (5 tests incl. tampered entry, other key, broken archives); redhat.vscode-yaml installs verified in port/tools/extensions-check |
 | platform/state | src/vs/platform | todo |  |
 | platform/storage | src/vs/platform | ported | cargo test -p storage (storage.integrationTest.ts cases); profile and workspace scopes only, storageService tests not ported |
 | platform/telemetry | src/vs/platform | todo |  |
@@ -312,7 +312,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/banner | workbench service | todo |  |
 | workbench/services/browserView | workbench service | todo |  |
 | workbench/services/chat | workbench service | removed | no sign-in/AI by decision (port/notes.md); not ported |
-| workbench/services/checksum | workbench service | todo |  |
+| workbench/services/checksum | todo | n/a | IPC client of platform/checksum, which only integrityService uses |
 | workbench/services/clipboard | workbench service | ported | electron-browser `NativeClipboardService` as clipboard.rs (platform/clipboard row): cargo test -p app clipboard; the browser service's navigator.clipboard fallback does not apply to a native app |
 | workbench/services/commands | workbench service | ported | commands.rs: onCommand activation before execute; api-tests commands suite |
 | workbench/services/configuration | workbench service | ported | cargo test -p config service (configurationEditing.test.ts write cases, workspace file layer and folder scopes); port/tools/settings-check configuration |
@@ -335,7 +335,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/host | workbench service | todo |  |
 | workbench/services/imageResize | workbench service | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | workbench/services/inlineCompletions | workbench service | todo |  |
-| workbench/services/integrity | workbench service | todo |  |
+| workbench/services/integrity | todo | n/a | checks the shipped JS files against product.json `checksums`; the port ships no workbench JS and product.json has none (upstream answers isPure true then) |
 | workbench/services/keybinding | workbench service | ported | keyboard.rs: default-macos.json, contributes.keybindings, keybindings.json reload, chords with the status bar message; cargo test -p app keybindings user_keybindings; pixel-check chord |
 | workbench/services/label | workbench service | todo |  |
 | workbench/services/language | workbench service | verified | getAssociationByPath plus firstLine detection (languages.rs); cargo test -p app languages::tests |
@@ -362,7 +362,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/progress | workbench service | ported | progressService.ts withNotificationProgress and withWindowProgress (delays 150 ms and 800 ms); Explorer, Extensions, SCM and Dialog locations not used by the port yet |
 | workbench/services/quickinput | workbench service | ported | quick_input_view.rs with header drag (cargo test -p app dragging); api-tests quick input 11/11; view state in application storage (cargo test -p app dragging) |
 | workbench/services/remote | workbench service | removed | no remote or tunnels by decision (port/notes.md); one local extension host |
-| workbench/services/request | workbench service | todo |  |
+| workbench/services/request | todo | ported | the workbench requests through exthost/src/request.rs (NSURLSession); the proxy settings of platform/request are not applied |
 | workbench/services/search | workbench service | ported | native/crates/search: QueryBuilder, ripgrep file search and text search with upstream ripgrepTextSearchEngineUtils and TextSearchResult tests, the view's search paths (search_paths.rs, queryBuilder.test.ts): cargo test -p search 43 passed; no symlink loop rerun, no results from unsaved editors |
 | workbench/services/secrets | workbench service | ported | port/tools/settings-check secrets |
 | workbench/services/sessions | workbench service | removed | no sign-in/AI by decision (port/notes.md); not ported |
@@ -595,6 +595,6 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | extension/yaml | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | telemetry/source-search | cross-cutting check | todo |  |
 | telemetry/network-capture | cross-cutting check | todo |  |
-| gallery/open-vsx | cross-cutting check | todo |  |
+| gallery/open-vsx | todo | verified | exthost/src/gallery.rs: query, latest-version resource, version choice, download with signature check; cargo test -p exthost gallery (upstream extensionGalleryService.test.ts sorting and filterLatestExtensionVersionsForTargetPlatform cases, Open VSX resource fixture); `workbench.extensions.installExtension redhat.vscode-yaml` downloads 2.0.0 from open-vsx.org, verifies it and activates without restart, not-found errors as upstream: PORT_GALLERY=1 port/tools/extensions-check |
 | look/screenshot-diff | cross-cutting check | verified | port/tools/pixel-check: CDP reference capture and Metal readback in 3 themes, pixeldiff reference vs itself 0 different; baseline in port/results/pixels.md |
 | perf/memory-benchmark | cross-cutting check | verified | port/tools/bench (Wu method), 3 runs on Studio; port/results/benchmark.md: exthost Bun 57 MiB, Node 98 MiB, reference 151 MiB |

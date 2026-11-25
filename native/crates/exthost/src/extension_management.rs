@@ -11,6 +11,7 @@ use serde_json::{Map, Value, json};
 use config::registry::Registry;
 
 use crate::extension_validator::{is_engine_valid, semver_version, validate_extension_manifest};
+use crate::gallery::GalleryExtension;
 use crate::main_thread_configuration::changed_args;
 use crate::scan::{ScannedExtension, file_uri, scan_extension};
 use crate::session::Session;
@@ -50,31 +51,38 @@ impl UserExtensions {
     /// `install(vsix)`: checks the engine, extracts into `<publisher>.<name>-<version>` and adds it to the profile,
     /// replacing other versions. Returns the installed extension as the host gets it.
     pub fn install_vsix(&self, vsix: &Path) -> anyhow::Result<ScannedExtension> {
+        self.install(vsix, None)
+    }
+
+    /// `InstallGalleryExtensionTask`: the downloaded VSIX of `gallery`, which must be the extension and version it names.
+    /// The same version already installed only gets the gallery metadata.
+    pub fn install_gallery(&self, vsix: &Path, gallery: &GalleryExtension) -> anyhow::Result<ScannedExtension> {
+        self.install(vsix, Some(gallery))
+    }
+
+    fn install(&self, vsix: &Path, gallery: Option<&GalleryExtension>) -> anyhow::Result<ScannedExtension> {
         let archive = Archive::open(std::fs::read(vsix).with_context(|| format!("reading {}", vsix.display()))?)?;
         let manifest_entry = archive.entry("extension/package.json").context("extension/package.json not found in zip")?;
         let manifest: Value = serde_json::from_slice(&archive.read(manifest_entry)?).map_err(|_| anyhow::anyhow!("VSIX invalid: package.json is not a JSON file."))?;
         let id = gallery_extension_id(&manifest);
         let version = manifest["version"].as_str().unwrap_or_default();
+        if let Some(gallery) = gallery
+            && (!gallery.id.eq_ignore_ascii_case(&id) || gallery.version != version)
+        {
+            bail!("Cannot install '{}' extension because of manifest mismatch with Marketplace", gallery.id);
+        }
         if let Some(engine) = manifest["engines"]["vscode"].as_str().filter(|engine| !engine.is_empty())
             && !is_engine_valid(engine, &self.product_version, None)
         {
             bail!("Unable to install extension '{id}' as it is not compatible with VS Code '{}'.", self.product_version);
         }
-        let key = format!("{id}-{version}");
+        let key = gallery.map_or_else(|| format!("{id}-{version}"), crate::gallery::extension_key);
         // The folder name comes from the VSIX: a `/` or `..` in `name` or `version` would reach outside the folder.
         if key.contains(['/', '\\']) || key.starts_with('.') || key.contains("..") {
             bail!("VSIX invalid: '{key}' is not a valid extension folder name.");
         }
         let profile = self.profile()?;
         let existing = profile.iter().find(|entry| entry_id(entry).eq_ignore_ascii_case(&id));
-
-        // Installing a VSIX always replaces the folder of the same version, installed or marked as removed.
-        self.unset_for_removal(&key)?;
-        let location = self.folder.join(&key);
-        if location.exists() {
-            delete_folder(&location).with_context(|| format!("Please restart VS Code before reinstalling {}.", display_name(&manifest)))?;
-        }
-        self.extract(&archive, &location)?;
 
         let mut metadata = Map::new();
         if let Some(existing) = existing {
@@ -83,7 +91,41 @@ impl UserExtensions {
             }
         }
         metadata.insert("installedTimestamp".into(), json!(now_millis()));
-        metadata.insert("source".into(), json!("vsix"));
+        metadata.insert("source".into(), json!(if gallery.is_some() { "gallery" } else { "vsix" }));
+        let location = self.folder.join(&key);
+        match gallery {
+            None => {
+                // Installing a VSIX always replaces the folder of the same version, installed or marked as removed.
+                self.unset_for_removal(&key)?;
+                if location.exists() {
+                    delete_folder(&location).with_context(|| format!("Please restart VS Code before reinstalling {}.", display_name(&manifest)))?;
+                }
+                self.extract(&archive, &location)?;
+            }
+            Some(gallery) => {
+                let has_pre_release = existing.is_some_and(|existing| existing["metadata"]["hasPreReleaseVersion"] == true);
+                let pre_release = existing.is_some_and(|existing| existing["metadata"]["preRelease"] == true);
+                metadata.insert("id".into(), json!(gallery.uuid));
+                metadata.insert("publisherId".into(), json!(gallery.publisher_id));
+                metadata.insert("publisherDisplayName".into(), json!(gallery.publisher_display_name));
+                metadata.insert("targetPlatform".into(), json!(gallery.target_platform));
+                metadata.insert("updated".into(), json!(existing.is_some()));
+                metadata.insert("private".into(), json!(gallery.private));
+                metadata.insert("isPreReleaseVersion".into(), json!(gallery.is_pre_release_version));
+                metadata.insert("hasPreReleaseVersion".into(), json!(has_pre_release || gallery.is_pre_release_version));
+                metadata.insert("preRelease".into(), json!(gallery.is_pre_release_version || pre_release));
+                // A version marked as removed comes back as it is (`unsetIfRemoved`); else it is extracted.
+                let was_removed = self.removed()?.contains_key(&key);
+                self.unset_for_removal(&key)?;
+                let installed = existing.is_some_and(|existing| existing["version"] == version);
+                if !(was_removed || installed) || !location.join("package.json").is_file() {
+                    if location.exists() {
+                        delete_folder(&location)?;
+                    }
+                    self.extract(&archive, &location)?;
+                }
+            }
+        }
         self.add_to_profile(&id, version, &location, Value::Object(metadata))?;
         self.scan_valid(&location, &Value::Null)
     }
@@ -267,6 +309,7 @@ impl UserExtensions {
 #[derive(Debug)]
 pub enum Job {
     InstallVsix(PathBuf),
+    InstallGallery(PathBuf, Box<GalleryExtension>),
     Uninstall(String),
 }
 
@@ -284,6 +327,11 @@ impl WindowExtensions {
         let (to_add, to_remove) = match job {
             Job::InstallVsix(vsix) => {
                 let installed = self.user.install_vsix(&vsix)?;
+                let id = installed.id.clone();
+                (vec![installed], vec![id])
+            }
+            Job::InstallGallery(vsix, gallery) => {
+                let installed = self.user.install_gallery(&vsix, &gallery)?;
                 let id = installed.id.clone();
                 (vec![installed], vec![id])
             }
