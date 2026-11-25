@@ -22,15 +22,11 @@ pub enum MinimapSize {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum MinimapSide {
-    // Only the tests lay it out until `editor.minimap.side` is read.
-    #[cfg_attr(not(test), allow(dead_code))]
     Left,
     Right,
 }
 
 /// The `editor.minimap.*` settings the layout reads, with their defaults.
-// shortcut: the editor reads no settings yet, so only the defaults draw; the other sizes and sides are laid out
-// but not drawn, and `fill`/`fit` sampling of long files is not ported. Upgrade with the settings milestone.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MinimapOptions {
     pub size: MinimapSize,
@@ -78,12 +74,87 @@ pub struct MinimapLayoutInfo {
     pub canvas_outer_height: f64,
 }
 
+impl MinimapLayoutInfo {
+    /// `EditorLayoutInfoComputer`: a minimap at `minimapLeft` 0 moves the glyph margin, line numbers, decorations
+    /// and content right by its width.
+    pub fn margin_shift(&self) -> f64 {
+        if self.left == 0. { self.width } else { 0. }
+    }
+}
+
+/// minimap.ts `MinimapSamplingState`: with `fill` or `fit` and more view lines than the canvas has rows, each
+/// minimap line shows one sampled view line.
+// shortcut: sampled afresh each frame, where upstream keeps the mapping sticky through `onLinesDeleted` and
+// `onLinesInserted`; upgrade if the sampled lines visibly jump while typing in a long file.
+pub struct MinimapSampling {
+    ratio: f64,
+    /// The 1-based view line of each minimap line.
+    pub lines: Vec<usize>,
+}
+
+impl MinimapSampling {
+    /// `MinimapSamplingState.compute` without a previous state.
+    pub fn new(view_line_count: usize, minimap_line_count: usize) -> Self {
+        let ratio = view_line_count as f64 / minimap_line_count as f64;
+        let mut lines = vec![1];
+        if minimap_line_count > 1 {
+            lines = (0..minimap_line_count - 1).map(|i| (i as f64 * ratio + ratio / 2.).round() as usize).collect();
+            lines.push(view_line_count);
+        }
+        MinimapSampling { ratio, lines }
+    }
+
+    /// `modelLineToMinimapLine`, both 1-based.
+    pub fn minimap_line(&self, view_line: usize) -> usize {
+        ((view_line as f64 / self.ratio).round() as usize).max(1).min(self.lines.len())
+    }
+
+    /// `decorationLineRangeToMinimapLineRange`: a range over several view lines keeps at least two minimap lines.
+    pub fn decoration_lines(&self, start: usize, end: usize) -> (usize, usize) {
+        let (mut minimap_start, mut minimap_end) = (self.minimap_line(start), self.minimap_line(end));
+        if start != end && minimap_start == minimap_end {
+            if minimap_end == self.lines.len() {
+                if minimap_start > 1 {
+                    minimap_start -= 1;
+                }
+            } else {
+                minimap_end += 1;
+            }
+        }
+        (minimap_start, minimap_end)
+    }
+}
+
 /// `_computeMinimapScale`: at a pixel ratio of 2 and above the scale doubles, so it does not jump near 2.
 fn minimap_scale(configured: f64, pixel_ratio: f64) -> f64 {
     if pixel_ratio >= 2. {
         return (configured * 2.).round();
     }
     configured.max((configured * pixel_ratio + 0.125).floor())
+}
+
+/// `computeContainedMinimapLineCount`'s results.
+pub struct ContainedLineCount {
+    typical_viewport_line_count: f64,
+    extra_lines_before: f64,
+    extra_lines_beyond: f64,
+    desired_ratio: f64,
+    pub minimap_line_count: f64,
+}
+
+/// `computeContainedMinimapLineCount`: how many minimap lines fit the view lines, with the padding and the lines
+/// scrolled past the last one, into the canvas height.
+pub fn contained_minimap_line_count(input: &MinimapLayoutInput) -> ContainedLineCount {
+    let view_line_count = input.view_line_count as f64;
+    let typical_viewport_line_count = input.outer_height / input.line_height;
+    let extra_lines_before = (input.padding_top / input.line_height).floor();
+    let mut extra_lines_beyond = (input.padding_bottom / input.line_height).floor();
+    if input.scroll_beyond_last_line {
+        extra_lines_beyond = extra_lines_beyond.max(typical_viewport_line_count - 1.);
+    }
+    let desired_ratio = (extra_lines_before + view_line_count + extra_lines_beyond) / (input.pixel_ratio * input.outer_height);
+    let minimap_line_count = (view_line_count / desired_ratio).floor();
+    ContainedLineCount { typical_viewport_line_count, extra_lines_before, extra_lines_beyond, desired_ratio, minimap_line_count }
 }
 
 /// `_computeMinimapLayout` without viewport wrapping (the editor does not wrap).
@@ -100,16 +171,8 @@ pub fn compute_minimap_layout(input: &MinimapLayoutInput) -> MinimapLayoutInfo {
     let mut char_width = scale / pixel_ratio;
     let mut width_multiplier: f64 = 1.;
     if options.size != MinimapSize::Proportional {
-        // computeContainedMinimapLineCount
+        let ContainedLineCount { typical_viewport_line_count, extra_lines_before, extra_lines_beyond, desired_ratio, minimap_line_count } = contained_minimap_line_count(input);
         let view_line_count = input.view_line_count as f64;
-        let typical_viewport_line_count = input.outer_height / input.line_height;
-        let extra_lines_before = (input.padding_top / input.line_height).floor();
-        let mut extra_lines_beyond = (input.padding_bottom / input.line_height).floor();
-        if input.scroll_beyond_last_line {
-            extra_lines_beyond = extra_lines_beyond.max(typical_viewport_line_count - 1.);
-        }
-        let desired_ratio = (extra_lines_before + view_line_count + extra_lines_beyond) / (pixel_ratio * input.outer_height);
-        let minimap_line_count = (view_line_count / desired_ratio).floor();
         if view_line_count / minimap_line_count > 1. {
             height_is_editor_height = true;
             is_sampling = true;
@@ -200,15 +263,17 @@ impl MinimapLayout {
         (line_number as f64 - self.start_line_number as f64 + self.top_padding_line_count as f64) * minimap_line_height
     }
 
-    /// `MinimapLayout.create` for a viewport whose first, partly shown line is `viewport_start_line_number`.
-    pub fn create(options: &SliderOptions, viewport_start_line_number: usize, viewport_height: f64, line_count: usize, scroll_top: f64, scroll_height: f64, previous: Option<&MinimapLayout>) -> MinimapLayout {
+    /// `MinimapLayout.create` for a viewport whose first, partly shown line is `viewport_start_line_number`;
+    /// `line_count` counts minimap lines, `real_line_count` view lines.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create(options: &SliderOptions, viewport_start_line_number: usize, viewport_height: f64, line_count: usize, real_line_count: usize, scroll_top: f64, scroll_height: f64, previous: Option<&MinimapLayout>) -> MinimapLayout {
         let pixel_ratio = options.pixel_ratio;
         let minimap_line_height = options.minimap_line_height;
         let minimap_lines_fitting = (options.canvas_inner_height / minimap_line_height).floor();
         let line_height = options.line_height;
         let lines = line_count as f64;
         if options.height_is_editor_height {
-            let mut logical_scroll_height = lines * line_height + options.padding_top + options.padding_bottom;
+            let mut logical_scroll_height = real_line_count as f64 * line_height + options.padding_top + options.padding_bottom;
             if options.scroll_beyond_last_line {
                 logical_scroll_height += (viewport_height - line_height - options.padding_bottom).max(0.);
             }
@@ -346,16 +411,28 @@ pub struct CharRenderer {
 }
 
 impl CharRenderer {
-    /// `MinimapCharRendererFactory.create` for the scales with a prebaked table (minimapPreBaked.ts), the ones the
-    /// default `editor.minimap.scale` gives at any pixel ratio.
-    pub fn prebaked(scale: usize) -> Self {
-        let hex = match scale {
-            1 => PREBAKED_SCALE_1,
-            2 => PREBAKED_SCALE_2,
-            _ => unimplemented!("minimap scale {scale} samples the font, which needs the minimap scale setting"),
-        };
-        let data = (0..hex.len()).step_by(2).map(|i| u8::from_str_radix(&hex[i..i + 2], 16).expect("prebaked hex")).collect();
-        CharRenderer::new(data, scale)
+    /// `MinimapCharRendererFactory.create`: the prebaked tables (minimapPreBaked.ts) for scales 1 and 2.
+    // shortcut: larger scales (`editor.minimap.scale` 2 and 3) stretch the scale 2 table, where upstream draws the
+    // editor font in bold at 16px and downsamples it (`createSampleData`); upgrade when GPUI rasterizes glyphs to CPU.
+    pub fn create(scale: usize) -> Self {
+        let decode = |hex: &str| (0..hex.len()).step_by(2).map(|i| u8::from_str_radix(&hex[i..i + 2], 16).expect("prebaked hex")).collect::<Vec<u8>>();
+        match scale {
+            1 => CharRenderer::new(decode(PREBAKED_SCALE_1), 1),
+            2 => CharRenderer::new(decode(PREBAKED_SCALE_2), 2),
+            _ => {
+                let source = decode(PREBAKED_SCALE_2);
+                let (width, height) = (BASE_CHAR_WIDTH * scale, BASE_CHAR_HEIGHT * scale);
+                let mut data = Vec::with_capacity(CHAR_COUNT as usize * width * height);
+                for char in source.chunks_exact(8) {
+                    for y in 0..height {
+                        for x in 0..width {
+                            data.push(char[y * 4 / height * 2 + x * 2 / width]);
+                        }
+                    }
+                }
+                CharRenderer::new(data, scale)
+            }
+        }
     }
 
     fn new(data: Vec<u8>, scale: usize) -> Self {
@@ -675,6 +752,68 @@ mod tests {
         assert_eq!(layout(2500, 2., Right, Fill, 1.), info(945., 55., true, true, 1, 1., (110., 1600.)), "12 - cover with sampling");
         assert_eq!(layout(120, 2., Right, Fit, 1.), info(903., 97., false, false, 2, 4., (194., 1600.)), "13 - contain without sampling");
         assert_eq!(layout(2500, 2., Right, Fit, 1.), info(945., 55., true, true, 1, 1., (110., 1600.)), "14 - contain with sampling");
+        // contentLeft is the 10px decorations lane plus the shift, contentWidth the remaining width less the minimap.
+        let content = |minimap: MinimapLayoutInfo| (10. + minimap.margin_shift(), 990. - minimap.width);
+        assert_eq!(content(layout(9, 4., Right, Proportional, 1.)), (10., 935.), "9 - pixelRatio = 4");
+        assert_eq!(content(layout(9, 4., Left, Proportional, 1.)), (65., 935.), "10 - minimap to left");
+    }
+
+    #[test]
+    fn issue_31312_when_wrapping_leave_2px_for_the_cursor() {
+        let minimap = compute_minimap_layout(&MinimapLayoutInput {
+            outer_width: 1201.,
+            outer_height: 422.,
+            line_height: 30.,
+            typical_halfwidth_character_width: 12.04296875,
+            pixel_ratio: 2.,
+            scroll_beyond_last_line: false,
+            padding_top: 0.,
+            padding_bottom: 0.,
+            vertical_scrollbar_width: 14.,
+            view_line_count: 1,
+            remaining_width: 1201. - 92.,
+            options: MinimapOptions { max_column: 120., ..MinimapOptions::default() },
+        });
+        let expected = MinimapLayoutInfo { canvas_outer_height: 422., ..info(1096., 91., false, false, 2, 4., (182., 844.)) };
+        assert_eq!(minimap, expected);
+        assert_eq!(1201. - 92. - minimap.width, 1018., "contentWidth");
+    }
+
+    #[test]
+    fn blocks_are_three_rows_high() {
+        let minimap = compute_minimap_layout(&MinimapLayoutInput {
+            outer_width: 1000.,
+            outer_height: 800.,
+            line_height: 16.,
+            typical_halfwidth_character_width: 10.,
+            pixel_ratio: 1.,
+            scroll_beyond_last_line: false,
+            padding_top: 0.,
+            padding_bottom: 0.,
+            vertical_scrollbar_width: 0.,
+            view_line_count: 9,
+            remaining_width: 990.,
+            options: MinimapOptions { render_characters: false, max_column: 20., ..MinimapOptions::default() },
+        });
+        assert_eq!((minimap.render_characters, minimap.line_height, minimap.width), (false, 3., 20.));
+    }
+
+    #[test]
+    fn sampling_maps_view_lines_to_minimap_lines() {
+        let sampling = MinimapSampling::new(10, 4);
+        assert_eq!(sampling.lines, [1, 4, 6, 10]);
+        assert_eq!((1..=10).map(|line| sampling.minimap_line(line)).collect::<Vec<_>>(), [1, 1, 1, 2, 2, 2, 3, 3, 4, 4]);
+        assert_eq!(sampling.decoration_lines(1, 2), (1, 2));
+        assert_eq!(sampling.decoration_lines(9, 10), (3, 4));
+        assert_eq!(MinimapSampling::new(5, 1).lines, [1]);
+    }
+
+    #[test]
+    fn larger_scales_stretch_the_scale_2_table() {
+        let (two, four) = (CharRenderer::create(2), CharRenderer::create(4));
+        let d = ('d' as usize - 32) * 8;
+        assert_eq!(four.normal.len(), CHAR_COUNT as usize * 4 * 8);
+        assert_eq!(&four.normal[d * 4..d * 4 + 4], &[two.normal[d], two.normal[d], two.normal[d + 1], two.normal[d + 1]]);
     }
 
     #[test]
@@ -694,7 +833,7 @@ mod tests {
         let mut scroll_top = 0.;
         while scroll_top <= scroll_height - viewport_height {
             let start_line = (scroll_top / line_height).floor() as usize + 1;
-            let layout = MinimapLayout::create(&options, start_line, viewport_height, line_count, scroll_top, scroll_height, previous.as_ref());
+            let layout = MinimapLayout::create(&options, start_line, viewport_height, line_count, line_count, scroll_top, scroll_height, previous.as_ref());
             let slider_line = layout.start_line_number as f64 - layout.top_padding_line_count as f64 + layout.slider_top / minimap_line_height;
             if previous.is_some() && slider_line < previous_slider_line - 1e-9 {
                 backward_moves += 1;
@@ -713,7 +852,7 @@ mod tests {
     #[test]
     fn letter_d_from_the_prebaked_tables() {
         for scale in [1, 2] {
-            let renderer = CharRenderer::prebaked(scale);
+            let renderer = CharRenderer::create(scale);
             assert_eq!(renderer.normal.len(), CHAR_COUNT as usize * scale * scale * BASE_CHAR_HEIGHT);
             let mut image = MinimapImage::new(scale, 2 * scale, [0, 0, 0, 255]);
             renderer.render_char(&mut image, 0, 0, 'd' as u32, [255, 255, 255], 255, [0, 0, 0], 255, scale, false, false);
@@ -733,7 +872,7 @@ mod tests {
 
     #[test]
     fn render_line_skips_whitespace_and_expands_tabs() {
-        let renderer = CharRenderer::prebaked(1);
+        let renderer = CharRenderer::create(1);
         let style = LineStyle { renderer: &renderer, render_characters: false, background: [0, 0, 0], background_alpha: 255, foreground_alpha: 255, use_lighter_font: false, font_scale: 1, char_width: 1, minimap_line_height: 2., tab_size: 4 };
         let mut image = MinimapImage::new(20, 2, [0, 0, 0, 255]);
         render_line(&mut image, &style, 0, "\ta b", &[(4, [200, 100, 50])]);

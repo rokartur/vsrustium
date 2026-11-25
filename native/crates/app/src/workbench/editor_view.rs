@@ -361,7 +361,8 @@ impl Workbench {
         let sticky_scroll_lines = self.sticky_scroll_lines();
         let top_whitespace = self.editors.viewport.top_whitespace;
         let stop_rendering_line_after = self.stop_rendering_line_after;
-        let minimap_enabled = !in_diff && self.setting("editor.minimap.enabled") != json!(false);
+        let minimap_settings = self.minimap_settings();
+        let minimap_enabled = !in_diff && minimap_settings.enabled;
         let viewport = self.editors.viewport;
         let lines = editor.visible_lines(viewport);
         let zones = editor.zones_between(lines.clone());
@@ -374,6 +375,8 @@ impl Workbench {
             rows.push(row);
         }
         let minimap_width = self.minimap.info.as_ref().map_or(0., |(info, _)| info.width as f32);
+        let margin_shift = self.minimap.info.as_ref().map_or(0., |(info, _)| info.margin_shift() as f32);
+        let shifted = || div().absolute().top_0().bottom_0().left(px(margin_shift)).right_0();
         let now = Instant::now();
         if self.scrollbars.in_transition(now) || self.fold_controls.in_transition(now) || self.minimap.in_transition(now) {
             window.request_animation_frame();
@@ -441,11 +444,13 @@ impl Workbench {
             .child(
                 canvas(
                     move |bounds, window, cx| {
-                        area_left.set(f32::from(bounds.left()));
-                        area_bounds.set(bounds.map(f32::from));
                         let (width, height) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
                         let pixel_ratio = window.scale_factor();
-                        let minimap = minimap_enabled.then(|| minimap_info(width, height, metrics.content_left(), metrics.char_width, metrics.line_height, view_line_count, pixel_ratio));
+                        let minimap = minimap_enabled.then(|| minimap_info(width, height, metrics.content_left(), metrics.char_width, metrics.line_height, view_line_count, pixel_ratio, minimap_settings.layout));
+                        // The margin and content right of a left minimap: pointer positions count from there.
+                        let shift = px(minimap.as_ref().map_or(0., |minimap| minimap.margin_shift() as f32));
+                        area_left.set(f32::from(bounds.left() + shift));
+                        area_bounds.set(Bounds::from_corners(point(bounds.left() + shift, bounds.top()), bounds.bottom_right()).map(f32::from));
                         // editorOptions.ts: contentWidth = remainingWidth - minimapWidth.
                         let minimap_width = minimap.as_ref().map_or(0., |minimap| minimap.width as f32);
                         let viewport = Viewport { width: width - metrics.content_left() - minimap_width, height, char_width: metrics.char_width, line_height: metrics.line_height, sticky_scroll_lines, top_whitespace, stop_rendering_line_after };
@@ -467,35 +472,47 @@ impl Workbench {
                 .absolute()
                 .inset_0(),
             )
-            // .view-lines is monaco-mouse-cursor-text; the line numbers, glyph margin and the overview ruler over the
-            // vertical scrollbar keep the default cursor.
-            .child(div().absolute().top_0().bottom_0().left(px(metrics.content_left())).right(px(OVERVIEW_RULER_WIDTH)).cursor(self.text_cursor_style()).on_mouse_down(
-                MouseButton::Right,
-                // Below the last line (MouseTargetType.CONTENT_EMPTY): the position is the end of the last line.
-                cx.listener(|workbench, event: &MouseDownEvent, window, cx| {
-                    let last = workbench.editors.active().expect("the text area shows an editor").document.lines.len() - 1;
-                    workbench.show_editor_context_menu(last, f32::MAX, event.position, window, cx);
-                }),
-            ))
-            // editorScrollbar.ts clips the lines at contentWidth: the column right of the minimap stays empty.
-            .child(div().absolute().left_0().right(px(minimap_width)).top_0().bottom_0().overflow_hidden().child(div().absolute().left_0().right_0().top(px(lines_top)).children(rows)))
-            .children(self.marker_navigation_widget(editor, metrics.content_left(), metrics.char_width, cx))
             .child(
-                div().id("margin").absolute().top_0().bottom_0().left_0().w(px(metrics.content_left())).on_hover(cx.listener(|workbench, hovered: &bool, _, cx| {
-                    workbench.fold_controls.set_shown(*hovered, Instant::now());
-                    cx.notify();
-                })),
+                shifted()
+                    // .view-lines is monaco-mouse-cursor-text; the line numbers, glyph margin and the overview ruler over the
+                    // vertical scrollbar keep the default cursor.
+                    .child(div().absolute().top_0().bottom_0().left(px(metrics.content_left())).right(px(OVERVIEW_RULER_WIDTH)).cursor(self.text_cursor_style()).on_mouse_down(
+                        MouseButton::Right,
+                        // Below the last line (MouseTargetType.CONTENT_EMPTY): the position is the end of the last line.
+                        cx.listener(|workbench, event: &MouseDownEvent, window, cx| {
+                            let last = workbench.editors.active().expect("the text area shows an editor").document.lines.len() - 1;
+                            workbench.show_editor_context_menu(last, f32::MAX, event.position, window, cx);
+                        }),
+                    ))
+                    // editorScrollbar.ts clips the lines at contentWidth: the column right of the minimap stays empty.
+                    .child(div().absolute().left_0().right(px(minimap_width - margin_shift)).top_0().bottom_0().overflow_hidden().child(div().absolute().left_0().right_0().top(px(lines_top)).children(rows)))
+                    .children(self.marker_navigation_widget(editor, metrics.content_left(), metrics.char_width, cx))
+                    .child(
+                        div().id("margin").absolute().top_0().bottom_0().left_0().w(px(metrics.content_left())).on_hover(cx.listener(|workbench, hovered: &bool, _, cx| {
+                            workbench.fold_controls.set_shown(*hovered, Instant::now());
+                            cx.notify();
+                        })),
+                    )
+                    .child(self.overview_ruler(editor).absolute().top_0().right_0().h_full())
+                    .child(self.scrollbars_canvas(editor, metrics, cx).absolute().inset_0())
+                    // contextmenu.ts: a right press on the scrollbar (MouseTargetType.SCROLLBAR) shows the minimap menu.
+                    .child(div().absolute().top_0().bottom_0().right_0().w(px(VERTICAL_SCROLLBAR_WIDTH)).on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(|workbench, event: &MouseDownEvent, window, cx| workbench.show_scrollbar_context_menu(event.position, window, cx)),
+                    )),
             )
-            .child(self.overview_ruler(editor).absolute().top_0().right_0().h_full())
-            .child(self.scrollbars_canvas(editor, metrics, cx).absolute().inset_0())
             .when(editor.scroll.top > 0., |area| area.child(div().absolute().top_0().left_0().right(px(VERTICAL_SCROLLBAR_WIDTH)).h(px(SCROLL_SHADOW_HEIGHT)).cursor_default().child(self.scroll_shadow().size_full())))
             .children(self.minimap(editor, cx))
-            .children(middle_scroll_dot)
-            .children(self.sticky_scroll_widget(editor, metrics, window, cx))
+            .child(
+                shifted()
+                    .children(middle_scroll_dot)
+                    .children(self.sticky_scroll_widget(editor, metrics, window, cx))
+                    .children(self.editor_message_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
+                    .children(self.content_hover_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
+                    .children(self.inspect_tokens_widget(editor, metrics.content_left(), metrics.char_width, window)),
+            )
+            // Overlay widgets: placed from the editor's right edge whichever side the minimap is on.
             .children(self.find_widget(self.editors.viewport.width + metrics.content_left() + minimap_width, metrics.content_left(), minimap_width, window, cx))
-            .children(self.editor_message_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
-            .children(self.content_hover_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
-            .children(self.inspect_tokens_widget(editor, metrics.content_left(), metrics.char_width, window))
             .children(self.keybindings_file_widgets(editor, self.editors.viewport.width + metrics.content_left() + minimap_width, viewport.height, minimap_width, window, cx))
     }
 
@@ -727,11 +744,20 @@ impl Workbench {
                 });
                 let workbench = workbench.clone();
                 window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
-                    if phase != DispatchPhase::Bubble || event.button != MouseButton::Left {
+                    if phase != DispatchPhase::Bubble {
                         return;
                     }
                     let Some((_, track, axis)) = tracks.iter().find(|(hitbox, _, _)| hitbox.is_hovered(window)) else { return };
                     let (track, axis) = (*track, *axis);
+                    // The vertical scrollbar's column shows the menu itself, shown or not.
+                    if event.button == MouseButton::Right && axis == Axis::Horizontal {
+                        cx.stop_propagation();
+                        workbench.update(cx, |workbench, cx| workbench.show_scrollbar_context_menu(event.position, window, cx));
+                        return;
+                    }
+                    if event.button != MouseButton::Left {
+                        return;
+                    }
                     let along = |position: Point<Pixels>| f32::from(if axis == Axis::Vertical { position.y - track.top() } else { position.x - track.left() });
                     let offset = along(event.position);
                     cx.stop_propagation();
@@ -1851,7 +1877,7 @@ impl FoldControls {
 }
 
 /// CSS `ease`, cubic-bezier(0.25, 0.1, 0.25, 1): the curve's x solved by bisection, then its y.
-fn ease(x: f32) -> f32 {
+pub(super) fn ease(x: f32) -> f32 {
     let bezier = |p1: f32, p2: f32, t: f32| 3. * p1 * t * (1. - t).powi(2) + 3. * p2 * t * t * (1. - t) + t.powi(3);
     let (mut low, mut high) = (0., 1.);
     for _ in 0..24 {
