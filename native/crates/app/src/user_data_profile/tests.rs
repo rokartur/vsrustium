@@ -51,6 +51,14 @@ fn the_profile_flag_creates_the_profile_and_the_workspace_keeps_it() {
 }
 
 #[test]
+fn a_window_with_no_association_opens_in_the_new_window_profile() {
+    let fixture = Fixture::new("new-window");
+    fixture.resolve(Some("Work"), true);
+    std::fs::write(fixture.root.join("data/User/settings.json"), r#"{ "window.newWindowProfile": "Work" }"#).unwrap();
+    assert_eq!(fixture.resolve(None, false).current.name, "Work");
+}
+
+#[test]
 fn an_extension_development_window_does_not_change_the_association() {
     let fixture = Fixture::new("development");
     fixture.resolve(Some("Work"), true);

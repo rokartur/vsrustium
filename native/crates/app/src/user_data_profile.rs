@@ -48,7 +48,12 @@ impl ProfileState {
                 eprintln!("[profiles] {error}");
                 profiles.default_profile().clone()
             }
-            None => workspace.as_ref().and_then(|workspace| profiles.profile_for_workspace(workspace)).unwrap_or(profiles.default_profile()).clone(),
+            None => {
+                // windowsMainService.ts: a window with no associated profile opens in `window.newWindowProfile`.
+                let new_window = new_window_profile(&paths.user_home).and_then(|name| profiles.profiles().into_iter().find(|profile| profile.name == name));
+                let associated = workspace.as_ref().and_then(|workspace| profiles.profile_for_workspace(workspace)).cloned();
+                associated.or(new_window).unwrap_or_else(|| profiles.default_profile().clone())
+            }
         };
         if let (Some(workspace), false) = (&workspace, extension_development)
             && let Err(error) = profiles.set_profile_for_workspace(workspace, &current.id, &mut state)
@@ -79,6 +84,14 @@ pub fn user_files(profile: &Profile, default: &Profile) -> UserFiles {
         mcp: profile.mcp_resource.clone(),
         default_settings: (!shares_settings).then(|| default.settings_resource.clone()),
     }
+}
+
+/// `window.newWindowProfile` of the default profile's settings.json (an application setting).
+fn new_window_profile(user_home: &Path) -> Option<String> {
+    let content = std::fs::read_to_string(user_home.join("settings.json")).ok()?;
+    let options = config::json::ParseOptions { allow_trailing_comma: true, allow_empty_content: true, ..Default::default() };
+    let settings = config::json::parse(&content, &mut Vec::new(), options)?;
+    settings[crate::workbench::NEW_WINDOW_PROFILE_SETTING].as_str().map(str::to_owned)
 }
 
 /// `toWorkspaceIdentifier(workspace).uri.toString()`: the workspace file, else the folder.

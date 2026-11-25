@@ -26,6 +26,9 @@ pub struct UserDataProfiles {
     pub state: Option<ProfileState>,
     /// `registerProfilesActions`: the `profileEntry` and `openProfile` command of each profile, by command id.
     registrations: Vec<(String, Registration)>,
+    pub editor: super::profiles_editor_view::ProfilesEditor,
+    /// The gallery extensions of an applied template, installed once the window runs the new profile.
+    pub pending_installs: Vec<String>,
 }
 
 impl Workbench {
@@ -56,6 +59,7 @@ impl Workbench {
     /// Takes the profiles main.rs resolved and publishes them to the context keys, menus and commands.
     pub fn set_user_data_profiles(&mut self, state: ProfileState, cx: &mut Context<Self>) {
         self.user_data_profiles.state = Some(state);
+        self.user_data_profiles.editor.name_focus = Some(cx.focus_handle());
         self.profiles_changed(cx);
     }
 
@@ -165,7 +169,7 @@ impl Workbench {
     }
 
     /// `hostService.openWindow({ forceProfile })`: another app process on no folder with the profile flags.
-    fn open_window_with_profile_flags(&mut self, flags: Vec<String>) -> Outcome {
+    pub(super) fn open_window_with_profile_flags(&mut self, flags: Vec<String>) -> Outcome {
         let mut args: Vec<String> = std::env::args().collect();
         for index in crate::positional_indexes(&args).into_iter().rev() {
             args.remove(index);
@@ -240,6 +244,13 @@ impl Workbench {
         self.configuration_changed(&change, before, cx);
         if restart {
             self.restart_extension_host(window, cx);
+        }
+        // `ExtensionsResource.apply`: the template's extensions the profile does not have yet.
+        let installed: Vec<String> = self.extensions.iter().map(|extension| extension.id.to_lowercase()).collect();
+        for id in std::mem::take(&mut self.user_data_profiles.pending_installs) {
+            if !installed.contains(&id) {
+                drop(self.install_from_gallery(id, None, false, cx));
+            }
         }
     }
 }

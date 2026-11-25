@@ -23,6 +23,8 @@ mod explorer_actions;
 mod extension_management;
 pub(crate) mod extension_host_restart;
 mod user_data_profile;
+mod profiles_editor_view;
+pub use profiles_editor_view::NEW_WINDOW_PROFILE_SETTING;
 mod explorer_find;
 mod explorer_keyboard;
 mod extension_editor;
@@ -294,7 +296,7 @@ impl Render for Workbench {
             .children(self.restricted_mode_banner(cx))
             .child(self.middle_section(viewport, editor, window, cx))
             .child(self.status_bar(window, cx));
-        let modal_editor = self.keybindings_editor_widget(window, cx).or_else(|| self.settings_editor_widget(window, cx));
+        let modal_editor = self.keybindings_editor_widget(window, cx).or_else(|| self.settings_editor_widget(window, cx)).or_else(|| self.profiles_editor_widget(window, cx));
         let quick_input = self.quick_input_widget(window, cx);
         let notifications = self.notifications_widget(viewport, window, cx);
         let context_menu = self.context_menu_widget(cx);
@@ -476,6 +478,7 @@ impl Workbench {
         workbench.register_extension_management_commands();
         workbench.register_extension_host_commands();
         workbench.register_user_data_profile_commands();
+        workbench.register_profiles_editor_commands();
         workbench.register_workspace_trust_commands();
         workbench.register_host_commands();
         workbench.register_workspace_commands();

@@ -55,6 +55,7 @@ mod output;
 mod perf;
 mod power;
 mod product;
+mod profile_template;
 mod policy;
 mod quick_input;
 mod recently_opened;
