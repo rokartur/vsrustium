@@ -19,13 +19,15 @@ impl ScannedExtension {
 
 /// Built-in extension folders the port does not ship: sign-in, AI, and Microsoft tunnels (port/notes.md).
 pub const REMOVED_BUILTINS: [&str; 5] = ["copilot", "github-authentication", "microsoft-authentication", "prompt-basics", "tunnel-forwarding"];
+/// Upstream's product leaves these out too (build/lib/extensions.ts excludedExtensions); api-tests load theirs as development extensions.
+const TEST_BUILTINS: [&str; 4] = ["vscode-api-tests", "vscode-colorize-tests", "vscode-colorize-perf-tests", "vscode-test-resolver"];
 
-/// Scans every direct child folder of `dir` that holds a package.json, except `REMOVED_BUILTINS`.
+/// Scans every direct child folder of `dir` that holds a package.json, except `REMOVED_BUILTINS` and `TEST_BUILTINS`.
 pub fn scan_builtin_extensions(dir: &Path) -> anyhow::Result<Vec<ScannedExtension>> {
     let mut folders: Vec<PathBuf> = std::fs::read_dir(dir)?
         .filter_map(|entry| entry.ok().map(|entry| entry.path()))
         .filter(|path| path.join("package.json").is_file())
-        .filter(|path| !path.file_name().is_some_and(|name| REMOVED_BUILTINS.iter().any(|removed| name == *removed)))
+        .filter(|path| !path.file_name().is_some_and(|name| REMOVED_BUILTINS.iter().chain(&TEST_BUILTINS).any(|skipped| name == *skipped)))
         .collect();
     folders.sort();
     folders.iter().map(|folder| scan_extension(folder, true)).collect()
@@ -101,7 +103,7 @@ mod tests {
     #[test]
     fn skips_removed_builtins() {
         let dir = std::env::temp_dir().join(format!("scan-removed-{}", std::process::id()));
-        for name in ["copilot", "git"] {
+        for name in ["copilot", "git", "vscode-api-tests"] {
             std::fs::create_dir_all(dir.join(name)).unwrap();
             std::fs::write(dir.join(name).join("package.json"), format!(r#"{{"name":"{name}","publisher":"vscode"}}"#)).unwrap();
         }
