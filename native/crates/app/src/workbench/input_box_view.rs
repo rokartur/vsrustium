@@ -32,6 +32,7 @@ pub enum InputId {
     KeybindingsWhen,
     SearchEditor(SearchField),
     OutputFilter,
+    ProblemsFilter,
     ScmInput,
     ExtensionsSearch,
     SettingsSearch,
@@ -47,7 +48,7 @@ pub enum InputId {
     IconSelectSearch,
 }
 
-const INPUTS: [InputId; 21] = [
+const INPUTS: [InputId; 22] = [
     InputId::QuickInput,
     InputId::Explorer,
     InputId::ExplorerFind,
@@ -56,6 +57,7 @@ const INPUTS: [InputId; 21] = [
     InputId::KeybindingsSearch,
     InputId::KeybindingsWhen,
     InputId::OutputFilter,
+    InputId::ProblemsFilter,
     InputId::ScmInput,
     InputId::ExtensionsSearch,
     InputId::SettingsSearch,
@@ -133,6 +135,7 @@ impl Workbench {
             InputId::KeybindingsWhen => &self.keybindings_editor.when_view,
             InputId::SearchEditor(field) => &self.search_editor_widget.view.input(field).view,
             InputId::OutputFilter => &self.output_view.filter_view,
+            InputId::ProblemsFilter => &self.problems.filter_view,
             InputId::ScmInput => &self.scm.input_view,
             InputId::ExtensionsSearch => &self.extensions_viewlet.search_view,
             InputId::SettingsSearch => &self.settings_editor.search_view,
@@ -161,6 +164,7 @@ impl Workbench {
             InputId::KeybindingsWhen => &mut self.keybindings_editor.when_view,
             InputId::SearchEditor(field) => &mut self.search_editor_widget.view.input_mut(field).view,
             InputId::OutputFilter => &mut self.output_view.filter_view,
+            InputId::ProblemsFilter => &mut self.problems.filter_view,
             InputId::ScmInput => &mut self.scm.input_view,
             InputId::ExtensionsSearch => &mut self.extensions_viewlet.search_view,
             InputId::SettingsSearch => &mut self.settings_editor.search_view,
@@ -192,6 +196,7 @@ impl Workbench {
             InputId::KeybindingsWhen => &self.keybindings_editor.when_focus,
             InputId::SearchEditor(field) => &self.search_editor_widget.view.input(field).focus,
             InputId::OutputFilter => &self.output_view.filter_focus,
+            InputId::ProblemsFilter => &self.problems.filter_focus,
             InputId::ScmInput => &self.scm.input_focus,
             InputId::ExtensionsSearch => &self.extensions_viewlet.search_focus,
             InputId::SettingsSearch => &self.settings_editor.search_focus,
@@ -220,6 +225,7 @@ impl Workbench {
             InputId::KeybindingsWhen => self.keybindings_editor.when.as_ref().map(|when| &when.input),
             InputId::SearchEditor(field) => Some(&self.search_editor_widget.view.input(field).value),
             InputId::OutputFilter => Some(&self.output_view.filter),
+            InputId::ProblemsFilter => Some(&self.problems.filter),
             InputId::ScmInput => Some(&self.scm.input),
             InputId::ExtensionsSearch => Some(&self.extensions_viewlet.search),
             InputId::SettingsSearch => Some(&self.settings_editor.search),
@@ -281,6 +287,10 @@ impl Workbench {
             }
             InputId::OutputFilter => {
                 self.edit_output_filter(edit, window, cx);
+                Outcome::done()
+            }
+            InputId::ProblemsFilter => {
+                self.edit_problems_filter(edit, window, cx);
                 Outcome::done()
             }
             InputId::ScmInput => {
@@ -519,6 +529,7 @@ impl Workbench {
                 InputId::KeybindingsWhen => "keybindings-when-text".into(),
                 InputId::SearchEditor(field) => ("search-editor-input-text", field as usize).into(),
                 InputId::OutputFilter => "output-filter-text".into(),
+                InputId::ProblemsFilter => "problems-filter-text".into(),
                 InputId::ScmInput => "scm-input-text".into(),
                 InputId::ExtensionsSearch => "extensions-search-text".into(),
                 InputId::SettingsSearch => "settings-search-text".into(),

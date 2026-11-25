@@ -1,0 +1,1 @@
+[{"wait": 5000}, {"hotkey": ["cmd", "shift", "m"]}, {"wait": 2000}, {"hotkey": ["cmd", "f"]}, {"type": "comma"}, {"wait": 1500}, {"shot": "filtered"}, {"hotkey": ["cmd", "a"]}, {"type": "zzz"}, {"wait": 1500}, {"shot": "empty"}]

@@ -56,6 +56,7 @@ mod main_thread_quick_open;
 mod main_thread_status_bar;
 mod markdown;
 mod markers;
+mod markers_filter;
 mod menus;
 mod merge_editor;
 mod multi_diff_editor;

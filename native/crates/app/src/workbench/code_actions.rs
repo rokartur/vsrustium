@@ -126,7 +126,7 @@ pub(super) struct CodeActionSet {
     pub(super) all: Vec<CodeActionItem>,
     pub(super) valid: Vec<CodeActionItem>,
     pub(super) documentation: Vec<Value>,
-    has_auto_fix: bool,
+    pub(super) has_auto_fix: bool,
     has_ai_fix: bool,
     all_ai_fixes: bool,
     caches: Vec<(u64, u64)>,
@@ -420,7 +420,7 @@ impl Workbench {
     /// failed command is an error notification. With `retrigger` an automatic request follows.
     // shortcut: only the text edits of a code action's workspace edit apply; file and cell edits need the bulk
     // edit service on the workbench side (they apply through `$tryApplyWorkspaceEdit` on the host thread today).
-    fn apply_code_action(&mut self, item: CodeActionItem, set: Rc<CodeActionSet>, retrigger: bool, window: AnyWindowHandle, cx: &mut Context<Self>) {
+    pub(super) fn apply_code_action(&mut self, item: CodeActionItem, set: Rc<CodeActionSet>, retrigger: bool, window: AnyWindowHandle, cx: &mut Context<Self>) {
         let supports_resolve = self.language_features.registration(item.handle).is_some_and(|registration| registration.args.get(5) == Some(&json!(true)));
         let resolve = match supports_resolve && item.action["edit"].is_null() && item.action["cacheId"].is_array() {
             true => Some(self.host.call("ExtHostLanguageFeatures", "$resolveCodeAction", vec![json!(item.handle), item.action["cacheId"].clone()])),
@@ -855,6 +855,16 @@ impl Workbench {
             QuickFixStatus::Text("No quick fixes available")
         } else if fixes.checking {
             QuickFixStatus::Text("Checking for quick fixes...")
+    /// markersTreeViewer.ts `MarkerViewModel.getCodeActions`: the quick fixes of the marker's range, triggered from
+    /// the Problems view.
+    pub(super) fn request_marker_quick_fixes(&self, editor: &OpenEditor, marker: &Marker) -> impl std::future::Future<Output = CodeActionSet> + use<> {
+        let range = json!({ "startLineNumber": marker.start_line, "startColumn": marker.start_column, "endLineNumber": marker.end_line, "endColumn": marker.end_column });
+        let filter = Filter { include: Some(QUICK_FIX.to_owned()), ..Default::default() };
+        let trigger = Trigger { kind: INVOKE, source: Source::QuickFix, filter: filter.clone(), auto_apply: None, not_available: None, window: None };
+        let calls = self.code_action_calls(editor, range, &trigger);
+        async move { collect_code_actions(calls, &filter, &Rc::new(RefCell::new(Vec::new()))).await }
+    }
+
         } else {
             QuickFixStatus::Text("\u{a0}")
         }

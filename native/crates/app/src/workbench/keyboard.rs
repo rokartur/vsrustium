@@ -347,7 +347,7 @@ impl Workbench {
         // toggleMultiCursorModifier.ts `MultiCursorModifierContextKeyController`.
         context.insert("multiCursorModifier".into(), json!(if self.multi_cursor_modifier_is_cmd() { "ctrlCmd" } else { "altKey" }));
         self.word_wrap_context(&mut context);
-        self.problems_context(&mut context);
+        self.problems_context(window, &mut context);
         // contextkeys.ts WorkbenchContextKeysHandler: the desktop build supports every workspace kind.
         let workbench_state = match self.workspace() {
             None => "empty",

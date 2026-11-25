@@ -18,6 +18,8 @@ mod context_menu;
 pub mod custom_editors;
 mod debug_commands;
 mod debug_console;
+mod problems_quick_fix;
+mod problems_table;
 mod problems_view;
 mod debug_toolbar;
 pub(crate) mod debug_service;
@@ -93,6 +95,7 @@ mod panel;
 mod part_grid;
 pub mod output_actions;
 mod output_view;
+mod view_filter;
 mod preferences;
 pub(crate) mod terminal_view;
 pub(crate) mod opener;
@@ -375,6 +378,7 @@ impl Render for Workbench {
         // Cursors move and editors switch on many paths; every one of them renders.
         self.close_editor_message_on_cursor_change(cx);
         self.stop_inspect_tokens_on_model_change();
+    problems_quick_fixes: problems_quick_fix::ProblemsQuickFixes,
         self.follow_marker_navigation_cursor();
         self.follow_references_peek_editor();
         self.follow_hierarchy_peek_editor(window, cx);
@@ -597,7 +601,8 @@ impl Workbench {
             debug: Default::default(),
             debug_view: debug_view::DebugView::new(cx),
             debug_console: debug_console::DebugConsole::new(cx),
-            problems: problems_view::ProblemsView::default(),
+            problems: problems_view::ProblemsView::new(cx),
+            problems_quick_fixes: Default::default(),
             problems_focus: cx.focus_handle(),
             breakpoint_widget: None,
             testing: Default::default(),

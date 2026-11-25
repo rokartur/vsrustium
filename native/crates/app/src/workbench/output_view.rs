@@ -13,11 +13,11 @@ use serde_json::{Value, json};
 use super::Workbench;
 use super::panel::PanelView;
 use super::bulk_text_edits::document_end;
-use super::input_box_view::{InputId, InputLook, InputView};
+use super::input_box_view::{InputId, InputView};
+use super::view_filter::ViewFilter;
 use crate::editor::{EditReason, OpenEditor, PANEL_GROUP, TextDocument};
 use crate::input_box::InputBox;
 use crate::output::{Content, OUTPUT_SCHEME};
-use crate::theme::ThemeKind;
 
 #[cfg(test)]
 mod tests;
@@ -268,50 +268,20 @@ impl Workbench {
             .when(level_settable, |actions| actions.child(self.output_dropdown_action("gear", self.output_view.level_menu_bounds.clone(), Workbench::show_output_log_level_menu, cx)))
     }
 
-    /// viewFilter.ts `FilterWidget` in a panel title (views.css): 150px to 200px, 400px while focused, 10px right
-    /// margin; the filter dropdown at the input's right shows as checked while level or category filters hide lines.
+    /// The filter dropdown shows as checked while level or category filters hide lines.
     fn output_filter_box(&self, window: &Window, cx: &mut Context<Self>) -> Div {
-        let focused = self.output_view.filter_focus.is_focused(window);
-        let height = if self.theme.kind == ThemeKind::Light { 25. } else { 24. };
-        let border = if focused { self.color("focusBorder") } else { self.theme.color("input.border").unwrap_or(self.color("input.background")) };
-        let checked = self.output.filters.more_filters(self.output.active.as_deref());
-        let foreground = if checked { self.foreground_or("inputOption.activeForeground") } else { self.foreground_or("icon.foreground") };
-        let bounds = self.output_view.filter_menu_bounds.clone();
-        let filter_button = self
-            .icon("filter", 20., 16., foreground)
-            .id("output-filter-menu")
-            .relative()
-            .rounded(px(4.))
-            .border_1()
-            .border_color(gpui::transparent_black())
-            .cursor_pointer()
-            .when(checked, |button| button.bg(self.color("inputOption.activeBackground")).border_color(self.color("inputOption.activeBorder")))
-            .when(!checked, |button| button.hover(|button| button.bg(self.color("toolbar.hoverBackground"))))
-            .child(bounds_tracker(bounds.clone()))
-            .on_mouse_down(MouseButton::Left, cx.listener(move |workbench, _: &MouseDownEvent, window, cx| {
-                cx.stop_propagation();
-                workbench.show_output_filter_menu(bounds.get(), window, cx);
-            }));
-        let placeholder = Some("Filter (e.g. text, !excludeText, text1,text2)".to_owned());
-        div()
-            .flex_1()
-            .min_w(px(150.))
-            .max_w(px(if focused { 400. } else { 200. }))
-            .mr(px(10.))
-            .h(px(height))
-            .flex()
-            .items_center()
-            .pl(px(4.))
-            .pr(px(2.))
-            .border_1()
-            .rounded(px(4.))
-            .cursor_text()
-            .text_size(px(12.))
-            .bg(self.color("input.background"))
-            .border_color(border)
-            .text_color(self.foreground_or("input.foreground"))
-            .child(div().flex_1().min_w_0().h_full().flex().child(self.input_text(InputId::OutputFilter, InputLook { password: false, placeholder, focused }, cx)))
-            .child(filter_button)
+        self.view_filter_box(
+            ViewFilter {
+                input: InputId::OutputFilter,
+                focused: self.output_view.filter_focus.is_focused(window),
+                placeholder: "Filter (e.g. text, !excludeText, text1,text2)",
+                more_filters_checked: self.output.filters.more_filters(self.output.active.as_deref()),
+                badge: None,
+                menu_bounds: self.output_view.filter_menu_bounds.clone(),
+                show_menu: Workbench::show_output_filter_menu,
+            },
+            cx,
+        )
     }
 
     /// selectBox.css `.monaco-select-box` in an action bar on macOS: 11px text, 24px high, 100px wide at least.

@@ -1,30 +1,179 @@
 //! The Problems view (markersView.ts, markersTreeViewer.ts, markersModel.ts): the markers of every resource as a
 //! tree, a resource row with its file icon, folder and count over its markers, each with its severity icon, message,
-//! source, code and position. A click opens the marker's location.
-// shortcut: no filter box, View as Table, multi-line messages, related information rows, quick fix actions, indent
-// guides or the focused first row on open.
+//! source, code and position, its related information below. A click opens the marker's location. The filter box
+//! and its menu (markersViewActions.ts, markersFilterOptions.ts) pick what shows.
+// shortcut: no indent guides, row focus (so no Cmd+. for quick fixes), filter history or the focused first row on open.
 
+use std::cell::Cell;
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::Arc;
 
-use gpui::{Context, Div, Window, div, prelude::*, px};
-use serde_json::json;
+use gpui::{Bounds, Context, Div, FocusHandle, Pixels, Task, Window, div, prelude::*, px};
+use serde_json::{Value, json};
 
 use super::Workbench;
+use super::input_box_view::{InputId, InputView};
 use super::panel::PanelView;
+use super::problems_table::{TableItem, table_items};
+use super::view_filter::ViewFilter;
 use crate::commands::Outcome;
+use crate::input_box::InputBox;
 use crate::markers::{ERROR, INFO, Marker, ReadOptions, WARNING};
+use crate::markers_filter::{FilesExclude, FilterOptions, Highlights, Visibility, filter_marker, filter_related, filter_resource, marker_code, marker_lines};
+use crate::menus::MenuAction;
 
 /// markers.ts `Markers.MARKERS_CONTAINER_ID` and `MARKERS_VIEW_ID`.
 pub const MARKERS_CONTAINER_ID: &str = "workbench.panel.markers";
 const MARKERS_VIEW_ID: &str = "workbench.panel.markers.view";
+/// markers.ts `MARKERS_VIEW_STORAGE_ID`: the view's memento in workspace storage.
+const MEMENTO_KEY: &str = "memento/workbench.panel.markers";
 const ROW_HEIGHT: f32 = 22.;
+const FILTER_PLACEHOLDER: &str = "Filter (e.g. text, **/*.ts, !**/node_modules/**, @source:ts)";
 
-#[derive(Default)]
 pub struct ProblemsView {
     /// Resources whose markers are hidden, by `URI.toString()`.
     pub collapsed: HashSet<String>,
+    /// Markers whose related information is hidden, by resource and index.
+    collapsed_markers: HashSet<(String, usize)>,
+    /// Markers shown on one line while `multiline` is on, or on all lines while it is off.
+    toggled_lines: HashSet<(String, usize)>,
+    pub(super) filter: InputBox,
+    pub(super) filter_view: InputView,
+    pub(super) filter_focus: FocusHandle,
+    /// The text applies 300 ms after the last edit (`FilterWidget.onDidChangeFilterText`).
+    filtering: Option<Task<()>>,
+    /// The applied filter text.
+    text: String,
+    show_errors: bool,
+    show_warnings: bool,
+    show_infos: bool,
+    /// "Hide Excluded Files" (`useFilesExclude`).
+    excluded_files: bool,
+    active_file: bool,
+    /// `MarkersViewModel.multiline`: every marker shows all its message lines.
+    multiline: bool,
+    /// `MarkersViewMode.Table`; `None` until set, then `problems.defaultViewMode` decides.
+    table: Option<bool>,
+    menu_bounds: Rc<Cell<Bounds<Pixels>>>,
+}
+
+impl ProblemsView {
+    pub fn new(cx: &mut gpui::App) -> ProblemsView {
+        ProblemsView {
+            collapsed: HashSet::new(),
+            collapsed_markers: HashSet::new(),
+            toggled_lines: HashSet::new(),
+            filter: InputBox::default(),
+            filter_view: InputView::default(),
+            filter_focus: cx.focus_handle(),
+            filtering: None,
+            text: String::new(),
+            show_errors: true,
+            show_warnings: true,
+            show_infos: true,
+            excluded_files: false,
+            active_file: false,
+            multiline: true,
+            table: None,
+            menu_bounds: Rc::default(),
+        }
+    }
+
+    /// `IMarkersPanelState` as markersView.ts reads it: missing severities are shown, multi-line is on.
+    fn restore(&mut self, memento: &Value) {
+        self.text = memento["filter"].as_str().unwrap_or_default().to_owned();
+        self.filter.set_value(self.text.clone());
+        self.show_errors = memento["showErrors"] != false;
+        self.show_warnings = memento["showWarnings"] != false;
+        self.show_infos = memento["showInfos"] != false;
+        self.excluded_files = memento["useFilesExclude"] == true;
+        self.active_file = memento["activeFile"] == true;
+        self.multiline = memento["multiline"] != false;
+        self.table = memento["viewMode"].as_str().map(|mode| mode == "table");
+    }
+
+    fn memento(&self) -> Value {
+        json!({
+            "filter": self.text,
+            "showErrors": self.show_errors,
+            "showWarnings": self.show_warnings,
+            "showInfos": self.show_infos,
+            "useFilesExclude": self.excluded_files,
+            "activeFile": self.active_file,
+            "multiline": self.multiline,
+            "viewMode": self.table.map(|table| if table { "table" } else { "tree" }),
+        })
+    }
+
+    /// `checkMoreFilters`: a filter of the menu is not at its default.
+    fn more_filters(&self) -> bool {
+        !self.show_errors || !self.show_warnings || !self.show_infos || self.excluded_files || self.active_file
+    }
+
+    fn shows_all_lines(&self, key: &(String, usize)) -> bool {
+        self.multiline != self.toggled_lines.contains(key)
+    }
+}
+
+/// A resource the filter keeps, with the markers and related information it keeps.
+pub struct ShownResource<'a> {
+    pub resource: &'a ResourceMarkers,
+    pub highlights: Highlights,
+    pub markers: Vec<ShownMarker<'a>>,
+}
+
+pub struct ShownMarker<'a> {
+    pub index: usize,
+    pub marker: &'a Arc<Marker>,
+    pub highlights: Highlights,
+    pub related: Vec<(&'a Value, Highlights)>,
+}
+
+/// markersTreeViewer.ts `Filter` over the tree: a resource shows when the filter keeps it or one of its markers; a
+/// marker's related information shows under it.
+pub fn filter_resources<'a>(resources: &'a [ResourceMarkers], options: &FilterOptions) -> Vec<ShownResource<'a>> {
+    let mut shown = Vec::new();
+    for resource in resources {
+        let path = crate::uri::Uri::parse(&resource.resource).map(|uri| uri.path).unwrap_or_else(|_| resource.path.to_string_lossy().into_owned());
+        let basename = resource.path.file_name().map_or_else(String::new, |name| name.to_string_lossy().into_owned());
+        let (visibility, highlights) = filter_resource(options, &path, &basename);
+        if visibility == Visibility::Hidden {
+            continue;
+        }
+        let mut markers = Vec::new();
+        for (index, marker) in resource.markers.iter().enumerate() {
+            let (marker_visibility, highlights) = filter_marker(options, marker, visibility);
+            if marker_visibility == Visibility::Hidden {
+                continue;
+            }
+            let related: Vec<(&Value, Highlights)> = related_information(marker)
+                .iter()
+                .filter_map(|related| {
+                    let basename = related_basename(related);
+                    let (visibility, highlights) = filter_related(options, &basename, related["message"].as_str().unwrap_or_default(), marker_visibility);
+                    (visibility == Visibility::Visible).then_some((related, highlights))
+                })
+                .collect();
+            if marker_visibility == Visibility::Visible || !related.is_empty() {
+                markers.push(ShownMarker { index, marker, highlights, related });
+            }
+        }
+        if visibility == Visibility::Visible || !markers.is_empty() {
+            shown.push(ShownResource { resource, highlights, markers });
+        }
+    }
+    shown
+}
+
+fn related_information(marker: &Marker) -> &[Value] {
+    marker.related_information.as_array().map_or(&[], Vec::as_slice)
+}
+
+fn related_basename(related: &Value) -> String {
+    let path = super::host_requests::uri_parts(&related["resource"]).map(|(_, path)| path).unwrap_or_default();
+    path.file_name().map_or_else(String::new, |name| name.to_string_lossy().into_owned())
 }
 
 /// `ResourceMarkers`: a resource's file path and its markers in `_compareMarkers` order.
@@ -59,7 +208,21 @@ impl Workbench {
             id: MARKERS_CONTAINER_ID,
             title: "Problems",
             render: |workbench, window, cx| workbench.problems_body(window, cx).into_any_element(),
-            actions: |workbench, _, cx| div().flex().child(workbench.search_action("collapse-all", "workbench.actions.treeView.workbench.panel.markers.view.collapseAll", true, cx)).into_any_element(),
+            // The navigation group: the filter, View as Tree/Table (order 3), Collapse All in the tree (order 2).
+            actions: |workbench, window, cx| {
+                let table = workbench.problems_table_mode();
+                let (icon, command) = match table {
+                    true => ("list-tree", "workbench.actions.table.workbench.panel.markers.view.viewAsTree"),
+                    false => ("list-flat", "workbench.actions.table.workbench.panel.markers.view.viewAsTable"),
+                };
+                div()
+                    .flex()
+                    .items_center()
+                    .child(workbench.problems_filter_box(window, cx))
+                    .when(!table, |actions| actions.child(workbench.search_action("collapse-all", "workbench.actions.treeView.workbench.panel.markers.view.collapseAll", true, cx)))
+                    .child(workbench.search_action(icon, command, true, cx))
+                    .into_any_element()
+            },
             visible: |_| true,
             // markersView.ts: the tab counts every marker the view shows.
             badge: |workbench| Some(workbench.diagnostics.service.read(ReadOptions::default()).len()),
@@ -90,33 +253,256 @@ impl Workbench {
             cx.notify();
             Outcome::done()
         });
+        let toggles: [(&str, fn(&mut ProblemsView) -> &mut bool); 5] = [
+            ("toggleErrors", |view| &mut view.show_errors),
+            ("toggleWarnings", |view| &mut view.show_warnings),
+            ("toggleInfos", |view| &mut view.show_infos),
+            ("toggleActiveFile", |view| &mut view.active_file),
+            ("toggleExcludedFiles", |view| &mut view.excluded_files),
+        ];
+        for (name, flag) in toggles {
+            self.commands.register(format!("workbench.actions.{MARKERS_VIEW_ID}.{name}"), move |workbench, _, _, cx| {
+                let flag = flag(&mut workbench.problems);
+                *flag = !*flag;
+                workbench.problems_state_changed(cx);
+                Outcome::done()
+            });
+        }
+        self.commands.register("problems.action.focusFilter", |workbench, _, window, cx| {
+            window.focus(&workbench.problems.filter_focus, cx);
+            Outcome::done()
+        });
+        self.commands.register("problems.action.focusProblemsFromFilter", |workbench, _, window, cx| {
+            window.focus(&workbench.problems_focus, cx);
+            Outcome::done()
+        });
+        self.commands.register("problems.action.clearFilterText", |workbench, _, window, cx| {
+            workbench.edit_problems_filter(|input| input.set_value(String::new()), window, cx);
+            Outcome::done()
+        });
+        for (command, table) in [("viewAsTree", false), ("viewAsTable", true)] {
+            self.commands.register(format!("workbench.actions.table.{MARKERS_VIEW_ID}.{command}"), move |workbench, _, _, cx| {
+                workbench.problems.table = Some(table);
+                workbench.problems_state_changed(cx);
+                Outcome::done()
+            });
+        }
+        for (id, multiline) in [("problems.action.showMultilineMessage", true), ("problems.action.showSinglelineMessage", false)] {
+            self.commands.register(id, move |workbench, _, _, cx| {
+                workbench.problems.multiline = multiline;
+                workbench.problems.toggled_lines.clear();
+                workbench.problems_state_changed(cx);
+                Outcome::done()
+            });
+        }
     }
 
-    /// The `${MARKERS_VIEW_ID}.active` key: the view is registered and its `when` holds.
-    pub(super) fn problems_context(&self, context: &mut std::collections::HashMap<String, serde_json::Value>) {
+    pub(super) fn restore_problems_state(&mut self) {
+        let memento = self.workspace_storage.lock().unwrap().get(MEMENTO_KEY).and_then(|raw| serde_json::from_str::<Value>(raw).ok());
+        self.problems.restore(&memento.unwrap_or(Value::Null));
+    }
+
+    /// The `${MARKERS_VIEW_ID}.active` key, the filter keys and `focusedView` while the view or its filter has focus.
+    pub(super) fn problems_context(&self, window: &Window, context: &mut std::collections::HashMap<String, Value>) {
         context.insert(format!("{MARKERS_VIEW_ID}.active"), json!(true));
+        let filter_focused = self.problems.filter_focus.is_focused(window);
+        let tree_focused = self.problems_focus.is_focused(window);
+        context.insert("problemsFilterFocus".into(), json!(filter_focused));
+        context.insert("problemsViewMode".into(), json!(if self.problems_table_mode() { "table" } else { "tree" }));
+        context.insert("problems.filter.errors".into(), json!(self.problems.show_errors));
+        context.insert("problems.filter.warnings".into(), json!(self.problems.show_warnings));
+        context.insert("problems.filter.info".into(), json!(self.problems.show_infos));
+        context.insert("problems.filter.activeFile".into(), json!(self.problems.active_file));
+        context.insert("problems.filter.excludedFiles".into(), json!(self.problems.excluded_files));
+        if filter_focused || tree_focused {
+            context.insert("focusedView".into(), json!(MARKERS_VIEW_ID));
+        }
+    }
+
+    /// `getDefaultViewMode`: the stored mode, else `problems.defaultViewMode`.
+    fn problems_table_mode(&self) -> bool {
+        self.problems.table.unwrap_or_else(|| self.setting("problems.defaultViewMode") == "table")
+    }
+
+    /// `FilterWidget.onDidChangeFilterText` after its 300 ms delay: the filter text applies.
+    pub(super) fn edit_problems_filter(&mut self, edit: impl FnOnce(&mut InputBox), window: &mut Window, cx: &mut Context<Self>) {
+        let before = self.problems.filter.value.clone();
+        edit(&mut self.problems.filter);
+        cx.notify();
+        if self.problems.filter.value == before {
+            return;
+        }
+        self.problems.filtering = Some(cx.spawn_in(window, async move |workbench, cx| {
+            cx.background_executor().timer(std::time::Duration::from_millis(300)).await;
+            let _ = workbench.update(cx, |workbench, cx| {
+                workbench.problems.text = workbench.problems.filter.value.clone();
+                workbench.problems_state_changed(cx);
+            });
+        }));
+    }
+
+    /// `saveState`: the filters and the line mode in the workspace memento.
+    fn problems_state_changed(&mut self, cx: &mut Context<Self>) {
+        self.workspace_storage.lock().unwrap().set(MEMENTO_KEY, self.problems.memento().to_string());
+        cx.notify();
+    }
+
+    /// `viewFilterSubmenu` of the Problems view: the severities, then the active file and excluded files filters.
+    fn show_problems_filter_menu(&mut self, anchor: Bounds<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
+        let view = &self.problems;
+        let item = |name: &str, title: &str, checked: bool| MenuAction::Command { id: format!("workbench.actions.{MARKERS_VIEW_ID}.{name}"), title: title.into(), enabled: true, checked, alt: None };
+        let actions = vec![
+            item("toggleErrors", "Show Errors", view.show_errors),
+            item("toggleWarnings", "Show Warnings", view.show_warnings),
+            item("toggleInfos", "Show Infos", view.show_infos),
+            MenuAction::Separator,
+            item("toggleActiveFile", "Show Active File Only", view.active_file),
+            item("toggleExcludedFiles", "Hide Excluded Files", view.excluded_files),
+        ];
+        let context = self.key_context(window);
+        self.show_context_menu_actions(actions, &context, anchor, Vec::new(), window, cx);
+    }
+
+    fn problems_filter_box(&self, window: &Window, cx: &mut Context<Self>) -> Div {
+        let (total, shown) = self.problems_counts();
+        self.view_filter_box(
+            ViewFilter {
+                input: InputId::ProblemsFilter,
+                focused: self.problems.filter_focus.is_focused(window),
+                placeholder: FILTER_PLACEHOLDER,
+                more_filters_checked: self.problems.more_filters(),
+                badge: (total != shown && total != 0).then(|| format!("Showing {shown} of {total}")),
+                menu_bounds: self.problems.menu_bounds.clone(),
+                show_menu: Workbench::show_problems_filter_menu,
+            },
+            cx,
+        )
+    }
+
+    /// `updateFilter`'s `FilterOptions`: `files.exclude` per workspace folder while "Hide Excluded Files" is on.
+    fn problems_filter_options(&self) -> FilterOptions {
+        let view = &self.problems;
+        let files_exclude = |resource: Option<&std::path::Path>| {
+            let overrides = config::configuration::Overrides { resource, override_identifier: None };
+            let value = self.settings.lock().unwrap().get_value(Some("files.exclude"), &overrides);
+            value.and_then(|value| value.as_object().cloned()).unwrap_or_default()
+        };
+        let exclude = match (view.excluded_files, self.workspace()) {
+            (false, _) => FilesExclude::ByRoot(Vec::new()),
+            (true, Some(workspace)) => FilesExclude::ByRoot(workspace.folders.iter().map(|folder| (folder.path.to_string_lossy().into_owned(), files_exclude(Some(&folder.path)))).collect()),
+            (true, None) => FilesExclude::Global(files_exclude(None)),
+        };
+        FilterOptions::new(&view.text, exclude, view.show_warnings, view.show_errors, view.show_infos)
+    }
+
+    /// `getResourceMarkers`: every resource, or only the active editor's with "Show Active File Only".
+    fn problems_resources(&self) -> Vec<ResourceMarkers> {
+        let mut resources = resource_markers(self.diagnostics.service.read(ReadOptions::default()));
+        if self.problems.active_file {
+            let active = self.editors.active().map(|editor| editor.document().uri_string());
+            resources.retain(|resource| Some(&resource.resource) == active.as_ref());
+        }
+        resources
+    }
+
+    /// `getFilterStats`: every marker, and the markers the filter shows.
+    fn problems_counts(&self) -> (usize, usize) {
+        let total = self.diagnostics.service.read(ReadOptions::default()).len();
+        let resources = self.problems_resources();
+        let shown = match self.problems_table_mode() {
+            true => self.problems_table_items(&resources).len(),
+            false => filter_resources(&resources, &self.problems_filter_options()).iter().map(|resource| resource.markers.len()).sum(),
+        };
+        (total, shown)
+    }
+
+    fn problems_table_items(&self, resources: &[ResourceMarkers]) -> Vec<TableItem> {
+        let markers: Vec<Arc<Marker>> = resources.iter().flat_map(|resource| resource.markers.iter().cloned()).collect();
+        let workspace = self.workspace();
+        let path_of = |marker: &Marker| crate::uri::Uri::parse(&marker.resource).map(|uri| uri.path).unwrap_or_default();
+        let file_label = |marker: &Marker| match crate::editor_history::file_path(&marker.resource) {
+            Some(path) => crate::quick_input::path_label(&path, workspace),
+            None => marker.resource.clone(),
+        };
+        table_items(&markers, &self.problems_filter_options(), path_of, file_label)
     }
 
     fn problems_body(&self, _window: &Window, cx: &mut Context<Self>) -> Div {
-        let resources = resource_markers(self.diagnostics.service.read(ReadOptions::default()));
+        let resources = self.problems_resources();
+        let shown = filter_resources(&resources, &self.problems_filter_options());
         let list = div().id("problems-tree").track_focus(&self.problems_focus).flex_1().min_h_0().overflow_y_scroll().flex().flex_col().text_size(px(13.));
-        if resources.is_empty() {
-            // markersView.ts `renderMessage`: the message area at the top of the view.
-            return div().flex_1().min_h_0().flex().flex_col().child(list.child(div().px(px(20.)).py(px(5.)).child("No problems have been detected in the workspace.")));
+        let total = self.diagnostics.service.read(ReadOptions::default()).len();
+        let table = self.problems_table_mode().then(|| self.problems_table_items(&resources));
+        let filtered = match &table {
+            Some(items) => items.len(),
+            None => shown.iter().map(|resource| resource.markers.len()).sum(),
+        };
+        if filtered == 0 {
+            return div().flex_1().min_h_0().flex().flex_col().child(list.child(self.problems_message(total, &resources, cx)));
+        }
+        if let Some(items) = table {
+            return div().flex_1().min_h_0().flex().flex_col().child(list.children(self.problems_table(&items, cx)));
         }
         let mut rows = Vec::new();
-        for resource in &resources {
-            let collapsed = self.problems.collapsed.contains(&resource.resource);
+        for resource in &shown {
+            let collapsed = self.problems.collapsed.contains(&resource.resource.resource);
             rows.push(self.problems_resource_row(resource, collapsed, cx));
-            if !collapsed {
-                rows.extend(resource.markers.iter().enumerate().map(|(index, marker)| self.problems_marker_row(marker, index, cx)));
+            if collapsed {
+                continue;
+            }
+            for marker in &resource.markers {
+                let key = (marker.marker.resource.clone(), marker.index);
+                let related_collapsed = self.problems.collapsed_markers.contains(&key);
+                rows.push(self.problems_marker_row(marker, related_collapsed, cx));
+                if !related_collapsed {
+                    rows.extend(marker.related.iter().enumerate().map(|(index, (related, highlights))| self.problems_related_row(&key, index, related, highlights, cx)));
+                }
             }
         }
         div().flex_1().min_h_0().flex().flex_col().child(list.children(rows))
     }
 
+    /// `renderMessage`: no problems at all, none in the active file, or none the filters let through with a Clear
+    /// Filters link.
+    fn problems_message(&self, total: usize, resources: &[ResourceMarkers], cx: &mut Context<Self>) -> Div {
+        let message = div().pl(px(20.)).line_height(px(22.)).flex().flex_wrap();
+        let filtered_out = match self.problems.active_file {
+            true => !resources.is_empty(),
+            false => total > 0,
+        };
+        if !filtered_out {
+            let text = if self.problems.active_file { "No problems have been detected in the current file." } else { "No problems have been detected in the workspace." };
+            return message.child(text);
+        }
+        let link = div()
+            .id("problems-clear-filters")
+            .ml(px(4.))
+            .cursor_pointer()
+            .underline()
+            .child("Clear Filters")
+            .on_click(cx.listener(|workbench, _, window, cx| workbench.clear_problems_filters(window, cx)));
+        message.child("No results found with provided filter criteria.").child(link).child(".")
+    }
+
+    /// `clearFilters`: the text, the excluded files and every severity back to their defaults.
+    fn clear_problems_filters(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let view = &mut self.problems;
+        (view.excluded_files, view.show_errors, view.show_warnings, view.show_infos) = (false, true, true, true);
+        self.edit_problems_filter(|input| input.set_value(String::new()), window, cx);
+        self.problems_state_changed(cx);
+    }
+
+    /// views.css `.pane-body .monaco-tl-contents .highlight` with markers.css: bold on `list.filterMatchBackground`.
+    fn filter_match(&self, text: &str, matches: &[std::ops::Range<usize>]) -> Div {
+        let byte_at = |chars: usize| text.char_indices().nth(chars).map_or(text.len(), |(byte, _)| byte);
+        let style = gpui::HighlightStyle { background_color: self.theme.color("list.filterMatchBackground").map(Into::into), font_weight: Some(gpui::FontWeight::BOLD), ..Default::default() };
+        let highlights: Vec<_> = matches.iter().map(|range| (byte_at(range.start)..byte_at(range.end), style)).collect();
+        div().min_w_0().truncate().child(gpui::StyledText::new(text.to_owned()).with_highlights(highlights))
+    }
+
     /// `ResourceMarkersRenderer`: twistie, file icon, name, folder description and the marker count.
-    fn problems_resource_row(&self, resource: &ResourceMarkers, collapsed: bool, cx: &mut Context<Self>) -> gpui::AnyElement {
+    fn problems_resource_row(&self, shown: &ShownResource, collapsed: bool, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let resource = shown.resource;
         let foreground = self.foreground_or("foreground");
         let icon = self.file_icons.as_ref().and_then(|icons| icons.file_icon(&resource.path, self.languages.language_of(&resource.path, ""), self.theme.kind, 13., ROW_HEIGHT, foreground));
         let name = resource.path.file_name().map_or_else(|| resource.resource.clone(), |name| name.to_string_lossy().into_owned());
@@ -134,7 +520,7 @@ impl Workbench {
             .hover(|row| row.bg(self.color("list.hoverBackground")))
             .child(self.icon(if collapsed { "chevron-right" } else { "chevron-down" }, 16., 16., foreground).mr(px(2.)))
             .children(icon.map(|icon| icon.mr(px(6.))))
-            .child(div().flex_none().child(name))
+            .child(self.filter_match(&name, &shown.highlights.uri).flex_none())
             .children(description.map(|description| div().ml(px(6.5)).text_size(px(11.7)).opacity(0.7).min_w_0().overflow_hidden().text_ellipsis().whitespace_nowrap().child(description)))
             .child(
                 div()
@@ -150,7 +536,8 @@ impl Workbench {
                     .text_size(px(11.))
                     .bg(self.color("badge.background"))
                     .text_color(self.foreground_or("badge.foreground"))
-                    .child(resource.markers.len().to_string()),
+                    // `updateCount`: the visible markers.
+                    .child(shown.markers.len().to_string()),
             )
             .on_click(cx.listener(move |workbench, _, _, cx| {
                 if !workbench.problems.collapsed.remove(&key) {
@@ -161,38 +548,141 @@ impl Workbench {
             .into_any_element()
     }
 
-    /// `MarkerRenderer`: severity icon, the message's first line, `source(code)` and `[Ln, Col]` at 70% opacity.
-    fn problems_marker_row(&self, marker: &Arc<Marker>, index: usize, cx: &mut Context<Self>) -> gpui::AnyElement {
+    /// `MarkerRenderer`: severity icon, the message (every line with multi-line on, the first otherwise),
+    /// `source(code)` and `[Ln, Col]` at 70% opacity on the first line, the multi-line toggle for longer messages; a
+    /// twistie before the icon when the marker has related information.
+    fn problems_marker_row(&self, shown: &ShownMarker, related_collapsed: bool, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let marker = shown.marker;
         let (icon, color) = match marker.severity {
             ERROR => ("error", self.color("problemsErrorIcon.foreground")),
             WARNING => ("warning", self.color("problemsWarningIcon.foreground")),
             INFO => ("info", self.color("problemsInfoIcon.foreground")),
             _ => ("lightbulb", self.foreground_or("foreground")),
         };
-        let code = match &marker.code {
-            serde_json::Value::String(code) => Some(code.clone()),
-            serde_json::Value::Object(code) => code.get("value").and_then(serde_json::Value::as_str).map(str::to_string),
-            _ => None,
+        let foreground = self.foreground_or("foreground");
+        let key = (marker.resource.clone(), shown.index);
+        let lines = marker_lines(&marker.message);
+        let all_lines = self.problems.shows_all_lines(&key);
+        let line_count = if all_lines { lines.len() } else { 1 };
+        let line_matches = |index: usize| shown.highlights.lines.get(index).cloned().unwrap_or_default();
+        let message = |index: usize| {
+            let line = lines[index];
+            let line = if line.chars().count() > 1000 { format!("{}...", line.chars().take(1000).collect::<String>()) } else { line.to_owned() };
+            self.filter_match(&line, &line_matches(index))
         };
-        let detail = |text: String| div().ml(px(6.)).opacity(0.7).flex_none().child(text);
-        let first_line = marker.message.lines().next().unwrap_or_default().to_string();
+        let source = marker.source.clone().unwrap_or_default();
+        let code = marker_code(marker);
+        let mut details = div().flex().flex_none().items_center();
+        if !source.is_empty() || code.is_some() {
+            details = details.child(div().ml(px(6.)).child(self.filter_match(&source, &shown.highlights.source)));
+            if let Some(code) = &code {
+                let code = format!("({code})");
+                let matches: Vec<_> = shown.highlights.code.iter().map(|range| range.start + 1..range.end + 1).collect();
+                details = details.child(div().opacity(0.7).child(self.filter_match(&code, &matches)));
+            }
+        }
+        details = details.child(div().ml(px(6.)).opacity(0.7).child(format!("[Ln {}, Col {}]", marker.start_line, marker.start_column)));
+        let toggle_key = key.clone();
+        let multiline_toggle = (lines.len() > 1).then(|| {
+            self.icon(if all_lines { "chevron-up" } else { "chevron-down" }, 20., 16., foreground)
+                .id(gpui::SharedString::from(format!("problems-multiline-{}-{}", key.0, key.1)))
+                .ml(px(4.))
+                .rounded(px(5.))
+                .cursor_pointer()
+                .hover(|button| button.bg(self.color("toolbar.hoverBackground")))
+                .on_click(cx.listener(move |workbench, _, _, cx| {
+                    cx.stop_propagation();
+                    if !workbench.problems.toggled_lines.remove(&toggle_key) {
+                        workbench.problems.toggled_lines.insert(toggle_key.clone());
+                    }
+                    cx.notify();
+                }))
+        });
+        let first = div().h(px(ROW_HEIGHT)).flex().items_center().min_w_0().child(message(0).flex_shrink_1()).child(details).children(multiline_toggle);
+        let rest = (1..line_count).map(|index| div().h(px(ROW_HEIGHT)).flex().items_center().min_w_0().child(message(index)));
+        let has_related = !related_information(marker).is_empty();
+        let twistie_key = key.clone();
+        let twistie = has_related.then(|| {
+            self.icon(if related_collapsed { "chevron-right" } else { "chevron-down" }, 16., 16., foreground)
+                .id(gpui::SharedString::from(format!("problems-twistie-{}-{}", key.0, key.1)))
+                .absolute()
+                .left(px(24.))
+                .top(px(3.))
+                .on_click(cx.listener(move |workbench, _, _, cx| {
+                    cx.stop_propagation();
+                    if !workbench.problems.collapsed_markers.remove(&twistie_key) {
+                        workbench.problems.collapsed_markers.insert(twistie_key.clone());
+                    }
+                    cx.notify();
+                }))
+        });
         let target = json!({ "resource": crate::debug::uri_from_string(&marker.resource), "startLineNumber": marker.start_line, "startColumn": marker.start_column });
+        let group = gpui::SharedString::from(format!("problems-marker-{}-{}", key.0, key.1));
+        // markers.css: on a hovered row the light bulb takes the severity icon's place.
+        let quick_fix = self.problems_quick_fix_icon(marker);
+        let severity = self.icon(icon, 16., 16., color).mx(px(6.)).when(quick_fix.is_some(), |icon| icon.group_hover(group.clone(), |icon| icon.invisible()));
+        let light_bulb = quick_fix.map(|light_bulb| {
+            let bounds: Rc<Cell<Bounds<Pixels>>> = Rc::default();
+            self.icon(light_bulb, 20., 20., self.color(if light_bulb == "lightbulb" { "editorLightBulb.foreground" } else { "editorLightBulbAutoFix.foreground" }))
+                .id("problems-quick-fix")
+                .absolute()
+                .left(px(4.))
+                .top(px(1.))
+                .rounded(px(5.))
+                .cursor_pointer()
+                .invisible()
+                .group_hover(group.clone(), |icon| icon.visible())
+                .hover(|icon| icon.bg(self.color("toolbar.hoverBackground")))
+                .child(super::output_view::bounds_tracker(bounds.clone()))
+                .on_click(cx.listener(move |workbench, _, window, cx| {
+                    cx.stop_propagation();
+                    workbench.show_problems_quick_fixes(bounds.get(), window, cx);
+                }))
+        });
+        let hovered = marker.clone();
         div()
-            .id(gpui::SharedString::from(format!("problems-marker-{}-{index}", marker.resource)))
+            .id(group.clone())
+            .group(group)
+            .relative()
+            .flex_none()
+            .flex()
+            .pl(px(42.))
+            .pr(px(10.))
+            .cursor_pointer()
+            .whitespace_nowrap()
+            .hover(|row| row.bg(self.color("list.hoverBackground")))
+            .children(twistie)
+            .child(div().relative().h(px(ROW_HEIGHT)).flex().items_center().child(severity).children(light_bulb))
+            .on_hover(cx.listener(move |workbench, hovered_now: &bool, _, cx| {
+                if *hovered_now {
+                    workbench.problems_marker_hovered(&hovered, cx);
+                }
+            }))
+            .child(div().flex_1().min_w_0().flex().flex_col().child(first).children(rest))
+            .on_click(cx.listener(move |workbench, _, window, cx| workbench.open_marker_related(&target, window, cx)))
+            .into_any_element()
+    }
+
+    /// `RelatedInformationRenderer`: the file name, `[Ln, Col]`, a colon and the message.
+    fn problems_related_row(&self, marker: &(String, usize), index: usize, related: &Value, highlights: &Highlights, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let basename = related_basename(related);
+        let message = related["message"].as_str().unwrap_or_default().to_owned();
+        let target = related.clone();
+        div()
+            .id(gpui::SharedString::from(format!("problems-related-{}-{}-{index}", marker.0, marker.1)))
             .h(px(ROW_HEIGHT))
             .flex_none()
             .flex()
             .items_center()
-            .pl(px(42.))
+            .pl(px(70.))
+            .pr(px(10.))
             .cursor_pointer()
             .whitespace_nowrap()
             .hover(|row| row.bg(self.color("list.hoverBackground")))
-            .child(self.icon(icon, 16., 16., color).mx(px(6.)))
-            .child(div().min_w_0().overflow_hidden().text_ellipsis().child(first_line))
-            .when(marker.source.is_some() || code.is_some(), |row| {
-                row.child(detail(format!("{}{}", marker.source.clone().unwrap_or_default(), code.map(|code| format!("({code})")).unwrap_or_default())))
-            })
-            .child(detail(format!("[Ln {}, Col {}]", marker.start_line, marker.start_column)))
+            .child(self.filter_match(&basename, &highlights.uri).flex_none())
+            .child(div().ml(px(4.)).opacity(0.7).flex_none().child(format!("[Ln {}, Col {}]", related["startLineNumber"], related["startColumn"])))
+            .child(div().opacity(0.7).pr(px(4.)).flex_none().child(":"))
+            .child(self.filter_match(&message, &highlights.message))
             .on_click(cx.listener(move |workbench, _, window, cx| workbench.open_marker_related(&target, window, cx)))
             .into_any_element()
     }
@@ -214,5 +704,20 @@ mod tests {
         let resources = resource_markers(markers);
         let order: Vec<(&str, Vec<(u8, usize)>)> = resources.iter().map(|resource| (resource.resource.as_str(), resource.markers.iter().map(|marker| (marker.severity, marker.start_line)).collect())).collect();
         assert_eq!(order, [("file:///a.ts", vec![(ERROR, 7), (WARNING, 2), (WARNING, 9)]), ("file:///c.ts", vec![(ERROR, 5)]), ("file:///b.ts", vec![(WARNING, 3)])]);
+    }
+
+    #[test]
+    fn the_filter_keeps_markers_whose_related_information_matches() {
+        let related = json!([{ "resource": { "scheme": "file", "path": "/w/other.ts" }, "message": "declared here", "startLineNumber": 4, "startColumn": 2, "endLineNumber": 4, "endColumn": 5 }]);
+        let with_related = Arc::new(Marker::new("owner", "file:///w/a.ts", &json!({ "severity": ERROR, "message": "m", "startLineNumber": 1, "startColumn": 1, "endLineNumber": 1, "endColumn": 2, "relatedInformation": related })).unwrap());
+        let resources = resource_markers(vec![with_related, marker("file:///w/b.ts", WARNING, 3)]);
+        let shown = |filter: &str| -> Vec<(String, usize, usize)> {
+            let options = FilterOptions::new(filter, FilesExclude::ByRoot(Vec::new()), true, true, true);
+            filter_resources(&resources, &options).iter().flat_map(|resource| resource.markers.iter().map(|marker| (marker.marker.resource.clone(), marker.index, marker.related.len()))).collect()
+        };
+        assert_eq!(shown(""), [("file:///w/a.ts".to_owned(), 0, 1), ("file:///w/b.ts".to_owned(), 0, 0)]);
+        assert_eq!(shown("declared"), [("file:///w/a.ts".to_owned(), 0, 1)]);
+        assert_eq!(shown("b.ts"), [("file:///w/b.ts".to_owned(), 0, 0)]);
+        assert_eq!(shown("!**/a.ts"), [("file:///w/b.ts".to_owned(), 0, 0)]);
     }
 }
