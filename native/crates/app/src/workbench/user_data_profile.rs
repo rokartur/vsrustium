@@ -289,6 +289,8 @@ fn profile_menus(profiles: &[Profile], current: &Profile) -> Vec<MenuItem> {
         item(MenuId::ProfilesMenu, command("workbench.profiles.actions.manageProfiles"), "Profiles", "1_manage", 1., None),
         item(MenuId::MenubarFileMenu, submenu(MenuId::OpenProfileMenu), "New Window with Profile", "1_new", 4., None),
         item(MenuId::OpenProfileMenu, command("workbench.profiles.actions.createProfile"), "New Profile...", "1_manage_profiles", 1., None),
+        // userDataProfileActions.ts `ExportProfileAction` under File > Share.
+        item(MenuId::MenubarShare, command("workbench.profiles.actions.exportProfile"), &format!("Export Profile ({})...", current.name), "", 0., None),
     ];
     for profile in profiles {
         let toggled = Toggled::when(Expr::deserialize(&format!("currentProfile == '{}'", profile.id)));
