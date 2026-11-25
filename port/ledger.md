@@ -328,7 +328,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/extensionManagement | workbench service | todo |  |
 | workbench/services/extensionRecommendations | workbench service | todo |  |
 | workbench/services/extensions | workbench service | todo |  |
-| workbench/services/files | workbench service | todo |  |
+| workbench/services/files | workbench service | ported | the disk provider and watcher client run in process: native/crates/files (disk provider, FSEvents watcher, cargo test -p files); elevatedFileService.ts writeElevated is text_files.rs write_elevated of milestone 8 (port-integrate) |
 | workbench/services/filesConfiguration | workbench service | stub | read-only part only (`workbench/readonly.rs`): session override commands, `files.readonlyInclude`/`readonlyExclude`/`readonlyFromPermissions`, tab lock badge, edit guards; not ported: `updateReadonly` custom reasons and events (filesConfigurationService.test.ts, used by chat and extension services), auto save and hot exit settings |
 | workbench/services/github | workbench service | todo |  |
 | workbench/services/history | workbench service | stub | editor history only (`history.entries` in workspace storage, exclude matcher, 200 entries) for Quick Open: cargo test -p app editor_history quick_open; no navigation stack (back/forward) or recently closed editors |

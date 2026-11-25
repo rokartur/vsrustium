@@ -1,5 +1,5 @@
 //! The native app: the workbench, themed from the built-in theme files, over the running extension host.
-//! Usage: code-gpui [folder or .code-workspace file [file]] [--theme <settings id>] [--user-data-dir <dir>] [--screenshot <png>]
+//! Usage: code-gpui [folder or .code-workspace file] [file] [--theme <settings id>] [--user-data-dir <dir>] [--screenshot <png>]
 //! [--screenshot-keys "<keystroke> ..."] [--screenshot-input <steps>] [--node]
 //!   [--extensionDevelopmentPath=<dir> [--extensionTestsPath=<path>]]: the app exits with the test runner's code.
 
@@ -105,8 +105,11 @@ fn main() -> anyhow::Result<()> {
     let positional: Vec<&String> = positional_indexes(&args).into_iter().map(|index| &args[index]).collect();
     // windowsMainService.ts keeps the path as given (no realpath), so /var stays /var on macOS.
     let resolve = |path: &String| std::fs::metadata(path).and_then(|_| std::path::absolute(path)).with_context(|| format!("opening {path}"));
-    let workspace = positional.first().map(|path| resolve(path)).transpose()?.map(Workspace::open);
-    let file = positional.get(1).map(|path| resolve(path)).transpose()?;
+    let mut paths = positional.iter().map(|path| resolve(path)).collect::<anyhow::Result<Vec<_>>>()?.into_iter().peekable();
+    // windowsMainService.ts: a file path alone opens an empty window with the file.
+    let opens_workspace = paths.peek().is_some_and(|path| path.is_dir() || path.extension().is_some_and(|extension| extension == config::workspace::WORKSPACE_EXTENSION));
+    let workspace = paths.next_if(|_| opens_workspace).map(Workspace::open);
+    let file = paths.next();
     let development = ExtensionDevelopment::from_args(&args)?;
     // shortcut: the port is no app bundle, so no CFBundleURLTypes routes `code-oss://` here; `--open-url <url>` does.
     let open_url = flag_value("--open-url");

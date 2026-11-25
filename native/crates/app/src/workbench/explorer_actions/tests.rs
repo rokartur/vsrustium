@@ -530,3 +530,24 @@ fn find_filters_the_tree_by_a_file_search_and_restores_it_on_close(cx: &mut Test
     assert_eq!(rows(&workbench, cx), ["sub", "needle.rs"]);
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[gpui::test]
+fn new_file_creates_the_picked_file_next_to_the_last_active_file(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = explorer("explorer-new-file", cx);
+    workbench.update_in(cx, |workbench, window, cx| workbench.open_file(dir.join("a.txt"), true, window, cx));
+    cx.run_until_parked();
+    workbench.update_in(cx, |workbench, window, cx| {
+        workbench.execute_command("workbench.action.files.newFile", vec![serde_json::json!({ "fileName": "b.md" })], window, cx);
+    });
+    cx.run_until_parked();
+    let created = dir.join("sub/new.md");
+    cx.simulate_new_path_selection(|directory| {
+        assert_eq!(directory, dir.as_path(), "the dialog opens in the folder of the last active file");
+        Some(created.clone())
+    });
+    cx.run_until_parked();
+    assert_eq!(std::fs::read_to_string(&created).unwrap(), "");
+    let active = workbench.read_with(cx, |workbench, _| workbench.editors.active().map(|editor| (editor.document.path.clone(), editor.preview)));
+    assert_eq!(active, Some((created, false)), "the new file opens pinned");
+    std::fs::remove_dir_all(&dir).unwrap();
+}

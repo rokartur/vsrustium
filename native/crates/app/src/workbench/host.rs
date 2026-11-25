@@ -39,7 +39,8 @@ impl Workbench {
     }
 }
 
-/// Starts another app process on `folder` with this one's flags: the port's window of its own.
+/// Starts another app process on `folder` (or a file, for an empty window with it) with this one's flags: the port's
+/// window of its own.
 pub(super) fn open_new_window(folder: Option<PathBuf>) -> std::io::Result<()> {
     let mut args: Vec<String> = std::env::args().collect();
     for index in crate::positional_indexes(&args).into_iter().rev() {

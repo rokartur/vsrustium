@@ -54,11 +54,45 @@ impl Workbench {
             workbench.clear_recently_opened(window, cx);
             Outcome::done()
         });
+        // fileCommands.ts NEW_FILE_COMMAND_ID: a save dialog for the new file, created empty and opened pinned.
+        self.commands.register("workbench.action.files.newFile", |workbench, args, window, cx| {
+            let name = args.first().and_then(|args| args["fileName"].as_str()).unwrap_or("Untitled.txt");
+            let picked = cx.prompt_for_new_path(&workbench.default_file_path(), Some(name));
+            cx.spawn_in(window, async move |workbench, cx| {
+                let Ok(Ok(Some(file))) = picked.await else { return };
+                let _ = workbench.update_in(cx, |workbench, window, cx| match std::fs::write(&file, "") {
+                    Ok(()) => workbench.open_file(file, true, window, cx),
+                    Err(error) => workbench.notify_error(&format!("Unable to create '{}': {error}", file.display())),
+                });
+            })
+            .detach();
+            Outcome::done()
+        });
+        // fileActions.ts `OpenActiveFileInEmptyWorkspace`; the port's file service has the `file` scheme only.
+        self.commands.register("workbench.action.files.showOpenedFileInNewWindow", |workbench, _, window, cx| {
+            let file = workbench.editors.active().filter(|editor| editor.document.scheme == "file").map(|editor| editor.document.path.clone());
+            let Some(file) = file else {
+                let _ = dialog::show_message_box(window, PromptLevel::Critical, "The active editor must contain an openable resource.", None, &["OK"], None, cx);
+                return Outcome::done();
+            };
+            if let Err(error) = super::host::open_new_window(Some(file)) {
+                workbench.notify_error(&format!("Failed to open a new window: {error}"));
+            }
+            Outcome::done()
+        });
     }
 
     /// The path of the open folder, or of the `.code-workspace` file of a multi-root window.
     pub(super) fn workspace_location(&self) -> Option<PathBuf> {
         self.workspace().map(|workspace| workspace.file.clone().unwrap_or_else(|| workspace.folders[0].path.clone()))
+    }
+
+    /// abstractFileDialogService.ts `defaultFilePath`: the folder of the last active file, else the first workspace
+    /// folder, else the user home.
+    fn default_file_path(&self) -> PathBuf {
+        let last_active_folder = self.quick_access.editor_history.entries.first().and_then(|file| file.parent()).map(Path::to_path_buf);
+        let workspace_folder = || self.workspace().and_then(|workspace| workspace.folders.first()).map(|folder| folder.path.clone());
+        last_active_folder.or_else(workspace_folder).or_else(|| std::env::var_os("HOME").map(PathBuf::from)).unwrap_or_default()
     }
 
     /// `pickFileFolderAndOpen`, `pickFileAndOpen` and `pickFolderAndOpen` of the native dialogs: what is picked
@@ -94,7 +128,7 @@ impl Workbench {
                 Openable::Workspace(path) => workspaces.push(path),
             }
         }
-        // shortcut: a file always opens in this window; the port opens a file in a new window only with a folder.
+        // shortcut: a file always opens in this window, even with `forceNewWindow`; open_new_window takes one path.
         if !files.is_empty() {
             let entries = files.iter().map(|path| recently_opened::entry(RecentKind::File, path, None)).collect();
             recently_opened::add(&mut self.shared_storage.lock().unwrap(), entries);
