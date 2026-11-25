@@ -60,8 +60,9 @@ fn the_title_actions_sort_collapse_and_follow_the_cursor(cx: &mut TestAppContext
     let (workbench, cx, receiver, _) = open(cx, "outline-actions", "class B {\n  run() {}\n}\nconst a = 1;\n");
     workbench.update(cx, |workbench, cx| {
         workbench.language_features.register(crate::workbench::document_symbols::REGISTER, vec![json!(11), json!("*"), json!("Test")]);
-        workbench.outline_pane.key = None;
         workbench.refresh_outline_pane(cx);
+        assert!(matches!(workbench.outline_pane.status, Status::NoProvider), "the editor opened before the provider");
+        workbench.language_providers_changed(crate::workbench::document_symbols::REGISTER, cx);
     });
     let range = |start: usize, end: usize| json!({ "startLineNumber": start, "startColumn": 1, "endLineNumber": end, "endColumn": 20 });
     answer(&receiver, "$provideDocumentSymbols", json!([

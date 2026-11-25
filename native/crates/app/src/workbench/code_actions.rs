@@ -223,6 +223,7 @@ impl Workbench {
                 self.code_actions_model_changed(cx);
             }
             "$registerCodeLensSupport" => self.code_lens_registrations_changed(cx),
+            super::document_symbols::REGISTER => self.outline_providers_changed(cx),
             "$registerInlayHintsProvider" => self.inlay_hints_registrations_changed(cx),
             "$registerDocumentColorProvider" => self.color_providers_changed(cx),
             "$registerFoldingRangeProvider" => self.trigger_folding_model_changed(cx),

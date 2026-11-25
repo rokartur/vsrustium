@@ -63,6 +63,13 @@ pub(super) struct Row<'a> {
 }
 
 impl Workbench {
+    /// outlinePane.ts listens to `IOutlineService.onDidChange`: a provider registered after the editor opened
+    /// builds the outline again.
+    pub(super) fn outline_providers_changed(&mut self, cx: &mut Context<Self>) {
+        self.outline_pane.key = None;
+        self.refresh_outline_pane(cx);
+    }
+
     /// `_handleEditorControlChanged` and `_createOutline`: a new model or version of the active editor asks the
     /// outline again; the previous tree stays until the answer, the loading message shows after 100ms.
     pub(super) fn refresh_outline_pane(&mut self, cx: &mut Context<Self>) {
