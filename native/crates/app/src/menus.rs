@@ -176,6 +176,9 @@ const WORKBENCH_MENUS: &[Row] = &[
     (MenuId::MenubarGoMenu, None, "workbench.action.quickOpen", "Go to &&File...", "3_global_nav", 1., None, None),
     (MenuId::MenubarGoMenu, None, "editor.action.dirtydiff.next", "Next &&Change", "7_change_nav", 0., None, None),
     (MenuId::MenubarGoMenu, None, "editor.action.dirtydiff.previous", "Previous &&Change", "7_change_nav", 0., None, None),
+    // gotoError.ts
+    (MenuId::MenubarGoMenu, None, "editor.action.marker.nextInFiles", "Next &&Problem", "6_problem_nav", 1., None, None),
+    (MenuId::MenubarGoMenu, None, "editor.action.marker.prevInFiles", "Previous &&Problem", "6_problem_nav", 2., None, None),
     // searchActionsSymbol.ts and gotoSymbolQuickAccess.ts
     (MenuId::MenubarGoMenu, None, "workbench.action.showAllSymbols", "Go to Symbol in &&Workspace...", "3_global_nav", 2., None, None),
     (MenuId::MenubarGoMenu, None, "workbench.action.gotoSymbol", "Go to &&Symbol in Editor...", "4_symbol_nav", 1., None, None),

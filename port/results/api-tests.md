@@ -192,6 +192,8 @@ On the Studio, the working tree of the diagnostics and Next Problem commit. `MOC
 
 On the Studio, the working tree of the `_executeFoldingRangeProvider` commit. `MOCHA_GREP="vscode API - languages" SUITE_TIMEOUT=300 port/tools/api-tests`: api-folder 7 passing, 0 pending, 0 failing, 395 not reached (exit 0); api-workspace 0/0/0. The four failing in M13 diagnostics pass: link detector, diagnostics & CodeActionProvider, completions with document filters, folding command.
 
+After the paste and drop providers and the snippet transforms and merge (00c1b4d219c), `MOCHA_GREP="vscode API - editor|vscode API - languages" SUITE_TIMEOUT=600`: api-folder 20 passing, 0 pending, 0 failing (exit 0 after 4s), api-workspace 0/0/0. editor.test.ts's `insertSnippet` cases pass.
+
 ## Milestone 17: webviews
 
 `MOCHA_GREP=<pattern> SUITE_TIMEOUT=900 port/tools/api-tests` on the Studio, the working tree of the webview panels commit 0af14672.

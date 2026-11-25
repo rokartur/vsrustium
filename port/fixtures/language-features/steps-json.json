@@ -1,0 +1,1 @@
+[{"wait": 9000}, {"hotkey": ["cmd", "shift", "m"]}, {"wait": 1500}, {"shot": "json"}, {"hover": [505, 102]}, {"wait": 2000}, {"shot": "json-hover"}]

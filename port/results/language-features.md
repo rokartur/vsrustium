@@ -63,3 +63,11 @@ Drop into the editor (Shift while dragging files) is checked by `cargo test -p a
 ## Extension manifests
 
 `FOLDER` port/fixtures/language-features/manifest, `FILE=package.json`, steps `steps-manifest.json`. Pair `manifest-pair.png`: extension-editing's "SVGs are not a valid image source." warning under `images/icon.svg` and in Problems, as in the reference. Left, outside milestone 13: the NPM Scripts view and the Terminal tab show in the port only.
+
+## JSON settings
+
+`FOLDER` a copy of port/fixtures/language-features/settings, `FILE=.vscode/settings.json` (`"editor.fontSize": "big"`), steps `steps-json.json` (Cmd+Shift+M). Pair `json-pair.png`: the squiggle under `"big"`, `Incorrect type. Expected "number".` in Problems with its first row selected and focused, the warning count in the status bar, as in the reference. The first run left the row unselected; the Problems view now selects the first marker when it takes focus (markersView.ts `focus`).
+
+## Links
+
+`FILE=d.md`, steps `steps-links.json`. Pair `link-pair.png`: `https://example.com` underlined in the link color, as in the reference. The hover the step aims at shows in neither window, so the link hover is not compared.
