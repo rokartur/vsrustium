@@ -10,7 +10,7 @@ use std::time::Duration;
 use config::configuration::Overrides;
 use files::Resource;
 use files::operations::{FileEdit, FileEditOptions, FileUndo};
-use gpui::{AsyncWindowContext, Context, Div, DragMoveEvent, FocusHandle, FontWeight, HighlightStyle, MouseButton, MouseDownEvent, PromptLevel, Rgba, ScrollHandle, StyledText, Subscription, Task, WeakEntity, Window, deferred, div, prelude::*, px};
+use gpui::{AsyncWindowContext, Context, Div, DragMoveEvent, ExternalPaths, FocusHandle, FontWeight, HighlightStyle, MouseButton, MouseDownEvent, PromptLevel, Rgba, ScrollHandle, StyledText, Subscription, Task, WeakEntity, Window, deferred, div, prelude::*, px};
 use serde_json::{Value, json};
 
 use super::Workbench;
@@ -690,21 +690,44 @@ impl Workbench {
         })
     }
 
-    /// `handleDragOver` with the pointer over `path`: the folder it drops into (a file drops into its folder),
-    /// unless that would move an item onto itself, into its own folder or below itself. A collapsed folder held
-    /// under the pointer for 500ms expands (`autoExpand`).
-    pub(super) fn explorer_drag_over(&mut self, path: &Path, items: &DraggedItems, window: &mut Window, cx: &mut Context<Self>) {
+    /// `handleDragOver` with the pointer over `over`, or over the empty area below the rows: the folder it drops into
+    /// (a file drops into its folder, the empty area into the last workspace folder), unless that would move an item
+    /// onto itself, into its own folder or below itself.
+    pub(super) fn explorer_drag_over(&mut self, over: Option<&Path>, items: &DraggedItems, window: &mut Window, cx: &mut Context<Self>) {
         let Some(tree) = self.folder.as_ref() else { return };
-        let target = tree.folder_for(path);
         let copy = window.modifiers().alt;
+        let target = match over {
+            Some(path) => tree.folder_for(path),
+            None if !copy && items.paths.iter().all(|source| source.parent().is_some_and(|parent| tree.is_root(parent))) => {
+                return self.set_explorer_drop_target(None, over, window, cx);
+            }
+            None => last_root(tree),
+        };
         let rejected = items.paths.iter().any(|source| *source == target || (!copy && source.parent() == Some(&target)) || target.starts_with(source));
-        let target = (!rejected).then_some(target);
+        self.set_explorer_drop_target((!rejected).then_some(target), over, window, cx);
+    }
+
+    /// `handleDragOver` for files dragged in from another app (`NativeDragAndDropData`): always a copy, into the
+    /// folder under the pointer or the last workspace folder.
+    pub(super) fn explorer_external_drag_over(&mut self, over: Option<&Path>, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(tree) = self.folder.as_ref() else { return };
+        let target = match over {
+            _ if self.setting("explorer.enableDragAndDrop") != json!(true) => None,
+            Some(path) => Some(tree.folder_for(path)),
+            None => Some(last_root(tree)),
+        };
+        self.set_explorer_drop_target(target, over, window, cx);
+    }
+
+    /// A collapsed folder held under the pointer for 500ms expands (`autoExpand`).
+    fn set_explorer_drop_target(&mut self, target: Option<PathBuf>, over: Option<&Path>, window: &mut Window, cx: &mut Context<Self>) {
         if self.explorer.drop_target == target {
             return;
         }
         self.explorer.drop_target = target.clone();
         self.explorer.expand_timer = None;
-        if let Some(folder) = target.filter(|folder| folder == path && !tree.is_expanded(folder)) {
+        let Some(tree) = self.folder.as_ref() else { return };
+        if let Some(folder) = target.filter(|folder| Some(folder.as_path()) == over && !tree.is_expanded(folder)) {
             self.explorer.expand_timer = Some(cx.spawn_in(window, async move |workbench, cx| {
                 cx.background_executor().timer(Duration::from_millis(500)).await;
                 let _ = workbench.update(cx, |workbench, cx| {
@@ -731,6 +754,7 @@ impl Workbench {
             let current = (row.clone(), index);
             let menu_target = (row.clone(), index);
             let over = folder.clone();
+            let external_over = folder.clone();
             div()
                 .id(("explorer-compressed-name", index))
                 .flex()
@@ -755,7 +779,13 @@ impl Workbench {
                         if event.bounds.contains(&event.event.position) {
                             cx.stop_propagation();
                             let items = event.drag(cx).clone();
-                            workbench.explorer_drag_over(&over, &items, window, cx);
+                            workbench.explorer_drag_over(Some(&over), &items, window, cx);
+                        }
+                    }))
+                    .on_drag_move(cx.listener(move |workbench, event: &DragMoveEvent<ExternalPaths>, window, cx| {
+                        if event.bounds.contains(&event.event.position) {
+                            cx.stop_propagation();
+                            workbench.explorer_external_drag_over(Some(&external_over), window, cx);
                         }
                     }))
                 })
@@ -841,6 +871,70 @@ impl Workbench {
                 }
             };
             if let Err(error) = result {
+                notify_error(&workbench, cx, error).await;
+            }
+        })
+        .detach();
+    }
+
+    /// The tree below its last row. A drop there has no target row (explorerViewer.ts `drop`), so it goes into the
+    /// last workspace folder; with no root rows that folder is the whole list, highlighted here too.
+    pub(super) fn explorer_empty_area(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let whole_list_targeted = cx.has_active_drag()
+            && self.folder.as_ref().is_some_and(|tree| !tree.shows_roots() && self.explorer.drop_target.as_ref().is_some_and(|target| tree.is_root(target)));
+        div()
+            .id("explorer-empty-area")
+            .flex_1()
+            .when(whole_list_targeted, |area| area.bg(self.color("list.dropBackground")))
+            .on_drag_move(cx.listener(|workbench, event: &DragMoveEvent<DraggedItems>, window, cx| {
+                if event.bounds.contains(&event.event.position) {
+                    let items = event.drag(cx).clone();
+                    workbench.explorer_drag_over(None, &items, window, cx);
+                }
+            }))
+            .on_drag_move(cx.listener(|workbench, event: &DragMoveEvent<ExternalPaths>, window, cx| {
+                if event.bounds.contains(&event.event.position) {
+                    workbench.explorer_external_drag_over(None, window, cx);
+                }
+            }))
+            .on_drop(cx.listener(|workbench, items: &DraggedItems, window, cx| workbench.explorer_drop(items, window, cx)))
+            .on_drop(cx.listener(|workbench, paths: &ExternalPaths, window, cx| workbench.explorer_import(paths, window, cx)))
+    }
+
+    /// fileImportExport.ts `ExternalFileImport.doImport`: folders dropped on a workspace folder ask whether to copy
+    /// them, then each dropped item whose name the target already has asks to replace it, and the rest copy in.
+    pub(super) fn explorer_import(&mut self, paths: &ExternalPaths, window: &mut Window, cx: &mut Context<Self>) {
+        self.explorer.expand_timer = None;
+        let Some(target) = self.explorer.drop_target.take() else { return };
+        let Some(tree) = self.folder.as_ref() else { return };
+        cx.notify();
+        window.activate_window();
+        let folders: Vec<PathBuf> = paths.paths().iter().filter(|path| path.is_dir()).cloned().collect();
+        let ask_about_folders = !folders.is_empty() && tree.is_root(&target);
+        let resources = paths.paths().to_vec();
+        let confirm_undo = self.setting("explorer.confirmUndo");
+        let auto_open = self.setting("explorer.autoOpenDroppedFile") == json!(true);
+        cx.spawn_in(window, async move |workbench, cx| {
+            if ask_about_folders {
+                // Every dropped folder is a `file` resource, as every workspace folder, so Add is always offered.
+                let (message, add, copy) = match folders.as_slice() {
+                    [folder] => {
+                        let name = file_name(folder);
+                        (format!("Do you want to copy '{name}' or add '{name}' as a folder to the workspace?"), "Add Folder to Workspace", "Copy Folder")
+                    }
+                    _ => ("Do you want to copy the folders or add the folders to the workspace?".to_string(), "Add Folders to Workspace", "Copy Folders"),
+                };
+                match prompt(&workbench, cx, PromptLevel::Info, message, &[add, copy, "Cancel"]).await {
+                    Some(0) => {
+                        // shortcut: workspaceEditingService.addFolders is not ported (port/notes.md milestone 12); upgrade with it.
+                        notify_error(&workbench, cx, "Adding folders to the workspace is not supported yet.".to_string()).await;
+                        return;
+                    }
+                    Some(1) => {}
+                    _ => return,
+                }
+            }
+            if let Err(error) = import_resources(&workbench, cx, &target, resources, confirm_undo != json!("light"), auto_open).await {
                 notify_error(&workbench, cx, error).await;
             }
         })
@@ -978,6 +1072,65 @@ pub(super) async fn confirm(workbench: &WeakEntity<Workbench>, cx: &mut AsyncWin
     }
 }
 
+/// `dialogService.prompt`: the index of the pressed button; with dialogs skipped, the first.
+async fn prompt(workbench: &WeakEntity<Workbench>, cx: &mut AsyncWindowContext, level: PromptLevel, message: String, buttons: &[&str]) -> Option<usize> {
+    let answer = workbench.update_in(cx, |workbench, window, cx| match workbench.skip_dialogs {
+        true => None,
+        false => Some(window.prompt(level, &message, None, buttons, cx)),
+    });
+    match answer {
+        Ok(Some(answer)) => answer.await.ok(),
+        Ok(None) => Some(0),
+        Err(_) => None,
+    }
+}
+
+/// `ExternalFileImport.importResources`: a dropped item missing on disk is counted, one whose name `target` already
+/// has (in any case, the disk is not PathCaseSensitive) asks to replace it, and the rest copy in as one undoable
+/// edit. A single dropped file opens pinned with `explorer.autoOpenDroppedFile`.
+async fn import_resources(workbench: &WeakEntity<Workbench>, cx: &mut AsyncWindowContext, target: &Path, resources: Vec<PathBuf>, confirm_before_undo: bool, auto_open: bool) -> Result<(), String> {
+    let target_names: std::collections::HashSet<String> = std::fs::read_dir(target).map_err(|error| error.to_string())?.flatten().map(|child| child.file_name().to_string_lossy().to_lowercase()).collect();
+    let mut inaccessible = 0;
+    let mut imported = Vec::new();
+    for resource in resources {
+        if !resource.exists() {
+            inaccessible += 1;
+            continue;
+        }
+        let name = file_name(&resource);
+        if target_names.contains(&name.to_lowercase()) && !confirm(workbench, cx, PromptLevel::Warning, overwrite_message(&name), Some("This action is irreversible!".into()), "Replace").await {
+            continue;
+        }
+        imported.push(resource);
+    }
+    if inaccessible > 0 {
+        let message = match inaccessible {
+            1 => "The dropped file could not be accessed for import.",
+            _ => "Some or all of the dropped files could not be accessed for import.",
+        };
+        notify_error(workbench, cx, message.to_string()).await;
+    }
+    if imported.is_empty() {
+        return Ok(());
+    }
+    let label = match imported.as_slice() {
+        [resource] => format!("Import {}", file_name(resource)),
+        _ => format!("Import {} resources", imported.len()),
+    };
+    let options = FileEditOptions { copy: Some(true), overwrite: Some(true), ..FileEditOptions::default() };
+    let targets: Vec<PathBuf> = imported.iter().map(|resource| target.join(file_name(resource))).collect();
+    let edits = imported.iter().zip(&targets).map(|(old, new)| FileEdit::Copy { old: resource(old), new: resource(new), options: options.clone() }).collect();
+    apply_bulk_edit(workbench, cx, edits, label, confirm_before_undo).await?;
+    if let [target] = targets.as_slice()
+        && auto_open
+        && target.is_file()
+    {
+        let target = target.clone();
+        let _ = workbench.update_in(cx, |workbench, window, cx| workbench.open_file(target, true, window, cx));
+    }
+    Ok(())
+}
+
 /// `dialogService.confirm` with the "Do not ask me again" checkbox; a confirmation with the box checked
 /// turns `setting` off. With dialogs skipped, confirmed.
 async fn confirm_or_stop_asking(workbench: &WeakEntity<Workbench>, cx: &mut AsyncWindowContext, level: PromptLevel, message: String, detail: Option<String>, primary: &str, setting: &str) -> bool {
@@ -1018,6 +1171,11 @@ fn valid_paste_target(folder: &Path, name: &str, is_dir: bool, naming: Increment
         name = file_actions::increment_file_name(&name, is_dir, naming);
     }
     folder.join(name)
+}
+
+/// Where a drop below the rows goes: `explorerService.roots`' last.
+fn last_root(tree: &crate::explorer::FileTree) -> PathBuf {
+    tree.workspace.folders.last().expect("a workspace has a folder").path.clone()
 }
 
 fn file_name(path: &Path) -> String {

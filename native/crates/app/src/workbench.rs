@@ -44,7 +44,7 @@ use config::service::Settings;
 use config::workspace::Workspace;
 use storage::Storage;
 
-use gpui::{ClickEvent, Context, Div, DragMoveEvent, FocusHandle, FontFeatures, FontWeight, MouseButton, MouseDownEvent, Rgba, Task, Window, div, prelude::*, px, rgb, svg, transparent_black};
+use gpui::{ClickEvent, Context, Div, DragMoveEvent, ExternalPaths, FocusHandle, FontFeatures, FontWeight, MouseButton, MouseDownEvent, Rgba, Task, Window, div, prelude::*, px, rgb, svg, transparent_black};
 use serde_json::Value;
 
 use crate::commands::Commands;
@@ -629,15 +629,25 @@ impl Workbench {
                 .when_some(drag, |row, drag| row.on_drag(drag, |drag, _, _, cx| cx.new(|_| drag.clone())))
                 .when(!row.is_new, |row| {
                     let over = path.clone();
+                    let external_over = path.clone();
                     row.on_drag_move(cx.listener(move |workbench, event: &DragMoveEvent<DraggedItems>, window, cx| {
                         if event.bounds.contains(&event.event.position) {
                             let items = event.drag(cx).clone();
-                            workbench.explorer_drag_over(&over, &items, window, cx);
+                            workbench.explorer_drag_over(Some(&over), &items, window, cx);
+                        }
+                    }))
+                    .on_drag_move(cx.listener(move |workbench, event: &DragMoveEvent<ExternalPaths>, window, cx| {
+                        if event.bounds.contains(&event.event.position) {
+                            workbench.explorer_external_drag_over(Some(&external_over), window, cx);
                         }
                     }))
                     .on_drop(cx.listener(|workbench, items: &DraggedItems, window, cx| {
                         cx.stop_propagation();
                         workbench.explorer_drop(items, window, cx);
+                    }))
+                    .on_drop(cx.listener(|workbench, paths: &ExternalPaths, window, cx| {
+                        cx.stop_propagation();
+                        workbench.explorer_import(paths, window, cx);
                     }))
                 })
                 .when(!is_edited, |row| {
@@ -687,7 +697,8 @@ impl Workbench {
                     .on_mouse_down(MouseButton::Right, cx.listener(|workbench, event: &MouseDownEvent, window, cx| workbench.show_explorer_context_menu(None, event.position, window, cx)))
                     // abstractTree.ts `AbstractFindController.open`: `paddingTop: 30` while the find widget shows.
                     .when(self.explorer.find.is_open(), |tree| tree.pt(px(30.)))
-                    .children(rows),
+                    .children(rows)
+                    .child(self.explorer_empty_area(cx)),
                 ).children(self.explorer_find_widget(window, cx))))
             .child(self.section_header("Outline", false, true))
             .child(self.section_header("Timeline", false, true))
