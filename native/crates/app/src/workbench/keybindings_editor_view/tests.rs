@@ -239,3 +239,34 @@ fn the_modal_blocks_the_command_palette_key_but_not_the_command(cx: &mut TestApp
     cx.run_until_parked();
     assert!(workbench.read_with(cx, |workbench, _| workbench.quick_inputs.current().is_some() && workbench.keybindings_editor.open));
 }
+
+/// Type navigation in the table (keybindingsEditor.ts `keyboardNavigationLabelProvider`: the command label, else the
+/// id), and `list.toggleSelection` taking the focused row out of the selection until the focus moves.
+#[gpui::test]
+fn typing_in_the_table_focuses_the_next_matching_command(cx: &mut TestAppContext) {
+    let (workbench, cx, _) = keybindings_editor_window(cx, "type-navigation", "");
+    cx.simulate_keystrokes("cmd-k cmd-s");
+    workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("keybindings.editor.focusKeybindings", Vec::new(), window, cx)));
+    cx.run_until_parked();
+    let focused_label = |cx: &mut VisualTestContext| {
+        workbench.read_with(cx, |workbench, _| {
+            let (labels, focus) = workbench.keybindings_table_navigation_labels();
+            focus.map(|index| labels[index].clone())
+        })
+    };
+    cx.simulate_keystrokes("t");
+    let first = focused_label(cx).expect("a row starts with t");
+    assert!(first.to_lowercase().starts_with('t'), "{first}");
+    cx.simulate_keystrokes("o");
+    let second = focused_label(cx).unwrap();
+    assert!(second.to_lowercase().starts_with("to"), "{second}");
+    cx.executor().advance_clock(Duration::from_millis(800));
+    cx.run_until_parked();
+
+    let selected = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| (workbench.keybindings_editor.selected, workbench.keybindings_editor.unselected));
+    let focus = selected(cx).0;
+    workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("list.toggleSelection", Vec::new(), window, cx)));
+    assert_eq!(selected(cx), (focus, true));
+    workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("list.focusAnyDown", Vec::new(), window, cx)));
+    assert_eq!(selected(cx), (focus.map(|index| index + 1), false));
+}

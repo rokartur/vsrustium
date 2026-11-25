@@ -326,7 +326,8 @@ pub fn theme_data(theme: &Theme, theme_label: &str, editor: &Value, underline_li
     styles.insert("text-link-decoration".into(), json!(if underline_links { "underline" } else { "none" }));
     for id in include_str!("webview/color_ids.txt").lines() {
         if let Some(color) = theme.color(id) {
-            styles.insert(format!("vscode-{}", id.replacen('.', "-", 1)), json!(css_color(color)));
+            // colorUtils.ts `asCssVariableName`: every dot.
+            styles.insert(format!("vscode-{}", id.replace('.', "-")), json!(css_color(color)));
         }
     }
     for (id, value) in SIZES {
@@ -419,19 +420,72 @@ const SIZES: [(&str, &str); 49] = [
 
 /// Runs before index.html's own script, which captures `window.parent.postMessage` (the top window here) to post
 /// `webview-ready` with its port. The port's messages then reach the native handler as JSON.
-/// shortcut: ArrayBuffers in messages arrive as `{}`, JSON has no binary; port with a base64 transfer if an extension needs it.
+/// Extension messages travel as extHostWebviewMessaging.ts serializes them: JSON text with
+/// `$$vscode_array_buffer_reference$$` objects, the ArrayBuffers beside it as base64.
 const BRIDGE_SCRIPT: &str = r#"(() => {
   const native = window.webkit.messageHandlers.vscodeWebviewHost;
+  const viewTypes = [, Int8Array, Uint8Array, Uint8ClampedArray, Int16Array, Uint16Array, Int32Array, Uint32Array, Float32Array, Float64Array, BigInt64Array, BigUint64Array];
+  const toBase64 = buffer => {
+    const bytes = new Uint8Array(buffer);
+    let text = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      text += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    }
+    return btoa(text);
+  };
+  const fromBase64 = text => Uint8Array.from(atob(text), c => c.charCodeAt(0)).buffer;
+  const serialize = message => {
+    const buffers = [];
+    const add = buffer => {
+      const index = buffers.indexOf(buffer);
+      return index >= 0 ? index : buffers.push(buffer) - 1;
+    };
+    const text = JSON.stringify(message, (_key, value) => {
+      if (value instanceof ArrayBuffer) {
+        return { $$vscode_array_buffer_reference$$: true, index: add(value) };
+      }
+      const type = ArrayBuffer.isView(value) ? viewTypes.indexOf(value.constructor) : -1;
+      if (type > 0) {
+        return { $$vscode_array_buffer_reference$$: true, index: add(value.buffer), view: { type, byteLength: value.byteLength, byteOffset: value.byteOffset } };
+      }
+      return value;
+    });
+    return { message: text, buffers: buffers.map(toBase64) };
+  };
+  const deserialize = ({ message, buffers }) => {
+    const transfer = buffers.map(fromBase64);
+    const revive = (_key, value) => {
+      if (!value || typeof value !== 'object' || !value.$$vscode_array_buffer_reference$$) {
+        return value;
+      }
+      const buffer = transfer[value.index];
+      const type = value.view && viewTypes[value.view.type];
+      return type ? new type(buffer, value.view.byteOffset, value.view.byteLength / type.BYTES_PER_ELEMENT) : buffer;
+    };
+    return { message: JSON.parse(message, transfer.length ? revive : undefined), transfer };
+  };
   let port;
   window.postMessage = (message, _origin, transfer) => {
     if (port || !message || message.channel !== 'webview-ready' || !transfer || !transfer[0]) {
       return;
     }
     port = transfer[0];
-    port.onmessage = e => native.postMessage(JSON.stringify({ channel: e.data.channel, data: e.data.data }));
+    port.onmessage = e => {
+      const { channel, data } = e.data;
+      native.postMessage(JSON.stringify({ channel, data: channel === 'onmessage' ? serialize(data.message) : data }));
+    };
     native.postMessage(JSON.stringify({ channel: 'webview-ready', data: message.data }));
   };
-  globalThis.__vscodeWebviewHost = { post: (channel, args) => port.postMessage({ channel, args }) };
+  globalThis.__vscodeWebviewHost = {
+    post: (channel, args) => {
+      if (channel !== 'message') {
+        port.postMessage({ channel, args });
+        return;
+      }
+      const data = deserialize(args);
+      port.postMessage({ channel, args: data }, data.transfer);
+    },
+  };
 })();"#;
 
 struct MessageState {

@@ -42,7 +42,7 @@ fn workbench_diff_opens_a_diff_editor_of_two_files(cx: &mut TestAppContext) {
 
     let (names, active, changes) = workbench.read_with(cx, |workbench, _| {
         let names: Vec<String> = workbench.editors.editors.iter().map(|editor| workbench.editor_name(editor)).collect();
-        let active = workbench.editors.active().unwrap().document.name();
+        let active = workbench.editors.active().unwrap().document().name();
         let diff = workbench.editors.active_diff().unwrap().diff.as_ref().unwrap();
         let changes: Vec<String> = diff.diff.changes.iter().map(|change| format!("{}->{}", change.original, change.modified)).collect();
         (names, active, changes)
@@ -76,12 +76,12 @@ fn workbench_diff_opens_a_diff_editor_of_two_files(cx: &mut TestAppContext) {
     cx.run_until_parked();
     let (dirty, changes) = workbench.read_with(cx, |workbench, _| {
         let diff = workbench.editors.active_diff().unwrap().diff.as_ref().unwrap();
-        assert_eq!(diff.versions.1, workbench.editors.tab_model(0).version_id);
+        assert_eq!(diff.versions.1, workbench.editors.tab_model(0).text_model().version_id);
         (workbench.editors.tab_model(0).is_dirty(), diff.diff.changes.iter().map(|change| format!("{}->{}", change.original, change.modified)).collect::<Vec<_>>())
     });
     assert!(dirty);
     assert_eq!(changes, ["[2,3)->[2,3)", "[4,4)->[4,5)"]);
-    let text = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document.lines[1].clone());
+    let text = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document().lines[1].clone());
     assert_eq!(text, "xTWO");
     std::fs::remove_dir_all(dir).unwrap();
 }
@@ -132,7 +132,7 @@ fn swap_sides_shows_the_modified_file_as_the_original(cx: &mut TestAppContext) {
         let diff = workbench.editors.active_diff().unwrap();
         let changes: Vec<String> = diff.diff.as_ref().unwrap().diff.changes.iter().map(|change| format!("{}->{}", change.original, change.modified)).collect();
         let zones = workbench.editors.model("file", &dir.join("b.txt")).unwrap().view_zones.len();
-        (workbench.editors.active().unwrap().document.name(), changes, zones)
+        (workbench.editors.active().unwrap().document().name(), changes, zones)
     });
     assert_eq!(active, "a.txt");
     assert_eq!(changes, ["[2,3)->[2,3)", "[4,5)->[4,4)"]);
@@ -184,5 +184,16 @@ fn hide_unchanged_regions_collapses_both_sides(cx: &mut TestAppContext) {
     workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("diffEditor.toggleCollapseUnchangedRegions", Vec::new(), window, cx)));
     cx.run_until_parked();
     assert_eq!(state(&workbench, cx), (vec![], 0));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[gpui::test]
+fn workbench_diff_opens_in_the_given_column(cx: &mut TestAppContext) {
+    let (dir, workbench, _receiver, cx) = workbench_in("diff-column", cx);
+    let (a, b) = (file_uri(&dir.join("a.txt")), file_uri(&dir.join("b.txt")));
+    workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("_workbench.diff", vec![a, b, json!("DIFF"), json!([1, { "preview": false }])], window, cx)));
+    cx.run_until_parked();
+    let (columns, active, diff_shown) = workbench.read_with(cx, |workbench, _| (workbench.editors.column_ids(), workbench.editors.id, workbench.editors.active_diff().is_some()));
+    assert_eq!((columns.len(), columns[1], diff_shown), (2, active, true), "ViewColumn.Two is the second group");
     std::fs::remove_dir_all(dir).unwrap();
 }

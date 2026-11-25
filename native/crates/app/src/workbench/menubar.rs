@@ -10,11 +10,13 @@ use gpui::{Action, App, Context, KeyBinding, Menu, MenuItem, OsAction, SystemMen
 use objc2::{MainThreadMarker, sel};
 use objc2_app_kit::{NSApplication, NSMenuItem};
 use objc2_foundation::NSString;
-use serde_json::json;
+use serde_json::{Value, json};
 
 use super::Workbench;
 use crate::keybindings::Chord;
+use super::workspace_actions::recent_openable;
 use crate::menus::{MenuAction, MenuId, menu_actions, mnemonic_menu_label};
+use crate::recently_opened;
 
 actions!(menubar, [Hide, HideOthers, ShowAll]);
 
@@ -23,6 +25,13 @@ actions!(menubar, [Hide, HideOthers, ShowAll]);
 #[action(namespace = menubar, no_json)]
 pub struct RunMenuCommand {
     pub id: String,
+}
+
+/// An Open Recent entry of the menu bar, by its index in `Menubar::recent`.
+#[derive(Clone, Debug, PartialEq, gpui::Action)]
+#[action(namespace = menubar, no_json)]
+pub struct OpenRecentMenuEntry {
+    pub index: usize,
 }
 
 /// A disabled item. AppKit enables an item only when GPUI has a listener for its action, and this one has none.
@@ -44,7 +53,14 @@ pub const NAME_LONG: &str = "VSRustium";
 pub struct Menubar {
     pub menus: Vec<(String, Vec<MenuAction>)>,
     pub keybindings: BTreeMap<String, Vec<Chord>>,
+    /// `getOpenRecentActions`: the labels and entries of the recent folders and workspaces, then of the files.
+    pub recent: Vec<(String, Value)>,
+    pub recent_workspaces: usize,
 }
+
+/// menubarControl.ts `MAX_MENU_RECENT_ENTRIES` and `MAX_MENU_RECENT_LABEL_LENGTH`.
+const MAX_MENU_RECENT_ENTRIES: usize = 10;
+const MAX_MENU_RECENT_LABEL_LENGTH: usize = 120;
 
 /// Runs the menu actions in `window`, the only window of the app.
 pub fn install(window: WindowHandle<Workbench>, cx: &mut App) {
@@ -53,6 +69,12 @@ pub fn install(window: WindowHandle<Workbench>, cx: &mut App) {
         let id = action.id.clone();
         cx.defer(move |cx| {
             let _ = window.update(cx, |workbench, window, cx| workbench.run_menu_command(&id, window, cx));
+        });
+    });
+    cx.on_action(move |action: &OpenRecentMenuEntry, cx| {
+        let index = action.index;
+        cx.defer(move |cx| {
+            let _ = window.update(cx, |workbench, window, cx| workbench.open_recent_menu_entry(index, window, cx));
         });
     });
     cx.on_action(|_: &Hide, cx| cx.hide());
@@ -66,7 +88,7 @@ impl Workbench {
         let context = self.key_context(window);
         let mut menus = Vec::new();
         for action in menu_actions(&self.menus, MenuId::MenubarMainMenu, &context) {
-            if let MenuAction::Submenu { title, actions } = action {
+            if let MenuAction::Submenu { title, actions, .. } = action {
                 menus.push((mnemonic_menu_label(&title), actions));
             }
         }
@@ -80,7 +102,16 @@ impl Workbench {
                 keybindings.insert(id, item.keybinding.clone());
             }
         }
-        Menubar { menus, keybindings }
+        // Entries of other schemes (remote) are left out: the port opens `file` paths only.
+        let menu_entries = |entries: &[Value]| -> Vec<(String, Value)> {
+            let entries = entries.iter().filter(|entry| recently_opened::path(entry).is_some()).take(MAX_MENU_RECENT_ENTRIES);
+            // menubarControl.ts escapes `&` (`unmnemonicLabel`) so Electron shows it; GPUI shows the label as is.
+            entries.map(|entry| (truncate_middle(&recently_opened::label(entry), MAX_MENU_RECENT_LABEL_LENGTH), entry.clone())).collect()
+        };
+        let mut recent = menu_entries(&self.recently_opened.workspaces);
+        let recent_workspaces = recent.len();
+        recent.extend(menu_entries(&self.recently_opened.files));
+        Menubar { menus, keybindings, recent, recent_workspaces }
     }
 
     /// Sets the application menu when what it shows changed, as `updateMenubar` does on menu changes.
@@ -96,6 +127,16 @@ impl Workbench {
         // AppKit retitles the app menu's first "Preferences" item to "Settings…" on a later main-queue turn.
         cx.spawn(async |_, _| fix_up_app_kit_menus()).detach();
         self.installed_menubar = Some(menubar);
+    }
+
+    /// menubar.ts `createOpenRecentMenuItem`: an entry that fails to open leaves the list.
+    fn open_recent_menu_entry(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((_, entry)) = self.installed_menubar.as_ref().and_then(|menubar| menubar.recent.get(index)).cloned() else { return };
+        if !self.open_window(vec![recent_openable(&entry)], false, window, cx) {
+            let uri = recently_opened::location(&entry).to_string();
+            recently_opened::remove(&mut self.shared_storage.lock().unwrap(), &[&uri]);
+            self.recently_opened_changed(window, cx);
+        }
     }
 
     /// `runActionInRenderer` of a menu click: the command gets `{ from: 'menu' }` (window.ts `vscode:runAction`).
@@ -156,9 +197,21 @@ fn native_menus(menubar: &Menubar) -> (Vec<Menu>, Vec<KeyBinding>) {
 fn native_items(actions: &[MenuAction], menubar: &Menubar, key_equivalents: &mut Vec<KeyBinding>) -> Vec<MenuItem> {
     let mut items = Vec::new();
     for action in actions {
+        // menubarControl.ts `insertActionsBefore`: the recent entries come before Open Recent's "More...".
+        if matches!(action, MenuAction::Command { id, .. } if id == "workbench.action.openRecent") {
+            for (index, (label, _)) in menubar.recent.iter().enumerate() {
+                if index == menubar.recent_workspaces && index > 0 {
+                    items.push(MenuItem::separator());
+                }
+                items.push(MenuItem::action(label.clone(), OpenRecentMenuEntry { index }));
+            }
+            if !menubar.recent.is_empty() {
+                items.push(MenuItem::separator());
+            }
+        }
         items.push(match action {
             MenuAction::Command { id, title, enabled, checked, .. } => native_command(id, title, *enabled, *checked, menubar, key_equivalents),
-            MenuAction::Submenu { title, actions } => MenuItem::submenu(Menu::new(native_label(title)).items(native_items(actions, menubar, key_equivalents))),
+            MenuAction::Submenu { title, actions, .. } => MenuItem::submenu(Menu::new(native_label(title)).items(native_items(actions, menubar, key_equivalents))),
             MenuAction::Separator => MenuItem::separator(),
         });
     }
@@ -192,9 +245,20 @@ fn native_command(id: &str, title: &str, enabled: bool, checked: bool, menubar: 
     item.checked(checked)
 }
 
+/// strings.ts `truncateMiddle` with its one-character ellipsis.
+fn truncate_middle(value: &str, max_length: usize) -> String {
+    let chars: Vec<char> = value.chars().collect();
+    if chars.len() <= max_length {
+        return value.to_string();
+    }
+    let prefix: String = chars[..max_length.div_ceil(2) - 1].iter().collect();
+    let suffix: String = chars[chars.len() - max_length / 2..].iter().collect();
+    format!("{prefix}…{suffix}")
+}
+
 /// The label Electron's Cocoa menu shows: mnemonics dropped and "..." drawn as "…".
 fn native_label(title: &str) -> String {
-    mnemonic_menu_label(title).replace("...", "…")
+    mnemonic_menu_label(&crate::nls::localize(title)).replace("...", "…")
 }
 
 fn action_item<A: Action + Clone>(label: String, action: A, os_action: Option<OsAction>, key_equivalent: Option<String>, key_equivalents: &mut Vec<KeyBinding>) -> MenuItem {

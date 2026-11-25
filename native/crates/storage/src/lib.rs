@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use rusqlite::types::{ToSql, ValueRef};
 use rusqlite::{Connection, params};
 
+pub mod profiles;
 pub mod state;
 
 pub struct Storage {
@@ -60,6 +61,11 @@ impl Storage {
         }
         let result = self.connection().execute("DELETE FROM ItemTable WHERE key = ?1", params![key]);
         self.check(result, "updateItems()");
+    }
+
+    /// Rereads the cache from the file, which another process may have written.
+    pub fn refresh(&mut self) {
+        self.items = self.stored_items();
     }
 
     /// `checkIntegrity(full)`: SQLite's verdict, `ok` for a healthy file.

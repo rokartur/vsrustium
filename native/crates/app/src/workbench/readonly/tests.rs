@@ -90,7 +90,7 @@ fn include_minus_exclude_then_permissions_decide_and_the_session_wins(cx: &mut T
 #[gpui::test]
 fn an_edit_in_a_read_only_editor_shows_why_and_escape_closes_it(cx: &mut TestAppContext) {
     let (workbench, cx, dir) = open(cx, "ro.txt", "abc\ndef", r#"{"files.readonlyInclude": {"ro.txt": true}}"#);
-    let text = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document.lines.join("\n"));
+    let text = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document().lines.join("\n"));
     let visible = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.editor_message_visible());
     workbench.update_in(cx, |workbench, window, cx| window.focus(&workbench.editor_focus, cx));
     cx.simulate_keystrokes("x");

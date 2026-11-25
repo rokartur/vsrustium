@@ -7,7 +7,8 @@ use std::cmp::Reverse;
 
 use super::auto_indent::{AutoIndent, Model};
 use super::cursor::{self, Position, Selection};
-use super::{OpenEditor, anchor_select, folding, indent_guides};
+use super::word_operations::{self, AutoClosing, DeleteWordContext, WordClassifier, WordDelete, WordDeleteKind, WordNavigation};
+use super::{OpenEditor, anchor_select, clipboard, folding, indent_guides};
 
 /// `EditOperationType`: what the last edit was, which decides where undo stops go.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -56,6 +57,8 @@ pub enum EditReason {
     EolChange,
 }
 
+/// How many replaces a model keeps for its other editors to follow (`sync_with_model`).
+const MAX_LOGGED_EDITS: usize = 1000;
 const TYPED: EditReason = EditReason::Cursor { kind: "type", detailed_source: "keyboard" };
 
 pub(super) fn command(id: &'static str) -> EditReason {
@@ -104,6 +107,17 @@ pub struct History {
 impl Default for History {
     fn default() -> Self {
         History { undo: Vec::new(), redo: Vec::new(), open: false, last_kind: EditKind::Other, alternative_version_id: 1, saved_alternative_version_id: 1, undone_version_id: 0 }
+    }
+}
+
+impl History {
+    /// `EditStackElement.heapSize` summed over the undo and redo groups; `None` without any.
+    pub(super) fn heap_size(&self) -> Option<usize> {
+        if self.undo.is_empty() && self.redo.is_empty() {
+            return None;
+        }
+        let edits = self.undo.iter().chain(&self.redo).flat_map(|group| &group.edits);
+        Some(edits.map(|edit| edit.removed.len() + edit.inserted.len()).sum())
     }
 }
 
@@ -170,10 +184,10 @@ impl CursorEdit {
 impl OpenEditor {
     pub fn is_dirty(&self) -> bool {
         // untitledTextEditorModel.ts: dirty with an associated file path or any text.
-        if self.document.scheme == "untitled" {
-            return self.associated_file || self.document.lines != [""];
+        if self.document().scheme == "untitled" {
+            return self.text_model().associated_file || self.document().lines != [""];
         }
-        self.history.alternative_version_id != self.history.saved_alternative_version_id
+        self.text_model().history.alternative_version_id != self.text_model().history.saved_alternative_version_id
     }
 
     /// The primary cursor's selection (`getSelection`).
@@ -183,7 +197,7 @@ impl OpenEditor {
 
     /// `pushStackElement`: the next edit starts a new undo group.
     pub fn push_undo_stop(&mut self) {
-        self.history.open = false;
+        self.text_model_mut().history.open = false;
     }
 
     /// `setSelections`: the first one is the primary cursor; overlapping ones merge. The vertical leftovers are dropped.
@@ -233,8 +247,8 @@ impl OpenEditor {
         let mut selections = Vec::new();
         for (index, &selection) in self.selections.iter().enumerate() {
             let (anchor_leftover, head_leftover) = self.leftover(index);
-            let (head, leftover) = step(&self.document.lines, selection, head_leftover);
-            let head = folding::shown_position(&self.document.lines, self.folding.hidden(), head, head > selection.head);
+            let (head, leftover) = step(&self.document().lines, selection, head_leftover);
+            let head = folding::shown_position(&self.document().lines, self.folding.hidden(), head, head > selection.head);
             selections.push(selection.moved(head, select));
             leftovers.push((if select { anchor_leftover } else { leftover }, leftover));
         }
@@ -261,7 +275,10 @@ impl OpenEditor {
 
     /// `cursorUp`/`cursorDown`: from a selection's start or end, keeping the visible column through short lines.
     pub fn move_vertically(&mut self, down: bool, select: bool) {
-        let tab_size = self.document.indentation.tab_size;
+        if self.wraps() {
+            return self.move_vertically_in_view(down, select);
+        }
+        let tab_size = self.document().indentation.tab_size;
         let hidden = self.folding.hidden().to_vec();
         self.move_cursors(select, |lines, selection, leftover| {
             let from = match (select || selection.is_empty(), down) {
@@ -273,18 +290,29 @@ impl OpenEditor {
         });
     }
 
-    /// `cursorWordStartLeft`/`cursorWordEndRight` from the head.
-    pub fn move_word(&mut self, right: bool, select: bool) {
-        self.move_cursors(select, |lines, selection, _| (if right { cursor::word_right(lines, selection.head) } else { cursor::word_left(lines, selection.head) }, 0));
+    /// wordOperations.ts `MoveWordCommand`: every cursor's head by word; without `select` the cursor collapses there.
+    pub fn move_word(&mut self, classifier: &WordClassifier, navigation: WordNavigation, right: bool, select: bool) {
+        let has_multicursor = self.selections.len() > 1;
+        self.move_cursors(select, |lines, selection, _| match right {
+            true => (word_operations::move_word_right(classifier, lines, selection.head, navigation), 0),
+            false => (word_operations::move_word_left(classifier, lines, selection.head, navigation, has_multicursor), 0),
+        });
     }
 
-    /// `cursorWordPartLeft`/`cursorWordPartRight` from the head (wordPartOperations.ts).
-    pub fn move_word_part(&mut self, right: bool, select: bool) {
-        self.move_cursors(select, |lines, selection, _| (if right { cursor::word_part_right(lines, selection.head, super::WORD_SEPARATORS) } else { cursor::word_part_left(lines, selection.head, super::WORD_SEPARATORS) }, 0));
+    /// wordPartOperations.ts `CursorWordPartLeft` and `CursorWordPartRight`.
+    pub fn move_word_part(&mut self, classifier: &WordClassifier, right: bool, select: bool) {
+        let has_multicursor = self.selections.len() > 1;
+        self.move_cursors(select, |lines, selection, _| match right {
+            true => (word_operations::move_word_part_right(classifier, lines, selection.head), 0),
+            false => (word_operations::move_word_part_left(classifier, lines, selection.head, has_multicursor), 0),
+        });
     }
 
     /// `cursorHome`/`cursorEnd`; Home toggles between the first non-blank character and column 0.
     pub fn move_to_line_edge(&mut self, end: bool, select: bool) {
+        if self.wraps() {
+            return self.move_to_line_edge_in_view(end, select);
+        }
         self.move_cursors(select, |lines, selection, _| (if end { cursor::line_end(lines, selection.head) } else { cursor::line_start(lines, selection.head) }, 0));
     }
 
@@ -295,13 +323,15 @@ impl OpenEditor {
     }
 
     pub fn select_all(&mut self) {
-        self.set_selections(vec![Selection { anchor: Position::default(), head: cursor::last_position(&self.document.lines) }]);
+        let head = cursor::last_position(&self.document().lines);
+        self.set_selections(vec![Selection { anchor: Position::default(), head }]);
     }
 
     /// `CursorMoveCommands.expandLineSelection`: each selection from its start line's start to the start of the line
     /// after its end, or to the end of the last line.
     pub fn expand_line_selection(&mut self) {
-        let lines = &self.document.lines;
+        let document = self.document();
+        let lines = &document.lines;
         let selections = self
             .selections
             .iter()
@@ -311,6 +341,7 @@ impl OpenEditor {
                 Selection { anchor: Position::new(selection.start().line, 0), head }
             })
             .collect();
+        drop(document);
         self.push_undo_stop();
         self.set_selections(selections);
     }
@@ -318,39 +349,47 @@ impl OpenEditor {
     /// The word highlights of the primary selection (wordHighlighter.ts `_run`): none for a multi-line selection
     /// or one that reaches past the word at its start.
     pub fn refresh_highlights(&mut self) {
+        // wordHighlighter.ts `createWordHighlighterIfPossible`: none for a model too large for tokenization.
+        if self.document().too_large_for_tokenization {
+            return;
+        }
         let selection = self.selection();
         let (start, end) = (selection.start(), selection.end());
-        let text = &self.document.lines[start.line];
+        let document = self.document();
+        let text = &document.lines[start.line];
         let word = super::word_at(text, start.column).filter(|word| start.line == end.line && word.start <= start.column && end.column <= word.end);
-        self.highlights = match word {
-            Some(range) => super::word_occurrences(&self.document.lines, &text.chars().skip(range.start).take(range.len()).collect::<String>()),
+        let highlights = match word {
+            Some(range) => super::word_occurrences(&document.lines, &text.chars().skip(range.start).take(range.len()).collect::<String>()),
             None => Vec::new(),
         };
+        drop(document);
+        self.highlights = highlights;
     }
 
-    /// `getPlainTextToCopy` with `emptySelectionClipboard`: each selection in document order, an empty
-    /// one as its whole line with the line break, once per line. Several pieces also travel apart as
-    /// `multicursorText`; `isFromEmptySelection` holds for one empty cursor only.
-    pub fn copy_text(&self) -> Copied {
-        let lines = &self.document.lines;
-        let eol = self.document.eol;
+    /// `getPlainTextToCopy`: each selection in document order; with `emptySelectionClipboard` an empty one
+    /// as its whole line with the line break, once per line. Several pieces also travel apart as
+    /// `multicursorText`; `isFromEmptySelection` holds for one empty cursor only, `isBlock` for a column selection.
+    pub fn copy_text(&self, empty_selection_clipboard: bool) -> Copied {
+        let document = self.document();
+        let lines = &document.lines;
+        let eol = document.eol;
         let mut selections = self.selections.clone();
         selections.sort_by_key(|selection| (selection.start(), selection.end()));
-        let any_empty = selections.iter().any(Selection::is_empty);
+        let whole_lines = empty_selection_clipboard && selections.iter().any(Selection::is_empty);
         let mut pieces = Vec::new();
         let mut previous_line = None;
         for selection in selections {
             let line = selection.start().line;
             if !selection.is_empty() {
                 pieces.push(text_between(lines, selection.start(), selection.end()).replace('\n', eol));
-            } else if any_empty && previous_line != Some(line) {
+            } else if whole_lines && previous_line != Some(line) {
                 pieces.push(format!("{}{eol}", lines[line]));
             }
             previous_line = Some(line);
         }
-        let from_empty_selection = self.selections.len() == 1 && self.selection().is_empty();
+        let from_empty_selection = empty_selection_clipboard && self.selections.len() == 1 && self.selection().is_empty();
         let multicursor_text = (pieces.len() > 1).then(|| pieces.clone());
-        Copied { text: pieces.join(eol), from_empty_selection, multicursor_text }
+        Copied { text: pieces.join(eol), from_empty_selection, is_block: self.is_column_selection(), multicursor_text }
     }
 
     /// `type`: text replaces every selection. Spaces and other text group into undo steps as upstream does.
@@ -361,7 +400,7 @@ impl OpenEditor {
     /// `compositionType`: at every empty cursor the text replaces `previous` chars before it and `next`
     /// after it, as IME composition does with its marked text; a selection is replaced whole.
     pub fn type_replacing(&mut self, text: &str, previous: usize, next: usize, kind: &'static str) -> Option<ContentChanged> {
-        let line_len = |line| cursor::line_len(&self.document.lines, line);
+        let line_len = |line| cursor::line_len(&self.document().lines, line);
         let ranges: Vec<_> = self
             .selections
             .iter()
@@ -381,7 +420,7 @@ impl OpenEditor {
     /// chars after each selection, up to its line's end.
     pub fn type_overtyping(&mut self, text: &str) -> Option<ContentChanged> {
         let text = normalize_line_breaks(text);
-        let ranges = self.selections.iter().map(|selection| (selection.start(), overtype_end(&self.document.lines, *selection, &text))).collect();
+        let ranges = self.selections.iter().map(|selection| (selection.start(), overtype_end(&self.document().lines, *selection, &text))).collect();
         self.type_into(&text, ranges, "type")
     }
 
@@ -389,19 +428,21 @@ impl OpenEditor {
     /// after each cursor, up to its line's end.
     pub fn overtype_composed(&mut self, composed: &str) -> Option<ContentChanged> {
         let count = composed.chars().count();
-        let lines = &self.document.lines;
+        let document = self.document();
+        let lines = &document.lines;
         let edits = self.each_cursor(|selection| {
             let head = selection.head;
             let end = Position::new(head.line, (head.column + count).min(cursor::line_len(lines, head.line)));
             CursorEdit::replace(head, end, String::new(), head)
         });
+        drop(document);
         self.apply_cursor_edits(edits, TYPED)
     }
 
     /// The typed text replaces `ranges`, one per selection; spaces and other text group into undo steps as upstream does.
     fn type_into(&mut self, text: &str, ranges: Vec<(Position, Position)>, kind: &'static str) -> Option<ContentChanged> {
         let text = normalize_line_breaks(text);
-        let last_kind = self.history.last_kind;
+        let last_kind = self.text_model().history.last_kind;
         let typing = match text.as_str() {
             " " if last_kind.is_space() => EditKind::TypingConsecutiveSpace,
             " " => EditKind::TypingFirstSpace,
@@ -412,7 +453,7 @@ impl OpenEditor {
         }
         let edits = ranges.into_iter().map(|(start, end)| CursorEdit::replace(start, end, text.clone(), end_of(start, &text))).collect();
         let change = self.apply_cursor_edits(edits, EditReason::Cursor { kind, detailed_source: "keyboard" });
-        self.history.last_kind = typing;
+        self.text_model_mut().history.last_kind = typing;
         change
     }
 
@@ -438,15 +479,17 @@ impl OpenEditor {
 
     /// `AutoIndentOperation`: typing `ch` reindents every cursor's line, or `None` when one keeps its indentation.
     fn auto_indent_type(&mut self, ch: &str, auto: AutoIndent) -> Option<Option<ContentChanged>> {
-        let model = auto.model(&self.document);
+        let document = self.document();
+        let model = auto.model(&document);
         let mut edits = Vec::new();
         for selection in &self.selections {
             let (start, end, text, caret) = model.type_edit(selection.start(), selection.end(), ch)?;
             edits.push(CursorEdit::replace(start, end, text, caret));
         }
+        drop(document);
         self.push_undo_stop();
         let change = self.apply_cursor_edits(edits, TYPED);
-        self.history.last_kind = EditKind::TypingOther;
+        self.text_model_mut().history.last_kind = EditKind::TypingOther;
         Some(change)
     }
 
@@ -456,39 +499,43 @@ impl OpenEditor {
         if !selection.is_empty() {
             return None;
         }
-        let (start, end, text, caret) = auto.model(&self.document).electric_edit(selection.head, ch)?;
+        let (start, end, text, caret) = auto.model(&*self.document()).electric_edit(selection.head, ch)?;
         let change = self.apply_cursor_edits(vec![CursorEdit::replace(start, end, text, caret)], TYPED);
         self.push_undo_stop();
-        self.history.last_kind = EditKind::TypingOther;
+        self.text_model_mut().history.last_kind = EditKind::TypingOther;
         Some(change)
     }
 
     /// `EnterOperation`: a line break at each cursor, indented by the language's onEnter and indentation rules.
     pub fn enter(&mut self, auto: AutoIndent) -> Option<ContentChanged> {
         self.push_undo_stop();
-        let model = auto.model(&self.document);
+        let document = self.document();
+        let model = auto.model(&document);
         let edits = self.each_cursor(|selection| {
             let (start, end, text, caret) = model.enter_edit(selection.start(), selection.end());
             CursorEdit::replace(start, end, text, caret)
         });
+        drop(document);
         let change = self.apply_cursor_edits(edits, TYPED);
-        self.history.last_kind = EditKind::TypingOther;
+        self.text_model_mut().history.last_kind = EditKind::TypingOther;
         change
     }
 
     /// `TypeOperations.lineBreakInsert`: the line break of `enter` with each cursor kept before it.
     pub fn line_break_insert(&mut self, auto: AutoIndent) -> Option<ContentChanged> {
         self.push_undo_stop();
-        let model = auto.model(&self.document);
+        let document = self.document();
+        let model = auto.model(&document);
         let edits = self.each_cursor(|selection| {
             let (start, end, text, _) = model.enter_edit(selection.start(), selection.end());
             CursorEdit::replace(start, end, text, start)
         });
+        drop(document);
         self.apply_cursor_edits(edits, command("lineBreakInsert"))
     }
 
     pub fn delete_left(&mut self) -> Option<ContentChanged> {
-        let indentation = self.document.indentation;
+        let indentation = self.document().indentation;
         self.delete(|lines, selection| cursor::delete_left_range(lines, selection, indentation), Some(EditKind::DeletingLeft), command("deleteLeft"))
     }
 
@@ -496,46 +543,54 @@ impl OpenEditor {
         self.delete(cursor::delete_right_range, Some(EditKind::DeletingRight), command("deleteRight"))
     }
 
-    pub fn delete_word_left(&mut self) -> Option<ContentChanged> {
-        self.delete(cursor::delete_word_left_range, None, command("deleteWordLeft"))
+    /// wordOperations.ts and wordPartOperations.ts `DeleteWordCommand`s: each cursor's range of `word_delete`,
+    /// or nothing at the document edge, between undo stops.
+    pub fn delete_word(&mut self, classifier: &WordClassifier, auto_closing: &AutoClosing, word_delete: WordDelete, id: &'static str) -> Option<ContentChanged> {
+        let range = |lines: &[String], selection: Selection| {
+            let ctx = DeleteWordContext { classifier, lines, selection, whitespace_heuristics: word_delete.whitespace_heuristics, auto_closing };
+            let range = match word_delete.kind {
+                WordDeleteKind::Left(navigation) => word_operations::delete_word_left(&ctx, navigation),
+                WordDeleteKind::Right(navigation) => word_operations::delete_word_right(&ctx, navigation),
+                WordDeleteKind::PartLeft => word_operations::delete_word_part_left(&ctx),
+                WordDeleteKind::PartRight => Some(word_operations::delete_word_part_right(&ctx)),
+            };
+            range.unwrap_or((selection.head, selection.head))
+        };
+        self.delete(range, None, command(id))
     }
 
-    pub fn delete_word_right(&mut self) -> Option<ContentChanged> {
-        self.delete(cursor::delete_word_right_range, None, command("deleteWordRight"))
-    }
-
-    pub fn delete_word_part_left(&mut self) -> Option<ContentChanged> {
-        self.delete(|lines, selection| cursor::delete_word_part_left_range(lines, selection, super::WORD_SEPARATORS), None, command("deleteWordPartLeft"))
-    }
-
-    pub fn delete_word_part_right(&mut self) -> Option<ContentChanged> {
-        self.delete(|lines, selection| cursor::delete_word_part_right_range(lines, selection, super::WORD_SEPARATORS), None, command("deleteWordPartRight"))
+    /// wordOperations.ts `DeleteInsideWord` (Delete Word).
+    pub fn delete_inside_word(&mut self, classifier: &WordClassifier, only_word: bool) -> Option<ContentChanged> {
+        self.delete(|lines, selection| word_operations::delete_inside_word(classifier, lines, selection, only_word), None, command("deleteInsideWord"))
     }
 
     /// Deletes each cursor's range. Consecutive char deletes (`kind`) in one direction undo together
     /// until one crosses a line break; the other deletes are undo steps of their own.
     fn delete(&mut self, range: impl Fn(&[String], Selection) -> (Position, Position), kind: Option<EditKind>, reason: EditReason) -> Option<ContentChanged> {
-        let lines = &self.document.lines;
+        let document = self.document();
+        let lines = &document.lines;
         let edits = self.each_cursor(|selection| {
             let (start, end) = range(lines, selection);
             CursorEdit::replace(start, end, String::new(), start)
         });
+        drop(document);
         let Some(kind) = kind else { return self.apply_between_stops(edits, reason) };
         let crosses_line = edits.iter().any(|edit| edit.replaces[0].start.line != edit.replaces[0].end.line);
-        if self.history.last_kind != kind || crosses_line {
+        if self.text_model().history.last_kind != kind || crosses_line {
             self.push_undo_stop();
         }
         let change = self.apply_cursor_edits(edits, reason);
-        self.history.last_kind = kind;
+        self.text_model_mut().history.last_kind = kind;
         change
     }
 
     /// `TabOperation.getCommands` per cursor: a blank line takes the indentation the language's rules give it,
     /// an empty or in-line selection jumps to the next indent stop, a selection over whole lines indents them.
     pub fn tab(&mut self, auto: AutoIndent) -> Option<ContentChanged> {
-        let lines = &self.document.lines;
-        let indentation = self.document.indentation;
-        let model = auto.model(&self.document);
+        let document = self.document();
+        let lines = &document.lines;
+        let indentation = document.indentation;
+        let model = auto.model(&document);
         let edits = self.each_cursor(|selection| {
             let (start, end) = (selection.start(), selection.end());
             let whole_lines = start.line != end.line || (start.column == 0 && end.column == cursor::line_len(lines, end.line));
@@ -555,6 +610,7 @@ impl OpenEditor {
             let caret = end_of(start, &text);
             CursorEdit::replace(start, end, text, caret)
         });
+        drop(document);
         self.apply_between_stops(edits, command("tab"))
     }
 
@@ -565,44 +621,60 @@ impl OpenEditor {
 
     /// `editor.action.indentLines` / `outdentLines`: `ShiftCommand` over each cursor's lines.
     pub fn shift(&mut self, unshift: bool, auto: AutoIndent, reason: EditReason) -> Option<ContentChanged> {
-        let model = auto.model(&self.document);
+        let document = self.document();
+        let model = auto.model(&document);
         let edits = self.each_cursor(|selection| shift_edit(&model, selection, unshift));
+        drop(document);
         self.apply_between_stops(edits, reason)
     }
 
-    /// `paste`: text replaces each selection. A whole line copied from an empty selection goes in above
-    /// each empty cursor (`pasteOnNewLine`); with as many pieces or lines as cursors, each cursor gets one
-    /// (`multiCursorPaste` "spread"). With `overtype` (overtype input mode and `editor.overtypeOnPaste`) the text also
-    /// replaces as many chars after the selection.
-    pub fn paste(&mut self, text: &str, from_empty_selection: bool, multicursor_text: Option<&[String]>, overtype: bool) -> Option<ContentChanged> {
-        let text = normalize_line_breaks(text);
+    /// `PasteOperation.getEdits`: text replaces each selection. A column block copy at one cursor pastes as a
+    /// block with `spread`. A whole line copied from an empty selection goes in above each empty cursor
+    /// (`pasteOnNewLine`); with as many pieces as cursors, or with `spread` as many lines, each cursor gets one.
+    /// With `overtype` (overtype input mode and `editor.overtypeOnPaste`) the text also replaces as many chars
+    /// after the selection.
+    pub fn paste(&mut self, pasted: Pasted, spread: bool, overtype: bool) -> Option<ContentChanged> {
+        let Pasted { text, paste_on_new_line, multicursor_text, is_block } = pasted;
         let reason = EditReason::Cursor { kind: "paste", detailed_source: "keyboard" };
-        if let Some(pieces) = self.distributed_paste(&text, from_empty_selection, multicursor_text) {
+        if is_block && spread && self.selections.len() == 1 {
+            let rows: Vec<String> = normalize_line_breaks(text).split('\n').map(String::from).collect();
+            let command = clipboard::column_selection_paste(&self.document().lines, self.selection(), &rows, self.document().indentation.tab_size, overtype);
+            self.push_undo_stop();
+            let change = self.execute_commands(vec![command], reason);
+            self.push_undo_stop();
+            return change;
+        }
+        let text = normalize_line_breaks(text);
+        if let Some(pieces) = self.distributed_paste(&text, paste_on_new_line, multicursor_text, spread) {
             let mut order: Vec<usize> = (0..self.selections.len()).collect();
             order.sort_by_key(|&index| (self.selections[index].start(), self.selections[index].end()));
             let mut edits = vec![CursorEdit::new(Vec::new(), Selection::default()); order.len()];
             for (index, piece) in order.into_iter().zip(pieces) {
                 let selection = self.selections[index];
-                let end = if overtype { overtype_end(&self.document.lines, selection, &piece) } else { selection.end() };
+                let end = if overtype { overtype_end(&self.document().lines, selection, &piece) } else { selection.end() };
                 edits[index] = CursorEdit::replace(selection.start(), end, piece.clone(), end_of(selection.start(), &piece));
             }
             return self.apply_between_stops(edits, reason);
         }
-        let on_new_line = from_empty_selection && text.find('\n') == Some(text.len() - 1);
-        let edits = self.each_cursor(|selection| {
+        // `_simplePaste`: one non-empty selection turns `pasteOnNewLine` off for the cursors after it.
+        let mut on_new_line = paste_on_new_line && text.find('\n') == Some(text.len() - 1);
+        let mut edits = Vec::new();
+        for &selection in &self.selections {
+            on_new_line &= selection.is_empty();
             let head = selection.head;
-            if on_new_line && selection.is_empty() {
+            if on_new_line {
                 let start = Position::new(head.line, 0);
-                return CursorEdit::replace(start, start, text.clone(), Position::new(head.line + 1, head.column));
+                edits.push(CursorEdit::replace(start, start, text.clone(), Position::new(head.line + 1, head.column)));
+                continue;
             }
-            let end = if overtype { overtype_end(&self.document.lines, selection, &text) } else { selection.end() };
-            CursorEdit::replace(selection.start(), end, text.clone(), end_of(selection.start(), &text))
-        });
+            let end = if overtype { overtype_end(&self.document().lines, selection, &text) } else { selection.end() };
+            edits.push(CursorEdit::replace(selection.start(), end, text.clone(), end_of(selection.start(), &text)));
+        }
         self.apply_between_stops(edits, reason)
     }
 
     /// `_distributePasteToCursors`.
-    fn distributed_paste(&self, text: &str, from_empty_selection: bool, multicursor_text: Option<&[String]>) -> Option<Vec<String>> {
+    fn distributed_paste(&self, text: &str, paste_on_new_line: bool, multicursor_text: Option<&[String]>, spread: bool) -> Option<Vec<String>> {
         let count = self.selections.len();
         if count == 1 {
             return None;
@@ -610,92 +682,106 @@ impl OpenEditor {
         if let Some(pieces) = multicursor_text.filter(|pieces| pieces.len() == count) {
             return Some(pieces.iter().map(|piece| normalize_line_breaks(piece)).collect());
         }
-        if from_empty_selection {
+        if paste_on_new_line || !spread {
             return None;
         }
         let lines: Vec<String> = text.strip_suffix('\n').unwrap_or(text).split('\n').map(String::from).collect();
         (lines.len() == count).then_some(lines)
     }
 
-    /// `cut`: each selection, or an empty cursor's whole line with a line break next to it.
-    pub fn cut(&mut self) -> Option<ContentChanged> {
-        let lines = &self.document.lines;
-        let edits = self.each_cursor(|selection| {
-            let (start, end) = match selection.is_empty() {
-                false => (selection.start(), selection.end()),
-                true => {
+    /// `DeleteOperations.cut`: each selection; with `emptySelectionClipboard` an empty cursor's whole line with
+    /// a line break next to it, the last line's break before it unless an earlier cut already reached that line.
+    pub fn cut(&mut self, empty_selection_clipboard: bool) -> Option<ContentChanged> {
+        let document = self.document();
+        let lines = &document.lines;
+        let mut order: Vec<usize> = (0..self.selections.len()).collect();
+        order.sort_by_key(|&index| self.selections[index].start());
+        let mut edits = vec![CursorEdit::new(Vec::new(), Selection::default()); order.len()];
+        let mut last_cut_end_line = None;
+        for index in order {
+            let selection = self.selections[index];
+            edits[index] = match (selection.is_empty(), empty_selection_clipboard) {
+                (false, _) => CursorEdit::replace(selection.start(), selection.end(), String::new(), selection.start()),
+                (true, false) => CursorEdit::new(Vec::new(), selection),
+                (true, true) => {
                     let line = selection.head.line;
-                    if line + 1 < lines.len() {
+                    let (start, end) = if line + 1 < lines.len() {
                         (Position::new(line, 0), Position::new(line + 1, 0))
-                    } else if line > 0 {
+                    } else if line > 0 && last_cut_end_line != Some(line) {
                         (cursor::line_end(lines, Position::new(line - 1, 0)), cursor::line_end(lines, Position::new(line, 0)))
                     } else {
                         (Position::new(line, 0), cursor::line_end(lines, Position::new(line, 0)))
+                    };
+                    last_cut_end_line = Some(end.line);
+                    match start == end {
+                        true => CursorEdit::new(Vec::new(), selection),
+                        false => CursorEdit::replace(start, end, String::new(), start),
                     }
                 }
             };
-            CursorEdit::replace(start, end, String::new(), start)
-        });
+        }
+        drop(document);
         self.apply_between_stops(edits, EditReason::Cursor { kind: "cut", detailed_source: "keyboard" })
     }
 
     pub fn undo(&mut self) -> Option<ContentChanged> {
-        let group = self.history.undo.pop()?;
+        let group = self.text_model_mut().history.undo.pop()?;
         let was_dirty = self.is_dirty();
         let mut changes = Vec::new();
         for edit in group.edits.iter().rev() {
             let end = end_of(edit.start, &edit.inserted);
             changes.push(self.replace(edit.start, end, &edit.removed));
         }
-        self.history.alternative_version_id = group.alternative_before;
+        self.text_model_mut().history.alternative_version_id = group.alternative_before;
         let selections = group.selections_before.clone();
-        self.history.redo.push(group);
+        self.text_model_mut().history.redo.push(group);
         let change = self.finish_undo_redo(changes, selections, true, was_dirty);
-        self.history.undone_version_id = self.version_id;
+        let mut model = self.text_model_mut();
+        model.history.undone_version_id = model.version_id;
         Some(change)
     }
 
     pub fn last_change_was_undo(&self) -> bool {
-        self.history.undone_version_id == self.version_id
+        self.text_model().history.undone_version_id == self.text_model().version_id
     }
 
     pub fn redo(&mut self) -> Option<ContentChanged> {
-        let group = self.history.redo.pop()?;
+        let group = self.text_model_mut().history.redo.pop()?;
         let was_dirty = self.is_dirty();
         let mut changes = Vec::new();
         for edit in &group.edits {
             let end = end_of(edit.start, &edit.removed);
             changes.push(self.replace(edit.start, end, &edit.inserted));
         }
-        self.history.alternative_version_id = group.alternative_after;
+        self.text_model_mut().history.alternative_version_id = group.alternative_after;
         let selections = group.selections_after.clone();
-        self.history.undo.push(group);
+        self.text_model_mut().history.undo.push(group);
         Some(self.finish_undo_redo(changes, selections, false, was_dirty))
     }
 
     fn finish_undo_redo(&mut self, changes: Vec<ContentChange>, selections: Vec<Selection>, is_undoing: bool, was_dirty: bool) -> ContentChanged {
-        self.version_id += 1;
-        self.history.open = false;
+        self.text_model_mut().version_id += 1;
+        self.text_model_mut().history.open = false;
         // cursor.ts: a model change the cursor did not make resets the previous edit type.
-        self.history.last_kind = EditKind::Other;
+        self.text_model_mut().history.last_kind = EditKind::Other;
         self.after_text_change(selections);
-        ContentChanged { changes, version_id: self.version_id, is_undoing, is_redoing: !is_undoing, reason: EditReason::ApplyEdits, was_dirty }
+        ContentChanged { changes, version_id: self.text_model().version_id, is_undoing, is_redoing: !is_undoing, reason: EditReason::ApplyEdits, was_dirty }
     }
 
     /// The text as it was written; the saved version is the clean one from now on.
     pub fn save(&mut self) -> std::io::Result<()> {
         // A content provider's model has no file to write; models of extension file system providers save through the host.
-        if self.document.scheme != "file" {
-            return Err(std::io::Error::new(std::io::ErrorKind::Unsupported, format!("no file system provider for {}", self.document.scheme)));
+        if self.document().scheme != "file" {
+            return Err(std::io::Error::new(std::io::ErrorKind::Unsupported, format!("no file system provider for {}", self.document().scheme)));
         }
-        std::fs::write(&self.document.path, self.saved_bytes())?;
+        std::fs::write(&self.document().path, self.saved_bytes())?;
         self.mark_saved();
         Ok(())
     }
 
     /// The document as saving writes it: its EOL, in its encoding, with the BOM that encoding takes.
     pub fn saved_bytes(&self) -> Vec<u8> {
-        let document = &self.document;
+        let document = &self.document();
         files::encoding::encode(&document.lines.join(document.eol), &document.encoding, files::encoding::has_bom(&document.encoding))
     }
 
@@ -703,28 +789,33 @@ impl OpenEditor {
     // shortcut: the change is not on the undo stack, so undo skips it; add it when undo groups take non-text elements.
     pub fn push_eol(&mut self, sequence: u64) -> Option<ContentChanged> {
         let eol = if sequence == 1 { "\r\n" } else { "\n" };
-        if self.document.eol == eol {
+        if self.document().eol == eol {
             return None;
         }
         let was_dirty = self.is_dirty();
-        self.document.eol = eol;
-        self.version_id += 1;
-        self.history.open = false;
-        self.history.alternative_version_id = self.version_id;
-        Some(ContentChanged { changes: Vec::new(), version_id: self.version_id, is_undoing: false, is_redoing: false, reason: EditReason::EolChange, was_dirty })
+        self.document_mut().eol = eol;
+        let mut model = self.text_model_mut();
+        model.version_id += 1;
+        model.history.open = false;
+        model.history.alternative_version_id = model.version_id;
+        let version_id = model.version_id;
+        drop(model);
+        self.seen_version = version_id;
+        Some(ContentChanged { changes: Vec::new(), version_id, is_undoing: false, is_redoing: false, reason: EditReason::EolChange, was_dirty })
     }
 
     pub fn mark_saved(&mut self) {
-        self.history.saved_alternative_version_id = self.history.alternative_version_id;
+        let mut model = self.text_model_mut();
+        model.history.saved_alternative_version_id = model.history.alternative_version_id;
     }
 
     /// The version a save marks clean once its write is done, so edits made while it writes stay dirty.
     pub fn alternative_version_id(&self) -> u32 {
-        self.history.alternative_version_id
+        self.text_model().history.alternative_version_id
     }
 
     pub fn mark_saved_at(&mut self, alternative_version_id: u32) {
-        self.history.saved_alternative_version_id = alternative_version_id;
+        self.text_model_mut().history.saved_alternative_version_id = alternative_version_id;
     }
 
     /// `codeEditorWidget.executeEdits`: each edit is a range, its text, and `forceMoveMarkers`. Without
@@ -741,8 +832,17 @@ impl OpenEditor {
     /// `executeCommand` of a command whose cursor state is `trackSelection` of the primary selection
     /// (replaceAllCommand.ts): the primary cursor alone stays.
     pub fn execute_edits_tracking_primary(&mut self, edits: Vec<(Position, Position, String)>, reason: EditReason) -> Option<ContentChanged> {
+        self.execute_edits_tracking_primary_on_empty(edits, None, reason)
+    }
+
+    /// `execute_edits_tracking_primary` with `trackSelection`'s `trackPreviousOnEmpty`: whether an empty
+    /// primary selection sticks to the character before it, else as at the line end.
+    pub fn execute_edits_tracking_primary_on_empty(&mut self, edits: Vec<(Position, Position, String)>, track_previous_on_empty: Option<bool>, reason: EditReason) -> Option<ContentChanged> {
         let primary = self.selection();
-        let sticks = track_selection_sticks(&self.document.lines, primary);
+        let sticks = match track_previous_on_empty.filter(|_| primary.is_empty()) {
+            Some(previous) => [previous; 2],
+            None => track_selection_sticks(&self.document().lines, primary),
+        };
         let edits = edits.into_iter().map(|(start, end, text)| (start, end, text, false)).collect();
         self.execute_tracked(edits, EndSelections::Tracked { selections: vec![(primary, sticks)], collapse_grown_carets: false }, reason)
     }
@@ -764,8 +864,9 @@ impl OpenEditor {
         for &loser in &losers {
             commands[loser].edits.clear();
         }
-        let eol_len = self.document.eol.len();
-        let lines = &self.document.lines;
+        let eol_len = self.document().eol.len();
+        let document = self.document();
+        let lines = &document.lines;
         let offset = |position| document_offset(lines, eol_len, position);
         let markers: Vec<Option<([usize; 2], [bool; 2])>> =
             commands.iter().map(|command| command.tracked.map(|selection| ([offset(selection.start()), offset(selection.end())], track_selection_sticks(lines, selection)))).collect();
@@ -773,7 +874,7 @@ impl OpenEditor {
         let mut by_start: Vec<(usize, usize, usize, usize, usize)> = Vec::new();
         for (index, command) in commands.iter().enumerate() {
             for (minor, edit) in command.edits.iter().enumerate() {
-                by_start.push((offset(edit.start), offset(edit.end), edit.text.replace('\n', self.document.eol).encode_utf16().count(), index, minor));
+                by_start.push((offset(edit.start), offset(edit.end), edit.text.replace('\n', self.document().eol).encode_utf16().count(), index, minor));
             }
         }
         by_start.sort_by_key(|&(start, end, ..)| (start, end));
@@ -788,8 +889,10 @@ impl OpenEditor {
         // Edits at one position apply last to first, so the first one's text ends up first.
         let replaces: Vec<Replace> = commands.iter().flat_map(|command| command.edits.iter().cloned()).rev().collect();
         let before = self.selections.clone();
+        drop(document);
         let change = self.apply(replaces, before.clone(), reason)?;
-        let lines = &self.document.lines;
+        let document = self.document();
+        let lines = &document.lines;
         let position = |offset| document_position(lines, eol_len, offset);
         let mut selections = Vec::new();
         for (index, (command, marker)) in commands.into_iter().zip(markers).enumerate() {
@@ -813,8 +916,9 @@ impl OpenEditor {
         for loser in losers {
             selections.remove(loser);
         }
+        drop(document);
         self.after_text_change(selections);
-        self.history.undo.last_mut().expect("the edit just pushed its group").selections_after = self.selections.clone();
+        self.text_model_mut().history.undo.last_mut().expect("the edit just pushed its group").selections_after = self.selections.clone();
         Some(change)
     }
 
@@ -823,8 +927,9 @@ impl OpenEditor {
         // Edits at one position apply last to first, so the first one's text ends up first (`_doApplyEdits` sorts ties by sortIndex).
         edits.reverse();
         edits.sort_by_key(|edit| std::cmp::Reverse(edit.0));
-        let eol_len = self.document.eol.len();
-        let lines = &self.document.lines;
+        let eol_len = self.document().eol.len();
+        let document = self.document();
+        let lines = &document.lines;
         let tracked: &[(Selection, [bool; 2])] = match &end {
             EndSelections::Given(_) => &[],
             EndSelections::Tracked { selections, .. } => selections,
@@ -832,12 +937,13 @@ impl OpenEditor {
         let markers: Vec<[usize; 2]> = tracked.iter().map(|(selection, _)| [document_offset(lines, eol_len, selection.start()), document_offset(lines, eol_len, selection.end())]).collect();
         let force_moves: Vec<bool> = edits.iter().map(|edit| edit.3).collect();
         let replaces = edits.into_iter().map(|(start, end, text, _)| Replace { start, end, text: normalize_line_breaks(&text) }).collect();
+        drop(document);
         let change = self.apply(replaces, self.selections.clone(), reason)?;
         let selections = match end {
             // `Cursor.setStates` validates the computed states, so a cursor past the deleted lines lands on the last.
             EndSelections::Given(selections) => selections
                 .into_iter()
-                .map(|selection| Selection { anchor: valid_position(&self.document.lines, selection.anchor), head: valid_position(&self.document.lines, selection.head) })
+                .map(|selection| Selection { anchor: valid_position(&self.document().lines, selection.anchor), head: valid_position(&self.document().lines, selection.head) })
                 .collect(),
             EndSelections::Tracked { selections: tracked, collapse_grown_carets } => tracked
                 .iter()
@@ -848,7 +954,7 @@ impl OpenEditor {
                         start = accept_edit(start, start_sticks, from, to, inserted, force_move);
                         end = accept_edit(end, end_sticks, from, to, inserted, force_move);
                     }
-                    let (mut start, end) = (document_position(&self.document.lines, eol_len, start), document_position(&self.document.lines, eol_len, end));
+                    let (mut start, end) = (document_position(&self.document().lines, eol_len, start), document_position(&self.document().lines, eol_len, end));
                     // `readSelectionFromMarkers`: a caret whose range grew does not select the text.
                     if collapse_grown_carets && selection.is_empty() {
                         start = end;
@@ -858,7 +964,7 @@ impl OpenEditor {
                 .collect(),
         };
         self.after_text_change(selections);
-        self.history.undo.last_mut().expect("the edit just pushed its group").selections_after = self.selections.clone();
+        self.text_model_mut().history.undo.last_mut().expect("the edit just pushed its group").selections_after = self.selections.clone();
         Some(change)
     }
 
@@ -895,7 +1001,7 @@ impl OpenEditor {
     /// added to the open undo group. Nothing happens when every replace is empty.
     fn apply(&mut self, mut replaces: Vec<Replace>, selections: Vec<Selection>, reason: EditReason) -> Option<ContentChanged> {
         replaces.retain(|replace| !replace.is_noop());
-        self.history.last_kind = EditKind::Other;
+        self.text_model_mut().history.last_kind = EditKind::Other;
         if replaces.is_empty() {
             return None;
         }
@@ -905,15 +1011,16 @@ impl OpenEditor {
         let mut edits = Vec::new();
         let mut changes = Vec::new();
         for replace in replaces {
-            let removed = text_between(&self.document.lines, replace.start, replace.end);
+            let removed = text_between(&self.document().lines, replace.start, replace.end);
             changes.push(self.replace(replace.start, replace.end, &replace.text));
             edits.push(AppliedEdit { start: replace.start, removed, inserted: replace.text });
         }
-        self.version_id += 1;
-        let version_id = self.version_id;
+        self.text_model_mut().version_id += 1;
+        let version_id = self.text_model().version_id;
         self.after_text_change(selections);
         let selections_after = self.selections.clone();
-        let history = &mut self.history;
+        let mut model = self.text_model_mut();
+        let history = &mut model.history;
         history.redo.clear();
         let alternative_before = history.alternative_version_id;
         history.alternative_version_id = version_id;
@@ -926,9 +1033,46 @@ impl OpenEditor {
             None => history.undo.push(UndoGroup { edits, selections_before, selections_after, alternative_before, alternative_after: version_id }),
         }
         history.open = true;
+        drop(model);
         // Editing a preview editor pins it (editorGroupView.ts pins a preview editor once it is dirty).
         self.preview = false;
         Some(ContentChanged { changes, version_id, is_undoing: false, is_redoing: false, reason, was_dirty })
+    }
+
+    /// Another editor of the shared model changed it: the cursors move with its edits as tracked ranges do
+    /// (`_onModelContentChanged`), or clamp to the text when the log no longer reaches back, and the
+    /// folding ranges are computed again.
+    pub fn sync_with_model(&mut self) {
+        let model = self.model.borrow();
+        if self.seen_version == model.version_id {
+            return;
+        }
+        let seen = self.seen_version;
+        let version = model.version_id;
+        let logged = model.edits.first().is_some_and(|(version, ..)| *version <= seen);
+        let mut selections = self.selections.clone();
+        for &(_, start, end, new_end) in model.edits.iter().filter(|(version, ..)| logged && *version >= seen) {
+            for selection in &mut selections {
+                selection.anchor = folding::tracked(selection.anchor, start, end, new_end, false);
+                selection.head = folding::tracked(selection.head, start, end, new_end, false);
+            }
+        }
+        let lines = &model.document.lines;
+        let clamp = |position: Position| {
+            let line = position.line.min(lines.len() - 1);
+            Position::new(line, position.column.min(cursor::line_len(lines, line)))
+        };
+        for selection in &mut selections {
+            *selection = Selection { anchor: clamp(selection.anchor), head: clamp(selection.head) };
+        }
+        self.word_wrap.lines_changed_elsewhere(lines);
+        drop(model);
+        self.seen_version = version;
+        self.selections = selections;
+        cursor::normalize(&mut self.selections, &mut self.last_added);
+        self.leftovers.clear();
+        self.highlights.clear();
+        self.refresh_folding_ranges();
     }
 
     /// Word highlights stop while the text changes: wordHighlighter.ts ignores non-explicit cursor changes.
@@ -938,15 +1082,27 @@ impl OpenEditor {
         cursor::normalize(&mut self.selections, &mut self.last_added);
         self.leftovers.clear();
         self.highlights.clear();
-        let indentation = self.document.indentation;
-        self.guides = indent_guides(&self.document.lines, indentation.tab_size, indentation.indent_size(), self.document.off_side);
+        let mut model = self.text_model_mut();
+        let document = &model.document;
+        let indentation = document.indentation;
+        let guides = indent_guides(&document.lines, indentation.tab_size, indentation.indent_size(), document.off_side);
+        model.guides = guides;
+        drop(model);
+        let version = self.text_model().version_id;
+        self.seen_version = version;
         self.refresh_folding_ranges();
     }
 
     /// Replaces `start..end` with `text` in the lines and describes it in the text before it.
     fn replace(&mut self, start: Position, end: Position, text: &str) -> ContentChange {
-        let eol = self.document.eol;
-        let lines = &mut self.document.lines;
+        let mut model = self.model.borrow_mut();
+        let version = model.version_id;
+        model.edits.push((version, start, end, end_of(start, text)));
+        if model.edits.len() > MAX_LOGGED_EDITS {
+            model.edits.remove(0);
+        }
+        let eol = model.document.eol;
+        let lines = &mut model.document.lines;
         let removed = text_between(lines, start, end);
         let change = ContentChange {
             start_line: start.line + 1,
@@ -959,16 +1115,23 @@ impl OpenEditor {
         };
         self.folding.accept_replace(lines, start, end, text);
         if let Some(anchor) = self.selection_anchor {
-            self.selection_anchor = Some(anchor_select::anchor_after_edit(anchor, &self.document.lines, start, end, text));
+            self.selection_anchor = Some(anchor_select::anchor_after_edit(anchor, lines, start, end, text));
         }
+        drop(model);
         self.track_markers(start, end, text);
         self.track_view_zones(start, end, text);
-        let lines = &mut self.document.lines;
+        if let Some(session) = self.snippet_session.as_mut() {
+            session.track(start, end, text);
+        }
+        let mut model = self.model.borrow_mut();
+        let lines = &mut model.document.lines;
         let prefix: String = lines[start.line].chars().take(start.column).collect();
         let suffix: String = lines[end.line].chars().skip(end.column).collect();
         let joined = prefix + text + &suffix;
         lines.splice(start.line..=end.line, joined.split('\n').map(String::from));
-        self.document.tokens.invalidate_from(start.line);
+        self.word_wrap.lines_replaced(lines, start.line, end.line, text.split('\n').count());
+        model.document.tokens.invalidate_from(start.line);
+        drop(model);
         change
     }
 }
@@ -978,7 +1141,17 @@ impl OpenEditor {
 pub struct Copied {
     pub text: String,
     pub from_empty_selection: bool,
+    pub is_block: bool,
     pub multicursor_text: Option<Vec<String>>,
+}
+
+/// A paste's text and the clipboard metadata that came with it (`PastePayload`).
+#[derive(Clone, Copy)]
+pub struct Pasted<'a> {
+    pub text: &'a str,
+    pub paste_on_new_line: bool,
+    pub multicursor_text: Option<&'a [String]>,
+    pub is_block: bool,
 }
 
 /// `ShiftCommand`: every line of the selection moves one indent stop; a multi-line selection skips empty lines.
@@ -1171,7 +1344,7 @@ pub fn text_between(lines: &[String], start: Position, end: Position) -> String 
 /// Where text inserted at `start` ends.
 /// replaceCommand.ts `ReplaceOvertypeCommand`: the selection's end moved past as many chars as `text` has (one
 /// fewer for a selection), never past its line's end.
-fn overtype_end(lines: &[String], selection: Selection, text: &str) -> Position {
+pub(super) fn overtype_end(lines: &[String], selection: Selection, text: &str) -> Position {
     let end = selection.end();
     let delta = (text.chars().count() + usize::from(selection.is_empty())).saturating_sub(1);
     Position::new(end.line, (end.column + delta).min(cursor::line_len(lines, end.line)))
@@ -1220,7 +1393,7 @@ pub(super) mod tests {
         deleted.move_to(Position::new(0, 6), true);
         let edits = vec![(Position::new(0, 4), Position::new(0, 8), String::new(), false), (Position::new(0, 8), Position::new(0, 13), "3".into(), false)];
         deleted.execute_edits(edits, None, api);
-        assert_eq!((deleted.document.lines[0].as_str(), deleted.selection()), ("one 3", Selection::caret(Position::new(0, 4))));
+        assert_eq!((deleted.document().lines[0].as_str(), deleted.selection()), ("one 3", Selection::caret(Position::new(0, 4))));
     }
 
     #[test]
@@ -1229,7 +1402,7 @@ pub(super) mod tests {
         let mut model = editor("", "\n");
         let at_start = |text: &str| (Position::new(0, 0), Position::new(0, 0), text.to_string(), true);
         model.execute_edits(vec![at_start("import1;"), at_start("import2;")], None, EditReason::ApplyEdits);
-        assert_eq!(model.document.lines, ["import1;import2;"]);
+        assert_eq!(model.document().lines, ["import1;import2;"]);
     }
 
     #[test]
@@ -1237,7 +1410,7 @@ pub(super) mod tests {
         let mut model = editor("foo\nbar", "\n");
         assert!(model.push_eol(0).is_none());
         let change = model.push_eol(1).expect("LF to CRLF");
-        assert_eq!((change.version_id, change.changes.len(), model.document.eol, model.is_dirty()), (2, 0, "\r\n", true));
+        assert_eq!((change.version_id, change.changes.len(), model.document().eol, model.is_dirty()), (2, 0, "\r\n", true));
     }
 
     pub(in crate::editor) fn editor(text: &str, eol: &'static str) -> OpenEditor {
@@ -1253,6 +1426,7 @@ pub(super) mod tests {
             folding_markers: None,
             block_comment: None,
             tokens: Default::default(),
+            too_large_for_tokenization: false,
         };
         let mut group = EditorGroup::default();
         group.open(document, true);
@@ -1264,7 +1438,7 @@ pub(super) mod tests {
     }
 
     fn text(editor: &OpenEditor) -> String {
-        editor.document.lines.join("\n")
+        editor.document().lines.join("\n")
     }
 
     #[test]
@@ -1327,12 +1501,12 @@ pub(super) mod tests {
         let dir = std::env::temp_dir().join(format!("code-gpui-edit-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let mut editor = editor("a", "\r\n");
-        editor.document.path = dir.join("a.txt");
-        editor.document.encoding = "utf8bom".into();
+        editor.document_mut().path = dir.join("a.txt");
+        editor.document_mut().encoding = "utf8bom".into();
         editor.move_to(at(0, 1), false);
         editor.enter(no_rules(Strategy::Full));
         editor.save().unwrap();
-        assert_eq!(std::fs::read(&editor.document.path).unwrap(), b"\xEF\xBB\xBFa\r\n");
+        assert_eq!(std::fs::read(&editor.document().path).unwrap(), b"\xEF\xBB\xBFa\r\n");
         assert!(!editor.is_dirty());
         editor.undo();
         assert!(editor.is_dirty());
@@ -1347,16 +1521,16 @@ pub(super) mod tests {
         let mut editor = editor("    let x", "\n");
         editor.move_to(at(0, 9), false);
         editor.enter(auto);
-        assert_eq!(editor.document.lines, ["    let x", "    "]);
+        assert_eq!(editor.document().lines, ["    let x", "    "]);
         editor.type_text("y");
         editor.move_to(at(1, 0), false);
         editor.delete_all_right();
-        assert_eq!(editor.document.lines[1], "");
+        assert_eq!(editor.document().lines[1], "");
         let change = editor.tab(auto).unwrap();
-        assert_eq!((editor.document.lines[1].as_str(), editor.selection().head), ("    ", at(1, 4)));
+        assert_eq!((editor.document().lines[1].as_str(), editor.selection().head), ("    ", at(1, 4)));
         assert_eq!(change.reason, command("tab"));
         editor.tab(auto);
-        assert_eq!(editor.document.lines[1], "        ");
+        assert_eq!(editor.document().lines[1], "        ");
     }
 
     #[test]
@@ -1364,10 +1538,10 @@ pub(super) mod tests {
         let mut editor = editor("a\n  b\n\nc", "\n");
         editor.set_selections(vec![Selection { anchor: at(0, 0), head: at(3, 1) }]);
         editor.tab(no_rules(Strategy::Full));
-        assert_eq!(editor.document.lines, ["    a", "    b", "", "    c"]);
+        assert_eq!(editor.document().lines, ["    a", "    b", "", "    c"]);
         assert_eq!(editor.selection(), Selection { anchor: at(0, 0), head: at(3, 5) });
         editor.outdent(no_rules(Strategy::Full));
-        assert_eq!(editor.document.lines, ["a", "b", "", "c"]);
+        assert_eq!(editor.document().lines, ["a", "b", "", "c"]);
         editor.undo();
         editor.undo();
         assert_eq!(text(&editor), "a\n  b\n\nc");
@@ -1377,15 +1551,15 @@ pub(super) mod tests {
     fn cut_and_paste_a_whole_line_from_an_empty_selection() {
         let mut editor = editor("one\ntwo\nthree", "\n");
         editor.move_to(at(1, 1), false);
-        let copied = editor.copy_text();
+        let copied = editor.copy_text(true);
         assert_eq!((copied.text.as_str(), copied.from_empty_selection, copied.multicursor_text.is_none()), ("two\n", true, true));
-        editor.cut();
+        editor.cut(true);
         assert_eq!((text(&editor), editor.selection().head), ("one\nthree".into(), at(1, 0)));
         editor.move_to(at(1, 2), false);
-        editor.paste(&copied.text, copied.from_empty_selection, None, false);
+        editor.paste(Pasted { text: &copied.text, paste_on_new_line: copied.from_empty_selection, multicursor_text: None, is_block: false }, true, false);
         assert_eq!((text(&editor), editor.selection().head), ("one\ntwo\nthree".into(), at(2, 2)));
         editor.move_to(at(2, 5), false);
-        editor.cut();
+        editor.cut(true);
         assert_eq!(text(&editor), "one\ntwo");
     }
 
@@ -1403,6 +1577,11 @@ pub(super) mod tests {
         assert_eq!(editor.selection().head, at(2, 4));
     }
 
+    /// A paste without clipboard metadata.
+    pub(in crate::editor) fn plain(text: &str) -> Pasted<'_> {
+        Pasted { text, paste_on_new_line: false, multicursor_text: None, is_block: false }
+    }
+
     fn range(anchor: (usize, usize), head: (usize, usize)) -> Selection {
         Selection { anchor: at(anchor.0, anchor.1), head: at(head.0, head.1) }
     }
@@ -1412,7 +1591,7 @@ pub(super) mod tests {
         // cursor.test.ts issue #4996: multicursorText pieces go one per cursor.
         let mut pieces = editor("line1\nline2\nline3", "\n");
         pieces.set_selections(vec![range((0, 0), (0, 0)), range((1, 0), (1, 0))]);
-        pieces.paste("a\nb\nc\nd", false, Some(&["a\nb".into(), "c\nd".into()]), false);
+        pieces.paste(Pasted { multicursor_text: Some(&["a\nb".into(), "c\nd".into()]), ..plain("a\nb\nc\nd") }, true, false);
         assert_eq!(text(&pieces), "a\nbline1\nc\ndline2\nline3");
         // multiCursorPasteCases: as many lines as cursors spread, a trailing line break ignored; other counts paste whole.
         let cases: [(&str, &[Selection], &str, &str); 4] = [
@@ -1424,7 +1603,7 @@ pub(super) mod tests {
         for (before, selections, pasted, expected) in cases {
             let mut lines = editor(before, "\n");
             lines.set_selections(selections.to_vec());
-            lines.paste(pasted, false, None, false);
+            lines.paste(plain(pasted), true, false);
             assert_eq!(text(&lines), expected, "pasting {pasted:?}");
         }
     }
@@ -1444,7 +1623,7 @@ pub(super) mod tests {
         let pasted = |selection, pasted: &str| {
             let mut editor = editor("123456789\n123456789", "\n");
             editor.set_selections(vec![selection]);
-            editor.paste(pasted, false, None, true);
+            editor.paste(plain(pasted), true, true);
             text(&editor)
         };
         assert_eq!(pasted(range((0, 4), (0, 4)), "cc"), "1234cc789\n123456789");
@@ -1494,7 +1673,8 @@ pub(super) mod tests {
         // Overlapping deletes: the later cursor loses its edit (`_getLoserCursorMap`) and only follows the text.
         let mut overlapping = editor("ab cd", "\n");
         overlapping.set_selections(vec![range((0, 4), (0, 4)), range((0, 5), (0, 5))]);
-        overlapping.delete_word_left();
+        let (_, delete_word_left) = word_operations::DELETE_COMMANDS[2];
+        overlapping.delete_word(&WordClassifier::new(word_operations::DEFAULT_WORD_SEPARATORS, &[]), &AutoClosing { delete: "auto", brackets: "languageDefined", quotes: "languageDefined", pairs: &[], auto_closed: &[] }, delete_word_left, "deleteWordLeft");
         assert_eq!(text(&overlapping), "ab d");
         assert_eq!(overlapping.selections, [Selection::caret(at(0, 3)), Selection::caret(at(0, 4))]);
     }
@@ -1518,13 +1698,13 @@ pub(super) mod tests {
     fn copy_joins_selections_in_document_order_and_keeps_the_pieces() {
         let mut editor = editor("one\ntwo\nthree", "\r\n");
         editor.set_selections(vec![range((2, 0), (2, 2)), range((0, 0), (1, 1))]);
-        let copied = editor.copy_text();
+        let copied = editor.copy_text(true);
         assert_eq!(copied.text, "one\r\nt\r\nth");
         assert_eq!(copied.multicursor_text, Some(vec!["one\r\nt".to_string(), "th".to_string()]));
         assert!(!copied.from_empty_selection);
         // Two empty cursors on one line copy it once; several empty cursors are not "from empty selection".
         editor.set_selections(vec![range((1, 0), (1, 0)), range((1, 2), (1, 2))]);
-        let copied = editor.copy_text();
+        let copied = editor.copy_text(true);
         assert_eq!((copied.text.as_str(), copied.from_empty_selection), ("two\r\n", false));
     }
 }

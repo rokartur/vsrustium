@@ -40,7 +40,7 @@ impl Workbench {
 
     /// The title bar's `contextmenu` listener: `menu` is `TitleBarTitleContext` over the title, else `TitleBarContext`.
     pub(super) fn show_title_bar_context_menu(&mut self, menu: MenuId, pointer: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
-        let file = self.editors.active().filter(|editor| editor.document.scheme == "file").map(|editor| editor.document.path.clone());
+        let file = self.editors.active().filter(|editor| editor.document().scheme == "file").map(|editor| editor.document().path.clone());
         self.provide_custom_title_context_menu(file.as_deref());
         let context = self.title_bar_context(window);
         self.show_context_menu(menu, &context, Bounds { origin: pointer, size: Size::default() }, Vec::new(), window, cx);

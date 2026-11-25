@@ -76,12 +76,13 @@ impl Workbench {
         let Some(id) = self.editors.active_tab().map(|tab| tab.model_id) else { return };
         let Some(input) = self.editors.diffs.get(&id).filter(|input| !input.unchanged.is_empty()) else { return };
         let Some(modified) = self.editors.model(&input.modified.scheme, &input.modified.path) else { return };
-        let version = modified.version_id;
+        let version = modified.text_model().version_id;
         if input.symbols_version == Some(version) {
             return;
         }
-        let uri = modified.document.uri();
-        let candidate = crate::language_features::Candidate { uri: &uri, language: &modified.document.language_id };
+        let uri = modified.document().uri();
+        let language = modified.document().language_id.clone();
+        let candidate = crate::language_features::Candidate { uri: &uri, language: &language };
         let calls: Vec<_> = self
             .language_features
             .ordered("$registerDocumentSymbolProvider", &candidate)

@@ -76,6 +76,29 @@ impl ScmView {
 }
 
 impl Workbench {
+    // shortcut: the SCM Changes and webview view headers are drawn here, not as view panes of view_panes.rs; milestone 11 moves them.
+    pub(super) fn section_header(&self, title: &str, expanded: bool, separated: bool) -> Div {
+        let foreground = self.foreground_or("sideBarSectionHeader.foreground");
+        let border = self.theme.color("sideBarSectionHeader.border").or(self.theme.color("surface.border")).filter(|_| separated);
+        div()
+            .relative()
+            .h(px(28.))
+            // paneview.css: .pane-header is cursor: pointer.
+            .cursor_pointer()
+            .flex_none()
+            .mx(px(4.))
+            .pl(px(4.))
+            .flex()
+            .items_center()
+            .rounded(px(4.))
+            .bg(self.color("sideBar.background"))
+            .hover(|header| header.bg(self.color("list.hoverBackground")))
+            .text_color(foreground)
+            .when_some(border, |header, border| header.child(div().absolute().top_0().left(px(4.)).right(px(4.)).h(px(1.)).bg(border)))
+            .child(self.icon(if expanded { "chevron-down" } else { "chevron-right" }, 16., 16., foreground).mx(px(2.)))
+            .child(div().text_size(px(12.)).font_weight(gpui::FontWeight::SEMIBOLD).child(title.to_string()))
+    }
+
     pub(in crate::workbench) fn register_scm_commands(&mut self) {
         self.commands.register("workbench.view.scm", |workbench, _, window, cx| {
             workbench.side_bar_view = super::search_view::SideBarView::Scm;
@@ -122,7 +145,7 @@ impl Workbench {
         if method == "$unregisterSourceControl"
             && let Some(handle) = handle
             && let Some((scheme, path)) = self.scm.input_models.remove(&handle)
-            && let Some(index) = self.editors.models.iter().position(|model| model.document.is(&scheme, &path))
+            && let Some(index) = self.editors.models.iter().position(|model| model.document().is(&scheme, &path))
         {
             self.editors.models.remove(index);
             self.editors_changed(cx);
@@ -209,7 +232,7 @@ impl Workbench {
     /// deepest root holding it) makes that repository active.
     pub(in crate::workbench) fn follow_active_editor_repository(&mut self) {
         let Some(editor) = self.editors.active() else { return };
-        let key = (editor.document.scheme.clone(), editor.document.path.clone());
+        let key = (editor.document().scheme.clone(), editor.document().path.clone());
         if self.scm.active_editor.as_ref() == Some(&key) {
             return;
         }
@@ -716,7 +739,7 @@ impl Workbench {
         let context = self.scm_context(provider, Some(group), Some(resource), window);
         let args = vec![Self::resource_arg(provider, group, resource)];
         let actions = self.inline_actions(MenuId::ScmResourceStateContext, &context, args.clone(), foreground, cx);
-        let decoration = self.scm_decoration(resource);
+        let decoration = self.scm_decoration(&path);
         let language = self.languages.language_of(&path, "").to_string();
         let icon = self.file_icons.as_ref().and_then(|icons| icons.file_icon(&path, &language, self.theme.kind, 13., ROW_HEIGHT, foreground)).unwrap_or_else(|| div().w(px(16.)));
         let key = (provider.handle, group.handle, Some(resource.handle));
@@ -760,27 +783,17 @@ impl Workbench {
             .children(decoration.map(|(letter, color)| div().w(px(16.)).ml(px(4.)).text_size(px(12.)).text_color(color).child(letter)))
     }
 
-    /// git's decoration of a resource: the letter and color its `IFileDecorationProvider` gives, read from the
-    /// tooltip (git's resource states) since the port has no decorations service yet.
-    fn scm_decoration(&self, resource: &Resource) -> Option<(String, Rgba)> {
-        let (letter, key) = match resource.tooltip.as_str() {
-            "Modified" | "Index Modified" => ("M", "gitDecoration.modifiedResourceForeground"),
-            "Added" | "Index Added" | "Intent to Add" => ("A", "gitDecoration.addedResourceForeground"),
-            "Deleted" | "Index Deleted" => ("D", "gitDecoration.deletedResourceForeground"),
-            "Renamed" | "Index Renamed" => ("R", "gitDecoration.renamedResourceForeground"),
-            "Untracked" => ("U", "gitDecoration.untrackedResourceForeground"),
-            "Ignored" => ("I", "gitDecoration.ignoredResourceForeground"),
-            "Conflict" | "Both Modified" | "Both Added" | "Both Deleted" | "Added By Us" | "Added By Them" | "Deleted By Us" | "Deleted By Them" => ("!", "gitDecoration.conflictingResourceForeground"),
-            "Type Changed" | "Index Type Changed" => ("T", "gitDecoration.modifiedResourceForeground"),
-            _ => return None,
-        };
-        Some((letter.to_string(), self.theme.color(key).unwrap_or(self.foreground_or("sideBar.foreground"))))
+    /// The letter and color the decorations service has for a resource (git's `IFileDecorationProvider`).
+    fn scm_decoration(&self, path: &std::path::Path) -> Option<(String, Rgba)> {
+        let decoration = self.file_decoration(path, false)?;
+        let color = decoration.color.as_deref().and_then(|color| self.theme.color(color)).unwrap_or(self.foreground_or("sideBar.foreground"));
+        Some((decoration.letter?, color))
     }
 
     /// The `inline` group of a menu as icon buttons (`createAndFillInActionBarActions` with `primaryGroup` inline or
     /// navigation): a command's icon, else its title.
-    fn inline_actions(&self, menu: MenuId, context: &HashMap<String, Value>, args: Vec<Value>, foreground: Rgba, cx: &mut Context<Self>) -> Div {
-        let primary = if menu == MenuId::ScmTitle { "navigation" } else { "inline" };
+    pub(in crate::workbench) fn inline_actions(&self, menu: MenuId, context: &HashMap<String, Value>, args: Vec<Value>, foreground: Rgba, cx: &mut Context<Self>) -> Div {
+        let primary = if matches!(menu, MenuId::ScmTitle | MenuId::ViewTitle) { "navigation" } else { "inline" };
         let mut items: Vec<&crate::menus::MenuItem> = self.menus.iter().filter(|item| item.menu == menu && item.group == primary && item.when.as_ref().is_none_or(|when| when.evaluate(context))).collect();
         items.sort_by(|a, b| a.order.total_cmp(&b.order).then_with(|| a.title.cmp(&b.title)));
         let mut bar = div().flex().items_center();
@@ -788,7 +801,7 @@ impl Workbench {
             .into_iter()
             .filter_map(|item| match &item.entry {
                 crate::menus::Entry::Command { id, .. } => Some((id.clone(), item.title.clone())),
-                crate::menus::Entry::Submenu(_) => None,
+                crate::menus::Entry::Submenu { .. } => None,
             })
             .collect();
         for (id, title) in commands {

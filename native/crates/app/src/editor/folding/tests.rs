@@ -657,3 +657,31 @@ fn limit_by_indent() {
     assert_eq!(limited(1), [r1]);
     assert_eq!(limited(0), []);
 }
+
+#[test]
+fn syntax_ranges_are_limited_by_nesting_level() {
+    // syntaxFold.test.ts 'Limit by nesting level'.
+    let all = [(1, 20), (3, 19), (4, 5), (7, 18), (9, 10), (12, 17), (13, 16), (14, 15), (22, 23)];
+    let ranges: Vec<SyntaxRange> = all.iter().map(|&(start, end)| SyntaxRange { start, end, rank: 0, kind: None }).collect();
+    let limited = |limit: usize| sanitize_ranges(ranges.clone(), limit).ranges().iter().map(|range| (range.start, range.end)).collect::<Vec<_>>();
+    let pick = |indexes: &[usize]| indexes.iter().map(|&index| all[index]).collect::<Vec<_>>();
+    assert_eq!(limited(1000), pick(&[0, 1, 2, 3, 4, 5, 6, 7, 8]));
+    assert_eq!(limited(9), pick(&[0, 1, 2, 3, 4, 5, 6, 7, 8]));
+    assert_eq!(limited(8), pick(&[0, 1, 2, 3, 4, 5, 6, 8]));
+    assert_eq!(limited(7), pick(&[0, 1, 2, 3, 4, 5, 8]));
+    assert_eq!(limited(6), pick(&[0, 1, 2, 3, 4, 8]));
+    assert_eq!(limited(5), pick(&[0, 1, 2, 3, 8]));
+    assert_eq!(limited(4), pick(&[0, 1, 2, 8]));
+    assert_eq!(limited(3), pick(&[0, 1, 8]));
+    assert_eq!(limited(2), pick(&[0, 8]));
+    assert_eq!(limited(1), pick(&[0]));
+    assert_eq!(limited(0), pick(&[]));
+}
+
+#[test]
+fn syntax_ranges_skip_same_start_and_keep_kinds() {
+    let range = |start, end, rank, kind: Option<&str>| SyntaxRange { start, end, rank, kind: kind.map(str::to_string) };
+    let regions = sanitize_ranges(vec![range(5, 8, 1, None), range(1, 10, 0, Some("imports")), range(5, 7, 0, None), range(9, 12, 0, None), range(11, 14, 0, Some("comment"))], 5000);
+    let kept: Vec<(usize, usize, Option<&str>)> = regions.ranges().iter().map(|range| (range.start, range.end, range.kind.as_deref())).collect();
+    assert_eq!(kept, [(1, 10, Some("imports")), (5, 7, None), (9, 12, None), (11, 14, Some("comment"))], "the lower rank wins a shared start");
+}

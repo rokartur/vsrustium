@@ -49,7 +49,7 @@ fn open_merge_editor_resets_the_conflict_and_accepts_incoming(cx: &mut TestAppCo
 
     let (name, result, unhandled) = workbench.read_with(cx, |workbench, _| {
         let name = workbench.editor_name(&workbench.editors.editors[0]);
-        let result = workbench.editors.active().unwrap().document.lines.join("\n");
+        let result = workbench.editors.active().unwrap().document().lines.join("\n");
         (name, result, workbench.editors.active_merge().unwrap().model.as_ref().unwrap().unhandled_count())
     });
     assert_eq!(name, "Merging: result.txt");
@@ -64,18 +64,18 @@ fn open_merge_editor_resets_the_conflict_and_accepts_incoming(cx: &mut TestAppCo
     run(&workbench, cx, "merge.goToNextUnhandledConflict", Vec::new());
     run(&workbench, cx, "merge.toggleActiveConflictInput1", Vec::new());
     let (result, unhandled) = workbench.read_with(cx, |workbench, _| {
-        let result = workbench.editors.active().unwrap().document.lines.join("\n");
+        let result = workbench.editors.active().unwrap().document().lines.join("\n");
         (result, workbench.editors.active_merge().unwrap().model.as_ref().unwrap().unhandled_count())
     });
     assert_eq!(result, "one\nTWO incoming\nthree");
     assert_eq!(unhandled, 0);
 
     run(&workbench, cx, "merge.acceptAllInput2", Vec::new());
-    let result = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document.lines.join("\n"));
+    let result = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document().lines.join("\n"));
     assert_eq!(result, "one\nTWO incoming\nTWO current\nthree");
 
     run(&workbench, cx, "mergeEditor.resetResultToBaseAndAutoMerge", Vec::new());
-    let result = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document.lines.join("\n"));
+    let result = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document().lines.join("\n"));
     assert_eq!(result, "one\ntwo\nthree");
 
     // viewModel.ts `AttachedHistory`: undoing an accept makes its conflict unhandled again.

@@ -88,7 +88,7 @@ fn entry_from_args(args: &[Value]) -> StatusEntry {
 }
 
 /// base/common/hash.ts `hash(string)`.
-fn string_hash(text: &str) -> i32 {
+pub(crate) fn string_hash(text: &str) -> i32 {
     let number_hash = |value: i32, initial: i32| initial.wrapping_shl(5).wrapping_sub(initial).wrapping_add(value);
     let mut hash = number_hash(149417, 0);
     for unit in text.encode_utf16() {

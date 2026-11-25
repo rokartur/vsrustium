@@ -50,20 +50,23 @@ impl Workbench {
     /// Switches to the folder's workspace storage and reads the editor history from it.
     pub fn restore_workspace_state(&mut self, storage: Arc<Mutex<Storage>>) {
         self.workspace_storage = storage;
+        self.reset_part_grid();
         let stored = self.workspace_storage.lock().unwrap().get(HISTORY_STORAGE_KEY).map(str::to_owned);
         let excluded = self.history_exclude_matcher();
-        self.quick_access.editor_history = EditorHistory::load(stored.as_deref(), |path| !excluded(path));
+        self.quick_access.editor_history = EditorHistory::load(stored.as_deref(), |path| !excluded(path, None));
         self.restore_find_state();
         self.restore_search_history();
         self.restore_explorer_view_state();
+        self.restore_editor_view_states();
+        self.restore_debug_state();
     }
 
     /// `handleActiveEditorChangeInHistory`. Upstream saves on shutdown only; the port saves on each change, as its
     /// storage writes synchronously and the app can exit without a shutdown phase.
     pub(super) fn record_editor_history(&mut self) {
         let Some(editor) = self.editors.active() else { return };
-        let path = editor.document.path.clone();
-        if self.quick_access.editor_history.entries.first() == Some(&path) || self.history_exclude_matcher()(&path) {
+        let path = editor.document().path.clone();
+        if self.quick_access.editor_history.entries.first() == Some(&path) || self.history_exclude_matcher()(&path, None) {
             return;
         }
         self.quick_access.editor_history.add(&path);
@@ -76,20 +79,26 @@ impl Workbench {
         }
     }
 
+    /// historyService.ts `clearRecentlyOpened`.
+    pub(super) fn clear_editor_history(&mut self) {
+        self.quick_access.editor_history.entries.clear();
+        self.save_editor_history();
+    }
+
     fn save_editor_history(&self) {
         let serialized = self.quick_access.editor_history.serialize();
         self.workspace_storage.lock().unwrap().set(HISTORY_STORAGE_KEY, serialized);
     }
 
     /// `includeInHistory`: `ExcludeResourceGlobMatcher` over `files.exclude` and `search.exclude`.
-    fn history_exclude_matcher(&self) -> impl Fn(&Path) -> bool + use<> {
+    fn history_exclude_matcher(&self) -> impl Fn(&Path, Option<&dyn Fn(&str) -> bool>) -> bool + use<> {
         self.resource_glob_matcher(&|setting, root| search::query::excludes(root.unwrap_or(Path::new("/")), setting, true).unwrap_or_default())
     }
 
     /// `ResourceGlobMatcher`: matches the path relative to its workspace folder with that folder's expression, and
     /// the absolute path too when a pattern is absolute; a path outside every folder matches the global expression
-    /// by its absolute path.
-    pub(super) fn resource_glob_matcher(&self, expression_for: &ExpressionFor) -> impl Fn(&Path) -> bool + use<> {
+    /// by its absolute path. `has_sibling` answers an expression's `when` clauses.
+    pub(super) fn resource_glob_matcher(&self, expression_for: &ExpressionFor) -> impl Fn(&Path, Option<&dyn Fn(&str) -> bool>) -> bool + use<> {
         let workspace = self.workspace().cloned();
         let settings = self.settings.lock().unwrap();
         let matcher_for = |root: Option<&Path>| {
@@ -100,7 +109,7 @@ impl Workbench {
         };
         let folder_matchers: Vec<_> = workspace.iter().flat_map(|workspace| &workspace.folders).map(|folder| matcher_for(Some(&folder.path))).collect();
         let global_matcher = matcher_for(None);
-        move |path: &Path| {
+        move |path: &Path, has_sibling: Option<&dyn Fn(&str) -> bool>| {
             let absolute = path.to_string_lossy();
             let folder = workspace.as_ref().and_then(|workspace| workspace.folder_of(path).map(|folder| (workspace, folder)));
             let ((matcher, has_absolute_path), relative) = match folder {
@@ -111,11 +120,11 @@ impl Workbench {
                 }
                 None => (&global_matcher, None),
             };
-            if matcher.matches(relative.as_deref().unwrap_or(&absolute), None, None).is_some() {
+            if matcher.matches(relative.as_deref().unwrap_or(&absolute), None, has_sibling).is_some() {
                 return true;
             }
             let Some(relative) = relative.filter(|_| *has_absolute_path) else { return false };
-            matcher.matches(&absolute, None, None).is_some() && !matcher.is_excepted(&relative, None)
+            matcher.matches(&absolute, None, has_sibling).is_some() && !matcher.is_excepted(&relative, None)
         }
     }
 
@@ -214,9 +223,9 @@ impl Workbench {
             .editors
             .editors
             .iter()
-            .map(|editor| &editor.document.path)
+            .map(|editor| editor.document().path.clone())
             .filter(|path| !folders.iter().any(|folder| path.starts_with(folder)))
-            .map(|path| FileEntry { relative_path: path.to_string_lossy().into_owned(), path: path.clone() })
+            .map(|path| FileEntry { relative_path: path.to_string_lossy().into_owned(), path })
             .collect();
         let rg = search::ripgrep::rg_path(&self.app_root);
         let cancellation = Arc::new(Cancellation::default());
@@ -296,13 +305,15 @@ impl Workbench {
     /// `applyTextEditorOptions`: the selection, validated against the text, then revealed in the center.
     pub(super) fn select_range(&mut self, path: &Path, range: TextRange, cx: &mut Context<Self>) {
         let viewport = self.editors.viewport;
-        let Some(editor) = self.editors.active_mut().filter(|editor| editor.document.path == path) else { return };
-        let lines = &editor.document.lines;
+        let Some(editor) = self.editors.active_mut().filter(|editor| editor.document().path == path) else { return };
+        let document = editor.document();
+        let lines = &document.lines;
         let validate = |line: usize, column: usize| {
             let line = line.clamp(1, lines.len()) - 1;
             Position::new(line, column.clamp(1, lines[line].chars().count() + 1) - 1)
         };
         let selection = Selection { anchor: validate(range.start_line_number, range.start_column), head: validate(range.end_line_number, range.end_column) };
+        drop(document);
         editor.set_selections(vec![selection]);
         editor.reveal_range(selection.start(), selection.end(), VerticalReveal::Center, viewport);
         self.host.send_selection(editor, "code.navigation");

@@ -55,6 +55,20 @@ fn active(input: &QuickInput) -> Vec<String> {
 }
 
 #[test]
+fn title_bar_is_hidden_when_empty() {
+    let mut input = pick(&[]);
+    let mut states = vec![input.shows_title_bar()];
+    input.title = Some("Title".into());
+    states.push(input.shows_title_bar());
+    input.title = None;
+    input.buttons = vec![Button { handle: -1, codicon: Some("quick-input-back".into()), ..Button::default() }];
+    states.push(input.shows_title_bar());
+    input.buttons.clear();
+    states.push(input.shows_title_bar());
+    assert_eq!(states, [false, true, true, false]);
+}
+
+#[test]
 fn pick_basecase() {
     let mut input = pick(&["foo", "bar"]);
     input.show();

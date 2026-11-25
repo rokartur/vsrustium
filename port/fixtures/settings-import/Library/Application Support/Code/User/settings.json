@@ -1,0 +1,10 @@
+{
+	// VS Code user settings
+	"editor.fontSize": 15,
+	"workbench.colorTheme": "Solarized Dark",
+	"workbench.iconTheme": "vs-seti",
+	"github.copilot.enable": { "*": true },
+	"chat.agent.enabled": true,
+	"telemetry.telemetryLevel": "off",
+	"[markdown]": { "editor.wordWrap": "on", "chat.editor.fontSize": 12 },
+}

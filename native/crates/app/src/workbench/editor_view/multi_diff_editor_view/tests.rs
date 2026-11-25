@@ -46,7 +46,7 @@ fn open_multi_diff_editor_shows_every_file_and_collapses_them(cx: &mut TestAppCo
     let (names, rows, added) = workbench.read_with(cx, |workbench, _| {
         let names: Vec<String> = workbench.editors.editors.iter().map(|editor| workbench.editor_name(editor)).collect();
         let input = workbench.editors.active_multi_diff().unwrap();
-        let rows = input.files[0].rows(&workbench.editors.model("file", &dir.join("a.txt")).unwrap().document.lines, 5, true);
+        let rows = input.files[0].rows(&workbench.editors.model("file", &dir.join("a.txt")).unwrap().document().lines, 5, true);
         (names, rows, input.files[1].status())
     });
     assert_eq!(names, ["Changes (2 files)"]);
@@ -88,13 +88,13 @@ fn open_multi_diff_editor_shows_every_file_and_collapses_them(cx: &mut TestAppCo
     assert_eq!(workbench.read_with(cx, |workbench, _| workbench.editors.active_multi_diff().unwrap().cursor), Some((1, 1)));
 
     // The models stay open while the editor shows them.
-    workbench.update(cx, |workbench, _| workbench.editors.release_models(std::time::Instant::now() + std::time::Duration::from_secs(3600), |_| false));
+    workbench.update(cx, |workbench, _| workbench.editors.release_models(std::time::Instant::now() + std::time::Duration::from_secs(3600)));
     assert!(workbench.read_with(cx, |workbench, _| workbench.editors.model("file", &dir.join("c.txt")).is_some()));
 
     // Open File opens the modified file.
     workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("multiDiffEditor.goToFile", vec![c], window, cx)));
     cx.run_until_parked();
-    let active = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document.name());
+    let active = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document().name());
     assert_eq!(active, "c.txt");
     std::fs::remove_dir_all(dir).unwrap();
 }
@@ -156,7 +156,7 @@ fn a_history_item_source_lists_its_changes_and_the_file_list_toggles(cx: &mut Te
 
     // The layout debug state opens as a jsonl model.
     workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("multiDiffEditor.openLayoutDebug", Vec::new(), window, cx)));
-    let line = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document.lines[0].clone());
+    let line = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document().lines[0].clone());
     let state: Value = serde_json::from_str(&line).unwrap();
     assert_eq!(state["items"][0]["collapsed"], false);
     std::fs::remove_dir_all(dir).unwrap();

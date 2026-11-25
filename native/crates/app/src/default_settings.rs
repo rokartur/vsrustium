@@ -5,7 +5,7 @@
 use std::cmp::Ordering;
 
 use config::model::is_override_key;
-use config::registry::{FOLDER_SCOPES, Property, Registry, WORKSPACE_SCOPES};
+use config::registry::{FOLDER_SCOPES, Property, Registry, Scope, WORKSPACE_SCOPES};
 use config::service::Target;
 use serde::Serialize;
 use serde_json::Value;
@@ -16,20 +16,31 @@ use crate::command_palette::locale_compare;
 pub struct SettingsGroup {
     pub id: String,
     pub title: String,
-    order: Option<f64>,
-    extension_id: Option<String>,
+    pub order: Option<f64>,
+    pub extension_id: Option<String>,
     /// The section title, the title of the setting that created the group.
     pub section_title: Option<String>,
     pub settings: Vec<Setting>,
 }
 
-/// The `ISetting` fields the default settings content reads.
-#[derive(Default)]
+/// `ISetting`: the default settings content and the Settings editor read it.
+#[derive(Clone, Default)]
 pub struct Setting {
     pub key: String,
     pub value: Value,
     pub description: Vec<String>,
+    pub description_is_markdown: bool,
+    /// The registered schema, for the type, enum, items and properties the Settings editor reads.
+    pub schema: Value,
+    pub scope: Option<Scope>,
+    pub restricted: bool,
+    /// `extensionInfo.id`; `None` for core settings.
+    pub extension_id: Option<String>,
     pub deprecation_message: Option<String>,
+    /// `deprecationMessageSeverity: 'info'`: an info icon in the foreground color instead of the error look.
+    pub deprecation_is_info: bool,
+    /// `deprecationMessageShowInSettings`: the tree keeps the setting while it is not configured.
+    pub deprecation_show_in_settings: bool,
     pub enum_values: Option<Vec<Value>>,
     pub enum_descriptions: Option<Vec<Value>>,
     /// `parseOverrideSettings`: the settings a `[lang]` default sets.
@@ -144,7 +155,14 @@ fn parse_setting(key: &str, property: &Property, target: Target) -> Option<Setti
         key: key.to_string(),
         value: property.default.clone(),
         description: description.split('\n').map(str::to_string).collect(),
+        description_is_markdown: text("markdownDescription").is_some(),
+        schema: schema.clone(),
+        scope: Some(property.scope),
+        restricted: property.restricted,
+        extension_id: property.source.clone(),
         deprecation_message: text("markdownDeprecationMessage").or(text("deprecationMessage")).map(str::to_string),
+        deprecation_is_info: schema["deprecationMessageSeverity"] == "info",
+        deprecation_show_in_settings: schema["deprecationMessageShowInSettings"] == true,
         enum_values,
         enum_descriptions,
         overrides,

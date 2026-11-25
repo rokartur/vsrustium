@@ -629,6 +629,9 @@ mod tests {
 
     #[test]
     fn object_merge() {
+        let mut base = map(json!({ "a": 1, "b": 2 }));
+        merge_contents(&mut base, &map(json!({ "a": 3, "c": 4 })));
+        assert_eq!(Value::Object(base), json!({ "a": 3, "b": 2, "c": 4 }), "simple merge");
         let mut base = map(json!({ "a": { "b": 1, "c": true, "d": 2 } }));
         merge_contents(&mut base, &map(json!({ "a": { "c": false, "e": "a" } })));
         assert_eq!(Value::Object(base), json!({ "a": { "b": 1, "c": false, "d": 2, "e": "a" } }));

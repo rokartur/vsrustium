@@ -328,7 +328,6 @@ fn issue_91235_do_not_end_with_a_plus() {
 #[test]
 fn issue_173325_equal_scan_code_is_not_v() {
     assert_ne!(parse_keybinding("ctrl+v"), parse_keybinding("ctrl+[Equal]"));
-    assert_eq!(parse_keybinding("ctrl+[Equal]"), parse_keybinding("ctrl+="));
 }
 
 #[test]

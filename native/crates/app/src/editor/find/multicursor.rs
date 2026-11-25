@@ -60,7 +60,7 @@ fn create_session(editor: &OpenEditor, find: &FindController, context: &MultiCur
         match_case,
         current_match,
         model_id: editor.model_id,
-        version_id: editor.version_id,
+        version_id: editor.text_model().version_id,
         selections: editor.selections.clone(),
         find_options: (find.state.match_case, find.state.whole_word),
         match_mode: context.match_mode.clone(),
@@ -75,10 +75,10 @@ fn create_session(editor: &OpenEditor, find: &FindController, context: &MultiCur
     };
     let selection = editor.selection();
     if !selection.is_empty() {
-        let text = text_between(&editor.document.lines, selection.start(), selection.end());
+        let text = text_between(&editor.document().lines, selection.start(), selection.end());
         return Some(new_session(disconnected, uses_find_options, text, whole_word, match_case, None));
     }
-    let line = &editor.document.lines[selection.start().line];
+    let line = &editor.document().lines[selection.start().line];
     let word = word_at(line, selection.start().column)?;
     let text = line.chars().skip(word.start).take(word.len()).collect();
     let current = Selection { anchor: Position::new(selection.start().line, word.start), head: Position::new(selection.start().line, word.end) };
@@ -97,7 +97,7 @@ impl MultiCursorSession {
             return Some(current);
         }
         let last = editor.selections[editor.selections.len() - 1];
-        let lines = &editor.document.lines;
+        let lines = &editor.document().lines;
         let found = match next {
             true => find_next_match(lines, &self.params(), last.end(), false),
             false => find_previous_match(lines, &self.params(), last.start(), false),
@@ -122,7 +122,7 @@ fn begin_session_if_needed(find: &mut FindController, editor: &mut OpenEditor, v
 pub fn end_session_if_stale(find: &mut FindController, editor: &mut OpenEditor, viewport: Viewport, match_mode: &str) {
     let Some(session) = &find.multicursor else { return };
     let options_changed = session.uses_find_options && session.find_options != (find.state.match_case, find.state.whole_word);
-    let moved = (session.model_id, session.version_id, &session.selections) != (editor.model_id, editor.version_id, &editor.selections);
+    let moved = (session.model_id, session.version_id, &session.selections) != (editor.model_id, editor.text_model().version_id, &editor.selections);
     if moved || options_changed || session.match_mode != match_mode {
         end_session(find, editor, viewport);
     }
@@ -162,6 +162,7 @@ pub fn selection_to_find_match(find: &mut FindController, editor: &mut OpenEdito
     }
     begin_session_if_needed(find, editor, viewport, context);
     let Some(session) = &mut find.multicursor else { return };
+    find.highlight_find_options = session.uses_find_options && session.current_match.is_none();
     let Some(found) = session.next_match(editor, next) else { return };
     let mut selections = editor.selections.clone();
     if !add {
@@ -181,9 +182,11 @@ pub fn select_all(find: &mut FindController, editor: &mut OpenEditor, viewport: 
     let find_regex = allow_find_regex && state.is_revealed && !state.search_string.is_empty() && state.is_regex;
     if !find_regex {
         begin_session_if_needed(find, editor, viewport, context);
+        find.highlight_find_options = find.multicursor.as_ref().is_some_and(|session| session.uses_find_options);
     }
     let state = &find.state;
-    let lines = &editor.document.lines;
+    let document = editor.document();
+    let lines = &document.lines;
     let scope = state.search_scope.clone().unwrap_or_else(|| vec![Position::default()..last_position(lines)]);
     let mut matches = match (&find.multicursor, find_regex) {
         (_, true) => {
@@ -201,13 +204,14 @@ pub fn select_all(find: &mut FindController, editor: &mut OpenEditor, viewport: 
     if let Some(index) = matches.iter().position(|found| found.range.start.max(primary.start()) <= found.range.end.min(primary.end())) {
         matches.swap(0, index);
     }
+    drop(document);
     set_selections(find, editor, matches.into_iter().map(|FindMatch { range, .. }| Selection { anchor: range.start, head: range.end }).collect());
 }
 
 /// `modelRangesContainSameText`: every selection after the first is non-empty and holds the first one's text.
 fn selections_contain_same_text(editor: &OpenEditor, match_case: bool) -> bool {
     let text = |selection: &Selection| {
-        let text = text_between(&editor.document.lines, selection.start(), selection.end());
+        let text = text_between(&editor.document().lines, selection.start(), selection.end());
         if match_case { text } else { text.to_lowercase() }
     };
     let first = text(&editor.selections[0]);
@@ -220,7 +224,7 @@ fn expand_empty_to_word(editor: &OpenEditor, selection: Selection) -> Selection 
         return selection;
     }
     let line = selection.head.line;
-    match word_at(&editor.document.lines[line], selection.head.column) {
+    match word_at(&editor.document().lines[line], selection.head.column) {
         Some(word) => Selection { anchor: Position::new(line, word.start), head: Position::new(line, word.end) },
         None => selection,
     }
@@ -245,7 +249,8 @@ pub struct SelectionHighlightQuery {
 /// `SelectionHighlighter._createState`: the session's search, or the one a new session would make, unless the
 /// selection is empty, blank, too long, or the shown find widget highlights the same matches.
 pub fn selection_highlight_query(find: &FindController, editor: &OpenEditor, context: &MultiCursorContext, options: SelectionHighlightOptions) -> Option<SelectionHighlightQuery> {
-    if !options.enabled {
+    // multicursor.ts `_update`: searching the whole of a model too large for tokenization would block the UI.
+    if !options.enabled || editor.document().too_large_for_tokenization {
         return None;
     }
     let selection = editor.selection();
@@ -282,7 +287,7 @@ pub fn selection_highlight_query(find: &FindController, editor: &OpenEditor, con
 /// `SelectionHighlighterState.findMatches` and `_setState`: the first `LIMIT_FIND_COUNT` (999) matches, without
 /// those equal to a selection or overlapping a non-empty one. None in a model too large for tokenization.
 pub fn selection_highlight_ranges(editor: &OpenEditor, query: &SelectionHighlightQuery) -> Vec<Range<Position>> {
-    let lines = &editor.document.lines;
+    let lines = &editor.document().lines;
     if lines.len() > 300_000 || lines.iter().map(|line| line.len() + 1).sum::<usize>() > 20 * 1024 * 1024 {
         return Vec::new();
     }

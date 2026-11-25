@@ -26,7 +26,7 @@ impl Workbench {
         Some(style)
     }
 
-    fn decoration_color(&self, color: &Option<DecorationColor>) -> Option<Rgba> {
+    fn text_decoration_color(&self, color: &Option<DecorationColor>) -> Option<Rgba> {
         match color.as_ref()? {
             DecorationColor::Theme(id) => self.theme.color(id),
             DecorationColor::Css(css) => css_color(css),
@@ -35,7 +35,7 @@ impl Workbench {
 
     /// The boxes and content text of the decorations on model line `line`, `x` giving a column's left edge.
     pub(super) fn text_decoration_boxes(&self, editor: &OpenEditor, line: usize, scroll_left: f32, x: impl Fn(usize) -> f32) -> Vec<Div> {
-        let line_length = editor.document.lines[line].chars().count();
+        let line_length = editor.document().lines[line].chars().count();
         let mut boxes = Vec::new();
         for decoration in editor.text_decorations.iter().filter(|decoration| decoration.start.line <= line && line <= decoration.end.line) {
             let Some(style) = self.decoration_style(decoration) else { continue };
@@ -49,11 +49,11 @@ impl Workbench {
                 true => div().absolute().inset_0().left(px(scroll_left)),
                 false => div().absolute().top_0().h_full().left(px(x(from))).w(px(x(to) - x(from))),
             };
-            if let Some(background) = self.decoration_color(&style.background_color) {
+            if let Some(background) = self.text_decoration_color(&style.background_color) {
                 area = area.bg(background);
             }
             // shortcut: GPUI draws borders inside the box, where CSS outlines draw outside it; widths round to 1px.
-            if let Some(outline) = self.decoration_color(&style.outline_color).or_else(|| self.decoration_color(&style.border_color)) {
+            if let Some(outline) = self.text_decoration_color(&style.outline_color).or_else(|| self.text_decoration_color(&style.border_color)) {
                 area = area.border_1().border_color(outline);
             }
             boxes.push(area);
@@ -64,10 +64,10 @@ impl Workbench {
                 }
                 // shortcut: content text is drawn over the line after its column; upstream's inline span moves the text behind it.
                 let mut text = div().absolute().top_0().left(px(x(column))).whitespace_nowrap().child(attachment.content_text.clone());
-                if let Some(color) = self.decoration_color(&attachment.color) {
+                if let Some(color) = self.text_decoration_color(&attachment.color) {
                     text = text.text_color(color);
                 }
-                if let Some(background) = self.decoration_color(&attachment.background_color) {
+                if let Some(background) = self.text_decoration_color(&attachment.background_color) {
                     text = text.bg(background);
                 }
                 if attachment.font_style.as_deref() == Some("italic") {
@@ -84,13 +84,13 @@ impl Workbench {
 
     /// The text styles of the decorations on model line `line`, as byte ranges of its tab-expanded text.
     pub(super) fn text_decoration_styles(&self, editor: &OpenEditor, line: usize, tab_size: usize) -> Vec<(Range<usize>, HighlightStyle)> {
-        let text = &editor.document.lines[line];
+        let text = &editor.document().lines[line];
         let byte = |column: usize| expand_tabs(&text.chars().take(column).collect::<String>(), tab_size).len();
         let mut styles = Vec::new();
         for decoration in editor.text_decorations.iter().filter(|decoration| decoration.start.line <= line && line <= decoration.end.line) {
             let Some(style) = self.decoration_style(decoration) else { continue };
             let highlight = HighlightStyle {
-                color: self.decoration_color(&style.color).map(Into::into),
+                color: self.text_decoration_color(&style.color).map(Into::into),
                 font_style: (style.font_style.as_deref() == Some("italic")).then_some(FontStyle::Italic),
                 font_weight: style.font_weight.as_deref().filter(|weight| *weight == "bold").map(|_| FontWeight::BOLD),
                 fade_out: style.opacity.map(|opacity| 1. - opacity),
@@ -116,7 +116,7 @@ impl Workbench {
         let mut marks = Vec::new();
         for decoration in &editor.text_decorations {
             let Some(style) = self.decoration_style(decoration) else { continue };
-            if let Some(color) = self.decoration_color(&style.overview_ruler_color) {
+            if let Some(color) = self.text_decoration_color(&style.overview_ruler_color) {
                 marks.push((decoration.start.line, decoration.end.line, color, style.overview_ruler_lane));
             }
         }

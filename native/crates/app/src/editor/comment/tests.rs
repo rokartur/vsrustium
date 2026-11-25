@@ -14,9 +14,9 @@ fn selection((anchor_line, anchor_column, head_line, head_column): Sel) -> Selec
 fn run(lines: &[&str], given: Sel, expected: &[&str], expected_selection: Sel, make: impl FnOnce(&[String], Selection) -> Command) {
     let mut model = editor(&lines.join("\n"), "\n");
     model.set_selections(vec![selection(given)]);
-    let made = make(&model.document.lines, model.selections[0]);
+    let made = make(&model.document().lines, model.selections[0]);
     model.execute_commands(vec![made], command("tests"));
-    assert_eq!(model.document.lines, expected);
+    assert_eq!(model.document().lines, expected);
     assert_eq!(model.selections, [selection(expected_selection)]);
 }
 
@@ -138,15 +138,15 @@ fn comment_lines_comments_a_line_shared_by_two_cursors_once() {
     let languages = Languages::new(&[]);
     model.set_selections(vec![selection((1, 1, 2, 2)), selection((2, 1, 3, 2))]);
     model.comment_lines(LineCommentKind::Toggle, true, true, &languages);
-    assert_eq!(model.document.lines, ["a", "b", "c"], "plaintext has no comment tokens");
+    assert_eq!(model.document().lines, ["a", "b", "c"], "plaintext has no comment tokens");
     let mut model = editor("a\nb\nc", "\n");
     let languages = typescript();
     model.set_selections(vec![selection((1, 1, 2, 2)), selection((2, 1, 3, 2))]);
     model.comment_lines(LineCommentKind::Toggle, true, true, &languages);
-    assert_eq!(model.document.lines, ["// a", "// b", "// c"]);
+    assert_eq!(model.document().lines, ["// a", "// b", "// c"]);
     assert_eq!(model.selections, [selection((1, 4, 3, 5))]);
     model.undo();
-    assert_eq!(model.document.lines, ["a", "b", "c"]);
+    assert_eq!(model.document().lines, ["a", "b", "c"]);
 }
 
 fn typescript() -> Languages {

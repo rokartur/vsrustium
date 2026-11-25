@@ -16,6 +16,7 @@ use serde_json::{Value, json};
 use super::Workbench;
 use super::explorer_find::ExplorerFind;
 use super::input_box_view::{InputId, InputLook, InputView};
+use super::search_view::SideBarView;
 use crate::commands::Outcome;
 use crate::dialog;
 use crate::explorer::{Navigation, NewItem};
@@ -46,6 +47,9 @@ pub struct ExplorerState {
     undo: UndoRedo<FileUndo>,
     pub scroll: ScrollHandle,
     pub find: ExplorerFind,
+    /// paneview.css `.pane:hover`: the folder section shows its title actions.
+    pub pane_hovered: bool,
+    pub type_navigation: super::type_navigation::TypeNavigation,
 }
 
 pub struct ExplorerEdit {
@@ -60,7 +64,7 @@ pub struct ExplorerEdit {
 
 impl ExplorerState {
     pub fn new(cx: &mut gpui::App) -> Self {
-        ExplorerState { focus: cx.focus_handle(), input: InputView::default(), input_focus: cx.focus_handle(), edit: None, drop_target: None, expand_timer: None, undo: UndoRedo::default(), scroll: ScrollHandle::new(), find: ExplorerFind::new(cx) }
+        ExplorerState { focus: cx.focus_handle(), input: InputView::default(), input_focus: cx.focus_handle(), edit: None, drop_target: None, expand_timer: None, undo: UndoRedo::default(), scroll: ScrollHandle::new(), find: ExplorerFind::new(cx), pane_hovered: false, type_navigation: Default::default() }
     }
 }
 
@@ -77,10 +81,19 @@ impl Workbench {
     }
 
     pub(super) fn restore_explorer_view_state(&mut self) {
+        let expand_single_folder = self.setting("explorer.expandSingleFolderWorkspaces") == json!(true);
         let Some(tree) = &mut self.folder else { return };
         let stored = self.workspace_storage.lock().unwrap().get(TREE_VIEW_STATE_KEY).and_then(|raw| serde_json::from_str::<Value>(raw).ok());
         let Some(state) = stored else { return };
         let scroll_top = tree.restore_view_state(&state);
+        // `setTreeInput`: a workspace file with one folder expands it on load even when the stored state has it collapsed.
+        if let [folder] = tree.workspace.folders.as_slice()
+            && tree.shows_roots()
+            && expand_single_folder
+        {
+            let folder = folder.path.clone();
+            tree.set_expanded(&folder, true);
+        }
         self.explorer.scroll.set_offset(gpui::point(px(0.), px(-scroll_top)));
     }
 
@@ -101,13 +114,99 @@ impl Workbench {
             Outcome::done()
         });
         self.commands.register("filesExplorer.paste", |workbench, _, window, cx| workbench.paste_explorer_items(window, cx));
-        self.commands.register("copyFilePath", |workbench, args, window, cx| workbench.copy_paths_to_clipboard(false, &args, window, cx));
-        self.commands.register("copyRelativeFilePath", |workbench, args, window, cx| workbench.copy_paths_to_clipboard(true, &args, window, cx));
-        self.commands.register("revealFileInOS", |workbench, args, window, cx| workbench.reveal_in_os(&args, window, cx));
+        self.commands.register("copyFilePath", |workbench, args, window, cx| {
+            let resources = workbench.multi_selected_resources(&args, window);
+            workbench.copy_paths_to_clipboard(false, resources, cx)
+        });
+        self.commands.register("copyRelativeFilePath", |workbench, args, window, cx| {
+            let resources = workbench.multi_selected_resources(&args, window);
+            workbench.copy_paths_to_clipboard(true, resources, cx)
+        });
+        self.commands.register("workbench.action.files.copyPathOfActiveFile", |workbench, _, _, cx| {
+            let resources = workbench.editors.active().map(|editor| editor.document().path.clone()).into_iter().collect();
+            workbench.copy_paths_to_clipboard(false, resources, cx)
+        });
+        self.commands.register("revealFileInOS", |workbench, args, window, cx| {
+            let resources = workbench.multi_selected_resources(&args, window);
+            workbench.reveal_in_os(resources, cx)
+        });
+        self.commands.register("workbench.action.files.revealActiveFileInWindows", |workbench, _, _, cx| {
+            let resources = workbench.editors.active().map(|editor| editor.document().path.clone()).into_iter().collect();
+            workbench.reveal_in_os(resources, cx)
+        });
+        self.register_explorer_view_actions();
         self.commands.register("previousCompressedFolder", |workbench, _, _, cx| workbench.move_compressed_focus(Navigation::previous, cx));
         self.commands.register("nextCompressedFolder", |workbench, _, _, cx| workbench.move_compressed_focus(Navigation::next, cx));
         self.commands.register("firstCompressedFolder", |workbench, _, _, cx| workbench.move_compressed_focus(Navigation::first, cx));
         self.commands.register("lastCompressedFolder", |workbench, _, _, cx| workbench.move_compressed_focus(Navigation::last, cx));
+    }
+
+    /// The Explorer view's title actions (explorerView.ts) and the File actions that open or reveal it.
+    fn register_explorer_view_actions(&mut self) {
+        self.commands.register("workbench.files.action.createFileFromExplorer", |workbench, _, window, cx| workbench.execute_command("explorer.newFile", Vec::new(), window, cx));
+        self.commands.register("workbench.files.action.createFolderFromExplorer", |workbench, _, window, cx| workbench.execute_command("explorer.newFolder", Vec::new(), window, cx));
+        // explorerService.ts `refresh`: the port reads the tree from disk on every draw, so showing the view refreshes it.
+        self.commands.register("workbench.files.action.refreshFilesExplorer", |workbench, _, _, cx| {
+            if workbench.folder.as_ref().is_some_and(|tree| tree.is_filtering()) {
+                return Outcome::done();
+            }
+            workbench.side_bar_view = SideBarView::Explorer;
+            cx.notify();
+            Outcome::done()
+        });
+        self.commands.register("workbench.files.action.collapseExplorerFolders", |workbench, _, _, cx| {
+            if let Some(tree) = workbench.folder.as_mut() {
+                tree.collapse_folders();
+            }
+            cx.notify();
+            Outcome::done()
+        });
+        self.commands.register("workbench.files.action.focusFilesExplorer", |workbench, _, window, cx| workbench.execute_command("workbench.view.explorer", Vec::new(), window, cx));
+        self.commands.register("workbench.files.action.showActiveFileInExplorer", |workbench, _, window, cx| {
+            let Some(path) = workbench.editors.active().map(|editor| editor.document().path.clone()) else { return Outcome::done() };
+            workbench.execute_command("revealInExplorer", vec![json!({ "scheme": "file", "path": path })], window, cx)
+        });
+        // fileCommands.ts `REVEAL_IN_EXPLORER_COMMAND_ID` over `getResourceForCommand`: the resource, else the focused
+        // Explorer row, else the active editor's; outside the workspace it would focus Open Editors, which the port lacks.
+        self.commands.register("revealInExplorer", |workbench, args, window, cx| {
+            let focused_row = workbench.folder.as_ref().filter(|_| workbench.explorer.focus.is_focused(window)).and_then(|tree| tree.focused.clone());
+            let path = match args.first().and_then(|uri| uri["path"].as_str()) {
+                Some(path) => Some(PathBuf::from(path)),
+                None => focused_row.or_else(|| workbench.editors.active().map(|editor| editor.document().path.clone())),
+            };
+            let Some(path) = path.filter(|path| workbench.workspace().is_some_and(|workspace| workspace.folder_of(path).is_some())) else { return Outcome::done() };
+            workbench.side_bar_view = SideBarView::Explorer;
+            workbench.select_explorer_item(&path, window, cx);
+            Outcome::done()
+        });
+    }
+
+    /// The folder section's title actions (explorerView.ts `MenuId.ViewTitle`), shown while the pane is hovered or
+    /// holds the focus, or always with `workbench.view.alwaysShowHeaderActions` (paneview.css).
+    pub(super) fn explorer_title_actions(&self, window: &Window, cx: &mut Context<Self>) -> Option<Div> {
+        let focus_within = self.explorer.focus.is_focused(window) || self.explorer.input_focus.is_focused(window) || self.explorer.find.focus.is_focused(window);
+        if !(self.explorer.pane_hovered || focus_within || self.setting("workbench.view.alwaysShowHeaderActions") == json!(true)) {
+            return None;
+        }
+        let refresh_enabled = !self.folder.as_ref().is_some_and(|tree| tree.is_filtering());
+        let actions = [
+            ("new-file", "workbench.files.action.createFileFromExplorer", true),
+            ("new-folder", "workbench.files.action.createFolderFromExplorer", true),
+            ("refresh", "workbench.files.action.refreshFilesExplorer", refresh_enabled),
+            ("collapse-all", "workbench.files.action.collapseExplorerFolders", true),
+        ];
+        let hover = self.color("toolbar.hoverBackground");
+        let mut bar = div().ml_auto().mr(px(8.)).flex().gap(px(4.));
+        for (icon, command, enabled) in actions {
+            let foreground = if enabled { self.foreground_or("icon.foreground") } else { self.color("disabledForeground") };
+            bar = bar.child(self.icon(icon, 20., 16., foreground).id(command).rounded(px(4.)).when(enabled, |action| {
+                action.cursor_pointer().hover(|action| action.bg(hover)).on_click(cx.listener(move |workbench, _: &gpui::ClickEvent, window, cx| {
+                    cx.stop_propagation();
+                    workbench.execute_command(command, Vec::new(), window, cx);
+                }))
+            }));
+        }
+        Some(bar)
     }
 
     /// explorerView.ts `previousCompressedStat` and its siblings: moves the focused compact row's current folder.
@@ -132,13 +231,12 @@ impl Workbench {
         if let Some(path) = args.first().and_then(|uri| uri["path"].as_str()) {
             return vec![PathBuf::from(path)];
         }
-        self.editors.active().map(|editor| editor.document.path.clone()).into_iter().collect()
+        self.editors.active().map(|editor| editor.document().path.clone()).into_iter().collect()
     }
 
     /// fileCommands.ts `resourcesToClipboard`: one path per line, with `explorer.copyPathSeparator` or
     /// `explorer.copyRelativePathSeparator` when it is `/` or `\`.
-    fn copy_paths_to_clipboard(&mut self, relative: bool, args: &[Value], window: &mut Window, cx: &mut Context<Self>) -> Outcome {
-        let resources = self.multi_selected_resources(args, window);
+    fn copy_paths_to_clipboard(&mut self, relative: bool, resources: Vec<PathBuf>, cx: &mut Context<Self>) -> Outcome {
         if resources.is_empty() {
             return Outcome::done();
         }
@@ -155,8 +253,7 @@ impl Workbench {
 
     /// electron-browser fileCommands.ts `revealResourcesInOS`: each resource selected in Finder, else the first
     /// workspace folder.
-    fn reveal_in_os(&mut self, args: &[Value], window: &mut Window, cx: &mut Context<Self>) -> Outcome {
-        let mut resources = self.multi_selected_resources(args, window);
+    fn reveal_in_os(&mut self, mut resources: Vec<PathBuf>, cx: &mut Context<Self>) -> Outcome {
         if resources.is_empty() {
             resources.extend(self.workspace().map(|workspace| workspace.folders[0].path.clone()));
         }
@@ -180,6 +277,20 @@ impl Workbench {
         context.insert("listFocus".into(), json!(focused));
         if input_focused {
             context.insert("inputFocus".into(), json!(true));
+        }
+        // listService.ts `WorkbenchListSupportsMultiSelectContextKey`, `WorkbenchListHasSelectionOrFocus` and the
+        // tree's `WorkbenchTreeElement*` keys of the focused row.
+        context.insert("listSupportsMultiselect".into(), json!(true));
+        context.insert("listHasSelectionOrFocus".into(), json!(tree.focused.is_some() || !tree.selected.is_empty()));
+        let rows = tree.rows();
+        let focused_index = tree.focused.as_ref().and_then(|focused| rows.iter().position(|row| row.path == *focused));
+        if let Some(index) = focused_index {
+            let row = &rows[index];
+            let collapsible = row.is_dir || row.has_nests;
+            context.insert("treeElementCanCollapse".into(), json!(collapsible && row.expanded));
+            context.insert("treeElementCanExpand".into(), json!(collapsible && !row.expanded));
+            context.insert("treeElementHasChild".into(), json!(rows.get(index + 1).is_some_and(|child| child.depth > row.depth)));
+            context.insert("treeElementHasParent".into(), json!(row.depth > 1));
         }
         // Without a focused row the keys describe the last workspace folder, a root.
         let stat = tree.focused.clone().unwrap_or_else(|| tree.workspace.folders.last().expect("a workspace has a folder").path.clone());
@@ -258,6 +369,68 @@ impl Workbench {
 
     pub(super) fn setting(&self, key: &str) -> Value {
         self.settings.lock().unwrap().get_value(Some(key), &Overrides::default()).unwrap_or(Value::Null)
+    }
+
+    /// explorerView.ts `selectActiveFile` with `explorer.autoReveal`: selects the active file unless
+    /// `explorer.autoRevealExclude` matches it, and with `true` scrolls a row out of view to the middle (`reveal(item, 0.5)`).
+    pub(super) fn reveal_active_file(&mut self) {
+        let Some(path) = self.editors.active().map(|editor| editor.document().path.clone()) else { return };
+        let auto_reveal = self.setting("explorer.autoReveal");
+        if auto_reveal == json!(false) || self.auto_reveal_excluded(&path) {
+            return;
+        }
+        let Some(tree) = self.folder.as_mut() else { return };
+        if tree.focused.as_ref() == Some(&path) && tree.selected == [path.clone()] {
+            return;
+        }
+        tree.reveal(&path);
+        if auto_reveal == json!(true) {
+            self.reveal_explorer_focus(true);
+        }
+    }
+
+    /// listWidget.ts `reveal` of the focused row when it is not fully in view: to the middle with `center`
+    /// (`reveal(item, 0.5)`), else to the nearest edge as the list commands do.
+    pub(super) fn reveal_explorer_focus(&mut self, center: bool) {
+        let Some(tree) = self.folder.as_ref() else { return };
+        let rows = tree.rows();
+        let Some(index) = rows.iter().position(|row| tree.focused.as_ref() == Some(&row.path)) else { return };
+        let (row_height, viewport) = (px(22.), self.explorer.scroll.bounds().size.height);
+        let (top, scroll_top) = (row_height * index as f32, -self.explorer.scroll.offset().y);
+        let scroll_top = match (top < scroll_top, top + row_height > scroll_top + viewport) {
+            (false, false) => return,
+            _ if center => top - (viewport - row_height) * 0.5,
+            (true, _) => top,
+            (false, true) => top + row_height - viewport,
+        };
+        let max_scroll_top = (row_height * rows.len() as f32 - viewport).max(px(0.));
+        self.explorer.scroll.set_offset(gpui::point(px(0.), -scroll_top.clamp(px(0.), max_scroll_top)));
+    }
+
+    /// explorerService.ts `shouldAutoRevealItem`: the pattern matches the file, with its siblings for `when`, or a
+    /// folder above it inside its workspace folder.
+    fn auto_reveal_excluded(&self, path: &Path) -> bool {
+        let excluded = self.resource_glob_matcher(&|setting, root| setting(root.unwrap_or(Path::new("/")), "explorer.autoRevealExclude").as_object().cloned().unwrap_or_default());
+        let Some(parent) = path.parent() else { return false };
+        if excluded(path, Some(&|name: &str| parent.join(name).exists())) {
+            return true;
+        }
+        let Some(root) = self.workspace().and_then(|workspace| workspace.folder_of(path)) else { return false };
+        path.ancestors().skip(1).take_while(|folder| *folder != root.path).any(|folder| excluded(folder, None))
+    }
+
+    /// listService.ts `workbench.list.multiSelectModifier`, `workbench.list.openMode` and `workbench.tree.expandMode`.
+    pub(super) fn list_click_mode(&self) -> ListClickMode {
+        ListClickMode {
+            alt_multi_select: self.setting("workbench.list.multiSelectModifier") == "alt",
+            open_on_double_click: self.setting("workbench.list.openMode") == "doubleClick",
+            expand_on_double_click: self.setting("workbench.tree.expandMode") == "doubleClick",
+        }
+    }
+
+    /// `workbench.tree.indent`, clamped to 0..40 as abstractTree.ts `updateOptions` does; 8 without a number.
+    pub(super) fn tree_indent(&self) -> f32 {
+        tree_indent(&self.setting("workbench.tree.indent"))
     }
 
     /// `openExplorerAndCreate`: the new item's row with the name editor, in the focused folder or the focused
@@ -489,6 +662,7 @@ impl Workbench {
         if let Some(tree) = self.folder.as_mut() {
             tree.reveal(path);
         }
+        self.reveal_explorer_focus(true);
         window.focus(&self.explorer.focus.clone(), cx);
         cx.notify();
     }
@@ -992,7 +1166,7 @@ async fn delete_files(workbench: WeakEntity<Workbench>, cx: &mut AsyncWindowCont
     loop {
         let primary = if use_trash { "Move to Trash" } else { "Delete" };
         let Ok((dirty, confirm_delete)) = workbench.update(cx, |workbench, _| {
-            let dirty = workbench.editors.editors.iter().filter(|editor| editor.is_dirty() && items.iter().any(|item| editor.document.path.starts_with(item))).count();
+            let dirty = workbench.editors.editors.iter().filter(|editor| editor.is_dirty() && items.iter().any(|item| editor.document().path.starts_with(item))).count();
             (dirty, workbench.setting("explorer.confirmDelete") != json!(false))
         }) else {
             return;
@@ -1185,4 +1359,16 @@ fn file_name(path: &Path) -> String {
 
 fn resource(path: &Path) -> Resource {
     Resource::file(path.to_string_lossy())
+}
+
+/// How clicks act on list rows; the defaults are Cmd for multi-selection and single clicks to open and expand.
+pub(super) struct ListClickMode {
+    pub(super) alt_multi_select: bool,
+    pub(super) open_on_double_click: bool,
+    pub(super) expand_on_double_click: bool,
+}
+
+/// `workbench.tree.indent` per level: clamped to 0..40 as abstractTree.ts `updateOptions` does, 8 when not a number.
+fn tree_indent(value: &Value) -> f32 {
+    value.as_f64().map_or(8., |indent| indent.clamp(0., 40.)) as f32
 }

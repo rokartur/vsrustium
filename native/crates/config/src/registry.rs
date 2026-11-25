@@ -49,6 +49,7 @@ impl Scope {
 
 /// `APPLICATION_SCOPES`, `WORKSPACE_SCOPES` and `FOLDER_SCOPES` of workbench/services/configuration/common/configuration.ts.
 pub const APPLICATION_SCOPES: [Scope; 2] = [Scope::Application, Scope::ApplicationMachine];
+pub const PROFILE_SCOPES: [Scope; 5] = [Scope::Machine, Scope::Window, Scope::Resource, Scope::LanguageOverridable, Scope::MachineOverridable];
 pub const WORKSPACE_SCOPES: [Scope; 4] = [Scope::Window, Scope::Resource, Scope::LanguageOverridable, Scope::MachineOverridable];
 pub const FOLDER_SCOPES: [Scope; 3] = [Scope::Resource, Scope::LanguageOverridable, Scope::MachineOverridable];
 
@@ -74,6 +75,8 @@ pub struct Registry {
     default_overrides: Vec<(String, Value, Option<String>)>,
     /// `registerOverrideIdentifiers`: the language ids languagesRegistry.ts registers.
     pub override_identifiers: Vec<String>,
+    /// `getExcludedConfigurationProperties`: the schemas of `included: false` properties, which only policies read.
+    pub excluded: HashMap<String, Value>,
 }
 
 /// The core settings of VS Code 1.147.0 as its registry holds them, dumped with port/tools/dump-settings.
@@ -123,8 +126,29 @@ impl Registry {
                 }
             }
         }
+        registry.list_folding_range_providers(extensions);
         registry.finish();
         registry
+    }
+
+    /// folding.contribution.ts `_updateConfigValues`: `editor.defaultFoldingRangeProvider` offers All, then the
+    /// extensions with code, Programming Languages first, each group by name.
+    fn list_folding_range_providers(&mut self, extensions: &[(&str, &Value)]) {
+        let Some(property) = self.properties.get_mut("editor.defaultFoldingRangeProvider") else { return };
+        let mut with_code: Vec<_> = extensions.iter().filter(|(_, description)| description.get("main").is_some() || description.get("browser").is_some()).collect();
+        let is_language = |description: &Value| description["categories"].as_array().is_some_and(|categories| categories.iter().any(|category| category == "Programming Languages"));
+        with_code.sort_by_key(|(_, description)| (!is_language(description), description["name"].as_str().unwrap_or_default().to_lowercase()));
+        let mut ids = vec![Value::Null];
+        let mut labels = vec![json!("All")];
+        let mut descriptions = vec![json!("All active folding range providers")];
+        for (id, description) in with_code {
+            ids.push(json!(id));
+            labels.push(json!(description["displayName"].as_str().unwrap_or_default()));
+            descriptions.push(json!(description["description"].as_str().unwrap_or_default()));
+        }
+        property.schema["enum"] = Value::Array(ids);
+        property.schema["enumItemLabels"] = Value::Array(labels);
+        property.schema["markdownEnumDescriptions"] = Value::Array(descriptions);
     }
 
     /// The `configuration` contribution of one extension's package.json (`configurationExtPoint` handler).
@@ -153,6 +177,7 @@ impl Registry {
                 }
                 // `included: false` goes to the excluded properties, which only policies and experiments read.
                 if schema["included"] == false {
+                    self.excluded.insert(key.clone(), schema.clone());
                     continue;
                 }
                 let mut schema = schema.clone();
@@ -313,6 +338,19 @@ fn default_for_type(type_: &Value) -> Value {
 mod tests {
     use super::*;
 
+    #[test]
+    fn the_folding_range_provider_setting_lists_the_extensions_with_code() {
+        let css = json!({ "name": "css-language-features", "displayName": "CSS", "description": "css", "main": "a", "categories": ["Programming Languages"] });
+        let git = json!({ "name": "git", "displayName": "Git", "description": "git", "main": "b" });
+        let theme = json!({ "name": "theme-abyss", "displayName": "Abyss" });
+        let html = json!({ "name": "html-language-features", "displayName": "HTML", "browser": "c", "categories": ["Programming Languages"] });
+        let registry = Registry::with_extensions(&[("vscode.git", &git), ("vscode.theme-abyss", &theme), ("vscode.html-language-features", &html), ("vscode.css-language-features", &css)]);
+        let schema = &registry.properties["editor.defaultFoldingRangeProvider"].schema;
+        assert_eq!(schema["enum"], json!([null, "vscode.css-language-features", "vscode.html-language-features", "vscode.git"]));
+        assert_eq!(schema["enumItemLabels"], json!(["All", "CSS", "HTML", "Git"]));
+        assert_eq!(schema["markdownEnumDescriptions"], json!(["All active folding range providers", "css", "", "git"]));
+    }
+
     fn registry(properties: Value, defaults: &[Value]) -> Registry {
         let mut registry = Registry::default();
         registry.register_configuration("test", &json!({ "contributes": { "configuration": { "id": "_test_default", "type": "object", "properties": properties } } }));
@@ -358,5 +396,34 @@ mod tests {
         assert_eq!(registry.property("editor.tabSize").unwrap().default, json!(4));
         assert_eq!(registry.property("workbench.colorTheme").unwrap().default, json!("Dark 2026"));
         assert_eq!(registry.property("[yaml]").unwrap().default, json!({ "editor.insertSpaces": true, "editor.tabSize": 2 }));
+    }
+
+    /// configurations.test.ts `DefaultConfiguration` cases without events: the port builds the registry once per
+    /// extension set (`with_extensions`), so the initialize, update and deregister cases have no counterpart.
+    #[test]
+    fn default_configuration_cases() {
+        let model = registry(json!({ "a": { "type": "boolean", "default": false } }), &[]).default_model();
+        assert_eq!(model.get_value(Some("a")), Some(json!(false)), "registering a property");
+
+        let model = registry(json!({ "a.b": { "type": "object", "default": {} }, "a.b.c": { "type": "object", "default": "2" } }), &[]).default_model();
+        assert_eq!(model.get_value(Some("a")), Some(json!({ "b": { "c": "2" } })), "nested properties");
+        assert_eq!(model.keys, ["a.b", "a.b.c"]);
+
+        let mut same = Registry::default();
+        for (id, default) in [("first", true), ("second", false)] {
+            same.register_configuration(id, &json!({ "contributes": { "configuration": { "id": "a", "properties": { "a": { "type": "boolean", "default": default } } } } }));
+        }
+        same.finish();
+        assert_eq!(same.default_model().get_value(Some("a")), Some(json!(true)), "the first registration wins");
+
+        let model = registry(json!({}), &[json!({ "[a]": { "b": true } })]).default_model();
+        assert_eq!(model.get_value(Some("[a]")), Some(json!({ "b": true })), "an override identifier");
+        assert_eq!(model.keys, ["[a]"]);
+        assert_eq!(model.get_override_value(Some("b"), "a"), Some(json!(true)));
+
+        let model = registry(json!({ "b": { "type": "boolean", "default": false } }), &[json!({ "[a]": { "b": true } })]).default_model();
+        assert_eq!((model.get_value(Some("b")), model.get_value(Some("[a]"))), (Some(json!(false)), Some(json!({ "b": true }))), "a property and an override identifier");
+        assert_eq!(model.keys, ["b", "[a]"]);
+        assert_eq!(model.get_override_value(Some("b"), "a"), Some(json!(true)));
     }
 }

@@ -10,7 +10,6 @@ use gpui::Context;
 
 use crate::editor::{Indentation, guess_indentation};
 use crate::workbench::Workbench;
-use crate::workbench::themes::SettingTarget;
 
 /// Upstream batches settings file watcher events by 100 ms.
 const SETTINGS_CHECK_INTERVAL: Duration = Duration::from_millis(100);
@@ -38,42 +37,57 @@ impl Workbench {
     }
 
     /// `onDidChangeConfiguration` listeners of the workbench for a change already in the settings model.
-    fn configuration_changed(&mut self, change: &Change, before: Vec<CreationOptions>, cx: &mut Context<Self>) {
+    pub(super) fn configuration_changed(&mut self, change: &Change, before: Vec<CreationOptions>, cx: &mut Context<Self>) {
         self.host.send_configuration_change(&self.settings.lock().unwrap(), change);
-        if affects(change, "workbench.colorTheme") {
-            let configured = self.settings.lock().unwrap().get_value(Some("workbench.colorTheme"), &Default::default());
-            if let Some(id) = configured.as_ref().and_then(|id| id.as_str()) {
-                // ThemeService `restoreColorTheme`: applied without writing the setting back.
-                self.set_color_theme(id, SettingTarget::Preview, cx);
+        let theme_keys = ["workbench.colorTheme", "workbench.preferredDarkColorTheme", "workbench.preferredLightColorTheme", "workbench.preferredHighContrastColorTheme", "workbench.preferredHighContrastLightColorTheme", "window.autoDetectColorScheme", "window.autoDetectHighContrast"];
+        if theme_keys.iter().any(|key| affects(change, key)) {
+            self.restore_color_theme(cx);
+        }
+        // `restoreFileIconTheme`
+        if affects(change, "workbench.iconTheme") {
+            let file_icons = crate::settings_file_icons(&self.extensions, &self.settings.lock().unwrap());
+            match file_icons {
+                Ok(file_icons) => self.file_icons = file_icons,
+                Err(error) => eprintln!("loading the file icon theme: {error:#}"),
             }
         }
+        if affects(change, "workbench.colorCustomizations") || affects(change, "editor.tokenColorCustomizations") {
+            self.customize_theme();
+        }
         self.update_model_options(before);
+        if ["editor.folding", "editor.foldingStrategy", "editor.foldingMaximumRegions", "editor.defaultFoldingRangeProvider"].iter().any(|key| affects(change, key)) {
+            self.trigger_folding_model_changed(cx);
+        }
+        if affects(change, "files.associations") {
+            self.files_associations_changed(cx);
+        }
+        self.settings_editor_configuration_changed(cx);
         cx.notify();
     }
 
-    fn model_creation_options(&self) -> Vec<CreationOptions> {
+    pub(super) fn model_creation_options(&self) -> Vec<CreationOptions> {
         let settings = self.settings.lock().unwrap();
         let models = self.editors.editors.iter().chain(&self.editors.models);
-        models.map(|model| creation_options(&settings.configuration, &model.document.path, &model.document.language_id)).collect()
+        models.map(|model| creation_options(&settings.configuration, &model.document().path, &model.document().language_id)).collect()
     }
 
     /// modelService.ts `_updateModelOptions` for each model whose creation options changed.
     fn update_model_options(&mut self, before: Vec<CreationOptions>) {
         let after = self.model_creation_options();
-        let active_before = self.editors.active().map(|editor| editor.document.indentation);
+        let active_before = self.editors.active().map(|editor| editor.document().indentation);
         let models = self.editors.editors.iter_mut().chain(&mut self.editors.models);
         for ((model, old), new) in models.zip(before).zip(after) {
             if old == new {
                 continue;
             }
             let indentation = match new.detect_indentation {
-                true => guess_indentation(&model.document.lines, Indentation { tab_size: new.tab_size, indent_size: None, insert_spaces: new.insert_spaces }),
+                true => guess_indentation(&model.document().lines, Indentation { tab_size: new.tab_size, indent_size: None, insert_spaces: new.insert_spaces }),
                 false => Indentation { tab_size: new.tab_size, indent_size: new.indent_size, insert_spaces: new.insert_spaces },
             };
             model.set_indentation(indentation);
         }
         if let Some(editor) = self.editors.active()
-            && active_before != Some(editor.document.indentation)
+            && active_before != Some(editor.document().indentation)
         {
             self.host.send_options(editor);
         }

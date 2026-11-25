@@ -54,10 +54,10 @@ impl MergeInput {
     }
 
     /// mainThreadEditorTabs.ts `_buildTabObject` of a `MergeEditorInput`: a `TextMergeInput` tab keyed by its result.
-    pub fn tab_dto(&self, entry: &OpenEditor, active: bool, dirty: bool) -> Value {
+    pub fn tab_dto(&self, group: u32, entry: &OpenEditor, active: bool, dirty: bool) -> Value {
         let uri = |side: &Side| uri_value(&side.scheme, &side.path);
         json!({
-            "id": format!("0~default-mergeEditor.Input-{} ", uri_string(&self.result.scheme, &self.result.path)),
+            "id": format!("{group}~default-mergeEditor.Input-{} ", uri_string(&self.result.scheme, &self.result.path)),
             "label": self.name(),
             "input": { "kind": 3, "base": uri(&self.base), "input1": uri(&self.input1.side), "input2": uri(&self.input2.side), "result": uri(&self.result) },
             "editorId": "default",

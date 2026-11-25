@@ -11,7 +11,7 @@ impl Fixture {
         let root = std::env::temp_dir().join(format!("extension-management-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
-        let extensions = UserExtensions { folder: root.join("extensions"), product_version: "1.147.0".into() };
+        let extensions = UserExtensions::new(root.join("extensions"), "1.147.0");
         Fixture { root, extensions }
     }
 
@@ -108,6 +108,22 @@ fn initializes_the_profile_from_the_folder() {
     std::fs::write(folder.join("package.json"), r#"{"name":"other","publisher":"port","version":"2.0.0","engines":{"vscode":"^1.0.0"}}"#).unwrap();
     assert_eq!(fixture.extensions.scan().unwrap()[0].id, "port.other");
     assert_eq!(fixture.profile_ids(), [("port.other".to_owned(), "port.other-2.0.0".to_owned())]);
+}
+
+#[test]
+fn another_profile_starts_empty_and_keeps_a_folder_in_use() {
+    let fixture = Fixture::new("profiles");
+    fixture.extensions.install_vsix(&fixture.vsix("1.0.0", "^1.80.0")).unwrap();
+    let profiles_home = fixture.root.join("User/profiles");
+    let other = UserExtensions { extensions_file: profiles_home.join("p1/extensions.json"), profiles_home: Some(profiles_home.clone()), ..UserExtensions::new(fixture.extensions.folder.clone(), "1.147.0") };
+    assert!(other.scan().unwrap().is_empty());
+    other.install_vsix(&fixture.vsix("1.0.0", "^1.80.0")).unwrap();
+    assert_eq!(other.scan().unwrap().len(), 1);
+    let default = UserExtensions { profiles_home: Some(profiles_home), ..UserExtensions::new(fixture.extensions.folder.clone(), "1.147.0") };
+    default.uninstall("port.sample").unwrap();
+    assert!(default.removed().unwrap().is_empty(), "the other profile still lists the folder");
+    other.uninstall("port.sample").unwrap();
+    assert_eq!(other.removed().unwrap().len(), 1);
 }
 
 #[test]

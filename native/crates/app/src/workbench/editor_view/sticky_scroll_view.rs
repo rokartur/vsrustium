@@ -56,7 +56,7 @@ impl Workbench {
         let mut lines = Vec::new();
         for (index, (&start, &end)) in state.start_line_numbers.iter().zip(&state.end_line_numbers).enumerate() {
             let line = if show_end == Some(index) { end } else { start };
-            if line <= editor.document.lines.len() {
+            if line <= editor.document().lines.len() {
                 lines.push(StickyLine { line, end_line: end });
             }
         }
@@ -93,7 +93,7 @@ impl Workbench {
         let text_color = self.color("editor.foreground");
         let fold_color = self.color("editorGutter.foldingControlForeground");
         let focus_border = self.color("focusBorder");
-        let tab_size = editor.document.indentation.tab_size;
+        let tab_size = editor.document().indentation.tab_size;
         let (mut numbers, mut contents) = (Vec::new(), Vec::new());
         // The last line has z-index 0 under the others' 1, so it goes first.
         let last = lines.len() - 1;
@@ -151,14 +151,17 @@ impl Workbench {
                 );
             }
             numbers.push(number);
-            let text = &editor.document.lines[line - 1];
-            let highlights = editor.document.tokens.highlights(&self.theme, &self.languages, &editor.document.lines, line - 1, tab_size);
-            let span_starts = editor.document.tokens.span_starts(&self.theme, &self.languages, &editor.document.lines, line - 1);
+            let text = &editor.document().lines[line - 1];
+            // stickyScrollWidget.ts renders the line's first view line only.
+            let wrapped_width = editor.wraps().then(|| editor.wrapped_line_width(editor.view_line(line - 1)).unwrap_or_default() as f32 * metrics.char_width);
+            let highlights = editor.document().tokens.highlights(&self.theme, &self.languages, &editor.document().lines, line - 1, tab_size);
+            let span_starts = editor.document().tokens.span_starts(&self.theme, &self.languages, &editor.document().lines, line - 1);
             let column_at = move |workbench: &Workbench, event: &ClickEvent| {
                 let x = f32::from(event.position().x) - workbench.text_area_left.get() - metrics.content_left() + scroll_left;
                 let editor = workbench.editors.active().expect("sticky lines show only with an editor open");
                 // An edit from the host can shrink the document between this frame and the click.
-                let Some(text) = editor.document.lines.get(line - 1) else { return 0 };
+                let document = editor.document();
+                let Some(text) = document.lines.get(line - 1) else { return 0 };
                 span_column(text, &span_starts, x / metrics.char_width, tab_size)
             };
             let mut content = div()
@@ -179,7 +182,7 @@ impl Workbench {
                     let column = column_at(workbench, event);
                     workbench.click_sticky_line(end_line, Some(Position::new(line - 1, column)), event, window, cx);
                 }))
-                .child(div().absolute().top_0().left(px(-scroll_left)).whitespace_nowrap().child(StyledText::new(expand_tabs(text, tab_size)).with_highlights(highlights)));
+                .child(div().absolute().top_0().left(px(-scroll_left)).when_some(wrapped_width, |text, width| text.w(px(width)).overflow_hidden()).whitespace_nowrap().child(StyledText::new(expand_tabs(text, tab_size)).with_highlights(highlights)));
             // workbench.css `[tabindex="0"]:focus`: a 1px focusBorder outline inside the focused line.
             if focused_index == Some(index) {
                 content = content.child(div().absolute().inset_0().border_1().border_color(focus_border));
@@ -204,6 +207,12 @@ impl Workbench {
             })
             // _onMouseDown: a press keeps the focus in the editor, as the reveal that follows does.
             .on_mouse_down(MouseButton::Left, cx.listener(|workbench, _, window, cx| window.focus(&workbench.editor_focus, cx)))
+            // stickyScrollController.ts `_onContextMenu`: `MenuId.StickyScrollContext` at the pointer.
+            .on_mouse_down(MouseButton::Right, cx.listener(|workbench, event: &gpui::MouseDownEvent, window, cx| {
+                let context = workbench.key_context(window);
+                let anchor = gpui::Bounds { origin: event.position, size: gpui::Size::default() };
+                workbench.show_context_menu(crate::menus::MenuId::StickyScrollContext, &context, anchor, Vec::new(), window, cx);
+            }))
             .child(
                 div()
                     .id("sticky-line-numbers")

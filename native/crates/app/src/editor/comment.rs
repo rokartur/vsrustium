@@ -22,9 +22,9 @@ impl OpenEditor {
             LineCommentKind::ForceAdd => "editor.action.addCommentLine",
             LineCommentKind::ForceRemove => "editor.action.removeCommentLine",
         };
-        let indent_size = self.document.indentation.indent_size();
+        let indent_size = self.document().indentation.indent_size();
         let comments_at = |line: usize, column: usize| self.comments_at(languages, line, column);
-        let commands = line_comment_commands(&self.document.lines, &self.selections, indent_size, kind, insert_space, ignore_empty_lines, &comments_at);
+        let commands = line_comment_commands(&self.document().lines, &self.selections, indent_size, kind, insert_space, ignore_empty_lines, &comments_at);
         self.push_undo_stop();
         let change = self.execute_commands(commands, command(id));
         self.push_undo_stop();
@@ -34,7 +34,7 @@ impl OpenEditor {
     /// `BlockCommentAction.run`: a `BlockCommentCommand` per selection between undo stops.
     pub fn block_comment(&mut self, insert_space: bool, languages: &Languages) -> Option<ContentChanged> {
         let comments_at = |line: usize, column: usize| self.comments_at(languages, line, column);
-        let commands = self.selections.iter().map(|&selection| block_comment_command(&self.document.lines, selection, insert_space, &comments_at)).collect();
+        let commands = self.selections.iter().map(|&selection| block_comment_command(&self.document().lines, selection, insert_space, &comments_at)).collect();
         self.push_undo_stop();
         let change = self.execute_commands(commands, command("editor.action.blockComment"));
         self.push_undo_stop();
@@ -44,11 +44,11 @@ impl OpenEditor {
     /// The comment tokens of the language at a position (`getLanguageIdAtPosition`), an embedded one included.
     // shortcut: the line is tokenized when needed, where upstream's `tokenizeIfCheap` skips long or far lines.
     fn comments_at<'a>(&self, languages: &'a Languages, line: usize, column: usize) -> Comments<'a> {
-        let text = &self.document.lines[line];
+        let text = &self.document().lines[line];
         let offset = text.char_indices().nth(column).map_or(text.len(), |(offset, _)| offset);
-        match self.document.tokens.language_at(&self.document.lines, line, offset) {
+        match self.document().tokens.language_at(&self.document().lines, line, offset) {
             Some(language) => languages.comments(&language),
-            None => languages.comments(&self.document.language_id),
+            None => languages.comments(&self.document().language_id),
         }
     }
 }

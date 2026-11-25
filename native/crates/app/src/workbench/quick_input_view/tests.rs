@@ -22,7 +22,7 @@ fn dragging_the_header_moves_the_quick_input_and_a_double_click_puts_it_back(cx:
     let (workbench, cx) = cx.add_window_view(|_, cx| {
         let mut workbench = Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), crate::default_settings(), HostSync::new(std::sync::mpsc::channel().0), cx);
         workbench.load_keybindings(crate::keybindings::default_keybindings(&[]), dir.join("keybindings.json"), cx);
-        workbench.restore_profile_state(profile);
+        workbench.restore_profile_state(profile.clone(), profile);
         workbench
     });
     cx.run_until_parked();
@@ -149,4 +149,87 @@ fn the_word_highlight_stops_while_the_quick_input_has_the_focus(cx: &mut TestApp
     cx.run_until_parked();
     assert_eq!(highlights(cx), 0);
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// quickinput.test.ts "keepScrollPosition - works with activeItems" and "keepScrollPosition - works with items".
+#[gpui::test]
+fn keep_scroll_position_keeps_the_list_where_it_is(cx: &mut TestAppContext) {
+    use crate::main_thread_quick_open::Owner;
+    use crate::quick_input::{Entry, Item, Kind, QuickInput};
+
+    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
+    let theme = load_theme(&[themes], "Dark Modern").unwrap();
+    let (workbench, cx) = cx.add_window_view(|_, cx| Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), crate::default_settings(), HostSync::new(std::sync::mpsc::channel().0), cx));
+    let items: Vec<Entry> = (0..1000).map(|handle| Entry::Item(Item { handle, label: format!("item {handle}"), pickable: true, ..Item::default() })).collect();
+    let id = workbench.update_in(cx, |workbench, window, cx| {
+        let id = workbench.quick_inputs.add(QuickInput::new(0, Kind::QuickPick), Owner::Session(1));
+        workbench.show_quick_input(id, window, cx);
+        let input = workbench.quick_inputs.get_mut(id).unwrap();
+        input.set_items(items.clone());
+        input.set_active_items(&[999]);
+        id
+    });
+    cx.run_until_parked();
+    let scroll_top = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.quick_inputs.list.logical_scroll_top().item_ix);
+    let update = |cx: &mut gpui::VisualTestContext, keep: bool, set: &dyn Fn(&mut QuickInput)| {
+        workbench.update(cx, |workbench, cx| {
+            let input = workbench.quick_inputs.get_mut(id).unwrap();
+            input.keep_scroll_position = keep;
+            set(input);
+            cx.notify();
+        });
+        cx.run_until_parked();
+    };
+    let bottom = scroll_top(cx);
+    assert_ne!(bottom, 0);
+
+    update(cx, true, &|input| input.set_active_items(&[0]));
+    assert_eq!(scroll_top(cx), bottom);
+    update(cx, false, &|input| input.set_active_items(&[0]));
+    assert_eq!(scroll_top(cx), 0);
+
+    update(cx, false, &|input| input.set_active_items(&[999]));
+    assert_eq!(scroll_top(cx), bottom);
+    update(cx, true, &|input| input.set_items(items.clone()));
+    assert_eq!(scroll_top(cx), bottom);
+    update(cx, false, &|input| input.set_items(items.clone()));
+    assert_eq!(scroll_top(cx), 0);
+}
+
+/// quickinput.test.ts "close motion requires modern UI with motion enabled", "finishes closing when the close
+/// animation finishes" and "reopening discards the previous close animation callbacks and timeout".
+#[gpui::test]
+fn the_close_animation_ends_after_150ms_and_reopening_discards_it(cx: &mut TestAppContext) {
+    use crate::main_thread_quick_open::Owner;
+    use crate::quick_input::{Kind, QuickInput};
+
+    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
+    let theme = load_theme(&[themes], "Default High Contrast").unwrap();
+    let (workbench, cx) = cx.add_window_view(|_, cx| Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), crate::default_settings(), HostSync::new(std::sync::mpsc::channel().0), cx));
+    let id = workbench.update_in(cx, |workbench, window, cx| {
+        let id = workbench.quick_inputs.add(QuickInput::new(0, Kind::QuickPick), Owner::Session(1));
+        workbench.show_quick_input(id, window, cx);
+        workbench.hide_quick_input_by_id(id, window, cx);
+        id
+    });
+    let state = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| (workbench.quick_inputs.closing.is_some(), workbench.quick_inputs.current().is_some()));
+    assert_eq!(state(cx), (true, false), "closing, not visible");
+    cx.executor().advance_clock(std::time::Duration::from_millis(149));
+    cx.run_until_parked();
+    assert_eq!(state(cx), (true, false));
+    cx.executor().advance_clock(std::time::Duration::from_millis(1));
+    cx.run_until_parked();
+    assert_eq!(state(cx), (false, false), "the animation ended");
+
+    workbench.update_in(cx, |workbench, window, cx| {
+        workbench.show_quick_input(id, window, cx);
+        workbench.hide_quick_input_by_id(id, window, cx);
+        workbench.show_quick_input(id, window, cx);
+    });
+    assert_eq!(state(cx), (false, true), "reopened");
+    cx.executor().advance_clock(std::time::Duration::from_millis(150));
+    cx.run_until_parked();
+    assert_eq!(state(cx), (false, true), "the old close timer changes nothing");
 }

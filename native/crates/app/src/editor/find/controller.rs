@@ -38,11 +38,13 @@ pub struct FindOptions {
     pub close_on_result: bool,
     /// The search string is read from and written to the macOS find pasteboard.
     pub global_find_clipboard: bool,
+    /// `editor.find.cursorMoveOnType`: a research that may move the cursor moves it to the next match.
+    pub cursor_move_on_type: bool,
 }
 
 impl Default for FindOptions {
     fn default() -> Self {
-        FindOptions { seed_search_string_from_selection: SeedFromSelection::Always, auto_find_in_selection: AutoFindInSelection::Never, is_loop: true, close_on_result: false, global_find_clipboard: false }
+        FindOptions { seed_search_string_from_selection: SeedFromSelection::Always, auto_find_in_selection: AutoFindInSelection::Never, is_loop: true, close_on_result: false, global_find_clipboard: false, cursor_move_on_type: true }
     }
 }
 
@@ -91,7 +93,7 @@ pub fn selection_search_string(editor: &OpenEditor, seed: Seed, non_empty_only: 
     if !(seed == Seed::Single && start.line == end.line || seed == Seed::Multiple) {
         return None;
     }
-    let lines = &editor.document.lines;
+    let lines = &editor.document().lines;
     if selection.is_empty() {
         let word = word_at(&lines[start.line], start.column).filter(|_| !non_empty_only)?;
         return Some(lines[start.line].chars().skip(word.start).take(word.len()).collect());
@@ -111,12 +113,14 @@ pub struct FindController {
     pub find_input_focused: bool,
     /// The `MultiCursorSelectionController` session of Cmd+D and Select All Occurrences.
     pub multicursor: Option<MultiCursorSession>,
+    /// `highlightFindOptions` was called by a multi-cursor session that searches with the find options.
+    pub highlight_find_options: bool,
 }
 
 impl FindController {
     /// The controller with the stored query options (`loadQueryState`).
     pub fn new(options: FindOptions, query: QueryOptions) -> Self {
-        let mut controller = FindController { state: FindState::default(), model: None, options, find_input_focused: false, multicursor: None };
+        let mut controller = FindController { state: FindState::default(), model: None, options, find_input_focused: false, multicursor: None, highlight_find_options: false };
         controller.state.change(query_change(query), false, true);
         controller
     }
@@ -137,6 +141,7 @@ impl FindController {
             self.model = None;
         }
         if let Some(model) = &mut self.model {
+            model.cursor_move_on_type = self.options.cursor_move_on_type;
             model.state_changed(editor, &mut self.state, viewport, changed);
         }
         Some(changed)
@@ -197,7 +202,8 @@ impl FindController {
             self.change(editor, viewport, NewFindState { search_scope: Some(None), ..Default::default() }, true);
             return;
         }
-        let lines = &editor.document.lines;
+        let document = editor.document();
+        let lines = &document.lines;
         let mut scopes = Vec::new();
         for selection in &editor.selections {
             let (start, mut end) = (selection.start(), selection.end());
@@ -209,6 +215,7 @@ impl FindController {
             }
         }
         if !scopes.is_empty() {
+            drop(document);
             self.change(editor, viewport, NewFindState { search_scope: Some(Some(scopes)), ..Default::default() }, true);
         }
     }
@@ -258,7 +265,9 @@ impl FindController {
         }
         changes.is_loop = Some(opts.is_loop);
         self.change(editor, viewport, changes, false);
-        self.model = Some(FindModel::new(editor, &mut self.state, viewport));
+        let mut model = FindModel::new(editor, &mut self.state, viewport);
+        model.cursor_move_on_type = self.options.cursor_move_on_type;
+        self.model = Some(model);
     }
 
     /// `StartFindAction` (Cmd+F): the find input gets focus.
@@ -409,7 +418,7 @@ fn query_change(query: QueryOptions) -> NewFindState {
 
 /// `TextModel.isTooLargeForSyncing`: the text is over `_MODEL_SYNC_LIMIT`, 50 MB.
 fn too_large_for_syncing(editor: &OpenEditor) -> bool {
-    let length: usize = editor.document.lines.iter().map(|line| line.len() + 1).sum();
+    let length: usize = editor.document().lines.iter().map(|line| line.len() + 1).sum();
     length > 50 * 1024 * 1024
 }
 

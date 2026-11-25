@@ -3,14 +3,13 @@
 
 use futures::channel::oneshot;
 use gpui::{Context, PromptLevel, Window};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use super::Workbench;
 use super::host_requests::uri_parts;
 use super::search_editor_view::SEARCH_EDITOR_SCHEME;
 use crate::commands::Outcome;
 use crate::host_sync::tab_id;
-use crate::editor::{EditReason, Position, TextDocument};
 
 /// `MAX_CONFIRM_FILES` of platform/dialogs/common/dialogs.ts.
 const MAX_CONFIRM_FILES: usize = 10;
@@ -41,7 +40,35 @@ impl Workbench {
             }
             Outcome::done()
         });
-        self.commands.register("_workbench.open", |workbench, args, window, cx| Outcome::Ready(workbench.api_open_editor(&args, window, cx)));
+        self.commands.register("_workbench.open", |workbench, args, window, cx| match &args[..] {
+            [resource @ Value::Object(_), rest @ ..] => {
+                let column_and_options = rest.first().cloned().unwrap_or_default();
+                let mut options = column_and_options[1].clone();
+                if !column_and_options[0].is_null() {
+                    options["position"] = column_and_options[0].clone();
+                }
+                let override_id = options["override"].as_str().map(str::to_owned);
+                workbench.open_with_resolver(resource, override_id.as_deref(), options, window, cx)
+            }
+            _ => workbench.api_open_editor_resolving(args, window, cx),
+        });
+        self.commands.register("_workbench.openWith", |workbench, args, window, cx| {
+            // `{ pinned: true, ...optionsArg }`
+            let mut options = json!({ "pinned": true });
+            if let Some(Value::Object(given)) = args.get(2).map(|column_and_options| &column_and_options[1]) {
+                options.as_object_mut().expect("an object").extend(given.clone());
+            }
+            if let Some(column) = args.get(2).map(|column_and_options| &column_and_options[0]).filter(|column| !column.is_null()) {
+                options["position"] = column.clone();
+            }
+            let resource = args.first().cloned().unwrap_or(Value::Null);
+            let view_type = args.get(1).and_then(Value::as_str).unwrap_or("default").to_owned();
+            workbench.open_with_resolver(&resource, Some(&view_type), options, window, cx)
+        });
+        self.commands.register("reopenActiveEditorWith", |workbench, args, window, cx| {
+            workbench.reopen_active_editor_with(args.first().and_then(Value::as_str).map(str::to_owned), window, cx)
+        });
+        self.commands.register("workbench.action.reopenWithEditor", |workbench, _, window, cx| workbench.reopen_active_editor_with(None, window, cx));
         self.commands.register("vscode.open", |workbench, args, window, cx| workbench.execute_command("_workbench.open", args.into_iter().take(1).collect(), window, cx));
         self.commands.register("_workbench.revertAllDirty", |workbench, _, _, cx| {
             let dirty = workbench.dirty_editors();
@@ -49,8 +76,7 @@ impl Workbench {
             Outcome::done()
         });
         self.commands.register("workbench.action.closeAllEditors", |workbench, _, window, cx| workbench.close_all_editors(window, cx));
-        // The port has one editor group, so closing the group's editors closes them all.
-        self.commands.register("workbench.action.closeEditorsInGroup", |workbench, _, window, cx| workbench.close_all_editors(window, cx));
+        self.commands.register("workbench.action.closeEditorsInGroup", |workbench, _, window, cx| workbench.close_editors((0..workbench.editors.editors.len()).collect(), window, cx));
         // editorCommands.ts: these act on the editor a tab's context menu passes, else the active one.
         self.commands.register("workbench.action.closeActiveEditor", |workbench, args, window, cx| {
             let Some(index) = workbench.context_editor(&args) else { return Outcome::done() };
@@ -100,7 +126,7 @@ impl Workbench {
     /// mainThreadWorkspace.ts `$save`: the editors of `uri` saved even when clean (`force`); the URI once saved.
     pub(crate) fn save_resource(&mut self, uri: &Value, cx: &mut Context<Self>) -> Outcome {
         let Ok((scheme, path)) = uri_parts(uri) else { return Outcome::done() };
-        let indexes: Vec<usize> = (0..self.editors.editors.len()).filter(|index| self.editors.editors[*index].document.is(scheme, &path)).collect();
+        let indexes: Vec<usize> = (0..self.editors.editors.len()).filter(|index| self.editors.editors[*index].document().is(scheme, &path)).collect();
         let saves: Vec<_> = indexes.into_iter().map(|index| self.save_editor(index, cx)).collect();
         let uri = uri.clone();
         let saved_any = !saves.is_empty();
@@ -110,7 +136,7 @@ impl Workbench {
     /// mainThreadWorkspace.ts `$saveAll`: the dirty editors, untitled ones only with `include_untitled`; true once
     /// every one is saved.
     pub(crate) fn save_all(&mut self, include_untitled: bool, cx: &mut Context<Self>) -> Outcome {
-        let dirty: Vec<usize> = self.dirty_editors().into_iter().filter(|index| include_untitled || self.editors.editors[*index].document.scheme != "untitled").collect();
+        let dirty: Vec<usize> = self.dirty_editors().into_iter().filter(|index| include_untitled || self.editors.editors[*index].document().scheme != "untitled").collect();
         let saves = dirty.into_iter().map(|index| self.save_editor(index, cx)).collect();
         when_saved(saves, Value::Bool, cx)
     }
@@ -119,39 +145,70 @@ impl Workbench {
         (0..self.editors.editors.len()).filter(|index| self.editors.editors[*index].is_dirty()).collect()
     }
 
-    fn close_all_editors(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
-        self.close_editors((0..self.editors.editors.len()).collect(), window, cx)
+    /// editorActions.ts `CloseAllEditorsAction`: every group closes its editors, the active one last.
+    pub(super) fn close_all_editors(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
+        self.leave_panel_group();
+        // `pop` takes the least recent group first.
+        let groups = self.editors.group_ids_mru();
+        let keep = self.editors.id;
+        self.close_editors_in_groups(groups, keep, window, cx)
     }
 
     /// mainThreadEditorTabs.ts `$moveTab`: the tab moves inside its group and is pinned; `index` past the tabs
     /// moves it last.
     pub(crate) fn move_tab(&mut self, id: &str, index: i64, view_column: i64, cx: &mut Context<Self>) -> Outcome {
-        let Some(from) = self.editors.editors.iter().position(|editor| tab_id(editor) == id) else {
+        let Some((group, from)) = self.find_tab(id) else {
             return Outcome::error(format!("Attempted to close tab with id {id} which does not exist"));
         };
-        // shortcut: one editor group until milestone 11; a move to another view column (a new group upstream) does nothing.
-        if !matches!(view_column, 0 | ACTIVE_GROUP_COLUMN) {
-            return Outcome::done();
+        let columns = self.groups_in_grid_order();
+        // editorGroupColumn.ts `columnToEditorGroup`: a column past the last adds a group beside it.
+        let target = match view_column {
+            ACTIVE_GROUP_COLUMN => self.editors.id,
+            column if (column as usize) < columns.len() => columns[column as usize],
+            _ => self.add_group_beside(self.side_by_side_direction()),
+        };
+        if target == group {
+            self.with_group(group, |workbench| {
+                let len = workbench.editors.editors.len() as i64;
+                let index = if index < 0 || index > len { len } else { index };
+                workbench.editors.move_editor(from, index as usize);
+            });
+        } else {
+            let editor = self.with_group(group, |workbench| workbench.editors.take_editor(from));
+            self.with_group(target, |workbench| workbench.editors.insert_moved(editor));
+            self.close_group_if_empty(group);
         }
-        let len = self.editors.editors.len() as i64;
-        let index = if index < 0 || index > len { len } else { index };
-        self.editors.move_editor(from, index as usize);
         self.editors_changed(cx);
         Outcome::done()
+    }
+
+    /// The group and index of the tab the host names `id`.
+    fn find_tab(&self, id: &str) -> Option<(u32, usize)> {
+        self.groups_in_grid_order().into_iter().find_map(|group| {
+            let (editors, _) = self.editors.group_tabs(group);
+            editors.iter().position(|editor| tab_id(group, editor) == id).map(|index| (group, index))
+        })
     }
 
     /// mainThreadEditorTabs.ts `$closeTab`: the tabs named by `tab_ids` close as `closeEditors` closes them, dirty
     /// ones after the save prompt; true when every one of them closed.
     pub(crate) fn close_tabs(&mut self, tab_ids: &[Value], window: &mut Window, cx: &mut Context<Self>) -> Outcome {
-        let indices: Vec<usize> = (0..self.editors.editors.len()).filter(|index| tab_ids.iter().any(|id| *id == tab_id(&self.editors.editors[*index]))).collect();
+        let found: Vec<(u32, usize)> = tab_ids.iter().filter_map(|id| self.find_tab(id.as_str()?)).collect();
+        // shortcut: the tabs close in the first group that holds one of them; the host closes one group's tabs at a time.
+        let Some(&(group, _)) = found.first() else { return self.close_and_report(Vec::new(), window, cx) };
+        self.focus_group(group, window, cx);
+        let indices = found.into_iter().filter(|(found, _)| *found == group).map(|(_, index)| index).collect();
         self.close_and_report(indices, window, cx)
     }
 
-    /// mainThreadEditorTabs.ts `$closeGroup`: the one group closes all its editors and stays, as the last group does.
+    /// mainThreadEditorTabs.ts `$closeGroup`: the group closes all its editors, then closes as an empty group does.
     pub(crate) fn close_groups(&mut self, group_ids: &[Value], window: &mut Window, cx: &mut Context<Self>) -> Outcome {
-        if !group_ids.iter().any(|id| *id == 0) {
+        let groups = self.groups_in_grid_order();
+        // shortcut: the first named group closes; the host's closeGroups names one group per call in the API tests.
+        let Some(group) = group_ids.iter().filter_map(Value::as_u64).map(|id| id as u32).find(|id| groups.contains(id)) else {
             return Outcome::Ready(Ok(Value::Bool(true)));
-        }
+        };
+        self.focus_group(group, window, cx);
         self.close_and_report((0..self.editors.editors.len()).collect(), window, cx)
     }
 
@@ -176,7 +233,7 @@ impl Workbench {
 
     /// `AbstractCloseAllAction.run` and `handleDirtyClosing`: dirty editors among `indices` ask to save first;
     /// Cancel keeps every editor open.
-    fn close_editors(&mut self, indices: Vec<usize>, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
+    pub(super) fn close_editors(&mut self, indices: Vec<usize>, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
         let dirty: Vec<usize> = indices.iter().copied().filter(|index| self.editors.editors[*index].is_dirty()).collect();
         // showSaveConfirm answers Don't Save without a dialog while extension tests run.
         if dirty.is_empty() || self.skip_dialogs {
@@ -234,54 +291,33 @@ impl Workbench {
         self.editors_changed(cx);
     }
 
-    /// The text goes back to the file's content and the editor is clean again. An untitled editor is emptied
-    /// instead (untitledTextEditorModel.ts `revert`) and answers true: its input is disposed, so the caller closes it.
-    /// shortcut: one whole-text edit plus a save of the same bytes, since `editor/` has no revert yet; move to an `OpenEditor::revert` that flushes the model like `setValue` once it does.
+    /// `editorService.revert` of one editor: a file's model reads its file again and is clean; an untitled model
+    /// is emptied and answers true: its input is disposed (untitledTextEditorInput.ts), so the caller closes it.
     pub(super) fn revert_editor(&mut self, index: usize, cx: &mut Context<Self>) -> bool {
-        if self.editors.editors[index].document.scheme == SEARCH_EDITOR_SCHEME {
-            self.revert_search_editor(index, cx);
-            return false;
-        }
-        let editor = &mut self.editors.editors[index];
-        let untitled = editor.document.scheme == "untitled";
-        let text = match untitled {
-            true => String::new(),
-            false => match TextDocument::read(&editor.document.path, &self.languages, &self.settings.lock().unwrap()) {
-                Ok(document) => document.lines.join("\n"),
-                Err(error) => {
-                    eprintln!("reverting {}: {error}", editor.document.path.display());
-                    return false;
-                }
-            },
-        };
-        let was_dirty = editor.is_dirty();
-        let lines = &editor.document.lines;
-        let end = Position::new(lines.len() - 1, lines[lines.len() - 1].chars().count());
-        let change = editor.execute_edits(vec![(Position::new(0, 0), end, text, false)], None, EditReason::Unknown("revert"));
-        editor.associated_file = false;
-        match &change {
-            Some(change) => {
-                if self.editors.active_index() == Some(index) {
-                    self.find_editor_edited(Some(change));
-                }
-                self.host.send_content_change(&self.editors, index, change);
-                let document = &self.editors.editors[index].document;
-                let (scheme, path) = (document.scheme.clone(), document.path.clone());
-                self.search_model_changed(&scheme, &path);
+        let document = self.editors.editors[index].document();
+        let (scheme, path) = (document.scheme.clone(), document.path.clone());
+        drop(document);
+        match scheme.as_str() {
+            SEARCH_EDITOR_SCHEME => {
+                self.revert_search_editor(index, cx);
+                false
             }
-            None if untitled && was_dirty => self.host.send_dirty_state(&self.editors, &self.editors.editors[index], false),
-            None => {}
+            "untitled" => {
+                self.revert_untitled(&path);
+                true
+            }
+            _ => {
+                if let Err(error) = self.revert_text_file(&scheme, &path, cx) {
+                    self.notify_error(error);
+                }
+                false
+            }
         }
-        if untitled {
-            return true;
-        }
-        drop(self.save_editor(index, cx));
-        false
     }
 }
 
 /// The command's answer once every save is done; `answer` gets whether all of them succeeded.
-fn when_saved(saves: Vec<oneshot::Receiver<bool>>, answer: impl FnOnce(bool) -> Value + Send + 'static, cx: &mut Context<Workbench>) -> Outcome {
+pub(super) fn when_saved(saves: Vec<oneshot::Receiver<bool>>, answer: impl FnOnce(bool) -> Value + Send + 'static, cx: &mut Context<Workbench>) -> Outcome {
     let (sender, receiver) = oneshot::channel();
     cx.background_executor()
         .spawn(async move {

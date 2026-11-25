@@ -135,7 +135,7 @@ impl Workbench {
         });
         self.commands.register("merge.dev.saveContentsToFolder", |workbench, _, window, cx| {
             let Some(contents) = workbench.merge_contents() else { return workbench.merge_info("No active merge editor") };
-            let extension = workbench.editors.active().and_then(|result| result.document.path.extension()).map(|extension| format!(".{}", extension.to_string_lossy())).unwrap_or_default();
+            let extension = workbench.editors.active().and_then(|result| result.document().path.extension().map(|extension| format!(".{}", extension.to_string_lossy()))).unwrap_or_default();
             let picked = cx.prompt_for_paths(gpui::PathPromptOptions { files: false, directories: true, multiple: false, prompt: Some("Select folder to save to".into()) });
             cx.spawn_in(window, async move |workbench, cx| {
                 let Ok(Ok(Some(paths))) = picked.await else { return };
@@ -205,9 +205,9 @@ impl Workbench {
     /// devCommands.ts `MergeEditorContents` of the active merge editor.
     fn merge_contents(&self) -> Option<Value> {
         let merge = self.editors.active_merge()?;
-        let text = |side: &Side| self.editors.model(&side.scheme, &side.path).map(|model| model.document.lines.join("\n"));
+        let text = |side: &Side| self.editors.model(&side.scheme, &side.path).map(|model| model.document().lines.join("\n"));
         Some(json!({
-            "languageId": self.editors.active()?.document.language_id,
+            "languageId": self.editors.active()?.document().language_id,
             "base": text(&merge.base)?,
             "input1": text(&merge.input1.side)?,
             "input2": text(&merge.input2.side)?,
@@ -240,8 +240,8 @@ impl Workbench {
             "base": join(&model.base, None),
             "input1": join(&model.input1, Some(&to_input1)),
             "input2": join(&model.input2, Some(&to_input2)),
-            "result": join(&result.document.lines, Some(&to_result)),
-            "languageId": result.document.language_id,
+            "result": join(&result.document().lines, Some(&to_result)),
+            "languageId": result.document().language_id,
         }))
     }
 
@@ -362,7 +362,7 @@ impl Workbench {
         match self.editors.editors.iter().position(|editor| self.editors.merges.get(&editor.model_id).is_some_and(|merge| merge.result == result)) {
             Some(index) => self.editors.activate(index),
             None => {
-                let initial_result = self.editors.model(&result.scheme, &result.path).map_or_else(Vec::new, |model| model.document.lines.clone());
+                let initial_result = self.editors.model(&result.scheme, &result.path).map_or_else(Vec::new, |model| model.document().lines.clone());
                 let id = self.editors.merges.len() + self.editors.editors.len() + 1;
                 let input = MergeInput::new(base, input1, input2, result, initial_result);
                 // The entry's file name is the tab label (`MergeEditorInput.getName`).
@@ -414,15 +414,15 @@ impl Workbench {
         let Some(mut merge) = self.editors.merges.remove(&id) else { return false };
         let model = |side: &Side| self.editors.model(&side.scheme, &side.path);
         let synced = if let (Some(base), Some(input1), Some(input2), Some(result)) = (model(&merge.base), model(&merge.input1.side), model(&merge.input2.side), model(&merge.result)) {
-            let versions = (base.version_id, input1.version_id, input2.version_id);
+            let versions = (base.text_model().version_id, input1.text_model().version_id, input2.text_model().version_id);
             if merge.model.as_ref().is_none_or(|model| model.versions != versions) {
-                let mut new = MergeModel::new(versions, base.document.lines.clone(), input1.document.lines.clone(), input2.document.lines.clone());
+                let mut new = MergeModel::new(versions, base.document().lines.clone(), input1.document().lines.clone(), input2.document().lines.clone());
                 new.alternative_version_id = result.alternative_version_id();
                 merge.model = Some(new);
             }
             let model = merge.model.as_mut().expect("set above");
             model.follow_history(result.alternative_version_id());
-            model.sync_result(&result.document.lines, result.version_id, true);
+            model.sync_result(&result.document().lines, result.text_model().version_id, true);
             true
         } else {
             false
@@ -435,13 +435,13 @@ impl Workbench {
     fn apply_merge_edit(&mut self, edit: LineEdit, cx: &mut Context<Self>) {
         self.run_indenting(
             |editor, _| {
-                let (start, end, text) = text_edit(&edit, &editor.document.lines, editor.document.eol);
+                let (start, end, text) = text_edit(&edit, &editor.document().lines, editor.document().eol);
                 editor.execute_edits(vec![(start, end, text, false)], None, EditReason::Unknown("mergeEditor")).into_iter().collect()
             },
             cx,
         );
         let result = self.editors.active().expect("the merge editor's result model");
-        let (lines, version, alternative) = (result.document.lines.clone(), result.version_id, result.alternative_version_id());
+        let (lines, version, alternative) = (result.document().lines.clone(), result.text_model().version_id, result.alternative_version_id());
         if let Some(model) = self.editors.active_merge_mut().and_then(|merge| merge.model.as_mut()) {
             model.sync_result(&lines, version, false);
             model.alternative_version_id = alternative;
@@ -497,7 +497,7 @@ impl Workbench {
         if !self.sync_merge() {
             return;
         }
-        let line_count = self.editors.active().map_or(0, |result| result.document.lines.len());
+        let line_count = self.editors.active().map_or(0, |result| result.document().lines.len());
         let edit = self.active_merge_model_mut().expect("synced above").reset(line_count);
         self.apply_merge_edit(edit, cx);
     }
@@ -545,8 +545,8 @@ impl Workbench {
         let Some(&(index, range)) = target else { return };
         let viewport = self.editors.viewport;
         let editor = self.editors.active_mut().expect("found above");
-        let target_line = (range.start - 1).min(editor.document.lines.len() - 1);
-        let column = editor.document.lines[target_line].chars().position(|c| c != ' ' && c != '\t').unwrap_or(0);
+        let target_line = (range.start - 1).min(editor.document().lines.len() - 1);
+        let column = editor.document().lines[target_line].chars().position(|c| c != ' ' && c != '\t').unwrap_or(0);
         editor.move_to(Position::new(target_line, column), false);
         editor.reveal_range(Position::new(target_line, 0), Position::new(target_line, 0), VerticalReveal::NearTop, viewport);
         if let Some(merge) = self.editors.active_merge_mut() {
@@ -733,7 +733,7 @@ impl Workbench {
         let first_view_line = result.view_line_at(result.scroll.top, viewport);
         let first_line = result.model_line(first_view_line) + 1;
         let offset = result.scroll.top - result.line_top(first_view_line, viewport);
-        let input1_lines = self.editors.model(&merge.input1.side.scheme, &merge.input1.side.path).map_or(1, |model| model.document.lines.len());
+        let input1_lines = self.editors.model(&merge.input1.side.scheme, &merge.input1.side.path).map_or(1, |model| model.document().lines.len());
         let input_line = model.input_line_for_result_line(Input::One, first_line).min(input1_lines);
         let inputs = self.merge_line_top(&zones.input1, input_line) + offset;
         if layout.show_base && !layout.show_base_at_top {
@@ -790,7 +790,7 @@ impl Workbench {
     fn merge_result_title(&self, merge: &MergeInput, result: &OpenEditor, cx: &mut Context<Self>) -> Div {
         let count = merge.model.as_ref().map_or(0, MergeModel::unhandled_count);
         let counter = if count == 1 { "1 Conflict Remaining".to_string() } else { format!("{count} Conflicts Remaining") };
-        let path = crate::quick_input::path_label(&result.document.path, None);
+        let path = crate::quick_input::path_label(&result.document().path, None);
         self.merge_title("Result", Some(&path), None)
             .child(
                 div()
@@ -821,8 +821,8 @@ impl Workbench {
         let Some(model) = merge.model.as_ref() else { return area };
         let viewport = self.editors.viewport;
         let line_height = viewport.line_height;
-        let line_numbers = self.setting("editor.lineNumbers") != json!("off");
-        let content_left = EditorMetrics::measure(window, result.document.lines.len(), line_numbers, self.editor_zoom.multiplier()).content_left();
+        let line_numbers = if self.setting("editor.lineNumbers") == json!("off") { super::LineNumbers::Off } else { super::LineNumbers::On };
+        let content_left = EditorMetrics::measure(window, result.document().lines.len(), line_numbers, self.editor_zoom.multiplier()).content_left();
         let top = |index: usize| result.line_top(result.view_line(index), viewport) - result.scroll.top;
         let show_non_conflicting = self.merge_show_non_conflicting();
         let fill = self.theme.color("diffEditor.diagonalFill");
@@ -839,7 +839,7 @@ impl Workbench {
         let active = self.active_merge_range();
         for (index, range) in model.ranges.iter().enumerate() {
             let lines = model.result_line_range(range.base);
-            if !model.shows_actions(index, show_non_conflicting) || lines.start > result.document.lines.len() + 1 {
+            if !model.shows_actions(index, show_non_conflicting) || lines.start > result.document().lines.len() + 1 {
                 continue;
             }
             let block_top = top(lines.start - 1);
@@ -910,7 +910,7 @@ impl Workbench {
 
     #[allow(clippy::too_many_arguments)]
     fn merge_pane_lines(&self, merge: &MergeInput, model: &MergeModel, pane: Pane, editor: &OpenEditor, zones: &[Zone], scroll_top: f32, window: &mut Window, cx: &mut Context<Self>) -> gpui::Stateful<Div> {
-        let metrics = EditorMetrics::measure(window, editor.document.lines.len(), true, self.editor_zoom.multiplier());
+        let metrics = EditorMetrics::measure(window, editor.document().lines.len(), super::LineNumbers::On, self.editor_zoom.multiplier());
         let line_height = metrics.line_height;
         let gutter = if matches!(pane, Pane::Input(_)) { GUTTER_WIDTH } else { 0. };
         let content_left = gutter + metrics.glyph_margin_width() + metrics.line_numbers_width + metrics.decorations_width;
@@ -918,7 +918,7 @@ impl Workbench {
         let show_non_conflicting = self.merge_show_non_conflicting();
         let active = self.active_merge_range();
         let mut rows = Vec::new();
-        let line_count = editor.document.lines.len();
+        let line_count = editor.document().lines.len();
         let mut line = 1;
         while line < line_count && self.merge_line_top(zones, line + 1) - scroll_top < 0. {
             line += 1;
@@ -1036,8 +1036,8 @@ impl Workbench {
     /// lines and `mergeEditor.change.word.background` on their changed characters, then the text.
     fn merge_pane_line(&self, model: &MergeModel, pane: Pane, editor: &OpenEditor, index: usize, metrics: EditorMetrics, gutter: f32) -> Div {
         let line_number = index + 1;
-        let text = &editor.document.lines[index];
-        let tab_size = editor.document.indentation.tab_size;
+        let text = &editor.document().lines[index];
+        let tab_size = editor.document().indentation.tab_size;
         let mut content = div().absolute().top_0().bottom_0().right_0().left(px(gutter + metrics.glyph_margin_width() + metrics.line_numbers_width + metrics.decorations_width));
         if let Pane::Input(input) = pane {
             let shown = model.ranges.iter().enumerate().filter(|(index, range)| range.is_conflicting() || !model.is_handled(*index));
@@ -1050,7 +1050,7 @@ impl Workbench {
                 }
             }
         }
-        let highlights = editor.document.tokens.highlights(&self.theme, &self.languages, &editor.document.lines, index, tab_size);
+        let highlights = editor.document().tokens.highlights(&self.theme, &self.languages, &editor.document().lines, index, tab_size);
         content = content.child(div().absolute().top_0().left_0().whitespace_nowrap().child(StyledText::new(expand_tabs(text, tab_size)).with_highlights(highlights)));
         div()
             .h(px(metrics.line_height))

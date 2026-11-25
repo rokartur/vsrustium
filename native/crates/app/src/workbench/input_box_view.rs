@@ -33,9 +33,39 @@ pub enum InputId {
     SearchEditor(SearchField),
     OutputFilter,
     ScmInput,
+    ExtensionsSearch,
+    SettingsSearch,
+    SettingsValue,
+    SettingsListKey,
+    SettingsListValue,
+    DebugView,
+    BreakpointWidget,
+    DebugConsole,
+    TerminalFind,
+    ProfileName,
 }
 
-const INPUTS: [InputId; 9] = [InputId::QuickInput, InputId::Explorer, InputId::ExplorerFind, InputId::Find, InputId::Replace, InputId::KeybindingsSearch, InputId::KeybindingsWhen, InputId::OutputFilter, InputId::ScmInput];
+const INPUTS: [InputId; 19] = [
+    InputId::QuickInput,
+    InputId::Explorer,
+    InputId::ExplorerFind,
+    InputId::Find,
+    InputId::Replace,
+    InputId::KeybindingsSearch,
+    InputId::KeybindingsWhen,
+    InputId::OutputFilter,
+    InputId::ScmInput,
+    InputId::ExtensionsSearch,
+    InputId::SettingsSearch,
+    InputId::SettingsValue,
+    InputId::SettingsListKey,
+    InputId::SettingsListValue,
+    InputId::DebugView,
+    InputId::BreakpointWidget,
+    InputId::DebugConsole,
+    InputId::TerminalFind,
+    InputId::ProfileName,
+];
 
 /// The view state of one input element.
 pub struct InputView {
@@ -69,6 +99,14 @@ impl InputView {
         self.blink = None;
         self.text = Rc::default();
     }
+
+    /// The x of the char at `index` of `value` from the input's left edge, as last painted.
+    pub fn x_of_char(&self, value: &str, index: usize) -> f32 {
+        let text = self.text.borrow();
+        let Some(line) = &text.line else { return 0. };
+        let byte = value.char_indices().nth(index).map_or(value.len(), |(byte, _)| byte);
+        f32::from(line.x_for_index(byte)) - text.scroll
+    }
 }
 
 /// What the input element draws besides its value.
@@ -92,6 +130,16 @@ impl Workbench {
             InputId::SearchEditor(field) => &self.search_editor_widget.view.input(field).view,
             InputId::OutputFilter => &self.output_view.filter_view,
             InputId::ScmInput => &self.scm.input_view,
+            InputId::ExtensionsSearch => &self.extensions_viewlet.search_view,
+            InputId::SettingsSearch => &self.settings_editor.search_view,
+            InputId::SettingsValue => &self.settings_editor.value_view,
+            InputId::ProfileName => &self.user_data_profiles.editor.name_view,
+            InputId::SettingsListKey => &self.settings_editor.list.key_view,
+            InputId::SettingsListValue => &self.settings_editor.list.value_view,
+            InputId::DebugView => &self.debug_view.input_view,
+            InputId::BreakpointWidget => &self.debug_view.widget_view,
+            InputId::DebugConsole => &self.debug_console.input_view,
+            InputId::TerminalFind => &self.terminal_view.find.view,
         }
     }
 
@@ -108,6 +156,16 @@ impl Workbench {
             InputId::SearchEditor(field) => &mut self.search_editor_widget.view.input_mut(field).view,
             InputId::OutputFilter => &mut self.output_view.filter_view,
             InputId::ScmInput => &mut self.scm.input_view,
+            InputId::ExtensionsSearch => &mut self.extensions_viewlet.search_view,
+            InputId::SettingsSearch => &mut self.settings_editor.search_view,
+            InputId::SettingsValue => &mut self.settings_editor.value_view,
+            InputId::ProfileName => &mut self.user_data_profiles.editor.name_view,
+            InputId::SettingsListKey => &mut self.settings_editor.list.key_view,
+            InputId::SettingsListValue => &mut self.settings_editor.list.value_view,
+            InputId::DebugView => &mut self.debug_view.input_view,
+            InputId::BreakpointWidget => &mut self.debug_view.widget_view,
+            InputId::DebugConsole => &mut self.debug_console.input_view,
+            InputId::TerminalFind => &mut self.terminal_view.find.view,
         }
     }
 
@@ -124,6 +182,16 @@ impl Workbench {
             InputId::SearchEditor(field) => &self.search_editor_widget.view.input(field).focus,
             InputId::OutputFilter => &self.output_view.filter_focus,
             InputId::ScmInput => &self.scm.input_focus,
+            InputId::ExtensionsSearch => &self.extensions_viewlet.search_focus,
+            InputId::SettingsSearch => &self.settings_editor.search_focus,
+            InputId::SettingsValue => &self.settings_editor.value_focus,
+            InputId::ProfileName => self.user_data_profiles.editor.name_focus.as_ref().unwrap_or(&self.settings_editor.value_focus),
+            InputId::SettingsListKey => &self.settings_editor.list.key_focus,
+            InputId::SettingsListValue => &self.settings_editor.list.value_focus,
+            InputId::DebugView => &self.debug_view.input_focus,
+            InputId::BreakpointWidget => &self.debug_view.widget_focus,
+            InputId::DebugConsole => &self.debug_console.input_focus,
+            InputId::TerminalFind => &self.terminal_view.find.focus,
         }
     }
 
@@ -140,6 +208,16 @@ impl Workbench {
             InputId::SearchEditor(field) => Some(&self.search_editor_widget.view.input(field).value),
             InputId::OutputFilter => Some(&self.output_view.filter),
             InputId::ScmInput => Some(&self.scm.input),
+            InputId::ExtensionsSearch => Some(&self.extensions_viewlet.search),
+            InputId::SettingsSearch => Some(&self.settings_editor.search),
+            InputId::SettingsValue => self.settings_editor.value.as_ref().map(|(_, input)| input),
+            InputId::ProfileName => Some(&self.user_data_profiles.editor.name),
+            InputId::SettingsListKey => Some(&self.settings_editor.list.key),
+            InputId::SettingsListValue => Some(&self.settings_editor.list.value),
+            InputId::DebugView => self.debug_view.editing.as_ref().map(|_| &self.debug_view.input),
+            InputId::BreakpointWidget => self.breakpoint_widget.as_ref().map(|widget| &widget.input),
+            InputId::DebugConsole => Some(&self.debug_console.input),
+            InputId::TerminalFind => Some(&self.terminal_view.find.input),
         }
     }
 
@@ -192,6 +270,42 @@ impl Workbench {
             }
             InputId::ScmInput => {
                 self.edit_scm_input(edit, window, cx);
+                Outcome::done()
+            }
+            InputId::ExtensionsSearch => {
+                self.edit_extensions_search(edit, window, cx);
+                Outcome::done()
+            }
+            InputId::SettingsSearch => {
+                self.edit_settings_search(edit, window, cx);
+                Outcome::done()
+            }
+            InputId::SettingsValue => {
+                self.edit_settings_value(edit, window, cx);
+                Outcome::done()
+            }
+            InputId::ProfileName => {
+                self.edit_profile_name(edit, cx);
+                Outcome::done()
+            }
+            InputId::SettingsListKey | InputId::SettingsListValue => {
+                self.edit_settings_list_input(id == InputId::SettingsListKey, edit, cx);
+                Outcome::done()
+            }
+            InputId::DebugView => {
+                self.edit_debug_view_input(edit, cx);
+                Outcome::done()
+            }
+            InputId::BreakpointWidget => {
+                self.edit_breakpoint_widget_input(edit, cx);
+                Outcome::done()
+            }
+            InputId::DebugConsole => {
+                self.edit_debug_console_input(edit, cx);
+                Outcome::done()
+            }
+            InputId::TerminalFind => {
+                self.edit_terminal_find_input(edit, cx);
                 Outcome::done()
             }
         }
@@ -266,6 +380,10 @@ impl Workbench {
             return;
         }
         if id == InputId::ExplorerFind && self.explorer_find_input_key(keystroke, window, cx) {
+            cx.stop_propagation();
+            return;
+        }
+        if matches!(id, InputId::SettingsListKey | InputId::SettingsListValue) && self.settings_list_input_key(keystroke, window, cx) {
             cx.stop_propagation();
             return;
         }
@@ -376,6 +494,16 @@ impl Workbench {
                 InputId::SearchEditor(field) => ("search-editor-input-text", field as usize).into(),
                 InputId::OutputFilter => "output-filter-text".into(),
                 InputId::ScmInput => "scm-input-text".into(),
+                InputId::ExtensionsSearch => "extensions-search-text".into(),
+                InputId::SettingsSearch => "settings-search-text".into(),
+                InputId::SettingsValue => "settings-value-text".into(),
+                InputId::ProfileName => "profile-name-text".into(),
+                InputId::SettingsListKey => "settings-list-key-text".into(),
+                InputId::SettingsListValue => "settings-list-value-text".into(),
+                InputId::DebugView => "debug-view-input-text".into(),
+                InputId::BreakpointWidget => "breakpoint-widget-input-text".into(),
+                InputId::DebugConsole => "debug-console-input-text".into(),
+                InputId::TerminalFind => "terminal-find-text".into(),
             })
             .flex_1()
             .h_full()

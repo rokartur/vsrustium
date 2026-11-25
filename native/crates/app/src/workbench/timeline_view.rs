@@ -19,7 +19,7 @@ use super::scm_view::{INDENT, ROW_HEIGHT, TWISTIE};
 use super::search_view::SideBarView;
 use crate::commands::Outcome;
 use crate::contextkey::{Expr, JsRegex};
-use crate::menus::{Entry, MenuAction, MenuId, MenuItem, menu_actions};
+use crate::menus::{Entry, MenuAction, MenuId, MenuItem, Toggled, menu_actions};
 use crate::timeline::{Row, Timeline, TimelineItem, TimelineProvider, TimelineRequest, TimelineResult, from_now_ago, uri_basename};
 
 const EXCLUDE_SOURCES_KEY: &str = "timeline.excludeSources";
@@ -35,7 +35,6 @@ const TRIGGER_AUTOMATIC: u64 = 2;
 
 pub struct TimelineView {
     model: Timeline,
-    expanded: bool,
     /// `followActiveEditor` turned off ("Pin Current Timeline", "Pin Workspace Timeline", "Open Timeline").
     pinned: bool,
     /// The body was visible on the last render; becoming visible runs `onActiveEditorChanged` again.
@@ -58,7 +57,6 @@ impl TimelineView {
     pub fn new(cx: &mut App) -> TimelineView {
         TimelineView {
             model: Timeline::default(),
-            expanded: false,
             pinned: false,
             shown: false,
             followed: (None, false),
@@ -153,7 +151,7 @@ impl Workbench {
 
     /// `isBodyVisible`: expanded, in the Explorer on screen.
     fn timeline_visible(&self) -> bool {
-        self.timeline.expanded && self.side_bar_view == SideBarView::Explorer && self.side_bar_visible()
+        self.explorer_pane_expanded(TIMELINE_VIEW_ID) && self.side_bar_view == SideBarView::Explorer && self.side_bar_visible()
     }
 
     /// `onActiveEditorChanged` and `setExpanded`, checked on every render: the body follows the active editor while
@@ -187,7 +185,7 @@ impl Workbench {
     fn timeline_target(&self) -> Option<Value> {
         let editor = self.editors.active()?;
         let excluded = ["vscode-settings", "webview-panel", "walkThrough"];
-        (!excluded.contains(&editor.document.scheme.as_str())).then(|| crate::editor::uri_value(&editor.document.scheme, &editor.document.path))
+        (!excluded.contains(&editor.document().scheme.as_str())).then(|| crate::editor::uri_value(&editor.document().scheme, &editor.document().path))
     }
 
     /// The rest of `onActiveEditorChanged`: the same target only loads missing or stale sources (`reloadTimeline`);
@@ -238,7 +236,7 @@ impl Workbench {
             None => explorer_row.map(|path| crate::editor::uri_value("file", &path)).or_else(|| self.timeline_target()),
         };
         self.side_bar_view = SideBarView::Explorer;
-        self.timeline.expanded = true;
+        self.expand_explorer_pane(TIMELINE_VIEW_ID, cx);
         self.timeline.shown = self.timeline_visible();
         if let Some(uri) = uri {
             self.timeline.pinned = true;
@@ -388,14 +386,14 @@ impl Workbench {
     /// source, and the `timeline/title` and `timeline/item/context` contributions.
     fn timeline_menus(&self) -> Vec<MenuItem> {
         let mut items: Vec<MenuItem> = self.menus.iter().filter(|item| matches!(item.menu, MenuId::TimelineTitle | MenuId::TimelineItemContext)).cloned().collect();
-        let command = |id: &str, toggled: Option<Expr>| Entry::Command { id: id.to_string(), precondition: None, toggled, alt: None };
+        let command = |id: &str, toggled: Option<Expr>| Entry::Command { id: id.to_string(), precondition: None, toggled: Toggled::when(toggled), alt: None };
         let mut add = |menu, entry, title: &str, group: &str, order, when: Option<&str>| {
             items.push(MenuItem { menu, entry, title: title.to_string(), group: group.to_string(), order, when: when.and_then(Expr::deserialize) });
         };
         add(MenuId::TimelineTitle, command("timeline.refresh", None), "Refresh", "navigation", 99., None);
         add(MenuId::TimelineTitle, command("timeline.toggleFollowActiveEditor", None), "Pin Current Timeline", "navigation", 98., Some("timelineFollowActiveEditor"));
         add(MenuId::TimelineTitle, command("timeline.toggleFollowActiveEditor", None), "Unpin Current Timeline", "navigation", 98., Some("!timelineFollowActiveEditor"));
-        add(MenuId::TimelineTitle, Entry::Submenu(MenuId::TimelineFilterSubMenu), "Filter Timeline", "navigation", 100., None);
+        add(MenuId::TimelineTitle, Entry::Submenu { submenu: MenuId::TimelineFilterSubMenu, toggled: None }, "Filter Timeline", "navigation", 100., None);
         add(MenuId::TimelineTitle, command("timeline.showWorkspaceTimeline", None), "Pin Workspace Timeline", "1_workspace", 0., Some("timelineHasWorkspaceProvider && !timelineForWorkspace"));
         add(MenuId::TimelineItemContext, command("timeline.compareSelected", None), "Compare Selected", "3_compare", 0., Some("timelineCanCompareSelection"));
         for source in self.timeline.model.sources() {
@@ -596,10 +594,9 @@ impl Workbench {
         (0..handles.len()).map(|offset| (start + offset) % handles.len()).find(|&index| model.item(&handles[index]).is_some_and(|item| item.label.to_lowercase().starts_with(&prefix)))
     }
 
-    /// The Timeline pane of the Explorer: its header with the title menu, and when expanded a share of the height
-    /// with the message or the rows (timelinePane.css).
-    pub(in crate::workbench) fn timeline_section(&self, window: &Window, cx: &mut Context<Self>) -> Div {
-        let expanded = self.timeline.expanded;
+    /// The Timeline pane of the Explorer's pane view: the shown resource as its description, the title menu, and
+    /// the message or the rows (timelinePane.css).
+    pub(in crate::workbench) fn timeline_pane(&self, window: &Window, cx: &mut Context<Self>) -> super::view_panes::ExplorerPane {
         let model = &self.timeline.model;
         // timelinePane.ts `updateFilename`.
         let label = model.target_label();
@@ -607,22 +604,6 @@ impl Workbench {
             true if !label.is_empty() => format!("{label} (pinned)"),
             _ => label,
         };
-        let header = self
-            .section_header("Timeline", expanded, true)
-            .id("timeline-header")
-            .on_click(cx.listener(|workbench, _: &ClickEvent, _, cx| {
-                workbench.timeline.expanded = !workbench.timeline.expanded;
-                cx.notify();
-            }))
-            .when(expanded, |header| {
-                header
-                    .child(div().flex_1().min_w_0().ml(px(10.)).overflow_hidden().whitespace_nowrap().text_size(px(12.)).text_color(self.color("panelTitle.inactiveForeground")).child(description))
-                    .child(self.timeline_title_actions(window, cx))
-            });
-        let section = div().flex().flex_col().group("timeline-pane").child(header);
-        if !expanded {
-            return section.flex_none();
-        }
         let excluded = self.timeline_excluded_sources();
         let local_history = self.setting("workbench.localHistory.enabled") == json!(true);
         let message = model.message(&excluded, local_history, self.scm.model.providers.len());
@@ -651,7 +632,14 @@ impl Workbench {
             .overflow_y_scroll()
             .track_scroll(&self.timeline.scroll)
             .children(rows);
-        section.flex_1().min_h_0().child(div().relative().flex_1().min_h_0().flex().flex_col().children(message).child(tree))
+        let body = div().relative().size_full().flex().flex_col().children(message).child(tree);
+        super::view_panes::ExplorerPane {
+            id: TIMELINE_VIEW_ID,
+            title: "Timeline".into(),
+            description: Some(description).filter(|description| !description.is_empty()),
+            actions: Some(self.timeline_title_actions(window, cx).into_any_element()),
+            body: body.into_any_element(),
+        }
     }
 
     /// The pane's title toolbar (`MenuId.TimelineTitle`): the navigation actions as icons, the "Filter Timeline"
@@ -663,7 +651,7 @@ impl Workbench {
         let args = vec![self.timeline.model.uri.clone().unwrap_or(Value::Null)];
         let navigation: Vec<MenuItem> = menus.iter().filter(|item| item.menu != MenuId::TimelineTitle || item.group == "navigation").cloned().collect();
         let secondary: Vec<MenuItem> = menus.iter().filter(|item| item.menu != MenuId::TimelineTitle || item.group != "navigation").cloned().collect();
-        let mut bar = div().flex().pr(px(8.)).invisible().group_hover("timeline-pane", |actions| actions.visible());
+        let mut bar = div().flex().pr(px(8.));
         for action in menu_actions(&navigation, MenuId::TimelineTitle, &context) {
             bar = match action {
                 MenuAction::Command { id, title, .. } => match id.as_str() {
@@ -671,7 +659,7 @@ impl Workbench {
                     "timeline.toggleFollowActiveEditor" => bar.child(self.timeline_action(if self.timeline.pinned { "pinned" } else { "pin" }, id, title, args.clone(), foreground, cx)),
                     _ => bar.child(self.command_button(&id, title, args.clone(), foreground, cx)),
                 },
-                MenuAction::Submenu { title, actions } => bar.child(self.timeline_dropdown("filter", title, actions, context.clone(), args.clone(), foreground, cx)),
+                MenuAction::Submenu { title, actions, .. } => bar.child(self.timeline_dropdown("filter", title, actions, context.clone(), args.clone(), foreground, cx)),
                 MenuAction::Separator => bar,
             };
         }

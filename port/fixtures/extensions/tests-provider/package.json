@@ -1,0 +1,10 @@
+{
+	"name": "tests-provider",
+	"publisher": "port",
+	"displayName": "Port Tests Provider",
+	"version": "0.0.1",
+	"description": "A test controller over *.test.js files of the folder (one test per `test('name'` line), for the Test Explorer, gutter and results checks.",
+	"engines": { "vscode": "^1.100.0" },
+	"main": "./extension.js",
+	"activationEvents": ["onStartupFinished"]
+}

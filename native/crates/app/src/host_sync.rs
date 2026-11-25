@@ -3,7 +3,7 @@
 //! (`$acceptTabOperation`), mainThreadEditors.ts (`$acceptEditorPropertiesChanged`) and the
 //! `onLanguage` activation languageService.ts sends when a model of a new language is created.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 
@@ -80,22 +80,32 @@ pub struct HostSync {
     sender: Sender<HostMessage>,
     /// The documents the host has, in the order they were added: their URI string and `UriComponents`.
     documents: Vec<(String, Value)>,
-    /// The snapshot id of the visible editor the host has.
-    editor: Option<String>,
+    /// The snapshot ids of the visible editors the host has, one per group showing a text editor.
+    editors: Vec<String>,
+    /// mainThreadEditors.ts `_editorPositionData`: each visible text editor's view column, as last sent.
+    editor_positions: serde_json::Map<String, Value>,
+    /// The id of the active editor the host has.
+    active_editor: Option<String>,
     /// The lines of the visible editor the host has as its `visibleRanges`.
     visible_lines: Option<Vec<(usize, usize)>>,
-    /// The tabs of group 0 the host has; session.rs starts it with an empty group.
-    tabs: Vec<Value>,
+    /// The groups the host has in view column order with their tabs, and the active group; session.rs starts
+    /// with one empty group 0.
+    tabs: Vec<(u32, Vec<Value>)>,
+    active_group: u32,
     /// The search editors' tabs by their model's path; the workbench keeps them current.
     pub search_tabs: HashMap<PathBuf, SearchTab>,
     /// The webview panels' tabs by their editor's path; no text model backs them.
     pub webview_tabs: HashMap<PathBuf, WebviewTab>,
     activations: HashMap<String, Activation>,
+    /// The activation events the running extensions declare (`ExtensionDescriptionRegistry`'s activation map).
+    pub activation_events: HashSet<String>,
     /// `whenInstalledExtensionsRegistered`: set once the host's handshake is done; until then commands do not wait for
     /// their `onCommand` activation.
     pub installed_extensions_registered: bool,
     /// `configurationScopes` go to the host in a development build only (`MainThreadConfiguration.send_scopes`).
     pub configuration_scopes: bool,
+    /// `workbench.editor.untitled.labelFormat` is `content`: untitled tabs take their first line's words.
+    pub untitled_names_from_content: bool,
 }
 
 /// `TabModelOperationKind`.
@@ -109,19 +119,30 @@ const CODE_EDITOR_ID: &str = "vs.editor.ICodeEditor:1";
 
 impl HostSync {
     pub fn new(sender: Sender<HostMessage>) -> Self {
-        HostSync { sender, documents: Vec::new(), editor: None, visible_lines: None, tabs: Vec::new(), search_tabs: HashMap::new(), webview_tabs: HashMap::new(), activations: HashMap::new(), installed_extensions_registered: false, configuration_scopes: false }
+        HostSync { sender, documents: Vec::new(), editors: Vec::new(), editor_positions: serde_json::Map::new(), active_editor: None, visible_lines: None, tabs: vec![(0, Vec::new())], active_group: 0, search_tabs: HashMap::new(), webview_tabs: HashMap::new(), activations: HashMap::new(), activation_events: HashSet::new(), installed_extensions_registered: false, configuration_scopes: false, untitled_names_from_content: true }
     }
 
     /// Sends what changed in `group` since the last call: activation for new languages, the document
     /// and editor delta, then the tab model.
     pub fn send_changes(&mut self, group: &EditorGroup) {
-        let is_text = |editor: &&OpenEditor| !self.webview_tabs.contains_key(&editor.document.path) && !matches!(editor.document.scheme.as_str(), DIFF_EDITOR_SCHEME | MULTI_DIFF_EDITOR_SCHEME | crate::merge_editor::MERGE_EDITOR_SCHEME);
-        let open: Vec<&OpenEditor> = group.editors.iter().chain(&group.models).filter(is_text).collect();
-        let added: Vec<&OpenEditor> = open.iter().copied().filter(|editor| !self.documents.iter().any(|(uri, _)| *uri == editor.document.uri_string())).collect();
+        let is_entry = |editor: &&OpenEditor| matches!(editor.document().scheme.as_str(), DIFF_EDITOR_SCHEME | MULTI_DIFF_EDITOR_SCHEME | crate::merge_editor::MERGE_EDITOR_SCHEME);
+        let is_text = |editor: &&OpenEditor| !self.webview_tabs.contains_key(&editor.document().path) && !is_entry(editor);
+        // A custom text editor's model stays a document, without a text editor (customTextEditorModel.ts).
+        let is_document = |editor: &&OpenEditor| self.webview_tabs.get(&editor.document().path).is_none_or(|tab| tab.custom_text) && !is_entry(editor);
+        let open: Vec<&OpenEditor> = group.all_editors().filter(is_document).collect();
+        let mut added: Vec<&OpenEditor> = open.iter().copied().filter(|editor| !self.documents.iter().any(|(uri, _)| *uri == editor.document().uri_string())).collect();
+        // Editors of one model in several groups are one document.
+        let mut seen = Vec::new();
+        added.retain(|editor| {
+            let uri = editor.document().uri_string();
+            let new = !seen.contains(&uri);
+            seen.push(uri);
+            new
+        });
         let removed: Vec<(String, Value)> =
-            self.documents.iter().filter(|(uri, _)| !open.iter().any(|editor| editor.document.uri_string() == *uri)).cloned().collect();
+            self.documents.iter().filter(|(uri, _)| !open.iter().any(|editor| editor.document().uri_string() == *uri)).cloned().collect();
         for editor in &added {
-            for event in [format!("onLanguage:{}", editor.document.language_id), "onLanguage".to_string()] {
+            for event in [format!("onLanguage:{}", editor.document().language_id), "onLanguage".to_string()] {
                 // `activate_by_event`, inlined: `is_text` still borrows `self.webview_tabs`.
                 if !self.activations.contains_key(&event) {
                     let activation = self.call("ExtHostExtensionService", "$activateByEvent", vec![json!(event), json!(0)]).shared();
@@ -137,80 +158,131 @@ impl HostSync {
         if !added.is_empty() {
             delta.insert("addedDocuments".into(), added.iter().map(|editor| model_added_data(editor)).collect());
         }
-        let active = group.active().filter(is_text);
-        let active_id = active.map(snapshot_id);
-        if active_id != self.editor {
-            if let Some(previous) = &self.editor {
-                delta.insert("removedEditors".into(), json!([previous]));
-            }
-            if let Some(editor) = active {
-                let visible_lines = editor.visible_model_ranges(group.viewport);
-                delta.insert("addedEditors".into(), json!([text_editor_add_data(editor, &visible_lines)]));
+        // mainThreadDocumentsAndEditors.ts: a text editor per group showing one, at its group's view column.
+        let visible: Vec<(usize, &OpenEditor, crate::editor::Viewport)> = group
+            .column_ids()
+            .into_iter()
+            .enumerate()
+            .filter_map(|(column, id)| group.group_active(id).filter(|(editor, _)| is_text(editor)).map(|(editor, viewport)| (column, editor, viewport)))
+            .collect();
+        // The Output view's editor is visible without a view column (`editorPosition` undefined).
+        let panel = group.panel_editor_shown.then(|| group.group_active(crate::editor::PANEL_GROUP)).flatten().filter(|(editor, _)| is_text(editor));
+        let visible: Vec<(Option<usize>, &OpenEditor, crate::editor::Viewport)> =
+            visible.into_iter().map(|(column, editor, viewport)| (Some(column), editor, viewport)).chain(panel.map(|(editor, viewport)| (None, editor, viewport))).collect();
+        let ids: Vec<String> = visible.iter().map(|(_, editor, _)| snapshot_id(editor)).collect();
+        let removed_editors: Vec<&String> = self.editors.iter().filter(|id| !ids.contains(id)).collect();
+        if !removed_editors.is_empty() {
+            delta.insert("removedEditors".into(), json!(removed_editors));
+        }
+        let mut added_editors = Vec::new();
+        for (column, editor, viewport) in visible.iter().filter(|(_, editor, _)| !self.editors.contains(&snapshot_id(editor))) {
+            let visible_lines = editor.visible_model_ranges(*viewport);
+            let mut data = text_editor_add_data(editor, &visible_lines);
+            data["editorPosition"] = json!(column);
+            added_editors.push(data);
+            if group.active().is_some_and(|active| std::ptr::eq(active, *editor)) {
                 self.visible_lines = Some(visible_lines);
             }
+        }
+        if !added_editors.is_empty() {
+            delta.insert("addedEditors".into(), Value::Array(added_editors));
+        }
+        let active_id = group.active().filter(is_text).map(snapshot_id);
+        if active_id != self.active_editor || delta.contains_key("removedEditors") || delta.contains_key("addedEditors") {
             delta.insert("newActiveEditor".into(), json!(active_id));
         }
         if !delta.is_empty() {
             self.send("ExtHostDocumentsAndEditors", "$acceptDocumentsAndEditorsDelta", vec![Value::Object(delta)]);
         }
         self.documents.retain(|document| !removed.contains(document));
-        self.documents.extend(added.iter().map(|editor| (editor.document.uri_string(), editor.document.uri())));
-        self.editor = active_id;
+        self.documents.extend(added.iter().map(|editor| (editor.document().uri_string(), editor.document().uri())));
+        self.editors = ids;
+        self.active_editor = active_id;
+        // `_updateActiveAndVisibleTextEditors`: the columns, when one changed (a group closed or moved).
+        let positions: serde_json::Map<String, Value> = visible.iter().filter_map(|(column, editor, _)| Some((snapshot_id(editor), json!((*column)?)))).collect();
+        if positions != self.editor_positions {
+            self.send("ExtHostEditors", "$acceptEditorPositionData", vec![Value::Object(positions.clone())]);
+            self.editor_positions = positions;
+        }
         self.send_tabs(group);
     }
 
     /// One `$acceptTabOperation` per tab that closed, opened, moved or changed, as mainThreadEditorTabs.ts
     /// sends them: a whole `$acceptEditorTabModel` fires no `onDidChangeTabs`, which TypeScript's
     /// TabResourceTracker needs before it reports diagnostics.
+    /// A change to the groups themselves (added, removed, reordered, another active one) sends the whole model.
     pub fn send_tabs(&mut self, group: &EditorGroup) {
-        let tabs: Vec<Value> = group
-            .editors
+        let groups: Vec<(u32, Vec<Value>)> = group.column_ids().into_iter().map(|id| (id, self.group_tab_dtos(group, id))).collect();
+        let same_groups = groups.iter().map(|(id, _)| *id).eq(self.tabs.iter().map(|(id, _)| *id));
+        if !same_groups || self.active_group != group.id {
+            let model: Vec<Value> = groups.iter().enumerate().map(|(column, (id, tabs))| json!({ "groupId": id, "isActive": *id == group.id, "viewColumn": column, "tabs": tabs })).collect();
+            self.send("ExtHostEditorTabs", "$acceptEditorTabModel", vec![Value::Array(model)]);
+            self.tabs = groups;
+            self.active_group = group.id;
+            return;
+        }
+        for (id, tabs) in groups {
+            self.send_group_tabs(id, tabs);
+        }
+    }
+
+    fn group_tab_dtos(&self, group: &EditorGroup, id: u32) -> Vec<Value> {
+        let (editors, active) = group.group_tabs(id);
+        let dirty = |editor: &OpenEditor, diff: &DiffInput| group.model(&diff.modified.scheme, &diff.modified.path).unwrap_or(editor).is_dirty();
+        editors
             .iter()
             .enumerate()
-            .map(|(index, editor)| match group.diffs.get(&editor.model_id) {
-                Some(diff) => diff_tab_dto(editor, diff, group.active_index() == Some(index), group.tab_model(index).is_dirty()),
-                None => match group.multi_diffs.get(&editor.model_id) {
-                    Some(multi_diff) => multi_diff.tab_dto(editor, group.active_index() == Some(index)),
-                    None => match group.merges.get(&editor.model_id) {
-                        Some(merge) => merge.tab_dto(editor, group.active_index() == Some(index), group.tab_model(index).is_dirty()),
-                        None => tab_dto(editor, group.active_index() == Some(index), &self.search_tabs, &self.webview_tabs),
-                    },
-                },
+            .map(|(index, editor)| {
+                let active = active == Some(index);
+                if let Some(diff) = group.diffs.get(&editor.model_id) {
+                    return diff_tab_dto(id, editor, diff, active, dirty(editor, diff));
+                }
+                if let Some(multi_diff) = group.multi_diffs.get(&editor.model_id) {
+                    return multi_diff.tab_dto(id, editor, active);
+                }
+                if let Some(merge) = group.merges.get(&editor.model_id) {
+                    return merge.tab_dto(id, editor, active, group.model(&merge.result.scheme, &merge.result.path).unwrap_or(editor).is_dirty());
+                }
+                tab_dto(id, editor, active, self)
             })
-            .collect();
-        let mut sent = std::mem::take(&mut self.tabs);
+            .collect()
+    }
+
+    fn send_group_tabs(&mut self, group: u32, tabs: Vec<Value>) {
+        let slot = self.tabs.iter().position(|(id, _)| *id == group).expect("the host has the group");
+        let mut sent = std::mem::take(&mut self.tabs[slot].1);
         for index in (0..sent.len()).rev() {
             if !tabs.iter().any(|tab| tab["id"] == sent[index]["id"]) {
                 let closed = sent.remove(index);
-                self.send_tab_operation(TAB_CLOSE, index, closed, None);
+                self.send_tab_operation(group, TAB_CLOSE, index, closed, None);
             }
         }
         for (index, tab) in tabs.iter().enumerate() {
             match sent.iter().position(|old| old["id"] == tab["id"]) {
                 None => {
                     sent.insert(index, tab.clone());
-                    self.send_tab_operation(TAB_OPEN, index, tab.clone(), None);
+                    self.send_tab_operation(group, TAB_OPEN, index, tab.clone(), None);
                 }
                 Some(old_index) if old_index != index => {
                     let moved = sent.remove(old_index);
                     sent.insert(index, tab.clone());
-                    self.send_tab_operation(TAB_MOVE, index, moved.clone(), Some(old_index));
+                    self.send_tab_operation(group, TAB_MOVE, index, moved.clone(), Some(old_index));
                     if moved != *tab {
-                        self.send_tab_operation(TAB_UPDATE, index, tab.clone(), None);
+                        self.send_tab_operation(group, TAB_UPDATE, index, tab.clone(), None);
                     }
                 }
                 Some(_) if sent[index] != *tab => {
                     sent[index] = tab.clone();
-                    self.send_tab_operation(TAB_UPDATE, index, tab.clone(), None);
+                    self.send_tab_operation(group, TAB_UPDATE, index, tab.clone(), None);
                 }
                 Some(_) => {}
             }
         }
-        self.tabs = sent;
+        self.tabs[slot].1 = sent;
     }
 
-    fn send_tab_operation(&self, kind: u8, index: usize, tab: Value, old_index: Option<usize>) {
-        let mut operation = json!({ "groupId": 0, "index": index, "tabDto": tab, "kind": kind });
+    fn send_tab_operation(&self, group: u32, kind: u8, index: usize, tab: Value, old_index: Option<usize>) {
+        let mut operation = json!({ "groupId": group, "index": index, "tabDto": tab, "kind": kind });
         if let Some(old_index) = old_index {
             operation["oldIndex"] = json!(old_index);
         }
@@ -225,9 +297,9 @@ impl HostSync {
         self.send_selection(editor, "keyboard");
     }
 
-    /// The text of `editor`, shown or a model without an editor, changed: the change, then the dirty state and tabs when it flipped.
+    /// The text of `editor`, shown or a model without an editor, changed: the change, then the dirty state and tabs when it flipped, the tabs also for an untitled model.
     pub fn send_model_change(&mut self, group: &EditorGroup, editor: &OpenEditor, change: &ContentChanged) {
-        let document = &editor.document;
+        let document = &editor.document();
         let uri = document.uri();
         let changes: Vec<Value> = change
             .changes
@@ -255,6 +327,9 @@ impl HostSync {
         self.send("ExtHostDocuments", "$acceptModelChanged", vec![uri.clone(), event, json!(dirty)]);
         if dirty != change.was_dirty {
             self.send("ExtHostDocuments", "$acceptDirtyStateChanged", vec![uri, json!(dirty)]);
+        }
+        // untitledTextEditorInput.ts `onDidChangeLabel`: a new first line renames an untitled tab.
+        if dirty != change.was_dirty || document.scheme == "untitled" {
             self.send_tabs(group);
         }
     }
@@ -264,12 +339,12 @@ impl HostSync {
         if was_dirty {
             self.send_dirty_state(group, editor, false);
         }
-        self.send("ExtHostDocuments", "$acceptModelSaved", vec![editor.document.uri()]);
+        self.send("ExtHostDocuments", "$acceptModelSaved", vec![editor.document().uri()]);
     }
 
     /// The dirty state of `editor` flipped without a text change, then the tabs that show it.
     pub fn send_dirty_state(&mut self, group: &EditorGroup, editor: &OpenEditor, dirty: bool) {
-        self.send("ExtHostDocuments", "$acceptDirtyStateChanged", vec![editor.document.uri(), json!(dirty)]);
+        self.send("ExtHostDocuments", "$acceptDirtyStateChanged", vec![editor.document().uri(), json!(dirty)]);
         self.send_tabs(group);
     }
 
@@ -312,9 +387,22 @@ impl HostSync {
         self.send("ExtHostTheming", "$onColorThemeChange", vec![json!(scheme)]);
     }
 
+    /// `send` for callbacks that outlive a borrow of the workbench (a terminal's input).
+    pub fn notifier(&self) -> impl Fn(&'static str, &'static str, Vec<Value>) + 'static {
+        let sender = self.sender.clone();
+        move |proxy, method, args| {
+            let _ = sender.send(HostMessage { proxy, method, args, reply: None, cancellable: false, files: None, extensions: None });
+        }
+    }
+
     pub(crate) fn send(&self, proxy: &'static str, method: &'static str, args: Vec<Value>) {
         // The session thread is gone once the host exits; the workbench keeps working without it.
         let _ = self.sender.send(HostMessage { proxy, method, args, reply: None, cancellable: false, files: None, extensions: None });
+    }
+
+    /// `MessageType.Terminate`: the session thread tells the host to deactivate its extensions and exit.
+    pub fn stop_extension_host(&self) {
+        self.send("workbench", "stopExtensionHost", Vec::new());
     }
 
     /// Runs file edits on the host thread; with no host they run here on the disk, without participants.
@@ -325,6 +413,11 @@ impl HostSync {
             unsent.0.files.expect("the message carries file work").run(&mut files::disk::Disk);
         }
         receiver
+    }
+
+    /// Reads the activation events of the extensions the host runs.
+    pub fn set_running_extensions(&mut self, extensions: &[ScannedExtension]) {
+        self.activation_events = extensions.iter().flat_map(|extension| exthost::activation_events::read_activation_events(&extension.id, &extension.description)).collect();
     }
 
     /// `ExtensionHostManager.activateByEvent`: one request per event; a repeat shares the first one's answer.
@@ -366,10 +459,10 @@ pub fn snapshot_id(editor: &OpenEditor) -> String {
 }
 
 fn model_added_data(editor: &OpenEditor) -> Value {
-    let document = &editor.document;
+    let document = &editor.document();
     json!({
         "uri": document.uri(),
-        "versionId": editor.version_id,
+        "versionId": editor.text_model().version_id,
         "lines": document.lines,
         "EOL": document.eol,
         "languageId": document.language_id,
@@ -379,7 +472,7 @@ fn model_added_data(editor: &OpenEditor) -> Value {
 }
 
 fn text_editor_add_data(editor: &OpenEditor, visible_lines: &[(usize, usize)]) -> Value {
-    let document = &editor.document;
+    let document = &editor.document();
     json!({
         "id": snapshot_id(editor),
         "documentUri": document.uri(),
@@ -392,7 +485,7 @@ fn text_editor_add_data(editor: &OpenEditor, visible_lines: &[(usize, usize)]) -
 
 /// `IResolvedTextEditorConfiguration`: TextEditorCursorStyle.Line, RenderLineNumbersType.On.
 fn options(editor: &OpenEditor) -> Value {
-    let indentation = editor.document.indentation;
+    let indentation = editor.document().indentation;
     json!({
         "tabSize": indentation.tab_size,
         "indentSize": indentation.indent_size(),
@@ -405,13 +498,13 @@ fn options(editor: &OpenEditor) -> Value {
 
 /// `getVisibleRanges` without folding: one range over whole lines.
 fn visible_ranges(editor: &OpenEditor, lines: &[(usize, usize)]) -> Value {
-    let range = |&(first, last): &(usize, usize)| json!({ "startLineNumber": first + 1, "startColumn": 1, "endLineNumber": last + 1, "endColumn": utf16_len(&editor.document.lines[last]) + 1 });
+    let range = |&(first, last): &(usize, usize)| json!({ "startLineNumber": first + 1, "startColumn": 1, "endLineNumber": last + 1, "endColumn": utf16_len(&editor.document().lines[last]) + 1 });
     Value::Array(lines.iter().map(range).collect())
 }
 
 /// The cursors' `ISelection`s, primary first, 1-based with UTF-16 columns as the text model counts them.
 fn selections(editor: &OpenEditor) -> Value {
-    let lines = &editor.document.lines;
+    let lines = &editor.document().lines;
     let column = |position: Position| utf16_len(&lines[position.line].chars().take(position.column).collect::<String>()) + 1;
     let selection = |&Selection { anchor, head }: &Selection| {
         json!({ "selectionStartLineNumber": anchor.line + 1, "selectionStartColumn": column(anchor), "positionLineNumber": head.line + 1, "positionColumn": column(head) })
@@ -434,17 +527,22 @@ fn utf16_len(text: &str) -> usize {
 }
 
 /// The tab's id in `$acceptTabOperation`, which `$moveTab` and `$closeTab` name a tab by.
-pub fn tab_id(editor: &OpenEditor) -> String {
+pub fn tab_id(group: u32, editor: &OpenEditor) -> String {
     // Every scheme the file service reads opens as a file editor input; untitled text has its own.
-    let type_id = if editor.document.scheme == "untitled" { "workbench.editors.untitledEditorInput" } else { "workbench.editors.files.fileEditorInput" };
-    format!("0~default-{type_id}-{} ", editor.document.uri_string())
+    let type_id = if editor.document().scheme == "untitled" { "workbench.editors.untitledEditorInput" } else { "workbench.editors.files.fileEditorInput" };
+    format!("{group}~default-{type_id}-{} ", editor.document().uri_string())
 }
 
-fn tab_dto(editor: &OpenEditor, active: bool, search_tabs: &HashMap<PathBuf, SearchTab>, webview_tabs: &HashMap<PathBuf, WebviewTab>) -> Value {
-    let uri = editor.document.uri();
+fn tab_dto(group: u32, editor: &OpenEditor, active: bool, sync: &HostSync) -> Value {
+    let (search_tabs, webview_tabs) = (&sync.search_tabs, &sync.webview_tabs);
+    let uri = editor.document().uri();
+    let label = match editor.document().scheme.as_str() {
+        "untitled" => crate::untitled::name(editor, sync.untitled_names_from_content),
+        _ => editor.document().name(),
+    };
     let mut tab = json!({
-        "id": tab_id(editor),
-        "label": editor.document.name(),
+        "id": tab_id(group, editor),
+        "label": label,
         // TabInputKind.TextInput
         "input": { "kind": 1, "uri": uri },
         "editorId": "default",
@@ -454,19 +552,22 @@ fn tab_dto(editor: &OpenEditor, active: bool, search_tabs: &HashMap<PathBuf, Sea
         "isDirty": editor.is_dirty(),
     });
     // A search editor is no text resource input: TabInputKind.UnknownInput, its editor id is its type id.
-    if let Some(search) = search_tabs.get(&editor.document.path).filter(|_| editor.document.scheme == "search-editor") {
+    if let Some(search) = search_tabs.get(&editor.document().path).filter(|_| editor.document().scheme == "search-editor") {
         let type_id = "workbench.editorinputs.searchEditorInput";
-        tab["id"] = json!(format!("0~{type_id}-{type_id}-{} ", search.resource));
+        tab["id"] = json!(format!("{group}~{type_id}-{type_id}-{} ", search.resource));
         tab["label"] = json!(search.label);
         tab["input"] = json!({ "kind": 0 });
         tab["editorId"] = json!(type_id);
     }
-    // mainThreadEditorTabs.ts: TabInputKind.WebviewEditorInput, its editor id is the view type.
-    if let Some(webview) = webview_tabs.get(&editor.document.path) {
-        let type_id = "workbench.editors.webviewInput";
-        tab["id"] = json!(format!("0~{}-{type_id}-{} ", webview.view_type, editor.document.uri_string()));
+    // mainThreadEditorTabs.ts: TabInputKind.WebviewEditorInput or CustomEditorInput, its editor id is the view type.
+    if let Some(webview) = webview_tabs.get(&editor.document().path) {
+        let type_id = if webview.custom_resource.is_some() { "workbench.editors.webviewEditor" } else { "workbench.editors.webviewInput" };
+        tab["id"] = json!(format!("{group}~{}-{type_id}-{} ", webview.view_type, editor.document().uri_string()));
         tab["label"] = json!(webview.label);
-        tab["input"] = json!({ "kind": 7, "viewType": webview.view_type });
+        tab["input"] = match &webview.custom_resource {
+            Some(uri) => json!({ "kind": 6, "viewType": webview.view_type, "uri": uri }),
+            None => json!({ "kind": 7, "viewType": webview.view_type }),
+        };
         tab["editorId"] = json!(webview.view_type);
     }
     tab
@@ -474,11 +575,11 @@ fn tab_dto(editor: &OpenEditor, active: bool, search_tabs: &HashMap<PathBuf, Sea
 
 /// mainThreadEditorTabs.ts for a `DiffEditorInput` of text: TabInputKind.TextDiffInput, the id from both sides'
 /// resources (`supportSideBySide: BOTH`, modified first), dirty when the modified model is.
-fn diff_tab_dto(editor: &OpenEditor, diff: &DiffInput, active: bool, dirty: bool) -> Value {
+fn diff_tab_dto(group: u32, editor: &OpenEditor, diff: &DiffInput, active: bool, dirty: bool) -> Value {
     let (original, modified) = (uri_string(&diff.original.scheme, &diff.original.path), uri_string(&diff.modified.scheme, &diff.modified.path));
     let uri = |side: &crate::diff_editor::Side| uri_value(&side.scheme, &side.path);
     json!({
-        "id": format!("0~default-workbench.editors.diffEditorInput-{modified}-{original} "),
+        "id": format!("{group}~default-workbench.editors.diffEditorInput-{modified}-{original} "),
         "label": diff.name(),
         "input": { "kind": 2, "original": uri(&diff.original), "modified": uri(&diff.modified) },
         "editorId": "default",
@@ -499,8 +600,12 @@ pub struct SearchTab {
 
 pub struct WebviewTab {
     pub label: String,
-    /// `mainThreadWebview-<viewType>`.
+    /// `mainThreadWebview-<viewType>`, a custom editor's own view type.
     pub view_type: String,
+    /// A custom editor's resource.
+    pub custom_resource: Option<Value>,
+    /// A custom text editor, whose tab is its resource's text model.
+    pub custom_text: bool,
 }
 
 
@@ -524,12 +629,24 @@ mod tests {
             off_side: false,
             folding_markers: None,
             block_comment: None,
+            too_large_for_tokenization: false,
             tokens: Default::default(),
         }
     }
 
+    /// The messages sent, without the view columns (`$acceptEditorPositionData`), which one test checks.
     fn drain(receiver: &Receiver<HostMessage>) -> Vec<HostMessage> {
-        receiver.try_iter().collect()
+        receiver.try_iter().filter(|message| message.method != "$acceptEditorPositionData").collect()
+    }
+
+    /// uriIdentityService.test.ts 'extUri (isEqual)' with the disk's path casing ignored.
+    #[test]
+    fn a_file_in_another_case_finds_the_editor_opened_first() {
+        let mut group = EditorGroup::default();
+        group.open(document("/w/Readme.md", "markdown"), false);
+        assert_eq!(group.find(std::path::Path::new("/w/README.md")), Some(0));
+        assert_eq!(group.find(std::path::Path::new("/w/Readme.md")), Some(0));
+        assert_eq!(group.find(std::path::Path::new("/W2/readme.md")), None);
     }
 
     #[test]
@@ -585,6 +702,45 @@ mod tests {
         let delta = &drain(&receiver)[0].args[0];
         assert_eq!(delta["newActiveEditor"], Value::Null);
         assert!(delta.get("addedEditors").is_none());
+    }
+
+    #[test]
+    fn a_split_sends_both_groups_with_an_editor_each_on_one_document() {
+        let (sender, receiver) = channel();
+        let mut sync = HostSync::new(sender);
+        let mut group = EditorGroup::default();
+        group.open(document("/w/a.txt", "plaintext"), false);
+        sync.send_changes(&group);
+        drain(&receiver);
+        let second = group.add_group(true);
+        group.activate_group(second);
+        group.columns = vec![0, second];
+        sync.send_changes(&group);
+        let mut sent: Vec<HostMessage> = receiver.try_iter().collect();
+        let methods: Vec<_> = sent.iter().map(|message| message.method).collect();
+        assert_eq!(methods, ["$acceptDocumentsAndEditorsDelta", "$acceptEditorPositionData", "$acceptEditorTabModel"]);
+        // mainThreadEditors.ts `_getTextEditorPositionData`: both editors with their group's column.
+        let mut columns: Vec<Value> = sent.remove(1).args[0].as_object().unwrap().values().cloned().collect();
+        columns.sort_by_key(|column| column.as_u64());
+        assert_eq!(columns, [json!(0), json!(1)]);
+        let delta = &sent[0].args[0];
+        assert!(delta.get("addedDocuments").is_none());
+        assert_eq!(delta["addedEditors"].as_array().unwrap().len(), 1);
+        assert_eq!(delta["addedEditors"][0]["editorPosition"], 1);
+        assert_eq!(delta["newActiveEditor"], delta["addedEditors"][0]["id"]);
+        let model = &sent[1].args[0];
+        assert_eq!((model[0]["groupId"].clone(), model[0]["isActive"].clone(), model[1]["groupId"].clone(), model[1]["viewColumn"].clone()), (json!(0), json!(false), json!(second), json!(1)));
+        assert_eq!(model[1]["tabs"][0]["id"], format!("{second}~default-workbench.editors.files.fileEditorInput-file:///w/a.txt "));
+
+        group.close(0);
+        group.activate_group(0);
+        group.remove_group(second);
+        group.columns = Vec::new();
+        sync.send_changes(&group);
+        let sent = drain(&receiver);
+        assert_eq!(sent[0].args[0]["removedEditors"].as_array().unwrap().len(), 1);
+        assert!(sent[0].args[0].get("removedDocuments").is_none());
+        assert_eq!(sent[1].method, "$acceptEditorTabModel");
     }
 
     #[test]

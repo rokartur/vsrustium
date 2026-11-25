@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Runs port/fixtures/extensions/$FIXTURE (default webview-tests) in code-gpui and in the reference build on a copy of
+# port/fixtures/workspace, printing one line per check for each. APP=port or APP=reference runs one of them;
+# PORT_WEBVIEW_GREP=<text> runs the checks whose name contains it. Run on the Studio.
+set -uo pipefail
+cd "$(dirname "$0")/../.."
+REF=${REF:-$HOME/Developer/vscode-ref}
+(cd native && cargo build --release -q -p app) || exit 1
+source port/tools/gui-lock.sh
+tests=$PWD/port/fixtures/extensions/${FIXTURE:-webview-tests}
+status=0
+for app in ${APP:-reference port}; do
+  out=$(mktemp -d)
+  cp -R port/fixtures/workspace "$out/workspace"
+  args=("$out/workspace" --user-data-dir "$out/user-data" --extensionDevelopmentPath="$tests" --extensionTestsPath="$tests/tests")
+  if [[ $app == reference ]]; then
+    VSCODE_DEV=1 NODE_ENV=development timeout 180 "$REF/.build/electron/Code - OSS.app/Contents/MacOS/Code - OSS" "$REF" "${args[@]}" \
+      --disable-extension GitHub.copilot-chat >"$out/log" 2>&1
+  else
+    VSCODE_GPUI_EXTENSIONS=$REF/extensions timeout 180 native/target/release/code-gpui "${args[@]}" >"$out/log" 2>&1
+  fi
+  code=$?
+  echo "== $app"
+  grep -E '(^| )(ok|FAILED) ' "$out/log" | sed -E 's/^.*(ok|FAILED) /\1 /' || tail -20 "$out/log"
+  echo "exit $code"
+  [[ $code == 0 ]] || status=$code
+  rm -rf "$out"
+done
+exit "$status"

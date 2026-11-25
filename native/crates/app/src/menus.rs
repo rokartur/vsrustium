@@ -20,17 +20,37 @@ use crate::contextkey::{Context, Expr};
 pub enum MenuId {
     MenubarMainMenu,
     MenubarFileMenu,
+    NewFile,
+    MenubarRecentMenu,
     MenubarEditMenu,
     MenubarSelectionMenu,
     MenubarViewMenu,
     MenubarGoMenu,
+    MenubarLayoutMenu,
+    MenubarSwitchEditorMenu,
+    MenubarSwitchGroupMenu,
     MenubarHelpMenu,
     MenubarPreferencesMenu,
+    MenubarAppearanceMenu,
+    ActivityBarPositionMenu,
     ThemesSubMenu,
+    /// userDataProfile.ts `ProfilesMenu` and `OpenProfileMenu`.
+    ProfilesMenu,
+    OpenProfileMenu,
+    GlobalActivity,
+    MenubarCopy,
+    MenubarShare,
     ExplorerContext,
+    ExplorerContextShare,
     SearchContext,
     EditorContext,
+    EditorContextCopy,
+    EditorContextShare,
+    EditorContextPeek,
     EditorTitleContext,
+    EditorLineNumberContext,
+    EditorTitleContextShare,
+    StickyScrollContext,
     TitleBarContext,
     TitleBarTitleContext,
     ScmTitle,
@@ -53,6 +73,11 @@ pub enum MenuId {
     TimelineItemContext,
     /// timeline.contribution.ts "Filter Timeline": a toggle per timeline source.
     TimelineFilterSubMenu,
+    ViewTitle,
+    ViewItemContext,
+    EditorContent,
+    TerminalEditorInstanceContext,
+    TerminalInstanceContext,
     /// A `contributes.submenus` entry, `MenuId.for('api:<id>')`, by registration order.
     Api(usize),
     #[cfg(test)]
@@ -62,9 +87,29 @@ pub enum MenuId {
 #[derive(Clone, Debug)]
 #[allow(clippy::large_enum_variant, reason = "a few dozen items, built once")]
 pub enum Entry {
-    /// `alt` is the command and title shown while Alt is held (`IMenuItem.alt`).
-    Command { id: String, precondition: Option<Expr>, toggled: Option<Expr>, alt: Option<(String, String)> },
-    Submenu(MenuId),
+    Command { id: String, precondition: Option<Expr>, toggled: Option<Toggled>, alt: Option<Alt> },
+    Submenu { submenu: MenuId, toggled: Option<Expr> },
+}
+
+/// `ICommandAction.toggled`: checked while `condition` holds, with `title` as the label then.
+#[derive(Clone, Debug)]
+pub struct Toggled {
+    pub condition: Expr,
+    pub title: Option<String>,
+}
+
+impl Toggled {
+    pub fn when(condition: Option<Expr>) -> Option<Self> {
+        condition.map(|condition| Self { condition, title: None })
+    }
+}
+
+/// `IMenuItem.alt`: the command shown while Alt is held.
+#[derive(Clone, Debug)]
+pub struct Alt {
+    pub id: String,
+    pub title: String,
+    pub precondition: Option<Expr>,
 }
 
 /// `IMenuItem` or `ISubmenuItem`; `title` keeps upstream's `&&` mnemonics.
@@ -81,8 +126,9 @@ pub struct MenuItem {
 /// `MenuItemAction`, `SubmenuItemAction` or `Separator`, as a menu shows them.
 #[derive(Clone, Debug, PartialEq)]
 pub enum MenuAction {
+    /// `alt` is set only while its precondition holds, as `getActionForAltMode` shows it only then.
     Command { id: String, title: String, enabled: bool, checked: bool, alt: Option<(String, String)> },
-    Submenu { title: String, actions: Vec<MenuAction> },
+    Submenu { title: String, actions: Vec<MenuAction>, checked: bool },
     Separator,
 }
 
@@ -98,8 +144,22 @@ const WORKBENCH_MENUS: &[Row] = &[
     (MenuId::MenubarMainMenu, Some(MenuId::MenubarGoMenu), "", "&&Go", "", 5., None, None),
     (MenuId::MenubarMainMenu, Some(MenuId::MenubarHelpMenu), "", "&&Help", "", 8., None, None),
     (MenuId::MenubarMainMenu, Some(MenuId::MenubarPreferencesMenu), "", "&&Preferences", "", 9., Some("isMacNative"), None),
+    // workspaceActions.ts, windowActions.ts and editor.contribution.ts
+    (MenuId::MenubarFileMenu, None, "workbench.action.files.openFileFolder", "&&Open...", "2_open", 1., Some("isMacNative && openFolderWorkspaceSupport"), Some("isMacNative && openFolderWorkspaceSupport")),
+    (MenuId::MenubarFileMenu, None, "workbench.action.files.openFolder", "Open &&Folder...", "2_open", 2., Some("openFolderWorkspaceSupport"), Some("openFolderWorkspaceSupport")),
+    (MenuId::MenubarFileMenu, None, "workbench.action.openWorkspace", "Open Wor&&kspace from File...", "2_open", 3., Some("enterMultiRootWorkspaceSupport"), Some("enterMultiRootWorkspaceSupport")),
+    (MenuId::MenubarFileMenu, Some(MenuId::MenubarRecentMenu), "", "Open &&Recent", "2_open", 4., None, None),
+    (MenuId::MenubarFileMenu, None, "workbench.action.closeFolder", "Close &&Folder", "6_close", 3., Some("workbenchState == 'folder' && emptyWorkspaceSupport && !isSessionsWindow"), Some("workbenchState != 'empty' && emptyWorkspaceSupport && !isSessionsWindow")),
+    (MenuId::MenubarFileMenu, None, "workbench.action.closeFolder", "Close &&Workspace", "6_close", 3., Some("workbenchState == 'workspace' && emptyWorkspaceSupport && !isSessionsWindow"), Some("workbenchState != 'empty' && emptyWorkspaceSupport && !isSessionsWindow")),
+    (MenuId::MenubarRecentMenu, None, "workbench.action.openRecent", "&&More...", "y_more", 1., None, None),
+    (MenuId::MenubarRecentMenu, None, "workbench.action.clearRecentFiles", "&&Clear Recently Opened...", "z_clear", 1., None, None),
     // fileActions.contribution.ts
+    (MenuId::MenubarFileMenu, None, "workbench.action.files.newUntitledFile", "&&New Text File", "1_new", 1., None, None),
+    // newFile.contribution.ts
+    (MenuId::MenubarFileMenu, None, "welcome.showNewFileEntries", "New File...", "1_new", 2., Some("!isSessionsWindow"), Some("!isSessionsWindow")),
+    (MenuId::NewFile, None, "workbench.action.files.newUntitledFile", "Text File", "file", 1., None, None),
     (MenuId::MenubarFileMenu, None, "workbench.action.files.save", "&&Save", "4_save", 1., None, Some("activeEditor || foldersViewVisible && sideBarFocus")),
+    (MenuId::MenubarFileMenu, None, "workbench.action.files.saveAs", "Save &&As...", "4_save", 2., None, Some("activeEditor || foldersViewVisible && sideBarFocus")),
     (MenuId::MenubarFileMenu, None, "saveAll", "Save A&&ll", "4_save", 3., None, Some("dirtyWorkingCopies")),
     (
         MenuId::MenubarFileMenu,
@@ -114,6 +174,47 @@ const WORKBENCH_MENUS: &[Row] = &[
     (MenuId::MenubarGoMenu, None, "workbench.action.quickOpen", "Go to &&File...", "3_global_nav", 1., None, None),
     (MenuId::MenubarGoMenu, None, "editor.action.dirtydiff.next", "Next &&Change", "7_change_nav", 0., None, None),
     (MenuId::MenubarGoMenu, None, "editor.action.dirtydiff.previous", "Previous &&Change", "7_change_nav", 0., None, None),
+    // searchActionsSymbol.ts and gotoSymbolQuickAccess.ts
+    (MenuId::MenubarGoMenu, None, "workbench.action.showAllSymbols", "Go to Symbol in &&Workspace...", "3_global_nav", 2., None, None),
+    (MenuId::MenubarGoMenu, None, "workbench.action.gotoSymbol", "Go to &&Symbol in Editor...", "4_symbol_nav", 1., None, None),
+    // editor.contribution.ts, editorActions.ts and openEditorsView.ts: the editor group items of the menu bar.
+    (MenuId::MenubarRecentMenu, None, "workbench.action.reopenClosedEditor", "&&Reopen Closed Editor", "1_editor", 1., None, Some("canReopenClosedEditor")),
+    (MenuId::MenubarViewMenu, Some(MenuId::MenubarLayoutMenu), "", "Editor &&Layout", "2_appearance", 2., Some("!isSessionsWindow"), None),
+    (MenuId::MenubarLayoutMenu, None, "workbench.action.splitEditorUp", "Split &&Up", "1_split", 1., None, None),
+    (MenuId::MenubarLayoutMenu, None, "workbench.action.splitEditorDown", "Split &&Down", "1_split", 2., None, None),
+    (MenuId::MenubarLayoutMenu, None, "workbench.action.splitEditorLeft", "Split &&Left", "1_split", 3., None, None),
+    (MenuId::MenubarLayoutMenu, None, "workbench.action.splitEditorRight", "Split &&Right", "1_split", 4., None, None),
+    (MenuId::MenubarLayoutMenu, None, "workbench.action.editorLayoutSingle", "&&Single", "4_layouts", 1., None, None),
+    (MenuId::MenubarLayoutMenu, None, "workbench.action.editorLayoutTwoColumns", "&&Two Columns", "4_layouts", 3., None, None),
+    (MenuId::MenubarLayoutMenu, None, "workbench.action.editorLayoutThreeColumns", "T&&hree Columns", "4_layouts", 4., None, None),
+    (MenuId::MenubarLayoutMenu, None, "workbench.action.editorLayoutTwoRows", "T&&wo Rows", "4_layouts", 5., None, None),
+    (MenuId::MenubarLayoutMenu, None, "workbench.action.editorLayoutThreeRows", "Three &&Rows", "4_layouts", 6., None, None),
+    (MenuId::MenubarLayoutMenu, None, "workbench.action.editorLayoutTwoByTwoGrid", "&&Grid (2x2)", "4_layouts", 7., None, None),
+    (MenuId::MenubarLayoutMenu, None, "workbench.action.editorLayoutTwoRowsRight", "Two R&&ows Right", "4_layouts", 8., None, None),
+    (MenuId::MenubarLayoutMenu, None, "workbench.action.editorLayoutTwoColumnsBottom", "Two &&Columns Bottom", "4_layouts", 9., None, None),
+    (MenuId::MenubarLayoutMenu, None, "workbench.action.toggleEditorGroupLayout", "Flip &&Layout", "5_flip", 1., None, None),
+    (MenuId::MenubarGoMenu, None, "workbench.action.navigateBack", "&&Back", "1_history_nav", 1., None, Some("canNavigateBack")),
+    (MenuId::MenubarGoMenu, None, "workbench.action.navigateForward", "&&Forward", "1_history_nav", 2., None, Some("canNavigateForward")),
+    (MenuId::MenubarGoMenu, None, "workbench.action.navigateToLastEditLocation", "&&Last Edit Location", "1_history_nav", 3., None, Some("canNavigateToLastEditLocation")),
+    (MenuId::MenubarGoMenu, Some(MenuId::MenubarSwitchEditorMenu), "", "Switch &&Editor", "2_editor_nav", 1., None, None),
+    (MenuId::MenubarSwitchEditorMenu, None, "workbench.action.openNextRecentlyUsedEditor", "&&Next Used Editor", "3_any_used", 1., None, None),
+    (MenuId::MenubarSwitchEditorMenu, None, "workbench.action.openPreviousRecentlyUsedEditor", "&&Previous Used Editor", "3_any_used", 2., None, None),
+    (MenuId::MenubarSwitchEditorMenu, None, "workbench.action.openNextRecentlyUsedEditorInGroup", "&&Next Used Editor in Group", "5_group_used", 1., None, None),
+    (MenuId::MenubarSwitchEditorMenu, None, "workbench.action.openPreviousRecentlyUsedEditorInGroup", "&&Previous Used Editor in Group", "5_group_used", 2., None, None),
+    (MenuId::MenubarGoMenu, Some(MenuId::MenubarSwitchGroupMenu), "", "Switch &&Group", "2_editor_nav", 2., None, None),
+    (MenuId::MenubarSwitchGroupMenu, None, "workbench.action.focusFirstEditorGroup", "Group &&1", "1_focus_index", 1., None, None),
+    (MenuId::MenubarSwitchGroupMenu, None, "workbench.action.focusSecondEditorGroup", "Group &&2", "1_focus_index", 2., None, None),
+    (MenuId::MenubarSwitchGroupMenu, None, "workbench.action.focusThirdEditorGroup", "Group &&3", "1_focus_index", 3., None, Some("multipleEditorGroups")),
+    (MenuId::MenubarSwitchGroupMenu, None, "workbench.action.focusFourthEditorGroup", "Group &&4", "1_focus_index", 4., None, Some("multipleEditorGroups")),
+    (MenuId::MenubarSwitchGroupMenu, None, "workbench.action.focusFifthEditorGroup", "Group &&5", "1_focus_index", 5., None, Some("multipleEditorGroups")),
+    (MenuId::MenubarSwitchGroupMenu, None, "workbench.action.focusNextGroup", "&&Next Group", "2_next_prev", 1., None, Some("multipleEditorGroups")),
+    (MenuId::MenubarSwitchGroupMenu, None, "workbench.action.focusPreviousGroup", "&&Previous Group", "2_next_prev", 2., None, Some("multipleEditorGroups")),
+    (MenuId::MenubarSwitchGroupMenu, None, "workbench.action.focusLeftGroup", "Group &&Left", "3_directional", 1., None, Some("multipleEditorGroups")),
+    (MenuId::MenubarSwitchGroupMenu, None, "workbench.action.focusRightGroup", "Group &&Right", "3_directional", 2., None, Some("multipleEditorGroups")),
+    (MenuId::MenubarSwitchGroupMenu, None, "workbench.action.focusAboveGroup", "Group &&Above", "3_directional", 3., None, Some("multipleEditorGroups")),
+    (MenuId::MenubarSwitchGroupMenu, None, "workbench.action.focusBelowGroup", "Group &&Below", "3_directional", 4., None, Some("multipleEditorGroups")),
+    // bracketMatching.ts
+    (MenuId::MenubarGoMenu, None, "editor.action.jumpToBracket", "Go to &&Bracket", "5_infile_nav", 2., None, None),
     // editorExtensions.ts and clipboard.ts
     (MenuId::MenubarEditMenu, None, "undo", "&&Undo", "1_do", 1., None, None),
     (MenuId::MenubarEditMenu, None, "redo", "&&Redo", "1_do", 2., None, None),
@@ -142,11 +243,65 @@ const WORKBENCH_MENUS: &[Row] = &[
     (MenuId::MenubarSelectionMenu, None, "editor.action.selectHighlights", "Select All &&Occurrences", "3_multi", 7., None, None),
     // quickAccess.contribution.ts
     (MenuId::MenubarViewMenu, None, "workbench.action.showCommands", "&&Command Palette...", "1_open", 1., None, None),
+    // layoutActions.ts, activitybarPart.ts and viewsService.ts `openCommandActionDescriptor` entries of the views the port has.
+    (MenuId::MenubarViewMenu, Some(MenuId::MenubarAppearanceMenu), "", "&&Appearance", "2_appearance", 1., Some("!isSessionsWindow"), None),
+    (MenuId::MenubarAppearanceMenu, Some(MenuId::ActivityBarPositionMenu), "", "Activity Bar Position", "3_workbench_layout_move", 2., Some("!isSessionsWindow"), None),
+    (MenuId::MenubarViewMenu, None, "workbench.view.explorer", "&&Explorer", "3_sidebar", 0., Some("viewContainer.workbench.view.explorer.enabled"), Some("viewContainer.workbench.view.explorer.enabled")),
+    (MenuId::MenubarViewMenu, None, "workbench.view.search", "&&Search", "3_sidebar", 1., Some("workbench.view.search.active"), Some("workbench.view.search.active")),
+    (MenuId::MenubarViewMenu, None, "workbench.view.scm", "Source &&Control", "3_sidebar", 2., Some("workbench.scm.active"), Some("workbench.scm.active")),
+    (MenuId::MenubarViewMenu, None, "workbench.view.debug", "&&Run", "3_sidebar", 3., Some("viewContainer.workbench.view.debug.enabled"), Some("viewContainer.workbench.view.debug.enabled")),
+    (MenuId::MenubarViewMenu, None, "workbench.view.extensions", "E&&xtensions", "3_sidebar", 4., Some("viewContainer.workbench.view.extensions.enabled"), Some("viewContainer.workbench.view.extensions.enabled")),
+    // repl.ts: Debug Console in the panel group.
+    (MenuId::MenubarViewMenu, None, "workbench.debug.action.toggleRepl", "De&&bug Console", "5_panel", 2., None, None),
+    // preferences.contribution.ts
+    (MenuId::MenubarPreferencesMenu, None, "workbench.action.openSettings", "&&Settings", "2_configuration", 2., None, None),
+    (MenuId::MenubarViewMenu, None, "workbench.action.terminal.toggleTerminal", "&&Terminal", "5_panel", 3., Some("terminal.active"), Some("terminal.active")),
+    (MenuId::MenubarPreferencesMenu, None, "workbench.view.extensions", "&&Extensions", "2_configuration", 3., Some("!isSessionsWindow"), Some("viewContainer.workbench.view.extensions.enabled")),
+    // fileActions.contribution.ts, findController.ts, searchActionsFind.ts, searchActionsNav.ts, quickAccess.contribution.ts and gotoError.ts
+    (MenuId::MenubarFileMenu, None, "workbench.action.closeActiveEditor", "&&Close Editor", "6_close", 2., None, Some("activeEditor || foldersViewVisible && sideBarFocus")),
+    (MenuId::MenubarEditMenu, None, "actions.find", "&&Find", "3_find", 1., None, Some("editorFocus || editorIsOpen")),
+    (MenuId::MenubarEditMenu, None, "editor.action.startFindReplaceAction", "&&Replace", "3_find", 2., None, Some("editorFocus || editorIsOpen")),
+    (MenuId::MenubarEditMenu, None, "workbench.action.findInFiles", "Find &&in Files", "4_find_global", 1., Some("!isSessionsWindow"), Some("!isSessionsWindow")),
+    (MenuId::MenubarEditMenu, None, "workbench.action.replaceInFiles", "Replace in Files", "4_find_global", 2., Some("!isSessionsWindow"), Some("!isSessionsWindow")),
+    (MenuId::MenubarGoMenu, None, "workbench.action.gotoLine", "Go to &&Line/Column...", "5_infile_nav", 1., None, None),
+    (MenuId::MenubarGoMenu, None, "editor.action.marker.nextInFiles", "Next &&Problem", "6_problem_nav", 1., None, None),
+    (MenuId::MenubarGoMenu, None, "editor.action.marker.prevInFiles", "Previous &&Problem", "6_problem_nav", 2., None, None),
     (MenuId::MenubarHelpMenu, None, "workbench.action.showCommands", "Show All Commands", "1_welcome", 2., None, None),
     // preferences.contribution.ts
     (MenuId::MenubarPreferencesMenu, None, "workbench.action.openGlobalKeybindings", "Keyboard Shortcuts", "2_configuration", 4., None, None),
     // themes.contribution.ts
     (MenuId::MenubarPreferencesMenu, Some(MenuId::ThemesSubMenu), "", "&&Themes", "2_configuration", 7., None, None),
+    // The activity bar's Manage menu (quickAccess, preferences and themes contributions).
+    (MenuId::GlobalActivity, None, "workbench.action.showCommands", "Command Palette...", "1_command", 1., None, None),
+    (MenuId::GlobalActivity, None, "workbench.action.openGlobalKeybindings", "Keyboard Shortcuts", "2_configuration", 4., None, None),
+    (MenuId::GlobalActivity, Some(MenuId::ThemesSubMenu), "", "Themes", "2_configuration", 7., None, None),
+    // clipboard.ts, editor.contribution.ts: the Copy As and Share submenus, shown once an extension fills them.
+    (MenuId::MenubarEditMenu, Some(MenuId::MenubarCopy), "", "Copy As", "2_ccp", 3., None, None),
+    (MenuId::MenubarFileMenu, Some(MenuId::MenubarShare), "", "Share", "45_share", 1., Some("!isSessionsWindow"), None),
+    (MenuId::EditorContext, Some(MenuId::EditorContextCopy), "", "Copy As", "9_cutcopypaste", 3., None, None),
+    (MenuId::EditorContext, Some(MenuId::EditorContextShare), "", "Share", "11_share", -1., Some("resourceScheme != 'output' && editorTextFocus"), None),
+    (MenuId::ExplorerContext, Some(MenuId::ExplorerContextShare), "", "Share", "11_share", -1., None, None),
+    (MenuId::EditorTitleContext, Some(MenuId::EditorTitleContextShare), "", "Share", "11_share", -1., Some("!multipleEditorsSelectedInGroup"), None),
+    // goToCommands.ts
+    (MenuId::EditorContext, None, "editor.action.revealDefinition", "Go to Definition", "navigation", 1.1, None, Some("editorHasDefinitionProvider")),
+    (MenuId::EditorContext, None, "editor.action.revealDeclaration", "Go to Declaration", "navigation", 1.3, None, Some("editorHasDeclarationProvider && !isInEmbeddedEditor")),
+    (MenuId::EditorContext, None, "editor.action.goToTypeDefinition", "Go to Type Definition", "navigation", 1.4, None, Some("editorHasTypeDefinitionProvider")),
+    (MenuId::EditorContext, None, "editor.action.goToImplementation", "Go to Implementations", "navigation", 1.45, None, Some("editorHasImplementationProvider")),
+    (MenuId::EditorContext, None, "editor.action.goToReferences", "Go to References", "navigation", 1.45, None, Some("editorHasReferenceProvider && !inReferenceSearchEditor && !isInEmbeddedEditor")),
+    (MenuId::EditorContext, Some(MenuId::EditorContextPeek), "", "Peek", "navigation", 100., None, None),
+    (MenuId::EditorContextPeek, None, "editor.action.peekDefinition", "Peek Definition", "peek", 2., None, Some("editorHasDefinitionProvider && !inReferenceSearchEditor && !isInEmbeddedEditor")),
+    (MenuId::EditorContextPeek, None, "editor.action.peekDeclaration", "Peek Declaration", "peek", 3., None, Some("editorHasDeclarationProvider && !inReferenceSearchEditor && !isInEmbeddedEditor")),
+    (MenuId::EditorContextPeek, None, "editor.action.peekTypeDefinition", "Peek Type Definition", "peek", 4., None, Some("editorHasTypeDefinitionProvider && !inReferenceSearchEditor && !isInEmbeddedEditor")),
+    (MenuId::EditorContextPeek, None, "editor.action.peekImplementation", "Peek Implementations", "peek", 5., None, Some("editorHasImplementationProvider && !inReferenceSearchEditor && !isInEmbeddedEditor")),
+    (MenuId::EditorContextPeek, None, "editor.action.referenceSearch.trigger", "Peek References", "peek", 6., None, Some("editorHasReferenceProvider && !inReferenceSearchEditor && !isInEmbeddedEditor")),
+    // callHierarchy.contribution.ts and typeHierarchy.contribution.ts
+    (MenuId::EditorContextPeek, None, "editor.showCallHierarchy", "Peek Call Hierarchy", "navigation", 1000., None, Some("editorHasCallHierarchyProvider && !inReferenceSearchEditor && !isInEmbeddedEditor")),
+    (MenuId::EditorContextPeek, None, "editor.showTypeHierarchy", "Peek Type Hierarchy", "navigation", 1000., None, Some("editorHasTypeHierarchyProvider && !inReferenceSearchEditor && !isInEmbeddedEditor")),
+    (MenuId::MenubarGoMenu, None, "editor.action.revealDefinition", "Go to &&Definition", "4_symbol_nav", 2., None, None),
+    (MenuId::MenubarGoMenu, None, "editor.action.revealDeclaration", "Go to &&Declaration", "4_symbol_nav", 3., None, None),
+    (MenuId::MenubarGoMenu, None, "editor.action.goToTypeDefinition", "Go to &&Type Definition", "4_symbol_nav", 3., None, None),
+    (MenuId::MenubarGoMenu, None, "editor.action.goToImplementation", "Go to &&Implementations", "4_symbol_nav", 4., None, None),
+    (MenuId::MenubarGoMenu, None, "editor.action.goToReferences", "Go to &&References", "4_symbol_nav", 5., None, None),
     // multicursor.ts, clipboard.ts and quickAccess.contribution.ts: the EditorContext items of the commands the port has.
     (MenuId::EditorContext, None, "editor.action.changeAll", "Change All Occurrences", "1_modification", 1.2, Some("!editorReadonly && editorTextFocus"), None),
     (MenuId::EditorContext, None, "editor.action.clipboardCutAction", "Cut", "9_cutcopypaste", 1., Some("!editorReadonly"), None),
@@ -155,7 +310,23 @@ const WORKBENCH_MENUS: &[Row] = &[
     (MenuId::EditorContext, None, "workbench.action.showCommands", "Command Palette...", "z_commands", 1., Some("!editorSimpleInput"), None),
     // output.contribution.ts and viewsService.ts `openCommandActionDescriptor.mnemonicTitle`
     (MenuId::EditorContext, None, "workbench.output.action.clearOutput", "Clear Output", "", 0., Some("inOutput"), None),
+    // markers.contribution.ts: Problems before Output in the panel group.
+    (MenuId::MenubarViewMenu, None, "workbench.actions.view.problems", "&&Problems", "5_panel", 0., None, None),
     (MenuId::MenubarViewMenu, None, "workbench.action.output.toggleOutput", "&&Output", "5_panel", 1., Some("workbench.panel.output.active"), None),
+    // terminalMenus.ts: the TerminalEditorInstanceContext items of the commands the port has.
+    (MenuId::TerminalEditorInstanceContext, None, "workbench.action.terminal.split", "Split Terminal", "1_create", 0., None, None),
+    (MenuId::TerminalEditorInstanceContext, None, "workbench.action.terminal.new", "New Terminal", "1_create", 0., None, None),
+    (MenuId::TerminalEditorInstanceContext, None, "workbench.action.terminal.killEditor", "Kill Terminal", "7_kill", 0., None, None),
+    (MenuId::TerminalEditorInstanceContext, None, "workbench.action.terminal.copySelection", "Copy", "3_edit", 1., None, None),
+    (MenuId::TerminalEditorInstanceContext, None, "workbench.action.terminal.paste", "Paste", "3_edit", 3., None, None),
+    (MenuId::TerminalEditorInstanceContext, None, "workbench.action.terminal.clear", "Clear", "5_clear", 0., None, None),
+    (MenuId::TerminalEditorInstanceContext, None, "workbench.action.terminal.selectAll", "Select All", "3_edit", 3., None, None),
+    // terminalMenus.ts: the TerminalInstanceContext items of the commands the port has, the menu of the panel's terminal.
+    (MenuId::TerminalInstanceContext, None, "workbench.action.terminal.killViewOrEditor", "Kill Terminal", "7_kill", 0., None, None),
+    (MenuId::TerminalInstanceContext, None, "workbench.action.terminal.copySelection", "Copy", "3_edit", 1., None, None),
+    (MenuId::TerminalInstanceContext, None, "workbench.action.terminal.paste", "Paste", "3_edit", 3., None, None),
+    (MenuId::TerminalInstanceContext, None, "workbench.action.terminal.clear", "Clear", "5_clear", 0., None, None),
+    (MenuId::TerminalInstanceContext, None, "workbench.action.terminal.selectAll", "Select All", "3_edit", 3., None, None),
     // editor.contribution.ts: the EditorTitleContext items of the commands the port has.
     (MenuId::EditorTitleContext, None, "workbench.action.closeActiveEditor", "Close", "1_close", 10., Some("!activeEditorCannotClose"), None),
     (MenuId::EditorTitleContext, None, "workbench.action.closeOtherEditors", "Close Others", "1_close", 20., None, Some("groupEditorsCount != '1'")),
@@ -197,8 +368,25 @@ const WORKBENCH_MENUS: &[Row] = &[
     (MenuId::SearchContext, None, "search.action.revealInSideBar", "Reveal in Explorer View", "search_3", 1., Some("fileMatchFocus && hasSearchResult"), None),
 ];
 
-/// themes.contribution.ts: `ThemesSubMenu` items; the icon theme pickers are not ported.
-const THEMES_SUBMENU: [(&str, &str, f64); 1] = [("workbench.action.selectTheme", "Color Theme", 1.)];
+/// layoutActions.ts, auxiliaryBarActions.ts, panelActions.ts, activitybarPart.ts, toggleMinimap.ts, stickyScrollActions.ts and
+/// toggleRenderControlCharacter.ts: the Appearance items the port has, checked by their `toggled`.
+type ToggleRow = (MenuId, &'static str, &'static str, &'static str, f64, &'static str, &'static str);
+const APPEARANCE_TOGGLES: [ToggleRow; 11] = [
+    (MenuId::MenubarAppearanceMenu, "workbench.action.toggleSidebarVisibility", "&&Primary Side Bar", "2_workbench_layout", 1., "!isSessionsWindow", "sideBarVisible"),
+    (MenuId::MenubarAppearanceMenu, "workbench.action.toggleAuxiliaryBar", "&&Secondary Side Bar", "2_workbench_layout", 2., "!isSessionsWindow", "secondarySideBarVisible"),
+    (MenuId::MenubarAppearanceMenu, "workbench.action.togglePanel", "&&Panel", "2_workbench_layout", 5., "", "panelVisible"),
+    (MenuId::ActivityBarPositionMenu, "workbench.action.activityBarLocation.default", "&&Default", "", 1., "", "config.workbench.activityBar.location == 'default'"),
+    (MenuId::ActivityBarPositionMenu, "workbench.action.activityBarLocation.top", "&&Top", "", 2., "", "config.workbench.activityBar.location == 'top'"),
+    (MenuId::ActivityBarPositionMenu, "workbench.action.activityBarLocation.bottom", "&&Bottom", "", 3., "", "config.workbench.activityBar.location == 'bottom'"),
+    (MenuId::ActivityBarPositionMenu, "workbench.action.activityBarLocation.hide", "&&Hidden", "", 4., "", "config.workbench.activityBar.location == 'hidden'"),
+    (MenuId::MenubarAppearanceMenu, "editor.action.toggleMinimap", "&&Minimap", "4_editor", 1., "", "config.editor.minimap.enabled"),
+    (MenuId::MenubarAppearanceMenu, "breadcrumbs.toggle", "&&Breadcrumbs", "4_editor", 2., "", "config.breadcrumbs.enabled"),
+    (MenuId::MenubarAppearanceMenu, "editor.action.toggleStickyScroll", "&&Sticky Scroll", "4_editor", 3., "", "config.editor.stickyScroll.enabled"),
+    (MenuId::MenubarAppearanceMenu, "editor.action.toggleRenderControlCharacter", "Render &&Control Characters", "4_editor", 5., "", "config.editor.renderControlCharacters"),
+];
+
+/// themes.contribution.ts: `ThemesSubMenu` items; the product icon theme picker is not ported.
+const THEMES_SUBMENU: [(&str, &str, f64); 2] = [("workbench.action.selectTheme", "Color Theme", 1.), ("workbench.action.selectIconTheme", "File Icon Theme", 2.)];
 
 /// titlebarActions.ts `ToggleTitleBarConfigAction`s of the title bar parts the port draws: setting, title, order,
 /// `when`. Editor Actions, Notifications and Integrated Browser toggle parts the port has not.
@@ -213,20 +401,33 @@ pub fn workbench_menus() -> Vec<MenuItem> {
     let mut items = Vec::new();
     for (menu, submenu, id, title, group, order, when, precondition) in WORKBENCH_MENUS.iter().copied() {
         let entry = match submenu {
-            Some(submenu) => Entry::Submenu(submenu),
+            Some(submenu) => Entry::Submenu { submenu, toggled: None },
             None => {
                 // The Delete item runs Delete Permanently with Alt held.
-                let alt = (id == "moveFileToTrash").then(|| ("deleteFile".to_string(), "Delete Permanently".to_string()));
+                let alt = (id == "moveFileToTrash").then(|| Alt { id: "deleteFile".into(), title: "Delete Permanently".into(), precondition: None });
                 Entry::Command { id: id.to_string(), precondition: precondition.and_then(Expr::deserialize), toggled: None, alt }
             }
         };
         items.push(MenuItem { menu, entry, title: title.to_string(), group: group.to_string(), order, when: when.and_then(Expr::deserialize) });
     }
     // fileActions.contribution.ts: checked unless `files.autoSave` is `off`.
-    let entry = Entry::Command { id: "workbench.action.toggleAutoSave".into(), precondition: None, toggled: Expr::deserialize("config.files.autoSave != 'off'"), alt: None };
+    let entry = Entry::Command { id: "workbench.action.toggleAutoSave".into(), precondition: None, toggled: Toggled::when(Expr::deserialize("config.files.autoSave != 'off'")), alt: None };
     items.push(MenuItem { menu: MenuId::MenubarFileMenu, entry, title: "A&&uto Save".into(), group: "5_autosave".into(), order: 1., when: None });
+    // stickyScrollActions.ts and breadcrumbsControl.ts: the toggles' checked titles, the only ones the menu shows while it is open.
+    for (id, setting, title) in [("breadcrumbs.toggle", "breadcrumbs.enabled", "Breadcrumbs"), ("editor.action.toggleStickyScroll", "editor.stickyScroll.enabled", "Sticky Scroll")] {
+        let entry = Entry::Command { id: id.into(), precondition: None, toggled: Toggled::when(Expr::deserialize(&format!("config.{setting} == true"))), alt: None };
+        items.push(MenuItem { menu: MenuId::StickyScrollContext, entry, title: title.into(), group: String::new(), order: 0., when: None });
+    }
+    // toggleWordWrap.ts: checked while the active editor wraps, enabled while it can toggle.
+    let entry = Entry::Command { id: "editor.action.toggleWordWrap".into(), precondition: Some(Expr::has("canToggleWordWrap")), toggled: Toggled::when(Some(Expr::has("editorWordWrap"))), alt: None };
+    items.push(MenuItem { menu: MenuId::MenubarViewMenu, entry, title: "&&Word Wrap".into(), group: "6_editor".into(), order: 1., when: None });
+    // toggleWordWrap.ts: the editor title action of a file dominated by long lines.
+    for (title, when) in [("Disable wrapping for this file", "isDominatedByLongLines && isWordWrapMinified"), ("Enable wrapping for this file", "!inDiffEditor && isDominatedByLongLines && !isWordWrapMinified")] {
+        let entry = Entry::Command { id: "editor.action.toggleWordWrap".into(), precondition: None, toggled: None, alt: None };
+        items.push(MenuItem { menu: MenuId::EditorTitle, entry, title: title.into(), group: "navigation".into(), order: 1., when: Expr::deserialize(when) });
+    }
     // toggleColumnSelection.ts: checked while `config.editor.columnSelection` is true.
-    let entry = Entry::Command { id: "editor.action.toggleColumnSelection".into(), precondition: None, toggled: Some(Expr::has("config.editor.columnSelection")), alt: None };
+    let entry = Entry::Command { id: "editor.action.toggleColumnSelection".into(), precondition: None, toggled: Toggled::when(Some(Expr::has("config.editor.columnSelection"))), alt: None };
     items.push(MenuItem { menu: MenuId::MenubarSelectionMenu, entry, title: "Column &&Selection Mode".into(), group: "4_config".into(), order: 2., when: None });
     // toggleMultiCursorModifier.ts: the item names the modifier the toggle switches to.
     for (title, current) in [("Switch to Alt+Click for Multi-Cursor", "ctrlCmd"), ("Switch to Cmd+Click for Multi-Cursor", "altKey")] {
@@ -234,13 +435,18 @@ pub fn workbench_menus() -> Vec<MenuItem> {
         let when = Expr::deserialize(&format!("multiCursorModifier == '{current}'"));
         items.push(MenuItem { menu: MenuId::MenubarSelectionMenu, entry, title: title.into(), group: "4_config".into(), order: 1., when });
     }
+    // The Appearance items with their check: menu, command, title, group, order, `when`, `toggled`.
+    for (menu, id, title, group, order, when, toggled) in APPEARANCE_TOGGLES {
+        let entry = Entry::Command { id: id.into(), precondition: None, toggled: Toggled::when(Expr::deserialize(toggled)), alt: None };
+        items.push(MenuItem { menu, entry, title: title.into(), group: group.into(), order, when: Expr::deserialize(when) });
+    }
     for (id, title, order) in THEMES_SUBMENU {
         let entry = Entry::Command { id: id.to_string(), precondition: None, toggled: None, alt: None };
         items.push(MenuItem { menu: MenuId::ThemesSubMenu, entry, title: title.to_string(), group: String::new(), order, when: None });
     }
     for (setting, title, order, when) in TITLE_BAR_TOGGLES {
         for menu in [MenuId::TitleBarContext, MenuId::TitleBarTitleContext] {
-            let toggled = Some(Expr::has(&format!("config.{setting}")));
+            let toggled = Toggled::when(Some(Expr::has(&format!("config.{setting}"))));
             let entry = Entry::Command { id: format!("toggle.{setting}"), precondition: None, toggled, alt: None };
             items.push(MenuItem { menu, entry, title: title.to_string(), group: "2_config".into(), order, when: Expr::deserialize(when) });
         }
@@ -251,10 +457,12 @@ pub fn workbench_menus() -> Vec<MenuItem> {
 
 /// menusExtensionPoint.ts `apiMenus`: the `contributes.menus` keys of the menus the port shows. `commandPalette`
 /// is read by `command_palette::menu`.
-const API_MENUS: [(&str, MenuId); 16] = [
+const API_MENUS: [(&str, MenuId); 27] = [
+    ("file/newFile", MenuId::NewFile),
     ("editor/context", MenuId::EditorContext),
     ("explorer/context", MenuId::ExplorerContext),
     ("editor/title/context", MenuId::EditorTitleContext),
+    ("editor/lineNumber/context", MenuId::EditorLineNumberContext),
     ("scm/title", MenuId::ScmTitle),
     ("scm/resourceGroup/context", MenuId::ScmResourceGroupContext),
     ("scm/resourceState/context", MenuId::ScmResourceStateContext),
@@ -268,11 +476,22 @@ const API_MENUS: [(&str, MenuId); 16] = [
     ("scm/historyItem/context", MenuId::ScmHistoryItemContext),
     ("timeline/title", MenuId::TimelineTitle),
     ("timeline/item/context", MenuId::TimelineItemContext),
+    ("view/title", MenuId::ViewTitle),
+    ("view/item/context", MenuId::ViewItemContext),
+    ("editor/context/copy", MenuId::EditorContextCopy),
+    ("editor/context/share", MenuId::EditorContextShare),
+    ("explorer/context/share", MenuId::ExplorerContextShare),
+    ("editor/title/context/share", MenuId::EditorTitleContextShare),
+    ("file/share", MenuId::MenubarShare),
+    ("menuBar/edit/copy", MenuId::MenubarCopy),
+    ("editor/content", MenuId::EditorContent),
 ];
 
 /// The `icon` of each `contributes.commands` entry with one: a `$(codicon)` name, or the light and dark image paths.
 pub fn command_icons(extensions: &[ScannedExtension]) -> std::collections::HashMap<String, CommandIcon> {
     let mut icons = crate::workbench::scm_actions::command_icons();
+    // toggleWordWrap.ts: the editor title items' `Codicon.wordWrap`.
+    icons.insert("editor.action.toggleWordWrap".to_string(), CommandIcon::Codicon("word-wrap".into()));
     for extension in extensions {
         let commands = match &extension.description["contributes"]["commands"] {
             Value::Array(commands) => commands.iter().collect(),
@@ -320,12 +539,16 @@ pub fn extension_menus(extensions: &[ScannedExtension]) -> Vec<MenuItem> {
         for (key, entries) in menus {
             let Some(entries) = entries.as_array().filter(|entries| entries.iter().all(is_valid_item)) else { continue };
             let api_menu = API_MENUS.iter().find(|(api_key, _)| api_key == key).map(|(_, menu)| *menu);
+            // menusExtensionPoint.ts: `editor/content` is `proposed: 'contribEditorContentMenu'`.
+            if key == "editor/content" && !extension.description["enabledApiProposals"].as_array().is_some_and(|proposals| proposals.iter().any(|proposal| proposal == "contribEditorContentMenu")) {
+                continue;
+            }
             let Some(menu) = api_menu.or_else(|| submenus.iter().find(|(id, ..)| id == key).map(|(_, menu, _)| *menu)) else { continue };
             for entry in entries {
                 let (entry_value, title) = match entry["command"].as_str() {
                     Some(id) => {
                         let Some(command) = find_command(id) else { continue };
-                        let alt = entry["alt"].as_str().and_then(find_command).map(|alt| (alt.id.clone(), alt.title.clone()));
+                        let alt = entry["alt"].as_str().and_then(find_command).map(|alt| Alt { id: alt.id.clone(), title: alt.title.clone(), precondition: alt.precondition.clone() });
                         (Entry::Command { id: command.id.clone(), precondition: command.precondition.clone(), toggled: None, alt }, command.title.clone())
                     }
                     None => {
@@ -334,7 +557,7 @@ pub fn extension_menus(extensions: &[ScannedExtension]) -> Vec<MenuItem> {
                             continue;
                         }
                         submenu_items.push((menu, *submenu));
-                        (Entry::Submenu(*submenu), label.clone())
+                        (Entry::Submenu { submenu: *submenu, toggled: None }, label.clone())
                     }
                 };
                 let (group, order) = group_and_order(entry["group"].as_str().unwrap_or_default());
@@ -389,15 +612,18 @@ pub fn menu_actions(registry: &[MenuItem], menu: MenuId, context: &dyn Context) 
     for item in items {
         let action = match &item.entry {
             Entry::Command { id, precondition, toggled, alt } => {
-                let checked = toggled.as_ref().is_some_and(|toggled| toggled.evaluate(context));
-                MenuAction::Command { id: id.clone(), title: item.title.clone(), enabled: holds(precondition), checked, alt: alt.clone() }
+                let toggled = toggled.as_ref().filter(|toggled| toggled.condition.evaluate(context));
+                let title = toggled.and_then(|toggled| toggled.title.clone()).unwrap_or_else(|| item.title.clone());
+                let alt = alt.as_ref().filter(|alt| holds(&alt.precondition)).map(|alt| (alt.id.clone(), alt.title.clone()));
+                MenuAction::Command { id: id.clone(), title, enabled: holds(precondition), checked: toggled.is_some(), alt }
             }
-            Entry::Submenu(submenu) => {
+            Entry::Submenu { submenu, toggled } => {
                 let submenu_actions = menu_actions(registry, *submenu, context);
                 if submenu_actions.is_empty() {
                     continue;
                 }
-                MenuAction::Submenu { title: item.title.clone(), actions: submenu_actions }
+                let checked = toggled.as_ref().is_some_and(|toggled| toggled.evaluate(context));
+                MenuAction::Submenu { title: item.title.clone(), actions: submenu_actions, checked }
             }
         };
         if group.is_some_and(|group| group != item.group) {

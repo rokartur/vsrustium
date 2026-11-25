@@ -75,7 +75,7 @@ impl MultiDiffInput {
 
     /// Whether a file shows `model`, which then stays open.
     pub fn shows(&self, model: &OpenEditor) -> bool {
-        self.files.iter().flat_map(|file| [&file.original, &file.modified]).flatten().any(|side| model.document.is(&side.scheme, &side.path))
+        self.files.iter().flat_map(|file| [&file.original, &file.modified]).flatten().any(|side| model.document().is(&side.scheme, &side.path))
     }
 
     /// `multiDiffEditorAllCollapsed`.
@@ -102,10 +102,10 @@ impl MultiDiffInput {
 
     /// mainThreadEditorTabs.ts `_buildTabObject` of a `MultiDiffEditorInput`: its files with both sides as
     /// `TextDiffInput`s, its resource the multi diff source.
-    pub fn tab_dto(&self, entry: &OpenEditor, active: bool) -> Value {
+    pub fn tab_dto(&self, group: u32, entry: &OpenEditor, active: bool) -> Value {
         let resource = match &self.source {
             Some(source) => uri_string(&source.scheme, &source.path),
-            None => entry.document.uri_string(),
+            None => entry.document().uri_string(),
         };
         let uri = |side: &Side| uri_value(&side.scheme, &side.path);
         let diff_editors: Vec<Value> = self
@@ -114,7 +114,7 @@ impl MultiDiffInput {
             .filter_map(|file| Some(json!({ "kind": 2, "original": uri(file.original.as_ref()?), "modified": uri(file.modified.as_ref()?) })))
             .collect();
         json!({
-            "id": format!("0~default-workbench.input.multiDiffEditor-{resource} "),
+            "id": format!("{group}~default-workbench.input.multiDiffEditor-{resource} "),
             "label": self.name(),
             "input": { "kind": 11, "diffEditors": diff_editors },
             "editorId": "default",

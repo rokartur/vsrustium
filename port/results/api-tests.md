@@ -9,6 +9,18 @@ Not reached: tests of the reference run (402 folder, 4 workspace) the port did n
 | api-folder | 35 | 41 | 133 | 193 | timed out after 1800s |
 | api-workspace | 0 | 0 | 4 | 0 | exit 1 after 0s |
 
+## Milestone 11: tree views and editor groups
+
+`MOCHA_GREP="vscode API - tree|vscode API - window" SUITE_TIMEOUT=600 port/tools/api-tests` on the Studio, the working tree after the panel commit d1e955ab4cf with tree views and decorations: api-folder 33 passing, 0 pending, 11 failing (exit 1 after 10s). All four tree.test.ts cases pass (`TreeView - element already registered`, `... after rapid root refresh`, `... during switch and update`, `... after refresh`). The 11 failing are window.test.ts cases that open editors in view columns, which `$tryShowTextDocument` ignored then, plus `Tabs - vscode.open & vscode.diff` (fake-fs, `_workbench.diff`) and `showWorkspaceFolderPick` (`_workbench.pickWorkspaceFolder` not found).
+
+After the view column commit bbe3bd19e40, Close Editors in Other Groups, Close All Editors across groups, `$acceptEditorPositionData` and moving a group telling the host, same pattern without the tree suite (`MOCHA_GREP="vscode API - window" SUITE_TIMEOUT=600`): api-folder 37 passing, 0 pending, 3 failing (exit 1 after 18s), api-workspace 0/0/0. Left: `Tabs - vscode.open & vscode.diff` ("Unable to resolve resource fake-fs:/...": a file system provider's resource in `_workbench.open`), `Tabs - Ensure tabs getter is correct` (`openNotebookDocument`, no notebooks) and `showWorkspaceFolderPick` (`_workbench.pickWorkspaceFolder`).
+
+After the port-integrate merge 624b11540c5, with `_workbench.pickWorkspaceFolder`, provider resources and view columns in `_workbench.open` and the view column in `_workbench.diff` (same pattern): api-folder 39 passing, 0 pending, 1 failing (exit 1 after 6s), api-workspace 0/0/0. Left: `Tabs - Ensure tabs getter is correct` (`openNotebookDocument`, notebooks are milestone 17).
+
+## Milestone 16: debug and testing
+
+`MOCHA_GREP="vscode API - debug|createTestController" SUITE_TIMEOUT=600 port/tools/api-tests` on the Studio at e032c3f1-dirty. Before: `vscode API - debug` 2 passing, 1 failing (`start debugging failure`). After: api-folder 4 passing, 2 pending, 0 failing: `breakpoints`, `function breakpoint`, `start debugging failure`, `no rpc, createTestController(...)`. The 2 pending are `test.skip` upstream, as in the reference run.
+
 ## Milestone 11: notifications, progress, status bar
 
 `MOCHA_GREP="vscode API - window" SUITE_TIMEOUT=900 port/tools/api-tests` on the Studio, same setup. Before (f8bd4a40 plus notifications): api-folder 27 passing, 13 failing. After the extension status bar entries: 29 passing, 0 pending, 11 failing; `createStatusBar - static` and `createStatusBar - static, CANNOT change some props` now pass. The 11 failing need editor groups (view columns, tabs) and `showWorkspaceFolderPick`. window.test.ts has no message or progress cases.
@@ -34,6 +46,8 @@ Run with `MOCHA_GREP` on the Mac Studio at f598f3a9 (the full folder suite does 
 | `vscode API - commands\|showInputBox\|#7013` | 10 | 0 | 4 |
 
 Failing: `editorCommand with extra args`, `api-command: vscode.diff`, `api-command: vscode.open`, `vscode.open with untitled supports associated resource (#138925)`; they need milestone 8 editor groups and a diff editor (port/notes.md).
+
+At port-integrate 472a393b2b5 (the onCommand activation wait and keybindings export merged), run by the coordinator on the Studio with `MOCHA_GREP="vscode API - commands|vscode API - quick input|showInputBox|#7013" SUITE_TIMEOUT=900`: api-folder 23 passing, 0 pending, 2 failing (baseline 21/0/4: quick input 11/0/0 and commands|showInputBox|#7013 10/0/4); api-workspace 0/0/0. The 2 left are `api-command: vscode.open` (a second editor group, milestone 11) and `api-command: vscode.diff` (`_workbench.diff`, milestone 14). `vscode API - editors` 13/0/0 and `vscode API - window` 29/0/11, unchanged.
 
 After the command history, quick input position and theme picker commits, one run with `vscode API - quick input|vscode API - commands|showInputBox|#7013|vscode API - configuration`: 24 passing, 0 pending, the same 4 failing.
 
@@ -191,3 +205,11 @@ webview.test.ts ("loads many local resources concurrently without crashing") pas
 ## M10 settings and storage
 
 On the Studio at 1ed0e932 (settings.json reload in the workbench, `.vsrustium` folders). `MOCHA_GREP="vscode API - configuration|vscode API - globalState" SUITE_TIMEOUT=300 port/tools/api-tests`: api-folder 5/0/0/397 (exit 0 after 1s), api-workspace 0/0/0/4. All three `configuration` tests and both `globalState / workspaceState` tests pass.
+
+## M12 workspace trust
+
+`MOCHA_GREP="vscode API - env|vscode API - workspace" SUITE_TIMEOUT=900 port/tools/api-tests` on the Studio, the working tree of the workspace trust commit (`--disable-workspace-trust`, as the reference run has `security.workspace.trust.enabled: false`). api-folder 113 passing, 2 pending, 7 failing, 280 not reached (exit 1 after 13s); api-workspace 4/0/0. The 7 failing are the 6 `env.power` tests and `env.remoteName`, as at e9ae1460.
+
+## Milestone 15: terminal and tasks
+
+On the Studio at b9d74655619, `SHELL=/bin/bash MOCHA_GREP='vscode API - ([tT]erminal|tasks)' SUITE_TIMEOUT=600 port/tools/api-tests`: api-folder 47 passing, 4 pending, 0 failing, 351 not reached (exit 0 after 20s); api-workspace 0/0/0/4. terminal.test.ts, terminal.shellIntegration.test.ts and workspace.tasks.test.ts all pass; the 4 pending are upstream `test.skip` ("Test if env is set", "should listen to all future terminal data events", "should respect dimension overrides", "dependsOn task should start with a different processId (#118256)").

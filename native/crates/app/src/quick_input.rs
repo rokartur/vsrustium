@@ -63,8 +63,6 @@ pub enum Focus {
 /// `ItemActivation`: which item the list focuses when items are set.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum ItemActivation {
-    // Set by goto symbol and the simple file dialog upstream, neither ported yet; the #207832 test covers it.
-    #[cfg_attr(not(test), allow(dead_code))]
     None,
     #[default]
     First,
@@ -103,6 +101,8 @@ pub struct Item {
     /// `highlights`: matches a picker computed itself, kept while the list does not filter.
     pub label_highlights: Matches,
     pub description_highlights: Matches,
+    /// iconlabel.css `.strikethrough`: the label and description struck through.
+    pub strikethrough: bool,
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -160,6 +160,10 @@ pub struct QuickInput {
     pub match_on_label_contiguous: bool,
     pub sort_by_label: bool,
     pub hide_input: bool,
+    /// `keepScrollPosition`: setting items or active items leaves the list where it is scrolled.
+    pub keep_scroll_position: bool,
+    /// Counts the `items` and `activeItems` assignments; each resets the list's scroll unless it is kept.
+    pub list_updates: u64,
     pub item_activation: ItemActivation,
     pub buttons: Vec<Button>,
     items: Vec<Entry>,
@@ -209,6 +213,8 @@ impl QuickInput {
             match_on_label_contiguous: false,
             sort_by_label: true,
             hide_input: false,
+            keep_scroll_position: false,
+            list_updates: 0,
             item_activation: ItemActivation::First,
             buttons: Vec::new(),
             items: Vec::new(),
@@ -238,6 +244,7 @@ impl QuickInput {
     pub fn set_items(&mut self, items: Vec<Entry>) {
         self.items = items;
         self.items_updated = true;
+        self.list_updates += 1;
         self.update();
     }
 
@@ -254,6 +261,7 @@ impl QuickInput {
     pub fn set_active_items(&mut self, handles: &[i64]) {
         self.active_items = self.ids_of_handles(handles);
         self.active_items_updated = true;
+        self.list_updates += 1;
         self.update();
     }
 
@@ -321,6 +329,11 @@ impl QuickInput {
             let end = self.input_box.len();
             self.input_box.select(selection.map_or(0, |(start, _)| start), selection.map_or(end, |(_, stop)| stop));
         }
+    }
+
+    /// `QuickInput.update` `titleBarVisible`: a title, a step or a title bar button (one not next to or inside the input).
+    pub fn shows_title_bar(&self) -> bool {
+        !self.title_text().is_empty() || self.buttons.iter().any(|button| button.location.is_none_or(|location| location <= 1))
     }
 
     /// The title bar text: `getTitle()`, the title with its step.

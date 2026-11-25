@@ -42,7 +42,6 @@ const SLIDE: Duration = Duration::from_millis(200);
 /// `--vscode-shadow-lg` (style.css) blurs 12px; CSS takes sigma as half the blur, GPUI's blur_radius is sigma.
 const SHADOW_BLUR: f32 = 6.;
 /// `workbench.sash.hoverDelay` default.
-const SASH_HOVER_DELAY: Duration = Duration::from_millis(300);
 const BUTTON_IDS: [&str; 7] = ["find-replace-toggle", "find-previous", "find-next", "find-selection", "find-close", "replace", "replace-all"];
 
 /// A find match's overview ruler mark, also drawn in the minimap unless past 1000 matches.
@@ -84,6 +83,8 @@ pub struct FindWidget {
     history_update: Option<Task<()>>,
     /// multicursor.ts `SelectionHighlighter`: the matches of the selected text and what they were found for.
     pub selection_highlights: Option<(SelectionHighlightKey, Vec<Range<Position>>)>,
+    /// findOptionsWidget.ts while it shows, and findInput.ts `highlightFindOptions` flashing the input's options.
+    pub(super) options_widget: super::find_options_widget::FindOptionsWidget,
 }
 
 /// The model, its version, the selections and the search the selection highlights were found for.
@@ -112,6 +113,7 @@ impl FindWidget {
             replace_history: HistoryNavigator::new(Vec::new(), HISTORY_LIMIT),
             history_update: None,
             selection_highlights: None,
+            options_widget: Default::default(),
         }
     }
 }
@@ -269,11 +271,12 @@ impl Workbench {
         let Some(editor) = self.editors.active_mut() else { return };
         let find = &mut self.find;
         let (selections, scroll, revealed) = (editor.selections.clone(), editor.scroll, find.controller.state.is_revealed);
+        let options = (find.controller.state.is_regex, find.controller.state.whole_word, find.controller.state.match_case);
         let query = find.controller.query_options();
         // wordHighlighter.ts `_run`: without text focus the highlights keep the previous query's word.
         let highlighted_word = match self.editor_focus.is_focused(window) {
             true => None,
-            false => Some(editor.highlights.first().map(|(line, columns)| editor.document.lines[*line].chars().skip(columns.start).take(columns.len()).collect::<String>())),
+            false => Some(editor.highlights.first().map(|(line, columns)| editor.document().lines[*line].chars().skip(columns.start).take(columns.len()).collect::<String>())),
         };
         let (focus, change) = action(&mut find.controller, editor, viewport);
         multicursor::end_session_if_stale(&mut find.controller, editor, viewport, &match_mode);
@@ -281,12 +284,14 @@ impl Workbench {
         // refreshed them) runs the query again, so Replace All leaves none.
         let rerun = change.is_none() || !editor.highlights.is_empty();
         if let Some(word) = highlighted_word.filter(|_| rerun) {
-            editor.highlights = word.map_or_else(Vec::new, |word| crate::editor::word_occurrences(&editor.document.lines, &word));
+            editor.highlights = word.map_or_else(Vec::new, |word| crate::editor::word_occurrences(&editor.document().lines, &word));
         }
         let adjust_scroll = !self.find.controller.state.is_revealed || revealed || !self.selection_under_find_widget(selections[0]);
         self.layout_find_zone(adjust_scroll);
+        let moved = self.editors.active().expect("checked above").selections != selections;
+        // findModel.ts reveals matches with `ScrollType.Smooth`.
+        let scrolled = self.animate_scroll_from(scroll, cx) || self.editors.viewport.top_whitespace != top_whitespace;
         let editor = self.editors.active().expect("checked above");
-        let (moved, scrolled) = (editor.selections != selections, editor.scroll != scroll || self.editors.viewport.top_whitespace != top_whitespace);
         match &change {
             Some(change) => {
                 self.host.send_content_change(&self.editors, self.editors.active_index().expect("checked above"), change);
@@ -320,6 +325,7 @@ impl Workbench {
             FocusAction::FocusFindInput => self.focus_find_input(InputId::Find, window, cx),
             FocusAction::FocusReplaceInput => self.focus_find_input(InputId::Replace, window, cx),
         }
+        self.highlight_find_options(options, cx);
         self.save_query_state(query);
         self.schedule_find_history(window, cx);
         cx.notify();
@@ -405,6 +411,10 @@ impl Workbench {
             self.show_search_editor_history_value(field, previous, window, cx);
             return Outcome::done();
         }
+        if id == InputId::DebugConsole {
+            self.walk_repl_history(previous, cx);
+            return Outcome::done();
+        }
         if !matches!(id, InputId::Find | InputId::Replace) {
             return Outcome::done();
         }
@@ -457,8 +467,9 @@ impl Workbench {
             _ => AutoFindInSelection::Never,
         };
         let is_loop = self.setting("editor.find.loop").as_bool().unwrap_or(true);
+        let cursor_move_on_type = self.setting("editor.find.cursorMoveOnType").as_bool().unwrap_or(true);
         let global_find_clipboard = self.setting("editor.find.globalFindClipboard").as_bool().unwrap_or(false);
-        FindOptions { seed_search_string_from_selection: seed, auto_find_in_selection, is_loop, global_find_clipboard, ..FindOptions::default() }
+        FindOptions { seed_search_string_from_selection: seed, auto_find_in_selection, is_loop, global_find_clipboard, cursor_move_on_type, ..FindOptions::default() }
     }
 
     /// Typing in an input changes the state: the search string moves the cursor to the nearest match.
@@ -468,7 +479,8 @@ impl Workbench {
         edit(input);
         let value = input.value.clone();
         cx.notify();
-        if value == before {
+        // `editor.find.findOnType` off: the search string waits for Enter (`find_input_key_down`).
+        if value == before || (id == InputId::Find && self.setting("editor.find.findOnType") == Value::Bool(false)) {
             return;
         }
         let (new, move_cursor) = match id {
@@ -477,6 +489,19 @@ impl Workbench {
         };
         self.run_find(window, cx, move |find, editor, viewport| {
             find.change(editor, viewport, new, move_cursor);
+            (FocusAction::NoFocusChange, None)
+        });
+    }
+
+    /// The find input's keydown, before the keybindings: with `editor.find.findOnType` off Enter searches.
+    pub(super) fn find_input_key_down(&mut self, keystroke: &Keystroke, window: &mut Window, cx: &mut Context<Self>) {
+        let modifiers = keystroke.modifiers;
+        if keystroke.key != "enter" || modifiers.modified() || !self.find.find_focus.is_focused(window) || self.setting("editor.find.findOnType") != Value::Bool(false) {
+            return;
+        }
+        let new = NewFindState { search_string: Some(self.find.find_input.value.clone()), ..Default::default() };
+        self.run_find(window, cx, move |find, editor, viewport| {
+            find.change(editor, viewport, new, true);
             (FocusAction::NoFocusChange, None)
         });
     }
@@ -539,7 +564,7 @@ impl Workbench {
             max_length: self.setting("editor.selectionHighlightMaxLength").as_u64().unwrap_or(200) as usize,
         };
         let query = multicursor::selection_highlight_query(&self.find.controller, editor, &self.multicursor_context(window), options);
-        let key = query.map(|query| (editor.model_id, editor.version_id, editor.selections.clone(), query));
+        let key = query.map(|query| (editor.model_id, editor.text_model().version_id, editor.selections.clone(), query));
         if self.find.selection_highlights.as_ref().map(|(key, _)| key) == key.as_ref() {
             return;
         }
@@ -594,12 +619,12 @@ impl Workbench {
             return false;
         }
         let (start, end) = (selection.start(), selection.end());
-        let start_top = editor.line_top(editor.view_line(start.line), self.editors.viewport) - editor.scroll.top;
+        let start_top = editor.line_top(editor.position_view_line(start, false), self.editors.viewport) - editor.scroll.top;
         if start_top >= FIND_INPUT_AREA_HEIGHT {
             return false;
         }
-        let tab_size = editor.document.indentation.tab_size;
-        let left = |position: Position| visible_column(&editor.document.lines[position.line], position.column, tab_size) as f32 * self.editors.viewport.char_width - editor.scroll.left;
+        let tab_size = editor.document().indentation.tab_size;
+        let left = |position: Position| visible_column(&editor.document().lines[position.line], position.column, tab_size) as f32 * self.editors.viewport.char_width - editor.scroll.left;
         let widget_left = self.find.widget_left.get();
         end.line > start.line || left(start) > widget_left || left(end) > widget_left
     }
@@ -623,7 +648,7 @@ impl Workbench {
         let whole_line = || div().absolute().inset_0().left(px(scroll_left));
         let range_highlight = || bordered(whole_line(), self.theme.color("editor.rangeHighlightBackground"), self.theme.color("editor.rangeHighlightBorder"), 1.);
         // editorNavigationQuickAccess.ts addDecorations: Go to Line's whole-line `rangeHighlight`.
-        if self.quick_access.goto_line.as_ref().and_then(|state| state.highlight(editor.model_id)).is_some_and(|position| position.line == index) {
+        if self.quick_access.goto_line.as_ref().and_then(|state| state.highlight(editor.model_id)).is_some_and(|(first, last)| first <= index && index <= last) {
             whole_lines.push(range_highlight());
         }
         let Some(model) = self.find.controller.model.as_ref().filter(|_| self.find.model_id == Some(editor.model_id)) else {
@@ -639,8 +664,8 @@ impl Workbench {
             }
         }
 
-        let text = &editor.document.lines[index];
-        let tab_size = editor.document.indentation.tab_size;
+        let text = &editor.document().lines[index];
+        let tab_size = editor.document().indentation.tab_size;
         let x = |column: usize| visible_column(text, column, tab_size) as f32 * char_width;
         let byte = |column: usize| expand_tabs(&text.chars().take(column).collect::<String>(), tab_size).len();
         let first = model.matches.partition_point(|range| range.end.line < index);
@@ -673,7 +698,7 @@ impl Workbench {
         let Some(model) = self.find.controller.model.as_ref().filter(|_| self.find.model_id == Some(editor.model_id)) else { return Vec::new() };
         let mut marks = Vec::new();
         if model.matches.len() > 1000 {
-            let approx_pixels_per_line = editor_height / editor.document.lines.len() as f32;
+            let approx_pixels_per_line = editor_height / editor.document().lines.len() as f32;
             let merge_lines_delta = ((3. / approx_pixels_per_line).ceil() as usize).max(2);
             for lines in merged_match_lines(&model.matches, merge_lines_delta) {
                 marks.push(FindMark { range: Position::new(lines.start, 0)..Position::new(lines.end, 0), in_minimap: false, current: false });
@@ -755,9 +780,10 @@ impl Workbench {
                                 .top(px(2.))
                                 .right(px(1.))
                                 .flex()
-                                .child(self.option_toggle("case-sensitive", state.match_case, |state| NewFindState { match_case: Some(!state.match_case), ..Default::default() }, cx))
-                                .child(self.option_toggle("whole-word", state.whole_word, |state| NewFindState { whole_word: Some(!state.whole_word), ..Default::default() }, cx))
-                                .child(self.option_toggle("regex", state.is_regex, |state| NewFindState { is_regex: Some(!state.is_regex), ..Default::default() }, cx)),
+                                .when_some(self.find_options_flash(window), |controls, color| controls.bg(color))
+                                .child(self.option_toggle("case-sensitive", state.match_case, |state| NewFindState { match_case: Some(!state.match_case), ..Default::default() }, true, cx))
+                                .child(self.option_toggle("whole-word", state.whole_word, |state| NewFindState { whole_word: Some(!state.whole_word), ..Default::default() }, true, cx))
+                                .child(self.option_toggle("regex", state.is_regex, |state| NewFindState { is_regex: Some(!state.is_regex), ..Default::default() }, true, cx)),
                         )
                     }),
             )
@@ -811,6 +837,7 @@ impl Workbench {
                         "preserve-case",
                         state.preserve_case,
                         |state| NewFindState { preserve_case: Some(!state.preserve_case), ..Default::default() },
+                        true,
                         cx,
                     ))),
                 )
@@ -914,8 +941,8 @@ impl Workbench {
     }
 
     /// A find input option (toggle.css `.monaco-custom-toggle`); a click puts the focus back in its input
-    /// (`fixFocusOnOptionClickEnabled`).
-    fn option_toggle(&self, icon: &'static str, checked: bool, toggled: fn(&crate::editor::find::state::FindState) -> NewFindState, cx: &mut Context<Self>) -> Stateful<Div> {
+    /// (`fixFocusOnOptionClickEnabled`) unless `focus_input` is false, as in the find options widget.
+    pub(super) fn option_toggle(&self, icon: &'static str, checked: bool, toggled: fn(&crate::editor::find::state::FindState) -> NewFindState, focus_input: bool, cx: &mut Context<Self>) -> Stateful<Div> {
         let high_contrast = matches!(self.theme.kind, ThemeKind::HighContrastDark | ThemeKind::HighContrastLight);
         let color = if checked { self.foreground_or("inputOption.activeForeground") } else { self.foreground_or("editorWidget.foreground") };
         let input = if icon == "preserve-case" { InputId::Replace } else { InputId::Find };
@@ -936,7 +963,9 @@ impl Workbench {
                     find.change(editor, viewport, new, true);
                     (FocusAction::NoFocusChange, None)
                 });
-                workbench.focus_input_keeping_selection(input, window, cx);
+                if focus_input {
+                    workbench.focus_input_keeping_selection(input, window, cx);
+                }
             }))
     }
 
@@ -1065,9 +1094,10 @@ impl Workbench {
             .when(dragging || self.find.sash_hovered, |sash| sash.child(highlight))
             .on_hover(cx.listener(|workbench, hovered: &bool, window, cx| {
                 workbench.find.sash_hovered = false;
+                let delay = workbench.sash_hover_delay();
                 workbench.find.sash_hover = hovered.then(|| {
                     cx.spawn_in(window, async move |workbench, cx| {
-                        cx.background_executor().timer(SASH_HOVER_DELAY).await;
+                        cx.background_executor().timer(delay).await;
                         let _ = workbench.update(cx, |workbench, cx| {
                             workbench.find.sash_hovered = true;
                             cx.notify();
@@ -1169,3 +1199,6 @@ fn go_to_match_parses_like_parse_int() {
     assert_eq!(find_match_index("-0", 4), None);
     assert_eq!(find_match_index("x", 4), None);
 }
+
+#[cfg(test)]
+mod tests;

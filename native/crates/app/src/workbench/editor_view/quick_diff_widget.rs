@@ -208,14 +208,14 @@ impl Workbench {
     fn show_quick_diff_change(&mut self, index: usize, use_position: bool, cx: &mut Context<Self>) {
         let viewport = self.editors.viewport;
         let Some(editor) = self.editors.active() else { return };
-        let key = (editor.document.scheme.clone(), editor.document.path.clone());
+        let key = (editor.document().scheme.clone(), editor.document().path.clone());
         let Some(entry) = self.quick_diffs.entries.get(&key) else { return };
         let Some(change) = entry.changes.get(index).copied() else { return };
         let original = &entry.quick_diffs[change.provider].original;
         let Some(original) = self.editors.model(&original.scheme, &original.path) else { return };
         // The embedded diff editor's options: `ignoreTrimWhitespace` false, the advanced algorithm.
         let options = diff::DiffOptions { ignore_trim_whitespace: false, max_computation_time_ms: 5000, compute_moves: false, extend_to_subwords: false };
-        let diff = diff::compute_diff(&original.document.lines, &editor.document.lines, options);
+        let diff = diff::compute_diff(&original.document().lines, &editor.document().lines, options);
         let model_id = editor.model_id;
         let editor_lines = (viewport.height / viewport.line_height).floor() as usize;
         let height_in_lines = (change_height(&change) + 2 + 6).min(editor_lines / 3);
@@ -233,7 +233,7 @@ impl Workbench {
             }
         };
         let body_height = height - 2. * ARROW_HEIGHT - 2. * FRAME_WIDTH - HEAD_HEIGHT;
-        let rows = inline_rows(&diff, editor.document.lines.len());
+        let rows = inline_rows(&diff, editor.document().lines.len());
         let scroll_top = reveal_change_scroll(&rows, &change, body_height, viewport.line_height);
         // The picker's items: one command per quick diff of the model (`QuickDiffPickerBaseAction`).
         let quick_diff_count = self.quick_diffs.entries.get(&key).map_or(0, |entry| entry.quick_diffs.len());
@@ -247,7 +247,7 @@ impl Workbench {
         if use_position {
             let editor = self.editors.active_mut().expect("checked above");
             editor.set_selections(vec![Selection::caret(position)]);
-            let below = Position::new((position.line + 1).min(editor.document.lines.len() - 1), 0);
+            let below = Position::new((position.line + 1).min(editor.document().lines.len() - 1), 0);
             editor.reveal_range(below, below, VerticalReveal::CenterIfOutsideViewport, viewport);
             self.host.send_selection(editor, "api");
             self.editor_scrolled(cx);
@@ -341,7 +341,7 @@ impl Workbench {
         let top = editor.view_zone_top(widget.zone_id, viewport)? - editor.scroll.top;
         let changes = self.quick_diff_changes(editor);
         let change = changes.get(widget.index)?;
-        let key = (editor.document.scheme.clone(), editor.document.path.clone());
+        let key = (editor.document().scheme.clone(), editor.document().path.clone());
         let entry = self.quick_diffs.entries.get(&key)?;
         let frame = self.color(match change.kind {
             ChangeKind::Add => "editorGutter.addedBackground",
@@ -349,9 +349,9 @@ impl Workbench {
             ChangeKind::Modify => "editorGutter.modifiedBackground",
         });
         let anchor = zone.anchor?;
-        let line = &editor.document.lines[anchor.line];
+        let line = &editor.document().lines[anchor.line];
         let arrow_column = anchor.column.max(1).min(line.chars().count().max(1));
-        let arrow_x = metrics.content_left() + visible_column(line, arrow_column, editor.document.indentation.tab_size) as f32 * metrics.char_width - editor.scroll.left;
+        let arrow_x = metrics.content_left() + visible_column(line, arrow_column, editor.document().indentation.tab_size) as f32 * metrics.char_width - editor.scroll.left;
         let arrow = canvas(
             |_, _, _| (),
             move |bounds, _, window, _| {
@@ -390,7 +390,7 @@ impl Workbench {
             .items_baseline()
             .text_size(px(13.))
             .children(picker)
-            .child(div().whitespace_nowrap().text_color(self.color("peekViewTitleLabel.foreground")).child(editor.document.name()))
+            .child(div().whitespace_nowrap().text_color(self.color("peekViewTitleLabel.foreground")).child(editor.document().name()))
             .child(div().whitespace_nowrap().ml(px(0.5 * 0.9 * 13.)).text_size(px(0.9 * 13.)).text_color(self.color("peekViewTitleDescription.foreground")).child(detail));
         let head = div()
             .h(px(HEAD_HEIGHT))
@@ -442,7 +442,7 @@ impl Workbench {
     fn quick_diff_picker(&self, label: &str, providers: Vec<usize>, shown: usize, cx: &mut Context<Self>) -> impl IntoElement {
         let bounds = std::rc::Rc::new(std::cell::Cell::new(gpui::Bounds::default()));
         let foreground = self.foreground_or("select.foreground");
-        let key = self.editors.active().map(|editor| (editor.document.scheme.clone(), editor.document.path.clone()));
+        let key = self.editors.active().map(|editor| (editor.document().scheme.clone(), editor.document().path.clone()));
         let tracked = bounds.clone();
         div()
             .id("quick-diff-picker")
@@ -486,7 +486,7 @@ impl Workbench {
         // The context is the provider's changes and the shown one's index among them.
         let provider_changes: Vec<&QuickDiffChange> = entry.changes.iter().filter(|change| change.provider == widget.provider).collect();
         let context_index = entry.changes[..widget.index].iter().filter(|change| change.provider == widget.provider).count();
-        let args = vec![editor.document.uri(), Value::Array(provider_changes.into_iter().map(change_json).collect()), json!(context_index)];
+        let args = vec![editor.document().uri(), Value::Array(provider_changes.into_iter().map(change_json).collect()), json!(context_index)];
         let mut bar = div().flex_1().flex().justify_end().items_center().pr(px(2.));
         let mut commands: Vec<(String, String)> = Vec::new();
         for action in crate::menus::menu_actions(&self.menus, MenuId::ScmChangeContext, &context) {
@@ -524,10 +524,10 @@ impl Workbench {
     // shortcut: the port has one code editor per group, so the embedded diff editor is drawn, not editable; make it an
     // editor when editors can be embedded.
     fn quick_diff_body(&self, editor: &OpenEditor, widget: &PeekWidget, height: f32, metrics: EditorMetrics, cx: &mut Context<Self>) -> impl IntoElement {
-        let key = (editor.document.scheme.clone(), editor.document.path.clone());
+        let key = (editor.document().scheme.clone(), editor.document().path.clone());
         let original = self.quick_diffs.entries.get(&key).and_then(|entry| entry.quick_diffs.get(widget.provider)).and_then(|quick_diff| self.editors.model(&quick_diff.original.scheme, &quick_diff.original.path));
         let line_height = metrics.line_height;
-        let rows = inline_rows(&widget.diff, editor.document.lines.len());
+        let rows = inline_rows(&widget.diff, editor.document().lines.len());
         let first = (widget.scroll_top / line_height).floor() as usize;
         let visible = (height / line_height).ceil() as usize + 1;
         let content_left = metrics.content_left();
@@ -569,8 +569,8 @@ impl Workbench {
     /// One line of the embedded diff: the modified line number, the change's line and character backgrounds, the
     /// highlighted text. Deleted lines have no number in the inline view.
     fn peek_line(&self, model: &OpenEditor, line: usize, change: Option<(ZoneSide, usize)>, widget: &PeekWidget, metrics: EditorMetrics) -> Div {
-        let text = &model.document.lines[line - 1];
-        let tab_size = model.document.indentation.tab_size;
+        let text = &model.document().lines[line - 1];
+        let tab_size = model.document().indentation.tab_size;
         let content_left = metrics.content_left();
         let mut content = div().absolute().top_0().bottom_0().right_0().left(px(content_left));
         let mut row = div().h(px(metrics.line_height)).relative().flex();
@@ -584,7 +584,7 @@ impl Workbench {
             }
             row = row.children(self.margin_background(side, content_left));
         }
-        let highlights = model.document.tokens.highlights(&self.theme, &self.languages, &model.document.lines, line - 1, tab_size);
+        let highlights = model.document().tokens.highlights(&self.theme, &self.languages, &model.document().lines, line - 1, tab_size);
         content = content.child(div().absolute().top_0().left_0().whitespace_nowrap().child(StyledText::new(expand_tabs(text, tab_size)).with_highlights(highlights)));
         let number = match change {
             Some((ZoneSide::Original, _)) => String::new(),

@@ -71,7 +71,7 @@ fn new_file_takes_a_validated_name_and_opens(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("enter");
     cx.run_until_parked();
     assert_eq!(names(&dir), ["a.txt", "b.txt", "sub"]);
-    let opened = workbench.read_with(cx, |workbench, _| workbench.editors.active().map(|editor| editor.document.path.clone()));
+    let opened = workbench.read_with(cx, |workbench, _| workbench.editors.active().map(|editor| editor.document().path.clone()));
     assert_eq!(opened, Some(dir.join("b.txt")));
 
     run(&workbench, "explorer.newFolder", cx);
@@ -124,7 +124,7 @@ fn files_dropped_from_finder_copy_into_the_folder_under_the_pointer(cx: &mut Tes
     drop(&["dropped.txt"], sub_row, cx);
     assert_eq!(names(&dir.join("sub")), ["dropped.txt"]);
     assert_eq!(names(&finder), ["a.txt", "dropped.txt", "folder"], "a drop copies");
-    let opened = workbench.read_with(cx, |workbench, _| workbench.editors.active().map(|editor| editor.document.path.clone()));
+    let opened = workbench.read_with(cx, |workbench, _| workbench.editors.active().map(|editor| editor.document().path.clone()));
     assert_eq!(opened, Some(dir.join("sub/dropped.txt")), "explorer.autoOpenDroppedFile");
 
     // A folder dropped into a workspace folder asks first; the skipped dialog picks Add, which the port lacks.
@@ -196,7 +196,7 @@ fn rename_copy_paste_cut_delete_and_undo(cx: &mut TestAppContext) {
 fn menu_titles(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<String> {
     workbench.read_with(cx, |workbench, _| {
         let menu = workbench.context_menu.as_ref().expect("a context menu shows");
-        menu.actions
+        menu.levels[0].actions
             .iter()
             .map(|action| match action {
                 MenuAction::Command { title, enabled: true, .. } => title.clone(),
@@ -218,7 +218,7 @@ fn the_context_menu_selects_the_row_and_runs_its_items_with_keys_and_clicks(cx: 
     assert_eq!(workbench.read_with(cx, |workbench, _| workbench.folder.as_ref().unwrap().selected.clone()), [dir.join("a.txt")]);
 
     // The pointer focuses the item under it; Down goes on from there and skips the separator; Enter runs it.
-    let focused = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.context_menu.as_ref().unwrap().focused);
+    let focused = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.context_menu.as_ref().unwrap().levels[0].focused);
     cx.simulate_mouse_move(point(px(150.), px(148.)), None, Modifiers::none());
     assert_eq!(focused(cx), Some(0));
     cx.simulate_mouse_move(point(px(150.), px(400.)), None, Modifiers::none());
@@ -244,7 +244,7 @@ fn the_context_menu_selects_the_row_and_runs_its_items_with_keys_and_clicks(cx: 
     // A click runs the item only 100ms after the menu showed; with Alt, Delete is Delete Permanently.
     // Items are 24px from the border and the 4px padding, the separators 11px.
     cx.simulate_mouse_down(file_row, MouseButton::Right, Modifiers::none());
-    let top = workbench.read_with(cx, |workbench, _| f32::from(workbench.context_menu.as_ref().unwrap().origin.y));
+    let top = workbench.read_with(cx, |workbench, _| f32::from(workbench.context_menu.as_ref().unwrap().levels[0].origin.y));
     let delete = point(px(150.), px(top + 5. + 24. * 6. + 11. * 3. + 12.));
     cx.simulate_mouse_down(delete, MouseButton::Left, Modifiers::alt());
     cx.simulate_mouse_up(delete, MouseButton::Left, Modifiers::alt());
@@ -252,6 +252,23 @@ fn the_context_menu_selects_the_row_and_runs_its_items_with_keys_and_clicks(cx: 
     cx.executor().advance_clock(std::time::Duration::from_millis(100));
     cx.simulate_mouse_down(delete, MouseButton::Left, Modifiers::alt());
     cx.simulate_mouse_up(delete, MouseButton::Left, Modifiers::alt());
+    cx.run_until_parked();
+    assert_eq!(names(&dir), ["sub"]);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// menuEntryActionViewItem.test.ts 'Alt at open: false, Alt at activation: true': Alt+Enter runs the focused item's
+/// alt command, Delete Permanently for Delete.
+#[gpui::test]
+fn alt_enter_runs_the_alt_command_of_the_focused_item(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = explorer("explorer-context-menu-alt-enter", cx);
+    let file_row = point(px(120.), px(129.));
+    cx.simulate_mouse_down(file_row, MouseButton::Right, Modifiers::none());
+    cx.simulate_mouse_up(file_row, MouseButton::Right, Modifiers::none());
+    cx.run_until_parked();
+    cx.simulate_keystrokes("end shift-enter");
+    assert!(workbench.read_with(cx, |workbench, _| workbench.context_menu.is_some()), "Shift is no alt key on macOS");
+    cx.simulate_keystrokes("alt-enter");
     cx.run_until_parked();
     assert_eq!(names(&dir), ["sub"]);
     std::fs::remove_dir_all(&dir).unwrap();
@@ -341,7 +358,149 @@ fn closing_the_window_stores_the_tree_view_state_for_the_next_open(cx: &mut Test
     assert_eq!(restored, (true, Some(dir.join("sub/b.txt"))));
     std::fs::remove_dir_all(&dir).unwrap();
 }
+#[gpui::test]
+fn opening_a_file_reveals_it_unless_auto_reveal_is_off_or_excludes_it(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = explorer("explorer-auto-reveal", cx);
+    std::fs::create_dir_all(dir.join("node_modules/lib")).unwrap();
+    std::fs::write(dir.join("node_modules/lib/x.js"), "").unwrap();
+    // More rows than the 1080px test window shows.
+    for index in 0..150 {
+        std::fs::write(dir.join(format!("sub/f{index:03}.txt")), "").unwrap();
+    }
+    let user = std::env::temp_dir().join(format!("code-gpui-auto-reveal-user-{}", std::process::id()));
+    let settings = config::service::Settings::load(config::registry::Registry::with_extensions(&[]), user.clone(), None);
+    workbench.update(cx, |workbench, _| *workbench.settings.lock().unwrap() = settings);
+    let open = |path: PathBuf, cx: &mut VisualTestContext| {
+        workbench.update_in(cx, |workbench, window, cx| workbench.open_file(path, true, window, cx));
+        cx.run_until_parked();
+    };
 
+    open(dir.join("sub/f149.txt"), cx);
+    assert_eq!(focused(&workbench, cx), Some(dir.join("sub/f149.txt")));
+    let scroll_top = workbench.read_with(cx, |workbench, _| -workbench.explorer.scroll.offset().y);
+    assert!(scroll_top > px(0.), "the row below the view scrolls in");
+
+    workbench.update(cx, |workbench, _| workbench.settings.lock().unwrap().update_value_derived("explorer.autoReveal", Some(&serde_json::json!(false))).unwrap());
+    open(dir.join("a.txt"), cx);
+    assert_eq!(focused(&workbench, cx), Some(dir.join("sub/f149.txt")), "explorer.autoReveal false keeps the selection");
+
+    workbench.update(cx, |workbench, _| workbench.settings.lock().unwrap().update_value_derived("explorer.autoReveal", Some(&serde_json::json!(true))).unwrap());
+    open(dir.join("node_modules/lib/x.js"), cx);
+    assert_eq!(focused(&workbench, cx), Some(dir.join("sub/f149.txt")), "the default explorer.autoRevealExclude has **/node_modules");
+    assert!(!rows(&workbench, cx).contains(&"x.js".to_string()));
+    std::fs::remove_dir_all(&dir).unwrap();
+    std::fs::remove_dir_all(&user).unwrap();
+}
+
+#[gpui::test]
+fn view_title_and_file_actions_collapse_reveal_and_copy_the_active_file(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = explorer("explorer-title-actions", cx);
+    std::fs::create_dir_all(dir.join("sub/inner")).unwrap();
+    std::fs::write(dir.join("sub/inner/x.txt"), "").unwrap();
+    std::fs::write(dir.join("sub/y.txt"), "").unwrap();
+    let shows_title_actions = |cx: &mut VisualTestContext| workbench.update_in(cx, |workbench, window, cx| workbench.explorer_title_actions(window, cx).is_some());
+    assert!(shows_title_actions(cx), "the focused pane shows its title actions");
+
+    workbench.update_in(cx, |workbench, window, cx| workbench.select_explorer_item(&dir.join("sub/inner/x.txt"), window, cx));
+    assert_eq!(rows(&workbench, cx), ["sub", "inner", "x.txt", "y.txt", "a.txt"]);
+    run(&workbench, "workbench.files.action.collapseExplorerFolders", cx);
+    assert_eq!(rows(&workbench, cx), ["sub", "a.txt"]);
+
+    let user = std::env::temp_dir().join(format!("code-gpui-title-actions-user-{}", std::process::id()));
+    let settings = config::service::Settings::load(config::registry::Registry::with_extensions(&[]), user.clone(), None);
+    workbench.update(cx, |workbench, _| {
+        *workbench.settings.lock().unwrap() = settings;
+        workbench.settings.lock().unwrap().update_value_derived("explorer.autoReveal", Some(&serde_json::json!(false))).unwrap();
+    });
+    workbench.update_in(cx, |workbench, window, cx| workbench.open_file(dir.join("sub/inner/x.txt"), true, window, cx));
+    cx.run_until_parked();
+    assert!(!shows_title_actions(cx), "with the focus in the editor and no hover the actions hide");
+    assert_eq!(rows(&workbench, cx), ["sub", "a.txt"], "explorer.autoReveal false leaves the tree");
+    run(&workbench, "workbench.files.action.showActiveFileInExplorer", cx);
+    assert_eq!(focused(&workbench, cx), Some(dir.join("sub/inner/x.txt")));
+    assert!(workbench.update_in(cx, |workbench, window, _| workbench.explorer.focus.is_focused(window)), "revealInExplorer focuses the tree");
+
+    workbench.update_in(cx, |workbench, window, cx| {
+        workbench.execute_command("revealInExplorer", vec![serde_json::json!({ "scheme": "file", "path": "/outside/file.txt" })], window, cx);
+    });
+    assert_eq!(focused(&workbench, cx), Some(dir.join("sub/inner/x.txt")), "a resource outside the workspace is not revealed");
+
+    select(&workbench, &dir.join("sub"), cx);
+    run(&workbench, "workbench.action.files.copyPathOfActiveFile", cx);
+    assert_eq!(cx.read_from_clipboard().and_then(|item| item.text()).unwrap(), dir.join("sub/inner/x.txt").to_string_lossy(), "the active editor's path, not the selection's");
+    std::fs::remove_dir_all(&dir).unwrap();
+    std::fs::remove_dir_all(&user).unwrap();
+}
+
+#[gpui::test]
+fn keys_move_the_focus_expand_collapse_select_and_open(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = explorer("explorer-keys", cx);
+    std::fs::write(dir.join("sub/b.txt"), "b").unwrap();
+    let selected = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.folder.as_ref().unwrap().selected.clone());
+
+    cx.simulate_keystrokes("down");
+    assert_eq!(focused(&workbench, cx), Some(dir.join("sub")), "the first down focuses the first row");
+    cx.simulate_keystrokes("right");
+    assert_eq!(rows(&workbench, cx), ["sub", "b.txt", "a.txt"]);
+    cx.simulate_keystrokes("right");
+    assert_eq!(focused(&workbench, cx), Some(dir.join("sub/b.txt")), "right on an expanded folder goes to its first child");
+    cx.simulate_keystrokes("left");
+    assert_eq!(focused(&workbench, cx), Some(dir.join("sub")), "left on a file goes to its parent");
+    cx.simulate_keystrokes("left");
+    assert_eq!(rows(&workbench, cx), ["sub", "a.txt"]);
+    cx.simulate_keystrokes("space");
+    assert_eq!(rows(&workbench, cx), ["sub", "b.txt", "a.txt"], "space toggles a folder");
+
+    cx.simulate_keystrokes("end shift-up");
+    assert_eq!(focused(&workbench, cx), Some(dir.join("sub/b.txt")));
+    assert_eq!(selected(cx), [dir.join("sub/b.txt")], "shift-up adds the row it moves to");
+    cx.simulate_keystrokes("home");
+    cx.simulate_keystrokes("cmd-a");
+    assert_eq!(selected(cx), [dir.join("sub"), dir.join("sub/b.txt"), dir.join("a.txt")]);
+    cx.simulate_keystrokes("escape");
+    assert_eq!(selected(cx), Vec::<PathBuf>::new(), "escape clears a multi-selection and keeps the focus");
+    assert_eq!(focused(&workbench, cx), Some(dir.join("sub")));
+
+    cx.simulate_keystrokes("end space");
+    let active = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.editors.active().map(|editor| editor.document().path.clone()));
+    assert_eq!(active(cx), Some(dir.join("a.txt")), "space opens a file");
+    assert!(workbench.update_in(cx, |workbench, window, _| workbench.explorer.focus.is_focused(window)), "space keeps the focus");
+    cx.simulate_keystrokes("up cmd-down");
+    assert_eq!(active(cx), Some(dir.join("sub/b.txt")), "cmd-down opens a file and passes the focus");
+    assert!(workbench.update_in(cx, |workbench, window, _| workbench.editor_focus.is_focused(window)));
+
+    workbench.update_in(cx, |workbench, window, cx| window.focus(&workbench.explorer.focus.clone(), cx));
+    cx.simulate_keystrokes("cmd-left");
+    assert_eq!(rows(&workbench, cx), ["sub", "a.txt"], "cmd-left collapses every folder");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[gpui::test]
+fn page_keys_move_the_focus_by_the_rows_in_view(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = explorer("explorer-page-keys", cx);
+    for index in 0..150 {
+        std::fs::write(dir.join(format!("f{index:03}.txt")), "").unwrap();
+    }
+    cx.update(|window, _| window.refresh());
+    cx.run_until_parked();
+    let page = workbench.read_with(cx, |workbench, _| (f32::from(workbench.explorer.scroll.bounds().size.height) / 22.).floor() as usize);
+    let focused_index = |cx: &mut VisualTestContext| {
+        let path = focused(&workbench, cx).unwrap();
+        workbench.read_with(cx, |workbench, _| workbench.folder.as_ref().unwrap().rows().iter().position(|row| row.path == path).unwrap())
+    };
+
+    cx.simulate_keystrokes("pagedown");
+    assert_eq!(focused_index(cx), page - 1, "the first page down focuses the page's last row");
+    cx.simulate_keystrokes("pagedown");
+    assert!(focused_index(cx) > page, "the next one scrolls a page");
+    let scroll_top = workbench.read_with(cx, |workbench, _| -workbench.explorer.scroll.offset().y);
+    assert!(scroll_top > px(0.));
+    cx.simulate_keystrokes("end");
+    assert_eq!(focused_index(cx), 151);
+    cx.simulate_keystrokes("home");
+    assert_eq!(workbench.read_with(cx, |workbench, _| workbench.explorer.scroll.offset().y), px(0.), "home scrolls the first row in");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
 fn rows(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<String> {
     workbench.read_with(cx, |workbench, _| workbench.folder.as_ref().unwrap().rows().into_iter().map(|row| row.name).collect())
 }
@@ -387,4 +546,83 @@ fn find_filters_the_tree_by_a_file_search_and_restores_it_on_close(cx: &mut Test
     assert_eq!(workbench.read_with(cx, |workbench, _| workbench.explorer.find.input.value.clone()), "needle", "the widget reopens with the last pattern");
     assert_eq!(rows(&workbench, cx), ["sub", "needle.rs"]);
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[gpui::test]
+fn new_file_creates_the_picked_file_next_to_the_last_active_file(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = explorer("explorer-new-file", cx);
+    workbench.update_in(cx, |workbench, window, cx| workbench.open_file(dir.join("a.txt"), true, window, cx));
+    cx.run_until_parked();
+    workbench.update_in(cx, |workbench, window, cx| {
+        workbench.execute_command("workbench.action.files.newFile", vec![serde_json::json!({ "fileName": "b.md" })], window, cx);
+    });
+    cx.run_until_parked();
+    let created = dir.join("sub/new.md");
+    cx.simulate_new_path_selection(|directory| {
+        assert_eq!(directory, dir.as_path(), "the dialog opens in the folder of the last active file");
+        Some(created.clone())
+    });
+    cx.run_until_parked();
+    assert_eq!(std::fs::read_to_string(&created).unwrap(), "");
+    let active = workbench.read_with(cx, |workbench, _| workbench.editors.active().map(|editor| (editor.document().path.clone(), editor.preview)));
+    assert_eq!(active, Some((created, false)), "the new file opens pinned");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn tree_indent_is_clamped_and_defaults_to_8() {
+    use serde_json::json;
+    let indents: Vec<f32> = [json!(null), json!("12"), json!(12), json!(100), json!(-3)].iter().map(super::tree_indent).collect();
+    assert_eq!(indents, [8., 8., 12., 40., 0.]);
+}
+
+/// listService.ts: `workbench.list.openMode` and `workbench.tree.expandMode` `doubleClick` need a double click to
+/// open a file or expand a folder; `workbench.list.multiSelectModifier` `alt` adds rows with Alt instead of Cmd.
+#[gpui::test]
+fn list_click_settings_change_what_clicks_do(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = explorer("list-click-settings", cx);
+    let user = dir.join("../list-click-settings-user");
+    std::fs::create_dir_all(&user).unwrap();
+    std::fs::write(user.join("settings.json"), r#"{ "workbench.list.openMode": "doubleClick", "workbench.tree.expandMode": "doubleClick", "workbench.list.multiSelectModifier": "alt" }"#).unwrap();
+    workbench.update(cx, |workbench, _| {
+        workbench.settings = std::sync::Arc::new(std::sync::Mutex::new(config::service::Settings::load(config::registry::Registry::with_extensions(&[]), user.clone(), None)));
+    });
+    let (sub_row, file_row) = (point(px(120.), px(107.)), point(px(120.), px(129.)));
+    let state = |cx: &mut VisualTestContext| {
+        workbench.read_with(cx, |workbench, _| {
+            let tree = workbench.folder.as_ref().unwrap();
+            (workbench.editors.active().is_some(), tree.is_expanded(&dir.join("sub")), tree.selected.len())
+        })
+    };
+
+    cx.simulate_click(file_row, Modifiers::none());
+    assert_eq!(state(cx), (false, false, 1), "a single click only selects the file");
+    cx.simulate_click(sub_row, Modifiers::none());
+    assert_eq!(state(cx), (false, false, 1), "a single click only selects the folder");
+    cx.simulate_click(file_row, Modifiers::alt());
+    assert_eq!(state(cx).2, 2, "Alt adds the file to the selection");
+    cx.simulate_click(sub_row, Modifiers::none());
+    cx.simulate_event(gpui::MouseDownEvent { position: sub_row, modifiers: Modifiers::none(), button: MouseButton::Left, click_count: 2, first_mouse: false });
+    cx.simulate_event(gpui::MouseUpEvent { position: sub_row, modifiers: Modifiers::none(), button: MouseButton::Left, click_count: 2 });
+    assert!(state(cx).1, "a double click expands the folder");
+    std::fs::remove_dir_all(user).unwrap();
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// Type navigation in the Explorer: a letter focuses the next row starting with it, without selecting it.
+#[gpui::test]
+fn typing_a_letter_focuses_the_matching_row(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = explorer("type-navigation", cx);
+    select(&workbench, &dir.join("a.txt"), cx);
+    let focused = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.folder.as_ref().unwrap().focused.clone());
+    cx.simulate_keystrokes("s");
+    assert_eq!(focused(cx), Some(dir.join("sub")));
+    cx.simulate_keystrokes("x");
+    assert_eq!(focused(cx), Some(dir.join("sub")), "\"sx\" matches no row, the focus stays");
+    cx.executor().advance_clock(std::time::Duration::from_millis(800));
+    cx.run_until_parked();
+    cx.simulate_keystrokes("a");
+    assert_eq!(focused(cx), Some(dir.join("a.txt")), "after 800ms a new word starts");
+    assert_eq!(workbench.read_with(cx, |workbench, _| workbench.folder.as_ref().unwrap().selected.clone()), [dir.join("a.txt")], "the selection stays");
+    std::fs::remove_dir_all(dir).unwrap();
 }

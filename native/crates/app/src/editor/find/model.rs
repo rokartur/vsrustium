@@ -9,7 +9,7 @@ use super::search::{FindMatch, SearchParams, find_matches_in_ranges, find_next_m
 use super::state::{FindState, FindStateChanged, MATCHES_LIMIT};
 use crate::editor::cursor::{last_position, line_len};
 use crate::editor::edit::{document_offset, document_position, track_decoration};
-use crate::editor::{ContentChanged, EditReason, OpenEditor, Position, Selection, VerticalReveal, Viewport, WORD_SEPARATORS, end_of};
+use crate::editor::{ContentChanged, EditReason, OpenEditor, Position, Selection, VerticalReveal, Viewport, WORD_SEPARATORS, end_of, text_between};
 
 /// `FindModelBoundToEditorModel` and the decorations it keeps.
 #[derive(Debug, Default)]
@@ -24,12 +24,14 @@ pub struct FindModel {
     scopes: Vec<[usize; 2]>,
     /// Where the next search starts: the cursor when it last moved by the user or an edit.
     start_position: Position,
+    /// `editor.find.cursorMoveOnType`.
+    pub cursor_move_on_type: bool,
 }
 
 impl FindModel {
     /// Binds to the editor and searches with the state's scope.
     pub fn new(editor: &mut OpenEditor, state: &mut FindState, viewport: Viewport) -> Self {
-        let mut model = FindModel { start_position: editor.selection().head, ..Default::default() };
+        let mut model = FindModel { start_position: editor.selection().head, cursor_move_on_type: true, ..Default::default() };
         let scope = state.search_scope.clone();
         model.research(editor, state, viewport, false, Some(scope));
         model
@@ -57,7 +59,7 @@ impl FindModel {
     }
 
     pub fn find_scopes(&self, editor: &OpenEditor) -> Option<Vec<Range<Position>>> {
-        let (lines, eol_len) = (&editor.document.lines, editor.document.eol.len());
+        let (lines, eol_len) = (&editor.document().lines, editor.document().eol.len());
         let scopes: Vec<_> = self.scopes.iter().map(|&[start, end]| document_position(lines, eol_len, start)..document_position(lines, eol_len, end)).collect();
         (!scopes.is_empty()).then_some(scopes)
     }
@@ -79,7 +81,8 @@ impl FindModel {
             None => self.find_scopes(editor),
         };
         // A multi-line scope covers whole lines; one ending at a line start stops at the line before.
-        let lines = &editor.document.lines;
+        let document = editor.document();
+        let lines = &document.lines;
         let scopes = scopes.map(|scopes| {
             scopes
                 .into_iter()
@@ -103,7 +106,8 @@ impl FindModel {
             position = self.matches.partition_point(|range| (range.start, range.end) < (selection_range.start, selection_range.end));
         }
         state.change_match_info(position, self.matches.len(), None);
-        if move_cursor {
+        if move_cursor && self.cursor_move_on_type {
+            drop(document);
             self.move_to_next_match_after(editor, state, viewport, self.start_position);
         }
     }
@@ -113,7 +117,7 @@ impl FindModel {
         self.matches = matches;
         self.highlighted = None;
         self.range_highlight = None;
-        let (lines, eol_len) = (&editor.document.lines, editor.document.eol.len());
+        let (lines, eol_len) = (&editor.document().lines, editor.document().eol.len());
         self.scopes = scopes.into_iter().flatten().map(|scope| [document_offset(lines, eol_len, scope.start), document_offset(lines, eol_len, scope.end)]).collect();
     }
 
@@ -166,7 +170,7 @@ impl FindModel {
 
     /// `_setCurrentFindMatch`: selects the match and reveals it.
     fn select_match(&mut self, editor: &mut OpenEditor, state: &mut FindState, viewport: Viewport, found: Range<Position>) {
-        let position = self.set_current_find_match(Some(&found), &editor.document.lines);
+        let position = self.set_current_find_match(Some(&found), &editor.document().lines);
         state.change_match_info(position, self.matches.len(), Some(found.clone()));
         editor.set_selections(vec![Selection { anchor: found.start, head: found.end }]);
         editor.reveal_range(found.start, found.end, VerticalReveal::CenterIfOutsideViewport, viewport);
@@ -208,7 +212,7 @@ impl FindModel {
         if self.matches.len() < MATCHES_LIMIT {
             let mut previous = self.match_before_position(before);
             if previous.as_ref().is_some_and(|range| range.is_empty() && range.start == before) {
-                before = Self::previous_search_position(state, &editor.document.lines, before);
+                before = Self::previous_search_position(state, &editor.document().lines, before);
                 previous = self.match_before_position(before);
             }
             if let Some(found) = previous {
@@ -224,12 +228,14 @@ impl FindModel {
             before = search_range.end;
         }
         let params = search_params(state);
-        let lines = &editor.document.lines;
+        let document = editor.document();
+        let lines = &document.lines;
         let mut previous = find_previous_match(lines, &params, before, false);
         if previous.as_ref().is_some_and(|found| found.range.is_empty() && found.range.start == before) {
             before = Self::previous_search_position(state, lines, before);
             previous = find_previous_match(lines, &params, before, false);
         }
+        drop(document);
         let Some(previous) = previous else { return };
         if !is_recursed && !contains(&search_range, &previous.range) {
             return self.move_to_prev_match_before(editor, state, viewport, previous.range.start, true);
@@ -253,7 +259,7 @@ impl FindModel {
         if self.matches.len() < MATCHES_LIMIT {
             let mut next = self.match_after_position(after);
             if next.as_ref().is_some_and(|range| range.is_empty() && range.start == after) {
-                after = Self::next_search_position(state, &editor.document.lines, after);
+                after = Self::next_search_position(state, &editor.document().lines, after);
                 next = self.match_after_position(after);
             }
             if let Some(found) = next {
@@ -277,7 +283,8 @@ impl FindModel {
             after = search_range.start;
         }
         let params = search_params(state);
-        let lines = &editor.document.lines;
+        let document = editor.document();
+        let lines = &document.lines;
         let mut next = find_next_match(lines, &params, after, capture_matches);
         if force_move && next.as_ref().is_some_and(|found| found.range.is_empty() && found.range.start == after) {
             after = Self::next_search_position(state, lines, after);
@@ -285,6 +292,7 @@ impl FindModel {
         }
         let next = next?;
         if !is_recursed && !contains(&search_range, &next.range) {
+            drop(document);
             return self.next_match(editor, state, viewport, next.range.end, capture_matches, force_move, true);
         }
         Some(next)
@@ -292,7 +300,7 @@ impl FindModel {
 
     /// `_getSearchRange`: the first scope, else the whole model.
     fn search_range(&self, editor: &OpenEditor) -> Range<Position> {
-        self.find_scope(editor).unwrap_or_else(|| Position::default()..last_position(&editor.document.lines))
+        self.find_scope(editor).unwrap_or_else(|| Position::default()..last_position(&editor.document().lines))
     }
 
     /// `moveToMatch`: the match at a 0-based index.
@@ -334,19 +342,26 @@ impl FindModel {
 
     /// `_findMatches`: matches in the scopes, else in the whole model.
     fn find_matches(&self, editor: &OpenEditor, state: &FindState, scopes: Option<Vec<Range<Position>>>, capture_matches: bool, limit: usize) -> Vec<FindMatch> {
-        let lines = &editor.document.lines;
+        let lines = &editor.document().lines;
         let ranges = scopes.unwrap_or_else(|| vec![Position::default()..last_position(lines)]);
         find_matches_in_ranges(lines, &search_params(state), ranges, capture_matches, limit)
     }
 
-    /// `replaceAll`, as `_regularReplaceAll`: one edit per match, the primary selection tracked.
-    /// Upstream's `_largeReplaceAll` past `MATCHES_LIMIT` replaces the same matches in one whole-text edit.
+    /// `replaceAll`: without a find scope and with `MATCHES_LIMIT` matches or more `_largeReplaceAll`, else
+    /// `_regularReplaceAll`: one edit per match, the primary selection tracked.
     pub fn replace_all(&mut self, editor: &mut OpenEditor, state: &mut FindState, viewport: Viewport) -> Option<ContentChanged> {
         if state.matches_count == 0 {
             return None;
         }
         let pattern = Self::replace_pattern(state);
-        let matches = self.find_matches(editor, state, self.find_scopes(editor), pattern.has_replacement_patterns() || state.preserve_case, usize::MAX);
+        let scopes = self.find_scopes(editor);
+        let large = scopes.is_none() && state.matches_count >= MATCHES_LIMIT;
+        let matches = self.find_matches(editor, state, scopes, pattern.has_replacement_patterns() || state.preserve_case, usize::MAX);
+        if large {
+            let change = self.execute(editor, viewport, |editor| large_replace_all(editor, &pattern, matches, state.preserve_case));
+            self.research(editor, state, viewport, false, None);
+            return change;
+        }
         let mut edits: Vec<(Position, Position, String)> = Vec::new();
         // `ReplaceAllCommand` joins matches that touch into one edit.
         for found in matches {
@@ -394,6 +409,25 @@ impl FindModel {
         }
         change
     }
+}
+
+/// `_largeReplaceAll`: the whole text with every match replaced, as one edit that keeps the primary selection
+/// (`ReplaceCommandThatPreservesSelection`).
+fn large_replace_all(editor: &mut OpenEditor, pattern: &ReplacePattern, matches: Vec<FindMatch>, preserve_case: bool) -> Option<ContentChanged> {
+    let document = editor.document();
+    let lines = &document.lines;
+    let end = last_position(lines);
+    let mut text = String::new();
+    let mut copied_to = Position::default();
+    for found in matches {
+        text.push_str(&text_between(lines, copied_to, found.range.start));
+        text.push_str(&pattern.build(found.matches.as_deref(), preserve_case));
+        copied_to = found.range.end;
+    }
+    text.push_str(&text_between(lines, copied_to, end));
+    let selection = editor.selection();
+    drop(document);
+    editor.execute_edits(vec![(Position::default(), end, text, false)], Some(vec![selection]), REPLACE_ALL)
 }
 
 const REPLACE: EditReason = EditReason::Cursor { kind: "executeCommands", detailed_source: "replace" };

@@ -147,3 +147,11 @@ fn a_trigger_reads_the_current_binding_with_its_args() {
     assert_eq!(service.binding("Control+Cmd+A"), Some(&with_args));
     assert_eq!(service.binding("Control+Cmd+B"), None);
 }
+
+/// globalKeybindingsMainService.test.ts 'trigger passes undefined args when the binding has none'.
+#[test]
+fn a_trigger_of_a_binding_without_args_passes_none() {
+    let mut service = GlobalShortcuts::new(FakeGlobalShortcut::default());
+    service.update(vec![binding("Control+Cmd+A", "cmd")]);
+    assert_eq!(service.binding("Control+Cmd+A").map(|binding| (binding.command.as_str(), binding.args.clone())), Some(("cmd", None)));
+}

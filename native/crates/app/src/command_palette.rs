@@ -224,8 +224,8 @@ pub fn menu(extensions: &[ScannedExtension]) -> Vec<MenuItem> {
         .iter()
         .map(|item| MenuItem {
             id: text(&item["id"]).expect("an id"),
-            title: text(&item["title"]).unwrap_or_default(),
-            category: text(&item["category"]),
+            title: text(&item["title"]).map(|title| crate::nls::localize(&title).into_owned()).unwrap_or_default(),
+            category: text(&item["category"]).map(|category| crate::nls::localize(&category).into_owned()),
             when: item["when"].as_str().and_then(Expr::deserialize),
             precondition: item["precondition"].as_str().and_then(Expr::deserialize),
             source: None,
@@ -393,10 +393,23 @@ pub const EDITOR_ACTIONS: &[(&str, &str, Option<&str>)] = &[
     ("editor.action.addCommentLine", "Add Line Comment", Some("!editorReadonly")),
     ("editor.action.removeCommentLine", "Remove Line Comment", Some("!editorReadonly")),
     ("editor.action.blockComment", "Toggle Block Comment", Some("!editorReadonly")),
+    ("editor.action.revealDefinition", "Go to Definition", Some("editorHasDefinitionProvider")),
+    ("editor.action.revealDefinitionAside", "Open Definition to the Side", Some("editorHasDefinitionProvider && !isInEmbeddedEditor")),
+    ("editor.action.peekDefinition", "Peek Definition", Some("editorHasDefinitionProvider && !inReferenceSearchEditor && !isInEmbeddedEditor")),
+    ("editor.action.revealDeclaration", "Go to Declaration", Some("editorHasDeclarationProvider && !isInEmbeddedEditor")),
+    ("editor.action.peekDeclaration", "Peek Declaration", Some("editorHasDeclarationProvider && !inReferenceSearchEditor && !isInEmbeddedEditor")),
+    ("editor.action.goToTypeDefinition", "Go to Type Definition", Some("editorHasTypeDefinitionProvider")),
+    ("editor.action.peekTypeDefinition", "Peek Type Definition", Some("editorHasTypeDefinitionProvider && !inReferenceSearchEditor && !isInEmbeddedEditor")),
+    ("editor.action.goToImplementation", "Go to Implementations", Some("editorHasImplementationProvider")),
+    ("editor.action.peekImplementation", "Peek Implementations", Some("editorHasImplementationProvider && !inReferenceSearchEditor && !isInEmbeddedEditor")),
+    ("editor.action.goToReferences", "Go to References", Some("editorHasReferenceProvider && !inReferenceSearchEditor && !isInEmbeddedEditor")),
+    ("editor.action.referenceSearch.trigger", "Peek References", Some("editorHasReferenceProvider && !inReferenceSearchEditor && !isInEmbeddedEditor")),
+    ("editor.action.showDefinitionPreviewHover", "Show Definition Preview Hover", None),
     ("editor.action.marker.next", "Go to Next Problem (Error, Warning, Info)", None),
     ("editor.action.marker.prev", "Go to Previous Problem (Error, Warning, Info)", None),
     ("editor.action.marker.nextInFiles", "Go to Next Problem in Files (Error, Warning, Info)", None),
     ("editor.action.marker.prevInFiles", "Go to Previous Problem in Files (Error, Warning, Info)", None),
+    ("editor.action.inspectTMScopes", "Developer: Inspect Editor Tokens and Scopes", None),
 ];
 
 /// `getCodeEditorCommandPicks`: the active editor's supported actions, those whose precondition holds.
@@ -490,14 +503,17 @@ fn compare(a: &Candidate, b: &Candidate, history: &CommandsHistory) -> Ordering 
 /// whitespace, punctuation and symbols sort before digits and letters.
 /// shortcut: a few rules of the root collation of ICU, which Rust std lacks; labels here are English.
 pub fn locale_compare(a: &str, b: &str) -> Ordering {
-    let primary = |text: &str| -> Vec<(u8, char)> {
+    // ICU root collation order of ASCII punctuation and symbols (node: `.sort((a, b) => a.localeCompare(b))`).
+    const ASCII_SYMBOLS: &str = "_-,;:!?.'\"()[]{}@*/\\&#%`^+<=>|~$";
+    let primary = |text: &str| -> Vec<(u8, u32)> {
         try_normalize_to_base(text)
             .chars()
             .map(|c| {
+                if let Some(rank) = ASCII_SYMBOLS.find(c) {
+                    return (1, rank as u32);
+                }
                 let class = if c.is_whitespace() {
                     0
-                } else if c.is_ascii_punctuation() {
-                    1
                 } else if c.is_numeric() {
                     3
                 } else if c.is_alphabetic() {
@@ -505,7 +521,7 @@ pub fn locale_compare(a: &str, b: &str) -> Ordering {
                 } else {
                     2
                 };
-                (class, c)
+                (class, c as u32)
             })
             .collect()
     };

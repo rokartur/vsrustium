@@ -1,7 +1,9 @@
 //! The `Configuration` of platform/configuration/common/configurationModels.ts: the layers of one window and
-//! the merged view `getValue` reads. The port has no policies, remote, profiles or in-memory values yet, so
-//! those layers are empty and left out; `to_data` still sends them as upstream's `toData` does.
+//! the merged view `getValue` reads. The port has no remote or in-memory values, so those layers are empty and
+//! left out; `to_data` still sends them as upstream's `toData` does.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
@@ -11,13 +13,22 @@ use crate::model::{Change, ConfigurationModel, compare, merge_changes};
 #[derive(Clone, Debug, Default)]
 pub struct Configuration {
     pub defaults: ConfigurationModel,
+    /// `ApplicationConfiguration`: the default profile's application settings in a profile with its own settings.
+    pub application: ConfigurationModel,
     pub local_user: ConfigurationModel,
     pub workspace: ConfigurationModel,
     /// Each workspace folder and its `.vscode` settings; a folder window has one.
     pub folders: Vec<(PathBuf, ConfigurationModel)>,
+    /// The values policies force (`PolicyConfiguration`), over every other layer.
+    pub policy: ConfigurationModel,
     /// `WorkbenchState` is not EMPTY: a folder or a workspace file is open, so the workspace layer counts.
     pub has_workspace: bool,
+    /// `_workspaceConsolidatedConfiguration`, `_foldersConsolidatedConfigurations` and `overrideConfigurations`:
+    /// the merged model per folder and language. A write to a layer field must call `layers_changed`.
+    pub(crate) consolidated: RefCell<HashMap<FolderAndLanguage, ConfigurationModel>>,
 }
+
+type FolderAndLanguage = (Option<PathBuf>, Option<String>);
 
 /// `IConfigurationOverrides`: a file the value is read for, and a language.
 #[derive(Clone, Debug, Default)]
@@ -31,6 +42,8 @@ pub struct Overrides<'a> {
 pub struct Inspected {
     pub value: Option<Value>,
     pub default_value: Option<Value>,
+    pub policy_value: Option<Value>,
+    pub application: Layer,
     pub user_local: Layer,
     pub workspace: Layer,
     pub workspace_folder: Layer,
@@ -46,7 +59,15 @@ pub struct Layer {
 impl Configuration {
     /// `getValue(section, overrides)`.
     pub fn get_value(&self, section: Option<&str>, overrides: &Overrides) -> Option<Value> {
-        self.consolidated(overrides).get_value(section)
+        let folder = self.folder_for(overrides.resource).map(Path::to_path_buf);
+        let key = (folder, overrides.override_identifier.map(str::to_string));
+        let mut consolidated = self.consolidated.borrow_mut();
+        consolidated.entry(key).or_insert_with(|| self.consolidated(overrides)).get_value(section)
+    }
+
+    /// Drops the merged models after a layer changed.
+    pub fn layers_changed(&mut self) {
+        self.consolidated.get_mut().clear();
     }
 
     /// `inspect(key, overrides)`, the layers MainThreadConfiguration and `updateValue` decide a write target from.
@@ -63,38 +84,67 @@ impl Configuration {
         Inspected {
             value: self.get_value(Some(key), overrides),
             default_value: layer(Some(&self.defaults)).value,
+            policy_value: self.policy.get_value(Some(key)),
+            application: layer((!self.application.keys.is_empty()).then_some(&self.application)),
             user_local: layer(Some(&self.local_user)),
             workspace: layer(self.has_workspace.then_some(&self.workspace)),
             workspace_folder: layer(self.folder_model_for(overrides.resource)),
         }
     }
 
-    /// `getConsolidatedConfigurationModel`: defaults, then user, workspace and the folder the resource is in,
-    /// then the `[language]` block.
+    /// `getConsolidatedConfigurationModel`: defaults, then application, user, workspace and the folder the resource is in,
+    /// then the `[language]` block, then the policy values.
     fn consolidated(&self, overrides: &Overrides) -> ConfigurationModel {
-        let mut layers = vec![self.local_user.clone(), self.workspace.clone()];
+        let mut layers = vec![self.application.clone(), self.local_user.clone(), self.workspace.clone()];
         if let Some(folder) = self.folder_model_for(overrides.resource) {
             layers.push(folder.clone());
         }
         let merged = self.defaults.merge(&layers);
-        match overrides.override_identifier {
+        let mut merged = match overrides.override_identifier {
             Some(identifier) => merged.override_for(identifier),
             None => merged,
+        };
+        for key in &self.policy.keys {
+            merged.set_value(key, self.policy.get_value(Some(key)).expect("a model key has a value"));
         }
+        merged
     }
 
     /// `getFolderConfigurationModelForResource`: the model of the folder closest to the resource.
     fn folder_model_for(&self, resource: Option<&Path>) -> Option<&ConfigurationModel> {
+        let folder = self.folder_for(resource)?;
+        self.folders.iter().find(|(path, _)| path == folder).map(|(_, model)| model)
+    }
+
+    fn folder_for(&self, resource: Option<&Path>) -> Option<&Path> {
         let resource = resource?;
-        self.folders.iter().filter(|(folder, _)| resource.starts_with(folder)).max_by_key(|(folder, _)| folder.components().count()).map(|(_, model)| model)
+        self.folders.iter().map(|(folder, _)| folder.as_path()).filter(|folder| resource.starts_with(folder)).max_by_key(|folder| folder.components().count())
+    }
+
+    /// `compareAndUpdatePolicyConfiguration`.
+    pub fn compare_and_update_policy(&mut self, policy: ConfigurationModel) -> Change {
+        let change = compare(Some(&self.policy), Some(&policy));
+        if !change.keys.is_empty() {
+            self.policy = policy;
+            self.layers_changed();
+        }
+        change
+    }
+
+    /// `compareAndUpdateApplicationConfiguration`. The change compares the raw files, so a model parsed with other
+    /// scopes or exclusions from the same file is taken even when it reports no change.
+    pub fn compare_and_update_application(&mut self, application: ConfigurationModel) -> Change {
+        let change = compare(Some(&self.application), Some(&application));
+        self.application = application;
+        self.layers_changed();
+        change
     }
 
     /// `compareAndUpdateLocalUserConfiguration`.
     pub fn compare_and_update_local_user(&mut self, user: ConfigurationModel) -> Change {
         let change = compare(Some(&self.local_user), Some(&user));
-        if !change.keys.is_empty() {
-            self.local_user = user;
-        }
+        self.local_user = user;
+        self.layers_changed();
         change
     }
 
@@ -105,6 +155,7 @@ impl Configuration {
         let folder_change = compare(Some(current), Some(&folder_model));
         if !folder_change.keys.is_empty() {
             *current = folder_model.clone();
+            self.layers_changed();
         }
         if !single_folder {
             return folder_change;
@@ -117,6 +168,7 @@ impl Configuration {
         let change = compare(Some(&self.workspace), Some(&workspace));
         if !change.keys.is_empty() {
             self.workspace = workspace;
+            self.layers_changed();
         }
         change
     }
@@ -127,8 +179,8 @@ impl Configuration {
         let folders: Vec<Value> = self.folders.iter().map(|(folder, model)| json!([file_uri(folder), model.to_json()])).collect();
         json!({
             "defaults": self.defaults.to_json(),
-            "policy": empty,
-            "application": empty,
+            "policy": self.policy.to_json(),
+            "application": self.application.to_json(),
             "userLocal": self.local_user.to_json_with_raw(),
             "userRemote": empty,
             "workspace": self.workspace.to_json(),

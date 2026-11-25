@@ -30,6 +30,8 @@ pub(super) struct ContentHover {
     pub(super) row_target: Option<(usize, f32)>,
     /// The widget's window bounds, once painted.
     pub(super) widget_bounds: Rc<Cell<Option<Bounds<f32>>>>,
+    /// The rows' height before `max_height` clips them, which `_findPositionPreference` compares to the space.
+    pub(super) content_height: Rc<Cell<f32>>,
     serial: usize,
     /// Counts the shows from hidden, which replay the `fade-in` animation.
     pub(super) shows: usize,
@@ -137,7 +139,8 @@ const LOADING_ORDINAL: usize = 2000;
 impl Workbench {
     pub(super) fn hover_settings(&self, editor: &OpenEditor) -> HoverSettings {
         let settings = self.settings.lock().unwrap();
-        let overrides = Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
+        let (resource, language) = (editor.document().path.clone(), editor.document().language_id.clone());
+        let overrides = Overrides { resource: Some(&resource), override_identifier: Some(&language) };
         let value = |key: &str| settings.get_value(Some(&format!("editor.hover.{key}")), &overrides).unwrap_or(Value::Null);
         HoverSettings {
             enabled: value("enabled").as_str().unwrap_or("on").to_owned(),
@@ -278,12 +281,8 @@ impl Workbench {
         // shortcut: the hover takes no keyboard focus yet, so a second run leaves it as it is; port its focus and
         // scroll commands with the hover's keyboard navigation.
         self.commands.register("editor.action.showHover", |workbench, _, _, cx| {
-            if workbench.content_hover.shown.is_none()
-                && let Some(editor) = workbench.editors.active()
-            {
-                let head = editor.selection().head;
-                let anchor = Anchor { model_id: editor.model_id, line: head.line, start: head.column, end: head.column };
-                workbench.start_showing_or_update_hover(Some(anchor), Mode::Immediate, true, None, cx);
+            if workbench.content_hover.shown.is_none() {
+                workbench.show_content_hover_at_cursor(cx);
             }
             crate::commands::Outcome::done()
         });
@@ -291,6 +290,14 @@ impl Workbench {
             workbench.hide_content_hover(cx);
             crate::commands::Outcome::done()
         });
+    }
+
+    /// `showContentHover` at the primary cursor, `Immediate` from the keyboard.
+    pub(super) fn show_content_hover_at_cursor(&mut self, cx: &mut Context<Self>) {
+        let Some(editor) = self.editors.active() else { return };
+        let head = editor.selection().head;
+        let anchor = Anchor { model_id: editor.model_id, line: head.line, start: head.column, end: head.column };
+        self.start_showing_or_update_hover(Some(anchor), Mode::Immediate, true, None, cx);
     }
 
     /// `_startShowingOrUpdateHover`: whether the hover shows or will show for `anchor`.
@@ -392,9 +399,10 @@ impl Workbench {
         let Some(anchor) = self.operation(serial).map(|operation| operation.anchor) else { return };
         let mut calls = Vec::new();
         if let Some(editor) = self.editors.active().filter(|editor| editor.model_id == anchor.model_id) {
-            let uri = editor.document.uri();
-            let candidate = Candidate { uri: &uri, language: &editor.document.language_id };
-            let column = utf16_column(&editor.document.lines[anchor.line], anchor.start);
+            let uri = editor.document().uri();
+            let language = editor.document().language_id.clone();
+            let candidate = Candidate { uri: &uri, language: &language };
+            let column = utf16_column(&editor.document().lines[anchor.line], anchor.start);
             let position = json!({ "lineNumber": anchor.line + 1, "column": column + 1 });
             for (ordinal, registration) in self.language_features.ordered("$registerHoverProvider", &candidate).into_iter().enumerate() {
                 let args = vec![json!(registration.handle), uri.clone(), position.clone(), json!({})];
@@ -447,6 +455,7 @@ impl Workbench {
             Some(editor) => {
                 let mut parts = marker_parts(editor, anchor);
                 parts.extend(self.unicode_parts(editor, anchor));
+                parts.extend(self.definition_link_hover_parts(editor, anchor));
                 parts
             }
             None => Vec::new(),
@@ -506,6 +515,7 @@ impl Workbench {
             self.content_hover.widget_bounds.set(None);
         }
         self.content_hover.shown = result;
+        self.code_actions_hover_changed(cx);
         cx.notify();
     }
 
@@ -513,7 +523,7 @@ impl Workbench {
     fn unicode_parts(&self, editor: &OpenEditor, anchor: Anchor) -> Vec<Part> {
         let Some((options, highlights)) = self.unicode_highlights(editor).filter(|(_, highlights)| !highlights.has_more) else { return Vec::new() };
         let highlighter = CodePointHighlighter::new(&options);
-        let text = &editor.document.lines[anchor.line];
+        let text = &editor.document().lines[anchor.line];
         let mut reasons = Vec::new();
         let mut parts = Vec::new();
         for (start, end) in highlights.ranges.iter().filter(|(start, _)| start.line == anchor.line) {
@@ -522,24 +532,13 @@ impl Workbench {
             }
             let Some(c) = text.chars().nth(start.column) else { continue };
             let Some(reason) = highlighter.reason(c, None) else { continue };
-            let code_point = format_code_point_markdown(c);
-            let reason_text = match reason {
-                HighlightReason::Ambiguous => {
-                    let confusable = highlighter.ambiguous.get(&(c as u32)).and_then(|code| char::from_u32(*code)).unwrap_or(c);
-                    match confusable.is_ascii() {
-                        true => format!("The character {code_point} could be confused with the ASCII character {}, which is more common in source code.", format_code_point_markdown(confusable)),
-                        false => format!("The character {code_point} could be confused with the character {}, which is more common in source code.", format_code_point_markdown(confusable)),
-                    }
-                }
-                HighlightReason::Invisible => format!("The character {code_point} is invisible."),
-                HighlightReason::NonBasicAscii => format!("The character {code_point} is not a basic ASCII character."),
-            };
+            let reason_text = super::unicode_highlight::unicode_hover_reason(c, reason, &highlighter);
             if reasons.contains(&reason_text) {
                 continue;
             }
             reasons.push(reason_text.clone());
             let offset = text.char_indices().nth(start.column).map_or(text.len(), |(offset, _)| offset);
-            let token = editor.document.tokens.token_type_at(&editor.document.lines, anchor.line, offset);
+            let token = editor.document().tokens.token_type_at(&editor.document().lines, anchor.line, offset);
             let args = json!({
                 "codePoint": c as u32,
                 "reason": unicode_reason_value(reason, &highlighter, &options.allowed_locales, c),
@@ -559,9 +558,9 @@ impl Workbench {
 /// decorations are `showIfCollapsed`, so they take an anchor one column beyond either end.
 fn marker_parts(editor: &OpenEditor, anchor: Anchor) -> Vec<Part> {
     let line = anchor.line;
-    let max_column = editor.document.lines[line].chars().count();
+    let max_column = editor.document().lines[line].chars().count();
     let mut parts = Vec::new();
-    for decoration in editor.markers.iter().filter(|decoration| decoration.start.line <= line && decoration.end.line >= line) {
+    for decoration in editor.text_model().markers.iter().filter(|decoration| decoration.start.line <= line && decoration.end.line >= line) {
         let start = if decoration.start.line == line { decoration.start.column } else { 0 };
         let end = if decoration.end.line == line { decoration.end.column } else { max_column };
         if start > anchor.start + 1 || anchor.end as isize - 1 > end as isize {
@@ -577,8 +576,9 @@ fn marker_parts(editor: &OpenEditor, anchor: Anchor) -> Vec<Part> {
 /// contentHoverWidgetWrapper.ts `_findHoverAnchorCandidates` for a mouse target: the char under the mouse, or the
 /// end of the line when the mouse is less than half a char past it (mouseTarget.ts `createMouseTargetFromHitTestPosition`).
 fn anchor_at(editor: &OpenEditor, line: usize, visible: f32) -> Option<Anchor> {
-    let text = editor.document.lines.get(line)?;
-    let tab_size = editor.document.indentation.tab_size;
+    let document = editor.document();
+    let text = document.lines.get(line)?;
+    let tab_size = editor.document().indentation.tab_size;
     let count = text.chars().count();
     let width = visible_column(text, count, tab_size) as f32;
     let empty = |column| Anchor { model_id: editor.model_id, line, start: column, end: column };
@@ -603,7 +603,7 @@ fn distance_to_rectangle(point: Point<f32>, bounds: Bounds<f32>) -> f32 {
 }
 
 /// `formatCodePointMarkdown`: the `U+XXXX` code and, for a visible char, the char as inline code.
-fn format_code_point_markdown(c: char) -> String {
+pub(super) fn format_code_point_markdown(c: char) -> String {
     let code = format!("`{}`", code_point_to_hex(c));
     match crate::editor::unicode_highlighter::is_invisible_character(c) {
         true => code,

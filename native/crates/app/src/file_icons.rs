@@ -16,7 +16,29 @@ use crate::theme::{ThemeKind, parse_hex};
 /// `workbench.iconTheme` default.
 pub const DEFAULT_ICON_THEME: &str = "vs-seti";
 
+/// A `contributes.iconThemes` entry (`FileIconThemeData.fromExtensionTheme`): its id, label and description.
+pub struct FileIconThemeEntry {
+    pub id: String,
+    pub label: String,
+    pub description: Option<String>,
+}
+
+/// `contributes.iconThemes` of every extension; an entry without an id or a path is skipped.
+pub fn file_icon_themes(extensions: &[ScannedExtension]) -> Vec<FileIconThemeEntry> {
+    let mut entries = Vec::new();
+    for extension in extensions {
+        for theme in extension.description["contributes"]["iconThemes"].as_array().into_iter().flatten() {
+            let (Some(id), Some(_)) = (theme["id"].as_str(), theme["path"].as_str()) else { continue };
+            let label = theme["label"].as_str().unwrap_or(id).to_string();
+            entries.push(FileIconThemeEntry { id: id.to_string(), label, description: theme["description"].as_str().map(str::to_owned) });
+        }
+    }
+    entries
+}
+
 pub struct FileIconTheme {
+    /// The theme's id, its `workbench.iconTheme` value.
+    pub id: String,
     base: Associations,
     light: Associations,
     high_contrast: Associations,
@@ -69,7 +91,7 @@ impl FileIconTheme {
             })
             .with_context(|| format!("no icon theme {id}"))?;
         let document_path = extension.location.join(path);
-        let document: Value = serde_json::from_slice(&std::fs::read(&document_path)?)?;
+        let document: Value = serde_json::from_str(&crate::theme::strip_jsonc(&std::fs::read_to_string(&document_path)?))?;
         let folder = document_path.parent().expect("a theme file has a folder");
         let font = &document["fonts"][0];
         let face_data = match font["src"][0]["path"].as_str() {
@@ -87,6 +109,7 @@ impl FileIconTheme {
             definitions.insert(name.clone(), IconDefinition { outline, image, color });
         }
         Ok(FileIconTheme {
+            id: id.to_string(),
             base: Associations::read(&document),
             light: Associations::read(&document["light"]),
             high_contrast: Associations::read(&document["highContrast"]),

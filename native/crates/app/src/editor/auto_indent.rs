@@ -10,7 +10,7 @@ use textmate::StandardTokenType;
 
 use super::cursor::{self, Position};
 use super::folding::marker_regex;
-use super::edit::{ContentChanged, EditReason, end_of};
+use super::edit::{ContentChanged, EditReason, command, end_of};
 use super::{Indentation, OpenEditor, TextDocument, visible_column};
 use crate::brackets::{bracket_pattern, character_pairs, escape_regex};
 use crate::languages::{Languages, marker_pattern};
@@ -93,6 +93,8 @@ pub struct LanguageRules {
     electric: Option<ElectricBrackets>,
     /// The last char of each auto-closing pair's open (`autoClosingPairsOpenByEnd`).
     auto_closing_open_ends: Vec<char>,
+    /// `autoClosingPairs` (or the brackets) as (open, close).
+    pub auto_closing_pairs: Vec<(String, String)>,
     /// `wordPattern`: `getWordAtPosition` falls back to the default word pattern without one.
     pub word_pattern: Option<onig::Regex>,
 }
@@ -121,13 +123,13 @@ impl LanguageRules {
             (pairs, rules.unwrap_or_default())
         });
         let electric = brackets.as_ref().filter(|pairs| !pairs.is_empty()).map(|pairs| electric_brackets(pairs));
-        let auto_closing = match config["autoClosingPairs"].as_array() {
-            Some(pairs) => pairs.iter().filter_map(|pair| pair[0].as_str().or(pair["open"].as_str())).map(str::to_string).collect(),
-            None => brackets.unwrap_or_default().into_iter().map(|(open, _)| open).collect::<Vec<_>>(),
+        let auto_closing_pairs: Vec<(String, String)> = match config["autoClosingPairs"].as_array() {
+            Some(pairs) => pairs.iter().filter_map(|pair| Some((pair[0].as_str().or(pair["open"].as_str())?.to_string(), pair[1].as_str().or(pair["close"].as_str())?.to_string()))).collect(),
+            None => brackets.unwrap_or_default(),
         };
-        let auto_closing_open_ends = auto_closing.iter().filter_map(|open| open.chars().last()).collect();
+        let auto_closing_open_ends = auto_closing_pairs.iter().filter_map(|(open, _)| open.chars().last()).collect();
         let word_pattern = (!config["wordPattern"].is_null()).then(|| parse_regex(language, "wordPattern", &config["wordPattern"])).flatten();
-        LanguageRules { on_enter, indent, electric, auto_closing_open_ends, word_pattern }
+        LanguageRules { on_enter, indent, electric, auto_closing_open_ends, auto_closing_pairs, word_pattern }
     }
 
     /// `OnEnterSupport.onEnter`.
@@ -655,6 +657,72 @@ impl<'a> Model<'a> {
         }
         edits
     }
+
+    /// The edits of `AutoIndentOnPaste.trigger` as `reindent_edits` gives them: the first pasted line takes
+    /// its good indentation, and the lines after it move by the offset the next non-blank line needs.
+    pub fn paste_edits(&self, start: Position, end: Position, within_string: bool) -> Vec<(usize, usize, String)> {
+        if self.only_whitespace(start, end) || (!within_string && (self.in_string(start) || self.in_string(end))) || !self.tokens.is_cheap_to_tokenize(self.lines, start.line) {
+            return Vec::new();
+        }
+        let tab_size = self.indentation.tab_size;
+        let mut edits = Vec::new();
+        let mut first_line_text = self.lines[start.line].clone();
+        if is_blank(&substring(&first_line_text, 0, start.column))
+            && let Some(indent) = self.good_indent(self.language_id, start.line)
+        {
+            let old_indent = leading_whitespace(&first_line_text).to_string();
+            let count = space_count(&indent, tab_size);
+            if count != space_count(&old_indent, tab_size) {
+                let new_indent = generate_indent(count as isize, self.indentation);
+                first_line_text = format!("{new_indent}{}", &first_line_text[old_indent.len()..]);
+                edits.push((start.line, old_indent.len(), new_indent));
+            } else if self.matches_no_indent_rule(&first_line_text) {
+                return Vec::new();
+            }
+        }
+        let mut line = start.line;
+        while line < end.line && is_blank(&self.lines[line + 1]) {
+            line += 1;
+        }
+        if line == end.line {
+            return edits;
+        }
+        // The virtual model of `trigger`: the first line reads as reindented, its tokens stay the document's.
+        let model = self.virtual_model(&same_line, Some((start.line, first_line_text, self.processed_line(start.line))));
+        let Some(indent) = model.good_indent(self.language_id, line + 1) else { return edits };
+        let offset = space_count(&indent, tab_size) as isize - space_count(leading_whitespace(&self.lines[line + 1]), tab_size) as isize;
+        if offset == 0 {
+            return edits;
+        }
+        for line in line + 1..=end.line {
+            let old_indent = leading_whitespace(&self.lines[line]);
+            let new_indent = generate_indent(space_count(old_indent, tab_size) as isize + offset, self.indentation);
+            if new_indent != old_indent {
+                edits.push((line, old_indent.len(), new_indent));
+            }
+        }
+        edits
+    }
+
+    /// `rangeContainsOnlyWhitespaceCharacters`.
+    fn only_whitespace(&self, start: Position, end: Position) -> bool {
+        let tail = |line: usize, from: usize| self.lines[line].chars().skip(from).collect::<String>();
+        if start.line == end.line {
+            return is_blank(&substring(&self.lines[start.line], start.column, end.column));
+        }
+        is_blank(&tail(start.line, start.column)) && (start.line + 1..end.line).all(|line| is_blank(&self.lines[line])) && is_blank(&substring(&self.lines[end.line], 0, end.column))
+    }
+
+    /// `isStartOrEndInString` for one end: the token at `position` is a string, when its line is cheap to tokenize.
+    fn in_string(&self, position: Position) -> bool {
+        let offset = byte_offset(&self.lines[position.line], position.column);
+        self.tokens.is_cheap_to_tokenize(self.lines, position.line) && self.tokens.token_type_at(self.lines, position.line, offset) == StandardTokenType::String
+    }
+
+    /// `getIndentMetadata` of `text` is 0 or `UNINDENT_MASK`: no increase, decrease or indent-next rule matches.
+    fn matches_no_indent_rule(&self, text: &str) -> bool {
+        self.indent_rules(self.language_id).is_some_and(|rules| !is_match(&rules.increase, text) && !is_match(&rules.decrease, text) && !should(&rules.indent_next, text))
+    }
 }
 
 fn should(regex: &Option<onig::Regex>, text: &str) -> bool {
@@ -677,13 +745,14 @@ impl<'a> AutoIndent<'a> {
 impl OpenEditor {
     /// `ReindentLinesAction.run`: every line reindented by the language's indentation rules, as one undo step.
     pub fn reindent_lines(&mut self, auto: AutoIndent) -> Option<ContentChanged> {
-        let edits = auto.model(&self.document).reindent_edits(0, self.document.lines.len() - 1);
+        let edits = auto.model(&*self.document()).reindent_edits(0, self.document().lines.len() - 1);
         self.reindent(edits, "editor.action.reindentlines")
     }
 
     /// `ReindentSelectedLinesAction.run`: each selection's lines reindented, from the line above it.
     pub fn reindent_selected_lines(&mut self, auto: AutoIndent) -> Option<ContentChanged> {
-        let model = auto.model(&self.document);
+        let document = self.document();
+        let model = auto.model(&document);
         let mut edits = Vec::new();
         for selection in &self.selections {
             let (mut start, mut end) = (selection.start().line, selection.end().line);
@@ -696,7 +765,32 @@ impl OpenEditor {
             start = start.saturating_sub(1);
             edits.extend(model.reindent_edits(start, end));
         }
+        drop(document);
         self.reindent(edits, "editor.action.reindentselectedlines")
+    }
+
+    /// `AutoIndentOnPaste.trigger`: the lines pasted over `start..end` reindented as one undo step;
+    /// `within_string` is `editor.autoIndentOnPasteWithinString`.
+    pub fn auto_indent_on_paste(&mut self, start: Position, end: Position, auto: AutoIndent, within_string: bool) -> Option<ContentChanged> {
+        if self.selections.len() > 1 || auto.strategy < Strategy::Full {
+            return None;
+        }
+        let edits = auto.model(&self.document()).paste_edits(start, end, within_string);
+        let selection = self.selection();
+        // `AutoIndentOnPasteCommand`: one edit touching an empty selection decides which side it sticks to.
+        let track_previous_on_empty = match edits.as_slice() {
+            [(line, _, _)] if Position::new(*line, 0) == selection.end() => Some(true),
+            [(line, indent_len, _)] if Position::new(*line, *indent_len) == selection.start() => Some(false),
+            _ => None,
+        };
+        let edits: Vec<_> = edits.into_iter().map(|(line, indent_len, indent)| (Position::new(line, 0), Position::new(line, indent_len), indent)).collect();
+        if edits.is_empty() {
+            return None;
+        }
+        self.push_undo_stop();
+        let change = self.execute_edits_tracking_primary_on_empty(edits, track_previous_on_empty, command("autoIndentOnPaste"));
+        self.push_undo_stop();
+        change
     }
 
     fn reindent(&mut self, edits: Vec<(usize, usize, String)>, id: &'static str) -> Option<ContentChanged> {

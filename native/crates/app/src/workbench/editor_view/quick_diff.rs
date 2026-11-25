@@ -255,15 +255,15 @@ impl Workbench {
     /// quickDiffModel.ts `triggerDiff` for the active editor: asks the providers for their originals once per
     /// generation, then diffs the models whenever a version moves.
     pub(in crate::workbench) fn update_quick_diff(&mut self, cx: &mut Context<Self>) {
-        // The model each tab edits: a diff or merge editor's is not the tab entry's own.
-        let open: Vec<(String, PathBuf)> = (0..self.editors.editors.len()).map(|index| self.editors.tab_model(index)).map(|model| (model.document.scheme.clone(), model.document.path.clone())).collect();
+        // Every group's tabs and models: a diff or merge editor's model is not the tab entry's own.
+        let open: Vec<(String, PathBuf)> = self.editors.all_editors().map(|model| (model.document().scheme.clone(), model.document().path.clone())).collect();
         let followed: Vec<(String, PathBuf)> = self.quick_diffs.diff_information.values().map(|(key, _)| key.clone()).collect();
         self.quick_diffs.entries.retain(|key, _| open.contains(key) || followed.contains(key));
         self.follow_quick_diff_widget(None, cx);
         if !self.quick_diff_enabled() || self.editors.active_diff().is_some() {
             return;
         }
-        let mut keys: Vec<(String, PathBuf)> = self.editors.active().map(|editor| (editor.document.scheme.clone(), editor.document.path.clone())).into_iter().collect();
+        let mut keys: Vec<(String, PathBuf)> = self.editors.active().map(|editor| (editor.document().scheme.clone(), editor.document().path.clone())).into_iter().collect();
         for key in followed {
             if !keys.contains(&key) {
                 keys.push(key);
@@ -292,8 +292,8 @@ impl Workbench {
             let original = self.editors.model(&quick_diff.original.scheme, &quick_diff.original.path).expect("checked above");
             originals.push((quick_diff.kind, original));
         }
-        let mut versions: Vec<u32> = originals.iter().map(|(_, original)| original.version_id).collect();
-        versions.push(modified.version_id);
+        let mut versions: Vec<u32> = originals.iter().map(|(_, original)| original.text_model().version_id).collect();
+        versions.push(modified.text_model().version_id);
         if versions == entry.versions {
             return;
         }
@@ -303,9 +303,12 @@ impl Workbench {
             _ => false,
         };
         let options = diff::DiffOptions { ignore_trim_whitespace, max_computation_time_ms: MAX_COMPUTATION_TIME_MS, compute_moves: false, extend_to_subwords: false };
-        let inputs: Vec<(QuickDiffKind, &[String])> = originals.iter().map(|(kind, original)| (*kind, original.document.lines.as_slice())).collect();
-        let (changes, all_changes) = compute_changes(&inputs, &modified.document.lines, options);
-        let changes_version = modified.version_id;
+        let documents: Vec<_> = originals.iter().map(|(kind, original)| (*kind, original.document())).collect();
+        let inputs: Vec<(QuickDiffKind, &[String])> = documents.iter().map(|(kind, document)| (*kind, document.lines.as_slice())).collect();
+        let (changes, all_changes) = compute_changes(&inputs, &modified.document().lines, options);
+        let changes_version = modified.text_model().version_id;
+        drop(inputs);
+        drop(documents);
         let entry = self.quick_diffs.entries.get_mut(&key).expect("found above");
         entry.versions = versions;
         entry.all_changes = all_changes;
@@ -319,7 +322,7 @@ impl Workbench {
     /// the file, answers with an original; each original's content loads as a model (textModelResolverService).
     fn request_original_resources(&mut self, key: (String, PathBuf), generation: u64, cx: &mut Context<Self>) {
         let uri = crate::editor::uri_value(&key.0, &key.1);
-        let language = self.editors.model(&key.0, &key.1).map(|model| model.document.language_id.clone()).unwrap_or_default();
+        let language = self.editors.model(&key.0, &key.1).map(|model| model.document().language_id.clone()).unwrap_or_default();
         let mut answers = Vec::new();
         for provider in self.quick_diff_providers(&key.0, &key.1) {
             let answer = match &provider.source {
@@ -419,7 +422,7 @@ impl Workbench {
 
     /// The quick diff model of an editor's file.
     pub(super) fn quick_diff_entry(&self, editor: &OpenEditor) -> Option<&Entry> {
-        self.quick_diffs.entries.get(&(editor.document.scheme.clone(), editor.document.path.clone()))
+        self.quick_diffs.entries.get(&(editor.document().scheme.clone(), editor.document().path.clone()))
     }
 
     /// The model's `changes`, empty without a quick diff.

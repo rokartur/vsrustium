@@ -153,6 +153,7 @@ fn a_registered_command_waits_for_its_activation_once_then_runs_synchronously(cx
     let order = Rc::new(RefCell::new(Vec::new()));
     let executed = order.clone();
     workbench.update(cx, |workbench, _| {
+        workbench.host.activation_events.insert("onCommand:bizBaz".into());
         workbench.commands.register("bizBaz", move |_, _, _, _| {
             executed.borrow_mut().push("executing command");
             Outcome::done()

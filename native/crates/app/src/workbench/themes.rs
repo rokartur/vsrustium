@@ -1,9 +1,11 @@
-//! The color theme picker (workbench/contrib/themes/browser/themes.contribution.ts `SelectColorThemeCommandId`
-//! and `InstalledThemesPicker`) and `setColorTheme` of workbenchThemeService.ts.
+//! The color and file icon theme pickers (workbench/contrib/themes/browser/themes.contribution.ts
+//! `SelectColorThemeCommandId`, `SelectFileIconThemeCommandId` and `InstalledThemesPicker`) and `setColorTheme` and
+//! `setFileIconTheme` of workbenchThemeService.ts.
 
 use std::time::Duration;
 
 use gpui::{Context, Task, Window};
+use config::service::Settings;
 use serde_json::json;
 
 use super::Workbench;
@@ -15,11 +17,39 @@ use crate::quick_input::{Button, Entry, Event, Item, Kind, QuickInput};
 use crate::theme::{ColorThemeEntry, ThemeKind};
 
 const COLOR_THEME_SETTING: &str = "workbench.colorTheme";
+const ICON_THEME_SETTING: &str = "workbench.iconTheme";
 /// `ThemeSettingDefaults.COLOR_THEME_DARK` and `COLOR_THEME_LIGHT`: pinned first in their group.
 const DEFAULT_DARK: &str = "Dark 2026";
 const DEFAULT_LIGHT: &str = "Light 2026";
 /// `selectTheme`: a theme is previewed once the focus rested on it this long.
 const PREVIEW_DELAY: Duration = Duration::from_millis(200);
+
+/// `IHostColorSchemeService`: the system's dark appearance and its Increase Contrast accessibility setting.
+#[derive(Clone, Copy, PartialEq, Debug, Default)]
+pub struct HostColorScheme {
+    pub dark: bool,
+    pub high_contrast: bool,
+}
+
+/// Electron's `nativeTheme.shouldUseDarkColors` and `shouldUseHighContrastColors` on macOS.
+pub fn host_color_scheme() -> HostColorScheme {
+    let defaults = objc2_foundation::NSUserDefaults::standardUserDefaults();
+    let style = defaults.stringForKey(&objc2_foundation::NSString::from_str("AppleInterfaceStyle"));
+    let high_contrast = objc2_app_kit::NSWorkspace::sharedWorkspace().accessibilityDisplayShouldIncreaseContrast();
+    HostColorScheme { dark: style.is_some_and(|style| style.to_string() == "Dark"), high_contrast }
+}
+
+/// themeConfiguration.ts `getColorThemeSettingId`: the setting that names the color theme for this host scheme.
+pub fn color_theme_setting_id(settings: &Settings, host: HostColorScheme) -> &'static str {
+    let enabled = |key| settings.get_value(Some(key), &Default::default()) == Some(json!(true));
+    if enabled("window.autoDetectHighContrast") && host.high_contrast {
+        return if host.dark { "workbench.preferredHighContrastColorTheme" } else { "workbench.preferredHighContrastLightColorTheme" };
+    }
+    if enabled("window.autoDetectColorScheme") {
+        return if host.dark { "workbench.preferredDarkColorTheme" } else { "workbench.preferredLightColorTheme" };
+    }
+    COLOR_THEME_SETTING
+}
 
 /// `ThemeSettingTarget`: `Preview` shows the theme without writing `workbench.colorTheme`.
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -28,9 +58,17 @@ pub enum SettingTarget {
     Auto,
 }
 
-/// What the open picker remembers: the theme to restore, the settings id of each item by handle, and the
-/// preview waiting for its delay.
+/// Which theme service the picker sets.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum ThemeType {
+    Color,
+    FileIcon,
+}
+
+/// What the open picker remembers: the theme to restore, the settings id of each item by handle (`""` for the
+/// None file icon theme), and the preview waiting for its delay.
 pub struct ColorThemePicker {
+    theme_type: ThemeType,
     current: String,
     picks: Vec<String>,
     completed: bool,
@@ -43,6 +81,63 @@ impl Workbench {
             workbench.show_color_theme_picker(window, cx);
             Outcome::done()
         });
+        self.commands.register("workbench.action.selectIconTheme", |workbench, _, window, cx| {
+            workbench.show_file_icon_theme_picker(window, cx);
+            Outcome::done()
+        });
+    }
+
+    /// The `selectIconTheme` action: None first, then the installed file icon themes, the current one focused.
+    fn show_file_icon_theme_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (entries, picks) = file_icon_theme_entries(&crate::file_icons::file_icon_themes(&self.extensions));
+        let current = self.file_icons.as_ref().map_or_else(String::new, |theme| theme.id.clone());
+        let mut input = QuickInput::new(0, Kind::QuickPick);
+        input.placeholder = Some("Select File Icon Theme (Up/Down Keys to Preview)".into());
+        input.match_on_description = true;
+        input.set_items(entries);
+        if let Some(handle) = picks.iter().position(|id| *id == current) {
+            input.set_active_items(&[handle as i64]);
+        }
+        let picker = ColorThemePicker { theme_type: ThemeType::FileIcon, current, picks, completed: false, preview: None };
+        let id = self.quick_inputs.add(input, Owner::ColorThemes(picker));
+        self.show_quick_input(id, window, cx);
+        self.flush_quick_input_events(window, cx);
+    }
+
+    fn set_theme(&mut self, theme_type: ThemeType, settings_id: &str, target: SettingTarget, cx: &mut Context<Self>) {
+        match theme_type {
+            ThemeType::Color => self.set_color_theme(settings_id, target, cx),
+            ThemeType::FileIcon => self.set_file_icon_theme(settings_id, target, cx),
+        }
+    }
+
+    /// `WorkbenchThemeService.setFileIconTheme`: `""` is the None theme, written as `null`; a theme that fails to load
+    /// leaves the current one.
+    fn set_file_icon_theme(&mut self, id: &str, target: SettingTarget, cx: &mut Context<Self>) {
+        let current = self.file_icons.as_ref().map_or("", |theme| theme.id.as_str());
+        if current != id {
+            self.file_icons = match id {
+                "" => None,
+                id => match crate::file_icons::FileIconTheme::load(&self.extensions, id) {
+                    Ok(theme) => Some(theme),
+                    Err(error) => {
+                        eprintln!("loading file icon theme {id}: {error:#}");
+                        return;
+                    }
+                },
+            };
+            cx.notify();
+        }
+        if target == SettingTarget::Preview {
+            return;
+        }
+        let value = if id.is_empty() { json!(null) } else { json!(id) };
+        let mut settings = self.settings.lock().unwrap();
+        match settings.update_value_derived(ICON_THEME_SETTING, Some(&value)) {
+            Ok(change) if !change.is_empty() => self.host.send_configuration_change(&settings, &change),
+            Ok(_) => {}
+            Err(error) => eprintln!("writing {ICON_THEME_SETTING}: {error}"),
+        }
     }
 
     /// `InstalledThemesPicker.openQuickPick` with the picks of the `selectTheme` action.
@@ -64,7 +159,7 @@ impl Workbench {
         if let Some(handle) = picks.iter().position(|id| *id == current) {
             input.set_active_items(&[handle as i64]);
         }
-        let picker = ColorThemePicker { current, picks, completed: false, preview: None };
+        let picker = ColorThemePicker { theme_type: ThemeType::Color, current, picks, completed: false, preview: None };
         let id = self.quick_inputs.add(input, Owner::ColorThemes(picker));
         self.show_quick_input(id, window, cx);
         self.flush_quick_input_events(window, cx);
@@ -73,12 +168,13 @@ impl Workbench {
     /// The picker's listeners: moving previews, accepting keeps the theme, hiding otherwise restores it.
     pub fn color_theme_picker_event(&mut self, id: i64, event: Event, window: &mut Window, cx: &mut Context<Self>) {
         let Some(Owner::ColorThemes(picker)) = self.quick_inputs.owner(id) else { return };
+        let theme_type = picker.theme_type;
         match event {
             Event::ChangeActive(handles) => {
                 let theme = handles.first().map_or_else(|| picker.current.clone(), |handle| picker.picks[*handle as usize].clone());
                 let preview = cx.spawn_in(window, async move |workbench, cx| {
                     cx.background_executor().timer(PREVIEW_DELAY).await;
-                    let _ = workbench.update(cx, |workbench, cx| workbench.set_color_theme(&theme, SettingTarget::Preview, cx));
+                    let _ = workbench.update(cx, |workbench, cx| workbench.set_theme(theme_type, &theme, SettingTarget::Preview, cx));
                 });
                 if let Some(Owner::ColorThemes(picker)) = self.quick_inputs.owner_mut(id) {
                     picker.preview = Some(preview);
@@ -92,7 +188,7 @@ impl Workbench {
                     picker.completed = true;
                     picker.preview = None;
                 }
-                self.set_color_theme(&theme, SettingTarget::Auto, cx);
+                self.set_theme(theme_type, &theme, SettingTarget::Auto, cx);
                 self.hide_quick_input_by_id(id, window, cx);
             }
             Event::TriggerButton(..) => {
@@ -103,7 +199,10 @@ impl Workbench {
             }
             Event::TriggerItemButton(handle, ..) => {
                 let theme = &picker.picks[handle as usize];
-                let extension = self.color_themes.iter().find(|entry| entry.settings_id == *theme).map(|entry| entry.extension_id.clone());
+                let extension = match theme_type {
+                    ThemeType::Color => self.color_themes.iter().find(|entry| entry.settings_id == *theme).map(|entry| entry.extension_id.clone()),
+                    ThemeType::FileIcon => self.extensions.iter().find(|extension| extension.description["contributes"]["iconThemes"].as_array().is_some_and(|themes| themes.iter().any(|entry| entry["id"] == *theme))).map(|extension| extension.id.clone()),
+                };
                 let Some(extension) = extension else { return };
                 // `extensionsWorkbenchService.openSearch` runs as the command the Extensions view registers.
                 let outcome = self.execute_command("workbench.extensions.search", vec![json!(format!("@id:{extension}"))], window, cx);
@@ -113,10 +212,48 @@ impl Workbench {
                 let restore = (!picker.completed).then(|| picker.current.clone());
                 self.quick_inputs.remove(id);
                 if let Some(theme) = restore {
-                    self.set_color_theme(&theme, SettingTarget::Auto, cx);
+                    self.set_theme(theme_type, &theme, SettingTarget::Auto, cx);
                 }
             }
             Event::ChangeValue(_) | Event::ChangeSelection(_) => {}
+        }
+    }
+
+    /// `ThemeConfiguration`'s `workbench.colorCustomizations` and `editor.tokenColorCustomizations` on the current theme.
+    pub(crate) fn customize_theme(&mut self) {
+        let settings = self.settings.lock().unwrap();
+        let value = |key| settings.get_value(Some(key), &Default::default()).unwrap_or_default();
+        let (colors, token_colors) = (value("workbench.colorCustomizations"), value("editor.tokenColorCustomizations"));
+        drop(settings);
+        self.theme.set_customizations(&colors, &token_colors);
+        for editor in self.editors.all_editors() {
+            editor.model.borrow_mut().document.tokens.theme_changed();
+        }
+        self.restyle_webviews();
+    }
+
+    /// `restoreColorTheme`: applies the theme the settings name for the host scheme, without writing it back.
+    pub(crate) fn restore_color_theme(&mut self, cx: &mut Context<Self>) {
+        let settings = self.settings.lock().unwrap();
+        let configured = settings.get_value(Some(color_theme_setting_id(&settings, self.host_colors)), &Default::default());
+        drop(settings);
+        if let Some(id) = configured.as_ref().and_then(|id| id.as_str()) {
+            self.set_color_theme(id, SettingTarget::Preview, cx);
+        }
+    }
+
+    /// `hostColorService.onDidChangeColorScheme` with `isPreferredColorSchemeChange`.
+    pub fn host_color_scheme_changed(&mut self, cx: &mut Context<Self>) {
+        let (previous, current) = (self.host_colors, host_color_scheme());
+        self.host_colors = current;
+        let settings = self.settings.lock().unwrap();
+        let enabled = |key| settings.get_value(Some(key), &Default::default()) == Some(json!(true));
+        let dark_changed = previous.dark != current.dark;
+        let restore = (enabled("window.autoDetectColorScheme") && dark_changed)
+            || (enabled("window.autoDetectHighContrast") && (previous.high_contrast != current.high_contrast || (current.high_contrast && dark_changed)));
+        drop(settings);
+        if restore {
+            self.restore_color_theme(cx);
         }
     }
 
@@ -134,21 +271,19 @@ impl Workbench {
                 }
             };
             self.theme = theme;
-            for editor in &mut self.editors.editors {
-                editor.document.tokens.theme_changed();
-            }
+            self.customize_theme();
             self.host.send_color_theme(self.theme.kind);
-            self.restyle_webviews();
             cx.notify();
         }
         if target == SettingTarget::Preview {
             return;
         }
         let mut settings = self.settings.lock().unwrap();
-        match settings.update_value_derived(COLOR_THEME_SETTING, Some(&json!(settings_id))) {
+        let key = color_theme_setting_id(&settings, self.host_colors);
+        match settings.update_value_derived(key, Some(&json!(settings_id))) {
             Ok(change) if !change.is_empty() => self.host.send_configuration_change(&settings, &change),
             Ok(_) => {}
-            Err(error) => eprintln!("writing {COLOR_THEME_SETTING}: {error}"),
+            Err(error) => eprintln!("writing {key}: {error}"),
         }
     }
 }
@@ -180,6 +315,27 @@ fn color_theme_entries(themes: &[ColorThemeEntry]) -> (Vec<Entry>, Vec<String>) 
             }));
             picks.push(theme.settings_id.clone());
         }
+    }
+    (entries, picks)
+}
+
+/// The `selectIconTheme` picks: the "file icon themes" separator, None, then the themes by label (`toEntries`).
+fn file_icon_theme_entries(themes: &[crate::file_icons::FileIconThemeEntry]) -> (Vec<Entry>, Vec<String>) {
+    let none = Item { handle: 0, label: "None".into(), description: Some("Disable File Icons".into()), pickable: true, ..Item::default() };
+    let mut entries = vec![Entry::Separator(Some("file icon themes".into())), Entry::Item(none)];
+    let mut picks = vec![String::new()];
+    let mut sorted: Vec<_> = themes.iter().collect();
+    sorted.sort_by(|a, b| locale_compare(&a.label, &b.label));
+    for theme in sorted {
+        entries.push(Entry::Item(Item {
+            handle: picks.len() as i64,
+            label: theme.label.clone(),
+            description: theme.description.clone().or_else(|| (theme.label != theme.id).then(|| theme.id.clone())),
+            pickable: true,
+            buttons: vec![Button { handle: 0, codicon: Some("gear".into()), tooltip: Some("Manage Extension".into()), ..Button::default() }],
+            ..Item::default()
+        }));
+        picks.push(theme.id.clone());
     }
     (entries, picks)
 }

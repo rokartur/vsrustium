@@ -40,7 +40,7 @@ fn run(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext, command:
 fn active_text_and_cursor(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext) -> (String, Position) {
     workbench.read_with(cx, |workbench, _| {
         let editor = workbench.editors.active().unwrap();
-        (editor.document.lines.join("\n"), editor.selections[0].head)
+        (editor.document().lines.join("\n"), editor.selections[0].head)
     })
 }
 
@@ -76,6 +76,32 @@ fn a_setting_query_reveals_its_key_or_its_value(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn an_open_settings_file_marks_its_unknown_settings_until_it_closes(cx: &mut TestAppContext) {
+    let (workbench, cx, dir) = workbench(cx, "unknown");
+    std::fs::create_dir_all(dir.join("User")).unwrap();
+    std::fs::write(dir.join("User/settings.json"), "{\n\t\"editor.tabSize\": 2,\n\t\"editor.unknownSetting\": true\n}").unwrap();
+    let markers = |workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext| {
+        workbench.read_with(cx, |workbench, _| {
+            let markers = workbench.diagnostics.service.read(crate::markers::ReadOptions { owner: Some("UnsupportedSettingsRenderer"), ..Default::default() });
+            markers.iter().map(|marker| (marker.resource.clone(), marker.message.clone(), marker.start_line, marker.end_column)).collect::<Vec<_>>()
+        })
+    };
+
+    run(&workbench, cx, "workbench.action.openSettingsJson", vec![]);
+    assert_eq!(markers(&workbench, cx), Vec::new(), "the renderer waits 200ms");
+    cx.executor().advance_clock(std::time::Duration::from_millis(200));
+    cx.run_until_parked();
+    let resource = crate::editor::uri_string("file", &dir.join("User/settings.json"));
+    assert_eq!(markers(&workbench, cx), vec![(resource, "Unknown Configuration Setting".to_string(), 3, 31)]);
+
+    run(&workbench, cx, "workbench.action.closeActiveEditor", vec![]);
+    cx.executor().advance_clock(std::time::Duration::from_millis(200));
+    cx.run_until_parked();
+    assert_eq!(markers(&workbench, cx), Vec::new(), "dispose removes the markers");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[gpui::test]
 fn the_raw_default_settings_open_read_only(cx: &mut TestAppContext) {
     let (workbench, cx, dir) = workbench(cx, "raw");
 
@@ -83,7 +109,7 @@ fn the_raw_default_settings_open_read_only(cx: &mut TestAppContext) {
 
     let (uri, first_line, language, readonly) = workbench.read_with(cx, |workbench, _| {
         let editor = workbench.editors.active().unwrap();
-        let document = &editor.document;
+        let document = &editor.document();
         (document.uri_string(), document.lines[0].clone(), document.language_id.clone(), workbench.active_editor_readonly())
     });
     assert_eq!((uri.as_str(), first_line.as_str(), language.as_str()), ("vscode://defaultsettings/defaultSettings.jsonc", "{", "jsonc"));
@@ -100,7 +126,7 @@ fn the_default_keybindings_file_lists_the_defaults_then_the_unbound_commands(cx:
 
     let (name, lines) = workbench.read_with(cx, |workbench, _| {
         let editor = workbench.editors.active().unwrap();
-        (workbench.editor_name(editor), editor.document.lines.clone())
+        (workbench.editor_name(editor), editor.document().lines.clone())
     });
     assert_eq!(name, "Default Keybindings");
     assert_eq!(lines[..2], ["// Override key bindings by placing them into your key bindings file.", "["]);
@@ -133,6 +159,9 @@ fn export_default_keybindings_writes_the_core_then_the_built_in_extension_rules(
     let last_core = lines.iter().rposition(|line| line.contains("\"workbench.action.openSettings\"")).unwrap();
     assert!(preview > last_core, "the built-in extension rules come after the core rules");
     assert!(text.contains("\n]\n\n\n// Here are other available commands: \n// - "));
+    // Core rules keep their platform keys, as the reference's export (/tmp/kbref on the Studio) writes them.
+    assert!(text.contains(r#""when": "isMacNative && openFolderWorkspaceSupport""#), "isMacNative stays");
+    assert!(text.contains(r#""when": "inChatInput && isLinux && !quickChatHasFocus || inChatInput && isWindows && !quickChatHasFocus""#));
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -141,5 +170,31 @@ fn workspace_settings_need_a_folder(cx: &mut TestAppContext) {
     let (workbench, cx, dir) = workbench(cx, "workspace");
     run(&workbench, cx, "workbench.action.openWorkspaceSettingsFile", vec![]);
     assert!(workbench.read_with(cx, |workbench, _| workbench.editors.active().is_none()));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[gpui::test]
+fn pick_workspace_folder_answers_the_accepted_folder_as_the_api_expects(cx: &mut TestAppContext) {
+    let (workbench, cx, dir) = workbench(cx, "pick-folder");
+    let mut workspace = config::workspace::Workspace::folder(dir.join("one"));
+    workspace.folders.push(config::workspace::WorkspaceFolder { path: dir.join("two"), name: "two".into() });
+    workbench.update(cx, |workbench, _| workbench.settings.lock().unwrap().workspace = Some(workspace));
+    let outcome = workbench.update_in(cx, |workbench, window, cx| workbench.execute_command("_workbench.pickWorkspaceFolder", vec![json!({ "placeHolder": "Pick one" })], window, cx));
+    let crate::commands::Outcome::Pending(mut picked) = outcome else { panic!("the pick waits for the quick pick") };
+    cx.run_until_parked();
+    let placeholder = workbench.read_with(cx, |workbench, _| workbench.quick_inputs.current().and_then(|input| input.placeholder.clone()));
+    assert_eq!(placeholder.as_deref(), Some("Pick one"));
+    run(&workbench, cx, "quickInput.next", vec![]);
+    run(&workbench, cx, "workbench.action.acceptSelectedQuickOpenItem", vec![]);
+    let answer = picked.try_recv().unwrap().expect("answered").unwrap();
+    assert_eq!(answer, json!({ "uri": crate::editor::uri_value("file", &dir.join("two")), "name": "two", "index": 1 }));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[gpui::test]
+fn pick_workspace_folder_without_folders_answers_nothing(cx: &mut TestAppContext) {
+    let (workbench, cx, dir) = workbench(cx, "pick-no-folder");
+    let outcome = workbench.update_in(cx, |workbench, window, cx| workbench.execute_command("_workbench.pickWorkspaceFolder", vec![], window, cx));
+    assert!(matches!(outcome, crate::commands::Outcome::Ready(Ok(Value::Null))));
     std::fs::remove_dir_all(dir).unwrap();
 }

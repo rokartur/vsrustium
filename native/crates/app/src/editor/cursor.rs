@@ -1,12 +1,10 @@
 //! Where cursor commands move and what delete commands remove, as cursorMoveOperations.ts,
 //! cursorWordOperations.ts and cursorDeleteOperations.ts compute it. Positions are 0-based lines and
 //! char columns; upstream counts 1-based UTF-16 columns.
-//! shortcut: columns step over chars, not grapheme clusters; a ZWJ emoji takes several steps. Port
-//! strings.getLeftDeleteOffset and the grapheme iterator when that matters.
 
 use std::ops::Range;
 
-use super::{Indentation, WORD_SEPARATORS, folding};
+use super::{Indentation, folding, graphemes};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Position {
@@ -114,13 +112,14 @@ pub fn left(lines: &[String], position: Position) -> Position {
     match position {
         Position { column: 0, line: 0 } => position,
         Position { column: 0, line } => Position::new(line - 1, line_len(lines, line - 1)),
-        Position { line, column } => Position::new(line, column - 1),
+        Position { line, column } => Position::new(line, column - graphemes::prev_char_length(&chars(lines, line), column)),
     }
 }
 
 pub fn right(lines: &[String], position: Position) -> Position {
-    if position.column < line_len(lines, position.line) {
-        Position::new(position.line, position.column + 1)
+    let text = chars(lines, position.line);
+    if position.column < text.len() {
+        Position::new(position.line, position.column + graphemes::next_char_length(&text, position.column))
     } else if position.line + 1 < lines.len() {
         Position::new(position.line + 1, 0)
     } else {
@@ -132,7 +131,7 @@ pub fn right(lines: &[String], position: Position) -> Position {
 /// (`leftover`, negative after a jump to the end of the last line), and moves to the document's
 /// edge when there is no line to go to. Lines in `hidden` are folded away and skipped.
 pub fn vertical(lines: &[String], hidden: &[Range<usize>], position: Position, leftover: isize, down: bool, tab_size: usize) -> (Position, isize) {
-    let visible_of = |position: Position| super::visible_column(&lines[position.line], position.column, tab_size) as isize;
+    let visible_of = |position: Position| super::logical_visible_column(&lines[position.line], position.column, tab_size) as isize;
     let visible = visible_of(position) + leftover;
     let last_line = folding::last_shown_line(lines.len(), hidden);
     let last = Position::new(last_line, line_len(lines, last_line));
@@ -185,272 +184,8 @@ pub fn line_end(lines: &[String], position: Position) -> Position {
     Position::new(position.line, line_len(lines, position.line))
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum CharClass {
-    Regular,
-    Whitespace,
-    Separator,
-}
-
-/// `WordCharacterClassifier` with the default `editor.wordSeparators`: only space and tab are whitespace.
-fn class(c: char, separators: &str) -> CharClass {
-    match c {
-        ' ' | '\t' => CharClass::Whitespace,
-        c if separators.contains(c) => CharClass::Separator,
-        _ => CharClass::Regular,
-    }
-}
-
-/// A run of regular chars or of separators; `next` is the class of the char that ended it.
-#[derive(Clone, Copy, Debug)]
-struct Word {
-    start: usize,
-    end: usize,
-    kind: CharClass,
-    next: CharClass,
-}
-
-/// A word of `kind` ends at whitespace or at a char of the other kind.
-fn ends_word(kind: CharClass, class: CharClass) -> bool {
-    class == CharClass::Whitespace || (class != kind && kind != CharClass::Whitespace)
-}
-
-/// `_doFindPreviousWordOnLine`: the word that ends before `column`.
-fn previous_word(line: &[char], column: usize, separators: &str) -> Option<Word> {
-    let mut kind = CharClass::Whitespace;
-    for index in (0..column).rev() {
-        let class = class(line[index], separators);
-        if kind != CharClass::Whitespace && ends_word(kind, class) {
-            return Some(Word { start: index + 1, end: end_of_word(line, kind, index + 1, separators), kind, next: class });
-        }
-        if class != CharClass::Whitespace {
-            kind = class;
-        }
-    }
-    (kind != CharClass::Whitespace).then(|| Word { start: 0, end: end_of_word(line, kind, 0, separators), kind, next: CharClass::Whitespace })
-}
-
-fn end_of_word(line: &[char], kind: CharClass, start: usize, separators: &str) -> usize {
-    (start..line.len()).find(|&index| ends_word(kind, class(line[index], separators))).unwrap_or(line.len())
-}
-
-/// `_doFindNextWordOnLine`: the word that starts at or after `column`.
-fn next_word(line: &[char], column: usize, separators: &str) -> Option<Word> {
-    let mut kind = CharClass::Whitespace;
-    for (index, &c) in line.iter().enumerate().skip(column) {
-        let class = class(c, separators);
-        if kind != CharClass::Whitespace && ends_word(kind, class) {
-            return Some(Word { start: start_of_word(line, kind, index, separators), end: index, kind, next: class });
-        }
-        if class != CharClass::Whitespace {
-            kind = class;
-        }
-    }
-    (kind != CharClass::Whitespace).then(|| Word { start: start_of_word(line, kind, line.len(), separators), end: line.len(), kind, next: CharClass::Whitespace })
-}
-
-/// The start of the word that ends at `end`.
-fn start_of_word(line: &[char], kind: CharClass, end: usize, separators: &str) -> usize {
-    (0..end).rev().find(|&index| ends_word(kind, class(line[index], separators))).map_or(0, |index| index + 1)
-}
-
-/// A lone separator before a regular char ("." in "a.b") is skipped by word moves.
-fn is_lone_separator(word: &Word) -> bool {
-    word.kind == CharClass::Separator && word.end - word.start == 1 && word.next == CharClass::Regular
-}
-
-/// `cursorWordLeft` (WordStartFast): to the start of the previous word, from the end of the previous line at column 0.
-pub fn word_left(lines: &[String], position: Position) -> Position {
-    let Position { mut line, mut column } = position;
-    if column == 0 && line > 0 {
-        line -= 1;
-        column = line_len(lines, line);
-    }
-    let text = chars(lines, line);
-    let mut word = previous_word(&text, column, WORD_SEPARATORS);
-    if let Some(found) = word.filter(is_lone_separator) {
-        word = previous_word(&text, found.start, WORD_SEPARATORS);
-    }
-    Position::new(line, word.map_or(0, |word| word.start))
-}
-
-/// `cursorWordRight` (WordEnd): to the end of the next word, from the start of the next line at the line end.
-pub fn word_right(lines: &[String], position: Position) -> Position {
-    word_end_right(lines, position, WORD_SEPARATORS)
-}
-
-fn word_end_right(lines: &[String], position: Position, separators: &str) -> Position {
-    let Position { mut line, mut column } = position;
-    if column == line_len(lines, line) && line + 1 < lines.len() {
-        line += 1;
-        column = 0;
-    }
-    let text = chars(lines, line);
-    let mut word = next_word(&text, column, separators);
-    if let Some(found) = word.filter(is_lone_separator) {
-        word = next_word(&text, found.end, separators);
-    }
-    Position::new(line, word.map_or(text.len(), |word| word.end))
-}
-
-/// `moveWordLeft` with `WordStart` (word ends at the start of the previous word) or `WordEnd` (at the end
-/// of the previous word), from the end of the previous line at column 0.
-fn word_stop_left(lines: &[String], position: Position, at_end: bool, separators: &str) -> Position {
-    let Position { mut line, mut column } = position;
-    if column == 0 && line > 0 {
-        line -= 1;
-        column = line_len(lines, line);
-    }
-    let text = chars(lines, line);
-    let mut word = previous_word(&text, column, separators);
-    if !at_end {
-        return Position::new(line, word.map_or(0, |word| word.start));
-    }
-    if let Some(found) = word.filter(|word| column <= word.end) {
-        word = previous_word(&text, found.start, separators);
-    }
-    Position::new(line, word.map_or(0, |word| word.end))
-}
-
-/// `moveWordRight` with `WordStart`: to the start of the next word, from the start of the next line at the line end.
-fn word_start_right(lines: &[String], position: Position, separators: &str) -> Position {
-    let Position { mut line, mut column } = position;
-    let moved_down = column == line_len(lines, line) && line + 1 < lines.len();
-    if moved_down {
-        line += 1;
-        column = 0;
-    }
-    let text = chars(lines, line);
-    let mut word = next_word(&text, column, separators);
-    if let Some(found) = word.filter(|word| !moved_down && column >= word.start) {
-        word = next_word(&text, found.end, separators);
-    }
-    Position::new(line, word.map_or(text.len(), |word| word.start))
-}
-
-/// `_moveWordPartLeft`: back to the previous snake_case, kebab-case or camelCase boundary.
-fn word_part_boundary_left(lines: &[String], position: Position) -> Position {
-    let Position { line, column } = position;
-    if column == 0 {
-        return if line > 0 { Position::new(line - 1, line_len(lines, line - 1)) } else { position };
-    }
-    let text = chars(lines, line);
-    let boundary = (1..column).rev().find(|&index| is_word_part_start(&text, index, false));
-    Position::new(line, boundary.unwrap_or(0))
-}
-
-/// `_moveWordPartRight`: on to the next snake_case, kebab-case or camelCase boundary.
-fn word_part_boundary_right(lines: &[String], position: Position) -> Position {
-    let Position { line, column } = position;
-    let len = line_len(lines, line);
-    if column == len {
-        return if line + 1 < lines.len() { Position::new(line + 1, 0) } else { position };
-    }
-    let text = chars(lines, line);
-    let boundary = (column + 1..len).find(|&index| is_word_part_start(&text, index, true));
-    Position::new(line, boundary.unwrap_or(len))
-}
-
-/// Whether a word part starts between `text[index - 1]` and `text[index]`. Moving right stops before
-/// `_` and `-`, moving left after them.
-fn is_word_part_start(text: &[char], index: usize, right: bool) -> bool {
-    let (left, here) = (text[index - 1], text[index]);
-    let snake_or_kebab = match right {
-        true => (left != '_' && here == '_') || (left != '-' && here == '-'),
-        false => (left == '_' && here != '_') || (left == '-' && here != '-'),
-    };
-    let camel = (left.is_ascii_lowercase() || left.is_ascii_digit()) && here.is_ascii_uppercase();
-    // thisIsACamelCaseWithOneLetterWords
-    let one_letter = left.is_ascii_uppercase() && here.is_ascii_uppercase() && text.get(index + 1).is_some_and(|next| next.is_ascii_lowercase() || next.is_ascii_digit());
-    snake_or_kebab || camel || one_letter
-}
-
-/// `WordPartOperations.moveWordPartLeft`: the nearest of the previous word start, word end and word part boundary.
-pub fn word_part_left(lines: &[String], position: Position, separators: &str) -> Position {
-    let candidates = [word_stop_left(lines, position, false, separators), word_stop_left(lines, position, true, separators), word_part_boundary_left(lines, position)];
-    candidates.into_iter().max().expect("three candidates")
-}
-
-/// `WordPartOperations.moveWordPartRight`: the nearest of the next word start, word end and word part boundary.
-pub fn word_part_right(lines: &[String], position: Position, separators: &str) -> Position {
-    let candidates = [word_start_right(lines, position, separators), word_end_right(lines, position, separators), word_part_boundary_right(lines, position)];
-    candidates.into_iter().min().expect("three candidates")
-}
-
-/// `deleteWordLeft` with `WordEnd` and the whitespace heuristics: back to the end of the previous word.
-fn delete_word_end_left_range(lines: &[String], selection: Selection, separators: &str) -> (Position, Position) {
-    if !selection.is_empty() {
-        return (selection.start(), selection.end());
-    }
-    let position = selection.head;
-    let text = chars(lines, position.line);
-    let blanks = text[..position.column].iter().rev().take_while(|&&c| c == ' ' || c == '\t').count();
-    if blanks >= 2 {
-        return (Position::new(position.line, position.column - blanks), position);
-    }
-    let mut word = previous_word(&text, position.column, separators);
-    if let Some(found) = word.filter(|word| position.column <= word.end) {
-        word = previous_word(&text, found.start, separators);
-    }
-    let start = match word {
-        Some(word) => Position::new(position.line, word.end),
-        None if position.column > 0 => Position::new(position.line, 0),
-        None => left(lines, position),
-    };
-    (start, position)
-}
-
-/// `deleteWordRight` with `WordStart` and the whitespace heuristics: on to the start of the next word.
-fn delete_word_start_right_range(lines: &[String], selection: Selection, separators: &str) -> (Position, Position) {
-    if !selection.is_empty() {
-        return (selection.start(), selection.end());
-    }
-    let position = selection.head;
-    let text = chars(lines, position.line);
-    let blanks = text[position.column..].iter().take_while(|&&c| c == ' ' || c == '\t').count();
-    if blanks > 0 {
-        return (position, Position::new(position.line, position.column + blanks));
-    }
-    let mut word = next_word(&text, position.column, separators);
-    if let Some(found) = word.filter(|word| position.column >= word.start) {
-        word = next_word(&text, found.end, separators);
-    }
-    let end = match word {
-        Some(word) => Position::new(position.line, word.start),
-        None if position.column < text.len() || position.line + 1 == lines.len() => Position::new(position.line, text.len()),
-        None => {
-            let next = chars(lines, position.line + 1);
-            Position::new(position.line + 1, next_word(&next, 0, separators).map_or(next.len(), |word| word.start))
-        }
-    };
-    (position, end)
-}
-
-/// `WordPartOperations.deleteWordPartLeft`: of the word start, word end and word part deletes, the one
-/// with the last end (`compareRangesUsingEnds`), the nearest start among those.
-pub fn delete_word_part_left_range(lines: &[String], selection: Selection, separators: &str) -> (Position, Position) {
-    let part = match selection.is_empty() {
-        true => (word_part_boundary_left(lines, selection.head), selection.head),
-        false => (selection.start(), selection.end()),
-    };
-    let mut candidates = [delete_word_start_left_range(lines, selection, separators), delete_word_end_left_range(lines, selection, separators), part];
-    candidates.sort_by_key(|&(start, end)| (end, start));
-    candidates[2]
-}
-
-/// `WordPartOperations.deleteWordPartRight`: of the word start, word end and word part deletes, the one
-/// with the first start (`compareRangesUsingStarts`), the nearest end among those.
-pub fn delete_word_part_right_range(lines: &[String], selection: Selection, separators: &str) -> (Position, Position) {
-    let part = match selection.is_empty() {
-        true => (selection.head, word_part_boundary_right(lines, selection.head)),
-        false => (selection.start(), selection.end()),
-    };
-    let mut candidates = [delete_word_start_right_range(lines, selection, separators), delete_word_end_right_range(lines, selection, separators), part];
-    candidates.sort();
-    candidates[0]
-}
-
-/// `deleteLeft`: the selection, else one char, else back to the previous indent stop inside the indentation.
+/// `deleteLeft`: the selection, else back to the previous indent stop inside the indentation, else the
+/// last emoji component or one char (`strings.getLeftDeleteOffset`).
 pub fn delete_left_range(lines: &[String], selection: Selection, indentation: Indentation) -> (Position, Position) {
     if !selection.is_empty() {
         return (selection.start(), selection.end());
@@ -463,7 +198,11 @@ pub fn delete_left_range(lines: &[String], selection: Selection, indentation: In
         let to = (from - 1) - (from - 1) % indentation.indent_size();
         return (Position::new(position.line, column_from_visible(text, to, indentation.tab_size)), position);
     }
-    (left(lines, position), position)
+    if position.column == 0 {
+        return (left(lines, position), position);
+    }
+    let column = graphemes::left_delete_offset(position.column, &chars(lines, position.line));
+    (Position::new(position.line, column), position)
 }
 
 pub fn delete_right_range(lines: &[String], selection: Selection) -> (Position, Position) {
@@ -471,57 +210,6 @@ pub fn delete_right_range(lines: &[String], selection: Selection) -> (Position, 
         return (selection.start(), selection.end());
     }
     (selection.head, right(lines, selection.head))
-}
-
-/// `deleteWordLeft` (WordStart, whitespace heuristics): two or more blanks before the cursor go
-/// alone, else back to the start of the previous word.
-pub fn delete_word_left_range(lines: &[String], selection: Selection) -> (Position, Position) {
-    delete_word_start_left_range(lines, selection, WORD_SEPARATORS)
-}
-
-fn delete_word_start_left_range(lines: &[String], selection: Selection, separators: &str) -> (Position, Position) {
-    if !selection.is_empty() {
-        return (selection.start(), selection.end());
-    }
-    let position = selection.head;
-    let text = chars(lines, position.line);
-    let blanks = text[..position.column].iter().rev().take_while(|&&c| c == ' ' || c == '\t').count();
-    if blanks >= 2 {
-        return (Position::new(position.line, position.column - blanks), position);
-    }
-    let start = match previous_word(&text, position.column, separators) {
-        Some(word) => Position::new(position.line, word.start),
-        None if position.column > 0 => Position::new(position.line, 0),
-        None => left(lines, position),
-    };
-    (start, position)
-}
-
-/// `deleteWordRight` (WordEnd, whitespace heuristics): blanks after the cursor go alone, else to
-/// the end of the next word; at the line end, to the start of the first word of the next line.
-pub fn delete_word_right_range(lines: &[String], selection: Selection) -> (Position, Position) {
-    delete_word_end_right_range(lines, selection, WORD_SEPARATORS)
-}
-
-fn delete_word_end_right_range(lines: &[String], selection: Selection, separators: &str) -> (Position, Position) {
-    if !selection.is_empty() {
-        return (selection.start(), selection.end());
-    }
-    let position = selection.head;
-    let text = chars(lines, position.line);
-    let blanks = text[position.column..].iter().take_while(|&&c| c == ' ' || c == '\t').count();
-    if blanks > 0 {
-        return (position, Position::new(position.line, position.column + blanks));
-    }
-    let end = match next_word(&text, position.column, separators) {
-        Some(word) => Position::new(position.line, word.end),
-        None if position.column < text.len() || position.line + 1 == lines.len() => Position::new(position.line, text.len()),
-        None => {
-            let next = chars(lines, position.line + 1);
-            Position::new(position.line + 1, next_word(&next, 0, separators).map_or(next.len(), |word| word.start))
-        }
-    };
-    (position, end)
 }
 
 /// `deleteAllLeft`: to the line start, or the line break before it at column 0; a selection widens to its first line start.
@@ -656,6 +344,33 @@ mod tests {
     }
 
     #[test]
+    fn moves_step_over_grapheme_clusters() {
+        // cursor.test.ts: 'move left/right with surrogate pair', 'grapheme breaking'
+        let text = lines("    Third Line🐶\na\u{303}a\u{303}a\u{303}\n辻\u{E0100}辻\u{E0100}\nப\u{BC1}");
+        assert_eq!(left(&text, at(0, 15)), at(0, 14));
+        assert_eq!(right(&text, at(0, 14)), at(0, 15));
+        for line in 1..=3 {
+            assert_eq!(right(&text, at(line, 0)), at(line, 2));
+            assert_eq!(left(&text, at(line, 2)), at(line, 0));
+        }
+    }
+
+    #[test]
+    fn deletes_step_over_emoji_components_left_and_grapheme_clusters_right() {
+        // cursor.test.ts: 'issue #99629: Emoji modifiers in text treated separately when using backspace'
+        let text = lines("👶🏾\n👨‍👩🏽‍👧‍👦\ne\u{301}x");
+        let delete_left = |position| delete_left_range(&text, Selection::caret(position), SPACES_4).0;
+        assert_eq!(delete_left(at(0, 2)), at(0, 0));
+        assert_eq!(delete_left(at(1, 8)), at(1, 6));
+        assert_eq!(delete_left(at(1, 6)), at(1, 4));
+        assert_eq!(delete_left(at(1, 4)), at(1, 1));
+        assert_eq!(delete_left(at(1, 1)), at(1, 0));
+        assert_eq!(delete_left(at(2, 2)), at(2, 1));
+        assert_eq!(delete_left(at(2, 0)), at(1, 8));
+        assert_eq!(delete_right_range(&text, Selection::caret(at(2, 0))), (at(2, 0), at(2, 2)));
+    }
+
+    #[test]
     fn vertical_moves_keep_the_visible_column_through_short_lines_and_tabs() {
         let text = lines("abcdef\nab\n\tx\nabcdef");
         let (position, leftover) = vertical(&text, &[], at(0, 5), 0, true, 4);
@@ -689,124 +404,6 @@ mod tests {
     }
 
     #[test]
-    fn word_moves_stop_like_upstream() {
-        let text = lines("const fooBar = this.value;\n  next");
-        assert_eq!(word_right(&text, at(0, 0)), at(0, 5));
-        assert_eq!(word_right(&text, at(0, 5)), at(0, 12));
-        assert_eq!(word_right(&text, at(0, 12)), at(0, 14));
-        // A lone "." before a word is skipped: this.value moves to the end of "value".
-        assert_eq!(word_right(&text, at(0, 19)), at(0, 25));
-        assert_eq!(word_right(&text, at(0, 26)), at(1, 6));
-        assert_eq!(word_left(&text, at(0, 25)), at(0, 20));
-        assert_eq!(word_left(&text, at(0, 20)), at(0, 15));
-        assert_eq!(word_left(&text, at(0, 15)), at(0, 13));
-        // ";" after a word is a lone separator too, so the move goes on to the start of "value".
-        assert_eq!(word_left(&text, at(1, 0)), at(0, 20));
-    }
-
-    /// wordTestUtils.ts `deserializePipePositions`: the text without `|` and the positions they marked.
-    fn without_pipes(expected: &str) -> Vec<String> {
-        lines(&expected.replace('|', ""))
-    }
-
-    /// wordTestUtils.ts `serializePipePositions`.
-    fn with_pipes(text: &[String], mut stops: Vec<Position>) -> String {
-        stops.sort();
-        let mut out = Vec::new();
-        for (line, content) in text.iter().enumerate() {
-            let mut piped = String::new();
-            for (column, c) in content.chars().chain(std::iter::once('\0')).enumerate() {
-                if stops.contains(&at(line, column)) {
-                    piped.push('|');
-                }
-                if c != '\0' {
-                    piped.push(c);
-                }
-            }
-            out.push(piped);
-        }
-        out.join("\n")
-    }
-
-    /// wordTestUtils.ts `testRepeatedActionAndExtractPositions` for a cursor move, until `last`.
-    fn move_stops(expected: &str, from: Position, last: Position, separators: &str, step: fn(&[String], Position, &str) -> Position) -> String {
-        let text = without_pipes(expected);
-        let mut position = from;
-        let mut stops = Vec::new();
-        while position != last || stops.is_empty() {
-            position = step(&text, position, separators);
-            stops.push(position);
-            assert!(stops.len() < 1000, "endless loop at {position:?}");
-        }
-        with_pipes(&text, stops)
-    }
-
-    /// The same for a one-line delete: each stop is where the deleted text began in the original line.
-    fn delete_stops(expected: &str, right: bool, separators: &str, range: fn(&[String], Selection, &str) -> (Position, Position)) -> String {
-        let original = without_pipes(expected);
-        let mut text = original.clone();
-        let mut position = if right { at(0, 0) } else { at(0, line_len(&text, 0)) };
-        let mut stops = Vec::new();
-        while !text[0].is_empty() {
-            let (start, end) = range(&text, Selection::caret(position), separators);
-            let mut chars: Vec<char> = text[0].chars().collect();
-            chars.drain(start.column..end.column);
-            text[0] = chars.into_iter().collect();
-            position = start;
-            let original_len = line_len(&original, 0);
-            stops.push(if right { at(0, original_len - line_len(&text, 0)) } else { position });
-            assert!(stops.len() < 1000, "endless loop at {position:?}");
-        }
-        with_pipes(&original, stops)
-    }
-
-    /// wordPartOperations.test.ts; the #158667 cases (the last of each list) leave `-` out of the separators.
-    #[test]
-    fn word_part_moves_and_deletes_stop_like_upstream() {
-        let kebab_separators = "!\"#&'()*+,./:;<=>?@[\\]^`{|}\u{b7}";
-        let separators = |expected: &str| if expected.contains("kebab") { kebab_separators } else { WORD_SEPARATORS };
-        let end = |expected: &str| {
-            let text = without_pipes(expected);
-            at(text.len() - 1, line_len(&text, text.len() - 1))
-        };
-        let left_cases = [
-            "|start| |line|\n|this|Is|A|Camel|Case|Var|  |this_|is_|a_|snake_|case_|var| |THIS_|IS_|CAPS_|SNAKE| |this_|IS|Mixed|Use|\n|end| |line",
-            "|myvar| |=| |'|demonstration|     |of| |selection| |with| |space|'",
-            "|myvar| |=| |'|demonstration_____|of| |selection| |with| |space|'",
-            "|foo_|bar",
-            "|this-|is-|a-|kebab-|case-|var| |THIS-|IS-|CAPS-|KEBAB| |this-|IS|Mixed|Use",
-        ];
-        for expected in left_cases {
-            assert_eq!(move_stops(expected, end(expected), at(0, 0), separators(expected), word_part_left), expected);
-        }
-        let right_cases = [
-            "start| |line|\n|this|Is|A|Camel|Case|Var|  |this|_is|_a|_snake|_case|_var| |THIS|_IS|_CAPS|_SNAKE| |this|_IS|Mixed|Use|\n|end| |line|",
-            "myvar| |=| |'|demonstration|     |of| |selection| |with| |space|'|",
-            "myvar| |=| |'|demonstration|_____of| |selection| |with| |space|'|",
-            ";| |--| |1|\n|;|        |--| |2|\n|;|    |#|3|\n|;|   |#|4|",
-            "foo|_bar|",
-            "this|-is|-a|-kebab|-case|-var| |THIS|-IS|-CAPS|-KEBAB| |this|-IS|Mixed|Use|",
-        ];
-        for expected in right_cases {
-            assert_eq!(move_stops(expected, at(0, 0), end(expected), separators(expected), word_part_right), expected);
-        }
-        let delete_left = [
-            "|   |/*| |Just| |some| |text| |a|+=| |3| |+|5|-|3| |*/|  |this|Is|A|Camel|Case|Var|  |this_|is_|a_|snake_|case_|var| |THIS_|IS_|CAPS_|SNAKE| |this_|IS|Mixed|Use",
-            "|this-|is-|a-|kebab-|case-|var| |THIS-|IS-|CAPS-|KEBAB| |this-|IS|Mixed|Use",
-        ];
-        for expected in delete_left {
-            assert_eq!(delete_stops(expected, false, separators(expected), delete_word_part_left_range), expected);
-        }
-        let delete_right = [
-            "   |/*| |Just| |some| |text| |a|+=| |3| |+|5|-|3| |*/|  |this|Is|A|Camel|Case|Var|  |this|_is|_a|_snake|_case|_var| |THIS|_IS|_CAPS|_SNAKE| |this|_IS|Mixed|Use|",
-            "this|-is|-a|-kebab|-case|-var| |THIS|-IS|-CAPS|-KEBAB| |this|-IS|Mixed|Use|",
-        ];
-        for expected in delete_right {
-            assert_eq!(delete_stops(expected, true, separators(expected), delete_word_part_right_range), expected);
-        }
-    }
-
-    #[test]
     fn delete_left_unindents_inside_the_indentation() {
         let text = lines("      x\n\tx");
         assert_eq!(delete_left_range(&text, Selection::caret(at(0, 6)), SPACES_4), (at(0, 4), at(0, 6)));
@@ -814,18 +411,6 @@ mod tests {
         assert_eq!(delete_left_range(&text, Selection::caret(at(0, 7)), SPACES_4), (at(0, 6), at(0, 7)));
         assert_eq!(delete_left_range(&text, Selection::caret(at(1, 0)), SPACES_4), (at(0, 7), at(1, 0)));
         assert_eq!(delete_left_range(&text, Selection::caret(at(1, 1)), SPACES_4), (at(1, 0), at(1, 1)));
-    }
-
-    #[test]
-    fn word_deletes_use_the_whitespace_heuristics() {
-        let text = lines("let a =   b;\nnext word");
-        assert_eq!(delete_word_left_range(&text, Selection::caret(at(0, 10))), (at(0, 7), at(0, 10)));
-        assert_eq!(delete_word_left_range(&text, Selection::caret(at(0, 5))), (at(0, 4), at(0, 5)));
-        assert_eq!(delete_word_left_range(&text, Selection::caret(at(0, 4))), (at(0, 0), at(0, 4)));
-        assert_eq!(delete_word_left_range(&text, Selection::caret(at(1, 0))), (at(0, 12), at(1, 0)));
-        assert_eq!(delete_word_right_range(&text, Selection::caret(at(0, 7))), (at(0, 7), at(0, 10)));
-        assert_eq!(delete_word_right_range(&text, Selection::caret(at(0, 0))), (at(0, 0), at(0, 3)));
-        assert_eq!(delete_word_right_range(&text, Selection::caret(at(0, 12))), (at(0, 12), at(1, 0)));
     }
 
     #[test]

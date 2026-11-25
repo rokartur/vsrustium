@@ -7,6 +7,8 @@ use super::*;
 use crate::editor::cursor::Selection;
 use crate::editor::edit::tests::editor;
 
+mod indentation;
+
 /// `setupIndentRulesLanguage(indentRulesLanguageId, ...)` of the suite's setup.
 fn indent_rules_language() -> Value {
     json!({ "indentationRules": {
@@ -35,17 +37,17 @@ impl Cursor {
         let mut languages = Languages::new(&[]);
         languages.configure("testLanguage", &config);
         let mut editor = editor(&lines.join("\n"), "\n");
-        editor.document.language_id = "testLanguage".into();
+        editor.document_mut().language_id = "testLanguage".into();
         Cursor { editor, languages, strategy: Strategy::Full }
     }
 
     fn tabs(mut self) -> Self {
-        self.editor.document.indentation.insert_spaces = false;
+        self.editor.document_mut().indentation.insert_spaces = false;
         self
     }
 
     fn tab_size(mut self, tab_size: usize) -> Self {
-        self.editor.document.indentation.tab_size = tab_size;
+        self.editor.document_mut().indentation.tab_size = tab_size;
         self
     }
 
@@ -78,12 +80,13 @@ impl Cursor {
         (selection.anchor.line + 1, selection.anchor.column + 1, selection.head.line + 1, selection.head.column + 1)
     }
 
-    fn line(&self, line: usize) -> &str {
-        &self.editor.document.lines[line - 1]
+    // The model sits behind a RefCell; a leaked copy keeps the assertions' `&str` tuples.
+    fn line(&self, line: usize) -> &'static str {
+        self.editor.document().lines[line - 1].clone().leak()
     }
 
     fn value(&self) -> String {
-        self.editor.document.lines.join("\n")
+        self.editor.document().lines.join("\n")
     }
 }
 
@@ -93,7 +96,7 @@ fn enter_auto_indents_with_insert_spaces_setting() {
         let mut cursor = Cursor::new(on_enter_language(indent), &[text]);
         cursor.move_to(1, 7);
         cursor.type_text("\n");
-        assert_eq!(cursor.editor.document.lines.join("\r\n"), expected, "{indent}");
+        assert_eq!(cursor.editor.document().lines.join("\r\n"), expected, "{indent}");
     }
 }
 
@@ -122,7 +125,7 @@ fn issue_6862_enter_between_brackets_indents_and_outdents() {
     let mut cursor = Cursor::new(on_enter_language("indentOutdent"), &["function foo (params: string) {}"]);
     cursor.move_to(1, 32);
     cursor.type_text("\n");
-    assert_eq!(cursor.editor.document.lines, ["function foo (params: string) {", "    ", "}"]);
+    assert_eq!(cursor.editor.document().lines, ["function foo (params: string) {", "    ", "}"]);
 }
 
 #[test]
@@ -336,7 +339,7 @@ fn bug_31015_tab_with_enter_rules_indents_straight_to_the_right_spot() {
     let mut cursor = Cursor::new(on_enter_language("indent"), &["    if (a) {", "        ", "", "", "    }"]);
     cursor.move_to(3, 1);
     cursor.tab();
-    assert_eq!(cursor.editor.document.lines, ["    if (a) {", "        ", "        ", "", "    }"]);
+    assert_eq!(cursor.editor.document().lines, ["    if (a) {", "        ", "        ", "", "    }"]);
 }
 
 #[test]
@@ -384,7 +387,7 @@ fn issue_38261_tab_key_results_in_bizarre_indentation_in_cpp_mode() {
     cursor.tab();
     let mut expected = lines;
     expected[7] = "  ";
-    assert_eq!((cursor.editor.document.lines.clone(), cursor.cursor()), (expected.map(String::from).to_vec(), (8, 3, 8, 3)));
+    assert_eq!((cursor.editor.document().lines.clone(), cursor.cursor()), (expected.map(String::from).to_vec(), (8, 3, 8, 3)));
 }
 
 #[test]
@@ -483,7 +486,7 @@ mod typescript {
         let app_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
         let languages = Languages::new(&[exthost::scan::scan_extension(&app_root.join("extensions/typescript-basics"), true).unwrap()]);
         let mut editor = editor(&lines.join("\n"), "\n");
-        editor.document.tokens = Tokenization::new(languages.grammars.grammar("typescript"));
+        editor.document_mut().tokens = Tokenization::new(languages.grammars.grammar("typescript"));
         Cursor { editor, languages, strategy }
     }
 
@@ -491,7 +494,7 @@ mod typescript {
         let mut cursor = cursor(lines, strategy);
         cursor.move_to(line, column);
         cursor.type_text("\n");
-        assert_eq!(cursor.editor.document.lines, expected);
+        assert_eq!(cursor.editor.document().lines, expected);
         cursor
     }
 
@@ -538,7 +541,7 @@ mod typescript {
         // `viewModel.type` without the 'keyboard' source: no interceptors.
         cursor.editor.type_text("return;");
         cursor.type_text("\n");
-        assert_eq!(cursor.editor.document.lines, ["function f() {", "    if (condition)", "        return;", "    ", "}"]);
+        assert_eq!(cursor.editor.document().lines, ["function f() {", "    if (condition)", "        return;", "    ", "}"]);
     }
 
     #[test]
@@ -560,7 +563,7 @@ mod typescript {
             true => cursor.editor.outdent(auto),
             false => cursor.editor.indent_lines(auto),
         };
-        assert_eq!((cursor.editor.document.lines.clone(), cursor.cursor()), (expected.iter().map(|line| line.to_string()).collect(), expected_selection));
+        assert_eq!((cursor.editor.document().lines.clone(), cursor.cursor()), (expected.iter().map(|line| line.to_string()).collect(), expected_selection));
     }
 
     #[test]

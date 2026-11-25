@@ -45,6 +45,22 @@ const TITLE_ACTIONS: [(&str, &str, &str, f64, &str); 5] = [
     ("multiDiffEditor.toggleFileList", "list-flat", "Toggle Files", 100001., "activeEditor == 'multiDiffEditor' && config.multiDiffEditor.experimental.fileList && multiDiffEditorFileListAvailable"),
 ];
 
+/// The lines of a multi diff side: the empty model of an added or deleted file's missing side, or its model's.
+enum SideLines<'a> {
+    Missing,
+    Model(std::cell::Ref<'a, TextDocument>),
+}
+
+impl std::ops::Deref for SideLines<'_> {
+    type Target = [String];
+
+    fn deref(&self) -> &[String] {
+        match self {
+            SideLines::Missing => &EMPTY_MODEL,
+            SideLines::Model(document) => &document.lines,
+        }
+    }
+}
 impl Workbench {
     pub(in crate::workbench) fn register_multi_diff_editor_commands(&mut self) {
         self.commands.register("_workbench.openMultiDiffEditor", |workbench, args, window, cx| workbench.open_multi_diff_editor(args, window, cx));
@@ -281,14 +297,14 @@ impl Workbench {
         let count = |key: &str| self.setting(key).as_u64().unwrap_or(3) as usize;
         let (min_hidden, min_context) = (count("diffEditor.hideUnchangedRegions.minimumLineCount"), count("diffEditor.hideUnchangedRegions.contextLineCount"));
         for file in &mut input.files {
-            let side = |side: &Option<Side>| match side {
-                None => Some((&EMPTY_MODEL[..], 0)),
-                Some(side) => self.editors.model(&side.scheme, &side.path).map(|model| (&model.document.lines[..], model.version_id)),
+            let version = |side: &Option<Side>| match side {
+                None => Some(0),
+                Some(side) => self.editors.model(&side.scheme, &side.path).map(|model| model.text_model().version_id),
             };
-            match (side(&file.original), side(&file.modified)) {
-                (Some(original), Some(modified)) => {
+            match (self.multi_diff_lines(&file.original).zip(version(&file.original)), self.multi_diff_lines(&file.modified).zip(version(&file.modified))) {
+                (Some((original, original_version)), Some((modified, modified_version))) => {
                     file.unloadable = false;
-                    file.update(original, modified, options, min_hidden, min_context);
+                    file.update((&original, original_version), (&modified, modified_version), options, min_hidden, min_context);
                 }
                 _ => file.unloadable = true,
             }
@@ -350,10 +366,10 @@ impl Workbench {
     }
 
     /// A side's lines: an empty model without a resource, none while its model is not open.
-    fn multi_diff_lines(&self, side: &Option<Side>) -> Option<&[String]> {
+    fn multi_diff_lines(&self, side: &Option<Side>) -> Option<SideLines<'_>> {
         match side {
-            None => Some(&EMPTY_MODEL),
-            Some(side) => self.editors.model(&side.scheme, &side.path).map(|model| &model.document.lines[..]),
+            None => Some(SideLines::Missing),
+            Some(side) => self.editors.model(&side.scheme, &side.path).map(|model| SideLines::Model(model.document())),
         }
     }
 
@@ -362,7 +378,7 @@ impl Workbench {
             return Vec::new();
         }
         let (Some(original), Some(modified)) = (self.multi_diff_lines(&file.original), self.multi_diff_lines(&file.modified)) else { return Vec::new() };
-        file.rows(original, modified.len(), side_by_side)
+        file.rows(&original, modified.len(), side_by_side)
     }
 
     /// A file's header and, expanded, its diff's content height or the binary file placeholder's.
@@ -528,8 +544,8 @@ impl Workbench {
 
     /// A file's editor metrics: line numbers as wide as the longer side's last number.
     fn multi_diff_metrics(&self, file: &FileDiff, window: &mut Window) -> EditorMetrics {
-        let line_count = [&file.original, &file.modified].into_iter().filter_map(|side| self.multi_diff_lines(side)).map(<[String]>::len).max().unwrap_or(1);
-        EditorMetrics::measure(window, line_count, true, self.editor_zoom.multiplier())
+        let line_count = [&file.original, &file.modified].into_iter().filter_map(|side| self.multi_diff_lines(side)).map(|lines| lines.len()).max().unwrap_or(1);
+        EditorMetrics::measure(window, line_count, super::LineNumbers::On, self.editor_zoom.multiplier())
     }
 
     /// diffEditorItemTemplate.ts header: the collapse chevron, the file's icon, name and folder, the status flag, the
@@ -591,8 +607,8 @@ impl Workbench {
     /// A `ResourceLabel` of a side: file icon, name (14px) and the folder as its description.
     fn multi_diff_label(&self, side: &Side, strikethrough: bool, foreground: gpui::Rgba, description: gpui::Rgba) -> Div {
         let path = split_query(&side.scheme, &side.path).0;
-        let language = self.editors.model(&side.scheme, &side.path).map_or("", |model| model.document.language_id.as_str());
-        let icon = self.file_icons.as_ref().and_then(|icons| icons.file_icon(path, language, self.theme.kind, 13., 22., foreground));
+        let language = self.editors.model(&side.scheme, &side.path).map(|model| model.document().language_id.clone()).unwrap_or_default();
+        let icon = self.file_icons.as_ref().and_then(|icons| icons.file_icon(path, &language, self.theme.kind, 13., 22., foreground));
         let folder = path.parent().map(|folder| crate::quick_input::path_label(folder, self.workspace())).unwrap_or_default();
         let name = path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
         div()
@@ -694,7 +710,8 @@ impl Workbench {
         {
             content = content.child(div().absolute().inset_0().bg(background));
         }
-        let text = model.and_then(|model| model.document.lines.get(index));
+        let document = model.map(|model| model.document());
+        let text = document.as_ref().and_then(|document| document.lines.get(index));
         if let Some(change) = change {
             content = content.children(self.line_background(side));
             let other_side_empty = match side {
@@ -702,17 +719,17 @@ impl Workbench {
                 ZoneSide::Modified => change.original.is_empty(),
             };
             if let (Some(model), Some(text), false) = (model, text, other_side_empty) {
-                let ranges = char_ranges(change, side, line_number, text, model.document.indentation.tab_size, metrics.char_width);
+                let ranges = char_ranges(change, side, line_number, text, model.document().indentation.tab_size, metrics.char_width);
                 content = content.children(ranges.into_iter().map(|(left, width)| self.char_background(side, left, width)));
             }
         }
         if let (Some(model), Some(text)) = (model, text) {
-            let tab_size = model.document.indentation.tab_size;
-            for level in 0..model.guides.get(index).copied().unwrap_or(0) {
-                let x = (level * model.document.indentation.indent_size()) as f32 * metrics.char_width;
+            let tab_size = model.document().indentation.tab_size;
+            for level in 0..model.text_model().guides.get(index).copied().unwrap_or(0) {
+                let x = (level * model.document().indentation.indent_size()) as f32 * metrics.char_width;
                 content = content.child(div().absolute().top_0().left(px(x)).w(px(1.)).h_full().bg(self.color("editorIndentGuide.background1")));
             }
-            let highlights = model.document.tokens.highlights(&self.theme, &self.languages, &model.document.lines, index, tab_size);
+            let highlights = model.document().tokens.highlights(&self.theme, &self.languages, &model.document().lines, index, tab_size);
             content = content.child(div().absolute().top_0().left_0().whitespace_nowrap().child(StyledText::new(expand_tabs(text, tab_size)).with_highlights(highlights)));
         }
         let number_color = self.color("editorLineNumber.foreground");

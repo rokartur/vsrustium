@@ -15,7 +15,7 @@ use super::Workbench;
 use super::search_view::SideBarView;
 use crate::commands::Outcome;
 use crate::contextkey::Expr;
-use crate::menus::{CommandIcon, Entry, MenuAction, MenuId, MenuItem, menu_actions};
+use crate::menus::{CommandIcon, Entry, MenuAction, MenuId, MenuItem, Toggled, menu_actions};
 use crate::scm::Provider;
 use crate::scm_history::{HistoryItem, HistoryItemKind, SCM_INCOMING_HISTORY_ITEM_ID, SCM_OUTGOING_HISTORY_ITEM_ID};
 
@@ -688,8 +688,8 @@ pub fn menu_items() -> Vec<MenuItem> {
     let mut items = Vec::new();
     for (menu, id, title, group, order, when, precondition, toggled) in SCM_MENUS.iter().copied() {
         let entry = match id {
-            "" => Entry::Submenu(MenuId::ScmViewSort),
-            id => Entry::Command { id: id.to_string(), precondition: precondition.and_then(Expr::deserialize), toggled: toggled.and_then(Expr::deserialize), alt: None },
+            "" => Entry::Submenu { submenu: MenuId::ScmViewSort, toggled: None },
+            id => Entry::Command { id: id.to_string(), precondition: precondition.and_then(Expr::deserialize), toggled: Toggled::when(toggled.and_then(Expr::deserialize)), alt: None },
         };
         items.push(MenuItem { menu, entry, title: title.to_string(), group: group.to_string(), order, when: when.and_then(Expr::deserialize) });
     }

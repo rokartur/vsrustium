@@ -21,13 +21,26 @@ pub struct GotoLineState {
     model_id: u32,
     selections: Vec<Selection>,
     scroll: Scroll,
-    highlight: Option<Position>,
+    /// The first and last line of the previewed range (`addDecorations`).
+    highlight: Option<(usize, usize)>,
 }
 
 impl GotoLineState {
-    /// The previewed position in the editor of `model_id`.
-    pub fn highlight(&self, model_id: u32) -> Option<Position> {
+    pub fn previews(&self, model_id: u32) -> bool {
+        self.model_id == model_id
+    }
+
+    pub fn new(editor: &crate::editor::OpenEditor) -> Self {
+        GotoLineState { model_id: editor.model_id, selections: editor.selections.clone(), scroll: editor.scroll, highlight: None }
+    }
+
+    /// The previewed lines in the editor of `model_id`.
+    pub fn highlight(&self, model_id: u32) -> Option<(usize, usize)> {
         self.highlight.filter(|_| self.model_id == model_id)
+    }
+
+    pub fn set_highlight(&mut self, lines: Option<(usize, usize)>) {
+        self.highlight = lines;
     }
 }
 
@@ -51,10 +64,11 @@ impl Workbench {
             input.set_items(vec![Entry::Item(Item { handle: 0, label: NO_EDITOR.into(), pickable: true, ..Item::default() })]);
             return vec![Accept::Nothing];
         };
-        let state = self.quick_access.goto_line.get_or_insert_with(|| GotoLineState { model_id: editor.model_id, selections: editor.selections.clone(), scroll: editor.scroll, highlight: None });
-        let document = &editor.document;
+        let state = self.quick_access.goto_line.get_or_insert_with(|| GotoLineState::new(editor));
+        let document = editor.document();
         let parsed = parse_position(&document.lines, document.eol, document.indentation.tab_size, &value.trim()[GO_TO_LINE_PREFIX.len()..], zero_based);
-        state.highlight = parsed.position;
+        drop(document);
+        state.highlight = parsed.position.map(|position| (position.line, position.line));
         if let Some(position) = parsed.position {
             editor.reveal_range(position, position, VerticalReveal::Center, viewport);
         }
@@ -71,7 +85,7 @@ impl Workbench {
     /// The offset toggle: `useZeroBasedOffset` follows its new state.
     pub(super) fn toggle_zero_based_offset(&mut self, checked: Option<bool>) {
         let checked = checked.unwrap_or(!self.use_zero_based_offset());
-        self.profile_storage.lock().unwrap().set(ZERO_BASED_OFFSET_STORAGE_KEY, checked.to_string());
+        self.application_storage.lock().unwrap().set(ZERO_BASED_OFFSET_STORAGE_KEY, checked.to_string());
     }
 
     /// `gotoLocation`: the cursor at the position, revealed in the center; the editor takes focus unless the pick was
@@ -107,7 +121,7 @@ impl Workbench {
 
     /// `gotoLine.useZeroBasedOffset` in StorageScope.APPLICATION, false by default.
     fn use_zero_based_offset(&self) -> bool {
-        self.profile_storage.lock().unwrap().get(ZERO_BASED_OFFSET_STORAGE_KEY) == Some("true")
+        self.application_storage.lock().unwrap().get(ZERO_BASED_OFFSET_STORAGE_KEY) == Some("true")
     }
 }
 

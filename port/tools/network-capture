@@ -1,0 +1,66 @@
+#!/bin/bash
+# Network capture (roadmap section 19): runs vsrustium on a copy of port/fixtures/workspace with a fresh user data
+# dir and no user action for DURATION seconds (default 600) and lists every process of its tree that sent or got
+# bytes over a non-loopback interface (nettop, 1 s samples; the tree sampled 5 times a second). Run on the Studio after a release build:
+#   port/tools/studio 'port/tools/network-capture'      env DURATION=<s>, ARGS="<more vsrustium arguments>",
+#   WINDOW=folder|empty (default folder), SETTINGS='<user settings.json>', REF_APP=1 to capture the reference instead
+# First a 12 s control run (curl as a child of the watched tree) shows the capture sees a request; the check fails
+# if the control is not seen. Exits 1 when the app's tree had traffic. Logs land in $OUT.
+# shortcut: nettop reports a process only if it is alive at a 1 s sample; a child that connects and exits between
+# two samples is missed. A packet capture (tcpdump, needs root) would close that gap.
+set -uo pipefail
+REF=${REF:-$HOME/Developer/vscode-ref}
+DURATION=${DURATION:-600}
+OUT=${OUT:-/tmp/network-capture-$(basename "$PWD")}
+rm -rf "$OUT" && mkdir -p "$OUT"
+
+# capture <name> <seconds> <command...>: starts the command, samples its process tree every second while nettop
+# logs every process's external traffic, then prints the tree's lines with bytes in or out.
+capture() {
+  local name=$1 seconds=$2; shift 2
+  nettop -P -L "$seconds" -s 1 -x -J bytes_in,bytes_out -t external >"$OUT/$name-nettop.csv" 2>/dev/null &
+  local nettop=$!
+  "$@" >"$OUT/$name.log" 2>&1 &
+  local root=$!
+  : >"$OUT/$name-pids"
+  # About 5 samples a second while nettop runs, so a short-lived child (git, curl) is seen with its parent.
+  while kill -0 "$nettop" 2>/dev/null; do
+    ps -A -o pid=,ppid= | awk -v root="$root" '
+      { parent[$1] = $2 } END { tree[root] = 1; do { grew = 0; for (p in parent) if (!(p in tree) && (parent[p] in tree)) { tree[p] = 1; grew = 1 } } while (grew); for (p in tree) print p }' >>"$OUT/$name-pids"
+    sleep 0.2
+  done
+  pkill -KILL -P "$root" 2>/dev/null; kill -KILL "$root" 2>/dev/null; wait "$root" 2>/dev/null
+  wait "$nettop"
+  sort -u "$OUT/$name-pids" -o "$OUT/$name-pids"
+  # nettop rows are "<process>.<pid>,<bytes in>,<bytes out>,".
+  awk -F, 'NR == FNR { tree[$1] = 1; next } { n = split($1, part, "."); pid = part[n] } (pid in tree) && ($2 + $3 > 0) { print }' "$OUT/$name-pids" "$OUT/$name-nettop.csv" | sort -u
+}
+
+# nettop lists only processes alive at a sample: the control download is slowed to last about 6 s.
+control=$(capture control 15 bash -c 'sleep 3; curl -s --limit-rate 50k -o /dev/null "https://speed.cloudflare.com/__down?bytes=300000"; sleep 20')
+if [[ -z $control ]]; then
+  echo "network capture: the control request was not seen; the capture cannot be trusted"
+  exit 2
+fi
+echo "control run seen: $(echo "$control" | head -1)"
+
+source port/tools/gui-lock.sh
+cp -R port/fixtures/workspace "$OUT/workspace"
+mkdir -p "$OUT/user-data/User"
+echo "${SETTINGS:-{\}}" >"$OUT/user-data/User/settings.json"
+folder=("$OUT/workspace"); [[ ${WINDOW:-folder} == empty ]] && folder=()
+if [[ -n ${REF_APP:-} ]]; then
+  app=("$REF/.build/electron/Code - OSS.app/Contents/MacOS/Code - OSS" "$REF")
+  export VSCODE_DEV=1 NODE_ENV=development
+else
+  app=(native/target/release/vsrustium)
+fi
+# shellcheck disable=SC2086
+traffic=$(VSCODE_GPUI_EXTENSIONS=$REF/extensions capture app "$DURATION" "${app[@]}" ${folder[@]+"${folder[@]}"} --user-data-dir "$OUT/user-data" ${ARGS:-})
+echo "app process tree: $(wc -l <"$OUT/app-pids" | tr -d ' ') processes over $DURATION s"
+if [[ -n $traffic ]]; then
+  echo "network capture: outbound traffic"
+  echo "$traffic"
+  exit 1
+fi
+echo "network capture: no outbound traffic in $DURATION s"

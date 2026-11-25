@@ -10,7 +10,7 @@ use super::{ContentChanged, OpenEditor, Position, Replace, Selection, text_betwe
 use crate::languages::Languages;
 
 /// wordHelper.ts `DEFAULT_WORD_REGEXP`: numbers with a fraction, else runs of chars that are not separators.
-pub(super) static DEFAULT_WORD_REGEXP: LazyLock<onig::Regex> =
+pub(crate) static DEFAULT_WORD_REGEXP: LazyLock<onig::Regex> =
     LazyLock::new(|| onig::Regex::new(r#"(-?\d*\.\d\w*)|([^\`\~\!\@\#\$\%\^\&\*\(\)\-\=\+\[\{\]\}\\\|\;\:\'\"\,\.\<\>\/\?\s]+)"#).expect("valid pattern"));
 
 impl OpenEditor {
@@ -21,8 +21,8 @@ impl OpenEditor {
         if selection.start().line != selection.end().line {
             return None;
         }
-        let word_pattern = languages.rules(&self.document.language_id).and_then(|rules| rules.word_pattern.as_ref());
-        let (start, end, value) = navigate_value_set(&self.document.lines, selection, up, word_pattern.unwrap_or(&DEFAULT_WORD_REGEXP))?;
+        let word_pattern = languages.rules(&self.document().language_id).and_then(|rules| rules.word_pattern.as_ref());
+        let (start, end, value) = navigate_value_set(&self.document().lines, selection, up, word_pattern.unwrap_or(&DEFAULT_WORD_REGEXP))?;
         let value_len = value.chars().count();
         let diff = value_len as isize - (selection.end().column - selection.start().column) as isize;
         if diff > 1 {
@@ -156,7 +156,7 @@ mod tests {
         let mut model = editor(text, "\n");
         model.set_selections(vec![Selection { anchor: Position::new(0, anchor), head: Position::new(0, head) }]);
         model.in_place_replace(up, &Languages::new(&[]));
-        (model.document.lines[0].clone(), model.selections[0])
+        (model.document().lines[0].clone(), model.selections[0])
     }
 
     #[test]

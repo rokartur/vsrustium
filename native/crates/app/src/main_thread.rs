@@ -4,18 +4,22 @@
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::Duration;
 
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use exthost::extension_management::WindowExtensions;
 use exthost::main_thread::{MainThread, serialized_error};
 use exthost::main_thread_files::{Providers, resource};
 use exthost::rpc::{Arg, Reply};
-use exthost::session::{CallResult, Session};
+use exthost::session::{CallResult, Session, URL_PROTOCOL};
 use files::FileSystem;
 use futures::channel::mpsc::UnboundedSender;
 use futures::channel::oneshot;
 use serde_json::{Value, json};
 
 use crate::host_sync::HostMessage;
+use crate::uri::Uri;
 use crate::workbench::host_requests::HOST_REQUESTS;
+use crate::workbench::text_model_resolver::ContentProviders;
 
 pub struct HostRequest {
     pub proxy: String,
@@ -30,8 +34,7 @@ pub struct WorkbenchMainThread {
     /// Host calls the workbench made with `HostSync::call`, waiting for their answer, and whether a dropped receiver
     /// still has to cancel the request.
     pub waiting: Vec<(u32, bool, oneshot::Sender<Result<Value, Value>>)>,
-    /// `$registerTextContentProvider` handles and schemes, newest first as textModelResolverService.ts keeps them.
-    pub content_providers: Vec<(Value, String)>,
+    pub content_providers: ContentProviders,
     pub extensions: WindowExtensions,
 }
 
@@ -46,12 +49,22 @@ impl MainThread for WorkbenchMainThread {
             .collect();
         match (proxy, method) {
             ("MainThreadDocumentContentProviders", "$registerTextContentProvider") => {
-                self.content_providers.insert(0, (args[0].clone(), args[1].as_str().unwrap_or_default().to_string()));
+                self.content_providers.register(args[0].clone(), args[1].as_str().unwrap_or_default().to_string());
                 return Some(Ok(Reply::Empty));
             }
             ("MainThreadDocumentContentProviders", "$unregisterTextContentProvider") => {
-                self.content_providers.retain(|(handle, _)| *handle != args[0]);
+                self.content_providers.unregister(&args[0]);
                 return Some(Ok(Reply::Empty));
+            }
+            ("MainThreadWindow", "$asExternalUri") => return Some(as_external_uri(session, &args[0])),
+            // Recorded for Developer: Startup Performance; the session still handles them.
+            ("MainThreadExtensionService", "$setPerformanceMarks") => {
+                crate::perf::set_ext_host_marks(&args[0]);
+                return None;
+            }
+            ("MainThreadExtensionService", "$onDidActivateExtension") => {
+                crate::perf::extension_activated(&args);
+                return None;
             }
             _ if !HOST_REQUESTS.contains(&(proxy, method)) => return None,
             _ => {}
@@ -104,6 +117,10 @@ impl MainThread for WorkbenchMainThread {
                 let _ = reply.send(self.extensions.run(session, job).map_err(|error| format!("{error:#}")));
                 continue;
             }
+            if (message.proxy, message.method) == ("workbench", "stopExtensionHost") {
+                session.host.terminate();
+                continue;
+            }
             if (message.proxy, message.method) == ("workbench", "resolveTextContent") {
                 let content = self.resolve_text_content(session, &message.args[0]);
                 drop(message.reply.expect("resolveTextContent waits for its answer").send(content));
@@ -112,12 +129,22 @@ impl MainThread for WorkbenchMainThread {
             let req = if message.cancellable {
                 session.notify_cancellable(message.proxy, message.method, message.args)
             } else {
-                let mut args: Vec<Arg> = message.args.into_iter().map(Arg::Json).collect();
-                // extHostWebview.ts `$onMessage` reads its last argument as a SerializableObjectWithBuffers.
-                if (message.proxy, message.method) == ("ExtHostWebviews", "$onMessage") && let Some(Arg::Json(json)) = args.pop() {
-                    args.push(Arg::JsonWithBuffers { json, buffers: Vec::new() });
+                let mut args: Vec<Arg> = message.args.into_iter().map(Arg::from_value).collect();
+                // extHostWebview.ts `$onMessage` reads its last argument as a SerializableObjectWithBuffers of VSBuffers,
+                // which the workbench passes as base64 strings.
+                if (message.proxy, message.method) == ("ExtHostWebviews", "$onMessage") && let Some(Arg::Json(encoded)) = args.pop() {
+                    let buffers: Vec<Vec<u8>> = encoded.as_array().into_iter().flatten().map(|text| STANDARD.decode(text.as_str().unwrap_or_default()).unwrap_or_default()).collect();
+                    let json = (0..buffers.len()).map(|index| json!({ "$$ref$$": index })).collect();
+                    args.push(Arg::JsonWithBuffers { json, buffers });
                 }
-                session.send_request(message.proxy, message.method, args)
+                // webviewViewPane.ts passes the title it was never given as `undefined`, which the view's getter returns.
+                if (message.proxy, message.method) == ("ExtHostWebviewViews", "$resolveWebviewView") && matches!(args.get(2), Some(Arg::Json(Value::Null))) {
+                    args[2] = Arg::Undefined;
+                }
+                match TOKEN_METHODS.contains(&(message.proxy, message.method)) {
+                    true => session.send_cancellable_request(message.proxy, message.method, args),
+                    false => session.send_request(message.proxy, message.method, args),
+                }
             };
             if let Some(reply) = message.reply {
                 self.waiting.push((req, message.cancellable, reply));
@@ -151,14 +178,13 @@ impl WorkbenchMainThread {
     }
 
     fn has_content_provider(&self, uri: &Value) -> bool {
-        self.content_providers.iter().any(|(_, scheme)| uri["scheme"] == json!(scheme))
+        self.content_providers.has(uri["scheme"].as_str().unwrap_or_default())
     }
 
     /// `ResourceModelCollection.ensureResolvedTextModelContent`: the first provider of the scheme that gives a string;
     /// a provider that fails fails the open.
     fn provide_text_content(&self, session: &mut Session, uri: &Value) -> Result<String, String> {
-        let handles: Vec<Value> = self.content_providers.iter().filter(|(_, scheme)| uri["scheme"] == json!(scheme)).map(|(handle, _)| handle.clone()).collect();
-        for handle in handles {
+        for handle in self.content_providers.handles(uri["scheme"].as_str().unwrap_or_default()) {
             let args = vec![Arg::Json(handle), Arg::Json(uri.clone())];
             match session.request("ExtHostDocumentContentProviders", "$provideTextDocumentContent", args, PROVIDER_TIMEOUT) {
                 Ok(CallResult::Ok(Reply::Json(Value::String(text)))) => return Ok(text),
@@ -199,6 +225,21 @@ impl WorkbenchMainThread {
 /// The time `$provideTextDocumentContent` gets, as main_thread_files.rs gives a file system provider.
 const PROVIDER_TIMEOUT: Duration = Duration::from_secs(300);
 
+/// Workbench calls whose host method ends with a `CancellationToken` (extHost.protocol.ts): rpcProtocol.ts sends
+/// them as requests with cancellation, so the host passes a token instead of `undefined`.
+const TOKEN_METHODS: [(&str, &str); 10] = [
+    ("ExtHostDebugService", "$provideDebugConfigurations"),
+    ("ExtHostDebugService", "$resolveDebugConfiguration"),
+    ("ExtHostDebugService", "$resolveDebugConfigurationWithSubstitutedVariables"),
+    ("ExtHostTesting", "$runControllerTests"),
+    ("ExtHostTesting", "$startContinuousRun"),
+    ("ExtHostTesting", "$getCoverageDetails"),
+    ("ExtHostTesting", "$refreshTests"),
+    ("ExtHostTesting", "$getTestsRelatedToCode"),
+    ("ExtHostTesting", "$getCodeRelatedToTest"),
+    ("ExtHostTesting", "$provideTestFollowups"),
+];
+
 /// mainThreadSaveParticipant.ts: the host's `onWillSaveTextDocument` listeners apply their edits through
 /// `$tryApplyWorkspaceEdit` while this waits; a failed or late listener is logged and the save goes on.
 fn participate_in_save(session: &mut Session, uri: &Value) {
@@ -207,6 +248,16 @@ fn participate_in_save(session: &mut Session, uri: &Value) {
     if session.request_cancellable("ExtHostDocumentSaveParticipant", "$participateInSave", args, Duration::from_millis(1750)).is_none() {
         eprintln!("[exthost] Aborted onWillSaveTextDocument-event after 1750ms");
     }
+}
+
+/// window.ts `resolveExternalUri` without tunnels: a resource a file system provider serves becomes an app uri that
+/// opens it; nothing else resolves, and extHost.api.impl.ts then keeps an http or https uri as it is.
+fn as_external_uri(session: &mut Session, uri: &Value) -> Result<Reply, Value> {
+    let uri = Uri::from_json(uri).map_err(|error| serialized_error(&error))?;
+    if (Providers { session }).capabilities(&uri.scheme).is_none() {
+        return Err(serialized_error(&format!("Could not resolve external URI: {}", uri.to_string(false))));
+    }
+    Ok(Reply::Json(json!({ "$mid": 1, "scheme": URL_PROTOCOL, "path": "workspace", "query": uri.to_string(false) })))
 }
 
 fn uri_text(uri: &Value) -> String {

@@ -1,5 +1,5 @@
 //! The Explorer's file tree: which folders are expanded, and the visible rows read from disk in the
-//! order the reference explorer sorts them (explorerViewer.ts `FileSorter`, `explorer.sortOrder: default`).
+//! order the reference explorer sorts them (explorerViewer.ts `FileSorter` with the `explorer.sortOrder` settings).
 
 mod nesting;
 
@@ -7,6 +7,7 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use config::configuration::Overrides;
 use config::service::Settings;
@@ -15,7 +16,7 @@ use serde_json::{Value, json};
 
 use crate::editor::uri_string;
 use nesting::FileNestingTrie;
-use icu_collator::options::CollatorOptions;
+use icu_collator::options::{CollatorOptions, Strength};
 use icu_collator::preferences::CollationNumericOrdering;
 use icu_collator::{Collator, CollatorBorrowed, CollatorPreferences};
 
@@ -60,7 +61,7 @@ pub struct NewItem {
     pub is_dir: bool,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Row {
     pub path: PathBuf,
     pub name: String,
@@ -231,6 +232,68 @@ impl FileTree {
         self.anchor = Some(path.to_path_buf());
     }
 
+    /// A keyboard move: the focus and the anchor go to `path`, the selection stays (listCommands.ts `navigate`).
+    pub fn focus(&mut self, path: Option<PathBuf>) {
+        self.anchor = path.clone();
+        self.focused = path;
+    }
+
+    pub fn clear_anchor(&mut self) {
+        self.anchor = None;
+    }
+
+    /// `list.collapseAll`: every folder and nest collapses.
+    pub fn collapse_all(&mut self) {
+        let expanded: Vec<PathBuf> = self.rows().into_iter().filter(|row| row.expanded).map(|row| row.path).collect();
+        for path in expanded {
+            self.set_expanded(&path, false);
+        }
+        self.expanded.clear();
+    }
+
+    /// abstractTree.ts `collapse(element, recursive)`: the folder and every folder or nest under it.
+    pub fn collapse_recursive(&mut self, path: &Path) {
+        let under: Vec<PathBuf> = self.expanded.iter().filter(|expanded| expanded.starts_with(path)).cloned().collect();
+        for expanded in under {
+            self.set_expanded(&expanded, false);
+        }
+        self.set_expanded(path, false);
+    }
+
+    /// explorerView.ts `collapseAll`: in a workspace with a root's child expanded, the expanded roots stay open.
+    pub fn collapse_folders(&mut self) {
+        let open_roots: Vec<PathBuf> = self.workspace.folders.iter().map(|folder| folder.path.clone()).filter(|root| self.expanded.contains(root)).collect();
+        let root_child_expanded = self.shows_roots() && self.expanded.iter().any(|path| path.parent().is_some_and(|parent| open_roots.iter().any(|root| root == parent)));
+        self.collapse_all();
+        if root_child_expanded {
+            for root in open_roots {
+                self.collapsed_nests.remove(&root);
+                self.expanded.insert(root);
+            }
+        }
+    }
+
+    /// listCommands.ts `list.selectAll` on a tree: the shown rows under the parent of the focused row (or of the
+    /// selection's first), with the parent itself when they were all selected already.
+    pub fn select_all(&mut self) {
+        let rows = self.rows();
+        let start = match &self.focused {
+            Some(focused) if self.selected.is_empty() || !self.selected.contains(focused) => Some(focused.clone()),
+            _ => self.selected.first().cloned(),
+        };
+        let start = start.and_then(|start| rows.iter().position(|row| row.path == start));
+        let scope = start.and_then(|start| rows[..start].iter().rposition(|row| row.depth < rows[start].depth));
+        let (first, depth) = match scope {
+            Some(scope) => (scope + 1, rows[scope].depth),
+            None => (0, 0),
+        };
+        let mut selection: Vec<PathBuf> = rows[first..].iter().take_while(|row| row.depth > depth).map(|row| row.path.clone()).collect();
+        if let Some(scope) = scope.filter(|_| self.selected.len() == selection.len()) {
+            selection.insert(0, rows[scope].path.clone());
+        }
+        self.selected = selection;
+    }
+
     /// explorerService.ts `onDidRunOperation` for a move: the moved item and the items under it keep their
     /// focus, selection and expansion, as upstream moves the model element itself.
     pub fn move_item(&mut self, old: &Path, new: &Path) {
@@ -300,11 +363,11 @@ impl FileTree {
                 continue;
             }
             let nested = match (respect_multi_selection && !ignore_nested_children, item.parent().filter(|_| !item.is_dir())) {
-                (true, Some(folder)) => self.entries(folder).into_iter().find(|entry| entry.path == item).filter(|_| !self.nest_expanded(&item)).map(|entry| entry.nested),
+                (true, Some(folder)) => self.entries(folder).into_iter().find(|entry| entry.child.path == item).filter(|_| !self.nest_expanded(&item)).map(|entry| entry.nested),
                 _ => None,
             };
             items.push(item);
-            items.extend(nested.into_iter().flatten().map(|(path, _)| path));
+            items.extend(nested.into_iter().flatten().map(|child| child.path));
         }
         items.dedup();
         items
@@ -398,9 +461,9 @@ impl FileTree {
         }
         let mut folder = folder.to_path_buf();
         loop {
-            let children = sorted_children(&folder);
-            let [(child, _, true)] = children.as_slice() else { return };
-            folder = child.clone();
+            let children = read_children(&folder);
+            let [Child { path, is_dir: true, .. }] = children.as_slice() else { return };
+            folder = path.clone();
             self.expanded.insert(folder.clone());
         }
     }
@@ -461,21 +524,15 @@ impl FileTree {
         rows
     }
 
-    /// The new item has an empty name, so `FileSorter` puts it first among the folders or the files.
     fn push_children(&self, folder: &Path, depth: usize, rows: &mut Vec<Row>) {
-        let new_item = self.new_item.as_ref().filter(|item| item.parent == folder);
-        let new_row = |is_dir| Row { path: folder.to_path_buf(), name: String::new(), depth, is_dir, has_nests: false, expanded: false, is_new: true, compressed: Vec::new() };
         let compact = self.compact_folders();
-        if new_item.is_some_and(|item| item.is_dir) {
-            rows.push(new_row(true));
-        }
-        let mut new_file = new_item.filter(|item| !item.is_dir);
-        for Entry { path, name, is_dir, nested } in self.entries(folder) {
-            if self.is_filtered_out(&path) {
+        for Entry { child: Child { path, name, is_dir, .. }, nested, is_new } in self.entries(folder) {
+            if is_new {
+                rows.push(Row { path, name, depth, is_dir, has_nests: false, expanded: false, is_new: true, compressed: Vec::new() });
                 continue;
             }
-            if !is_dir && new_file.take().is_some() {
-                rows.push(new_row(false));
+            if self.is_filtered_out(&path) {
+                continue;
             }
             let has_nests = !nested.is_empty();
             let compressed = match is_dir && compact {
@@ -492,11 +549,8 @@ impl FileTree {
                 self.push_children(&path, depth + 1, rows);
             }
             if expanded && has_nests {
-                rows.extend(nested.into_iter().filter(|(path, _)| !self.is_filtered_out(path)).map(|(path, name)| Row { path, name, depth: depth + 1, is_dir: false, has_nests: false, expanded: false, is_new: false, compressed: Vec::new() }));
+                rows.extend(nested.into_iter().filter(|child| !self.is_filtered_out(&child.path)).map(|Child { path, name, .. }| Row { path, name, depth: depth + 1, is_dir: false, has_nests: false, expanded: false, is_new: false, compressed: Vec::new() }));
             }
-        }
-        if new_file.is_some() {
-            rows.push(new_row(false));
         }
     }
 
@@ -510,12 +564,12 @@ impl FileTree {
             if !self.expanded.contains(last) || self.new_item.as_ref().is_some_and(|item| item.parent == *last) {
                 break;
             }
-            let mut children = sorted_children(last);
-            if children.len() != 1 || !children[0].2 {
+            let mut children = read_children(last);
+            if children.len() != 1 || !children[0].is_dir {
                 break;
             }
-            let (child, child_name, _) = children.remove(0);
-            elements.push((child, child_name));
+            let child = children.remove(0);
+            elements.push((child.path, child.name));
         }
         if elements.len() == 1 {
             elements.clear();
@@ -523,37 +577,51 @@ impl FileTree {
         elements
     }
 
-    /// The items of `folder` in `FileSorter` order. With `explorer.fileNesting.enabled`, a file nested under another
-    /// is left out and listed, sorted, in its parent's `nested` (explorerModel.ts `fetchChildren`). Names are
-    /// matched lowercased, as `getPlatformAwareName` on a disk without PathCaseSensitive.
+    /// The items of `folder` in `FileSorter` order, with the new item, whose name is empty, among them. With
+    /// `explorer.fileNesting.enabled`, a file nested under another is left out and listed, sorted, in its parent's
+    /// `nested` (explorerModel.ts `fetchChildren`). Names are matched lowercased, as `getPlatformAwareName` on a disk
+    /// without PathCaseSensitive.
     fn entries(&self, folder: &Path) -> Vec<Entry> {
-        let children = sorted_children(folder);
+        let children = read_children(folder);
+        let sorter = self.file_sorter();
         let visible = |name: &str| !EXCLUDED_NAMES.contains(&name);
-        let Some(nester) = self.nester(folder) else {
-            return children.into_iter().filter(|(_, name, _)| visible(name)).map(|(path, name, is_dir)| Entry { path, name, is_dir, nested: Vec::new() }).collect();
-        };
         // `files.exclude` filters the tree after nesting, so an excluded file still nests the files under it.
-        let files: Vec<String> = children.iter().filter(|(_, _, is_dir)| !is_dir).map(|(_, name, _)| name.to_lowercase()).collect();
-        let dirname = folder.file_name().map(|name| name.to_string_lossy().to_lowercase()).unwrap_or_default();
-        let nests = nester.nest(&files, &dirname);
+        let nests = self.nester(folder).map(|nester| {
+            let files: Vec<String> = children.iter().filter(|child| !child.is_dir).map(|child| child.name.to_lowercase()).collect();
+            let dirname = folder.file_name().map(|name| name.to_string_lossy().to_lowercase()).unwrap_or_default();
+            nester.nest(&files, &dirname)
+        });
         let mut entries = Vec::new();
-        for (path, name, is_dir) in &children {
-            if !visible(name) {
+        for child in &children {
+            if !visible(&child.name) {
                 continue;
             }
-            if *is_dir {
-                entries.push(Entry { path: path.clone(), name: name.clone(), is_dir: true, nested: Vec::new() });
-                continue;
+            let mut nested = Vec::new();
+            if let Some(nests) = &nests
+                && !child.is_dir
+            {
+                let Some(nested_names) = nests.get(&child.name.to_lowercase()) else { continue };
+                nested = children.iter().filter(|other| !other.is_dir && visible(&other.name) && nested_names.contains(&other.name.to_lowercase())).cloned().collect();
+                nested.sort_by(|a, b| sorter.compare(a, false, b, false));
             }
-            let Some(nested_names) = nests.get(&name.to_lowercase()) else { continue };
-            let nested = children
-                .iter()
-                .filter(|(_, child, is_dir)| !is_dir && visible(child) && nested_names.contains(&child.to_lowercase()))
-                .map(|(path, name, _)| (path.clone(), name.clone()))
-                .collect();
-            entries.push(Entry { path: path.clone(), name: name.clone(), is_dir: false, nested });
+            entries.push(Entry { child: child.clone(), nested, is_new: false });
         }
+        if let Some(item) = self.new_item.as_ref().filter(|item| item.parent == folder) {
+            let child = Child { path: folder.to_path_buf(), name: String::new(), is_dir: item.is_dir, mtime: SystemTime::now() };
+            entries.push(Entry { child, nested: Vec::new(), is_new: true });
+        }
+        entries.sort_by(|a, b| sorter.compare(&a.child, !a.nested.is_empty(), &b.child, !b.nested.is_empty()));
         entries
+    }
+
+    fn file_sorter(&self) -> FileSorter {
+        let settings = self.settings.lock().unwrap();
+        let setting = |key| settings.get_value(Some(key), &Overrides::default()).unwrap_or(Value::Null);
+        FileSorter {
+            order: setting("explorer.sortOrder").as_str().unwrap_or("default").to_string(),
+            lexicographic: setting("explorer.sortOrderLexicographicOptions").as_str().unwrap_or("default").to_string(),
+            reverse: setting("explorer.sortOrderReverse") == json!(true),
+        }
     }
 
     /// explorerModel.ts `fileNester` for the folder's `explorer.fileNesting.patterns`; `None` while nesting is off.
@@ -576,37 +644,138 @@ impl FileTree {
     }
 }
 
-/// An item of a folder, with the files nested under it.
+/// An item of a folder, with the files nested under it; `is_new` marks the item being created, with an empty name.
 struct Entry {
+    child: Child,
+    nested: Vec<Child>,
+    is_new: bool,
+}
+
+#[derive(Clone)]
+struct Child {
     path: PathBuf,
     name: String,
     is_dir: bool,
-    nested: Vec<(PathBuf, String)>,
+    mtime: SystemTime,
 }
 
-/// Folders first, then names in `compareFileNamesDefault` order; excluded names too.
-fn sorted_children(folder: &Path) -> Vec<(PathBuf, String, bool)> {
+/// The items of `folder` in no order, excluded names too.
+fn read_children(folder: &Path) -> Vec<Child> {
     // shortcut: an unreadable folder shows no children; the reference shows the error in the tree.
     let Ok(entries) = std::fs::read_dir(folder) else { return Vec::new() };
     let mut children = Vec::new();
     for entry in entries.flatten() {
-        let name = entry.file_name().to_string_lossy().into_owned();
-        let is_dir = entry.path().is_dir();
-        children.push((entry.path(), name, is_dir));
+        let path = entry.path();
+        let metadata = std::fs::metadata(&path).ok();
+        children.push(Child {
+            name: entry.file_name().to_string_lossy().into_owned(),
+            is_dir: metadata.as_ref().is_some_and(|metadata| metadata.is_dir()),
+            mtime: metadata.and_then(|metadata| metadata.modified().ok()).unwrap_or(UNIX_EPOCH),
+            path,
+        });
     }
-    children.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| compare_file_names(&a.1, &b.1)));
     children
+}
+
+/// explorerViewer.ts `FileSorter` with `explorer.sortOrder`, `explorer.sortOrderLexicographicOptions` and
+/// `explorer.sortOrderReverse`.
+struct FileSorter {
+    order: String,
+    lexicographic: String,
+    reverse: bool,
+}
+
+impl FileSorter {
+    fn compare(&self, a: &Child, a_nests: bool, b: &Child, b_nests: bool) -> Ordering {
+        let ((a, a_nests), (b, b_nests)) = match self.reverse {
+            true => ((b, b_nests), (a, a_nests)),
+            false => ((a, a_nests), (b, b_nests)),
+        };
+        let folders_first = b.is_dir.cmp(&a.is_dir);
+        match self.order.as_str() {
+            "type" if a.is_dir && b.is_dir => return self.compare_names(&a.name, &b.name),
+            "filesFirst" if a.is_dir != b.is_dir => return folders_first.reverse(),
+            "foldersNestsFiles" if a.is_dir != b.is_dir => return folders_first,
+            "foldersNestsFiles" if a_nests != b_nests => return b_nests.cmp(&a_nests),
+            "mixed" | "filesFirst" | "foldersNestsFiles" => {}
+            _ if a.is_dir != b.is_dir => return folders_first,
+            _ => {}
+        }
+        match self.order.as_str() {
+            "type" => self.compare_extensions(&a.name, &b.name),
+            "modified" => b.mtime.cmp(&a.mtime).then_with(|| self.compare_names(&a.name, &b.name)),
+            _ => self.compare_names(&a.name, &b.name),
+        }
+    }
+
+    /// comparers.ts `compareFileNames{Default,Upper,Lower,Unicode}`.
+    fn compare_names(&self, one: &str, other: &str) -> Ordering {
+        match self.lexicographic.as_str() {
+            "upper" => compare_case_upper_first(one, other).then_with(|| compare_file_names(one, other)),
+            "lower" => compare_case_upper_first(one, other).reverse().then_with(|| compare_file_names(one, other)),
+            "unicode" => one.encode_utf16().cmp(other.encode_utf16()),
+            _ => compare_file_names(one, other),
+        }
+    }
+
+    /// comparers.ts `compareFileExtensions{Default,Upper,Lower,Unicode}`: the extensions without case, then the names.
+    fn compare_extensions(&self, one: &str, other: &str) -> Ordering {
+        let (one_extension, other_extension) = (extension(one), extension(other));
+        if self.lexicographic == "unicode" {
+            return one_extension.to_lowercase().encode_utf16().cmp(other_extension.to_lowercase().encode_utf16()).then_with(|| one.encode_utf16().cmp(other.encode_utf16()));
+        }
+        static CASE_INSENSITIVE: LazyLock<CollatorBorrowed<'static>> = LazyLock::new(|| {
+            let mut options = CollatorOptions::default();
+            options.strength = Some(Strength::Secondary);
+            Collator::try_new(numeric_preferences(), options).expect("the root collation is compiled in")
+        });
+        let by_extension = CASE_INSENSITIVE.compare(one_extension, other_extension).then_with(|| utf16_len(one_extension).cmp(&utf16_len(other_extension)));
+        let by_case = match self.lexicographic.as_str() {
+            "upper" => compare_case_upper_first(one, other),
+            "lower" => compare_case_upper_first(one, other).reverse(),
+            _ => Ordering::Equal,
+        };
+        by_extension.then(by_case).then_with(|| compare_file_names(one, other))
+    }
+}
+
+/// comparers.ts `extractExtension`: after the last dot, none for a dotfile or a name without one.
+fn extension(name: &str) -> &str {
+    match name.rsplit_once('.') {
+        Some((stem, extension)) if !stem.is_empty() && !stem.starts_with('.') => extension,
+        _ => "",
+    }
+}
+
+/// comparers.ts `compareCaseUpperFirst`: a name starting with an upper case letter before one starting with a lower
+/// case letter; `compareCaseLowerFirst` is its reverse.
+fn compare_case_upper_first(one: &str, other: &str) -> Ordering {
+    let starts_with_lower = |name: &str| name.chars().next().is_some_and(|first| first.to_uppercase().ne([first]));
+    let starts_with_upper = |name: &str| name.chars().next().is_some_and(|first| first.to_lowercase().ne([first]));
+    if starts_with_upper(one) && starts_with_lower(other) {
+        return Ordering::Less;
+    }
+    if starts_with_lower(one) && starts_with_upper(other) {
+        return Ordering::Greater;
+    }
+    Ordering::Equal
+}
+
+fn utf16_len(text: &str) -> usize {
+    text.encode_utf16().count()
+}
+
+fn numeric_preferences() -> CollatorPreferences {
+    let mut preferences = CollatorPreferences::default();
+    preferences.numeric_ordering = Some(CollationNumericOrdering::True);
+    preferences
 }
 
 /// comparers.ts `compareFileNamesDefault`: `Intl.Collator(undefined, { numeric: true })`, then the shorter name
 /// first, since numeric collation makes `foo1` and `foo01` equal.
 pub fn compare_file_names(one: &str, other: &str) -> Ordering {
-    static COLLATOR: LazyLock<CollatorBorrowed<'static>> = LazyLock::new(|| {
-        let mut preferences = CollatorPreferences::default();
-        preferences.numeric_ordering = Some(CollationNumericOrdering::True);
-        Collator::try_new(preferences, CollatorOptions::default()).expect("the root collation is compiled in")
-    });
-    COLLATOR.compare(one, other).then_with(|| one.len().cmp(&other.len()))
+    static COLLATOR: LazyLock<CollatorBorrowed<'static>> = LazyLock::new(|| Collator::try_new(numeric_preferences(), CollatorOptions::default()).expect("the root collation is compiled in"));
+    COLLATOR.compare(one, other).then_with(|| utf16_len(one).cmp(&utf16_len(other)))
 }
 
 #[cfg(test)]
@@ -868,5 +1037,79 @@ mod tests {
         assert_eq!(compare_file_names(".env", "aaa"), Ordering::Less);
         assert_eq!(compare_file_names(".MD", "a.md"), Ordering::Less);
         assert_eq!(sorted(&["Émail", "émail", "Email", "email"]), ["email", "Email", "émail", "Émail"]);
+    }
+
+    /// Cases from comparers.test.ts for the Upper, Lower, Unicode and Extensions comparers.
+    #[test]
+    fn sorts_names_with_each_lexicographic_option() {
+        let sorter = |lexicographic: &str| FileSorter { order: "default".into(), lexicographic: lexicographic.into(), reverse: false };
+        let sorted = |lexicographic: &str, extensions: bool, names: &[&'static str]| {
+            let sorter = sorter(lexicographic);
+            let mut names = names.to_vec();
+            names.sort_by(|a, b| if extensions { sorter.compare_extensions(a, b) } else { sorter.compare_names(a, b) });
+            names
+        };
+        let numbers = ["a10.txt", "A2.txt", "A100.txt", "a20.txt"];
+        let roots = ["artichoke", "Artichoke", "art", "Art"];
+        let emails = ["email", "Email", "émail", "Émail"];
+        for extensions in [false, true] {
+            assert_eq!(sorted("upper", extensions, &roots), ["Art", "Artichoke", "art", "artichoke"]);
+            assert_eq!(sorted("upper", extensions, &emails), ["Email", "Émail", "email", "émail"]);
+            assert_eq!(sorted("upper", extensions, &numbers), ["A2.txt", "A100.txt", "a10.txt", "a20.txt"]);
+            assert_eq!(sorted("lower", extensions, &roots), ["art", "artichoke", "Art", "Artichoke"]);
+            assert_eq!(sorted("lower", extensions, &emails), ["email", "émail", "Email", "Émail"]);
+            assert_eq!(sorted("lower", extensions, &numbers), ["a10.txt", "a20.txt", "A2.txt", "A100.txt"]);
+            assert_eq!(sorted("default", extensions, &numbers), ["A2.txt", "a10.txt", "a20.txt", "A100.txt"]);
+        }
+        assert_eq!(sorted("unicode", false, &roots), ["Art", "Artichoke", "art", "artichoke"]);
+        assert_eq!(sorted("unicode", false, &emails), ["Email", "email", "Émail", "émail"]);
+        assert_eq!(sorted("unicode", false, &numbers), ["A100.txt", "A2.txt", "a10.txt", "a20.txt"]);
+        assert_eq!(sorted("unicode", true, &numbers), ["A100.txt", "A2.txt", "a10.txt", "a20.txt"]);
+
+        let default = sorter("default");
+        assert_eq!(default.compare_extensions("bbb.aaa", "aaa.bbb"), Ordering::Less, "the extension first");
+        assert_eq!(default.compare_extensions("a.MD", "a.md"), compare_file_names("a.MD", "a.md"), "extensions equal but for case compare as full names");
+        assert_eq!(default.compare_extensions(".md", ".Gitattributes"), Ordering::Greater, "a dotfile has no extension");
+        assert_eq!(default.compare_extensions("txt.abc1", "txt.abc10"), Ordering::Less, "extensions compare numerically");
+        assert_eq!(default.compare_extensions("a.ext1", "b.Ext1"), Ordering::Less);
+        assert_eq!(sorter("unicode").compare_extensions("a.MD", "b.md"), Ordering::Less, "unicode extensions compare without case");
+        assert_eq!(default.compare_names("bbb.aaa", "aaa.bbb"), Ordering::Greater);
+    }
+
+    #[test]
+    fn sorts_items_with_each_sort_order() {
+        let root = std::env::temp_dir().join(format!("explorer-sort-order-test-{}", std::process::id()));
+        let now = SystemTime::now();
+        std::fs::create_dir_all(&root).unwrap();
+        for (age, file) in [(3, "a.ts"), (1, "a.js"), (2, "c.md"), (4, "z.css"), (5, "0.md"), (0, "b/"), (5, "x/")] {
+            let file = match file.strip_suffix('/') {
+                Some(folder) => std::fs::create_dir_all(root.join(folder)).and_then(|_| std::fs::File::open(root.join(folder))),
+                None => std::fs::File::create(root.join(file)),
+            };
+            file.unwrap().set_modified(now - std::time::Duration::from_secs(age * 60)).unwrap();
+        }
+        let user = root.with_extension("user");
+        std::fs::create_dir_all(&user).unwrap();
+        let settings = Arc::new(Mutex::new(Settings::load(config::registry::Registry::with_extensions(&[]), user.clone(), None)));
+        let tree = FileTree::new(Workspace::folder(root.clone()), settings.clone());
+        let sorted_with = |order: &str, reverse: bool| {
+            let mut settings = settings.lock().unwrap();
+            settings.update_value_derived("explorer.sortOrder", Some(&json!(order))).unwrap();
+            settings.update_value_derived("explorer.sortOrderReverse", Some(&json!(reverse))).unwrap();
+            drop(settings);
+            names(&tree).into_iter().map(|(name, _)| name).collect::<Vec<_>>()
+        };
+        assert_eq!(sorted_with("default", false), ["b", "x", "0.md", "a.js", "a.ts", "c.md", "z.css"]);
+        assert_eq!(sorted_with("default", true), ["z.css", "c.md", "a.ts", "a.js", "0.md", "x", "b"], "reversed, files come first");
+        assert_eq!(sorted_with("mixed", false), ["0.md", "a.js", "a.ts", "b", "c.md", "x", "z.css"]);
+        assert_eq!(sorted_with("filesFirst", false), ["0.md", "a.js", "a.ts", "c.md", "z.css", "b", "x"]);
+        assert_eq!(sorted_with("type", false), ["b", "x", "z.css", "a.js", "0.md", "c.md", "a.ts"]);
+        assert_eq!(sorted_with("modified", false), ["b", "x", "a.js", "c.md", "a.ts", "z.css", "0.md"]);
+
+        settings.lock().unwrap().update_value_derived("explorer.fileNesting.enabled", Some(&json!(true))).unwrap();
+        assert_eq!(sorted_with("default", false), ["b", "x", "0.md", "a.ts", "a.js", "c.md", "z.css"]);
+        assert_eq!(sorted_with("foldersNestsFiles", false), ["b", "x", "a.ts", "a.js", "0.md", "c.md", "z.css"], "a.ts nests a.js and comes before the files without nests");
+        std::fs::remove_dir_all(root).unwrap();
+        std::fs::remove_dir_all(user).unwrap();
     }
 }

@@ -20,13 +20,22 @@ impl Workbench {
             ("MainThreadProgress", "$progressReport") => self.report_progress(&request.args, window, cx),
             ("MainThreadProgress", "$progressEnd") => self.end_progress(&request.args, window, cx),
             ("MainThreadWebviews" | "MainThreadWebviewPanels", method) => self.handle_webview_request(method, &request.args, window, cx),
+            ("MainThreadDecorations", method) => self.handle_decorations_request(method, &request.args, cx),
+            ("MainThreadTreeViews", method) => self.handle_tree_view_request(method, &request.args, window, cx),
             ("MainThreadSCM", method) => self.handle_scm_request(method, &request.args, window, cx),
             ("MainThreadQuickDiff", method) => self.handle_quick_diff_request(method, &request.args, cx),
             ("MainThreadTimeline", method) => self.handle_timeline_request(method, &request.args, cx),
             ("MainThreadGitHub", method) => self.handle_github_request(method, &request.args, cx),
+            ("MainThreadWebviewViews", method) => self.handle_webview_views_request(method, &request.args, window, cx),
+            ("MainThreadCustomEditors", method) => self.handle_custom_editors_request(method, &request.args, window, cx),
             ("MainThreadStatusBar", "$setEntry") => self.set_extension_status_entry(&request.args, cx),
             ("MainThreadStatusBar", "$disposeEntry") => self.dispose_extension_status_entry(&request.args, cx),
             ("MainThreadOutputService" | "MainThreadLogger", _) => self.handle_output_request(request, window, cx),
+            ("MainThreadConsole" | "MainThreadErrors" | "MainThreadExtensionService", _) => self.handle_observed_request(&request),
+            ("MainThreadDebugService", _) => self.handle_debug_request(request, window, cx),
+            ("MainThreadTesting", _) => self.handle_testing_request(request, cx),
+            ("MainThreadTerminalService" | "MainThreadTerminalShellIntegration", _) => self.handle_terminal_request(request, window, cx),
+            ("MainThreadTask", _) => self.handle_task_request(request, window, cx),
             ("MainThreadCommands", "$registerCommand") => {
                 let id = arg(0).as_str().unwrap_or_default().to_owned();
                 let handler_id = id.clone();
@@ -72,6 +81,26 @@ impl Workbench {
             ("MainThreadEditorTabs", "$moveTab") => self.move_tab(arg(0).as_str().unwrap_or_default(), arg(1).as_i64().unwrap_or(-1), arg(2).as_i64().unwrap_or(-1), cx),
             ("MainThreadEditorTabs", "$closeTab") => self.close_tabs(arg(0).as_array().map_or(&[], Vec::as_slice), window, cx),
             ("MainThreadEditorTabs", "$closeGroup") => self.close_groups(arg(0).as_array().map_or(&[], Vec::as_slice), window, cx),
+            ("MainThreadWindow", "$openUri") => self.api_open_uri(&request.args, window, cx),
+            ("MainThreadUrls", "$registerUriHandler") => {
+                // ExtensionIdentifier serializes as `{ value, _lower }`.
+                let extension = arg(1)["value"].as_str().unwrap_or_default().to_owned();
+                self.register_uri_handler(arg(0).as_u64().unwrap_or_default(), &extension, arg(2).as_str().unwrap_or_default());
+                Outcome::done()
+            }
+            ("MainThreadUrls", "$unregisterUriHandler") => {
+                self.unregister_uri_handler(arg(0).as_u64().unwrap_or_default());
+                Outcome::done()
+            }
+            // shortcut: milestones 12 (url_handler.rs) and 17 (url_handlers.rs) both ported MainThreadUrls; the rest goes to 17's until one module remains.
+            ("MainThreadUrls", method) => self.handle_urls_request(method, &request.args),
+            ("MainThreadUriOpeners", "$registerUriOpener") => self.register_uri_opener(&request.args),
+            ("MainThreadUriOpeners", "$unregisterUriOpener") => {
+                self.urls.openers.retain(|opener| Some(opener.id.as_str()) != arg(0).as_str());
+                Outcome::done()
+            }
+            ("MainThreadWorkspace", "$requestWorkspaceTrust") => self.request_workspace_trust(&arg(0), window, cx),
+            ("MainThreadWorkspace", "$isResourceTrusted") => self.is_resource_trusted(&arg(0)),
             ("workbench", "applyTextEdits") => Outcome::Ready(self.apply_workspace_text_edits(&arg(0), &arg(1), cx)),
             ("workbench", "didRunFileOperation") => {
                 self.models_after_file_operation(arg(0).as_u64().unwrap_or_default(), &arg(1), cx);
@@ -87,23 +116,22 @@ impl Workbench {
             }
             // codelensController.ts: `codeLensProvider.onDidChange` asks for the lenses again.
             ("MainThreadLanguageFeatures", "$unregister") => {
-                if self.language_features.unregister(arg(0).as_u64().unwrap_or_default()).as_deref() == Some("$registerCodeLensSupport") {
-                    self.code_lens_event += 1;
-                    cx.notify();
+                if let Some(method) = self.language_features.unregister(arg(0).as_u64().unwrap_or_default()) {
+                    self.language_providers_changed(&method, cx);
                 }
                 Outcome::done()
             }
+            ("MainThreadLanguageFeatures", "$emitFoldingRangeEvent") => {
+                self.folding_range_event(&arg(0), cx);
+                Outcome::done()
+            }
             ("MainThreadLanguageFeatures", "$emitCodeLensEvent") => {
-                self.code_lens_event += 1;
-                cx.notify();
+                self.code_lens_provider_changed(arg(0).as_u64().unwrap_or_default(), cx);
                 Outcome::done()
             }
             ("MainThreadLanguageFeatures", method) if method.starts_with("$register") => {
                 self.language_features.register(method, request.args.clone());
-                if method == "$registerCodeLensSupport" {
-                    self.code_lens_event += 1;
-                    cx.notify();
-                }
+                self.language_providers_changed(method, cx);
                 Outcome::done()
             }
             ("MainThreadCommands", "$getCommands") => Outcome::Ready(Ok(json!(self.commands.ids().collect::<Vec<_>>()))),

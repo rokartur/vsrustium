@@ -8,7 +8,7 @@
 # environment appName ("Code - OSS Dev" in a dev run), machineId (MAC hash vs uuid) and isTelemetryEnabled;
 # preferences: the reference also has the chat, sign-in, js-debug and external terminal settings and languages, chat
 # schema associations, the check extension's own id in extension enums, platform `when` clauses where the port's
-# keybinding export has `false` or lacks (terminal, node-debug), no unbound commands with `args` metadata, and the
+# keybinding export has `false` or lacks (terminal, node-debug), no unbound commands with `args` metadata, the port's own `workbench.action.importSettings`, and the
 # Unknown Configuration Setting hint of preferencesRenderers.ts (needs the marker service of milestone 13).
 set -uo pipefail
 REF=${REF:-$HOME/Developer/vscode-ref}
@@ -21,7 +21,7 @@ rm -rf "$OUT" && mkdir -p "$OUT"
 launch() { # <port|ref> <dir> [--extensionTestsPath=...]
   if [[ $1 == port ]]; then
     SHELL=/bin/bash VSCODE_GPUI_EXTENSIONS=$REF/extensions timeout -k 5 120 native/target/release/vsrustium "$2/folder" \
-      --user-data-dir "$2/udd" --extensionDevelopmentPath="$2/ext" "${@:3}"
+      --user-data-dir "$2/udd" --disable-workspace-trust --extensionDevelopmentPath="$2/ext" "${@:3}"
   else
     VSCODE_DEV=1 NODE_ENV=development timeout -k 5 120 "$REF/.build/electron/Code - OSS.app/Contents/MacOS/Code - OSS" "$REF" "$2/folder" \
       --user-data-dir "$2/udd" --disable-extensions --disable-workspace-trust --extensionDevelopmentPath="$2/ext" "${@:3}"

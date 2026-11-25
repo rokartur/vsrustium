@@ -3,7 +3,7 @@
 //! column selection (cursorColumnSelection.ts).
 
 use super::cursor::{self, Position, Selection};
-use super::{OpenEditor, visible_column, word_at};
+use super::{OpenEditor, logical_visible_column, word_at};
 
 /// What a command scrolls into view: all cursors (`revealAllCursors`), one position
 /// (`revealTopMostCursor`, `revealBottomMostCursor`), or nothing (`setSelections`).
@@ -29,8 +29,9 @@ impl OpenEditor {
     /// `insertCursorAbove`/`insertCursorBelow` (`addCursorUp`/`addCursorDown` on logical lines): every
     /// cursor stays and gets a copy one line up or down, anchor and head moved by `translateUp`/`translateDown`.
     pub fn insert_cursors_vertically(&mut self, down: bool) -> Reveal {
-        let tab_size = self.document.indentation.tab_size;
-        let lines = &self.document.lines;
+        let tab_size = self.document().indentation.tab_size;
+        let document = self.document();
+        let lines = &document.lines;
         let mut selections = Vec::new();
         let mut leftovers = Vec::new();
         for (index, &selection) in self.selections.iter().enumerate() {
@@ -40,6 +41,7 @@ impl OpenEditor {
             selections.extend([selection, Selection { anchor, head }]);
             leftovers.extend([(anchor_leftover, head_leftover), (anchor_leftover_after, head_leftover_after)]);
         }
+        drop(document);
         self.set_cursor_states(selections, leftovers);
         let heads = self.selections.iter().map(|selection| selection.head);
         Reveal::Position(if down { heads.max() } else { heads.min() }.expect("an editor has a cursor"))
@@ -52,7 +54,7 @@ impl OpenEditor {
         for selection in self.selections.iter().filter(|selection| !selection.is_empty()) {
             let (start, end) = (selection.start(), selection.end());
             for line in start.line..end.line {
-                carets.push(Selection::caret(cursor::line_end(&self.document.lines, Position::new(line, 0))));
+                carets.push(Selection::caret(cursor::line_end(&self.document().lines, Position::new(line, 0))));
             }
             if end.column > 0 {
                 carets.push(Selection::caret(end));
@@ -68,11 +70,11 @@ impl OpenEditor {
     /// start line to the last or first line, clamped to each line.
     pub fn add_cursors_to_edge(&mut self, bottom: bool) -> Reveal {
         let (start, end) = (self.selection().start(), self.selection().end());
-        let lines: Vec<usize> = if bottom { (start.line..self.document.lines.len()).collect() } else { (0..=start.line).rev().collect() };
+        let lines: Vec<usize> = if bottom { (start.line..self.document().lines.len()).collect() } else { (0..=start.line).rev().collect() };
         let selections = lines
             .into_iter()
             .map(|line| {
-                let len = cursor::line_len(&self.document.lines, line);
+                let len = cursor::line_len(&self.document().lines, line);
                 Selection { anchor: Position::new(line, start.column.min(len)), head: Position::new(line, end.column.min(len)) }
             })
             .collect();
@@ -132,16 +134,16 @@ impl OpenEditor {
     /// `_lastCursorWordSelect` (Alt+double click): the cursor added last selects the word at `position`,
     /// the same word a double click selects.
     pub fn last_cursor_select_word(&mut self, position: Position) {
-        let word = word_at(&self.document.lines[position.line], position.column).unwrap_or(position.column..position.column);
+        let word = word_at(&self.document().lines[position.line], position.column).unwrap_or(position.column..position.column);
         let index = self.last_added();
         self.set_last_cursor(index, Selection { anchor: Position::new(position.line, word.start), head: Position::new(position.line, word.end) });
     }
 
     /// `_lastCursorLineSelect` (Alt+triple click): the cursor added last selects the line with its line break.
     pub fn last_cursor_select_line(&mut self, line: usize) {
-        let end = match line + 1 < self.document.lines.len() {
+        let end = match line + 1 < self.document().lines.len() {
             true => Position::new(line + 1, 0),
-            false => cursor::line_end(&self.document.lines, Position::new(line, 0)),
+            false => cursor::line_end(&self.document().lines, Position::new(line, 0)),
         };
         let index = self.last_added();
         self.set_last_cursor(index, Selection { anchor: Position::new(line, 0), head: end });
@@ -154,6 +156,11 @@ impl OpenEditor {
         self.set_cursor_states(selections, leftovers);
     }
 
+    /// `getCursorColumnSelectData().isReal`: the cursors are still the last column selection's.
+    pub fn is_column_selection(&self) -> bool {
+        self.column_select.as_ref().is_some_and(|(_, selections)| *selections == self.selections)
+    }
+
     /// `getCursorColumnSelectData`: the last column selection while its cursors are unchanged, else the
     /// primary cursor from its anchor to its head.
     pub fn column_select_data(&self) -> ColumnSelectData {
@@ -162,9 +169,9 @@ impl OpenEditor {
         {
             return *data;
         }
-        let tab_size = self.document.indentation.tab_size;
+        let tab_size = self.document().indentation.tab_size;
         let Selection { anchor, head } = self.selection();
-        let visible = |position: Position| visible_column(&self.document.lines[position.line], position.column, tab_size);
+        let visible = |position: Position| logical_visible_column(&self.document().lines[position.line], position.column, tab_size);
         ColumnSelectData { from_line: anchor.line, from_visible: visible(anchor), to_line: head.line, to_visible: visible(head) }
     }
 
@@ -173,15 +180,15 @@ impl OpenEditor {
     /// each line's end. Reveals the cursor at the end the selection grew towards.
     pub fn column_select(&mut self, data: ColumnSelectData) -> Reveal {
         let ColumnSelectData { from_line, from_visible, to_line, to_visible } = data;
-        let tab_size = self.document.indentation.tab_size;
+        let tab_size = self.document().indentation.tab_size;
         let reversed = from_line > to_line;
         let lines: Vec<usize> = if reversed { (to_line..=from_line).rev().collect() } else { (from_line..=to_line).collect() };
         let mut selections = Vec::new();
         for &line in &lines {
-            let text = &self.document.lines[line];
+            let text = &self.document().lines[line];
             let start = cursor::column_from_visible(text, from_visible, tab_size);
             let end = cursor::column_from_visible(text, to_visible, tab_size);
-            let (visible_start, visible_end) = (visible_column(text, start, tab_size), visible_column(text, end, tab_size));
+            let (visible_start, visible_end) = (logical_visible_column(text, start, tab_size), logical_visible_column(text, end, tab_size));
             if from_visible < to_visible && (visible_start > to_visible || visible_end < from_visible) {
                 continue;
             }
@@ -191,7 +198,7 @@ impl OpenEditor {
             selections.push(Selection { anchor: Position::new(line, start), head: Position::new(line, end) });
         }
         if selections.is_empty() {
-            selections = lines.iter().map(|&line| Selection::caret(cursor::line_end(&self.document.lines, Position::new(line, 0)))).collect();
+            selections = lines.iter().map(|&line| Selection::caret(cursor::line_end(&self.document().lines, Position::new(line, 0)))).collect();
         }
         self.set_selections(selections);
         self.column_select = Some((data, self.selections.clone()));
@@ -207,11 +214,11 @@ impl OpenEditor {
             data.to_visible = data.to_visible.saturating_sub(1);
             return self.column_select(data);
         }
-        let tab_size = self.document.indentation.tab_size;
+        let tab_size = self.document().indentation.tab_size;
         let max_visible = (data.from_line.min(data.to_line)..=data.from_line.max(data.to_line))
             .map(|line| {
-                let text = &self.document.lines[line];
-                visible_column(text, text.chars().count(), tab_size)
+                let text = &self.document().lines[line];
+                logical_visible_column(text, text.chars().count(), tab_size)
             })
             .max()
             .expect("a range of lines");
@@ -224,7 +231,7 @@ impl OpenEditor {
     /// `cursorColumnSelectUp`/`Down` and their `PageUp`/`PageDown` forms: the moving corner `count` lines over.
     pub fn column_select_vertically(&mut self, down: bool, count: usize) -> Reveal {
         let mut data = self.column_select_data();
-        data.to_line = if down { (data.to_line + count).min(self.document.lines.len() - 1) } else { data.to_line.saturating_sub(count) };
+        data.to_line = if down { (data.to_line + count).min(self.document().lines.len() - 1) } else { data.to_line.saturating_sub(count) };
         self.column_select(data)
     }
 
@@ -236,8 +243,8 @@ impl OpenEditor {
             return self.column_select(self.column_select_data());
         }
         let data = self.column_select_data();
-        let tab_size = self.document.indentation.tab_size;
-        let position = |line: usize, visible: usize| Position::new(line, cursor::column_from_visible(&self.document.lines[line], visible, tab_size));
+        let tab_size = self.document().indentation.tab_size;
+        let position = |line: usize, visible: usize| Position::new(line, cursor::column_from_visible(&self.document().lines[line], visible, tab_size));
         let selection = Selection { anchor: position(data.from_line, data.from_visible), head: position(data.to_line, data.to_visible) };
         self.set_selections(vec![selection]);
         Reveal::Nothing

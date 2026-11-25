@@ -25,7 +25,7 @@ fn a_shown_model_loses_its_ls_and_ps_and_an_undo_brings_them_back(cx: &mut TestA
         workbench
     });
     cx.run_until_parked();
-    let text = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document.lines.join("\n"));
+    let text = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document().lines.join("\n"));
     assert_eq!(text(cx), "ab\nc");
 
     workbench.update(cx, |workbench, cx| {

@@ -36,10 +36,42 @@ pub enum Owner {
     ResizeColumn(Option<usize>),
     /// A picker of output channels, with what accepting each item does.
     Output(Vec<crate::workbench::output_actions::OutputPick>),
-    /// `_workbench.pickWorkspaceFolder` of Open Folder Settings (JSON): the folders, by item handle.
-    FolderSettings(Vec<std::path::PathBuf>),
     /// The terminal profile picker or rename input.
     Terminal(crate::workbench::terminal_view::TerminalInput),
+    /// The `workbench.action.reopenWithEditor` picker.
+    OpenWith(crate::workbench::custom_editors::OpenWithPicker),
+    /// The `imagePreview.selectZoomLevel` picker.
+    ImageZoom,
+    /// `workbench.action.openRecent`: the recently opened entry of each item by handle.
+    RecentlyOpened(Vec<Value>),
+    /// `workbench.action.localHistory.restoreViaPicker`: the files to pick, by handle.
+    LocalHistoryFiles(Vec<std::path::PathBuf>),
+    /// The picked file's local history entries, by handle.
+    LocalHistoryEntries(std::path::PathBuf, Vec<crate::local_history::Entry>),
+    /// `workbench.action.localHistory.create`: the input box of the new entry's source for the file.
+    LocalHistoryCreate(std::path::PathBuf),
+    /// A workbench `quickInputService.pick` of one item, answered with its handle or null.
+    Choose(Reply),
+    /// The folder pick of Configure Recommended Extensions (Workspace Folder).
+    ExtensionsFolder(Vec<std::path::PathBuf>),
+    /// The Profiles editor's Import Profile...: a template URL as typed, or Select File...
+    ProfileTemplateImport,
+    /// Configure Display Language: the languages, by item handle.
+    DisplayLanguage(Vec<crate::workbench::localization::LanguageItem>),
+    /// Help: List Signal Sounds and Help: List Signal Announcements.
+    AccessibilitySignals(crate::workbench::accessibility::SignalHelp),
+    /// Accessibility Help Configure (Un)assigned Keybindings.
+    AccessibleViewKeybindings(crate::workbench::accessible_view::KeybindingPick),
+    /// File > New File...
+    NewFile(crate::workbench::new_file::NewFilePicker),
+    /// Configure Metered Connection.
+    MeteredConnection,
+    /// A pick or input of the debug start flow, answered with the picked handle or the typed value.
+    Debug(Option<futures::channel::oneshot::Sender<Option<String>>>),
+    /// A task picker (run, build, test, terminate, restart).
+    Tasks(crate::workbench::task_quick_pick::TaskPicker),
+    /// The tasks.json template picker of the folder.
+    TaskTemplates(std::path::PathBuf),
 }
 
 impl Workbench {
@@ -177,7 +209,7 @@ impl Workbench {
                 "matchOnLabel" => input.match_on_label = value.as_bool().unwrap_or(true),
                 "sortByLabel" => input.sort_by_label = value.as_bool().unwrap_or(true),
                 "hideInput" => input.hide_input = flag(),
-                // keepScrollPosition: the list keeps its scroll position on every update already.
+                "keepScrollPosition" => input.keep_scroll_position = flag(),
                 _ => {}
             }
             if let Some(input) = self.quick_inputs.get_mut(id) {
@@ -208,13 +240,70 @@ impl Workbench {
             Owner::Input { .. } => self.input_event(id, event, window, cx),
             Owner::QuickAccess(_) => self.quick_access_event(id, event, window, cx),
             Owner::ColorThemes(_) => self.color_theme_picker_event(id, event, window, cx),
+            Owner::AccessibilitySignals(_) => self.signal_help_event(id, event, window, cx),
+            Owner::AccessibleViewKeybindings(_) => self.accessible_view_keybindings_event(id, event, window, cx),
+            Owner::NewFile(_) => self.new_file_picker_event(id, event, window, cx),
+            Owner::MeteredConnection => self.metered_connection_picker_event(id, event, window, cx),
             Owner::GoToMatch => self.go_to_match_event(id, event, window, cx),
             Owner::EditorStatus(_) => self.editor_status_event(id, event, window, cx),
             Owner::ResizeColumn(_) => self.resize_column_event(id, event, window, cx),
             Owner::Output(_) => self.output_pick_event(id, event, window, cx),
-            Owner::FolderSettings(_) => self.folder_settings_pick_event(id, event, window, cx),
             Owner::Terminal(_) => self.terminal_input_event(id, event, window, cx),
+            Owner::OpenWith(_) => self.open_with_picker_event(id, event, window, cx),
+            Owner::ImageZoom => self.image_zoom_picker_event(id, event, window, cx),
+            Owner::RecentlyOpened(_) => self.recently_opened_event(id, event, window, cx),
+            Owner::LocalHistoryFiles(_) => self.local_history_files_event(id, event, window, cx),
+            Owner::LocalHistoryEntries(..) => self.local_history_entries_event(id, event, window, cx),
+            Owner::LocalHistoryCreate(_) => self.create_local_history_entry_event(id, event, window, cx),
+            Owner::Choose(_) => self.choose_event(id, event, window, cx),
+            Owner::ExtensionsFolder(_) => self.extensions_folder_pick_event(id, event, window, cx),
+            Owner::DisplayLanguage(_) => self.display_language_pick_event(id, event, window, cx),
+            Owner::Debug(_) => self.debug_pick_event(id, event, window, cx),
+            Owner::Tasks(_) => self.task_pick_event(id, event, window, cx),
+            Owner::TaskTemplates(_) => self.task_template_event(id, event, window, cx),
+            Owner::ProfileTemplateImport => self.profile_template_import_event(id, event, window, cx),
         }
+    }
+
+    /// `quickInputService.pick` for the workbench: the picked item's handle (the checked handles with
+    /// `can_select_many`), or null once the pick hides.
+    pub fn choose(&mut self, input: QuickInput, window: &mut Window, cx: &mut Context<Self>) -> oneshot::Receiver<Result<Value, Value>> {
+        let (sender, receiver) = oneshot::channel();
+        let id = self.quick_inputs.add(input, Owner::Choose(Some(sender)));
+        self.show_quick_input(id, window, cx);
+        self.flush_quick_input_events(window, cx);
+        receiver
+    }
+
+    /// `quickInputService.input` for the workbench: the accepted value, or null once the input box hides.
+    pub fn ask_input(&mut self, input: QuickInput, window: &mut Window, cx: &mut Context<Self>) -> oneshot::Receiver<Result<Value, Value>> {
+        let (sender, receiver) = oneshot::channel();
+        // No host request: an id `$cancel` never names.
+        let id = self.quick_inputs.add(input, Owner::Input { req: u32::MAX, reply: Some(sender), validate: false, validated: None });
+        self.show_quick_input(id, window, cx);
+        self.flush_quick_input_events(window, cx);
+        receiver
+    }
+
+    fn choose_event(&mut self, id: i64, event: Event, window: &mut Window, cx: &mut Context<Self>) {
+        let picked = match event {
+            Event::Accept(_) => match self.quick_inputs.get(id) {
+                Some(input) if input.can_select_many => Some(json!(input.selected_handles())),
+                input => input.and_then(|input| input.active_handles().first().map(|handle| json!(handle))),
+            },
+            Event::Hide => {
+                if let Some(Owner::Choose(reply)) = self.quick_inputs.owner_mut(id) {
+                    resolve(reply, Ok(Value::Null));
+                }
+                self.quick_inputs.remove(id);
+                return;
+            }
+            _ => return,
+        };
+        if let Some(Owner::Choose(reply)) = self.quick_inputs.owner_mut(id) {
+            resolve(reply, Ok(json!(picked)));
+        }
+        self.hide_quick_input_by_id(id, window, cx);
     }
 
     /// The listeners `quickInputService.pick` puts on its quick pick.

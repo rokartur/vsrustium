@@ -19,6 +19,7 @@ use super::auto_save::SaveReason;
 use super::explorer_actions::confirm;
 use super::find_widget::HISTORY_LIMIT;
 use super::input_box_view::InputId;
+use super::layout::Part;
 use super::search_view::{MessagePart, RowAction, RowKey, RowKind, SEARCH_FIELDS, SearchField, SearchOption, SearchUiState, SearchView, SideBarView};
 use crate::anything_quick_access::TextRange;
 use crate::commands::Outcome;
@@ -51,12 +52,16 @@ impl Workbench {
         });
         self.commands.register("workbench.view.explorer", |workbench, _, window, cx| {
             workbench.side_bar_view = SideBarView::Explorer;
+            workbench.set_part_hidden(Part::SideBar, false, cx);
             window.focus(&workbench.explorer.focus.clone(), cx);
             cx.notify();
             Outcome::done()
         });
         self.commands.register("workbench.action.findInFiles", |workbench, args, window, cx| {
-            let args = args.into_iter().next().unwrap_or(Value::Null);
+            let args = match workbench.resolve_string_arguments(args.into_iter().next().unwrap_or(Value::Null)) {
+                Ok(args) => args,
+                Err(error) => return Outcome::error(error.message),
+            };
             workbench.find_in_files(&args, window, cx);
             Outcome::done()
         });
@@ -382,10 +387,18 @@ impl Workbench {
                 cx.notify();
             }),
         ];
-        for (id, run) in commands {
+        // `IListService.lastFocusedList`: the keybindings table, the search results or the Explorer, whichever has focus.
+        for id in super::explorer_keyboard::EXPLORER_LIST_COMMANDS {
+            let search_run = commands.iter().find(|(search_id, _)| *search_id == id).map(|(_, run)| *run);
             self.commands.register(id, move |workbench, _, window, cx| {
-                if workbench.search.focus.is_focused(window) {
-                    run(workbench, window, cx);
+                if workbench.keybindings_table_list_command(id, window, cx) || workbench.references_peek_list_command(id, window, cx) || workbench.hierarchy_peek_list_command(id, window, cx) {
+                    return Outcome::done();
+                }
+                match search_run {
+                    Some(run) if workbench.search.focus.is_focused(window) => run(workbench, window, cx),
+                    None if workbench.search.focus.is_focused(window) => workbench.run_search_list_command(id, window, cx),
+                    _ if workbench.explorer.focus.is_focused(window) => workbench.run_explorer_list_command(id, window, cx),
+                    _ => return Outcome::error(format!("command '{id}' not found")),
                 }
                 Outcome::done()
             });
@@ -449,6 +462,7 @@ impl Workbench {
         }
         context.insert("listFocus".into(), json!(true));
         context.insert("searchResultListFocused".into(), json!(true));
+        self.search_list_context(context);
         let focus = view.focused.as_ref();
         let is_file = matches!(focus, Some(RowKey::File(_)));
         let is_folder = matches!(focus, Some(RowKey::Folder(_)));
@@ -471,7 +485,7 @@ impl Workbench {
 
     fn open_search_view(&mut self, cx: &mut Context<Self>) {
         self.side_bar_view = SideBarView::Search;
-        cx.notify();
+        self.set_part_hidden(Part::SideBar, false, cx);
     }
 
     /// `searchWidget.focus(select, focusReplace)`.
@@ -560,7 +574,8 @@ impl Workbench {
         let allow_unselected_word = allow_unselected_word && self.setting("search.seedWithNearestWord") == true;
         let Some(editor) = self.editors.active() else { return false };
         let selection = editor.selection();
-        let lines = &editor.document.lines;
+        let document = editor.document();
+        let lines = &document.lines;
         let text = match selection.is_empty() {
             true if allow_unselected_word => {
                 let line = &lines[selection.head.line];
@@ -577,6 +592,7 @@ impl Workbench {
         self.search.input_mut(SearchField::Query).value.set_value(text);
         self.search.validation = Self::validate_search_input(&self.search);
         if let Some(delay) = self.search_on_type_delay(&self.search) {
+            drop(document);
             self.trigger_search(true, Some(delay), window, cx);
         }
         true
@@ -874,7 +890,7 @@ impl Workbench {
         let setting = move |folder: &Path, key: &str| settings.lock().unwrap().get_value(Some(key), &Overrides { resource: Some(folder), ..Overrides::default() }).unwrap_or(Value::Null);
         let mut query = search_paths::expanded_text_query(&pattern, &workspace, include, exclude, &options, &setting)?;
         if config.only_open_editors {
-            let open_editors: Vec<PathBuf> = self.editors.editors.iter().filter(|editor| editor.document.scheme == "file").map(|editor| editor.document.path.clone()).collect();
+            let open_editors: Vec<PathBuf> = self.editors.editors.iter().filter(|editor| editor.document().scheme == "file").map(|editor| editor.document().path.clone()).collect();
             search_paths::restrict_to_open_editors(&mut query, &open_editors, &workspace);
         }
         let searched = query.folder_queries.len();
@@ -895,7 +911,7 @@ impl Workbench {
         let params = SearchParams { search_string: &content_pattern.pattern, is_regex: content_pattern.is_reg_exp, match_case: content_pattern.is_case_sensitive, word_separators: content_pattern.is_word_match.then_some(word_separators.as_str()) };
         let mut local = Vec::new();
         for editor in &self.editors.editors {
-            let document = &editor.document;
+            let document = &editor.document();
             if !matches!(document.scheme.as_str(), "file" | "untitled") || !search::query::path_included_in_query(query, &document.path) {
                 continue;
             }
@@ -1022,14 +1038,17 @@ impl Workbench {
         let word_separators = self.setting("editor.wordSeparators").as_str().unwrap_or_default().to_string();
         let params = SearchParams { search_string: &pattern.pattern, is_regex: pattern.is_reg_exp, match_case: pattern.is_case_sensitive, word_separators: pattern.is_word_match.then_some(word_separators.as_str()) };
         let folder = file.folder;
-        self.search.result.set_model_matches(folder, path, &model.document.lines, &params);
+        self.search.result.set_model_matches(folder, path, &model.document().lines, &params);
         self.update_result_count_message();
     }
 
     /// A click on a result row: a match opens in a preview editor, keeping the focus (`onPointer`), or pinned and
     /// focused on a double click; a file or folder row expands or collapses.
-    pub(super) fn search_row_clicked(&mut self, key: &RowKey, click_count: usize, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn search_row_clicked(&mut self, key: &RowKey, click_count: usize, modifiers: gpui::Modifiers, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.search.focus.clone(), cx);
+        if self.search_selection_click(key, modifiers, cx) {
+            return;
+        }
         self.search.focus_and_select(Some(key.clone()));
         cx.notify();
         match key {
@@ -1081,7 +1100,7 @@ impl Workbench {
 
     /// `list.focusDown` and the others: the focus moves by `step` rows, without wrapping; the focused match opens in a
     /// preview editor, keeping the focus (`selectionNavigation`).
-    fn move_search_focus(&mut self, step: isize, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn move_search_focus(&mut self, step: isize, window: &mut Window, cx: &mut Context<Self>) {
         let rows = self.search.rows(&self.search_folders(), Some(&self.collapse_results()));
         if rows.is_empty() {
             return;
@@ -1140,7 +1159,7 @@ impl Workbench {
     /// `searchView.open`: the match's file opens with the match selected (`getEditorSelectionFromMatch`), a file's
     /// last match for a file row.
     // shortcut: with a replace string upstream opens the replace preview diff editor, which waits for the diff editor.
-    fn open_search_row(&mut self, key: &RowKey, preserve_focus: bool, pinned: bool, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn open_search_row(&mut self, key: &RowKey, preserve_focus: bool, pinned: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some((path, found)) = self.search_row_match(key) else { return };
         let mut range = found.range;
         if self.search.replace_active && !self.search.value(SearchField::Replace).is_empty()
@@ -1150,10 +1169,12 @@ impl Workbench {
             range = SearchRange { start_line: range.start_line, start_column: range.start_column, end_line: range.start_line, end_column: range.start_column + utf16_len(&replace) };
         }
         self.open_file(path.clone(), pinned, window, cx);
-        let Some(editor) = self.editors.active().filter(|editor| editor.document.path == path) else { return };
-        let lines = &editor.document.lines;
+        let Some(editor) = self.editors.active().filter(|editor| editor.document().path == path) else { return };
+        let document = editor.document();
+        let lines = &document.lines;
         let column = |line: usize, utf16: usize| lines.get(line).map_or(utf16, |text| char_column(text, utf16)) + 1;
         let text_range = TextRange { start_line_number: range.start_line + 1, start_column: column(range.start_line, range.start_column), end_line_number: range.end_line + 1, end_column: column(range.end_line, range.end_column) };
+        drop(document);
         self.select_range(&path, text_range, cx);
         match preserve_focus {
             true => window.focus(&self.search.focus.clone(), cx),

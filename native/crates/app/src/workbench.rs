@@ -2,14 +2,33 @@
 //! (src/vs/workbench/browser/media/floatingPanels.css), empty or with a folder in the Explorer.
 //! Sizes are the reference's CSS pixels.
 
+pub mod accessibility;
+pub mod accessible_view;
+pub mod new_file;
 mod actions;
+mod breakpoint_widget;
 mod bulk_text_edits;
 mod configuration;
 mod content_hover;
 mod content_hover_view;
+mod editor_groups;
+mod history_actions;
+mod configuration_resolver;
 mod context_menu;
+pub mod custom_editors;
+mod debug_commands;
+mod debug_console;
+mod problems_view;
+mod debug_toolbar;
+pub(crate) mod debug_service;
+mod debug_view;
+pub(crate) mod testing_service;
+mod testing_view;
 mod define_keybinding;
+mod exception_widget;
+mod floating_menu;
 mod diagnostics;
+mod dialog_view;
 mod editor_commands;
 mod editor_menus;
 mod editor_message;
@@ -17,48 +36,121 @@ pub mod editor_status;
 mod editor_view;
 mod explorer_actions;
 mod extension_management;
+pub(crate) mod extension_host_restart;
+mod user_data_profile;
+mod profiles_editor_view;
+mod settings_import;
+pub use profiles_editor_view::NEW_WINDOW_PROFILE_SETTING;
 mod explorer_find;
+mod explorer_keyboard;
+mod extension_editor;
+mod extensions_list_view;
+mod workspace_recommendations;
+pub(crate) mod localization;
+pub(crate) mod extensions_view;
 mod file_participants;
+mod find_options_widget;
 mod find_widget;
+mod folding_providers;
 mod auto_save;
+mod host;
+mod power;
+mod relauncher;
+mod update;
+mod perf_view;
+mod user_activity;
 mod hover;
 pub(crate) mod host_requests;
 mod input_box_view;
 mod keybindings_editor_view;
 mod keyboard;
 mod markdown_view;
+mod empty_view;
+mod layout;
+mod list_scroll;
+mod search_list;
+mod tree_guides;
+mod local_history_actions;
+mod document_highlights;
+mod document_symbols;
+mod goto_definition_link;
+mod goto_symbol;
 mod marker_navigation;
+mod hierarchy_peek;
+mod outline_pane;
+mod peek_view;
+mod references_peek;
 pub mod menubar;
 mod middle_scroll;
 mod minimap_view;
 pub mod logs_actions;
 mod notifications_view;
+mod panel;
+mod part_grid;
 pub mod output_actions;
 mod output_view;
 mod preferences;
 pub(crate) mod terminal_view;
+pub(crate) mod opener;
+mod terminal_host;
+mod external_terminal;
+mod terminal_contrib;
+mod terminal_find;
+mod terminal_links;
+pub mod task_quick_pick;
+pub(crate) mod task_service;
 pub mod quick_access;
 mod quick_open;
 mod readonly;
 mod search_actions;
+mod side_bar;
+mod view_panes;
 mod search_editor_view;
 mod search_editor_widget;
 mod search_view;
 mod scroll_locking;
+mod settings_editor_view;
 mod status_entries;
+mod parameter_hints;
+mod action_widget;
+mod code_actions;
+mod code_lens;
+mod inlay_hints;
+mod snippet_completions;
+mod snippet_controller;
+mod suggest_controller;
+mod suggest_widget;
 use status_entries::{EDITOR_STATUS_PRIORITY, PROBLEMS_PRIORITY};
 pub mod themes;
 mod quick_input_view;
+mod text_files;
+pub(crate) mod text_model_resolver;
+mod control_characters;
+mod large_file;
+mod inspect_tokens;
+mod gutter_mouse;
+mod word_wrap;
+mod smooth_scrolling;
 mod text_input;
 mod timeline_view;
 mod title_bar_actions;
+mod type_navigation;
 mod unicode_highlight;
 mod unusual_line_terminators;
 pub(crate) mod scm_actions;
 mod scm_graph_view;
 mod scm_tree;
 mod scm_view;
+mod tree_view;
+mod file_decorations;
+mod url_handlers;
+mod webview_views;
+mod media_preview;
 mod webview_panels;
+mod url_actions;
+pub(crate) mod url_handler;
+mod workspace_actions;
+mod workspace_trust_view;
 
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -71,13 +163,13 @@ use config::service::Settings;
 use config::workspace::Workspace;
 use storage::Storage;
 
-use gpui::{ClickEvent, Context, Div, DragMoveEvent, ExternalPaths, FocusHandle, FontFeatures, FontWeight, MouseButton, MouseDownEvent, Rgba, Task, Window, div, prelude::*, px, rgb, svg, transparent_black};
+use gpui::{ClickEvent, Context, Div, DragMoveEvent, ExternalPaths, FocusHandle, FontFeatures, FontWeight, MouseButton, MouseDownEvent, Rgba, Stateful, Task, Window, div, prelude::*, px, rgb, svg, transparent_black};
 use serde_json::Value;
 
 use crate::commands::Commands;
 use crate::contextkey;
 use crate::menus::MenuId;
-use crate::editor::{EditorGroup, TextDocument};
+use crate::editor::EditorGroup;
 use crate::explorer::FileTree;
 use explorer_actions::DraggedItems;
 use hover::{HoverContent, HoverOptions, HoverPosition};
@@ -109,15 +201,27 @@ pub struct Workbench {
     pub(crate) extension_commands: HashMap<String, crate::commands::Registration>,
     /// Extension tests run: dialogs answer their default without showing (abstractFileDialogService.ts skipDialogs).
     pub skip_dialogs: bool,
+    pub host_colors: themes::HostColorScheme,
+    /// `IEnvironmentService.isExtensionDevelopment`.
+    pub extension_development: bool,
+    /// workbench.ts `setUnexpectedErrorHandler(createUnexpectedErrorHandler(logService))`.
+    pub unexpected_errors: crate::output::logger::UnexpectedErrorHandler,
     pub keybindings: keyboard::Keybindings,
     pub keybindings_editor: keybindings_editor_view::KeybindingsEditor,
+    pub settings_editor: settings_editor_view::SettingsEditor,
     keybinding_marks: define_keybinding::KeybindingMarks,
+    unsupported_settings_render: Option<Task<()>>,
     diagnostics: diagnostics::Diagnostics,
+    accessibility: accessibility::AccessibilityState,
+    metered: power::MeteredConnection,
+    relauncher: relauncher::Relauncher,
+    user_activity: user_activity::UserActivity,
     /// Context keys set with the `setContext` command.
     context_keys: HashMap<String, Value>,
     pub output: crate::output::Output,
     output_view: output_view::OutputView,
     terminal_view: terminal_view::TerminalView,
+    tasks: task_service::TaskService,
     /// The status bar message and the task that hides it.
     status_message: Option<(String, Task<()>)>,
     scrollbars: editor_view::Scrollbars,
@@ -127,6 +231,7 @@ pub struct Workbench {
     unicode_highlight: unicode_highlight::UnicodeHighlight,
     unusual_line_terminators: unusual_line_terminators::UnusualLineTerminators,
     auto_save: auto_save::AutoSave,
+    text_files: text_files::TextFiles,
     find: find_widget::FindWidget,
     /// The line and whether on its folding control a press may toggle a fold (folding.ts `mouseDownInfo`).
     fold_mouse_down: Option<(usize, bool)>,
@@ -137,11 +242,31 @@ pub struct Workbench {
     /// The text area's window bounds at paint, where content widgets that may overflow it lay out.
     text_area_bounds: Rc<Cell<gpui::Bounds<f32>>>,
     editor_message: editor_message::EditorMessages,
+    inspect_tokens: inspect_tokens::InspectTokens,
     marker_navigation: marker_navigation::MarkerNavigation,
+    goto_symbol: goto_symbol::GotoSymbol,
+    definition_link: goto_definition_link::DefinitionLink,
+    document_highlights: document_highlights::DocumentHighlights,
+    document_symbols: document_symbols::DocumentSymbols,
+    references_peek: references_peek::ReferencesPeek,
+    outline_pane: outline_pane::OutlinePane,
+    hierarchy_peek: hierarchy_peek::HierarchyPeek,
     content_hover: content_hover::ContentHover,
+    suggest: suggest_controller::Suggest,
+    parameter_hints: parameter_hints::ParameterHints,
+    code_actions: code_actions::CodeActions,
+    action_widget: action_widget::ActionWidget,
+    code_lenses: code_lens::CodeLenses,
+    snippet_files: snippet_completions::SnippetFiles,
+    /// The snippet choice the controller last showed the suggest widget for.
+    snippet_choice_shown: Option<(crate::editor::Position, crate::editor::Position)>,
     /// The providers extensions registered through MainThreadLanguageFeatures.
     pub(crate) language_features: crate::language_features::LanguageFeatures,
+    folding_providers: folding_providers::FoldingProviders,
     readonly_overrides: readonly::SessionOverrides,
+    /// The editor labels of opened local history entries (`openEntry`), by entry file.
+    local_history_labels: HashMap<PathBuf, String>,
+    pub(crate) urls: url_handler::Urls,
     pub editor_focus: FocusHandle,
     /// bannerController.ts: the banner element is focusable (`tabIndex = 0`) inside the editor's DOM node.
     unicode_banner_focus: FocusHandle,
@@ -157,31 +282,41 @@ pub struct Workbench {
     marked_text: Option<Range<usize>>,
     /// A left button press in the text is held, so moves extend the selection.
     selecting_text: bool,
+    /// The line range a gutter press selected, which a drag extends (`selectionStart` of a line selection).
+    line_select_start: Option<(crate::editor::Position, crate::editor::Position)>,
     text_drag: Option<editor_view::drag_and_drop::TextDrag>,
     /// editorOptions.ts `stopRenderingLineAfter` (10000) of the group's code editor; longLinesHelper.ts clears it.
     stop_rendering_line_after: Option<usize>,
     editor_zoom: crate::editor::zoom::EditorZoom,
     middle_scroll: Option<middle_scroll::MiddleScroll>,
+    smooth_scrolling: Option<smooth_scrolling::SmoothScrolling>,
     pub quick_inputs: quick_input_view::QuickInputs,
     pub quick_access: quick_access::QuickAccess,
     pub explorer: explorer_actions::ExplorerState,
     pub side_bar_view: search_view::SideBarView,
     pub search: search_view::SearchView,
+    list_scrolls: list_scroll::ListScrolls,
     pub search_editors: search_editor_view::SearchEditors,
     pub search_editor_widget: search_editor_widget::SearchEditorWidget,
     pub webview_panels: webview_panels::WebviewPanels,
     pub scm: scm_view::ScmView,
     timeline: timeline_view::TimelineView,
     scm_graph: scm_graph_view::ScmGraph,
+    tree_views: tree_view::TreeViews,
+    decorations: std::cell::RefCell<crate::decorations::Decorations>,
     quick_diffs: editor_view::quick_diff::QuickDiffs,
     pub(crate) github_clients: crate::main_thread_github::GitHubClients,
-    /// Bumped by `$emitCodeLensEvent`: the code lenses are asked again.
-    pub(crate) code_lens_event: u64,
     /// `contributes.commands` icons, for the view toolbars.
     pub command_icons: HashMap<String, crate::menus::CommandIcon>,
+    url_handlers: url_handlers::UrlHandlers,
+    webview_views: webview_views::WebviewViews,
+    pub extensions_viewlet: extensions_view::ExtensionsViewlet,
+    pub extension_editors: Vec<extension_editor::ExtensionEditor>,
     /// `MenuRegistry`.
     pub menus: Vec<crate::menus::MenuItem>,
     pub(crate) context_menu: Option<context_menu::ContextMenu>,
+    /// The activity bar's Manage button, the anchor of its menu.
+    manage_bounds: Rc<Cell<gpui::Bounds<gpui::Pixels>>>,
     context_menus_shown: usize,
     pub(crate) notifications: notifications_view::NotificationsUi,
     /// Extension status bar entries, in statusbarModel.ts order.
@@ -189,19 +324,48 @@ pub struct Workbench {
     pub hovers: hover::Hovers,
     /// What the application menu shows now.
     installed_menubar: Option<menubar::Menubar>,
-    /// The application storage (StorageScope.PROFILE and APPLICATION in the default profile), shared with the
-    /// extension host's MainThreadStorage.
+    /// StorageScope.PROFILE of the current profile, shared with the extension host's MainThreadStorage.
     profile_storage: Arc<Mutex<Storage>>,
+    /// StorageScope.APPLICATION: the default profile's storage, the same as `profile_storage` in that profile.
+    application_storage: Arc<Mutex<Storage>>,
     /// StorageScope.WORKSPACE of the opened folder, shared with the extension host's MainThreadStorage.
     workspace_storage: Arc<Mutex<Storage>>,
+    pub(crate) user_data_profiles: user_data_profile::UserDataProfiles,
+    part_grid: part_grid::PartGrid,
+    editor_groups: editor_groups::EditorGroups,
+    history: history_actions::History,
+    panel: panel::Panel,
+    explorer_panes: view_panes::ExplorerPanes,
+    pub workspace_trust: crate::workspace_trust::WorkspaceTrust,
+    /// The APPLICATION_SHARED storage: trust and the recently opened list.
+    pub shared_storage: Arc<Mutex<Storage>>,
+    /// The recently opened list as last read, which the menu bar shows.
+    recently_opened: crate::recently_opened::RecentlyOpened,
+    /// Custom dialogs, the shown one first.
+    dialogs: Vec<dialog_view::ShownDialog>,
+    pub debug: debug_service::DebugService,
+    debug_view: debug_view::DebugView,
+    debug_console: debug_console::DebugConsole,
+    problems: problems_view::ProblemsView,
+    problems_focus: FocusHandle,
+    breakpoint_widget: Option<breakpoint_widget::BreakpointWidget>,
+    pub testing: testing_service::TestingService,
+    testing_view: testing_view::TestingView,
 }
 
 impl Render for Workbench {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Cursors move and editors switch on many paths; every one of them renders.
         self.close_editor_message_on_cursor_change(cx);
+        self.stop_inspect_tokens_on_model_change();
         self.follow_marker_navigation_cursor();
+        self.follow_references_peek_editor();
+        self.follow_hierarchy_peek_editor(window, cx);
+        self.follow_symbol_navigation();
+        self.follow_definition_link(cx);
         self.refresh_selection_highlights(window);
+        self.refresh_document_highlights(window, cx);
+        self.refresh_outline_pane(cx);
         self.update_webview_panels(window, cx);
         self.update_diff_editor();
         self.update_merge_editor(cx);
@@ -211,13 +375,19 @@ impl Render for Workbench {
         self.follow_active_editor_repository();
         self.update_timeline(cx);
         self.update_scm_graph(cx);
-        self.update_code_lenses(cx);
+        self.update_extension_editor_webviews(window, cx);
         self.auto_save_models_changed(cx);
         self.follow_content_hover_editor();
+        self.folding_model_changed(cx);
+        self.accessibility_frame(window, cx);
+        self.update_metered_connection(cx);
+        self.check_relaunch_settings(window, cx);
         let viewport = window.viewport_size();
         let window_border = self.theme.color("window.activeBorder");
         // The reference lays the grid out at the full window size and shifts it inside the 1px window border.
         let inset = if window_border.is_some() { 1. } else { 0. };
+        self.editors.sync_editors();
+        let editor = self.editor_groups_part(window, cx);
         let grid = div()
             .absolute()
             .left(px(inset))
@@ -227,24 +397,17 @@ impl Render for Workbench {
             .flex()
             .flex_col()
             .child(self.title_bar(f32::from(viewport.width), cx))
-            .child(
-                div()
-                    .flex_1()
-                    .flex()
-                    .flex_row()
-                    .gap(px(4.))
-                    .px(px(4.))
-                    .pb(px(4.))
-                    // The side bar meets the activity bar flush; the bar draws the seam (floatingPanels.css).
-                    .child(div().flex().child(self.activity_bar(cx)).when(self.side_bar_visible(), |row| row.child(self.side_bar(window, cx))))
-                    .child(if self.editors.active().is_some() { self.text_editor_part(window, cx) } else { self.editor_part() }),
-            )
+            .children(self.restricted_mode_banner(cx))
+            .child(self.middle_section(viewport, editor, window, cx))
             .child(self.status_bar(window, cx));
-        let modal_editor = self.keybindings_editor_widget(window, cx);
+        let modal_editor = self.keybindings_editor_widget(window, cx).or_else(|| self.settings_editor_widget(window, cx)).or_else(|| self.profiles_editor_widget(window, cx));
         let quick_input = self.quick_input_widget(window, cx);
         let notifications = self.notifications_widget(viewport, window, cx);
         let context_menu = self.context_menu_widget(cx);
+        let action_widget = self.action_widget(window, cx);
         let hover = self.hover_widget(window, cx);
+        let dialog = self.custom_dialog_widget(window, cx);
+        let accessible_view = self.accessible_view_widget(window, cx);
         self.update_menubar(window, cx);
         div()
             .relative()
@@ -254,12 +417,23 @@ impl Render for Workbench {
             .text_color(self.color("foreground"))
             .text_size(px(13.))
             .child(grid)
+            .children(self.debug_toolbar(window, cx))
+            .when(self.debug_view.toolbar_drag.is_some(), |root| {
+                root.on_mouse_move(cx.listener(|workbench, event, window, cx| workbench.drag_debug_toolbar(event, window, cx)))
+                    .on_mouse_up(gpui::MouseButton::Left, cx.listener(|workbench, _, _, _| workbench.end_debug_toolbar_drag()))
+            })
             .children(modal_editor)
             // The quick input lives in the workbench container, inside the window border as the grid.
             .children(quick_input.map(|widget| div().absolute().left(px(inset)).top(px(inset)).child(widget)))
             .children(notifications)
+            .children(accessible_view)
             .children(context_menu)
+            .children(dialog)
+            .children(action_widget)
             .children(hover)
+            .on_modifiers_changed(cx.listener(|workbench, event: &gpui::ModifiersChangedEvent, _, cx| workbench.hover_modifiers_changed(event.modifiers.alt, cx)))
+            .child(self.aria_live_region())
+            .capture_any_mouse_down(cx.listener(|workbench, _, _, cx| workbench.user_activity(cx)))
             // style.css: .macos-tahoe windows round 16px, older macOS 10px.
             .when_some(window_border, |root, border| root.child(div().absolute().inset_0().border_1().rounded(px(if is_tahoe_or_newer() { 16. } else { 10. })).border_color(border)))
     }
@@ -267,6 +441,7 @@ impl Render for Workbench {
 
 impl Workbench {
     pub fn new(theme: Theme, app_root: PathBuf, workspace: Option<Workspace>, languages: Languages, settings: Arc<Mutex<Settings>>, host: HostSync, cx: &mut Context<Self>) -> Self {
+        let accessibility = accessibility::AccessibilityState::new(&app_root, cx);
         let mut workbench = Workbench {
             theme,
             color_themes: Vec::new(),
@@ -281,14 +456,24 @@ impl Workbench {
             commands: Commands::default(),
             extension_commands: HashMap::new(),
             skip_dialogs: false,
+            host_colors: themes::host_color_scheme(),
+            extension_development: false,
+            unexpected_errors: Default::default(),
             keybindings: keyboard::Keybindings::default(),
             keybindings_editor: keybindings_editor_view::KeybindingsEditor::new(cx),
+            settings_editor: settings_editor_view::SettingsEditor::new(cx),
             keybinding_marks: Default::default(),
+            unsupported_settings_render: None,
             diagnostics: Default::default(),
+            accessibility,
+            metered: Default::default(),
+            relauncher: Default::default(),
+            user_activity: Default::default(),
             context_keys: HashMap::new(),
             output: Default::default(),
             output_view: output_view::OutputView::new(cx),
             terminal_view: terminal_view::TerminalView::new(cx),
+            tasks: Default::default(),
             status_message: None,
             scrollbars: Default::default(),
             fold_controls: Default::default(),
@@ -297,16 +482,35 @@ impl Workbench {
             unicode_highlight: Default::default(),
             unusual_line_terminators: Default::default(),
             auto_save: Default::default(),
+            text_files: Default::default(),
             find: find_widget::FindWidget::new(cx),
             fold_mouse_down: None,
             text_area_left: Rc::default(),
             diff_part_width: Rc::default(),
             text_area_bounds: Rc::default(),
             editor_message: Default::default(),
+            inspect_tokens: Default::default(),
             marker_navigation: Default::default(),
+            goto_symbol: Default::default(),
+            definition_link: Default::default(),
+            document_highlights: Default::default(),
+            document_symbols: Default::default(),
+            references_peek: references_peek::ReferencesPeek::new(cx),
+            outline_pane: outline_pane::OutlinePane::new(cx),
+            hierarchy_peek: hierarchy_peek::HierarchyPeek::new(cx),
             content_hover: Default::default(),
+            suggest: Default::default(),
+            parameter_hints: Default::default(),
+            code_actions: Default::default(),
+            action_widget: Default::default(),
+            code_lenses: Default::default(),
+            snippet_files: Default::default(),
+            snippet_choice_shown: None,
             language_features: Default::default(),
+            folding_providers: Default::default(),
             readonly_overrides: Default::default(),
+            local_history_labels: HashMap::new(),
+            urls: url_handler::Urls::default(),
             editor_focus: cx.focus_handle(),
             unicode_banner_focus: cx.focus_handle(),
             status_bar_focus: cx.focus_handle(),
@@ -316,36 +520,65 @@ impl Workbench {
             input_carets_hidden: false,
             marked_text: None,
             selecting_text: false,
+            line_select_start: None,
             text_drag: None,
             stop_rendering_line_after: Some(10_000),
             editor_zoom: Default::default(),
             middle_scroll: None,
+            smooth_scrolling: None,
             quick_inputs: quick_input_view::QuickInputs::new(cx),
             quick_access: quick_access::QuickAccess::default(),
             explorer: explorer_actions::ExplorerState::new(cx),
             side_bar_view: search_view::SideBarView::Explorer,
             search: search_view::SearchView::new(cx),
+            list_scrolls: Default::default(),
             search_editors: HashMap::new(),
             search_editor_widget: search_editor_widget::SearchEditorWidget::new(cx),
             webview_panels: Default::default(),
             scm: scm_view::ScmView::new(cx),
             timeline: timeline_view::TimelineView::new(cx),
             scm_graph: Default::default(),
+            tree_views: Default::default(),
+            decorations: Default::default(),
             quick_diffs: Default::default(),
             github_clients: Default::default(),
-            code_lens_event: 0,
             command_icons: HashMap::new(),
+            url_handlers: Default::default(),
+            webview_views: Default::default(),
+            extensions_viewlet: extensions_view::ExtensionsViewlet::new(cx),
+            extension_editors: Vec::new(),
             menus: crate::menus::workbench_menus(),
             context_menu: None,
+            manage_bounds: Rc::default(),
             context_menus_shown: 0,
             notifications: notifications_view::NotificationsUi::new(cx),
             status_entries: Vec::new(),
             hovers: hover::Hovers::default(),
             installed_menubar: None,
             profile_storage: Arc::new(Mutex::new(Storage::in_memory())),
+            application_storage: Arc::new(Mutex::new(Storage::in_memory())),
             workspace_storage: Arc::new(Mutex::new(Storage::in_memory())),
+            user_data_profiles: Default::default(),
+            part_grid: part_grid::PartGrid::default(),
+            editor_groups: Default::default(),
+            history: Default::default(),
+            panel: panel::Panel::default(),
+            explorer_panes: view_panes::ExplorerPanes::default(),
+            workspace_trust: Default::default(),
+            shared_storage: Arc::new(Mutex::new(Storage::in_memory())),
+            recently_opened: Default::default(),
+            dialogs: Vec::new(),
+            debug: Default::default(),
+            debug_view: debug_view::DebugView::new(cx),
+            debug_console: debug_console::DebugConsole::new(cx),
+            problems: problems_view::ProblemsView::default(),
+            problems_focus: cx.focus_handle(),
+            breakpoint_widget: None,
+            testing: Default::default(),
+            testing_view: Default::default(),
         };
         crate::main_thread_commands::register_commands_documentation(&mut workbench);
+        workbench.editors.disposed.settings = Some(workbench.settings.clone());
         workbench.register_workbench_actions();
         workbench.register_diff_editor_commands();
         workbench.register_diff_gutter_commands();
@@ -357,6 +590,11 @@ impl Workbench {
         workbench.register_timeline_commands();
         workbench.register_scm_commands();
         workbench.register_scm_actions();
+        workbench.register_text_file_commands();
+        workbench.register_large_file_commands();
+        workbench.register_media_preview_commands();
+        workbench.register_inspect_tokens_commands();
+        workbench.register_word_wrap_commands();
         workbench.register_editor_commands();
         workbench.register_find_commands();
         workbench.register_sticky_scroll_commands();
@@ -368,42 +606,101 @@ impl Workbench {
         workbench.register_editor_status_commands();
         workbench.register_title_bar_actions();
         workbench.register_explorer_actions();
+        workbench.register_explorer_keyboard_commands();
         workbench.register_explorer_find_commands();
+        workbench.register_type_navigation_commands();
+        workbench.register_list_scroll_commands();
         workbench.register_search_actions();
+        workbench.register_layout_actions();
+        workbench.register_editor_group_actions();
+        workbench.register_history_actions();
         workbench.register_search_editor_actions();
         workbench.register_search_editor_widget_actions();
         workbench.register_file_participant_commands();
         workbench.register_keybindings_editor_commands();
+        workbench.register_settings_editor_commands();
         workbench.register_readonly_commands();
         workbench.register_preferences_commands();
         workbench.register_editor_message_commands();
         workbench.register_content_hover_commands();
+        workbench.register_suggest();
+        workbench.register_settings_suggest_commands();
+        workbench.register_parameter_hints();
+        workbench.register_code_actions();
+        workbench.register_code_lens();
+        workbench.register_inlay_hints();
+        workbench.register_snippet_completions();
+        workbench.register_snippet_commands();
         workbench.register_marker_navigation_commands();
         workbench.register_quick_diff_commands();
+        workbench.register_goto_symbol_commands();
+        workbench.register_definition_link_commands();
+        workbench.register_document_highlight_commands();
+        workbench.register_document_symbol_commands();
+        workbench.register_references_peek_commands();
+        workbench.register_hierarchy_commands();
         workbench.register_define_keybinding_command();
         workbench.register_notifications_commands();
         workbench.register_output_actions();
+        workbench.register_empty_view_actions();
         workbench.register_logs_actions();
         workbench.register_terminal_actions();
+        workbench.register_problems_panel_view();
+        workbench.register_output_panel_view();
+        workbench.register_debug_console_panel_view();
+        workbench.register_test_results_panel_view();
+        workbench.register_terminal_panel_view();
+        workbench.register_perf_view();
+        workbench.register_accessibility_actions();
+        workbench.start_system_events(cx);
+        workbench.user_activity(cx);
         workbench.register_extension_management_commands();
+        workbench.register_extension_host_commands();
+        workbench.register_user_data_profile_commands();
+        workbench.register_profiles_editor_commands();
+        workbench.register_settings_import_commands();
+        workbench.register_workspace_trust_commands();
+        workbench.register_host_commands();
+        workbench.register_workspace_commands();
+        workbench.register_url_commands();
+        workbench.register_local_history_commands();
+        workbench.register_extensions_view_commands();
+        workbench.register_workspace_recommendations_commands();
+        workbench.register_localization_commands();
+        workbench.register_new_file_commands();
+        workbench.register_debug_commands();
+        workbench.register_debug_console_commands();
+        workbench.register_breakpoint_widget_commands();
+        workbench.register_testing_commands();
         // Keybindings resolve before the focused element sees the key, and with nothing focused too.
         let entity = cx.entity().downgrade();
         cx.intercept_keystrokes(move |event, window, cx| {
-            let _ = entity.update(cx, |workbench, cx| workbench.dispatch_key(&event.keystroke, window, cx));
+            let _ = entity.update(cx, |workbench, cx| {
+                workbench.user_activity(cx);
+                workbench.dispatch_key(&event.keystroke, window, cx)
+            });
         })
         .detach();
         cx.on_app_quit(|workbench, _| {
             workbench.store_explorer_view_state();
+            workbench.store_editor_view_states();
             async {}
         })
         .detach();
-        cx.on_release(|workbench, _| workbench.store_explorer_view_state()).detach();
+        cx.on_release(|workbench, _| {
+            workbench.store_explorer_view_state();
+            workbench.store_editor_view_states();
+        })
+        .detach();
+        workbench.customize_theme();
         workbench
     }
 
-    /// Switches to the app's profile storage and reads the command history and the quick input position from it.
-    pub fn restore_profile_state(&mut self, storage: Arc<Mutex<Storage>>) {
-        self.profile_storage = storage;
+    /// Switches to the profile's and the application's storage and reads the command history, the quick input
+    /// position and the notification filters from them.
+    pub fn restore_profile_state(&mut self, profile: Arc<Mutex<Storage>>, application: Arc<Mutex<Storage>>) {
+        self.profile_storage = profile;
+        self.application_storage = application;
         self.load_command_history();
         self.load_quick_input_view_state();
         self.load_notification_filters();
@@ -419,10 +716,15 @@ impl Workbench {
     pub fn open_file(&mut self, path: PathBuf, pinned: bool, window: &mut Window, cx: &mut Context<Self>) {
         // editorGroupFinder.ts `handleModalEditorPart`: an editor opened without preserveFocus closes the modal.
         if pinned {
-            self.close_keybindings_editor(window, cx);
+            self.close_modal_editor(window, cx);
         }
         if path.to_string_lossy().ends_with(crate::search_editor::SEARCH_EDITOR_EXT) {
             return self.open_search_editor_file(path, pinned, window, cx);
+        }
+        if let Some(view_type) = self.custom_editor_for("file", &path) {
+            let options = serde_json::json!({ "pinned": pinned, "preserveFocus": !pinned });
+            drop(self.open_with_resolver(&exthost::scan::file_uri(&path), Some(&view_type), options, window, cx));
+            return;
         }
         match self.editors.find(&path) {
             Some(index) => {
@@ -432,9 +734,9 @@ impl Workbench {
                 }
             }
             // A model without an editor, as a search replace leaves it, keeps its text.
-            None => match self.editors.models.iter().position(|model| model.document.is("file", &path)) {
+            None => match self.editors.models.iter().position(|model| model.document().is_file(&path)) {
                 Some(index) => self.editors.show_model(index, !pinned),
-                None => match TextDocument::read(&path, &self.languages, &self.settings.lock().unwrap()) {
+                None => match self.read_document(&path) {
                     Ok(document) => self.editors.open(document, !pinned),
                     // shortcut: a read error is logged, not shown as the reference's editor error placeholder.
                     Err(error) => eprintln!("opening {}: {error}", path.display()),
@@ -451,16 +753,27 @@ impl Workbench {
 
     /// Keeps the Explorer selection and the extension host in step with the group.
     fn editors_changed(&mut self, cx: &mut Context<Self>) {
-        if let (Some(tree), Some(editor)) = (self.folder.as_mut(), self.editors.active()) {
-            tree.reveal(&editor.document.path);
+        if std::mem::take(&mut self.editors.closed_last_editor) {
+            self.close_group_if_empty(self.editors.id);
         }
+        self.editors.columns = if self.editors.has_several_groups() { self.groups_in_grid_order() } else { Vec::new() };
+        for (group, path, index) in std::mem::take(&mut self.editors.closed) {
+            self.remember_closed_editor(group, path, index);
+        }
+        self.record_navigation(None);
+        self.editors.panel_editor_shown = self.output_view_visible() && self.output_editor().is_some();
+        self.reveal_active_file();
         self.record_editor_history();
         self.drop_closed_search_editors();
         self.load_search_editor_widget();
         self.find_editor_changed();
         self.schedule_keybinding_marks(cx);
+        self.schedule_unsupported_settings_markers(cx);
         self.update_marker_decorations(None);
+        self.code_actions_model_changed(cx);
+        self.code_lens_model_changed(cx);
         self.sync_webview_panels();
+        self.text_files_editors_changed();
         self.host.send_changes(&self.editors);
         cx.notify();
     }
@@ -473,6 +786,21 @@ impl Workbench {
     /// A foreground key with no color inherits, as CSS `color` does; every part here inherits `foreground`.
     fn foreground_or(&self, key: &str) -> Rgba {
         self.theme.color(key).unwrap_or(self.color("foreground"))
+    }
+
+    /// The command center's Go Back and Go Forward (`MenuId.CommandCenter` orders 1 and 2): enabled by their
+    /// `canNavigateBack`/`canNavigateForward` precondition, pointer only then (actionbar.css `.disabled`).
+    fn navigation_button(&self, icon: &'static str, title: &'static str, command: &'static str, enabled: bool, foreground: Rgba, disabled: Rgba, cx: &mut Context<Self>) -> Stateful<Div> {
+        self.icon(icon, 22., 16., if enabled { foreground } else { disabled })
+            .id(command)
+            .rounded(px(4.))
+            .when(enabled, |button| {
+                button.cursor_pointer().hover(|button| button.bg(self.color("toolbar.hoverBackground"))).on_click(cx.listener(move |workbench, _, window, cx| {
+                    workbench.execute_command(command, Vec::new(), window, cx);
+                }))
+            })
+            .on_mouse_down(MouseButton::Right, cx.listener(show_command_center_context_menu))
+            .child(self.action_hover(title, command, HoverOptions::instant()))
     }
 
     fn title_bar(&self, viewport_width: f32, cx: &mut Context<Self>) -> Div {
@@ -511,8 +839,8 @@ impl Workbench {
             true => title
                 .when(contextkey::truthy(Some(&self.setting("workbench.navigationControl.enabled"))), |title| {
                     title
-                        .child(self.icon("arrow-left", 22., 16., disabled).on_mouse_down(MouseButton::Right, cx.listener(show_command_center_context_menu)).child(self.action_hover("Go Back", "workbench.action.navigateBack", HoverOptions::instant())))
-                        .child(self.icon("arrow-right", 22., 16., disabled).ml(px(4.)).mr(px(10.)).on_mouse_down(MouseButton::Right, cx.listener(show_command_center_context_menu)).child(self.action_hover("Go Forward", "workbench.action.navigateForward", HoverOptions::instant())))
+                        .child(self.navigation_button("arrow-left", "Go Back", "workbench.action.navigateBack", self.can_navigate(true), foreground, disabled, cx))
+                        .child(self.navigation_button("arrow-right", "Go Forward", "workbench.action.navigateForward", self.can_navigate(false), foreground, disabled, cx).ml(px(4.)).mr(px(10.)))
                 })
                 .child(command_center)
                 .child(div().w(px(6.))),
@@ -534,12 +862,12 @@ impl Workbench {
                 }
             }));
         let center = div().absolute().top(px(6.5)).w_full().h(px(24.)).flex().justify_center().items_center().child(title);
-        let side_bar_toggle = if self.folder.is_some() { "layout-sidebar-left" } else { "layout-sidebar-left-off" };
+        let side_bar_toggle = if self.side_bar_visible() { "layout-sidebar-left" } else { "layout-sidebar-left-off" };
         let layout_actions = [
             ("layout", "Customize Layout...", "workbench.action.customizeLayout"),
             (side_bar_toggle, "Toggle Primary Side Bar", "workbench.action.toggleSidebarVisibility"),
-            ("layout-panel-off", "Toggle Panel", "workbench.action.togglePanel"),
-            ("layout-sidebar-right-off", "Toggle Secondary Side Bar", "workbench.action.toggleAuxiliaryBar"),
+            (if self.is_part_visible(layout::Part::Panel) { "layout-panel" } else { "layout-panel-off" }, "Toggle Panel", "workbench.action.togglePanel"),
+            (if self.is_part_visible(layout::Part::AuxiliaryBar) { "layout-sidebar-right" } else { "layout-sidebar-right-off" }, "Toggle Secondary Side Bar", "workbench.action.toggleAuxiliaryBar"),
         ];
         let right = div()
             .absolute()
@@ -549,7 +877,9 @@ impl Workbench {
             .gap(px(4.))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .children(self.notifications_title_bar_item(foreground, cx))
-            .when(layout_control_enabled, |right| right.children(layout_actions.map(|(name, title, command)| self.icon(name, 22., 16., foreground).cursor_pointer().child(self.action_hover(title, command, HoverOptions::instant())))));
+            .when(layout_control_enabled, |right| right.children(layout_actions.map(|(name, title, command)| self.icon(name, 22., 16., foreground).cursor_pointer().child(self.action_hover(title, command, HoverOptions::instant())))))
+            // titlebarPart.ts: with the activity bar on top or bottom, its global Manage action moves to the title bar.
+            .when(self.compact_activity_bar_location().is_some(), |right| right.child(self.icon("settings-gear", 22., 16., foreground).cursor_pointer().child(self.hover_target("manage-title", HoverContent::Text("Manage".into()), HoverOptions::instant()))));
         // NativeTitlebarPart.minimumHeight: DEFAULT_CUSTOM_TITLEBAR_HEIGHT with the command center, else macTitlebarSize.
         let height = match (command_center_visible, is_tahoe_or_newer()) {
             (true, _) => 35.,
@@ -590,32 +920,24 @@ impl Workbench {
         format!("Search {root_name} \u{2014} {}", self.window_title())
     }
 
-    /// The Explorer shows only with a folder; the Search view searches the open editors without one.
     fn side_bar_visible(&self) -> bool {
-        match self.side_bar_view {
-            SideBarView::Explorer => self.folder.is_some(),
-            SideBarView::Search | SideBarView::Scm => true,
-        }
+        self.is_part_visible(layout::Part::SideBar)
     }
 
-    fn activity_bar(&self, cx: &mut Context<Self>) -> Div {
-        let views = [
-            ("debug-alt", "Run and Debug", "workbench.view.debug"),
-            ("extensions", "Extensions", "workbench.view.extensions"),
-        ];
+    fn activity_bar(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         // The side bar is on the left, so the hovers go right of the bar (activitybarPart.ts).
         let hover = HoverOptions::composite_bar(HoverPosition::Right);
         let inactive = self.color("activityBar.inactiveForeground");
-        let view_icon = |icon: &str, view: SideBarView, command: &'static str| {
-            let active = self.side_bar_view == view && self.side_bar_visible();
+        let items = side_bar::VIEW_CONTAINERS.map(|(icon, _, title, command, view)| {
+            let active = view.is_some_and(|view| self.side_bar_view == view) && self.side_bar_visible();
             let icon = if active { self.active_view_icon(icon) } else { self.icon(icon, 36., 24., inactive) };
-            icon.id(command).cursor_pointer().on_click(cx.listener(move |workbench, _: &ClickEvent, window, cx| {
-                workbench.execute_command(command, Vec::new(), window, cx);
-            }))
-        };
-        let explorer = view_icon("files", SideBarView::Explorer, "workbench.view.explorer");
-        let search = view_icon("search-large", SideBarView::Search, "workbench.view.search");
-        let scm = view_icon("source-control", SideBarView::Scm, "workbench.view.scm").children(self.activity_badge(self.scm_badge()));
+            icon.id(command)
+                .cursor_pointer()
+                .child(self.action_hover(title, command, hover))
+                .when(view == Some(SideBarView::Scm), |icon| icon.children(self.activity_badge(self.scm_badge())))
+                .when(view == Some(SideBarView::Extensions), |icon| icon.relative().children(self.extensions_activity_badge()))
+                .when(view.is_some(), |icon| icon.on_click(cx.listener(move |workbench, event: &ClickEvent, window, cx| workbench.activity_item_clicked(active, command, event, window, cx))))
+        });
         div()
             .w(px(44.))
             .flex()
@@ -626,19 +948,40 @@ impl Workbench {
             .border_1()
             .when(self.side_bar_visible(), |bar| bar.rounded_l(px(8.)))
             .when(!self.side_bar_visible(), |bar| bar.rounded(px(8.)))
-            .bg(self.color("activityBar.background"))
-            .border_color(self.color("surface.border"))
+            // activitybarPart.ts `updateStyles` with the modern UI: the inactive background while the window is not focused.
+            .bg(self.color(if window.is_window_active() { "modernActivityBar.background" } else { "modernActivityBar.inactiveBackground" }))
+            .border_color(self.color("modernActivityBar.border"))
             .child(
                 div()
                     .flex()
                     .flex_col()
                     .gap(px(8.))
-                    .child(explorer.child(self.action_hover("Explorer", "workbench.view.explorer", hover)))
-                    .child(search.child(self.action_hover("Search", "workbench.view.search", hover)))
-                    .child(scm.child(self.action_hover("Source Control", "workbench.view.scm", hover)))
-                    .children(views.map(|(name, title, command)| self.icon(name, 36., 24., inactive).cursor_pointer().child(self.action_hover(title, command, hover)))),
+                    .children(items)
+                    .children(self.testing_activity_item(hover, inactive, cx)),
             )
-            .child(self.icon("settings-gear", 36., 24., inactive).cursor_pointer().child(self.hover_target("manage", HoverContent::Text("Manage".into()), hover)))
+            .child(
+                self.icon("settings-gear", 36., 24., inactive)
+                    .cursor_pointer()
+                    .child(output_view::bounds_tracker(self.manage_bounds.clone()))
+                    .child(self.hover_target("manage", HoverContent::Text("Manage".into()), hover))
+                    // globalCompositeBar.ts: a left mouse down opens MenuId.GlobalActivity beside the button.
+                    .on_mouse_down(MouseButton::Left, cx.listener(|workbench, _, window, cx| {
+                        let context = workbench.key_context(window);
+                        let actions = crate::menus::menu_actions(&workbench.menus, MenuId::GlobalActivity, &context);
+                        workbench.show_context_menu_beside(actions, &context, workbench.manage_bounds.get(), window, cx);
+                    })),
+            )
+    }
+
+    /// The Testing container shows once a controller registers (testing.contribution.ts `TestingContextKeys.providerCount`).
+    fn testing_activity_item(&self, hover: HoverOptions, inactive: Rgba, cx: &mut Context<Self>) -> Option<gpui::Stateful<Div>> {
+        if self.testing.controllers.is_empty() {
+            return None;
+        }
+        let active = self.side_bar_view == SideBarView::Testing && self.side_bar_visible();
+        let icon = if active { self.active_view_icon("beaker") } else { self.icon("beaker", 36., 24., inactive) };
+        let command = "workbench.view.testing";
+        Some(icon.id(command).cursor_pointer().child(self.action_hover("Testing", command, hover)).on_click(cx.listener(move |workbench, event: &ClickEvent, window, cx| workbench.activity_item_clicked(active, command, event, window, cx))))
     }
 
     /// The checked view: a 32px rounded indicator behind the icon (activityaction.css); High Contrast
@@ -653,21 +996,34 @@ impl Workbench {
         div().relative().child(indicator).child(self.icon(name, 36., 24., self.color("modernActivityBarItem.activeForeground")))
     }
 
-    /// The Explorer: title, the folder section with its tree, and the collapsed Outline and Timeline sections.
-    fn side_bar(&self, window: &Window, cx: &mut Context<Self>) -> Div {
+    /// The Explorer: title, then the folder's view with its tree, Outline and Timeline as panes.
+    fn side_bar_view(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         let foreground = self.foreground_or("sideBar.foreground");
         if self.side_bar_view == SideBarView::Scm {
             return self.scm_side_bar(window, cx);
+        }
+        if self.side_bar_view == SideBarView::Extensions {
+            let title = self.side_bar_title_text(self.extensions_title()).child(self.extensions_title_actions(cx));
+            return self.side_bar_frame().text_color(foreground).child(title).child(self.extensions_view(window, cx));
         }
         if self.side_bar_view == SideBarView::Search {
             let title = self.side_bar_title("Search").child(self.search_title_actions(cx));
             return self.side_bar_frame().text_color(foreground).child(title).child(self.search_view(window, cx));
         }
-        let tree = self.folder.as_ref().expect("the Explorer is drawn only with a folder");
+        if self.side_bar_view == SideBarView::Debug {
+            return self.debug_side_bar(window, cx);
+        }
+        if self.side_bar_view == SideBarView::Testing {
+            return self.testing_side_bar(cx);
+        }
         let title = self
             .side_bar_title("Explorer")
             // actionbar.css: .monaco-action-bar .action-item is cursor: pointer.
             .child(self.icon("ellipsis", 22., 16., foreground).cursor_pointer());
+        let Some(tree) = self.folder.as_ref() else {
+            let empty = view_panes::ExplorerPane { id: view_panes::EMPTY_VIEW, title: "No Folder Opened".into(), description: None, actions: None, body: self.empty_view(cx).into_any_element() };
+            return self.side_bar_frame().text_color(foreground).child(title).child(self.explorer_pane_view(empty, window, cx)).child(div().h(px(5.)).flex_none());
+        };
         // explorerviewlet.css: in high contrast an explorer item has a 20px line from the row top, 1px above center.
         let label_line = if self.theme.kind.is_high_contrast() { 20. } else { 22. };
         let edit_focused = self.explorer.input_focus.is_focused(window);
@@ -692,21 +1048,34 @@ impl Workbench {
         let selection_outline = self.theme.color("contrastActiveBorder");
         let folder_name = tree.workspace.label();
         let has_folder_icons = self.file_icons.as_ref().is_some_and(FileIconTheme::has_folder_icons);
-        let rows = tree_rows.into_iter().enumerate().map(|(index, row)| {
+        let active: Vec<usize> = tree_rows.iter().enumerate().filter(|(_, row)| tree.focused.as_ref() == Some(&row.path) || tree.selected.contains(&row.path)).map(|(index, _)| index).collect();
+        let guides = self.tree_guides(list_scroll::ListId::Explorer, tree_rows.iter().map(|row| row.depth).collect(), &active, window);
+        // abstractTree.ts `AbstractFindController`: its 30px paddingTop keeps the sticky rows away while find is open.
+        let sticky = if self.explorer.find.is_open() { Vec::new() } else { self.tree_sticky_rows(list_scroll::ListId::Explorer, &tree_rows.iter().map(|row| row.depth).collect::<Vec<_>>()) };
+        let sticky_rows: Vec<_> = sticky.iter().map(|sticky| (sticky.index, tree_rows[sticky.index].clone())).collect();
+        // abstractTree.ts `StickyScrollWidget` toggles only `focused` on its rows, never `selected`.
+        let mut render_row = |(index, row): (usize, crate::explorer::Row), sticky: bool| {
+            let row_guides = guides.row(index, 0.);
             let twistie = match (row.is_dir || row.has_nests, row.expanded) {
                 (true, true) => Some("chevron-down"),
                 (true, false) => Some("chevron-right"),
                 (false, _) => None,
             };
             let navigation = tree.navigation(&row);
+            // explorerViewer.ts `ExplorerAccessibilityProvider.getAriaLabel`: the name, a compact row's names joined.
+            let aria_label = match row.compressed.is_empty() {
+                true => row.name.clone(),
+                false => row.compressed.iter().map(|(_, name)| name.as_str()).collect::<Vec<_>>().join("/"),
+            };
+            let (aria_level, aria_expanded) = (row.depth, (row.is_dir || row.has_nests).then_some(row.expanded));
             let path = row.path;
             let is_dir = row.is_dir;
             let is_edited = edited.as_ref().is_some_and(|renamed| match renamed {
                 Some(renamed) => *renamed == path || row.compressed.iter().any(|(folder, _)| folder == renamed),
                 None => row.is_new,
             });
-            let is_selected = !row.is_new && tree.selected.contains(&path);
-            let is_focused = !row.is_new && tree.focused.as_ref() == Some(&path);
+            let is_selected = !sticky && !row.is_new && tree.selected.contains(&path);
+            let is_focused = !sticky && !row.is_new && tree.focused.as_ref() == Some(&path);
             let name = match (is_edited, navigation) {
                 (true, _) => self.explorer_input_box(label_line, edit_focused, cx).into_any_element(),
                 (false, Some(navigation)) => self.compressed_label(&row.compressed, &navigation, is_focused, segment_drop_target, cx).into_any_element(),
@@ -730,7 +1099,11 @@ impl Workbench {
                 }
                 false => icons.file_icon(&icon_path, self.languages.language_of(&icon_path, ""), self.theme.kind, 13., label_line, foreground),
             });
-            let indent = 8. * (row.depth - 1) as f32;
+            let indent = self.tree_indent() * (row.depth - 1) as f32;
+            // explorerViewer.ts passes `explorer.decorations` as the label's `fileDecorations`.
+            let decoration = self.file_decoration(&path, is_dir);
+            let decoration_color = self.decoration_color(decoration.as_ref(), self.setting("explorer.decorations.colors") != Value::Bool(false));
+            let badge = self.decoration_badge(decoration.as_ref(), foreground).filter(|_| self.setting("explorer.decorations.badges") != Value::Bool(false));
             let has_nests = row.has_nests;
             let (twistie_path, row_expanded) = (path.clone(), row.expanded);
             let twistie_element = |chevron| {
@@ -741,9 +1114,20 @@ impl Workbench {
                     cx.notify();
                 }))
             };
-            let hover = self.hover_target(("explorer-hover", index), HoverContent::Text(crate::quick_input::path_label(&path, None)), HoverOptions::mouse());
+            let hover = self.hover_target(("explorer-hover", index), HoverContent::Text(match decoration.as_ref().and_then(|decoration| decoration.tooltip.as_deref()) {
+                // labels.ts: the title, then the decoration's tooltip.
+                Some(tooltip) => format!("{} \u{2022} {tooltip}", crate::quick_input::path_label(&path, None)),
+                None => crate::quick_input::path_label(&path, None),
+            }), HoverOptions::mouse());
             div()
                 .id(index)
+                .role(gpui::Role::TreeItem)
+                .aria_label(aria_label)
+                .aria_level(aria_level)
+                .aria_selected(is_selected)
+                .when_some(aria_expanded, |row, expanded| row.aria_expanded(expanded))
+                // listWidget.ts: the list keeps the focus and points aria-activedescendant at the focused row.
+                .when(is_focused, |row| row.aria_active_descendant())
                 // list.css: .monaco-list.mouse-support .monaco-list-row is cursor: pointer.
                 .cursor_pointer()
                 .relative()
@@ -768,8 +1152,11 @@ impl Workbench {
                             .child(div().self_start().flex_1().ml(px(label_margin)).line_height(px(label_line)).child(name))
                     }
                 })
+                .children(badge)
+                .when_some(decoration_color, |row, color| row.text_color(color))
                 // explorerviewlet.css: .explorer-item.cut is at half opacity. Its 0.3 for the other rows while a name is
                 // edited needs `.explorer-folders-view` twice in the ancestry, which the reference DOM never has.
+                .children(row_guides)
                 .when(is_cut, |row| row.opacity(0.5))
                 .when(is_selected, |row| {
                     // shortcut: dashed, GPUI has no dotted border.
@@ -819,31 +1206,47 @@ impl Workbench {
                     }))
                     .on_click(cx.listener(move |workbench, event: &ClickEvent, window, cx| {
                         let modifiers = event.modifiers();
+                        let mode = workbench.list_click_mode();
+                        let multi_select = if mode.alt_multi_select { modifiers.alt } else { modifiers.platform };
+                        let double_click = event.click_count() == 2;
                         window.focus(&workbench.explorer.focus.clone(), cx);
                         let tree = workbench.folder.as_mut().expect("rows exist only with a folder");
-                        tree.click_select(&path, modifiers.platform, modifiers.shift);
+                        tree.click_select(&path, multi_select, modifiers.shift);
                         cx.notify();
-                        if modifiers.platform || modifiers.shift {
+                        if multi_select || modifiers.shift {
                             return;
                         }
-                        if is_dir {
-                            tree.toggle(&path);
-                        } else {
-                            workbench.open_file(path.clone(), event.click_count() == 2, window, cx);
+                        match is_dir {
+                            true if mode.expand_on_double_click && !double_click => {}
+                            true => tree.toggle(&path),
+                            false if mode.open_on_double_click && !double_click => {}
+                            false => workbench.open_file(path.clone(), double_click, window, cx),
                         }
                     }))
                 })
-        });
-        let rows: Vec<_> = rows.collect();
+        };
+        let rows: Vec<_> = tree_rows.into_iter().enumerate().map(|row| render_row(row, false)).collect();
+        let sticky_elements = sticky_rows.into_iter().map(|row| render_row(row, true).into_any_element()).collect();
+        let sticky_container = self.tree_sticky_container(list_scroll::ListId::Explorer, &sticky, sticky_elements, cx);
+        // explorerView.ts `setEditable`: no horizontal scrolling while a name is edited.
+        let horizontal = self.horizontal_scrolling(list_scroll::ListId::Explorer) && self.explorer.edit.is_none();
         self.side_bar_frame()
             .text_color(foreground)
             .child(title)
-            .child(div().flex_1().overflow_hidden().flex().flex_col().child(self.section_header(&folder_name, true, false)).child(
-                div().relative().flex_1().min_h_0().flex().flex_col().child(
+            .child(self.explorer_pane_view(view_panes::ExplorerPane { id: view_panes::FILE_VIEW, title: folder_name, description: None, actions: None, body:
+                div().id("explorer-pane").relative().flex_1().min_h_0().flex().flex_col()
+                .on_hover(cx.listener(|workbench, hovered: &bool, _, cx| {
+                    workbench.explorer.pane_hovered = *hovered;
+                    cx.notify();
+                }))
+                .child(
                 div()
                     .id("explorer-tree")
+                    .role(gpui::Role::Tree)
+                    .aria_label("Files Explorer")
                     .track_focus(&self.explorer.focus)
                     .overflow_y_scroll()
+                    .when(horizontal, |tree| tree.overflow_x_scroll())
                     .track_scroll(&self.explorer.scroll)
                     .flex_1()
                     .min_h_0()
@@ -852,32 +1255,26 @@ impl Workbench {
                     .on_mouse_down(MouseButton::Right, cx.listener(|workbench, event: &MouseDownEvent, window, cx| workbench.show_explorer_context_menu(None, event.position, window, cx)))
                     // abstractTree.ts `AbstractFindController.open`: `paddingTop: 30` while the find widget shows.
                     .when(self.explorer.find.is_open(), |tree| tree.pt(px(30.)))
-                    .children(rows)
+                    // `horizontalScrolling`: unwrapped rows as wide as the widest, at least the view.
+                    .child(div().flex_none().flex().flex_col().when(horizontal, |rows| rows.self_start().min_w_full().whitespace_nowrap()).children(rows))
                     .child(self.explorer_empty_area(cx)),
-                ).children(self.explorer_find_widget(window, cx))))
-            .child(self.section_header("Outline", false, true))
-            .child(self.timeline_section(window, cx))
+                ).child(self.list_scroll_layer(list_scroll::ListId::Explorer, cx)).children(sticky_container).children(self.explorer_find_widget(window, cx)).into_any_element() }, window, cx))
+            // shortcut: extension webview views sit below the Explorer's panes, not in view_panes.rs; milestone 11 moves them in.
+            .children(self.webview_view_panes(cx))
             // The pane view is laid out 5px shorter than the side bar content.
             .child(div().h(px(5.)).flex_none())
     }
 
     fn side_bar_frame(&self) -> Div {
-        div()
-            .w(px(256.))
-            .flex()
-            .flex_col()
-            // The seam with the activity bar is the bar's border; the side bar keeps a transparent 1px edge.
-            .pl(px(1.))
-            .border_t_1()
-            .border_r_1()
-            .border_b_1()
-            .rounded_r(px(8.))
-            .bg(self.color("sideBar.background"))
-            .border_color(self.color("surface.border"))
+        div().flex_1().min_h_0().flex().flex_col()
     }
 
     /// The composite title bar: the view's name and its actions.
     fn side_bar_title(&self, name: &'static str) -> Div {
+        self.side_bar_title_text(name.to_owned())
+    }
+
+    fn side_bar_title_text(&self, name: String) -> Div {
         div()
             .h(px(32.))
             .flex_none()
@@ -887,32 +1284,11 @@ impl Workbench {
             .px(px(4.))
             .when_some(self.theme.color("sideBarTitle.border"), |title, border| title.border_b_1().border_color(border))
             // The h2 keeps its 32px line under the HC border-bottom, so it is laid out from the top, not centered.
-            .child(div().self_start().pl(px(8.)).line_height(px(32.)).text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).text_color(self.foreground_or("sideBarTitle.foreground")).child(name))
+            .child(div().self_start().pl(px(8.)).line_height(px(32.)).text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).text_color(self.foreground_or("sideBarTitle.foreground")).child(crate::nls::localize(&name).into_owned()))
     }
 
-    /// A pane header (paneview.ts): 28px, sideBarSectionHeader colors, a top border on every section but the first.
-    fn section_header(&self, title: &str, expanded: bool, separated: bool) -> Div {
-        let foreground = self.foreground_or("sideBarSectionHeader.foreground");
-        let border = self.theme.color("sideBarSectionHeader.border").filter(|_| separated);
-        div()
-            .relative()
-            .h(px(28.))
-            // paneview.css: .pane-header is cursor: pointer; these panes are all collapsible.
-            .cursor_pointer()
-            .flex_none()
-            .mx(px(4.))
-            .pl(px(4.))
-            .flex()
-            .items_center()
-            .rounded(px(4.))
-            .bg(self.color("sideBarSectionHeader.background"))
-            .text_color(foreground)
-            .when_some(border, |header, border| header.child(div().absolute().top_0().left_0().right_0().h(px(1.)).bg(border)))
-            .child(self.icon(if expanded { "chevron-down" } else { "chevron-right" }, 16., 16., foreground).mx(px(2.)))
-            .child(div().text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).child(title.to_string()))
-    }
-
-    fn editor_part(&self) -> Div {
+    /// The letterpress of an empty group, `size` wide (256px, 200px in a part of several groups).
+    fn watermark(&self, size: f32) -> Div {
         // The high contrast letterpress files paint their own fill; the others are black at the opacity the file sets (editorgroupview.css).
         let (file, color) = match self.theme.kind {
             ThemeKind::Dark => ("letterpress-dark.svg", rgb(0x000000)),
@@ -921,28 +1297,18 @@ impl Workbench {
             ThemeKind::HighContrastLight => ("letterpress-hcLight.svg", rgb(0xd9d9d9)),
         };
         let path = self.app_root.join("src/vs/workbench/browser/parts/editor/media").join(file);
-        // .watermark-container is 280px tall and centered; the 256px letterpress sits at its top.
-        let watermark = div().h(px(280.)).child(svg().external_path(path.to_string_lossy().into_owned()).size(px(256.)).text_color(color));
-        div()
-            .flex_1()
-            .flex()
-            .flex_col()
-            .items_center()
-            .justify_center()
-            .border_1()
-            .rounded(px(8.))
-            .bg(self.color("editor.background"))
-            .border_color(self.color("surface.border"))
-            .child(watermark)
+        // .watermark-container is 280px tall and centered; the letterpress sits at its top.
+        div().h(px(size + 24.)).child(svg().external_path(path.to_string_lossy().into_owned()).size(px(size)).text_color(color))
     }
 
     fn status_bar(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         let (foreground, background) = match self.folder {
+            _ if self.statusbar_in_debug_mode() => (self.color("statusBar.debuggingForeground"), self.color("statusBar.debuggingBackground")),
             Some(_) => (self.color("statusBar.foreground"), self.color("statusBar.background")),
             None => (self.color("statusBar.noFolderForeground"), self.color("statusBar.noFolderBackground")),
         };
         // statusbarpart.css: pointer only on items with a command; status.message has none.
-        let problems = self.problems_status_item(foreground);
+        let problems = self.problems_status_item(foreground, cx);
         div()
             .relative()
             .h(px(28.))
@@ -962,7 +1328,7 @@ impl Workbench {
                 let radius = px(if is_tahoe_or_newer() { 16. } else { 10. });
                 bar.child(div().absolute().inset_0().border_1().rounded_bl(radius).rounded_br(radius).border_color(border))
             })
-            .child(div().h(px(24.)).flex().child(self.icon("remote", 28., 16., foreground).h_full().cursor_pointer().child(self.hover_target("status.host", HoverContent::Text("Open a Remote Window".into()), HoverOptions::status_bar()))).children(self.notifications_status_item(true, foreground, cx)).child(self.extension_status_items(true, |priority| priority > PROBLEMS_PRIORITY, foreground, cx)).child(problems).child(self.extension_status_items(true, |priority| priority <= PROBLEMS_PRIORITY, foreground, cx)).children(self.status_bar_message()).children(self.window_progress_entry(cx.background_executor().now()).map(|entry| self.extension_status_item(&entry, foreground, cx))))
+            .child(div().h(px(24.)).flex().child(self.icon("remote", 28., 16., foreground).h_full().cursor_pointer().child(self.hover_target("status.host", HoverContent::Text("Open a Remote Window".into()), HoverOptions::status_bar()))).children(self.restricted_mode_status_item(foreground, cx)).children(self.notifications_status_item(true, foreground, cx)).child(self.extension_status_items(true, |priority| priority > PROBLEMS_PRIORITY, foreground, cx)).child(problems).child(self.extension_status_items(true, |priority| priority <= PROBLEMS_PRIORITY, foreground, cx)).children(self.status_bar_message()).children(self.window_progress_entry(cx.background_executor().now()).map(|entry| self.extension_status_item(&entry, foreground, cx))))
             .child(div().h(px(24.)).flex().child(self.extension_status_items(false, |priority| priority > EDITOR_STATUS_PRIORITY, foreground, cx)).child(self.editor_status_items(foreground, window, cx)).child(self.extension_status_items(false, |priority| priority <= EDITOR_STATUS_PRIORITY, foreground, cx)).children(self.notifications_status_item(false, foreground, cx)))
     }
 
@@ -975,7 +1341,7 @@ impl Workbench {
     /// A codicon centered in a square box. Drawn from the icon's SVG: Wu's text system skips fonts
     /// without an 'm' glyph, so codicon.ttf cannot load (gpui_macos text_system.rs load_family).
     fn icon(&self, name: &str, box_size: f32, icon_size: f32, color: Rgba) -> Div {
-        let path = self.app_root.join("node_modules/@vscode/codicons/src/icons").join(format!("{name}.svg"));
+        let path = self.app_root.join("node_modules/@vscode/codicons/src/icons").join(format!("{}.svg", crate::symbol_icons::svg_name(name)));
         div()
             .relative()
             .size(px(box_size))
@@ -1048,7 +1414,7 @@ mod tests {
         cx.run_until_parked();
 
         let editors = workbench.read_with(cx, |workbench, _| {
-            workbench.editors.editors.iter().map(|editor| (editor.document.uri_string(), editor.preview, editor.document.lines[..2].join("\n"))).collect::<Vec<_>>()
+            workbench.editors.editors.iter().map(|editor| (editor.document().uri_string(), editor.preview, editor.document().lines[..2].join("\n"))).collect::<Vec<_>>()
         });
         let expected = |name: &str| (format!("untitled:{name}"), false, "{\n\t\"layout\": {".to_string());
         assert_eq!(editors, [expected("Untitled-1"), expected("Untitled-2")]);
@@ -1072,7 +1438,7 @@ mod tests {
         });
         cx.run_until_parked();
         receiver.try_iter().count();
-        let text = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document.lines.join("\n"));
+        let text = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document().lines.join("\n"));
 
         cx.simulate_keystrokes("down end");
         cx.simulate_input("!");
@@ -1123,7 +1489,7 @@ mod tests {
         let methods: Vec<_> = receiver.try_iter().map(|message| message.method).collect();
         assert_eq!(methods.iter().filter(|method| **method == "$acceptModelChanged").count(), 2);
         cx.simulate_keystrokes("cmd-z");
-        assert_eq!(workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document.lines.join("\n")), "ab  \ncd\n\n\n");
+        assert_eq!(workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document().lines.join("\n")), "ab  \ncd\n\n\n");
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -1149,7 +1515,7 @@ mod tests {
             workbench.update_in(cx, |workbench, window, _| {
                 let moves_focus = workbench.key_context(window).get("editorTabMovesFocus").cloned();
                 let editor = workbench.editors.active().unwrap();
-                (editor.document.lines.join("\n"), editor.highlights.len(), workbench.status_bar_focus.is_focused(window), moves_focus)
+                (editor.document().lines.join("\n"), editor.highlights.len(), workbench.status_bar_focus.is_focused(window), moves_focus)
             })
         };
 
@@ -1253,6 +1619,41 @@ mod tests {
     }
 
     #[gpui::test]
+    fn folding_the_cursor_line_moves_the_cursor_to_the_fold_start(cx: &mut TestAppContext) {
+        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
+        let theme = load_theme(&[themes], "Dark Modern").unwrap();
+        let file = app_root.join("port/fixtures/folding/long.py");
+        // A host that is up, as in the app: no extension declares the `onCommand` events of the keys.
+        let (sender, host_receiver) = std::sync::mpsc::channel();
+        let mut host = HostSync::new(sender);
+        host.installed_extensions_registered = true;
+        let (workbench, cx) = cx.add_window_view(|window, cx| {
+            let mut workbench = Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), crate::default_settings(), host, cx);
+            workbench.load_keybindings(crate::keybindings::default_keybindings(&[]), std::env::temp_dir().join("code-gpui-fold-cursor-keybindings.json"), cx);
+            workbench.open_file(file.clone(), true, window, cx);
+            workbench
+        });
+        cx.run_until_parked();
+        // The keys of the pixel-check "folded" window, dispatched like `--screenshot-keys` in main.rs.
+        cx.update(|window, cx| {
+            for key in "cmd-down up alt-cmd-[ up up up up up up up up up up up up alt-cmd-[".split(' ') {
+                window.dispatch_keystroke(gpui::Keystroke::parse(key).unwrap(), cx);
+            }
+        });
+        // The host answers each event on its own turn, in the order it was asked.
+        for message in host_receiver.try_iter().filter(|message| message.method == "$activateByEvent") {
+            message.reply.unwrap().send(Ok(serde_json::Value::Null)).unwrap();
+            cx.run_until_parked();
+        }
+        let (hidden, head) = workbench.read_with(cx, |workbench, _| {
+            let editor = workbench.editors.active().unwrap();
+            (editor.folding.hidden().to_vec(), editor.selection().head)
+        });
+        assert_eq!((hidden, head.line, head.column), (vec![75..89, 99..101], 74, 25), "`def merge` and `if __name__` folded, cursor on line 75");
+    }
+
+    #[gpui::test]
     fn selection_anchor_keys_select_from_the_anchor(cx: &mut TestAppContext) {
         use crate::editor::{Position, Selection};
         let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
@@ -1320,7 +1721,7 @@ mod tests {
             assert_eq!(workbench.text_cursor_style(), gpui::CursorStyle::Arrow);
             workbench.drop_text(1, 7., Default::default(), cx);
             let editor = workbench.editors.active().unwrap();
-            assert_eq!(editor.document.lines, ["Port  for", "the edinotestor"]);
+            assert_eq!(editor.document().lines, ["Port  for", "the edinotestor"]);
             assert_eq!(editor.selections, [Selection { anchor: Position::new(1, 7), head: Position::new(1, 12) }]);
             assert!(workbench.start_text_drag(1, 9., Default::default(), 1));
             workbench.drag_text(1, 9., true, cx);
@@ -1350,7 +1751,7 @@ mod tests {
             workbench
         });
         cx.run_until_parked();
-        let lines = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document.lines.clone());
+        let lines = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document().lines.clone());
 
         cx.simulate_keystrokes("cmd-/");
         assert_eq!(lines(cx), ["// let a = 1;", "    let b = 2;"], "editor.action.commentLine");
@@ -1391,7 +1792,7 @@ mod tests {
             workbench
         });
         cx.run_until_parked();
-        let lines = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document.lines.clone());
+        let lines = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document().lines.clone());
 
         cx.simulate_keystrokes("alt-down");
         assert_eq!(lines(cx), ["two", "one", "three"], "editor.action.moveLinesDownAction");
@@ -1466,7 +1867,7 @@ mod tests {
         cx.simulate_input("the");
         cx.simulate_keystrokes("alt-cmd-enter");
         assert_eq!(zone(cx).0, 62.);
-        let text = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document.lines.join("\n"));
+        let text = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document().lines.join("\n"));
         assert_eq!(text, "a cat\nand a dog\na end");
 
         cx.simulate_keystrokes("escape");

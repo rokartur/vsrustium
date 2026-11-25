@@ -1,0 +1,17 @@
+{
+	"name": "custom-editor-tests",
+	"publisher": "port",
+	"version": "0.0.1",
+	"main": "./extension.js",
+	"activationEvents": ["onCustomEditor:testWebviewEditor.abc"],
+	"engines": { "vscode": "^1.90.0" },
+	"contributes": {
+		"customEditors": [
+			{
+				"viewType": "testWebviewEditor.abc",
+				"displayName": "Test ABC editor",
+				"selector": [{ "filenamePattern": "*.abc" }]
+			}
+		]
+	}
+}

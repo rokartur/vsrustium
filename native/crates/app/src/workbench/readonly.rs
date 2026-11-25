@@ -16,9 +16,10 @@ use crate::commands::Outcome;
 #[cfg(test)]
 mod tests;
 
-/// Why a file is read-only (`READONLY_MESSAGES`); `vscode` is the read-only provider of settingsFilesystemProvider.ts.
+/// Why a file is read-only (`READONLY_MESSAGES`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Readonly {
+    /// A file system provider with the `Readonly` capability: `vscode` (settingsFilesystemProvider.ts) and the local history's.
     Provider,
     Session,
     Configured,
@@ -75,8 +76,8 @@ impl Workbench {
     /// `updateReadonly` of the active editor's file: `Some` sets the override (`None` resets it), `None` toggles
     /// from the state it has now.
     fn update_active_editor_readonly(&mut self, state: Option<Option<bool>>, cx: &mut Context<Self>) -> Outcome {
-        let Some(editor) = self.editors.active().filter(|editor| editor.document.scheme != "untitled") else { return Outcome::done() };
-        let resource = (editor.document.scheme.clone(), editor.document.path.clone());
+        let Some(editor) = self.editors.active().filter(|editor| editor.document().scheme != "untitled") else { return Outcome::done() };
+        let resource = (editor.document().scheme.clone(), editor.document().path.clone());
         let state = state.unwrap_or_else(|| Some(self.readonly(&resource.0, &resource.1).is_none()));
         match state {
             Some(readonly) => self.readonly_overrides.insert(resource, readonly),
@@ -96,7 +97,7 @@ impl Workbench {
         if scheme == crate::output::OUTPUT_SCHEME {
             return Some(Readonly::Editor);
         }
-        if scheme == "vscode" {
+        if scheme == "vscode" || scheme == super::local_history_actions::LOCAL_HISTORY_SCHEME || scheme == super::perf_view::PERF_SCHEME {
             return Some(Readonly::Provider);
         }
         if let Some(&readonly) = self.readonly_overrides.get(&(scheme.to_owned(), path.to_path_buf())) {
@@ -109,8 +110,8 @@ impl Workbench {
         }
         drop(settings);
         let expression = |key: &'static str| move |setting: search::query::Setting, _: Option<&Path>| setting(Path::new(""), key).as_object().cloned().unwrap_or_default();
-        if self.resource_glob_matcher(&expression("files.readonlyInclude"))(path) {
-            return (!self.resource_glob_matcher(&expression("files.readonlyExclude"))(path)).then_some(Readonly::Configured);
+        if self.resource_glob_matcher(&expression("files.readonlyInclude"))(path, None) {
+            return (!self.resource_glob_matcher(&expression("files.readonlyExclude"))(path, None)).then_some(Readonly::Configured);
         }
         let locked = || std::fs::metadata(path).is_ok_and(|stat| stat.permissions().mode() & 0o200 == 0);
         (scheme == "file" && self.setting("files.readonlyFromPermissions") == Value::Bool(true) && locked()).then_some(Readonly::Locked)
@@ -118,7 +119,7 @@ impl Workbench {
 
     pub(super) fn active_editor_readonly(&self) -> Option<Readonly> {
         let editor = self.editors.active()?;
-        self.readonly(&editor.document.scheme, &editor.document.path)
+        self.readonly(&editor.document().scheme, &editor.document().path)
     }
 
     /// Whether an edit of the active editor must not run because it is read-only. An edit command's

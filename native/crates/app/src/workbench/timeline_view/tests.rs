@@ -4,7 +4,7 @@ use std::sync::mpsc::Receiver;
 use gpui::{Modifiers, TestAppContext, VisualTestContext};
 use serde_json::{Value, json};
 
-use super::now_ms;
+use super::{TIMELINE_VIEW_ID, now_ms};
 use crate::host_sync::{HostMessage, HostSync};
 use crate::menus::{MenuAction, MenuId, menu_actions};
 use crate::workbench::Workbench;
@@ -22,7 +22,8 @@ fn workbench_in<'a>(name: &str, cx: &'a mut TestAppContext) -> (PathBuf, gpui::E
     let settings = std::sync::Arc::new(std::sync::Mutex::new(config::service::Settings::load(config::registry::Registry::with_extensions(&[]), dir.join("User"), None)));
     let workspace = Some(config::workspace::Workspace::folder(dir.clone()));
     let (workbench, cx) = cx.add_window_view(|_, cx| Workbench::new(theme, app_root.clone(), workspace, crate::languages::Languages::new(&[]), settings, HostSync::new(sender), cx));
-    workbench.update(cx, |workbench, _| workbench.timeline.expanded = true);
+    cx.run_until_parked();
+    workbench.update(cx, |workbench, cx| workbench.expand_explorer_pane(TIMELINE_VIEW_ID, cx));
     (dir, workbench, receiver, cx)
 }
 
@@ -171,7 +172,7 @@ fn two_selected_items_compare_older_against_newer(cx: &mut TestAppContext) {
         let names: Vec<String> = workbench.editors.editors.iter().map(|editor| workbench.editor_name(editor)).collect();
         assert_eq!(names, ["a.txt", "a.txt (First) \u{2194} b.txt (2 mins ago)"]);
         assert!(workbench.editors.active_diff().is_some());
-        assert_eq!(workbench.editors.active().unwrap().document.name(), "b.txt", "the newer side is modified");
+        assert_eq!(workbench.editors.active().unwrap().document().name(), "b.txt", "the newer side is modified");
     });
 }
 
