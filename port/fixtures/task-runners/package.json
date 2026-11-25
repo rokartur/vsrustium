@@ -1,0 +1,10 @@
+{
+  "name": "task-runners",
+  "private": true,
+  "description": "Fixture for the grunt, gulp and jake task providers: copy it, run npm install in the copy, open the copy.",
+  "devDependencies": {
+    "grunt": "1.6.1",
+    "gulp": "5.0.0",
+    "jake": "10.9.2"
+  }
+}
