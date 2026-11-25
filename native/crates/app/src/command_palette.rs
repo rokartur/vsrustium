@@ -3,10 +3,12 @@
 //! accent-insensitive substring or by exact id, then "similar commands" by TF-IDF; recently used first.
 
 use std::cmp::Ordering;
+use std::sync::LazyLock;
 
 use exthost::scan::ScannedExtension;
 use serde_json::Value;
 
+use crate::commands::Commands;
 use crate::contextkey::{Context, Expr};
 use crate::filters::{Matches, matches_base_contiguous_sub_string, matches_words, try_normalize_to_base};
 use crate::keybindings::ExtensionSource;
@@ -191,47 +193,41 @@ pub struct MenuItem {
     pub source: Option<ExtensionSource>,
 }
 
-/// The workbench's palette items of the commands this port runs, with upstream's titles and categories:
-/// `f1: true` actions and `appendToCommandPalette` (fileActions.contribution.ts), undo/redo/select all
-/// (editorExtensions.ts), clipboard.ts, commandsQuickAccess.ts, gotoLineQuickAccess.ts, preferences.contribution.ts, themes.contribution.ts,
-/// stickyScrollActions.ts, mainThreadFileSystemEventService.ts, editorStatus.ts. Each is the id, title, category, `when` and `precondition`.
-const WORKBENCH_ITEMS: [(&str, &str, Option<&str>, Option<&str>, Option<&str>); 23] = [
-    ("workbench.action.showCommands", "Show All Commands", None, None, None),
-    ("workbench.action.gotoLine", "Go to Line/Column...", None, None, None),
-    ("workbench.action.gotoOffset", "Go to Offset...", None, None, None),
-    ("workbench.action.clearCommandHistory", "Clear Command History", None, None, None),
-    ("workbench.action.files.save", "Save", Some("File"), None, None),
-    ("workbench.action.files.saveFiles", "Save All Files", Some("File"), Some("!isSessionsWindow"), None),
-    ("workbench.action.files.revert", "Revert File", Some("File"), Some("!isSessionsWindow"), None),
-    ("workbench.action.closeAllEditors", "Close All Editors", Some("View"), None, None),
-    ("workbench.action.openGlobalKeybindings", "Open Keyboard Shortcuts", Some("Preferences"), None, None),
-    ("workbench.action.openGlobalKeybindingsFile", "Open Keyboard Shortcuts (JSON)", Some("Preferences"), None, None),
-    ("workbench.action.selectTheme", "Color Theme", Some("Preferences"), None, None),
-    ("workbench.action.editor.changeLanguageMode", "Change Language Mode", None, None, Some("!notebookEditorFocused")),
-    ("workbench.action.editor.changeEOL", "Change End of Line Sequence", None, None, None),
-    ("workbench.action.editor.changeEncoding", "Change File Encoding", None, None, None),
-    ("files.participants.resetChoice", "Reset choice for 'File operation needs preview'", None, None, None),
-    ("undo", "Undo", None, None, None),
-    ("redo", "Redo", None, None, None),
-    ("editor.action.selectAll", "Select All", None, None, None),
-    ("editor.action.clipboardCutAction", "Cut", None, None, None),
-    ("editor.action.clipboardCopyAction", "Copy", None, None, None),
-    ("editor.action.clipboardPasteAction", "Paste", None, None, None),
-    ("editor.action.toggleStickyScroll", "Toggle Editor Sticky Scroll", Some("View"), None, None),
-    ("editor.action.focusStickyScroll", "Focus Editor Sticky Scroll", None, None, Some("config.editor.stickyScroll.enabled && stickyScrollVisible")),
-];
+/// The reference's command titles and `MenuId.CommandPalette` items without the extensions' ones, dumped from
+/// 1.147.0 by port/tools/ref-commands. `labels` is what the Keyboard Shortcuts editor shows for each command id.
+static REFERENCE: LazyLock<Value> = LazyLock::new(|| serde_json::from_str(include_str!("command_palette/reference-commands.json")).expect("valid JSON"));
+
+impl MenuItem {
+    /// "Category: Title"; upstream tests the category for truthiness, so emmet's `"category": ""` shows the title alone.
+    pub fn label(&self) -> String {
+        match &self.category {
+            Some(category) if !category.is_empty() => format!("{category}: {}", self.title),
+            _ => self.title.clone(),
+        }
+    }
+}
+
+/// The reference's label of a workbench or editor command: `MenuRegistry.getCommand`'s title, else the command
+/// palette item's, else the editor action's (keybindingsEditor.ts `getActionsLabels`).
+pub fn reference_label(id: &str) -> Option<&'static str> {
+    REFERENCE["labels"][id].as_str()
+}
 
 /// `MenuRegistry.getMenuItems(MenuId.CommandPalette)`: the workbench's items, the extensions'
 /// `contributes.menus.commandPalette` entries, then every other contributed command (`_appendImplicitItems`).
+/// The workbench's items are the reference's; `enabled_commands` leaves out those the port does not register.
 pub fn menu(extensions: &[ScannedExtension]) -> Vec<MenuItem> {
-    let mut items: Vec<MenuItem> = WORKBENCH_ITEMS
+    let text = |value: &Value| value.as_str().map(str::to_string);
+    let mut items: Vec<MenuItem> = REFERENCE["commandPalette"]
+        .as_array()
+        .expect("an array")
         .iter()
-        .map(|(id, title, category, when, precondition)| MenuItem {
-            id: id.to_string(),
-            title: title.to_string(),
-            category: category.map(str::to_string),
-            when: when.and_then(Expr::deserialize),
-            precondition: precondition.and_then(Expr::deserialize),
+        .map(|item| MenuItem {
+            id: text(&item["id"]).expect("an id"),
+            title: text(&item["title"]).unwrap_or_default(),
+            category: text(&item["category"]),
+            when: item["when"].as_str().and_then(Expr::deserialize),
+            precondition: item["precondition"].as_str().and_then(Expr::deserialize),
             source: None,
         })
         .collect();
@@ -276,19 +272,15 @@ fn contributed_commands(extension: &ScannedExtension) -> Vec<MenuItem> {
 }
 
 /// `getGlobalCommandPicks`: the items whose `when` holds and that are enabled, labelled "Category: Title".
-pub fn enabled_commands(menu: &[MenuItem], context: &dyn Context) -> Vec<CommandPick> {
+/// A workbench item shows only when the port registers its command.
+pub fn enabled_commands(menu: &[MenuItem], context: &dyn Context, commands: &Commands) -> Vec<CommandPick> {
     let holds = |expr: &Option<Expr>| expr.as_ref().is_none_or(|expr| expr.evaluate(context));
     let mut picks = Vec::new();
     for item in menu {
-        if !holds(&item.when) || !holds(&item.precondition) {
+        if (item.source.is_none() && commands.get(&item.id).is_none()) || !holds(&item.when) || !holds(&item.precondition) {
             continue;
         }
-        let label = match &item.category {
-            // Upstream tests the category for truthiness, so emmet's `"category": ""` shows the title alone.
-            Some(category) if !category.is_empty() => format!("{category}: {}", item.title),
-            _ => item.title.clone(),
-        };
-        picks.push(CommandPick { id: item.id.clone(), label: strip_icons(&label), category: item.category.clone() });
+        picks.push(CommandPick { id: item.id.clone(), label: strip_icons(&item.label()), category: item.category.clone() });
     }
     picks
 }

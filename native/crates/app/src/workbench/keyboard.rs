@@ -186,6 +186,14 @@ impl Workbench {
         context.insert("textInputFocus".into(), json!(editor_focused));
         context.insert("editorIsOpen".into(), json!(self.editors.active().is_some()));
         context.insert("dirtyWorkingCopies".into(), json!(self.editors.editors.iter().any(|editor| editor.is_dirty())));
+        // viewDescriptorService.ts: the Explorer and Search containers always hold their view.
+        for (container, view) in [("workbench.view.explorer", "workbench.explorer.fileView"), ("workbench.view.search", "workbench.view.search")] {
+            context.insert(format!("viewContainer.{container}.enabled"), json!(true));
+            context.insert(format!("{view}.active"), json!(true));
+        }
+        if let Some(index) = self.editors.active_index() {
+            context.insert("activeEditorIsLastInGroup".into(), json!(index == self.editors.editors.len() - 1));
+        }
         if let Some(editor) = self.editors.active() {
             context.insert("activeEditor".into(), json!("workbench.editor.files"));
             // The port opens only files, never untitled editors (editorGroupView.ts).

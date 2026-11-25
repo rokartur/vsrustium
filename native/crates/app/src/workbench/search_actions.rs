@@ -423,6 +423,7 @@ impl Workbench {
         context.insert("viewHasReplacePattern".into(), json!(!view.value(SearchField::Replace).is_empty()));
         context.insert("viewHasFilePattern".into(), json!(!view.value(SearchField::Include).is_empty() || !view.value(SearchField::Exclude).is_empty()));
         context.insert("inTreeView".into(), json!(view.tree_view));
+        context.insert("viewHasSomeCollapsibleResult".into(), json!(self.search_has_expanded_rows()));
         context.insert("searchState".into(), json!(view.state as u8));
         if !tree_focused {
             return;

@@ -13,8 +13,10 @@ fn titled(id: &str, title: &str) -> MenuItem {
     MenuItem { id: id.into(), title: title.into(), category: None, when: None, precondition: None, source: None }
 }
 
+/// `registerCommandWithTitle`: each menu item's command is registered too.
 fn model(items: &[Item], menu: &[MenuItem], registered: &[&str]) -> Model {
-    Model::new(items, items, menu, registered)
+    let registered: Vec<&str> = menu.iter().map(|item| item.id.as_str()).chain(registered.iter().copied()).collect();
+    Model::new(items, items, menu, &registered)
 }
 
 /// The commands and keybinding labels of the rows that have a keybinding.
@@ -103,6 +105,14 @@ fn convert_keybinding_with_and_without_title_to_entry() {
 
     let entry = &model(&items, &[titled("a1", "Some Title")], &[]).fetch("", false)[0];
     assert_eq!(entry.row.command_label, "Some Title");
+}
+
+#[test]
+fn workbench_commands_take_the_reference_label() {
+    let items = [item("copyFilePath", "alt+cmd+c", None, true), item("cursorDown", "down", None, true)];
+    let entries = model(&items, &[], &[]).fetch("", false);
+    let labels: Vec<&str> = entries[..2].iter().map(|entry| entry.row.command_label.as_str()).collect();
+    assert_eq!(labels, ["File: Copy Path of Active File", ""]);
 }
 
 #[test]

@@ -248,7 +248,7 @@ impl Workbench {
             Some(_) => command_palette::editor_action_picks(&context),
             None => Vec::new(),
         };
-        commands.extend(command_palette::enabled_commands(&self.quick_access.menu, &context));
+        commands.extend(command_palette::enabled_commands(&self.quick_access.menu, &context, &self.commands));
         let mut entries = Vec::new();
         let mut accepts = Vec::new();
         for entry in command_palette::command_picks(&commands, filter, &self.quick_access.history) {
