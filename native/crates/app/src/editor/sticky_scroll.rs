@@ -240,7 +240,7 @@ mod tests {
         let line_height = crate::editor::LINE_HEIGHT;
         let body = vec!["        x;"; 30].join("\n");
         let mut editor = crate::editor::edit::tests::editor(&format!("class A {{\n    b() {{\n{body}\n    }}\n}}\nx;"), "\n");
-        let viewport = Viewport { width: 400., height: 360., char_width: 7.2, sticky_scroll_lines: 5, top_whitespace: 0. };
+        let viewport = Viewport { width: 400., height: 360., char_width: 7.2, sticky_scroll_lines: 5, top_whitespace: 0., stop_rendering_line_after: None };
         editor.set_scroll(10. * line_height, 0., viewport);
         assert_eq!(editor.sticky_scroll_state(viewport).start_line_numbers, vec![1, 2]);
         assert!(editor.toggle_sticky_fold(2, 1, viewport));

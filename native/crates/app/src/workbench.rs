@@ -110,6 +110,8 @@ pub struct Workbench {
     marked_text: Option<Range<usize>>,
     /// A left button press in the text is held, so moves extend the selection.
     selecting_text: bool,
+    /// editorOptions.ts `stopRenderingLineAfter` (10000) of the group's code editor; longLinesHelper.ts clears it.
+    stop_rendering_line_after: Option<usize>,
     pub quick_inputs: quick_input_view::QuickInputs,
     pub quick_access: quick_access::QuickAccess,
     pub explorer: explorer_actions::ExplorerState,
@@ -219,6 +221,7 @@ impl Workbench {
             input_carets_hidden: false,
             marked_text: None,
             selecting_text: false,
+            stop_rendering_line_after: Some(10_000),
             quick_inputs: quick_input_view::QuickInputs::new(cx),
             quick_access: quick_access::QuickAccess::default(),
             explorer: explorer_actions::ExplorerState::new(cx),

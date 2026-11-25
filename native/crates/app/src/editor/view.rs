@@ -31,6 +31,8 @@ pub struct Viewport {
     pub sticky_scroll_lines: usize,
     /// The find widget's view zone above the first line (`editor.find.addExtraSpaceOnTop`), 0 without it.
     pub top_whitespace: f32,
+    /// editorOptions.ts `stopRenderingLineAfter`, `None` for -1.
+    pub stop_rendering_line_after: Option<usize>,
 }
 
 impl Viewport {
@@ -66,9 +68,13 @@ impl OpenEditor {
         viewport.width.max(self.max_line_width + SCROLL_BEYOND_LAST_COLUMN * viewport.char_width + VERTICAL_SCROLLBAR_WIDTH)
     }
 
-    /// `ViewLines._ensureMaxLineWidth`: the content width only grows with the lines that were drawn.
+    /// `ViewLines._ensureMaxLineWidth`: the content width grows with the lines that were drawn.
     pub fn saw_line_width(&mut self, width: f32) {
         self.max_line_width = self.max_line_width.max(width);
+    }
+
+    pub fn forget_line_widths(&mut self) {
+        self.max_line_width = 0.;
     }
 
     /// Sets the scroll position, clamped like `Scrollable.validateScrollPosition`. Returns whether it moved.
@@ -214,7 +220,15 @@ impl OpenEditor {
     /// `_computeScrollLeftToReveal` over one-line ranges: 30px of room before the box and 15px after it.
     fn reveal_columns(&mut self, ranges: &[(Position, Position)], selections: bool, viewport: Viewport) {
         let tab_size = self.document.indentation.tab_size;
-        let x = |position: Position| (super::visible_column(&self.document.lines[position.line], position.column, tab_size) as f32 * viewport.char_width).round();
+        let x = |position: Position| {
+            let text = &self.document.lines[position.line];
+            let x = match super::line_overflow(text, viewport.stop_rendering_line_after) {
+                // Past the cut the position is the end of the "Show more" span.
+                Some((limit, _, label)) if position.column > limit => super::visible_column(text, limit, tab_size) as f32 * viewport.char_width + super::show_more_width(&label, viewport.char_width),
+                _ => super::visible_column(text, position.column, tab_size) as f32 * viewport.char_width,
+            };
+            x.round()
+        };
         let box_start = ranges.iter().map(|range| x(range.0)).fold(f32::MAX, f32::min);
         let box_end = ranges.iter().map(|range| x(range.1)).fold(0., f32::max);
         let box_start = (box_start - HORIZONTAL_EXTRA_PX).max(0.);
@@ -319,7 +333,7 @@ mod tests {
         editor(text, "\n")
     }
 
-    const VIEWPORT: Viewport = Viewport { width: 400., height: 360., char_width: 7.2, sticky_scroll_lines: 5, top_whitespace: 0. };
+    const VIEWPORT: Viewport = Viewport { width: 400., height: 360., char_width: 7.2, sticky_scroll_lines: 5, top_whitespace: 0., stop_rendering_line_after: None };
 
     #[test]
     fn scrolls_past_the_last_line_by_one_viewport_less_one_line() {
@@ -426,5 +440,16 @@ mod tests {
         editor.selections = vec![Selection::caret(Position::new(0, 10))];
         editor.reveal_cursors("keyboard", VIEWPORT);
         assert_eq!(editor.scroll.left, 72. - 30.);
+    }
+
+    #[test]
+    fn a_position_past_the_cut_reveals_the_show_more_span_end() {
+        let mut editor = editor_with(&"y".repeat(200));
+        let viewport = Viewport { stop_rendering_line_after: Some(100), ..VIEWPORT };
+        editor.saw_line_width(1000. * 7.2);
+        editor.selections = vec![Selection::caret(Position::new(0, 200))];
+        editor.reveal_cursors("keyboard", viewport);
+        // "Show more (100 chars)": 21 chars and 10px of padding and border.
+        assert_eq!(editor.scroll.left, (720. + 21. * 7.2 + 10_f32).round() + 15. - (400. - 14.));
     }
 }
