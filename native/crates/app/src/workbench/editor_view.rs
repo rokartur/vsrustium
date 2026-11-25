@@ -663,6 +663,8 @@ impl Workbench {
         };
         // currentLineHighlight.css: high contrast draws the exact border 1px wide.
         let line_border_width = if self.theme.kind.is_high_contrast() { 1. } else { 2. };
+        // outputView.ts `OutputEditor.getConfigurationOverrides`: renderLineHighlight none.
+        let line_highlight = editor.document.scheme != crate::output::OUTPUT_SCHEME;
         let char_width = metrics.char_width;
         let fold_controls = self.fold_controls.opacity(Instant::now());
         let fold_control_color = self.color("editorGutter.foldingControlForeground");
@@ -700,7 +702,7 @@ impl Workbench {
                     .text_color(if index == primary_line { colors.active_number } else { colors.number })
                     .when(metrics.line_numbers_width > 0., |number| number.child((index + 1).to_string()));
                 let mut current_line = div().absolute().inset_0();
-                if all_empty && selections.iter().any(|selection| selection.head.line == index) {
+                if line_highlight && all_empty && selections.iter().any(|selection| selection.head.line == index) {
                     current_line = current_line.border(px(line_border_width)).border_color(colors.line_border);
                 }
                 // The text scrolls left under the fixed margin and current line border.
