@@ -341,7 +341,24 @@ impl Workbench {
         {
             let width = self.diff_part_width.get();
             let sash_left = (width / 2.).floor().clamp(MINIMUM_EDITOR_WIDTH.min(width / 2.), (width - MINIMUM_EDITOR_WIDTH).max(width / 2.));
-            body = body.child(self.original_pane(input, original, modified, window).w(px(sash_left)).flex_none());
+            // diffEditorWidget.ts: the gutter sits left of the sash, taken from the original editor.
+            let gutter_width = self.diff_gutter_width(input);
+            body = body.child(self.original_pane(input, original, modified, true, window).w(px(sash_left - gutter_width)).flex_none());
+            if gutter_width > 0. {
+                body = body.child(self.diff_gutter(input, modified, cx));
+            }
+        } else {
+            if self.diff_gutter_width(input) > 0. {
+                body = body.child(self.diff_gutter(input, modified, cx));
+            }
+            if let Some(original) = original
+                && self.setting("diffEditor.hideOriginalLineNumbers") != json!(true)
+            {
+                // diffEditorWidget.ts: inline, the original editor shows up to its decorations, its line numbers.
+                let metrics = EditorMetrics::measure(window, original.document.lines.len(), false, self.editor_zoom.multiplier());
+                let width = (metrics.glyph_margin_width() + metrics.line_numbers_width).max(5.);
+                body = body.child(self.original_pane(input, original, modified, false, window).w(px(width)).flex_none());
+            }
         }
         let shadow = self.theme.color("scrollbar.shadow");
         let border = self.theme.color("diffEditor.border");
@@ -360,8 +377,8 @@ impl Workbench {
 
     /// The original editor, read-only and scrolled with the modified one: its lines, the deleted line and character
     /// decorations, the `-` signs and the diagonal fill under the side with fewer lines.
-    fn original_pane(&self, input: &DiffInput, original: &OpenEditor, modified: &OpenEditor, window: &mut Window) -> Div {
-        let metrics = EditorMetrics::measure(window, original.document.lines.len(), true, self.editor_zoom.multiplier());
+    fn original_pane(&self, input: &DiffInput, original: &OpenEditor, modified: &OpenEditor, side_by_side: bool, window: &mut Window) -> Div {
+        let metrics = EditorMetrics::measure(window, original.document.lines.len(), side_by_side, self.editor_zoom.multiplier());
         let line_height = metrics.line_height;
         let decorations_width = diff_decorations_width(metrics.char_width);
         // `_adjustOptionsForLeftHandSide`: the glyph margin shows side by side.

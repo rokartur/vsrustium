@@ -170,7 +170,8 @@ pub struct DiffZone {
 }
 
 /// The view zones of `diffEditorViewZones.ts` for `alignments`: side by side, the diagonal fill under the shorter side
-/// of each stretch; inline, the deleted lines above each change of the modified editor (the original editor is hidden).
+/// of each stretch; inline, the deleted lines above each change of the modified editor, and in the original editor,
+/// which shows only its line numbers, the space of the inserted lines below each change.
 pub fn view_zones(diff: &LinesDiff, alignments: &[Alignment], side_by_side: bool) -> Vec<DiffZone> {
     let mut zones = Vec::new();
     for alignment in alignments.iter().filter(|alignment| alignment.changed) {
@@ -178,6 +179,9 @@ pub fn view_zones(diff: &LinesDiff, alignments: &[Alignment], side_by_side: bool
             if !alignment.original.is_empty() {
                 let change = diff.changes.iter().position(|change| change.original.start <= alignment.original.start && alignment.original.end <= change.original.end).unwrap_or(0);
                 zones.push(DiffZone { side: ZoneSide::Modified, after_line: alignment.modified.start - 1, lines: alignment.original.len(), content: ZoneContent::Deleted { original: alignment.original, change } });
+            }
+            if !alignment.modified.is_empty() {
+                zones.push(DiffZone { side: ZoneSide::Original, after_line: alignment.original.end - 1, lines: alignment.modified.len(), content: ZoneContent::Fill });
             }
             continue;
         }
@@ -200,13 +204,13 @@ mod tests {
     }
 
     #[test]
-    fn an_insertion_fills_the_original_side_and_inline_shows_nothing_deleted() {
+    fn an_insertion_fills_the_original_side_both_side_by_side_and_inline() {
         let (original, modified) = (lines("a\nb\nc"), lines("a\nx\ny\nb\nc"));
         let diff = diff::compute_diff(&original, &modified, DiffOptions::default());
         let alignments = range_alignment(&diff, &original, true);
         assert_eq!(alignments, vec![Alignment { original: LineRange::new(2, 2), modified: LineRange::new(2, 4), changed: true }]);
         assert_eq!(view_zones(&diff, &alignments, true), vec![DiffZone { side: ZoneSide::Original, after_line: 1, lines: 2, content: ZoneContent::Fill }]);
-        assert_eq!(view_zones(&diff, &alignments, false), vec![]);
+        assert_eq!(view_zones(&diff, &alignments, false), vec![DiffZone { side: ZoneSide::Original, after_line: 1, lines: 2, content: ZoneContent::Fill }]);
     }
 
     #[test]

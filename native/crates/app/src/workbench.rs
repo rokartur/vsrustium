@@ -312,6 +312,7 @@ impl Workbench {
         crate::main_thread_commands::register_commands_documentation(&mut workbench);
         workbench.register_workbench_actions();
         workbench.register_diff_editor_commands();
+        workbench.register_diff_gutter_commands();
         workbench.register_scm_commands();
         workbench.register_editor_commands();
         workbench.register_find_commands();
