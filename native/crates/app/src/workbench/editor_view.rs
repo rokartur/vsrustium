@@ -19,6 +19,7 @@ use gpui::{
 pub(super) mod sticky_scroll_view;
 
 use files::encoding::SUPPORTED_ENCODINGS;
+use serde_json::json;
 
 use super::Workbench;
 use super::minimap_view::minimap_info;
@@ -569,6 +570,19 @@ impl Workbench {
         let fold_control_color = self.color("editorGutter.foldingControlForeground");
         let fold_background = self.color("editor.foldBackground");
         let fold_placeholder = self.color("editor.foldPlaceholderForeground");
+        let rounded_selection = self.setting("editor.roundedSelection") != json!(false);
+        // selections.css: high contrast themes square the corners.
+        let selection_radius = if self.theme.kind.is_high_contrast() { 0. } else { 3. };
+        let editor_background = self.color("editor.background");
+        let view_line_count = editor.view_line_count();
+        // viewLines.ts linesVisibleRangesForRange: a selected line break is one typicalHalfwidthCharacterWidth wide.
+        let selection_range = |selection: Selection, view_line: usize| {
+            let line = editor.model_line(view_line);
+            let text = &editor.document.lines[line];
+            let (start, end, line_break) = selected_columns(selection, line, text)?;
+            let left = visible_column(text, start, tab_size) as f32 * char_width;
+            Some((left, visible_column(text, end, tab_size) as f32 * char_width + if line_break { char_width } else { 0. }))
+        };
         let mut fold_starts = HashMap::new();
         for (range, decoration) in editor.folding.regions.ranges().iter().zip(editor.folding.decorations()) {
             if decoration != FoldDecoration::Hidden {
@@ -593,14 +607,60 @@ impl Workbench {
                 }
                 // The text scrolls left under the fixed margin and current line border.
                 let mut content = div().absolute().top_0().bottom_0().right_0().left(px(-scroll_left));
+                // selections.ts: inner corner pieces of every selection go before the rest (issue #77777).
+                let mut inner_corners = Vec::new();
+                let mut pieces = Vec::new();
                 for selection in selections {
-                    let Some((start, end, line_break)) = selected_columns(*selection, index, text) else { continue };
-                    // A selected line break is one typicalHalfwidthCharacterWidth wide (viewLines.ts linesVisibleRangesForRange).
-                    // shortcut: square corners, where roundedSelection rounds the outer ones by 3px.
-                    let left = visible_column(text, start, tab_size) as f32 * char_width;
-                    let right = visible_column(text, end, tab_size) as f32 * char_width + if line_break { char_width } else { 0. };
-                    content = content.child(div().absolute().top_0().h_full().left(px(left)).w(px(right - left)).bg(colors.selection));
+                    let Some((left, right)) = selection_range(*selection, view_line) else { continue };
+                    let above = view_line.checked_sub(1).and_then(|above| selection_range(*selection, above));
+                    let below = if view_line + 1 < view_line_count { selection_range(*selection, view_line + 1) } else { None };
+                    // `hasMultipleSelections` insets the first line by 1px at the top, the last (not also first) at the bottom.
+                    let multiple = selections.len() > 1;
+                    let top = if multiple && above.is_none() { 1. } else { 0. };
+                    let bottom = if multiple && above.is_some() && below.is_none() { 1. } else { 0. };
+                    let piece = |left: f32, width: f32| div().absolute().top(px(top)).bottom(px(bottom)).left(px(left)).w(px(width));
+                    let mut rest = piece(left, right - left).bg(colors.selection);
+                    if rounded_selection {
+                        let corners = selection_corners(above, (left, right), below, char_width / 4.);
+                        let radius = px(selection_radius);
+                        if corners.start_top == Corner::Intern || corners.start_bottom == Corner::Intern {
+                            let mut background = piece(left - ROUNDED_PIECE_WIDTH, ROUNDED_PIECE_WIDTH).bg(editor_background);
+                            if corners.start_top == Corner::Intern {
+                                background = background.rounded_tr(radius);
+                            }
+                            if corners.start_bottom == Corner::Intern {
+                                background = background.rounded_br(radius);
+                            }
+                            inner_corners.push(piece(left - ROUNDED_PIECE_WIDTH, ROUNDED_PIECE_WIDTH).bg(colors.selection));
+                            inner_corners.push(background);
+                        }
+                        if corners.end_top == Corner::Intern || corners.end_bottom == Corner::Intern {
+                            let mut background = piece(right, ROUNDED_PIECE_WIDTH).bg(editor_background);
+                            if corners.end_top == Corner::Intern {
+                                background = background.rounded_tl(radius);
+                            }
+                            if corners.end_bottom == Corner::Intern {
+                                background = background.rounded_bl(radius);
+                            }
+                            inner_corners.push(piece(right, ROUNDED_PIECE_WIDTH).bg(colors.selection));
+                            inner_corners.push(background);
+                        }
+                        if corners.start_top == Corner::Extern {
+                            rest = rest.rounded_tl(radius);
+                        }
+                        if corners.start_bottom == Corner::Extern {
+                            rest = rest.rounded_bl(radius);
+                        }
+                        if corners.end_top == Corner::Extern {
+                            rest = rest.rounded_tr(radius);
+                        }
+                        if corners.end_bottom == Corner::Extern {
+                            rest = rest.rounded_br(radius);
+                        }
+                    }
+                    pieces.push(rest);
                 }
+                content = content.children(inner_corners).children(pieces);
                 for level in 0..editor.guides[index] {
                     let x = (level * editor.document.indentation.indent_size()) as f32 * char_width;
                     content = content.child(div().absolute().top_0().left(px(x)).w(px(1.)).h_full().bg(colors.guide));
@@ -1122,6 +1182,55 @@ fn selection_label(editor: &OpenEditor) -> String {
     }
 }
 
+const ROUNDED_PIECE_WIDTH: f32 = 10.;
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Corner {
+    Extern,
+    Intern,
+    Flat,
+}
+
+#[derive(PartialEq, Debug)]
+struct SelectionCorners {
+    start_top: Corner,
+    start_bottom: Corner,
+    end_top: Corner,
+    end_bottom: Corner,
+}
+
+/// selections.ts `_enrichVisibleRangesWithStyle` for one line's range against the same selection's range on
+/// the view lines above and below. Upstream keeps the previous frame's corners at the viewport edges; the
+/// neighbor lines past the edge give the same corners.
+fn selection_corners(above: Option<(f32, f32)>, (left, right): (f32, f32), below: Option<(f32, f32)>, epsilon: f32) -> SelectionCorners {
+    let mut corners = SelectionCorners { start_top: Corner::Extern, start_bottom: Corner::Extern, end_top: Corner::Extern, end_bottom: Corner::Extern };
+    if let Some((above_left, above_right)) = above {
+        if (left - above_left).abs() < epsilon {
+            corners.start_top = Corner::Flat;
+        } else if left > above_left {
+            corners.start_top = Corner::Intern;
+        }
+        if (right - above_right).abs() < epsilon {
+            corners.end_top = Corner::Flat;
+        } else if above_left < right && right < above_right {
+            corners.end_top = Corner::Intern;
+        }
+    }
+    if let Some((below_left, below_right)) = below {
+        if (left - below_left).abs() < epsilon {
+            corners.start_bottom = Corner::Flat;
+        } else if below_left < left && left < below_right {
+            corners.start_bottom = Corner::Intern;
+        }
+        if (right - below_right).abs() < epsilon {
+            corners.end_bottom = Corner::Flat;
+        } else if right < below_right {
+            corners.end_bottom = Corner::Intern;
+        }
+    }
+    corners
+}
+
 /// The selected chars of a line and whether its line break is selected too.
 pub(super) fn selected_columns(selection: Selection, line: usize, text: &str) -> Option<(usize, usize, bool)> {
     let (start, end) = (selection.start(), selection.end());
@@ -1265,4 +1374,23 @@ pub(super) fn erfc(x: f32) -> f32 {
     let t = 1. / (1. + 0.327_591_1 * x);
     let poly = t * (0.254_829_6 + t * (-0.284_496_74 + t * (1.421_413_7 + t * (-1.453_152_1 + t * 1.061_405_4))));
     poly * (-x * x).exp()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Corner, SelectionCorners, selection_corners};
+    use Corner::{Extern, Flat, Intern};
+
+    #[test]
+    fn selection_corners_follow_the_neighbor_lines() {
+        let corners = |start_top, start_bottom, end_top, end_bottom| SelectionCorners { start_top, start_bottom, end_top, end_bottom };
+        // One line: every corner rounds out.
+        assert_eq!(selection_corners(None, (10., 50.), None, 2.), corners(Extern, Extern, Extern, Extern));
+        // A middle line starting left of the line above, ending left of the line below.
+        assert_eq!(selection_corners(Some((20., 80.)), (0., 80.), Some((0., 100.)), 2.), corners(Extern, Flat, Flat, Intern));
+        // A last line starting right of the line above and ending inside it.
+        assert_eq!(selection_corners(Some((0., 80.)), (10., 30.), None, 2.), corners(Intern, Extern, Intern, Extern));
+        // A start within epsilon of the line below counts as aligned.
+        assert_eq!(selection_corners(None, (20.5, 80.), Some((20., 60.)), 2.), corners(Extern, Flat, Extern, Extern));
+    }
 }
