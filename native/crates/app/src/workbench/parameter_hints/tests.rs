@@ -85,6 +85,19 @@ fn a_trigger_character_shows_the_hints_and_a_retrigger_keeps_them(cx: &mut TestA
     workbench.read_with(cx, |workbench, _| assert!(workbench.active_parameter_hints().is_none()));
 }
 
+/// Text from the keyboard reaches the editor through the input handler, not the `type` command: it triggers the
+/// hints too.
+#[gpui::test]
+fn keyboard_input_triggers_the_hints(cx: &mut TestAppContext) {
+    let (workbench, cx, receiver) = open(cx);
+    cx.simulate_input("(");
+    cx.executor().advance_clock(DELAY);
+    cx.run_until_parked();
+    let contexts = answer(&receiver, help(0), cx);
+    assert_eq!(contexts.len(), 1);
+    workbench.read_with(cx, |workbench, _| assert!(workbench.active_parameter_hints().is_some()));
+}
+
 #[gpui::test]
 fn next_and_previous_wrap_with_cycle_and_an_empty_answer_hides(cx: &mut TestAppContext) {
     let (workbench, cx, receiver) = open(cx);

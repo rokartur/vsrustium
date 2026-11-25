@@ -226,9 +226,11 @@ impl EntityInputHandler for Workbench {
             return;
         }
         let range = range.or(self.marked_text.take()).map(|range| self.input_range(range));
-        let Some((previous, next)) = range else {
-            let overtype = self.overtype;
-            self.run_indenting(|editor, auto| editor.type_keyboard(text, auto, overtype), cx);
+        // An insert at the cursor is typing: the `type` command runs auto-closing and the typed-character triggers
+        // (suggest, signature help, format on type), as the textarea's input event does upstream.
+        let Some((previous, next)) = range.filter(|range| *range != (0, 0)) else {
+            let typing = self.commands.get("type").expect("editor_commands registers type");
+            drop(typing(self, vec![json!({ "text": text })], window, cx));
             return;
         };
         let editor = self.editors.active_mut().expect("input goes to the active editor");
