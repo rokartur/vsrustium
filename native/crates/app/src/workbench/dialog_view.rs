@@ -24,6 +24,8 @@ pub struct DialogButton {
 pub struct CustomDialog {
     pub icon: &'static str,
     pub message: String,
+    /// The plain `detail` under the message, its line breaks kept.
+    pub detail: Option<String>,
     /// `custom.markdownDetails`: trusted markdown paragraphs, with `[label](href)` links and `` `code` `` spans.
     pub details: Vec<String>,
     pub checkbox: Option<String>,
@@ -47,7 +49,7 @@ pub(super) struct ShownDialog {
 
 impl Workbench {
     /// `IDialogService.prompt` with `custom`: the chosen button, once picked. Dialogs queue as the reference's do.
-    pub(super) fn show_custom_dialog(&mut self, dialog: CustomDialog, cx: &mut Context<Self>) -> oneshot::Receiver<DialogResult> {
+    pub(crate) fn show_custom_dialog(&mut self, dialog: CustomDialog, cx: &mut Context<Self>) -> oneshot::Receiver<DialogResult> {
         let (reply, receiver) = oneshot::channel();
         self.dialogs.push(ShownDialog { dialog, checked: false, focused: 0, reply });
         cx.notify();
@@ -102,6 +104,9 @@ impl Workbench {
         let width = (buttons_width + 10.).max(MIN_WIDTH).min(f32::from(window.viewport_size().width) * 0.9);
         // The details are markdown paragraphs, whose 13px margins also sit below the last one.
         let mut body = div().flex().flex_col().when(!dialog.details.is_empty(), |body| body.mb(px(13.)));
+        if let Some(detail) = &dialog.detail {
+            body = body.child(div().line_height(px(20.)).child(detail.clone()));
+        }
         for (index, detail) in dialog.details.iter().filter(|detail| !detail.is_empty()).enumerate() {
             body = body.child(div().mt(px(13.)).child(self.dialog_markdown(index, detail, cx)));
         }
@@ -124,7 +129,7 @@ impl Workbench {
             .flex()
             .pt(px(16.))
             .px(px(8.))
-            .child(self.icon(dialog.icon, 24., 24., self.color("problemsInfoIcon.foreground")))
+            .child(self.icon(dialog.icon, 24., 24., self.color(icon_color(dialog.icon))))
             .child(
                 div()
                     .flex_1()
@@ -234,6 +239,15 @@ impl Workbench {
                 let _ = weak.update(cx, |workbench, cx| workbench.open_notification_link(&href, window, cx));
             })
             .into_any_element()
+    }
+}
+
+/// dialog.css: the error and warning codicons in the problems colors, every other icon in the info color.
+fn icon_color(icon: &str) -> &'static str {
+    match icon {
+        "error" => "problemsErrorIcon.foreground",
+        "warning" => "problemsWarningIcon.foreground",
+        _ => "problemsInfoIcon.foreground",
     }
 }
 

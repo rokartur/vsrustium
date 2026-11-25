@@ -2,6 +2,8 @@
 //! `startExtensionHosts`): the host is told to terminate, what it registered in the workbench is disposed as each
 //! MainThread* `dispose` does, and a new host starts with the window's current extensions, settings and storage.
 
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{Sender, channel};
 
 use config::configuration::Overrides;
@@ -127,14 +129,18 @@ impl Workbench {
         let storage = MainThreadStorage { profile: self.profile_storage.clone(), workspace: self.workspace_storage.clone() };
         let trusted = self.workspace_trust.is_trusted();
         let workspace = self.workspace().cloned();
+        let window_closed = Arc::new(AtomicBool::new(false));
+        let (session_ended, ended) = futures::channel::oneshot::channel::<()>();
+        self.watch_session_end(window_closed.clone(), ended, cx);
         std::thread::Builder::new()
             .name("exthost-session".into())
             .spawn(move || {
                 let development = development_without_tests();
-                let started = crate::run_extension_host(runtime, app_root, extensions, settings, storage, trusted, user_data, workspace, development, main_thread, request_sender, replies, &status);
+                let started = crate::run_extension_host(runtime, app_root, extensions, settings, storage, trusted, user_data, workspace, development, main_thread, request_sender, replies, &status, &window_closed);
                 if let Err(error) = started {
                     let _ = status.unbounded_send(format!("extension host failed: {error:#}"));
                 }
+                let _ = session_ended.send(());
             })
             .expect("spawn exthost session thread");
         serve_host_requests(requests, reply_sender, window, cx);

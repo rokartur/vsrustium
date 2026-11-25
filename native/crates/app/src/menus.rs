@@ -152,6 +152,9 @@ const WORKBENCH_MENUS: &[Row] = &[
     (MenuId::MenubarFileMenu, Some(MenuId::MenubarRecentMenu), "", "Open &&Recent", "2_open", 4., None, None),
     (MenuId::MenubarFileMenu, None, "workbench.action.closeFolder", "Close &&Folder", "6_close", 3., Some("workbenchState == 'folder' && emptyWorkspaceSupport && !isSessionsWindow"), Some("workbenchState != 'empty' && emptyWorkspaceSupport && !isSessionsWindow")),
     (MenuId::MenubarFileMenu, None, "workbench.action.closeFolder", "Close &&Workspace", "6_close", 3., Some("workbenchState == 'workspace' && emptyWorkspaceSupport && !isSessionsWindow"), Some("workbenchState != 'empty' && emptyWorkspaceSupport && !isSessionsWindow")),
+    // windowActions.ts (electron-browser) `CloseWindowAction`
+    (MenuId::MenubarFileMenu, None, "workbench.action.closeWindow", "Clos&&e Window", "6_close", 4., None, None),
+    (MenuId::MenubarFileMenu, None, "workbench.action.newWindow", "New &&Window", "1_new", 3., None, None),
     (MenuId::MenubarRecentMenu, None, "workbench.action.openRecent", "&&More...", "y_more", 1., None, None),
     (MenuId::MenubarRecentMenu, None, "workbench.action.clearRecentFiles", "&&Clear Recently Opened...", "z_clear", 1., None, None),
     // fileActions.contribution.ts
@@ -381,10 +384,11 @@ const WORKBENCH_MENUS: &[Row] = &[
     (MenuId::SearchContext, None, "search.action.revealInSideBar", "Reveal in Explorer View", "search_3", 1., Some("fileMatchFocus && hasSearchResult"), None),
 ];
 
-/// layoutActions.ts, auxiliaryBarActions.ts, panelActions.ts, activitybarPart.ts, toggleMinimap.ts, stickyScrollActions.ts and
+/// windowActions.ts, layoutActions.ts, auxiliaryBarActions.ts, panelActions.ts, activitybarPart.ts, toggleMinimap.ts, stickyScrollActions.ts and
 /// toggleRenderControlCharacter.ts: the Appearance items the port has, checked by their `toggled`.
 type ToggleRow = (MenuId, &'static str, &'static str, &'static str, f64, &'static str, &'static str);
-const APPEARANCE_TOGGLES: [ToggleRow; 11] = [
+const APPEARANCE_TOGGLES: [ToggleRow; 12] = [
+    (MenuId::MenubarAppearanceMenu, "workbench.action.toggleFullScreen", "&&Full Screen", "1_toggle_view", 1., "", "isFullscreen"),
     (MenuId::MenubarAppearanceMenu, "workbench.action.toggleSidebarVisibility", "&&Primary Side Bar", "2_workbench_layout", 1., "!isSessionsWindow", "sideBarVisible"),
     (MenuId::MenubarAppearanceMenu, "workbench.action.toggleAuxiliaryBar", "&&Secondary Side Bar", "2_workbench_layout", 2., "!isSessionsWindow", "secondarySideBarVisible"),
     (MenuId::MenubarAppearanceMenu, "workbench.action.togglePanel", "&&Panel", "2_workbench_layout", 5., "", "panelVisible"),

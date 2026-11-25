@@ -3,12 +3,15 @@
 
 use std::path::{Path, PathBuf};
 
-use gpui::{Context, PathPromptOptions, PromptLevel, Window};
+use gpui::{Context, PromptLevel, Window};
 use serde_json::Value;
 
 use super::Workbench;
+use super::file_dialogs::Pick;
+use super::lifecycle::ShutdownReason;
 use crate::commands::Outcome;
 use crate::dialog;
+use crate::file_dialog::FileDialog;
 use crate::main_thread_quick_open::Owner;
 use crate::quick_input::{Button, Entry, Event, Item, Kind, QuickInput, path_label};
 use crate::recently_opened::{self, Kind as RecentKind};
@@ -28,7 +31,7 @@ impl Openable {
         }
     }
 
-    fn path(&self) -> &Path {
+    pub(super) fn path(&self) -> &Path {
         match self {
             Openable::Workspace(path) | Openable::File(path) => path,
         }
@@ -37,13 +40,12 @@ impl Openable {
 
 impl Workbench {
     pub(super) fn register_workspace_commands(&mut self) {
-        self.commands.register("workbench.action.files.openFileFolder", |workbench, _, window, cx| workbench.pick_and_open(true, true, window, cx));
-        self.commands.register("workbench.action.files.openFile", |workbench, _, window, cx| workbench.pick_and_open(true, false, window, cx));
-        self.commands.register("workbench.action.files.openFolder", |workbench, _, window, cx| workbench.pick_and_open(false, true, window, cx));
-        // shortcut: GPUI's open panel takes no file type filter, so WORKSPACE_FILTER is not applied.
-        self.commands.register("workbench.action.openWorkspace", |workbench, _, window, cx| workbench.pick_and_open(true, false, window, cx));
+        self.commands.register("workbench.action.files.openFileFolder", |workbench, _, window, cx| workbench.pick_and_open(Pick::FileFolder, window, cx));
+        self.commands.register("workbench.action.files.openFile", |workbench, _, window, cx| workbench.pick_and_open(Pick::File, window, cx));
+        self.commands.register("workbench.action.files.openFolder", |workbench, _, window, cx| workbench.pick_and_open(Pick::Folder, window, cx));
+        self.commands.register("workbench.action.openWorkspace", |workbench, _, window, cx| workbench.pick_and_open(Pick::Workspace, window, cx));
         self.commands.register("workbench.action.closeFolder", |workbench, _, window, cx| match workbench.workspace() {
-            Some(_) => workbench.relaunch(None, window, cx),
+            Some(_) => workbench.relaunch(ShutdownReason::Load, None, window, cx),
             None => Outcome::done(),
         });
         self.commands.register("workbench.action.openRecent", |workbench, _, window, cx| {
@@ -57,9 +59,10 @@ impl Workbench {
         // fileCommands.ts NEW_FILE_COMMAND_ID: a save dialog for the new file, created empty and opened pinned.
         self.commands.register("workbench.action.files.newFile", |workbench, args, window, cx| {
             let name = args.first().and_then(|args| args["fileName"].as_str()).unwrap_or("Untitled.txt");
-            let picked = cx.prompt_for_new_path(&workbench.default_file_path(), Some(name));
+            let default_path = Some(workbench.default_file_path().join(name));
+            let picked = workbench.show_save_dialog(FileDialog { title: Some("Create File".into()), button_label: Some("Create File".into()), default_path, ..FileDialog::default() }, cx);
             cx.spawn_in(window, async move |workbench, cx| {
-                let Ok(Ok(Some(file))) = picked.await else { return };
+                let Ok(Some(file)) = picked.await else { return };
                 let _ = workbench.update_in(cx, |workbench, window, cx| match std::fs::write(&file, "") {
                     Ok(()) => workbench.open_file(file, true, window, cx),
                     Err(error) => workbench.notify_error(&format!("Unable to create '{}': {error}", file.display())),
@@ -75,9 +78,7 @@ impl Workbench {
                 let _ = dialog::show_message_box(window, PromptLevel::Critical, "The active editor must contain an openable resource.", None, &["OK"], None, cx);
                 return Outcome::done();
             };
-            if let Err(error) = super::host::open_new_window(Some(file)) {
-                workbench.notify_error(&format!("Failed to open a new window: {error}"));
-            }
+            super::host::open_new_window(Some(file), cx);
             Outcome::done()
         });
     }
@@ -89,12 +90,17 @@ impl Workbench {
 
     /// `pickFileFolderAndOpen`, `pickFileAndOpen` and `pickFolderAndOpen` of the native dialogs: what is picked
     /// opens with `forceNewWindow: false`.
-    fn pick_and_open(&mut self, files: bool, directories: bool, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
-        let picked = cx.prompt_for_paths(PathPromptOptions { files, directories, multiple: true, prompt: None });
+    fn pick_and_open(&mut self, pick: Pick, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
+        let picked = self.pick_to_open(pick, cx);
+        // `window.openFoldersInNewWindow`: `on` opens what the dialog picked in a new window, `default` and `off` here.
+        let force_new_window = self.setting("window.openFoldersInNewWindow") == "on";
         cx.spawn_in(window, async move |workbench, cx| {
-            let Ok(Ok(Some(paths))) = picked.await else { return };
+            let Ok(paths) = picked.await else { return };
+            if paths.is_empty() {
+                return;
+            }
             let _ = workbench.update_in(cx, |workbench, window, cx| {
-                workbench.open_window(paths.into_iter().map(Openable::of).collect(), false, window, cx);
+                workbench.open_window(paths.into_iter().map(Openable::of).collect(), force_new_window, window, cx);
             });
         })
         .detach();
@@ -138,9 +144,9 @@ impl Workbench {
             }
             if reuse_window {
                 reuse_window = false;
-                self.relaunch(Some(path), window, cx);
-            } else if let Err(error) = super::host::open_new_window(Some(path)) {
-                self.notify_error(&format!("Failed to open a new window: {error}"));
+                self.relaunch(ShutdownReason::Load, Some(path), window, cx);
+            } else {
+                super::host::open_new_window(Some(path), cx);
             }
         }
         cx.notify();

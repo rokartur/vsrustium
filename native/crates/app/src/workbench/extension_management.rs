@@ -8,12 +8,13 @@ use exthost::extension_management::Job;
 use exthost::gallery::{Gallery, Operation};
 use exthost::scan::ScannedExtension;
 use futures::channel::oneshot;
-use gpui::{Context, PathPromptOptions};
+use gpui::Context;
 use serde_json::Value;
 
 use super::Workbench;
 use super::host_requests::uri_parts;
 use crate::commands::Outcome;
+use crate::file_dialog::FileDialog;
 use exthost::main_thread::serialized_error;
 use crate::notifications::Severity;
 
@@ -24,12 +25,16 @@ const INSTALL_FROM_VSIX: &str = "workbench.extensions.command.installFromVSIX";
 
 impl Workbench {
     pub(super) fn register_extension_management_commands(&mut self) {
-        self.commands.register(SELECT_INSTALL_VSIX, |_, _, window, cx| {
-            // shortcut: gpui's open panel takes no file type filter, so the 'VSIX Extensions' filter is not applied.
-            let picked = cx.prompt_for_paths(PathPromptOptions { files: true, directories: false, multiple: true, prompt: Some("Install".into()) });
+        self.commands.register(SELECT_INSTALL_VSIX, |workbench, _, window, cx| {
+            let filters = vec![("VSIX Extensions".to_owned(), vec!["vsix".to_owned()])];
+            let dialog = FileDialog { title: Some("Install from VSIX".into()), button_label: Some("Install".into()), filters, files: true, multiple: true, ..FileDialog::default() };
+            let picked = workbench.show_open_dialog(dialog, cx);
             let (sender, receiver) = oneshot::channel();
             cx.spawn_in(window, async move |workbench, cx| {
-                let Ok(Ok(Some(paths))) = picked.await else { return drop(sender.send(Ok(Value::Null))) };
+                let paths = picked.await.unwrap_or_default();
+                if paths.is_empty() {
+                    return drop(sender.send(Ok(Value::Null)));
+                }
                 let uris = paths.iter().map(|path| exthost::scan::file_uri(path)).collect();
                 let outcome = workbench.update_in(cx, |workbench, window, cx| workbench.execute_command(INSTALL_FROM_VSIX, vec![Value::Array(uris)], window, cx));
                 let result = match outcome {

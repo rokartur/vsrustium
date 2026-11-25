@@ -89,6 +89,8 @@ impl Workbench {
             ("MainThreadEditorTabs", "$moveTab") => self.move_tab(arg(0).as_str().unwrap_or_default(), arg(1).as_i64().unwrap_or(-1), arg(2).as_i64().unwrap_or(-1), cx),
             ("MainThreadEditorTabs", "$closeTab") => self.close_tabs(arg(0).as_array().map_or(&[], Vec::as_slice), window, cx),
             ("MainThreadEditorTabs", "$closeGroup") => self.close_groups(arg(0).as_array().map_or(&[], Vec::as_slice), window, cx),
+            ("MainThreadDialogs", "$showOpenDialog") => self.api_show_open_dialog(&arg(0), cx),
+            ("MainThreadDialogs", "$showSaveDialog") => self.api_show_save_dialog(&arg(0), cx),
             ("MainThreadWindow", "$openUri") => self.api_open_uri(&request.args, window, cx),
             ("MainThreadUrls", "$registerUriHandler") => {
                 // ExtensionIdentifier serializes as `{ value, _lower }`.

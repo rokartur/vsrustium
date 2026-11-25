@@ -35,6 +35,10 @@ mod exception_widget;
 mod floating_menu;
 mod diagnostics;
 mod dialog_view;
+mod backup_tracker;
+mod banner;
+mod dialogs;
+mod lifecycle;
 mod editor_commands;
 mod editor_menus;
 mod editor_message;
@@ -55,12 +59,13 @@ mod extensions_list_view;
 mod workspace_recommendations;
 pub(crate) mod localization;
 pub(crate) mod extensions_view;
+mod file_dialogs;
 mod file_participants;
 mod find_options_widget;
 mod find_widget;
 mod folding_providers;
 mod auto_save;
-mod host;
+pub(crate) mod host;
 mod power;
 mod relauncher;
 mod update;
@@ -379,6 +384,8 @@ pub struct Workbench {
     recently_opened: crate::recently_opened::RecentlyOpened,
     /// Custom dialogs, the shown one first.
     dialogs: Vec<dialog_view::ShownDialog>,
+    lifecycle: lifecycle::Lifecycle,
+    banner: banner::Banner,
     pub debug: debug_service::DebugService,
     debug_view: debug_view::DebugView,
     debug_console: debug_console::DebugConsole,
@@ -414,6 +421,7 @@ impl Render for Workbench {
         self.update_scm_graph(cx);
         self.update_extension_editor_webviews(window, cx);
         self.auto_save_models_changed(cx);
+        self.backup_models_changed(cx);
         self.follow_content_hover_editor();
         self.follow_rename_editor_state(window, cx);
         self.folding_model_changed(cx);
@@ -435,8 +443,8 @@ impl Render for Workbench {
             .h(viewport.height)
             .flex()
             .flex_col()
-            .child(self.title_bar(f32::from(viewport.width), cx))
-            .children(self.restricted_mode_banner(cx))
+            .child(self.title_bar(f32::from(viewport.width), window.is_window_active(), cx))
+            .children(self.banner_part(window, cx))
             .child(self.middle_section(viewport, editor, window, cx))
             .child(self.status_bar(window, cx));
         let modal_editor = self.keybindings_editor_widget(window, cx).or_else(|| self.settings_editor_widget(window, cx)).or_else(|| self.profiles_editor_widget(window, cx)).or_else(|| self.modal_group_widget(window, cx));
@@ -448,11 +456,12 @@ impl Render for Workbench {
         let dialog = self.custom_dialog_widget(window, cx);
         let accessible_view = self.accessible_view_widget(window, cx);
         self.update_menubar(window, cx);
+        self.sync_window_title(window);
         div()
             .relative()
             .size_full()
             .overflow_hidden()
-            .bg(self.color("titleBar.activeBackground"))
+            .bg(self.shell_background(window.is_window_active()))
             .text_color(self.color("foreground"))
             .text_size(px(13.))
             .child(grid)
@@ -562,6 +571,7 @@ impl Workbench {
             urls: url_handler::Urls::default(),
             editor_focus: cx.focus_handle(),
             unicode_banner_focus: cx.focus_handle(),
+            banner: banner::Banner::new(cx),
             status_bar_focus: cx.focus_handle(),
             tab_focus_toggle: None,
             overtype: false,
@@ -617,6 +627,7 @@ impl Workbench {
             shared_storage: Arc::new(Mutex::new(Storage::in_memory())),
             recently_opened: Default::default(),
             dialogs: Vec::new(),
+            lifecycle: Default::default(),
             debug: Default::default(),
             debug_view: debug_view::DebugView::new(cx),
             debug_console: debug_console::DebugConsole::new(cx),
@@ -699,7 +710,6 @@ impl Workbench {
         workbench.register_define_keybinding_command();
         workbench.register_notifications_commands();
         workbench.register_output_actions();
-        workbench.register_empty_view_actions();
         workbench.register_logs_actions();
         workbench.register_terminal_actions();
         workbench.register_problems_panel_view();
@@ -720,6 +730,9 @@ impl Workbench {
         workbench.register_workspace_trust_commands();
         workbench.register_host_commands();
         workbench.register_workspace_commands();
+        workbench.register_dialog_commands();
+        workbench.register_lifecycle_commands();
+        workbench.register_banner_commands();
         workbench.register_url_commands();
         workbench.register_local_history_commands();
         workbench.register_extensions_view_commands();
@@ -872,8 +885,14 @@ impl Workbench {
             .child(self.action_hover(title, command, HoverOptions::instant()))
     }
 
-    fn title_bar(&self, viewport_width: f32, cx: &mut Context<Self>) -> Div {
-        let foreground = self.color("titleBar.activeForeground");
+    fn title_bar(&self, viewport_width: f32, active: bool, cx: &mut Context<Self>) -> Div {
+        // titlebarPart.ts `updateStyles` and titlebarpart.css `.inactive`: inactive colors, the contents at 0.6 opacity.
+        let foreground = match active {
+            true => self.color("titleBar.activeForeground"),
+            false => self.theme.color("titleBar.inactiveForeground").unwrap_or_else(|| self.color("foreground")),
+        };
+        let background = self.theme.opaque_on_workbench(if active { "titleBar.activeBackground" } else { "titleBar.inactiveBackground" }).or_else(|| self.theme.opaque_on_workbench("titleBar.activeBackground"));
+        let opacity = if active { 1. } else { 0.6 };
         let command_center_visible = self.setting("window.commandCenter") != Value::Bool(false);
         let layout_control_enabled = self.setting("workbench.layoutControl.enabled") != Value::Bool(false);
         // Disabled codicon actions take disabledForeground (actionbar.css .disabled .action-label:not(.icon)).
@@ -891,8 +910,8 @@ impl Workbench {
             .border_1()
             .rounded(px(6.))
             .bg(self.color("commandCenter.background"))
-            .border_color(self.color("commandCenter.border"))
-            .text_color(self.color("commandCenter.foreground"))
+            .border_color(self.color(if active { "commandCenter.border" } else { "commandCenter.inactiveBorder" }))
+            .text_color(if active { self.color("commandCenter.foreground") } else { foreground })
             .hover(|center| center.bg(self.color("commandCenter.activeBackground")).border_color(self.color("commandCenter.activeBorder")).text_color(self.color("commandCenter.activeForeground")))
             .text_size(px(12.))
             .child(self.workspace().map_or("Search".into(), Workspace::label))
@@ -930,7 +949,7 @@ impl Workbench {
                     workbench.show_title_bar_context_menu(MenuId::TitleBarTitleContext, event.position, window, cx);
                 }
             }));
-        let center = div().absolute().top(px(6.5)).w_full().h(px(24.)).flex().justify_center().items_center().child(title);
+        let center = div().absolute().top(px(6.5)).w_full().h(px(24.)).flex().justify_center().items_center().opacity(opacity).child(title);
         let side_bar_toggle = if self.side_bar_visible() { "layout-sidebar-left" } else { "layout-sidebar-left-off" };
         let layout_actions = [
             ("layout", "Customize Layout...", "workbench.action.customizeLayout"),
@@ -942,6 +961,7 @@ impl Workbench {
             .absolute()
             .top(px(7.5))
             .right(px(12.))
+            .opacity(opacity)
             .flex()
             .gap(px(4.))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -959,6 +979,7 @@ impl Workbench {
             .relative()
             .h(px(height))
             .flex_none()
+            .when_some(background, |bar, background| bar.bg(background))
             .child(center)
             .child(right)
             // titlebarpart.css `.titlebar-drag-region`: the bar drags the window and a double click runs the system's
@@ -968,6 +989,12 @@ impl Workbench {
                 _ => window.start_window_move(),
             })
             .on_mouse_down(MouseButton::Right, cx.listener(|workbench, event: &MouseDownEvent, window, cx| workbench.show_title_bar_context_menu(MenuId::TitleBarContext, event.position, window, cx)))
+    }
+
+    /// The modern UI shell around the floating parts (floatingPanels.css), opaque as titlebarPart.ts sets it.
+    fn shell_background(&self, active: bool) -> Rgba {
+        let shell = if active { "modernUI.shellBackground" } else { "modernUI.inactiveShellBackground" };
+        self.theme.opaque_on_workbench(shell).or_else(|| self.theme.opaque_on_workbench("modernUI.shellBackground")).unwrap_or_else(|| self.color("titleBar.activeBackground"))
     }
 
     /// windowTitle.ts `getFullWindowTitle` with the macOS `window.title` default

@@ -1,0 +1,23 @@
+[
+	{ "wait": 4000 },
+	{ "hotkey": ["cmd", "shift", "p"] },
+	{ "wait": 600 },
+	{ "type": "about" },
+	{ "wait": 800 },
+	{ "key": "return" },
+	{ "wait": 1200 },
+	{ "shot": "about" },
+	{ "key": "escape" },
+	{ "wait": 600 },
+	{ "click": [600, 200] },
+	{ "type": "x" },
+	{ "wait": 300 },
+	{ "hotkey": ["cmd", "w"] },
+	{ "wait": 1200 },
+	{ "shot": "save-confirm" },
+	{ "key": "escape" },
+	{ "wait": 600 },
+	{ "hotkey": ["cmd", "o"] },
+	{ "wait": 1500 },
+	{ "shot": "open" }
+]
