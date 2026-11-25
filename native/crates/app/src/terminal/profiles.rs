@@ -17,6 +17,8 @@ pub struct Profile {
     pub override_name: bool,
     /// Found in /etc/shells, not configured.
     pub auto_detected: bool,
+    /// `isFromPath`: the configured path was a bare name found on PATH.
+    pub is_from_path: bool,
 }
 
 /// `detectAvailableUnixProfiles`: the shells of /etc/shells (named by basename, `name (2)` for the second
@@ -66,11 +68,11 @@ fn validate(name: String, value: &Value, env_path: Option<&str>) -> Option<Profi
         Value::Array(paths) => paths.iter().filter_map(|path| path.as_str().map(str::to_owned)).collect(),
         _ => return None,
     };
-    let path = paths.iter().filter(|path| !path.is_empty()).find_map(|path| {
+    let (path, is_from_path) = paths.iter().filter(|path| !path.is_empty()).find_map(|path| {
         if Path::new(path).file_name().is_some_and(|name| name == path.as_str()) {
-            return find_executable(path, env_path);
+            return find_executable(path, env_path).map(|found| (found, true));
         }
-        Path::new(path).is_file().then(|| PathBuf::from(path))
+        Path::new(path).is_file().then(|| (PathBuf::from(path), false))
     })?;
     let args = match &value["args"] {
         Value::Array(args) => args.iter().filter_map(|arg| arg.as_str().map(str::to_owned)).collect(),
@@ -86,6 +88,7 @@ fn validate(name: String, value: &Value, env_path: Option<&str>) -> Option<Profi
         color: value["color"].as_str().map(str::to_owned),
         override_name: value["overrideName"] == true,
         auto_detected: value["isAutoDetected"] == true,
+        is_from_path,
     })
 }
 
@@ -116,6 +119,7 @@ pub fn default_profile(profiles: &[Profile], default_name: Option<&str>, system_
         color: None,
         override_name: false,
         auto_detected: false,
+        is_from_path: false,
     }
 }
 

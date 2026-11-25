@@ -32,7 +32,7 @@ fn a_shell_runs_in_a_pty_and_its_output_reaches_the_screen() {
     let deadline = Instant::now() + Duration::from_secs(10);
     while instance.exit_code.is_none() && Instant::now() < deadline {
         match receiver.try_recv() {
-            Ok(PtyEvent::Data(bytes)) => instance.process(&bytes, &colors),
+            Ok(PtyEvent::Data(bytes)) => _ = instance.process(&bytes, &colors),
             Ok(PtyEvent::Exit(code)) => instance.exited(code),
             Err(_) => std::thread::sleep(Duration::from_millis(10)),
         }

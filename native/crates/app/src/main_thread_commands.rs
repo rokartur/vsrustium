@@ -23,6 +23,8 @@ impl Workbench {
             ("MainThreadStatusBar", "$setEntry") => self.set_extension_status_entry(&request.args, cx),
             ("MainThreadStatusBar", "$disposeEntry") => self.dispose_extension_status_entry(&request.args, cx),
             ("MainThreadOutputService" | "MainThreadLogger", _) => self.handle_output_request(request, window, cx),
+            ("MainThreadTerminalService" | "MainThreadTerminalShellIntegration", _) => self.handle_terminal_request(request, window, cx),
+            ("MainThreadTask", _) => self.handle_task_request(request, window, cx),
             ("MainThreadCommands", "$registerCommand") => {
                 let id = arg(0).as_str().unwrap_or_default().to_owned();
                 let handler_id = id.clone();

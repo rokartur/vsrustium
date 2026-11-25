@@ -49,6 +49,7 @@ mod search_model;
 mod smart_snippet_inserter;
 mod split_view;
 mod syntax;
+mod tasks;
 mod terminal;
 mod tf_idf;
 mod theme;
@@ -177,6 +178,7 @@ fn main() -> anyhow::Result<()> {
                 workbench.file_icons = file_icons;
                 workbench.color_themes = color_themes;
                 workbench.extensions = extensions.clone();
+                workbench.start_tasks();
                 if let Some(folder) = &export_default_keybindings {
                     match workbench.export_default_keybindings(folder) {
                         Ok(path) => eprintln!("[workbench.contrib.keybindingsExport] Wrote {}", path.display()),
@@ -186,6 +188,7 @@ fn main() -> anyhow::Result<()> {
                 }
                 workbench.restore_profile_state(storage.profile.clone());
                 workbench.restore_workspace_state(storage.workspace.clone());
+                workbench.start_terminal_host();
                 workbench.watch_editor_focus(window, cx);
                 if let Some(file) = file {
                     workbench.open_file(file, true, window, cx);
@@ -338,7 +341,7 @@ fn run_extension_host(
             MainThreadSecretState::in_memory()
         }),
     });
-    session.forward(&["MainThreadCommands", "MainThreadDiagnostics", "MainThreadDownloadService", "MainThreadEditorTabs", "MainThreadLanguageFeatures", "MainThreadLogger", "MainThreadMessageService", "MainThreadOutputService", "MainThreadProgress", "MainThreadQuickOpen", "MainThreadStatusBar", "MainThreadWebviewPanels", "MainThreadWebviews", "MainThreadWorkspace"], move |request| {
+    session.forward(&["MainThreadCommands", "MainThreadDiagnostics", "MainThreadDownloadService", "MainThreadEditorTabs", "MainThreadLanguageFeatures", "MainThreadLogger", "MainThreadMessageService", "MainThreadOutputService", "MainThreadProgress", "MainThreadQuickOpen", "MainThreadStatusBar", "MainThreadTask", "MainThreadTerminalService", "MainThreadTerminalShellIntegration", "MainThreadWebviewPanels", "MainThreadWebviews", "MainThreadWorkspace"], move |request| {
         let _ = workbench_requests.unbounded_send(request);
     }, workbench_replies);
     session.main_thread = Some(Box::new(main_thread));

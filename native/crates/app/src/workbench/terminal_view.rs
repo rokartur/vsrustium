@@ -16,6 +16,8 @@ use alacritty_terminal::vte::ansi::{CursorShape, CursorStyle};
 use futures::StreamExt;
 use futures::channel::mpsc::UnboundedReceiver;
 use gpui::{Bounds, ClipboardItem, Context, Div, FocusHandle, FontWeight, Keystroke, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, ScrollDelta, ScrollWheelEvent, SharedString, Window, canvas, div, prelude::*, px};
+use config::configuration::Overrides;
+use config::service::Target;
 use serde_json::{Value, json};
 
 use self::grid::{CellMetrics, GUTTER, Look, SCROLLBAR_WIDTH, SCROLLBAR_WIDTH_MODERN};
@@ -24,14 +26,20 @@ use crate::commands::Outcome;
 use crate::editor::TextDocument;
 use crate::keybindings::Resolution;
 use crate::main_thread_quick_open::Owner;
-use crate::quick_input::{Entry, Event, Item, Kind, QuickInput};
+use crate::quick_input::{Button, Entry, Event, Item, Kind, QuickInput, Severity};
 use crate::terminal::colors::TerminalColors;
+use crate::terminal::environment_collection::EnvironmentCollections;
 use crate::terminal::keys::{self, KeyResult};
 use crate::terminal::mouse::{self, MouseAction};
 use crate::terminal::profiles::{self, Profile};
 use crate::terminal::pty::PtyEvent;
 use crate::terminal::skip_shell::DEFAULT_COMMANDS_TO_SKIP_SHELL;
 use crate::terminal::{ShellLaunchConfig, TerminalInstance, create_environment};
+
+/// `TerminalExitReason`.
+pub(super) const EXIT_REASON_PROCESS: u8 = 2;
+pub(super) const EXIT_REASON_USER: u8 = 3;
+pub(super) const EXIT_REASON_EXTENSION: u8 = 4;
 
 /// terminal.ts `TERMINAL_VIEW_ID`.
 pub const TERMINAL_VIEW_ID: &str = "terminal";
@@ -49,7 +57,7 @@ const SCROLL_WHEEL_SENSITIVITY: f32 = 50.;
 
 pub struct TerminalView {
     pub(super) focus: FocusHandle,
-    instances: Vec<TerminalInstance>,
+    pub(super) instances: Vec<TerminalInstance>,
     /// terminalGroupService.ts groups: each holds instance ids, laid out side by side.
     groups: Vec<Group>,
     active_group: usize,
@@ -65,6 +73,19 @@ pub struct TerminalView {
     title_polling: bool,
     /// Set once a terminal was created: `terminalHasBeenCreated`.
     has_been_created: bool,
+    /// What the extension host was told (mainThreadTerminalService.ts): the active terminal and the events it asked for.
+    pub(super) host: HostTerminals,
+}
+
+#[derive(Default)]
+pub(super) struct HostTerminals {
+    pub active: Option<u32>,
+    /// `$startSendingDataEvents`: process data goes to the host (`window.onDidWriteTerminalData`).
+    pub data_events: bool,
+    /// `$startSendingCommandEvents`: finished commands go to the host (`onDidExecuteTerminalCommand`).
+    pub command_events: bool,
+    pub environment_collections: EnvironmentCollections,
+    pub reported: HashMap<u32, super::terminal_host::Reported>,
 }
 
 struct Group {
@@ -73,11 +94,14 @@ struct Group {
 }
 
 /// What a terminal quick input does when it is accepted.
+#[derive(Clone)]
 pub enum TerminalInput {
     /// `TerminalProfileQuickpick`: create a terminal with the picked profile, or make it the default.
     Profiles { profiles: Vec<Profile>, set_default: bool },
     /// `renameWithQuickPick` for an instance id.
     Rename(u32),
+    /// The "Configure Terminal Profile" button's name input: the profile to copy and the names already configured.
+    ProfileName { profile: Profile, existing: Vec<String> },
 }
 
 impl TerminalView {
@@ -95,19 +119,20 @@ impl TerminalView {
             scroll_remainder: 0.,
             title_polling: false,
             has_been_created: false,
+            host: HostTerminals::default(),
         }
     }
 
-    fn active_instance_id(&self) -> Option<u32> {
+    pub(super) fn active_instance_id(&self) -> Option<u32> {
         let group = self.groups.get(self.active_group)?;
         group.instances.get(group.active).copied()
     }
 
-    fn instance(&self, id: u32) -> Option<&TerminalInstance> {
+    pub(super) fn instance(&self, id: u32) -> Option<&TerminalInstance> {
         self.instances.iter().find(|instance| instance.id == id)
     }
 
-    fn instance_mut(&mut self, id: u32) -> Option<&mut TerminalInstance> {
+    pub(super) fn instance_mut(&mut self, id: u32) -> Option<&mut TerminalInstance> {
         self.instances.iter_mut().find(|instance| instance.id == id)
     }
 
@@ -116,8 +141,15 @@ impl TerminalView {
         self.instance_mut(id)
     }
 
+    /// `showBackgroundTerminal`: a terminal hidden from the user joins the view as its own group.
+    pub(super) fn show_background(&mut self, id: u32) {
+        if self.instance(id).is_some() && !self.groups.iter().any(|group| group.instances.contains(&id)) {
+            self.groups.push(Group { instances: vec![id], active: 0 });
+        }
+    }
+
     /// `setActiveInstance`: the group holding `id` and its pane become active.
-    fn set_active(&mut self, id: u32) {
+    pub(super) fn set_active(&mut self, id: u32) {
         for (group_index, group) in self.groups.iter_mut().enumerate() {
             if let Some(index) = group.instances.iter().position(|&instance| instance == id) {
                 group.active = index;
@@ -212,6 +244,7 @@ impl Workbench {
             if let Some(instance) = workbench.terminal_view.active_instance_mut() {
                 instance.select_all();
             }
+            workbench.sync_terminals_to_host();
             cx.notify();
             Outcome::done()
         });
@@ -219,6 +252,7 @@ impl Workbench {
             if let Some(instance) = workbench.terminal_view.active_instance_mut() {
                 instance.term.selection = None;
             }
+            workbench.sync_terminals_to_host();
             cx.notify();
             Outcome::done()
         });
@@ -273,7 +307,7 @@ impl Workbench {
     }
 
     /// `terminalGroupService.showPanel(true)`: shows the view, creating a terminal when there is none.
-    fn open_terminal_view(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn open_terminal_view(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.terminal_view.instances.is_empty() {
             self.create_terminal(None, false, window, cx);
             return;
@@ -281,7 +315,7 @@ impl Workbench {
         self.show_terminal_tab(window, cx);
     }
 
-    fn show_terminal_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn show_terminal_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         match self.editors.editors.iter().position(|editor| editor.document.scheme == TERMINAL_SCHEME) {
             Some(index) => self.editors.activate(index),
             None => {
@@ -291,10 +325,11 @@ impl Workbench {
         }
         self.editors_changed(cx);
         window.focus(&self.terminal_view.focus, cx);
+        self.sync_terminals_to_host();
     }
 
     /// `viewsService.closeView(TERMINAL_VIEW_ID)`: the terminals keep running.
-    fn close_terminal_view(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn close_terminal_view(&mut self, cx: &mut Context<Self>) {
         let Some(index) = self.editors.editors.iter().position(|editor| editor.document.scheme == TERMINAL_SCHEME) else { return };
         self.editors.close(index);
         self.editors_changed(cx);
@@ -304,43 +339,62 @@ impl Workbench {
     /// (`terminal.integrated.splitCwd` inherited).
     fn create_terminal(&mut self, profile: Option<Profile>, split: bool, window: &mut Window, cx: &mut Context<Self>) {
         let profile = profile.unwrap_or_else(|| self.default_terminal_profile());
-        let parent_cwd = match split {
-            true if self.setting("terminal.integrated.splitCwd") == "inherited" => self.terminal_view.active_instance_id().and_then(|id| self.terminal_view.instance(id)).and_then(|parent| parent.cwd.clone()),
+        let parent = self.terminal_view.active_instance_id().filter(|_| split);
+        let parent_cwd = match parent {
+            Some(id) if self.setting("terminal.integrated.splitCwd") == "inherited" => self.terminal_view.instance(id).and_then(|parent| parent.cwd.clone()),
             _ => None,
         };
         let cwd = parent_cwd.map(PathBuf::from).unwrap_or_else(|| self.terminal_initial_cwd());
         let launch = self.shell_launch_config(&profile, cwd);
-        let view = &mut self.terminal_view;
-        let id = view.next_id;
-        view.next_id += 1;
+        self.add_terminal(launch, parent, window, cx);
+        self.show_terminal_tab(window, cx);
+    }
+
+    /// terminalService.ts `createTerminal` and terminalInstance.ts's process start: the instance joins a new group,
+    /// or `split_from`'s group after it, unless it is hidden from the user; the extension host hears of it.
+    pub(super) fn add_terminal(&mut self, mut launch: ShellLaunchConfig, split_from: Option<u32>, window: &mut Window, cx: &mut Context<Self>) -> u32 {
+        let id = self.terminal_view.next_id;
+        self.terminal_view.next_id += 1;
+        self.prepare_terminal_launch(&mut launch);
+        let view = &self.terminal_view;
         let (cols, rows) = view.active_instance_id().and_then(|id| view.instance(id)).map_or((80, 30), |instance| (instance.term.columns() as u16, instance.term.screen_lines() as u16));
+        let hidden = launch.hide_from_user;
         let (mut instance, receiver) = TerminalInstance::new(id, launch, cols, rows, self.terminal_config());
         if let Some(message) = instance.spawn_error.clone() {
             let colors = TerminalColors::new(&self.theme);
             instance.write_message(&message, &colors);
         }
+        self.connect_terminal_to_host(&mut instance);
         let view = &mut self.terminal_view;
         view.instances.push(instance);
         view.has_been_created = true;
-        match view.groups.get_mut(view.active_group).filter(|_| split) {
-            Some(group) => {
-                group.active += 1;
-                group.instances.insert(group.active, id);
-            }
-            None => {
-                view.groups.push(Group { instances: vec![id], active: 0 });
-                view.active_group = view.groups.len() - 1;
+        if !hidden {
+            let group = split_from.and_then(|parent| view.groups.iter().position(|group| group.instances.contains(&parent)));
+            match group {
+                Some(index) => {
+                    let group = &mut view.groups[index];
+                    let parent = group.instances.iter().position(|&instance| Some(instance) == split_from).expect("the group holds the parent");
+                    group.instances.insert(parent + 1, id);
+                    group.active = parent + 1;
+                    view.active_group = index;
+                }
+                None => {
+                    view.groups.push(Group { instances: vec![id], active: 0 });
+                    view.active_group = view.groups.len() - 1;
+                }
             }
         }
         if let Some(receiver) = receiver {
             self.pump_terminal_events(id, receiver, window, cx);
         }
+        self.terminal_opened(id, cx);
         self.start_title_poll(cx);
-        self.show_terminal_tab(window, cx);
+        cx.notify();
+        id
     }
 
     /// `getDefaultProfile` over the detected and configured profiles.
-    fn default_terminal_profile(&self) -> Profile {
+    pub(super) fn default_terminal_profile(&self) -> Profile {
         let profiles = self.terminal_profiles();
         let default_name = self.setting("terminal.integrated.defaultProfile.osx");
         let env: HashMap<String, String> = std::env::vars().collect();
@@ -353,7 +407,7 @@ impl Workbench {
     }
 
     /// `getCwd`: `terminal.integrated.cwd` against the workspace folder, else the folder, else the home directory.
-    fn terminal_initial_cwd(&self) -> PathBuf {
+    pub(super) fn terminal_initial_cwd(&self) -> PathBuf {
         let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/"));
         let root = self.workspace().and_then(|workspace| workspace.folders.first()).map(|folder| folder.path.clone());
         let configured = self.setting("terminal.integrated.cwd").as_str().filter(|cwd| !cwd.is_empty()).map(PathBuf::from);
@@ -366,21 +420,26 @@ impl Workbench {
     }
 
     fn shell_launch_config(&self, profile: &Profile, cwd: PathBuf) -> ShellLaunchConfig {
-        let configured_env: HashMap<String, Option<String>> = match self.setting("terminal.integrated.env.osx") {
-            Value::Object(map) => map.into_iter().map(|(key, value)| (key, value.as_str().map(str::to_owned))).collect(),
-            _ => HashMap::new(),
-        };
-        let detect_locale = self.setting("terminal.integrated.detectLocale");
-        let env = create_environment(std::env::vars(), &[configured_env, profile.env.clone()], crate::VERSION, "en", detect_locale.as_str().unwrap_or("auto"));
         ShellLaunchConfig {
             name: profile.override_name.then(|| profile.name.clone()),
             executable: profile.path.clone(),
             args: profile.args.clone(),
             cwd,
-            env,
+            env: self.terminal_environment(&profile.env),
             icon: profile.icon.clone(),
             color: profile.color.clone(),
+            ..ShellLaunchConfig::default()
         }
+    }
+
+    /// `createTerminalEnvironment` with `terminal.integrated.env.osx`, then the launch's own variables.
+    pub(super) fn terminal_environment(&self, launch_env: &HashMap<String, Option<String>>) -> HashMap<String, String> {
+        let configured_env: HashMap<String, Option<String>> = match self.setting("terminal.integrated.env.osx") {
+            Value::Object(map) => map.into_iter().map(|(key, value)| (key, value.as_str().map(str::to_owned))).collect(),
+            _ => HashMap::new(),
+        };
+        let detect_locale = self.setting("terminal.integrated.detectLocale");
+        create_environment(std::env::vars(), &[configured_env, launch_env.clone()], crate::VERSION, "en", detect_locale.as_str().unwrap_or("auto"))
     }
 
     /// The PTY's output reaches the instance in the order it was read; the exit follows the last read.
@@ -402,30 +461,47 @@ impl Workbench {
 
     /// Returns false once the instance is gone.
     fn terminal_events(&mut self, id: u32, events: Vec<PtyEvent>, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        let colors = TerminalColors::new(&self.theme);
-        let Some(instance) = self.terminal_view.instance_mut(id) else { return false };
         for event in events {
             match event {
-                PtyEvent::Data(bytes) => instance.process(&bytes, &colors),
+                PtyEvent::Data(bytes) => self.terminal_data(id, &bytes, cx),
                 PtyEvent::Exit(code) => {
-                    instance.exited(code);
+                    if let Some(instance) = self.terminal_view.instance_mut(id) {
+                        instance.exited(code);
+                    }
                     self.terminal_process_exited(id, code, window, cx);
                     return false;
                 }
             }
         }
+        self.terminal_view.instance(id).is_some()
+    }
+
+    /// Output of the process, a PTY's or an extension pty's: the screen, the clipboard and what the host listens to.
+    pub(super) fn terminal_data(&mut self, id: u32, bytes: &[u8], cx: &mut Context<Self>) {
+        let colors = TerminalColors::new(&self.theme);
+        let Some(instance) = self.terminal_view.instance_mut(id) else { return };
+        let processed = instance.process(bytes, &colors);
         // xtermTerminal.ts loads ClipboardAddon: OSC 52 writes go to the clipboard.
         // shortcut: the OSC 52 `?` query that reads the clipboard back to the process is not answered.
         if let Some(text) = instance.clipboard_requests.drain(..).last() {
             cx.write_to_clipboard(ClipboardItem::new_string(text));
         }
         instance.bell = false;
+        self.task_output(id, &processed.text, cx);
+        self.terminal_output_to_host(id, processed);
         cx.notify();
-        true
     }
 
     /// terminalInstance.ts `_onProcessExit`: a non-zero exit shows its message, then the instance goes.
-    fn terminal_process_exited(&mut self, id: u32, code: Option<i32>, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn terminal_process_exited(&mut self, id: u32, code: Option<i32>, window: &mut Window, cx: &mut Context<Self>) {
+        if self.task_process_exited(id, code, window, cx) {
+            // terminalTaskSystem.ts keeps the terminal for reuse, with `waitOnExit`'s message.
+            let colors = TerminalColors::new(&self.theme);
+            if let Some(instance) = self.terminal_view.instance_mut(id) {
+                instance.write_message("\r\n\x1b[0m\x1b[7m * \x1b[0m Terminal will be reused by tasks, press any key to close it. \x1b[0m", &colors);
+            }
+            return cx.notify();
+        }
         let Some(instance) = self.terminal_view.instance(id) else { return };
         // node-pty reports exit code 0 for a process a signal ended.
         let message = instance.exit_message(code.unwrap_or(0));
@@ -438,23 +514,24 @@ impl Workbench {
                 eprintln!("[terminal] {message}");
             }
         }
-        self.dispose_terminal(id, window, cx);
+        self.dispose_terminal(id, EXIT_REASON_PROCESS, window, cx);
     }
 
     /// `killInstance`: the process gets SIGHUP and the instance goes without an exit message.
-    fn kill_terminal(&mut self, id: u32, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn kill_terminal(&mut self, id: u32, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(instance) = self.terminal_view.instance_mut(id) {
             instance.kill();
         }
-        self.dispose_terminal(id, window, cx);
+        self.dispose_terminal(id, EXIT_REASON_USER, window, cx);
     }
 
     /// terminalGroup.ts `_onInstanceDisposed`: the next pane of the group becomes active; an empty group goes, and
     /// with it the view when it was the last one and `terminal.integrated.hideOnLastClosed` is on.
-    fn dispose_terminal(&mut self, id: u32, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn dispose_terminal(&mut self, id: u32, exit_reason: u8, window: &mut Window, cx: &mut Context<Self>) {
         let view = &mut self.terminal_view;
         let had_focus = view.focus.is_focused(window);
-        view.instances.retain(|instance| instance.id != id);
+        let Some(index) = view.instances.iter().position(|instance| instance.id == id) else { return };
+        let instance = view.instances.remove(index);
         view.pane_bounds.remove(&id);
         for group in &mut view.groups {
             if let Some(index) = group.instances.iter().position(|&instance| instance == id) {
@@ -468,7 +545,8 @@ impl Workbench {
                 view.active_group -= 1;
             }
         }
-        if view.instances.is_empty() {
+        self.terminal_closed(instance, exit_reason);
+        if self.terminal_view.instances.is_empty() {
             if self.setting("terminal.integrated.hideOnLastClosed") == true {
                 self.close_terminal_view(cx);
             }
@@ -492,11 +570,13 @@ impl Workbench {
                     for instance in &mut view.instances {
                         changed |= instance.refresh_process();
                     }
+                    view.title_polling = !view.instances.is_empty();
+                    let polling = view.title_polling;
                     if changed {
+                        workbench.sync_terminals_to_host();
                         cx.notify();
                     }
-                    view.title_polling = !view.instances.is_empty();
-                    view.title_polling
+                    polling
                 });
                 if !matches!(running, Ok(true)) {
                     break;
@@ -507,10 +587,10 @@ impl Workbench {
     }
 
     /// `TerminalProfileQuickpick.showAndGetResult`: configured profiles, then the detected ones, each list with the
-    /// default first.
-    // shortcut: the "Configure Terminal Profile" item button and contributed profiles are not ported.
+    /// profile `terminal.integrated.defaultProfile.osx` names first (`getDefaultProfileName`), then by name.
+    // shortcut: contributed profiles (`contributes.terminal.profiles`) are not listed; no built-in of the port has one.
     fn show_terminal_profiles(&mut self, set_default: bool, window: &mut Window, cx: &mut Context<Self>) {
-        let default_name = self.default_terminal_profile().name;
+        let default_name = self.setting("terminal.integrated.defaultProfile.osx").as_str().unwrap_or_default().to_owned();
         let (detected, configured): (Vec<Profile>, Vec<Profile>) = self.terminal_profiles().into_iter().partition(|profile| profile.auto_detected);
         let sort = |mut profiles: Vec<Profile>| {
             profiles.sort_by(|a, b| (b.name == default_name).cmp(&(a.name == default_name)).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
@@ -524,7 +604,14 @@ impl Workbench {
             }
             entries.push(Entry::Separator(Some(separator.into())));
             for profile in profiles {
-                entries.push(Entry::Item(Item { handle: picks.len() as i64, label: format!("$({}) {}", profile.icon.as_deref().unwrap_or("terminal"), profile.name), description: Some(profile_description(&profile)), ..Item::default() }));
+                let configure = Button { handle: 0, codicon: Some("gear".into()), tooltip: Some("Configure Terminal Profile".into()), ..Button::default() };
+                entries.push(Entry::Item(Item {
+                    handle: picks.len() as i64,
+                    label: format!("$({}) {}", profile.icon.as_deref().unwrap_or("terminal"), profile.name),
+                    description: Some(profile_description(&profile)),
+                    buttons: vec![configure],
+                    ..Item::default()
+                }));
                 picks.push(profile);
             }
         }
@@ -547,32 +634,79 @@ impl Workbench {
     }
 
     pub fn terminal_input_event(&mut self, id: i64, event: Event, window: &mut Window, cx: &mut Context<Self>) {
-        match event {
-            Event::Accept(_) => {
-                let Some(input) = self.quick_inputs.get(id) else { return };
-                let (value, selected) = (input.input_box.value.clone(), input.selected_handles().first().copied());
-                let Some(Owner::Terminal(owner)) = self.quick_inputs.owner(id) else { return };
-                let accepted = match owner {
-                    TerminalInput::Profiles { profiles, set_default } => selected.map(|handle| (Some((profiles[handle as usize].clone(), *set_default)), None)),
-                    TerminalInput::Rename(instance) => Some((None, Some(*instance))),
-                };
+        let Some(Owner::Terminal(owner)) = self.quick_inputs.owner(id) else { return };
+        let owner = owner.clone();
+        match (event, owner) {
+            (Event::Accept(_), TerminalInput::Profiles { profiles, set_default }) => {
+                let selected = self.quick_inputs.get(id).and_then(|input| input.selected_handles().first().copied());
+                let picked = selected.map(|handle| profiles[handle as usize].clone());
                 self.hide_quick_input_by_id(id, window, cx);
-                match accepted {
-                    Some((Some((profile, true)), _)) => self.update_setting("terminal.integrated.defaultProfile.osx", json!(profile.name)),
-                    Some((Some((profile, false)), _)) => self.create_terminal(Some(profile), false, window, cx),
-                    // `if (title) instance.rename(title)`: an empty name keeps the title.
-                    Some((None, Some(instance))) if !value.is_empty() => {
-                        if let Some(instance) = self.terminal_view.instance_mut(instance) {
-                            instance.user_title = Some(value);
-                        }
-                        cx.notify();
-                    }
-                    _ => {}
+                match (picked, set_default) {
+                    (Some(profile), true) => self.update_setting("terminal.integrated.defaultProfile.osx", json!(profile.name)),
+                    (Some(profile), false) => self.create_terminal(Some(profile), false, window, cx),
+                    (None, _) => {}
                 }
             }
-            Event::Hide => self.quick_inputs.remove(id),
+            (Event::TriggerItemButton(handle, _, _), TerminalInput::Profiles { profiles, .. }) => {
+                let profile = profiles[handle as usize].clone();
+                self.hide_quick_input_by_id(id, window, cx);
+                self.show_terminal_profile_name(profile, window, cx);
+            }
+            (Event::Accept(_), TerminalInput::Rename(instance)) => {
+                let value = self.quick_inputs.get(id).map(|input| input.input_box.value.clone()).unwrap_or_default();
+                self.hide_quick_input_by_id(id, window, cx);
+                // `if (title) instance.rename(title)`: an empty name keeps the title.
+                if !value.is_empty() {
+                    self.rename_terminal(instance, value);
+                    cx.notify();
+                }
+            }
+            (Event::ChangeValue(value), TerminalInput::ProfileName { existing, .. }) => {
+                let message = existing.contains(&value).then(|| "A terminal profile already exists with that name".to_owned());
+                let Some(input) = self.quick_inputs.get_mut(id) else { return };
+                input.severity = if message.is_some() { Severity::Error } else { Severity::Ignore };
+                input.validation_message = message;
+                cx.notify();
+            }
+            (Event::Accept(_), TerminalInput::ProfileName { profile, existing }) => {
+                let Some(name) = self.quick_inputs.get(id).map(|input| input.input_box.value.clone()) else { return };
+                if name.is_empty() || existing.contains(&name) {
+                    return;
+                }
+                // `_createNewProfileConfig`: the path, and args and env when the profile has them.
+                let mut config = json!({ "path": profile.path });
+                if !profile.args.is_empty() {
+                    config["args"] = json!(profile.args);
+                }
+                if !profile.env.is_empty() {
+                    config["env"] = json!(profile.env);
+                }
+                self.hide_quick_input_by_id(id, window, cx);
+                let key = "terminal.integrated.profiles.osx";
+                let mut settings = self.settings.lock().unwrap();
+                let mut profiles = settings.configuration.inspect(key, &Overrides::default()).user_local.value.filter(Value::is_object).unwrap_or_else(|| json!({}));
+                profiles[name.as_str()] = config;
+                match settings.update_value(key, Some(&profiles), Target::User, None, &[]) {
+                    Ok(change) if !change.is_empty() => self.host.send_configuration_change(&settings, &change),
+                    Ok(_) => {}
+                    Err(error) => eprintln!("writing {key}: {error}"),
+                }
+            }
+            (Event::Hide, _) => self.quick_inputs.remove(id),
             _ => {}
         }
+    }
+
+    /// `onDidTriggerItemButton` of the profile picker: name a copy of the profile in the user's profiles.
+    fn show_terminal_profile_name(&mut self, profile: Profile, window: &mut Window, cx: &mut Context<Self>) {
+        let configured = self.setting("terminal.integrated.profiles.osx");
+        let existing: Vec<String> = configured.as_object().map(|profiles| profiles.keys().cloned().collect()).unwrap_or_default();
+        let mut input = QuickInput::new(0, Kind::InputBox);
+        input.prompt = Some("Enter terminal profile name".into());
+        input.set_value(profile.name.clone());
+        let id = self.quick_inputs.add(input, Owner::Terminal(TerminalInput::ProfileName { profile, existing }));
+        self.show_quick_input(id, window, cx);
+        self.flush_quick_input_events(window, cx);
     }
 
     /// terminalContextKey.ts keys.
@@ -614,12 +748,18 @@ impl Workbench {
         let Some(instance) = self.terminal_view.active_instance_mut() else { return false };
         let application_cursor = instance.term.mode().contains(TermMode::APP_CURSOR);
         match keys::evaluate(keystroke, application_cursor, mac_option_is_meta) {
+            // A task terminal whose process ended closes on any key (`waitOnExit`).
+            KeyResult::Send(_) if instance.exit_code.is_some() => {
+                let id = instance.id;
+                cx.defer_in(window, move |workbench, window, cx| workbench.dispose_terminal(id, EXIT_REASON_USER, window, cx));
+            }
             KeyResult::Send(data) => instance.input(&data),
             KeyResult::PageUp => instance.scroll(Scroll::PageUp),
             KeyResult::PageDown => instance.scroll(Scroll::PageDown),
             KeyResult::SelectAll => instance.select_all(),
             KeyResult::None => return false,
         }
+        self.sync_terminals_to_host();
         cx.notify();
         true
     }
@@ -639,7 +779,17 @@ impl Workbench {
     /// the active terminal while the tabs list is hidden, New with the profile dropdown, Split and Kill while the
     /// tabs list is hidden, and Clear.
     pub(super) fn terminal_title_actions(&self, cx: &mut Context<Self>) -> Div {
-        let show_tabs = self.terminal_tabs_shown();
+        // terminalMenus.ts: the active terminal entry and the inline Split and Kill actions follow
+        // `tabs.showActiveTerminal` and `tabs.showActions` (`shouldShowViewInlineActions`) over the group count.
+        let tabs_enabled = self.setting("terminal.integrated.tabs.enabled") == true;
+        let single_group = self.terminal_view.groups.len() == 1;
+        let shown_for = |key: &str| match self.setting(key).as_str() {
+            Some("always") => true,
+            Some("singleTerminal" | "singleTerminalOrNarrow" | "singleGroup") => single_group,
+            _ => false,
+        };
+        let show_active_terminal = tabs_enabled && shown_for("terminal.integrated.tabs.showActiveTerminal");
+        let show_inline_actions = self.setting("terminal.integrated.tabs.hideCondition") != "never" && (!tabs_enabled || shown_for("terminal.integrated.tabs.showActions"));
         let title_border = ["editorGroupHeader.border", "contrastBorder"].into_iter().find_map(|key| self.theme.color(key));
         let active_title = self.terminal_view.active_instance_id().and_then(|id| self.terminal_view.instance(id)).map(TerminalInstance::title);
         let foreground = self.foreground_or("icon.foreground");
@@ -653,7 +803,7 @@ impl Workbench {
             .px(px(8.))
             .gap(px(4.))
             .bg(self.color("breadcrumb.background"))
-            .when_some(active_title.filter(|_| !show_tabs), |actions, title| {
+            .when_some(active_title.filter(|_| show_active_terminal), |actions, title| {
                 actions.child(
                     div()
                         .id("terminal-single-tab")
@@ -676,7 +826,7 @@ impl Workbench {
             })
             .child(self.search_action("add", "workbench.action.terminal.new", true, cx))
             .child(self.search_action("chevron-down", "workbench.action.terminal.newWithProfile", true, cx))
-            .when(!show_tabs, |actions| {
+            .when(show_inline_actions, |actions| {
                 actions.child(self.search_action("split-horizontal", "workbench.action.terminal.split", true, cx)).child(self.search_action("trash", "workbench.action.terminal.kill", true, cx))
             })
             .when_some(title_border, |actions, color| actions.child(div().absolute().bottom_0().left_0().right_0().h(px(1.)).bg(color)))
@@ -757,9 +907,12 @@ impl Workbench {
         self.terminal_view.pane_bounds.insert(id, bounds);
         let Some(instance) = self.terminal_view.instance_mut(id) else { return };
         instance.cell_size = (metrics.cell_width, metrics.cell_height);
-        instance.resize(cols, rows);
+        let resized = instance.resize(cols, rows);
         instance.configure(config);
         window.with_content_mask(Some(gpui::ContentMask { bounds }), |window| grid::paint(bounds, instance, &look, window));
+        if resized {
+            self.terminal_resized(id);
+        }
     }
 
     /// The xterm.js options the settings set: `scrollback`, `wordSeparator` and `cursorStyle`, which a program's
@@ -839,6 +992,7 @@ impl Workbench {
         if event.button == MouseButton::Left {
             self.terminal_view.selecting = Some(id);
         }
+        self.sync_terminals_to_host();
         cx.notify();
     }
 
@@ -874,7 +1028,7 @@ impl Workbench {
             if copy_on_selection && let Some(text) = instance.selection_text() {
                 cx.write_to_clipboard(ClipboardItem::new_string(text));
             }
-            return;
+            return self.sync_terminals_to_host();
         }
         let mode = *instance.term.mode();
         let (row, column, _) = grid::cell_at(bounds, event.position, instance, &metrics);
@@ -961,16 +1115,17 @@ impl Workbench {
                     .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().child(instance.title()))
                     .when(TABS_DEFAULT_WIDTH >= TABS_ACTIONBAR_MINIMUM_WIDTH, |row| {
                         row.child(
+                            // terminal.css: `.actions { display: none }`, shown on the hovered row.
                             div()
-                                .flex()
-                                .invisible()
-                                .group_hover("terminal-tab", |actions| actions.visible())
+                                .hidden()
+                                .group_hover("terminal-tab", |actions| actions.flex())
                                 .child(self.terminal_tab_action("split-horizontal", id, false, cx))
                                 .child(self.terminal_tab_action("trash", id, true, cx)),
                         )
                     })
                     .on_click(cx.listener(move |workbench, event: &gpui::ClickEvent, window, cx| {
                         workbench.terminal_view.set_active(id);
+                        workbench.sync_terminals_to_host();
                         if event.click_count() >= 2 {
                             workbench.show_terminal_rename(id, window, cx);
                             return;
@@ -1005,7 +1160,10 @@ impl Workbench {
 
 /// The profile's path, with its arguments when it has any (`_createProfileQuickPickItem`).
 fn profile_description(profile: &Profile) -> String {
-    let path = profile.path.to_string_lossy();
+    let path = match profile.is_from_path {
+        true => profile.path.file_name().map_or_else(|| profile.path.to_string_lossy(), |name| name.to_string_lossy()),
+        false => profile.path.to_string_lossy(),
+    };
     if profile.args.is_empty() {
         return path.into_owned();
     }
