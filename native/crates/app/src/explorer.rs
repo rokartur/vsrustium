@@ -248,6 +248,19 @@ impl FileTree {
         self.expanded.clear();
     }
 
+    /// explorerView.ts `collapseAll`: in a workspace with a root's child expanded, the expanded roots stay open.
+    pub fn collapse_folders(&mut self) {
+        let open_roots: Vec<PathBuf> = self.workspace.folders.iter().map(|folder| folder.path.clone()).filter(|root| self.expanded.contains(root)).collect();
+        let root_child_expanded = self.shows_roots() && self.expanded.iter().any(|path| path.parent().is_some_and(|parent| open_roots.iter().any(|root| root == parent)));
+        self.collapse_all();
+        if root_child_expanded {
+            for root in open_roots {
+                self.collapsed_nests.remove(&root);
+                self.expanded.insert(root);
+            }
+        }
+    }
+
     /// listCommands.ts `list.selectAll` on a tree: the shown rows under the parent of the focused row (or of the
     /// selection's first), with the parent itself when they were all selected already.
     pub fn select_all(&mut self) {

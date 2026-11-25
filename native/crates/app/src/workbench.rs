@@ -770,7 +770,12 @@ impl Workbench {
         self.side_bar_frame()
             .text_color(foreground)
             .child(title)
-            .child(div().flex_1().overflow_hidden().flex().flex_col().child(self.section_header(&folder_name, true, false)).child(
+            .child(div().id("explorer-pane").flex_1().overflow_hidden().flex().flex_col()
+                .on_hover(cx.listener(|workbench, hovered: &bool, _, cx| {
+                    workbench.explorer.pane_hovered = *hovered;
+                    cx.notify();
+                }))
+                .child(self.section_header(&folder_name, true, false).children(self.explorer_title_actions(window, cx))).child(
                 div().relative().flex_1().min_h_0().flex().flex_col().child(
                 div()
                     .id("explorer-tree")

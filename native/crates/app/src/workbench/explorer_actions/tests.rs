@@ -376,6 +376,46 @@ fn opening_a_file_reveals_it_unless_auto_reveal_is_off_or_excludes_it(cx: &mut T
 }
 
 #[gpui::test]
+fn view_title_and_file_actions_collapse_reveal_and_copy_the_active_file(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = explorer("explorer-title-actions", cx);
+    std::fs::create_dir_all(dir.join("sub/inner")).unwrap();
+    std::fs::write(dir.join("sub/inner/x.txt"), "").unwrap();
+    std::fs::write(dir.join("sub/y.txt"), "").unwrap();
+    let shows_title_actions = |cx: &mut VisualTestContext| workbench.update_in(cx, |workbench, window, cx| workbench.explorer_title_actions(window, cx).is_some());
+    assert!(shows_title_actions(cx), "the focused pane shows its title actions");
+
+    workbench.update_in(cx, |workbench, window, cx| workbench.select_explorer_item(&dir.join("sub/inner/x.txt"), window, cx));
+    assert_eq!(rows(&workbench, cx), ["sub", "inner", "x.txt", "y.txt", "a.txt"]);
+    run(&workbench, "workbench.files.action.collapseExplorerFolders", cx);
+    assert_eq!(rows(&workbench, cx), ["sub", "a.txt"]);
+
+    let user = std::env::temp_dir().join(format!("code-gpui-title-actions-user-{}", std::process::id()));
+    let settings = config::service::Settings::load(config::registry::Registry::with_extensions(&[]), user.clone(), None);
+    workbench.update(cx, |workbench, _| {
+        *workbench.settings.lock().unwrap() = settings;
+        workbench.settings.lock().unwrap().update_value_derived("explorer.autoReveal", Some(&serde_json::json!(false))).unwrap();
+    });
+    workbench.update_in(cx, |workbench, window, cx| workbench.open_file(dir.join("sub/inner/x.txt"), true, window, cx));
+    cx.run_until_parked();
+    assert!(!shows_title_actions(cx), "with the focus in the editor and no hover the actions hide");
+    assert_eq!(rows(&workbench, cx), ["sub", "a.txt"], "explorer.autoReveal false leaves the tree");
+    run(&workbench, "workbench.files.action.showActiveFileInExplorer", cx);
+    assert_eq!(focused(&workbench, cx), Some(dir.join("sub/inner/x.txt")));
+    assert!(workbench.update_in(cx, |workbench, window, _| workbench.explorer.focus.is_focused(window)), "revealInExplorer focuses the tree");
+
+    workbench.update_in(cx, |workbench, window, cx| {
+        workbench.execute_command("revealInExplorer", vec![serde_json::json!({ "scheme": "file", "path": "/outside/file.txt" })], window, cx);
+    });
+    assert_eq!(focused(&workbench, cx), Some(dir.join("sub/inner/x.txt")), "a resource outside the workspace is not revealed");
+
+    select(&workbench, &dir.join("sub"), cx);
+    run(&workbench, "workbench.action.files.copyPathOfActiveFile", cx);
+    assert_eq!(cx.read_from_clipboard().and_then(|item| item.text()).unwrap(), dir.join("sub/inner/x.txt").to_string_lossy(), "the active editor's path, not the selection's");
+    std::fs::remove_dir_all(&dir).unwrap();
+    std::fs::remove_dir_all(&user).unwrap();
+}
+
+#[gpui::test]
 fn keys_move_the_focus_expand_collapse_select_and_open(cx: &mut TestAppContext) {
     let (dir, workbench, cx) = explorer("explorer-keys", cx);
     std::fs::write(dir.join("sub/b.txt"), "b").unwrap();
