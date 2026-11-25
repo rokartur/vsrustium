@@ -63,6 +63,7 @@ mod search_editor;
 mod scm;
 mod search_model;
 mod settings_editor;
+mod settings_import;
 mod smart_snippet_inserter;
 mod split_view;
 mod syntax;
@@ -287,6 +288,7 @@ fn main() -> anyhow::Result<()> {
                 workbench.watch_window_focus(window, cx);
                 workbench.set_installed_extensions(builtins.clone(), user_extensions.clone_for_profile(), developed.clone(), cx);
                 workbench.set_user_data_profiles(profile, cx);
+                workbench.offer_settings_import(window, cx);
                 workbench.watch_editor_focus(window, cx);
                 workbench.show_trust_modal_on_start(window, cx);
                 if let Some(file) = file {

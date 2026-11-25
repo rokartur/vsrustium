@@ -24,6 +24,7 @@ mod extension_management;
 pub(crate) mod extension_host_restart;
 mod user_data_profile;
 mod profiles_editor_view;
+mod settings_import;
 pub use profiles_editor_view::NEW_WINDOW_PROFILE_SETTING;
 mod explorer_find;
 mod explorer_keyboard;
@@ -479,6 +480,7 @@ impl Workbench {
         workbench.register_extension_host_commands();
         workbench.register_user_data_profile_commands();
         workbench.register_profiles_editor_commands();
+        workbench.register_settings_import_commands();
         workbench.register_workspace_trust_commands();
         workbench.register_host_commands();
         workbench.register_workspace_commands();

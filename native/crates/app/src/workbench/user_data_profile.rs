@@ -90,7 +90,12 @@ impl Workbench {
         self.user_data_profiles.registrations = registrations;
         self.menus.retain(|item| !matches!(item.menu, MenuId::ProfilesMenu | MenuId::OpenProfileMenu) && !is_profiles_submenu(item));
         self.menus.extend(profile_menus(&profiles, &current));
-        let palette = std::mem::take(&mut self.quick_access.menu).into_iter().filter(|item| !item.id.starts_with("workbench.action.openProfile.")).chain(open_profile_palette_items(&profiles)).collect();
+        let palette = std::mem::take(&mut self.quick_access.menu)
+            .into_iter()
+            .filter(|item| !item.id.starts_with("workbench.action.openProfile.") && item.id != IMPORT_SETTINGS_COMMAND)
+            .chain(open_profile_palette_items(&profiles))
+            .chain([import_settings_palette_item()])
+            .collect();
         self.set_command_palette_menu(palette);
         cx.notify();
     }
@@ -289,6 +294,13 @@ fn profile_menus(profiles: &[Profile], current: &Profile) -> Vec<MenuItem> {
         items.push(item(MenuId::OpenProfileMenu, entry, &profile.name, "0_profiles", 0., Some("hasProfiles")));
     }
     items
+}
+
+const IMPORT_SETTINGS_COMMAND: &str = "workbench.action.importSettings";
+
+/// The settings import (port feature, Artur) in the Command Palette.
+fn import_settings_palette_item() -> PaletteItem {
+    PaletteItem { id: IMPORT_SETTINGS_COMMAND.into(), title: "Import from VS Code, Cursor or VSCodium...".into(), category: Some("Preferences".into()), when: None, precondition: None, source: None }
 }
 
 /// `registerNewWindowAction`'s Command Palette item: "Open {name} Profile".
