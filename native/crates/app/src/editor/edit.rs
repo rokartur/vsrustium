@@ -291,11 +291,14 @@ impl OpenEditor {
         self.set_selections(vec![Selection { anchor: Position::default(), head: cursor::last_position(&self.document.lines) }]);
     }
 
-    /// The word highlights at the primary head; a multi-line selection has none (wordHighlighter.ts `_onPositionChanged`).
+    /// The word highlights of the primary selection (wordHighlighter.ts `_run`): none for a multi-line selection
+    /// or one that reaches past the word at its start.
     pub fn refresh_highlights(&mut self) {
-        let Selection { anchor, head } = self.selection();
-        let text = &self.document.lines[head.line];
-        self.highlights = match super::word_at(text, head.column).filter(|_| anchor.line == head.line) {
+        let selection = self.selection();
+        let (start, end) = (selection.start(), selection.end());
+        let text = &self.document.lines[start.line];
+        let word = super::word_at(text, start.column).filter(|word| start.line == end.line && word.start <= start.column && end.column <= word.end);
+        self.highlights = match word {
             Some(range) => super::word_occurrences(&self.document.lines, &text.chars().skip(range.start).take(range.len()).collect::<String>()),
             None => Vec::new(),
         };

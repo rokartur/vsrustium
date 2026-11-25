@@ -731,5 +731,11 @@ mod tests {
         editor.selections[0].anchor = Position::new(0, 0);
         editor.refresh_highlights();
         assert!(editor.highlights.is_empty());
+        editor.selections[0] = Selection { anchor: Position::new(1, 0), head: Position::new(1, 4) };
+        editor.refresh_highlights();
+        assert_eq!(editor.highlights, [(1, 0..4)]);
+        editor.selections[0].head = Position::new(1, 5);
+        editor.refresh_highlights();
+        assert!(editor.highlights.is_empty());
     }
 }
