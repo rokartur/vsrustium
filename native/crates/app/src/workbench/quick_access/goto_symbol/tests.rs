@@ -76,4 +76,9 @@ fn the_picker_lists_the_symbols_and_goes_to_the_accepted_one(cx: &mut TestAppCon
     // The second picker reuses the cached outline: the providers are not asked again.
     run(&workbench, cx, "workbench.action.gotoSymbol");
     assert!(receiver.try_iter().all(|message| message.method != "$provideDocumentSymbols"));
+    // `ItemActivation.NONE`: outside every symbol no pick is active.
+    run(&workbench, cx, "workbench.action.closeQuickOpen");
+    workbench.update(cx, |workbench, _| workbench.editors.active_mut().unwrap().move_to(crate::editor::Position::new(4, 0), false));
+    run(&workbench, cx, "workbench.action.gotoSymbol");
+    workbench.read_with(cx, |workbench, _| assert!(workbench.quick_inputs.current().unwrap().focused.is_none(), "no active pick"));
 }

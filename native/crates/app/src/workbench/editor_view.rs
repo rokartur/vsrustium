@@ -302,9 +302,9 @@ impl Workbench {
         let symbols = self.breadcrumb_symbols(editor);
         let last = file + symbols.len();
         let symbol_items = symbols.into_iter().map(|(kind, name)| {
-            let codicon = crate::symbol_icons::codicon(kind);
-            let color = crate::symbol_icons::color_key(codicon).and_then(|key| self.theme.color(key)).unwrap_or(foreground);
-            let icon = (self.setting("breadcrumbs.icons") != false).then(|| self.icon(codicon, 16., 16., color));
+            let codicon = kind.map(crate::symbol_icons::codicon);
+            let color = codicon.and_then(crate::symbol_icons::color_key).and_then(|key| self.theme.color(key)).unwrap_or(foreground);
+            let icon = codicon.filter(|_| self.setting("breadcrumbs.icons") != false).map(|codicon| self.icon(codicon, 16., 16., color));
             (icon, name)
         });
         let file_items = segments.into_iter().enumerate().map(|(index, segment)| {

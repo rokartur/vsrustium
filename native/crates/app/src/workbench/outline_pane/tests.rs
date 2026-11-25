@@ -42,7 +42,7 @@ fn the_outline_lists_the_symbols_and_opens_the_selected_one(cx: &mut TestAppCont
         assert_eq!(workbench.outline_pane.selected.as_deref(), Some("root/provider_0/A/run"));
         let editor = workbench.editors.active().unwrap();
         assert_eq!(editor.selection().head, crate::editor::Position::new(1, 2), "the start of the name");
-        assert_eq!(workbench.breadcrumb_symbols(editor), [(4, "A".to_string()), (5, "run".to_string())], "the breadcrumbs follow the cursor");
+        assert_eq!(workbench.breadcrumb_symbols(editor), [(Some(4), "A".to_string()), (Some(5), "run".to_string())], "the breadcrumbs follow the cursor");
     });
     key("left", cx);
     assert_eq!(rows(cx), ["A", "  run", "b"], "a childless row has nothing to collapse");

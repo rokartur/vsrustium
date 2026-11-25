@@ -153,7 +153,7 @@ impl Workbench {
             Outcome::done()
         });
         self.commands.register("workbench.action.gotoSymbol", |workbench, _, window, cx| {
-            workbench.show_quick_access(goto_symbol::PREFIX, false, false, window, cx);
+            workbench.show_quick_access_activating(goto_symbol::PREFIX, false, false, crate::quick_input::ItemActivation::None, window, cx);
             Outcome::done()
         });
         self.commands.register("workbench.action.showAllSymbols", |workbench, _, window, cx| {
@@ -189,8 +189,13 @@ impl Workbench {
         value.and_then(|value| value.as_u64()).map_or(command_palette::DEFAULT_HISTORY_LENGTH, |length| length as usize)
     }
 
-    /// `QuickAccessController.show`: reuses a visible picker of the same provider, else fills a new one.
     fn show_quick_access(&mut self, value: &str, preserve_value: bool, include_help: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_quick_access_activating(value, preserve_value, include_help, crate::quick_input::ItemActivation::First, window, cx);
+    }
+
+    /// `QuickAccessController.show`: reuses a visible picker of the same provider, else fills a new one, its first
+    /// items activated as `item_activation` says.
+    fn show_quick_access_activating(&mut self, value: &str, preserve_value: bool, include_help: bool, item_activation: crate::quick_input::ItemActivation, window: &mut Window, cx: &mut Context<Self>) {
         // `updateConfiguration`: the configured length applies from the next pick list on.
         let limit = self.configured_command_history_length();
         self.quick_access.history.set_limit(limit);
@@ -222,6 +227,7 @@ impl Workbench {
         input.match_on_description = false;
         input.match_on_detail = false;
         input.sort_by_label = false;
+        input.item_activation = item_activation;
         // Showing it hides the visible picker, whose Hide event then drops it.
         let id = self.quick_inputs.add(input, Owner::QuickAccess(Vec::new()));
         self.quick_access.help_input = include_help.then_some(id);
@@ -270,8 +276,9 @@ impl Workbench {
         input.can_accept_in_background = provider != Provider::Commands;
         let Some((entries, accepts, busy)) = picks else { return };
         input.busy = busy;
-        // The Go to Line provider sets its one pick and its buttons itself.
-        if !matches!(provider, Provider::GotoLine | Provider::GotoOffset) {
+        // The Go to Line provider sets its one pick and its buttons itself; an empty pending list leaves an empty
+        // picker alone, so `ItemActivation::None` applies to the resolved picks.
+        if !matches!(provider, Provider::GotoLine | Provider::GotoOffset) && !(busy && entries.is_empty() && input.rows.is_empty()) {
             input.set_items(entries);
         }
         if let Some(Owner::QuickAccess(picks)) = self.quick_inputs.owner_mut(id) {

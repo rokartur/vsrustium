@@ -63,8 +63,6 @@ pub enum Focus {
 /// `ItemActivation`: which item the list focuses when items are set.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum ItemActivation {
-    // Set by goto symbol and the simple file dialog upstream, neither ported yet; the #207832 test covers it.
-    #[cfg_attr(not(test), allow(dead_code))]
     None,
     #[default]
     First,

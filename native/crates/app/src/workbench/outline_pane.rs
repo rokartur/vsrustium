@@ -239,8 +239,9 @@ impl Workbench {
     }
 
     /// `DocumentSymbolBreadcrumbsSource._computeBreadcrumbs` with `breadcrumbs.symbolPath`: the symbols around the
-    /// cursor from the outermost, up to the first filtered one, as (kind, name).
-    pub(super) fn breadcrumb_symbols(&self, editor: &crate::editor::OpenEditor) -> Vec<(u64, String)> {
+    /// cursor from the outermost, up to the first filtered one, as (kind, name); none around the cursor in a
+    /// non-empty outline is `…` without a kind (breadcrumbsModel.ts `_getOutlineElements`).
+    pub(super) fn breadcrumb_symbols(&self, editor: &crate::editor::OpenEditor) -> Vec<(Option<u64>, String)> {
         let Status::Ready { model_id, outline, .. } = &self.outline_pane.status else { return Vec::new() };
         let symbol_path = self.setting("breadcrumbs.symbolPath");
         if *model_id != editor.model_id || symbol_path == "off" {
@@ -248,13 +249,15 @@ impl Workbench {
         }
         let head = editor.selection().head;
         let position = (head.line + 1, crate::editor::utf16_column(&editor.document.lines[head.line], head.column) + 1);
-        let Some(item) = outline.item_enclosing_position(position, None) else { return Vec::new() };
-        let path = outline.path_to(&item.id).expect("an element of the outline");
-        let mut symbols: Vec<(u64, String)> = path
+        let path = outline.item_enclosing_position(position, None).map(|item| outline.path_to(&item.id).expect("an element of the outline")).unwrap_or_default();
+        let mut symbols: Vec<(Option<u64>, String)> = path
             .into_iter()
             .take_while(|element| self.shows_symbol_kind("breadcrumbs", element.symbol.kind))
-            .map(|element| (element.symbol.kind, element.symbol.name.clone()))
+            .map(|element| (Some(element.symbol.kind), element.symbol.name.clone()))
             .collect();
+        if symbols.is_empty() && !outline.groups.is_empty() {
+            return vec![(None, "\u{2026}".into())];
+        }
         if symbol_path == "last" {
             symbols.drain(..symbols.len().saturating_sub(1));
         }
