@@ -244,13 +244,7 @@ impl Workbench {
     fn hover_text(&self, content: &HoverContent, window: &Window) -> String {
         match content {
             HoverContent::Text(text) | HoverContent::Preview(text) => text.clone(),
-            HoverContent::Action { title, command } => {
-                let context = self.key_context(window);
-                match self.keybindings.resolver.lookup_primary_keybinding(command, &context) {
-                    Some(item) => format!("{title} ({})", crate::keybindings::label(&item.keybinding)),
-                    None => title.to_string(),
-                }
-            }
+            HoverContent::Action { title, command } => self.keybindings.resolver.append_keybinding(title, command, &self.key_context(window)),
         }
     }
 

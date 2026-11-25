@@ -376,6 +376,14 @@ impl Resolver {
         Some(matching.unwrap_or(last))
     }
 
+    /// abstractKeybindingService.ts `appendKeybinding`: `label (⌘K)` when the command has a keybinding.
+    pub fn append_keybinding(&self, label: &str, command: &str, context: &dyn Context) -> String {
+        match self.lookup_primary_keybinding(command, context) {
+            Some(item) if !command.is_empty() => format!("{label} ({})", self::label(&item.keybinding)),
+            _ => label.to_string(),
+        }
+    }
+
     #[cfg(test)]
     pub fn resolve(&self, context: &dyn Context, current_chords: &[Chord], keypress: Chord) -> Resolution {
         self.resolve_logged(context, current_chords, keypress, &mut Vec::new())
@@ -508,6 +516,18 @@ pub fn default_keybindings(extensions: &[ScannedExtension]) -> Vec<Item> {
     }
     weighted.sort_by(|a, b| a.weight.cmp(&b.weight).then_with(|| a.item.command.cmp(&b.item.command)).then(a.order.cmp(&b.order)));
     items.extend(weighted.into_iter().map(|weighted| weighted.item));
+    items
+}
+
+/// keybindingsExport.contribution.ts `_getDefaultKeybindingsContentForOS` on macOS: the core rows in registry order, then
+/// each built-in extension's rules in their own order, unsorted.
+pub fn exported_default_keybindings(extensions: &[ScannedExtension]) -> Vec<Item> {
+    let rows: Vec<Value> = serde_json::from_str(DEFAULT_KEYBINDINGS).expect("the bundled default keybindings are JSON");
+    let mut items: Vec<Item> = rows.iter().map(|row| rule_item(row, row["key"].as_str().expect("every default row has a key"), true).expect("every default row has a command")).collect();
+    let enablements = command_enablements(extensions);
+    for extension in extensions.iter().filter(|extension| extension.description["isBuiltin"] == true) {
+        items.extend(extension_keybindings(extension, &enablements).into_iter().map(|(_, item)| item));
+    }
     items
 }
 

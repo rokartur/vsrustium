@@ -115,6 +115,28 @@ fn the_default_keybindings_file_lists_the_defaults_then_the_unbound_commands(cx:
 }
 
 #[gpui::test]
+fn export_default_keybindings_writes_the_core_then_the_built_in_extension_rules(cx: &mut TestAppContext) {
+    let (workbench, cx, dir) = workbench(cx, "export");
+    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let markdown = scan_extension(&app_root.join("extensions/markdown-language-features"), true).unwrap();
+    let written = workbench.update(cx, |workbench, cx| {
+        workbench.load_keybindings(crate::keybindings::default_keybindings(std::slice::from_ref(&markdown)), dir.join("User/keybindings.json"), cx);
+        workbench.extensions = vec![markdown];
+        workbench.export_default_keybindings(&dir.join("doc")).unwrap()
+    });
+
+    assert_eq!(written, dir.join("doc/doc.keybindings.osx.json"));
+    let text = std::fs::read_to_string(&written).unwrap();
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines[0], "[", "no header");
+    let preview = lines.iter().position(|line| line.contains("\"markdown.showPreviewToSide\"")).unwrap();
+    let last_core = lines.iter().rposition(|line| line.contains("\"workbench.action.openSettings\"")).unwrap();
+    assert!(preview > last_core, "the built-in extension rules come after the core rules");
+    assert!(text.contains("\n]\n\n\n// Here are other available commands: \n// - "));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[gpui::test]
 fn workspace_settings_need_a_folder(cx: &mut TestAppContext) {
     let (workbench, cx, dir) = workbench(cx, "workspace");
     run(&workbench, cx, "workbench.action.openWorkspaceSettingsFile", vec![]);

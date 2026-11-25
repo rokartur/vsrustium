@@ -216,4 +216,39 @@ mod tests {
         assert_eq!(position_at(&lines, 1, 3), Position::new(0, 3));
         assert_eq!(position_at(&lines, 1, 99), Position::new(2, 2));
     }
+
+    /// gotoLineQuickAccess.test.ts `runTest` and `runTabTest`: 1-based line and column, as upstream asserts them.
+    fn assert_parses(lines: &[&str], cases: &[(&str, usize, usize, bool)]) {
+        let lines: Vec<String> = lines.iter().map(|line| line.to_string()).collect();
+        for &(input, line, column, zero_based) in cases {
+            let position = parse_position(&lines, "\n", 4, input, zero_based).position.unwrap();
+            assert_eq!((position.line + 1, position.column + 1), (line, column), "{input:?} zero_based {zero_based}");
+        }
+    }
+
+    #[test]
+    fn parse_position_works_as_expected() {
+        let cases = [
+            ("-100", 1, 1, false), ("-5", 1, 1, false), ("-1", 5, 1, false), ("0", 1, 1, false), ("1", 1, 1, false), ("2", 2, 1, false),
+            ("5", 5, 1, false), ("6", 5, 1, false), ("7", 5, 1, false), ("100", 5, 1, false),
+            ("2:-100", 2, 1, false), ("2:-5", 2, 2, false), ("2:-1", 2, 6, false), ("2:0", 2, 1, false), ("2:1", 2, 1, false),
+            ("2:2", 2, 2, false), ("2:6", 2, 6, false), ("2:7", 2, 7, false), ("2:8", 2, 7, false), ("2:100", 2, 7, false),
+            (":-1000", 1, 1, false), (":-10", 4, 5, false), (":-1", 5, 7, false), (":0", 1, 1, false), (":1", 1, 1, false),
+            (":10", 2, 3, false), (":1000", 5, 7, false),
+            (":-1000", 1, 1, true), (":-10", 4, 4, true), (":-1", 5, 6, true), (":0", 1, 1, true), (":1", 1, 2, true),
+            (":10", 2, 4, true), (":1000", 5, 7, true),
+            ("-1#6", 5, 6, false), ("2,4", 2, 4, false), ("  2  :  3  ", 2, 3, false),
+        ];
+        assert_parses(&["line 1", "line 2", "line 3", "line 4", "line 5"], &cases);
+    }
+
+    #[test]
+    fn parse_position_works_with_tabs() {
+        let cases = [
+            ("1:1", 1, 1), ("1:2", 1, 1), ("1:3", 1, 1), ("1:4", 1, 2), ("1:5", 1, 2), ("1:6", 1, 3), ("1:11", 1, 8), ("1:12", 1, 8),
+            ("1:-5", 1, 3), ("1:-6", 1, 2), ("1:-7", 1, 2), ("1:-8", 1, 1), ("1:-9", 1, 1), ("1:-10", 1, 1), ("1:-11", 1, 1),
+            ("2:1", 2, 1), ("2:2", 2, 1), ("2:3", 2, 1), ("2:4", 2, 2), ("2:5", 2, 2), ("2:8", 2, 3), ("2:9", 2, 3), ("2:11", 2, 5),
+        ];
+        assert_parses(&["\tline 1", "\t\tline 2", "\tline 3"], &cases.map(|(input, line, column)| (input, line, column, false)));
+    }
 }

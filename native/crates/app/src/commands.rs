@@ -5,6 +5,7 @@
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
+use futures::FutureExt;
 use futures::channel::oneshot;
 use gpui::{Context, Window};
 use serde_json::{Value, json};
@@ -32,12 +33,27 @@ pub type Handler = Rc<dyn Fn(&mut Workbench, Vec<Value>, &mut Window, &mut Conte
 /// Registrations of one id stack: the newest runs, and removing it brings back the one under it.
 #[derive(Default)]
 pub struct Commands {
-    handlers: BTreeMap<String, Vec<Handler>>,
+    handlers: BTreeMap<String, Vec<(Registration, Handler)>>,
+    next_registration: Registration,
 }
 
+/// What `registerCommand` returns: disposing it removes that one registration, wherever it sits in its id's stack.
+pub type Registration = u64;
+
 impl Commands {
-    pub fn register(&mut self, id: impl Into<String>, handler: impl Fn(&mut Workbench, Vec<Value>, &mut Window, &mut Context<Workbench>) -> Outcome + 'static) {
-        self.handlers.entry(id.into()).or_default().push(Rc::new(handler));
+    pub fn register(&mut self, id: impl Into<String>, handler: impl Fn(&mut Workbench, Vec<Value>, &mut Window, &mut Context<Workbench>) -> Outcome + 'static) -> Registration {
+        self.next_registration += 1;
+        self.handlers.entry(id.into()).or_default().push((self.next_registration, Rc::new(handler)));
+        self.next_registration
+    }
+
+    /// Disposes one registration of `id`; the newest of the others runs from then on.
+    pub fn dispose(&mut self, id: &str, registration: Registration) {
+        let Some(stack) = self.handlers.get_mut(id) else { return };
+        stack.retain(|(other, _)| *other != registration);
+        if stack.is_empty() {
+            self.handlers.remove(id);
+        }
     }
 
     /// Registers a table of upstream ids, such as the editor's command table, in one call.
@@ -61,7 +77,7 @@ impl Commands {
     }
 
     pub fn get(&self, id: &str) -> Option<Handler> {
-        self.handlers.get(id).and_then(|stack| stack.last()).cloned()
+        self.handlers.get(id).and_then(|stack| stack.last()).map(|(_, handler)| handler.clone())
     }
 
     pub fn ids(&self) -> impl Iterator<Item = &str> {
@@ -75,18 +91,22 @@ pub fn error_value(message: &str) -> Value {
 }
 
 impl Workbench {
-    /// `CommandService.executeCommand`: activates `onCommand:<id>` and runs the command, waiting for the
-    /// activation first when no one registered it yet.
+    /// `CommandService.executeCommand`: runs the command at once when `onCommand:<id>` is done or the host is not up yet,
+    /// else waits for that activation first, registered or not, as an extension may override the command (issue #71471).
     pub fn execute_command(&mut self, id: &str, args: Vec<Value>, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
         let activation = self.host.activate_by_event(&format!("onCommand:{id}"));
-        if let Some(handler) = self.commands.get(id) {
+        let run_now = activation.clone().now_or_never().is_some() || !self.host.installed_extensions_registered;
+        if let Some(handler) = self.commands.get(id).filter(|_| run_now) {
             return handler(self, args, window, cx);
         }
         let (sender, receiver) = oneshot::channel();
         let id = id.to_owned();
         cx.spawn_in(window, async move |workbench, cx| {
             // A host that is gone answers nothing; the lookup below then reports the command as missing.
-            let _ = activation.await;
+            if let Ok(Err(error)) = activation.await {
+                let _ = sender.send(Err(error));
+                return;
+            }
             let outcome = workbench.update_in(cx, |workbench, window, cx| match workbench.commands.get(&id) {
                 Some(handler) => handler(workbench, args, window, cx),
                 None => Outcome::error(format!("command '{id}' not found")),
