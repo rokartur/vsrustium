@@ -254,7 +254,8 @@ impl Session {
         })
     }
 
-    /// Hands requests to `proxies` to `send` instead of answering them here; `pump` sends the answers that arrive on `replies`.
+    /// Hands requests to `proxies` (a proxy, or `Proxy.$method` for one method) to `send` instead of answering them here;
+    /// `pump` sends the answers that arrive on `replies`.
     pub fn forward(&mut self, proxies: &'static [&'static str], send: impl FnMut(ForwardedRequest) + Send + 'static, replies: std::sync::mpsc::Receiver<(u32, Result<Value, Value>)>) {
         self.forward = Some(Forward { proxies, send: Box::new(send), replies, asks: Vec::new() });
     }
@@ -441,10 +442,12 @@ impl Session {
             }
             Message::Request { req, rpc_id, method, args, .. } => {
                 self.host.send(rpc::encode(&Message::Acknowledged { req }));
-                if let Some(forward) = self.forward.as_mut().filter(|forward| forward.proxies.contains(&proxy_name(rpc_id))) {
-                    *self.log.host_calls.entry(format!("{}.{method}", proxy_name(rpc_id))).or_default() += 1;
+                let proxy = proxy_name(rpc_id);
+                let forwards = |entry: &&str| *entry == proxy || entry.strip_prefix(proxy).and_then(|rest| rest.strip_prefix('.')) == Some(method.as_str());
+                if let Some(forward) = self.forward.as_mut().filter(|forward| forward.proxies.iter().any(forwards)) {
+                    *self.log.host_calls.entry(format!("{proxy}.{method}")).or_default() += 1;
                     let args = args.into_iter().map(arg_value).collect();
-                    (forward.send)(ForwardedRequest { req, proxy: proxy_name(rpc_id), method, args });
+                    (forward.send)(ForwardedRequest { req, proxy, method, args });
                     return Ok(true);
                 }
                 self.serve(req, rpc_id, method, args);
@@ -579,10 +582,10 @@ impl Session {
 }
 
 /// product.json `urlProtocol`.
-const URL_PROTOCOL: &str = "code-oss";
+pub const URL_PROTOCOL: &str = "code-oss";
 
 /// urlService.ts `NativeURLService.create`: the uri with the product's scheme.
-fn app_uri(uri: &Value) -> Value {
+pub fn app_uri(uri: &Value) -> Value {
     let text = |key: &str| uri[key].as_str().unwrap_or_default().to_owned();
     let (authority, mut path) = (text("authority"), text("path"));
     // URI validation requires a path if there is an authority

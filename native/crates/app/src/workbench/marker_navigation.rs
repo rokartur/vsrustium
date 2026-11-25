@@ -8,10 +8,12 @@ use serde_json::Value;
 
 use super::Workbench;
 use super::hover::HoverOptions;
+use super::opener::{OpenOptions, Target};
 use crate::commands::Outcome;
 use crate::editor::marker_decorations::validate;
 use crate::editor::{LINE_HEIGHT, OpenEditor, Position, Selection, VERTICAL_SCROLLBAR_WIDTH, VerticalReveal, utf16_column, visible_column, word_at};
 use crate::markers::{ERROR, INFO, Marker, MarkerService, ReadOptions, WARNING};
+use crate::uri::Uri;
 
 /// zoneWidget.ts: the arrow is a third of a line high, the frame `frameWidth` 1.
 const ARROW_HEIGHT: f32 = 6.;
@@ -442,17 +444,8 @@ impl Workbench {
                         .child(")")
                         .on_click(cx.listener(move |workbench, _: &ClickEvent, window, cx| {
                             cx.stop_propagation();
-                            // The opener service shows web links in the browser, other resources in an editor.
-                            let part = |key: &str| target[key].as_str().unwrap_or_default().to_string();
-                            match part("scheme").as_str() {
-                                "http" | "https" => {
-                                    let query = Some(part("query")).filter(|query| !query.is_empty()).map(|query| format!("?{query}")).unwrap_or_default();
-                                    let fragment = Some(part("fragment")).filter(|fragment| !fragment.is_empty()).map(|fragment| format!("#{fragment}")).unwrap_or_default();
-                                    cx.open_url(&format!("{}://{}{}{query}{fragment}", part("scheme"), part("authority"), part("path")));
-                                }
-                                _ => {
-                                    workbench.execute_command("vscode.open", vec![target.clone()], window, cx);
-                                }
+                            if let Ok(uri) = Uri::from_json(&target) {
+                                drop(workbench.open_link(Target::Uri(uri), OpenOptions::default(), window, cx));
                             }
                         })),
                 )

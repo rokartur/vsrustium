@@ -29,6 +29,7 @@ pub mod menubar;
 mod middle_scroll;
 mod minimap_view;
 mod notifications_view;
+pub(crate) mod opener;
 pub mod quick_access;
 mod quick_open;
 mod readonly;
@@ -44,6 +45,8 @@ mod text_input;
 mod title_bar_actions;
 mod unicode_highlight;
 mod unusual_line_terminators;
+mod url_actions;
+pub(crate) mod url_handler;
 mod workspace_actions;
 mod workspace_trust_view;
 
@@ -120,6 +123,7 @@ pub struct Workbench {
     readonly_overrides: readonly::SessionOverrides,
     /// The editor labels of opened local history entries (`openEntry`), by entry file.
     local_history_labels: HashMap<PathBuf, String>,
+    pub(crate) urls: url_handler::Urls,
     pub editor_focus: FocusHandle,
     /// bannerController.ts: the banner element is focusable (`tabIndex = 0`) inside the editor's DOM node.
     unicode_banner_focus: FocusHandle,
@@ -258,6 +262,7 @@ impl Workbench {
             marker_navigation: Default::default(),
             readonly_overrides: Default::default(),
             local_history_labels: HashMap::new(),
+            urls: url_handler::Urls::default(),
             editor_focus: cx.focus_handle(),
             unicode_banner_focus: cx.focus_handle(),
             editor_focus_listeners: Vec::new(),
@@ -314,6 +319,7 @@ impl Workbench {
         workbench.register_workspace_trust_commands();
         workbench.register_host_commands();
         workbench.register_workspace_commands();
+        workbench.register_url_commands();
         workbench.register_local_history_commands();
         // Keybindings resolve before the focused element sees the key, and with nothing focused too.
         let entity = cx.entity().downgrade();

@@ -65,8 +65,8 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | mainthread/MainThreadChatAgents | MainThread* shape (Rust side) | removed | no sign-in/AI by decision (port/notes.md); API stays inert: session.rs answers undefined, list getters []; exthost-probe 30/30 on Bun and Node |
 | mainthread/MainThreadCodeMapper | MainThread* shape (Rust side) | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | mainthread/MainThreadLanguageModelTools | MainThread* shape (Rust side) | removed | no sign-in/AI by decision (port/notes.md); API stays inert: session.rs answers undefined, list getters []; exthost-probe 30/30 on Bun and Node |
-| mainthread/MainThreadUrls | MainThread* shape (Rust side) | stub | $createAppUri in session.rs app_uri (cargo test -p exthost app_uri; api-tests env.uiKind and env.asExternalUri pass); $registerUriHandler answers undefined, no URL reaches extension handlers yet |
-| mainthread/MainThreadUriOpeners | MainThread* shape (Rust side) | stub | session.rs answers undefined |
+| mainthread/MainThreadUrls | MainThread* shape (Rust side) | ported | $createAppUri in session.rs app_uri (cargo test -p exthost app_uri); $registerUriHandler/$unregisterUriHandler in workbench/url_handler.rs: a code-oss://<publisher.name>/ url (`--open-url`, shortcut: no CFBundleURLTypes registration) reaches ExtHostUrls.$handleExternalUri after the "Allow '{0}' extension to open this URI?" prompt, buffered and onUri:<id> activated when the handler is not registered yet; cargo test -p app url_handler |
+| mainthread/MainThreadUriOpeners | MainThread* shape (Rust side) | ported | workbench/opener.rs: $registerUriOpener/$unregisterUriOpener, onOpenExternalUri:<scheme> activation, $canOpenUri priorities, chooser prompt, failure notification with "Open using default opener"; cargo test -p app opener |
 | mainthread/MainThreadChatOutputRenderer | MainThread* shape (Rust side) | removed | no sign-in/AI by decision (port/notes.md); API stays inert: session.rs answers undefined, list getters []; exthost-probe 30/30 on Bun and Node |
 | mainthread/MainThreadProfileContentHandlers | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadWorkspace | MainThread* shape (Rust side) | ported | main_thread_workspace.rs serves $startFileSearch and $startTextSearch through ripgrep over every workspace folder: api-tests workspace.test findFiles, findFiles2, findTextInFiles and their cancellation tests pass (11/11); multi-root workspace data: api-workspace 4/4; $requestWorkspaceTrust (startup or request dialog, concurrent callers queued) and $isResourceTrusted answer from workspace_trust.rs, $initializeWorkspace sends the window's trust; $updateWorkspaceFolders, $save and $checkExists answer undefined |
@@ -82,7 +82,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | mainthread/MainThreadAgentEditorComments | MainThread* shape (Rust side) | removed | no sign-in/AI by decision (port/notes.md); API stays inert: session.rs answers undefined, list getters []; exthost-probe 30/30 on Bun and Node |
 | mainthread/MainThreadDocumentDiff | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadDebugService | MainThread* shape (Rust side) | stub | session.rs answers undefined |
-| mainthread/MainThreadWindow | MainThread* shape (Rust side) | stub | session.rs: $getInitialState fixed {isFocused,isActive}; rest undefined |
+| mainthread/MainThreadWindow | MainThread* shape (Rust side) | ported | $openUri through the opener service (openExternal), $asExternalUri for file system provider resources (code-oss://workspace?<uri>, no tunnels), $onDidChangeWindowFocus on window activation; $getInitialState isActive fixed true (no user activity service); api-tests env.asExternalUri pass |
 | mainthread/MainThreadTunnelService | MainThread* shape (Rust side) | removed | no remote or tunnels by decision (port/notes.md); one local extension host |
 | mainthread/MainThreadTimeline | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadChatArtifactIntegrations | MainThread* shape (Rust side) | removed | no sign-in/AI by decision (port/notes.md); API stays inert: session.rs answers undefined, list getters []; exthost-probe 30/30 on Bun and Node |
@@ -177,7 +177,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/notification | src/vs/platform | ported | notifications.rs: severities, priorities, actions, progress, legacy link parsing (linkedText.ts), 1000-character messages; cargo test -p app notifications:: |
 | platform/observable | src/vs/platform | removed | Artur: internal infrastructure or developer tool with no 1:1 counterpart in the native port |
 | platform/onboarding | src/vs/platform | todo |  |
-| platform/opener | src/vs/platform | todo |  |
+| platform/opener | src/vs/platform | ported | workbench/opener.rs (openerService.ts open: contributed external openers, validators, folder, url, external, command, editor openers; extractSelection); cargo test -p app opener |
 | platform/otel | src/vs/platform | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | platform/path | src/vs/platform | todo |  |
 | platform/policy | src/vs/platform | todo |  |
@@ -206,7 +206,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/undoRedo | src/vs/platform | ported | workspace elements across resources with sources, confirmBeforeUndo and flush on conflict (undo_redo.rs): cargo test -p app undo_redo, explorer_actions; text editors keep their own history (editor::edit::tests); no resource elements or undo groups |
 | platform/update | src/vs/platform | todo |  |
 | platform/uriIdentity | src/vs/platform | ported | asCanonicalUri for open models: $tryOpenDocument answers the casing opened first where the provider has no PathCaseSensitive (api-tests MOCHA_GREP="vscode API - workspace" openTextDocument, actual casing first), workbench editors find a file in any case (cargo test -p app a_file_in_another_case); no cache of unopened URIs |
-| platform/url | src/vs/platform | todo |  |
+| platform/url | src/vs/platform | ported | uri.rs (base/common/uri.ts) and workbench/url_handler.rs (urlService open, protocol url file handling with security.promptForLocalFileProtocolHandling); cargo test -p app uri:: url_handler |
 | platform/userData | src/vs/platform | todo |  |
 | platform/userDataProfile | src/vs/platform | todo |  |
 | platform/userDataSync | src/vs/platform | removed | no sign-in/AI by decision (port/notes.md); not ported |
@@ -383,7 +383,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/tunnel | workbench service | removed | no remote or tunnels by decision (port/notes.md); one local extension host |
 | workbench/services/untitled | workbench service | stub | Untitled-<n> models and untitled models with an associated file (host_requests.rs, editor/edit.rs is_dirty); no Save As |
 | workbench/services/update | workbench service | todo |  |
-| workbench/services/url | workbench service | todo |  |
+| workbench/services/url | workbench service | ported | workbench/url_handler.rs: RelayURLService open for code-oss urls, windowId=_blank, workspace urls; extensionUrlHandler.ts trust prompt, confirmed ids, extensions.confirmedUriHandlerExtensionIds; install of an unknown extension fails (no gallery) |
 | workbench/services/userActivity | workbench service | todo |  |
 | workbench/services/userAttention | workbench service | todo |  |
 | workbench/services/userData | workbench service | todo |  |
@@ -418,7 +418,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/encryption | workbench contribution | todo |  |
 | workbench/contrib/extensions | workbench contribution | todo |  |
 | workbench/contrib/externalTerminal | workbench contribution | todo |  |
-| workbench/contrib/externalUriOpener | workbench contribution | todo |  |
+| workbench/contrib/externalUriOpener | workbench contribution | ported | workbench/opener.rs: externalUriOpenerService.ts getRequestedOpener (workbench.externalUriOpeners globs), chooseOpener, "How would you like to open: {0}" picker; no Simple Browser (out of scope) |
 | workbench/contrib/files | workbench contribution | stub | Explorer tree read from disk (explorer.rs): folders first, default excludes, click to expand, click opens a file as preview, double click pins, selection follows the active editor; Seti file icons and compareFileNamesDefault sort; workspace folders as roots, first five expanded (cargo test -p app); new file and folder, rename, delete, copy, cut, paste, drag and drop and undo through the working copy file operations (cargo test -p app explorer_actions, file_actions); "Do not ask me again" as the NSAlert suppression checkbox (dialog.rs); frames checked against the reference with port/tools/ui-pair; the context menu with the items whose commands the port has (port/results/contextmenu.md); tree view state in workspace storage (cargo test -p app view_state); file nesting with the explorerFileNestingTrie.test.ts cases (cargo test -p app nest); copyFilePath, copyRelativeFilePath and revealFileInOS with their Explorer, tab and palette entries (cargo test -p app copy_path, copied_path_labels); compact folders with their navigation commands and getContext (cargo test -p app compact, get_context, compressed_navigation); Explorer find with highlight and filter modes over a ripgrep file search (cargo test -p app explorer_find find_filters); Finder drops through ExternalFileImport (cargo test -p app files_dropped_from_finder); Add Folder to Workspace waits for workspace folder editing (port/notes.md milestones 3, 4, 12) |
 | workbench/contrib/folding | workbench contribution | todo |  |
 | workbench/contrib/format | workbench contribution | todo |  |
@@ -449,7 +449,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/multiDiffEditor | workbench contribution | todo |  |
 | workbench/contrib/notebook | workbench contribution | todo |  |
 | workbench/contrib/onboarding | workbench contribution | todo |  |
-| workbench/contrib/opener | workbench contribution | todo |  |
+| workbench/contrib/opener | workbench contribution | ported | workbench/opener.rs open_folder_link: a link to a workspace folder reveals it in the Explorer |
 | workbench/contrib/outline | workbench contribution | todo |  |
 | workbench/contrib/output | workbench contribution | todo |  |
 | workbench/contrib/performance | workbench contribution | todo |  |
@@ -485,7 +485,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/timeline | workbench contribution | todo |  |
 | workbench/contrib/typeHierarchy | workbench contribution | todo |  |
 | workbench/contrib/update | workbench contribution | todo |  |
-| workbench/contrib/url | workbench contribution | todo |  |
+| workbench/contrib/url | workbench contribution | ported | trusted_domains.rs (isURLDomainTrusted, globs, localhost) and workbench/url_actions.rs: workbench.action.url.openUrl, workbench.action.manageTrustedDomain (trustedDomains:/Trusted Domains.jsonc editor, saved to http.linkProtectionTrustedDomains), link prompt "Do you want Code - OSS to open the external website?" with Copy and Configure Trusted Domains; cargo test -p app -- trusted_domains:: url_actions |
 | workbench/contrib/userDataProfile | workbench contribution | todo |  |
 | workbench/contrib/userDataSync | workbench contribution | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/contrib/webview | workbench contribution | todo |  |

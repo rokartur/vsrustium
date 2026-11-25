@@ -14,10 +14,12 @@ use serde_json::{Value, json};
 
 use super::Workbench;
 use super::hover::{HoverContent, HoverOptions};
+use super::opener::{OpenOptions, Target};
 use crate::commands::Outcome;
 use crate::main_thread_progress::ProgressTask;
 use crate::menus::MenuAction;
 use crate::notifications::{Action, Item, Node, Notification, Notifications, Priority, Run, Severity};
+use crate::uri::Uri;
 
 #[cfg(test)]
 mod tests;
@@ -712,23 +714,11 @@ impl Workbench {
             .child(message)
     }
 
-    /// The opener service for a message link: a `command:` link runs the command with its JSON arguments.
+    /// notificationsViewer.ts: `openerService.open(URI.parse(link), { allowCommands: true })`.
     pub(super) fn open_notification_link(&mut self, href: &str, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(command) = href.strip_prefix("command:") {
-            let (id, query) = command.split_once('?').unwrap_or((command, ""));
-            let decoded = percent_decode(query);
-            let args = match serde_json::from_str::<Value>(&decoded) {
-                Ok(Value::Array(args)) => args,
-                Ok(arg) => vec![arg],
-                Err(_) => Vec::new(),
-            };
-            let outcome = self.execute_command(id, args, window, cx);
-            super::keyboard::report_failure(outcome, cx);
-        } else if let Some(path) = href.strip_prefix("file://") {
-            self.open_file(percent_decode(path).into(), true, window, cx);
-        } else {
-            cx.open_url(href);
-        }
+        let Ok(uri) = Uri::parse(href) else { return };
+        let options = OpenOptions { allow_commands: true, ..OpenOptions::default() };
+        drop(self.open_link(Target::Uri(uri), options, window, cx));
     }
 
     /// `renderSecondaryActions`: More Actions when there are secondary actions, expand or collapse, and close.
@@ -1008,24 +998,4 @@ fn text_width(text: &str, window: &Window) -> f32 {
 fn message_lines(text: &str, width: f32, window: &Window) -> usize {
     let lines = window.text_system().shape_text(SharedString::from(text.to_owned()), px(13.), &[text_run(text, window)], Some(px(width)), None);
     lines.map(|lines| lines.iter().map(|line| line.wrap_boundaries().len() + 1).sum()).unwrap_or(1).max(1)
-}
-
-fn percent_decode(text: &str) -> String {
-    let bytes = text.as_bytes();
-    let mut decoded = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        let hex = bytes.get(index + 1..index + 3).and_then(|hex| std::str::from_utf8(hex).ok()).and_then(|hex| u8::from_str_radix(hex, 16).ok());
-        match (bytes[index], hex) {
-            (b'%', Some(byte)) => {
-                decoded.push(byte);
-                index += 3;
-            }
-            (byte, _) => {
-                decoded.push(byte);
-                index += 1;
-            }
-        }
-    }
-    String::from_utf8_lossy(&decoded).into_owned()
 }

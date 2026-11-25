@@ -51,6 +51,22 @@ impl Workbench {
                 let names = arg(1).as_array().cloned().unwrap_or_default();
                 self.confirm_participant_edits(arg(0).as_u64().unwrap_or_default(), &names, arg(2) == true, window, cx)
             }
+            ("MainThreadWindow", "$openUri") => self.api_open_uri(&request.args, window, cx),
+            ("MainThreadUrls", "$registerUriHandler") => {
+                // ExtensionIdentifier serializes as `{ value, _lower }`.
+                let extension = arg(1)["value"].as_str().unwrap_or_default().to_owned();
+                self.register_uri_handler(arg(0).as_u64().unwrap_or_default(), &extension, arg(2).as_str().unwrap_or_default());
+                Outcome::done()
+            }
+            ("MainThreadUrls", "$unregisterUriHandler") => {
+                self.unregister_uri_handler(arg(0).as_u64().unwrap_or_default());
+                Outcome::done()
+            }
+            ("MainThreadUriOpeners", "$registerUriOpener") => self.register_uri_opener(&request.args),
+            ("MainThreadUriOpeners", "$unregisterUriOpener") => {
+                self.urls.openers.retain(|opener| Some(opener.id.as_str()) != arg(0).as_str());
+                Outcome::done()
+            }
             ("MainThreadWorkspace", "$save") => self.save_resource(&arg(0), cx),
             ("MainThreadWorkspace", "$saveAll") => self.save_all(arg(0) == true, cx),
             ("MainThreadWorkspace", "$requestWorkspaceTrust") => self.request_workspace_trust(&arg(0), window, cx),

@@ -7,13 +7,14 @@ use std::time::Duration;
 use exthost::main_thread::{MainThread, serialized_error};
 use exthost::main_thread_files::{Providers, resource};
 use exthost::rpc::{Arg, Reply};
-use exthost::session::{CallResult, Session};
+use exthost::session::{CallResult, Session, URL_PROTOCOL};
 use files::FileSystem;
 use futures::channel::mpsc::UnboundedSender;
 use futures::channel::oneshot;
 use serde_json::{Value, json};
 
 use crate::host_sync::HostMessage;
+use crate::uri::Uri;
 use crate::workbench::host_requests::HOST_REQUESTS;
 
 pub struct HostRequest {
@@ -50,6 +51,7 @@ impl MainThread for WorkbenchMainThread {
                 self.content_providers.retain(|(handle, _)| *handle != args[0]);
                 return Some(Ok(Reply::Empty));
             }
+            ("MainThreadWindow", "$asExternalUri") => return Some(as_external_uri(session, &args[0])),
             _ if !HOST_REQUESTS.contains(&(proxy, method)) => return None,
             _ => {}
         }
@@ -169,6 +171,16 @@ fn participate_in_save(session: &mut Session, uri: &Value) {
     if session.request_cancellable("ExtHostDocumentSaveParticipant", "$participateInSave", args, Duration::from_millis(1750)).is_none() {
         eprintln!("[exthost] Aborted onWillSaveTextDocument-event after 1750ms");
     }
+}
+
+/// window.ts `resolveExternalUri` without tunnels: a resource a file system provider serves becomes an app uri that
+/// opens it; nothing else resolves, and extHost.api.impl.ts then keeps an http or https uri as it is.
+fn as_external_uri(session: &mut Session, uri: &Value) -> Result<Reply, Value> {
+    let uri = Uri::from_json(uri).map_err(|error| serialized_error(&error))?;
+    if (Providers { session }).capabilities(&uri.scheme).is_none() {
+        return Err(serialized_error(&format!("Could not resolve external URI: {}", uri.to_string(false))));
+    }
+    Ok(Reply::Json(json!({ "$mid": 1, "scheme": URL_PROTOCOL, "path": "workspace", "query": uri.to_string(false) })))
 }
 
 fn uri_text(uri: &Value) -> String {

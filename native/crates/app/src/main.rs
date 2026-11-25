@@ -46,7 +46,9 @@ mod split_view;
 mod syntax;
 mod tf_idf;
 mod theme;
+mod trusted_domains;
 mod undo_redo;
+mod uri;
 mod workbench;
 mod workspace_trust;
 
@@ -84,7 +86,7 @@ use workbench::Workbench;
 
 /// The indexes of the folder and file arguments: those that are neither a flag nor a flag's value.
 pub(crate) fn positional_indexes(args: &[String]) -> Vec<usize> {
-    let value_flags = ["--user-data-dir", "--shared-data-dir", "--screenshot", "--screenshot-keys", "--screenshot-input", "--theme"];
+    let value_flags = ["--user-data-dir", "--shared-data-dir", "--screenshot", "--screenshot-keys", "--screenshot-input", "--theme", "--open-url"];
     (1..args.len()).filter(|&index| !args[index].starts_with("--") && !value_flags.contains(&args[index - 1].as_str())).collect()
 }
 
@@ -106,6 +108,8 @@ fn main() -> anyhow::Result<()> {
     let workspace = positional.first().map(|path| resolve(path)).transpose()?.map(Workspace::open);
     let file = positional.get(1).map(|path| resolve(path)).transpose()?;
     let development = ExtensionDevelopment::from_args(&args)?;
+    // shortcut: the port is no app bundle, so no CFBundleURLTypes routes `code-oss://` here; `--open-url <url>` does.
+    let open_url = flag_value("--open-url");
 
     let app_root = std::env::current_dir()?;
     let extensions_dir = std::env::var_os("VSCODE_GPUI_EXTENSIONS").map(PathBuf::from).unwrap_or_else(|| app_root.join("extensions"));
@@ -182,6 +186,7 @@ fn main() -> anyhow::Result<()> {
                 workbench.set_command_palette_menu(command_palette::menu(&extensions));
                 workbench.menus.extend(menus::extension_menus(&extensions));
                 workbench.status_entries = main_thread_status_bar::static_entries(&extensions);
+                workbench.urls.extensions = extensions.iter().map(|extension| (extension.id.to_lowercase(), extension.description["displayName"].as_str().unwrap_or(&extension.id).to_owned())).collect();
                 workbench.file_icons = file_icons;
                 workbench.color_themes = color_themes;
                 workbench.restore_profile_state(storage.profile.clone());
@@ -190,10 +195,14 @@ fn main() -> anyhow::Result<()> {
                 workbench.workspace_trust = workspace_trust;
                 workbench.shared_storage = shared_storage;
                 workbench.watch_recently_opened(window, cx);
+                workbench.watch_window_focus(window, cx);
                 workbench.watch_editor_focus(window, cx);
                 workbench.show_trust_modal_on_start(window, cx);
                 if let Some(file) = file {
                     workbench.open_file(file, true, window, cx);
+                }
+                if let Some(url) = &open_url {
+                    workbench.open_protocol_url(url, window, cx);
                 }
                 std::thread::Builder::new()
                     .name("exthost-session".into())
@@ -339,7 +348,7 @@ fn run_extension_host(
             MainThreadSecretState::in_memory()
         }),
     });
-    session.forward(&["MainThreadCommands", "MainThreadDiagnostics", "MainThreadMessageService", "MainThreadProgress", "MainThreadQuickOpen", "MainThreadStatusBar", "MainThreadWorkspace"], move |request| {
+    session.forward(&["MainThreadCommands", "MainThreadDiagnostics", "MainThreadMessageService", "MainThreadProgress", "MainThreadQuickOpen", "MainThreadStatusBar", "MainThreadWorkspace", "MainThreadUrls.$registerUriHandler", "MainThreadUrls.$unregisterUriHandler", "MainThreadUriOpeners", "MainThreadWindow.$openUri"], move |request| {
         let _ = workbench_requests.unbounded_send(request);
     }, workbench_replies);
     session.main_thread = Some(Box::new(main_thread));

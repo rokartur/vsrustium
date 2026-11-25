@@ -42,6 +42,8 @@ pub enum Owner {
     LocalHistoryEntries(std::path::PathBuf, Vec<crate::local_history::Entry>),
     /// `workbench.action.localHistory.create`: the input box of the new entry's source for the file.
     LocalHistoryCreate(std::path::PathBuf),
+    /// A workbench `quickInputService.pick` of one item, answered with its handle or null.
+    Choose(Reply),
 }
 
 impl Workbench {
@@ -217,7 +219,45 @@ impl Workbench {
             Owner::LocalHistoryFiles(_) => self.local_history_files_event(id, event, window, cx),
             Owner::LocalHistoryEntries(..) => self.local_history_entries_event(id, event, window, cx),
             Owner::LocalHistoryCreate(_) => self.create_local_history_entry_event(id, event, window, cx),
+            Owner::Choose(_) => self.choose_event(id, event, window, cx),
         }
+    }
+
+    /// `quickInputService.pick` for the workbench: the picked item's handle, or null once the pick hides.
+    pub fn choose(&mut self, input: QuickInput, window: &mut Window, cx: &mut Context<Self>) -> oneshot::Receiver<Result<Value, Value>> {
+        let (sender, receiver) = oneshot::channel();
+        let id = self.quick_inputs.add(input, Owner::Choose(Some(sender)));
+        self.show_quick_input(id, window, cx);
+        self.flush_quick_input_events(window, cx);
+        receiver
+    }
+
+    /// `quickInputService.input` for the workbench: the accepted value, or null once the input box hides.
+    pub fn ask_input(&mut self, input: QuickInput, window: &mut Window, cx: &mut Context<Self>) -> oneshot::Receiver<Result<Value, Value>> {
+        let (sender, receiver) = oneshot::channel();
+        // No host request: an id `$cancel` never names.
+        let id = self.quick_inputs.add(input, Owner::Input { req: u32::MAX, reply: Some(sender), validate: false, validated: None });
+        self.show_quick_input(id, window, cx);
+        self.flush_quick_input_events(window, cx);
+        receiver
+    }
+
+    fn choose_event(&mut self, id: i64, event: Event, window: &mut Window, cx: &mut Context<Self>) {
+        let picked = match event {
+            Event::Accept(_) => self.quick_inputs.get(id).and_then(|input| input.active_handles().first().copied()),
+            Event::Hide => {
+                if let Some(Owner::Choose(reply)) = self.quick_inputs.owner_mut(id) {
+                    resolve(reply, Ok(Value::Null));
+                }
+                self.quick_inputs.remove(id);
+                return;
+            }
+            _ => return,
+        };
+        if let Some(Owner::Choose(reply)) = self.quick_inputs.owner_mut(id) {
+            resolve(reply, Ok(json!(picked)));
+        }
+        self.hide_quick_input_by_id(id, window, cx);
     }
 
     /// The listeners `quickInputService.pick` puts on its quick pick.

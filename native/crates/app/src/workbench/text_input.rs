@@ -74,6 +74,9 @@ impl Workbench {
         if scheme == SEARCH_EDITOR_SCHEME {
             return self.save_search_editor(path, cx);
         }
+        if scheme == super::url_actions::TRUSTED_DOMAINS_SCHEME {
+            return self.save_trusted_domains(&path, cx);
+        }
         let (sender, receiver) = oneshot::channel();
         let editor = self.editors.model(&scheme, &path).expect("saving an open model");
         let version = editor.alternative_version_id();

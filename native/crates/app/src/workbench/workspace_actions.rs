@@ -21,7 +21,7 @@ pub enum Openable {
 }
 
 impl Openable {
-    fn of(path: PathBuf) -> Openable {
+    pub(super) fn of(path: PathBuf) -> Openable {
         match path.is_dir() || path.extension().is_some_and(|extension| extension == "code-workspace") {
             true => Openable::Workspace(path),
             false => Openable::File(path),
