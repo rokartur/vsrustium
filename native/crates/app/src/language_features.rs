@@ -41,8 +41,10 @@ impl LanguageFeatures {
         self.registrations.push(Registration { handle, method: method.to_owned(), args, time: self.clock });
     }
 
-    pub fn unregister(&mut self, handle: u64) {
-        self.registrations.retain(|registration| registration.handle != handle);
+    /// Removes the provider `handle` and returns the method it was registered with.
+    pub fn unregister(&mut self, handle: u64) -> Option<String> {
+        let index = self.registrations.iter().position(|registration| registration.handle == handle)?;
+        Some(self.registrations.remove(index).method)
     }
 
     /// `LanguageFeatureRegistry.ordered`: the providers registered with `method` whose selector matches, best score

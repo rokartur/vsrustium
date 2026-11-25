@@ -1,4 +1,4 @@
-//! codelensController.ts and codelensWidget.ts: the active editor's code lenses from every `$registerCodeLensProvider`
+//! codelensController.ts and codelensWidget.ts: the active editor's code lenses from every `$registerCodeLensSupport`
 //! provider, grouped per line (codelens.ts `getCodeLensModel` order) into a view zone above the line, each command a
 //! link that runs it; unresolved lenses get `$resolveCodeLens`.
 
@@ -61,7 +61,7 @@ impl Workbench {
         let candidate = Candidate { uri: &uri, language: &editor.document.language_id };
         let calls: Vec<_> = self
             .language_features
-            .ordered("$registerCodeLensProvider", &candidate)
+            .ordered("$registerCodeLensSupport", &candidate)
             .iter()
             .map(|registration| (registration.handle, self.host.call_cancellable("ExtHostLanguageFeatures", "$provideCodeLenses", vec![json!(registration.handle), uri.clone(), json!({})])))
             .collect();
@@ -134,7 +134,9 @@ impl Workbench {
         let text = &editor.document.lines[*line];
         let indent = crate::editor::visible_column(text, text.chars().take_while(|ch| ch.is_whitespace()).count(), editor.document.indentation.tab_size);
         let left = content_left + indent as f32 * self.editors.viewport.char_width - editor.scroll.left;
-        let mut row = div().absolute().top_0().left(px(left)).h(px(height)).flex().items_center().whitespace_nowrap().text_size(px(font_size)).text_color(foreground).pr(px(font_size * 0.5));
+        // codelensWidget.css: an empty `editor.codeLensFontFamily` leaves the workbench's UI font.
+        let family = self.setting("editor.codeLensFontFamily").as_str().filter(|family| !family.is_empty()).unwrap_or(".SystemUIFont").to_string();
+        let mut row = div().absolute().top_0().left(px(left)).h(px(height)).flex().items_center().whitespace_nowrap().font_family(family).text_size(px(font_size)).text_color(foreground).pr(px(font_size * 0.5));
         let commands: Vec<&Value> = lenses.iter().map(|lens| &lens.symbol["command"]).filter(|command| command.is_object()).collect();
         if commands.is_empty() {
             return Some(div().relative().flex_none().h(px(height)).child(row.child("no commands")));
@@ -148,6 +150,7 @@ impl Workbench {
                     row = row.child(
                         div()
                             .id(gpui::SharedString::from(format!("codelens-{zone}-{index}")))
+                            .debug_selector(move || format!("codelens-{index}"))
                             .cursor_pointer()
                             .hover(move |item| item.text_color(link))
                             .child(label)
@@ -193,5 +196,34 @@ mod tests {
         // 12px font, 18px lines: 10px lenses (12 * 0.9 truncated) 15px high.
         assert_eq!(layout(12., 18., 0.), (10., 15.));
         assert_eq!(layout(14., 14., 8.), (8., 10.));
+    }
+
+    #[gpui::test]
+    fn a_provider_registered_after_the_editor_opened_draws_its_lenses(cx: &mut gpui::TestAppContext) {
+        let app_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let themes = exthost::scan::scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
+        let theme = crate::theme::load_theme(&[themes], "Dark Modern").unwrap();
+        let dir = std::env::temp_dir().join(format!("code-gpui-code-lens-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.txt"), "one\ntwo").unwrap();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let settings = std::sync::Arc::new(std::sync::Mutex::new(config::service::Settings::load(config::registry::Registry::with_extensions(&[]), dir.join("User"), None)));
+        let (workbench, cx) = cx.add_window_view(|_, cx| Workbench::new(theme, app_root.clone(), None, crate::languages::Languages::new(&[]), settings, crate::host_sync::HostSync::new(sender), cx));
+        let uri = json!({ "scheme": "file", "path": dir.join("a.txt").to_string_lossy() });
+        workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("_workbench.open", vec![uri], window, cx)));
+        cx.run_until_parked();
+        assert!(!receiver.try_iter().any(|message| message.method == "$provideCodeLenses"));
+
+        let register = exthost::session::ForwardedRequest { req: 1, proxy: "MainThreadLanguageFeatures", method: "$registerCodeLensSupport".into(), args: vec![json!(7), json!([{ "scheme": "file" }]), json!(null)] };
+        workbench.update_in(cx, |workbench, window, cx| drop(workbench.handle_host_request(register, window, cx)));
+        cx.run_until_parked();
+        let call = receiver.try_iter().find(|message| message.method == "$provideCodeLenses").expect("codelensController.ts asks on the registry's onDidChange");
+        let lens = json!({ "range": { "startLineNumber": 2, "startColumn": 1, "endLineNumber": 2, "endColumn": 1 }, "command": { "id": "x", "title": "Accept" } });
+        drop(call.reply.unwrap().send(Ok(json!({ "lenses": [lens] }))));
+        cx.run_until_parked();
+        let bounds = cx.debug_bounds("codelens-0").expect("the lens is drawn");
+        assert!(bounds.size.width > gpui::px(0.) && bounds.size.height > gpui::px(0.));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

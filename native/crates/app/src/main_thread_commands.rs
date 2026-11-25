@@ -85,8 +85,12 @@ impl Workbench {
                 self.clear_markers(arg(0).as_str().unwrap_or_default(), cx);
                 Outcome::done()
             }
+            // codelensController.ts: `codeLensProvider.onDidChange` asks for the lenses again.
             ("MainThreadLanguageFeatures", "$unregister") => {
-                self.language_features.unregister(arg(0).as_u64().unwrap_or_default());
+                if self.language_features.unregister(arg(0).as_u64().unwrap_or_default()).as_deref() == Some("$registerCodeLensSupport") {
+                    self.code_lens_event += 1;
+                    cx.notify();
+                }
                 Outcome::done()
             }
             ("MainThreadLanguageFeatures", "$emitCodeLensEvent") => {
@@ -96,6 +100,10 @@ impl Workbench {
             }
             ("MainThreadLanguageFeatures", method) if method.starts_with("$register") => {
                 self.language_features.register(method, request.args.clone());
+                if method == "$registerCodeLensSupport" {
+                    self.code_lens_event += 1;
+                    cx.notify();
+                }
                 Outcome::done()
             }
             ("MainThreadCommands", "$getCommands") => Outcome::Ready(Ok(json!(self.commands.ids().collect::<Vec<_>>()))),
