@@ -71,3 +71,11 @@ Drop into the editor (Shift while dragging files) is checked by `cargo test -p a
 ## Links
 
 `FILE=d.md`, steps `steps-links.json`. Pair `link-pair.png`: `https://example.com` underlined in the link color, as in the reference. The hover the step aims at shows in neither window, so the link hover is not compared.
+
+## Problems quick fix
+
+`FOLDER` a copy of port/fixtures/language-features/quickfix, `FILE=e.ts` (`Mathh.max(1, 2);`), steps `steps-problems-fix.json` (Cmd+Shift+M, Cmd+.). Pair `problems-fix-pair.png`: the selected marker's row with its light bulb, the "Change spelling to 'Math'" menu below it, the related information row, the squiggle and the editor light bulb, as in the reference. Fixed after the pair: the row's light bulb was the blue autofix icon; the reference draws the plain one in the row's color. Left: the reference's row has the focused selection colors while the menu is open, the port the unfocused ones.
+
+## Snippets file schema
+
+`FOLDER` a copy of port/fixtures/language-features/snippets, `FILE=.vscode/a.code-snippets` (`"prefix": 1`), steps `steps-snippets-schema.json`. Pair `snippets-schema-pair.png`: `Incorrect type. Expected one of string, array.` at Ln 3, Col 13 from the served `vscode://schemas/snippets`, as in the reference.

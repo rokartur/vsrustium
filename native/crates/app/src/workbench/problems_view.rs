@@ -828,7 +828,7 @@ impl Workbench {
         let severity = severity.when(selected && quick_fix.is_some(), |icon| icon.invisible());
         let light_bulb = quick_fix.map(|light_bulb| {
             let bounds = if selected { self.problems.selected_light_bulb.clone() } else { Rc::default() };
-            self.icon(light_bulb, 20., 20., self.color(if light_bulb == "lightbulb" { "editorLightBulb.foreground" } else { "editorLightBulbAutoFix.foreground" }))
+            self.icon(light_bulb, 20., 20., self.foreground_or("foreground"))
                 .id("problems-quick-fix")
                 .absolute()
                 .left(px(4.))

@@ -60,11 +60,12 @@ impl Workbench {
         }));
     }
 
-    /// The light bulb of `marker`'s row: `lightbulb-autofix` when a fix is preferred, `None` without fixes.
+    /// The light bulb of `marker`'s row, `None` without fixes. `QuickFixAction.autoFixable` only adds a class no CSS
+    /// rule styles, and markers.css colors `codicon-light-bulb`, not the `codicon-lightbulb` the action has, so the
+    /// icon is always the plain one in the row's color.
     pub(super) fn problems_quick_fix_icon(&self, marker: &Marker) -> Option<&'static str> {
         let fixes = &self.problems_quick_fixes;
-        let set = fixes.set.as_ref().filter(|_| fixes.marker.as_deref() == Some(marker))?;
-        Some(if set.has_auto_fix { "lightbulb-autofix" } else { "lightbulb" })
+        fixes.set.as_ref().filter(|_| fixes.marker.as_deref() == Some(marker)).map(|_| "lightbulb")
     }
 
     /// `QuickFixActionViewItem.showQuickFixes`: the fixes' titles in a context menu 10px right of and 4px below the

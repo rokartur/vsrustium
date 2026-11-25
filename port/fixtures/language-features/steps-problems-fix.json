@@ -1,0 +1,1 @@
+[{"wait": 14000}, {"hotkey": ["cmd", "shift", "m"]}, {"wait": 2000}, {"hotkey": ["cmd", "."]}, {"wait": 2500}, {"shot": "problems-fix"}, {"key": "escape"}]
