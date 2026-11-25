@@ -2,7 +2,7 @@
 //! paths exist (terminalLinkParsing.ts). Ports the Linux and macOS branches only. Every `index`
 //! counts chars, where upstream counts UTF-16 code units: the two differ only outside the BMP.
 
-#![allow(dead_code, reason = "the terminal view wires the links next")]
+#![allow(dead_code, reason = "suffix helpers serve the link hover and quick access, not ported yet")]
 
 use std::sync::LazyLock;
 

@@ -2,8 +2,6 @@
 //! URI link detector (terminalUriLinkDetector.ts). Columns count chars, where upstream counts UTF-16
 //! code units: the two differ only for chars outside the BMP.
 
-#![allow(dead_code, reason = "the terminal view wires the links next")]
-
 /// `ILink` on one line: 1-based `line_number`, 1-based `start_column`, exclusive `end_column`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Link {
