@@ -349,6 +349,7 @@ impl Workbench {
         self.register_terminal_history_actions();
         self.register_terminal_sticky_scroll_actions();
         self.register_terminal_environment_actions();
+        self.register_terminal_decoration_actions();
         self.register_terminal_find_actions();
     }
 
@@ -989,6 +990,7 @@ impl Workbench {
             .child(canvas(|_, _, _| {}, move |bounds, _, window, cx| entity.update(cx, |workbench, _| workbench.paint_terminal_pane(id, bounds, window))).size_full())
             .children(self.terminal_sticky_scroll_hit_area(id, cx))
             .children(self.terminal_resize_overlay(id))
+            .children(self.terminal_decorations(id, cx))
             .on_hover(cx.listener(move |workbench, hovered: &bool, _, cx| {
                 workbench.terminal_view.hovered = hovered.then_some(id);
                 cx.notify();

@@ -249,7 +249,6 @@ impl QuickInput {
         }
     }
 
-    #[cfg(test)]
     pub fn items(&self) -> &[Entry] {
         &self.items
     }

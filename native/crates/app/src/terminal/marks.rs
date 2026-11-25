@@ -15,6 +15,15 @@ impl TerminalInstance {
         marks
     }
 
+    /// The commands the gutter decorates: each finished one (its index in `commands`) at its prompt line with its
+    /// exit code, then the prompt being entered or run, without either.
+    pub fn decorated_commands(&self) -> Vec<(Option<usize>, i64, Option<i32>)> {
+        let finished = self.commands.iter().enumerate().filter_map(|(index, command)| Some((Some(index), command.prompt_line.or(command.command_line)?, command.exit_code)));
+        let mut decorated: Vec<_> = finished.collect();
+        decorated.extend(self.current.prompt_line.map(|line| (None, line, None)));
+        decorated
+    }
+
     /// The mark above the viewport top, else the top of the buffer.
     pub fn scroll_to_previous_mark(&mut self) {
         let viewport_y = self.viewport_y();
@@ -72,5 +81,6 @@ mod tests {
         assert_eq!(viewport(&instance), 10);
         instance.scroll_to_next_mark();
         assert_eq!(viewport(&instance), 16, "past the last mark: the bottom");
+        assert_eq!(instance.decorated_commands(), [(Some(0), 0, Some(0)), (Some(1), 10, Some(0)), (None, 20, None)]);
     }
 }

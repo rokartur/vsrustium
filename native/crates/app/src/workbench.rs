@@ -84,6 +84,7 @@ mod terminal_links;
 mod terminal_suggest;
 mod terminal_quick_access;
 mod terminal_history;
+mod terminal_decorations;
 mod terminal_environment;
 mod terminal_resize_overlay;
 mod output_compound;

@@ -39,13 +39,11 @@ pub struct TerminalCompletionModel {
     line_context: LineContext,
     filtered: Option<Vec<TerminalCompletionItem>>,
     refilter: Refilter,
-    /// `stats.pLabelLen`: the 85th percentile of the filtered label lengths.
-    label_length_percentile: usize,
 }
 
 impl TerminalCompletionModel {
     pub fn new(items: Vec<TerminalCompletionItem>, line_context: LineContext) -> Self {
-        Self { items, line_context, filtered: None, refilter: Refilter::All, label_length_percentile: 0 }
+        Self { items, line_context, filtered: None, refilter: Refilter::All }
     }
 
     /// The filtered and sorted items.
@@ -59,12 +57,15 @@ impl TerminalCompletionModel {
         self.filtered.as_deref().unwrap_or_default()
     }
 
-    /// `stats.pLabelLen`.
+    /// `stats.pLabelLen`; the widget does not size by it yet, the ported model tests read it.
+    #[cfg(test)]
     pub fn label_length_percentile(&mut self) -> usize {
         self.ensure_cached_state();
-        self.label_length_percentile
+        // `quickSelect(length - .85, ...)` truncates to the last index: the longest label.
+        self.filtered_items().iter().map(|item| item.completion.label.chars().count()).max().unwrap_or(0)
     }
 
+    #[cfg(test)]
     pub fn line_context(&self) -> &LineContext {
         &self.line_context
     }
@@ -108,7 +109,6 @@ impl TerminalCompletionModel {
         };
         let options = FuzzyScoreOptions { first_match_can_be_weak: true, ..FuzzyScoreOptions::default() };
         let mut target = Vec::new();
-        let mut label_lengths = Vec::new();
         for (index, mut item) in source.into_iter().enumerate() {
             if item.is_invalid {
                 continue;
@@ -137,15 +137,12 @@ impl TerminalCompletionModel {
                 }
             }
             item.idx = index;
-            label_lengths.push(item.completion.label.chars().count());
             target.push(item);
         }
         let leading_line_content = &self.line_context.leading_line_content;
         target.sort_by(|a, b| compare_completions(leading_line_content, a, b));
         self.filtered = Some(target);
         self.refilter = Refilter::Nothing;
-        // `quickSelect(length - .85, ...)` truncates to the last index: the longest label.
-        self.label_length_percentile = label_lengths.into_iter().max().unwrap_or(0);
     }
 }
 
