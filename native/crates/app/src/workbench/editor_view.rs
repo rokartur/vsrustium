@@ -1686,17 +1686,25 @@ impl Workbench {
         let search_editor = self.editors.active().is_some_and(|editor| editor.document().scheme == SEARCH_EDITOR_SCHEME);
         let items: Vec<_> = items.into_iter().filter(|(_, _, command)| !search_editor || !matches!(*command, "workbench.action.editor.changeEncoding" | "workbench.action.editor.changeLanguageMode")).collect();
         let language_index = items.iter().position(|(_, _, command)| *command == "workbench.action.editor.changeLanguageMode");
+        // languageStatus.ts: the combined entry sits left of the language entry, the pinned ones right of it.
+        let (combined, pinned) = match language_index {
+            Some(_) => self.language_status_items(foreground, cx),
+            None => (None, Vec::new()),
+        };
+        // statusbarpart.css `.compact-left`: the language entry next to the compact combined entry.
+        let compact_language = combined.is_some();
         let items = items.into_iter().enumerate().map(|(index, (label, tooltip, command))| {
+            let compact = compact_language && Some(index) == language_index;
             // The media preview's dimensions and file size entries have neither tooltip nor command.
             let hover = (!tooltip.is_empty()).then(|| self.hover_target(tooltip, super::hover::HoverContent::Text(tooltip.into()), super::hover::HoverOptions::status_bar()));
             let item = div()
                 .id(("editor-status", index))
                 .relative()
                 .h_full()
-                .w(text_width(&label) + px(10.))
+                .w(text_width(&label) + px(if compact { 6. } else { 10. }))
                 .flex_none()
-                .mx(px(3.))
-                .px(px(5.))
+                .when(!compact, |item| item.mx(px(3.)).px(px(5.)))
+                .when(compact, |item| item.mr(px(5.)).px(px(3.)))
                 .flex()
                 .items_center()
                 .whitespace_nowrap()
@@ -1717,9 +1725,7 @@ impl Workbench {
             div().h_full().flex_none().rounded(px(4.)).text_color(prominent.1).when_some(prominent.0, |container, background| container.bg(background)).child(item).into_any_element()
         });
         let mut items: Vec<gpui::AnyElement> = items.collect();
-        // languageStatus.ts: the combined entry sits left of the language entry, the pinned ones right of it.
         if let Some(language_index) = language_index {
-            let (combined, pinned) = self.language_status_items(foreground, cx);
             items.splice(language_index + 1..language_index + 1, pinned);
             if let Some(combined) = combined {
                 items.insert(language_index, combined);

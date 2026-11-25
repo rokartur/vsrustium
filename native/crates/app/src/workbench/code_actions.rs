@@ -219,7 +219,10 @@ impl Workbench {
             "$registerDocumentLinkProvider" => self.links_model_changed(cx),
             "$registerLinkedEditingRangeProvider" => self.linked_editing_reinitialize(false, cx),
             "$registerDocumentSemanticTokensProvider" | "$registerDocumentRangeSemanticTokensProvider" => self.semantic_tokens_providers_changed(cx),
-            "$registerDocumentFormattingSupport" | "$registerRangeFormattingSupport" => self.formatters_changed(),
+            "$registerDocumentFormattingSupport" | "$registerRangeFormattingSupport" => {
+                self.formatters_changed();
+                self.refresh_language_status(cx);
+            }
             _ => {}
         }
     }

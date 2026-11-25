@@ -107,7 +107,9 @@ fn pinning_moves_a_status_into_its_own_entry_and_persists(cx: &mut TestAppContex
     warning["command"] = json!({ "id": "lint.run", "title": "Run", "arguments": [1] });
     set(&workbench, cx, 1, warning);
     set(&workbench, cx, 2, status("other", 1, "S", json!("*")));
-    assert!(hover_markdown(&view(&workbench, cx)).contains("[Add to Status Bar](command:_languageStatus.pin?%5B%22lint%22%5D)"));
+    let rows = hover_rows(&view(&workbench, cx));
+    assert_eq!(rows[0], HoverRow { severity: Some(("info", Some("notificationsInfoIcon.foreground"))), label: "$(check) lint".into(), detail: String::new(), command: Some(("Run".into(), "lint.run".into(), vec![json!(1)])), pinned: false, id: "lint".into() });
+    assert_eq!((rows[1].severity, rows[1].pinned), (Some(("check", None)), false));
 
     run(&workbench, cx, PIN, "lint");
     let pinned = view(&workbench, cx);
@@ -116,9 +118,7 @@ fn pinning_moves_a_status_into_its_own_entry_and_persists(cx: &mut TestAppContex
     assert_eq!(stored(&workbench, cx, KEY_DEDICATED_ITEMS).as_deref(), Some(r#"["lint"]"#));
     let entry = dedicated_entry(&pinned.dedicated[0]);
     assert_eq!((entry.entry_id.as_str(), entry.text.as_str(), entry.kind, entry.command), ("status.languageStatus.lint", "$(check) lint", Some("warning"), Some(json!({ "id": "lint.run", "arguments": [1] }))));
-    let hover = hover_markdown(&pinned);
-    assert!(hover.contains("[Run](command:lint.run?%5B1%5D)"));
-    assert!(hover.contains("[Remove from Status Bar](command:_languageStatus.unpin?%5B%22lint%22%5D)"));
+    assert!(hover_rows(&pinned)[0].pinned);
 
     run(&workbench, cx, UNPIN, "lint");
     assert!(view(&workbench, cx).dedicated.is_empty());

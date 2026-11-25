@@ -43,6 +43,8 @@ pub(super) enum Mode {
     Silent,
 }
 
+/// The Formatting status's Configure... command; upstream makes one id per status with a UUID suffix.
+pub(super) const CONFIGURE_DEFAULT_FORMATTER: &str = "formatter/configure/dfl";
 #[derive(Clone, Copy, PartialEq)]
 enum FormattingKind {
     File,
@@ -89,6 +91,27 @@ impl Workbench {
             workbench.execute_format_provider(&args, Some(range), cx)
         });
         self.commands.register("_executeFormatOnTypeProvider", |workbench, args, _, cx| workbench.execute_format_on_type_provider(&args, cx));
+        self.commands.register(CONFIGURE_DEFAULT_FORMATTER, |workbench, _, window, cx| {
+            if let Some(key) = workbench.active_model_key() {
+                let editor = workbench.editors.model(&key.scheme, &key.path).expect("the active model");
+                let formatters = workbench.document_formatters(editor);
+                let window = window.window_handle();
+                cx.spawn(async move |workbench, cx| pick_and_persist_default_formatter(workbench, window, formatters, key, cx).await).detach();
+            }
+            Outcome::done()
+        });
+    }
+
+    /// `DefaultFormatter._updateStatus`: why the active model's formatter cannot be picked, for the Formatting
+    /// language status.
+    pub(super) fn formatter_conflict(&self) -> Option<String> {
+        let key = self.active_model_key()?;
+        let editor = self.editors.model(&key.scheme, &key.path)?;
+        let formatters = self.document_formatters(editor);
+        if formatters.is_empty() {
+            return None;
+        }
+        self.analyze_formatter(&formatters, &key, FormattingKind::File).err()
     }
 
     /// `editorHasDocumentFormattingProvider` and its relatives (editorContextKeys.ts, `EditorContextKeysManager`).
