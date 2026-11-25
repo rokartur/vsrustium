@@ -360,6 +360,12 @@ impl Workbench {
             context.insert("messageVisible".into(), json!(self.editor_message_visible()));
             context.insert("markersNavigationVisible".into(), json!(self.markers_navigation_visible()));
             context.insert("editorHoverVisible".into(), json!(self.content_hover_visible()));
+            self.suggest_context(&mut context);
+            self.snippet_context(&mut context);
+            self.parameter_hints_context(&mut context);
+            self.code_actions_context(&mut context);
+            self.action_widget_context(&mut context);
+            self.code_lens_context(&mut context);
             context.insert("editorHasSelection".into(), json!(editor.selections.iter().any(|selection| !selection.is_empty())));
             context.insert("editorHasMultipleSelections".into(), json!(editor.selections.len() > 1));
             context.insert("selectionAnchorSet".into(), json!(editor.selection_anchor.is_some()));

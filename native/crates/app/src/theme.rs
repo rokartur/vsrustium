@@ -337,7 +337,8 @@ fn from_hsla(h: f64, s: f64, l: f64, a: f64) -> Rgba {
     Rgba { r: byte(r), g: byte(g), b: byte(b), a: a as f32 }
 }
 
-enum ColorValue {
+#[derive(Clone, Copy)]
+pub(crate) enum ColorValue {
     None,
     Hex(&'static str),
     Key(&'static str),
@@ -362,6 +363,14 @@ const MINIMAP_SELECTION: ColorValue = ColorValue::Key("editor.selectionBackgroun
 /// (theme.ts, baseColors.ts, editorColors.ts, miscColors.ts, minimapColors.ts). Keys not listed resolve to no color.
 fn registry_default(key: &str, kind: ThemeKind) -> ColorValue {
     use ColorValue::*;
+    if let Some([dark, light, hc, hc_light]) = crate::symbol_icons::color_default(key) {
+        return match kind {
+            ThemeKind::Dark => dark,
+            ThemeKind::Light => light,
+            ThemeKind::HighContrastDark => hc,
+            ThemeKind::HighContrastLight => hc_light,
+        };
+    }
     if kind == ThemeKind::HighContrastLight {
         return hc_light_default(key);
     }
@@ -851,6 +860,12 @@ fn quick_input_default(key: &str) -> (ColorValue, ColorValue, ColorValue) {
         "editorHoverWidget.background" => (Key("editorWidget.background"), Key("editorWidget.background"), Key("editorWidget.background")),
         "editorHoverWidget.foreground" => (Key("editorWidget.foreground"), Key("editorWidget.foreground"), Key("editorWidget.foreground")),
         "editorHoverWidget.border" => (Key("editorWidget.border"), Key("editorWidget.border"), Key("editorWidget.border")),
+        "editorHoverWidget.highlightForeground" => (Key("list.highlightForeground"), Key("list.highlightForeground"), Key("list.highlightForeground")),
+        "editorLightBulb.foreground" => (Hex("#FFCC00"), Hex("#DDB100"), Hex("#FFCC00")),
+        "editorCodeLens.foreground" => (Hex("#999999"), Hex("#919191"), Hex("#999999")),
+        "editorLink.activeForeground" => (Hex("#4E94CE"), Hex("#0000FF"), Hex("#00FFFF")),
+        "editorLightBulbAutoFix.foreground" => (Hex("#75BEFF"), Hex("#007ACC"), Hex("#75BEFF")),
+        "editorLightBulbAi.foreground" => (Key("editorLightBulb.foreground"), Key("editorLightBulb.foreground"), Key("editorLightBulb.foreground")),
         // `lighten(editorHoverBackground, 0.2)` is a darken by -0.2: both scale the lightness by the factor.
         "editorHoverWidget.statusBarBackground" => (Darken(&Key("editorHoverWidget.background"), -0.2), Darken(&Key("editorHoverWidget.background"), 0.05), Key("editorWidget.background")),
         "editor.hoverHighlightBackground" => (Hex("#264f7840"), Hex("#ADD6FF26"), Hex("#ADD6FF26")),
@@ -966,6 +981,10 @@ fn quick_input_default_hc_light(key: &str) -> ColorValue {
         "editorHoverWidget.background" => Key("editorWidget.background"),
         "editorHoverWidget.foreground" => Key("editorWidget.foreground"),
         "editorHoverWidget.border" => Key("editorWidget.border"),
+        "editorHoverWidget.highlightForeground" => Key("list.highlightForeground"),
+        "editorLightBulb.foreground" | "editorLightBulbAutoFix.foreground" => Hex("#007ACC"),
+        "editorCodeLens.foreground" | "editorLink.activeForeground" => Hex("#292929"),
+        "editorLightBulbAi.foreground" => Key("editorLightBulb.foreground"),
         "textCodeBlock.background" => Hex("#F2F2F2"),
         "textLink.foreground" | "textLink.activeForeground" => Hex("#0F4A85"),
         "list.focusOutline" => Key("contrastActiveBorder"),

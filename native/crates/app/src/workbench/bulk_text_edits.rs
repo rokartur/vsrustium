@@ -66,7 +66,7 @@ impl Workbench {
             let change = if in_active_editor && replaces.iter().any(|replace| replace.3) {
                 let templates: Vec<String> = replaces.iter().map(|&(_, _, text, is_snippet, _)| if is_snippet { text.to_string() } else { escape_snippet(text) }).collect();
                 let snippets: Vec<_> = replaces.iter().zip(&templates).map(|(&(start, end, _, _, keep_whitespace), template)| (start, end, template.as_str(), keep_whitespace)).collect();
-                let (edits, selections) = snippet_edits(model, &snippets, clipboard.as_deref());
+                let (edits, selections, _) = snippet_edits(model, &snippets, clipboard.as_deref());
                 model.execute_edits(edits, Some(selections), EditReason::Unknown("snippet"))
             } else {
                 let indentation = model.document.indentation;
@@ -201,6 +201,6 @@ pub(super) fn document_end(lines: &[String]) -> Position {
 }
 
 /// `SnippetParser.escape`: the text inserts as it is.
-fn escape_snippet(text: &str) -> String {
+pub(super) fn escape_snippet(text: &str) -> String {
     text.replace('\\', "\\\\").replace('$', "\\$").replace('}', "\\}")
 }

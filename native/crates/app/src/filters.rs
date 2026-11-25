@@ -479,6 +479,49 @@ impl Default for FuzzyScoreOptions {
     }
 }
 
+impl FuzzyScore {
+    /// `FuzzyScore.Default`: the rank of an item scored against an empty word.
+    pub fn default_score() -> Self {
+        Self { score: -100, word_start: 0, positions: Vec::new() }
+    }
+}
+
+/// `anyScore`: the first pattern suffix (from at most 13 chars) that matches, else a zero score.
+pub fn any_score(pattern: &str, pattern_low: &str, pattern_start: usize, word: &str, word_low: &str, word_start: usize) -> FuzzyScore {
+    let max = pattern.chars().count().min(13);
+    for start in pattern_start..max {
+        let options = FuzzyScoreOptions { first_match_can_be_weak: true, boost_full_match: true };
+        if let Some(score) = fuzzy_score(pattern, pattern_low, start, word, word_low, word_start, options) {
+            return score;
+        }
+    }
+    FuzzyScore { score: 0, word_start, positions: Vec::new() }
+}
+
+/// `fuzzyScoreGracefulAggressive`: also tries up to 7 patterns with two neighbouring chars swapped, at 3 points less.
+pub fn fuzzy_score_graceful_aggressive(pattern: &str, pattern_low: &str, pattern_start: usize, word: &str, word_low: &str, word_start: usize, options: FuzzyScoreOptions) -> Option<FuzzyScore> {
+    let mut top = fuzzy_score(pattern, pattern_low, pattern_start, word, word_low, word_start, options);
+    let chars: Vec<char> = pattern.chars().collect();
+    if chars.len() < 3 {
+        return top;
+    }
+    let tries = (chars.len() - 1).min(7);
+    for moving in pattern_start + 1..tries {
+        if moving + 1 >= chars.len() || chars[moving] == chars[moving + 1] {
+            continue;
+        }
+        let mut permuted = chars.clone();
+        permuted.swap(moving, moving + 1);
+        let permuted: String = permuted.into_iter().collect();
+        if let Some(mut candidate) = fuzzy_score(&permuted, &permuted.to_lowercase(), pattern_start, word, word_low, word_start, options) {
+            candidate.score -= 3;
+            if top.as_ref().is_none_or(|top| candidate.score > top.score) {
+                top = Some(candidate);
+            }
+        }
+    }
+    top
+}
 pub fn create_matches(score: Option<&FuzzyScore>) -> Matches {
     let Some(score) = score else {
         return vec![];
@@ -614,7 +657,7 @@ pub fn fuzzy_score(pattern: &str, pattern_low: &str, pattern_start: usize, word:
     Some(result)
 }
 
-fn is_pattern_in_word(pattern_low: &[char], mut pattern_pos: usize, pattern_len: usize, word_low: &[char], mut word_pos: usize, word_len: usize, min_word_match_pos: &mut [usize]) -> bool {
+pub fn is_pattern_in_word(pattern_low: &[char], mut pattern_pos: usize, pattern_len: usize, word_low: &[char], mut word_pos: usize, word_len: usize, min_word_match_pos: &mut [usize]) -> bool {
     while pattern_pos < pattern_len && word_pos < word_len {
         if pattern_low[pattern_pos] == word_low[word_pos] {
             min_word_match_pos[pattern_pos] = word_pos;

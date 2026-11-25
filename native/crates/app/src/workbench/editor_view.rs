@@ -511,6 +511,10 @@ impl Workbench {
             .children(self.find_widget(self.editors.viewport.width + metrics.content_left() + minimap_width, metrics.content_left(), minimap_width, window, cx))
             .children(self.editor_message_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
             .children(self.content_hover_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
+            .children(self.parameter_hints_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
+            .children(self.lightbulb_widget(editor, metrics.content_left(), metrics.char_width, cx))
+            .children(self.code_lens_widgets(editor, metrics.content_left(), metrics.char_width, cx))
+            .children(self.suggest_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
             .children(self.keybindings_file_widgets(editor, self.editors.viewport.width + metrics.content_left() + minimap_width, viewport.height, minimap_width, window, cx))
     }
 
@@ -578,6 +582,9 @@ impl Workbench {
             blurred_at.set(Some((editor.model_id, editor.version_id)));
         }
         self.editor_blurred_auto_save(cx);
+        self.suggest_editor_blurred(cx);
+        self.cancel_parameter_hints(cx);
+        self.code_actions_editor_blurred(cx);
         cx.notify();
     }
 
@@ -649,6 +656,7 @@ impl Workbench {
         self.host.send_visible_ranges(&self.editors);
         self.reveal_scrollbars(cx);
         self.minimap_scrolled(cx);
+        self.code_lens_scrolled(cx);
         cx.notify();
     }
 
@@ -993,6 +1001,8 @@ impl Workbench {
                     content = content.child(highlight);
                 }
                 content = content.children(self.content_hover_highlight(editor, index, char_width));
+                content = content.children(self.code_action_highlights(editor, index, char_width));
+                content = content.children(self.snippet_placeholder_highlights(editor, index, char_width));
                 // bracketMatching.css .bracket-match: background and a 1px border inside the bracket's box.
                 for (_, bytes) in bracket_matches.iter().flat_map(|(pair, _)| pair).filter(|(line, _)| *line == index) {
                     let start = visible_column(text, text[..bytes.start].chars().count(), tab_size) as f32 * char_width;
@@ -1172,7 +1182,7 @@ impl Workbench {
                     .flex()
                     .children(self.diff_margin(editor, index, metrics))
                     .children(self.quick_diff_glyph(editor, index, metrics))
-                    .child(self.gutter_mouse(div().w(px(metrics.glyph_margin_width())).h_full().flex_none(), index, cx))
+                    .child(self.gutter_mouse(div().w(px(metrics.glyph_margin_width())).h_full().flex_none().children(self.lightbulb_glyph(editor, index, metrics.line_height, cx)), index, cx))
                     .child(self.gutter_mouse(number, index, cx))
                     .child(self.fold_control(index, collapsed, metrics, fold_control_color, fold_controls, cx))
                     .child(content)
@@ -1429,7 +1439,7 @@ impl Workbench {
         let quick_diff = self.quick_diff_ruler_lines(editor);
         let border = self.theme.color("editorOverviewRuler.border");
         let Viewport { top_whitespace, line_height, .. } = self.editors.viewport;
-        let zones: Vec<(usize, f32)> = editor.view_zones.iter().map(|zone| (zone.anchor.map_or(0, |anchor| anchor.line + 1), zone.height)).collect();
+        let zones: Vec<(usize, f32)> = editor.view_zones.iter().map(|zone| (zone.anchor.map_or(0, |anchor| anchor.line + usize::from(!zone.before)), zone.height)).collect();
         let line_top = move |line: usize| top_whitespace + line as f32 * line_height + zones.iter().filter(|zone| zone.0 <= line).map(|zone| zone.1).sum::<f32>();
         canvas(
             |_, _, _| {},

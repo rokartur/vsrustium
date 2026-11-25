@@ -85,6 +85,7 @@ impl Workbench {
         self.update_marker_decorations(Some(&resources));
         self.marker_navigation_markers_changed();
         self.auto_save_markers_changed(&resources, cx);
+        self.code_actions_markers_changed(&resources, cx);
         cx.notify();
     }
 

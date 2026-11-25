@@ -41,19 +41,41 @@ impl LanguageFeatures {
         self.registrations.push(Registration { handle, method: method.to_owned(), args, time: self.clock });
     }
 
-    pub fn unregister(&mut self, handle: u64) {
-        self.registrations.retain(|registration| registration.handle != handle);
+    /// Removes the registration of `handle`; answers its method.
+    pub fn unregister(&mut self, handle: u64) -> Option<String> {
+        let index = self.registrations.iter().position(|registration| registration.handle == handle)?;
+        Some(self.registrations.remove(index).method)
+    }
+
+    pub fn registration(&self, handle: u64) -> Option<&Registration> {
+        self.registrations.iter().find(|registration| registration.handle == handle)
     }
 
     /// `LanguageFeatureRegistry.ordered`: the providers registered with `method` whose selector matches, best score
     /// first, then extension providers before built-in ones, then the newest; an exclusive selector that matches
     /// takes the model alone.
     pub fn ordered(&self, method: &str, candidate: &Candidate) -> Vec<&Registration> {
+        self.scored(method, candidate).into_iter().map(|(_, registration)| registration).collect()
+    }
+
+    /// `orderedGroups`: `ordered` split into runs of equal score.
+    pub fn ordered_groups(&self, method: &str, candidate: &Candidate) -> Vec<Vec<&Registration>> {
+        let mut groups: Vec<(u32, Vec<&Registration>)> = Vec::new();
+        for (value, registration) in self.scored(method, candidate) {
+            match groups.last_mut() {
+                Some((last, group)) if *last == value => group.push(registration),
+                _ => groups.push((value, vec![registration])),
+            }
+        }
+        groups.into_iter().map(|(_, group)| group).collect()
+    }
+
+    fn scored(&self, method: &str, candidate: &Candidate) -> Vec<(u32, &Registration)> {
         let mut scored: Vec<(u32, &Registration)> = Vec::new();
         for registration in self.registrations.iter().filter(|registration| registration.method == method) {
             let value = score(registration.selector(), candidate.uri, candidate.language, true);
             if value > 0 && is_exclusive(registration.selector()) {
-                return vec![registration];
+                return vec![(value, registration)];
             }
             if value > 0 {
                 scored.push((value, registration));
@@ -62,7 +84,7 @@ impl LanguageFeatures {
         scored.sort_by(|(a_score, a), (b_score, b)| {
             b_score.cmp(a_score).then(is_builtin(a.selector()).cmp(&is_builtin(b.selector()))).then(b.time.cmp(&a.time))
         });
-        scored.into_iter().map(|(_, registration)| registration).collect()
+        scored
     }
 }
 

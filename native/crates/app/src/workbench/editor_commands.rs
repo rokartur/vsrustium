@@ -119,8 +119,12 @@ impl Workbench {
             if !workbench.editor_focus.is_focused(window) || workbench.edit_blocked(true, cx) {
                 return Outcome::done();
             }
+            workbench.suggest_will_type(&text, window, cx);
             let overtype = workbench.overtype;
-            workbench.run_indenting(|editor, auto| editor.type_keyboard(&text, auto, overtype), cx)
+            let outcome = workbench.run_indenting(|editor, auto| editor.type_keyboard(&text, auto, overtype), cx);
+            workbench.suggest_typed(cx);
+            workbench.parameter_hints_typed(&text, cx);
+            outcome
         });
         for &id in commands::IDS {
             // multicursor.ts FocusNextCursor/FocusPreviousCursor do nothing in a read-only editor.

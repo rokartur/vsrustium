@@ -64,6 +64,15 @@ impl Workbench {
         if scrolled {
             self.editor_scrolled(cx);
         }
+        self.snippet_state_changed(cx);
+        self.suggest_editor_changed(change.is_some(), source, cx);
+        self.parameter_hints_editor_changed(source, cx);
+        if moved || change.is_some() {
+            self.code_actions_cursor_changed(change.is_some(), cx);
+        }
+        if change.is_some() {
+            self.code_lens_content_changed(cx);
+        }
         cx.notify();
     }
 

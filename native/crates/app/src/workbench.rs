@@ -71,6 +71,15 @@ mod search_editor_widget;
 mod search_view;
 mod settings_editor_view;
 mod status_entries;
+mod parameter_hints;
+mod action_widget;
+mod code_actions;
+mod code_lens;
+mod inlay_hints;
+mod snippet_completions;
+mod snippet_controller;
+mod suggest_controller;
+mod suggest_widget;
 use status_entries::{EDITOR_STATUS_PRIORITY, PROBLEMS_PRIORITY};
 pub mod themes;
 mod quick_input_view;
@@ -184,6 +193,14 @@ pub struct Workbench {
     editor_message: editor_message::EditorMessages,
     marker_navigation: marker_navigation::MarkerNavigation,
     content_hover: content_hover::ContentHover,
+    suggest: suggest_controller::Suggest,
+    parameter_hints: parameter_hints::ParameterHints,
+    code_actions: code_actions::CodeActions,
+    action_widget: action_widget::ActionWidget,
+    code_lenses: code_lens::CodeLenses,
+    snippet_files: snippet_completions::SnippetFiles,
+    /// The snippet choice the controller last showed the suggest widget for.
+    snippet_choice_shown: Option<(crate::editor::Position, crate::editor::Position)>,
     /// The providers extensions registered through MainThreadLanguageFeatures.
     pub(crate) language_features: crate::language_features::LanguageFeatures,
     folding_providers: folding_providers::FoldingProviders,
@@ -295,6 +312,7 @@ impl Render for Workbench {
         let quick_input = self.quick_input_widget(window, cx);
         let notifications = self.notifications_widget(viewport, window, cx);
         let context_menu = self.context_menu_widget(cx);
+        let action_widget = self.action_widget(window, cx);
         let hover = self.hover_widget(window, cx);
         let dialog = self.custom_dialog_widget(window, cx);
         self.update_menubar(window, cx);
@@ -312,6 +330,7 @@ impl Render for Workbench {
             .children(notifications)
             .children(context_menu)
             .children(dialog)
+            .children(action_widget)
             .children(hover)
             .on_modifiers_changed(cx.listener(|workbench, event: &gpui::ModifiersChangedEvent, _, cx| workbench.hover_modifiers_changed(event.modifiers.alt, cx)))
             .child(self.aria_live_region())
@@ -372,6 +391,13 @@ impl Workbench {
             editor_message: Default::default(),
             marker_navigation: Default::default(),
             content_hover: Default::default(),
+            suggest: Default::default(),
+            parameter_hints: Default::default(),
+            code_actions: Default::default(),
+            action_widget: Default::default(),
+            code_lenses: Default::default(),
+            snippet_files: Default::default(),
+            snippet_choice_shown: None,
             language_features: Default::default(),
             folding_providers: Default::default(),
             readonly_overrides: Default::default(),
@@ -458,6 +484,13 @@ impl Workbench {
         workbench.register_preferences_commands();
         workbench.register_editor_message_commands();
         workbench.register_content_hover_commands();
+        workbench.register_suggest();
+        workbench.register_parameter_hints();
+        workbench.register_code_actions();
+        workbench.register_code_lens();
+        workbench.register_inlay_hints();
+        workbench.register_snippet_completions();
+        workbench.register_snippet_commands();
         workbench.register_marker_navigation_commands();
         workbench.register_define_keybinding_command();
         workbench.register_notifications_commands();
@@ -565,6 +598,8 @@ impl Workbench {
         self.schedule_keybinding_marks(cx);
         self.schedule_unsupported_settings_markers(cx);
         self.update_marker_decorations(None);
+        self.code_actions_model_changed(cx);
+        self.code_lens_model_changed(cx);
         self.sync_webview_panels();
         self.text_files_editors_changed();
         self.host.send_changes(&self.editors);

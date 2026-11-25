@@ -93,7 +93,7 @@ pub struct LanguageRules {
     electric: Option<ElectricBrackets>,
     /// The last char of each auto-closing pair's open (`autoClosingPairsOpenByEnd`).
     auto_closing_open_ends: Vec<char>,
-    /// `autoClosingPairs` as (open, close), the brackets without them.
+    /// `autoClosingPairs` (or the brackets) as (open, close).
     pub auto_closing_pairs: Vec<(String, String)>,
     /// `wordPattern`: `getWordAtPosition` falls back to the default word pattern without one.
     pub word_pattern: Option<onig::Regex>,
