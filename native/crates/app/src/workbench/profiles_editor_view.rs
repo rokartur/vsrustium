@@ -3,6 +3,7 @@
 //! (Use for Current Window, Use for New Windows, its contents and the folders and workspaces using it), or the form
 //! of a new profile (name, the profile to copy from, Create).
 
+use std::cell::Cell;
 use std::collections::{BTreeSet, HashSet};
 use std::rc::Rc;
 
@@ -11,6 +12,7 @@ use serde_json::{Value, json};
 use storage::profiles::{Options, Profile};
 
 use super::Workbench;
+use super::icon_select_box::{IconSelectBox, IconTarget};
 use super::input_box_view::{InputId, InputLook, InputView};
 use super::keybindings_editor_view::ModalHeader;
 use crate::commands::Outcome;
@@ -40,6 +42,11 @@ pub struct ProfilesEditor {
     pub name_focus: Option<FocusHandle>,
     pub focus: Option<FocusHandle>,
     expanded: HashSet<&'static str>,
+    pub icon_picker: Option<IconSelectBox>,
+    pub icon_search_focus: Option<FocusHandle>,
+    pub icon_grid_focus: Option<FocusHandle>,
+    /// The Icon row's icon, the picker's anchor.
+    icon_bounds: Rc<Cell<gpui::Bounds<gpui::Pixels>>>,
 }
 
 /// The form of a new profile: copied from a profile, or from an imported template.
@@ -49,6 +56,11 @@ pub struct NewProfile {
     pub error: Option<String>,
     /// The name the form gave, replaced when the source changes while the user kept it.
     default_name: String,
+    pub icon: Option<String>,
+    /// The source's icon, replaced as `default_name` is.
+    default_icon: Option<String>,
+    /// `previewProfile`: the profile Preview created, which Create keeps and Cancel removes.
+    preview: Option<Profile>,
     /// `flags`: the resources that use the Default profile's.
     use_default: BTreeSet<&'static str>,
     /// `copyFlags`: the resources copied from the source.
@@ -85,6 +97,7 @@ impl Workbench {
             workbench.import_profile(window, cx);
             Outcome::done()
         });
+        self.register_icon_select_box_commands();
     }
 
     pub(super) fn open_profiles_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -109,15 +122,18 @@ impl Workbench {
         let editor = &mut self.user_data_profiles.editor;
         editor.open = false;
         editor.new_profile = None;
+        editor.icon_picker = None;
         cx.notify();
     }
 
-    /// `createNewProfile(copyFrom)`: the new profile form, named after its source or "Untitled".
+    /// `createNewProfile(copyFrom)`: the new profile form, named after its source or "Untitled N", with its icon.
     fn start_new_profile(&mut self, copy_from: Option<String>, template: Option<Value>, window: &mut Window, cx: &mut Context<Self>) {
         let name = self.new_profile_default_name(copy_from.as_deref(), template.as_ref());
+        let icon = self.new_profile_default_icon(copy_from.as_deref(), template.as_ref());
         let copy = copy_flags(copy_from.as_deref(), template.as_ref());
         let editor = &mut self.user_data_profiles.editor;
-        editor.new_profile = Some(NewProfile { copy_from, template, error: None, default_name: name.clone(), use_default: BTreeSet::new(), copy });
+        editor.icon_picker = None;
+        editor.new_profile = Some(NewProfile { copy_from, template, error: None, default_name: name.clone(), icon: icon.clone(), default_icon: icon, preview: None, use_default: BTreeSet::new(), copy });
         editor.selected = None;
         editor.name = InputBox::new(name);
         editor.name.select_all();
@@ -157,47 +173,133 @@ impl Workbench {
         let editor = &mut self.user_data_profiles.editor;
         editor.selected = Some(profile.id.clone());
         editor.new_profile = None;
+        editor.icon_picker = None;
         editor.name = InputBox::new(profile.name.clone());
         editor.name_view.reset();
         cx.notify();
     }
 
-    /// `NewProfileElement.saveProfile`: creates the profile, copies or applies its contents and switches to it.
-    fn create_new_profile(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// `saveNewProfile(transient)`: Create keeps a previewed profile, else creates the profile (replacing the one of the
+    /// same name when the form copies from a source and the user confirms) and selects it; Preview creates it and opens
+    /// it in a new window, keeping the form.
+    fn save_new_profile(&mut self, preview: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some(new_profile) = &self.user_data_profiles.editor.new_profile else { return };
+        if let Some(previewed) = new_profile.preview.clone() {
+            if !preview {
+                self.finish_new_profile(&previewed, cx);
+            }
+            return;
+        }
+        if let Some(error) = self.new_profile_error() {
+            return self.set_new_profile_error(&error, cx);
+        }
         let name = self.user_data_profiles.editor.name.value.trim().to_owned();
-        let Some(state) = self.user_data_profiles.state.as_ref() else { return };
+        let profiles = self.user_data_profiles.state.as_ref().map(|state| state.profiles.profiles()).unwrap_or_default();
+        let existing = profiles.into_iter().find(|profile| profile.name == name && !profile.is_transient);
+        let Some(existing) = existing.filter(|_| !preview) else { return self.create_profile_from_form(None, preview, cx) };
+        // `getProfileToImport`: replacing asks first.
+        let message = format!("Profile with name '{name}' already exists. Do you want to replace its contents?");
+        cx.spawn_in(window, async move |workbench, cx| {
+            if !super::explorer_actions::confirm(&workbench, cx, gpui::PromptLevel::Info, message, None, "Replace").await {
+                return;
+            }
+            let _ = workbench.update(cx, |workbench, cx| workbench.create_profile_from_form(Some(existing), false, cx));
+        })
+        .detach();
+    }
+
+    /// `NewProfileElement.validate`.
+    fn new_profile_error(&self) -> Option<String> {
+        let editor = &self.user_data_profiles.editor;
+        let new_profile = editor.new_profile.as_ref()?;
+        let name = editor.name.value.trim();
         if name.is_empty() {
-            return self.set_new_profile_error("Profile name is required and must be a non-empty value.", cx);
+            return Some("Profile name is required and must be a non-empty value.".into());
         }
-        if state.profiles.profiles().iter().any(|profile| profile.name == name) {
-            return self.set_new_profile_error(&format!("Profile with name {name} already exists."), cx);
+        let has_source = new_profile.copy_from.is_some() || new_profile.template.is_some();
+        let profiles = self.user_data_profiles.state.as_ref().map(|state| state.profiles.profiles()).unwrap_or_default();
+        if !has_source && profiles.iter().any(|profile| profile.name == name) {
+            return Some(format!("Profile with name {name} already exists."));
         }
-        let copy_from = new_profile.copy_from.clone().and_then(|id| state.profiles.profiles().into_iter().find(|profile| profile.id == id));
-        let icon = copy_from.as_ref().and_then(|profile| profile.icon.clone());
+        if ["settings", "keybindings", "tasks", "snippets", "extensions"].iter().all(|resource| new_profile.use_default.contains(resource)) {
+            return Some("The profile should contain at least one configuration.".into());
+        }
+        None
+    }
+
+    /// `createFromProfile`, `createProfileFromTemplate` or `createProfile` with the form's name, icon and flags; a
+    /// preview of a taken name gets the next free `<name> <n>`.
+    fn create_profile_from_form(&mut self, existing: Option<Profile>, preview: bool, cx: &mut Context<Self>) {
+        let Some(new_profile) = &self.user_data_profiles.editor.new_profile else { return };
+        let Some(state) = self.user_data_profiles.state.as_ref() else { return };
+        let profiles = state.profiles.profiles();
+        let mut name = self.user_data_profiles.editor.name.value.trim().to_owned();
+        if preview && profiles.iter().any(|profile| profile.name == name) {
+            name = format!("{name} {}", name_index(profiles.iter().map(|profile| profile.name.as_str()), &name));
+        }
+        let copy_from = new_profile.copy_from.clone().and_then(|id| profiles.into_iter().find(|profile| profile.id == id));
+        let icon = new_profile.icon.clone();
         let template = match (&new_profile.template, &copy_from) {
             (Some(template), _) => Some(template.clone()),
             (None, Some(from)) => Some(self.profile_template(from, &name)),
             (None, None) => None,
         };
         let template = template.map(|template| copied_template(template, &new_profile.copy, &new_profile.use_default));
-        let use_default_flags = (!new_profile.use_default.is_empty()).then(|| new_profile.use_default.iter().map(|resource| (resource.to_string(), true)).collect());
+        let use_default_flags: Option<storage::profiles::UseDefaultFlags> = (!new_profile.use_default.is_empty()).then(|| new_profile.use_default.iter().map(|resource| (resource.to_string(), true)).collect());
         let state = self.user_data_profiles.state.as_mut().expect("checked above");
-        let created = state.edit(|profiles, storage| profiles.create_named_profile(&name, Options { icon, use_default_flags, ..Options::default() }, None, storage));
-        let profile = match created {
-            Ok((profile, _)) => profile,
+        let saved = match existing {
+            Some(existing) if existing.is_default => Ok(existing),
+            Some(existing) => {
+                let update = storage::profiles::UpdateOptions { icon: Some(icon), use_default_flags: Some(use_default_flags.unwrap_or_default()), ..Default::default() };
+                state.edit(|profiles, storage| profiles.update_profile(&existing.id, update, storage)).map(|(profile, _)| profile)
+            }
+            None => state.edit(|profiles, storage| profiles.create_named_profile(&name, Options { icon, use_default_flags, ..Options::default() }, None, storage)).map(|(profile, _)| profile),
+        };
+        let profile = match saved {
+            Ok(profile) => profile,
             Err(error) => return self.set_new_profile_error(&error, cx),
         };
-        if let Some(template) = template {
-            match self.apply_profile_template(&template, &profile, cx) {
-                Ok(()) => {}
-                Err(error) => self.notify_error(error),
-            }
+        if let Some(template) = template
+            && let Err(error) = self.apply_profile_template(&template, &profile, cx)
+        {
+            self.notify_error(error);
         }
-        self.user_data_profiles.editor.new_profile = None;
-        self.user_data_profiles.editor.selected = Some(profile.id.clone());
+        if !preview {
+            return self.finish_new_profile(&profile, cx);
+        }
+        // shortcut: the preview profile is stored, not transient: each window is its own process, so a transient
+        // profile would not reach the preview window; Cancel removes it.
+        if let Some(new_profile) = &mut self.user_data_profiles.editor.new_profile {
+            new_profile.preview = Some(profile.clone());
+        }
         self.profiles_changed(cx);
-        self.switch_profile(&profile, window, cx);
+        drop(self.open_window_with_profile_flags(vec!["--profile".into(), profile.name.clone()]));
+        cx.notify();
+    }
+
+    /// `removeNewProfile` after a save: the created profile is selected.
+    fn finish_new_profile(&mut self, profile: &Profile, cx: &mut Context<Self>) {
+        let editor = &mut self.user_data_profiles.editor;
+        editor.new_profile = None;
+        editor.icon_picker = None;
+        editor.selected = Some(profile.id.clone());
+        editor.name = InputBox::new(profile.name.clone());
+        editor.name_view.reset();
+        self.profiles_changed(cx);
+        cx.notify();
+    }
+
+    /// `discardNewProfile`: removes the previewed profile, else closes the form.
+    fn discard_new_profile(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(new_profile) = &mut self.user_data_profiles.editor.new_profile else { return };
+        if let Some(previewed) = new_profile.preview.take() {
+            return self.remove_profile(&previewed, window, cx);
+        }
+        let editor = &mut self.user_data_profiles.editor;
+        editor.new_profile = None;
+        editor.icon_picker = None;
+        editor.selected = self.user_data_profiles.state.as_ref().map(|state| state.current.id.clone());
+        cx.notify();
     }
 
     /// The new profile's name for its source: the template's, "<profile> (Copy)", or "Untitled".
@@ -206,10 +308,44 @@ impl Workbench {
             return name.to_owned();
         }
         let profiles = self.user_data_profiles.state.as_ref().map(|state| state.profiles.profiles()).unwrap_or_default();
-        match copy_from.and_then(|id| profiles.into_iter().find(|profile| profile.id == id)) {
+        match copy_from.and_then(|id| profiles.iter().find(|profile| profile.id == id)) {
             Some(profile) => format!("{} (Copy)", profile.name),
-            None => "Untitled".to_owned(),
+            None => untitled_name(&profiles),
         }
+    }
+
+    /// The new profile's icon for its source: the template's or the copied profile's.
+    fn new_profile_default_icon(&self, copy_from: Option<&str>, template: Option<&Value>) -> Option<String> {
+        if let Some(template) = template {
+            return template["icon"].as_str().map(str::to_owned);
+        }
+        let profiles = self.user_data_profiles.state.as_ref().map(|state| state.profiles.profiles()).unwrap_or_default();
+        copy_from.and_then(|id| profiles.into_iter().find(|profile| profile.id == id)).and_then(|profile| profile.icon)
+    }
+
+    /// `root.icon = selectedIcon.id`: the new profile form keeps it, a profile saves it (`updateProfile`).
+    pub(super) fn set_profile_icon(&mut self, target: &IconTarget, icon: &str, cx: &mut Context<Self>) {
+        let id = match target {
+            IconTarget::NewProfile => {
+                if let Some(new_profile) = &mut self.user_data_profiles.editor.new_profile {
+                    new_profile.icon = Some(icon.to_owned());
+                }
+                return cx.notify();
+            }
+            IconTarget::Profile(id) => id,
+        };
+        let Some(state) = self.user_data_profiles.state.as_mut() else { return };
+        let update = storage::profiles::UpdateOptions { icon: Some(Some(icon.to_owned())), ..Default::default() };
+        match state.edit(|profiles, storage| profiles.update_profile(id, update, storage)) {
+            Ok((updated, _)) => {
+                if state.current.id == updated.id {
+                    state.current = updated;
+                }
+                self.profiles_changed(cx);
+            }
+            Err(error) => self.notify_error(error),
+        }
+        cx.notify();
     }
 
     /// `NewProfileResourceTreeRenderer`'s radio: [copy,] Default, None.
@@ -365,7 +501,7 @@ impl Workbench {
         let extensions = profile_template::apply_template(template, profile, &settings.registry, &settings.configuration, &mut global_state)?;
         drop(settings);
         let to_install: Vec<String> = extensions.iter().filter(|extension| extension["disabled"] != true).filter_map(|extension| extension["identifier"]["id"].as_str().map(str::to_owned)).collect();
-        self.user_data_profiles.pending_installs = to_install;
+        self.user_data_profiles.pending_installs.insert(profile.id.clone(), to_install);
         cx.notify();
         Ok(())
     }
@@ -373,14 +509,30 @@ impl Workbench {
     /// `exportProfile`: the template saved to a `.code-profile` file (FileUserDataProfileContentHandler).
     fn export_profile(&mut self, profile: Profile, window: &mut Window, cx: &mut Context<Self>) {
         let template = self.profile_template(&profile, &profile.name);
-        let file_name = format!("{}.{PROFILE_EXTENSION}", profile.name.replace('/', "-"));
+        self.save_profile_template(template, profile.name, window, cx);
+    }
+
+    /// `exportNewProfile`: the copied profile's contents under the form's name, icon and flags.
+    fn export_new_profile(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(new_profile) = &self.user_data_profiles.editor.new_profile else { return };
+        let Some(state) = &self.user_data_profiles.state else { return };
+        let Some(from) = new_profile.copy_from.as_ref().and_then(|id| state.profiles.profiles().into_iter().find(|profile| profile.id == *id)) else { return };
+        let name = self.user_data_profiles.editor.name.value.trim().to_owned();
+        let profile = Profile { name: name.clone(), icon: new_profile.icon.clone(), ..from };
+        let template = copied_template(self.profile_template(&profile, &name), &new_profile.copy, &new_profile.use_default);
+        self.save_profile_template(template, name, window, cx);
+    }
+
+    /// FileUserDataProfileContentHandler: the template saved to a picked `.code-profile` file.
+    fn save_profile_template(&mut self, template: Value, name: String, window: &mut Window, cx: &mut Context<Self>) {
+        let file_name = format!("{}.{PROFILE_EXTENSION}", name.replace('/', "-"));
         let picked = cx.prompt_for_new_path(&self.default_file_path(), Some(&file_name));
         cx.spawn_in(window, async move |workbench, cx| {
             let Ok(Ok(Some(path))) = picked.await else { return };
             let written = std::fs::write(&path, template.to_string());
             let _ = workbench.update(cx, |workbench, cx| {
                 match written {
-                    Ok(()) => drop(workbench.prompt_notification(crate::notifications::Severity::Info, format!("Profile '{}' was exported successfully.", profile.name), &[])),
+                    Ok(()) => drop(workbench.prompt_notification(crate::notifications::Severity::Info, format!("Profile '{name}' was exported successfully."), &[])),
                     Err(error) => workbench.notify_error(format!("{}: {error}", path.display())),
                 }
                 cx.notify();
@@ -470,27 +622,48 @@ impl Workbench {
         }
     }
 
-    /// The `...` actions of a profile row: Export..., Delete, Open in New Window.
+    /// The `...` actions of a profile row (`createProfileElement`'s secondary actions): Duplicate..., Export..., then
+    /// Delete for a profile that is not the default one.
     fn show_profile_actions(&mut self, profile: Profile, anchor: gpui::Bounds<gpui::Pixels>, window: &mut Window, cx: &mut Context<Self>) {
         let mut actions = Vec::new();
-        let mut register = |workbench: &mut Workbench, id: &str, title: &str, run: Box<dyn Fn(&mut Workbench, &mut Window, &mut Context<Workbench>)>| {
-            let id = format!("_profilesEditor.{id}");
-            workbench.commands.register(id.clone(), move |workbench, _, window, cx| {
-                run(workbench, window, cx);
-                Outcome::done()
-            });
-            actions.push(MenuAction::Command { id, title: title.into(), enabled: true, checked: false, alt: None });
-        };
+        let duplicate = profile.id.clone();
+        self.register_row_action(&mut actions, "duplicate", "Duplicate...", move |workbench, window, cx| workbench.start_new_profile(Some(duplicate.clone()), None, window, cx));
         let export = profile.clone();
-        register(self, "export", "Export...", Box::new(move |workbench, window, cx| workbench.export_profile(export.clone(), window, cx)));
+        self.register_row_action(&mut actions, "export", "Export...", move |workbench, window, cx| workbench.export_profile(export.clone(), window, cx));
         if !profile.is_default {
-            let delete = profile.clone();
-            register(self, "delete", "Delete", Box::new(move |workbench, window, cx| workbench.remove_profile(&delete, window, cx)));
+            actions.push(MenuAction::Separator);
+            self.register_row_action(&mut actions, "delete", "Delete", move |workbench, window, cx| workbench.confirm_remove_profile(profile.clone(), window, cx));
         }
-        let name = profile.name.clone();
-        register(self, "openInNewWindow", "Open in New Window", Box::new(move |workbench, _, _| drop(workbench.open_window_with_profile_flags(vec!["--profile".into(), name.clone()]))));
         let context = self.key_context(window);
         self.show_context_menu_actions(actions, &context, anchor, Vec::new(), window, cx);
+    }
+
+    /// The new profile row's `...` action: Export..., while the form copies from a profile.
+    fn show_new_profile_actions(&mut self, anchor: gpui::Bounds<gpui::Pixels>, window: &mut Window, cx: &mut Context<Self>) {
+        let mut actions = Vec::new();
+        self.register_row_action(&mut actions, "exportNew", "Export...", |workbench, window, cx| workbench.export_new_profile(window, cx));
+        let context = self.key_context(window);
+        self.show_context_menu_actions(actions, &context, anchor, Vec::new(), window, cx);
+    }
+
+    fn register_row_action(&mut self, actions: &mut Vec<MenuAction>, id: &str, title: &str, run: impl Fn(&mut Workbench, &mut Window, &mut Context<Workbench>) + 'static) {
+        let id = format!("_profilesEditor.{id}");
+        self.commands.register(id.clone(), move |workbench, _, window, cx| {
+            run(workbench, window, cx);
+            Outcome::done()
+        });
+        actions.push(MenuAction::Command { id, title: title.into(), enabled: true, checked: false, alt: None });
+    }
+
+    /// `removeProfile`: deletes after the confirmation.
+    fn confirm_remove_profile(&mut self, profile: Profile, window: &mut Window, cx: &mut Context<Self>) {
+        let message = format!("Are you sure you want to delete the profile '{}'?", profile.name);
+        cx.spawn_in(window, async move |workbench, cx| {
+            if super::explorer_actions::confirm(&workbench, cx, gpui::PromptLevel::Info, message, None, "Delete").await {
+                let _ = workbench.update_in(cx, |workbench, window, cx| workbench.remove_profile(&profile, window, cx));
+            }
+        })
+        .detach();
     }
 
     pub(super) fn profiles_editor_widget(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -499,12 +672,15 @@ impl Workbench {
         }
         let header = ModalHeader { icon: "settings", title: "Profiles", json_title: "", json_command: "" };
         let focus = self.user_data_profiles.editor.focus.clone()?;
-        Some(self.modal_editor_part(header, &focus, window, cx, |workbench, width, height, window, cx| workbench.profiles_editor_pane(width, height, window, cx)))
+        let modal = self.modal_editor_part(header, &focus, window, cx, |workbench, width, height, window, cx| workbench.profiles_editor_pane(width, height, window, cx));
+        let picker = self.icon_select_box_widget(self.user_data_profiles.editor.icon_bounds.get(), window, cx);
+        Some(div().absolute().inset_0().child(modal).children(picker).into_any_element())
     }
 
     fn profiles_editor_pane(&mut self, width: f32, _height: f32, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let Some(state) = &self.user_data_profiles.state else { return div().into_any_element() };
-        let profiles = state.profiles.profiles();
+        let previewed = self.user_data_profiles.editor.new_profile.as_ref().and_then(|new_profile| new_profile.preview.as_ref()).map(|profile| profile.id.clone());
+        let profiles: Vec<Profile> = state.profiles.profiles().into_iter().filter(|profile| Some(&profile.id) != previewed.as_ref()).collect();
         let current = state.current.clone();
         let sash = self.theme.color("profiles.sashBorder").or(self.theme.color("panel.border")).unwrap_or_default();
         let sidebar = self.profiles_sidebar(&profiles, &current, cx);
@@ -526,7 +702,7 @@ impl Workbench {
             .text_color(self.color("foreground"))
             .child(sidebar)
             .child(div().w(px(1.)).h_full().mt(px(35.)).bg(sash))
-            .child(div().id("profiles-contents").flex_1().min_w_0().h_full().overflow_y_scroll().child(contents))
+            .child(div().flex_1().min_w_0().h_full().flex().flex_col().child(contents))
             .into_any_element()
     }
 
@@ -567,16 +743,12 @@ impl Workbench {
                     })),
             );
         let selected = self.user_data_profiles.editor.selected.clone();
-        let new_profile = self.user_data_profiles.editor.new_profile.is_some().then(|| self.user_data_profiles.editor.name.value.clone());
         let mut rows: Vec<AnyElement> = Vec::new();
         for profile in profiles {
             let is_selected = selected.as_deref() == Some(profile.id.as_str());
             rows.push(self.profile_row(profile, profile.id == current.id, is_selected, cx).into_any_element());
         }
-        if let Some(name) = new_profile {
-            let row = div().h(px(ROW_HEIGHT)).flex().items_center().pl(px(20.)).bg(self.color("list.activeSelectionBackground")).child(self.icon(profile_icon(None), 22., 16., self.color("foreground"))).child(div().ml(px(5.)).italic().child(name));
-            rows.push(row.into_any_element());
-        }
+        rows.extend(self.new_profile_row(profiles, cx).map(IntoElement::into_any_element));
         div()
             .w(px(SIDEBAR_WIDTH))
             .h_full()
@@ -586,6 +758,47 @@ impl Workbench {
             .pl(px(20.))
             .child(div().h(px(40.)).flex().items_center().pl(px(18.)).pr(px(20.)).child(button))
             .child(div().mt(px(15.)).flex().flex_col().children(rows))
+    }
+
+    /// `ProfileElementRenderer` of the new profile: its icon, the italic name, the dirty dot, and its actions, Cancel
+    /// (the trash icon) and, while it copies from a profile, Export... in the `...` menu.
+    fn new_profile_row(&self, profiles: &[Profile], cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
+        let editor = &self.user_data_profiles.editor;
+        let new_profile = editor.new_profile.as_ref()?;
+        let foreground = self.foreground_or("list.activeSelectionForeground");
+        let exportable = new_profile.copy_from.as_ref().is_some_and(|id| profiles.iter().any(|profile| profile.id == *id));
+        let actions = div()
+            .flex_1()
+            .flex()
+            .justify_end()
+            .mr(px(10.))
+            .child(
+                self.icon("trash", 22., 16., foreground)
+                    .id("new-profile-cancel")
+                    .cursor_pointer()
+                    .child(self.hover_target("new-profile-cancel-hover", super::hover::HoverContent::Text("Cancel".into()), super::hover::HoverOptions::instant()))
+                    .on_click(cx.listener(|workbench, _, window, cx| workbench.discard_new_profile(window, cx))),
+            )
+            .when(exportable, |actions| {
+                actions.child(self.icon("ellipsis", 22., 16., foreground).id("new-profile-actions").cursor_pointer().on_click(cx.listener(|workbench, event: &gpui::ClickEvent, window, cx| {
+                    let anchor = gpui::Bounds::new(event.position(), gpui::size(px(1.), px(1.)));
+                    workbench.show_new_profile_actions(anchor, window, cx);
+                })))
+            });
+        let row = div()
+            .id("new-profile-row")
+            .h(px(ROW_HEIGHT))
+            .flex()
+            .items_center()
+            .pl(px(20.))
+            .cursor_pointer()
+            .text_color(foreground)
+            .bg(self.color("list.activeSelectionBackground"))
+            .child(self.icon(super::icon_select_box::profile_icon_file(new_profile.icon.as_deref()), 22., 16., foreground))
+            .child(div().ml(px(5.)).italic().truncate().child(editor.name.value.clone()))
+            .child(self.icon("circle-filled", 16., 16., foreground).ml(px(5.)))
+            .child(actions);
+        Some(row)
     }
 
     fn profile_row(&self, profile: &Profile, active: bool, selected: bool, cx: &mut Context<Self>) -> impl IntoElement + use<> {
@@ -619,7 +832,7 @@ impl Workbench {
             .when(selected, |row| row.bg(self.color("list.activeSelectionBackground")))
             .when(!selected, |row| row.hover(|row| row.bg(self.color("list.hoverBackground"))))
             .on_click(cx.listener(move |workbench, _, _, cx| workbench.select_profile(&select, cx)))
-            .child(self.icon(profile_icon(profile.icon.as_deref()), 22., 16., foreground))
+            .child(self.icon(super::icon_select_box::profile_icon_file(profile.icon.as_deref()), 22., 16., foreground))
             .child(div().ml(px(5.)).truncate().child(profile.name.clone()))
             .children(description)
             .when(selected || active, |row| row.child(actions))
@@ -668,14 +881,16 @@ impl Workbench {
         let add_folder = self.text_button("profile-add-folder", "Add Folder", cx, move |workbench, window, cx| workbench.add_profile_folder(add_folder_profile.clone(), window, cx));
         let folders = self.profile_row_container("Folders & Workspaces", div().flex().flex_col().child(div().line_height(px(18.)).opacity(0.9).child(description)).child(table).child(div().mt(px(8.)).flex().child(add_folder)));
         let name = (!profile.is_default).then(|| self.profile_row_container("Name", self.profile_name_input(window, cx)));
-        div().flex().flex_col().child(title).child(div().mt(px(15.)).ml(px(28.)).children(name).children(use_for_current).child(use_for_new).child(contents).child(folders))
+        let icon = (!profile.is_default).then(|| self.profile_row_container("Icon", self.profile_icon_row(profile.icon.as_deref(), IconTarget::Profile(profile.id.clone()), self.user_data_profiles.editor.icon_bounds.clone(), cx)));
+        let body = div().id("profile-body").flex_1().min_h_0().overflow_y_scroll().child(div().mt(px(15.)).ml(px(28.)).children(name).children(icon).children(use_for_current).child(use_for_new).child(contents).child(folders));
+        div().size_full().flex().flex_col().child(title).child(body)
     }
 
     fn new_profile_contents(&self, profiles: &[Profile], window: &Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let editor = &self.user_data_profiles.editor;
         let new_profile = editor.new_profile.as_ref().expect("the new profile form is shown");
         let name = self.profile_name_input(window, cx);
-        let error = new_profile.error.clone().map(|error| div().w(px(400.)).px(px(6.)).py(px(4.)).border_1().border_color(self.color("inputValidation.errorBorder")).bg(self.color("inputValidation.errorBackground")).child(error));
+        let error = new_profile.error.clone().or_else(|| self.new_profile_error()).map(|error| div().w(px(400.)).px(px(6.)).py(px(4.)).border_1().border_color(self.color("inputValidation.errorBorder")).bg(self.color("inputValidation.errorBackground")).child(error));
         let copy_from_name = match (&new_profile.template, &new_profile.copy_from) {
             (Some(template), _) => template["name"].as_str().unwrap_or_default().to_owned(),
             (None, Some(id)) => profiles.iter().find(|profile| profile.id == *id).map(|profile| profile.name.clone()).unwrap_or_default(),
@@ -717,26 +932,35 @@ impl Workbench {
                 }
             })
             .collect();
-        let create = self.text_button("profile-create", "Create", cx, |workbench, window, cx| workbench.create_new_profile(window, cx));
-        let cancel = self.text_button("profile-cancel", "Cancel", cx, |workbench, _, cx| {
-            let editor = &mut workbench.user_data_profiles.editor;
-            editor.new_profile = None;
-            editor.selected = workbench.user_data_profiles.state.as_ref().map(|state| state.current.id.clone());
-            cx.notify();
-        });
-        div()
-            .flex()
-            .flex_col()
-            .child(div().ml(px(27.)).h(px(40.)).flex().items_center().text_size(px(26.)).font_weight(FontWeight::SEMIBOLD).italic().child(editor.name.value.clone()))
+        let valid = self.new_profile_error().is_none();
+        let replaces = new_profile.copy_from.is_some() && profiles.iter().any(|profile| !profile.is_transient && profile.name == editor.name.value.trim());
+        let cancel = self.title_button("profile-cancel", "Cancel", false, true, cx, |workbench, window, cx| workbench.discard_new_profile(window, cx));
+        let preview = self.title_button("profile-preview", "Preview", false, valid && new_profile.preview.is_none(), cx, |workbench, window, cx| workbench.save_new_profile(true, window, cx));
+        let create = self.title_button("profile-create", if replaces { "Replace" } else { "Create" }, true, valid, cx, |workbench, window, cx| workbench.save_new_profile(false, window, cx));
+        let icon = self.profile_icon_row(new_profile.icon.as_deref(), IconTarget::NewProfile, editor.icon_bounds.clone(), cx);
+        let body = div()
+            .id("new-profile-body")
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll()
             .child(
                 div()
                     .mt(px(15.))
                     .ml(px(28.))
                     .child(self.profile_row_container("Name", div().flex().flex_col().gap(px(4.)).child(name).children(error)))
+                    .child(self.profile_row_container("Icon", icon))
                     .child(self.profile_row_container("Copy from", div().flex().flex_col().gap(px(4.)).child(div().opacity(0.9).child("Select the profile source from which you want to copy contents")).child(copy_from)))
-                    .child(self.profile_row_container("Contents", self.new_profile_source_contents(bullets, rows, cx)))
-                    .child(div().mt(px(10.)).flex().gap(px(8.)).child(create).child(cancel)),
-            )
+                    .child(self.profile_row_container("Contents", self.new_profile_source_contents(bullets, rows, cx))),
+            );
+        // `.profile-button-container`: the secondary buttons, then the primary one, under the scrolling tree.
+        let buttons = div().flex_none().mt(px(10.)).ml(px(30.)).py(px(12.)).flex().items_center().child(cancel).child(preview).child(create);
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .child(div().ml(px(27.)).h(px(40.)).flex_none().flex().items_center().text_size(px(26.)).font_weight(FontWeight::SEMIBOLD).italic().child(editor.name.value.clone()))
+            .child(body)
+            .child(buttons)
     }
 
     /// The Copy from dropdown: None, then the existing profiles.
@@ -750,8 +974,13 @@ impl Workbench {
             let id = format!("_profilesEditor.copyFrom.{index}");
             self.commands.register(id.clone(), move |workbench, _, _, cx| {
                 let name = workbench.new_profile_default_name(choice.as_deref(), None);
+                let icon = workbench.new_profile_default_icon(choice.as_deref(), None);
                 let editor = &mut workbench.user_data_profiles.editor;
                 if let Some(new_profile) = &mut editor.new_profile {
+                    if new_profile.icon == new_profile.default_icon {
+                        new_profile.icon = icon.clone();
+                    }
+                    new_profile.default_icon = icon.clone();
                     new_profile.copy_from = choice.clone();
                     new_profile.template = None;
                     new_profile.copy = copy_flags(choice.as_deref(), None);
@@ -857,6 +1086,33 @@ impl Workbench {
             .child(title.to_owned())
     }
 
+    /// A `.profile-button-container` button: `padding: 4px 10px; margin-right: 10px`, secondary or primary, dimmed and
+    /// inert while disabled.
+    fn title_button(&self, id: &'static str, label: &str, primary: bool, enabled: bool, cx: &mut Context<Self>, run: impl Fn(&mut Workbench, &mut Window, &mut Context<Workbench>) + 'static) -> gpui::Stateful<gpui::Div> {
+        let (background, foreground, hover) = match primary {
+            true => ("button.background", "button.foreground", "button.hoverBackground"),
+            false => ("button.secondaryBackground", "button.secondaryForeground", "button.secondaryHoverBackground"),
+        };
+        let hover = self.color(hover);
+        div()
+            .id(id)
+            .mr(px(10.))
+            .px(px(10.))
+            .py(px(4.))
+            .rounded(px(4.))
+            .bg(self.color(background))
+            .text_color(self.color(foreground))
+            .when(!enabled, |button| button.opacity(0.4))
+            .when(enabled, |button| {
+                button
+                    .cursor_pointer()
+                    .hover(move |button| button.bg(hover))
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(cx.listener(move |workbench, _, window, cx| run(workbench, window, cx)))
+            })
+            .child(label.to_owned())
+    }
+
     fn text_button(&self, id: &'static str, label: &str, cx: &mut Context<Self>, run: impl Fn(&mut Workbench, &mut Window, &mut Context<Workbench>) + 'static) -> gpui::Stateful<gpui::Div> {
         div()
             .id(id)
@@ -896,6 +1152,31 @@ fn copied_template(mut template: Value, copy: &BTreeSet<&'static str>, use_defau
     template
 }
 
+/// `getNewProfileName`: "Untitled" and one past the highest `Untitled <n>` of the profiles.
+fn untitled_name(profiles: &[Profile]) -> String {
+    format!("Untitled {}", name_index(profiles.iter().map(|profile| profile.name.as_str()), "Untitled"))
+}
+
+/// `getProfileNameIndex`: one past the highest `<n>` of the first `<name>\s(\d+)` in each profile's name.
+fn name_index<'a>(names: impl IntoIterator<Item = &'a str>, name: &str) -> u64 {
+    let mut highest = 0;
+    for profile in names {
+        let index = profile.match_indices(name).find_map(|(at, _)| numbered_suffix(&profile[at + name.len()..])).unwrap_or(0);
+        highest = highest.max(index);
+    }
+    highest + 1
+}
+
+/// `\s(\d+)` at the start of `rest`.
+fn numbered_suffix(rest: &str) -> Option<u64> {
+    let mut chars = rest.chars();
+    if !chars.next()?.is_whitespace() {
+        return None;
+    }
+    let digits: String = chars.take_while(char::is_ascii_digit).collect();
+    digits.parse().ok()
+}
+
 fn set_member(set: &mut BTreeSet<&'static str>, resource: &'static str, member: bool) {
     match member {
         true => set.insert(resource),
@@ -916,9 +1197,5 @@ fn import_items(value: &str) -> Vec<Entry> {
 }
 
 /// `DEFAULT_ICON`: a profile without an icon shows the settings gear.
-fn profile_icon(icon: Option<&str>) -> &str {
-    icon.unwrap_or("settings-gear")
-}
-
 #[cfg(test)]
 mod tests;

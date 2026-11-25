@@ -181,7 +181,7 @@ impl Workbench {
             return;
         }
         // The menu's own key handlers run before the window's keybindings.
-        if self.context_menu_key(keystroke, window, cx) || self.custom_dialog_key(keystroke, cx) || self.accessible_view_key(keystroke, window, cx) {
+        if self.context_menu_key(keystroke, window, cx) || self.custom_dialog_key(keystroke, cx) || self.accessible_view_key(keystroke, window, cx) || self.icon_select_box_key(keystroke, window, cx) {
             cx.stop_propagation();
             return;
         }

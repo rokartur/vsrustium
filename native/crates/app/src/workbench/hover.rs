@@ -81,6 +81,16 @@ impl HoverOptions {
         HoverOptions { max_height_ratio: 0.9, ..Self::instant() }
     }
 
+    /// getDefaultHoverDelegate('element'): above the target, after the hover delay.
+    pub fn element() -> Self {
+        HoverOptions { instant: false, ..Self::instant() }
+    }
+
+    /// `showInstantHover` with `HoverPosition.BELOW` and `showPointer`: the profile icon picker.
+    pub fn sticky_below() -> Self {
+        HoverOptions { position: HoverPosition::Below, ..Self::instant() }
+    }
+
     /// compositeBarActions.ts: `HoverStyle.Pointer` on the side away from the side bar.
     pub fn composite_bar(position: HoverPosition) -> Self {
         HoverOptions { position, follows_mouse: false, instant: false, group: Some("composite-bar-actions"), max_height_ratio: 0.5 }
@@ -399,7 +409,7 @@ impl Workbench {
 
     /// `.workbench-hover-pointer:after`: a 6px square turned 45 degrees, centered on the hover's edge, showing the
     /// hover's background and its two outer borders.
-    fn hover_pointer(&self, side: HoverPosition, origin: Point<f32>, size: Size<f32>, offset: f32) -> impl IntoElement {
+    pub(super) fn hover_pointer(&self, side: HoverPosition, origin: Point<f32>, size: Size<f32>, offset: f32) -> impl IntoElement {
         let half = POINTER_SIZE * std::f32::consts::SQRT_2;
         let (center, outward) = match side {
             HoverPosition::Right => (point(origin.x, origin.y + offset), point(-1f32, 0.)),

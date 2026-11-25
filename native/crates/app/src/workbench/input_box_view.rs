@@ -43,9 +43,10 @@ pub enum InputId {
     DebugConsole,
     TerminalFind,
     ProfileName,
+    IconSelectSearch,
 }
 
-const INPUTS: [InputId; 19] = [
+const INPUTS: [InputId; 20] = [
     InputId::QuickInput,
     InputId::Explorer,
     InputId::ExplorerFind,
@@ -65,6 +66,7 @@ const INPUTS: [InputId; 19] = [
     InputId::DebugConsole,
     InputId::TerminalFind,
     InputId::ProfileName,
+    InputId::IconSelectSearch,
 ];
 
 /// The view state of one input element.
@@ -134,6 +136,7 @@ impl Workbench {
             InputId::SettingsSearch => &self.settings_editor.search_view,
             InputId::SettingsValue => &self.settings_editor.value_view,
             InputId::ProfileName => &self.user_data_profiles.editor.name_view,
+            InputId::IconSelectSearch => self.user_data_profiles.editor.icon_picker.as_ref().map_or(&self.user_data_profiles.editor.name_view, |picker| &picker.search_view),
             InputId::SettingsListKey => &self.settings_editor.list.key_view,
             InputId::SettingsListValue => &self.settings_editor.list.value_view,
             InputId::DebugView => &self.debug_view.input_view,
@@ -160,6 +163,10 @@ impl Workbench {
             InputId::SettingsSearch => &mut self.settings_editor.search_view,
             InputId::SettingsValue => &mut self.settings_editor.value_view,
             InputId::ProfileName => &mut self.user_data_profiles.editor.name_view,
+            InputId::IconSelectSearch => match &mut self.user_data_profiles.editor.icon_picker {
+                Some(picker) => &mut picker.search_view,
+                None => &mut self.user_data_profiles.editor.name_view,
+            },
             InputId::SettingsListKey => &mut self.settings_editor.list.key_view,
             InputId::SettingsListValue => &mut self.settings_editor.list.value_view,
             InputId::DebugView => &mut self.debug_view.input_view,
@@ -186,6 +193,7 @@ impl Workbench {
             InputId::SettingsSearch => &self.settings_editor.search_focus,
             InputId::SettingsValue => &self.settings_editor.value_focus,
             InputId::ProfileName => self.user_data_profiles.editor.name_focus.as_ref().unwrap_or(&self.settings_editor.value_focus),
+            InputId::IconSelectSearch => self.user_data_profiles.editor.icon_search_focus.as_ref().unwrap_or(&self.settings_editor.value_focus),
             InputId::SettingsListKey => &self.settings_editor.list.key_focus,
             InputId::SettingsListValue => &self.settings_editor.list.value_focus,
             InputId::DebugView => &self.debug_view.input_focus,
@@ -212,6 +220,7 @@ impl Workbench {
             InputId::SettingsSearch => Some(&self.settings_editor.search),
             InputId::SettingsValue => self.settings_editor.value.as_ref().map(|(_, input)| input),
             InputId::ProfileName => Some(&self.user_data_profiles.editor.name),
+            InputId::IconSelectSearch => self.user_data_profiles.editor.icon_picker.as_ref().map(|picker| &picker.search),
             InputId::SettingsListKey => Some(&self.settings_editor.list.key),
             InputId::SettingsListValue => Some(&self.settings_editor.list.value),
             InputId::DebugView => self.debug_view.editing.as_ref().map(|_| &self.debug_view.input),
@@ -286,6 +295,10 @@ impl Workbench {
             }
             InputId::ProfileName => {
                 self.edit_profile_name(edit, cx);
+                Outcome::done()
+            }
+            InputId::IconSelectSearch => {
+                self.edit_icon_select_search(edit, cx);
                 Outcome::done()
             }
             InputId::SettingsListKey | InputId::SettingsListValue => {
@@ -498,6 +511,7 @@ impl Workbench {
                 InputId::SettingsSearch => "settings-search-text".into(),
                 InputId::SettingsValue => "settings-value-text".into(),
                 InputId::ProfileName => "profile-name-text".into(),
+                InputId::IconSelectSearch => "icon-select-search-text".into(),
                 InputId::SettingsListKey => "settings-list-key-text".into(),
                 InputId::SettingsListValue => "settings-list-value-text".into(),
                 InputId::DebugView => "debug-view-input-text".into(),
