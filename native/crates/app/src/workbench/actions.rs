@@ -42,17 +42,24 @@ impl Workbench {
         });
         self.commands.register("_workbench.open", |workbench, args, window, cx| match &args[..] {
             [resource @ Value::Object(_), rest @ ..] => {
-                let options = rest.first().map_or(Value::Null, |column_and_options| column_and_options[1].clone());
+                let column_and_options = rest.first().cloned().unwrap_or_default();
+                let mut options = column_and_options[1].clone();
+                if !column_and_options[0].is_null() {
+                    options["position"] = column_and_options[0].clone();
+                }
                 let override_id = options["override"].as_str().map(str::to_owned);
                 workbench.open_with_resolver(resource, override_id.as_deref(), options, window, cx)
             }
-            _ => Outcome::Ready(workbench.api_open_editor(&args, window, cx)),
+            _ => workbench.api_open_editor_resolving(args, window, cx),
         });
         self.commands.register("_workbench.openWith", |workbench, args, window, cx| {
             // `{ pinned: true, ...optionsArg }`
             let mut options = json!({ "pinned": true });
             if let Some(Value::Object(given)) = args.get(2).map(|column_and_options| &column_and_options[1]) {
                 options.as_object_mut().expect("an object").extend(given.clone());
+            }
+            if let Some(column) = args.get(2).map(|column_and_options| &column_and_options[0]).filter(|column| !column.is_null()) {
+                options["position"] = column.clone();
             }
             let resource = args.first().cloned().unwrap_or(Value::Null);
             let view_type = args.get(1).and_then(Value::as_str).unwrap_or("default").to_owned();

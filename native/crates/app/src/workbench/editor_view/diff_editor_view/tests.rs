@@ -124,3 +124,14 @@ fn swap_sides_shows_the_modified_file_as_the_original(cx: &mut TestAppContext) {
     assert_eq!(zones, 0);
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[gpui::test]
+fn workbench_diff_opens_in_the_given_column(cx: &mut TestAppContext) {
+    let (dir, workbench, _receiver, cx) = workbench_in("diff-column", cx);
+    let (a, b) = (file_uri(&dir.join("a.txt")), file_uri(&dir.join("b.txt")));
+    workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("_workbench.diff", vec![a, b, json!("DIFF"), json!([1, { "preview": false }])], window, cx)));
+    cx.run_until_parked();
+    let (columns, active, diff_shown) = workbench.read_with(cx, |workbench, _| (workbench.editors.column_ids(), workbench.editors.id, workbench.editors.active_diff().is_some()));
+    assert_eq!((columns.len(), columns[1], diff_shown), (2, active, true), "ViewColumn.Two is the second group");
+    std::fs::remove_dir_all(dir).unwrap();
+}

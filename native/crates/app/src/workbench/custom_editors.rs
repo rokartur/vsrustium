@@ -109,7 +109,7 @@ impl Workbench {
             },
             None => {
                 self.detach_custom_editors(resource, None);
-                Outcome::Ready(self.api_open_editor(&[resource.clone(), json!([null, options])], window, cx))
+                self.api_open_editor_resolving(vec![resource.clone(), json!([null, options])], window, cx)
             }
         }
     }

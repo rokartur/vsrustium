@@ -20,6 +20,7 @@ use crate::editor::{
     CursorEdit, EditReason, OpenEditor, Position, Replace, Selection, SnippetText, TextDocument, VerticalReveal, char_column, end_of, expand_snippet,
     selections_after, text_between, uri_string, word_at,
 };
+use crate::commands::Outcome;
 use crate::host_sync::snapshot_id;
 
 /// The requests `host_request` answers; every other one stays with the session.
@@ -342,6 +343,32 @@ impl Workbench {
     }
 
     /// editorCommands.ts `_workbench.open`: a resource in the editor group, a web link in the browser.
+    /// `api_open_editor` of a resource no model holds yet and no file is: its text comes from the extension host's
+    /// content or file system provider first (textFileEditorModel.ts reads through `fileService`).
+    pub(super) fn api_open_editor_resolving(&mut self, args: Vec<Value>, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
+        let unresolved = match uri_parts(args.first().unwrap_or(&Value::Null)) {
+            Ok((scheme, path)) => !matches!(scheme, "file" | "untitled" | "command") && self.editors.model(scheme, &path).is_none(),
+            Err(_) => false,
+        };
+        if !unresolved {
+            return Outcome::Ready(self.api_open_editor(&args, window, cx));
+        }
+        let content = self.host.call("workbench", "resolveTextContent", vec![args[0].clone()]);
+        let (sender, receiver) = futures::channel::oneshot::channel();
+        cx.spawn_in(window, async move |workbench, cx| {
+            let content = content.await.ok().and_then(Result::ok);
+            let result = workbench.update_in(cx, |workbench, window, cx| {
+                if let Some(content) = content {
+                    workbench.try_open_document(&args[0], &Value::Null, &content, false, cx)?;
+                }
+                workbench.api_open_editor(&args, window, cx)
+            });
+            drop(sender.send(result.unwrap_or_else(|_| Err(serialized_error("Canceled")))));
+        })
+        .detach();
+        Outcome::Pending(receiver)
+    }
+
     pub(super) fn api_open_editor(&mut self, args: &[Value], window: &mut Window, cx: &mut Context<Self>) -> HostResult {
         let resource = args.first().unwrap_or(&Value::Null);
         if let Some(link) = resource.as_str() {
@@ -362,7 +389,8 @@ impl Workbench {
         }
         let column_and_options = args.get(1).unwrap_or(&Value::Null);
         let mut options = column_and_options[1].clone();
-        if options.is_object() || options.is_null() {
+        // `_workbench.open` and `_workbench.openWith` carry the column in the options already.
+        if (options.is_object() || options.is_null()) && options["position"].is_null() {
             options["position"] = column_and_options[0].clone();
         }
         self.try_show_text_document(resource, &options, window, cx)?;

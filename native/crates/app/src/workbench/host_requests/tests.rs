@@ -75,3 +75,32 @@ fn view_columns_pick_or_add_groups_in_grid_order(cx: &mut TestAppContext) {
     assert_eq!(show(-2, cx), (3, 1));
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[gpui::test]
+fn workbench_open_reads_a_provider_resource_through_the_host(cx: &mut TestAppContext) {
+    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let theme = load_theme(&[scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap()], "Dark Modern").unwrap();
+    let (sender, messages) = std::sync::mpsc::channel();
+    let (workbench, cx) = cx.add_window_view(|_, cx| Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), crate::default_settings(), HostSync::new(sender), cx));
+    let uri = json!({ "scheme": "fake-fs", "path": "/a/b.txt" });
+    let outcome = workbench.update_in(cx, |workbench, window, cx| workbench.execute_command("_workbench.open", vec![uri.clone()], window, cx));
+    let crate::commands::Outcome::Pending(mut opened) = outcome else { panic!("the open waits for the provider") };
+    let asked = messages.try_iter().find(|message| message.method == "resolveTextContent").expect("asked the host");
+    assert_eq!(asked.args, [uri]);
+    let _ = asked.reply.expect("a call").send(Ok(json!(b"from the provider".to_vec())));
+    cx.run_until_parked();
+    assert_eq!(opened.try_recv().unwrap(), Some(Ok(Value::Null)));
+    let text = workbench.read_with(cx, |workbench, _| workbench.editors.active().map(|editor| editor.document().lines.join("\n")));
+    assert_eq!(text.as_deref(), Some("from the provider"));
+}
+
+#[gpui::test]
+fn workbench_open_opens_in_the_given_column(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = workbench_in("workbench-open-column", cx);
+    let uri = file_uri(&dir.join("far.js"));
+    let outcome = workbench.update_in(cx, |workbench, window, cx| workbench.execute_command("_workbench.open", vec![uri, json!([1, {}])], window, cx));
+    assert!(matches!(outcome, crate::commands::Outcome::Ready(Ok(_))));
+    let (columns, active) = workbench.read_with(cx, |workbench, _| (workbench.editors.column_ids(), workbench.editors.id));
+    assert_eq!((columns.len(), columns[1]), (2, active), "ViewColumn.Two is the second group");
+    std::fs::remove_dir_all(dir).unwrap();
+}

@@ -89,7 +89,11 @@ impl Workbench {
             Some(Value::Object(labels)) => labels.get("label").and_then(Value::as_str).map(str::to_string),
             _ => None,
         };
-        let options = args.get(3).map(|column_and_options| column_and_options[1].clone()).unwrap_or(Value::Null);
+        let column_and_options = args.get(3).cloned().unwrap_or_default();
+        let mut options = column_and_options[1].clone();
+        if !column_and_options[0].is_null() {
+            options["position"] = column_and_options[0].clone();
+        }
         let missing: Vec<Value> = [(&original, &sides.0), (&modified, &sides.1)]
             .into_iter()
             .filter(|(_, side)| side.scheme != "file" && self.editors.model(&side.scheme, &side.path).is_none())
@@ -128,6 +132,7 @@ impl Workbench {
     /// `openEditor` of a `DiffEditorInput`: an open diff editor of the same sides is activated, else a new one
     /// opens (a preview unless `pinned` or `preview: false`).
     fn show_diff_editor(&mut self, original: Side, modified: Side, label: Option<String>, options: &Value, window: &mut Window, cx: &mut Context<Self>) {
+        self.activate_column(&options["position"]);
         let existing = self.editors.editors.iter().position(|editor| self.editors.diffs.get(&editor.model_id).is_some_and(|diff| diff.original == original && diff.modified == modified));
         let pinned = options["pinned"] == json!(true) || options["preview"] == json!(false);
         match existing {

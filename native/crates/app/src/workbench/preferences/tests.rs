@@ -172,3 +172,29 @@ fn workspace_settings_need_a_folder(cx: &mut TestAppContext) {
     assert!(workbench.read_with(cx, |workbench, _| workbench.editors.active().is_none()));
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[gpui::test]
+fn pick_workspace_folder_answers_the_accepted_folder_as_the_api_expects(cx: &mut TestAppContext) {
+    let (workbench, cx, dir) = workbench(cx, "pick-folder");
+    let mut workspace = config::workspace::Workspace::folder(dir.join("one"));
+    workspace.folders.push(config::workspace::WorkspaceFolder { path: dir.join("two"), name: "two".into() });
+    workbench.update(cx, |workbench, _| workbench.settings.lock().unwrap().workspace = Some(workspace));
+    let outcome = workbench.update_in(cx, |workbench, window, cx| workbench.execute_command("_workbench.pickWorkspaceFolder", vec![json!({ "placeHolder": "Pick one" })], window, cx));
+    let crate::commands::Outcome::Pending(mut picked) = outcome else { panic!("the pick waits for the quick pick") };
+    cx.run_until_parked();
+    let placeholder = workbench.read_with(cx, |workbench, _| workbench.quick_inputs.current().and_then(|input| input.placeholder.clone()));
+    assert_eq!(placeholder.as_deref(), Some("Pick one"));
+    run(&workbench, cx, "quickInput.next", vec![]);
+    run(&workbench, cx, "workbench.action.acceptSelectedQuickOpenItem", vec![]);
+    let answer = picked.try_recv().unwrap().expect("answered").unwrap();
+    assert_eq!(answer, json!({ "uri": crate::editor::uri_value("file", &dir.join("two")), "name": "two", "index": 1 }));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[gpui::test]
+fn pick_workspace_folder_without_folders_answers_nothing(cx: &mut TestAppContext) {
+    let (workbench, cx, dir) = workbench(cx, "pick-no-folder");
+    let outcome = workbench.update_in(cx, |workbench, window, cx| workbench.execute_command("_workbench.pickWorkspaceFolder", vec![], window, cx));
+    assert!(matches!(outcome, crate::commands::Outcome::Ready(Ok(Value::Null))));
+    std::fs::remove_dir_all(dir).unwrap();
+}
