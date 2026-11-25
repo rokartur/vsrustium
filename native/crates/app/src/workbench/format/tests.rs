@@ -185,10 +185,14 @@ fn two_formatters_without_a_default_format_nothing_and_ask_to_configure(cx: &mut
     let formatters = workbench.read_with(cx, |workbench, _| workbench.document_formatters(workbench.editors.active().unwrap()));
     let analyzed = workbench.read_with(cx, |workbench, _| workbench.analyze_formatter(&formatters, &key, FormattingKind::File).unwrap_err());
     assert_eq!(analyzed, "There are multiple formatters for ''Plain Text'' files. One of them should be configured as default formatter.");
+    let status = workbench.read_with(cx, |workbench, _| workbench.language_statuses().into_iter().find(|status| status.id == "formatter.conflict"));
+    assert_eq!(status.map(|status| (status.severity, status.busy)), Some((3, false)), "the Formatting language status shows the conflict");
     std::fs::write(dir.join("User/settings.json"), r#"{ "editor.defaultFormatter": "A.TWO" }"#).unwrap();
     workbench.update(cx, |workbench, _| drop(workbench.settings.lock().unwrap().reload_changed_files()));
     let analyzed = workbench.read_with(cx, |workbench, _| workbench.analyze_formatter(&formatters, &key, FormattingKind::File).unwrap());
     assert_eq!(analyzed.handle, 2);
+    let conflict = workbench.read_with(cx, |workbench, _| workbench.language_statuses().iter().any(|status| status.id == "formatter.conflict"));
+    assert!(!conflict, "a configured default formatter ends the conflict");
     assert!(answer(&receiver, "$provideDocumentFormattingEdits", json!([]), cx).is_empty());
     std::fs::remove_dir_all(dir).unwrap();
 }

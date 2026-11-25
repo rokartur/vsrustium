@@ -8,6 +8,8 @@ use serde_json::Value;
 /// `IDecorationData` as `$provideDecorations` answers it: `[bubble, tooltip, letter, themeColor]`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DecorationData {
+    /// The merge order, heaviest first; mainThreadDecorations.ts gives extension data 10.
+    pub weight: u32,
     pub bubble: bool,
     pub tooltip: Option<String>,
     pub letter: Option<String>,
@@ -18,7 +20,7 @@ impl DecorationData {
     pub fn from_reply(value: &Value) -> Option<DecorationData> {
         let data = value.as_array()?;
         let text = |index: usize| data.get(index).and_then(Value::as_str).filter(|text| !text.is_empty()).map(str::to_owned);
-        Some(DecorationData { bubble: data.first() == Some(&Value::Bool(true)), tooltip: text(1), letter: text(2), color: data.get(3).and_then(|color| color["id"].as_str()).map(str::to_owned) })
+        Some(DecorationData { weight: 10, bubble: data.first() == Some(&Value::Bool(true)), tooltip: text(1), letter: text(2), color: data.get(3).and_then(|color| color["id"].as_str()).map(str::to_owned) })
     }
 }
 
@@ -34,6 +36,9 @@ pub struct Decoration {
 
 /// One provider's answer for a resource; `None` while its request is pending.
 type Entry = Option<Option<DecorationData>>;
+
+/// The handle of markersFileDecorations.ts `MarkersDecorationsProvider`, which answers synchronously.
+pub const MARKERS_PROVIDER: u64 = u64::MAX;
 
 #[derive(Default)]
 pub struct Decorations {
@@ -55,9 +60,18 @@ impl Decorations {
         self.providers.insert(0, handle);
     }
 
+    pub fn is_registered(&self, handle: u64) -> bool {
+        self.providers.contains(&handle)
+    }
+
     pub fn unregister(&mut self, handle: u64) {
         self.providers.retain(|provider| *provider != handle);
         self.forget(handle, None);
+    }
+
+    /// A synchronous provider's data for a resource (`_fetchData` of a provider that answers at once).
+    pub fn set(&mut self, handle: u64, path: &str, data: Option<DecorationData>) {
+        self.cache.entry(key(path)).or_default().insert(handle, Some(data));
     }
 
     /// `onDidChange`: the resources' entries are dropped and asked for again at once (so folders keep their
@@ -87,7 +101,7 @@ impl Decorations {
     pub fn decoration(&mut self, path: &str, include_children: bool) -> Option<Decoration> {
         let entries = self.cache.get(&key(path));
         for &provider in &self.providers {
-            if !entries.is_some_and(|entries| entries.contains_key(&provider)) {
+            if provider != MARKERS_PROVIDER && !entries.is_some_and(|entries| entries.contains_key(&provider)) {
                 self.wanted.insert((provider, path.to_owned()));
             }
         }
@@ -114,8 +128,8 @@ impl Decorations {
         if data.is_empty() {
             return None;
         }
-        // Every provider weighs 10, so the sort keeps provider order (newest first).
-        data.sort_by_key(|(rank, _)| *rank);
+        // `asDecoration`: by weight, heaviest first; the stable sort keeps provider order (newest first) within a weight.
+        data.sort_by_key(|(rank, data)| (std::cmp::Reverse(data.weight), *rank));
         let color = data.iter().find_map(|(_, data)| data.color.clone());
         let letters: Vec<&str> = data.iter().filter(|(_, data)| !bubbled || !data.bubble).filter_map(|(_, data)| data.letter.as_deref()).collect();
         let mut tooltips: Vec<&str> = Vec::new();

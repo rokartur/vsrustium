@@ -5,13 +5,13 @@ use std::cell::Cell;
 use std::rc::Rc;
 use std::time::Duration;
 
-use gpui::{Animation, AnimationExt, AnyElement, Bounds, Context, Pixels, Rgba, Transformation, canvas, div, percentage, prelude::*, px, size, svg};
+use gpui::{Animation, AnimationExt, AnyElement, Bounds, Context, Pixels, Rgba, Size, Transformation, Window, canvas, div, percentage, prelude::*, px, size, svg};
 use serde_json::{Value, json};
 
 use super::Workbench;
-use super::hover::{HoverContent, HoverOptions};
+use super::hover::{HoverContent, HoverOptions, text_width};
+use super::quick_input_view::icon_at;
 use super::status_entries::EDITOR_STATUS_PRIORITY;
-use crate::command_palette::strip_icons;
 use crate::commands::Outcome;
 use crate::language_features::{Candidate, LanguageFeatures};
 use crate::main_thread_status_bar::StatusEntry;
@@ -30,6 +30,12 @@ const BUSY: &str = "$(loading~spin)";
 /// base/common/severity.ts.
 const WARNING: u64 = 2;
 const ERROR: u64 = 3;
+/// actionbar.css: a 16px codicon in a 3px padded `.action-label`.
+const PIN_BOX: f32 = 22.;
+/// The hover's 19px line; the pin's box overflows it (ui-pair: rows 20px apart with the border in the reference).
+const ROW_HEIGHT: f32 = super::hover::LINE_HEIGHT;
+/// `.right:not(:empty)`.
+const RIGHT_PADDING: f32 = 16.;
 
 #[derive(Default)]
 pub(super) struct LanguageStatus {
@@ -155,6 +161,7 @@ impl Workbench {
         let uri = editor.document().uri();
         let candidate = Candidate { uri: &uri, language: &editor.document().language_id };
         let mut statuses: Vec<Status> = self.language_status.registry.ordered(SET, &candidate).into_iter().map(|registration| Status::from_dto(&registration.args[2])).collect();
+        statuses.extend(self.formatter_conflict().map(formatter_conflict_status));
         statuses.sort_by(|a, b| b.severity.cmp(&a.severity).then_with(|| a.source.cmp(&b.source)).then_with(|| a.id.cmp(&b.id)));
         statuses
     }
@@ -207,7 +214,7 @@ impl Workbench {
         } else {
             icon.into_any_element()
         };
-        let content = HoverContent::Markdown(hover_markdown(view));
+        let content = HoverContent::LanguageStatus;
         let bounds = state.bounds.clone();
         let anchor = state.bounds.clone();
         let item = div()
@@ -215,8 +222,9 @@ impl Workbench {
             .relative()
             .h_full()
             .flex_none()
-            .mx(px(3.))
-            .px(px(5.))
+            // statusbarpart.css `.compact-right`: `compact: true` next to the language entry.
+            .ml(px(5.))
+            .px(px(3.))
             .flex()
             .items_center()
             .cursor_pointer()
@@ -243,6 +251,63 @@ impl Workbench {
             item.bg(Rgba { a: prominent.a * (1. - (2. * delta - 1.).abs()), ..prominent })
         });
         Some(item.into_any_element())
+    }
+
+    /// The hover's text, for the empty check: the labels.
+    pub(super) fn language_status_hover_text(&self) -> String {
+        self.language_status.view.combined.iter().map(|status| status.label.as_str()).collect::<Vec<_>>().join("\n")
+    }
+
+    /// The rows of `_renderStatus` (languageStatus.css `.hover-language-status`) and their content size.
+    pub(super) fn language_status_hover(&self, window: &Window, cx: &mut Context<Self>) -> (Size<f32>, AnyElement) {
+        let rows = hover_rows(&self.language_status.view);
+        let foreground = self.color("editorHoverWidget.foreground");
+        let link = self.color("textLink.foreground");
+        let border = self.color("notifications.border");
+        let toolbar_hover = self.color("toolbar.hoverBackground");
+        let (mut width, count) = (0f32, rows.len());
+        let mut column = div().flex().flex_col();
+        for (index, row) in rows.into_iter().enumerate() {
+            let mut row_width = label_width(&row.label, window) + PIN_BOX + RIGHT_PADDING;
+            let mut element = div().h(px(ROW_HEIGHT)).flex().items_center().when(index + 1 < count, |element| element.border_b_1().border_color(border));
+            if let Some((icon, color)) = row.severity {
+                let color = color.map_or(foreground, |key| self.color(key));
+                element = element.child(div().pr(px(8.)).flex_none().child(self.icon(icon, 16., 16., color)));
+                row_width += 16. + 8.;
+            }
+            let mut left = div().flex().items_center().min_w_0().child(self.highlighted_label(&row.label, &[], foreground, 16., foreground));
+            if !row.detail.is_empty() {
+                left = left.child(div().px(px(2.)).opacity(0.6).child("\u{2013}")).child(self.highlighted_label(&row.detail, &[], foreground, 16., foreground));
+                row_width += text_width("\u{2013}", false, window) + 4. + label_width(&row.detail, window);
+            }
+            let mut right = div().pl(px(RIGHT_PADDING)).flex().flex_none().items_center();
+            let has_command = row.command.is_some();
+            // shortcut: the link's and the pin's native title tooltips are not drawn; hover.rs shows one hover at a time.
+            if let Some((title, id, arguments)) = row.command {
+                row_width += text_width(&title, false, window) + 8.;
+                right = right.child(div().id(("language-status-command", index)).cursor_pointer().text_color(link).child(title).on_click(cx.listener(move |workbench, _, window, cx| {
+                    workbench.dismiss_hover(cx);
+                    workbench.execute_command(&id, arguments.clone(), window, cx);
+                })));
+            }
+            let (icon, command) = if row.pinned { ("pinned", UNPIN) } else { ("pin", PIN) };
+            let id = row.id;
+            let pin = div()
+                .id(("language-status-pin", index))
+                .when(has_command, |pin| pin.ml(px(8.)))
+                .p(px(3.))
+                .rounded(px(5.))
+                .cursor_pointer()
+                .hover(|pin| pin.bg(toolbar_hover))
+                .child(self.icon(icon, 16., 16., foreground))
+                .on_click(cx.listener(move |workbench, _, window, cx| _ = workbench.execute_command(command, vec![json!(id)], window, cx)));
+            right = right.child(pin);
+            element = element.child(div().flex_1().min_w_0().flex().justify_between().items_center().child(left).child(right));
+            column = column.child(element);
+            width = width.max(row_width);
+        }
+        let height = count as f32 * ROW_HEIGHT + count.saturating_sub(1) as f32;
+        (Size { width, height }, column.into_any_element())
     }
 
     /// The pin and unpin actions of the hover.
@@ -284,6 +349,21 @@ impl Workbench {
     }
 }
 
+/// formatActionsMultiple.ts `_updateStatus`: the `formatter.conflict` status.
+fn formatter_conflict_status(detail: String) -> Status {
+    Status {
+        id: "formatter.conflict".into(),
+        name: "Formatter Conflicts".into(),
+        severity: ERROR,
+        label: "Formatting".into(),
+        short_label: "Formatting".into(),
+        detail,
+        busy: false,
+        source: String::new(),
+        command: Some(json!({ "id": super::format::CONFIGURE_DEFAULT_FORMATTER, "title": "Configure..." })),
+    }
+}
+
 /// `_asStatusbarEntry`: a pinned status as its own entry.
 pub(super) fn dedicated_entry(status: &Status) -> StatusEntry {
     let tooltip = status.command.as_ref().and_then(|command| command["tooltip"].as_str()).filter(|tooltip| !tooltip.is_empty()).map(str::to_owned);
@@ -309,48 +389,41 @@ pub(super) fn dedicated_entry(status: &Status) -> StatusEntry {
     }
 }
 
-/// `_renderStatus` of each status as one markdown paragraph: label, detail, command link, pin link.
-// shortcut: the hover is markdown text, so `$(icon)`s, the severity icon and the busy spinner are dropped and pin is
-// a text link; draw them once HoverContent carries icons.
-pub(super) fn hover_markdown(view: &LanguageStatusView) -> String {
+/// One `_renderStatus` row of the combined entry's hover.
+#[derive(Debug, PartialEq)]
+pub(super) struct HoverRow {
+    /// `_severityToSingleCodicon` and its color key, shown when the first status is a warning or an error.
+    pub(super) severity: Option<(&'static str, Option<&'static str>)>,
+    pub(super) label: String,
+    pub(super) detail: String,
+    /// The command link: title, id and arguments.
+    pub(super) command: Option<(String, String, Vec<Value>)>,
+    pub(super) pinned: bool,
+    pub(super) id: String,
+}
+
+/// The rows of the combined entry's hover, in view model order.
+pub(super) fn hover_rows(view: &LanguageStatusView) -> Vec<HoverRow> {
+    let show_severity = view.show_severity();
+    let text = |value: &Value| value.as_str().unwrap_or_default().to_owned();
     let mut rows = Vec::new();
     for status in &view.combined {
-        let mut row = strip_icons(&status.label).trim().to_owned();
-        if !status.detail.is_empty() {
-            row.push_str(" \u{2013} ");
-            row.push_str(&strip_icons(&status.detail));
-        }
-        if let Some(command) = &status.command {
-            let title = command["title"].as_str().unwrap_or_default();
-            row.push_str(&format!("   {}", command_link(title, command["id"].as_str().unwrap_or_default(), &command["arguments"])));
-        }
-        let pinned = view.dedicated.contains(status);
-        let (title, id) = if pinned { ("Remove from Status Bar", UNPIN) } else { ("Add to Status Bar", PIN) };
-        row.push_str(&format!("   {}", command_link(title, id, &json!([status.id]))));
-        rows.push(row);
+        let severity = match status.severity {
+            ERROR => ("error", Some("notificationsErrorIcon.foreground")),
+            WARNING => ("info", Some("notificationsInfoIcon.foreground")),
+            _ => ("check", None),
+        };
+        let command = status.command.as_ref().map(|command| (text(&command["title"]), text(&command["id"]), command["arguments"].as_array().cloned().unwrap_or_default()));
+        rows.push(HoverRow {
+            severity: show_severity.then_some(severity),
+            label: compute_text(&status.label, status.busy),
+            detail: status.detail.clone(),
+            command,
+            pinned: view.dedicated.contains(status),
+            id: status.id.clone(),
+        });
     }
-    rows.join("\n\n")
-}
-
-/// A linked text `[title](command:id?args)` with the arguments URI-encoded, as `URI.from({ scheme: 'command' })`.
-fn command_link(title: &str, id: &str, arguments: &Value) -> String {
-    let query = match arguments {
-        Value::Null => String::new(),
-        arguments => format!("?{}", encode_uri_component(&arguments.to_string())),
-    };
-    format!("[{title}](command:{id}{query})")
-}
-
-/// `encodeURIComponent`, also escaping the parentheses that end a linked text's href.
-fn encode_uri_component(text: &str) -> String {
-    let mut encoded = String::new();
-    for byte in text.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'!' | b'~' | b'*' | b'\'' => encoded.push(byte as char),
-            _ => encoded.push_str(&format!("%{byte:02X}")),
-        }
-    }
-    encoded
+    rows
 }
 
 /// `_renderTextPlus` as plain text: links show their label.
@@ -363,6 +436,22 @@ fn linked_text_label(text: &str) -> String {
         }
     }
     label
+}
+
+/// The width of a `$(icon)` label: its text plus 16px per icon.
+fn label_width(label: &str, window: &Window) -> f32 {
+    let chars: Vec<char> = label.chars().collect();
+    let (mut text, mut icons, mut index) = (String::new(), 0, 0);
+    while index < chars.len() {
+        if let Some((_, length)) = icon_at(&chars[index..]) {
+            icons += 1;
+            index += length;
+            continue;
+        }
+        text.push(chars[index]);
+        index += 1;
+    }
+    text_width(&text, false, window) + 16. * icons as f32
 }
 
 /// `computeText`.

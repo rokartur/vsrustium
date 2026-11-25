@@ -659,6 +659,7 @@ impl Workbench {
         workbench.register_links();
         workbench.register_linked_editing();
         workbench.register_language_status();
+        workbench.update_markers_file_decorations();
         workbench.register_semantic_tokens();
         workbench.register_format();
         workbench.register_snippet_completions();

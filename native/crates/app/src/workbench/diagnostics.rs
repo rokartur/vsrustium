@@ -21,7 +21,7 @@ pub(super) const EXT_HOST_ID: &str = "extHost1";
 pub struct Diagnostics {
     pub service: MarkerService,
     /// The `UriComponents` of every resource with markers, by `URI.toString()`, for `$acceptMarkersChange`.
-    uris: HashMap<String, Value>,
+    pub(super) uris: HashMap<String, Value>,
 }
 
 impl Workbench {
@@ -87,6 +87,9 @@ impl Workbench {
         for resource in &resources {
             let markers = self.diagnostics.service.read(ReadOptions { resource: Some(resource), ..Default::default() });
             let others: Vec<Value> = markers.iter().filter(|marker| marker.origin.as_deref() != Some(EXT_HOST_ID)).map(|marker| marker.to_data()).collect();
+            if let Some(Ok(("file", path))) = self.diagnostics.uris.get(resource).map(uri_parts) {
+                self.markers_file_decoration_changed(resource, &path);
+            }
             let uri = match markers.is_empty() {
                 true => self.diagnostics.uris.remove(resource),
                 false => self.diagnostics.uris.get(resource).cloned(),

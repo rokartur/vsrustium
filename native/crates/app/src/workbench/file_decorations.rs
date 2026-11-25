@@ -8,7 +8,8 @@ use serde_json::{Value, json};
 
 use super::Workbench;
 use crate::commands::Outcome;
-use crate::decorations::Decoration;
+use crate::decorations::{Decoration, DecorationData, MARKERS_PROVIDER};
+use crate::markers::{ERROR, ReadOptions, WARNING};
 
 #[cfg(test)]
 mod tests;
@@ -48,6 +49,51 @@ impl Workbench {
             })
             .detach();
         }
+    }
+
+    /// markersFileDecorations.ts `_updateEnablement`: the Problems provider while `problems.visibility` and
+    /// `problems.decorations.enabled` are on.
+    pub(super) fn update_markers_file_decorations(&mut self) {
+        let enabled = self.setting("problems.visibility") != Value::Bool(false) && self.setting("problems.decorations.enabled") != Value::Bool(false);
+        let mut decorations = self.decorations.borrow_mut();
+        if enabled == decorations.is_registered(MARKERS_PROVIDER) {
+            return;
+        }
+        match enabled {
+            true => decorations.register(MARKERS_PROVIDER),
+            false => decorations.unregister(MARKERS_PROVIDER),
+        }
+        drop(decorations);
+        if enabled {
+            let resources: Vec<(String, std::path::PathBuf)> = self.diagnostics.uris.iter().filter_map(|(resource, uri)| match super::host_requests::uri_parts(uri) {
+                Ok(("file", path)) => Some((resource.clone(), path)),
+                _ => None,
+            }).collect();
+            for (resource, path) in resources {
+                self.markers_file_decoration_changed(&resource, &path);
+            }
+        }
+    }
+
+    /// `MarkersDecorationsProvider.provideDecorations` after `onMarkerChanged`: the most severe error or warning
+    /// colors the file, the count is its letter.
+    pub(super) fn markers_file_decoration_changed(&self, resource: &str, path: &Path) {
+        let mut decorations = self.decorations.borrow_mut();
+        if !decorations.is_registered(MARKERS_PROVIDER) {
+            return;
+        }
+        let markers = self.diagnostics.service.read(ReadOptions { resource: Some(resource), severities: Some(ERROR | WARNING), ..Default::default() });
+        let data = markers.iter().map(|marker| marker.severity).max().map(|severity| DecorationData {
+            weight: 100 * u32::from(severity),
+            bubble: true,
+            tooltip: Some(match markers.len() {
+                1 => "1 problem in this file".to_owned(),
+                count => format!("{count} problems in this file"),
+            }),
+            letter: Some(if markers.len() < 10 { markers.len().to_string() } else { "9+".to_owned() }),
+            color: Some(if severity == ERROR { "list.errorForeground" } else { "list.warningForeground" }.to_owned()),
+        });
+        decorations.set(MARKERS_PROVIDER, &path.to_string_lossy(), data);
     }
 
     /// `getDecoration(uri, includeChildren)` for a file label; a folder includes its bubbling descendants.

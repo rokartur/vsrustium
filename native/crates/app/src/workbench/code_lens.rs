@@ -451,7 +451,7 @@ impl Workbench {
             .language_features
             .ordered(REGISTER, &candidate)
             .iter()
-            .map(|registration| (registration.handle, self.host.call("ExtHostLanguageFeatures", "$provideCodeLenses", vec![json!(registration.handle), uri.clone()])))
+            .map(|registration| (registration.handle, self.host.call_cancellable("ExtHostLanguageFeatures", "$provideCodeLenses", vec![json!(registration.handle), uri.clone()])))
             .collect();
         let mut resolve_count = args.get(1).and_then(Value::as_u64);
         let (sender, receiver) = oneshot::channel();
@@ -467,7 +467,7 @@ impl Workbench {
                     continue;
                 }
                 resolve_count = Some(count - 1);
-                let Ok(call) = workbench.update(cx, |workbench, _| workbench.host.call("ExtHostLanguageFeatures", "$resolveCodeLens", vec![json!(lens.handle), lens.symbol.clone()])) else { return };
+                let Ok(call) = workbench.update(cx, |workbench, _| workbench.host.call_cancellable("ExtHostLanguageFeatures", "$resolveCodeLens", vec![json!(lens.handle), lens.symbol.clone()])) else { return };
                 let resolved = call.await.ok().and_then(Result::ok).filter(|symbol| !symbol.is_null());
                 result.push(resolved.unwrap_or(lens.symbol));
             }
