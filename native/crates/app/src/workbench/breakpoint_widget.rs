@@ -340,7 +340,7 @@ impl Workbench {
             (true, _) if condition.is_empty() && !hit_count.is_empty() => WidgetContext::HitCount,
             (_, context) => context,
         };
-        let zone_id = editor.add_view_zone(Position::new(line as usize - 1, 0), 2. * viewport.line_height);
+        let zone_id = editor.add_view_zone(Some(Position::new(line as usize - 1, 0)), 2. * viewport.line_height);
         let mut input = InputBox::default();
         input.set_value(match context {
             WidgetContext::Condition => condition.clone(),

@@ -117,7 +117,7 @@ impl Workbench {
             None => "Run and Debug".into(),
         };
         if !self.debug.debuggers.is_empty() {
-            content = content.child(self.welcome_button(&label, "workbench.action.debug.start", cx));
+            content = content.child(self.debug_welcome_button(&label, "workbench.action.debug.start", cx));
             if self.folder.is_some() {
                 content = content.child(div().child(self.welcome_paragraph(&[("To customize Run and Debug ", None), ("create a launch.json file", Some("workbench.action.debug.configure")), (".", None)], link_color, cx)));
             }
@@ -149,13 +149,13 @@ impl Workbench {
     fn welcome_line(&self, line: &str, link_color: Rgba, cx: &mut Context<Self>) -> Div {
         let parts = markdown_links(line);
         if let [(label, Some(command))] = parts.as_slice() {
-            return self.welcome_button(label, command, cx);
+            return self.debug_welcome_button(label, command, cx);
         }
         let parts: Vec<(&str, Option<&str>)> = parts.iter().map(|(text, command)| (text.as_str(), command.as_deref())).collect();
         div().child(self.welcome_paragraph(&parts, link_color, cx))
     }
 
-    fn welcome_button(&self, label: &str, command: &str, cx: &mut Context<Self>) -> Div {
+    fn debug_welcome_button(&self, label: &str, command: &str, cx: &mut Context<Self>) -> Div {
         let command = command.to_owned();
         let background = self.color("button.background");
         let hover = self.color("button.hoverBackground");

@@ -836,7 +836,7 @@ impl Workbench {
     }
 
     /// The Testing container shows once a controller registers (testing.contribution.ts `TestingContextKeys.providerCount`).
-    fn testing_activity_item(&self, hover: HoverOptions, inactive: Rgba, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+    fn testing_activity_item(&self, hover: HoverOptions, inactive: Rgba, cx: &mut Context<Self>) -> Option<gpui::Stateful<Div>> {
         if self.testing.controllers.is_empty() {
             return None;
         }

@@ -53,7 +53,7 @@ impl Workbench {
         let lines = 1 + info["description"].as_str().map_or(0, |text| text.lines().count()) + info["details"]["stackTrace"].as_str().map_or(0, |text| text.lines().count());
         // exceptionWidget.ts `_doLayout`: the content height plus the 6px paddings, in 11px lines (exceptionWidget.css on mac).
         let height = lines as f32 * (viewport.line_height * 11. / 12.).round() + 12. + 4.;
-        let zone_id = editor.add_view_zone(Position::new(line.max(1) as usize - 1, 0), height);
+        let zone_id = editor.add_view_zone(Some(Position::new(line.max(1) as usize - 1, 0)), height);
         self.debug_view.exception = Some(ExceptionWidget { model_uri: editor.document.uri_string(), zone_id, info });
         cx.notify();
     }
