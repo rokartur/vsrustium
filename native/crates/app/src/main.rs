@@ -106,7 +106,7 @@ fn main() -> anyhow::Result<()> {
     let app_root = std::env::current_dir()?;
     let extensions_dir = std::env::var_os("VSCODE_GPUI_EXTENSIONS").map(PathBuf::from).unwrap_or_else(|| app_root.join("extensions"));
     let builtins = scan_builtin_extensions(&extensions_dir)?;
-    // shortcut: user extensions default to <user data>/extensions, not ~/.vscode-oss/extensions, so the port never shares them with Code - OSS.
+    // Artur: user extensions live in ~/.vsrustium/extensions, the default user data dir's extensions folder.
     let user_extensions = UserExtensions { folder: flag_value("--extensions-dir").map_or_else(|| user_data.join("extensions"), PathBuf::from), product_version: VERSION.into() };
     user_extensions.clean_up()?;
     let mut extensions = builtins.clone();
@@ -417,7 +417,8 @@ fn icon_theme_follows_workbench_icon_theme() {
 
 fn default_user_data() -> anyhow::Result<PathBuf> {
     let home = std::env::var_os("HOME").ok_or_else(|| anyhow::anyhow!("HOME is not set"))?;
-    let dir = PathBuf::from(home).join("Library/Application Support/vscode-gpui");
+    // Artur: all user data lives in ~/.vsrustium, product.json `dataFolderName`.
+    let dir = PathBuf::from(home).join(".vsrustium");
     std::fs::create_dir_all(&dir)?;
     Ok(dir)
 }

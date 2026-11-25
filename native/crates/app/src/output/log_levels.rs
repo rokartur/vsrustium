@@ -26,7 +26,7 @@ impl DefaultLogLevels {
 
 /// environmentService.argvResource: `<home>/<product dataFolderName>/argv.json`.
 pub fn argv_file(home: &Path) -> PathBuf {
-    home.join(".vscode-oss/argv.json")
+    home.join(".vsrustium/argv.json")
 }
 
 /// log.ts `parseLogLevel`.

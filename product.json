@@ -2,7 +2,7 @@
 	"nameShort": "Code - OSS",
 	"nameLong": "Code - OSS",
 	"applicationName": "code-oss",
-	"dataFolderName": ".vscode-oss",
+	"dataFolderName": ".vsrustium",
 	"sharedDataFolderName": ".vscode-oss-shared",
 	"win32MutexName": "vscodeoss",
 	"licenseName": "MIT",
