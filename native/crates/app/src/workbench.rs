@@ -51,7 +51,9 @@ mod document_symbols;
 mod goto_definition_link;
 mod goto_symbol;
 mod marker_navigation;
+mod hierarchy_peek;
 mod outline_pane;
+mod peek_view;
 mod references_peek;
 pub mod menubar;
 mod middle_scroll;
@@ -191,6 +193,7 @@ pub struct Workbench {
     document_symbols: document_symbols::DocumentSymbols,
     references_peek: references_peek::ReferencesPeek,
     outline_pane: outline_pane::OutlinePane,
+    hierarchy_peek: hierarchy_peek::HierarchyPeek,
     content_hover: content_hover::ContentHover,
     /// The providers extensions registered through MainThreadLanguageFeatures.
     pub(crate) language_features: crate::language_features::LanguageFeatures,
@@ -272,6 +275,7 @@ impl Render for Workbench {
         self.close_editor_message_on_cursor_change(cx);
         self.follow_marker_navigation_cursor();
         self.follow_references_peek_editor();
+        self.follow_hierarchy_peek_editor(window, cx);
         self.follow_symbol_navigation();
         self.follow_definition_link(cx);
         self.refresh_selection_highlights(window);
@@ -388,6 +392,7 @@ impl Workbench {
             document_symbols: Default::default(),
             references_peek: references_peek::ReferencesPeek::new(cx),
             outline_pane: outline_pane::OutlinePane::new(cx),
+            hierarchy_peek: hierarchy_peek::HierarchyPeek::new(cx),
             content_hover: Default::default(),
             language_features: Default::default(),
             folding_providers: Default::default(),
@@ -480,6 +485,7 @@ impl Workbench {
         workbench.register_document_highlight_commands();
         workbench.register_document_symbol_commands();
         workbench.register_references_peek_commands();
+        workbench.register_hierarchy_commands();
         workbench.register_define_keybinding_command();
         workbench.register_notifications_commands();
         workbench.register_output_actions();

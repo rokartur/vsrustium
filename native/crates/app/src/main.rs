@@ -26,6 +26,7 @@ mod file_icons;
 mod filters;
 mod history;
 mod fuzzy_scorer;
+mod hierarchy_model;
 mod host_sync;
 mod input_box;
 mod keybinding_editing;

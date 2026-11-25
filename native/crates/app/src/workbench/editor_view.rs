@@ -511,6 +511,7 @@ impl Workbench {
             .child(div().absolute().left_0().right(px(minimap_width)).top_0().bottom_0().overflow_hidden().child(div().absolute().left_0().right_0().top(px(lines_top)).children(rows)))
             .children(self.marker_navigation_widget(editor, metrics.content_left(), metrics.char_width, cx))
             .children(self.references_peek_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
+            .children(self.hierarchy_peek_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
             .child(
                 div().id("margin").absolute().top_0().bottom_0().left_0().w(px(metrics.content_left())).on_hover(cx.listener(|workbench, hovered: &bool, _, cx| {
                     workbench.fold_controls.set_shown(*hovered, Instant::now());

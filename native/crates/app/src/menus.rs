@@ -201,6 +201,9 @@ const WORKBENCH_MENUS: &[Row] = &[
     (MenuId::EditorContextPeek, None, "editor.action.peekTypeDefinition", "Peek Type Definition", "peek", 4., None, Some("editorHasTypeDefinitionProvider && !inReferenceSearchEditor && !isInEmbeddedEditor")),
     (MenuId::EditorContextPeek, None, "editor.action.peekImplementation", "Peek Implementations", "peek", 5., None, Some("editorHasImplementationProvider && !inReferenceSearchEditor && !isInEmbeddedEditor")),
     (MenuId::EditorContextPeek, None, "editor.action.referenceSearch.trigger", "Peek References", "peek", 6., None, Some("editorHasReferenceProvider && !inReferenceSearchEditor && !isInEmbeddedEditor")),
+    // callHierarchy.contribution.ts and typeHierarchy.contribution.ts
+    (MenuId::EditorContextPeek, None, "editor.showCallHierarchy", "Peek Call Hierarchy", "navigation", 1000., None, Some("editorHasCallHierarchyProvider && !inReferenceSearchEditor && !isInEmbeddedEditor")),
+    (MenuId::EditorContextPeek, None, "editor.showTypeHierarchy", "Peek Type Hierarchy", "navigation", 1000., None, Some("editorHasTypeHierarchyProvider && !inReferenceSearchEditor && !isInEmbeddedEditor")),
     (MenuId::MenubarGoMenu, None, "editor.action.revealDefinition", "Go to &&Definition", "4_symbol_nav", 2., None, None),
     (MenuId::MenubarGoMenu, None, "editor.action.revealDeclaration", "Go to &&Declaration", "4_symbol_nav", 3., None, None),
     (MenuId::MenubarGoMenu, None, "editor.action.goToTypeDefinition", "Go to &&Type Definition", "4_symbol_nav", 3., None, None),

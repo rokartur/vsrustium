@@ -361,6 +361,7 @@ impl Workbench {
             context.insert("markersNavigationVisible".into(), json!(self.markers_navigation_visible()));
             self.goto_symbol_context(&mut context);
             self.references_peek_context(window, &mut context);
+            self.hierarchy_peek_context(editor, window, &mut context);
             context.insert("editorHoverVisible".into(), json!(self.content_hover_visible()));
             context.insert("editorHasSelection".into(), json!(editor.selections.iter().any(|selection| !selection.is_empty())));
             context.insert("editorHasMultipleSelections".into(), json!(editor.selections.len() > 1));

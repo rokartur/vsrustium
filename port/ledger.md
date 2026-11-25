@@ -400,7 +400,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/bracketPairColorizer2Telemetry | workbench contribution | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | workbench/contrib/browserView | workbench contribution | removed | Artur: the integrated browser of 1.147 (WebContentsView, CDP proxy, Playwright, chat tools) serves the agent; Simple Browser stays on a webview panel |
 | workbench/contrib/bulkEdit | workbench contribution | ported | BulkFileEdits with grouping, options and undo edits (cargo test -p files operations); text edits in workbench/bulk_text_edits.rs; no preview or undo stack for text edits yet |
-| workbench/contrib/callHierarchy | workbench contribution | todo |  |
+| workbench/contrib/callHierarchy | workbench contribution | ported | Peek Call Hierarchy (Shift+Alt+H, editor context Peek) in workbench/hierarchy_peek.rs over the shared peek frame (workbench/peek_view.rs): loading, "No results", callers or calls lazily per row, incoming/outgoing toggle, refocus (Shift+Enter), Enter/double click open, layout `callHierarchyPeekLayout` and direction stored, session released; `_executePrepareCallHierarchy`, `_executeProvideIncomingCalls`, `_executeProvideOutgoingCalls` (hierarchy_model.rs); cargo test -p app hierarchy |
 | workbench/contrib/canvases | workbench contribution | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | workbench/contrib/chat | workbench contribution | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/contrib/chatWindow | workbench contribution | removed | no sign-in/AI by decision (port/notes.md); not ported |
@@ -483,7 +483,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/testing | workbench contribution | todo |  |
 | workbench/contrib/themes | workbench contribution | verified | Color Theme picker (`workbench.action.selectTheme`, Cmd+K Cmd+T): rows, order and descriptions as the reference, 200ms preview, Escape restores, accept writes `workbench.colorTheme`; File Icon Theme picker (`workbench.action.selectIconTheme`, Themes submenu): None and the installed themes, preview, Escape restores, accept writes `workbench.iconTheme` (null for None) (cargo test -p app themes); no product icon theme picker (no product icon theme is built in), no Marketplace browsing, no `window.autoDetectColorScheme` |
 | workbench/contrib/timeline | workbench contribution | todo |  |
-| workbench/contrib/typeHierarchy | workbench contribution | todo |  |
+| workbench/contrib/typeHierarchy | workbench contribution | ported | Peek Type Hierarchy in workbench/hierarchy_peek.rs: supertypes/subtypes toggle, layout `typeHierarchyPeekLayout`, `_executePrepareTypeHierarchy`, `_executeProvideSupertypes`, `_executeProvideSubtypes`; cargo test -p app hierarchy |
 | workbench/contrib/update | workbench contribution | todo |  |
 | workbench/contrib/url | workbench contribution | ported | trusted_domains.rs (isURLDomainTrusted, globs, localhost) and workbench/url_actions.rs: workbench.action.url.openUrl, workbench.action.manageTrustedDomain (trustedDomains:/Trusted Domains.jsonc editor, saved to http.linkProtectionTrustedDomains), link prompt "Do you want Code - OSS to open the external website?" with Copy and Configure Trusted Domains; cargo test -p app -- trusted_domains:: url_actions |
 | workbench/contrib/userDataProfile | workbench contribution | todo |  |
@@ -559,7 +559,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | extension/python | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/r | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/razor | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
-| extension/references-view | built-in extension | todo |  |
+| extension/references-view | built-in extension | todo | waits for mainthread/MainThreadTreeViews (stub): its References, Call and Type Hierarchy views are extension tree views |
 | extension/restructuredtext | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/ruby | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/rust | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
