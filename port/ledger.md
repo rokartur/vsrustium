@@ -77,20 +77,20 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | mainthread/MainThreadShare | MainThread* shape (Rust side) | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | mainthread/MainThreadTask | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadExtensionService | MainThread* shape (Rust side) | ported | session.rs: `$getExtension`, `$asBrowserUri`, activation and runtime errors to the port log (no notification until milestone 11); `$extensionTestsExecute` result is code-gpui's exit code (api-workspace exits 1 with 4 failing, 0 with no test matched) |
-| mainthread/MainThreadSCM | MainThread* shape (Rust side) | ported | scm.rs model of the `$registerSourceControl`/groups/resources/input calls, workbench/scm_view.rs view, badge and status entries: cargo test -p app scm |
-| mainthread/MainThreadQuickDiff | MainThread* shape (Rust side) | ported | the source control quick diff (`$provideOriginalResource`, quickDiffModel/quickDiffDecorator: gutter bars and triangles, overview ruler marks) in workbench/editor_view/quick_diff.rs: cargo test -p app quick_diff; `registerQuickDiffProvider` of extensions not routed yet |
+| mainthread/MainThreadSCM | MainThread* shape (Rust side) | verified | scm.rs model of the `$registerSourceControl`/groups/resources/input calls, workbench/scm_view.rs view, badge and status entries: cargo test -p app scm |
+| mainthread/MainThreadQuickDiff | MainThread* shape (Rust side) | verified | primary, secondary and extension quick diff providers (`$registerQuickDiffProvider`, `$provideOriginalResource`), gutter bars and triangles, overview ruler and minimap marks, peek widget, hidden providers, `$acceptSourceControlDiffInformation` in workbench/editor_view/quick_diff.rs and quick_diff_widget.rs: cargo test -p app quick_diff |
 | mainthread/MainThreadAgentEditorComments | MainThread* shape (Rust side) | removed | no sign-in/AI by decision (port/notes.md); API stays inert: session.rs answers undefined, list getters []; exthost-probe 30/30 on Bun and Node |
-| mainthread/MainThreadDocumentDiff | MainThread* shape (Rust side) | ported | `$computeDocumentDiff` (workbench/editor_view/diff_editor_view.rs `compute_document_diff`) over the native/crates/diff port of editor/common/diff: cargo test -p diff (upstream fixtures of src/vs/editor/test/node/diffing, verifyLinesDiff) |
+| mainthread/MainThreadDocumentDiff | MainThread* shape (Rust side) | verified | `$computeDocumentDiff` (workbench/editor_view/diff_editor_view.rs `compute_document_diff`) over the native/crates/diff port of editor/common/diff: cargo test -p diff (upstream fixtures of src/vs/editor/test/node/diffing, verifyLinesDiff) |
 | mainthread/MainThreadDebugService | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadWindow | MainThread* shape (Rust side) | stub | session.rs: $getInitialState fixed {isFocused,isActive}; rest undefined |
 | mainthread/MainThreadTunnelService | MainThread* shape (Rust side) | removed | no remote or tunnels by decision (port/notes.md); one local extension host |
-| mainthread/MainThreadTimeline | MainThread* shape (Rust side) | stub | session.rs answers undefined |
+| mainthread/MainThreadTimeline | MainThread* shape (Rust side) | verified | `$registerTimelineProvider`/`$unregisterTimelineProvider`/`$emitTimelineChangeEvent` routed to timeline.rs and workbench/timeline_view.rs (main_thread_commands.rs): cargo test -p app timeline |
 | mainthread/MainThreadChatArtifactIntegrations | MainThread* shape (Rust side) | removed | no sign-in/AI by decision (port/notes.md); API stays inert: session.rs answers undefined, list getters []; exthost-probe 30/30 on Bun and Node |
 | mainthread/MainThreadAiRelatedInformation | MainThread* shape (Rust side) | removed | no sign-in/AI by decision (port/notes.md); API stays inert: session.rs answers undefined, list getters []; exthost-probe 30/30 on Bun and Node |
 | mainthread/MainThreadAiSettingsSearch | MainThread* shape (Rust side) | removed | no sign-in/AI by decision (port/notes.md); API stays inert: session.rs answers undefined, list getters []; exthost-probe 30/30 on Bun and Node |
 | mainthread/MainThreadAiEmbeddingVector | MainThread* shape (Rust side) | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | mainthread/MainThreadMeteredConnection | MainThread* shape (Rust side) | stub | session.rs answers undefined |
-| mainthread/MainThreadGitHub | MainThread* shape (Rust side) | ported | main_thread_github.rs: anonymous clients and `$getGist` over api.github.com (githubTransport.ts headers, toGistDto), every account method answers the unavailable-session error (no sign-in by decision): cargo test -p app gists_become_dtos |
+| mainthread/MainThreadGitHub | MainThread* shape (Rust side) | verified | main_thread_github.rs: anonymous clients and `$getGist` over api.github.com (githubTransport.ts headers, toGistDto), every account method answers the unavailable-session error (no sign-in by decision): cargo test -p app gists_become_dtos |
 | mainthread/MainThreadPower | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadLogger | MainThread* shape (Rust side) | ported | main_thread_output.rs: $registerLogger, $deregisterLogger and $setVisibility keep the logger registry, a visible logger is a log channel (cargo test -p app output loggers_are_log_channels); $log lines still go to the port log (desktop file loggers are written by the host itself) |
 | mainthread/MainThreadTheming | MainThread* shape (Rust side) | ported | host_sync.rs sends $onColorThemeChange at startup; no runtime theme switch yet |
@@ -228,12 +228,12 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | editor/contrib/caretOperations | src/vs/editor/contrib | verified | Move Selected Text Left/Right (palette), Transpose Letters (Ctrl+T): cargo test -p app caret_operations (moveCarretCommand.test.ts); ui-pair notes.txt Ctrl+T and both palette actions |
 | editor/contrib/clipboard | src/vs/editor/contrib | ported | Cmd+C/X/V with whole-line copy metadata: cargo test -p app keys_and_typed_text_edit_the_focused_editor_and_reach_the_host |
 | editor/contrib/codeAction | src/vs/editor/contrib | todo |  |
-| editor/contrib/codelens | src/vs/editor/contrib | todo |  |
+| editor/contrib/codelens | src/vs/editor/contrib | ported | workbench/editor_view/code_lens.rs: `$registerCodeLensSupport` providers asked on model change, registry change and `$emitCodeLensEvent`, grouped per line in view zones, resolve, workbench UI font; merge-conflict lenses match the reference (port/results/scm.md): cargo test -p app code_lens |
 | editor/contrib/colorPicker | src/vs/editor/contrib | todo |  |
 | editor/contrib/comment | src/vs/editor/contrib | verified | `editor/comment.rs`: line and block comment commands over a `CommandExecutor` port, Toggle/Add/Remove Line Comment and Toggle Block Comment with their keys, Edit menu rows and palette entries; cargo test -p app editor::comment (lineCommentCommand.test.ts, blockCommentCommand.test.ts) comment_keys menubar; ui-pair Cmd+/ and Shift+Alt+A match the reference (port/notes.md milestone 8) |
 | editor/contrib/contextmenu | src/vs/editor/contrib | ported | right click on text or below the last line: focus, cursor to the pointer unless a selection holds it, `MenuId.EditorContext` with Change All Occurrences, Cut, Copy, Paste and Command Palette... (port/results/contextmenu.md, cargo test -p app editor_menus); no Refactor... (no such command yet), no scrollbar menu, no Shift+F10 |
 | editor/contrib/cursorUndo | src/vs/editor/contrib | verified | Cursor Undo (Cmd+U) and Cursor Redo over the selections and scroll positions of cursor-only changes, cleared by an edit or another shown model: cargo test -p app cursor_undo (both cursorUndo.test.ts cases); ui-pair on a .ts file matches the reference |
-| editor/contrib/diffEditorBreadcrumbs | src/vs/editor/contrib | ported | the outline of the modified model (every `$provideDocumentSymbols` provider) feeds the breadcrumbs of collapsed unchanged regions (diff_editor/unchanged_regions.rs `breadcrumb_items`): cargo test -p app breadcrumbs_name_the_symbols |
+| editor/contrib/diffEditorBreadcrumbs | src/vs/editor/contrib | verified | the outline of the modified model (every `$provideDocumentSymbols` provider) feeds the breadcrumbs of collapsed unchanged regions (diff_editor/unchanged_regions.rs `breadcrumb_items`): cargo test -p app breadcrumbs_name_the_symbols |
 | editor/contrib/dnd | src/vs/editor/contrib | verified | `editor/drag_and_drop.rs` (DragAndDropCommand) and `workbench/editor_view/drag_and_drop.rs`: a press on the primary selection drags its text, the dotted `.dnd-target` bar, Alt copies, a key cancels: cargo test -p app drag; ui-pair notes.txt double click then drag |
 | editor/contrib/documentSymbols | src/vs/editor/contrib | todo |  |
 | editor/contrib/dropOrPasteInto | src/vs/editor/contrib | todo |  |
@@ -443,10 +443,10 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/markers | workbench contribution | stub | status bar problems entry and tooltip from markers (workbench/diagnostics.rs); the Problems panel waits for milestone 11's panel part |
 | workbench/contrib/mcp | workbench contribution | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/contrib/mediaPreview | workbench contribution | todo |  |
-| workbench/contrib/mergeEditor | workbench contribution | todo |  |
+| workbench/contrib/mergeEditor | workbench contribution | verified | merge_editor.rs model (mapping, conflict states, accept/combine) and workbench/editor_view/merge_editor_view.rs (input 1/2, result, base view, layouts, gutter checkboxes, `_open.mergeEditor`, dev commands): cargo test -p app merge |
 | workbench/contrib/meteredConnection | workbench contribution | todo |  |
 | workbench/contrib/modernUI | workbench contribution | todo |  |
-| workbench/contrib/multiDiffEditor | workbench contribution | todo |  |
+| workbench/contrib/multiDiffEditor | workbench contribution | verified | multi_diff_editor.rs and workbench/editor_view/multi_diff_editor_view.rs: `_workbench.openMultiDiffEditor`, SCM group and history item sources, file toolbar, change navigation, collapse, binary placeholder, unchanged bars: cargo test -p app multi_diff |
 | workbench/contrib/notebook | workbench contribution | todo |  |
 | workbench/contrib/onboarding | workbench contribution | todo |  |
 | workbench/contrib/opener | workbench contribution | todo |  |
@@ -463,9 +463,9 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/remoteTunnel | workbench contribution | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/contrib/replNotebook | workbench contribution | todo |  |
 | workbench/contrib/sash | workbench contribution | todo |  |
-| workbench/contrib/scm | workbench contribution | ported | SCM view: input box, action button, groups, resources with decorations, inline and title actions, activity badge, status bar commands (workbench/scm_view.rs); quick diff gutter (quick_diff.rs). Missing: SCM graph view, repositories view, multi-repository selection, tree view mode |
+| workbench/contrib/scm | workbench contribution | verified | SCM view: input box, action button, groups, resources with decorations, inline and title actions, activity badge, status bar commands (workbench/scm_view.rs); quick diff gutter and peek (quick_diff.rs, quick_diff_widget.rs), multiple repositories, tree view mode and sort (scm_tree.rs), Graph view (scm_history.rs, scm_graph_view.rs), view actions (scm_actions.rs), editor commands run from the resource row: cargo test -p app scm |
 | workbench/contrib/screenshotTool | workbench contribution | removed | Artur: internal infrastructure or developer tool with no 1:1 counterpart in the native port |
-| workbench/contrib/scrollLocking | workbench contribution | ported | workbench/scroll_locking.rs: Toggle and Hold Locked Scrolling and the prominent `status.scrollLockingEnabled` entry: cargo test -p app scroll_locking; one editor group, so no second pane to move; Hold toggles (no keybinding hold mode) |
+| workbench/contrib/scrollLocking | workbench contribution | verified | workbench/scroll_locking.rs: Toggle and Hold Locked Scrolling and the prominent `status.scrollLockingEnabled` entry: cargo test -p app scroll_locking; one editor group, so no second pane to move; Hold toggles (no keybinding hold mode) |
 | workbench/contrib/search | workbench contribution | ported | Search view (workbench/search_view.rs, search_actions.rs) and its model (search_model.rs): cargo test -p app search_model (searchResult, fileMatch and replace tests) and workbench::search_actions (context menu, input history, hover right click), port/tools/ui-pair frames match the reference in dark, light and hc (port/notes.md milestone 12); anythingQuickAccess.ts file picks: cargo test -p app anything_quick_access quick_open. No search editor links, notebook or AI results, replace preview diff |
 | workbench/contrib/searchEditor | workbench contribution | ported | search_editor.rs, workbench/search_editor_view.rs, search_editor_widget.rs: cargo test -p app search_editor (serialization, match navigation, result blocks, definitions, paths) and workbench::search_actions (openNewEditor, openInEditor, palette, keys), host_sync a_search_editor_tab_has_its_name_and_an_unknown_input. ui-pair (palette, query, details, context, select all; port/notes.md milestone 12) matches; not verified: file-line link underline, active indent guide and the file-line peek wait for editor/contrib/links, guides and peekView |
 | workbench/contrib/sessionChanges | workbench contribution | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
@@ -482,7 +482,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/terminalContrib | workbench contribution | todo |  |
 | workbench/contrib/testing | workbench contribution | todo |  |
 | workbench/contrib/themes | workbench contribution | ported | Color Theme picker (`workbench.action.selectTheme`, Cmd+K Cmd+T): rows, order and descriptions as the reference, 200ms preview, Escape restores, accept writes `workbench.colorTheme` (cargo test -p app themes); no file icon or product icon theme pickers, no Marketplace browsing, no `window.autoDetectColorScheme` |
-| workbench/contrib/timeline | workbench contribution | todo |  |
+| workbench/contrib/timeline | workbench contribution | verified | Timeline view (workbench/timeline_view.rs, timeline.rs): active editor and workspace timelines, paging, follow active editor, excluded sources in profile storage, compare selected, keyboard, `timeline/item/context` and title menus: cargo test -p app timeline |
 | workbench/contrib/typeHierarchy | workbench contribution | todo |  |
 | workbench/contrib/update | workbench contribution | todo |  |
 | workbench/contrib/url | workbench contribution | todo |  |
@@ -516,9 +516,9 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | extension/emmet | built-in extension | todo |  |
 | extension/extension-editing | built-in extension | todo |  |
 | extension/fsharp | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
-| extension/git | built-in extension | todo |  |
-| extension/git-base | built-in extension | todo |  |
-| extension/github | built-in extension | todo |  |
+| extension/git | built-in extension | verified | integration tests 91 passing, 2 pending, 0 failing, as the reference (port/results/scm.md); SCM pixel-check window: the changed file listed and its diff opened |
+| extension/git-base | built-in extension | verified | integration tests 14 passing, as the reference (port/results/scm.md); its API serves git and github |
+| extension/github | built-in extension | verified | activates with git and git-base (ui-pair log `eager extensions activated`); features that need a GitHub session stay off (no sign-in by decision); its smoke tests are in no scripts/test-integration.sh suite and the reference cannot load them either (port/results/scm.md) |
 | extension/github-authentication | built-in extension | removed | scan.rs REMOVED_BUILTINS; cargo test -p exthost skips_removed_builtins |
 | extension/go | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/groovy | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
@@ -544,7 +544,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | extension/markdown-basics | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/markdown-language-features | built-in extension | todo |  |
 | extension/markdown-math | built-in extension | todo |  |
-| extension/merge-conflict | built-in extension | todo |  |
+| extension/merge-conflict | built-in extension | verified | conflict decorations, code lenses and the editor title previous/next actions match the reference in a ui-pair shot of a conflict file (port/results/scm.md) |
 | extension/mermaid-markdown-features | built-in extension | todo |  |
 | extension/microsoft-authentication | built-in extension | removed | scan.rs REMOVED_BUILTINS; cargo test -p exthost skips_removed_builtins |
 | extension/notebook-renderers | built-in extension | todo |  |
