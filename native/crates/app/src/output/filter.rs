@@ -6,7 +6,7 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
-static LOG_ENTRY: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})\s(\[(info|trace|debug|error|warning)\])\s(\[(.*?)\])?").unwrap());
+pub(super) static LOG_ENTRY: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})\s(\[(info|trace|debug|error|warning)\])\s(\[(.*?)\])?").unwrap());
 
 /// `LogLevel` of an entry, by its `[level]` header.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

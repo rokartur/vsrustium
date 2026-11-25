@@ -84,6 +84,7 @@ mod terminal_links;
 mod terminal_suggest;
 mod terminal_quick_access;
 mod terminal_history;
+mod output_compound;
 mod terminal_sticky_scroll;
 mod task_configure;
 pub mod task_quick_pick;

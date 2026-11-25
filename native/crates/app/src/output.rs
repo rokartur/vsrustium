@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 pub mod filter;
+pub mod compound;
 pub mod links;
 pub mod log_levels;
 pub mod logger;
@@ -42,6 +43,10 @@ pub struct OutputChannel {
     pub log: bool,
     pub language_id: Option<String>,
     pub extension_id: Option<String>,
+    /// `IOutputChannelDescriptor.user`: a compound log the user added, which Remove Output... lists.
+    pub user: bool,
+    /// A compound log's sources (`MultiFileOutputChannelModel`); `file` is unused then.
+    pub sources: Vec<compound::Source>,
     start: u64,
     end: u64,
 }
@@ -103,7 +108,7 @@ impl Default for Output {
 
 impl OutputChannel {
     pub fn new(id: String, label: String, file: PathBuf, log: bool) -> Self {
-        OutputChannel { id, label, file, log, language_id: None, extension_id: None, start: 0, end: 0 }
+        OutputChannel { id, label, file, log, language_id: None, extension_id: None, user: false, sources: Vec::new(), start: 0, end: 0 }
     }
 
     /// The language of the channel's model (`createOutputChannelModel`).
@@ -113,6 +118,9 @@ impl OutputChannel {
 
     /// `FileContentProvider.reset(till)`, or `resetToEnd` without `till`: the text starts there.
     pub fn reset(&mut self, till: Option<u64>) {
+        for source in &mut self.sources {
+            source.reader.reset(None);
+        }
         self.start = till.unwrap_or(self.end);
         self.end = self.start;
     }
@@ -120,6 +128,9 @@ impl OutputChannel {
     /// The whole text, read again from the start offset (`loadModel`, `replaceContent`).
     pub fn read_all(&mut self) -> String {
         self.end = self.start;
+        for source in &mut self.sources {
+            source.reader.end = source.reader.start;
+        }
         match self.read_appended() {
             Content::Append(text) | Content::Reset(text) => text,
         }
@@ -128,6 +139,9 @@ impl OutputChannel {
     /// `FileContentProvider.doWatch` and `getContent`: what the file gained since the last read; a file shorter than
     /// what was read restarts the channel at 0. A file not written yet reads as empty.
     pub fn read_appended(&mut self) -> Content {
+        if !self.sources.is_empty() {
+            return self.read_sources();
+        }
         let Ok(mut file) = std::fs::File::open(&self.file) else { return Content::Append(String::new()) };
         let size = file.metadata().map_or(0, |metadata| metadata.len());
         let reset = self.end > size;
