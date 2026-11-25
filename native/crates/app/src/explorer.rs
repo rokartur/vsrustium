@@ -4,7 +4,7 @@
 mod nesting;
 
 use std::cmp::Ordering;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex};
 
@@ -39,6 +39,8 @@ pub struct FileTree {
     pub cut: bool,
     /// `NewExplorerItem`: the row of the name being typed for a new file or folder, under `parent`.
     pub new_item: Option<NewItem>,
+    /// `CompressedNavigationController.index` of compact rows, keyed by the row's last folder; a row not here is at its last.
+    compressed_index: HashMap<PathBuf, usize>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -59,6 +61,77 @@ pub struct Row {
     pub expanded: bool,
     /// The new item's row: no name yet, `path` is its parent.
     pub is_new: bool,
+    /// The folders of a compact row (`explorer.compactFolders`), first to last; `path` and `name` are the last's.
+    /// Empty for any other row.
+    pub compressed: Vec<(PathBuf, String)>,
+}
+
+/// explorerViewer.ts `CompressedNavigationController`: the folders of a compact row and the one keyboard and
+/// context menu commands act on.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Navigation {
+    pub items: Vec<PathBuf>,
+    pub index: usize,
+}
+
+impl Navigation {
+    pub fn current(&self) -> &PathBuf {
+        &self.items[self.index]
+    }
+
+    pub fn previous(&mut self) {
+        self.set_index(self.index.saturating_sub(1));
+    }
+
+    pub fn next(&mut self) {
+        self.set_index(self.index + 1);
+    }
+
+    pub fn first(&mut self) {
+        self.index = 0;
+    }
+
+    pub fn last(&mut self) {
+        self.index = self.items.len() - 1;
+    }
+
+    pub fn set_index(&mut self, index: usize) {
+        if index < self.items.len() {
+            self.index = index;
+        }
+    }
+}
+
+/// explorerView.ts `getContext`: with a multi-selection and `respect_multi_selection` the selection, else the focused
+/// item when it is selected (with the selection) or alone. A compact row stands for its navigation's current folder
+/// when focused, for all its folders when only selected.
+pub fn get_context(focus: Option<&Path>, selection: &[PathBuf], respect_multi_selection: bool, navigation: impl Fn(&Path) -> Option<Navigation>) -> Vec<PathBuf> {
+    let focus = focus.filter(|_| !(respect_multi_selection && selection.len() > 1));
+    let focused_navigation = focus.and_then(&navigation);
+    let focused = match &focused_navigation {
+        Some(navigation) => Some(navigation.current().clone()),
+        None => focus.map(Path::to_path_buf),
+    };
+    let mut selected = Vec::new();
+    for stat in selection {
+        match navigation(stat) {
+            // Folders of the focused compact row other than its current one are left out.
+            Some(stat_navigation) if focused.is_some() && Some(&stat_navigation) == focused_navigation.as_ref() => {
+                if Some(stat) == focused.as_ref() {
+                    selected.push(stat.clone());
+                }
+            }
+            Some(stat_navigation) => selected.extend(stat_navigation.items),
+            None => selected.push(stat.clone()),
+        }
+    }
+    let Some(focused) = focused else {
+        return if respect_multi_selection { selected } else { Vec::new() };
+    };
+    if respect_multi_selection && selected.contains(&focused) {
+        return selected;
+    }
+    vec![focused]
 }
 
 impl FileTree {
@@ -69,7 +142,19 @@ impl FileTree {
         if workspace.file.is_some() {
             expanded.extend(workspace.folders.iter().take(5).map(|folder| folder.path.clone()));
         }
-        Self { workspace, settings, expanded, collapsed_nests: HashSet::new(), focused: None, selected: Vec::new(), anchor: None, clipboard: Vec::new(), cut: false, new_item: None }
+        Self {
+            workspace,
+            settings,
+            expanded,
+            collapsed_nests: HashSet::new(),
+            focused: None,
+            selected: Vec::new(),
+            anchor: None,
+            clipboard: Vec::new(),
+            cut: false,
+            new_item: None,
+            compressed_index: HashMap::new(),
+        }
     }
 
     /// `AsyncDataTree.getViewState` with explorerModel.ts `getId` (`<root URI>::<resource URI>`), as
@@ -79,8 +164,10 @@ impl FileTree {
             let root = self.workspace.folder_of(path).map_or(path.as_path(), |folder| folder.path.as_path());
             format!("{}::{}", uri_string("file", root), uri_string("file", path))
         };
-        let mut expanded: Vec<&PathBuf> = self.expanded.iter().filter(|path| path.exists()).collect();
         let rows = self.rows();
+        // `CompressibleAsyncDataTree.getViewState`: a collapsed compact row lists none of its folders.
+        let collapsed_compact: HashSet<&PathBuf> = rows.iter().filter(|row| !row.expanded).flat_map(|row| row.compressed.iter().map(|(path, _)| path)).collect();
+        let mut expanded: Vec<&PathBuf> = self.expanded.iter().filter(|path| path.exists() && !collapsed_compact.contains(path)).collect();
         expanded.extend(rows.iter().filter(|row| row.has_nests && row.expanded && !self.expanded.contains(&row.path)).map(|row| &row.path));
         json!({
             "focus": self.focused.iter().map(id).collect::<Vec<_>>(),
@@ -119,7 +206,9 @@ impl FileTree {
         if self.shows_roots() && path != root {
             self.expanded.insert(root);
         }
-        self.set_selection(path);
+        // A folder inside a compact row selects the row, as the compressed tree maps each of its elements to the row.
+        let row = self.rows().into_iter().find(|row| row.compressed.iter().any(|(folder, _)| folder == path)).map(|row| row.path);
+        self.set_selection(row.as_deref().unwrap_or(path));
     }
 
     /// A plain click: the row alone is selected and focused.
@@ -186,23 +275,47 @@ impl FileTree {
         }
     }
 
-    /// `ExplorerService.getContext`: the selection when it holds the focused row and `respect_multi_selection`,
-    /// else the focused row.
+    /// `ExplorerService.getContext` over explorerView.ts `getContext`.
     /// With `respect_multi_selection` and not `ignore_nested_children`, a collapsed nest brings the files nested under it.
     pub fn context(&self, respect_multi_selection: bool, ignore_nested_children: bool) -> Vec<PathBuf> {
-        let Some(focused) = &self.focused else { return Vec::new() };
-        if !respect_multi_selection || !self.selected.contains(focused) {
-            return vec![focused.clone()];
-        }
-        let mut items = self.selected.clone();
-        for item in self.selected.iter().filter(|_| !ignore_nested_children) {
-            let Some(folder) = item.parent().filter(|_| !item.is_dir()) else { continue };
-            let Some(entry) = self.entries(folder).into_iter().find(|entry| entry.path == *item) else { continue };
-            if !entry.nested.is_empty() && !self.nest_expanded(item) {
-                items.extend(entry.nested.into_iter().map(|(path, _)| path).filter(|path| !self.selected.contains(path)));
+        let rows = self.rows();
+        let navigation = |path: &Path| rows.iter().find(|row| row.path == path).and_then(|row| self.navigation(row));
+        let context = get_context(self.focused.as_deref(), &self.selected, respect_multi_selection, navigation);
+        let mut items = Vec::new();
+        for item in context {
+            if items.contains(&item) {
+                continue;
             }
+            let nested = match (respect_multi_selection && !ignore_nested_children, item.parent().filter(|_| !item.is_dir())) {
+                (true, Some(folder)) => self.entries(folder).into_iter().find(|entry| entry.path == item).filter(|_| !self.nest_expanded(&item)).map(|entry| entry.nested),
+                _ => None,
+            };
+            items.push(item);
+            items.extend(nested.into_iter().flatten().map(|(path, _)| path));
         }
+        items.dedup();
         items
+    }
+
+    /// The navigation of a compact row, at the folder the user last picked in it.
+    pub fn navigation(&self, row: &Row) -> Option<Navigation> {
+        if row.compressed.is_empty() {
+            return None;
+        }
+        let items: Vec<PathBuf> = row.compressed.iter().map(|(path, _)| path.clone()).collect();
+        let index = self.compressed_index.get(&row.path).copied().filter(|index| *index < items.len()).unwrap_or(items.len() - 1);
+        Some(Navigation { items, index })
+    }
+
+    /// The navigation of the row at `path`, if it is a compact one.
+    pub fn navigation_at(&self, path: &Path) -> Option<Navigation> {
+        self.rows().iter().find(|row| row.path == path).and_then(|row| self.navigation(row))
+    }
+
+    /// Stores a navigation moved by a key, a click on one of its folders or a context menu.
+    pub fn set_navigation(&mut self, navigation: &Navigation) {
+        let row = navigation.items.last().expect("a compact row has folders").clone();
+        self.compressed_index.insert(row, navigation.index);
     }
 
     /// A workspace folder: the tree's root, a row only in a workspace.
@@ -219,7 +332,7 @@ impl FileTree {
     }
 
     pub fn expand(&mut self, folder: &Path) {
-        self.expanded.insert(folder.to_path_buf());
+        self.set_expanded(folder, true);
     }
 
     /// `ExplorerService.isCut`.
@@ -241,12 +354,47 @@ impl FileTree {
             true => {
                 self.expanded.insert(path.to_path_buf());
                 self.collapsed_nests.remove(path);
+                self.expand_single_child_folders(path);
+                self.select_compact_rows();
             }
             false => {
                 self.expanded.remove(path);
                 self.collapsed_nests.insert(path.to_path_buf());
             }
         }
+    }
+
+    /// A folder that just joined a compact row is that row in focus and selection, as the compressed tree maps each
+    /// of its elements to the row.
+    fn select_compact_rows(&mut self) {
+        let rows = self.rows();
+        let row_of = |path: &mut PathBuf| {
+            if let Some(row) = rows.iter().find(|row| row.compressed.iter().any(|(folder, _)| folder == path)) {
+                *path = row.path.clone();
+            }
+        };
+        self.focused.iter_mut().chain(self.anchor.iter_mut()).chain(self.selected.iter_mut()).for_each(row_of);
+        self.selected.dedup();
+    }
+
+    /// asyncDataTree.ts `shouldAutoExpandSingleChild` with `autoExpandCompressedChildren`: a folder's only child, a
+    /// folder that compresses with it, is expanded with it, since the compact row shows its children only then.
+    fn expand_single_child_folders(&mut self, folder: &Path) {
+        if !self.compact_folders() || self.is_root(folder) || !folder.is_dir() {
+            return;
+        }
+        let mut folder = folder.to_path_buf();
+        loop {
+            let children = sorted_children(&folder);
+            let [(child, _, true)] = children.as_slice() else { return };
+            folder = child.clone();
+            self.expanded.insert(folder.clone());
+        }
+    }
+
+    /// `explorer.compactFolders`; explorerView.ts also turns it off for screen readers, which the port does not detect.
+    fn compact_folders(&self) -> bool {
+        self.settings.lock().unwrap().get_value(Some("explorer.compactFolders"), &Overrides::default()) == Some(Value::Bool(true))
     }
 
     fn nest_expanded(&self, path: &Path) -> bool {
@@ -262,7 +410,7 @@ impl FileTree {
         }
         for folder in &self.workspace.folders {
             let expanded = self.expanded.contains(&folder.path);
-            rows.push(Row { path: folder.path.clone(), name: folder.name.clone(), depth: 1, is_dir: true, has_nests: false, expanded, is_new: false });
+            rows.push(Row { path: folder.path.clone(), name: folder.name.clone(), depth: 1, is_dir: true, has_nests: false, expanded, is_new: false, compressed: Vec::new() });
             if expanded {
                 self.push_children(&folder.path, 2, &mut rows);
             }
@@ -273,7 +421,8 @@ impl FileTree {
     /// The new item has an empty name, so `FileSorter` puts it first among the folders or the files.
     fn push_children(&self, folder: &Path, depth: usize, rows: &mut Vec<Row>) {
         let new_item = self.new_item.as_ref().filter(|item| item.parent == folder);
-        let new_row = |is_dir| Row { path: folder.to_path_buf(), name: String::new(), depth, is_dir, has_nests: false, expanded: false, is_new: true };
+        let new_row = |is_dir| Row { path: folder.to_path_buf(), name: String::new(), depth, is_dir, has_nests: false, expanded: false, is_new: true, compressed: Vec::new() };
+        let compact = self.compact_folders();
         if new_item.is_some_and(|item| item.is_dir) {
             rows.push(new_row(true));
         }
@@ -283,21 +432,49 @@ impl FileTree {
                 rows.push(new_row(false));
             }
             let has_nests = !nested.is_empty();
+            let compressed = match is_dir && compact {
+                true => self.compress(&path, &name),
+                false => Vec::new(),
+            };
+            let (path, name) = compressed.last().cloned().unwrap_or((path, name));
             let expanded = match is_dir {
                 true => self.expanded.contains(&path),
                 false => has_nests && self.nest_expanded(&path),
             };
-            rows.push(Row { path: path.clone(), name, depth, is_dir, has_nests, expanded, is_new: false });
+            rows.push(Row { path: path.clone(), name, depth, is_dir, has_nests, expanded, is_new: false, compressed });
             if expanded && is_dir {
                 self.push_children(&path, depth + 1, rows);
             }
             if expanded && has_nests {
-                rows.extend(nested.into_iter().map(|(path, name)| Row { path, name, depth: depth + 1, is_dir: false, has_nests: false, expanded: false, is_new: false }));
+                rows.extend(nested.into_iter().map(|(path, name)| Row { path, name, depth: depth + 1, is_dir: false, has_nests: false, expanded: false, is_new: false, compressed: Vec::new() }));
             }
         }
         if new_file.is_some() {
             rows.push(new_row(false));
         }
+    }
+
+    /// compressedObjectTreeModel.ts `compress` with `ExplorerCompressionDelegate`: a folder whose children are loaded
+    /// (it is expanded) and are one folder takes that folder onto its row, and so on down. Children count unfiltered,
+    /// so an excluded `.DS_Store` or a new item keeps them apart. Answers the row's folders, empty for a plain row.
+    fn compress(&self, folder: &Path, name: &str) -> Vec<(PathBuf, String)> {
+        let mut elements = vec![(folder.to_path_buf(), name.to_string())];
+        loop {
+            let last = &elements[elements.len() - 1].0;
+            if !self.expanded.contains(last) || self.new_item.as_ref().is_some_and(|item| item.parent == *last) {
+                break;
+            }
+            let mut children = sorted_children(last);
+            if children.len() != 1 || !children[0].2 {
+                break;
+            }
+            let (child, child_name, _) = children.remove(0);
+            elements.push((child, child_name));
+        }
+        if elements.len() == 1 {
+            elements.clear();
+        }
+        elements
     }
 
     /// The items of `folder` in `FileSorter` order. With `explorer.fileNesting.enabled`, a file nested under another
@@ -429,11 +606,100 @@ mod tests {
         assert_eq!(tree.selected.len(), 3, "Shift selects from the anchor");
         tree.click_select(&root.join("src"), true, false);
         assert_eq!(tree.selected, [root.join("Docs"), root.join("src/main.ts")], "Cmd toggles a row");
-        assert_eq!(tree.context(true, false), [root.join("src")], "the focused row outside the selection is the context");
+        assert_eq!(tree.context(true, false), [root.join("Docs"), root.join("src/main.ts")], "a multi-selection wins over the focused row");
         tree.click_select(&root.join("Docs"), true, false);
         tree.click_select(&root.join("Docs"), true, false);
         assert_eq!(tree.context(true, false), [root.join("src/main.ts"), root.join("Docs")]);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// explorerView.test.ts `getContext`.
+    #[test]
+    fn get_context_matches_upstream() {
+        let [s1, s2, s3, s4] = ["/", "/path", "/path/to", "/path/to/stat"].map(PathBuf::from);
+        let none = |_: &Path| None;
+        assert_eq!(get_context(Some(&s1), &[s2.clone(), s3.clone(), s4.clone()], true, none), [s2.clone(), s3.clone(), s4.clone()]);
+        assert_eq!(get_context(Some(&s1), &[s1.clone(), s3.clone(), s4.clone()], true, none), [s1.clone(), s3.clone(), s4.clone()]);
+        assert_eq!(get_context(Some(&s1), &[s3.clone(), s1.clone(), s4.clone()], false, none), [s1.clone()]);
+        assert_eq!(get_context(None, &[s3.clone(), s1.clone(), s4.clone()], false, none), Vec::<PathBuf>::new());
+        assert_eq!(get_context(None, &[s3.clone(), s1.clone(), s4.clone()], true, none), [s3.clone(), s1.clone(), s4.clone()]);
+
+        // "keeps the compressed-folder navigation target when replacing the selection": a compact row focused at its
+        // first folder acts on that folder; one only selected stands for all its folders.
+        let compact = |path: &Path| (path == s3).then(|| Navigation { items: vec![s2.clone(), s3.clone()], index: 0 });
+        assert_eq!(get_context(Some(&s3), &[s3.clone()], true, compact), [s2.clone()]);
+        assert_eq!(get_context(Some(&s4), &[s3.clone(), s4.clone()], true, compact), [s2.clone(), s3.clone(), s4.clone()]);
+    }
+
+    /// explorerView.test.ts `compressed navigation controller`.
+    #[test]
+    fn compressed_navigation_moves_within_its_folders() {
+        let [s1, s2, s3] = ["/path", "/path/to", "/path/to/stat"].map(PathBuf::from);
+        let mut navigation = Navigation { items: vec![s1.clone(), s2.clone(), s3.clone()], index: 2 };
+        navigation.next();
+        assert_eq!(navigation.current(), &s3);
+        navigation.previous();
+        assert_eq!(navigation.current(), &s2);
+        navigation.previous();
+        navigation.previous();
+        assert_eq!(navigation.current(), &s1);
+        navigation.last();
+        assert_eq!(navigation.current(), &s3);
+        navigation.first();
+        assert_eq!(navigation.current(), &s1);
+        navigation.set_index(1);
+        assert_eq!(navigation.current(), &s2);
+        navigation.set_index(44);
+        assert_eq!(navigation.current(), &s2);
+    }
+
+    #[test]
+    fn compacts_single_child_folders_into_one_row() {
+        let root = std::env::temp_dir().join(format!("explorer-compact-test-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("a/b/c")).unwrap();
+        std::fs::create_dir_all(root.join("lib")).unwrap();
+        std::fs::write(root.join("a/b/c/deep.txt"), "").unwrap();
+        std::fs::write(root.join("lib/one.ts"), "").unwrap();
+        let user = root.with_extension("user");
+        std::fs::create_dir_all(&user).unwrap();
+        let settings = Arc::new(Mutex::new(Settings::load(config::registry::Registry::with_extensions(&[]), user.clone(), None)));
+        let mut tree = FileTree::new(Workspace::folder(root.clone()), settings.clone());
+        let row = |name: &str, depth| (name.to_string(), depth);
+        assert_eq!(names(&tree), [row("a", 1), row("lib", 1)], "a folder never expanded shows alone");
+
+        tree.click_select(&root.join("a"), false, false);
+        tree.toggle(&root.join("a"));
+        assert_eq!(names(&tree), [row("c", 1), row("deep.txt", 2), row("lib", 1)], "expanding opens the single-child chain");
+        assert_eq!((&tree.selected, &tree.focused), (&vec![root.join("a/b/c")], &Some(root.join("a/b/c"))), "the clicked folder's row stays selected");
+        let rows = tree.rows();
+        let folders: Vec<&str> = rows[0].compressed.iter().map(|(_, name)| name.as_str()).collect();
+        assert_eq!((folders, &rows[0].path), (vec!["a", "b", "c"], &root.join("a/b/c")));
+
+        let mut navigation = tree.navigation(&rows[0]).unwrap();
+        assert_eq!(navigation.current(), &root.join("a/b/c"));
+        navigation.first();
+        tree.set_navigation(&navigation);
+        tree.click_select(&root.join("a/b/c"), false, false);
+        assert_eq!(tree.context(true, false), [root.join("a")], "commands act on the compact row's current folder");
+
+        tree.toggle(&root.join("a/b/c"));
+        assert_eq!(names(&tree), [row("c", 1), row("lib", 1)], "a collapsed compact row stays compact");
+        let stored = tree.view_state(0.)["expanded"].to_string();
+        assert!(!stored.contains("/a\"") && !stored.contains("/a/b"), "nor does it store its folders as expanded: {stored}");
+        tree.toggle(&root.join("a/b/c"));
+
+        tree.new_item = Some(NewItem { parent: root.join("a/b"), is_dir: false });
+        let rows = tree.rows();
+        assert_eq!(rows[0].compressed.iter().map(|(_, name)| name.as_str()).collect::<Vec<_>>(), ["a", "b"], "a new item splits the row");
+        tree.new_item = None;
+
+        std::fs::write(root.join("a/b/side.txt"), "").unwrap();
+        assert_eq!(names(&tree)[..3], [row("b", 1), row("c", 2), row("deep.txt", 3)], "a second child ends the chain");
+
+        settings.lock().unwrap().update_value_derived("explorer.compactFolders", Some(&json!(false))).unwrap();
+        assert_eq!(names(&tree)[..2], [row("a", 1), row("b", 2)]);
+        std::fs::remove_dir_all(root).unwrap();
+        std::fs::remove_dir_all(user).unwrap();
     }
 
     #[test]

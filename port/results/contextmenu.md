@@ -39,3 +39,13 @@ Reference: `FOLDER=port/fixtures/workspace port/tools/ref-contextmenu /tmp/ref-m
 - Pasteboard: `<folder>/src` and `src` in both.
 - Menu: New File..., New Folder..., Reveal in Finder [⌥⌘R] | Cut, Copy, Paste | Copy Path [⌥⌘C], Copy Relative Path [⇧⌥⌘C] | Rename..., Delete, at the reference's places. The reference also has Open in Images Preview, Open in Integrated Terminal, Find in Folder... and Open Timeline, which the port does not have, and shows Delete Permanently where the port shows Delete.
 - `cargo test -p app`: 888 passed, 1 ignored.
+
+## Milestone 12: compact folders
+
+`port/tools/ui-pair` on a folder with `a/b/c/deep.txt`, `lib/one.ts`, `notes.txt`, Dark Modern: click the `a` row, Left, Home, Right, Enter, Escape, right click.
+
+- One row `a/b/c` with dim `/` separators, expanded with `deep.txt`; the focused segment is underlined: `c` after the click, `b` after Left, `a` after Home, at the reference's x positions.
+- Enter renames the focused segment: the input holds `b`, selected, in both.
+- Right click: the menu targets the row's folder, items as in the section above.
+- Still different, not compact folders: the reference shows the pane's title actions, the tree indent guide and the row's path hover while the pointer rests in the view (view and row hover, milestone 11).
+- `cargo test -p app`: 891 passed, 1 ignored (`compacts_single_child_folders_into_one_row`, `compressed_navigation_moves_within_its_folders`, `get_context_matches_upstream`).

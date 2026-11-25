@@ -10,14 +10,14 @@ use std::time::Duration;
 use config::configuration::Overrides;
 use files::Resource;
 use files::operations::{FileEdit, FileEditOptions, FileUndo};
-use gpui::{AsyncWindowContext, Context, Div, FocusHandle, FontWeight, HighlightStyle, PromptLevel, Rgba, ScrollHandle, StyledText, Subscription, Task, WeakEntity, Window, deferred, div, prelude::*, px};
+use gpui::{AsyncWindowContext, Context, Div, DragMoveEvent, FocusHandle, FontWeight, HighlightStyle, MouseButton, MouseDownEvent, PromptLevel, Rgba, ScrollHandle, StyledText, Subscription, Task, WeakEntity, Window, deferred, div, prelude::*, px};
 use serde_json::{Value, json};
 
 use super::Workbench;
 use super::input_box_view::{InputId, InputLook, InputView};
 use crate::commands::Outcome;
 use crate::dialog;
-use crate::explorer::NewItem;
+use crate::explorer::{Navigation, NewItem};
 use crate::file_actions::{self, Deleted, IncrementalNaming, Severity};
 use crate::host_sync::FileJob;
 use crate::input_box::InputBox;
@@ -102,6 +102,20 @@ impl Workbench {
         self.commands.register("copyFilePath", |workbench, args, window, cx| workbench.copy_paths_to_clipboard(false, &args, window, cx));
         self.commands.register("copyRelativeFilePath", |workbench, args, window, cx| workbench.copy_paths_to_clipboard(true, &args, window, cx));
         self.commands.register("revealFileInOS", |workbench, args, window, cx| workbench.reveal_in_os(&args, window, cx));
+        self.commands.register("previousCompressedFolder", |workbench, _, _, cx| workbench.move_compressed_focus(Navigation::previous, cx));
+        self.commands.register("nextCompressedFolder", |workbench, _, _, cx| workbench.move_compressed_focus(Navigation::next, cx));
+        self.commands.register("firstCompressedFolder", |workbench, _, _, cx| workbench.move_compressed_focus(Navigation::first, cx));
+        self.commands.register("lastCompressedFolder", |workbench, _, _, cx| workbench.move_compressed_focus(Navigation::last, cx));
+    }
+
+    /// explorerView.ts `previousCompressedStat` and its siblings: moves the focused compact row's current folder.
+    fn move_compressed_focus(&mut self, step: fn(&mut Navigation), cx: &mut Context<Self>) -> Outcome {
+        let Some(tree) = self.folder.as_mut() else { return Outcome::done() };
+        let Some(mut navigation) = tree.focused.as_ref().and_then(|focused| tree.navigation_at(focused)) else { return Outcome::done() };
+        step(&mut navigation);
+        tree.set_navigation(&navigation);
+        cx.notify();
+        Outcome::done()
     }
 
     /// files.ts `getMultiSelectedResources`: the Explorer's context while it has focus, else the command's
@@ -175,6 +189,12 @@ impl Workbench {
         context.insert("explorerResourceMoveableToTrash".into(), json!(tree.focused.is_some() && self.setting("files.enableTrash") == json!(true)));
         context.insert("explorerResourceCut".into(), json!(tree.cut && !tree.clipboard.is_empty()));
         context.insert("fileCopied".into(), json!(!tree.clipboard.is_empty()));
+        let navigation = tree.focused.as_ref().and_then(|focused| tree.navigation_at(focused));
+        context.insert("explorerViewletCompressedFocus".into(), json!(navigation.is_some()));
+        if let Some(navigation) = navigation {
+            context.insert("explorerViewletCompressedFirstFocus".into(), json!(navigation.index == 0));
+            context.insert("explorerViewletCompressedLastFocus".into(), json!(navigation.index == navigation.items.len() - 1));
+        }
         if focused {
             self.explorer_resource_context(tree.focused.as_deref(), context);
         }
@@ -206,7 +226,11 @@ impl Workbench {
         tree.context_menu_select(stat);
         let uri = |path: &Path| json!({ "scheme": "file", "path": path.to_string_lossy() });
         let (arg, selection) = match stat {
-            Some(stat) => (uri(stat), tree.selected.iter().map(|path| uri(path)).collect()),
+            Some(stat) => {
+                // A compact row's menu acts on its current folder.
+                let current = tree.navigation_at(stat).map(|navigation| navigation.current().clone());
+                (uri(current.as_deref().unwrap_or(stat)), tree.selected.iter().map(|path| uri(path)).collect())
+            }
             None if tree.workspace.folders.len() == 1 => (uri(&tree.workspace.folders[0].path), Vec::new()),
             None => (json!({}), Vec::new()),
         };
@@ -690,6 +714,57 @@ impl Workbench {
             }));
         }
         cx.notify();
+    }
+
+    /// iconLabel.ts with a label array: an `a.label-name` per folder of a compact row, a half-opaque `/` 2px from its
+    /// neighbors. explorerviewlet.css underlines the hovered name and, in the focused row, the current one; a name is
+    /// the drop target on its own. Pressing a name makes it current (`renderCompressedElements` mousedown).
+    pub(super) fn compressed_label(&self, folders: &[(PathBuf, String)], navigation: &Navigation, row_focused: bool, drop_target: Option<&PathBuf>, cx: &mut Context<Self>) -> Div {
+        let row = navigation.items.last().expect("a compact row has folders").clone();
+        let drop_background = self.color("list.dropBackground");
+        div().flex().children(folders.iter().enumerate().map(|(index, (folder, name))| {
+            let is_last = index == folders.len() - 1;
+            let current = (row.clone(), index);
+            let menu_target = (row.clone(), index);
+            let over = folder.clone();
+            div()
+                .id(("explorer-compressed-name", index))
+                .flex()
+                .group("explorer-compressed-name")
+                .child(
+                    div()
+                        .rounded(px(3.))
+                        .when(row_focused && index == navigation.index, |name| name.underline())
+                        .group_hover("explorer-compressed-name", |name| name.underline())
+                        .when(drop_target == Some(folder), |name| name.bg(drop_background))
+                        .child(name.clone()),
+                )
+                .when(!is_last, |name| name.child(div().mx(px(2.)).opacity(0.5).child("/")))
+                .on_mouse_down(MouseButton::Left, cx.listener(move |workbench, _: &MouseDownEvent, _, cx| workbench.set_compressed_current(&current.0, current.1, cx)))
+                .on_mouse_down(MouseButton::Right, cx.listener(move |workbench, event: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    workbench.set_compressed_current(&menu_target.0, menu_target.1, cx);
+                    workbench.show_explorer_context_menu(Some(&menu_target.0), event.position, window, cx);
+                }))
+                .when(!is_last, |name| {
+                    name.on_drag_move(cx.listener(move |workbench, event: &DragMoveEvent<DraggedItems>, window, cx| {
+                        if event.bounds.contains(&event.event.position) {
+                            cx.stop_propagation();
+                            let items = event.drag(cx).clone();
+                            workbench.explorer_drag_over(&over, &items, window, cx);
+                        }
+                    }))
+                })
+        }))
+    }
+
+    fn set_compressed_current(&mut self, row: &Path, index: usize, cx: &mut Context<Self>) {
+        let tree = self.folder.as_mut().expect("rows exist only with a folder");
+        if let Some(mut navigation) = tree.navigation_at(row) {
+            navigation.set_index(index);
+            tree.set_navigation(&navigation);
+            cx.notify();
+        }
     }
 
     /// `handleExplorerDrop`: Alt copies, otherwise the items move after `explorer.confirmDragAndDrop` asks.
