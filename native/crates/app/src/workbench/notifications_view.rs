@@ -393,7 +393,7 @@ impl Workbench {
     /// `setFilter(NotificationsFilter)`: Do Not Disturb hides the center and silences new non-error notifications.
     fn set_do_not_disturb(&mut self, enabled: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.notifications.model.do_not_disturb = enabled;
-        self.profile_storage.lock().unwrap().set(GLOBAL_FILTER_KEY, enabled.to_string());
+        self.application_storage.lock().unwrap().set(GLOBAL_FILTER_KEY, enabled.to_string());
         if enabled {
             self.hide_notifications_center(window, cx);
         }
@@ -406,12 +406,12 @@ impl Workbench {
         source.2 = muted;
         ui.model.muted_sources = ui.sources.iter().filter(|(.., muted)| *muted).map(|(id, ..)| id.clone()).collect();
         let stored: Vec<Value> = ui.sources.iter().map(|(id, label, muted)| json!({ "id": id, "label": label, "filter": if *muted { 1 } else { 0 } })).collect();
-        self.profile_storage.lock().unwrap().set(SOURCE_FILTER_KEY, Value::Array(stored).to_string());
+        self.application_storage.lock().unwrap().set(SOURCE_FILTER_KEY, Value::Array(stored).to_string());
     }
 
     /// NotificationService's constructor: the filters from application storage.
     pub(super) fn load_notification_filters(&mut self) {
-        let storage = self.profile_storage.lock().unwrap();
+        let storage = self.application_storage.lock().unwrap();
         let ui = &mut self.notifications;
         ui.model.do_not_disturb = storage.get(GLOBAL_FILTER_KEY) == Some("true");
         let stored: Vec<Value> = storage.get(SOURCE_FILTER_KEY).and_then(|value| serde_json::from_str(value).ok()).unwrap_or_default();

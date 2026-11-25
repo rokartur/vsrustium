@@ -24,7 +24,7 @@ fn open<'a>(folder: Option<PathBuf>, stores: &Stores, cx: &'a mut TestAppContext
     let (workbench, cx) = cx.add_window_view(|_, cx| {
         let mut workbench = Workbench::new(theme, app_root, folder.map(Workspace::folder), Languages::new(&[]), crate::default_settings(), HostSync::new(std::sync::mpsc::channel().0), cx);
         workbench.load_keybindings(crate::keybindings::default_keybindings(&[]), std::env::temp_dir().join("code-gpui-part-grid-keybindings.json"), cx);
-        workbench.restore_profile_state(profile);
+        workbench.restore_profile_state(profile.clone(), profile);
         workbench.restore_workspace_state(workspace);
         workbench
     });

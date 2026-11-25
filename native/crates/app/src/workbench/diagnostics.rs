@@ -15,7 +15,7 @@ use crate::editor::{LINE_HEIGHT, OpenEditor, expand_tabs};
 use crate::markers::{DEPRECATED, ERROR, HINT, INFO, MarkerService, MarkerStatistics, ReadOptions, UNNECESSARY, WARNING};
 
 /// `MainThreadDiagnostics.extHostId`: the window's one extension host is the first.
-const EXT_HOST_ID: &str = "extHost1";
+pub(super) const EXT_HOST_ID: &str = "extHost1";
 
 #[derive(Default)]
 pub struct Diagnostics {

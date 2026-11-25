@@ -53,9 +53,17 @@ impl Workbench {
         // shortcut: the file is polled once a second where the reference has a file watcher; no watcher crate is in the port.
         cx.spawn(async move |workbench, cx| {
             let modified = |path: &PathBuf| std::fs::metadata(path).and_then(|metadata| metadata.modified()).ok();
-            let mut seen: Option<SystemTime> = modified(&user_file);
+            let mut watched = user_file;
+            let mut seen: Option<SystemTime> = modified(&watched);
             loop {
                 cx.background_executor().timer(Duration::from_secs(1)).await;
+                // A profile switch moves the file; its change was applied then.
+                let Ok(Some(user_file)) = workbench.read_with(cx, |workbench, _| workbench.keybindings.user_file.clone()) else { return };
+                if user_file != watched {
+                    seen = modified(&user_file);
+                    watched = user_file;
+                    continue;
+                }
                 let now = modified(&user_file);
                 if now == seen {
                     continue;

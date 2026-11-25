@@ -215,7 +215,7 @@ impl Workbench {
     }
 
     /// The extension points the workbench reads, after `_doHandleExtensionPoints` with the running extensions.
-    fn set_running_extensions(&mut self, running: Vec<ScannedExtension>, cx: &mut Context<Self>) {
+    pub(super) fn set_running_extensions(&mut self, running: Vec<ScannedExtension>, cx: &mut Context<Self>) {
         self.languages = crate::languages::Languages::new(&running);
         self.menus = crate::menus::workbench_menus();
         self.menus.extend(crate::menus::extension_menus(&running));

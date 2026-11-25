@@ -75,7 +75,7 @@ impl Workbench {
     /// The offset toggle: `useZeroBasedOffset` follows its new state.
     pub(super) fn toggle_zero_based_offset(&mut self, checked: Option<bool>) {
         let checked = checked.unwrap_or(!self.use_zero_based_offset());
-        self.profile_storage.lock().unwrap().set(ZERO_BASED_OFFSET_STORAGE_KEY, checked.to_string());
+        self.application_storage.lock().unwrap().set(ZERO_BASED_OFFSET_STORAGE_KEY, checked.to_string());
     }
 
     /// `gotoLocation`: the cursor at the position, revealed in the center; the editor takes focus unless the pick was
@@ -111,7 +111,7 @@ impl Workbench {
 
     /// `gotoLine.useZeroBasedOffset` in StorageScope.APPLICATION, false by default.
     fn use_zero_based_offset(&self) -> bool {
-        self.profile_storage.lock().unwrap().get(ZERO_BASED_OFFSET_STORAGE_KEY) == Some("true")
+        self.application_storage.lock().unwrap().get(ZERO_BASED_OFFSET_STORAGE_KEY) == Some("true")
     }
 }
 

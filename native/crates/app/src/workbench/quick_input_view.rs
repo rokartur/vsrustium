@@ -451,7 +451,7 @@ impl Workbench {
 
     /// `loadViewState`: the position stored by the last drag, if any.
     pub(super) fn load_quick_input_view_state(&mut self) {
-        let storage = self.profile_storage.lock().unwrap();
+        let storage = self.application_storage.lock().unwrap();
         let data: Value = storage.get(VIEWSTATE_STORAGE_KEY).and_then(|raw| serde_json::from_str(raw).ok()).unwrap_or_default();
         self.quick_inputs.view_state = match (data["top"].as_f64(), data["left"].as_f64()) {
             (None, None) => None,
@@ -461,7 +461,7 @@ impl Workbench {
 
     /// `saveViewState` in StorageScope.APPLICATION; the default position removes the key.
     fn save_quick_input_view_state(&self) {
-        let mut storage = self.profile_storage.lock().unwrap();
+        let mut storage = self.application_storage.lock().unwrap();
         match self.quick_inputs.view_state {
             Some((top, left)) => {
                 // JSON.stringify leaves out an undefined side.

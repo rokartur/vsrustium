@@ -119,6 +119,28 @@ fn the_tree_puts_core_settings_under_their_toc_entry_and_extensions_last() {
 }
 
 #[test]
+fn deprecated_settings_stay_out_of_the_tree_unless_configured_or_shown() {
+    let mut registry = Registry::default();
+    let contribution = json!({ "contributes": { "configuration": { "title": "Sample", "properties": {
+        "sample.current": { "type": "boolean", "default": false },
+        "sample.gone": { "type": "boolean", "default": false, "deprecationMessage": "Gone." },
+        "sample.shown": { "type": "boolean", "default": false, "deprecationMessage": "Moved.", "deprecationMessageShowInSettings": true }
+    } } } });
+    registry.register_configuration("pub.sample", &contribution);
+    registry.finish();
+    let groups = registered_groups(&registry, Target::User);
+    let tree_keys = |configured: bool| {
+        let mut model = Model::new(&groups, true, |id| id.to_string());
+        let inspections: Vec<Inspection> = model.settings.iter().map(|_| Inspection { is_configured: configured, ..Inspection::default() }).collect();
+        model.hide_deprecated(&inspections);
+        let sample = &model.root.children.last().unwrap().children[0];
+        sample.settings.iter().map(|&index| model.settings[index].key.clone()).collect::<Vec<_>>()
+    };
+    assert_eq!(tree_keys(false), ["sample.current", "sample.shown"]);
+    assert_eq!(tree_keys(true), ["sample.current", "sample.gone", "sample.shown"]);
+}
+
+#[test]
 fn value_types_follow_the_schema() {
     let setting = |key: &str, schema: Value| Setting { key: key.into(), enum_values: schema["enum"].as_array().cloned(), schema, ..Setting::default() };
     assert_eq!(value_type(&setting("a", json!({ "type": "boolean" }))), ValueType::Boolean);

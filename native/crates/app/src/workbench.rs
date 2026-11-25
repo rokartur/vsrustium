@@ -33,6 +33,11 @@ pub mod editor_status;
 mod editor_view;
 mod explorer_actions;
 mod extension_management;
+pub(crate) mod extension_host_restart;
+mod user_data_profile;
+mod profiles_editor_view;
+mod settings_import;
+pub use profiles_editor_view::NEW_WINDOW_PROFILE_SETTING;
 mod explorer_find;
 mod explorer_keyboard;
 mod extension_editor;
@@ -289,11 +294,13 @@ pub struct Workbench {
     pub hovers: hover::Hovers,
     /// What the application menu shows now.
     installed_menubar: Option<menubar::Menubar>,
-    /// The application storage (StorageScope.PROFILE and APPLICATION in the default profile), shared with the
-    /// extension host's MainThreadStorage.
+    /// StorageScope.PROFILE of the current profile, shared with the extension host's MainThreadStorage.
     profile_storage: Arc<Mutex<Storage>>,
+    /// StorageScope.APPLICATION: the default profile's storage, the same as `profile_storage` in that profile.
+    application_storage: Arc<Mutex<Storage>>,
     /// StorageScope.WORKSPACE of the opened folder, shared with the extension host's MainThreadStorage.
     workspace_storage: Arc<Mutex<Storage>>,
+    pub(crate) user_data_profiles: user_data_profile::UserDataProfiles,
     part_grid: part_grid::PartGrid,
     panel: panel::Panel,
     explorer_panes: view_panes::ExplorerPanes,
@@ -346,7 +353,7 @@ impl Render for Workbench {
             .children(self.restricted_mode_banner(cx))
             .child(self.middle_section(viewport, editor, window, cx))
             .child(self.status_bar(window, cx));
-        let modal_editor = self.keybindings_editor_widget(window, cx).or_else(|| self.settings_editor_widget(window, cx));
+        let modal_editor = self.keybindings_editor_widget(window, cx).or_else(|| self.settings_editor_widget(window, cx)).or_else(|| self.profiles_editor_widget(window, cx));
         let quick_input = self.quick_input_widget(window, cx);
         let notifications = self.notifications_widget(viewport, window, cx);
         let context_menu = self.context_menu_widget(cx);
@@ -490,7 +497,9 @@ impl Workbench {
             hovers: hover::Hovers::default(),
             installed_menubar: None,
             profile_storage: Arc::new(Mutex::new(Storage::in_memory())),
+            application_storage: Arc::new(Mutex::new(Storage::in_memory())),
             workspace_storage: Arc::new(Mutex::new(Storage::in_memory())),
+            user_data_profiles: Default::default(),
             part_grid: part_grid::PartGrid::default(),
             panel: panel::Panel::default(),
             explorer_panes: view_panes::ExplorerPanes::default(),
@@ -562,6 +571,10 @@ impl Workbench {
         workbench.start_system_events(cx);
         workbench.user_activity(cx);
         workbench.register_extension_management_commands();
+        workbench.register_extension_host_commands();
+        workbench.register_user_data_profile_commands();
+        workbench.register_profiles_editor_commands();
+        workbench.register_settings_import_commands();
         workbench.register_workspace_trust_commands();
         workbench.register_host_commands();
         workbench.register_workspace_commands();
@@ -599,9 +612,11 @@ impl Workbench {
         workbench
     }
 
-    /// Switches to the app's profile storage and reads the command history and the quick input position from it.
-    pub fn restore_profile_state(&mut self, storage: Arc<Mutex<Storage>>) {
-        self.profile_storage = storage;
+    /// Switches to the profile's and the application's storage and reads the command history, the quick input
+    /// position and the notification filters from them.
+    pub fn restore_profile_state(&mut self, profile: Arc<Mutex<Storage>>, application: Arc<Mutex<Storage>>) {
+        self.profile_storage = profile;
+        self.application_storage = application;
         self.load_command_history();
         self.load_quick_input_view_state();
         self.load_notification_filters();

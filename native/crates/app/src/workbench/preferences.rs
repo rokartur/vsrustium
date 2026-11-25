@@ -53,10 +53,11 @@ impl OpenSettingsOptions {
 
 impl Workbench {
     pub(super) fn register_preferences_commands(&mut self) {
-        // The default profile is the only one, so the application settings are the user settings.
-        for id in ["workbench.action.openSettingsJson", "workbench.action.openApplicationSettingsJson"] {
-            self.commands.register(id, |workbench, args, window, cx| workbench.open_settings_json(Target::UserLocal, None, OpenSettingsOptions::sanitize(&args), window, cx));
-        }
+        self.commands.register("workbench.action.openSettingsJson", |workbench, args, window, cx| workbench.open_settings_json(Target::UserLocal, None, OpenSettingsOptions::sanitize(&args), window, cx));
+        // `openApplicationSettings`: the default profile's settings.json, the user settings in the default profile.
+        self.commands.register("workbench.action.openApplicationSettingsJson", |workbench, args, window, cx| {
+            workbench.open_settings_json(Target::Application, None, OpenSettingsOptions::sanitize(&args), window, cx)
+        });
         self.commands.register("workbench.action.openWorkspaceSettingsFile", |workbench, args, window, cx| {
             if workbench.settings.lock().unwrap().workspace.is_none() {
                 // shortcut: logged, since the port has no notification toasts.

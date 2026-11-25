@@ -325,6 +325,11 @@ impl HostSync {
         let _ = self.sender.send(HostMessage { proxy, method, args, reply: None, cancellable: false, files: None, extensions: None });
     }
 
+    /// `MessageType.Terminate`: the session thread tells the host to deactivate its extensions and exit.
+    pub fn stop_extension_host(&self) {
+        self.send("workbench", "stopExtensionHost", Vec::new());
+    }
+
     /// Runs file edits on the host thread; with no host they run here on the disk, without participants.
     pub fn run_files(&self, job: FileJob) -> oneshot::Receiver<files::Result<FileUndo>> {
         let (reply, receiver) = oneshot::channel();

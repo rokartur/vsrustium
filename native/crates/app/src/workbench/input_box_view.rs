@@ -42,9 +42,10 @@ pub enum InputId {
     BreakpointWidget,
     DebugConsole,
     TerminalFind,
+    ProfileName,
 }
 
-const INPUTS: [InputId; 18] = [
+const INPUTS: [InputId; 19] = [
     InputId::QuickInput,
     InputId::Explorer,
     InputId::ExplorerFind,
@@ -63,6 +64,7 @@ const INPUTS: [InputId; 18] = [
     InputId::BreakpointWidget,
     InputId::DebugConsole,
     InputId::TerminalFind,
+    InputId::ProfileName,
 ];
 
 /// The view state of one input element.
@@ -131,6 +133,7 @@ impl Workbench {
             InputId::ExtensionsSearch => &self.extensions_viewlet.search_view,
             InputId::SettingsSearch => &self.settings_editor.search_view,
             InputId::SettingsValue => &self.settings_editor.value_view,
+            InputId::ProfileName => &self.user_data_profiles.editor.name_view,
             InputId::SettingsListKey => &self.settings_editor.list.key_view,
             InputId::SettingsListValue => &self.settings_editor.list.value_view,
             InputId::DebugView => &self.debug_view.input_view,
@@ -156,6 +159,7 @@ impl Workbench {
             InputId::ExtensionsSearch => &mut self.extensions_viewlet.search_view,
             InputId::SettingsSearch => &mut self.settings_editor.search_view,
             InputId::SettingsValue => &mut self.settings_editor.value_view,
+            InputId::ProfileName => &mut self.user_data_profiles.editor.name_view,
             InputId::SettingsListKey => &mut self.settings_editor.list.key_view,
             InputId::SettingsListValue => &mut self.settings_editor.list.value_view,
             InputId::DebugView => &mut self.debug_view.input_view,
@@ -181,6 +185,7 @@ impl Workbench {
             InputId::ExtensionsSearch => &self.extensions_viewlet.search_focus,
             InputId::SettingsSearch => &self.settings_editor.search_focus,
             InputId::SettingsValue => &self.settings_editor.value_focus,
+            InputId::ProfileName => self.user_data_profiles.editor.name_focus.as_ref().unwrap_or(&self.settings_editor.value_focus),
             InputId::SettingsListKey => &self.settings_editor.list.key_focus,
             InputId::SettingsListValue => &self.settings_editor.list.value_focus,
             InputId::DebugView => &self.debug_view.input_focus,
@@ -206,6 +211,7 @@ impl Workbench {
             InputId::ExtensionsSearch => Some(&self.extensions_viewlet.search),
             InputId::SettingsSearch => Some(&self.settings_editor.search),
             InputId::SettingsValue => self.settings_editor.value.as_ref().map(|(_, input)| input),
+            InputId::ProfileName => Some(&self.user_data_profiles.editor.name),
             InputId::SettingsListKey => Some(&self.settings_editor.list.key),
             InputId::SettingsListValue => Some(&self.settings_editor.list.value),
             InputId::DebugView => self.debug_view.editing.as_ref().map(|_| &self.debug_view.input),
@@ -276,6 +282,10 @@ impl Workbench {
             }
             InputId::SettingsValue => {
                 self.edit_settings_value(edit, window, cx);
+                Outcome::done()
+            }
+            InputId::ProfileName => {
+                self.edit_profile_name(edit, cx);
                 Outcome::done()
             }
             InputId::SettingsListKey | InputId::SettingsListValue => {
@@ -487,6 +497,7 @@ impl Workbench {
                 InputId::ExtensionsSearch => "extensions-search-text".into(),
                 InputId::SettingsSearch => "settings-search-text".into(),
                 InputId::SettingsValue => "settings-value-text".into(),
+                InputId::ProfileName => "profile-name-text".into(),
                 InputId::SettingsListKey => "settings-list-key-text".into(),
                 InputId::SettingsListValue => "settings-list-value-text".into(),
                 InputId::DebugView => "debug-view-input-text".into(),

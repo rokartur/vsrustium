@@ -498,6 +498,7 @@ impl Workbench {
         editor.model = Model::new(groups, show_advanced, |id| groups.iter().find(|group| group.extension_id.as_deref() == Some(id)).map_or_else(|| id.to_string(), |group| group.title.clone()));
         let folder = editor.folder.as_deref();
         editor.inspections = editor.model.settings.iter().map(|setting| inspect_setting(&settings.configuration, &setting.key, editor.target, folder)).collect();
+        editor.model.hide_deprecated(&editor.inspections);
     }
 
     /// The settings changed on disk or through a write: the shown editor reads them again.
@@ -1276,6 +1277,10 @@ impl Workbench {
             .children(indicators);
         let description = self.setting_description(index, window, cx);
         let deprecation = setting.deprecation_message.clone();
+        let (deprecation_color, deprecation_icon, deprecation_icon_color, deprecation_top) = match setting.deprecation_is_info {
+            true => (self.color("foreground"), "info", self.color("editorInfo.foreground"), 6.),
+            false => (self.color("errorForeground"), "error", self.color("errorForeground"), 3.),
+        };
         let mut contents = div()
             .relative()
             .pt(px(12.))
@@ -1328,7 +1333,7 @@ impl Workbench {
             contents.child(description).child(div().mt(px(9.)).flex().when(is_list, |control_box| control_box.w_full()).child(control))
         };
         contents = contents.when_some(deprecation, |contents, message| {
-            contents.child(div().mt(px(3.)).flex().gap(px(4.)).text_color(self.color("errorForeground")).child(self.icon("error", 16., 14., self.color("errorForeground"))).child(message))
+            contents.child(div().mt(px(deprecation_top)).flex().gap(px(4.)).text_color(deprecation_color).child(self.icon(deprecation_icon, 16., 14., deprecation_icon_color)).child(message))
         });
         contents
             .on_mouse_down(MouseButton::Right, cx.listener(move |workbench, event: &MouseDownEvent, window, cx| {
