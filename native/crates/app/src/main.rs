@@ -9,6 +9,7 @@ mod accessibility_signals;
 mod anything_quick_access;
 mod brackets;
 mod clipboard;
+mod codicons;
 mod command_palette;
 mod commands;
 mod contextkey;

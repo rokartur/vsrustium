@@ -24,7 +24,7 @@ pub struct TaskService {
     /// `$registerTaskProvider`: handle and task type.
     pub(super) providers: Vec<(i64, String)>,
     definitions: Vec<TaskDefinition>,
-    matchers: Registry,
+    pub(super) matchers: Registry,
     /// `UUIDMap`: custom task ids by folder and label, stable across reads.
     uuids: HashMap<(PathBuf, String), String>,
     /// Tasks the host referred to by id (`$executeTask` with a DTO), for `$getTaskExecution`.

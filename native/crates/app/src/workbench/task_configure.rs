@@ -107,7 +107,7 @@ impl Workbench {
     /// `_configureTask`: a contributed task is customized, a tasks.json task opened at its entry.
     pub(super) fn configure_task(&mut self, task: Task, window: &mut Window, cx: &mut Context<Self>) {
         if is_contributed(&task) {
-            self.customize_task(&task, None, true, window, cx);
+            self.customize_task(&task, Map::new(), true, window, cx);
         } else if !task.configures {
             self.open_task_entry(&task, window, cx);
         }
@@ -167,17 +167,17 @@ impl Workbench {
         if was_selected && !is_contributed(&task) {
             self.open_task_entry(&task, window, cx);
         }
-        self.customize_task(&task, Some(json!({ "kind": group, "isDefault": true })), true, window, cx);
+        self.customize_task(&task, Map::from_iter([("group".into(), json!({ "kind": group, "isDefault": true }))]), true, window, cx);
         if let Some(selected) = selected.filter(|_| !was_selected) {
             // The first write changed tasks.json: the old default is read again from it.
             let fresh = self.configured_tasks().into_iter().find(|candidate| candidate.label == selected.label).unwrap_or(selected);
-            self.customize_task(&fresh, Some(json!(group)), false, window, cx);
+            self.customize_task(&fresh, Map::from_iter([("group".into(), json!(group))]), false, window, cx);
         }
     }
 
-    /// `customize`: the task's tasks.json entry (a new one for a contributed task) with `group` set, written back
-    /// as `tasks.tasks`, or a new tasks.json holding only it.
-    pub(super) fn customize_task(&mut self, task: &Task, group: Option<Value>, open_config: bool, window: &mut Window, cx: &mut Context<Self>) {
+    /// `customize`: the task's tasks.json entry (a new one for a contributed task) with `properties` set, written
+    /// back as `tasks.tasks`, or a new tasks.json holding only it.
+    pub(super) fn customize_task(&mut self, task: &Task, properties: Map<String, Value>, open_config: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some(folder) = task.workspace_folder.clone() else { return };
         let (file_config, has_parse_errors) = self.folder_tasks_config(&folder);
         if has_parse_errors {
@@ -185,9 +185,7 @@ impl Workbench {
             return;
         }
         let (index, mut to_customize) = customizable_task(task, file_config.as_ref());
-        if let Some(group) = group {
-            to_customize.insert("group".into(), group);
-        }
+        to_customize.extend(properties);
         let to_customize = Value::Object(to_customize);
         let path = match file_config {
             None => {

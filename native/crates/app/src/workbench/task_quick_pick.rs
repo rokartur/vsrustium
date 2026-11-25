@@ -7,6 +7,7 @@ use gpui::{Context, PromptLevel, Window};
 use serde_json::{Value, json};
 
 use super::Workbench;
+use super::task_matcher_prompt::MatcherChoice;
 use crate::commands::Outcome;
 use crate::dialog;
 use crate::main_thread_quick_open::Owner;
@@ -38,6 +39,8 @@ pub enum TaskPick {
     OpenConfig(PathBuf),
     /// "No build task to run found. Configure Build Task...": Configure Default Build or Test Task.
     ConfigureDefault(&'static str),
+    /// An entry of the problem matcher prompt for the task about to run.
+    Matcher(Task, MatcherChoice),
     Nothing,
 }
 
@@ -50,6 +53,8 @@ pub enum PickAction {
     Configure,
     /// Configure Default Build or Test Task.
     ConfigureDefault(&'static str),
+    /// `_attachProblemMatcher`: dismissing it runs the task too.
+    AttachMatcher,
 }
 
 #[derive(Clone)]
@@ -206,6 +211,10 @@ impl Workbench {
                     self.hide_quick_input_by_id(id, window, cx);
                     return self.set_default_task(group, task.clone(), all, window, cx);
                 }
+                if let Some(Owner::Tasks(picker)) = self.quick_inputs.owner_mut(id) {
+                    // Accepted: the Hide that follows must not run the task again.
+                    picker.action = PickAction::Run;
+                }
                 self.accept_task_pick(id, pick, picker.action, window, cx);
             }
             Event::TriggerItemButton(handle, button, _) => {
@@ -220,7 +229,14 @@ impl Workbench {
                 self.hide_quick_input_by_id(id, window, cx);
                 self.configure_task(task, window, cx);
             }
-            Event::Hide => self.quick_inputs.remove(id),
+            Event::Hide => {
+                self.quick_inputs.remove(id);
+                if picker.action == PickAction::AttachMatcher
+                    && let Some(TaskPick::Matcher(task, _)) = picker.picks.first()
+                {
+                    drop(self.run_task(task.clone(), window, cx));
+                }
+            }
             _ => {}
         }
     }
@@ -230,13 +246,13 @@ impl Workbench {
             TaskPick::Type(task_type) => return self.show_second_level(id, Some(task_type), window, cx),
             TaskPick::ShowAll => return self.show_second_level(id, None, window, cx),
             TaskPick::GoBack => {
+                let configured = self.configured_tasks().into_iter().filter(|task| !task.hide).collect();
                 let Some(input) = self.quick_inputs.get_mut(id) else { return };
                 input.set_value(String::new());
-                let configured = self.configured_tasks().into_iter().filter(|task| !task.hide).collect();
-                let mut input = std::mem::replace(self.quick_inputs.get_mut(id).expect("checked above"), QuickInput::new(0, Kind::QuickPick));
+                let mut input = std::mem::replace(input, QuickInput::new(id, Kind::QuickPick));
                 let picker = self.top_level_entries(&mut input, configured, window);
-                *self.quick_inputs.get_mut(id).expect("checked above") = input;
-                *self.quick_inputs.owner_mut(id).expect("checked above") = Owner::Tasks(picker);
+                *self.quick_inputs.get_mut(id).expect("placeholder keeps the id") = input;
+                *self.quick_inputs.owner_mut(id).expect("placeholder keeps the id") = Owner::Tasks(picker);
                 cx.notify();
                 return;
             }
@@ -254,6 +270,7 @@ impl Workbench {
             (TaskPick::TerminateAll, _) => self.terminate_all_tasks(window, cx),
             (TaskPick::Configure, _) => self.run_configure_tasks(window, cx),
             (TaskPick::EnableDetection(task_type), _) => self.enable_task_detection(task_type, window, cx),
+            (TaskPick::Matcher(task, choice), _) => self.accept_problem_matcher(task, choice, window, cx),
             _ => {}
         }
     }
@@ -330,7 +347,7 @@ impl Workbench {
     fn run_picked_task(&mut self, task: Task, window: &mut Window, cx: &mut Context<Self>) {
         self.add_recent_task(&task);
         if !task.configures {
-            drop(self.run_task(task, window, cx));
+            self.run_attaching_problem_matcher(task, window, cx);
             return;
         }
         let fetched = self.fetch_tasks(task.definition["type"].as_str().map(str::to_owned), cx);
@@ -338,7 +355,7 @@ impl Workbench {
             let tasks = fetched.await.unwrap_or_default();
             let resolved = tasks.into_iter().find(|candidate| candidate.definition["_key"] == task.definition["_key"]);
             let _ = workbench.update_in(cx, |workbench, window, cx| match resolved {
-                Some(resolved) => drop(workbench.run_task(resolved, window, cx)),
+                Some(resolved) => workbench.run_attaching_problem_matcher(resolved, window, cx),
                 None => workbench.notify_error(format!("There is no task provider registered for tasks of type \"{}\".", task.definition["type"].as_str().unwrap_or_default())),
             });
         })
@@ -644,5 +661,22 @@ mod tests {
         let task = Task { group: Some(json!({ "_id": "build", "isDefault": true })), ..Task::default() };
         assert!(in_group(&task, "build") && task_is_default(&task));
         assert!(!in_group(&task, "test"));
+    }
+
+    #[gpui::test]
+    fn go_back_rebuilds_the_top_level_in_the_same_picker(cx: &mut gpui::TestAppContext) {
+        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let themes = exthost::scan::scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
+        let theme = crate::theme::load_theme(&[themes], "Dark Modern").unwrap();
+        let (workbench, cx) = cx.add_window_view(|_, cx| Workbench::new(theme, app_root.clone(), None, crate::languages::Languages::new(&[]), crate::default_settings(), crate::host_sync::HostSync::new(std::sync::mpsc::channel().0), cx));
+        workbench.update_in(cx, |workbench, window, cx| {
+            workbench.show_run_task_picker(None, window, cx);
+            let id = workbench.quick_inputs.find_id(|owner| matches!(owner, Owner::Tasks(_))).unwrap();
+            workbench.quick_inputs.get_mut(id).unwrap().set_value("gulp".into());
+            workbench.accept_task_pick(id, TaskPick::GoBack, PickAction::Run, window, cx);
+            assert_eq!(workbench.quick_inputs.get(id).unwrap().input_box.value, "");
+            let Some(Owner::Tasks(picker)) = workbench.quick_inputs.owner(id) else { panic!("the task picker is gone") };
+            assert!(matches!(picker.picks[0], TaskPick::Configure));
+        });
     }
 }

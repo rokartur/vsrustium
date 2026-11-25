@@ -36,9 +36,8 @@ impl Workbench {
             entries.push(Entry::Separator(Some("editor".into())));
             entries.push(Entry::Separator(None));
         }
-        // Upstream writes `$(plus)`, an alias codicons ships only as add.svg.
         for (label, command) in [("Create New Terminal", "workbench.action.terminal.new"), ("Create New Terminal With Profile...", "workbench.action.terminal.newWithProfile")] {
-            entries.push(Entry::Item(Item { handle: accepts.len() as i64, label: format!("$(add) {label}"), ..Item::default() }));
+            entries.push(Entry::Item(Item { handle: accepts.len() as i64, label: format!("$(plus) {label}"), ..Item::default() }));
             accepts.push(Accept::Command { id: command.into(), label: label.into() });
         }
         (entries, accepts)

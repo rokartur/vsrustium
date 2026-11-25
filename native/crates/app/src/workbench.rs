@@ -90,6 +90,7 @@ mod terminal_resize_overlay;
 mod output_compound;
 mod terminal_sticky_scroll;
 mod task_configure;
+pub mod task_matcher_prompt;
 pub mod task_quick_pick;
 pub(crate) mod task_service;
 pub mod quick_access;
@@ -1227,7 +1228,7 @@ impl Workbench {
     /// A codicon centered in a square box. Drawn from the icon's SVG: Wu's text system skips fonts
     /// without an 'm' glyph, so codicon.ttf cannot load (gpui_macos text_system.rs load_family).
     fn icon(&self, name: &str, box_size: f32, icon_size: f32, color: Rgba) -> Div {
-        let path = self.app_root.join("node_modules/@vscode/codicons/src/icons").join(format!("{name}.svg"));
+        let path = crate::codicons::svg_path(&self.app_root, name);
         div()
             .relative()
             .size(px(box_size))
