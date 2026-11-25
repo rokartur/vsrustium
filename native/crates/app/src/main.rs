@@ -47,6 +47,7 @@ mod quick_input;
 mod search_editor;
 mod search_model;
 mod smart_snippet_inserter;
+mod snippets;
 mod split_view;
 mod suggest;
 mod symbol_icons;

@@ -426,6 +426,7 @@ impl Workbench {
             .children(self.find_widget(self.editors.viewport.width + metrics.content_left() + minimap_width, metrics.content_left(), minimap_width, window, cx))
             .children(self.editor_message_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
             .children(self.content_hover_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
+            .children(self.parameter_hints_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
             .children(self.suggest_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
             .children(self.keybindings_file_widgets(editor, self.editors.viewport.width + metrics.content_left() + minimap_width, viewport.height, minimap_width, window, cx))
     }
@@ -495,6 +496,7 @@ impl Workbench {
         }
         self.editor_blurred_auto_save(cx);
         self.suggest_editor_blurred(cx);
+        self.cancel_parameter_hints(cx);
         cx.notify();
     }
 

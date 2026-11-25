@@ -63,6 +63,7 @@ impl Workbench {
         }
         self.snippet_state_changed(cx);
         self.suggest_editor_changed(change.is_some(), source, cx);
+        self.parameter_hints_editor_changed(source, cx);
         cx.notify();
     }
 

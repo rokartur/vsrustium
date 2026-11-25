@@ -93,6 +93,8 @@ pub struct LanguageRules {
     electric: Option<ElectricBrackets>,
     /// The last char of each auto-closing pair's open (`autoClosingPairsOpenByEnd`).
     auto_closing_open_ends: Vec<char>,
+    /// `autoClosingPairs` (or the brackets) as (open, close).
+    pub auto_closing_pairs: Vec<(String, String)>,
     /// `wordPattern`: `getWordAtPosition` falls back to the default word pattern without one.
     pub word_pattern: Option<onig::Regex>,
 }
@@ -121,13 +123,13 @@ impl LanguageRules {
             (pairs, rules.unwrap_or_default())
         });
         let electric = brackets.as_ref().filter(|pairs| !pairs.is_empty()).map(|pairs| electric_brackets(pairs));
-        let auto_closing = match config["autoClosingPairs"].as_array() {
-            Some(pairs) => pairs.iter().filter_map(|pair| pair[0].as_str().or(pair["open"].as_str())).map(str::to_string).collect(),
-            None => brackets.unwrap_or_default().into_iter().map(|(open, _)| open).collect::<Vec<_>>(),
+        let auto_closing_pairs: Vec<(String, String)> = match config["autoClosingPairs"].as_array() {
+            Some(pairs) => pairs.iter().filter_map(|pair| Some((pair[0].as_str().or(pair["open"].as_str())?.to_string(), pair[1].as_str().or(pair["close"].as_str())?.to_string()))).collect(),
+            None => brackets.unwrap_or_default(),
         };
-        let auto_closing_open_ends = auto_closing.iter().filter_map(|open| open.chars().last()).collect();
+        let auto_closing_open_ends = auto_closing_pairs.iter().filter_map(|(open, _)| open.chars().last()).collect();
         let word_pattern = (!config["wordPattern"].is_null()).then(|| parse_regex(language, "wordPattern", &config["wordPattern"])).flatten();
-        LanguageRules { on_enter, indent, electric, auto_closing_open_ends, word_pattern }
+        LanguageRules { on_enter, indent, electric, auto_closing_open_ends, auto_closing_pairs, word_pattern }
     }
 
     /// `OnEnterSupport.onEnter`.

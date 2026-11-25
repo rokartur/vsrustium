@@ -637,7 +637,7 @@ pub fn fuzzy_score(pattern: &str, pattern_low: &str, pattern_start: usize, word:
     Some(result)
 }
 
-fn is_pattern_in_word(pattern_low: &[char], mut pattern_pos: usize, pattern_len: usize, word_low: &[char], mut word_pos: usize, word_len: usize, min_word_match_pos: &mut [usize]) -> bool {
+pub fn is_pattern_in_word(pattern_low: &[char], mut pattern_pos: usize, pattern_len: usize, word_low: &[char], mut word_pos: usize, word_len: usize, min_word_match_pos: &mut [usize]) -> bool {
     while pattern_pos < pattern_len && word_pos < word_len {
         if pattern_low[pattern_pos] == word_low[word_pos] {
             min_word_match_pos[pattern_pos] = word_pos;

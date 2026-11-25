@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 use super::Workbench;
 use super::bulk_text_edits::escape_snippet;
 use super::host_requests::{range, uri_parts};
+use super::snippet_completions::SNIPPET_PROVIDER;
 use super::snippet_controller::{SNIPPET_CHOICE_PROVIDER, SnippetInsert};
 use crate::commands::Outcome;
 use crate::editor::{EditReason, OpenEditor, Position, Selection, utf16_column, word_at};
@@ -286,6 +287,15 @@ impl Workbench {
         let auto = options.auto;
         self.suggest.session = Some(Session { model_id, options: options.clone(), context: context.clone(), model: None, line_suffix });
         self.show_suggest_triggered(auto, cx);
+        // suggest.ts asks the snippet support beside the provider groups, whichever group answers.
+        let snippets = match options.reuse.iter().find(|(provider, _)| *provider == SNIPPET_PROVIDER) {
+            Some((_, items)) => Some(Call::Reuse(items.clone())),
+            None if options.provider_filter.is_empty() || options.provider_filter.contains(&SNIPPET_PROVIDER) => {
+                let result = self.snippet_suggestions(options.trigger_character.as_deref());
+                Some(Call::Ready(ProviderAnswer { provider: SNIPPET_PROVIDER, supports_resolve: false, result }))
+            }
+            None => None,
+        };
         let editor = self.editors.active().expect("checked above");
         let uri = editor.document.uri();
         let candidate = Candidate { uri: &uri, language: &editor.document.language_id };
@@ -349,6 +359,11 @@ impl Workbench {
                 if added {
                     break;
                 }
+            }
+            match snippets {
+                Some(Call::Reuse(reused)) => items.extend(reused),
+                Some(Call::Ready(answer)) => answers.push(answer),
+                _ => {}
             }
             let _ = workbench.update(cx, |workbench, cx| workbench.suggest_items_arrived(model_id, items, answers, cx));
         }));
@@ -650,6 +665,7 @@ impl Workbench {
 
     /// suggest.ts `_executeCompletionItemProvider`: every provider's items at a position of a model, resolved up to
     /// `maxItemsToResolve`, as a `CompletionList`.
+    // shortcut: without the snippet support's items, which need the model active; add them when an API test needs it.
     fn execute_completion_item_provider(&mut self, args: &[Value], cx: &mut Context<Self>) -> Outcome {
         let uri = args.first().cloned().unwrap_or_default();
         let Some(editor) = uri_parts(&uri).ok().and_then(|(scheme, path)| self.editors.model(scheme, &path)) else {

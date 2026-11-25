@@ -153,3 +153,17 @@ fn a_manual_trigger_lists_every_word_and_a_move_off_the_line_cancels(cx: &mut Te
     run(&workbench, cx, "cursorUp");
     assert!(shown(&workbench, cx).is_empty());
 }
+
+/// snippetsService.ts: a user `plaintext.json` snippet shows beside the words and inserts as a snippet.
+#[gpui::test]
+fn user_snippets_show_and_insert_as_snippets(cx: &mut TestAppContext) {
+    let (workbench, cx) = open(cx, "");
+    let folder = workbench.read_with(cx, |workbench, _| workbench.settings.lock().unwrap().user_home().join("snippets"));
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(folder.join("plaintext.json"), r#"{ "Greet": { "prefix": "hello", "body": "hello ${1:name}", "description": "Say hello" } }"#).unwrap();
+    type_text(&workbench, cx, "he");
+    assert_eq!(shown(&workbench, cx), ["hello"]);
+    run(&workbench, cx, "acceptSelectedSuggestion");
+    assert_eq!(text(&workbench, cx), "hello name");
+    assert!(in_snippet(&workbench, cx));
+}

@@ -682,6 +682,7 @@ fn quick_input_default(key: &str) -> (ColorValue, ColorValue, ColorValue) {
         "editorHoverWidget.background" => (Key("editorWidget.background"), Key("editorWidget.background"), Key("editorWidget.background")),
         "editorHoverWidget.foreground" => (Key("editorWidget.foreground"), Key("editorWidget.foreground"), Key("editorWidget.foreground")),
         "editorHoverWidget.border" => (Key("editorWidget.border"), Key("editorWidget.border"), Key("editorWidget.border")),
+        "editorHoverWidget.highlightForeground" => (Key("list.highlightForeground"), Key("list.highlightForeground"), Key("list.highlightForeground")),
         // `lighten(editorHoverBackground, 0.2)` is a darken by -0.2: both scale the lightness by the factor.
         "editorHoverWidget.statusBarBackground" => (Darken(&Key("editorHoverWidget.background"), -0.2), Darken(&Key("editorHoverWidget.background"), 0.05), Key("editorWidget.background")),
         "editor.hoverHighlightBackground" => (Hex("#264f7840"), Hex("#ADD6FF26"), Hex("#ADD6FF26")),
@@ -759,6 +760,7 @@ fn quick_input_default_hc_light(key: &str) -> ColorValue {
         "editorHoverWidget.background" => Key("editorWidget.background"),
         "editorHoverWidget.foreground" => Key("editorWidget.foreground"),
         "editorHoverWidget.border" => Key("editorWidget.border"),
+        "editorHoverWidget.highlightForeground" => Key("list.highlightForeground"),
         "textCodeBlock.background" => Hex("#F2F2F2"),
         "textLink.foreground" | "textLink.activeForeground" => Hex("#0F4A85"),
         "list.focusOutline" => Key("contrastActiveBorder"),
