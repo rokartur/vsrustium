@@ -51,6 +51,7 @@ mod document_symbols;
 mod goto_definition_link;
 mod goto_symbol;
 mod marker_navigation;
+mod outline_pane;
 mod references_peek;
 pub mod menubar;
 mod middle_scroll;
@@ -189,6 +190,7 @@ pub struct Workbench {
     document_highlights: document_highlights::DocumentHighlights,
     document_symbols: document_symbols::DocumentSymbols,
     references_peek: references_peek::ReferencesPeek,
+    outline_pane: outline_pane::OutlinePane,
     content_hover: content_hover::ContentHover,
     /// The providers extensions registered through MainThreadLanguageFeatures.
     pub(crate) language_features: crate::language_features::LanguageFeatures,
@@ -274,6 +276,7 @@ impl Render for Workbench {
         self.follow_definition_link(cx);
         self.refresh_selection_highlights(window);
         self.refresh_document_highlights(cx);
+        self.refresh_outline_pane(cx);
         self.update_webview_panels(window, cx);
         self.update_diff_editor();
         self.update_quick_diff(cx);
@@ -384,6 +387,7 @@ impl Workbench {
             document_highlights: Default::default(),
             document_symbols: Default::default(),
             references_peek: references_peek::ReferencesPeek::new(cx),
+            outline_pane: outline_pane::OutlinePane::new(cx),
             content_hover: Default::default(),
             language_features: Default::default(),
             folding_providers: Default::default(),

@@ -351,7 +351,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/model | workbench service | ported | `_schemaShouldMaintainUndoRedoElements` with modelService's disposed-model cache: a reopened unchanged file gets its undo stack back, 20 MB cap, `files.restoreUndoStack` (editor/model_service.rs): cargo test -p app model_service |
 | workbench/services/notebook | workbench service | todo |  |
 | workbench/services/notification | workbench service | ported | `notify`, `prompt` and the Do Not Disturb filters (global and per source, stored in application storage) on Workbench (notifications_view.rs); cargo test -p app notifications_view |
-| workbench/services/outline | workbench service | todo |  |
+| workbench/services/outline | workbench service | ported | the document symbols outline of the active editor (workbench/outline_pane.rs): breadcrumb symbols from `getItemEnclosingPosition` with `breadcrumbs.symbolPath` and `breadcrumbs.show*`, the Outline view's tree; cargo test -p app outline_pane |
 | workbench/services/output | workbench service | ported | output.rs: channels read from their files from a start offset, Replace/Clear move it, log channels from visible loggers, `OutputViewFilters` and `parseLogEntryAt` (output/filter.rs), the active channel and its log level: cargo test -p app output (14 tests) |
 | workbench/services/panecomposite | workbench service | stub | active side bar view and active panel view (workbench.panelpart.activepanelid) only; no view container registry |
 | workbench/services/path | workbench service | ported | the user home is $HOME (path_label, tildify), hasValidBasename is file_actions.rs is_valid_basename (cargo test -p app validates_file_names); pathService.test.ts covers only remote path semantics (no remote) |
@@ -450,7 +450,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/notebook | workbench contribution | todo |  |
 | workbench/contrib/onboarding | workbench contribution | removed | the only registered tours are the Agents window ones (src/vs/sessions/contrib/onboardingTours): no AI by decision (port/notes.md) |
 | workbench/contrib/opener | workbench contribution | ported | workbench/opener.rs open_folder_link: a link to a workspace folder reveals it in the Explorer |
-| workbench/contrib/outline | workbench contribution | todo |  |
+| workbench/contrib/outline | workbench contribution | ported | Outline view (workbench/outline_pane.rs): messages, loading after 100ms, symbols by position with `outline.show*`, `outline.icons`, `outline.collapseItems`, problem colors and badges, twisties, Up/Down/Left/Right/Enter/Space, click opens at the name and double click selects the range; cargo test -p app outline_pane. Not yet: sort by name/kind, follow cursor, filter on type, the view's title actions |
 | workbench/contrib/output | workbench contribution | ported | output_view.rs and output_actions.rs: read-only Output view with the channel dropdown, filter box with level and category menus, Clear Output, Toggle Auto Scrolling, log level gear, Open Output in Editor, Show Output Channels, `workbench.action.output.show.<id>`, Cmd+Shift+U toggle, the Window and Extension Host channels; the view is an editor tab until the milestone 11 panel lands (port/notes.md milestone 15): cargo test -p app output |
 | workbench/contrib/performance | workbench contribution | todo |  |
 | workbench/contrib/policyExport | workbench contribution | todo |  |

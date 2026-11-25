@@ -298,17 +298,28 @@ impl Workbench {
             segments.insert(0, folder.name.clone());
         }
         let foreground = self.color("breadcrumb.foreground");
-        let last = segments.len() - 1;
-        let items = segments.into_iter().enumerate().map(|(index, segment)| {
+        let file = segments.len() - 1;
+        let symbols = self.breadcrumb_symbols(editor);
+        let last = file + symbols.len();
+        let symbol_items = symbols.into_iter().map(|(kind, name)| {
+            let codicon = crate::symbol_icons::codicon(kind);
+            let color = crate::symbol_icons::color_key(codicon).and_then(|key| self.theme.color(key)).unwrap_or(foreground);
+            let icon = (self.setting("breadcrumbs.icons") != false).then(|| self.icon(codicon, 16., 16., color));
+            (icon, name)
+        });
+        let file_items = segments.into_iter().enumerate().map(|(index, segment)| {
             // The 16px before each item is the item's own ::before; folders have no icon in Seti, the file does.
-            let file_icon = if index == last { self.document_icon(editor, BREADCRUMBS_HEIGHT, foreground) } else { None };
+            let file_icon = if index == file { self.document_icon(editor, BREADCRUMBS_HEIGHT, foreground) } else { None };
+            (file_icon, segment)
+        });
+        let items = file_items.chain(symbol_items).enumerate().map(|(index, (icon, segment))| {
             div()
                 .flex()
                 .items_center()
                 .pl(px(16.))
                 .pr(px(8.))
                 .whitespace_nowrap()
-                .when_some(file_icon, |item, icon| item.child(icon.mr(px(6.))))
+                .when_some(icon, |item, icon| item.child(icon.mr(px(6.))))
                 .child(segment)
                 .when(index < last, |item| item.child(self.icon("chevron-right", 16., 16., foreground).ml(px(8.))))
         });

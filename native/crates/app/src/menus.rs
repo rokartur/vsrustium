@@ -140,6 +140,9 @@ const WORKBENCH_MENUS: &[Row] = &[
         Some("activeEditorCanRevert || resourceScheme != 'untitled' && foldersViewVisible && sideBarFocus"),
     ),
     (MenuId::MenubarGoMenu, None, "workbench.action.quickOpen", "Go to &&File...", "3_global_nav", 1., None, None),
+    // searchActionsSymbol.ts and gotoSymbolQuickAccess.ts
+    (MenuId::MenubarGoMenu, None, "workbench.action.showAllSymbols", "Go to Symbol in &&Workspace...", "3_global_nav", 2., None, None),
+    (MenuId::MenubarGoMenu, None, "workbench.action.gotoSymbol", "Go to &&Symbol in Editor...", "4_symbol_nav", 1., None, None),
     // bracketMatching.ts
     (MenuId::MenubarGoMenu, None, "editor.action.jumpToBracket", "Go to &&Bracket", "5_infile_nav", 2., None, None),
     // editorExtensions.ts and clipboard.ts

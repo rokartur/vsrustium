@@ -28,7 +28,7 @@ impl Range {
         Range { start: (start_line, start_column), end: (end_line, end_column) }
     }
 
-    fn from_dto(range: &Value) -> Option<Self> {
+    pub fn from_dto(range: &Value) -> Option<Self> {
         let number = |key: &str| range[key].as_u64().map(|value| value as usize);
         Some(Range::new(number("startLineNumber")?, number("startColumn")?, number("endLineNumber")?, number("endColumn")?))
     }

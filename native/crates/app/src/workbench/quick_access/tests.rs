@@ -174,6 +174,7 @@ fn help_lists_the_providers_and_shows_the_picked_one(cx: &mut TestAppContext) {
         "::|Go to Offset|[]",
         r#"@|Go to Symbol in Editor|[["⇧", "⌘", "O"]]"#,
         "@:|Go to Symbol in Editor by Category|[]",
+        r#"#|Go to Symbol in Workspace|[["⌘", "T"]]"#,
         r#">|Show and Run Commands|[["⇧", "⌘", "P"]]"#,
     ]);
     cx.simulate_keystrokes("down enter");

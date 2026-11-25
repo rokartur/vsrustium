@@ -641,7 +641,7 @@ impl Workbench {
     }
 
     /// `ILabelService.getUriLabel(dirname, { relative: true })`: the folder relative to its workspace folder.
-    fn peek_folder_label(&self, folder: &str) -> String {
+    pub(super) fn peek_folder_label(&self, folder: &str) -> String {
         for root in self.search_folders() {
             let root = root.to_string_lossy();
             if folder == root {
