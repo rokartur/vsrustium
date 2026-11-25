@@ -58,6 +58,7 @@ impl Workbench {
         self.restore_search_history();
         self.restore_explorer_view_state();
         self.restore_editor_view_states();
+        self.restore_editor_part_state();
         self.restore_debug_state();
         self.restore_problems_state();
         self.restore_outline_state();

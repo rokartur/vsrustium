@@ -94,7 +94,7 @@ fn log_entries_span_their_continuation_lines() {
     let entries = parse_log_entries(&text);
     assert_eq!(
         entries,
-        [LogEntry { lines: 0..2, level: Level::Info, category: None }, LogEntry { lines: 2..3, level: Level::Error, category: Some("git".into()) }]
+        [LogEntry { lines: 0..2, timestamp: entries[0].timestamp, level: Level::Info, category: None }, LogEntry { lines: 2..3, timestamp: entries[0].timestamp + 1, level: Level::Error, category: Some("git".into()) }]
     );
     assert_eq!(parse_log_entries(&lines("plain\n2025-01-02 03:04:05.678 [info] x")), []);
 }

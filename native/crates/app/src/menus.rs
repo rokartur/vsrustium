@@ -82,6 +82,7 @@ pub enum MenuId {
     CommentThreadActions,
     CommentTitle,
     CommentActions,
+    TerminalStickyScrollContext,
     /// A `contributes.submenus` entry, `MenuId.for('api:<id>')`, by registration order.
     Api(usize),
     #[cfg(test)]
@@ -155,6 +156,9 @@ const WORKBENCH_MENUS: &[Row] = &[
     (MenuId::MenubarFileMenu, Some(MenuId::MenubarRecentMenu), "", "Open &&Recent", "2_open", 4., None, None),
     (MenuId::MenubarFileMenu, None, "workbench.action.closeFolder", "Close &&Folder", "6_close", 3., Some("workbenchState == 'folder' && emptyWorkspaceSupport && !isSessionsWindow"), Some("workbenchState != 'empty' && emptyWorkspaceSupport && !isSessionsWindow")),
     (MenuId::MenubarFileMenu, None, "workbench.action.closeFolder", "Close &&Workspace", "6_close", 3., Some("workbenchState == 'workspace' && emptyWorkspaceSupport && !isSessionsWindow"), Some("workbenchState != 'empty' && emptyWorkspaceSupport && !isSessionsWindow")),
+    // windowActions.ts (electron-browser) `CloseWindowAction`
+    (MenuId::MenubarFileMenu, None, "workbench.action.closeWindow", "Clos&&e Window", "6_close", 4., None, None),
+    (MenuId::MenubarFileMenu, None, "workbench.action.newWindow", "New &&Window", "1_new", 3., None, None),
     (MenuId::MenubarRecentMenu, None, "workbench.action.openRecent", "&&More...", "y_more", 1., None, None),
     (MenuId::MenubarRecentMenu, None, "workbench.action.clearRecentFiles", "&&Clear Recently Opened...", "z_clear", 1., None, None),
     // fileActions.contribution.ts
@@ -178,9 +182,6 @@ const WORKBENCH_MENUS: &[Row] = &[
     (MenuId::MenubarGoMenu, None, "workbench.action.quickOpen", "Go to &&File...", "3_global_nav", 1., None, None),
     (MenuId::MenubarGoMenu, None, "editor.action.dirtydiff.next", "Next &&Change", "7_change_nav", 0., None, None),
     (MenuId::MenubarGoMenu, None, "editor.action.dirtydiff.previous", "Previous &&Change", "7_change_nav", 0., None, None),
-    // gotoError.ts
-    (MenuId::MenubarGoMenu, None, "editor.action.marker.nextInFiles", "Next &&Problem", "6_problem_nav", 1., None, None),
-    (MenuId::MenubarGoMenu, None, "editor.action.marker.prevInFiles", "Previous &&Problem", "6_problem_nav", 2., None, None),
     // searchActionsSymbol.ts and gotoSymbolQuickAccess.ts
     (MenuId::MenubarGoMenu, None, "workbench.action.showAllSymbols", "Go to Symbol in &&Workspace...", "3_global_nav", 2., None, None),
     (MenuId::MenubarGoMenu, None, "workbench.action.gotoSymbol", "Go to &&Symbol in Editor...", "4_symbol_nav", 1., None, None),
@@ -340,12 +341,14 @@ const WORKBENCH_MENUS: &[Row] = &[
     (MenuId::TerminalEditorInstanceContext, None, "workbench.action.terminal.new", "New Terminal", "1_create", 0., None, None),
     (MenuId::TerminalEditorInstanceContext, None, "workbench.action.terminal.killEditor", "Kill Terminal", "7_kill", 0., None, None),
     (MenuId::TerminalEditorInstanceContext, None, "workbench.action.terminal.copySelection", "Copy", "3_edit", 1., None, None),
+    (MenuId::TerminalEditorInstanceContext, None, "workbench.action.terminal.copySelectionAsHtml", "Copy as HTML", "3_edit", 2., None, None),
     (MenuId::TerminalEditorInstanceContext, None, "workbench.action.terminal.paste", "Paste", "3_edit", 3., None, None),
     (MenuId::TerminalEditorInstanceContext, None, "workbench.action.terminal.clear", "Clear", "5_clear", 0., None, None),
     (MenuId::TerminalEditorInstanceContext, None, "workbench.action.terminal.selectAll", "Select All", "3_edit", 3., None, None),
     // terminalMenus.ts: the TerminalInstanceContext items of the commands the port has, the menu of the panel's terminal.
     (MenuId::TerminalInstanceContext, None, "workbench.action.terminal.killViewOrEditor", "Kill Terminal", "7_kill", 0., None, None),
     (MenuId::TerminalInstanceContext, None, "workbench.action.terminal.copySelection", "Copy", "3_edit", 1., None, None),
+    (MenuId::TerminalInstanceContext, None, "workbench.action.terminal.copySelectionAsHtml", "Copy as HTML", "3_edit", 2., None, None),
     (MenuId::TerminalInstanceContext, None, "workbench.action.terminal.paste", "Paste", "3_edit", 3., None, None),
     (MenuId::TerminalInstanceContext, None, "workbench.action.terminal.clear", "Clear", "5_clear", 0., None, None),
     (MenuId::TerminalInstanceContext, None, "workbench.action.terminal.selectAll", "Select All", "3_edit", 3., None, None),
@@ -390,10 +393,11 @@ const WORKBENCH_MENUS: &[Row] = &[
     (MenuId::SearchContext, None, "search.action.revealInSideBar", "Reveal in Explorer View", "search_3", 1., Some("fileMatchFocus && hasSearchResult"), None),
 ];
 
-/// layoutActions.ts, auxiliaryBarActions.ts, panelActions.ts, activitybarPart.ts, toggleMinimap.ts, stickyScrollActions.ts and
+/// windowActions.ts, layoutActions.ts, auxiliaryBarActions.ts, panelActions.ts, activitybarPart.ts, toggleMinimap.ts, stickyScrollActions.ts and
 /// toggleRenderControlCharacter.ts: the Appearance items the port has, checked by their `toggled`.
 type ToggleRow = (MenuId, &'static str, &'static str, &'static str, f64, &'static str, &'static str);
-const APPEARANCE_TOGGLES: [ToggleRow; 11] = [
+const APPEARANCE_TOGGLES: [ToggleRow; 12] = [
+    (MenuId::MenubarAppearanceMenu, "workbench.action.toggleFullScreen", "&&Full Screen", "1_toggle_view", 1., "", "isFullscreen"),
     (MenuId::MenubarAppearanceMenu, "workbench.action.toggleSidebarVisibility", "&&Primary Side Bar", "2_workbench_layout", 1., "!isSessionsWindow", "sideBarVisible"),
     (MenuId::MenubarAppearanceMenu, "workbench.action.toggleAuxiliaryBar", "&&Secondary Side Bar", "2_workbench_layout", 2., "!isSessionsWindow", "secondarySideBarVisible"),
     (MenuId::MenubarAppearanceMenu, "workbench.action.togglePanel", "&&Panel", "2_workbench_layout", 5., "", "panelVisible"),
@@ -440,6 +444,9 @@ pub fn workbench_menus() -> Vec<MenuItem> {
         let entry = Entry::Command { id: id.into(), precondition: None, toggled: Toggled::when(Expr::deserialize(&format!("config.{setting} == true"))), alt: None };
         items.push(MenuItem { menu: MenuId::StickyScrollContext, entry, title: title.into(), group: String::new(), order: 0., when: None });
     }
+    // terminal.stickyScroll.contribution.ts: Toggle Sticky Scroll, checked by its setting.
+    let entry = Entry::Command { id: "workbench.action.terminal.toggleStickyScroll".into(), precondition: None, toggled: Toggled::when(Expr::deserialize("config.terminal.integrated.stickyScroll.enabled == true")), alt: None };
+    items.push(MenuItem { menu: MenuId::TerminalStickyScrollContext, entry, title: "Sticky Scroll".into(), group: String::new(), order: 0., when: None });
     // toggleWordWrap.ts: checked while the active editor wraps, enabled while it can toggle.
     let entry = Entry::Command { id: "editor.action.toggleWordWrap".into(), precondition: Some(Expr::has("canToggleWordWrap")), toggled: Toggled::when(Some(Expr::has("editorWordWrap"))), alt: None };
     items.push(MenuItem { menu: MenuId::MenubarViewMenu, entry, title: "&&Word Wrap".into(), group: "6_editor".into(), order: 1., when: None });

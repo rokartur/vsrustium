@@ -10,6 +10,8 @@ pub struct TaskDefinition {
     pub required: Vec<String>,
     /// The JSON schemas of the type's properties, in declaration order.
     pub properties: Map<String, Value>,
+    /// The context the type's provider is enabled in (`_isTaskProviderEnabled`).
+    pub when: Option<String>,
 }
 
 /// The declared task types, in extension order.
@@ -23,6 +25,7 @@ pub fn definitions(extensions: &[(&str, &Value)]) -> Vec<TaskDefinition> {
                 task_type: task_type.to_owned(),
                 required: definition["required"].as_array().into_iter().flatten().filter_map(|value| value.as_str().map(str::to_owned)).collect(),
                 properties: definition["properties"].as_object().cloned().unwrap_or_default(),
+                when: definition["when"].as_str().map(str::to_owned),
             });
         }
     }

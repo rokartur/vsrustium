@@ -335,6 +335,8 @@ impl Workbench {
         context.insert("editorTextFocus".into(), json!(editor_focused));
         context.insert("textInputFocus".into(), json!(editor_focused));
         self.notifications_context(window, &mut context);
+        self.banner_context(window, &mut context);
+        self.host_context(window, &mut context);
         self.layout_context(&mut context);
         self.editor_groups_context(&mut context);
         self.history_context(&mut context);
@@ -348,6 +350,9 @@ impl Workbench {
         context.insert("multiCursorModifier".into(), json!(if self.multi_cursor_modifier_is_cmd() { "ctrlCmd" } else { "altKey" }));
         self.word_wrap_context(&mut context);
         self.problems_context(window, &mut context);
+        self.view_containers_context(&mut context);
+        self.refactor_preview_context(&mut context);
+        self.modal_group_context(window, &mut context);
         // contextkeys.ts WorkbenchContextKeysHandler: the desktop build supports every workspace kind.
         let workbench_state = match self.workspace() {
             None => "empty",
@@ -441,7 +446,7 @@ impl Workbench {
             SideBarView::Search => self.search_context(window, &mut context),
             SideBarView::Scm => {}
             SideBarView::Extensions => self.extensions_context(window, &mut context),
-            SideBarView::Debug | SideBarView::Testing => {}
+            SideBarView::Debug | SideBarView::Testing | SideBarView::Contributed(_) => {}
         }
         self.scm_key_context(window, &mut context);
         self.debug_context(window, &mut context);
@@ -450,6 +455,7 @@ impl Workbench {
         self.search_editor_context(window, &mut context);
         self.output_context(window, &mut context);
         self.terminal_context(window, &mut context);
+        self.task_context(&mut context);
         self.timeline_context(window, &mut context);
         self.accessibility_context(&mut context);
         context
@@ -464,7 +470,7 @@ impl Workbench {
                 return Outcome::error(format!("writing {}: {error}", file.display()));
             }
         }
-        self.open_file(file, true, window, cx);
+        self.open_preferences_file(file, window, cx);
         Outcome::done()
     }
 

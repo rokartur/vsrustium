@@ -5,7 +5,7 @@
 use std::time::{Duration, Instant};
 
 use gpui::{
-    Animation, AnimationExt, AnyElement, Bounds, BoxShadow, Context, DispatchPhase, ElementId, HitboxBehavior, MouseDownEvent, MouseMoveEvent, PathBuilder, Pixels, Point, Size, Task,
+    Animation, AnimationExt, AnyElement, Bounds, BoxShadow, Context, DispatchPhase, ElementId, HitboxBehavior, Hsla, MouseDownEvent, MouseMoveEvent, PathBuilder, Pixels, Point, Size, Task,
     TextRun, Window, canvas, div, point, prelude::*, px, rgba,
 };
 
@@ -306,7 +306,8 @@ impl Workbench {
         };
         let interactive_rows = language_status.is_some();
         let paragraphs: Vec<Vec<Node>> = match markdown {
-            true => hover.text.split("\n\n").map(parse_linked_text).collect(),
+            // A `---` paragraph is a rule, kept as a paragraph without nodes.
+            true => hover.text.split("\n\n").map(|paragraph| if paragraph.trim() == "---" { Vec::new() } else { parse_linked_text(paragraph) }).collect(),
             false => vec![vec![Node::Text(hover.text.clone())]],
         };
         // shortcut: a paragraph is one line of text; wrap at max-width 700px when content longer than that shows.
@@ -314,9 +315,7 @@ impl Workbench {
         if preview {
             content_width += text_width(" (", false, window) + text_width("preview", true, window) + text_width(" )", false, window) + FONT_SIZE;
         }
-        let lines = paragraphs.len() as f32;
-        // hover.css: a markdown paragraph has an 8px bottom margin except the last.
-        let mut content_height = lines * LINE_HEIGHT + (lines - 1.) * PARAGRAPH_GAP;
+        let mut content_height = paragraphs_height(&paragraphs);
         if let Some((content_size, _)) = &language_status {
             (content_width, content_height) = (content_size.width, content_size.height);
         }
@@ -400,9 +399,17 @@ impl Workbench {
 
     fn markdown_paragraphs(&self, paragraphs: Vec<Vec<Node>>, cx: &mut Context<Self>) -> impl IntoElement {
         let link_color = self.color("textLink.foreground");
-        let mut column = div().flex().flex_col().gap(px(PARAGRAPH_GAP));
+        let rule_color = self.theme.color("editorHoverWidget.border").map(|color| Hsla::from(color).opacity(0.5));
+        let mut column = div().flex().flex_col();
+        let mut after_rule = false;
         for (paragraph, nodes) in paragraphs.into_iter().enumerate() {
-            let mut row = div().flex();
+            let top = paragraph_top(paragraph, nodes.is_empty(), after_rule);
+            after_rule = nodes.is_empty();
+            if nodes.is_empty() {
+                column = column.child(div().mt(px(top)).mx(px(-PADDING_X)).h(px(1.)).when_some(rule_color, |rule, color| rule.bg(color)));
+                continue;
+            }
+            let mut row = div().flex().mt(px(top));
             for (index, node) in nodes.into_iter().enumerate() {
                 row = match node {
                     Node::Text(text) => row.child(text),
@@ -466,6 +473,26 @@ impl Hovers {
     fn is_target(&self, id: &ElementId) -> bool {
         self.target.as_ref().is_some_and(|target| &target.id == id)
     }
+}
+
+/// hover.css: a paragraph has an 8px margin between paragraphs; a rule (`hr`: 4px top, -4px bottom margin, a 1px
+/// line) collapses with them into 8px above it and 4px below it.
+fn paragraph_top(index: usize, rule: bool, after_rule: bool) -> f32 {
+    match (index, rule, after_rule) {
+        (0, _, _) => 0.,
+        (_, false, true) => 4.,
+        _ => PARAGRAPH_GAP,
+    }
+}
+
+fn paragraphs_height(paragraphs: &[Vec<Node>]) -> f32 {
+    let mut height = 0.;
+    let mut after_rule = false;
+    for (index, nodes) in paragraphs.iter().enumerate() {
+        height += paragraph_top(index, nodes.is_empty(), after_rule) + if nodes.is_empty() { 1. } else { LINE_HEIGHT };
+        after_rule = nodes.is_empty();
+    }
+    height
 }
 
 fn linked_text_label(nodes: &[Node]) -> String {

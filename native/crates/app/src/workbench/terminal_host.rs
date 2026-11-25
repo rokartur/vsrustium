@@ -15,6 +15,7 @@ use super::Workbench;
 use super::terminal_view::{EXIT_REASON_EXTENSION, EXIT_REASON_PROCESS};
 use crate::commands::Outcome;
 use crate::terminal::environment_collection::{EnvironmentCollections, STORAGE_KEY};
+use crate::terminal::prompt_input::PromptInputState;
 use crate::terminal::shell_integration::{Command, ShellEvent};
 use crate::terminal::{Processed, ShellLaunchConfig, TerminalInstance, injection};
 
@@ -72,8 +73,7 @@ impl Workbench {
                 }
             }
             ("MainThreadTerminalService", "$hide") => {
-                // A terminal in the editor area is not hidden (`target !== TerminalLocation.Editor`); the port's
-                // view is an editor tab, so hiding closes the tab while the terminals keep running.
+                // `hidePanel`: the active terminal's panel hides while the terminals keep running.
                 if self.extension_terminal_id(&arg(0)).is_some_and(|id| self.terminal_view.active_instance_id() == Some(id)) {
                     self.close_terminal_view(cx);
                 }
@@ -106,7 +106,7 @@ impl Workbench {
             }
             ("MainThreadTerminalService", "$sendProcessData") => {
                 let data = arg(1).as_str().unwrap_or_default().to_owned();
-                self.terminal_data(arg(0).as_u64().unwrap_or_default() as u32, data.as_bytes(), cx);
+                self.terminal_data(arg(0).as_u64().unwrap_or_default() as u32, data.as_bytes(), window, cx);
             }
             ("MainThreadTerminalService", "$sendProcessReady") => {
                 let id = arg(0).as_u64().unwrap_or_default() as u32;
@@ -137,9 +137,12 @@ impl Workbench {
             }
             ("MainThreadTerminalShellIntegration", "$executeCommand") => {
                 let id = arg(0).as_u64().unwrap_or_default() as u32;
-                self.run_terminal_command(id, arg(1).as_str().unwrap_or_default().to_owned(), window, cx);
+                self.run_terminal_command(id, arg(1).as_str().unwrap_or_default().to_owned(), true, window, cx);
             }
-            // Profile, completion, quick fix and link providers register here; the port has no UI that asks them yet.
+            ("MainThreadTerminalService", "$registerCompletionProvider") => self.register_terminal_completion_provider(&request.args),
+            ("MainThreadTerminalService", "$unregisterCompletionProvider") => self.unregister_terminal_completion_provider(arg(0).as_str().unwrap_or_default()),
+            ("MainThreadTerminalService", method @ ("$registerQuickFixProvider" | "$unregisterQuickFixProvider")) => self.handle_quick_fix_provider_request(method, &request.args),
+            // Profile, quick fix and link providers register here; the port has no UI that asks them yet.
             _ => {}
         }
         Outcome::done()
@@ -429,26 +432,37 @@ impl Workbench {
     }
 
     /// terminalInstance.ts `runCommand`: waits for the prompt (`getShellIntegrationTimeout`), then types the line.
-    fn run_terminal_command(&mut self, id: u32, command_line: String, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn run_terminal_command(&mut self, id: u32, command_line: String, should_execute: bool, window: &mut Window, cx: &mut Context<Self>) {
         let timeout = shell_integration_timeout(&self.setting("terminal.integrated.shellIntegration.timeout"), self.setting("terminal.integrated.shellIntegration.enabled") == true);
         let started = Instant::now();
         cx.spawn_in(window, async move |workbench, cx| {
             loop {
-                let ready = workbench.read_with(cx, |workbench, _| workbench.terminal_view.instance(id).map(|instance| instance.shell_integration.prompt_ready()));
+                let ready = workbench.read_with(cx, |workbench, _| workbench.terminal_view.instance(id).map(|instance| instance.prompt_input.state() == PromptInputState::Input));
                 match ready {
                     Ok(Some(false)) if started.elapsed() < timeout => cx.background_executor().timer(Duration::from_millis(20)).await,
                     Ok(Some(_)) => break,
                     _ => return,
                 }
             }
-            let _ = workbench.update(cx, |workbench, cx| {
-                let Some(instance) = workbench.terminal_view.instance_mut(id) else { return };
-                // shortcut: the prompt's typed text is not modelled (promptInputModel), so a ^C is sent only
-                // without command detection.
-                if !instance.shell_integration.has_command_detection {
+            // A ^C clears typed text first, then 100 ms keep its echo apart from the command.
+            let interrupted = workbench.update(cx, |workbench, _| {
+                let Some(instance) = workbench.terminal_view.instance_mut(id) else { return false };
+                let interrupt = should_execute && (!instance.shell_integration.has_command_detection || !instance.prompt_input.value().is_empty());
+                if interrupt {
                     instance.send_text("\x03", false);
                 }
-                instance.send_text(&command_line, true);
+                interrupt
+            });
+            if matches!(interrupted, Ok(true)) {
+                cx.background_executor().timer(Duration::from_millis(100)).await;
+            }
+            let _ = workbench.update(cx, |workbench, cx| {
+                let Some(instance) = workbench.terminal_view.instance_mut(id) else { return };
+                // Bracketed paste only when the command is not run.
+                match should_execute {
+                    true => instance.send_text(&command_line, true),
+                    false => instance.paste(&command_line),
+                }
                 cx.notify();
             });
         })

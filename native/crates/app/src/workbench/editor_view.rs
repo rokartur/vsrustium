@@ -86,6 +86,7 @@ impl Workbench {
                 super::welcome_page::WALKTHROUGH_SCHEME => part.child(self.walkthrough_editor_body(&editor.document().path, window, cx)),
                 // searchEditor.ts draws its query widget where a text editor has its breadcrumbs.
                 SEARCH_EDITOR_SCHEME => part.child(self.search_editor_query(window, cx)),
+                crate::output::OUTPUT_SCHEME => part.child(self.output_title_actions(window, cx)),
                 MULTI_DIFF_EDITOR_SCHEME => part.child(self.multi_diff_editor_body(window, cx)),
                 // breadcrumbsControl.ts `update`: no breadcrumbs for a resource without a file system provider.
                 "untitled" => part,
@@ -302,7 +303,7 @@ impl Workbench {
             .child(tab)
     }
 
-    fn document_icon(&self, editor: &OpenEditor, line_height: f32, foreground: Rgba) -> Option<Div> {
+    pub(super) fn document_icon(&self, editor: &OpenEditor, line_height: f32, foreground: Rgba) -> Option<Div> {
         let document = &editor.document();
         // `SearchEditorInput.getIcon`.
         if document.scheme == SEARCH_EDITOR_SCHEME {
@@ -324,7 +325,7 @@ impl Workbench {
 
     /// The file's path below its workspace folder, one item per segment (breadcrumbs.filePath relative), after the
     /// folder's name in a workspace (`BreadcrumbsModel._initFilePathInfo`).
-    fn breadcrumbs(&self, editor: &OpenEditor) -> Div {
+    pub(super) fn breadcrumbs(&self, editor: &OpenEditor) -> Div {
         let path = &editor.document().path;
         let workspace = self.workspace();
         let folder = workspace.and_then(|workspace| workspace.folder_of(path));

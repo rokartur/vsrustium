@@ -15,6 +15,7 @@ fn rows(entries: &[Entry]) -> Vec<String> {
         .iter()
         .map(|entry| match entry {
             Entry::Separator(label) => format!("--{}--", label.clone().unwrap_or_default()),
+            Entry::Header(header) => format!("##{}##", header.label),
             Entry::Item(item) => format!("{}|{}|{:?}", item.label, item.description.clone().unwrap_or_default(), item.label_highlights),
         })
         .collect()

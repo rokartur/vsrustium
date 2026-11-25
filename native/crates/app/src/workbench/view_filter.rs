@@ -24,8 +24,8 @@ pub(super) struct ViewFilter {
 }
 
 impl Workbench {
-    /// 150px to 200px, 400px while focused, 10px right margin. The badge hides below 400px (`.small`), so in a
-    /// panel title it shows while the box is focused.
+    /// 200px, while focused up to 400px of the room the tabs leave, 10px right margin. The badge hides below 400px
+    /// (`.small`), so in a panel title it shows while the box is focused.
     pub(super) fn view_filter_box(&self, filter: ViewFilter, cx: &mut Context<Self>) -> Div {
         let height = if self.theme.kind == ThemeKind::Light { 25. } else { 24. };
         let border = if filter.focused { self.color("focusBorder") } else { self.theme.color("input.border").unwrap_or(self.color("input.background")) };
@@ -63,9 +63,10 @@ impl Workbench {
         });
         let look = InputLook { password: false, placeholder: Some(filter.placeholder.to_owned()), focused: filter.focused };
         div()
-            .flex_1()
+            .relative()
+            .w(px(self.panel_filter_width(filter.focused)))
+            .flex_shrink(1.)
             .min_w(px(150.))
-            .max_w(px(if filter.focused { 400. } else { 200. }))
             .mr(px(10.))
             .h(px(height))
             .flex()
@@ -82,5 +83,6 @@ impl Workbench {
             .child(div().flex_1().min_w_0().h_full().flex().child(self.input_text(filter.input, look, cx)))
             .children(badge)
             .child(filter_button)
+            .child(self.panel_filter_tracker())
     }
 }

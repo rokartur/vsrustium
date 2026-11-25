@@ -28,7 +28,7 @@ pub enum Event {
     Hide,
     /// A title bar button by handle (-1 is the back button), with the new state of a toggle.
     TriggerButton(i64, Option<bool>),
-    /// An item's button: the item handle and the button's index.
+    /// An item's or a header's button: its handle and the button's index.
     TriggerItemButton(i64, i64, Option<bool>),
 }
 
@@ -110,6 +110,16 @@ pub enum Entry {
     Item(Item),
     /// A separator; unlabelled ones still start a section.
     Separator(Option<String>),
+    /// A separator with `buttons` set (even empty): its own 30px row above its section's first visible item.
+    Header(Header),
+}
+
+#[derive(Clone, PartialEq, Debug, Default)]
+pub struct Header {
+    pub handle: i64,
+    pub label: String,
+    pub description: Option<String>,
+    pub buttons: Vec<Button>,
 }
 
 /// A `QuickPickItemElement`: an item with its list state.
@@ -121,6 +131,9 @@ pub struct Row {
     section_label: Option<String>,
     /// The separator drawn above the row, on the first visible row of a section; its label may be empty.
     pub separator: Option<String>,
+    section_header: Option<Header>,
+    /// The section's header row, drawn above the first visible row of the section.
+    pub header: Option<Header>,
     pub hidden: bool,
     pub label_highlights: Matches,
     pub description_highlights: Matches,
@@ -236,7 +249,6 @@ impl QuickInput {
         }
     }
 
-    #[cfg(test)]
     pub fn items(&self) -> &[Entry] {
         &self.items
     }
@@ -562,17 +574,26 @@ impl QuickInput {
         let mut rows = Vec::new();
         let mut section = 0;
         let mut section_label = None;
+        let mut section_header = None;
         for entry in &self.items {
             match entry {
                 Entry::Separator(label) => {
                     section += 1;
                     section_label = label.clone().filter(|label| !label.is_empty());
+                    section_header = None;
+                }
+                Entry::Header(header) => {
+                    section += 1;
+                    section_label = None;
+                    section_header = Some(header.clone());
                 }
                 Entry::Item(item) => rows.push(Row {
                     item: item.clone(),
                     section,
                     section_label: section_label.clone(),
                     separator: None,
+                    section_header: section_header.clone(),
+                    header: None,
                     hidden: false,
                     label_highlights: item.label_highlights.clone(),
                     description_highlights: item.description_highlights.clone(),
@@ -591,7 +612,9 @@ impl QuickInput {
         let mut previous_section = None;
         for at in 0..self.order.len() {
             let row = &mut self.rows[self.order[at]];
-            row.separator = (!sorted && row.section > 0 && previous_section != Some(row.section)).then(|| row.section_label.clone().unwrap_or_default());
+            let first_of_section = !sorted && row.section > 0 && previous_section != Some(row.section);
+            row.header = row.section_header.clone().filter(|_| first_of_section);
+            row.separator = (first_of_section && row.header.is_none()).then(|| row.section_label.clone().unwrap_or_default());
             previous_section = Some(row.section);
         }
     }

@@ -144,6 +144,13 @@ pub(crate) fn color_default(key: &str) -> Option<[ColorValue; 4]> {
         "symbolIcon.constructorForeground" | "symbolIcon.functionForeground" | "symbolIcon.methodForeground" => Some(PURPLE),
         "symbolIcon.enumeratorMemberForeground" | "symbolIcon.fieldForeground" | "symbolIcon.interfaceForeground" | "symbolIcon.variableForeground" => Some(BLUE),
         _ if key.starts_with("symbolIcon.") => same(Key("foreground")),
+        // terminalSymbolIcons.ts.
+        "terminalSymbolIcon.flagForeground" | "terminalSymbolIcon.optionForeground" => same(Key("symbolIcon.enumeratorForeground")),
+        "terminalSymbolIcon.aliasForeground" | "terminalSymbolIcon.methodForeground" => same(Key("symbolIcon.methodForeground")),
+        "terminalSymbolIcon.optionValueForeground" => same(Key("symbolIcon.enumeratorMemberForeground")),
+        "terminalSymbolIcon.argumentForeground" => same(Key("symbolIcon.variableForeground")),
+        "terminalSymbolIcon.folderForeground" | "terminalSymbolIcon.symbolicLinkFolderForeground" => same(Key("symbolIcon.folderForeground")),
+        _ if key.starts_with("terminalSymbolIcon.") && key != "terminalSymbolIcon.inlineSuggestionForeground" => same(Key("symbolIcon.fileForeground")),
         "editorSuggestWidget.background" => same(Key("editorWidget.background")),
         "editorSuggestWidget.border" => same(Key("editorWidget.border")),
         "editorSuggestWidget.foreground" => same(Key("editor.foreground")),

@@ -130,7 +130,13 @@ impl Workbench {
         view.filter.set_value(view.filters.text.clone());
         self.register_panel_view(PanelView {
             id: COMMENTS_VIEW_ID,
+            // mainThreadComments.ts registers the container and its view under the same id.
+            view_id: COMMENTS_VIEW_ID,
             title: "Comments",
+            open: |workbench, window, cx| {
+                workbench.open_panel_view(COMMENTS_VIEW_ID, cx);
+                window.focus(&workbench.comments.view.tree_focus, cx);
+            },
             render: |workbench, window, cx| workbench.comments_body(window, cx).into_any_element(),
             actions: |workbench, window, cx| workbench.comments_actions(window, cx).into_any_element(),
             visible: Workbench::comments_view_registered,

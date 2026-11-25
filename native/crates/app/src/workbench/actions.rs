@@ -2,10 +2,11 @@
 //! editor group (editorActions.ts, fileActions.ts, fileCommands.ts).
 
 use futures::channel::oneshot;
-use gpui::{Context, PromptLevel, Window};
+use gpui::{Context, Window};
 use serde_json::{Value, json};
 
 use super::Workbench;
+use super::lifecycle::ConfirmResult;
 use super::host_requests::uri_parts;
 use super::search_editor_view::SEARCH_EDITOR_SCHEME;
 use crate::commands::Outcome;
@@ -104,23 +105,6 @@ impl Workbench {
             }
             Outcome::done()
         });
-        // shortcut: dirty editors ask to save as with `files.hotExit: off`, since the port has no backups to restore
-        // them from; quit without asking once hot exit lands.
-        self.commands.register("workbench.action.quit", |workbench, _, window, cx| {
-            let closed = workbench.close_all_editors(window, cx);
-            cx.spawn(async move |workbench, cx| {
-                if let Outcome::Pending(pending) = closed {
-                    let _ = pending.await;
-                }
-                let _ = workbench.update(cx, |workbench, cx| {
-                    if workbench.editors.editors.is_empty() {
-                        cx.quit();
-                    }
-                });
-            })
-            .detach();
-            Outcome::done()
-        });
     }
 
     /// mainThreadWorkspace.ts `$save`: the editors of `uri` saved even when clean (`force`); the URI once saved.
@@ -141,7 +125,7 @@ impl Workbench {
         when_saved(saves, Value::Bool, cx)
     }
 
-    fn dirty_editors(&self) -> Vec<usize> {
+    pub(super) fn dirty_editors(&self) -> Vec<usize> {
         (0..self.editors.editors.len()).filter(|index| self.editors.editors[*index].is_dirty()).collect()
     }
 
@@ -241,20 +225,18 @@ impl Workbench {
             return Outcome::done();
         }
         let names: Vec<String> = dirty.iter().map(|index| self.editor_name(&self.editors.editors[*index])).collect();
-        let (message, detail) = save_confirm_text(&names);
-        let save = if names.len() > 1 { "Save All" } else { "Save" };
-        let answer = window.prompt(PromptLevel::Warning, &message, Some(&detail), &[save, "Don't Save", "Cancel"], cx);
+        let answer = self.show_save_confirm(&names, window, cx);
         let (sender, receiver) = futures::channel::oneshot::channel();
         cx.spawn_in(window, async move |workbench, cx| {
             let answer = answer.await;
             let _ = workbench.update(cx, |workbench, cx| match answer {
-                Ok(0) => {
+                Ok(ConfirmResult::Save) => {
                     for index in &dirty {
                         drop(workbench.save_editor(*index, cx));
                     }
                     workbench.discard_and_close(&[], &indices, cx);
                 }
-                Ok(1) => workbench.discard_and_close(&dirty, &indices, cx),
+                Ok(ConfirmResult::DontSave) => workbench.discard_and_close(&dirty, &indices, cx),
                 _ => {}
             });
             let _ = sender.send(Ok(Value::Null));
@@ -329,11 +311,16 @@ pub(super) fn when_saved(saves: Vec<oneshot::Receiver<bool>>, answer: impl FnOnc
 }
 
 /// `doShowSaveConfirm` and `getFileNamesMessage`.
-fn save_confirm_text(names: &[String]) -> (String, String) {
+pub(super) fn save_confirm_text(names: &[String]) -> (String, String) {
     let detail = "Your changes will be lost if you don't save them.";
     if let [name] = names {
         return (format!("Do you want to save the changes you made to {name}?"), detail.into());
     }
+    (format!("Do you want to save the changes to the following {} files?", names.len()), format!("{}\n{detail}", file_names_message(names)))
+}
+
+/// dialogs.ts `getFileNamesMessage`: up to ten names, then how many are not shown, each on a line.
+pub(super) fn file_names_message(names: &[String]) -> String {
     let mut lines: Vec<String> = names.iter().take(MAX_CONFIRM_FILES).cloned().collect();
     match names.len().saturating_sub(MAX_CONFIRM_FILES) {
         0 => {}
@@ -341,7 +328,7 @@ fn save_confirm_text(names: &[String]) -> (String, String) {
         more => lines.push(format!("...{more} additional files not shown")),
     }
     lines.push(String::new());
-    (format!("Do you want to save the changes to the following {} files?", names.len()), format!("{}\n{detail}", lines.join("\n")))
+    lines.join("\n")
 }
 
 #[cfg(test)]

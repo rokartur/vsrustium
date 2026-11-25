@@ -1,0 +1,7 @@
+[
+	{ "wait": 4000 },
+	{ "shot": "active" },
+	{ "hotkey": ["cmd", "shift", "n"] },
+	{ "wait": 4000 },
+	{ "shot": "inactive" }
+]

@@ -18,7 +18,7 @@ use crate::editor::minimap::MinimapLayoutInfo;
 use super::search_editor_view::SEARCH_EDITOR_SCHEME;
 use super::webview_panels::WEBVIEW_PANEL_SCHEME;
 use crate::commands::Outcome;
-use crate::editor::PANEL_GROUP;
+use crate::editor::{MODAL_GROUP, PANEL_GROUP};
 use crate::editor_grid::{Direction, EditorGrid, GridSash, GroupLayout, Orientation, SashId, SplitSizing};
 use crate::split_view::SashState;
 
@@ -249,7 +249,9 @@ impl Workbench {
     /// The editor part's context keys (editorPart.ts `handleContextKeys`, editorGroupView.ts).
     pub(super) fn editor_groups_context(&self, context: &mut HashMap<String, Value>) {
         let groups = self.groups_in_grid_order();
-        let index = groups.iter().position(|group| *group == self.editor_group_id()).expect("the active group is in the grid");
+        // The modal group is in no grid: its keys follow the part's group active before it.
+        let active = self.editors.group_ids_mru().into_iter().find(|group| groups.contains(group)).expect("the part has a group");
+        let index = groups.iter().position(|group| *group == active).expect("found in the grid above");
         let maximized = self.editor_groups.grid.as_ref().is_some_and(EditorGrid::is_maximized);
         context.insert("multipleEditorGroups".into(), json!(groups.len() > 1));
         context.insert("editorPartMultipleEditorGroups".into(), json!(groups.len() > 1));
@@ -265,7 +267,7 @@ impl Workbench {
     pub(super) fn groups_in_grid_order(&self) -> Vec<u32> {
         match &self.editor_groups.grid {
             Some(grid) => grid.groups(),
-            None => vec![self.editor_group_id()],
+            None => self.editors.group_ids_mru().into_iter().filter(|group| *group != MODAL_GROUP).take(1).collect(),
         }
     }
 
@@ -487,7 +489,8 @@ impl Workbench {
     /// editorGroupView.ts `doCloseEditor`: the last editor of a group closed with `workbench.editor.closeEmptyGroups`.
     pub(super) fn close_group_if_empty(&mut self, group: u32) {
         let empty = if group == self.editors.id { self.editors.editors.is_empty() } else { self.editors.group(group).is_some_and(|state| state.editors.is_empty()) };
-        if empty && group != PANEL_GROUP && self.editors.has_several_groups() && self.setting("workbench.editor.closeEmptyGroups") != json!(false) {
+        // The modal part enforces `closeEmptyGroups`: its group goes with its last editor.
+        if empty && (group == MODAL_GROUP || group != PANEL_GROUP && self.editors.has_several_groups() && self.setting("workbench.editor.closeEmptyGroups") != json!(false)) {
             self.remove_group(group);
         }
     }
@@ -502,9 +505,8 @@ impl Workbench {
         self.editor_groups.views.remove(&group);
         self.remove_from_navigation(|entry| entry.group == group);
         let sizing = self.split_sizing();
-        let grid = self.editor_groups.grid.as_mut().expect("several groups have a grid");
-        // `applyLayout` takes the groups it drops out of the grid before their editors merge.
-        if grid.groups().contains(&group) {
+        // `applyLayout` takes the groups it drops out of the grid before their editors merge; the modal group has none.
+        if let Some(grid) = self.editor_groups.grid.as_mut().filter(|grid| grid.groups().contains(&group)) {
             grid.remove_group(group, sizing);
         }
         if !self.editors.has_several_groups() {
@@ -566,7 +568,8 @@ impl Workbench {
             .child(measure);
         let sash_size = self.sash_size();
         let Some(grid) = self.editor_groups.grid.as_mut() else {
-            let group = self.editor_group_id();
+            // The modal part's group draws in the modal; the part shows the group active before it.
+            let group = self.editors.group_ids_mru().into_iter().find(|group| *group != MODAL_GROUP).expect("the part has a group");
             if self.editors.group_tabs(group).0.is_empty() {
                 return card.flex().flex_col().items_center().justify_center().child(self.watermark(256.));
             }
@@ -884,6 +887,8 @@ fn opposite(direction: Direction) -> Direction {
         Direction::Right => Direction::Left,
     }
 }
+
+mod part_state;
 
 #[cfg(test)]
 mod tests;

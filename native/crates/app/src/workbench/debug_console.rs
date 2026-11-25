@@ -36,7 +36,9 @@ impl Workbench {
     pub(super) fn register_debug_console_panel_view(&mut self) {
         self.register_panel_view(PanelView {
             id: DEBUG_PANEL_ID,
+            view_id: "workbench.panel.repl.view",
             title: "Debug Console",
+            open: |workbench, window, cx| workbench.open_debug_console(true, window, cx),
             render: |workbench, window, cx| workbench.debug_console_body(window, cx).into_any_element(),
             actions: |workbench, _, cx| div().flex().child(workbench.search_action("clear-all", "workbench.debug.panel.action.clearReplAction", true, cx)).into_any_element(),
             visible: |_| true,

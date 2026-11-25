@@ -38,6 +38,8 @@ impl Severity {
 pub enum Priority {
     Default,
     Silent,
+    /// `NotificationPriority.URGENT`: Do Not Disturb and source filters leave it alone.
+    Urgent,
 }
 
 #[derive(Clone, Debug, PartialEq)]

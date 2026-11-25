@@ -2,7 +2,7 @@
 //! tree, a resource row with its file icon, folder and count over its markers, each with its severity icon, message,
 //! source, code and position, its related information below. A click opens the marker's location. The filter box
 //! and its menu (markersViewActions.ts, markersFilterOptions.ts) pick what shows.
-// shortcut: no indent guides, filter history, multi-selection, or focus apart from selection.
+// shortcut: no indent guides, multi-selection, or focus apart from selection.
 
 use std::cell::Cell;
 use std::collections::HashSet;
@@ -16,9 +16,10 @@ use serde_json::{Value, json};
 use super::Workbench;
 use super::input_box_view::{InputId, InputView};
 use super::panel::PanelView;
-use super::problems_table::{TableItem, table_items};
+use super::problems_table::{ProblemsTable, TableItem, table_items};
 use super::view_filter::ViewFilter;
 use crate::commands::Outcome;
+use crate::history::HistoryNavigator;
 use crate::input_box::InputBox;
 use crate::markers::{ERROR, INFO, Marker, ReadOptions, WARNING};
 use crate::markers_filter::{FilesExclude, FilterOptions, Highlights, Visibility, filter_marker, filter_related, filter_resource, marker_code, marker_lines};
@@ -26,11 +27,13 @@ use crate::menus::MenuAction;
 
 /// markers.ts `Markers.MARKERS_CONTAINER_ID` and `MARKERS_VIEW_ID`.
 pub const MARKERS_CONTAINER_ID: &str = "workbench.panel.markers";
-const MARKERS_VIEW_ID: &str = "workbench.panel.markers.view";
+pub(super) const MARKERS_VIEW_ID: &str = "workbench.panel.markers.view";
 /// markers.ts `MARKERS_VIEW_STORAGE_ID`: the view's memento in workspace storage.
 const MEMENTO_KEY: &str = "memento/workbench.panel.markers";
 const ROW_HEIGHT: f32 = 22.;
 const FILTER_PLACEHOLDER: &str = "Filter (e.g. text, **/*.ts, !**/node_modules/**, @source:ts)";
+/// HistoryInputBox's `HistoryNavigator` limit.
+const FILTER_HISTORY_LIMIT: usize = 100;
 
 pub struct ProblemsView {
     /// Resources whose markers are hidden, by `URI.toString()`.
@@ -46,16 +49,19 @@ pub struct ProblemsView {
     filtering: Option<Task<()>>,
     /// The applied filter text.
     text: String,
+    /// The filter box's history (`filterHistory`).
+    filter_history: HistoryNavigator,
     show_errors: bool,
     show_warnings: bool,
     show_infos: bool,
-    /// "Hide Excluded Files" (`useFilesExclude`).
+    /// `useFilesExclude`: hide `files.exclude` matches ("Show Excluded Files" unchecked).
     excluded_files: bool,
     active_file: bool,
     /// `MarkersViewModel.multiline`: every marker shows all its message lines.
     multiline: bool,
     /// `MarkersViewMode.Table`; `None` until set, then `problems.defaultViewMode` decides.
     table: Option<bool>,
+    pub(super) table_view: ProblemsTable,
     menu_bounds: Rc<Cell<Bounds<Pixels>>>,
     /// The focused and selected row.
     selected: Option<Row>,
@@ -83,6 +89,7 @@ impl ProblemsView {
             filter_focus: cx.focus_handle(),
             filtering: None,
             text: String::new(),
+            filter_history: HistoryNavigator::new(Vec::new(), FILTER_HISTORY_LIMIT),
             show_errors: true,
             show_warnings: true,
             show_infos: true,
@@ -90,6 +97,7 @@ impl ProblemsView {
             active_file: false,
             multiline: true,
             table: None,
+            table_view: ProblemsTable::default(),
             menu_bounds: Rc::default(),
             selected: None,
             selected_light_bulb: Rc::default(),
@@ -100,6 +108,8 @@ impl ProblemsView {
     fn restore(&mut self, memento: &Value) {
         self.text = memento["filter"].as_str().unwrap_or_default().to_owned();
         self.filter.set_value(self.text.clone());
+        let history = memento["filterHistory"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect();
+        self.filter_history = HistoryNavigator::new(history, FILTER_HISTORY_LIMIT);
         self.show_errors = memento["showErrors"] != false;
         self.show_warnings = memento["showWarnings"] != false;
         self.show_infos = memento["showInfos"] != false;
@@ -112,6 +122,7 @@ impl ProblemsView {
     fn memento(&self) -> Value {
         json!({
             "filter": self.text,
+            "filterHistory": self.filter_history.elements(),
             "showErrors": self.show_errors,
             "showWarnings": self.show_warnings,
             "showInfos": self.show_infos,
@@ -262,7 +273,12 @@ impl Workbench {
     pub(super) fn register_problems_panel_view(&mut self) {
         self.register_panel_view(PanelView {
             id: MARKERS_CONTAINER_ID,
+            view_id: MARKERS_VIEW_ID,
             title: "Problems",
+            open: |workbench, window, cx| {
+                workbench.open_panel_view(MARKERS_CONTAINER_ID, cx);
+                workbench.focus_problems(window, cx);
+            },
             render: |workbench, window, cx| workbench.problems_body(window, cx).into_any_element(),
             // The navigation group: the filter, View as Tree/Table (order 3), Collapse All in the tree (order 2).
             actions: |workbench, window, cx| {
@@ -408,6 +424,12 @@ impl Workbench {
         if filter_focused || tree_focused {
             context.insert("focusedView".into(), json!(MARKERS_VIEW_ID));
         }
+        if filter_focused {
+            // contextScopedHistoryWidget.ts: the filter is a history input.
+            for key in ["inputFocus", "historyNavigationWidgetFocus", "historyNavigationForwardsEnabled", "historyNavigationBackwardsEnabled"] {
+                context.insert(key.into(), json!(true));
+            }
+        }
         let selected = self.problems.selected.as_ref().filter(|_| tree_focused);
         context.insert("problemsVisibility".into(), json!(!self.problems_table_mode()));
         context.insert("problemFocus".into(), json!(matches!(selected, Some(Row::Marker(..)))));
@@ -527,10 +549,24 @@ impl Workbench {
         self.problems.filtering = Some(cx.spawn_in(window, async move |workbench, cx| {
             cx.background_executor().timer(std::time::Duration::from_millis(300)).await;
             let _ = workbench.update(cx, |workbench, cx| {
-                workbench.problems.text = workbench.problems.filter.value.clone();
+                let view = &mut workbench.problems;
+                view.text = view.filter.value.clone();
+                view.filter_history.add_to_history(&view.text, false);
                 workbench.problems_state_changed(cx);
             });
         }));
+    }
+
+    /// `history.showPrevious` and `history.showNext` in the filter box.
+    pub(super) fn show_problems_filter_history_value(&mut self, previous: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let view = &mut self.problems;
+        let value = match previous {
+            true => view.filter_history.show_previous_value(&view.filter.value),
+            false => Some(view.filter_history.show_next_value(&view.filter.value)),
+        };
+        if let Some(value) = value {
+            self.edit_problems_filter(|input| input.set_value(value), window, cx);
+        }
     }
 
     /// `saveState`: the filters and the line mode in the workspace memento.
@@ -549,7 +585,7 @@ impl Workbench {
             item("toggleInfos", "Show Infos", view.show_infos),
             MenuAction::Separator,
             item("toggleActiveFile", "Show Active File Only", view.active_file),
-            item("toggleExcludedFiles", "Hide Excluded Files", view.excluded_files),
+            item("toggleExcludedFiles", "Show Excluded Files", !view.excluded_files),
         ];
         let context = self.key_context(window);
         self.show_context_menu_actions(actions, &context, anchor, Vec::new(), window, cx);
@@ -571,7 +607,7 @@ impl Workbench {
         )
     }
 
-    /// `updateFilter`'s `FilterOptions`: `files.exclude` per workspace folder while "Hide Excluded Files" is on.
+    /// `updateFilter`'s `FilterOptions`: `files.exclude` per workspace folder while "Show Excluded Files" is off.
     fn problems_filter_options(&self) -> FilterOptions {
         let view = &self.problems;
         let files_exclude = |resource: Option<&std::path::Path>| {
@@ -619,11 +655,10 @@ impl Workbench {
         table_items(&markers, &self.problems_filter_options(), path_of, file_label)
     }
 
-    fn problems_body(&self, window: &Window, cx: &mut Context<Self>) -> Div {
+    fn problems_body(&mut self, window: &Window, cx: &mut Context<Self>) -> Div {
         let resources = self.problems_resources();
         let shown = filter_resources(&resources, &self.problems_filter_options());
         let focused = self.problems_focus.is_focused(window);
-        let selected = |row: Row| self.problems.selected.as_ref() == Some(&row);
         let list = div()
             .id("problems-tree")
             .track_focus(&self.problems_focus)
@@ -639,8 +674,9 @@ impl Workbench {
             return div().flex_1().min_h_0().flex().flex_col().child(list.child(self.problems_message(total, &resources, cx)));
         }
         if let Some(items) = table {
-            return div().flex_1().min_h_0().flex().flex_col().child(list.children(self.problems_table(&items, cx)));
+            return div().flex_1().min_h_0().flex().flex_col().child(self.problems_table(&items, list, cx));
         }
+        let selected = |row: Row| self.problems.selected.as_ref() == Some(&row);
         let mut rows = Vec::new();
         for resource in &shown {
             let collapsed = self.problems.collapsed.contains(&resource.resource.resource);
@@ -928,6 +964,25 @@ mod tests {
         assert_eq!(shown("declared"), [("file:///w/a.ts".to_owned(), 0, 1)]);
         assert_eq!(shown("b.ts"), [("file:///w/b.ts".to_owned(), 0, 0)]);
         assert_eq!(shown("!**/a.ts"), [("file:///w/b.ts".to_owned(), 0, 0)]);
+    }
+
+    #[test]
+    fn text_globs_and_severities_pick_the_shown_markers() {
+        let marker = |message: &str, severity: u8, source: &str| Arc::new(Marker::new("owner", "file:///w/a.ts", &json!({ "severity": severity, "message": message, "source": source, "startLineNumber": 1, "startColumn": 1, "endLineNumber": 1, "endColumn": 2 })).unwrap());
+        let resources = resource_markers(vec![marker("missing semicolon", ERROR, "ts"), marker("unused variable", WARNING, "eslint"), marker("hint", INFO, "ts")]);
+        let shown = |options: FilterOptions| -> Vec<String> { filter_resources(&resources, &options).iter().flat_map(|resource| resource.markers.iter().map(|marker| marker.marker.message.clone())).collect() };
+        let text = |filter: &str| shown(FilterOptions::new(filter, FilesExclude::ByRoot(Vec::new()), true, true, true));
+        let all = ["missing semicolon", "unused variable", "hint"];
+        assert_eq!(text(""), all);
+        assert_eq!(text("unused"), ["unused variable"]);
+        assert_eq!(text("!unused"), ["missing semicolon", "hint"]);
+        assert!(text("nothing").is_empty());
+        // A file name match or an include glob shows every marker of the file.
+        assert_eq!(text("a.ts"), all);
+        assert_eq!(text(".ts"), all);
+        assert!(text("!.ts").is_empty());
+        assert_eq!(text("@source:ts"), ["missing semicolon", "hint"]);
+        assert_eq!(shown(FilterOptions::new("", FilesExclude::ByRoot(Vec::new()), false, true, false)), ["missing semicolon"]);
     }
 
     /// markersView.ts `focus`: opening the view selects the first marker; Up, Down and Enter move through the rows.

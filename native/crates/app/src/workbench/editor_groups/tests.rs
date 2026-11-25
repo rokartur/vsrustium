@@ -185,3 +185,22 @@ fn close_editors_in_other_groups_leaves_the_active_group(cx: &mut TestAppContext
     run(&workbench, "workbench.action.closeAllEditors", cx);
     assert_eq!(groups(&workbench, cx), (vec![Vec::<String>::new()], 0));
 }
+
+#[gpui::test]
+fn the_grid_and_its_editors_come_back_from_workspace_storage(cx: &mut TestAppContext) {
+    let (_dir, workbench, cx) = workbench_with("part-state", &["a.txt", "b.txt"], cx);
+    cx.simulate_keystrokes("cmd-\\");
+    cx.run_until_parked();
+    run(&workbench, "workbench.action.focusFirstEditorGroup", cx);
+    let saved = workbench.read_with(cx, |workbench, _| workbench.workspace_storage.lock().unwrap().get("memento/workbench.parts.editor").map(str::to_owned).unwrap());
+    let before = groups(&workbench, cx);
+    assert_eq!(before, (vec![vec!["a.txt".to_string(), "b.txt".to_string()], vec!["b.txt".to_string()]], 0));
+    run(&workbench, "workbench.action.closeAllEditors", cx);
+    assert_eq!(groups(&workbench, cx), (vec![Vec::<String>::new()], 0));
+    let storage = std::sync::Arc::new(std::sync::Mutex::new(storage::Storage::in_memory()));
+    storage.lock().unwrap().set("memento/workbench.parts.editor", saved);
+    workbench.update(cx, |workbench, _| workbench.restore_workspace_state(storage));
+    assert_eq!(groups(&workbench, cx), before);
+    let active = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document().name());
+    assert_eq!(active, "b.txt");
+}

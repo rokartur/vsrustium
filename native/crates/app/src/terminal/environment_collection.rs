@@ -76,6 +76,42 @@ impl EnvironmentCollections {
         self.collections.is_empty()
     }
 
+    /// terminal.environmentChanges.contribution.ts `describeEnvironmentChanges`: the Markdown Show Environment
+    /// Contributions opens, each extension with its descriptions and mutators for the folder `scope`.
+    pub fn describe(&self, scope: Option<u64>) -> String {
+        let mut content = "# Terminal Environment Changes".to_owned();
+        for (extension_id, collection) in &self.collections {
+            content += &format!("\n\n## Extension: {extension_id}\n");
+            // `getDescriptionMap` keeps an extension's last description in scope; strictly, unscoped ones only without a scope.
+            let description = |scope: Option<u64>| {
+                let entries = collection.description.as_array().into_iter().flatten();
+                let in_scope = entries.filter(|entry| match entry[1]["scope"]["workspaceFolder"]["index"].as_u64() {
+                    Some(index) => scope == Some(index),
+                    None => entry[1]["scope"].is_null() && scope.is_none(),
+                });
+                in_scope.filter_map(|entry| entry[1]["description"].as_str().map(str::to_owned)).last()
+            };
+            let global = description(None);
+            if let Some(global) = &global {
+                content += &format!("\n{global}\n");
+            }
+            if let Some(workspace) = description(scope) {
+                let suffix = if global.is_some() { " (workspace)" } else { "" };
+                content += &format!("\n{workspace}{suffix}\n");
+            }
+            for (_, mutator) in collection.entries.iter().filter(|(_, mutator)| in_scope(mutator, scope)) {
+                let (variable, value) = (mutator["variable"].as_str().unwrap_or_default(), mutator["value"].as_str().unwrap_or_default());
+                let label = match mutator["type"].as_u64() {
+                    Some(PREPEND) => format!("{variable}={value}${{env:{variable}}}"),
+                    Some(APPEND) => format!("{variable}=${{env:{variable}}}{value}"),
+                    _ => format!("{variable}={value}"),
+                };
+                content += &format!("\n- `{label}`");
+            }
+        }
+        content
+    }
+
     /// `MergedEnvironmentVariableCollection.applyToProcessEnvironment` for a terminal in the workspace folder
     /// with this index.
     pub fn apply(&self, env: &mut HashMap<String, String>, workspace_folder: Option<u64>) {
@@ -192,6 +228,19 @@ mod tests {
     }
 
     /// environmentVariableCollection.test.ts 'applyToProcessEnvironment' and the api-tests expectations.
+    #[test]
+    fn changes_are_described_per_extension_with_their_descriptions() {
+        let mut collections = EnvironmentCollections::default();
+        let mutators = json!([mutator("PATH", "/bin:", PREPEND), mutator("A", "x", APPEND), mutator("B", "y", REPLACE)]);
+        let description = json!([["", { "description": "Adds tools" }], ["folder", { "description": "Folder tools", "scope": { "workspaceFolder": { "index": 0 } } }]]);
+        collections.set("pub.ext", false, Some(&mutators), &description);
+        assert_eq!(
+            collections.describe(Some(0)),
+            "# Terminal Environment Changes\n\n## Extension: pub.ext\n\nAdds tools\n\nFolder tools (workspace)\n\n- `PATH=/bin:${env:PATH}`\n- `A=${env:A}x`\n- `B=y`"
+        );
+        assert_eq!(collections.describe(None), "# Terminal Environment Changes\n\n## Extension: pub.ext\n\nAdds tools\n\nAdds tools (workspace)\n\n- `PATH=/bin:${env:PATH}`\n- `A=${env:A}x`\n- `B=y`");
+    }
+
     #[test]
     fn mutators_replace_append_and_prepend() {
         let mut collections = EnvironmentCollections::default();

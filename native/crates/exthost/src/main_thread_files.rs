@@ -406,6 +406,7 @@ impl WorkingCopyFiles for Providers<'_> {
         let Some(edits) = data["edit"]["edits"].as_array().filter(|edits| !edits.is_empty()) else { return };
         let needs_confirmation = edits.iter().any(|edit| edit["metadata"]["needsConfirmation"] == true);
         // Extension tests show no dialog and no preview.
+        let mut edit = data["edit"].clone();
         if !self.session.runs_extension_tests() {
             let args = vec![json!(operation as u8), data["extensionNames"].clone(), json!(needs_confirmation)];
             // The workbench's answer: `showPreview`, or null when the changes are skipped.
@@ -414,14 +415,12 @@ impl WorkingCopyFiles for Providers<'_> {
                 _ => return,
             };
             // bulkEditService.ts: a preview, or an edit that needs confirmation, goes through the Refactor Preview.
-            // shortcut: the Refactor Preview is not ported (it lives in the panel, milestone 11), so these edits are skipped.
             if show_preview || needs_confirmation {
-                eprintln!("[onWill-handler] skipping additional workspace edit from extensions {}: the Refactor Preview is not ported", data["extensionNames"]);
-                return;
+                edit = crate::main_thread_bulk_edits::preview(self.session, &edit);
             }
         }
         eprintln!("[onWill-handler] applying additional workspace edit from extensions {}", data["extensionNames"]);
-        if let Err(error) = crate::main_thread_bulk_edits::apply(self, &data["edit"], undo.undo_redo_group_id) {
+        if let Err(error) = crate::main_thread_bulk_edits::apply(self, &edit, undo.undo_redo_group_id) {
             eprintln!("[file participants] {error}");
         }
     }

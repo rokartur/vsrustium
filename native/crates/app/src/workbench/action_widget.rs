@@ -13,6 +13,7 @@ use super::code_actions::{CodeActionSet, RowLook};
 use crate::action_list::{ActionList, Item, ItemKind, Options};
 use crate::commands::Outcome;
 use crate::editor::{Position, visible_column};
+use crate::terminal::quick_fix::QuickFix;
 
 const UI_FONT: &str = ".SystemUIFont";
 const FONT_SIZE: f32 = 13.;
@@ -65,13 +66,14 @@ pub(super) enum Owner {
     CodeActions { set: Rc<CodeActionSet>, include_disabled: bool, from_lightbulb: bool },
     /// postEditWidget.ts `showSelector`: the row is the index of a paste edit.
     PasteEdits,
+    /// quickFixAddon.ts: a terminal instance's quick fixes, by row.
+    TerminalQuickFixes(u32, Rc<Vec<QuickFix>>),
 }
 
 impl Workbench {
     pub(super) fn register_action_widget_commands(&mut self) {
         self.commands.register("hideCodeActionWidget", |workbench, _, window, cx| {
-            workbench.hide_action_widget(cx);
-            window.focus(&workbench.editor_focus, cx);
+            workbench.hide_action_widget_to_owner(window, cx);
             Outcome::done()
         });
         self.commands.register("selectNextCodeAction", |workbench, _, _, cx| {
@@ -151,6 +153,21 @@ impl Workbench {
         cx.notify();
     }
 
+    /// quickFixAddon.ts `showMenu`: the widget over a terminal's quick fixes, without an action bar.
+    pub(super) fn show_terminal_quick_fix_widget(&mut self, items: Vec<Item<usize>>, looks: Vec<RowLook>, anchor: Anchor, instance: u32, fixes: Rc<Vec<QuickFix>>, cx: &mut Context<Self>) {
+        self.show_action_widget(items, looks, anchor, Vec::new(), Owner::TerminalQuickFixes(instance, fixes), cx);
+    }
+
+    /// The widget hides and the focus goes back to what showed it: the editor or the terminal.
+    fn hide_action_widget_to_owner(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let terminal = matches!(self.action_widget.shown.as_ref().map(|shown| &shown.owner), Some(Owner::TerminalQuickFixes(..)));
+        self.hide_action_widget(cx);
+        match terminal {
+            true => window.focus(&self.terminal_view.focus, cx),
+            false => window.focus(&self.editor_focus, cx),
+        }
+    }
+
     /// `hide`: the rows go and the set is released unless the light bulb still shows it.
     pub(super) fn hide_action_widget(&mut self, cx: &mut Context<Self>) {
         if let Some(shown) = self.action_widget.shown.take() {
@@ -179,14 +196,21 @@ impl Workbench {
             None => shown.list.accept_selected(false, false),
         };
         let crate::action_list::Accepted::Select { item, .. } = accepted else { return cx.notify() };
-        let set = match &shown.owner {
-            Owner::CodeActions { set, .. } => Some(set.clone()),
-            Owner::PasteEdits => None,
-        };
-        self.hide_action_widget(cx);
-        match set {
-            Some(set) => self.accept_code_action(item, set, window, cx),
-            None => self.select_paste_edit(item, window, cx),
+        match &shown.owner {
+            Owner::CodeActions { set, .. } => {
+                let set = set.clone();
+                self.hide_action_widget(cx);
+                self.accept_code_action(item, set, window, cx);
+            }
+            Owner::PasteEdits => {
+                self.hide_action_widget(cx);
+                self.select_paste_edit(item, window, cx);
+            }
+            Owner::TerminalQuickFixes(instance, fixes) => {
+                let (instance, fix) = (*instance, fixes[item].clone());
+                self.hide_action_widget_to_owner(window, cx);
+                self.run_terminal_quick_fix(instance, &fix, window, cx);
+            }
         }
     }
 
@@ -298,8 +322,7 @@ impl Workbench {
             .child(list)
             .children(bar);
         let block = div().id("action-widget-block").absolute().inset_0().occlude().on_any_mouse_down(cx.listener(|workbench, _, window, cx| {
-            workbench.hide_action_widget(cx);
-            window.focus(&workbench.editor_focus, cx);
+            workbench.hide_action_widget_to_owner(window, cx);
         }));
         Some(div().absolute().inset_0().child(block).child(widget).into_any_element())
     }

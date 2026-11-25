@@ -119,6 +119,11 @@ impl Registry {
         self.matchers.get(name)
     }
 
+    /// The named matchers but `lessCompile`, the one registered `deprecated`.
+    pub fn pickable(&self) -> impl Iterator<Item = &ProblemMatcher> {
+        self.matchers.iter().filter(|(name, _)| *name != "lessCompile").map(|(_, matcher)| matcher)
+    }
+
     /// `ProblemMatcherParser.parse`: an object matcher, possibly based on a named one (`base`).
     pub fn parse(&self, description: &Value) -> Option<ProblemMatcher> {
         let owner = description["owner"].as_str().map(str::to_owned).unwrap_or_else(exthost::main_thread_storage::generate_uuid);

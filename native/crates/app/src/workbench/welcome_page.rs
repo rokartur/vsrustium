@@ -211,7 +211,11 @@ impl Workbench {
             }
             *held = holds;
         }
-        let view = self.side_bar_visible().then(|| side_bar_view_id(self.side_bar_view)).flatten();
+        let view = match self.side_bar_view {
+            _ if !self.side_bar_visible() => None,
+            SideBarView::Contributed(id) => self.container_views(id).first().copied(),
+            view => side_bar_view_id(view),
+        };
         if view != self.welcome.visible_view {
             self.welcome.visible_view = view;
             events.extend(view.map(|view| format!("onView:{view}")));
@@ -1398,7 +1402,7 @@ fn side_bar_view_id(view: SideBarView) -> Option<&'static str> {
         SideBarView::Scm => Some("workbench.scm"),
         SideBarView::Debug => Some("workbench.debug.variablesView"),
         SideBarView::Testing => Some("workbench.view.testing"),
-        SideBarView::Extensions => None,
+        SideBarView::Extensions | SideBarView::Contributed(_) => None,
     }
 }
 

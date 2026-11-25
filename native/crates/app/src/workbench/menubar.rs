@@ -56,30 +56,50 @@ pub struct Menubar {
     /// `getOpenRecentActions`: the labels and entries of the recent folders and workspaces, then of the files.
     pub recent: Vec<(String, Value)>,
     pub recent_workspaces: usize,
+    /// The Window menu's Always on Top check.
+    pub always_on_top: bool,
 }
 
 /// menubarControl.ts `MAX_MENU_RECENT_ENTRIES` and `MAX_MENU_RECENT_LABEL_LENGTH`.
 const MAX_MENU_RECENT_ENTRIES: usize = 10;
 const MAX_MENU_RECENT_LABEL_LENGTH: usize = 120;
 
-/// Runs the menu actions in `window`, the only window of the app.
-pub fn install(window: WindowHandle<Workbench>, cx: &mut App) {
+/// Runs the menu actions in the window `menu_window` picks.
+pub fn install(cx: &mut App) {
     cx.on_action(move |action: &RunMenuCommand, cx| {
         // With the window active, GPUI calls this inside its `window.update`, where a nested update fails.
         let id = action.id.clone();
         cx.defer(move |cx| {
-            let _ = window.update(cx, |workbench, window, cx| workbench.run_menu_command(&id, window, cx));
+            // menubar.ts `runActionInRenderer`: the focused window runs it; with no window Quit quits and the
+            // others open an empty window first.
+            match menu_window(cx) {
+                Some(window) => drop(window.update(cx, |workbench, window, cx| workbench.run_menu_command(&id, window, cx))),
+                None if id == "workbench.action.quit" => cx.quit(),
+                None => {
+                    let Ok(window) = crate::open_window(crate::WindowRequest::default(), cx) else { return };
+                    let _ = window.update(cx, |workbench, window, cx| workbench.run_menu_command(&id, window, cx));
+                }
+            }
         });
     });
     cx.on_action(move |action: &OpenRecentMenuEntry, cx| {
         let index = action.index;
         cx.defer(move |cx| {
+            let Some(window) = menu_window(cx) else { return };
             let _ = window.update(cx, |workbench, window, cx| workbench.open_recent_menu_entry(index, window, cx));
         });
     });
     cx.on_action(|_: &Hide, cx| cx.hide());
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
     cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
+}
+
+/// The window menu actions go to: the active window, else the frontmost workbench window, else any (a platform
+/// without a window stack).
+fn menu_window(cx: &App) -> Option<WindowHandle<Workbench>> {
+    let active = cx.active_window().and_then(|window| window.downcast::<Workbench>());
+    let frontmost = || cx.window_stack().unwrap_or_else(|| cx.windows()).into_iter().find_map(|window| window.downcast::<Workbench>());
+    active.or_else(frontmost)
 }
 
 impl Workbench {
@@ -111,11 +131,18 @@ impl Workbench {
         let mut recent = menu_entries(&self.recently_opened.workspaces);
         let recent_workspaces = recent.len();
         recent.extend(menu_entries(&self.recently_opened.files));
-        Menubar { menus, keybindings, recent, recent_workspaces }
+        let always_on_top = context.get("isWindowAlwaysOnTop") == Some(&Value::Bool(true));
+        Menubar { menus, keybindings, recent, recent_workspaces, always_on_top }
     }
 
     /// Sets the application menu when what it shows changed, as `updateMenubar` does on menu changes.
     pub(super) fn update_menubar(&mut self, window: &Window, cx: &mut Context<Self>) {
+        // The application menu is the focused window's (menubar.ts `onDidChangeWindowFocus`); a window in the
+        // background installs its menu again once it comes to the front.
+        if !window.is_window_active() && cx.windows().len() > 1 {
+            self.installed_menubar = None;
+            return;
+        }
         let menubar = self.menubar(window);
         if self.installed_menubar.as_ref() == Some(&menubar) {
             return;
@@ -157,15 +184,16 @@ fn collect_command_ids(actions: &[MenuAction], ids: &mut Vec<String>) {
 }
 
 /// `Menubar.install`: the app menu, the workbench's menus, then the Window menu before Help.
-/// shortcut: no About, Check for Updates, Always on Top or Switch Window; the port has no about dialog, updates,
-/// always-on-top windows or window switching.
+/// shortcut: no Check for Updates, Always on Top or Switch Window; the port has no updates, always-on-top windows
+/// or window switching.
 fn native_menus(menubar: &Menubar) -> (Vec<Menu>, Vec<KeyBinding>) {
     let mut key_equivalents = vec![
         KeyBinding::new("cmd-h", Hide, Some(MENU_KEY_EQUIVALENT)),
         KeyBinding::new("alt-cmd-h", HideOthers, Some(MENU_KEY_EQUIVALENT)),
     ];
-    let mut app_items = Vec::new();
+    let mut app_items = vec![native_command("workbench.action.showAboutDialog", &format!("About {NAME_LONG}"), true, false, menubar, &mut key_equivalents)];
     if let Some((_, preferences)) = menubar.menus.iter().find(|(title, _)| title == "Preferences") {
+        app_items.push(MenuItem::separator());
         app_items.push(MenuItem::submenu(Menu::new("Preferences").items(native_items(preferences, menubar, &mut key_equivalents))));
         app_items.push(MenuItem::separator());
     }
@@ -179,17 +207,24 @@ fn native_menus(menubar: &Menubar) -> (Vec<Menu>, Vec<KeyBinding>) {
         native_command("workbench.action.quit", &format!("Quit {NAME_LONG}"), true, false, menubar, &mut key_equivalents),
     ]);
     let mut menus = vec![Menu::new(NAME_LONG).items(app_items)];
-    let window_menu = || Menu::new("Window").window_menu(true);
+    // menubar.ts `setMacWindowMenu`: fix_up_app_kit_menus adds the AppKit role items around these.
+    let window_menu = |key_equivalents: &mut Vec<KeyBinding>| {
+        Menu::new("Window").window_menu(true).items([
+            native_command("workbench.action.toggleWindowAlwaysOnTop", "Always on Top", true, menubar.always_on_top, menubar, key_equivalents),
+            MenuItem::separator(),
+            native_command("workbench.action.switchWindow", "Switch &&Window...", true, false, menubar, key_equivalents),
+        ])
+    };
     for (title, actions) in &menubar.menus {
         match title.as_str() {
             "Preferences" => continue,
-            "Help" => menus.push(window_menu()),
+            "Help" => menus.push(window_menu(&mut key_equivalents)),
             _ => {}
         }
         menus.push(Menu::new(title.clone()).items(native_items(actions, menubar, &mut key_equivalents)));
     }
     if !menubar.menus.iter().any(|(title, _)| title == "Help") {
-        menus.push(window_menu());
+        menus.push(window_menu(&mut key_equivalents));
     }
     (menus, key_equivalents)
 }
@@ -287,9 +322,8 @@ fn fix_up_app_kit_menus() {
     let item = |title: &str, action, key: &str| unsafe {
         NSMenuItem::initWithTitle_action_keyEquivalent(mtm.alloc(), &NSString::from_str(title), Some(action), &NSString::from_str(key))
     };
-    window_menu.removeAllItems();
-    window_menu.addItem(&item("Minimize", sel!(performMiniaturize:), "m"));
-    window_menu.addItem(&item("Zoom", sel!(performZoom:), ""));
+    window_menu.insertItem_atIndex(&item("Minimize", sel!(performMiniaturize:), "m"), 0);
+    window_menu.insertItem_atIndex(&item("Zoom", sel!(performZoom:), ""), 1);
     window_menu.addItem(&NSMenuItem::separatorItem(mtm));
     window_menu.addItem(&item("Bring All to Front", sel!(arrangeInFront:), ""));
 }

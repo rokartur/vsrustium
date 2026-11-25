@@ -20,8 +20,14 @@ pub fn serve(session: &mut Session, req: u32, args: &[Arg]) -> Message {
         Some(Arg::Json(value)) => value.as_u64(),
         _ => None,
     };
+    let needs_confirmation = dto["edits"].as_array().is_some_and(|edits| edits.iter().any(|edit| edit["metadata"]["needsConfirmation"] == true));
+    let dto = match needs_confirmation {
+        true => preview(session, &dto),
+        false => dto,
+    };
+    let edits = dto["edits"].as_array().map_or(0, Vec::len);
     let applied = match apply(&mut Providers { session }, &dto, undo_redo_group_id) {
-        Ok(()) => true,
+        Ok(()) => edits > 0,
         Err(error) => {
             eprintln!("IGNORING workspace edit: {error}");
             false
@@ -30,6 +36,18 @@ pub fn serve(session: &mut Session, req: u32, args: &[Arg]) -> Message {
     // The model changes the workbench queued reach the host before the reply, as the model events fire before the edit resolves.
     session.flush_main_thread();
     Message::ReplyOk { req, value: Reply::Json(json!(applied)) }
+}
+
+/// bulkEditService.ts `_previewHandler`: the workbench's Refactor Preview answers the checked edits, none on Discard.
+/// Extension tests show no preview.
+pub(crate) fn preview(session: &mut Session, dto: &Value) -> Value {
+    if session.runs_extension_tests() {
+        return dto.clone();
+    }
+    match session.ask_workbench("workbench", "previewWorkspaceEdit", vec![dto.clone()]) {
+        Some(Ok(checked)) => checked,
+        _ => json!({ "edits": [] }),
+    }
 }
 
 /// `BulkEdit.perform`: consecutive edits of one kind run together, in the order the workspace edit lists them.

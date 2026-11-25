@@ -78,6 +78,17 @@ impl Workbench {
     }
 
     /// `isViewVisible(OUTPUT_VIEW_ID)`: the panel shows the Output view.
+    /// The Output view's editor is the active one, so the links contribution follows its text.
+    fn output_editor_active(&self) -> bool {
+        self.editors.active().is_some_and(|editor| editor.document().scheme == OUTPUT_SCHEME)
+    }
+
+    fn output_links_reset(&mut self, cx: &mut Context<Self>) {
+        if self.output_editor_active() {
+            self.links_model_changed(cx);
+        }
+    }
+
     pub(crate) fn output_view_visible(&self) -> bool {
         self.panel_view_visible(OUTPUT_VIEW_ID)
     }
@@ -91,7 +102,12 @@ impl Workbench {
     pub(super) fn register_output_panel_view(&mut self) {
         self.register_panel_view(PanelView {
             id: OUTPUT_VIEW_ID,
+            view_id: OUTPUT_VIEW_ID,
             title: "Output",
+            open: |workbench, window, cx| {
+                workbench.open_panel_view(OUTPUT_VIEW_ID, cx);
+                workbench.open_output_view(true, window, cx);
+            },
             render: |workbench, window, cx| workbench.output_panel_body(window, cx).into_any_element(),
             actions: |workbench, window, cx| workbench.output_title_actions(window, cx).into_any_element(),
             visible: |_| true,
@@ -214,6 +230,7 @@ impl Workbench {
                 self.output_view.text.push_str(&text);
                 let shown = self.output.filters.shown_text(&self.output_view.text, id);
                 self.replace_model_text(OUTPUT_SCHEME, path, shown, true, cx);
+                self.output_links_reset(cx);
             }
             Content::Append(text) => {
                 self.output_view.text.push_str(&text);
@@ -223,12 +240,16 @@ impl Workbench {
                 model.mark_saved();
                 if let Some(change) = change {
                     self.send_model_edit(OUTPUT_SCHEME, path, &change);
+                    if self.output_editor_active() {
+                        self.links_content_changed(&change, cx);
+                    }
                 }
             }
             Content::Reset(text) => {
                 let shown = self.output.filters.shown_text(&text, id);
                 self.output_view.text = text;
                 self.replace_model_text(OUTPUT_SCHEME, path, shown, true, cx);
+                self.output_links_reset(cx);
             }
         }
         if !self.output_view.scroll_lock {

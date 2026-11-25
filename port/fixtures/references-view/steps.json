@@ -1,0 +1,1 @@
+[{"wait": 8000}, {"hotkey": ["option", "right"]}, {"hotkey": ["option", "right"]}, {"key": "right"}, {"wait": 6000}, {"hotkey": ["shift", "option", "f12"]}, {"wait": 5000}, {"shot": "references"}]
