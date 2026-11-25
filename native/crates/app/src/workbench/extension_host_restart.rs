@@ -110,7 +110,7 @@ impl Workbench {
         let (main_thread_sender, main_thread_requests) = unbounded::<HostRequest>();
         let user = self.extensions_viewlet.user.as_ref().expect("the user extensions are set at startup").clone_for_profile();
         let window_extensions = WindowExtensions { builtins: self.extensions_viewlet.builtins.clone(), user, running: extensions.clone() };
-        let main_thread = WorkbenchMainThread { requests: main_thread_sender, messages: host_receiver, waiting: Vec::new(), content_providers: Vec::new(), extensions: window_extensions };
+        let main_thread = WorkbenchMainThread { requests: main_thread_sender, messages: host_receiver, waiting: Vec::new(), content_providers: Default::default(), extensions: window_extensions };
         let mut host = HostSync::new(host_sender);
         host.configuration_scopes = self.host.configuration_scopes;
         host.untitled_names_from_content = self.host.untitled_names_from_content;

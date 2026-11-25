@@ -265,7 +265,7 @@ fn main() -> anyhow::Result<()> {
                 let (host_sender, host_receiver) = channel();
                 let (request_sender, requests) = unbounded::<ForwardedRequest>();
                 let (reply_sender, replies) = channel::<(u32, Result<serde_json::Value, serde_json::Value>)>();
-                let (main_thread_sender, mut main_thread_requests) = unbounded::<HostRequest>();
+                let (main_thread_sender, main_thread_requests) = unbounded::<HostRequest>();
                 let main_thread = WorkbenchMainThread { requests: main_thread_sender, messages: host_receiver, waiting: Vec::new(), content_providers: Default::default(), extensions: window_extensions };
                 let languages = Languages::new(&extensions);
                 let mut host = HostSync::new(host_sender);
