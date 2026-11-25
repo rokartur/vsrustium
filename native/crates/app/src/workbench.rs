@@ -56,6 +56,7 @@ use status_entries::{EDITOR_STATUS_PRIORITY, PROBLEMS_PRIORITY};
 pub mod themes;
 mod quick_input_view;
 mod text_files;
+pub(crate) mod text_model_resolver;
 mod control_characters;
 mod large_file;
 mod inspect_tokens;

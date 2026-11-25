@@ -707,13 +707,14 @@ impl EditorGroup {
         model
     }
 
-    /// A model whose editor went: its file's view state is kept; the extension host may still hold it, else it
+    /// A model whose editor went: its file's view state is kept; a model something else references stays, else it
     /// is disposed.
     fn keep_or_dispose(&mut self, model: OpenEditor) {
         self.save_view_state(&model);
-        match model.host_reference {
-            Some(_) => self.models.push(model),
-            None => self.disposed.insert(model),
+        if self.is_referenced(&model, Instant::now()) {
+            self.models.push(model);
+        } else {
+            self.disposed.insert(model);
         }
     }
 
@@ -733,17 +734,20 @@ impl EditorGroup {
         self.insert(editor, preview);
     }
 
-    /// Drops the clean models without an editor whose host reference ran out; a dirty model stays, as text file models do.
+    /// Drops the models without an editor that nothing references any more.
     pub fn release_models(&mut self, now: Instant) {
-        let diffs = &self.diffs;
-        let shown_in_diff = |model: &OpenEditor| diffs.values().any(|diff| [&diff.original, &diff.modified].iter().any(|side| model.document.is(&side.scheme, &side.path)));
-        let (kept, released) = std::mem::take(&mut self.models)
-            .into_iter()
-            .partition(|model| model.is_dirty() || shown_in_diff(model) || model.host_reference.is_some_and(|opened| now.duration_since(opened) < HOST_REFERENCE_AGE));
+        let (kept, released) = std::mem::take(&mut self.models).into_iter().partition(|model| self.is_referenced(model, now));
         self.models = kept;
         for model in released {
             self.disposed.insert(model);
         }
+    }
+
+    /// textModelResolverService.ts `destroyReferencedObject`: a diff editor's side or an unexpired host reference holds
+    /// a model, and a dirty one waits for `canDispose`.
+    fn is_referenced(&self, model: &OpenEditor, now: Instant) -> bool {
+        let shown_in_diff = self.diffs.values().any(|diff| [&diff.original, &diff.modified].iter().any(|side| model.document.is(&side.scheme, &side.path)));
+        model.is_dirty() || shown_in_diff || model.host_reference.is_some_and(|opened| now.duration_since(opened) < HOST_REFERENCE_AGE)
     }
 
     fn insert(&mut self, mut editor: OpenEditor, preview: bool) {

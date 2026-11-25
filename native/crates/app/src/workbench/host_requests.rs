@@ -147,6 +147,11 @@ impl Workbench {
                 };
                 TextDocument::from_text(scheme, path, &text, encoding::UTF8.into(), None, &self.languages, &self.settings.lock().unwrap())
             }
+            // textModelResolverService.ts `ensureResolvedTextModelContent`: an inmemory resource resolves only to a model it has.
+            ("inmemory", _) => {
+                let uri = uri_string(scheme, path);
+                return Err(serialized_error(&format!("cannot open {uri}. Detail: Unable to resolve text model content for resource {uri}")));
+            }
             _ => return Err(serialized_error(&format!("cannot open {scheme}:{}. Detail: Unable to resolve resource {scheme}:{}", path.display(), path.display()))),
         };
         let index = self.editors.open_model(document);
