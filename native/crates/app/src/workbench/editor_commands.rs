@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use super::Workbench;
 use crate::commands::Outcome;
 use crate::editor::auto_indent::{AutoIndent, Strategy};
-use crate::editor::{CaseTransform, ContentChanged, Copied, LineCommentKind, OpenEditor, Selection, commands};
+use crate::editor::{CaseTransform, ContentChanged, Copied, LineCommentKind, OpenEditor, Selection, commands, smart_select};
 
 type EditorCommand = fn(&mut OpenEditor) -> Option<ContentChanged>;
 
@@ -118,6 +118,10 @@ impl Workbench {
         for (id, kind) in comment_actions {
             self.commands.register(id, move |workbench, _, _, cx| workbench.run_comment_action(kind, cx));
         }
+        // `editor.action.smartSelect.grow` is the expand command's old id (registerCommandAlias).
+        for (id, forward) in [("editor.action.smartSelect.expand", true), ("editor.action.smartSelect.grow", true), ("editor.action.smartSelect.shrink", false)] {
+            self.commands.register(id, move |workbench, _, _, cx| workbench.run_smart_select(forward, cx));
+        }
         self.commands.register("editor.action.clipboardCopyAction", |workbench, _, window, cx| workbench.copy_to_clipboard(false, window, cx));
         self.commands.register("editor.action.clipboardCutAction", |workbench, _, window, cx| workbench.copy_to_clipboard(true, window, cx));
         self.commands.register("editor.action.clipboardPasteAction", |workbench, _, window, cx| {
@@ -174,6 +178,19 @@ impl Workbench {
         self.marked_text = None;
         self.editor_edited(change, moved, "keyboard", cx);
         Outcome::Ready(Ok(Value::Null))
+    }
+
+    /// smartSelect.ts `GrowSelectionAction` and `ShrinkSelectionAction` with the `editor.smartSelect` options.
+    fn run_smart_select(&mut self, forward: bool, cx: &mut Context<Self>) -> Outcome {
+        let Some(editor) = self.editors.active_mut() else { return Outcome::done() };
+        let overrides = Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
+        let settings = self.settings.lock().unwrap();
+        let enabled = |key| settings.get_value(Some(key), &overrides) != Some(json!(false));
+        let options = smart_select::Options { select_leading_and_trailing_whitespace: enabled("editor.smartSelect.selectLeadingAndTrailingWhitespace"), select_subwords: enabled("editor.smartSelect.selectSubwords") };
+        drop(settings);
+        let selections_before = editor.selections.clone();
+        editor.smart_select(forward, &self.languages, options);
+        self.editor_command_ran(None, selections_before, cx)
     }
 
     /// comment.ts `CommentLineAction` and `BlockCommentAction` with the `editor.comments` options, on the

@@ -333,6 +333,8 @@ pub const EDITOR_ACTIONS: &[(&str, &str, Option<&str>)] = &[
     ("editor.action.changeTabDisplaySize", "Change Tab Display Size", None),
     ("editor.action.detectIndentation", "Detect Indentation from Content", None),
     ("editor.action.reindentlines", "Reindent Lines", Some("!editorReadonly")),
+    ("editor.action.smartSelect.expand", "Expand Selection", None),
+    ("editor.action.smartSelect.shrink", "Shrink Selection", None),
     ("editor.action.reindentselectedlines", "Reindent Selected Lines", Some("!editorReadonly")),
     ("editor.action.trimTrailingWhitespace", "Trim Trailing Whitespace", Some("!editorReadonly")),
     ("deleteAllLeft", "Delete All Left", Some("!editorReadonly")),

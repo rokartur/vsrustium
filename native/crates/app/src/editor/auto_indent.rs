@@ -93,6 +93,8 @@ pub struct LanguageRules {
     electric: Option<ElectricBrackets>,
     /// The last char of each auto-closing pair's open (`autoClosingPairsOpenByEnd`).
     auto_closing_open_ends: Vec<char>,
+    /// `wordPattern`: `getWordAtPosition` falls back to the default word pattern without one.
+    pub word_pattern: Option<onig::Regex>,
 }
 
 fn is_match(regex: &onig::Regex, text: &str) -> bool {
@@ -124,7 +126,8 @@ impl LanguageRules {
             None => brackets.unwrap_or_default().into_iter().map(|(open, _)| open).collect::<Vec<_>>(),
         };
         let auto_closing_open_ends = auto_closing.iter().filter_map(|open| open.chars().last()).collect();
-        LanguageRules { on_enter, indent, electric, auto_closing_open_ends }
+        let word_pattern = (!config["wordPattern"].is_null()).then(|| parse_regex(language, "wordPattern", &config["wordPattern"])).flatten();
+        LanguageRules { on_enter, indent, electric, auto_closing_open_ends, word_pattern }
     }
 
     /// `OnEnterSupport.onEnter`.

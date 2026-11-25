@@ -269,7 +269,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | editor/contrib/rename | src/vs/editor/contrib | todo |  |
 | editor/contrib/sectionHeaders | src/vs/editor/contrib | todo |  |
 | editor/contrib/semanticTokens | src/vs/editor/contrib | todo |  |
-| editor/contrib/smartSelect | src/vs/editor/contrib | todo |  |
+| editor/contrib/smartSelect | src/vs/editor/contrib | ported | Expand and Shrink Selection (Ctrl+Shift+Right/Left, Selection menu, palette, `editor.smartSelect.*`) over the word and bracket providers: cargo test -p app smart_select (all 14 smartSelect.test.ts cases, #73850 on the whitespace step alone); no extension `SelectionRangeProvider` (milestone 13), so TypeScript ranges differ from the reference (the third expand in `foo(barBaz)` selects `(barBaz)`, the reference `foo(barBaz)`) |
 | editor/contrib/snippet | src/vs/editor/contrib | todo |  |
 | editor/contrib/stickyScroll | src/vs/editor/contrib | ported | folding-provider model, candidates and widget state with the upstream stickyScroll.test.ts cases (editor/sticky_scroll.rs); widget, clicks, Shift end lines, folding icons, keyboard focus and the toggle and focus actions (workbench/editor_view/sticky_scroll_view.rs): cargo test -p app sticky, pixel-check folded; outline model, go to definition and the context menu open (port/notes.md milestone 8) |
 | editor/contrib/structuralDiff | src/vs/editor/contrib | todo |  |

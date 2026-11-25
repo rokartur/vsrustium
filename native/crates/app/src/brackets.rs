@@ -160,12 +160,22 @@ pub struct Pair {
     pub close: Option<BracketRange>,
 }
 
+/// A bracket of a pair (`IFoundBracket`): `key` is the `languageId:::text` of the bracket, or of the first
+/// opening bracket a closing one closes.
+pub struct PairBracket {
+    pub range: BracketRange,
+    pub opening: bool,
+    pub key: String,
+}
+
 /// The brackets of a whole document: the colorized brackets of each line
-/// (`getBracketsInRange(range, true)`) and every pair, outer pairs first (`getBracketPairsInRange`).
+/// (`getBracketsInRange(range, true)`), every pair, outer pairs first (`getBracketPairsInRange`), and
+/// every bracket of a pair in document order (`getFirstBracketAfter`/`Before` skip unexpected closings).
 #[derive(Default)]
 pub struct DocumentBrackets {
     pub lines: Vec<Vec<Bracket>>,
     pub pairs: Vec<Pair>,
+    pub brackets: Vec<PairBracket>,
 }
 
 impl DocumentBrackets {
@@ -176,9 +186,10 @@ impl DocumentBrackets {
         while parser.next < found.len() {
             nodes.extend(parser.parse_child(&[], 1));
         }
-        let mut result = DocumentBrackets { lines: vec![Vec::new(); lines.len()], pairs: Vec::new() };
+        let mut result = DocumentBrackets { lines: vec![Vec::new(); lines.len()], pairs: Vec::new(), brackets: Vec::new() };
         collect(&nodes, &found, 0, &mut result.lines);
         collect_pairs(&nodes, &found, &mut result.pairs);
+        collect_pair_brackets(&nodes, &found, &mut result.brackets);
         result
     }
 
@@ -307,6 +318,18 @@ impl Parser<'_> {
             self.next += 1;
         }
         Some(Node::Pair { open: index, children, close })
+    }
+}
+
+fn collect_pair_brackets(nodes: &[Node], found: &[Found], result: &mut Vec<PairBracket>) {
+    for node in nodes {
+        let Node::Pair { open, children, close } = node else { continue };
+        let bracket = |index: usize| PairBracket { range: (found[index].line, found[index].range.clone()), opening: found[index].token.opening, key: found[index].token.id.clone() };
+        result.push(bracket(*open));
+        collect_pair_brackets(children, found, result);
+        if let Some(close) = close {
+            result.push(bracket(*close));
+        }
     }
 }
 

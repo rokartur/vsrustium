@@ -28,6 +28,7 @@ mod lines_operations;
 pub mod minimap;
 mod multicursor;
 pub mod section_headers;
+pub mod smart_select;
 mod snippet;
 pub mod sticky_scroll;
 mod view;
@@ -400,6 +401,8 @@ pub struct OpenEditor {
     leftovers: Vec<(isize, isize)>,
     /// The last column selection and the selections it made: it goes on while they are unchanged (`_columnSelectData`).
     column_select: Option<(ColumnSelectData, Vec<Selection>)>,
+    /// The ranges of the last Expand or Shrink Selection and the selections it made: kept while they are unchanged.
+    smart_select: Option<(Vec<smart_select::SelectionRanges>, Vec<Selection>)>,
     /// `getVersionId`: 1 when opened, one more per content change.
     pub version_id: u32,
     history: History,
@@ -435,7 +438,7 @@ impl OpenEditor {
     fn new(document: TextDocument, preview: bool, model_id: u32) -> Self {
         let indentation = document.indentation;
         let guides = indent_guides(&document.lines, indentation.tab_size, indentation.indent_size(), document.off_side);
-        let mut editor = OpenEditor { document, preview, model_id, selections: vec![Selection::default()], last_added: 0, leftovers: Vec::new(), column_select: None, version_id: 1, history: History::default(), guides, highlights: Vec::new(), folding: FoldingModel::default(), sticky_model: Default::default(), scroll: Scroll::default(), max_line_width: 0., host_reference: None, associated_file: false };
+        let mut editor = OpenEditor { document, preview, model_id, selections: vec![Selection::default()], last_added: 0, leftovers: Vec::new(), column_select: None, smart_select: None, version_id: 1, history: History::default(), guides, highlights: Vec::new(), folding: FoldingModel::default(), sticky_model: Default::default(), scroll: Scroll::default(), max_line_width: 0., host_reference: None, associated_file: false };
         editor.refresh_highlights();
         editor.refresh_folding_ranges();
         editor
