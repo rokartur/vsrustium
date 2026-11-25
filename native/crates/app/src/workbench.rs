@@ -19,6 +19,7 @@ mod explorer_find;
 mod file_participants;
 mod find_widget;
 mod auto_save;
+mod update;
 mod hover;
 pub(crate) mod host_requests;
 mod input_box_view;

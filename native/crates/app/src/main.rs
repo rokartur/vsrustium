@@ -41,6 +41,7 @@ mod markers;
 mod menus;
 mod notifications;
 mod output;
+mod product;
 mod quick_input;
 mod search_editor;
 mod search_model;
@@ -106,7 +107,14 @@ fn main() -> anyhow::Result<()> {
     let file = positional.get(1).map(|path| canonical(path)).transpose()?;
     let development = ExtensionDevelopment::from_args(&args)?;
 
-    let app_root = std::env::current_dir()?;
+    // Packaged as VSRustium.app (port/tools/package-app) the app files sit in Contents/Resources/app; run from the
+    // checkout they are the working directory.
+    let bundled = std::env::current_exe()?.parent().and_then(|macos| macos.parent()).map(|contents| contents.join("Resources/app")).filter(|app| app.join("product.json").is_file());
+    let app_root = match bundled {
+        Some(app) => app,
+        None => std::env::current_dir()?,
+    };
+    product::load(&app_root);
     let extensions_dir = std::env::var_os("VSCODE_GPUI_EXTENSIONS").map(PathBuf::from).unwrap_or_else(|| app_root.join("extensions"));
     let builtins = scan_builtin_extensions(&extensions_dir)?;
     // Artur: user extensions live in ~/.vsrustium/extensions, the default user data dir's extensions folder.
@@ -164,6 +172,7 @@ fn main() -> anyhow::Result<()> {
                 workbench.load_keybindings(keybindings::default_keybindings(&extensions), keybindings_file.clone(), cx);
                 workbench.watch_settings_files(cx);
                 workbench.start_system_wide_keybindings(window, cx);
+                workbench.register_update_actions(window, cx);
                 workbench.set_command_palette_menu(command_palette::menu(&extensions));
                 workbench.menus.extend(menus::extension_menus(&extensions));
                 workbench.status_entries = main_thread_status_bar::static_entries(&extensions);

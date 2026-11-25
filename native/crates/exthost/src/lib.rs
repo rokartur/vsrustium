@@ -40,11 +40,14 @@ pub enum Runtime {
 }
 
 impl Runtime {
-    pub fn executable(self) -> &'static str {
-        match self {
+    /// The runtime next to the running executable (VSRustium.app ships bun in Contents/MacOS), else the one on PATH.
+    pub fn executable(self) -> PathBuf {
+        let name = match self {
             Runtime::Bun => "bun",
             Runtime::Node => "node",
-        }
+        };
+        let bundled = std::env::current_exe().ok().and_then(|exe| exe.parent().map(|dir| dir.join(name))).filter(|path| path.is_file());
+        bundled.unwrap_or_else(|| PathBuf::from(name))
     }
 
     fn runtime_args(self) -> &'static [&'static str] {
