@@ -476,6 +476,14 @@ Scope (roadmap section 18): extension management on disk with VSIX install and u
 - Markdown: `FIXTURE=markdown-tests port/tools/webview-check` passes 4/5 on the port (reference 5/5): `markdown.showPreviewToSide` opens in the single group, and editor/preview scroll sync needs both visible, which waits for editor groups (milestone 11).
 - Studio: never call `port/tools/studio` while another run of this worktree builds there: its `git clean` drops untracked files mid-build. Poll with plain `ssh studio`.
 - Checks: `FIXTURE=webview-view-tests`, `FIXTURE=media-preview-tests` and `FIXTURE=markdown-tests port/tools/webview-check`; `FIXTURE=webview-tests port/tools/webview-check` (7 upstream webview.test cases removed in c5f857f0cf0, incl. ArrayBuffer messages and `vscode:` links); `FIXTURE=custom-editor-tests port/tools/webview-check` (upstream customEditor.test.ts and its test extension, removed in bbe7b54cf4d; timeout 30 s, the reference's cold first check takes over 10 s); `cargo test -p app webview`; api-tests `MOCHA_GREP="vscode API - webview"` (625 local resources through the scheme handler, reply over postMessage) passes as in the reference.
+- Handoff (at 2233a8b3bbc), in order:
+  1. Media preview: `port/tools/ui-pair` image, video and audio against the reference (`cargo build --release -p app`, `/tmp/park-pointer` first), then mediaPreview verified; Copy image (`imagePreview.copyImage`, image viewer context menu) and mediaCodecs.ts are not ported.
+  2. Rows still `todo` or `ported` in this section: `workbench/contrib/markdown`, `platform/markdown` (markdown renderer, shared with the hover of milestone 13), `MainThreadWebviewPanels`, `contrib/webview`, `contrib/webviewPanel` (serializer restore waits for editor restore, milestone 11), `extension/markdown-language-features` (side-by-side and scroll sync wait for editor groups).
+  3. `extension/simple-browser`: its commands call `workbench.action.browser.open` when registered (integrated browser), else open its own webview panel; check that path with a fixture.
+  4. `contrib/browserView`, `platform/browserView`, `services/browserView`, `MainThreadBrowsers`: the integrated browser is about 37k lines (Electron WebContentsView, CDP proxy, Playwright, chat tools). Needs Artur's decision: a WKWebView browser editor without the agent and chat parts, or removed.
+  5. `MainThreadEditorInsets` (proposed `editorInsets` API, mainThreadCodeInsets.ts 148 lines): a webview inside an editor view zone.
+  6. `contrib/imageCarousel`: Explorer "Open in Images Preview" (`workbench.action.openImagesInCarousel`, setting `imageCarousel.explorerContextMenu.enabled`); its mark-up and chat parts are AI (removed).
+  7. Notebooks (item 4 of the milestone): every notebook mainthread row is still the session.rs stub.
 ## Benchmarks
 
 - `port/tools/bench`: Wu's `script/memory-benchmark` method generalized to N apps (`APPS="name=cmd;..."`), plus an extension host line per app.
