@@ -106,7 +106,7 @@ impl Workbench {
             }
             ("MainThreadTerminalService", "$sendProcessData") => {
                 let data = arg(1).as_str().unwrap_or_default().to_owned();
-                self.terminal_data(arg(0).as_u64().unwrap_or_default() as u32, data.as_bytes(), cx);
+                self.terminal_data(arg(0).as_u64().unwrap_or_default() as u32, data.as_bytes(), window, cx);
             }
             ("MainThreadTerminalService", "$sendProcessReady") => {
                 let id = arg(0).as_u64().unwrap_or_default() as u32;

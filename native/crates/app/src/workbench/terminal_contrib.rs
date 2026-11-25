@@ -138,7 +138,7 @@ impl Workbench {
             // `xterm._writeText`: the data goes to the parser as if the process wrote it.
             TerminalInput::WriteData if !value.is_empty() => {
                 if let Some(id) = self.terminal_view.active_instance_id() {
-                    self.terminal_data(id, unescape_sequence(&value).as_bytes(), cx);
+                    self.terminal_data(id, unescape_sequence(&value).as_bytes(), window, cx);
                     cx.notify();
                 }
             }

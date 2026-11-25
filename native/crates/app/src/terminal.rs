@@ -17,6 +17,7 @@ pub mod sticky_scroll;
 pub mod marks;
 pub mod injection;
 pub mod pty;
+pub mod osc99;
 pub mod search;
 pub mod serialize_html;
 pub mod shell_integration;
@@ -116,6 +117,9 @@ pub struct TerminalInstance {
     pub cell_size: (f32, f32),
     /// Text the process asked to put on the clipboard (OSC 52).
     pub clipboard_requests: Vec<String>,
+    /// OSC 99 notification sequences, the data after `99;`, for the workbench's handler.
+    pub osc99_sequences: Vec<String>,
+    pub osc99: osc99::Osc99,
     /// OSC 52 `?` queries, each formatting the clipboard text into its reply.
     pub clipboard_loads: Vec<std::sync::Arc<dyn Fn(&str) -> String + Sync + Send>>,
     /// The bell rang since it was last read.
@@ -198,6 +202,8 @@ impl TerminalInstance {
             spawn_error: None,
             cell_size: (0., 0.),
             clipboard_requests: Vec::new(),
+            osc99_sequences: Vec::new(),
+            osc99: osc99::Osc99::default(),
             clipboard_loads: Vec::new(),
             bell: false,
             auto_reply_setting: serde_json::Value::Null,
@@ -261,6 +267,9 @@ impl TerminalInstance {
             }
             self.feed(&text[fed..sequence.end], colors);
             fed = sequence.end;
+            if let Some(data) = sequence.payload.strip_prefix("99;") {
+                self.osc99_sequences.push(data.to_owned());
+            }
             let cursor = self.buffer_cursor();
             let command_start = self.shell_integration.command_start_point();
             input_changed |= self.prompt_sequence(&sequence.payload, cursor);

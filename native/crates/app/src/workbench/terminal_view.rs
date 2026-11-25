@@ -89,6 +89,8 @@ pub struct TerminalView {
     pub(super) sticky_hovered: Option<u32>,
     /// The command guide under the pointer: its instance and buffer rows.
     pub(super) command_guide: Option<(u32, std::ops::Range<i64>)>,
+    /// The shown OSC 99 notifications: instance, the handler's key, the notification's key.
+    pub(super) osc99_notifications: Vec<(u32, u64, u64)>,
     /// The last resize: its instance, `cols x rows` and when.
     pub(super) resize_overlay: Option<(u32, String, std::time::Instant)>,
 }
@@ -154,6 +156,7 @@ impl TerminalView {
             history: Default::default(),
             sticky_hovered: None,
             command_guide: None,
+            osc99_notifications: Vec::new(),
             resize_overlay: None,
         }
     }
@@ -523,7 +526,7 @@ impl Workbench {
         for event in events {
             match event {
                 PtyEvent::Data(bytes) => {
-                    if self.terminal_data(id, &bytes, cx) {
+                    if self.terminal_data(id, &bytes, window, cx) {
                         self.sync_terminal_suggest(id, window, cx);
                     }
                 }
@@ -541,7 +544,7 @@ impl Workbench {
 
     /// Output of the process, a PTY's or an extension pty's: the screen, the clipboard and what the host listens to.
     /// Returns whether the prompt input changed.
-    pub(super) fn terminal_data(&mut self, id: u32, bytes: &[u8], cx: &mut Context<Self>) -> bool {
+    pub(super) fn terminal_data(&mut self, id: u32, bytes: &[u8], window: &mut Window, cx: &mut Context<Self>) -> bool {
         let colors = TerminalColors::new(&self.theme);
         let auto_replies = self.setting("terminal.integrated.autoReplies");
         let Some(instance) = self.terminal_view.instance_mut(id) else { return false };
@@ -560,6 +563,7 @@ impl Workbench {
         self.task_output(id, &processed.text, cx);
         self.record_terminal_history(id, &processed.shell_events);
         self.terminal_output_to_host(id, processed);
+        self.terminal_osc99(id, window, cx);
         cx.notify();
         input_changed
     }
