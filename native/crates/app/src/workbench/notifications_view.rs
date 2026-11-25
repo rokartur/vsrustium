@@ -15,6 +15,7 @@ use serde_json::{Value, json};
 use super::Workbench;
 use super::hover::{HoverContent, HoverOptions};
 use crate::commands::Outcome;
+use crate::main_thread_progress::ProgressTask;
 use crate::menus::MenuAction;
 use crate::notifications::{Action, Item, Node, Notification, Notifications, Priority, Run, Severity};
 
@@ -66,6 +67,8 @@ pub(crate) struct NotificationsUi {
     /// The open dropdown's items, command and arguments, run by the `_notifications.menuItem.<index>` commands.
     menu_items: Vec<(String, Vec<Value>)>,
     menu_slots: usize,
+    /// The running `$startProgress` tasks by handle.
+    pub(crate) progress: HashMap<u64, ProgressTask>,
 }
 
 struct Toast {
@@ -91,11 +94,16 @@ impl NotificationsUi {
             purge: None,
             menu_items: Vec::new(),
             menu_slots: 0,
+            progress: HashMap::new(),
         }
     }
 
     pub fn toasts_visible(&self) -> bool {
         !self.toasts.is_empty()
+    }
+
+    pub fn toast_shown(&self, key: u64) -> bool {
+        self.toasts.iter().take(MAX_TOASTS).any(|toast| toast.key == key)
     }
 }
 
@@ -662,7 +670,7 @@ impl Workbench {
 
     /// notificationsViewer.ts `renderProgress`: a 2px bar at the row's bottom, infinite or worked of total.
     fn notification_progress(&self, item: &Item) -> Option<Div> {
-        let progress = item.progress.as_ref().filter(|progress| !progress.done)?;
+        let progress = item.progress.as_ref()?;
         let color = self.color("progressBar.background");
         let bar = div().absolute().left_0().bottom_0().w_full().h(px(2.)).overflow_hidden();
         Some(match (progress.infinite, progress.total, progress.worked) {

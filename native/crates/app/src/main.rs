@@ -30,7 +30,9 @@ mod languages;
 mod main_thread;
 mod main_thread_commands;
 mod main_thread_message;
+mod main_thread_progress;
 mod main_thread_quick_open;
+mod main_thread_status_bar;
 mod menus;
 mod notifications;
 mod quick_input;
@@ -144,6 +146,7 @@ fn main() -> anyhow::Result<()> {
                 workbench.start_system_wide_keybindings(window, cx);
                 workbench.set_command_palette_menu(command_palette::menu(&extensions));
                 workbench.menus.extend(menus::extension_menus(&extensions));
+                workbench.status_entries = main_thread_status_bar::static_entries(&extensions);
                 workbench.file_icons = file_icons;
                 workbench.color_themes = color_themes;
                 workbench.restore_profile_state(storage.profile.clone());
@@ -294,10 +297,11 @@ fn run_extension_host(
             MainThreadSecretState::in_memory()
         }),
     });
-    session.forward(&["MainThreadCommands", "MainThreadMessageService", "MainThreadQuickOpen", "MainThreadWorkspace"], move |request| {
+    session.forward(&["MainThreadCommands", "MainThreadMessageService", "MainThreadProgress", "MainThreadQuickOpen", "MainThreadStatusBar", "MainThreadWorkspace"], move |request| {
         let _ = workbench_requests.unbounded_send(request);
     }, workbench_replies);
     session.main_thread = Some(Box::new(main_thread));
+    session.notify("ExtHostStatusBar", "$acceptStaticEntries", vec![json!(main_thread_status_bar::static_entry_dtos(&extensions))]);
     session.start(&extensions, workspace.as_ref().map(|workspace| workspace_data(&init, workspace)))?;
     let reply = session.call("ExtHostExtensionService", "$test_latency", vec![Arg::Json(json!(7))], Duration::from_secs(10))?;
     let _ = status.unbounded_send(format!("main -> host: $test_latency(7) = {reply:?}"));

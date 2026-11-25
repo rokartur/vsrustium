@@ -83,16 +83,11 @@ pub struct Progress {
     pub infinite: bool,
     pub total: Option<f64>,
     pub worked: Option<f64>,
-    pub done: bool,
 }
 
 impl Progress {
     pub fn set_infinite(&mut self) {
         *self = Progress { infinite: true, ..Progress::default() };
-    }
-
-    pub fn set_done(&mut self) {
-        *self = Progress { done: true, ..Progress::default() };
     }
 
     pub fn set_total(&mut self, total: f64) {
@@ -171,7 +166,7 @@ impl Item {
     }
 
     pub fn has_active_progress(&self) -> bool {
-        self.progress.as_ref().is_some_and(|state| !state.done && (state.infinite || state.total.is_some() || state.worked.is_some()))
+        self.progress.as_ref().is_some_and(|state| state.infinite || state.total.is_some() || state.worked.is_some())
     }
 
     /// Whether the expansion changed, as `onDidChangeExpansion` fires.
@@ -440,8 +435,7 @@ mod tests {
         assert_eq!([item1.expand(), item1.expand(), item1.collapse(), item1.collapse()], [true, false, true, false]);
         let mut progress = Progress::default();
         progress.set_infinite();
-        progress.set_done();
-        assert!(progress.done && !progress.infinite);
+        assert!(progress.infinite);
         progress.set_total(10.);
         progress.add_worked(3.);
         progress.add_worked(2.);

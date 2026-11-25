@@ -9,6 +9,10 @@ Not reached: tests of the reference run (402 folder, 4 workspace) the port did n
 | api-folder | 35 | 41 | 133 | 193 | timed out after 1800s |
 | api-workspace | 0 | 0 | 4 | 0 | exit 1 after 0s |
 
+## Milestone 11: notifications, progress, status bar
+
+`MOCHA_GREP="vscode API - window" SUITE_TIMEOUT=900 port/tools/api-tests` on the Studio, same setup. Before (f8bd4a40 plus notifications): api-folder 27 passing, 13 failing. After the extension status bar entries: 29 passing, 0 pending, 11 failing; `createStatusBar - static` and `createStatusBar - static, CANNOT change some props` now pass. The 11 failing need editor groups (view columns, tabs) and `showWorkspaceFolderPick`. window.test.ts has no message or progress cases.
+
 ## M10
 
 `MOCHA_GREP="vscode API - configuration|vscode API - globalState" SUITE_TIMEOUT=300 port/tools/api-tests` at 96df8471, same setup. The two suites have 5 tests; not reached counts the reference tests the pattern filters out.

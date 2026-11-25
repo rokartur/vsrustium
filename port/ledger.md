@@ -35,11 +35,11 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | mainthread/MainThreadLanguages | MainThread* shape (Rust side) | stub | $changeLanguage answered by host_requests.rs (setTextDocumentLanguage); $tokensAtPosition and the language status items answer undefined |
 | mainthread/MainThreadMessageService | MainThread* shape (Rust side) | ported | main_thread_message.rs: `$showMessage` as a notification with the items as buttons and Manage Extension (answers the picked handle, undefined on close), modal messages as an NSAlert sheet with the close affordance or Cancel/OK last; cargo test -p app notifications_view; no urgent auth sources (no sign-in by decision) |
 | mainthread/MainThreadOutputService | MainThread* shape (Rust side) | stub | session.rs answers undefined |
-| mainthread/MainThreadProgress | MainThread* shape (Rust side) | stub | session.rs answers undefined |
+| mainthread/MainThreadProgress | MainThread* shape (Rust side) | ported | main_thread_progress.rs: Notification and Window locations (cargo test -p app progress); Source Control location not shown (no SCM view) |
 | mainthread/MainThreadTerminalService | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadTerminalShellIntegration | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadQuickOpen | MainThread* shape (Rust side) | verified | api-tests MOCHA_GREP="vscode API - quick input": 11 passing, 0 failing |
-| mainthread/MainThreadStatusBar | MainThread* shape (Rust side) | stub | session.rs answers undefined |
+| mainthread/MainThreadStatusBar | MainThread* shape (Rust side) | ported | main_thread_status_bar.rs: $setEntry/$disposeEntry, static `statusBarItems` sent with $acceptStaticEntries (api-tests createStatusBar cases) |
 | mainthread/MainThreadStorage | MainThread* shape (Rust side) | verified | api-tests globalState / workspaceState 2/2; port/tools/settings-check state (restart, state.vscdb rows) same as the reference |
 | mainthread/MainThreadTelemetry | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadEditorInsets | MainThread* shape (Rust side) | stub | session.rs answers undefined |
@@ -184,7 +184,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/process | src/vs/platform | todo |  |
 | platform/product | src/vs/platform | todo |  |
 | platform/profiling | src/vs/platform | todo |  |
-| platform/progress | src/vs/platform | todo |  |
+| platform/progress | src/vs/platform | ported | ProgressLocation values and the step shape, in main_thread_progress.rs |
 | platform/protocol | src/vs/platform | n/a | Electron process, IPC or DOM layer; replaced by the single-process Rust/GPUI architecture (port/notes.md) |
 | platform/quickinput | src/vs/platform | ported | cargo test -p app quick_input, filters, tf_idf, command_palette; api-tests quick input 11/11; ad-hoc palette screenshot 0.28% pixels differ at 2% fuzz |
 | platform/registry | src/vs/platform | n/a | Registry.add/as, a string-keyed registry of registries for the JS module graph; the port passes its typed registries directly (config::registry::Registry, Commands, the menus and keybindings modules), so there is no lookup by id to port |
@@ -294,7 +294,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/parts/partGrid | workbench part | stub | fixed floating layout drawn with flex (workbench.rs), no grid, sashes or hidden parts; pixel-check (port/results/pixels.md): part bounds match at 1024x768 |
 | workbench/parts/sessions | workbench part | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/parts/sidebar | workbench part | ported | Explorer only (title, folder section, collapsed Outline and Timeline), shown when a folder is open; pixel-check (port/results/pixels.md, milestone 3): chevron and label edge pixels only |
-| workbench/parts/statusbar | workbench part | ported | no-folder and folder colors (remote, problems, bell), editor items Ln/Col, indentation, encoding, EOL, language with tabular-nums at their shaped widths and their upstream hovers; each item runs its editorStatus.ts command (Go to Line, indentation, encoding, EOL and language pickers: cargo test -p app editor_status); entries from extensions not shown |
+| workbench/parts/statusbar | workbench part | ported | no-folder and folder colors (remote, problems, bell), editor items Ln/Col, indentation, encoding, EOL, language with tabular-nums at their shaped widths and their upstream hovers; each item runs its editorStatus.ts command (Go to Line, indentation, encoding, EOL and language pickers: cargo test -p app editor_status); extension entries in statusbarModel.ts order around problems and the editor items (status_entries.rs), and the `status.progress` window progress entry with its spinner |
 | workbench/parts/titlebar | workbench part | ported | active window only (command center with the folder name, nav and layout actions; a click on the command center opens Quick Open with the Go to File and Show and Run Commands help picks, port/results/command-center.md); drag region as `-webkit-app-region` (empty bar drags and double-click zooms, command center and layout controls no-drag; cargo test -p app title_bar, port/results/command-center.md); context menus of the bar, the title and the command center with the Command Center, Navigation Controls and Layout Controls toggles and the path items (cargo test -p app title_bar); pixel-check file and titlebar (port/results/pixels.md): blending rounding and glyph edges only |
 | workbench/parts/views | workbench part | stub | pane headers drawn statically (workbench.rs section_header): no collapse, resize or view actions |
 | workbench/services/accessibility | workbench service | todo |  |
@@ -359,7 +359,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/power | workbench service | todo |  |
 | workbench/services/preferences | workbench service | todo | keybindingsEditorModel.ts and keybindingsEditorInput.ts ported as keybindings_editor.rs with keybindingsEditorModel.test.ts (cargo test -p app keybindings_editor); openGlobalKeybindingSettings opens the Keyboard Shortcuts editor (cargo test -p app keybindings_editor_view); preferencesService.ts settings parts, preferencesModels.ts and preferencesValidation.ts wait for the Settings editor (milestone 10) |
 | workbench/services/process | workbench service | todo |  |
-| workbench/services/progress | workbench service | todo |  |
+| workbench/services/progress | workbench service | ported | progressService.ts withNotificationProgress and withWindowProgress (delays 150 ms and 800 ms); Explorer, Extensions, SCM and Dialog locations not used by the port yet |
 | workbench/services/quickinput | workbench service | ported | quick_input_view.rs with header drag (cargo test -p app dragging); api-tests quick input 11/11; view state in application storage (cargo test -p app dragging) |
 | workbench/services/remote | workbench service | removed | no remote or tunnels by decision (port/notes.md); one local extension host |
 | workbench/services/request | workbench service | todo |  |
@@ -367,7 +367,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/secrets | workbench service | ported | port/tools/settings-check secrets |
 | workbench/services/sessions | workbench service | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/services/sharedProcess | workbench service | todo |  |
-| workbench/services/statusbar | workbench service | todo |  |
+| workbench/services/statusbar | workbench service | ported | ExtensionStatusBarItemService entries and sort (main_thread_status_bar.rs); statusbar hiding per entry not ported |
 | workbench/services/storage | workbench service | ported | port/tools/settings-check state; no application scope or flush on shutdown, writes are synchronous |
 | workbench/services/suggest | workbench service | todo |  |
 | workbench/services/telemetry | workbench service | todo |  |

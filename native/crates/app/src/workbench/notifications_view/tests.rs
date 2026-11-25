@@ -112,3 +112,59 @@ fn the_position_moves_the_bell_between_status_bar_sides_and_the_title_bar(cx: &m
     assert_eq!(sides(&workbench, "workbench.action.setNotificationsPosition.topRight", cx), (false, false, true));
     assert_eq!(sides(&workbench, "workbench.action.setNotificationsPosition.bottomRight", cx), (false, true, false));
 }
+
+fn progress(workbench: &gpui::Entity<Workbench>, method: &str, args: Vec<Value>, cx: &mut VisualTestContext) {
+    workbench.update_in(cx, |workbench, window, cx| match method {
+        "start" => drop(workbench.start_progress(&args, window, cx)),
+        "report" => drop(workbench.report_progress(&args, window, cx)),
+        _ => drop(workbench.end_progress(&args, window, cx)),
+    });
+    cx.run_until_parked();
+}
+
+#[gpui::test]
+fn notification_progress_reports_into_its_toast_and_stays_800ms(cx: &mut TestAppContext) {
+    let (workbench, cx) = workbench(cx);
+    progress(&workbench, "start", vec![json!(1), json!({ "location": 15, "title": "Working", "cancellable": true }), json!("port.messages")], cx);
+    progress(&workbench, "report", vec![json!(1), json!({ "message": "half", "increment": 50 })], cx);
+    workbench.update(cx, |workbench, cx| {
+        let item = &workbench.notifications.model.items[0];
+        assert_eq!(item.message.raw, "Working: half");
+        assert_eq!((item.progress.as_ref().unwrap().total, item.progress.as_ref().unwrap().worked), (Some(100.), Some(50.)));
+        assert_eq!(item.primary[0].label, "Cancel");
+        assert_eq!(item.secondary[0].label, "Manage Extension");
+        assert!(workbench.notifications.toast_shown(item.key));
+        assert!(workbench.window_progress_entry(cx.background_executor().now()).is_none());
+    });
+    progress(&workbench, "end", vec![json!(1)], cx);
+    assert_eq!(workbench.read_with(cx, |workbench, _| workbench.notifications.model.items.len()), 1);
+    cx.executor().advance_clock(std::time::Duration::from_millis(800));
+    cx.run_until_parked();
+    assert!(workbench.read_with(cx, |workbench, _| workbench.notifications.model.items.is_empty()));
+}
+
+#[gpui::test]
+fn window_progress_is_a_silent_notification_shown_in_the_status_bar(cx: &mut TestAppContext) {
+    let (workbench, cx) = workbench(cx);
+    progress(&workbench, "start", vec![json!(2), json!({ "location": 10, "title": "Indexing", "source": { "label": "Port", "id": "port.messages" } })], cx);
+    assert!(workbench.read_with(cx, |workbench, _| workbench.notifications.model.items.is_empty()));
+    cx.executor().advance_clock(std::time::Duration::from_millis(150));
+    cx.run_until_parked();
+    progress(&workbench, "report", vec![json!(2), json!({ "message": "src" })], cx);
+    workbench.update(cx, |workbench, _| {
+        assert_eq!(workbench.notifications.model.items[0].message.raw, "Indexing: src");
+        assert!(!workbench.notifications.toasts_visible());
+    });
+    cx.executor().advance_clock(std::time::Duration::from_millis(150));
+    cx.run_until_parked();
+    let entry = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, cx| workbench.window_progress_entry(cx.background_executor().now()));
+    let shown = entry(cx).unwrap();
+    assert_eq!((shown.text.as_str(), shown.tooltip.as_deref(), shown.show_progress), ("Indexing: src", Some("[Port] Indexing: src"), true));
+    progress(&workbench, "end", vec![json!(2)], cx);
+    assert!(workbench.read_with(cx, |workbench, _| workbench.notifications.model.items.is_empty()));
+    // withWindowProgress keeps the entry 150ms after it showed.
+    assert!(entry(cx).is_some());
+    cx.executor().advance_clock(std::time::Duration::from_millis(150));
+    cx.run_until_parked();
+    assert!(entry(cx).is_none());
+}

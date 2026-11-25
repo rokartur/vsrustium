@@ -30,6 +30,8 @@ mod search_actions;
 mod search_editor_view;
 mod search_editor_widget;
 mod search_view;
+mod status_entries;
+use status_entries::{EDITOR_STATUS_PRIORITY, PROBLEMS_PRIORITY};
 pub mod themes;
 mod quick_input_view;
 mod text_input;
@@ -131,6 +133,8 @@ pub struct Workbench {
     pub(crate) context_menu: Option<context_menu::ContextMenu>,
     context_menus_shown: usize,
     pub(crate) notifications: notifications_view::NotificationsUi,
+    /// Extension status bar entries, in statusbarModel.ts order.
+    pub(crate) status_entries: Vec<crate::main_thread_status_bar::StatusEntry>,
     pub hovers: hover::Hovers,
     /// What the application menu shows now.
     installed_menubar: Option<menubar::Menubar>,
@@ -247,6 +251,7 @@ impl Workbench {
             context_menu: None,
             context_menus_shown: 0,
             notifications: notifications_view::NotificationsUi::new(cx),
+            status_entries: Vec::new(),
             hovers: hover::Hovers::default(),
             installed_menubar: None,
             profile_storage: Arc::new(Mutex::new(Storage::in_memory())),
@@ -831,8 +836,8 @@ impl Workbench {
             .text_size(px(12.))
             // statusbarpart.css: font-variant-numeric: tabular-nums.
             .font_features(FontFeatures(Arc::new(vec![("tnum".into(), 1)])))
-            .child(div().h(px(24.)).flex().child(self.icon("remote", 28., 16., foreground).h_full().cursor_pointer().child(self.hover_target("status.host", HoverContent::Text("Open a Remote Window".into()), HoverOptions::status_bar()))).children(self.notifications_status_item(true, foreground, cx)).child(problems).children(self.status_bar_message()))
-            .child(div().h(px(24.)).flex().children(self.editor_status_items(foreground, window, cx)).children(self.notifications_status_item(false, foreground, cx)))
+            .child(div().h(px(24.)).flex().child(self.icon("remote", 28., 16., foreground).h_full().cursor_pointer().child(self.hover_target("status.host", HoverContent::Text("Open a Remote Window".into()), HoverOptions::status_bar()))).children(self.notifications_status_item(true, foreground, cx)).child(self.extension_status_items(true, |priority| priority > PROBLEMS_PRIORITY, foreground, cx)).child(problems).child(self.extension_status_items(true, |priority| priority <= PROBLEMS_PRIORITY, foreground, cx)).children(self.status_bar_message()).children(self.window_progress_entry(cx.background_executor().now()).map(|entry| self.extension_status_item(&entry, foreground, cx))))
+            .child(div().h(px(24.)).flex().child(self.extension_status_items(false, |priority| priority > EDITOR_STATUS_PRIORITY, foreground, cx)).children(self.editor_status_items(foreground, window, cx)).child(self.extension_status_items(false, |priority| priority <= EDITOR_STATUS_PRIORITY, foreground, cx)).children(self.notifications_status_item(false, foreground, cx)))
     }
 
     /// The `status.message` entry: multi-chord mode, else the latest status message (notificationsStatus.ts).
