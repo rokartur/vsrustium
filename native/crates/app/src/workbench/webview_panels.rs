@@ -14,6 +14,7 @@ use super::Workbench;
 use crate::commands::Outcome;
 use crate::editor::{OpenEditor, TextDocument};
 use crate::host_sync::WebviewTab;
+use crate::theme::ThemeKind;
 use crate::webview::{self, Webview, WebviewEvent};
 
 /// `Schemas.webviewPanel`.
@@ -45,6 +46,8 @@ struct WebviewPanel {
     retain_context_when_hidden: bool,
     /// `do-update-state`: what `vscode.setState` stored, given back when a released webview loads again.
     state: Value,
+    /// `$setIconPath`: the light and the dark theme's icon file.
+    icon: Option<(PathBuf, PathBuf)>,
     /// Created when the editor first shows; released while hidden unless `retainContextWhenHidden`.
     webview: Option<Webview>,
 }
@@ -86,8 +89,14 @@ impl Workbench {
                     self.editors_changed(cx);
                 }
             }
-            // shortcut: the tab keeps the file icon theme's icon, icon paths of webview panels are not drawn yet.
-            "$setIconPath" => {}
+            "$setIconPath" => {
+                if let Some(panel) = self.webview_panel_mut(&handle) {
+                    let file = |uri: &Value| (uri["scheme"] == "file").then(|| PathBuf::from(uri["path"].as_str().unwrap_or_default()));
+                    let icon = arg(1);
+                    panel.icon = file(&icon["light"]).zip(file(&icon["dark"]));
+                    cx.notify();
+                }
+            }
             "$setHtml" => {
                 if let Some(panel) = self.webview_panel_mut(&handle) {
                     panel.html = arg(1).as_str().unwrap_or_default().to_owned();
@@ -132,6 +141,7 @@ impl Workbench {
             content_options: init["webviewOptions"].clone(),
             retain_context_when_hidden: init["panelOptions"]["retainContextWhenHidden"] == true,
             state: Value::Null,
+            icon: None,
             webview: None,
         });
         self.editors.open(document, false);
@@ -339,6 +349,15 @@ impl Workbench {
     fn webview_styles(&self) -> Value {
         let label = self.color_themes.iter().find(|entry| entry.settings_id == self.theme.settings_id).map_or(self.theme.settings_id.clone(), |entry| entry.label.clone());
         webview::theme_data(&self.theme, &label, &self.setting("editor"), self.setting("accessibility.underlineLinks") == true)
+    }
+
+    /// webviewIconManager.ts: the dark icon for dark and high contrast themes, the light one otherwise.
+    pub(super) fn webview_icon(&self, path: &Path) -> Option<&Path> {
+        let (light, dark) = self.webview_panel(path)?.icon.as_ref()?;
+        Some(match self.theme.kind {
+            ThemeKind::Dark | ThemeKind::HighContrastDark => dark,
+            ThemeKind::Light | ThemeKind::HighContrastLight => light,
+        })
     }
 
     fn webview_panel(&self, path: &Path) -> Option<&WebviewPanel> {

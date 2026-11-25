@@ -225,6 +225,9 @@ impl Workbench {
         if document.scheme == SEARCH_EDITOR_SCHEME {
             return Some(self.icon("search", 16., 16., foreground).h(px(line_height)));
         }
+        if let Some(icon) = self.webview_icon(&document.path) {
+            return Some(div().flex().items_center().h(px(line_height)).child(gpui::img(icon.to_path_buf()).size(px(16.))));
+        }
         self.file_icons.as_ref()?.file_icon(&document.path, &document.language_id, self.theme.kind, 13., line_height, foreground)
     }
 
@@ -1246,6 +1249,9 @@ impl Workbench {
     pub(super) fn editor_status_items(&self, foreground: Rgba, window: &Window, cx: &mut Context<Self>) -> Option<Div> {
         let editor = self.editors.active()?;
         let document = &editor.document;
+        if document.scheme == WEBVIEW_PANEL_SCHEME {
+            return None;
+        }
         let Indentation { tab_size, insert_spaces, .. } = document.indentation;
         let indent_size = document.indentation.indent_size();
         let indentation = match (insert_spaces, tab_size == indent_size) {
