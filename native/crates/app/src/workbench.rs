@@ -169,12 +169,12 @@ impl Render for Workbench {
 }
 
 impl Workbench {
-    pub fn new(theme: Theme, app_root: PathBuf, folder: Option<FileTree>, languages: Languages, settings: Arc<Mutex<Settings>>, host: HostSync, cx: &mut Context<Self>) -> Self {
+    pub fn new(theme: Theme, app_root: PathBuf, workspace: Option<Workspace>, languages: Languages, settings: Arc<Mutex<Settings>>, host: HostSync, cx: &mut Context<Self>) -> Self {
         let mut workbench = Workbench {
             theme,
             color_themes: Vec::new(),
             app_root,
-            folder,
+            folder: workspace.map(|workspace| FileTree::new(workspace, settings.clone())),
             languages,
             file_icons: None,
             editors: EditorGroup::default(),
@@ -233,6 +233,12 @@ impl Workbench {
             let _ = entity.update(cx, |workbench, cx| workbench.dispatch_key(&event.keystroke, window, cx));
         })
         .detach();
+        cx.on_app_quit(|workbench, _| {
+            workbench.store_explorer_view_state();
+            async {}
+        })
+        .detach();
+        cx.on_release(|workbench, _| workbench.store_explorer_view_state()).detach();
         workbench
     }
 
@@ -509,7 +515,7 @@ impl Workbench {
         let selection_outline = self.theme.color("contrastActiveBorder");
         let folder_name = tree.workspace.label();
         let rows = tree.rows().into_iter().enumerate().map(|(index, row)| {
-            let twistie = match (row.is_dir, row.expanded) {
+            let twistie = match (row.is_dir || row.has_nests, row.expanded) {
                 (true, true) => Some("chevron-down"),
                 (true, false) => Some("chevron-right"),
                 (false, _) => None,
@@ -540,6 +546,16 @@ impl Workbench {
                 icons.file_icon(&icon_path, self.languages.language_of(&icon_path, ""), self.theme.kind, 13., label_line, foreground)
             });
             let indent = 8. * (row.depth - 1) as f32;
+            let has_nests = row.has_nests;
+            let (twistie_path, row_expanded) = (path.clone(), row.expanded);
+            let twistie_element = |chevron| {
+                self.icon(chevron, 16., 16., foreground).id(("explorer-twistie", index)).on_click(cx.listener(move |workbench, _: &ClickEvent, _, cx| {
+                    // explorerView.ts `expandOnlyOnTwistieClick`: a nest's row opens the file, its twistie toggles.
+                    cx.stop_propagation();
+                    workbench.folder.as_mut().expect("rows exist only with a folder").set_expanded(&twistie_path, !row_expanded);
+                    cx.notify();
+                }))
+            };
             let hover = self.hover_target(("explorer-hover", index), HoverContent::Text(crate::quick_input::path_label(&path, None)), HoverOptions::mouse());
             div()
                 .id(index)
@@ -552,14 +568,20 @@ impl Workbench {
                 .flex()
                 .items_center()
                 .rounded(px(4.))
-                .map(|row| match file_icon {
-                    Some(icon) => row.pl(px(8. + indent)).child(icon.self_start()).child(div().self_start().flex_1().ml(px(6.)).line_height(px(label_line)).child(name)),
+                .map(|row| match (file_icon, twistie) {
+                    (Some(icon), Some(chevron)) => row
+                        .pl(px(11. + indent))
+                        .child(twistie_element(chevron))
+                        .child(icon.self_start().ml(px(3.)))
+                        .child(div().self_start().flex_1().ml(px(6.)).line_height(px(label_line)).child(name)),
+                    (Some(icon), None) => row.pl(px(8. + indent)).child(icon.self_start()).child(div().self_start().flex_1().ml(px(6.)).line_height(px(label_line)).child(name)),
                     // monaco-tl-twistie: 3px row inset, 8px base indent plus 8px per level, a 16px icon, 6px before the label.
-                    None => row
+                    (None, _) => row
                         .pl(px(11. + indent))
                         .child(match twistie {
-                            Some(chevron) => self.icon(chevron, 16., 16., foreground),
-                            None => div().size(px(16.)).flex_none(),
+                            Some(chevron) if has_nests => twistie_element(chevron).into_any_element(),
+                            Some(chevron) => self.icon(chevron, 16., 16., foreground).into_any_element(),
+                            None => div().size(px(16.)).flex_none().into_any_element(),
                         })
                         .child(div().self_start().flex_1().ml(px(3.)).line_height(px(label_line)).child(name)),
                 })
@@ -621,7 +643,10 @@ impl Workbench {
                 div()
                     .id("explorer-tree")
                     .track_focus(&self.explorer.focus)
+                    .overflow_y_scroll()
+                    .track_scroll(&self.explorer.scroll)
                     .flex_1()
+                    .min_h_0()
                     .flex()
                     .flex_col()
                     .on_mouse_down(MouseButton::Right, cx.listener(|workbench, event: &MouseDownEvent, window, cx| workbench.show_explorer_context_menu(None, event.position, window, cx)))
@@ -784,7 +809,6 @@ mod tests {
     use gpui::{Modifiers, TestAppContext, point, px};
 
     use super::Workbench;
-    use crate::explorer::FileTree;
     use crate::host_sync::HostSync;
     use crate::languages::Languages;
     use crate::theme::load_theme;
@@ -798,7 +822,7 @@ mod tests {
         let docs = folder.join("docs");
         let languages = Languages::new(&[]);
         let host = HostSync::new(std::sync::mpsc::channel().0);
-        let (workbench, cx) = cx.add_window_view(|_, cx| Workbench::new(theme, app_root.clone(), Some(FileTree::new(Workspace::folder(folder))), languages, crate::default_settings(), host, cx));
+        let (workbench, cx) = cx.add_window_view(|_, cx| Workbench::new(theme, app_root.clone(), Some(Workspace::folder(folder)), languages, crate::default_settings(), host, cx));
         cx.run_until_parked();
 
         // The first tree row (docs) spans y 96..118 under the side bar's "workspace" header (reference DOM dump).

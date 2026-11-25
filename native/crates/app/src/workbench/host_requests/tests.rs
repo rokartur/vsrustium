@@ -46,6 +46,11 @@ fn workbench_open_shows_files_and_untitled_files_and_rejects_other_strings(cx: &
         (editor.document.name(), editor.is_dirty())
     });
     assert_eq!((name.as_str(), dirty), ("untitled-file.txt", true));
+    // untitledTextEditorModel.ts `revert`: emptied and clean, never read from or written to its file; the input closes.
+    workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("workbench.action.files.revert", Vec::new(), window, cx)));
+    let names = workbench.read_with(cx, |workbench, _| workbench.editors.editors.iter().map(|editor| editor.document.name()).collect::<Vec<_>>());
+    assert_eq!(names, ["far.js"]);
+    assert!(!dir.join("untitled-file.txt").exists());
 
     assert!(open(&workbench, vec![json!("file:///some/path/not/http")], cx).is_err());
     assert_eq!(open(&workbench, vec![json!({ "scheme": "command", "path": "workbench.action.quit" })], cx), Ok(Value::Null));

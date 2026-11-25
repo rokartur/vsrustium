@@ -60,7 +60,6 @@ use gpui::{App, Bounds, Keystroke, TitlebarOptions, Window, WindowBounds, Window
 use gpui_platform::application;
 use serde_json::json;
 use anyhow::Context as _;
-use explorer::FileTree;
 use commands::Outcome;
 use host_sync::HostSync;
 use languages::Languages;
@@ -130,7 +129,7 @@ fn main() -> anyhow::Result<()> {
                 let mut host = HostSync::new(host_sender);
                 host.configuration_scopes = development.is_some();
                 host.send_color_theme(theme.kind);
-                let mut workbench = Workbench::new(theme, app_root.clone(), workspace.clone().map(FileTree::new), languages, settings.clone(), host, cx);
+                let mut workbench = Workbench::new(theme, app_root.clone(), workspace.clone(), languages, settings.clone(), host, cx);
                 workbench.skip_dialogs = development.as_ref().is_some_and(|development| development.tests_path.is_some());
                 workbench.load_keybindings(keybindings::default_keybindings(&extensions), keybindings_file.clone(), cx);
                 workbench.quick_access.menu = command_palette::menu(&extensions);

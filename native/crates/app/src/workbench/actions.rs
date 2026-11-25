@@ -28,16 +28,15 @@ impl Workbench {
         }
         self.commands.register("workbench.action.files.revert", |workbench, _, _, cx| {
             if let Some(index) = workbench.editors.active_index() {
-                workbench.revert_editor(index, cx);
+                workbench.revert_and_close_untitled(vec![index], cx);
             }
             Outcome::done()
         });
         self.commands.register("_workbench.open", |workbench, args, window, cx| Outcome::Ready(workbench.api_open_editor(&args, window, cx)));
         self.commands.register("vscode.open", |workbench, args, window, cx| workbench.execute_command("_workbench.open", args.into_iter().take(1).collect(), window, cx));
         self.commands.register("_workbench.revertAllDirty", |workbench, _, _, cx| {
-            for index in workbench.dirty_editors() {
-                workbench.revert_editor(index, cx);
-            }
+            let dirty = workbench.dirty_editors();
+            workbench.revert_and_close_untitled(dirty, cx);
             Outcome::done()
         });
         self.commands.register("workbench.action.closeAllEditors", |workbench, _, window, cx| workbench.close_all_editors(window, cx));
@@ -147,6 +146,21 @@ impl Workbench {
         Outcome::Pending(receiver)
     }
 
+    /// Reverts the editors at `indices` and closes the untitled ones, whose inputs a revert disposes (untitledTextEditorInput.ts).
+    fn revert_and_close_untitled(&mut self, mut indices: Vec<usize>, cx: &mut Context<Self>) {
+        indices.sort_unstable();
+        let mut closed = false;
+        for index in indices.into_iter().rev() {
+            if self.revert_editor(index, cx) {
+                self.editors.close(index);
+                closed = true;
+            }
+        }
+        if closed {
+            self.editors_changed(cx);
+        }
+    }
+
     /// Reverts `dirty` (ConfirmResult.DONT_SAVE), then closes the editors at `indices`.
     fn discard_and_close(&mut self, dirty: &[usize], indices: &[usize], cx: &mut Context<Self>) {
         for index in dirty {
@@ -160,30 +174,45 @@ impl Workbench {
         self.editors_changed(cx);
     }
 
-    /// The text goes back to the file's content and the editor is clean again.
+    /// The text goes back to the file's content and the editor is clean again. An untitled editor is emptied
+    /// instead (untitledTextEditorModel.ts `revert`) and answers true: its input is disposed, so the caller closes it.
     /// shortcut: one whole-text edit plus a save of the same bytes, since `editor/` has no revert yet; move to an `OpenEditor::revert` that flushes the model like `setValue` once it does.
-    pub(super) fn revert_editor(&mut self, index: usize, cx: &mut Context<Self>) {
+    pub(super) fn revert_editor(&mut self, index: usize, cx: &mut Context<Self>) -> bool {
         let editor = &mut self.editors.editors[index];
-        let disk = match TextDocument::read(&editor.document.path, &self.languages, &self.settings.lock().unwrap()) {
-            Ok(document) => document,
-            Err(error) => {
-                eprintln!("reverting {}: {error}", editor.document.path.display());
-                return;
-            }
+        let untitled = editor.document.scheme == "untitled";
+        let text = match untitled {
+            true => String::new(),
+            false => match TextDocument::read(&editor.document.path, &self.languages, &self.settings.lock().unwrap()) {
+                Ok(document) => document.lines.join("\n"),
+                Err(error) => {
+                    eprintln!("reverting {}: {error}", editor.document.path.display());
+                    return false;
+                }
+            },
         };
+        let was_dirty = editor.is_dirty();
         let lines = &editor.document.lines;
         let end = Position::new(lines.len() - 1, lines[lines.len() - 1].chars().count());
-        let change = editor.execute_edits(vec![(Position::new(0, 0), end, disk.lines.join("\n"), false)], None, EditReason::Unknown("revert"));
-        if let Some(change) = change {
-            if self.editors.active_index() == Some(index) {
-                self.find_editor_edited(Some(&change));
+        let change = editor.execute_edits(vec![(Position::new(0, 0), end, text, false)], None, EditReason::Unknown("revert"));
+        editor.associated_file = false;
+        match &change {
+            Some(change) => {
+                if self.editors.active_index() == Some(index) {
+                    self.find_editor_edited(Some(change));
+                }
+                self.host.send_content_change(&self.editors, index, change);
+                let document = &self.editors.editors[index].document;
+                let (scheme, path) = (document.scheme.clone(), document.path.clone());
+                self.search_model_changed(&scheme, &path);
             }
-            self.host.send_content_change(&self.editors, index, &change);
-            let document = &self.editors.editors[index].document;
-            let (scheme, path) = (document.scheme.clone(), document.path.clone());
-            self.search_model_changed(&scheme, &path);
+            None if untitled && was_dirty => self.host.send_dirty_state(&self.editors, &self.editors.editors[index], false),
+            None => {}
+        }
+        if untitled {
+            return true;
         }
         drop(self.save_editor(index, cx));
+        false
     }
 }
 

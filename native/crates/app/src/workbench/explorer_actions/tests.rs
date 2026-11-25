@@ -4,7 +4,6 @@ use config::workspace::Workspace;
 use exthost::scan::scan_extension;
 use gpui::{Modifiers, MouseButton, TestAppContext, VisualTestContext, point, px};
 
-use crate::explorer::FileTree;
 use crate::host_sync::HostSync;
 use crate::languages::Languages;
 use crate::menus::MenuAction;
@@ -23,7 +22,7 @@ fn explorer<'a>(name: &str, cx: &'a mut TestAppContext) -> (PathBuf, gpui::Entit
     let host = HostSync::new(std::sync::mpsc::channel().0);
     let folder = dir.clone();
     let (workbench, cx) = cx.add_window_view(|window, cx| {
-        let mut workbench = Workbench::new(theme, app_root.clone(), Some(FileTree::new(Workspace::folder(folder.clone()))), Languages::new(&[]), crate::default_settings(), host, cx);
+        let mut workbench = Workbench::new(theme, app_root.clone(), Some(Workspace::folder(folder.clone())), Languages::new(&[]), crate::default_settings(), host, cx);
         workbench.skip_dialogs = true;
         workbench.load_keybindings(crate::keybindings::default_keybindings(&[]), folder.join("keybindings.json"), cx);
         window.focus(&workbench.explorer.focus.clone(), cx);
@@ -219,5 +218,34 @@ fn the_context_menu_selects_the_row_and_runs_its_items_with_keys_and_clicks(cx: 
     cx.simulate_mouse_up(delete, MouseButton::Left, Modifiers::alt());
     cx.run_until_parked();
     assert_eq!(names(&dir), ["sub"]);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[gpui::test]
+fn closing_the_window_stores_the_tree_view_state_for_the_next_open(cx: &mut TestAppContext) {
+    let (dir, workbench, window_cx) = explorer("explorer-view-state", cx);
+    std::fs::write(dir.join("sub/b.txt"), "b").unwrap();
+    let storage = workbench.update(window_cx, |workbench, _| {
+        workbench.folder.as_mut().unwrap().reveal(&dir.join("sub/b.txt"));
+        workbench.workspace_storage.clone()
+    });
+    drop(workbench);
+    window_cx.update(|window, _| window.remove_window());
+    window_cx.run_until_parked();
+    assert!(storage.lock().unwrap().get("workbench.explorer.treeViewState").is_some(), "stored when the workbench is released");
+
+    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let theme = load_theme(&[scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap()], "Dark Modern").unwrap();
+    let folder = dir.clone();
+    let (reopened, window_cx) = cx.add_window_view(|_, cx| {
+        let mut workbench = Workbench::new(theme, app_root.clone(), Some(Workspace::folder(folder)), Languages::new(&[]), crate::default_settings(), HostSync::new(std::sync::mpsc::channel().0), cx);
+        workbench.restore_workspace_state(storage);
+        workbench
+    });
+    let restored = reopened.read_with(window_cx, |workbench, _| {
+        let tree = workbench.folder.as_ref().unwrap();
+        (tree.is_expanded(&dir.join("sub")), tree.focused.clone())
+    });
+    assert_eq!(restored, (true, Some(dir.join("sub/b.txt"))));
     std::fs::remove_dir_all(&dir).unwrap();
 }

@@ -6,7 +6,6 @@ use config::workspace::Workspace;
 use gpui::TestAppContext;
 
 use crate::editor::{Position, Selection};
-use crate::explorer::FileTree;
 use crate::host_sync::HostSync;
 use crate::languages::Languages;
 use crate::theme::load_theme;
@@ -76,7 +75,7 @@ fn quick_open_shows_the_rows_of_the_reference(cx: &mut TestAppContext) {
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
     let folder = app_root.join("port/fixtures/workspace");
     let (workbench, cx) = cx.add_window_view(|window, cx| {
-        let mut workbench = Workbench::new(theme, app_root.clone(), Some(FileTree::new(Workspace::folder(folder.clone()))), Languages::new(&[]), crate::default_settings(), HostSync::new(std::sync::mpsc::channel().0), cx);
+        let mut workbench = Workbench::new(theme, app_root.clone(), Some(Workspace::folder(folder.clone())), Languages::new(&[]), crate::default_settings(), HostSync::new(std::sync::mpsc::channel().0), cx);
         workbench.load_keybindings(crate::keybindings::default_keybindings(&[]), app_root.join("keybindings-unused.json"), cx);
         workbench.open_file(folder.join("docs/guide.md"), true, window, cx);
         workbench
@@ -107,7 +106,7 @@ fn quick_open_lists_history_and_files_and_opens_at_the_line(cx: &mut TestAppCont
     storage.lock().unwrap().set("history.entries", guide);
     let workspace = storage.clone();
     let (workbench, cx) = cx.add_window_view(|_, cx| {
-        let mut workbench = Workbench::new(theme, app_root.clone(), Some(FileTree::new(Workspace::folder(folder.clone()))), Languages::new(&[]), crate::default_settings(), HostSync::new(std::sync::mpsc::channel().0), cx);
+        let mut workbench = Workbench::new(theme, app_root.clone(), Some(Workspace::folder(folder.clone())), Languages::new(&[]), crate::default_settings(), HostSync::new(std::sync::mpsc::channel().0), cx);
         workbench.load_keybindings(crate::keybindings::default_keybindings(&[]), app_root.join("keybindings-unused.json"), cx);
         workbench.restore_workspace_state(workspace);
         workbench
