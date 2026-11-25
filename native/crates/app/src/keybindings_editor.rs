@@ -440,7 +440,7 @@ fn matches_key(chord: &Chord, word: &str, complete_match: bool) -> bool {
     if complete_match || label.chars().count() == 1 || word.chars().count() == 1 {
         return label.to_lowercase() == word.to_lowercase();
     }
-    matches_contiguous_sub_string(word, label).is_some()
+    matches_contiguous_sub_string(word, &label).is_some()
 }
 
 fn is_complete_match(chord: Option<&Chord>, matched: &ChordMatch) -> bool {

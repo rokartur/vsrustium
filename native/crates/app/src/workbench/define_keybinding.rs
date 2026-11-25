@@ -19,6 +19,7 @@ use super::hover::{HoverContent, HoverOptions};
 use crate::commands::Outcome;
 use crate::editor::{EditReason, HORIZONTAL_SCROLLBAR_HEIGHT, OpenEditor, VERTICAL_SCROLLBAR_WIDTH, VerticalReveal};
 use crate::keybindings;
+use crate::keyboard_mapper;
 use crate::smart_snippet_inserter::{insert_snippet, offset_to_position};
 
 pub const DEFINE_KEYBINDING_COMMAND: &str = "editor.action.defineKeybinding";
@@ -43,23 +44,38 @@ pub struct KeybindingMark {
     pub message: String,
 }
 
-/// `_getDecorationForEntry` of one key string: whether it is the error, and the hover message; `None` unmarked.
-/// shortcut: without a scan code mapper (port/notes.md milestone 9) a key the layout types under another label
-/// (`isWYSIWYG` false) is not marked; mark it once the port maps scan codes.
+/// `_getDecorationForEntry` of one key string on the layout of `raw_mapping`: whether it is the error, and the hover
+/// message; `None` unmarked. A layout without a key map dispatches on key codes, where every key resolves.
 pub fn key_mark(key: &str, raw_mapping: &Value) -> Option<(bool, String)> {
     let chords = keybindings::parse_keybinding(key);
-    if chords.is_empty() || chords.iter().any(|chord| !keybindings::layout_types_key(chord.key, raw_mapping)) {
-        return Some((true, "You won't be able to produce this key combination under your current keyboard layout.".into()));
+    let unproducible = Some((true, "You won't be able to produce this key combination under your current keyboard layout.".into()));
+    if chords.is_empty() {
+        return unproducible;
     }
+    let (label, user_settings_label, wysiwyg) = match keyboard_mapper::for_layout(&Value::Null, raw_mapping, false, false) {
+        Some(mapper) => {
+            let resolved = mapper.resolve_keybinding(&chords);
+            let Some(first) = resolved.first() else { return unproducible };
+            (mapper.label(first), mapper.user_settings_label(first), mapper.is_wysiwyg_keybinding(first))
+        }
+        None => (Some(keybindings::label(&chords)), Some(keybindings::user_settings_label(&chords)), true),
+    };
     // `**{0}** for your current keyboard layout.`, plain text until the editor hover renders markdown.
-    let info = Some((false, format!("{} for your current keyboard layout.", keybindings::label(&chords))));
+    let info = Some((false, format!("{} for your current keyboard layout.", label.clone().unwrap_or_default())));
+    if !wysiwyg {
+        // Coincidentally WYSIWYG: the key string is the label.
+        if label.is_some_and(|label| label.to_lowercase() == key.to_lowercase()) {
+            return None;
+        }
+        return info;
+    }
     if key.contains("abnt_") || key.contains("oem_") {
         return info;
     }
-    if keybindings::user_settings_fuzzy_equals(key, &keybindings::user_settings_label(&chords)) {
-        return None;
+    if user_settings_label.is_some_and(|expected| !keybindings::user_settings_fuzzy_equals(key, &expected)) {
+        return info;
     }
-    info
+    None
 }
 
 /// `_updateDecorationsNow`: each `"key"` string property of the top-level array's objects.

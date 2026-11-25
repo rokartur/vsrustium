@@ -21,6 +21,8 @@ use crate::system_wide_keybindings::{HotKeys, SystemWide};
 /// The keybindings and the dispatch state of `AbstractKeybindingService`.
 pub struct Keybindings {
     pub(super) defaults: Vec<Item>,
+    /// The rules of keybindings.json, kept to rebuild the resolver when the keyboard layout changes.
+    overrides: Vec<Item>,
     /// `<user data>/User/keybindings.json`.
     pub(super) user_file: Option<PathBuf>,
     pub resolver: Resolver,
@@ -36,7 +38,7 @@ pub struct Keybindings {
 
 impl Default for Keybindings {
     fn default() -> Self {
-        Keybindings { defaults: Vec::new(), user_file: None, resolver: Resolver::new(Vec::new(), Vec::new()), generation: 0, chords: Vec::new(), chord_checker: None, system_wide: SystemWide::default(), logging: false }
+        Keybindings { defaults: Vec::new(), overrides: Vec::new(), user_file: None, resolver: Resolver::new(Vec::new(), Vec::new()), generation: 0, chords: Vec::new(), chord_checker: None, system_wide: SystemWide::default(), logging: false }
     }
 }
 
@@ -100,8 +102,24 @@ impl Workbench {
         for warning in self.keybindings.system_wide.set_keybindings(&overrides) {
             self.notify_warning(warning);
         }
-        self.keybindings.resolver = Resolver::new(self.keybindings.defaults.clone(), overrides);
+        self.keybindings.overrides = overrides;
+        self.rebuild_resolver();
+    }
+
+    fn rebuild_resolver(&mut self) {
+        self.keybindings.resolver = Resolver::new(self.keybindings.defaults.clone(), self.keybindings.overrides.clone());
         self.keybindings.generation += 1;
+    }
+
+    /// nativeKeyboardLayout.ts: a new keyboard mapper when the input source or `keyboard.dispatch` and
+    /// `keyboard.mapAltGrToCtrlAlt` change, and the keybindings resolved again on it.
+    pub fn refresh_keyboard_mapper(&mut self) {
+        let setting = |key| self.settings.lock().unwrap().get_value(Some(key), &Default::default());
+        let dispatch_key_code = setting("keyboard.dispatch") == Some(json!("keyCode"));
+        let map_alt_gr_to_ctrl_alt = setting("keyboard.mapAltGrToCtrlAlt") == Some(json!(true));
+        if crate::keyboard_mapper::refresh(dispatch_key_code, map_alt_gr_to_ctrl_alt) {
+            self.rebuild_resolver();
+        }
     }
 
     /// Registers the system-wide keybindings with macOS and runs the command of each press, as the
@@ -129,13 +147,18 @@ impl Workbench {
 
     /// `_doDispatch`: runs the command bound to the key and keeps the key from the focused element.
     pub(super) fn dispatch_key(&mut self, keystroke: &Keystroke, window: &mut Window, cx: &mut Context<Self>) {
-        let chord = Chord::from_keystroke(keystroke);
+        let native_event = crate::keyboard_layout::current_key_event();
+        if native_event.is_some() {
+            self.refresh_keyboard_mapper();
+        }
+        let chord = crate::keyboard_mapper::event_chord(keystroke);
         if self.keybindings.logging {
-            // shortcut: GPUI key events carry no DOM code or keyCode; the key name stands in for them.
             let m = &keystroke.modifiers;
             let modifiers: Vec<&str> = [(m.control, "ctrl"), (m.shift, "shift"), (m.alt, "alt"), (m.platform, "meta")].into_iter().filter(|(on, _)| *on).map(|(_, name)| name).collect();
-            self.log_keybinding(&format!("/ Received  keydown event - modifiers: [{}], key: {}", modifiers.join(","), keystroke.key));
-            self.log_keybinding(&format!("| Converted keydown event - modifiers: [{}], keyCode: {} ('{}')", modifiers.join(","), chord.key, crate::keybindings::key_codes::KEY_CODES[chord.key].0));
+            // shortcut: GPUI keystrokes carry no DOM keyCode (`e.keyCode` of printKeyboardEvent), so it is left out.
+            let code = native_event.map_or("", |event| event.code);
+            self.log_keybinding(&format!("/ Received  keydown event - modifiers: [{}], code: {code}, key: {}", modifiers.join(","), keystroke.key));
+            self.log_keybinding(&format!("| Converted keydown event - modifiers: [{}], code: {code}, keyCode: {} ('{}')", modifiers.join(","), chord.key, crate::keybindings::key_codes::KEY_CODES[chord.key].0));
         }
         // isKeyInComposition: the IME owns the keys while it composes.
         if self.marked_text.is_some() || self.input_composing() {
@@ -359,6 +382,11 @@ impl Workbench {
     /// The `_setContext` command (extensions call it as `setContext`): `createKey(String(key), value)`.
     pub(super) fn register_context_commands(&mut self) {
         self.commands.register("workbench.action.openGlobalKeybindingsFile", |workbench, _, window, cx| workbench.open_keybindings_file(window, cx));
+        self.commands.register("workbench.action.inspectKeyMappings", |workbench, _, window, cx| {
+            let resolved = keybindings::dump_resolve_keybinding_debug_info(&workbench.keybindings.defaults, &workbench.keybindings.overrides);
+            workbench.open_untitled_with_contents(&crate::keyboard_layout::dump_debug_info(&resolved), window, cx);
+            Outcome::done()
+        });
         self.commands.register("workbench.action.inspectKeyMappingsJSON", |workbench, _, window, cx| {
             workbench.open_untitled_with_contents(&crate::keyboard_layout::dump_debug_info_json(), window, cx);
             Outcome::done()
