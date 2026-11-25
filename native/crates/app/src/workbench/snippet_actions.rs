@@ -606,7 +606,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("User/snippets")).unwrap();
         std::fs::write(dir.join("a.txt"), "word").unwrap();
-        std::fs::write(dir.join("User/snippets/plaintext.json"), r#"{ "Bold": { "prefix": "b", "body": "<b>$TM_SELECTED_TEXT</b>" }, "Plain": { "prefix": "p", "body": "plain" } }"#).unwrap();
+        std::fs::write(dir.join("User/snippets/plaintext.json"), r#"{ "Bold": { "prefix": "b", "body": "<b>$TM_SELECTED_TEXT</b>" }, "Plain": { "prefix": "p", "body": "plain" }, "Wrap": { "prefix": "word", "body": "[$0]" } }"#).unwrap();
         let workspace = config::workspace::Workspace::folder(dir.clone());
         let settings = Arc::new(Mutex::new(Settings::load(Registry::with_extensions(&[]), dir.join("User"), Some(workspace.clone()))));
         let (workbench, cx) = cx.add_window_view(|window, cx| {
@@ -646,6 +646,21 @@ mod tests {
         assert_eq!(text(&workbench, cx), "<b>word</b>");
         run(&workbench, cx, "editor.action.insertSnippet", vec![json!({ "snippet": " and ${1:more}" })]);
         assert_eq!(text(&workbench, cx), "<b>word</b> and more");
+    }
+
+    /// tabCompletion.ts: a selection equal to a prefix offers that snippet, and Tab inserts it over the selection.
+    #[gpui::test]
+    fn tab_completes_the_snippet_whose_prefix_is_selected(cx: &mut TestAppContext) {
+        let (workbench, cx) = open(cx);
+        run(&workbench, cx, "editor.action.selectAll", vec![]);
+        let suggestions = workbench.update(cx, |workbench, _| {
+            workbench.refresh_snippet_files();
+            workbench.tab_completion_suggestions()
+        });
+        assert_eq!(suggestions["b"].as_array().map(Vec::len), Some(1));
+        assert_eq!(suggestions["b"][0]["j"]["startColumn"], json!(1));
+        run(&workbench, cx, "insertSnippet", vec![]);
+        assert_eq!(text(&workbench, cx), "[]");
     }
 
     #[test]

@@ -395,6 +395,7 @@ impl Workbench {
             context.insert("editorHoverVisible".into(), json!(self.content_hover_visible()));
             self.suggest_context(&mut context);
             self.snippet_context(&mut context);
+            self.tab_completion_context(&mut context);
             self.parameter_hints_context(&mut context);
             self.code_actions_context(&mut context);
             self.action_widget_context(&mut context);

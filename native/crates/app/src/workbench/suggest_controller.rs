@@ -12,6 +12,7 @@ use super::Workbench;
 use super::bulk_text_edits::escape_snippet;
 use super::host_requests::{range, uri_parts};
 use super::snippet_completions::SNIPPET_PROVIDER;
+use super::tab_completion::TAB_COMPLETION_PROVIDER;
 use super::snippet_controller::{SNIPPET_CHOICE_PROVIDER, SnippetInsert};
 use crate::commands::Outcome;
 use crate::editor::{EditReason, OpenEditor, Position, Selection, utf16_column, word_at};
@@ -291,6 +292,10 @@ impl Workbench {
         // suggest.ts asks the snippet support beside the provider groups, whichever group answers.
         let snippets = match options.reuse.iter().find(|(provider, _)| *provider == SNIPPET_PROVIDER) {
             Some((_, items)) => Some(Call::Reuse(items.clone())),
+            None if options.provider_filter == [TAB_COMPLETION_PROVIDER] => {
+                let result = self.tab_completion_suggestions();
+                Some(Call::Ready(ProviderAnswer { provider: TAB_COMPLETION_PROVIDER, supports_resolve: false, result }))
+            }
             None if options.provider_filter.is_empty() || options.provider_filter.contains(&SNIPPET_PROVIDER) => {
                 let result = self.snippet_suggestions(options.trigger_character.as_deref());
                 Some(Call::Ready(ProviderAnswer { provider: SNIPPET_PROVIDER, supports_resolve: false, result }))

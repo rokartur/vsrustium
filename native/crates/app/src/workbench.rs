@@ -127,6 +127,7 @@ mod inline_completions;
 mod language_detection;
 pub mod snippet_actions;
 mod emmet;
+mod tab_completion;
 mod color_picker;
 mod standalone_color_picker;
 mod inlay_hints;
@@ -689,6 +690,7 @@ impl Workbench {
         workbench.register_snippet_completions();
         workbench.register_snippet_actions();
         workbench.register_emmet();
+        workbench.register_tab_completion();
         workbench.register_snippet_commands();
         workbench.register_marker_navigation_commands();
         workbench.register_quick_diff_commands();

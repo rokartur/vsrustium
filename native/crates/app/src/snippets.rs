@@ -398,22 +398,27 @@ pub fn snippet_completions(line_text: &str, line: usize, column: usize, trigger_
     let items: Vec<Value> = suggestions
         .into_iter()
         .map(|(index, insert, replace)| {
-            let snippet = snippets[index];
-            json!({
-                "x": index,
-                "a": { "label": snippet.prefix, "description": snippet.name },
-                "b": KIND_SNIPPET,
-                "c": format!("{} ({})", if snippet.description.is_empty() { &snippet.name } else { &snippet.description }, snippet.source),
-                "e": format!("{}-{}", if snippet.snippet_source == SnippetSource::Extension { "z" } else { "a" }, snippet.prefix),
-                "h": snippet.body,
-                "i": INSERT_AS_SNIPPET,
-                "j": { "insert": range(insert), "replace": range(replace) },
-                "o": MARK_SNIPPET_AS_USED,
-                "p": [snippet.snippet_identifier],
-            })
+            let mut item = snippet_completion(snippets[index], json!({ "insert": range(insert), "replace": range(replace) }));
+            item["x"] = json!(index);
+            item
         })
         .collect();
     json!({ "b": items })
+}
+
+/// `SnippetCompletion` as the extension host's completion item DTO.
+pub fn snippet_completion(snippet: &Snippet, range: Value) -> Value {
+    json!({
+        "a": { "label": snippet.prefix, "description": snippet.name },
+        "b": KIND_SNIPPET,
+        "c": format!("{} ({})", if snippet.description.is_empty() { &snippet.name } else { &snippet.description }, snippet.source),
+        "e": format!("{}-{}", if snippet.snippet_source == SnippetSource::Extension { "z" } else { "a" }, snippet.prefix),
+        "h": snippet.body,
+        "i": INSERT_AS_SNIPPET,
+        "j": range,
+        "o": MARK_SNIPPET_AS_USED,
+        "p": [snippet.snippet_identifier],
+    })
 }
 
 /// `SnippetCompletion.resolve`: the documentation is a code block of the text the snippet inserts.
