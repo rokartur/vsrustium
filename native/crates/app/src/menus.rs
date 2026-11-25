@@ -49,6 +49,10 @@ pub enum MenuId {
     /// `MenuId.MultiDiffEditorFileToolbar`: a multi diff editor file header's toolbar.
     MultiDiffEditorFileToolbar,
     EditorTitle,
+    TimelineTitle,
+    TimelineItemContext,
+    /// timeline.contribution.ts "Filter Timeline": a toggle per timeline source.
+    TimelineFilterSubMenu,
     /// A `contributes.submenus` entry, `MenuId.for('api:<id>')`, by registration order.
     Api(usize),
     #[cfg(test)]
@@ -166,6 +170,8 @@ const WORKBENCH_MENUS: &[Row] = &[
     // fileActions.contribution.ts, the ExplorerContext items of the commands the port has.
     (MenuId::ExplorerContext, None, "explorer.newFile", "New File...", "navigation", 4., Some("explorerResourceIsFolder"), Some("!explorerResourceReadonly")),
     (MenuId::ExplorerContext, None, "explorer.newFolder", "New Folder...", "navigation", 6., Some("explorerResourceIsFolder"), Some("!explorerResourceReadonly")),
+    // timeline.contribution.ts; the port's resource keys name `resourceSet` `hasResource`.
+    (MenuId::ExplorerContext, None, "files.openTimeline", "Open Timeline", "4_timeline", 1., Some("hasResource && timelineHasProvider"), None),
     (MenuId::ExplorerContext, None, "revealFileInOS", "Reveal in Finder", "navigation", 20., Some("resourceScheme == 'file' || resourceScheme == 'vscode-userdata'"), None),
     (MenuId::ExplorerContext, None, "filesExplorer.cut", "Cut", "5_cutcopypaste", 8., Some("!explorerResourceIsRoot && !explorerResourceReadonly"), None),
     (MenuId::ExplorerContext, None, "filesExplorer.copy", "Copy", "5_cutcopypaste", 10., Some("!explorerResourceIsRoot"), None),
@@ -245,7 +251,7 @@ pub fn workbench_menus() -> Vec<MenuItem> {
 
 /// menusExtensionPoint.ts `apiMenus`: the `contributes.menus` keys of the menus the port shows. `commandPalette`
 /// is read by `command_palette::menu`.
-const API_MENUS: [(&str, MenuId); 14] = [
+const API_MENUS: [(&str, MenuId); 16] = [
     ("editor/context", MenuId::EditorContext),
     ("explorer/context", MenuId::ExplorerContext),
     ("editor/title/context", MenuId::EditorTitleContext),
@@ -260,6 +266,8 @@ const API_MENUS: [(&str, MenuId); 14] = [
     ("scm/sourceControl", MenuId::ScmSourceControl),
     ("scm/history/title", MenuId::ScmHistoryTitle),
     ("scm/historyItem/context", MenuId::ScmHistoryItemContext),
+    ("timeline/title", MenuId::TimelineTitle),
+    ("timeline/item/context", MenuId::TimelineItemContext),
 ];
 
 /// The `icon` of each `contributes.commands` entry with one: a `$(codicon)` name, or the light and dark image paths.

@@ -255,7 +255,8 @@ impl Workbench {
     /// quickDiffModel.ts `triggerDiff` for the active editor: asks the providers for their originals once per
     /// generation, then diffs the models whenever a version moves.
     pub(in crate::workbench) fn update_quick_diff(&mut self, cx: &mut Context<Self>) {
-        let open: Vec<(String, PathBuf)> = self.editors.editors.iter().map(|editor| (editor.document.scheme.clone(), editor.document.path.clone())).collect();
+        // The model each tab edits: a diff or merge editor's is not the tab entry's own.
+        let open: Vec<(String, PathBuf)> = (0..self.editors.editors.len()).map(|index| self.editors.tab_model(index)).map(|model| (model.document.scheme.clone(), model.document.path.clone())).collect();
         let followed: Vec<(String, PathBuf)> = self.quick_diffs.diff_information.values().map(|(key, _)| key.clone()).collect();
         self.quick_diffs.entries.retain(|key, _| open.contains(key) || followed.contains(key));
         self.follow_quick_diff_widget(None, cx);

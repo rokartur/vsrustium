@@ -237,3 +237,91 @@ fn states_toggle_as_upstream() {
     assert_eq!(State::Both { first: Input::Two, smart: false }.toggle(Input::Two), State::Input1);
     assert_eq!(State::Unrecognized.toggle(Input::Two), State::Input2);
 }
+
+#[test]
+fn alignments_and_view_zones_line_the_inputs_up() {
+    let harness = Harness::new("a\nb\nc", "a\nX\nY\nc", "a\nZ\nc", "a\nb\nc");
+    assert_eq!(harness.model.alignments(0), vec![(Some(1), 1, Some(1)), (Some(3), 2, Some(2)), (Some(4), 3, Some(3))]);
+    let zones = harness.model.view_zones(ZoneOptions::default(), |_| false);
+    let actions = Zone { after_line: 1, kind: ZoneKind::Actions(0) };
+    assert_eq!(zones, ViewZones { input1: vec![actions], input2: vec![actions, Zone { after_line: 1, kind: ZoneKind::Spacer(1) }], base: Vec::new(), result: vec![actions] });
+    // The column layout lines the result up too: its one line of the range gets a spacer below.
+    let columns = harness.model.view_zones(ZoneOptions { align_result: true, ..ZoneOptions::default() }, |_| true);
+    assert_eq!(columns.result, vec![actions, Zone { after_line: 2, kind: ZoneKind::Spacer(1) }]);
+}
+
+#[test]
+fn undoing_an_accept_restores_the_handled_state() {
+    let mut harness = Harness::new("a\nb\nc", "a\nX\nc", "a\nY\nc", "a\nb\nc");
+    harness.model.alternative_version_id = 1;
+    harness.toggle(0, Input::One);
+    harness.model.attach(5, 0, (false, false));
+    assert!(harness.model.is_handled(0));
+    harness.model.follow_history(3);
+    assert!(!harness.model.is_handled(0));
+    harness.model.follow_history(5);
+    assert!(harness.model.is_handled(0));
+    harness.model.follow_history(3);
+    // A new edit after the undo drops the redo.
+    harness.model.follow_history(9);
+    assert!(harness.model.attached.is_empty());
+    assert!(!harness.model.is_handled(0));
+}
+
+#[test]
+fn the_layout_reads_old_and_json_values() {
+    assert_eq!(Layout::parse(None), Layout { columns: false, show_base: false, show_base_at_top: true });
+    assert!(Layout::parse(Some("columns")).columns);
+    let layout = Layout { columns: false, show_base: true, show_base_at_top: false };
+    assert_eq!(Layout::parse(Some(&layout.to_json())), layout);
+}
+
+/// mapping.test.ts `createDocumentRangeMap`: equal lengths ("lines:columns") and mapped pairs of lengths.
+fn document_range_map(items: &[(&str, Option<&str>)]) -> DocumentRangeMap {
+    let length = |text: &str| -> (usize, usize) {
+        let (lines, columns) = text.split_once(':').unwrap();
+        (lines.parse().unwrap(), columns.parse().unwrap())
+    };
+    let add = |a: (usize, usize), b: (usize, usize)| if b.0 == 0 { (a.0, a.1 + b.1) } else { (a.0 + b.0, b.1) };
+    let position = |length: (usize, usize)| (length.0 + 1, length.1 + 1);
+    let (mut last1, mut last2) = ((0, 0), (0, 0));
+    let mut mappings = Vec::new();
+    for (first, second) in items {
+        let length1 = length(first);
+        let length2 = second.map_or(length1, length);
+        if second.is_some() {
+            mappings.push(PosMapping { input: (position(last1), position(add(last1, length1))), output: (position(last2), position(add(last2, length2))) });
+        }
+        last1 = add(last1, length1);
+        last2 = add(last2, length2);
+    }
+    DocumentRangeMap(mappings)
+}
+
+fn mapping_text(mapping: PosMapping) -> String {
+    let range = |(start, end): ((usize, usize), (usize, usize))| format!("[{}:{}, {}:{})", start.0, start.1, end.0, end.1);
+    format!("{} -> {}", range(mapping.input), range(mapping.output))
+}
+
+#[test]
+fn document_range_map_projects_positions() {
+    let map = document_range_map(&[("1:3", None), ("0:2", Some("0:3")), ("1:1", None), ("1:2", Some("3:3")), ("0:2", None), ("0:2", Some("0:3"))]);
+    assert_eq!(map.0.iter().map(|mapping| mapping_text(*mapping)).collect::<Vec<_>>(), ["[2:4, 2:6) -> [2:4, 2:7)", "[3:2, 4:3) -> [3:2, 6:4)", "[4:5, 4:7) -> [6:6, 6:9)"]);
+    let cases = [
+        ((1, 1), "[1:1, 1:1) -> [1:1, 1:1)"),
+        ((2, 3), "[2:3, 2:3) -> [2:3, 2:3)"),
+        ((2, 4), "[2:4, 2:6) -> [2:4, 2:7)"),
+        ((2, 5), "[2:4, 2:6) -> [2:4, 2:7)"),
+        ((2, 6), "[2:6, 2:6) -> [2:7, 2:7)"),
+        ((2, 7), "[2:7, 2:7) -> [2:8, 2:8)"),
+        ((3, 1), "[3:1, 3:1) -> [3:1, 3:1)"),
+        ((3, 2), "[3:2, 4:3) -> [3:2, 6:4)"),
+        ((4, 2), "[3:2, 4:3) -> [3:2, 6:4)"),
+        ((4, 3), "[4:3, 4:3) -> [6:4, 6:4)"),
+        ((4, 4), "[4:4, 4:4) -> [6:5, 6:5)"),
+        ((4, 5), "[4:5, 4:7) -> [6:6, 6:9)"),
+    ];
+    for (position, expected) in cases {
+        assert_eq!(mapping_text(map.project(position)), expected, "{position:?}");
+    }
+}

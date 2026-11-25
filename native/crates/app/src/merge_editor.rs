@@ -32,15 +32,20 @@ pub struct MergeInput {
     pub model: Option<MergeModel>,
     /// mergeEditorInputModel.ts `resetResult`: the result had conflict markers when the editor opened.
     pub reset_pending: bool,
-    /// The result model's view zones above the ranges' action rows: view zone id and range index.
-    pub placed_zones: Vec<(u32, usize)>,
+    /// The result model's view zones (action rows and spacers) as placed: view zone id and zone.
+    pub placed_zones: Vec<(u32, Zone)>,
     /// viewModel.ts `manuallySetActiveModifiedBaseRange`, else the range at the result's cursor.
     pub active_range: Option<usize>,
+    /// `getInitialResultValue`: the result's lines when the editor opened.
+    pub initial_result: Vec<String>,
+    /// The input `mergeEditor.toggleBetweenInputs` focused last.
+    pub focused_input: Option<Input>,
 }
 
 impl MergeInput {
-    pub fn new(base: Side, input1: InputData, input2: InputData, result: Side, reset_pending: bool) -> Self {
-        MergeInput { base, input1, input2, result, model: None, reset_pending, placed_zones: Vec::new(), active_range: None }
+    pub fn new(base: Side, input1: InputData, input2: InputData, result: Side, initial_result: Vec<String>) -> Self {
+        let reset_pending = initial_result.iter().any(|line| line.starts_with("<<<<<<<"));
+        MergeInput { base, input1, input2, result, model: None, reset_pending, placed_zones: Vec::new(), active_range: None, initial_result, focused_input: None }
     }
 
     /// `MergeEditorInput.getName`.
@@ -169,6 +174,10 @@ pub struct MergeModel {
     pub handled: Vec<(bool, bool)>,
     pub result_diffs: Vec<LineRangeMapping>,
     pub result_version: Option<u32>,
+    /// viewModel.ts `AttachedHistory`: the result's alternative version id after each `set_state` edit, the range
+    /// and its handled states before; undoing the edit restores them, redoing it handles the range again.
+    pub attached: Vec<(u32, usize, (bool, bool))>,
+    pub alternative_version_id: u32,
 }
 
 /// mergeEditor's `MergeDiffComputer`: no whitespace trimming, no time limit, no moves.
@@ -185,7 +194,7 @@ impl MergeModel {
             .map(|alignment| ModifiedBaseRange { base: alignment.input, input1: alignment.output1, input2: alignment.output2, input1_diffs: alignment.mappings1, input2_diffs: alignment.mappings2 })
             .collect();
         let count = ranges.len();
-        MergeModel { versions, base, input1, input2, ranges, accepted: vec![State::Base; count], handled: vec![(false, false); count], result_diffs: Vec::new(), result_version: None }
+        MergeModel { versions, base, input1, input2, ranges, accepted: vec![State::Base; count], handled: vec![(false, false); count], result_diffs: Vec::new(), result_version: None, attached: Vec::new(), alternative_version_id: 0 }
     }
 
     fn lines(&self, input: Input) -> &[String] {
@@ -371,6 +380,170 @@ impl MergeModel {
         LineEdit { range: self.result_line_range(reverted), lines }
     }
 
+    /// `pushAttachedHistoryElement` for the `set_state` edit that left the result at `alternative_version_id`.
+    pub fn attach(&mut self, alternative_version_id: u32, index: usize, handled_before: (bool, bool)) {
+        self.attached.push((alternative_version_id, index, handled_before));
+        self.alternative_version_id = alternative_version_id;
+    }
+
+    /// `AttachedHistory`'s content change listener: an undo below an attached edit restores its range's handled
+    /// states, a redo past it handles the range again, a new edit drops the ones it can no longer redo. A new edit's
+    /// alternative version id is above every recorded one, a redo's is one of them.
+    pub fn follow_history(&mut self, alternative_version_id: u32) {
+        let previous = std::mem::replace(&mut self.alternative_version_id, alternative_version_id);
+        if alternative_version_id < previous {
+            for &(id, index, before) in self.attached.iter().rev() {
+                if alternative_version_id < id && id <= previous {
+                    self.handled[index] = before;
+                }
+            }
+        } else if alternative_version_id > previous {
+            let newest = self.attached.iter().map(|item| item.0).max().unwrap_or(0);
+            if alternative_version_id > newest {
+                self.attached.retain(|item| item.0 <= previous);
+                return;
+            }
+            for &(id, index, _) in &self.attached {
+                if previous < id && id <= alternative_version_id {
+                    self.handled[index] = (true, true);
+                }
+            }
+        }
+    }
+
+    /// conflictActions.ts: a range shows actions when it conflicts, is unhandled or non-conflicting changes show.
+    pub fn shows_actions(&self, index: usize, show_non_conflicting: bool) -> bool {
+        self.ranges[index].is_conflicting() || show_non_conflicting || !self.is_handled(index)
+    }
+
+    /// viewZones.ts `computeViewZones`: the action zones above each range and the spacers that line the inputs
+    /// (and base, and result in the column layout) up; `inputs_empty` tells a range without input actions.
+    pub fn view_zones(&self, options: ZoneOptions, inputs_empty: impl Fn(usize) -> bool) -> ViewZones {
+        let mut zones = ViewZones::default();
+        let mut added = [0isize; 4];
+        let delta = |diff: Option<&LineRangeMapping>| diff.map_or(0, |diff| diff.modified.end as isize - diff.original.end as isize);
+        let mut last_range: Option<usize> = None;
+        let mut last_result_diff: Option<&LineRangeMapping> = None;
+        for (left, rights) in self.join_result_diffs() {
+            if let Some(index) = left.filter(|&index| self.shows_actions(index, options.show_non_conflicting)) {
+                let range = &self.ranges[index];
+                if options.align_result || !inputs_empty(index) {
+                    zones.input1.push(Zone { after_line: range.input1.start - 1, kind: ZoneKind::Actions(index) });
+                    zones.input2.push(Zone { after_line: range.input2.start - 1, kind: ZoneKind::Actions(index) });
+                    if options.align_base {
+                        zones.base.push(Zone { after_line: range.base.start - 1, kind: ZoneKind::Placeholder });
+                    }
+                }
+                let after_line = (range.base.start as isize + delta(last_result_diff) - 1).max(0) as usize;
+                zones.result.push(Zone { after_line, kind: ZoneKind::Actions(index) });
+            }
+            if let Some(last) = rights.last() {
+                last_result_diff = Some(last);
+            }
+            let alignments: Vec<[Option<isize>; 4]> = match left {
+                Some(index) => {
+                    last_range = Some(index);
+                    let mut alignments: Vec<[Option<isize>; 4]> = self.alignments(index).into_iter().map(|(input1, base, input2)| [input1, Some(base), input2, None]).collect();
+                    // viewZones.ts "This is a total hack": the range's end lines up with its end in the result.
+                    alignments.last_mut().expect("the final alignment")[3] = Some(self.ranges[index].base.end as isize + delta(last_result_diff));
+                    alignments
+                }
+                None => {
+                    let last = rights.last().expect("a row without range has result diffs");
+                    let base_end = last.original.end as isize;
+                    let shift = |input: Input| last_range.map_or(0, |index| self.ranges[index].range(input).end as isize - self.ranges[index].base.end as isize);
+                    vec![[Some(base_end + shift(Input::One)), Some(base_end), Some(base_end + shift(Input::Two)), Some(last.modified.end as isize)]]
+                }
+            };
+            for alignment in alignments {
+                let [input1, base, input2, result] = alignment;
+                if !options.align_base && (input1.is_none() || input2.is_none()) {
+                    continue;
+                }
+                let base = base.expect("every alignment has a base line");
+                let shifted = |line: Option<isize>, side: usize| line.map_or(-1, |line| line + added[side]);
+                let (input1_, input2_, base_, result_) = (shifted(input1, 0), shifted(input2, 1), base + added[2], shifted(result, 3));
+                let max = [if options.align_base { base_ } else { 0 }, input1_, input2_, if options.align_result { result_ } else { 0 }].into_iter().max().expect("four values");
+                let mut spacer = |line: isize, shifted: isize, side: usize, zones: &mut Vec<Zone>| {
+                    let lines = max - shifted;
+                    if lines > 0 {
+                        zones.push(Zone { after_line: (line - 1).max(0) as usize, kind: ZoneKind::Spacer(lines as usize) });
+                        added[side] += lines;
+                    }
+                };
+                if let Some(input1) = input1 {
+                    spacer(input1, input1_, 0, &mut zones.input1);
+                }
+                if let Some(input2) = input2 {
+                    spacer(input2, input2_, 1, &mut zones.input2);
+                }
+                if options.align_base {
+                    spacer(base, base_, 2, &mut zones.base);
+                }
+                if let (true, Some(result)) = (options.align_result, result) {
+                    spacer(result, result_, 3, &mut zones.result);
+                }
+            }
+        }
+        zones
+    }
+
+    /// utils.ts `join` of the ranges and the result diffs touching them: result diffs before a range form a row of
+    /// their own; those after the last range are left out, as upstream.
+    fn join_result_diffs(&self) -> Vec<(Option<usize>, Vec<&LineRangeMapping>)> {
+        let mut rows = Vec::new();
+        let mut diffs = self.result_diffs.iter().peekable();
+        for (index, range) in self.ranges.iter().enumerate() {
+            let mut skipped = Vec::new();
+            while let Some(diff) = diffs.next_if(|diff| !range.base.intersects_or_touches(&diff.original) && diff.original.start < range.base.start) {
+                skipped.push(diff);
+            }
+            if !skipped.is_empty() {
+                rows.push((None, skipped));
+            }
+            let mut touching = Vec::new();
+            while let Some(diff) = diffs.next_if(|diff| range.base.intersects_or_touches(&diff.original)) {
+                touching.push(diff);
+            }
+            rows.push((Some(index), touching));
+        }
+        rows
+    }
+
+    /// lineAlignment.ts `getAlignments`: (input 1, base, input 2) lines of a range that show at one height; an
+    /// input is `None` where only the other one lines up with base.
+    pub fn alignments(&self, index: usize) -> Vec<(Option<isize>, isize, Option<isize>)> {
+        let range = &self.ranges[index];
+        let exclusive = |range: LineRange| ((range.start, 1), (range.end, 1));
+        let equal1 = equal_range_mappings(range.diffs(Input::One), exclusive(range.base), exclusive(range.input1));
+        let equal2 = equal_range_mappings(range.diffs(Input::Two), exclusive(range.base), exclusive(range.input2));
+        let line = |value: usize| value as isize;
+        let mut result: Vec<(Option<isize>, isize, Option<isize>)> = vec![(Some(line(range.input1.start) - 1), line(range.base.start) - 1, Some(line(range.input2.start) - 1))];
+        let shares = |a: &(Option<isize>, isize, Option<isize>), b: &(Option<isize>, isize, Option<isize>)| (a.0.is_some() && a.0 == b.0) || a.1 == b.1 || (a.2.is_some() && a.2 == b.2);
+        let full = |a: &(Option<isize>, isize, Option<isize>)| a.0.is_some() && a.2.is_some();
+        for common in split_up_common(&equal1, &equal2) {
+            let alignment = (common.output1.map(|pos| line(pos.0)), line(common.input.0), common.output2.map(|pos| line(pos.0)));
+            let should_add = if full(&alignment) {
+                let is_new = !result.iter().any(|existing| full(existing) && shares(existing, &alignment));
+                if is_new {
+                    result.retain(|existing| !shares(existing, &alignment));
+                }
+                is_new
+            } else {
+                !result.iter().any(|existing| shares(existing, &alignment))
+            };
+            if should_add {
+                result.push(alignment);
+            } else if common.length > (1, 0) {
+                result.push((common.output1.map(|pos| line(pos.0) + 1), line(common.input.0) + 1, common.output2.map(|pos| line(pos.0) + 1)));
+            }
+        }
+        let last = (Some(line(range.input1.end)), line(range.base.end), Some(line(range.input2.end)));
+        result.retain(|existing| existing.0 != last.0 && existing.1 != last.1 && existing.2 != last.2);
+        result.push(last);
+        result
+    }
+
     /// `setInputHandled` (Ignore).
     pub fn set_input_handled(&mut self, index: usize, input: Input) {
         match input {
@@ -414,10 +587,190 @@ impl MergeModel {
     /// `DocumentLineRangeMap.project` of result to base, then base to `input`: the input line shown beside a
     /// result line, for the panes' scroll synchronization.
     pub fn input_line_for_result_line(&self, input: Input, result_line: usize) -> usize {
-        let base_line = project_line(self.result_diffs.iter().map(|diff| (diff.modified, diff.original)), result_line);
+        let base_line = self.base_line_for_result_line(result_line);
         let diffs = self.ranges.iter().flat_map(|range| range.diffs(input));
         project_line(diffs.map(|diff| (diff.original, diff.modified)), base_line)
     }
+
+    /// `resultBaseMapping.project`: the base line shown beside a result line.
+    pub fn base_line_for_result_line(&self, result_line: usize) -> usize {
+        project_line(self.result_diffs.iter().map(|diff| (diff.modified, diff.original)), result_line)
+    }
+}
+
+/// The layout options `computeViewZones` reads.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ZoneOptions {
+    pub align_result: bool,
+    pub align_base: bool,
+    pub show_non_conflicting: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ZoneKind {
+    /// `CommandViewZone`: the action row of a range.
+    Actions(usize),
+    /// `Spacer`: lines of diagonal fill.
+    Spacer(usize),
+    /// `Placeholder`: 16px in base for the inputs' action rows.
+    Placeholder,
+}
+
+/// A view zone below 1-based `after_line` (0: above the first line).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Zone {
+    pub after_line: usize,
+    pub kind: ZoneKind,
+}
+
+/// `MergeEditorViewZones`.
+#[derive(Debug, Default, PartialEq)]
+pub struct ViewZones {
+    pub input1: Vec<Zone>,
+    pub input2: Vec<Zone>,
+    pub base: Vec<Zone>,
+    pub result: Vec<Zone>,
+}
+
+/// mergeEditor.ts `IMergeEditorLayout`, kept in profile storage under `mergeEditor/layout`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Layout {
+    pub columns: bool,
+    pub show_base: bool,
+    pub show_base_at_top: bool,
+}
+
+pub const LAYOUT_KEY: &str = "mergeEditor/layout";
+pub const SHOW_NON_CONFLICTING_KEY: &str = "mergeEditor/showNonConflictingChanges";
+
+impl Layout {
+    /// `MergeEditorLayoutStore`: "mixed" or "columns" from older versions, else the JSON layout; mixed by default.
+    pub fn parse(stored: Option<&str>) -> Layout {
+        let default = Layout { columns: false, show_base: false, show_base_at_top: true };
+        match stored {
+            None | Some("mixed") => default,
+            Some("columns") => Layout { columns: true, ..default },
+            Some(json) => {
+                let Ok(value) = serde_json::from_str::<Value>(json) else { return default };
+                Layout {
+                    columns: value["kind"] == "columns",
+                    show_base: value["showBase"] == true,
+                    show_base_at_top: value["showBaseAtTop"] != false,
+                }
+            }
+        }
+    }
+
+    pub fn to_json(self) -> String {
+        json!({ "kind": if self.columns { "columns" } else { "mixed" }, "showBase": self.show_base, "showBaseAtTop": self.show_base_at_top }).to_string()
+    }
+}
+
+type Pos = (usize, usize);
+
+/// mapping.ts `RangeMapping` of 1-based (line, column) positions: `[input start, input end)` to output.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PosMapping {
+    pub input: (Pos, Pos),
+    pub output: (Pos, Pos),
+}
+
+/// mapping.ts `DocumentRangeMap`: a monotonous mapping of ranges in one document to another, with holes.
+pub struct DocumentRangeMap(pub Vec<PosMapping>);
+
+impl DocumentRangeMap {
+    /// The character changes of line mappings (`rangeMappings`, whole lines without them).
+    pub fn of(diffs: &[LineRangeMapping]) -> Self {
+        let position = |position: diff::Position| (position.line, position.column);
+        DocumentRangeMap(diffs.iter().flat_map(inner_changes).map(|change| PosMapping { input: (position(change.original.start), position(change.original.end)), output: (position(change.modified.start), position(change.modified.end)) }).collect())
+    }
+
+    pub fn reverse(&self) -> Self {
+        DocumentRangeMap(self.0.iter().map(|mapping| PosMapping { input: mapping.output, output: mapping.input }).collect())
+    }
+
+    /// `project`: the mapping containing `position`, else the empty one it moves to past the last mapping before it.
+    pub fn project(&self, position: Pos) -> PosMapping {
+        let Some(last) = self.0.iter().rev().find(|mapping| mapping.input.0 <= position) else { return PosMapping { input: (position, position), output: (position, position) } };
+        if position < last.input.1 {
+            return *last;
+        }
+        let output = add_length(last.output.1, length_between(last.input.1, position));
+        PosMapping { input: (position, position), output: (output, output) }
+    }
+
+    /// `projectRange`: the output range of a range's projected start and end.
+    pub fn project_range(&self, range: (Pos, Pos)) -> (Pos, Pos) {
+        let (start, end) = (self.project(range.0), self.project(range.1));
+        (start.output.0.min(end.output.0), start.output.1.max(end.output.1))
+    }
+}
+
+/// rangeUtils.ts `lengthBetweenPositions`, as (lines, columns).
+fn length_between(start: Pos, end: Pos) -> (usize, usize) {
+    if start.0 == end.0 { (0, end.1 - start.1) } else { (end.0 - start.0, end.1 - 1) }
+}
+
+/// rangeUtils.ts `addLength`.
+fn add_length(position: Pos, length: (usize, usize)) -> Pos {
+    if length.0 == 0 { (position.0, position.1 + length.1) } else { (position.0 + length.0, length.1 + 1) }
+}
+
+/// lineAlignment.ts `toEqualRangeMappings`: the unchanged stretches between a side's character changes, as (base
+/// start, base end, input start).
+fn equal_range_mappings(diffs: &[LineRangeMapping], base: (Pos, Pos), input: (Pos, Pos)) -> Vec<(Pos, Pos, Pos)> {
+    let mut result = Vec::new();
+    let (mut base_start, mut input_start) = (base.0, input.0);
+    let position = |position: diff::Position| (position.line, position.column);
+    for change in diffs.iter().flat_map(inner_changes) {
+        if base_start != position(change.original.start) {
+            result.push((base_start, position(change.original.start), input_start));
+        }
+        base_start = position(change.original.end);
+        input_start = position(change.modified.end);
+    }
+    if base_start != base.1 {
+        result.push((base_start, base.1, input_start));
+    }
+    result
+}
+
+/// lineAlignment.ts `CommonRangeMapping`.
+struct CommonRange {
+    input: Pos,
+    length: (usize, usize),
+    output1: Option<Pos>,
+    output2: Option<Pos>,
+}
+
+/// lineAlignment.ts `splitUpCommonEqualRangeMappings`: the base stretches unchanged in one or both inputs.
+fn split_up_common(equal1: &[(Pos, Pos, Pos)], equal2: &[(Pos, Pos, Pos)]) -> Vec<CommonRange> {
+    let mut events: Vec<(usize, bool, Pos, Pos)> = Vec::new();
+    for (side, mappings) in [(0, equal1), (1, equal2)] {
+        for &(base_start, base_end, output_start) in mappings {
+            let output_end = add_length(output_start, length_between(base_start, base_end));
+            events.push((side, true, base_start, output_start));
+            events.push((side, false, base_end, output_end));
+        }
+    }
+    events.sort_by_key(|event| event.2);
+    let mut result = Vec::new();
+    let mut starts: [Option<Pos>; 2] = [None, None];
+    let mut last_input: Option<Pos> = None;
+    for (side, start, input, output) in events {
+        if let Some(last) = last_input.filter(|_| starts.iter().any(Option::is_some)) {
+            let length = length_between(last, input);
+            if length != (0, 0) {
+                result.push(CommonRange { input: last, length, output1: starts[0], output2: starts[1] });
+                for start in starts.iter_mut().flatten() {
+                    *start = add_length(*start, length);
+                }
+            }
+        }
+        starts[side] = start.then_some(output);
+        last_input = Some(input);
+    }
+    result
 }
 
 /// `DocumentLineRangeMap.project`, the start of the line's mapped range.
@@ -576,6 +929,12 @@ fn text_in_range(lines: &[String], start: diff::Position, end: diff::Position) -
         }
     }
     text
+}
+
+/// `getValueInRange` of 1-based (line, column) positions.
+pub fn text_of(lines: &[String], range: (Pos, Pos)) -> String {
+    let position = |(line, column): Pos| diff::Position { line, column };
+    text_in_range(lines, position(range.0), position(range.1))
 }
 
 /// editing.ts `LineEdits.toEdits`: the text edit of a line edit on a model of `lines`, 0-based.

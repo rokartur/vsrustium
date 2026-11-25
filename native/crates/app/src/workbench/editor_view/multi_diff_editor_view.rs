@@ -29,13 +29,20 @@ use crate::workbench::host_requests::uri_parts;
 const MULTI_DIFF_EDITOR_ID: &str = "multiDiffEditor";
 /// diffEditorItemTemplate.ts `binaryFilePlaceholderContentHeight`.
 const BINARY_PLACEHOLDER_HEIGHT: f32 = 100.;
+/// common/multiDiffEditor.ts `multiDiffEditorExperimentalFileListSetting`, off by default.
+const FILE_LIST_SETTING: &str = "multiDiffEditor.experimental.fileList";
+/// common/multiDiffEditor.ts `multiDiffEditorFileListHiddenStorageKey` (StorageScope.PROFILE).
+const FILE_LIST_HIDDEN_KEY: &str = "multiDiffEditor.fileListHidden";
+/// multiDiffEditorWithFileListWidget.ts `DEFAULT_FILE_LIST_WIDTH`.
+const FILE_LIST_WIDTH: f32 = 260.;
 
 /// actions.ts `MenuId.EditorTitle` items of the multi diff editor: command, icon, title, order and `when`.
-const TITLE_ACTIONS: [(&str, &str, &str, f64, &str); 4] = [
+const TITLE_ACTIONS: [(&str, &str, &str, f64, &str); 5] = [
     ("multiDiffEditor.goToPreviousChange", "arrow-up", "Go to Previous Change", 1., "activeEditor == 'multiDiffEditor'"),
     ("multiDiffEditor.goToNextChange", "arrow-down", "Go to Next Change", 2., "activeEditor == 'multiDiffEditor'"),
     ("multiDiffEditor.collapseAll", "collapse-all", "Collapse All Diffs", 100., "activeEditor == 'multiDiffEditor' && !multiDiffEditorAllCollapsed"),
     ("multiDiffEditor.expandAll", "expand-all", "Expand All Diffs", 100., "activeEditor == 'multiDiffEditor' && multiDiffEditorAllCollapsed"),
+    ("multiDiffEditor.toggleFileList", "list-flat", "Toggle Files", 100001., "activeEditor == 'multiDiffEditor' && config.multiDiffEditor.experimental.fileList && multiDiffEditorFileListAvailable"),
 ];
 
 impl Workbench {
@@ -61,11 +68,69 @@ impl Workbench {
             });
         }
         self.commands.register("multiDiffEditor.goToFile", |workbench, args, window, cx| workbench.go_to_multi_diff_file(args, window, cx));
+        // actions.ts `ToggleFileListAction` (`toggleMultiDiffEditorFileList`) and `FocusFileListAction`, which shows a hidden list.
+        // shortcut: Focus File List shows the list without moving keyboard focus into it; until the list takes keyboard navigation.
+        for (id, toggle) in [("multiDiffEditor.toggleFileList", true), ("multiDiffEditor.focusFileList", false)] {
+            self.commands.register(id, move |workbench, _, _, cx| {
+                if workbench.editors.active_multi_diff().is_none() || !workbench.multi_diff_file_list_enabled() {
+                    return Outcome::done();
+                }
+                let mut storage = workbench.profile_storage.lock().unwrap();
+                let hidden = storage.get(FILE_LIST_HIDDEN_KEY) == Some("true");
+                match (hidden, toggle) {
+                    (true, _) => storage.delete(FILE_LIST_HIDDEN_KEY),
+                    (false, true) => storage.set(FILE_LIST_HIDDEN_KEY, "true".into()),
+                    (false, false) => {}
+                }
+                drop(storage);
+                cx.notify();
+                Outcome::done()
+            });
+        }
+        self.commands.register("multiDiffEditor.openLayoutDebug", |workbench, _, _, cx| {
+            workbench.open_multi_diff_layout_debug(cx);
+            Outcome::done()
+        });
+    }
+
+    fn multi_diff_file_list_enabled(&self) -> bool {
+        self.setting(FILE_LIST_SETTING) == json!(true)
+    }
+
+    /// `observableMultiDiffEditorFileListVisible`: the setting is on and the user has not hidden the list.
+    fn multi_diff_file_list_visible(&self) -> bool {
+        self.multi_diff_file_list_enabled() && self.profile_storage.lock().unwrap().get(FILE_LIST_HIDDEN_KEY) != Some("true")
+    }
+
+    /// actions.ts `OpenMultiDiffEditorLayoutDebugAction`: an `inmemory` jsonl model of the layout state, opened pinned.
+    // shortcut: one snapshot line, where upstream's model appends a line per layout change; until the layout is observable.
+    fn open_multi_diff_layout_debug(&mut self, cx: &mut Context<Self>) {
+        let Some(input) = self.editors.active_multi_diff() else { return };
+        let side_by_side = self.diff_side_by_side();
+        let line_height = self.multi_diff_line_height();
+        let mut offset = 0.;
+        let mut items = Vec::new();
+        for file in &input.files {
+            let height = self.multi_diff_file_height(file, side_by_side, line_height);
+            let uri = |side: &Option<Side>| side.as_ref().map(|side| crate::editor::uri_string(&side.scheme, &side.path));
+            let label = file.label_side().map(|side| split_query(&side.scheme, &side.path).0.to_string_lossy().into_owned());
+            items.push(json!({ "label": label, "originalUri": uri(&file.original), "modifiedUri": uri(&file.modified), "collapsed": file.collapsed, "verticalState": { "contentHeight": height, "itemViewportOffset": offset - input.scroll_top } }));
+            offset += height;
+        }
+        let state = json!({ "scrollTop": input.scroll_top, "viewHeight": input.view_height.get(), "contentHeight": offset, "items": items });
+        let id = self.editors.editors.len() + self.editors.models.len() + 1;
+        let path = format!("/multi-diff-editor-layout-{id}.jsonl");
+        let document = TextDocument::from_text("inmemory", Path::new(&path), &format!("{state}\n"), "utf8".into(), Some("jsonl"), &self.languages, &self.settings.lock().unwrap());
+        self.editors.open(document, false);
+        self.editors_changed(cx);
     }
 
     /// editorCommands.ts `_workbench.openMultiDiffEditor`: `{ multiDiffSourceUri?, title, resources?, reveal? }`.
     fn open_multi_diff_editor(&mut self, args: Vec<Value>, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
         let options = args.first().cloned().unwrap_or(Value::Null);
+        if options["resources"].is_null() && options["multiDiffSourceUri"]["scheme"] == "scm-history-item" {
+            return self.open_scm_history_item_multi_diff(options, window, cx);
+        }
         let resources: Vec<(Value, Value, Value)> = options["resources"].as_array().into_iter().flatten().map(|resource| (resource["originalUri"].clone(), resource["modifiedUri"].clone(), Value::Null)).collect();
         let reveal = (options["reveal"]["modifiedUri"].clone(), options["reveal"]["range"]["startLineNumber"].as_u64().map(|line| line as usize));
         let input = match self.multi_diff_input(&options["multiDiffSourceUri"], &options["title"], resources) {
@@ -101,6 +166,30 @@ impl Workbench {
         };
         input.context_keys = context_keys;
         self.open_multi_diff_resources(input, (Value::Null, None), window, cx)
+    }
+
+    /// scmMultiDiffSourceResolver.ts `ScmHistoryItemResolver`: a `scm-history-item` source's query names the repository
+    /// (`scm<handle>`), the history item and its parent; the item's changes are the files, each opening its modified URI.
+    // shortcut: no `goToFileEditorTitle`, Open File shows the modified resource's own name; until editors take a label.
+    fn open_scm_history_item_multi_diff(&mut self, options: Value, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
+        let query: Value = options["multiDiffSourceUri"]["query"].as_str().and_then(|query| serde_json::from_str(query).ok()).unwrap_or(Value::Null);
+        let handle = query["repositoryId"].as_str().and_then(|id| id.strip_prefix("scm")).and_then(|handle| handle.parse::<u64>().ok());
+        let (Some(handle), Some(item)) = (handle, query["historyItemId"].as_str()) else { return Outcome::Ready(Err(exthost::main_thread::serialized_error("Invalid scm-history-item source"))) };
+        let call = self.host.call_cancellable("ExtHostSCM", "$provideHistoryItemChanges", vec![json!(handle), json!(item), query["historyItemParentId"].clone()]);
+        let (sender, receiver) = futures::channel::oneshot::channel();
+        cx.spawn_in(window, async move |workbench, cx| {
+            let changes = call.await.ok().and_then(Result::ok).unwrap_or(Value::Null);
+            let resources: Vec<(Value, Value, Value)> = changes.as_array().into_iter().flatten().map(|change| (change["originalUri"].clone(), change["modifiedUri"].clone(), change["modifiedUri"].clone())).collect();
+            let reveal = (options["reveal"]["modifiedUri"].clone(), options["reveal"]["range"]["startLineNumber"].as_u64().map(|line| line as usize));
+            let result = workbench.update_in(cx, |workbench, window, cx| {
+                let input = workbench.multi_diff_input(&options["multiDiffSourceUri"], &options["title"], resources)?;
+                drop(workbench.open_multi_diff_resources(input, reveal, window, cx));
+                Ok(Value::Null)
+            });
+            drop(sender.send(result.unwrap_or_else(|_| Err(exthost::main_thread::serialized_error("Canceled")))));
+        })
+        .detach();
+        Outcome::Pending(receiver)
     }
 
     /// The input of a source URI, a title and (original, modified, go to file) URIs, each possibly null.
@@ -212,6 +301,11 @@ impl Workbench {
         let Some(input) = self.editors.active_multi_diff() else { return };
         context.insert("activeEditor".into(), json!(MULTI_DIFF_EDITOR_ID));
         context.insert("multiDiffEditorAllCollapsed".into(), json!(input.all_collapsed()));
+        let enabled = self.multi_diff_file_list_enabled();
+        context.insert(format!("config.{FILE_LIST_SETTING}"), json!(enabled));
+        context.insert("multiDiffEditorFileListAvailable".into(), json!(enabled));
+        context.insert("multiDiffEditorFileListEnabled".into(), json!(self.multi_diff_file_list_visible()));
+        context.insert("multiDiffEditorFileListVisible".into(), json!(self.multi_diff_file_list_visible()));
     }
 
     fn active_multi_diff_mut(&mut self) -> Option<&mut MultiDiffInput> {
@@ -304,9 +398,66 @@ impl Workbench {
             .child(self.hover_target(gpui::SharedString::from(format!("{id}-hover")), HoverContent::Action { title, command }, HoverOptions::mouse()))
     }
 
-    /// The list: the files' visible rows and placeholders, the unchanged regions' placeholders over them (their bars
+    /// multiDiffEditorWithFileListWidget.ts: the diffs, with the file list right of them while it is visible.
+    pub(super) fn multi_diff_editor_body(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let list = self.multi_diff_list(window, cx);
+        let body = div().flex_1().min_h_0().flex().child(list);
+        match self.multi_diff_file_list_visible() {
+            true => body.child(self.multi_diff_file_list(cx)),
+            false => body,
+        }
+    }
+
+    /// multiDiffEditorFileList.ts in its default place right of the diffs: one row per file, its label and status
+    /// letter; a click reveals the file.
+    // shortcut: a flat list at the default width, without the tree view mode, the left position or a sash; until requested.
+    fn multi_diff_file_list(&self, cx: &mut Context<Self>) -> gpui::Stateful<Div> {
+        let input = self.editors.active_multi_diff().expect("drawn for the active multi diff editor");
+        let (foreground, description) = (self.color("foreground"), self.color("descriptionForeground"));
+        let active = input.cursor.map(|cursor| cursor.0);
+        let rows = input.files.iter().enumerate().map(|(index, file)| {
+            let (letter, color) = match file.status() {
+                Some("A") => ("A", "gitDecoration.addedResourceForeground"),
+                Some("D") => ("D", "gitDecoration.deletedResourceForeground"),
+                Some("R") => ("R", "gitDecoration.modifiedResourceForeground"),
+                _ => ("M", "gitDecoration.modifiedResourceForeground"),
+            };
+            div()
+                .id(("multi-diff-file-list-item", index))
+                .h(px(22.))
+                .px(px(8.))
+                .flex()
+                .items_center()
+                .cursor_pointer()
+                .when(active == Some(index), |row| row.bg(self.color("list.inactiveSelectionBackground")))
+                .hover(|row| row.bg(self.color("list.hoverBackground")))
+                .child(div().flex_1().min_w_0().overflow_hidden().children(file.label_side().map(|side| self.multi_diff_label(side, file.modified.is_none(), foreground, description))))
+                .child(div().flex_none().ml(px(8.)).text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).text_color(self.color(color)).child(letter))
+                .on_click(cx.listener(move |workbench, _, _, cx| {
+                    let Some(input) = workbench.active_multi_diff_mut() else { return };
+                    if index < input.files.len() {
+                        input.reveal(index, None);
+                        workbench.scroll_multi_diff_to(index, None);
+                        cx.notify();
+                    }
+                }))
+        });
+        div()
+            .id("multi-diff-file-list")
+            .w(px(FILE_LIST_WIDTH))
+            .flex_none()
+            .h_full()
+            .overflow_y_scroll()
+            .font_family(".SystemUIFont")
+            .text_size(px(13.))
+            .text_color(foreground)
+            .bg(self.color("multiDiffEditor.background"))
+            .children(rows)
+    }
+
+    /// The diffs: the files' visible rows and placeholders, the unchanged regions' placeholders over them (their bars
     /// reach into the lines around), then the headers on top, each stuck to the top while its file scrolls under it.
-    pub(super) fn multi_diff_editor_body(&self, window: &mut Window, cx: &mut Context<Self>) -> gpui::Stateful<Div> {
+    fn multi_diff_list(&self, window: &mut Window, cx: &mut Context<Self>) -> gpui::Stateful<Div> {
         let id = self.editors.active_tab().expect("drawn for the active tab").model_id;
         let input = &self.editors.multi_diffs[&id];
         let (part_width, view_height) = (self.diff_part_width.clone(), input.view_height.clone());
@@ -354,7 +505,8 @@ impl Workbench {
         div()
             .id("multi-diff-editor")
             .flex_1()
-            .min_h_0()
+            .min_w_0()
+            .h_full()
             .relative()
             .overflow_hidden()
             .bg(self.color("multiDiffEditor.background"))

@@ -77,4 +77,29 @@ fn open_merge_editor_resets_the_conflict_and_accepts_incoming(cx: &mut TestAppCo
     run(&workbench, cx, "mergeEditor.resetResultToBaseAndAutoMerge", Vec::new());
     let result = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document.lines.join("\n"));
     assert_eq!(result, "one\ntwo\nthree");
+
+    // viewModel.ts `AttachedHistory`: undoing an accept makes its conflict unhandled again.
+    run(&workbench, cx, "merge.goToNextUnhandledConflict", Vec::new());
+    run(&workbench, cx, "merge.toggleActiveConflictInput2", Vec::new());
+    assert_eq!(unhandled_after_frame(&workbench, cx), 0);
+    run(&workbench, cx, "undo", Vec::new());
+    assert_eq!(unhandled_after_frame(&workbench, cx), 1);
+    run(&workbench, cx, "redo", Vec::new());
+    assert_eq!(unhandled_after_frame(&workbench, cx), 0);
+
+    run(&workbench, cx, "merge.columnLayout", Vec::new());
+    run(&workbench, cx, "merge.showBase", Vec::new());
+    let context = workbench.update_in(cx, |workbench, window, _| workbench.key_context(window));
+    assert_eq!((&context["isMergeEditor"], &context["mergeEditorLayout"], &context["mergeEditorShowBase"]), (&json!(true), &json!("columns"), &json!(true)));
+
+    // Complete Merge without unhandled conflicts saves the result and closes the editor.
+    run(&workbench, cx, "mergeEditor.acceptMerge", Vec::new());
+    assert_eq!(std::fs::read_to_string(dir.join("result.txt")).unwrap(), "one\nTWO current\nthree");
+    assert!(workbench.read_with(cx, |workbench, _| workbench.editors.editors.is_empty()));
+}
+
+/// The unhandled conflicts after the next frame's `update_merge_editor`.
+fn unhandled_after_frame(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext) -> usize {
+    workbench.update(cx, |workbench, cx| workbench.update_merge_editor(cx));
+    workbench.read_with(cx, |workbench, _| workbench.editors.active_merge().unwrap().model.as_ref().unwrap().unhandled_count())
 }

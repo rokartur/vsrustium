@@ -329,7 +329,7 @@ impl Workbench {
             search_editor_widget: search_editor_widget::SearchEditorWidget::new(cx),
             webview_panels: Default::default(),
             scm: scm_view::ScmView::new(cx),
-            timeline: Default::default(),
+            timeline: timeline_view::TimelineView::new(cx),
             scm_graph: Default::default(),
             quick_diffs: Default::default(),
             github_clients: Default::default(),
@@ -856,7 +856,7 @@ impl Workbench {
                     .child(self.explorer_empty_area(cx)),
                 ).children(self.explorer_find_widget(window, cx))))
             .child(self.section_header("Outline", false, true))
-            .child(self.timeline_section(cx))
+            .child(self.timeline_section(window, cx))
             // The pane view is laid out 5px shorter than the side bar content.
             .child(div().h(px(5.)).flex_none())
     }

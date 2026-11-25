@@ -88,6 +88,8 @@ impl Workbench {
                 crate::output::OUTPUT_SCHEME => part.child(self.output_title_actions(window, cx)),
                 TERMINAL_SCHEME => part.child(self.terminal_title_actions(cx)).child(self.terminal_body(cx)),
                 MULTI_DIFF_EDITOR_SCHEME => part.child(self.multi_diff_editor_body(window, cx)),
+                // mergeEditor.ts: the merge editor has no breadcrumbs.
+                _ if self.editors.active_merge().is_some() => part,
                 _ => part.child(self.breadcrumbs(editor)),
             })
             .map(|part| match self.editors.active_diff() {
@@ -124,7 +126,9 @@ impl Workbench {
             })
             .children(self.editor_title_actions(window, cx))
             .child(self.icon("split-horizontal", 22., 16., icon_color).cursor_pointer())
-            .child(self.icon("ellipsis", 22., 16., icon_color).cursor_pointer());
+            .child(self.icon("ellipsis", 22., 16., icon_color).cursor_pointer().when(self.editors.active_merge().is_some(), |more| {
+                more.on_mouse_down(gpui::MouseButton::Left, cx.listener(|workbench, event: &gpui::MouseDownEvent, window, cx| workbench.show_merge_more_actions(event, window, cx)))
+            }));
         // The line under the strip (tabs-border-bottom) runs below the shoulders; the active fill covers it.
         let bottom_line = div().absolute().bottom_0().left_0().right_0().h(px(1.)).bg(self.connected_tab_border());
         // editortabscontrol.css: the whole title, tabs and their close buttons included, is cursor pointer.
@@ -146,6 +150,7 @@ impl Workbench {
         let mut actions = self.diff_title_actions(cx);
         let context = self.key_context(window);
         actions.extend(self.multi_diff_title_actions(&context, cx));
+        actions.extend(self.merge_title_actions(cx));
         let resource = self.editors.active().map(|editor| editor.document.uri()).into_iter().collect::<Vec<_>>();
         let foreground = self.color("icon.foreground");
         for item in self.menus.iter().filter(|item| item.menu == crate::menus::MenuId::EditorTitle && item.group == "navigation" && item.when.as_ref().is_none_or(|when| when.evaluate(&context))) {
@@ -183,7 +188,11 @@ impl Workbench {
         let title = match (self.editors.diffs.get(&editor.model_id), matches!(editor.document.scheme.as_str(), SEARCH_EDITOR_SCHEME | WEBVIEW_PANEL_SCHEME | TERMINAL_SCHEME | MULTI_DIFF_EDITOR_SCHEME)) {
             (Some(diff), _) => diff.title(|side| crate::quick_input::path_label(crate::editor::split_query(&side.scheme, &side.path).0, None)),
             (None, true) => self.editor_name(editor),
-            (None, false) => crate::quick_input::path_label(&editor.document.path, None),
+            // `MergeEditorInput` keeps `getTitle` of its result.
+            (None, false) => match self.editors.merges.get(&editor.model_id) {
+                Some(merge) => crate::quick_input::path_label(&merge.result.path, None),
+                None => crate::quick_input::path_label(&editor.document.path, None),
+            },
         };
         let content = if editor.preview { super::hover::HoverContent::Preview(title) } else { super::hover::HoverContent::Text(title) };
         self.hover_target(("tab-hover", index), content, super::hover::HoverOptions::mouse())

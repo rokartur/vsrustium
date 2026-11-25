@@ -300,6 +300,7 @@ impl Workbench {
             context.insert("activeEditor".into(), json!("workbench.editor.files"));
             self.insert_diff_editor_context(&mut context);
             self.insert_multi_diff_editor_context(&mut context);
+            self.insert_merge_editor_context(&mut context);
             // The port opens only files, never untitled editors (editorGroupView.ts).
             context.insert("activeEditorCanRevert".into(), json!(true));
             let readonly = self.active_editor_readonly().is_some();
@@ -349,6 +350,7 @@ impl Workbench {
         self.search_editor_context(window, &mut context);
         self.output_context(window, &mut context);
         self.terminal_context(window, &mut context);
+        self.timeline_context(window, &mut context);
         context
     }
 

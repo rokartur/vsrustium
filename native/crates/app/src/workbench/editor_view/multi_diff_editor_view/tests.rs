@@ -126,3 +126,38 @@ fn a_file_that_does_not_load_shows_the_binary_placeholder_and_reveal_scrolls_to_
     assert!(scroll_top > 140., "scrolled to {scroll_top}");
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[gpui::test]
+fn a_history_item_source_lists_its_changes_and_the_file_list_toggles(cx: &mut TestAppContext) {
+    let (dir, workbench, receiver, cx) = workbench_in("multi-diff-history", cx);
+    let (a, b) = (file_uri(&dir.join("a.txt")), file_uri(&dir.join("b.txt")));
+    let query = json!({ "repositoryId": "scm3", "historyItemId": "abc", "historyItemParentId": "def" }).to_string();
+    let options = json!({ "title": "abc - subject", "multiDiffSourceUri": { "scheme": "scm-history-item", "path": "/repo", "query": query } });
+    workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("_workbench.openMultiDiffEditor", vec![options], window, cx)));
+    cx.run_until_parked();
+    // ScmHistoryItemResolver: the repository's history provider answers with the item's changes.
+    let call = receiver.try_iter().find(|message| message.method == "$provideHistoryItemChanges").unwrap();
+    assert_eq!(call.args, [json!(3), json!("abc"), json!("def")]);
+    drop(call.reply.unwrap().send(Ok(json!([{ "uri": b, "originalUri": a, "modifiedUri": b }]))));
+    cx.run_until_parked();
+    let name = workbench.read_with(cx, |workbench, _| workbench.editor_name(&workbench.editors.editors[0]));
+    assert_eq!(name, "abc - subject (1 file)");
+
+    // The file list shows with `multiDiffEditor.experimental.fileList` until Toggle Files hides it.
+    let visible = |workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext| workbench.update_in(cx, |workbench, window, _| workbench.key_context(window)["multiDiffEditorFileListVisible"].clone());
+    assert_eq!(visible(&workbench, cx), json!(false));
+    workbench.update(cx, |workbench, _| workbench.update_setting("multiDiffEditor.experimental.fileList", json!(true)));
+    assert_eq!(visible(&workbench, cx), json!(true));
+    workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("multiDiffEditor.toggleFileList", Vec::new(), window, cx)));
+    assert_eq!(visible(&workbench, cx), json!(false));
+    workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("multiDiffEditor.focusFileList", Vec::new(), window, cx)));
+    assert_eq!(visible(&workbench, cx), json!(true));
+    cx.run_until_parked();
+
+    // The layout debug state opens as a jsonl model.
+    workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("multiDiffEditor.openLayoutDebug", Vec::new(), window, cx)));
+    let line = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document.lines[0].clone());
+    let state: Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(state["items"][0]["collapsed"], false);
+    std::fs::remove_dir_all(dir).unwrap();
+}
