@@ -513,6 +513,7 @@ impl Workbench {
             )
             // Overlay widgets: placed from the editor's right edge whichever side the minimap is on.
             .children(self.find_widget(self.editors.viewport.width + metrics.content_left() + minimap_width, metrics.content_left(), minimap_width, window, cx))
+            .children(self.find_options_widget(minimap_width, cx))
             .children(self.floating_menu(editor, viewport.height, minimap_width, window, cx))
             .children(self.define_keybinding_overlay(editor, self.editors.viewport.width + metrics.content_left() + minimap_width, viewport.height, window, cx))
     }

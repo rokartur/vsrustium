@@ -20,6 +20,7 @@ mod explorer_actions;
 mod extension_management;
 mod explorer_find;
 mod file_participants;
+mod find_options_widget;
 mod find_widget;
 mod folding_providers;
 mod auto_save;
