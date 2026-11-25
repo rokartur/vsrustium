@@ -103,11 +103,21 @@ pub struct Look<'a> {
     /// The scrollbar shows while the pointer is over the terminal (`ScrollbarVisibility.Auto`).
     pub hovered: bool,
     pub scrollbar_slider: Rgba,
+    /// `shellIntegration.decorationsEnabled` with the overview ruler: its border color and the command marks.
+    pub overview_ruler: Option<OverviewRuler>,
+    /// The hovered link's cells (grid line, column) while the link modifier is down: xterm's link underline.
+    pub link_underline: &'a [(i32, usize)],
     /// The find widget's matches, the selected one, and their `terminal.findMatch*Background` colors.
     pub find_matches: &'a [alacritty_terminal::term::search::Match],
     pub find_current: Option<usize>,
     pub find_match: Rgba,
     pub find_highlight: Rgba,
+}
+
+pub struct OverviewRuler {
+    pub border: Rgba,
+    /// Each decorated command's buffer line, its color and whether it sits right (failed) or left.
+    pub marks: Vec<(i64, Rgba, bool)>,
 }
 
 /// The grid's top left: bottom aligned in the pane (terminal.css `.xterm { bottom: 0 }`), right of the gutter.
@@ -198,6 +208,15 @@ pub fn paint(bounds: Bounds<Pixels>, instance: &TerminalInstance, look: &Look, w
         paint_row_text(line, origin.x, baseline(row), metrics, window);
     }
 
+    for &(line, column) in look.link_underline {
+        let row = line + offset;
+        if (0..rows as i32).contains(&row) && column < cols {
+            let bounds = cell(column, row as usize);
+            let style = UnderlineStyle { thickness: px(1.), color: Some(Hsla::from(colors.foreground)), wavy: false };
+            window.paint_underline(point(bounds.origin.x, bounds.bottom() - px(metrics.descent.max(2.)) + px(1.)), bounds.size.width, &style);
+        }
+    }
+
     if cursor_shown && (0..rows as i32).contains(&cursor_row) {
         let bounds = cell(cursor.point.column.0.min(cols - 1), cursor_row as usize);
         let thickness = px(look.cursor_width.max(1.));
@@ -212,6 +231,10 @@ pub fn paint(bounds: Bounds<Pixels>, instance: &TerminalInstance, look: &Look, w
     }
 
     let history = term.history_size();
+    if let Some(ruler) = look.overview_ruler.as_ref().filter(|_| !term.mode().contains(alacritty_terminal::term::TermMode::ALT_SCREEN)) {
+        let canvas = Bounds::new(point(bounds.right() - px(look.scrollbar_width), origin.y), size(px(look.scrollbar_width), px(rows as f32 * metrics.cell_height)));
+        paint_overview_ruler(canvas, history + rows, ruler, window);
+    }
     if look.hovered && history > 0 {
         paint_scrollbar(bounds, rows, history, content.display_offset, look, window);
     }
@@ -375,6 +398,22 @@ fn paint_scrollbar(bounds: Bounds<Pixels>, rows: usize, history: usize, display_
     let top = (track - slider_height) * first_row / history as f32;
     let slider = Bounds::new(point(bounds.right() - px(look.scrollbar_width), bounds.origin.y + px(top)), size(px(look.scrollbar_width), px(slider_height)));
     window.paint_quad(fill(slider, look.scrollbar_slider));
+}
+
+/// xterm.js OverviewRulerRenderer: a left and top border, then each mark a third of the ruler wide at its line,
+/// 6 to 12 pixels tall by the pixels a line gets.
+fn paint_overview_ruler(canvas: Bounds<Pixels>, buffer_lines: usize, ruler: &OverviewRuler, window: &mut Window) {
+    let (width, height) = (f32::from(canvas.size.width), f32::from(canvas.size.height));
+    window.paint_quad(fill(Bounds::new(canvas.origin, size(px(1.), canvas.size.height)), ruler.border));
+    window.paint_quad(fill(Bounds::new(canvas.origin + point(px(1.), px(0.)), size(px(width - 1.), px(1.))), ruler.border));
+    let outer = ((width - 1.) / 3.).floor();
+    let center = ((width - 1.) / 3.).ceil();
+    let mark_height = (height / buffer_lines as f32).clamp(6., 12.).round();
+    for &(line, color, right) in &ruler.marks {
+        let x = if right { 1. + outer + center } else { 1. };
+        let y = ((height - 1.) * line as f32 / buffer_lines as f32 - mark_height / 2.).round();
+        window.paint_quad(fill(Bounds::new(canvas.origin + point(px(x), px(y)), size(px(outer), px(mark_height))), color));
+    }
 }
 
 #[derive(Default)]

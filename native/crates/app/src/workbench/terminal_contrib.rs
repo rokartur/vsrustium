@@ -1,17 +1,24 @@
 //! The small terminalContrib actions: sendSequence, sendSignal, zoom (font size commands and Cmd+wheel) and the
-//! developer contribution's Write Data to Terminal.
+//! developer contribution's Write Data to Terminal and Record Terminal Session.
 
-use gpui::{Context, ScrollDelta, Window};
+use std::time::{Duration, Instant};
+
+use alacritty_terminal::grid::Dimensions;
+use gpui::{ClipboardItem, Context, ScrollDelta, Window};
 use serde_json::json;
 
 use super::Workbench;
 use super::terminal_view::TerminalInput;
 use crate::commands::Outcome;
 use crate::main_thread_quick_open::Owner;
+use crate::main_thread_status_bar::StatusEntry;
 use crate::quick_input::{Entry, Event, Item, Kind, QuickInput};
+use crate::terminal::Recording;
 
 /// terminal.ts `defaultTerminalFontSize` on macOS.
 const DEFAULT_FONT_SIZE: f64 = 12.;
+/// `RecordSession`'s `Delayer(5000)`.
+const RECORDING_IDLE: Duration = Duration::from_millis(5000);
 const MANUAL_SIGNAL: &str = "Manually enter signal";
 /// terminal.sendSignal.contribution.ts: the signals the picker offers, with their descriptions.
 const SIGNALS: [(&str, &str); 9] = [
@@ -52,12 +59,73 @@ impl Workbench {
             workbench.flush_quick_input_events(window, cx);
             Outcome::done()
         });
+        self.commands.register("workbench.action.terminal.recordSession", |workbench, _, window, cx| {
+            workbench.record_terminal_session(window, cx);
+            Outcome::done()
+        });
         self.commands.register("workbench.action.terminal.fontZoomIn", |workbench, _, _, _| workbench.zoom_terminal_font(1.));
         self.commands.register("workbench.action.terminal.fontZoomOut", |workbench, _, _, _| workbench.zoom_terminal_font(-1.));
         self.commands.register("workbench.action.terminal.fontZoomReset", |workbench, _, _, _| {
             workbench.update_setting("terminal.integrated.fontSize", json!(DEFAULT_FONT_SIZE));
             Outcome::done()
         });
+    }
+
+    /// `RecordSession`: a new terminal records its resizes, output, input, sent text, prompt input and every executed
+    /// command until 5 s pass without one, then the events go to the clipboard as JSON.
+    fn record_terminal_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.create_terminal(None, false, window, cx);
+        self.show_terminal_tab(window, cx);
+        let Some(id) = self.terminal_view.active_instance_id() else { return };
+        let instance = self.terminal_view.instance_mut(id).expect("the terminal just created");
+        let size = json!({ "type": "resize", "cols": instance.term.columns(), "rows": instance.term.screen_lines() });
+        instance.recording = Some(Recording { events: vec![size], last_event: Instant::now() });
+        cx.notify();
+        cx.spawn(async move |workbench, cx| {
+            loop {
+                let Ok(Some(last_event)) = workbench.update(cx, |workbench, _| Some(workbench.terminal_view.instance(id)?.recording.as_ref()?.last_event)) else { return };
+                let idle = last_event.elapsed();
+                if idle >= RECORDING_IDLE {
+                    break;
+                }
+                cx.background_executor().timer(RECORDING_IDLE - idle).await;
+            }
+            let _ = workbench.update(cx, |workbench, cx| {
+                let Some(recording) = workbench.terminal_view.instance_mut(id).and_then(|instance| instance.recording.take()) else { return };
+                let session = serde_json::to_string_pretty(&recording.events).expect("JSON values serialize");
+                cx.write_to_clipboard(ClipboardItem::new_string(session));
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// `onWillExecuteCommand` of a running recording.
+    pub(crate) fn record_terminal_command(&mut self, id: &str) {
+        for instance in self.terminal_view.instances.iter_mut() {
+            instance.record(json!({ "type": "command", "id": id }));
+        }
+    }
+
+    /// The recording's status bar entry: "Recording terminal session..." with a progress spinner.
+    pub(crate) fn terminal_recording_status_entry(&self) -> Option<StatusEntry> {
+        self.terminal_view.instances.iter().find(|instance| instance.recording.is_some())?;
+        let text = "Recording terminal session...".to_owned();
+        Some(StatusEntry {
+            entry_id: "recordSession".into(),
+            id: "recordSession".into(),
+            name: text.clone(),
+            text,
+            tooltip: None,
+            command: None,
+            color: None,
+            background_color: None,
+            kind: None,
+            align_left: true,
+            priority: 0.,
+            secondary: 0,
+            show_progress: true,
+        })
     }
 
     /// `FontZoomIn` and `FontZoomOut`: the font size setting by one, clamped to 6..100 (`clampTerminalFontSize`).
@@ -224,5 +292,27 @@ mod tests {
         assert_eq!(signal_number("SIGNOPE"), None);
         assert_eq!(clamp_font_size(120.), 100.);
         assert_eq!(clamp_font_size(5.), 6.);
+    }
+
+    /// terminalEnvironment.ts `getCwd`: the setting's variables resolve, a relative result joins the folder.
+    #[gpui::test]
+    fn the_cwd_setting_resolves_its_variables(cx: &mut gpui::TestAppContext) {
+        let app_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let themes = exthost::scan::scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
+        let theme = crate::theme::load_theme(&[themes], "Dark Modern").unwrap();
+        let folder = std::path::PathBuf::from("/w/project");
+        let workspace = config::workspace::Workspace::folder(folder.clone());
+        let user = std::env::temp_dir().join(format!("code-gpui-terminal-cwd-{}", std::process::id()));
+        std::fs::create_dir_all(&user).unwrap();
+        let settings = std::sync::Arc::new(std::sync::Mutex::new(config::service::Settings::load(config::registry::Registry::with_extensions(&[]), user.join("User"), None)));
+        let (workbench, cx) = cx.add_window_view(|_, cx| Workbench::new(theme, app_root.clone(), Some(workspace), crate::languages::Languages::new(&[]), settings, crate::host_sync::HostSync::new(std::sync::mpsc::channel().0), cx));
+        workbench.update(cx, |workbench, _| {
+            workbench.update_setting("terminal.integrated.cwd", serde_json::json!("${workspaceFolder}/src"));
+            assert_eq!(workbench.terminal_initial_cwd(), folder.join("src"));
+            workbench.update_setting("terminal.integrated.cwd", serde_json::json!("${workspaceFolderBasename}"));
+            assert_eq!(workbench.terminal_initial_cwd(), folder.join("project"));
+            workbench.update_setting("terminal.integrated.cwd", serde_json::json!("${env:CODE_GPUI_NOT_SET}"));
+            assert_eq!(workbench.terminal_initial_cwd(), folder);
+        });
     }
 }

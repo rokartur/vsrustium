@@ -92,6 +92,10 @@ pub struct TerminalView {
     pub(super) osc99_notifications: Vec<(u32, u64, u64)>,
     /// The last resize: its instance, `cols x rows` and when.
     pub(super) resize_overlay: Option<(u32, String, std::time::Instant)>,
+    pub(super) quick_fixes: super::terminal_quick_fix::TerminalQuickFixes,
+    /// The link under the pointer and whether the link modifier is down.
+    pub(super) hovered_link: Option<super::terminal_links::HoveredLink>,
+    pub(super) link_modifier: bool,
 }
 
 #[derive(Default)]
@@ -128,6 +132,8 @@ pub enum TerminalInput {
     ManualSignal,
     /// Run Recent Command and Go to Recent Directory: what each pick runs, in which terminal.
     RunRecent { kind: super::terminal_history::RecentKind, picks: Vec<super::terminal_history::RecentPick>, fuzzy: bool, instance: u32 },
+    /// The command decorations' Toggle Visibility picker.
+    DecorationVisibility,
 }
 
 impl TerminalView {
@@ -157,6 +163,9 @@ impl TerminalView {
             command_guide: None,
             osc99_notifications: Vec::new(),
             resize_overlay: None,
+            quick_fixes: Default::default(),
+            hovered_link: None,
+            link_modifier: false,
         }
     }
 
@@ -356,6 +365,7 @@ impl Workbench {
         self.register_external_terminal_actions();
         self.register_terminal_contrib_actions();
         self.register_terminal_suggest_actions();
+        self.register_terminal_quick_fix_actions();
         self.register_terminal_history_actions();
         self.register_terminal_sticky_scroll_actions();
         self.register_terminal_environment_actions();
@@ -408,7 +418,7 @@ impl Workbench {
 
     /// `createTerminal`: a new group, or a pane after the active one with `split`; the split's cwd is its parent's
     /// (`terminal.integrated.splitCwd` inherited).
-    fn create_terminal(&mut self, profile: Option<Profile>, split: bool, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn create_terminal(&mut self, profile: Option<Profile>, split: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.create_terminal_with_cwd(profile, split, None, window, cx);
     }
 
@@ -487,16 +497,25 @@ impl Workbench {
         profiles::detect(&self.setting("terminal.integrated.profiles.osx"), &shells, std::env::var("PATH").ok().as_deref())
     }
 
-    /// `getCwd`: `terminal.integrated.cwd` against the workspace folder, else the folder, else the home directory.
+    /// `getCwd`: `terminal.integrated.cwd` with its variables resolved, against the workspace folder, else the
+    /// folder, else the home directory; one that fails to resolve is dropped (`_resolveCwd`).
     pub(super) fn terminal_initial_cwd(&self) -> PathBuf {
         let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/"));
         let root = self.workspace().and_then(|workspace| workspace.folders.first()).map(|folder| folder.path.clone());
-        let configured = self.setting("terminal.integrated.cwd").as_str().filter(|cwd| !cwd.is_empty()).map(PathBuf::from);
-        match (configured, root) {
-            (Some(cwd), Some(root)) if cwd.is_relative() => root.join(cwd),
-            (Some(cwd), _) => cwd,
-            (None, Some(root)) => root,
-            (None, None) => home,
+        let configured = self.setting("terminal.integrated.cwd").as_str().filter(|cwd| !cwd.is_empty()).map(str::to_owned);
+        let resolved = configured.and_then(|cwd| match self.resolve_variables(&Value::String(cwd), root.clone()) {
+            Ok(Value::String(cwd)) if !cwd.is_empty() => Some(PathBuf::from(cwd)),
+            Ok(_) => None,
+            Err(error) => {
+                eprintln!("Could not resolve terminal cwd {error}");
+                None
+            }
+        });
+        match (resolved, root) {
+            (Some(cwd), _) if cwd.is_absolute() => cwd,
+            (Some(cwd), Some(root)) => root.join(cwd),
+            (_, Some(root)) => root,
+            (_, None) => home,
         }
     }
 
@@ -581,7 +600,11 @@ impl Workbench {
         instance.bell = false;
         self.task_output(id, &processed.text, cx);
         self.record_terminal_history(id, &processed.shell_events);
+        let finished = processed.shell_events.iter().any(|event| matches!(event, crate::terminal::shell_integration::ShellEvent::CommandFinished(_)));
         self.terminal_output_to_host(id, processed);
+        if finished {
+            self.terminal_command_finished_quick_fixes(id, cx);
+        }
         self.terminal_osc99(id, window, cx);
         cx.notify();
         input_changed
@@ -817,6 +840,8 @@ impl Workbench {
             }
             (event, TerminalInput::RunRecent { kind, picks, fuzzy, instance }) => self.run_recent_input_event(id, event, kind, picks, fuzzy, instance, window, cx),
             (Event::Hide, _) => self.quick_inputs.remove(id),
+            (Event::Accept(_), TerminalInput::DecorationVisibility) => self.hide_quick_input_by_id(id, window, cx),
+            (event, TerminalInput::DecorationVisibility) => self.decoration_visibility_event(event),
             (event, input @ (TerminalInput::SendSequence | TerminalInput::WriteData | TerminalInput::Signal | TerminalInput::ManualSignal)) => self.terminal_contrib_input_event(id, event, input, window, cx),
             _ => {}
         }
@@ -866,7 +891,8 @@ impl Workbench {
     /// commands to skip the shell go to the workbench, every other key the terminal turns into input. Returns
     /// whether the terminal took the key.
     pub(super) fn terminal_key(&mut self, keystroke: &Keystroke, resolution: &Resolution, window: &Window, cx: &mut Context<Self>) -> bool {
-        if !self.terminal_view.focus.is_focused(window) {
+        // The quick fix widget takes the keys while it shows, as its list has the focus upstream.
+        if !self.terminal_view.focus.is_focused(window) || self.action_widget_visible() {
             return false;
         }
         // `restartBlinkAnimation` on a key: the cursor shows.
@@ -1028,7 +1054,7 @@ impl Workbench {
             .on_mouse_down(MouseButton::Left, cx.listener(move |workbench, event: &MouseDownEvent, window, cx| workbench.terminal_mouse_down(id, event, window, cx)))
             .on_mouse_down(MouseButton::Right, cx.listener(move |workbench, event: &MouseDownEvent, window, cx| workbench.terminal_mouse_down(id, event, window, cx)))
             .on_mouse_down(MouseButton::Middle, cx.listener(move |workbench, event: &MouseDownEvent, window, cx| workbench.terminal_mouse_down(id, event, window, cx)))
-            .on_mouse_move(cx.listener(move |workbench, event: &MouseMoveEvent, _, cx| workbench.terminal_mouse_move(id, event, cx)))
+            .on_mouse_move(cx.listener(move |workbench, event: &MouseMoveEvent, window, cx| workbench.terminal_mouse_move(id, event, window, cx)))
             .on_mouse_up(MouseButton::Left, cx.listener(move |workbench, event: &MouseUpEvent, _, cx| workbench.terminal_mouse_up(id, event, cx)))
             .on_scroll_wheel(cx.listener(move |workbench, event: &ScrollWheelEvent, _, cx| workbench.terminal_wheel(id, event, cx)))
     }
@@ -1046,6 +1072,8 @@ impl Workbench {
             // `cursorBlinking` is the default style's; a program's DECSCUSR overrides it.
             self.terminal_view.cursor_blinking = self.terminal_view.instance(id).is_some_and(|instance| instance.term.cursor_style().blinking);
         }
+        let link_underline = self.terminal_link_underline(id).map(<[_]>::to_vec).unwrap_or_default();
+        let overview_ruler = self.terminal_overview_ruler(id);
         let look = Look {
             colors: &colors,
             metrics: &metrics,
@@ -1058,6 +1086,8 @@ impl Workbench {
             scrollbar_width,
             hovered: self.terminal_view.hovered == Some(id),
             scrollbar_slider: self.color("scrollbarSlider.background"),
+            overview_ruler,
+            link_underline: &link_underline,
             find_matches: &find_matches,
             find_current: self.terminal_view.find.current,
             find_match: self.color("terminal.findMatchBackground"),
@@ -1174,8 +1204,7 @@ impl Workbench {
         let (Some(bounds), Some(metrics)) = (self.terminal_view.pane_bounds.get(&id).copied(), self.terminal_view.metrics.clone()) else { return };
         let Some(instance) = self.terminal_view.instance_mut(id) else { return };
         let (row, column, side) = grid::cell_at(bounds, event.position, instance, &metrics);
-        // `editor.multiCursorModifier` alt (the default) makes Cmd the link modifier.
-        let link_modifier = if self.setting("editor.multiCursorModifier") == "ctrlCmd" { event.modifiers.alt } else { event.modifiers.platform };
+        let link_modifier = self.terminal_link_modifier(event.modifiers);
         if event.button == MouseButton::Left && link_modifier && self.open_terminal_link(id, row, column, window, cx) {
             return;
         }
@@ -1214,7 +1243,7 @@ impl Workbench {
         cx.notify();
     }
 
-    fn terminal_mouse_move(&mut self, id: u32, event: &MouseMoveEvent, cx: &mut Context<Self>) {
+    fn terminal_mouse_move(&mut self, id: u32, event: &MouseMoveEvent, window: &mut Window, cx: &mut Context<Self>) {
         let (Some(bounds), Some(metrics)) = (self.terminal_view.pane_bounds.get(&id).copied(), self.terminal_view.metrics.clone()) else { return };
         let selecting = self.terminal_view.selecting == Some(id) && event.pressed_button == Some(MouseButton::Left);
         let show_command_guide = self.setting("terminal.integrated.shellIntegration.showCommandGuide") != false;
@@ -1224,6 +1253,9 @@ impl Workbench {
         if guide != self.terminal_view.command_guide {
             self.terminal_view.command_guide = guide;
             cx.notify();
+        }
+        if event.pressed_button.is_none() {
+            self.terminal_link_hover(id, row, column, event.modifiers, window, cx);
         }
         let Some(instance) = self.terminal_view.instance_mut(id) else { return };
         if selecting {

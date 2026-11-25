@@ -1,6 +1,7 @@
 //! The integrated terminal's model: one `TerminalInstance` per terminal (terminalInstance.ts), its shell in a
 //! PTY (terminalProcess.ts over node-pty) and its screen in alacritty_terminal standing in for xterm.js.
 
+pub mod accessible_buffer;
 pub mod auto_replies;
 pub mod colors;
 pub mod completion_item;
@@ -11,6 +12,7 @@ pub mod link_parsing;
 pub mod mouse;
 pub mod profiles;
 pub mod prompt_input;
+pub mod quick_fix;
 pub mod environment_collection;
 pub mod history;
 pub mod sticky_scroll;
@@ -36,6 +38,7 @@ use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::term::{Config, Term, TermMode};
 use alacritty_terminal::vte::ansi::{ClearMode, Handler, Processor, Rgb};
 use futures::channel::mpsc::{UnboundedReceiver, unbounded};
+use serde_json::json;
 
 use self::pty::{Pty, PtyEvent};
 use self::shell_integration::{BufferPoint, ShellEvent, ShellIntegration};
@@ -141,6 +144,8 @@ pub struct TerminalInstance {
     pub on_input: Option<Box<dyn FnMut()>>,
     /// terminalProcess.ts `shellType`, from the foreground process name.
     pub shell_type: Option<&'static str>,
+    /// Record Terminal Session: the events since recording started, and when the last one came.
+    pub recording: Option<Recording>,
     /// commandDetectionCapability.ts `promptInputModel`, fed by the B, C, D and P sequences.
     pub prompt_input: prompt_input::PromptInputModel,
     /// commandDetectionCapability.ts `commands`: the finished commands of this session, oldest first.
@@ -167,6 +172,12 @@ pub struct FinishedCommand {
     pub end_line: Option<i64>,
     /// The cursor column at C (`executedX`).
     pub executed_column: Option<usize>,
+    /// Milliseconds since the Unix epoch at C (`commandExecutedTimestamp`).
+    pub executed_timestamp: Option<u64>,
+    /// Milliseconds from C to D, 0 without a C (`commandDuration || 0`).
+    pub duration: u64,
+    /// The command line came with the session's nonce (`isTrusted`).
+    pub is_trusted: bool,
 }
 
 /// What one chunk of process output did: its text (`onData`) and the shell integration events in stream order.
@@ -204,6 +215,7 @@ impl TerminalInstance {
             clipboard_requests: Vec::new(),
             osc99_sequences: Vec::new(),
             osc99: osc99::Osc99::default(),
+            recording: None,
             clipboard_loads: Vec::new(),
             bell: false,
             auto_reply_setting: serde_json::Value::Null,
@@ -258,6 +270,7 @@ impl TerminalInstance {
     /// handled where they occur in the stream, so the command output between them is known.
     pub fn process(&mut self, bytes: &[u8], colors: &colors::TerminalColors) -> Processed {
         let text = self.decode(bytes);
+        self.record(json!({ "type": "output", "data": text }));
         let mut shell_events = Vec::new();
         let mut fed = 0;
         let mut input_changed = false;
@@ -293,6 +306,9 @@ impl TerminalInstance {
         }
         self.feed(&text[fed..], colors);
         input_changed |= self.prompt_input.sync(&self.term);
+        if input_changed {
+            self.record(json!({ "type": "promptInputChange", "data": self.prompt_input.get_combined_string(false) }));
+        }
         Processed { text, shell_events, input_changed }
     }
 
@@ -303,9 +319,11 @@ impl TerminalInstance {
             ShellEvent::CommandFinished(command) => {
                 let mut finished = std::mem::take(&mut self.current);
                 finished.command = command.command_line.clone();
+                finished.is_trusted = command.is_trusted;
                 finished.cwd = command.cwd.clone();
                 finished.exit_code = command.exit_code;
-                finished.timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |elapsed| elapsed.as_millis() as u64);
+                finished.timestamp = now_ms();
+                finished.duration = finished.executed_timestamp.map_or(0, |executed| finished.timestamp.saturating_sub(executed));
                 self.commands.push(finished);
             }
             ShellEvent::Cwd(cwd) => {
@@ -338,6 +356,7 @@ impl TerminalInstance {
             Some("C") => {
                 self.current.executed_line = Some(cursor.line);
                 self.current.executed_column = Some(cursor.column);
+                self.current.executed_timestamp.get_or_insert_with(now_ms);
                 self.prompt_input.command_executed();
                 true
             }
@@ -462,6 +481,19 @@ impl TerminalInstance {
 
     /// `sendText` and typed input: the terminal follows the input (xterm.js `scrollOnUserInput`).
     pub fn input(&mut self, data: &str) {
+        self.record(json!({ "type": "input", "data": data }));
+        self.write_input(data);
+    }
+
+    /// `record` of Record Terminal Session: the event goes to the recording, if one runs.
+    pub fn record(&mut self, event: serde_json::Value) {
+        if let Some(recording) = &mut self.recording {
+            recording.events.push(event);
+            recording.last_event = Instant::now();
+        }
+    }
+
+    fn write_input(&mut self, data: &str) {
         self.term.scroll_display(Scroll::Bottom);
         self.term.selection = None;
         self.prompt_input.user_input(data);
@@ -477,7 +509,8 @@ impl TerminalInstance {
         if should_execute && !text.ends_with('\r') {
             text.push('\r');
         }
-        self.input(&text);
+        self.record(json!({ "type": "sendText", "data": text }));
+        self.write_input(&text);
     }
 
     /// xterm.js `paste`: line breaks become carriage returns, wrapped in bracketed paste mode markers when the
@@ -511,6 +544,7 @@ impl TerminalInstance {
         if let Some(pty) = &self.pty {
             pty.resize(cols, rows);
         }
+        self.record(json!({ "type": "resize", "cols": cols, "rows": rows }));
         true
     }
 
@@ -631,6 +665,16 @@ pub fn shell_type(process: &str) -> Option<&'static str> {
         ("python", "python"), ("julia", "julia"), ("nu", "nu"), ("node", "node"), ("xonsh", "xonsh"),
     ];
     types.iter().find(|(process, _)| *process == name).map(|(_, kind)| *kind)
+}
+
+/// Record Terminal Session's events (`type` resize, command, output, sendText, input, promptInputChange).
+pub struct Recording {
+    pub events: Vec<serde_json::Value>,
+    pub last_event: Instant,
+}
+
+pub(crate) fn now_ms() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |elapsed| elapsed.as_millis() as u64)
 }
 
 /// shellIntegrationAddon.ts `value.replace(/\x1b\[[0-9;]*m/g, '')`.

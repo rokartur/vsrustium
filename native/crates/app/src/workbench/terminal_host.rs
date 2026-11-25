@@ -141,6 +141,7 @@ impl Workbench {
             }
             ("MainThreadTerminalService", "$registerCompletionProvider") => self.register_terminal_completion_provider(&request.args),
             ("MainThreadTerminalService", "$unregisterCompletionProvider") => self.unregister_terminal_completion_provider(arg(0).as_str().unwrap_or_default()),
+            ("MainThreadTerminalService", method @ ("$registerQuickFixProvider" | "$unregisterQuickFixProvider")) => self.handle_quick_fix_provider_request(method, &request.args),
             // Profile, quick fix and link providers register here; the port has no UI that asks them yet.
             _ => {}
         }
