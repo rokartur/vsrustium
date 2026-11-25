@@ -1,0 +1,1 @@
+[{"wait": 8000}, {"click": [600, 300]}, {"hotkey": ["cmd", "down"]}, {"type": "add(1, "}, {"wait": 2000}, {"shot": "params"}, {"key": "escape"}, {"hotkey": ["cmd", "up"]}, {"key": "right"}, {"hotkey": ["cmd", "."]}, {"wait": 2500}, {"shot": "actions"}, {"key": "escape"}]

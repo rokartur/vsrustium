@@ -25,6 +25,7 @@ impl Workbench {
             ("MainThreadSCM", method) => self.handle_scm_request(method, &request.args, window, cx),
             ("MainThreadQuickDiff", method) => self.handle_quick_diff_request(method, &request.args, cx),
             ("MainThreadTimeline", method) => self.handle_timeline_request(method, &request.args, cx),
+            ("MainThreadComments", method) => self.handle_comments_request(method, &request.args, window, cx),
             ("MainThreadGitHub", method) => self.handle_github_request(method, &request.args, cx),
             ("MainThreadWebviewViews", method) => self.handle_webview_views_request(method, &request.args, window, cx),
             ("MainThreadCustomEditors", method) => self.handle_custom_editors_request(method, &request.args, window, cx),

@@ -22,6 +22,7 @@ pub(super) mod drag_and_drop;
 pub(super) mod injected_text_view;
 pub(super) mod merge_editor_view;
 pub(super) mod multi_diff_editor_view;
+mod comment_glyph;
 pub(super) mod quick_diff;
 pub(super) mod quick_diff_widget;
 pub(super) mod sticky_scroll_view;
@@ -382,6 +383,8 @@ impl Workbench {
         // diffEditorEditors.ts `_adjustOptionsForSubEditor`: no folding and no minimap in either side.
         if self.editors.active_diff().is_some() {
             metrics.decorations_width = diff_editor_view::diff_decorations_width(metrics.char_width);
+        } else if self.editor_has_comment_threads(editor) {
+            metrics.decorations_width += comment_glyph::RESERVED_WIDTH;
         }
         metrics
     }
@@ -1348,6 +1351,7 @@ impl Workbench {
                     .flex()
                     .children(self.diff_margin(editor, index, metrics))
                     .children(self.quick_diff_glyph(editor, index, metrics, cx))
+                    .children(self.comment_glyph(editor, index, metrics))
                     .child(
                         div()
                             .relative()
@@ -1382,7 +1386,9 @@ impl Workbench {
         let (name, opacity) = if collapsed { ("chevron-right", 1.) } else { ("chevron-down", hover_opacity) };
         // folding.css: the icon box is the lane's width, 2px right, the glyph at 140% of the editor font size.
         let icon = self.icon(name, metrics.line_height, 1.4 * metrics.font_size, Rgba { a: color.a * opacity, ..color });
-        lane = lane.child(div().w(px(DECORATIONS_WIDTH)).ml(px(2.)).h(px(metrics.line_height)).flex().justify_center().cursor_pointer().child(icon));
+        // review.css `.inline-comment`: the folding icons move 11px right of the comment glyphs.
+        let left = if metrics.decorations_width > DECORATIONS_WIDTH { 13. } else { 2. };
+        lane = lane.child(div().w(px(DECORATIONS_WIDTH)).ml(px(left)).h(px(metrics.line_height)).flex().justify_center().cursor_pointer().child(icon));
         lane
     }
 

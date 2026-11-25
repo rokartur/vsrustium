@@ -1,0 +1,141 @@
+//! mainThreadComments.ts: the comment controllers extensions register and their threads, kept for the Comments
+//! view (workbench/comments_view.rs).
+
+use gpui::{Context, Window};
+use serde_json::Value;
+
+use super::Workbench;
+use crate::commands::Outcome;
+
+#[cfg(test)]
+mod tests;
+
+#[derive(Default)]
+pub(super) struct Comments {
+    pub(super) controllers: Vec<Controller>,
+    pub(super) collapsed: std::collections::HashSet<String>,
+}
+
+/// `MainThreadCommentController`.
+pub(super) struct Controller {
+    pub(super) handle: u64,
+    pub(super) label: String,
+    /// `updateCommentingRanges` was called, which registers the view upstream.
+    has_commenting_ranges: bool,
+    pub(super) threads: Vec<Thread>,
+}
+
+/// `MainThreadCommentThread`: the fields of `CommentThreadChanges`.
+#[derive(Clone, Debug)]
+pub(super) struct Thread {
+    pub(super) handle: u64,
+    pub(super) resource: Value,
+    pub(super) range: Option<Value>,
+    pub(super) label: Option<String>,
+    pub(super) context_value: Option<String>,
+    pub(super) comments: Vec<Value>,
+    pub(super) collapse_state: u64,
+    pub(super) can_reply: Value,
+    /// `CommentThreadState`: 0 unresolved, 1 resolved.
+    pub(super) state: Option<u64>,
+    pub(super) is_template: bool,
+}
+
+impl Workbench {
+    pub(crate) fn handle_comments_request(&mut self, method: &str, args: &[Value], window: &mut Window, cx: &mut Context<Self>) -> Outcome {
+        let arg = |index: usize| args.get(index).cloned().unwrap_or(Value::Null);
+        let handle = arg(0).as_u64().unwrap_or_default();
+        match method {
+            "$registerCommentController" => {
+                let text = |index: usize| arg(index).as_str().unwrap_or_default().to_owned();
+                self.comments.controllers.push(Controller { handle, label: text(2), has_commenting_ranges: false, threads: Vec::new() });
+            }
+            "$unregisterCommentController" => self.comments.controllers.retain(|controller| controller.handle != handle),
+            "$createCommentThread" => {
+                let Some(controller) = self.comment_controller_mut(handle) else { return Outcome::done() };
+                let range = Some(arg(4)).filter(|range| !range.is_null());
+                let comments = arg(5).as_array().cloned().unwrap_or_default();
+                // `MainThreadCommentThread`: a new thread is collapsed and can be replied to.
+                let thread = Thread { handle: arg(1).as_u64().unwrap_or_default(), resource: arg(3), range, label: None, context_value: None, comments, collapse_state: 0, can_reply: Value::Bool(true), state: None, is_template: arg(7) == true };
+                controller.threads.push(thread);
+            }
+            "$updateCommentThread" => {
+                let Some(controller) = self.comment_controller_mut(handle) else { return Outcome::done() };
+                let thread_handle = arg(1).as_u64().unwrap_or_default();
+                if let Some(thread) = controller.threads.iter_mut().find(|thread| thread.handle == thread_handle) {
+                    thread.update(&arg(4));
+                }
+            }
+            "$deleteCommentThread" => {
+                let thread_handle = arg(1).as_u64().unwrap_or_default();
+                if let Some(controller) = self.comment_controller_mut(handle) {
+                    controller.threads.retain(|thread| thread.handle != thread_handle);
+                }
+            }
+            "$updateCommentingRanges" => {
+                if let Some(controller) = self.comment_controller_mut(handle) {
+                    controller.has_commenting_ranges = true;
+                }
+            }
+            "$revealCommentThread" => self.reveal_comment_thread(handle, arg(1).as_u64().unwrap_or_default(), window, cx),
+            "$hideCommentThread" => {
+                let thread_handle = arg(1).as_u64().unwrap_or_default();
+                if let Some(thread) = self.comment_controller_mut(handle).and_then(|controller| controller.threads.iter_mut().find(|thread| thread.handle == thread_handle)) {
+                    thread.collapse_state = 0;
+                }
+            }
+            _ => {}
+        }
+        cx.notify();
+        Outcome::done()
+    }
+
+    fn comment_controller_mut(&mut self, handle: u64) -> Option<&mut Controller> {
+        self.comments.controllers.iter_mut().find(|controller| controller.handle == handle)
+    }
+
+    /// `registerView` runs once a controller has threads or commenting ranges; the container `hideIfEmpty`.
+    pub(super) fn comments_view_registered(&self) -> bool {
+        self.comments.controllers.iter().any(|controller| controller.has_commenting_ranges || !controller.threads.is_empty())
+    }
+
+    /// `revealCommentThread` for a document thread: its file opens at the start of its range.
+    pub(super) fn reveal_comment_thread(&mut self, controller: u64, thread: u64, window: &mut Window, cx: &mut Context<Self>) {
+        let thread = self.comments.controllers.iter().find(|candidate| candidate.handle == controller).and_then(|controller| controller.threads.iter().find(|candidate| candidate.handle == thread));
+        let Some(thread) = thread else { return };
+        let mut target = thread.range.clone().unwrap_or_else(|| serde_json::json!({ "startLineNumber": 1, "startColumn": 1 }));
+        target["resource"] = thread.resource.clone();
+        self.open_marker_related(&target, window, cx);
+    }
+}
+
+impl Thread {
+    /// `MainThreadCommentThread.batchUpdate`: only the fields the changes carry.
+    fn update(&mut self, changes: &Value) {
+        let Some(changes) = changes.as_object() else { return };
+        if let Some(range) = changes.get("range") {
+            self.range = Some(range.clone()).filter(|range| !range.is_null());
+        }
+        if let Some(label) = changes.get("label") {
+            self.label = label.as_str().map(str::to_owned);
+        }
+        if let Some(context_value) = changes.get("contextValue") {
+            self.context_value = context_value.as_str().map(str::to_owned);
+        }
+        if let Some(comments) = changes.get("comments") {
+            self.comments = comments.as_array().cloned().unwrap_or_default();
+        }
+        if let Some(collapse_state) = changes.get("collapseState").and_then(Value::as_u64) {
+            self.collapse_state = collapse_state;
+        }
+        if let Some(can_reply) = changes.get("canReply") {
+            self.can_reply = can_reply.clone();
+        }
+        if let Some(state) = changes.get("state") {
+            self.state = state.as_u64();
+        }
+        if let Some(is_template) = changes.get("isTemplate") {
+            self.is_template = is_template == true;
+        }
+    }
+}

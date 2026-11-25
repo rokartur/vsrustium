@@ -130,6 +130,8 @@ mod emmet;
 mod tab_completion;
 mod outline_actions;
 mod inlay_hints_accessibility;
+mod comments;
+mod comments_view;
 mod color_picker;
 mod standalone_color_picker;
 mod inlay_hints;
@@ -382,6 +384,7 @@ pub struct Workbench {
     debug_console: debug_console::DebugConsole,
     problems: problems_view::ProblemsView,
     problems_quick_fixes: problems_quick_fix::ProblemsQuickFixes,
+    comments: comments::Comments,
     problems_focus: FocusHandle,
     breakpoint_widget: Option<breakpoint_widget::BreakpointWidget>,
     pub testing: testing_service::TestingService,
@@ -621,6 +624,7 @@ impl Workbench {
             debug_console: debug_console::DebugConsole::new(cx),
             problems: problems_view::ProblemsView::new(cx),
             problems_quick_fixes: Default::default(),
+            comments: Default::default(),
             problems_focus: cx.focus_handle(),
             breakpoint_widget: None,
             testing: Default::default(),
@@ -715,6 +719,8 @@ impl Workbench {
         workbench.register_debug_console_panel_view();
         workbench.register_test_results_panel_view();
         workbench.register_terminal_panel_view();
+        // mainThreadComments.ts registers the Comments container at order 10, after the others.
+        workbench.register_comments_panel_view();
         workbench.register_perf_view();
         workbench.register_accessibility_actions();
         workbench.start_system_events(cx);

@@ -1,0 +1,10 @@
+{
+	"name": "comments",
+	"publisher": "port",
+	"displayName": "Port Comments",
+	"version": "0.0.1",
+	"description": "A comment controller with two threads on a.ts for port/tools/ui-pair.",
+	"engines": { "vscode": "^1.100.0" },
+	"main": "./extension.js",
+	"activationEvents": ["onStartupFinished"]
+}
