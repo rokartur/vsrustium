@@ -91,6 +91,6 @@ impl Workbench {
         let Some(item) = set.valid.get(index).cloned() else { return };
         let target = json!({ "resource": crate::debug::uri_from_string(&marker.resource), "startLineNumber": marker.start_line, "startColumn": marker.start_column });
         self.open_marker_related(&target, window, cx);
-        self.apply_code_action(item, set, false, window.window_handle(), cx);
+        self.apply_code_action(item, set, false, window.window_handle(), cx).detach();
     }
 }

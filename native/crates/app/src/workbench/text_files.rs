@@ -41,6 +41,8 @@ mod untitled_tests;
 pub(super) struct SaveOptions {
     pub force: bool,
     pub skip_participants: bool,
+    /// The code actions on save ran already.
+    pub skip_code_actions: bool,
     pub ignore_modified_since: bool,
     pub unlock: bool,
     pub elevated: bool,
@@ -192,6 +194,11 @@ impl Workbench {
         if self.readonly(&scheme, &path).is_some() {
             let _ = sender.send(false);
             return receiver;
+        }
+        if !options.skip_participants && !options.skip_code_actions
+            && let Some(actions) = self.code_actions_on_save(&scheme, &path, reason, cx)
+        {
+            return self.save_after_code_actions(scheme, path, reason, options, actions, cx);
         }
         if !options.skip_participants {
             if let Some(format) = self.format_on_save(&scheme, &path, reason, cx) {

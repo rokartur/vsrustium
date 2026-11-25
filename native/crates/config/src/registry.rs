@@ -153,6 +153,47 @@ impl Registry {
         property.schema["markdownEnumDescriptions"] = Value::Array(descriptions);
     }
 
+    /// codeActionsContribution.ts `updateConfigurationSchema`: each provided `source` kind gets its own property in
+    /// `editor.codeActionsOnSave` and `notebook.codeActionsOnSave`; properties once added stay.
+    pub fn list_code_actions_on_save(&mut self, source_kinds: &[&str]) {
+        for kind in source_kinds {
+            let description = format!("Controls whether '{kind}' actions should be run on file save.");
+            if let Some(property) = self.properties.get_mut("editor.codeActionsOnSave")
+                && property.schema["properties"].get(*kind).is_none()
+            {
+                property.schema["properties"][*kind] = json!({
+                    "type": "string",
+                    "enum": ["always", "explicit", "never", true, false],
+                    "enumDescriptions": [
+                        "Triggers Code Actions on explicit saves and auto saves triggered by window or focus changes.",
+                        "Triggers Code Actions only when explicitly saved",
+                        "Never triggers Code Actions on save",
+                        "Triggers Code Actions only when explicitly saved. This value will be deprecated in favor of \"explicit\".",
+                        "Never triggers Code Actions on save. This value will be deprecated in favor of \"never\".",
+                    ],
+                    "default": "explicit",
+                    "description": description,
+                });
+            }
+            if let Some(property) = self.properties.get_mut("notebook.codeActionsOnSave")
+                && property.schema["properties"].get(*kind).is_none()
+            {
+                property.schema["properties"][*kind] = json!({
+                    "type": ["string", "boolean"],
+                    "enum": ["explicit", "never", true, false],
+                    "enumDescriptions": [
+                        "Triggers Code Actions only when explicitly saved.",
+                        "Never triggers Code Actions on save.",
+                        "Triggers Code Actions only when explicitly saved. This value will be deprecated in favor of \"explicit\".",
+                        "Triggers Code Actions only when explicitly saved. This value will be deprecated in favor of \"never\".",
+                    ],
+                    "default": "explicit",
+                    "description": description,
+                });
+            }
+        }
+    }
+
     /// folding.contribution.ts `_updateConfigValues`: `editor.defaultFoldingRangeProvider` offers All, then the
     /// extensions with code, Programming Languages first, each group by name.
     fn list_folding_range_providers(&mut self, extensions: &[(&str, &Value)]) {
@@ -385,6 +426,16 @@ mod tests {
         let schema = &registry.properties["editor.defaultFormatter"].schema;
         assert_eq!(schema["enum"], json!([null, "vscode.typescript-language-features", "vscode.css-language-features", "esbenp.prettier", "vscode.git"]));
         assert_eq!(schema["enumItemLabels"], json!(["None", "TS", "CSS", "Prettier", "Git"]));
+    }
+
+    #[test]
+    fn code_actions_on_save_gets_a_property_per_provided_source_kind() {
+        let mut registry = Registry::core();
+        registry.list_code_actions_on_save(&["source.organizeImports"]);
+        let editor = &registry.properties["editor.codeActionsOnSave"].schema["properties"]["source.organizeImports"];
+        assert_eq!((editor["default"].as_str(), editor["enum"][0].as_str()), (Some("explicit"), Some("always")));
+        assert_eq!(editor["description"], "Controls whether 'source.organizeImports' actions should be run on file save.");
+        assert_eq!(registry.properties["notebook.codeActionsOnSave"].schema["properties"]["source.organizeImports"]["enum"], json!(["explicit", "never", true, false]));
     }
 
     fn registry(properties: Value, defaults: &[Value]) -> Registry {

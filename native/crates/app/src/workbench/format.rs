@@ -751,6 +751,25 @@ impl Workbench {
     }
 }
 
+impl Workbench {
+    /// The rest of `doSave` once the code actions on save applied: formatting and the other participants, then the
+    /// write.
+    pub(super) fn save_after_code_actions(&mut self, scheme: String, path: PathBuf, reason: SaveReason, options: SaveOptions, actions: Task<()>, cx: &mut Context<Self>) -> oneshot::Receiver<bool> {
+        let (sender, receiver) = oneshot::channel();
+        cx.spawn(async move |workbench, cx| {
+            actions.await;
+            let saved = workbench.update(cx, |workbench, cx| workbench.save_model_with(scheme, path, reason, SaveOptions { skip_code_actions: true, ..options }, cx));
+            let saved = match saved {
+                Ok(saved) => saved.await.unwrap_or(false),
+                Err(_) => false,
+            };
+            let _ = sender.send(saved);
+        })
+        .detach();
+        receiver
+    }
+}
+
 /// `_pickAndPersistDefaultFormatter`: the picked formatter becomes `editor.defaultFormatter` for the model's language.
 async fn pick_and_persist_default_formatter(workbench: WeakEntity<Workbench>, window: AnyWindowHandle, formatters: Vec<Formatter>, key: ModelKey, cx: &mut AsyncApp) -> Option<Formatter> {
     let picked = window

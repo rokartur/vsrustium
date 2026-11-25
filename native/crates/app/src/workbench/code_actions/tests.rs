@@ -191,3 +191,28 @@ fn a_kind_command_applies_a_single_action_and_reports_none(cx: &mut TestAppConte
     answer(&receiver, json!([]), cx);
     workbench.read_with(cx, |workbench, _| assert!(workbench.editor_message_visible()));
 }
+
+/// saveParticipants.ts `CodeActionOnSaveParticipant`: an explicit save asks for the setting's kinds over the whole
+/// file and writes the text the actions left.
+#[gpui::test]
+fn an_explicit_save_applies_the_code_actions_on_save(cx: &mut TestAppContext) {
+    let (workbench, cx, receiver) = open("let x\n", cx);
+    workbench.update(cx, |workbench, _| {
+        let value = json!({ "source.organizeImports": "explicit" });
+        workbench.settings.lock().unwrap().update_value("editor.codeActionsOnSave", Some(&value), config::service::Target::User, None, &[]).unwrap();
+    });
+    workbench.update_in(cx, |workbench, window, cx| _ = workbench.execute_command("type", vec![json!({ "text": "y" })], window, cx));
+    cx.run_until_parked();
+    answer(&receiver, json!([]), cx);
+    workbench.update_in(cx, |workbench, window, cx| _ = workbench.execute_command("workbench.action.files.save", vec![], window, cx));
+    cx.run_until_parked();
+    let mut action = edit_action("Organize Imports", "import a;");
+    action["kind"] = json!("source.organizeImports");
+    let contexts = answer(&receiver, json!([action]), cx);
+    assert_eq!(contexts, [json!({ "only": "source.organizeImports", "trigger": AUTO })]);
+    // The other tests write the same a.ts, so the saved state stands for the file.
+    workbench.read_with(cx, |workbench, _| {
+        let editor = workbench.editors.active().unwrap();
+        assert_eq!((editor.document().lines[0].as_str(), editor.is_dirty()), ("import a;ylet x", false));
+    });
+}

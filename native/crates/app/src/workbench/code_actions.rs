@@ -218,7 +218,10 @@ impl Workbench {
     /// A registry's `onDidChange`: the code action model and the code lenses update when their providers change.
     pub(crate) fn language_providers_changed(&mut self, method: &str, cx: &mut Context<Self>) {
         match method {
-            REGISTER => self.code_actions_model_changed(cx),
+            REGISTER => {
+                self.code_actions_on_save_kinds_changed();
+                self.code_actions_model_changed(cx);
+            }
             "$registerCodeLensSupport" => self.code_lens_registrations_changed(cx),
             "$registerInlayHintsProvider" => self.inlay_hints_registrations_changed(cx),
             "$registerDocumentColorProvider" => self.color_providers_changed(cx),
@@ -232,6 +235,13 @@ impl Workbench {
             }
             _ => {}
         }
+    }
+
+    /// `CodeActionsContribution.updateConfigurationSchema` on a provider change.
+    fn code_actions_on_save_kinds_changed(&mut self) {
+        let registrations: Vec<_> = self.language_features.all(REGISTER).collect();
+        let source_kinds: Vec<&str> = registrations.iter().flat_map(|registration| provided_kinds(&registration.args)).filter(|kind| contains(SOURCE, kind)).collect();
+        self.settings.lock().unwrap().registry.list_code_actions_on_save(&source_kinds);
     }
 
     /// `CodeActionModel._update` on another model: the state empties and an automatic request runs at once.
@@ -409,7 +419,7 @@ impl Workbench {
             if let Some(item) = valid_action_to_apply(&trigger, &set) {
                 self.hide_lightbulb();
                 let window = trigger.window.expect("manual triggers carry their window");
-                self.apply_code_action(item, set, false, window, cx);
+                self.apply_code_action(item, set, false, window, cx).detach();
                 return cx.notify();
             }
             if trigger.not_available.is_some()
@@ -435,7 +445,7 @@ impl Workbench {
     /// failed command is an error notification. With `retrigger` an automatic request follows.
     // shortcut: only the text edits of a code action's workspace edit apply; file and cell edits need the bulk
     // edit service on the workbench side (they apply through `$tryApplyWorkspaceEdit` on the host thread today).
-    pub(super) fn apply_code_action(&mut self, item: CodeActionItem, set: Rc<CodeActionSet>, retrigger: bool, window: AnyWindowHandle, cx: &mut Context<Self>) {
+    pub(super) fn apply_code_action(&mut self, item: CodeActionItem, set: Rc<CodeActionSet>, retrigger: bool, window: AnyWindowHandle, cx: &mut Context<Self>) -> Task<()> {
         let supports_resolve = self.language_features.registration(item.handle).is_some_and(|registration| registration.args.get(5) == Some(&json!(true)));
         let resolve = match supports_resolve && item.action["edit"].is_null() && item.action["cacheId"].is_array() {
             true => Some(self.host.call("ExtHostLanguageFeatures", "$resolveCodeAction", vec![json!(item.handle), item.action["cacheId"].clone()])),
@@ -482,7 +492,6 @@ impl Workbench {
                 cx.notify();
             });
         })
-        .detach();
     }
 
     /// An action picked in the widget: it applies and an automatic request follows.
@@ -490,7 +499,7 @@ impl Workbench {
         let item = set.all.iter().chain(&set.valid).nth(index).cloned();
         let Some(item) = item else { return };
         window.focus(&self.editor_focus, cx);
-        self.apply_code_action(item, set, true, window.window_handle(), cx);
+        self.apply_code_action(item, set, true, window.window_handle(), cx).detach();
     }
 
     /// `_executeCodeActionProvider`: the valid actions for a range of a model, as an Invoke with source actions,
@@ -710,7 +719,7 @@ impl Workbench {
         let set = lightbulb.set.clone();
         if set.all_ai_fixes && set.valid.len() == 1 {
             let item = set.valid[0].clone();
-            return self.apply_code_action(item, set, true, window.window_handle(), cx);
+            return self.apply_code_action(item, set, true, window.window_handle(), cx).detach();
         }
         self.show_code_action_list(set, Anchor::Point(at), false, true, cx);
     }
@@ -1234,5 +1243,6 @@ fn keybinding_for_action(bindings: &[(String, bool, String)], action: &Value) ->
     best.map(|binding| binding.2.clone())
 }
 
+mod on_save;
 #[cfg(test)]
 mod tests;
