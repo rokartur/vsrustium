@@ -197,6 +197,8 @@ impl Workbench {
             }
             InputId::ScmInput => {
                 self.edit_scm_input(edit, window, cx);
+                Outcome::done()
+            }
             InputId::ExtensionsSearch => {
                 self.edit_extensions_search(edit, window, cx);
                 Outcome::done()
