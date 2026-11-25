@@ -130,6 +130,12 @@ impl Task {
             task.detail = configuration.detail.clone();
         }
         task.hide = configuration.hide;
+        if !configuration.run_options.is_null() {
+            task.run_options = configuration.run_options.clone();
+        }
+        if !configuration.presentation.is_null() {
+            task.presentation = configuration.presentation.clone();
+        }
         task.configures = false;
         task
     }
@@ -329,5 +335,13 @@ mod tests {
         assert_eq!((task.id.as_str(), task.label.as_str()), ("vscode.npm.script,build,type,npm,", "npm: build"));
         let custom = json!({ "_id": "uuid-1", "name": "c", "definition": { "type": "t" }, "source": { "label": "x" }, "execution": { "customExecution": "customExecution" }, "problemMatchers": [] });
         assert_eq!(Task::from_dto(&custom, None, None).unwrap().id, "uuid-1");
+    }
+
+    #[test]
+    fn a_configuration_carries_its_run_options_onto_the_provided_task() {
+        let provided = Task { definition: json!({ "type": "t", "_key": "k" }), run_options: json!({}), ..Task::default() };
+        let configuration = Task { definition: json!({ "type": "t", "_key": "k" }), configures: true, run_options: json!({ "instanceLimit": 2 }), ..Task::default() };
+        assert!(configuration.configures_task(&provided));
+        assert_eq!(provided.customize(&configuration).run_options, json!({ "instanceLimit": 2 }));
     }
 }
