@@ -128,7 +128,7 @@ impl OpenEditor {
         if self.wraps() {
             return self.wrapped_view_line_count();
         }
-        self.folding.view_line_count(self.document.lines.len())
+        self.folding.view_line_count(self.document().lines.len())
     }
 
     /// The view line a model line shows on; a hidden line shows on the line it is folded into.
@@ -244,9 +244,9 @@ impl OpenEditor {
 
     /// `_computeScrollLeftToReveal` over one-line ranges: 30px of room before the box and 15px after it.
     fn reveal_columns(&mut self, ranges: &[(Position, Position)], selections: bool, viewport: Viewport) {
-        let tab_size = self.document.indentation.tab_size;
+        let tab_size = self.document().indentation.tab_size;
         let x = |position: Position| {
-            let text = &self.document.lines[position.line];
+            let text = &self.document().lines[position.line];
             let x = match super::line_overflow(text, viewport.stop_rendering_line_after) {
                 // Past the cut the position is the end of the "Show more" span.
                 _ if self.wraps() => self.segment_visible_column(self.segment(self.position_view_line(position, false)), position.column) as f32 * viewport.char_width,

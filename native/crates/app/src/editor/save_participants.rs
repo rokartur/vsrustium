@@ -34,32 +34,36 @@ impl OpenEditor {
 
     /// `TrimWhitespaceParticipant`: only an auto save keeps the whitespace before a cursor.
     fn trim_trailing_whitespace_on_save(&mut self, trim_in_regex_and_strings: bool, spared_cursors: &[Position]) -> Option<ContentChanged> {
-        let lines = &self.document.lines;
-        let tokens = &self.document.tokens;
+        let document = self.document();
+        let (lines, tokens) = (&document.lines, &document.tokens);
         let keep = |line: usize, offset: usize| {
             use textmate::StandardTokenType::{RegEx, String};
             !trim_in_regex_and_strings && matches!(tokens.token_type_at(lines, line, offset), String | RegEx)
         };
         let edits = trim_trailing_whitespace_edits(lines, spared_cursors, keep).into_iter().map(|(start, end, text)| (start, end, text, false)).collect();
+        drop(document);
         self.execute_edits(edits, Some(self.selections.clone()), EditReason::Unknown("trimTrailingWhitespace"))
     }
 
     /// `FinalNewLineParticipant`: the EOL after a last line with other than whitespace.
     fn insert_final_newline_on_save(&mut self) -> Option<ContentChanged> {
-        let last = self.document.lines.len() - 1;
-        let text = &self.document.lines[last];
+        let last = self.document().lines.len() - 1;
+        let document = self.document();
+        let text = &document.lines[last];
         if text.trim_matches([' ', '\t']).is_empty() {
             return None;
         }
         let end = Position::new(last, text.chars().count());
-        let edits = vec![(end, end, self.document.eol.to_string(), false)];
+        let edits = vec![(end, end, self.document().eol.to_string(), false)];
+        drop(document);
         self.execute_edits(edits, Some(self.selections.clone()), EditReason::Unknown("insertFinalNewLine"))
     }
 
     /// `TrimFinalNewLinesParticipant`: the empty lines after the last line with text go, but for the line break
     /// that ends it; an auto save keeps the lines up to the last spared cursor.
     fn trim_final_newlines_on_save(&mut self, spared_cursors: &[Position]) -> Option<ContentChanged> {
-        let lines = &self.document.lines;
+        let document = self.document();
+        let lines = &document.lines;
         if lines.len() == 1 {
             return None;
         }
@@ -72,6 +76,7 @@ impl OpenEditor {
             return None;
         }
         let edits = vec![(Position::new(delete_from, 0), end, String::new(), false)];
+        drop(document);
         self.execute_edits(edits, Some(self.selections.clone()), EditReason::Unknown("trimFinalNewlines"))
     }
 }
@@ -97,7 +102,7 @@ mod tests {
     fn saved(text: &str, participants: &SaveParticipants) -> String {
         let mut model = editor(text, "\n");
         model.run_save_participants(participants);
-        model.document.lines.join("\n")
+        model.document().lines.join("\n")
     }
 
     /// saveParticipant.test.ts 'insert final new line'.
@@ -128,7 +133,7 @@ mod tests {
         model.undo();
         model.run_save_participants(&trim_final());
         model.redo();
-        assert_eq!(model.document.lines, ["Trim New Line."]);
+        assert_eq!(model.document().lines, ["Trim New Line."]);
     }
 
     /// saveParticipant.test.ts 'trim final new lines bug#46075': saving again changes nothing, and undo goes back at once.
@@ -138,11 +143,11 @@ mod tests {
         for _ in 0..10 {
             model.run_save_participants(&trim_final());
         }
-        assert_eq!(model.document.lines, ["Test", ""]);
+        assert_eq!(model.document().lines, ["Test", ""]);
         model.undo();
-        assert_eq!(model.document.lines, ["Test", "", ""]);
+        assert_eq!(model.document().lines, ["Test", "", ""]);
         model.redo();
-        assert_eq!(model.document.lines, ["Test", ""]);
+        assert_eq!(model.document().lines, ["Test", ""]);
     }
 
     /// saveParticipant.test.ts 'trim whitespace'.
@@ -152,7 +157,7 @@ mod tests {
         for _ in 0..10 {
             model.run_save_participants(&SaveParticipants { trim_trailing_whitespace: true, ..none() });
         }
-        assert_eq!(model.document.lines, ["Test"]);
+        assert_eq!(model.document().lines, ["Test"]);
     }
 
     /// saveParticipants.ts with `SaveReason.AUTO`: the whitespace before a cursor and the empty lines up to the
@@ -162,7 +167,7 @@ mod tests {
         let mut model = editor("a  \nb  \n\n\n", "\n");
         let spared_cursors = vec![Position::new(1, 3), Position::new(2, 0)];
         model.run_save_participants(&SaveParticipants { trim_trailing_whitespace: true, trim_final_newlines: true, spared_cursors, ..none() });
-        assert_eq!(model.document.lines, ["a", "b  ", "", ""]);
+        assert_eq!(model.document().lines, ["a", "b  ", "", ""]);
     }
 
     /// The participants run in their registration order and undo together; the selections stay.
@@ -171,9 +176,9 @@ mod tests {
         let mut model = editor("a  \nb  \n\n", "\n");
         model.move_to(Position::new(1, 1), false);
         model.run_save_participants(&SaveParticipants { trim_trailing_whitespace: true, insert_final_newline: true, trim_final_newlines: true, ..none() });
-        assert_eq!(model.document.lines, ["a", "b", ""]);
+        assert_eq!(model.document().lines, ["a", "b", ""]);
         assert_eq!(model.selection(), Selection::caret(Position::new(1, 1)));
         model.undo();
-        assert_eq!(model.document.lines, ["a  ", "b  ", "", ""]);
+        assert_eq!(model.document().lines, ["a  ", "b  ", "", ""]);
     }
 }

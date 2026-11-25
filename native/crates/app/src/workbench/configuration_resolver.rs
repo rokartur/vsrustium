@@ -27,7 +27,7 @@ impl Workbench {
     /// `historyService.getLastActiveWorkspaceRoot`: the folder of the active file, else the first folder.
     fn last_active_workspace_root(&self) -> Option<String> {
         let workspace = self.workspace()?;
-        let file = self.editors.active().filter(|editor| editor.document.scheme == "file").map(|editor| &editor.document.path);
+        let file = self.editors.active().filter(|editor| editor.document().scheme == "file").map(|editor| editor.document().path.clone());
         let folder = file.and_then(|file| workspace.folders.iter().filter(|folder| file.starts_with(&folder.path)).max_by_key(|folder| folder.path.as_os_str().len()));
         Some(folder.or(workspace.folders.first())?.path.to_string_lossy().into_owned())
     }
@@ -43,8 +43,8 @@ impl Workbench {
         let extension_location = move |id: &str| locations.get(&id.to_lowercase()).cloned();
 
         let editor = self.editors.active();
-        let file = editor.filter(|editor| matches!(editor.document.scheme.as_str(), "file" | "vscode-userdata")).map(|editor| &editor.document.path);
-        let workspace_folder_for_file = file.and_then(|file| {
+        let file = editor.filter(|editor| matches!(editor.document().scheme.as_str(), "file" | "vscode-userdata")).map(|editor| editor.document().path.clone());
+        let workspace_folder_for_file = file.as_ref().and_then(|file| {
             let workspace = self.workspace()?;
             let folder = workspace.folders.iter().filter(|folder| file.starts_with(&folder.path)).max_by_key(|folder| folder.path.as_os_str().len())?;
             Some(folder.path.to_string_lossy().into_owned())
@@ -56,9 +56,9 @@ impl Workbench {
             extension_location: Box::new(extension_location),
             file_path: file.map(|file| file.to_string_lossy().into_owned()),
             workspace_folder_for_file,
-            selected_text: selection.map(|(editor, selection)| crate::editor::text_between(&editor.document.lines, selection.start(), selection.end())),
+            selected_text: selection.map(|(editor, selection)| crate::editor::text_between(&editor.document().lines, selection.start(), selection.end())),
             line_number: selection.map(|(_, selection)| (selection.head.line + 1).to_string()),
-            column_number: selection.map(|(editor, selection)| (utf16_column(&editor.document.lines[selection.head.line], selection.head.column) + 1).to_string()),
+            column_number: selection.map(|(editor, selection)| (utf16_column(&editor.document().lines[selection.head.line], selection.head.column) + 1).to_string()),
             exec_path: std::env::current_exe().ok().map(|path| path.to_string_lossy().into_owned()),
             app_root: Some(self.app_root.to_string_lossy().into_owned()),
             env: std::env::vars().collect(),

@@ -9,6 +9,14 @@ Not reached: tests of the reference run (402 folder, 4 workspace) the port did n
 | api-folder | 35 | 41 | 133 | 193 | timed out after 1800s |
 | api-workspace | 0 | 0 | 4 | 0 | exit 1 after 0s |
 
+## Milestone 11: tree views and editor groups
+
+`MOCHA_GREP="vscode API - tree|vscode API - window" SUITE_TIMEOUT=600 port/tools/api-tests` on the Studio, the working tree after the panel commit d1e955ab4cf with tree views and decorations: api-folder 33 passing, 0 pending, 11 failing (exit 1 after 10s). All four tree.test.ts cases pass (`TreeView - element already registered`, `... after rapid root refresh`, `... during switch and update`, `... after refresh`). The 11 failing are window.test.ts cases that open editors in view columns, which `$tryShowTextDocument` ignored then, plus `Tabs - vscode.open & vscode.diff` (fake-fs, `_workbench.diff`) and `showWorkspaceFolderPick` (`_workbench.pickWorkspaceFolder` not found).
+
+After the view column commit bbe3bd19e40, Close Editors in Other Groups, Close All Editors across groups, `$acceptEditorPositionData` and moving a group telling the host, same pattern without the tree suite (`MOCHA_GREP="vscode API - window" SUITE_TIMEOUT=600`): api-folder 37 passing, 0 pending, 3 failing (exit 1 after 18s), api-workspace 0/0/0. Left: `Tabs - vscode.open & vscode.diff` ("Unable to resolve resource fake-fs:/...": a file system provider's resource in `_workbench.open`), `Tabs - Ensure tabs getter is correct` (`openNotebookDocument`, no notebooks) and `showWorkspaceFolderPick` (`_workbench.pickWorkspaceFolder`).
+
+After the port-integrate merge 624b11540c5, with `_workbench.pickWorkspaceFolder`, provider resources and view columns in `_workbench.open` and the view column in `_workbench.diff` (same pattern): api-folder 39 passing, 0 pending, 1 failing (exit 1 after 6s), api-workspace 0/0/0. Left: `Tabs - Ensure tabs getter is correct` (`openNotebookDocument`, notebooks are milestone 17).
+
 ## Milestone 16: debug and testing
 
 `MOCHA_GREP="vscode API - debug|createTestController" SUITE_TIMEOUT=600 port/tools/api-tests` on the Studio at e032c3f1-dirty. Before: `vscode API - debug` 2 passing, 1 failing (`start debugging failure`). After: api-folder 4 passing, 2 pending, 0 failing: `breakpoints`, `function breakpoint`, `start debugging failure`, `no rpc, createTestController(...)`. The 2 pending are `test.skip` upstream, as in the reference run.

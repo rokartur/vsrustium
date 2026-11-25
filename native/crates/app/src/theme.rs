@@ -414,6 +414,7 @@ fn registry_default(key: &str, kind: ThemeKind) -> ColorValue {
             Hex("#FFFFFF"),
         ),
         "surface.background" => (Key("sideBar.background"), Key("editor.background"), Key("sideBar.background")),
+        "modernSash.gripForeground" => (Transparent(&Key("foreground"), 0.4), Transparent(&Key("foreground"), 0.4), Key("foreground")),
         "surface.border" => (
             Opaque(&Transparent(&Key("foreground"), 0.15), &Key("surface.background")),
             Opaque(&Transparent(&Key("foreground"), 0.15), &Key("surface.background")),
@@ -696,6 +697,7 @@ fn hc_light_default(key: &str) -> ColorValue {
         "activityBar.inactiveForeground" => Key("editor.foreground"),
         "surface.background" => Key("sideBar.background"),
         "surface.border" => Key("contrastBorder"),
+        "modernSash.gripForeground" => Key("foreground"),
         "statusBar.foreground" => Key("editor.foreground"),
         "statusBar.focusBorder" => Key("statusBar.foreground"),
         "statusBarItem.prominentForeground" => Key("statusBar.foreground"),

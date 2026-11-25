@@ -65,7 +65,7 @@ impl Workbench {
     /// storage writes synchronously and the app can exit without a shutdown phase.
     pub(super) fn record_editor_history(&mut self) {
         let Some(editor) = self.editors.active() else { return };
-        let path = editor.document.path.clone();
+        let path = editor.document().path.clone();
         if self.quick_access.editor_history.entries.first() == Some(&path) || self.history_exclude_matcher()(&path, None) {
             return;
         }
@@ -223,9 +223,9 @@ impl Workbench {
             .editors
             .editors
             .iter()
-            .map(|editor| &editor.document.path)
+            .map(|editor| editor.document().path.clone())
             .filter(|path| !folders.iter().any(|folder| path.starts_with(folder)))
-            .map(|path| FileEntry { relative_path: path.to_string_lossy().into_owned(), path: path.clone() })
+            .map(|path| FileEntry { relative_path: path.to_string_lossy().into_owned(), path })
             .collect();
         let rg = search::ripgrep::rg_path(&self.app_root);
         let cancellation = Arc::new(Cancellation::default());
@@ -305,13 +305,15 @@ impl Workbench {
     /// `applyTextEditorOptions`: the selection, validated against the text, then revealed in the center.
     pub(super) fn select_range(&mut self, path: &Path, range: TextRange, cx: &mut Context<Self>) {
         let viewport = self.editors.viewport;
-        let Some(editor) = self.editors.active_mut().filter(|editor| editor.document.path == path) else { return };
-        let lines = &editor.document.lines;
+        let Some(editor) = self.editors.active_mut().filter(|editor| editor.document().path == path) else { return };
+        let document = editor.document();
+        let lines = &document.lines;
         let validate = |line: usize, column: usize| {
             let line = line.clamp(1, lines.len()) - 1;
             Position::new(line, column.clamp(1, lines[line].chars().count() + 1) - 1)
         };
         let selection = Selection { anchor: validate(range.start_line_number, range.start_column), head: validate(range.end_line_number, range.end_column) };
+        drop(document);
         editor.set_selections(vec![selection]);
         editor.reveal_range(selection.start(), selection.end(), VerticalReveal::Center, viewport);
         self.host.send_selection(editor, "code.navigation");

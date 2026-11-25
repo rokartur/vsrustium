@@ -113,7 +113,7 @@ fn define_keybinding_inserts_a_rule_into_the_user_keybindings_json(cx: &mut Test
         "Cmd+K Cmd+K shows the define widget over keybindings.json"
     );
     cx.simulate_keystrokes("cmd-u enter");
-    let text = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document.lines.join("\n"));
+    let text = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document().lines.join("\n"));
     // SmartSnippetInserter puts it right after `[`; the snippet's tabs become the file's 4 spaces.
     assert_eq!(text, "[{\n    \"key\": \"cmd+u\",\n    \"command\": \"commandId\",\n    \"when\": \"editorTextFocus\"\n}\n]");
     assert!(!workbench.read_with(cx, |workbench, _| workbench.define_widget_shown(true)));

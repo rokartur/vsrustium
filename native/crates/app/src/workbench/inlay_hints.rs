@@ -22,9 +22,10 @@ impl Workbench {
         let Some(editor) = super::host_requests::uri_parts(&args.first().cloned().unwrap_or_default()).ok().and_then(|(scheme, path)| self.editors.model(scheme, &path)) else {
             return Outcome::Ready(Err(crate::commands::error_value("Illegal argument")));
         };
-        let uri = editor.document.uri();
+        let uri = editor.document().uri();
         let range = args.get(1).cloned().unwrap_or_default();
-        let candidate = Candidate { uri: &uri, language: &editor.document.language_id };
+        let language = editor.document().language_id.clone();
+        let candidate = Candidate { uri: &uri, language: &language };
         // `registry.ordered(model).reverse()`.
         let calls: Vec<_> = self
             .language_features

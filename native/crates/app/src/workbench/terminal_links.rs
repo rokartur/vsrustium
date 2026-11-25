@@ -43,7 +43,7 @@ impl Workbench {
         let Some(line) = line else { return };
         let viewport = self.editors.viewport;
         let Some(editor) = self.editors.active_mut() else { return };
-        let position = validate(&editor.document.lines, line as usize, column.unwrap_or(1) as usize);
+        let position = validate(&editor.document().lines, line as usize, column.unwrap_or(1) as usize);
         editor.set_selections(vec![Selection::caret(position)]);
         editor.reveal_range(position, position, VerticalReveal::CenterIfOutsideViewport, viewport);
         self.host.send_selection(editor, "code.jump");

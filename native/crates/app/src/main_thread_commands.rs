@@ -20,6 +20,8 @@ impl Workbench {
             ("MainThreadProgress", "$progressReport") => self.report_progress(&request.args, window, cx),
             ("MainThreadProgress", "$progressEnd") => self.end_progress(&request.args, window, cx),
             ("MainThreadWebviews" | "MainThreadWebviewPanels", method) => self.handle_webview_request(method, &request.args, window, cx),
+            ("MainThreadDecorations", method) => self.handle_decorations_request(method, &request.args, cx),
+            ("MainThreadTreeViews", method) => self.handle_tree_view_request(method, &request.args, window, cx),
             ("MainThreadSCM", method) => self.handle_scm_request(method, &request.args, window, cx),
             ("MainThreadWebviewViews", method) => self.handle_webview_views_request(method, &request.args, window, cx),
             ("MainThreadCustomEditors", method) => self.handle_custom_editors_request(method, &request.args, window, cx),

@@ -81,6 +81,8 @@ fn the_side_bar_is_hidden_in_an_empty_window_and_cmd_b_toggles_it_for_the_next_o
 #[gpui::test]
 fn cmd_j_shows_the_panel_under_the_editor_and_maximize_hides_the_editor_until_the_panel_closes(cx: &mut TestAppContext) {
     let stores = stores();
+    // The Output view, as the default Terminal view would start a shell the test scheduler cannot track.
+    stores.workspace.lock().unwrap().set("workbench.panelpart.activepanelid", super::super::output_view::OUTPUT_VIEW_ID.to_string());
     let (workbench, window_cx) = open(None, &stores, cx);
     let column = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.part_grid.grid.as_ref().unwrap().column_sizes());
     window_cx.simulate_keystrokes("cmd-j");

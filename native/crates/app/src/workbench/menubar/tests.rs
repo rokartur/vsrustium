@@ -145,7 +145,7 @@ fn open_recent_lists_folders_then_files_before_more(cx: &mut TestAppContext) {
         MenuItem::Separator => "-".into(),
         _ => "?".into(),
     }).collect();
-    assert_eq!(names[..5], ["/tmp/a&b", "-", "/tmp/one.txt", "-", "More…"]);
+    assert_eq!(names[..7], ["Reopen Closed Editor", "-", "/tmp/a&b", "-", "/tmp/one.txt", "-", "More…"]);
 }
 
 #[test]

@@ -44,7 +44,7 @@ impl Workbench {
         let settings = self.settings.lock().unwrap();
         let mut rendered = Vec::new();
         for editor in &self.editors.editors {
-            let document = &editor.document;
+            let document = &editor.document();
             if document.scheme != "file" {
                 continue;
             }

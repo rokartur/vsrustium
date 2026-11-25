@@ -226,8 +226,8 @@ impl Workbench {
         let (colors, token_colors) = (value("workbench.colorCustomizations"), value("editor.tokenColorCustomizations"));
         drop(settings);
         self.theme.set_customizations(&colors, &token_colors);
-        for editor in &mut self.editors.editors {
-            editor.document.tokens.theme_changed();
+        for editor in self.editors.all_editors() {
+            editor.model.borrow_mut().document.tokens.theme_changed();
         }
         self.restyle_webviews();
     }

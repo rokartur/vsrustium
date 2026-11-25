@@ -85,7 +85,7 @@ impl Workbench {
             self.editors.open(document, false);
             self.editors.active_mut().expect("just opened").set_language("jsonc", &self.languages, &settings);
         }
-        let model = &self.editors.model(TRUSTED_DOMAINS_SCHEME, &path).expect("opened above").document;
+        let model = self.editors.model(TRUSTED_DOMAINS_SCHEME, &path).expect("opened above").document();
         let text = model.lines.join(&model.eol);
         let mut options = json!({ "pinned": true });
         if let Some(offset) = first_entry_offset(&text) {
@@ -93,6 +93,7 @@ impl Workbench {
             let (line, column) = (position.line + 1, position.column + 1);
             options["selection"] = json!({ "startLineNumber": line, "startColumn": column, "endLineNumber": line, "endColumn": column });
         }
+        drop(model);
         let uri = json!({ "$mid": 1, "scheme": TRUSTED_DOMAINS_SCHEME, "path": TRUSTED_DOMAINS_PATH });
         if let Err(error) = self.try_show_text_document(&uri, &options, window, cx) {
             self.notify_error(error["message"].as_str().unwrap_or_default().to_owned());
@@ -120,7 +121,7 @@ impl Workbench {
         let (sender, receiver) = oneshot::channel();
         let model = self.editors.model(TRUSTED_DOMAINS_SCHEME, path).expect("saving an open model");
         let version = model.alternative_version_id();
-        let text = model.document.lines.join(&model.document.eol);
+        let text = model.document().lines.join(&model.document().eol);
         let domains = config::json::parse(&text, &mut Vec::new(), ParseOptions::default()).map(|domains| domains.to_string());
         let mut storage = self.application_storage.lock().unwrap();
         storage.set(trusted_domains::CONTENT_STORAGE_KEY, text);

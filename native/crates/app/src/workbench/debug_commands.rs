@@ -79,7 +79,7 @@ impl Workbench {
             let Some(editor) = workbench.editors.active() else { return Outcome::done() };
             let mut lines: Vec<u32> = editor.selections.iter().map(|selection| selection.head.line as u32 + 1).collect();
             lines.dedup();
-            let uri = editor.document.uri();
+            let uri = editor.document().uri();
             for line in lines {
                 workbench.toggle_breakpoint(&uri, line, None, cx);
             }
@@ -89,7 +89,7 @@ impl Workbench {
         self.commands.register("editor.debug.action.toggleInlineBreakpoint", |workbench, _, _, cx| {
             let Some(editor) = workbench.editors.active() else { return Outcome::done() };
             let head = editor.selections[0].head;
-            let uri = editor.document.uri();
+            let uri = editor.document().uri();
             workbench.toggle_breakpoint(&uri, head.line as u32 + 1, Some(head.column as u32 + 1), cx);
             Outcome::done()
         });
@@ -104,7 +104,7 @@ impl Workbench {
         self.commands.register("editor.debug.action.editBreakpoint", |workbench, _, window, cx| {
             let Some(editor) = workbench.editors.active() else { return Outcome::done() };
             let line = editor.selections[0].head.line as u32 + 1;
-            let uri = editor.document.uri_string();
+            let uri = editor.document().uri_string();
             let id = workbench.debug.model.breakpoints_in(&uri).find(|breakpoint| breakpoint.line_number() == line).map(|breakpoint| breakpoint.id().to_owned());
             workbench.show_breakpoint_widget(line, id, super::breakpoint_widget::WidgetContext::Condition, window, cx);
             Outcome::done()
@@ -238,8 +238,8 @@ impl Workbench {
     fn run_to_cursor(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
         let Some(editor) = self.editors.active() else { return Outcome::done() };
         let line = editor.selections[0].head.line as u32 + 1;
-        let uri = editor.document.uri();
-        let uri_string = editor.document.uri_string();
+        let uri = editor.document().uri();
+        let uri_string = editor.document().uri_string();
         if self.debug.model.breakpoints_in(&uri_string).any(|breakpoint| breakpoint.line_number() == line) {
             return self.run_thread_command("continue", false, window, cx);
         }
@@ -267,7 +267,8 @@ impl Workbench {
     /// `debug.allowBreakpointsEverywhere`; never in jsonc or log files.
     pub(crate) fn can_set_breakpoints_in_active_editor(&self) -> bool {
         let Some(editor) = self.editors.active() else { return false };
-        let language = editor.document.language_id.as_str();
+        let language = editor.document().language_id.clone();
+        let language = language.as_str();
         if language.is_empty() || language == "jsonc" || language == "log" {
             return false;
         }
@@ -283,7 +284,7 @@ impl Workbench {
         let selection = editor.selections[0];
         if !selection.is_empty() {
             let (start, end) = if selection.anchor < selection.head { (selection.anchor, selection.head) } else { (selection.head, selection.anchor) };
-            let lines = &editor.document.lines;
+            let lines = &editor.document().lines;
             let text: Vec<String> = (start.line..=end.line)
                 .map(|line| {
                     let chars: Vec<char> = lines[line].chars().collect();
@@ -294,7 +295,7 @@ impl Workbench {
                 .collect();
             return Some(text.join("\n"));
         }
-        let line: Vec<char> = editor.document.lines[selection.head.line].chars().collect();
+        let line: Vec<char> = editor.document().lines[selection.head.line].chars().collect();
         let is_word = |c: &char| c.is_alphanumeric() || *c == '_' || *c == '$';
         let mut start = selection.head.column.min(line.len());
         while start > 0 && is_word(&line[start - 1]) {

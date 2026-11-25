@@ -29,7 +29,7 @@ impl OpenEditor {
     /// to `target`; only the primary cursor stays (`killSecondaryCursors`).
     pub fn drop_dragged_text(&mut self, dragged: Selection, target: Position, copy: bool) -> Option<ContentChanged> {
         self.selections.truncate(1);
-        let text = text_between(&self.document.lines, dragged.start(), dragged.end());
+        let text = text_between(&self.document().lines, dragged.start(), dragged.end());
         let mut edits = Vec::new();
         if !copy {
             edits.push(Replace::new(dragged.start(), dragged.end(), ""));
@@ -86,7 +86,7 @@ mod tests {
         let dragged = Selection { anchor: Position::new(dragged.0.0, dragged.0.1), head: Position::new(dragged.1.0, dragged.1.1) };
         model.set_selections(vec![dragged]);
         model.drop_dragged_text(dragged, Position::new(target.0, target.1), copy);
-        (model.document.lines.join("\n"), model.selections[0])
+        (model.document().lines.join("\n"), model.selections[0])
     }
 
     fn selection(anchor: (usize, usize), head: (usize, usize)) -> Selection {

@@ -95,7 +95,8 @@ struct ProviderAnswer {
 impl Workbench {
     pub(super) fn suggest_setting(&self, editor: &OpenEditor, key: &str) -> Value {
         let settings = self.settings.lock().unwrap();
-        let overrides = Overrides { resource: Some(&editor.document.path), override_identifier: Some(&editor.document.language_id) };
+        let (resource, language) = (editor.document().path.clone(), editor.document().language_id.clone());
+        let overrides = Overrides { resource: Some(&resource), override_identifier: Some(&language) };
         settings.get_value(Some(key), &overrides).unwrap_or(Value::Null)
     }
 
@@ -202,9 +203,9 @@ impl Workbench {
                 let config = workbench.suggest_setting(editor, "editor.quickSuggestions");
                 if !quick_suggestions_all_on(&config) {
                     let head = editor.selection().head;
-                    let text = &editor.document.lines[head.line];
+                    let text = &editor.document().lines[head.line];
                     let offset = text.char_indices().nth(head.column.saturating_sub(1)).map_or(text.len(), |(offset, _)| offset);
-                    let token = editor.document.tokens.token_type_at(&editor.document.lines, head.line, offset);
+                    let token = editor.document().tokens.token_type_at(&editor.document().lines, head.line, offset);
                     let key = match token {
                         textmate::StandardTokenType::Comment => "comments",
                         textmate::StandardTokenType::String => "strings",
@@ -223,7 +224,7 @@ impl Workbench {
     fn should_auto_trigger(&self) -> bool {
         let Some(editor) = self.editors.active() else { return false };
         let head = editor.selection().head;
-        let text = &editor.document.lines[head.line];
+        let text = &editor.document().lines[head.line];
         let Some(word) = word_at(text, head.column) else { return false };
         if word.end != head.column && word.start + 1 != head.column {
             return false;
@@ -239,10 +240,11 @@ impl Workbench {
             return;
         }
         let head = editor.selection().head;
-        let Some(last) = editor.document.lines[head.line].chars().take(head.column).last() else { return };
+        let Some(last) = editor.document().lines[head.line].chars().take(head.column).last() else { return };
         let last = last.to_string();
-        let uri = editor.document.uri();
-        let candidate = Candidate { uri: &uri, language: &editor.document.language_id };
+        let uri = editor.document().uri();
+        let language = editor.document().language_id.clone();
+        let candidate = Candidate { uri: &uri, language: &language };
         let supports: Vec<u64> = self.language_features.ordered("$registerCompletionsProvider", &candidate).into_iter().filter(|registration| registration.args.get(2).and_then(Value::as_array).is_some_and(|chars| chars.contains(&json!(last)))).map(|registration| registration.handle).collect();
         if supports.is_empty() {
             return;
@@ -267,7 +269,7 @@ impl Workbench {
 
     fn line_context(editor: &OpenEditor) -> Context_ {
         let head = editor.selection().head;
-        let text = &editor.document.lines[head.line];
+        let text = &editor.document().lines[head.line];
         let leading_line_content: String = text.chars().take(head.column).collect();
         let (leading_word_start, leading_word) = match word_at(text, head.column) {
             Some(word) if word.start < head.column => (word.start, text.chars().skip(word.start).take(head.column - word.start).collect()),
@@ -281,8 +283,7 @@ impl Workbench {
         let Some(editor) = self.editors.active() else { return };
         let context = Self::line_context(editor);
         let model_id = editor.model_id;
-        let text = &editor.document.lines[context.line];
-        let line_suffix = text.chars().count() - context.column;
+        let line_suffix = editor.document().lines[context.line].chars().count() - context.column;
         self.cancel_suggest(options.retrigger, cx);
         let auto = options.auto;
         self.suggest.session = Some(Session { model_id, options: options.clone(), context: context.clone(), model: None, line_suffix });
@@ -297,9 +298,10 @@ impl Workbench {
             None => None,
         };
         let editor = self.editors.active().expect("checked above");
-        let uri = editor.document.uri();
-        let candidate = Candidate { uri: &uri, language: &editor.document.language_id };
-        let position = json!({ "lineNumber": context.line + 1, "column": utf16_column(&editor.document.lines[context.line], context.column) + 1 });
+        let uri = editor.document().uri();
+        let language = editor.document().language_id.clone();
+        let candidate = Candidate { uri: &uri, language: &language };
+        let position = json!({ "lineNumber": context.line + 1, "column": utf16_column(&editor.document().lines[context.line], context.column) + 1 });
         let completion_context = match &options.trigger_character {
             Some(character) => json!({ "triggerKind": TRIGGER_CHARACTER, "triggerCharacter": character }),
             None => json!({ "triggerKind": options.trigger_kind }),
@@ -515,13 +517,13 @@ impl Workbench {
         if mode == "off" {
             return Value::Null;
         }
-        let text = &editor.document.lines[head.line];
+        let text = &editor.document().lines[head.line];
         let word = word_at(text, head.column);
         let current: Option<String> = word.clone().map(|word| text.chars().skip(word.start).take(word.len()).collect());
         let mut models = vec![editor];
         if mode != "currentDocument" {
             for other in self.editors.editors.iter().chain(&self.editors.models) {
-                if other.model_id != editor.model_id && !models.iter().any(|model| model.model_id == other.model_id) && (mode == "allDocuments" || other.document.language_id == editor.document.language_id) {
+                if other.model_id != editor.model_id && !models.iter().any(|model| model.model_id == other.model_id) && (mode == "allDocuments" || other.document().language_id == editor.document().language_id) {
                     models.push(other);
                 }
             }
@@ -529,7 +531,7 @@ impl Workbench {
         let mut seen: Vec<String> = Vec::new();
         let mut known = std::collections::HashSet::new();
         'models: for model in models {
-            for line in &model.document.lines {
+            for line in &model.document().lines {
                 for word in line_words(line) {
                     if current.as_deref() == Some(word.as_str()) || word.parse::<f64>().is_ok() || !known.insert(word.clone()) {
                         continue;
@@ -572,7 +574,7 @@ impl Workbench {
         let replace = (insert_mode == "replace") != flags.alternative_overwrite;
         let head = editor.selection().head;
         let overwrite_before = item.position.column as isize - item.edit_start.column as isize + head.column as isize - item.position.column as isize;
-        let suffix_delta = if head.line == item.position.line { (editor.document.lines[head.line].chars().count() as isize - line_suffix as isize - head.column as isize).max(0) } else { 0 };
+        let suffix_delta = if head.line == item.position.line { (editor.document().lines[head.line].chars().count() as isize - line_suffix as isize - head.column as isize).max(0) } else { 0 };
         let end = if replace { item.edit_replace_end } else { item.edit_insert_end };
         let overwrite_after = end.column as isize - item.position.column as isize + suffix_delta;
         let mut change = None;
@@ -605,9 +607,9 @@ impl Workbench {
             .selections
             .iter()
             .map(|selection| {
-                let line_len = editor.document.lines[selection.start().line].chars().count();
+                let line_len = editor.document().lines[selection.start().line].chars().count();
                 let start = Position::new(selection.start().line, (selection.start().column as isize - overwrite_before).clamp(0, line_len as isize) as usize);
-                let end_line_len = editor.document.lines[selection.end().line].chars().count();
+                let end_line_len = editor.document().lines[selection.end().line].chars().count();
                 let end = Position::new(selection.end().line, (selection.end().column as isize + overwrite_after).clamp(0, end_line_len as isize) as usize);
                 (start, end)
             })
@@ -639,7 +641,7 @@ impl Workbench {
     /// an edit before them happened meanwhile.
     fn resolve_additional_edits(&mut self, item: CompletionItem, model_id: u32, cx: &mut Context<Self>) {
         let Some(editor) = self.editors.active() else { return };
-        let version = editor.version_id;
+        let version = editor.text_model().version_id;
         let resolve = self.host.call_cancellable("ExtHostLanguageFeatures", "$resolveCompletionItem", vec![json!(item.provider), item.id.clone()]);
         cx.spawn(async move |workbench, cx| {
             let Ok(Ok(resolved)) = resolve.await else { return };
@@ -648,7 +650,7 @@ impl Workbench {
                 let Some(editor) = workbench.editors.active_mut().filter(|editor| editor.model_id == model_id) else { return };
                 // shortcut: any edit since the insert drops the edits, where upstream keeps them when the edits were
                 // after the earliest changed position; track change positions when an extension needs it.
-                if editor.version_id != version + 1 {
+                if editor.text_model().version_id != version + 1 {
                     return;
                 }
                 let edits = edits.iter().map(|edit| {
@@ -674,8 +676,8 @@ impl Workbench {
         let position = args.get(1).cloned().unwrap_or_default();
         let trigger_character = args.get(2).and_then(Value::as_str).map(String::from);
         let max_resolve = args.get(3).and_then(Value::as_u64).unwrap_or(0) as usize;
-        let document_uri = editor.document.uri();
-        let candidate = Candidate { uri: &document_uri, language: &editor.document.language_id };
+        let document_uri = editor.document().uri();
+        let candidate = Candidate { uri: &document_uri, language: &editor.document().language_id };
         let context = match &trigger_character {
             Some(character) => json!({ "triggerKind": TRIGGER_CHARACTER, "triggerCharacter": character }),
             None => json!({ "triggerKind": INVOKE }),

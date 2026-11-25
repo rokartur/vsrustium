@@ -76,13 +76,13 @@ impl Workbench {
     /// quickDiffModel.ts `triggerDiff` for the active editor: asks its source control for the original once per
     /// SCM change, then diffs the two models whenever either version moves.
     pub(in crate::workbench) fn update_quick_diff(&mut self, cx: &mut Context<Self>) {
-        let open: Vec<(String, PathBuf)> = self.editors.editors.iter().map(|editor| (editor.document.scheme.clone(), editor.document.path.clone())).collect();
+        let open: Vec<(String, PathBuf)> = self.editors.editors.iter().map(|editor| (editor.document().scheme.clone(), editor.document().path.clone())).collect();
         self.quick_diffs.entries.retain(|key, _| open.contains(key));
         if !self.quick_diff_enabled() || self.editors.active_diff().is_some() {
             return;
         }
         let Some(editor) = self.editors.active() else { return };
-        let key = (editor.document.scheme.clone(), editor.document.path.clone());
+        let key = (editor.document().scheme.clone(), editor.document().path.clone());
         let generation = self.quick_diffs.generation;
         let original_loaded = |workbench: &Self, entry: &Entry| entry.original.as_ref().is_none_or(|side| workbench.editors.model(&side.scheme, &side.path).is_some());
         let entry = self.quick_diffs.entries.entry(key.clone()).or_default();
@@ -96,7 +96,7 @@ impl Workbench {
         }
         let Some(original) = &entry.original else { return };
         let (Some(original), Some(modified)) = (self.editors.model(&original.scheme, &original.path), self.editors.model(&key.0, &key.1)) else { return };
-        let versions = (original.version_id, modified.version_id);
+        let versions = (original.text_model().version_id, modified.text_model().version_id);
         if versions == entry.versions {
             return;
         }
@@ -106,7 +106,7 @@ impl Workbench {
             _ => false,
         };
         let options = diff::DiffOptions { ignore_trim_whitespace, max_computation_time_ms: MAX_COMPUTATION_TIME_MS, compute_moves: false, extend_to_subwords: false };
-        let changes = line_changes(&diff::compute_diff(&original.document.lines, &modified.document.lines, options));
+        let changes = line_changes(&diff::compute_diff(&original.document().lines, &modified.document().lines, options));
         let entry = self.quick_diffs.entries.get_mut(&key).expect("found above");
         entry.versions = versions;
         entry.changes = changes;
@@ -155,7 +155,7 @@ impl Workbench {
 
     /// The active editor's quick diff changes, empty when it has none.
     fn quick_diff_changes(&self, editor: &OpenEditor) -> &[QuickDiffChange] {
-        let key = (editor.document.scheme.clone(), editor.document.path.clone());
+        let key = (editor.document().scheme.clone(), editor.document().path.clone());
         self.quick_diffs.entries.get(&key).map_or(&[], |entry| entry.changes.as_slice())
     }
 

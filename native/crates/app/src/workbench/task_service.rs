@@ -67,7 +67,7 @@ impl Markers for WorkbenchMarkers<'_> {
     }
 
     fn is_open(&self, resource: &PathBuf) -> bool {
-        self.0.editors.editors.iter().any(|editor| editor.document.path == *resource)
+        self.0.editors.editors.iter().any(|editor| editor.document().path == *resource)
     }
 }
 
@@ -375,12 +375,12 @@ impl Workbench {
     // shortcut: `${selectedText}` stays unresolved, the editor model has no range text accessor here; add it with one.
     pub(super) fn variable_context(&self, folder: Option<PathBuf>) -> crate::variables::VariableContext {
         let folders: Vec<(String, PathBuf)> = self.workspace().map(|workspace| workspace.folders.iter().map(|folder| (folder.name.clone(), folder.path.clone())).collect()).unwrap_or_default();
-        let active = self.editors.active().filter(|editor| editor.document.scheme == "file");
+        let active = self.editors.active().filter(|editor| editor.document().scheme == "file");
         let cursor = active.map(|editor| editor.selections[0].head);
         crate::variables::VariableContext {
             folder: folder.or_else(|| folders.first().map(|(_, path)| path.clone())),
             folders,
-            file: active.map(|editor| editor.document.path.clone()),
+            file: active.map(|editor| editor.document().path.clone()),
             line_number: cursor.map(|position| position.line as u32 + 1),
             column_number: cursor.map(|position| position.column as u32 + 1),
             selected_text: None,

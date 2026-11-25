@@ -248,7 +248,7 @@ impl Workbench {
             return;
         };
         let position = editor.selections[0].head;
-        let (model_id, version) = (editor.model_id, editor.version_id);
+        let (model_id, version) = (editor.model_id, editor.text_model().version_id);
         let now = Instant::now();
         let state = &mut self.accessibility;
         if (state.version.0, state.version.1) != (model_id, version) {
@@ -363,7 +363,7 @@ impl Workbench {
             let folding = &editor.folding;
             return mode == SignalMode::Line && folding.region_at_line(line_number).is_some_and(|index| folding.regions.is_collapsed(index) && folding.regions.get(index).start == line_number);
         };
-        let resource = crate::editor::uri_string(&editor.document.scheme, &editor.document.path);
+        let resource = crate::editor::uri_string(&editor.document().scheme, &editor.document().path);
         self.diagnostics.service.read(ReadOptions { resource: Some(&resource), ..ReadOptions::default() }).iter().any(|marker| {
             let on_line = marker.severity == severity && marker.start_line <= line_number && line_number <= marker.end_line;
             match mode {
@@ -485,7 +485,7 @@ impl Workbench {
             return element;
         }
         let page_size = self.setting("editor.accessibilityPageSize").as_u64().unwrap_or(500).max(1) as usize;
-        let page = screen_reader_page(&editor.document.lines, editor.selections[0].anchor, editor.selections[0].head, page_size);
+        let page = screen_reader_page(&editor.document().lines, editor.selections[0].anchor, editor.selections[0].head, page_size);
         element.a11y_synthetic_children(move |builder| page.build(builder))
     }
 }
@@ -624,7 +624,7 @@ mod tests {
         cx.update(|window, _| window.activate_window());
         let set_markers = |markers: Vec<Value>, cx: &mut gpui::VisualTestContext| {
             workbench.update(cx, |workbench, cx| {
-                let resource = workbench.editors.active().unwrap().document.uri_string();
+                let resource = workbench.editors.active().unwrap().document().uri_string();
                 workbench.diagnostics.service.change_one("test", &resource, &markers, false);
                 cx.notify();
             });

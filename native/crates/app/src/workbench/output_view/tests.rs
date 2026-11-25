@@ -48,8 +48,8 @@ fn request(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext, prox
 
 fn shown_text(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext) -> Option<(String, String)> {
     workbench.read_with(cx, |workbench, _| {
-        let editor = workbench.editors.active().filter(|editor| editor.document.scheme == OUTPUT_SCHEME)?;
-        Some((editor.document.path.to_string_lossy().into_owned(), editor.document.lines.join("\n")))
+        let editor = workbench.output_editor().filter(|editor| workbench.output_view_visible() && editor.document().scheme == OUTPUT_SCHEME)?;
+        Some((editor.document().path.to_string_lossy().into_owned(), editor.document().lines.join("\n")))
     })
 }
 
@@ -82,7 +82,10 @@ fn extension_channels_show_their_file_in_the_output_view(cx: &mut TestAppContext
     std::fs::write(&file, "one\ntwonew").unwrap();
     request(&workbench, cx, "MainThreadOutputService", "$update", json!([id, 2, 7]));
     assert_eq!(shown_text(&workbench, cx).unwrap().1, "new");
-    let readonly = workbench.read_with(cx, |workbench, _| workbench.active_editor_readonly());
+    let readonly = workbench.update_in(cx, |workbench, window, cx| {
+        workbench.focus_group(crate::editor::PANEL_GROUP, window, cx);
+        workbench.active_editor_readonly()
+    });
     assert_eq!(readonly, Some(crate::workbench::readonly::Readonly::Editor));
 
     request(&workbench, cx, "MainThreadOutputService", "$close", json!([id]));
@@ -106,12 +109,12 @@ fn loggers_are_log_channels(cx: &mut TestAppContext) {
     }
     workbench.update_in(cx, |workbench, window, cx| workbench.show_output_channel("vscode.git.Git.log", true, window, cx));
     assert_eq!(shown_text(&workbench, cx), Some(("vscode.git.Git.log".into(), "Git log".into())));
-    let language = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document.language_id.clone());
+    let language = workbench.read_with(cx, |workbench, _| workbench.output_editor().unwrap().document().language_id.clone());
     assert_eq!(language, "log");
     request(&workbench, cx, "MainThreadLogger", "$deregisterLogger", json!([{ "scheme": "file", "path": dir.join("vscode.git.Git.log.log") }]));
     assert_eq!(shown_text(&workbench, cx), Some(("exthost".into(), "Extension Host log".into())));
-    let tabs = workbench.read_with(cx, |workbench, _| workbench.editors.editors.len());
-    assert_eq!(tabs, 1, "the view's one tab shows the other channel");
+    let tabs = workbench.read_with(cx, |workbench, _| (workbench.editors.group_tabs(crate::editor::PANEL_GROUP).0.len(), workbench.editors.group_tabs(0).0.len()));
+    assert_eq!(tabs, (1, 0), "the view's one editor shows the other channel, no editor group has a tab");
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -133,6 +136,25 @@ fn toggle_output_opens_and_closes_the_view(cx: &mut TestAppContext) {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+/// The Debug Console is a panel view beside Output; the Test Results tab waits for results (`hideIfEmpty`).
+#[gpui::test]
+fn the_debug_console_and_test_results_are_panel_views(cx: &mut TestAppContext) {
+    let (workbench, cx, _receiver, dir) = open(cx);
+    run(&workbench, cx, "workbench.debug.action.toggleRepl");
+    let (console_shown, editors) = workbench.read_with(cx, |workbench, _| (workbench.debug_console_visible(), workbench.editors.editors.len()));
+    assert_eq!((console_shown, editors), (true, 0), "the console opens in the panel, not as an editor");
+    let tabs = |workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext| {
+        workbench.read_with(cx, |workbench, _| workbench.panel_tabs().iter().map(|view| view.title).collect::<Vec<_>>())
+    };
+    assert_eq!(tabs(&workbench, cx), ["Problems", "Output", "Debug Console", "Terminal"]);
+    workbench.update(cx, |workbench, _| workbench.testing.results.push(crate::testing::TestResult::new("r1".into(), json!({}))));
+    assert_eq!(tabs(&workbench, cx), ["Problems", "Output", "Debug Console", "Test Results", "Terminal"]);
+    run(&workbench, cx, "workbench.actions.view.toggleProblems");
+    assert!(workbench.read_with(cx, |workbench, _| workbench.panel_view_visible(super::super::problems_view::MARKERS_CONTAINER_ID)));
+    run(&workbench, cx, "workbench.actions.view.toggleProblems");
+    assert!(workbench.read_with(cx, |workbench, _| !workbench.panel_view_visible(super::super::problems_view::MARKERS_CONTAINER_ID)));
+    std::fs::remove_dir_all(dir).unwrap();
+}
 fn run(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext, command: &str) {
     let command = command.to_owned();
     workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command(&command, vec![], window, cx)));

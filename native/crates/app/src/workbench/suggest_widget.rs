@@ -246,14 +246,14 @@ impl Workbench {
     /// The suggest context keys of suggest.ts `Context` and the controller.
     pub(super) fn suggest_context(&self, context: &mut std::collections::HashMap<String, Value>) {
         let Some(editor) = self.editors.active() else { return };
-        let uri = editor.document.uri();
-        let candidate = crate::language_features::Candidate { uri: &uri, language: &editor.document.language_id };
+        let uri = editor.document().uri();
+        let candidate = crate::language_features::Candidate { uri: &uri, language: &editor.document().language_id };
         context.insert("editorHasCompletionItemProvider".into(), json!(!self.language_features.ordered("$registerCompletionsProvider", &candidate).is_empty()));
         let accept_on_enter = self.suggest_setting(editor, "editor.acceptSuggestionOnEnter");
         context.insert("acceptSuggestionOnEnter".into(), json!(matches!(accept_on_enter.as_str(), Some("on" | "smart") | None)));
         context.insert("suggestionInsertMode".into(), self.suggest_setting(editor, "editor.suggest.insertMode"));
         let head = editor.selection().head;
-        let line = editor.document.lines[head.line].clone();
+        let line = editor.document().lines[head.line].clone();
         let smart = accept_on_enter == "smart";
         let visible = self.suggest_widget_visible();
         let auto = self.suggest.session.as_ref().is_some_and(|session| session.options.auto);
@@ -287,8 +287,8 @@ impl Workbench {
         if self.suggest.session.as_ref().is_none_or(|session| session.model_id != editor.model_id) || editor.folding.is_hidden(position.line) {
             return None;
         }
-        let text = editor.document.lines.get(position.line)?;
-        let left = visible_column(text, position.column, editor.document.indentation.tab_size) as f32 * char_width - editor.scroll.left + content_left;
+        let text = editor.document().lines.get(position.line)?.clone();
+        let left = visible_column(&text, position.column, editor.document().indentation.tab_size) as f32 * char_width - editor.scroll.left + content_left;
         let line_top = editor.line_top(editor.view_line(position.line), self.editors.viewport) - editor.scroll.top;
         let editor_bounds = self.text_area_bounds.get();
         let window_size = window.viewport_size().map(f32::from);
@@ -385,7 +385,7 @@ impl Workbench {
             Value::Object(_) => {
                 let style = super::markdown_view::MarkdownStyle { font_size: EDITOR_FONT_SIZE, line_height: LINE_HEIGHT, foreground: self.foreground_or("editorSuggestWidget.foreground") };
                 let blocks = crate::markdown::parse(&crate::markdown::MarkdownString::from_value(&item.documentation));
-                Some(div().px(px(5.)).py(px(4.)).child(self.markdown_blocks("suggest-details", &blocks, style, &editor.document.language_id, cx)))
+                Some(div().px(px(5.)).py(px(4.)).child(self.markdown_blocks("suggest-details", &blocks, style, &editor.document().language_id, cx)))
             }
             _ => None,
         };

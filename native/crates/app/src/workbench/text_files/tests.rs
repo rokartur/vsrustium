@@ -48,7 +48,7 @@ fn type_text(workbench: &gpui::Entity<Workbench>, text: &str, cx: &mut VisualTes
 fn active_text(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext) -> (String, bool) {
     workbench.read_with(cx, |workbench, _| {
         let editor = workbench.editors.active().unwrap();
-        (editor.document.lines.join("\n"), editor.is_dirty())
+        (editor.document().lines.join("\n"), editor.is_dirty())
     })
 }
 
@@ -77,7 +77,7 @@ fn an_untitled_file_with_a_path_saves_as_that_file_in_its_editor(cx: &mut TestAp
     run(&workbench, "workbench.action.files.save", Vec::new(), cx);
     assert_eq!(std::fs::read_to_string(&target).unwrap(), "abc");
     let (schemes, cursor, dirty) = workbench.read_with(cx, |workbench, _| {
-        let schemes: Vec<String> = workbench.editors.editors.iter().chain(&workbench.editors.models).map(|editor| editor.document.scheme.clone()).collect();
+        let schemes: Vec<String> = workbench.editors.editors.iter().chain(&workbench.editors.models).map(|editor| editor.document().scheme.clone()).collect();
         let editor = workbench.editors.active().unwrap();
         (schemes, editor.selection().head, editor.is_dirty())
     });
@@ -117,7 +117,7 @@ fn a_file_changed_on_disk_fails_the_save_until_overwrite(cx: &mut TestAppContext
     let message = workbench.read_with(cx, |workbench, _| workbench.notifications.model.items.first().map(|item| (item.message.text(), item.primary.iter().map(|action| action.label.clone()).collect::<Vec<_>>())));
     let expected = "Failed to save 'a.txt': The content of the file is newer. Please compare your version with the file contents or overwrite the content of the file with your changes.";
     assert_eq!(message, Some((expected.to_string(), vec!["Overwrite".to_string()])));
-    let uri = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document.uri());
+    let uri = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document().uri());
     run(&workbench, "workbench.files.action.saveIgnoreModifiedSince", vec![uri], cx);
     assert_eq!(std::fs::read_to_string(&file).unwrap(), "xone");
     assert!(workbench.read_with(cx, |workbench, _| workbench.notifications.model.items.is_empty()), "the message closes once the model saves");
@@ -181,7 +181,7 @@ fn files_associations_change_the_language_of_models_without_a_picked_one(cx: &mu
     workbench.update(cx, |workbench, cx| workbench.set_active_language("plaintext", cx));
     std::fs::write(dir.join("User/settings.json"), r#"{ "files.associations": { "*.foo": "markdown" } }"#).unwrap();
     workbench.update(cx, |workbench, cx| workbench.reload_changed_settings_files(cx));
-    let languages = workbench.read_with(cx, |workbench, _| workbench.editors.editors.iter().map(|editor| editor.document.language_id.clone()).collect::<Vec<_>>());
+    let languages = workbench.read_with(cx, |workbench, _| workbench.editors.editors.iter().map(|editor| editor.document().language_id.clone()).collect::<Vec<_>>());
     assert_eq!(languages, ["markdown", "plaintext"], "b's language was picked");
     std::fs::remove_dir_all(dir).unwrap();
 }
@@ -199,7 +199,7 @@ fn a_write_locked_file_saves_after_overwrite(cx: &mut TestAppContext) {
     let message = workbench.read_with(cx, |workbench, _| workbench.notifications.model.items.first().map(|item| (item.message.text(), item.primary.iter().map(|action| action.label.clone()).collect::<Vec<_>>())));
     let expected = "Failed to save 'a.txt': File is read-only. Select 'Overwrite' to attempt to make it writeable.";
     assert_eq!(message, Some((expected.to_string(), vec!["Overwrite".to_string(), "Save As...".to_string(), "Revert".to_string()])));
-    let uri = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document.uri());
+    let uri = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document().uri());
     run(&workbench, "workbench.files.action.unlock", vec![uri], cx);
     assert_eq!(std::fs::read_to_string(&file).unwrap(), "xone");
     assert_eq!(std::fs::metadata(&file).unwrap().permissions().mode() & 0o200, 0o200);

@@ -333,7 +333,7 @@ impl Workbench {
             foreground_alpha: self.theme.color("minimap.foregroundOpacity").map_or(255, |color| byte(color.a)),
             use_lighter_font: relative_luminance(default_background) >= 0.5,
         };
-        let document = &editor.document;
+        let document = &editor.document();
         let tab_size = document.indentation.tab_size;
         let renderer = CharRenderer::create(info.scale);
         let mut image = render_lines(info, layout, &renderer, &colors, tab_size, |minimap_line| {
@@ -366,7 +366,7 @@ impl Workbench {
             if editor.folding.is_hidden(line) {
                 let view_line = editor.view_line(line);
                 let fold_line = editor.segment(view_line).line;
-                let (view_line, column) = editor.view_column(Position::new(fold_line, editor.document.lines[fold_line].chars().count()));
+                let (view_line, column) = editor.view_column(Position::new(fold_line, editor.document().lines[fold_line].chars().count()));
                 return (view_line + 1, column);
             }
             let (view_line, column) = editor.view_column(Position::new(line, column));
@@ -384,7 +384,7 @@ impl Workbench {
             for (range, decoration) in editor.folding.regions.ranges().iter().zip(editor.folding.decorations()) {
                 if decoration == FoldDecoration::Collapsed {
                     let line = range.start - 1;
-                    decorations.push((MinimapRange { start: view(line, 0), end: view(line, editor.document.lines[line].chars().count()) }, color));
+                    decorations.push((MinimapRange { start: view(line, 0), end: view(line, editor.document().lines[line].chars().count()) }, color));
                 }
             }
         }
@@ -408,7 +408,7 @@ impl Workbench {
                 (range.start.0, range.end.0) = (sampling.minimap_line(range.start.0), sampling.minimap_line(range.end.0));
             }
         }
-        let tab_size = editor.document.indentation.tab_size;
+        let tab_size = editor.document().indentation.tab_size;
         decoration_fills(info, layout, self.theme.color("minimap.selectionHighlight"), &selections, &decorations, tab_size, |minimap_line| editor.view_line_text(sampled_view_line(sampling, minimap_line) - 1))
     }
 
@@ -418,7 +418,7 @@ impl Workbench {
     // after the last edit and moves the old headers with the text meanwhile; upgrade when large files lag on typing.
     #[allow(clippy::too_many_arguments)]
     fn minimap_section_labels(&self, editor: &OpenEditor, info: &MinimapLayoutInfo, pixel_ratio: f64, layout: &MinimapLayout, options: &SectionHeaderOptions, sampling: Option<&MinimapSampling>) -> Vec<SectionLabel> {
-        let key = (editor.model_id, editor.version_id, options.show_region, options.mark_regex.clone());
+        let key = (editor.model_id, editor.text_model().version_id, options.show_region, options.mark_regex.clone());
         let mut cached = self.minimap.section_headers.borrow_mut();
         let headers = match cached.as_ref().filter(|(cached_key, _)| *cached_key == key) {
             Some((_, headers)) => headers.clone(),
@@ -605,7 +605,7 @@ impl Workbench {
 
 /// `findSectionHeaders` then `updateDecorations`: a mark header stays only when it starts in a comment token.
 fn section_headers(editor: &OpenEditor, options: &SectionHeaderOptions) -> Vec<SectionHeader> {
-    let document = &editor.document;
+    let document = &editor.document();
     let options = FindOptions {
         region_start: document.folding_markers.as_deref().map(|markers| &markers.start_with_flags).filter(|_| options.show_region),
         mark_regex: options.mark_regex.as_deref(),

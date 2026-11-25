@@ -22,7 +22,7 @@ use super::Workbench;
 use super::find_widget::HISTORY_LIMIT;
 use super::hover::{HoverContent, HoverOptions};
 use super::input_box_view::{InputId, InputLook, InputView};
-use super::keybindings_editor_view::{ModalHeader, SASH_HOVER_DELAY, SASH_SIZE};
+use super::keybindings_editor_view::{ModalHeader, SASH_SIZE};
 use crate::commands::Outcome;
 use crate::default_settings::{SettingsGroup, registered_groups};
 use crate::history::HistoryNavigator;
@@ -1087,11 +1087,12 @@ impl Workbench {
             .child(div().absolute().top_0().bottom_0().left(px(SASH_SIZE / 2.)).w(px(1.)).bg(separator))
             .when(editor.sash_hovered || dragging, |sash| sash.bg(hover))
             .on_hover(cx.listener(|workbench, hovered: &bool, window, cx| {
+                let delay = workbench.sash_hover_delay();
                 let editor = &mut workbench.settings_editor;
                 editor.sash_hovered = false;
                 editor.sash_hover = hovered.then(|| {
                     cx.spawn_in(window, async move |workbench, cx| {
-                        cx.background_executor().timer(SASH_HOVER_DELAY).await;
+                        cx.background_executor().timer(delay).await;
                         let _ = workbench.update(cx, |workbench, cx| {
                             workbench.settings_editor.sash_hovered = true;
                             cx.notify();

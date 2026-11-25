@@ -11,11 +11,14 @@ mod bulk_text_edits;
 mod configuration;
 mod content_hover;
 mod content_hover_view;
+mod editor_groups;
+mod history_actions;
 mod configuration_resolver;
 mod context_menu;
 pub mod custom_editors;
 mod debug_commands;
 mod debug_console;
+mod problems_view;
 mod debug_toolbar;
 pub(crate) mod debug_service;
 mod debug_view;
@@ -66,7 +69,7 @@ mod empty_view;
 mod layout;
 mod list_scroll;
 mod search_list;
-mod tree_view;
+mod tree_guides;
 mod local_history_actions;
 mod document_highlights;
 mod document_symbols;
@@ -133,6 +136,8 @@ mod type_navigation;
 mod unicode_highlight;
 mod unusual_line_terminators;
 mod scm_view;
+mod tree_view;
+mod file_decorations;
 mod url_handlers;
 mod webview_views;
 mod media_preview;
@@ -153,7 +158,7 @@ use config::service::Settings;
 use config::workspace::Workspace;
 use storage::Storage;
 
-use gpui::{ClickEvent, Context, Div, DragMoveEvent, ExternalPaths, FocusHandle, FontFeatures, FontWeight, MouseButton, MouseDownEvent, Rgba, Task, Window, div, prelude::*, px, rgb, svg, transparent_black};
+use gpui::{ClickEvent, Context, Div, DragMoveEvent, ExternalPaths, FocusHandle, FontFeatures, FontWeight, MouseButton, MouseDownEvent, Rgba, Stateful, Task, Window, div, prelude::*, px, rgb, svg, transparent_black};
 use serde_json::Value;
 
 use crate::commands::Commands;
@@ -290,6 +295,8 @@ pub struct Workbench {
     pub search_editor_widget: search_editor_widget::SearchEditorWidget,
     pub webview_panels: webview_panels::WebviewPanels,
     pub scm: scm_view::ScmView,
+    tree_views: tree_view::TreeViews,
+    decorations: std::cell::RefCell<crate::decorations::Decorations>,
     quick_diffs: editor_view::quick_diff::QuickDiffs,
     /// `contributes.commands` icons, for the view toolbars.
     pub command_icons: HashMap<String, crate::menus::CommandIcon>,
@@ -317,6 +324,8 @@ pub struct Workbench {
     workspace_storage: Arc<Mutex<Storage>>,
     pub(crate) user_data_profiles: user_data_profile::UserDataProfiles,
     part_grid: part_grid::PartGrid,
+    editor_groups: editor_groups::EditorGroups,
+    history: history_actions::History,
     panel: panel::Panel,
     explorer_panes: view_panes::ExplorerPanes,
     pub workspace_trust: crate::workspace_trust::WorkspaceTrust,
@@ -329,6 +338,8 @@ pub struct Workbench {
     pub debug: debug_service::DebugService,
     debug_view: debug_view::DebugView,
     debug_console: debug_console::DebugConsole,
+    problems: problems_view::ProblemsView,
+    problems_focus: FocusHandle,
     breakpoint_widget: Option<breakpoint_widget::BreakpointWidget>,
     pub testing: testing_service::TestingService,
     testing_view: testing_view::TestingView,
@@ -361,7 +372,8 @@ impl Render for Workbench {
         let window_border = self.theme.color("window.activeBorder");
         // The reference lays the grid out at the full window size and shifts it inside the 1px window border.
         let inset = if window_border.is_some() { 1. } else { 0. };
-        let editor = if self.editors.active().is_some() { self.text_editor_part(window, cx) } else { self.editor_part() };
+        self.editors.sync_editors();
+        let editor = self.editor_groups_part(window, cx);
         let grid = div()
             .absolute()
             .left(px(inset))
@@ -510,6 +522,8 @@ impl Workbench {
             search_editor_widget: search_editor_widget::SearchEditorWidget::new(cx),
             webview_panels: Default::default(),
             scm: scm_view::ScmView::new(cx),
+            tree_views: Default::default(),
+            decorations: Default::default(),
             quick_diffs: Default::default(),
             command_icons: HashMap::new(),
             url_handlers: Default::default(),
@@ -529,6 +543,8 @@ impl Workbench {
             workspace_storage: Arc::new(Mutex::new(Storage::in_memory())),
             user_data_profiles: Default::default(),
             part_grid: part_grid::PartGrid::default(),
+            editor_groups: Default::default(),
+            history: Default::default(),
             panel: panel::Panel::default(),
             explorer_panes: view_panes::ExplorerPanes::default(),
             workspace_trust: Default::default(),
@@ -538,6 +554,8 @@ impl Workbench {
             debug: Default::default(),
             debug_view: debug_view::DebugView::new(cx),
             debug_console: debug_console::DebugConsole::new(cx),
+            problems: problems_view::ProblemsView::default(),
+            problems_focus: cx.focus_handle(),
             breakpoint_widget: None,
             testing: Default::default(),
             testing_view: Default::default(),
@@ -570,6 +588,8 @@ impl Workbench {
         workbench.register_list_scroll_commands();
         workbench.register_search_actions();
         workbench.register_layout_actions();
+        workbench.register_editor_group_actions();
+        workbench.register_history_actions();
         workbench.register_search_editor_actions();
         workbench.register_search_editor_widget_actions();
         workbench.register_file_participant_commands();
@@ -600,6 +620,11 @@ impl Workbench {
         workbench.register_empty_view_actions();
         workbench.register_logs_actions();
         workbench.register_terminal_actions();
+        workbench.register_problems_panel_view();
+        workbench.register_output_panel_view();
+        workbench.register_debug_console_panel_view();
+        workbench.register_test_results_panel_view();
+        workbench.register_terminal_panel_view();
         workbench.register_perf_view();
         workbench.register_accessibility_actions();
         workbench.start_system_events(cx);
@@ -684,7 +709,7 @@ impl Workbench {
                 }
             }
             // A model without an editor, as a search replace leaves it, keeps its text.
-            None => match self.editors.models.iter().position(|model| model.document.is_file(&path)) {
+            None => match self.editors.models.iter().position(|model| model.document().is_file(&path)) {
                 Some(index) => self.editors.show_model(index, !pinned),
                 None => match self.read_document(&path) {
                     Ok(document) => self.editors.open(document, !pinned),
@@ -703,6 +728,15 @@ impl Workbench {
 
     /// Keeps the Explorer selection and the extension host in step with the group.
     fn editors_changed(&mut self, cx: &mut Context<Self>) {
+        if std::mem::take(&mut self.editors.closed_last_editor) {
+            self.close_group_if_empty(self.editors.id);
+        }
+        self.editors.columns = if self.editors.has_several_groups() { self.groups_in_grid_order() } else { Vec::new() };
+        for (group, path, index) in std::mem::take(&mut self.editors.closed) {
+            self.remember_closed_editor(group, path, index);
+        }
+        self.record_navigation(None);
+        self.editors.panel_editor_shown = self.output_view_visible() && self.output_editor().is_some();
         self.reveal_active_file();
         self.record_editor_history();
         self.drop_closed_search_editors();
@@ -727,6 +761,21 @@ impl Workbench {
     /// A foreground key with no color inherits, as CSS `color` does; every part here inherits `foreground`.
     fn foreground_or(&self, key: &str) -> Rgba {
         self.theme.color(key).unwrap_or(self.color("foreground"))
+    }
+
+    /// The command center's Go Back and Go Forward (`MenuId.CommandCenter` orders 1 and 2): enabled by their
+    /// `canNavigateBack`/`canNavigateForward` precondition, pointer only then (actionbar.css `.disabled`).
+    fn navigation_button(&self, icon: &'static str, title: &'static str, command: &'static str, enabled: bool, foreground: Rgba, disabled: Rgba, cx: &mut Context<Self>) -> Stateful<Div> {
+        self.icon(icon, 22., 16., if enabled { foreground } else { disabled })
+            .id(command)
+            .rounded(px(4.))
+            .when(enabled, |button| {
+                button.cursor_pointer().hover(|button| button.bg(self.color("toolbar.hoverBackground"))).on_click(cx.listener(move |workbench, _, window, cx| {
+                    workbench.execute_command(command, Vec::new(), window, cx);
+                }))
+            })
+            .on_mouse_down(MouseButton::Right, cx.listener(show_command_center_context_menu))
+            .child(self.action_hover(title, command, HoverOptions::instant()))
     }
 
     fn title_bar(&self, viewport_width: f32, cx: &mut Context<Self>) -> Div {
@@ -765,8 +814,8 @@ impl Workbench {
             true => title
                 .when(contextkey::truthy(Some(&self.setting("workbench.navigationControl.enabled"))), |title| {
                     title
-                        .child(self.icon("arrow-left", 22., 16., disabled).on_mouse_down(MouseButton::Right, cx.listener(show_command_center_context_menu)).child(self.action_hover("Go Back", "workbench.action.navigateBack", HoverOptions::instant())))
-                        .child(self.icon("arrow-right", 22., 16., disabled).ml(px(4.)).mr(px(10.)).on_mouse_down(MouseButton::Right, cx.listener(show_command_center_context_menu)).child(self.action_hover("Go Forward", "workbench.action.navigateForward", HoverOptions::instant())))
+                        .child(self.navigation_button("arrow-left", "Go Back", "workbench.action.navigateBack", self.can_navigate(true), foreground, disabled, cx))
+                        .child(self.navigation_button("arrow-right", "Go Forward", "workbench.action.navigateForward", self.can_navigate(false), foreground, disabled, cx).ml(px(4.)).mr(px(10.)))
                 })
                 .child(command_center)
                 .child(div().w(px(6.))),
@@ -947,7 +996,7 @@ impl Workbench {
             // actionbar.css: .monaco-action-bar .action-item is cursor: pointer.
             .child(self.icon("ellipsis", 22., 16., foreground).cursor_pointer());
         let Some(tree) = self.folder.as_ref() else {
-            let empty = view_panes::ExplorerPane { id: view_panes::EMPTY_VIEW, title: "No Folder Opened".into(), body: self.empty_view(cx).into_any_element() };
+            let empty = view_panes::ExplorerPane { id: view_panes::EMPTY_VIEW, title: "No Folder Opened".into(), description: None, actions: None, body: self.empty_view(cx).into_any_element() };
             return self.side_bar_frame().text_color(foreground).child(title).child(self.explorer_pane_view(empty, window, cx)).child(div().h(px(5.)).flex_none());
         };
         // explorerviewlet.css: in high contrast an explorer item has a 20px line from the row top, 1px above center.
@@ -1026,6 +1075,10 @@ impl Workbench {
                 false => icons.file_icon(&icon_path, self.languages.language_of(&icon_path, ""), self.theme.kind, 13., label_line, foreground),
             });
             let indent = self.tree_indent() * (row.depth - 1) as f32;
+            // explorerViewer.ts passes `explorer.decorations` as the label's `fileDecorations`.
+            let decoration = self.file_decoration(&path, is_dir);
+            let decoration_color = self.decoration_color(decoration.as_ref(), self.setting("explorer.decorations.colors") != Value::Bool(false));
+            let badge = self.decoration_badge(decoration.as_ref(), foreground).filter(|_| self.setting("explorer.decorations.badges") != Value::Bool(false));
             let has_nests = row.has_nests;
             let (twistie_path, row_expanded) = (path.clone(), row.expanded);
             let twistie_element = |chevron| {
@@ -1036,7 +1089,11 @@ impl Workbench {
                     cx.notify();
                 }))
             };
-            let hover = self.hover_target(("explorer-hover", index), HoverContent::Text(crate::quick_input::path_label(&path, None)), HoverOptions::mouse());
+            let hover = self.hover_target(("explorer-hover", index), HoverContent::Text(match decoration.as_ref().and_then(|decoration| decoration.tooltip.as_deref()) {
+                // labels.ts: the title, then the decoration's tooltip.
+                Some(tooltip) => format!("{} \u{2022} {tooltip}", crate::quick_input::path_label(&path, None)),
+                None => crate::quick_input::path_label(&path, None),
+            }), HoverOptions::mouse());
             div()
                 .id(index)
                 .role(gpui::Role::TreeItem)
@@ -1070,6 +1127,8 @@ impl Workbench {
                             .child(div().self_start().flex_1().ml(px(label_margin)).line_height(px(label_line)).child(name))
                     }
                 })
+                .children(badge)
+                .when_some(decoration_color, |row, color| row.text_color(color))
                 // explorerviewlet.css: .explorer-item.cut is at half opacity. Its 0.3 for the other rows while a name is
                 // edited needs `.explorer-folders-view` twice in the ancestry, which the reference DOM never has.
                 .children(row_guides)
@@ -1149,7 +1208,7 @@ impl Workbench {
         self.side_bar_frame()
             .text_color(foreground)
             .child(title)
-            .child(self.explorer_pane_view(view_panes::ExplorerPane { id: view_panes::FILE_VIEW, title: folder_name, body:
+            .child(self.explorer_pane_view(view_panes::ExplorerPane { id: view_panes::FILE_VIEW, title: folder_name, description: None, actions: None, body:
                 div().id("explorer-pane").relative().flex_1().min_h_0().flex().flex_col()
                 .on_hover(cx.listener(|workbench, hovered: &bool, _, cx| {
                     workbench.explorer.pane_hovered = *hovered;
@@ -1203,7 +1262,8 @@ impl Workbench {
             .child(div().self_start().pl(px(8.)).line_height(px(32.)).text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).text_color(self.foreground_or("sideBarTitle.foreground")).child(crate::nls::localize(&name).into_owned()))
     }
 
-    fn editor_part(&self) -> Div {
+    /// The letterpress of an empty group, `size` wide (256px, 200px in a part of several groups).
+    fn watermark(&self, size: f32) -> Div {
         // The high contrast letterpress files paint their own fill; the others are black at the opacity the file sets (editorgroupview.css).
         let (file, color) = match self.theme.kind {
             ThemeKind::Dark => ("letterpress-dark.svg", rgb(0x000000)),
@@ -1212,19 +1272,8 @@ impl Workbench {
             ThemeKind::HighContrastLight => ("letterpress-hcLight.svg", rgb(0xd9d9d9)),
         };
         let path = self.app_root.join("src/vs/workbench/browser/parts/editor/media").join(file);
-        // .watermark-container is 280px tall and centered; the 256px letterpress sits at its top.
-        let watermark = div().h(px(280.)).child(svg().external_path(path.to_string_lossy().into_owned()).size(px(256.)).text_color(color));
-        div()
-            .flex_1()
-            .flex()
-            .flex_col()
-            .items_center()
-            .justify_center()
-            .border_1()
-            .rounded(px(8.))
-            .bg(self.color("editor.background"))
-            .border_color(self.color("surface.border"))
-            .child(watermark)
+        // .watermark-container is 280px tall and centered; the letterpress sits at its top.
+        div().h(px(size + 24.)).child(svg().external_path(path.to_string_lossy().into_owned()).size(px(size)).text_color(color))
     }
 
     fn status_bar(&self, window: &Window, cx: &mut Context<Self>) -> Div {
@@ -1234,7 +1283,7 @@ impl Workbench {
             None => (self.color("statusBar.noFolderForeground"), self.color("statusBar.noFolderBackground")),
         };
         // statusbarpart.css: pointer only on items with a command; status.message has none.
-        let problems = self.problems_status_item(foreground);
+        let problems = self.problems_status_item(foreground, cx);
         div()
             .relative()
             .h(px(28.))
@@ -1340,7 +1389,7 @@ mod tests {
         cx.run_until_parked();
 
         let editors = workbench.read_with(cx, |workbench, _| {
-            workbench.editors.editors.iter().map(|editor| (editor.document.uri_string(), editor.preview, editor.document.lines[..2].join("\n"))).collect::<Vec<_>>()
+            workbench.editors.editors.iter().map(|editor| (editor.document().uri_string(), editor.preview, editor.document().lines[..2].join("\n"))).collect::<Vec<_>>()
         });
         let expected = |name: &str| (format!("untitled:{name}"), false, "{\n\t\"layout\": {".to_string());
         assert_eq!(editors, [expected("Untitled-1"), expected("Untitled-2")]);
@@ -1364,7 +1413,7 @@ mod tests {
         });
         cx.run_until_parked();
         receiver.try_iter().count();
-        let text = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document.lines.join("\n"));
+        let text = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document().lines.join("\n"));
 
         cx.simulate_keystrokes("down end");
         cx.simulate_input("!");
@@ -1415,7 +1464,7 @@ mod tests {
         let methods: Vec<_> = receiver.try_iter().map(|message| message.method).collect();
         assert_eq!(methods.iter().filter(|method| **method == "$acceptModelChanged").count(), 2);
         cx.simulate_keystrokes("cmd-z");
-        assert_eq!(workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document.lines.join("\n")), "ab  \ncd\n\n\n");
+        assert_eq!(workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document().lines.join("\n")), "ab  \ncd\n\n\n");
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -1441,7 +1490,7 @@ mod tests {
             workbench.update_in(cx, |workbench, window, _| {
                 let moves_focus = workbench.key_context(window).get("editorTabMovesFocus").cloned();
                 let editor = workbench.editors.active().unwrap();
-                (editor.document.lines.join("\n"), editor.highlights.len(), workbench.status_bar_focus.is_focused(window), moves_focus)
+                (editor.document().lines.join("\n"), editor.highlights.len(), workbench.status_bar_focus.is_focused(window), moves_focus)
             })
         };
 
@@ -1612,7 +1661,7 @@ mod tests {
             assert_eq!(workbench.text_cursor_style(), gpui::CursorStyle::Arrow);
             workbench.drop_text(1, 7., Default::default(), cx);
             let editor = workbench.editors.active().unwrap();
-            assert_eq!(editor.document.lines, ["Port  for", "the edinotestor"]);
+            assert_eq!(editor.document().lines, ["Port  for", "the edinotestor"]);
             assert_eq!(editor.selections, [Selection { anchor: Position::new(1, 7), head: Position::new(1, 12) }]);
             assert!(workbench.start_text_drag(1, 9., Default::default(), 1));
             workbench.drag_text(1, 9., true, cx);
@@ -1642,7 +1691,7 @@ mod tests {
             workbench
         });
         cx.run_until_parked();
-        let lines = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document.lines.clone());
+        let lines = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document().lines.clone());
 
         cx.simulate_keystrokes("cmd-/");
         assert_eq!(lines(cx), ["// let a = 1;", "    let b = 2;"], "editor.action.commentLine");
@@ -1683,7 +1732,7 @@ mod tests {
             workbench
         });
         cx.run_until_parked();
-        let lines = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document.lines.clone());
+        let lines = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document().lines.clone());
 
         cx.simulate_keystrokes("alt-down");
         assert_eq!(lines(cx), ["two", "one", "three"], "editor.action.moveLinesDownAction");
@@ -1758,7 +1807,7 @@ mod tests {
         cx.simulate_input("the");
         cx.simulate_keystrokes("alt-cmd-enter");
         assert_eq!(zone(cx).0, 62.);
-        let text = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document.lines.join("\n"));
+        let text = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document().lines.join("\n"));
         assert_eq!(text, "a cat\nand a dog\na end");
 
         cx.simulate_keystrokes("escape");
