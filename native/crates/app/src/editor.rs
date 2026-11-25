@@ -16,6 +16,7 @@ use crate::languages::Languages;
 use crate::syntax::Tokenization;
 
 pub mod auto_indent;
+mod caret_operations;
 pub mod commands;
 pub mod cursor_undo;
 mod comment;

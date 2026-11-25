@@ -392,7 +392,7 @@ impl OpenEditor {
         self.execute_edits_between_stops(edits, None, transform.id())
     }
 
-    fn run_commands_between_stops(&mut self, commands: Vec<Command>, id: &'static str) -> Option<ContentChanged> {
+    pub(super) fn run_commands_between_stops(&mut self, commands: Vec<Command>, id: &'static str) -> Option<ContentChanged> {
         self.push_undo_stop();
         let change = self.execute_commands(commands, command(id));
         self.push_undo_stop();

@@ -14,7 +14,7 @@ use crate::editor::{CaseTransform, ContentChanged, Copied, LineCommentKind, Open
 type EditorCommand = fn(&mut OpenEditor) -> Option<ContentChanged>;
 
 /// Cursor and edit commands: `EditorCommand`s, which run on the focused editor or else the active one.
-const EDITOR_COMMANDS: [(&str, EditorCommand); 44] = [
+const EDITOR_COMMANDS: [(&str, EditorCommand); 47] = [
     ("cursorLeft", |editor| { editor.move_horizontally(false, false); None }),
     ("cursorLeftSelect", |editor| { editor.move_horizontally(false, true); None }),
     ("cursorRight", |editor| { editor.move_horizontally(true, false); None }),
@@ -60,6 +60,9 @@ const EDITOR_COMMANDS: [(&str, EditorCommand); 44] = [
     ("editor.action.deleteLines", OpenEditor::delete_lines),
     ("editor.action.joinLines", OpenEditor::join_lines),
     ("editor.action.transpose", OpenEditor::transpose),
+    ("editor.action.moveCarretLeftAction", |editor| editor.move_selected_text(true)),
+    ("editor.action.moveCarretRightAction", |editor| editor.move_selected_text(false)),
+    ("editor.action.transposeLetters", OpenEditor::transpose_letters),
 ];
 
 type IndentingCommand = fn(&mut OpenEditor, AutoIndent) -> Option<ContentChanged>;

@@ -225,7 +225,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | editor/test | src/vs/editor | n/a | upstream test infrastructure; the port tests with cargo test and port/tools |
 | editor/contrib/anchorSelect | src/vs/editor/contrib | todo |  |
 | editor/contrib/bracketMatching | src/vs/editor/contrib | ported | bracket pair colors and match boxes with overview ruler lane (brackets.rs); cargo test -p app brackets::tests; no Go to Bracket / Select to Bracket commands until keybindings |
-| editor/contrib/caretOperations | src/vs/editor/contrib | todo |  |
+| editor/contrib/caretOperations | src/vs/editor/contrib | verified | Move Selected Text Left/Right (palette), Transpose Letters (Ctrl+T): cargo test -p app caret_operations (moveCarretCommand.test.ts); ui-pair notes.txt Ctrl+T and both palette actions |
 | editor/contrib/clipboard | src/vs/editor/contrib | ported | Cmd+C/X/V with whole-line copy metadata: cargo test -p app keys_and_typed_text_edit_the_focused_editor_and_reach_the_host |
 | editor/contrib/codeAction | src/vs/editor/contrib | todo |  |
 | editor/contrib/codelens | src/vs/editor/contrib | todo |  |
