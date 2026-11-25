@@ -400,8 +400,7 @@ impl Workbench {
         let middle_scroll_dot = self.middle_scroll_dot(point(px(editor_origin.x), px(editor_origin.y)));
         let middle_scrolling = middle_scroll_dot.is_some();
         let scrolled = cx.entity();
-        div()
-            .id("text-area")
+        self.editor_accessibility(div().id("text-area"), editor, window)
             .flex_1()
             .relative()
             .overflow_hidden()

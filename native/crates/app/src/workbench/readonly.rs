@@ -97,7 +97,7 @@ impl Workbench {
         if scheme == crate::output::OUTPUT_SCHEME {
             return Some(Readonly::Editor);
         }
-        if scheme == "vscode" || scheme == super::local_history_actions::LOCAL_HISTORY_SCHEME {
+        if scheme == "vscode" || scheme == super::local_history_actions::LOCAL_HISTORY_SCHEME || scheme == super::perf_view::PERF_SCHEME {
             return Some(Readonly::Provider);
         }
         if let Some(&readonly) = self.readonly_overrides.get(&(scheme.to_owned(), path.to_path_buf())) {

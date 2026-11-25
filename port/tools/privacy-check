@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Runs port/fixtures/extensions/privacy-tests in vsrustium on Bun and on Node: telemetry reported off, a telemetry
+# logger that never reaches its sender, and the inert @vscode/extension-telemetry and vscode-tas-client modules.
+# Run on the Studio after a release build and port/tools/build-exthost. Prints one line per check and runtime.
+set -uo pipefail
+cd "$(dirname "$0")/../.."
+REF=${REF:-$HOME/Developer/vscode-ref}
+out=$(mktemp -d)
+source port/tools/gui-lock.sh
+tests=$PWD/port/fixtures/extensions/privacy-tests
+code=0
+for runtime in bun node; do
+  flag=(); [[ $runtime == node ]] && flag=(--node)
+  VSCODE_GPUI_EXTENSIONS=$REF/extensions timeout 120 native/target/release/vsrustium --user-data-dir "$out/user-data-$runtime" ${flag[@]+"${flag[@]}"} \
+    --extensionDevelopmentPath="$tests" --extensionTestsPath="$tests/tests" >"$out/$runtime.log" 2>&1 || code=1
+  grep -E '^(ok|FAILED) ' "$out/$runtime.log" | sed "s/^/$runtime: /" || cat "$out/$runtime.log"
+done
+echo "exit $code"
+rm -rf "$out"
+exit "$code"

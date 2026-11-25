@@ -58,6 +58,10 @@ pub enum Owner {
     ExtensionsFolder(Vec<std::path::PathBuf>),
     /// Configure Display Language: the languages, by item handle.
     DisplayLanguage(Vec<crate::workbench::localization::LanguageItem>),
+    /// Help: List Signal Sounds and Help: List Signal Announcements.
+    AccessibilitySignals(crate::workbench::accessibility::SignalHelp),
+    /// Configure Metered Connection.
+    MeteredConnection,
 }
 
 impl Workbench {
@@ -226,6 +230,8 @@ impl Workbench {
             Owner::Input { .. } => self.input_event(id, event, window, cx),
             Owner::QuickAccess(_) => self.quick_access_event(id, event, window, cx),
             Owner::ColorThemes(_) => self.color_theme_picker_event(id, event, window, cx),
+            Owner::AccessibilitySignals(_) => self.signal_help_event(id, event, window, cx),
+            Owner::MeteredConnection => self.metered_connection_picker_event(id, event, window, cx),
             Owner::GoToMatch => self.go_to_match_event(id, event, window, cx),
             Owner::EditorStatus(_) => self.editor_status_event(id, event, window, cx),
             Owner::ResizeColumn(_) => self.resize_column_event(id, event, window, cx),

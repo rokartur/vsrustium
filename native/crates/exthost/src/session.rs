@@ -672,6 +672,8 @@ impl Session {
                 let values: Vec<Value> = (0..args.len()).map(arg).collect();
                 return crate::language_packs::serve_localization(method, &values).map_or(Reply::Empty, Reply::Json);
             }
+            // product.json has no `enableTelemetry`: upstream's NullTelemetryService drops extension events, and so does the port.
+            ("MainThreadTelemetry", "$publicLog" | "$publicLog2") => {}
             // No sign-in and no AI in the port: these APIs stay callable and report nothing.
             ("MainThreadLanguageModelTools", "$getTools")
             | ("MainThreadAuthentication", "$getAccounts")

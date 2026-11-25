@@ -37,6 +37,13 @@ pub const HOST_REQUESTS: &[(&str, &str)] = &[
     ("MainThreadTextEditors", "$trySetOptions"),
     ("MainThreadTextEditors", "$tryApplyEdits"),
     ("MainThreadTextEditors", "$tryInsertSnippet"),
+    ("MainThreadPower", "$getSystemIdleState"),
+    ("MainThreadPower", "$getSystemIdleTime"),
+    ("MainThreadPower", "$getCurrentThermalState"),
+    ("MainThreadPower", "$isOnBatteryPower"),
+    ("MainThreadPower", "$startPowerSaveBlocker"),
+    ("MainThreadPower", "$stopPowerSaveBlocker"),
+    ("MainThreadPower", "$isPowerSaveBlockerStarted"),
 ];
 
 #[cfg(test)]
@@ -56,6 +63,7 @@ impl Workbench {
                 cx.write_to_clipboard(ClipboardItem::new_string(arg(0).as_str().unwrap_or_default().to_string()));
                 Ok(null)
             }
+            ("MainThreadPower", method) => crate::power::request(method, args).map_err(|error| serialized_error(&error)),
             ("MainThreadDocuments", "$tryOpenDocument") => self.try_open_document(arg(0), arg(1), arg(2), arg(3) == true, cx),
             ("MainThreadDocuments", "$trySaveDocument") => self.try_save_document(arg(0), cx),
             ("MainThreadDocuments", "$tryCreateDocument") => self.try_create_document(arg(0), cx),

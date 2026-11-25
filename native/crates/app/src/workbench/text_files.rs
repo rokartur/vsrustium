@@ -201,7 +201,9 @@ impl Workbench {
                     if let Some(stat) = written.is_ok().then(|| stat(&path)).flatten() {
                         workbench.text_files.stats.insert(path.clone(), stat);
                     }
-                    workbench.finish_save(&scheme, &path, version, written, cx)
+                    let saved = workbench.finish_save(&scheme, &path, version, written, cx);
+                    workbench.save_signal(saved, reason);
+                    saved
                 });
                 let _ = sender.send(saved.unwrap_or(false));
             })
@@ -210,7 +212,9 @@ impl Workbench {
         }
         if scheme == "file" {
             let written = self.write_text_file(&path, &editor.document.language_id.clone(), &bytes, options);
-            let _ = sender.send(self.finish_save(&scheme, &path, version, written, cx));
+            let saved = self.finish_save(&scheme, &path, version, written, cx);
+            self.save_signal(saved, reason);
+            let _ = sender.send(saved);
             return receiver;
         }
         let write = self.host.run_files(FileJob::Write(resource(&editor.document.uri()), bytes));
@@ -219,7 +223,11 @@ impl Workbench {
                 Ok(result) => result.map(drop).map_err(|error| SaveError::Other(error.to_string())),
                 Err(_) => Err(SaveError::Other("Canceled".to_string())),
             };
-            let saved = workbench.update(cx, |workbench, cx| workbench.finish_save(&scheme, &path, version, written, cx));
+            let saved = workbench.update(cx, |workbench, cx| {
+                let saved = workbench.finish_save(&scheme, &path, version, written, cx);
+                workbench.save_signal(saved, reason);
+                saved
+            });
             let _ = sender.send(saved.unwrap_or(false));
         })
         .detach();

@@ -57,6 +57,15 @@ impl MainThread for WorkbenchMainThread {
                 return Some(Ok(Reply::Empty));
             }
             ("MainThreadWindow", "$asExternalUri") => return Some(as_external_uri(session, &args[0])),
+            // Recorded for Developer: Startup Performance; the session still handles them.
+            ("MainThreadExtensionService", "$setPerformanceMarks") => {
+                crate::perf::set_ext_host_marks(&args[0]);
+                return None;
+            }
+            ("MainThreadExtensionService", "$onDidActivateExtension") => {
+                crate::perf::extension_activated(&args);
+                return None;
+            }
             _ if !HOST_REQUESTS.contains(&(proxy, method)) => return None,
             _ => {}
         }

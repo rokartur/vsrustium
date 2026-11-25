@@ -41,7 +41,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | mainthread/MainThreadQuickOpen | MainThread* shape (Rust side) | verified | api-tests MOCHA_GREP="vscode API - quick input": 11 passing, 0 failing |
 | mainthread/MainThreadStatusBar | MainThread* shape (Rust side) | ported | main_thread_status_bar.rs: $setEntry/$disposeEntry, static `statusBarItems` sent with $acceptStaticEntries (api-tests createStatusBar cases) |
 | mainthread/MainThreadStorage | MainThread* shape (Rust side) | verified | api-tests globalState / workspaceState 2/2; port/tools/settings-check state (restart, state.vscdb rows) same as the reference |
-| mainthread/MainThreadTelemetry | MainThread* shape (Rust side) | stub | session.rs answers undefined |
+| mainthread/MainThreadTelemetry | MainThread* shape (Rust side) | verified | port/tools/privacy-check (Bun and Node, 5/5 each: isTelemetryEnabled false, TelemetryLogger never calls its sender, inert @vscode/extension-telemetry and vscode-tas-client); $publicLog/$publicLog2 dropped as NullTelemetryService (no enableTelemetry in product.json) |
 | mainthread/MainThreadEditorInsets | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadEditorTabs | MainThread* shape (Rust side) | ported | host_sync.rs sends $acceptTabOperation per tab change (cargo test -p app host_sync); $moveTab inside the group (pins the tab, an index past the tabs moves it last), $closeTab and $closeGroup through the save prompt, answering whether every tab closed (workbench/actions.rs): cargo test -p app the_host_moves_and_closes_tabs; the upstream window.test.ts tab tests are commented out; a move to another view column waits for editor groups (milestone 11) |
 | mainthread/MainThreadWebviews | MainThread* shape (Rust side) | verified | api-tests `MOCHA_GREP="vscode API - webview"` webview.test passes as in the reference (625 local resources, postMessage both ways); cargo test -p app webview; `FIXTURE=webview-tests port/tools/webview-check` 7 upstream webview.test cases (ArrayBuffer and typed array messages, `vscode:` links) pass in reference and port |
@@ -176,7 +176,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/networkFilter | src/vs/platform | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | platform/notification | src/vs/platform | ported | notifications.rs: severities, priorities, actions, progress, legacy link parsing (linkedText.ts), 1000-character messages; cargo test -p app notifications:: |
 | platform/observable | src/vs/platform | removed | Artur: internal infrastructure or developer tool with no 1:1 counterpart in the native port |
-| platform/onboarding | src/vs/platform | todo |  |
+| platform/onboarding | src/vs/platform | removed | the Agents window tryout handoff (onboardingTryoutHandoff.ts): no AI by decision (port/notes.md) |
 | platform/opener | src/vs/platform | ported | workbench/opener.rs (openerService.ts open: contributed external openers, validators, folder, url, external, command, editor openers; extractSelection); cargo test -p app opener |
 | platform/otel | src/vs/platform | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | platform/path | src/vs/platform | ported | the IPathService interface; see workbench/services/path |
@@ -198,7 +198,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/sign | src/vs/platform | verified | Open VSX signatures (ed25519 `.signature.sig` over `.signature.manifest`, package and entry sha256 digests; `.signature.p7s` is empty there, so no PKCS#7 chain): cargo test -p exthost sign (5 tests incl. tampered entry, other key, broken archives); redhat.vscode-yaml installs verified in port/tools/extensions-check |
 | platform/state | src/vs/platform | ported | storage/src/state.rs FileStorage (stateService.ts, immediate saves) with state.test.ts cases (cargo test -p storage state); User/globalStorage/storage.json keeps machineId and devDeviceId |
 | platform/storage | src/vs/platform | ported | cargo test -p storage (storage.integrationTest.ts cases); profile and workspace scopes only, storageService tests not ported |
-| platform/telemetry | src/vs/platform | todo |  |
+| platform/telemetry | src/vs/platform | verified | product without enableTelemetry: supportsTelemetry false, NullTelemetryService, nothing sent (port/notes.md milestone 19); port/tools/privacy-check (Bun and Node, 5/5 each: isTelemetryEnabled false, TelemetryLogger never calls its sender, inert @vscode/extension-telemetry and vscode-tas-client); port/tools/telemetry-source-check |
 | platform/terminal | src/vs/platform | ported | terminal/pty.rs (node-pty), terminal.rs (process, environment, exit messages) on alacritty_terminal; cargo test -p app terminal |
 | platform/test | src/vs/platform | n/a | upstream test infrastructure; the port tests with cargo test and port/tools |
 | platform/theme | src/vs/platform | ported | registry defaults for dark, light, hcDark, hcLight (theme.rs); cargo test -p app theme::tests |
@@ -210,7 +210,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/userData | src/vs/platform | todo |  |
 | platform/userDataProfile | src/vs/platform | todo |  |
 | platform/userDataSync | src/vs/platform | removed | no sign-in/AI by decision (port/notes.md); not ported |
-| platform/userInteraction | src/vs/platform | todo |  |
+| platform/userInteraction | src/vs/platform | n/a | DOM observables for modifier keys, focus and hover that editor widgets read; GPUI gives each element its own focus, hover and modifier state |
 | platform/utilityProcess | src/vs/platform | n/a | Electron process, IPC or DOM layer; replaced by the single-process Rust/GPUI architecture (port/notes.md) |
 | platform/webContentExtractor | src/vs/platform | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | platform/webWorker | src/vs/platform | removed | Artur: internal infrastructure or developer tool with no 1:1 counterpart in the native port |
@@ -370,7 +370,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/statusbar | workbench service | ported | ExtensionStatusBarItemService entries and sort (main_thread_status_bar.rs); statusbar hiding per entry not ported |
 | workbench/services/storage | workbench service | ported | port/tools/settings-check state; no application scope or flush on shutdown, writes are synchronous |
 | workbench/services/suggest | workbench service | todo |  |
-| workbench/services/telemetry | workbench service | todo |  |
+| workbench/services/telemetry | workbench service | verified | NullTelemetryService of the built product without enableTelemetry; telemetryInfo ids in init data (seam/init-data); port/tools/privacy-check (Bun and Node, 5/5 each: isTelemetryEnabled false, TelemetryLogger never calls its sender, inert @vscode/extension-telemetry and vscode-tas-client) |
 | workbench/services/terminal | workbench service | todo |  |
 | workbench/services/textMate | workbench service | verified | textmate crate (vscode-textmate 9.3.2, onig); cargo test -p textmate; colorize test 109/109 fixtures; pixel-check main window |
 | workbench/services/textfile | workbench service | ported | Cmd+S writes the model's encoding (files::encoding, port of encoding.ts with iconv-lite DOS code pages; cargo test -p files encoding) and clears dirty state (cargo test -p app keys_and_typed_text_edit_the_focused_editor_and_reach_the_host); save participants: the extensions' for extension saves, trim trailing whitespace, insert final newline and trim final newlines for every save (cargo test -p app save_participants), an auto save sparing the cursor lines; auto save (editorAutoSave.ts): after delay, on focus change, on window change, a delay restarted by each edit, saves held back by error markers, a dirty tab with a short delay drawn clean (`isSaving`) (cargo test -p app auto_save); Save As, Save without Formatting, revert as one undoable edit, save conflict and read-only/permission errors with their actions, file changes and deletes on disk (orphaned tabs), `files.associations` re-detection (workbench/text_files.rs): cargo test -p app text_files; not ported: Format on Save (milestone 13), files.autoGuessEncoding (jschardet), the conflict Compare editor |
@@ -384,8 +384,8 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/untitled | workbench service | ported | Untitled-<n> models, first-line names, `files.defaultLanguage`, `workbench.editor.untitled.labelFormat`, associated files, Save As and revert disposing them (untitled.rs, workbench/text_files.rs): cargo test -p app untitled text_files |
 | workbench/services/update | workbench service | todo |  |
 | workbench/services/url | workbench service | ported | workbench/url_handler.rs: RelayURLService open for code-oss urls, windowId=_blank, workspace urls; extensionUrlHandler.ts trust prompt, confirmed ids, extensions.confirmedUriHandlerExtensionIds; install of an unknown extension fails (no gallery) |
-| workbench/services/userActivity | workbench service | todo |  |
-| workbench/services/userAttention | workbench service | todo |  |
+| workbench/services/userActivity | workbench service | verified | workbench/user_activity.rs: domActivityTracker.ts 30 s checks and the 10 s inactive debounce over every keystroke and mouse press, sent as $onDidChangeWindowActive (cargo test -p app user_activity); progressService.ts holding the mark during long progress is not ported |
+| workbench/services/userAttention | workbench service | n/a | its only consumer is editTelemetry (editSourceTrackingImpl.ts); the port has no telemetry by decision (port/notes.md) |
 | workbench/services/userData | workbench service | todo |  |
 | workbench/services/userDataProfile | workbench service | todo |  |
 | workbench/services/userDataSync | workbench service | removed | no sign-in/AI by decision (port/notes.md); not ported |
@@ -448,7 +448,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/modernUI | workbench contribution | todo |  |
 | workbench/contrib/multiDiffEditor | workbench contribution | todo |  |
 | workbench/contrib/notebook | workbench contribution | todo |  |
-| workbench/contrib/onboarding | workbench contribution | todo |  |
+| workbench/contrib/onboarding | workbench contribution | removed | the only registered tours are the Agents window ones (src/vs/sessions/contrib/onboardingTours): no AI by decision (port/notes.md) |
 | workbench/contrib/opener | workbench contribution | ported | workbench/opener.rs open_folder_link: a link to a workspace folder reveals it in the Explorer |
 | workbench/contrib/outline | workbench contribution | todo |  |
 | workbench/contrib/output | workbench contribution | ported | output_view.rs and output_actions.rs: read-only Output view with the channel dropdown, filter box with level and category menus, Clear Output, Toggle Auto Scrolling, log level gear, Open Output in Editor, Show Output Channels, `workbench.action.output.show.<id>`, Cmd+Shift+U toggle, the Window and Extension Host channels; the view is an editor tab until the milestone 11 panel lands (port/notes.md milestone 15): cargo test -p app output |
@@ -473,11 +473,11 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/share | workbench contribution | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | workbench/contrib/snippets | workbench contribution | todo |  |
 | workbench/contrib/speech | workbench contribution | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
-| workbench/contrib/splash | workbench contribution | todo |  |
+| workbench/contrib/splash | workbench contribution | n/a | partsSplash.ts stores the parts' layout and colors so Electron can paint them before the workbench loads; the GPUI window's first frame is the workbench, drawn from the theme |
 | workbench/contrib/surveys | workbench contribution | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | workbench/contrib/tags | workbench contribution | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | workbench/contrib/tasks | workbench contribution | todo |  |
-| workbench/contrib/telemetry | workbench contribution | todo |  |
+| workbench/contrib/telemetry | workbench contribution | verified | the contribution logs to the NullTelemetryService and registers Show Telemetry only when supportsTelemetry, false in the built product: nothing to port; port/tools/telemetry-source-check no endpoint in 18370 shipped files (SELF_TEST finds 9 in the inert packages) |
 | workbench/contrib/terminal | workbench contribution | ported | workbench/terminal_view.rs: terminals, split, kill, rename, profiles, tabs list as an editor tab until the panel lands; ui-pair against the reference |
 | workbench/contrib/terminalContrib | workbench contribution | todo |  |
 | workbench/contrib/testing | workbench contribution | todo |  |
@@ -491,9 +491,9 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/webview | workbench contribution | ported | webviewElement.ts host protocol, theme variables, focus handoff, local resource loading (webview.rs); api-tests `MOCHA_GREP="vscode API - webview"` webview.test passes as in the reference (625 local resources, postMessage both ways); cargo test -p app webview. Find widget and dev tools not ported |
 | workbench/contrib/webviewPanel | workbench contribution | ported | webview panels as editors (workbench/webview_panels.rs); api-tests `MOCHA_GREP="vscode API - webview"` webview.test passes as in the reference (625 local resources, postMessage both ways); cargo test -p app webview |
 | workbench/contrib/webviewView | workbench contribution | verified | `contributes.views.explorer` of type webview, collapsed at first (viewsExtensionPoint.ts `showCollapsed`), resolved on first show with `onView:` activation (workbench/webview_views.rs); `FIXTURE=webview-view-tests port/tools/webview-check` 5/5 on both apps. Other view containers wait for milestone 11; `when` not evaluated |
-| workbench/contrib/welcomeBanner | workbench contribution | todo |  |
+| workbench/contrib/welcomeBanner | workbench contribution | n/a | shows the web embedder's `welcomeBanner` option; a desktop window has none |
 | workbench/contrib/welcomeGettingStarted | workbench contribution | todo |  |
-| workbench/contrib/welcomeOnboarding | workbench contribution | todo |  |
+| workbench/contrib/welcomeOnboarding | workbench contribution | removed | Developer: Welcome Onboarding 2026 (onboardingVariationA.ts) is sign-in and Copilot setup: no sign-in or AI by decision (port/notes.md) |
 | workbench/contrib/welcomeViews | workbench contribution | todo |  |
 | workbench/contrib/welcomeWalkthrough | workbench contribution | todo |  |
 | workbench/contrib/workspace | workbench contribution | ported | workbench/workspace_trust_view.rs: startup prompt (startupPrompt once/always/never, parent folder checkbox), request dialog, Restricted Mode status entry and hover, banner with Manage/Learn More and dismissal; untrusted windows drop extensions without untrustedWorkspaces support and restricted workspace settings (cargo test -p config untrusted); ui-pair startup prompt against the reference (port/notes.md milestone 12); Workspace Trust editor (workbench.trust.manage) not ported |
@@ -593,8 +593,8 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | extension/vscode-test-resolver | built-in extension | removed | no remote or tunnels by decision (port/notes.md); one local extension host |
 | extension/xml | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/yaml | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
-| telemetry/source-search | cross-cutting check | todo |  |
-| telemetry/network-capture | cross-cutting check | todo |  |
+| telemetry/source-search | cross-cutting check | verified | port/tools/telemetry-source-check: no telemetry or experimentation endpoint in the release binary, out-exthost and the 86 shipped built-ins with their 339 resolved packages (18370 files); SELF_TEST=1 finds 9 files in the inert packages |
+| telemetry/network-capture | cross-cutting check | verified | port/tools/network-capture, 600 s with no user action, fresh user data: folder window (eager git, npm, github activated) and empty window, no outbound traffic from the app's process tree; the control curl is seen each run. An earlier folder run with traffic was another session's keystrokes opening JSON files (json-language-features schema downloads), so runs take the Studio GUI lock |
 | gallery/open-vsx | cross-cutting check | verified | exthost/src/gallery.rs: query, latest-version resource, version choice, download with signature check; cargo test -p exthost gallery (upstream extensionGalleryService.test.ts sorting and filterLatestExtensionVersionsForTargetPlatform cases, Open VSX resource fixture); `workbench.extensions.installExtension redhat.vscode-yaml` downloads 2.0.0 from open-vsx.org, verifies it and activates without restart, not-found errors as upstream: PORT_GALLERY=1 port/tools/extensions-check |
 | port/settings-import | port feature | todo | Artur: import settings from VS Code, Cursor and VSCodium (roadmap milestone 10) |
 | look/screenshot-diff | cross-cutting check | verified | port/tools/pixel-check: CDP reference capture and Metal readback in 3 themes, pixeldiff reference vs itself 0 different; baseline in port/results/pixels.md |
