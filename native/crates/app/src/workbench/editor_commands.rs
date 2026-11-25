@@ -244,6 +244,13 @@ impl Workbench {
             cx.notify();
             Outcome::done()
         });
+        // breadcrumbsControl.ts `ToggleBreadcrumb`.
+        self.commands.register("breadcrumbs.toggle", |workbench, _, _, cx| {
+            let enabled = workbench.setting("breadcrumbs.enabled") != json!(false);
+            workbench.update_setting("breadcrumbs.enabled", json!(!enabled));
+            cx.notify();
+            Outcome::done()
+        });
         self.commands.register("editor.action.toggleMinimap", |workbench, _, _, cx| {
             let enabled = workbench.setting("editor.minimap.enabled") != json!(false);
             workbench.update_setting("editor.minimap.enabled", json!(!enabled));

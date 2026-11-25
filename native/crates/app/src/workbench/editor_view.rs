@@ -82,6 +82,7 @@ impl Workbench {
                 TERMINAL_SCHEME => part.child(self.terminal_title_actions(cx)).child(self.terminal_body(cx)),
                 // breadcrumbsControl.ts `update`: no breadcrumbs for a resource without a file system provider.
                 "untitled" => part,
+                _ if self.setting("breadcrumbs.enabled") == json!(false) => part,
                 _ => part.child(self.breadcrumbs(editor)),
             })
             .map(|part| match self.editors.active_diff() {

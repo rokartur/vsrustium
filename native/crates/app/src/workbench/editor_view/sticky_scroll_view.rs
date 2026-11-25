@@ -206,6 +206,12 @@ impl Workbench {
             })
             // _onMouseDown: a press keeps the focus in the editor, as the reveal that follows does.
             .on_mouse_down(MouseButton::Left, cx.listener(|workbench, _, window, cx| window.focus(&workbench.editor_focus, cx)))
+            // stickyScrollController.ts `_onContextMenu`: `MenuId.StickyScrollContext` at the pointer.
+            .on_mouse_down(MouseButton::Right, cx.listener(|workbench, event: &gpui::MouseDownEvent, window, cx| {
+                let context = workbench.key_context(window);
+                let anchor = gpui::Bounds { origin: event.position, size: gpui::Size::default() };
+                workbench.show_context_menu(crate::menus::MenuId::StickyScrollContext, &context, anchor, Vec::new(), window, cx);
+            }))
             .child(
                 div()
                     .id("sticky-line-numbers")

@@ -32,6 +32,7 @@ pub enum MenuId {
     EditorContext,
     EditorTitleContext,
     EditorLineNumberContext,
+    StickyScrollContext,
     TitleBarContext,
     TitleBarTitleContext,
     ScmTitle,
@@ -210,6 +211,11 @@ pub fn workbench_menus() -> Vec<MenuItem> {
     // fileActions.contribution.ts: checked unless `files.autoSave` is `off`.
     let entry = Entry::Command { id: "workbench.action.toggleAutoSave".into(), precondition: None, toggled: Expr::deserialize("config.files.autoSave != 'off'"), alt: None };
     items.push(MenuItem { menu: MenuId::MenubarFileMenu, entry, title: "A&&uto Save".into(), group: "5_autosave".into(), order: 1., when: None });
+    // stickyScrollActions.ts and breadcrumbsControl.ts: the toggles' checked titles, the only ones the menu shows while it is open.
+    for (id, setting, title) in [("breadcrumbs.toggle", "breadcrumbs.enabled", "Breadcrumbs"), ("editor.action.toggleStickyScroll", "editor.stickyScroll.enabled", "Sticky Scroll")] {
+        let entry = Entry::Command { id: id.into(), precondition: None, toggled: Expr::deserialize(&format!("config.{setting} == true")), alt: None };
+        items.push(MenuItem { menu: MenuId::StickyScrollContext, entry, title: title.into(), group: String::new(), order: 0., when: None });
+    }
     // toggleWordWrap.ts: checked while the active editor wraps, enabled while it can toggle.
     let entry = Entry::Command { id: "editor.action.toggleWordWrap".into(), precondition: Some(Expr::has("canToggleWordWrap")), toggled: Some(Expr::has("editorWordWrap")), alt: None };
     items.push(MenuItem { menu: MenuId::MenubarViewMenu, entry, title: "&&Word Wrap".into(), group: "6_editor".into(), order: 1., when: None });
