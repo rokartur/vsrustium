@@ -558,29 +558,35 @@ impl Workbench {
         // listWidget.ts: the drop target folder and the rows below it take list.dropBackground.
         let drop_target = self.explorer.drop_target.as_ref().filter(|_| cx.has_active_drag());
         let drop_background = self.color("list.dropBackground");
+        let tree_rows = tree.rows();
+        // explorerViewer.ts `onDragOver`: over a compact row's folder other than its last, that name alone is the
+        // drop target, without feedback on the rows.
+        let segment_drop_target = drop_target.filter(|target| tree_rows.iter().any(|row| row.compressed.iter().rev().skip(1).any(|(path, _)| path == *target)));
         // listWidget.ts: a selected row gets a 1px dotted listSelectionOutline (activeContrastBorder) inside it.
         let selection_outline = self.theme.color("contrastActiveBorder");
         let folder_name = tree.workspace.label();
-        let rows = tree.rows().into_iter().enumerate().map(|(index, row)| {
+        let rows = tree_rows.into_iter().enumerate().map(|(index, row)| {
             let twistie = match (row.is_dir || row.has_nests, row.expanded) {
                 (true, true) => Some("chevron-down"),
                 (true, false) => Some("chevron-right"),
                 (false, _) => None,
             };
+            let navigation = tree.navigation(&row);
             let path = row.path;
             let is_dir = row.is_dir;
             let is_edited = edited.as_ref().is_some_and(|renamed| match renamed {
-                Some(renamed) => *renamed == path,
+                Some(renamed) => *renamed == path || row.compressed.iter().any(|(folder, _)| folder == renamed),
                 None => row.is_new,
             });
-            let name = match is_edited {
-                true => self.explorer_input_box(label_line, edit_focused, cx).into_any_element(),
-                false => row.name.into_any_element(),
-            };
             let is_selected = !row.is_new && tree.selected.contains(&path);
             let is_focused = !row.is_new && tree.focused.as_ref() == Some(&path);
+            let name = match (is_edited, navigation) {
+                (true, _) => self.explorer_input_box(label_line, edit_focused, cx).into_any_element(),
+                (false, Some(navigation)) => self.compressed_label(&row.compressed, &navigation, is_focused, segment_drop_target, cx).into_any_element(),
+                (false, None) => row.name.into_any_element(),
+            };
             let is_cut = tree.is_cut(&path);
-            let is_drop_target = !row.is_new && drop_target.is_some_and(|target| path.starts_with(target));
+            let is_drop_target = !row.is_new && segment_drop_target.is_none() && drop_target.is_some_and(|target| path.starts_with(target));
             let drag = self.explorer_drag(&path).filter(|_| !is_edited);
             // views.css align-icons-and-twisties: with file icons and no folder icons a file's empty twistie collapses
             // to its 8px indent and the icon takes its place, so file and folder names line up.
@@ -663,6 +669,12 @@ impl Workbench {
                     let target = path.clone();
                     row.on_mouse_down(MouseButton::Right, cx.listener(move |workbench, event: &MouseDownEvent, window, cx| {
                         cx.stop_propagation();
+                        // explorerView.ts `onContextMenu`: a compact row right-clicked off its names acts on its last folder.
+                        let tree = workbench.folder.as_mut().expect("rows exist only with a folder");
+                        if let Some(mut navigation) = tree.navigation_at(&target) {
+                            navigation.last();
+                            tree.set_navigation(&navigation);
+                        }
                         workbench.show_explorer_context_menu(Some(&target), event.position, window, cx);
                     }))
                     .on_click(cx.listener(move |workbench, event: &ClickEvent, window, cx| {

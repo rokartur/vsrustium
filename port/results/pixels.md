@@ -240,3 +240,7 @@ Rerun after the Explorer fixes from the reference comparison (inline name row, N
 ## Milestone 12 Search view
 
 Full rerun after the Search view, on the Studio with the pointer parked: every window and theme gives the counts above (empty 3567/3600/398/401, folder 7238/4067/960/874, file 10342/7164/4696/5468, main 11927/8685/5842/6873, multiroot 7371/4143/1110/951, folded 14070/27529/6987/9021). The first run gave main hc 7404 (breadcrumbs drawn at a shifted position); `WINDOWS=main THEMES="hc dark"` rerun gave 5842 and 11927.
+
+## Milestone 12 compact folders
+
+`WINDOWS="folder multiroot" THEMES=dark`, pointer parked: folder 7238, multiroot 7371, as before. The fixture folders hold no single-child chain, so no captured row is compacted.
