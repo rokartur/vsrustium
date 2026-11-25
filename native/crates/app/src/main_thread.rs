@@ -108,7 +108,10 @@ impl MainThread for WorkbenchMainThread {
             if (message.proxy, message.method) == ("ExtHostWebviews", "$onMessage") && let Some(Arg::Json(json)) = args.pop() {
                 args.push(Arg::JsonWithBuffers { json, buffers: Vec::new() });
             }
-            let req = session.send_request(message.proxy, message.method, args);
+            let req = match TOKEN_METHODS.contains(&(message.proxy, message.method)) {
+                true => session.send_cancellable_request(message.proxy, message.method, args),
+                false => session.send_request(message.proxy, message.method, args),
+            };
             if let Some(reply) = message.reply {
                 self.waiting.push((req, reply));
             }
@@ -172,6 +175,21 @@ impl WorkbenchMainThread {
 
 /// The time `$provideTextDocumentContent` gets, as main_thread_files.rs gives a file system provider.
 const PROVIDER_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Workbench calls whose host method ends with a `CancellationToken` (extHost.protocol.ts): rpcProtocol.ts sends
+/// them as requests with cancellation, so the host passes a token instead of `undefined`.
+const TOKEN_METHODS: [(&str, &str); 10] = [
+    ("ExtHostDebugService", "$provideDebugConfigurations"),
+    ("ExtHostDebugService", "$resolveDebugConfiguration"),
+    ("ExtHostDebugService", "$resolveDebugConfigurationWithSubstitutedVariables"),
+    ("ExtHostTesting", "$runControllerTests"),
+    ("ExtHostTesting", "$startContinuousRun"),
+    ("ExtHostTesting", "$getCoverageDetails"),
+    ("ExtHostTesting", "$refreshTests"),
+    ("ExtHostTesting", "$getTestsRelatedToCode"),
+    ("ExtHostTesting", "$getCodeRelatedToTest"),
+    ("ExtHostTesting", "$provideTestFollowups"),
+];
 
 /// mainThreadSaveParticipant.ts: the host's `onWillSaveTextDocument` listeners apply their edits through
 /// `$tryApplyWorkspaceEdit` while this waits; a failed or late listener is logged and the save goes on.

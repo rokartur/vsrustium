@@ -405,6 +405,10 @@ impl Workbench {
             self.show_search_editor_history_value(field, previous, window, cx);
             return Outcome::done();
         }
+        if id == InputId::DebugConsole {
+            self.walk_repl_history(previous, cx);
+            return Outcome::done();
+        }
         if !matches!(id, InputId::Find | InputId::Replace) {
             return Outcome::done();
         }

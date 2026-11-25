@@ -32,9 +32,12 @@ pub enum InputId {
     KeybindingsWhen,
     SearchEditor(SearchField),
     OutputFilter,
+    DebugView,
+    BreakpointWidget,
+    DebugConsole,
 }
 
-const INPUTS: [InputId; 8] = [InputId::QuickInput, InputId::Explorer, InputId::ExplorerFind, InputId::Find, InputId::Replace, InputId::KeybindingsSearch, InputId::KeybindingsWhen, InputId::OutputFilter];
+const INPUTS: [InputId; 11] = [InputId::QuickInput, InputId::Explorer, InputId::ExplorerFind, InputId::Find, InputId::Replace, InputId::KeybindingsSearch, InputId::KeybindingsWhen, InputId::OutputFilter, InputId::DebugView, InputId::BreakpointWidget, InputId::DebugConsole];
 
 /// The view state of one input element.
 pub struct InputView {
@@ -90,6 +93,9 @@ impl Workbench {
             InputId::KeybindingsWhen => &self.keybindings_editor.when_view,
             InputId::SearchEditor(field) => &self.search_editor_widget.view.input(field).view,
             InputId::OutputFilter => &self.output_view.filter_view,
+            InputId::DebugView => &self.debug_view.input_view,
+            InputId::BreakpointWidget => &self.debug_view.widget_view,
+            InputId::DebugConsole => &self.debug_console.input_view,
         }
     }
 
@@ -105,6 +111,9 @@ impl Workbench {
             InputId::KeybindingsWhen => &mut self.keybindings_editor.when_view,
             InputId::SearchEditor(field) => &mut self.search_editor_widget.view.input_mut(field).view,
             InputId::OutputFilter => &mut self.output_view.filter_view,
+            InputId::DebugView => &mut self.debug_view.input_view,
+            InputId::BreakpointWidget => &mut self.debug_view.widget_view,
+            InputId::DebugConsole => &mut self.debug_console.input_view,
         }
     }
 
@@ -120,6 +129,9 @@ impl Workbench {
             InputId::KeybindingsWhen => &self.keybindings_editor.when_focus,
             InputId::SearchEditor(field) => &self.search_editor_widget.view.input(field).focus,
             InputId::OutputFilter => &self.output_view.filter_focus,
+            InputId::DebugView => &self.debug_view.input_focus,
+            InputId::BreakpointWidget => &self.debug_view.widget_focus,
+            InputId::DebugConsole => &self.debug_console.input_focus,
         }
     }
 
@@ -135,6 +147,9 @@ impl Workbench {
             InputId::KeybindingsWhen => self.keybindings_editor.when.as_ref().map(|when| &when.input),
             InputId::SearchEditor(field) => Some(&self.search_editor_widget.view.input(field).value),
             InputId::OutputFilter => Some(&self.output_view.filter),
+            InputId::DebugView => self.debug_view.editing.as_ref().map(|_| &self.debug_view.input),
+            InputId::BreakpointWidget => self.breakpoint_widget.as_ref().map(|widget| &widget.input),
+            InputId::DebugConsole => Some(&self.debug_console.input),
         }
     }
 
@@ -183,6 +198,18 @@ impl Workbench {
             }
             InputId::OutputFilter => {
                 self.edit_output_filter(edit, window, cx);
+                Outcome::done()
+            }
+            InputId::DebugView => {
+                self.edit_debug_view_input(edit, cx);
+                Outcome::done()
+            }
+            InputId::BreakpointWidget => {
+                self.edit_breakpoint_widget_input(edit, cx);
+                Outcome::done()
+            }
+            InputId::DebugConsole => {
+                self.edit_debug_console_input(edit, cx);
                 Outcome::done()
             }
         }
@@ -366,6 +393,9 @@ impl Workbench {
                 InputId::KeybindingsWhen => "keybindings-when-text".into(),
                 InputId::SearchEditor(field) => ("search-editor-input-text", field as usize).into(),
                 InputId::OutputFilter => "output-filter-text".into(),
+                InputId::DebugView => "debug-view-input-text".into(),
+                InputId::BreakpointWidget => "breakpoint-widget-input-text".into(),
+                InputId::DebugConsole => "debug-console-input-text".into(),
             })
             .flex_1()
             .h_full()

@@ -322,7 +322,9 @@ impl Workbench {
         match self.side_bar_view {
             SideBarView::Explorer => self.explorer_context(window, &mut context),
             SideBarView::Search => self.search_context(window, &mut context),
+            SideBarView::Debug | SideBarView::Testing => {}
         }
+        self.debug_context(window, &mut context);
         self.keybindings_editor_context(window, &mut context);
         self.search_editor_context(window, &mut context);
         self.output_context(window, &mut context);

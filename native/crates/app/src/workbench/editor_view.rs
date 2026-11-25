@@ -77,7 +77,12 @@ impl Workbench {
                 crate::output::OUTPUT_SCHEME => part.child(self.output_title_actions(window, cx)),
                 _ => part.child(self.breadcrumbs(editor)),
             })
-            .when(editor.document.scheme != WEBVIEW_PANEL_SCHEME, |part| part.children(self.unicode_banner(editor, cx)).child(self.text_area(editor, window, cx)))
+            .map(|part| match editor.document.scheme.as_str() {
+                WEBVIEW_PANEL_SCHEME => part,
+                super::debug_console::DEBUG_CONSOLE_SCHEME => part.child(self.debug_console_body(window, cx)),
+                super::testing_view::TEST_RESULTS_SCHEME => part.child(self.test_results_body(cx)),
+                _ => part.children(self.unicode_banner(editor, cx)).child(self.text_area(editor, window, cx)),
+            })
             // The active tab reaches into the part's top border, which Chrome still draws over it.
             .child(div().absolute().inset(px(-1.)).border_1().rounded(px(8.)).border_color(self.color("surface.border")))
     }
@@ -410,6 +415,8 @@ impl Workbench {
             .children(self.sticky_scroll_widget(editor, metrics, window, cx))
             .children(self.find_widget(self.editors.viewport.width + metrics.content_left() + minimap_width, metrics.content_left(), minimap_width, window, cx))
             .children(self.editor_message_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
+            .children(self.breakpoint_widget_element(editor, metrics.content_left(), window, cx))
+            .children(self.exception_widget_element(editor, metrics.content_left(), cx))
             .children(self.keybindings_file_widgets(editor, self.editors.viewport.width + metrics.content_left() + minimap_width, viewport.height, minimap_width, window, cx))
     }
 
@@ -986,6 +993,7 @@ impl Workbench {
                     .h_full()
                     .overflow_hidden()
                     .text_color(colors.text)
+                    .children(self.stack_frame_line(editor, index))
                     .child(current_line)
                     .child(content)
                     .on_mouse_down(MouseButton::Left, cx.listener(move |workbench, event: &MouseDownEvent, window, cx| {
@@ -1041,7 +1049,7 @@ impl Workbench {
                     .w_full()
                     .h(px(metrics.line_height))
                     .flex()
-                    .child(div().w(px(metrics.glyph_margin_width())).flex_none())
+                    .child(self.breakpoint_glyph_margin(editor, index, metrics.glyph_margin_width(), metrics.line_height, cx))
                     .child(number)
                     .child(self.fold_control(index, collapsed, metrics, fold_control_color, fold_controls, cx))
                     .child(content)

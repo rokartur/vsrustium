@@ -11,6 +11,7 @@ mod clipboard;
 mod command_palette;
 mod commands;
 mod contextkey;
+mod debug;
 mod default_settings;
 mod dialog;
 mod editor;
@@ -47,6 +48,7 @@ mod search_model;
 mod smart_snippet_inserter;
 mod split_view;
 mod syntax;
+mod testing;
 mod tf_idf;
 mod theme;
 mod undo_redo;
@@ -108,7 +110,8 @@ fn main() -> anyhow::Result<()> {
 
     let app_root = std::env::current_dir()?;
     let extensions_dir = std::env::var_os("VSCODE_GPUI_EXTENSIONS").map(PathBuf::from).unwrap_or_else(|| app_root.join("extensions"));
-    let builtins = scan_builtin_extensions(&extensions_dir)?;
+    let mut builtins = scan_builtin_extensions(&extensions_dir)?;
+    builtins.extend(exthost::scan::scan_dev_system_extensions(&app_root)?);
     // Artur: user extensions live in ~/.vsrustium/extensions, the default user data dir's extensions folder.
     let user_extensions = UserExtensions { folder: flag_value("--extensions-dir").map_or_else(|| user_data.join("extensions"), PathBuf::from), product_version: VERSION.into() };
     user_extensions.clean_up()?;
@@ -321,7 +324,7 @@ fn run_extension_host(
             MainThreadSecretState::in_memory()
         }),
     });
-    session.forward(&["MainThreadCommands", "MainThreadDiagnostics", "MainThreadEditorTabs", "MainThreadLogger", "MainThreadMessageService", "MainThreadOutputService", "MainThreadProgress", "MainThreadQuickOpen", "MainThreadStatusBar", "MainThreadWebviewPanels", "MainThreadWebviews", "MainThreadWorkspace"], move |request| {
+    session.forward(&["MainThreadCommands", "MainThreadDebugService", "MainThreadDiagnostics", "MainThreadEditorTabs", "MainThreadLogger", "MainThreadMessageService", "MainThreadOutputService", "MainThreadProgress", "MainThreadQuickOpen", "MainThreadStatusBar", "MainThreadTesting", "MainThreadWebviewPanels", "MainThreadWebviews", "MainThreadWorkspace"], move |request| {
         let _ = workbench_requests.unbounded_send(request);
     }, workbench_replies);
     session.main_thread = Some(Box::new(main_thread));

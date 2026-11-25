@@ -3,10 +3,19 @@
 //! Sizes are the reference's CSS pixels.
 
 mod actions;
+mod breakpoint_widget;
 mod bulk_text_edits;
 mod configuration;
 mod context_menu;
+mod debug_commands;
+mod debug_console;
+mod debug_toolbar;
+pub(crate) mod debug_service;
+mod debug_view;
+pub(crate) mod testing_service;
+mod testing_view;
 mod define_keybinding;
+mod exception_widget;
 mod diagnostics;
 mod editor_commands;
 mod editor_menus;
@@ -167,6 +176,12 @@ pub struct Workbench {
     profile_storage: Arc<Mutex<Storage>>,
     /// StorageScope.WORKSPACE of the opened folder, shared with the extension host's MainThreadStorage.
     workspace_storage: Arc<Mutex<Storage>>,
+    pub debug: debug_service::DebugService,
+    debug_view: debug_view::DebugView,
+    debug_console: debug_console::DebugConsole,
+    breakpoint_widget: Option<breakpoint_widget::BreakpointWidget>,
+    pub testing: testing_service::TestingService,
+    testing_view: testing_view::TestingView,
 }
 
 impl Render for Workbench {
@@ -217,6 +232,11 @@ impl Render for Workbench {
             .text_color(self.color("foreground"))
             .text_size(px(13.))
             .child(grid)
+            .children(self.debug_toolbar(window, cx))
+            .when(self.debug_view.toolbar_drag.is_some(), |root| {
+                root.on_mouse_move(cx.listener(|workbench, event, window, cx| workbench.drag_debug_toolbar(event, window, cx)))
+                    .on_mouse_up(gpui::MouseButton::Left, cx.listener(|workbench, _, _, _| workbench.end_debug_toolbar_drag()))
+            })
             .children(modal_editor)
             // The quick input lives in the workbench container, inside the window border as the grid.
             .children(quick_input.map(|widget| div().absolute().left(px(inset)).top(px(inset)).child(widget)))
@@ -295,6 +315,12 @@ impl Workbench {
             installed_menubar: None,
             profile_storage: Arc::new(Mutex::new(Storage::in_memory())),
             workspace_storage: Arc::new(Mutex::new(Storage::in_memory())),
+            debug: Default::default(),
+            debug_view: debug_view::DebugView::new(cx),
+            debug_console: debug_console::DebugConsole::new(cx),
+            breakpoint_widget: None,
+            testing: Default::default(),
+            testing_view: Default::default(),
         };
         crate::main_thread_commands::register_commands_documentation(&mut workbench);
         workbench.register_workbench_actions();
@@ -324,6 +350,10 @@ impl Workbench {
         workbench.register_output_actions();
         workbench.register_logs_actions();
         workbench.register_extension_management_commands();
+        workbench.register_debug_commands();
+        workbench.register_debug_console_commands();
+        workbench.register_breakpoint_widget_commands();
+        workbench.register_testing_commands();
         // Keybindings resolve before the focused element sees the key, and with nothing focused too.
         let entity = cx.entity().downgrade();
         cx.intercept_keystrokes(move |event, window, cx| {
@@ -532,14 +562,13 @@ impl Workbench {
     fn side_bar_visible(&self) -> bool {
         match self.side_bar_view {
             SideBarView::Explorer => self.folder.is_some(),
-            SideBarView::Search => true,
+            SideBarView::Search | SideBarView::Debug | SideBarView::Testing => true,
         }
     }
 
     fn activity_bar(&self, cx: &mut Context<Self>) -> Div {
         let views = [
             ("source-control", "Source Control", "workbench.view.scm"),
-            ("debug-alt", "Run and Debug", "workbench.view.debug"),
             ("extensions", "Extensions", "workbench.view.extensions"),
         ];
         // The side bar is on the left, so the hovers go right of the bar (activitybarPart.ts).
@@ -554,6 +583,9 @@ impl Workbench {
         };
         let explorer = view_icon("files", SideBarView::Explorer, "workbench.view.explorer");
         let search = view_icon("search-large", SideBarView::Search, "workbench.view.search");
+        let debug = view_icon("debug-alt", SideBarView::Debug, "workbench.view.debug");
+        // The Testing container shows once a controller registers (testing.contribution.ts `TestingContextKeys.providerCount`).
+        let testing = (!self.testing.controllers.is_empty()).then(|| view_icon("beaker", SideBarView::Testing, "workbench.view.testing").child(self.action_hover("Testing", "workbench.view.testing", hover)));
         div()
             .w(px(44.))
             .flex()
@@ -573,7 +605,10 @@ impl Workbench {
                     .gap(px(8.))
                     .child(explorer.child(self.action_hover("Explorer", "workbench.view.explorer", hover)))
                     .child(search.child(self.action_hover("Search", "workbench.view.search", hover)))
-                    .children(views.map(|(name, title, command)| self.icon(name, 36., 24., inactive).cursor_pointer().child(self.action_hover(title, command, hover)))),
+                    .children(views[..1].iter().map(|&(name, title, command)| self.icon(name, 36., 24., inactive).cursor_pointer().child(self.action_hover(title, command, hover))))
+                    .child(debug.child(self.action_hover("Run and Debug", "workbench.view.debug", hover)))
+                    .children(views[1..].iter().map(|&(name, title, command)| self.icon(name, 36., 24., inactive).cursor_pointer().child(self.action_hover(title, command, hover))))
+                    .children(testing),
             )
             .child(self.icon("settings-gear", 36., 24., inactive).cursor_pointer().child(self.hover_target("manage", HoverContent::Text("Manage".into()), hover)))
     }
@@ -596,6 +631,12 @@ impl Workbench {
         if self.side_bar_view == SideBarView::Search {
             let title = self.side_bar_title("Search").child(self.search_title_actions(cx));
             return self.side_bar_frame().text_color(foreground).child(title).child(self.search_view(window, cx));
+        }
+        if self.side_bar_view == SideBarView::Debug {
+            return self.debug_side_bar(window, cx);
+        }
+        if self.side_bar_view == SideBarView::Testing {
+            return self.testing_side_bar(cx);
         }
         let tree = self.folder.as_ref().expect("the Explorer is drawn only with a folder");
         let title = self
@@ -872,6 +913,7 @@ impl Workbench {
 
     fn status_bar(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         let (foreground, background) = match self.folder {
+            _ if self.statusbar_in_debug_mode() => (self.color("statusBar.debuggingForeground"), self.color("statusBar.debuggingBackground")),
             Some(_) => (self.color("statusBar.foreground"), self.color("statusBar.background")),
             None => (self.color("statusBar.noFolderForeground"), self.color("statusBar.noFolderBackground")),
         };

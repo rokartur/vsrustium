@@ -81,7 +81,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | mainthread/MainThreadQuickDiff | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadAgentEditorComments | MainThread* shape (Rust side) | removed | no sign-in/AI by decision (port/notes.md); API stays inert: session.rs answers undefined, list getters []; exthost-probe 30/30 on Bun and Node |
 | mainthread/MainThreadDocumentDiff | MainThread* shape (Rust side) | stub | session.rs answers undefined |
-| mainthread/MainThreadDebugService | MainThread* shape (Rust side) | stub | session.rs answers undefined |
+| mainthread/MainThreadDebugService | MainThread* shape (Rust side) | verified | workbench/debug_service.rs: api-tests MOCHA_GREP="vscode API - debug" 3 passing, 2 pending (skipped upstream), as the reference; ui-pair port/fixtures/debug-node: js-debug stops at the app.js breakpoint and shows its locals |
 | mainthread/MainThreadWindow | MainThread* shape (Rust side) | stub | session.rs: $getInitialState fixed {isFocused,isActive}; rest undefined |
 | mainthread/MainThreadTunnelService | MainThread* shape (Rust side) | removed | no remote or tunnels by decision (port/notes.md); one local extension host |
 | mainthread/MainThreadTimeline | MainThread* shape (Rust side) | stub | session.rs answers undefined |
@@ -97,7 +97,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | mainthread/MainThreadLocalization | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadMcp | MainThread* shape (Rust side) | removed | no sign-in/AI by decision (port/notes.md); API stays inert: session.rs answers undefined, list getters []; exthost-probe 30/30 on Bun and Node |
 | mainthread/MainThreadDataChannels | MainThread* shape (Rust side) | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
-| mainthread/MainThreadTesting | MainThread* shape (Rust side) | stub | session.rs answers undefined |
+| mainthread/MainThreadTesting | MainThread* shape (Rust side) | verified | workbench/testing_service.rs: cargo test -p app testing::; ui-pair port/fixtures/debug-node with port/fixtures/extensions/tests-provider: Run All runs 3 tests, states and output reach the Testing view and Test Results |
 | mainthread/MainThreadChatStatus | MainThread* shape (Rust side) | removed | no sign-in/AI by decision (port/notes.md); API stays inert: session.rs answers undefined, list getters []; exthost-probe 30/30 on Bun and Node |
 | mainthread/MainThreadChatQuota | MainThread* shape (Rust side) | removed | no sign-in/AI by decision (port/notes.md); API stays inert: session.rs answers undefined, list getters []; exthost-probe 30/30 on Bun and Node |
 | mainthread/MainThreadChatInputNotification | MainThread* shape (Rust side) | removed | no sign-in/AI by decision (port/notes.md); API stays inert: session.rs answers undefined, list getters []; exthost-probe 30/30 on Bun and Node |
@@ -129,7 +129,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/cssDev | src/vs/platform | removed | Artur: internal infrastructure or developer tool with no 1:1 counterpart in the native port |
 | platform/customizationMarketplace | src/vs/platform | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | platform/dataChannel | src/vs/platform | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
-| platform/debug | src/vs/platform | todo |  |
+| platform/debug | src/vs/platform | n/a | extensionHostDebugIpc.ts (electron-main IPC) and rendererDebugBridge.ts (CDP into the Electron renderer); the port has no Electron processes. The `extensionHost` launch type that drives them is a gap in port/notes.md |
 | platform/defaultAccount | src/vs/platform | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | platform/diagnostics | src/vs/platform | todo |  |
 | platform/dialogs | src/vs/platform | todo |  |
@@ -409,7 +409,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/commands | workbench contribution | verified | runCommands (commands.rs register_run_commands): cargo test -p app commands::, argument checks, spread args, order, stop at a failure; argument errors and the failure notify (cargo test -p app run_commands_argument_errors_notify) |
 | workbench/contrib/comments | workbench contribution | todo |  |
 | workbench/contrib/customEditor | workbench contribution | todo |  |
-| workbench/contrib/debug | workbench contribution | todo |  |
+| workbench/contrib/debug | workbench contribution | verified | ui-pair port/fixtures/debug-node: gutter breakpoint, F5 stops at it, Variables (Local: main), Call Stack with folded deemphasized frames, Breakpoints, Debug Console REPL, toolbar, status bar entry; cargo test -p app debug; shortcuts in port/notes.md |
 | workbench/contrib/dropOrPasteInto | workbench contribution | todo |  |
 | workbench/contrib/editSessions | workbench contribution | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/contrib/editTelemetry | workbench contribution | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
@@ -480,7 +480,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/telemetry | workbench contribution | todo |  |
 | workbench/contrib/terminal | workbench contribution | todo |  |
 | workbench/contrib/terminalContrib | workbench contribution | todo |  |
-| workbench/contrib/testing | workbench contribution | todo |  |
+| workbench/contrib/testing | workbench contribution | verified | ui-pair port/fixtures/debug-node with tests-provider: Testing view tree, Run All, pass/fail icons, Test Results tree and output, run glyphs in the gutter; cargo test -p app testing:: |
 | workbench/contrib/themes | workbench contribution | ported | Color Theme picker (`workbench.action.selectTheme`, Cmd+K Cmd+T): rows, order and descriptions as the reference, 200ms preview, Escape restores, accept writes `workbench.colorTheme` (cargo test -p app themes); no file icon or product icon theme pickers, no Marketplace browsing, no `window.autoDetectColorScheme` |
 | workbench/contrib/timeline | workbench contribution | todo |  |
 | workbench/contrib/typeHierarchy | workbench contribution | todo |  |
@@ -508,8 +508,8 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | extension/css | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/css-language-features | built-in extension | todo |  |
 | extension/dart | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
-| extension/debug-auto-launch | built-in extension | todo |  |
-| extension/debug-server-ready | built-in extension | todo |  |
+| extension/debug-auto-launch | built-in extension | verified | ui-pair port/fixtures/debug-node: "Toggle Auto Attach" lists Always, Smart, Only With Flag, Disabled; picking Smart shows "Auto Attach: Smart" in the status bar. The attach variables it sets reach terminals once milestone 14 lands |
+| extension/debug-server-ready | built-in extension | verified | ui-pair port/fixtures/debug-node: "Launch server.js" prints "listening on port 3000" and serverReadyAction starts "Launch app.js" |
 | extension/diff | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/docker | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/dotenv | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |

@@ -38,6 +38,8 @@ pub enum Owner {
     Output(Vec<crate::workbench::output_actions::OutputPick>),
     /// `_workbench.pickWorkspaceFolder` of Open Folder Settings (JSON): the folders, by item handle.
     FolderSettings(Vec<std::path::PathBuf>),
+    /// A pick or input of the debug start flow, answered with the picked handle or the typed value.
+    Debug(Option<futures::channel::oneshot::Sender<Option<String>>>),
 }
 
 impl Workbench {
@@ -211,6 +213,7 @@ impl Workbench {
             Owner::ResizeColumn(_) => self.resize_column_event(id, event, window, cx),
             Owner::Output(_) => self.output_pick_event(id, event, window, cx),
             Owner::FolderSettings(_) => self.folder_settings_pick_event(id, event, window, cx),
+            Owner::Debug(_) => self.debug_pick_event(id, event, window, cx),
         }
     }
 
