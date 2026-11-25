@@ -59,7 +59,7 @@ function startReference(paths: string[]) {
 	// windowsStateHandler.ts: the first window takes the last active window's size (WindowMode.Normal is 1).
 	writeFileSync(join(userData, 'User/globalStorage/storage.json'), JSON.stringify({ windowsState: { lastActiveWindow: { uiState: { mode: 1, x: 100, y: 100, width: 1024, height: 768 } } } }));
 	const electron = join(ref, '.build/electron/Code - OSS.app/Contents/MacOS/Code - OSS');
-	return Bun.spawn([electron, ref, ...paths, ...referenceArgs, ...extraArgs, '--user-data-dir', userData], {
+	return Bun.spawn([electron, ref, ...paths, ...referenceArgs, ...extraArgs, '--user-data-dir', userData, '--shared-data-dir', join(userData, 'shared')], {
 		env: { ...process.env, VSCODE_DEV: '1', NODE_ENV: 'development' },
 		stdout: 'ignore',
 		stderr: 'ignore',
@@ -69,8 +69,9 @@ function startReference(paths: string[]) {
 function startPort(paths: string[]) {
 	const userData = mkdtempSync(join(scratch, 'port-user-'));
 	mkdirSync(join(userData, 'User'));
-	writeFileSync(join(userData, 'User/settings.json'), JSON.stringify(settings));
-	return Bun.spawn(['native/target/release/vsrustium', ...paths, ...extraArgs, '--user-data-dir', userData, '--theme', portTheme], {
+	// Trust is off in referenceUserData; SETTINGS turns it on for both.
+	writeFileSync(join(userData, 'User/settings.json'), JSON.stringify({ 'security.workspace.trust.enabled': false, ...settings }));
+	return Bun.spawn(['native/target/release/vsrustium', ...paths, ...extraArgs, '--user-data-dir', userData, '--shared-data-dir', join(userData, 'shared'), '--theme', portTheme], {
 		env: { ...process.env, VSCODE_GPUI_EXTENSIONS: join(ref, 'extensions') },
 		stdout: 'ignore',
 		stderr: Bun.file(join(outDir, 'port.log')),

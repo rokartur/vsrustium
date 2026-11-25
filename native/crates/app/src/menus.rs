@@ -20,6 +20,7 @@ use crate::contextkey::{Context, Expr};
 pub enum MenuId {
     MenubarMainMenu,
     MenubarFileMenu,
+    MenubarRecentMenu,
     MenubarEditMenu,
     MenubarSelectionMenu,
     MenubarViewMenu,
@@ -85,6 +86,15 @@ const WORKBENCH_MENUS: &[Row] = &[
     (MenuId::MenubarMainMenu, Some(MenuId::MenubarGoMenu), "", "&&Go", "", 5., None, None),
     (MenuId::MenubarMainMenu, Some(MenuId::MenubarHelpMenu), "", "&&Help", "", 8., None, None),
     (MenuId::MenubarMainMenu, Some(MenuId::MenubarPreferencesMenu), "", "&&Preferences", "", 9., Some("isMacNative"), None),
+    // workspaceActions.ts, windowActions.ts and editor.contribution.ts
+    (MenuId::MenubarFileMenu, None, "workbench.action.files.openFileFolder", "&&Open...", "2_open", 1., Some("isMacNative && openFolderWorkspaceSupport"), Some("isMacNative && openFolderWorkspaceSupport")),
+    (MenuId::MenubarFileMenu, None, "workbench.action.files.openFolder", "Open &&Folder...", "2_open", 2., Some("openFolderWorkspaceSupport"), Some("openFolderWorkspaceSupport")),
+    (MenuId::MenubarFileMenu, None, "workbench.action.openWorkspace", "Open Wor&&kspace from File...", "2_open", 3., Some("enterMultiRootWorkspaceSupport"), Some("enterMultiRootWorkspaceSupport")),
+    (MenuId::MenubarFileMenu, Some(MenuId::MenubarRecentMenu), "", "Open &&Recent", "2_open", 4., None, None),
+    (MenuId::MenubarFileMenu, None, "workbench.action.closeFolder", "Close &&Folder", "6_close", 3., Some("workbenchState == 'folder' && emptyWorkspaceSupport && !isSessionsWindow"), Some("workbenchState != 'empty' && emptyWorkspaceSupport && !isSessionsWindow")),
+    (MenuId::MenubarFileMenu, None, "workbench.action.closeFolder", "Close &&Workspace", "6_close", 3., Some("workbenchState == 'workspace' && emptyWorkspaceSupport && !isSessionsWindow"), Some("workbenchState != 'empty' && emptyWorkspaceSupport && !isSessionsWindow")),
+    (MenuId::MenubarRecentMenu, None, "workbench.action.openRecent", "&&More...", "y_more", 1., None, None),
+    (MenuId::MenubarRecentMenu, None, "workbench.action.clearRecentFiles", "&&Clear Recently Opened...", "z_clear", 1., None, None),
     // fileActions.contribution.ts
     (MenuId::MenubarFileMenu, None, "workbench.action.files.newUntitledFile", "&&New Text File", "1_new", 1., None, None),
     (MenuId::MenubarFileMenu, None, "workbench.action.files.save", "&&Save", "4_save", 1., None, Some("activeEditor || foldersViewVisible && sideBarFocus")),

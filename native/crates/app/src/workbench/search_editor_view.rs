@@ -118,6 +118,9 @@ impl Workbench {
             None if editor.document.scheme == crate::output::OUTPUT_SCHEME => "Output".into(),
             None if editor.document.scheme == super::terminal_view::TERMINAL_SCHEME => "Terminal".into(),
             None if editor.document.scheme == "untitled" => crate::untitled::name(editor, self.untitled_names_from_content()),
+            None if editor.document.scheme == super::local_history_actions::LOCAL_HISTORY_SCHEME => {
+                self.local_history_labels.get(&editor.document.path).cloned().unwrap_or_else(|| editor.document.name())
+            }
             None => super::preferences::editor_label(&editor.document)
                 .or_else(|| self.webview_title(&editor.document.path))
                 .or_else(|| self.diff_name(editor))

@@ -62,6 +62,11 @@ impl Storage {
         self.check(result, "updateItems()");
     }
 
+    /// Rereads the cache from the file, which another process may have written.
+    pub fn refresh(&mut self) {
+        self.items = self.stored_items();
+    }
+
     /// `checkIntegrity(full)`: SQLite's verdict, `ok` for a healthy file.
     pub fn check_integrity(&mut self, full: bool) -> String {
         let sql = if full { "PRAGMA integrity_check" } else { "PRAGMA quick_check" };

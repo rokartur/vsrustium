@@ -143,7 +143,7 @@ impl Workbench {
             return;
         }
         // The menu's own key handlers run before the window's keybindings.
-        if self.context_menu_key(keystroke, window, cx) {
+        if self.context_menu_key(keystroke, window, cx) || self.custom_dialog_key(keystroke, cx) {
             cx.stop_propagation();
             return;
         }
@@ -290,6 +290,16 @@ impl Workbench {
         context.insert("dirtyWorkingCopies".into(), json!(self.editors.editors.iter().any(|editor| editor.is_dirty())));
         // toggleMultiCursorModifier.ts `MultiCursorModifierContextKeyController`.
         context.insert("multiCursorModifier".into(), json!(if self.multi_cursor_modifier_is_cmd() { "ctrlCmd" } else { "altKey" }));
+        // contextkeys.ts WorkbenchContextKeysHandler: the desktop build supports every workspace kind.
+        let workbench_state = match self.workspace() {
+            None => "empty",
+            Some(workspace) if workspace.file.is_some() => "workspace",
+            Some(_) => "folder",
+        };
+        context.insert("workbenchState".into(), json!(workbench_state));
+        for key in ["openFolderWorkspaceSupport", "enterMultiRootWorkspaceSupport", "emptyWorkspaceSupport"] {
+            context.insert(key.into(), json!(true));
+        }
         // viewDescriptorService.ts: the Explorer and Search containers always hold their view.
         for (container, view) in [("workbench.view.explorer", "workbench.explorer.fileView"), ("workbench.view.search", "workbench.view.search")] {
             context.insert(format!("viewContainer.{container}.enabled"), json!(true));

@@ -166,6 +166,9 @@ impl Workbench {
         if scheme == "untitled" {
             return self.save_untitled(path, options, cx);
         }
+        if scheme == super::url_actions::TRUSTED_DOMAINS_SCHEME {
+            return self.save_trusted_domains(&path, cx);
+        }
         let (sender, receiver) = oneshot::channel();
         let Some(model) = self.editors.model_mut(&scheme, &path) else {
             let _ = sender.send(false);

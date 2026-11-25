@@ -384,10 +384,17 @@ impl Workbench {
                 cx.notify();
             }),
         ];
-        for (id, run) in commands {
+        // `IListService.lastFocusedList`: the keybindings table, the search results or the Explorer, whichever has focus.
+        for id in super::explorer_keyboard::EXPLORER_LIST_COMMANDS {
+            let search_run = commands.iter().find(|(search_id, _)| *search_id == id).map(|(_, run)| *run);
             self.commands.register(id, move |workbench, _, window, cx| {
-                if workbench.search.focus.is_focused(window) {
-                    run(workbench, window, cx);
+                if workbench.keybindings_table_list_command(id, window, cx) {
+                    return Outcome::done();
+                }
+                match search_run {
+                    Some(run) if workbench.search.focus.is_focused(window) => run(workbench, window, cx),
+                    _ if workbench.explorer.focus.is_focused(window) => workbench.run_explorer_list_command(id, window, cx),
+                    _ => return Outcome::error(format!("command '{id}' not found")),
                 }
                 Outcome::done()
             });

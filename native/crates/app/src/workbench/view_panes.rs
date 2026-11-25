@@ -389,6 +389,7 @@ impl Workbench {
                 .when_some(border, |header, border| header.child(div().absolute().top_0().left_0().right_0().h(px(1.)).bg(border)))
                 .child(self.icon(chevron, 16., 16., foreground).mx(px(2.)))
                 .child(div().text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).child(title.to_string()))
+                .when(id == FILE_VIEW, |header| header.children(self.explorer_title_actions(window, cx)))
                 .when(focused, |header| header.child(div().absolute().inset_0().rounded(px(4.)).border_1().border_color(self.color("focusBorder"))))
                 .on_click(cx.listener(move |workbench, _, window, cx| {
                     let focus = workbench.explorer_panes.focus[id].clone();

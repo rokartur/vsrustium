@@ -289,16 +289,6 @@ impl Workbench {
             workbench.render_keybindings_entries(false, false, window, cx);
             Outcome::done()
         });
-        // listCommands.ts on the focused list; the keybindings table is the only list that answers them so far.
-        for (id, key) in [("list.select", "enter"), ("list.focusDown", "down"), ("list.focusUp", "up"), ("list.focusPageDown", "pagedown"), ("list.focusPageUp", "pageup"), ("list.focusFirst", "home"), ("list.focusLast", "end")] {
-            commands.register(id, move |workbench, _, window, cx| {
-                if !workbench.keybindings_editor.table_focus.is_focused(window) {
-                    return Outcome::error(format!("command '{id}' not found"));
-                }
-                workbench.keybindings_table_key(key, window, cx);
-                Outcome::done()
-            });
-        }
         // ListResizeColumnAction: the last focused list is the keybindings table, the only table so far.
         commands.register("list.resizeColumn", |workbench, _, window, cx| {
             if workbench.keybindings_editor.table_focus.is_focused(window) {
@@ -804,6 +794,17 @@ impl Workbench {
     }
 
     /// The list commands on the table, named by their default key.
+    /// listCommands.ts on the keybindings table: the key each list command stands for, when the table has focus.
+    pub(super) fn keybindings_table_list_command(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let keys = [("list.select", "enter"), ("list.focusDown", "down"), ("list.focusUp", "up"), ("list.focusPageDown", "pagedown"), ("list.focusPageUp", "pageup"), ("list.focusFirst", "home"), ("list.focusLast", "end")];
+        let Some((_, key)) = keys.into_iter().find(|(list_id, _)| *list_id == id) else { return false };
+        if !self.keybindings_editor.table_focus.is_focused(window) {
+            return false;
+        }
+        self.keybindings_table_key(key, window, cx);
+        true
+    }
+
     fn keybindings_table_key(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
         let editor = &self.keybindings_editor;
         let count = editor.entries.len();

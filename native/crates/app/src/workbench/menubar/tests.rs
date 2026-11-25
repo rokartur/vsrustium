@@ -119,3 +119,37 @@ fn native_menus_show_keybindings_as_key_equivalents_or_in_the_label(cx: &mut Tes
         assert!(keystrokes.iter().any(|found| found == keystroke), "{keystroke} in {keystrokes:?}");
     }
 }
+
+#[gpui::test]
+fn open_recent_lists_folders_then_files_before_more(cx: &mut TestAppContext) {
+    let (workbench, cx) = workbench(None, cx);
+    let menubar = cx.update(|window, cx| {
+        workbench.update(cx, |workbench, _| {
+            let mut storage = workbench.shared_storage.lock().unwrap();
+            let entries = vec![
+                crate::recently_opened::entry(crate::recently_opened::Kind::Folder, Path::new("/tmp/a&b"), None),
+                crate::recently_opened::entry(crate::recently_opened::Kind::File, Path::new("/tmp/one.txt"), None),
+            ];
+            crate::recently_opened::add(&mut storage, entries);
+            drop(storage);
+            workbench.recently_opened = crate::recently_opened::load(&mut workbench.shared_storage.lock().unwrap());
+        });
+        workbench.read(cx).menubar(window)
+    });
+    assert_eq!(menubar.recent.iter().map(|(label, _)| label.as_str()).collect::<Vec<_>>(), ["/tmp/a&b", "/tmp/one.txt"]);
+    assert_eq!(menubar.recent_workspaces, 1);
+    let (menus, _) = native_menus(&menubar);
+    let MenuItem::Submenu(recent) = menus[1].items.iter().find(|item| matches!(item, MenuItem::Submenu(menu) if menu.name.as_ref() == "Open Recent")).unwrap() else { unreachable!() };
+    let names: Vec<String> = recent.items.iter().map(|item| match item {
+        MenuItem::Action { name, .. } => name.to_string(),
+        MenuItem::Separator => "-".into(),
+        _ => "?".into(),
+    }).collect();
+    assert_eq!(names[..5], ["/tmp/a&b", "-", "/tmp/one.txt", "-", "More…"]);
+}
+
+#[test]
+fn truncate_middle_keeps_both_ends() {
+    assert_eq!(truncate_middle("abcdefghij", 5), "ab…ij");
+    assert_eq!(truncate_middle("abc", 5), "abc");
+}

@@ -18,7 +18,7 @@ export function referenceUserData(theme: string, extraSettings: Record<string, u
 		'update.mode': 'none',
 		// The port ships without AI and sign-in (port/notes.md); this is the reference look of that product.
 		'chat.disableAIFeatures': true,
-		// Not ported: the trust dialog (port/notes.md, milestone 3).
+		// Off as in the reference's integration tests (--disable-workspace-trust); trust checks turn it on with SETTINGS.
 		'security.workspace.trust.enabled': false,
 		// With AI off the secondary side bar only hosts chat, so the product without AI has none.
 		'workbench.secondarySideBar.defaultVisibility': 'hidden',

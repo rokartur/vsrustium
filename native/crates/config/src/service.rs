@@ -73,6 +73,8 @@ pub struct Settings {
     pub workspace: Option<Workspace>,
     /// Size and modification time of every file a layer reads, to notice edits made outside the port.
     stamps: Vec<(PathBuf, Option<(SystemTime, u64)>)>,
+    /// `isWorkspaceTrusted`: an untrusted window skips restricted and unregistered workspace settings.
+    trusted: bool,
 }
 
 impl Settings {
@@ -80,7 +82,7 @@ impl Settings {
     pub fn load(registry: Registry, user_home: PathBuf, workspace: Option<Workspace>) -> Settings {
         let defaults = registry.default_model();
         let has_workspace = workspace.is_some();
-        let mut settings = Settings { registry, configuration: Configuration { defaults, has_workspace, ..Configuration::default() }, user_home, workspace, stamps: Vec::new() };
+        let mut settings = Settings { registry, configuration: Configuration { defaults, has_workspace, ..Configuration::default() }, user_home, workspace, stamps: Vec::new(), trusted: true };
         settings.configuration.local_user = settings.load_user();
         let folders: Vec<PathBuf> = settings.workspace.iter().flat_map(|workspace| workspace.folders.iter().map(|folder| folder.path.clone())).collect();
         settings.configuration.folders = folders.into_iter().map(|folder| (folder.clone(), settings.load_folder(&folder))).collect();
@@ -98,6 +100,15 @@ impl Settings {
         self.configuration.layers_changed();
         self.registry = registry;
         change
+    }
+
+    /// `updateWorkspaceTrust`: reparses the folder and workspace settings. Main calls it before the window opens,
+    /// as a trust change later reloads the window, so no change event is computed.
+    pub fn update_workspace_trust(&mut self, trusted: bool) {
+        self.trusted = trusted;
+        let folders: Vec<PathBuf> = self.configuration.folders.iter().map(|(folder, _)| folder.clone()).collect();
+        self.configuration.folders = folders.into_iter().map(|folder| (folder.clone(), self.load_folder(&folder))).collect();
+        self.configuration.workspace = self.load_workspace();
     }
 
     /// `<user data>/User`, `environmentService.userRoamingDataHome`.
@@ -277,7 +288,7 @@ impl Settings {
     /// is trusted, as the reference runs with workspace trust off), plus tasks.json, launch.json and mcp.json.
     fn load_folder_dir(&self, directory: &Path) -> ConfigurationModel {
         let scopes = if self.workspace_file().is_some() { FOLDER_SCOPES.to_vec() } else { WORKSPACE_SCOPES.to_vec() };
-        let filter = ParseFilter { scopes: Some(scopes), ..ParseFilter::default() };
+        let filter = ParseFilter { scopes: Some(scopes), skip_restricted: !self.trusted, skip_unregistered: !self.trusted, ..ParseFilter::default() };
         let settings = parse_content(&read_or_empty(&directory.join("settings.json")), Some(&self.registry), &filter).model;
         let standalone = ["tasks", "launch", "mcp"].map(|name| standalone_model(name, &directory.join(format!("{name}.json"))));
         settings.merge(&standalone.into_iter().flatten().collect::<Vec<_>>())
@@ -294,7 +305,7 @@ impl Settings {
             Some(Value::Object(raw)) => raw,
             _ => Map::new(),
         };
-        let filter = ParseFilter { scopes: Some(WORKSPACE_SCOPES.to_vec()), ..ParseFilter::default() };
+        let filter = ParseFilter { scopes: Some(WORKSPACE_SCOPES.to_vec()), skip_restricted: !self.trusted, skip_unregistered: !self.trusted, ..ParseFilter::default() };
         let settings = raw.get("settings").and_then(Value::as_object).cloned().unwrap_or_default();
         let (settings, _) = parse_raw(settings, Some(&self.registry), &filter);
         let standalone = ["launch", "tasks"].map(|name| raw.get(name).and_then(Value::as_object).map(|section| standalone_section(name, section)));
@@ -582,6 +593,7 @@ mod tests {
                 "configurationEditing.service.applicationSetting": { "type": "string", "default": "isSet", "scope": "application" },
                 "configurationEditing.service.windowSetting": { "type": "string", "default": "isSet", "scope": "window" },
                 "configurationEditing.service.languageSetting": { "type": "string", "default": "isSet", "scope": "language-overridable" },
+                "configurationEditing.service.restrictedSetting": { "type": "string", "default": "isSet", "restricted": true },
             });
             registry.register_configuration("test", &json!({ "contributes": { "configuration": { "id": "_test", "properties": properties } } }));
             registry.finish();
@@ -820,5 +832,25 @@ mod tests {
         assert_eq!(parsed(&folder2)["configurationEditing.service.languageSetting"], "two");
         let error = fixture.settings.update_value("configurationEditing.service.testSetting", Some(&json!("two")), Target::WorkspaceFolder, Some(&resource), &[]).unwrap_err();
         assert_eq!(error, "Unable to write to Folder Settings because configurationEditing.service.testSetting does not support the folder resource scope.");
+    }
+
+    #[test]
+    fn an_untrusted_window_skips_restricted_and_unregistered_workspace_settings() {
+        let mut fixture = Fixture::new("trust", true);
+        let folder_settings = r#"{ "configurationEditing.service.restrictedSetting": "folder", "configurationEditing.service.testSetting": "folder", "unregistered.setting": "folder" }"#;
+        write_file(&fixture.folder("settings.json"), folder_settings);
+        write_file(&fixture.user("settings.json"), r#"{ "configurationEditing.service.restrictedSetting": "user" }"#);
+        fixture.settings.reload_changed_files();
+        let value = |fixture: &Fixture, key| fixture.settings.get_value(Some(key), &Overrides::default());
+        assert_eq!(value(&fixture, "configurationEditing.service.restrictedSetting"), Some(json!("folder")));
+        assert_eq!(value(&fixture, "unregistered.setting"), Some(json!("folder")));
+
+        fixture.settings.update_workspace_trust(false);
+        assert_eq!(value(&fixture, "configurationEditing.service.restrictedSetting"), Some(json!("user")));
+        assert_eq!(value(&fixture, "unregistered.setting"), None);
+        assert_eq!(value(&fixture, "configurationEditing.service.testSetting"), Some(json!("folder")));
+
+        fixture.settings.update_workspace_trust(true);
+        assert_eq!(value(&fixture, "configurationEditing.service.restrictedSetting"), Some(json!("folder")));
     }
 }

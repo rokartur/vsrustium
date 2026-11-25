@@ -334,7 +334,7 @@ impl Workbench {
             if !matches!(link.split(':').next(), Some("http" | "https")) {
                 return Err(serialized_error(&format!("Unable to open '{link}'")));
             }
-            cx.open_url(link);
+            drop(self.open_link(super::opener::Target::Text(link.to_owned()), super::opener::OpenOptions::default(), window, cx));
             return Ok(Value::Null);
         }
         let (scheme, _) = uri_parts(resource)?;

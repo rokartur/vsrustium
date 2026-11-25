@@ -191,3 +191,7 @@ webview.test.ts ("loads many local resources concurrently without crashing") pas
 ## M10 settings and storage
 
 On the Studio at 1ed0e932 (settings.json reload in the workbench, `.vsrustium` folders). `MOCHA_GREP="vscode API - configuration|vscode API - globalState" SUITE_TIMEOUT=300 port/tools/api-tests`: api-folder 5/0/0/397 (exit 0 after 1s), api-workspace 0/0/0/4. All three `configuration` tests and both `globalState / workspaceState` tests pass.
+
+## M12 workspace trust
+
+`MOCHA_GREP="vscode API - env|vscode API - workspace" SUITE_TIMEOUT=900 port/tools/api-tests` on the Studio, the working tree of the workspace trust commit (`--disable-workspace-trust`, as the reference run has `security.workspace.trust.enabled: false`). api-folder 113 passing, 2 pending, 7 failing, 280 not reached (exit 1 after 13s); api-workspace 4/0/0. The 7 failing are the 6 `env.power` tests and `env.remoteName`, as at e9ae1460.

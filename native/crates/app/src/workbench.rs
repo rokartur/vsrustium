@@ -11,6 +11,7 @@ mod context_menu;
 pub mod custom_editors;
 mod define_keybinding;
 mod diagnostics;
+mod dialog_view;
 mod editor_commands;
 mod editor_menus;
 mod editor_message;
@@ -19,10 +20,12 @@ mod editor_view;
 mod explorer_actions;
 mod extension_management;
 mod explorer_find;
+mod explorer_keyboard;
 mod file_participants;
 mod find_widget;
 mod folding_providers;
 mod auto_save;
+mod host;
 mod hover;
 pub(crate) mod host_requests;
 mod input_box_view;
@@ -31,6 +34,7 @@ mod keyboard;
 mod markdown_view;
 mod empty_view;
 mod layout;
+mod local_history_actions;
 mod marker_navigation;
 pub mod menubar;
 mod middle_scroll;
@@ -43,6 +47,7 @@ pub mod output_actions;
 mod output_view;
 mod preferences;
 pub(crate) mod terminal_view;
+pub(crate) mod opener;
 pub mod quick_access;
 mod quick_open;
 mod readonly;
@@ -69,6 +74,10 @@ mod url_handlers;
 mod webview_views;
 mod media_preview;
 mod webview_panels;
+mod url_actions;
+pub(crate) mod url_handler;
+mod workspace_actions;
+mod workspace_trust_view;
 
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -154,6 +163,9 @@ pub struct Workbench {
     pub(crate) language_features: crate::language_features::LanguageFeatures,
     folding_providers: folding_providers::FoldingProviders,
     readonly_overrides: readonly::SessionOverrides,
+    /// The editor labels of opened local history entries (`openEntry`), by entry file.
+    local_history_labels: HashMap<PathBuf, String>,
+    pub(crate) urls: url_handler::Urls,
     pub editor_focus: FocusHandle,
     /// bannerController.ts: the banner element is focusable (`tabIndex = 0`) inside the editor's DOM node.
     unicode_banner_focus: FocusHandle,
@@ -208,6 +220,13 @@ pub struct Workbench {
     part_grid: part_grid::PartGrid,
     panel: panel::Panel,
     explorer_panes: view_panes::ExplorerPanes,
+    pub workspace_trust: crate::workspace_trust::WorkspaceTrust,
+    /// The APPLICATION_SHARED storage: trust and the recently opened list.
+    pub shared_storage: Arc<Mutex<Storage>>,
+    /// The recently opened list as last read, which the menu bar shows.
+    recently_opened: crate::recently_opened::RecentlyOpened,
+    /// Custom dialogs, the shown one first.
+    dialogs: Vec<dialog_view::ShownDialog>,
 }
 
 impl Render for Workbench {
@@ -236,6 +255,7 @@ impl Render for Workbench {
             .flex()
             .flex_col()
             .child(self.title_bar(f32::from(viewport.width), cx))
+            .children(self.restricted_mode_banner(cx))
             .child(self.middle_section(viewport, editor, window, cx))
             .child(self.status_bar(window, cx));
         let modal_editor = self.keybindings_editor_widget(window, cx);
@@ -243,6 +263,7 @@ impl Render for Workbench {
         let notifications = self.notifications_widget(viewport, window, cx);
         let context_menu = self.context_menu_widget(cx);
         let hover = self.hover_widget(window, cx);
+        let dialog = self.custom_dialog_widget(window, cx);
         self.update_menubar(window, cx);
         div()
             .relative()
@@ -257,6 +278,7 @@ impl Render for Workbench {
             .children(quick_input.map(|widget| div().absolute().left(px(inset)).top(px(inset)).child(widget)))
             .children(notifications)
             .children(context_menu)
+            .children(dialog)
             .children(hover)
             // style.css: .macos-tahoe windows round 16px, older macOS 10px.
             .when_some(window_border, |root, border| root.child(div().absolute().inset_0().border_1().rounded(px(if is_tahoe_or_newer() { 16. } else { 10. })).border_color(border)))
@@ -307,6 +329,8 @@ impl Workbench {
             language_features: Default::default(),
             folding_providers: Default::default(),
             readonly_overrides: Default::default(),
+            local_history_labels: HashMap::new(),
+            urls: url_handler::Urls::default(),
             editor_focus: cx.focus_handle(),
             unicode_banner_focus: cx.focus_handle(),
             status_bar_focus: cx.focus_handle(),
@@ -346,6 +370,10 @@ impl Workbench {
             part_grid: part_grid::PartGrid::default(),
             panel: panel::Panel::default(),
             explorer_panes: view_panes::ExplorerPanes::default(),
+            workspace_trust: Default::default(),
+            shared_storage: Arc::new(Mutex::new(Storage::in_memory())),
+            recently_opened: Default::default(),
+            dialogs: Vec::new(),
         };
         crate::main_thread_commands::register_commands_documentation(&mut workbench);
         workbench.editors.disposed.settings = Some(workbench.settings.clone());
@@ -367,6 +395,7 @@ impl Workbench {
         workbench.register_editor_status_commands();
         workbench.register_title_bar_actions();
         workbench.register_explorer_actions();
+        workbench.register_explorer_keyboard_commands();
         workbench.register_explorer_find_commands();
         workbench.register_search_actions();
         workbench.register_layout_actions();
@@ -386,6 +415,11 @@ impl Workbench {
         workbench.register_logs_actions();
         workbench.register_terminal_actions();
         workbench.register_extension_management_commands();
+        workbench.register_workspace_trust_commands();
+        workbench.register_host_commands();
+        workbench.register_workspace_commands();
+        workbench.register_url_commands();
+        workbench.register_local_history_commands();
         // Keybindings resolve before the focused element sees the key, and with nothing focused too.
         let entity = cx.entity().downgrade();
         cx.intercept_keystrokes(move |event, window, cx| {
@@ -442,7 +476,7 @@ impl Workbench {
                 }
             }
             // A model without an editor, as a search replace leaves it, keeps its text.
-            None => match self.editors.models.iter().position(|model| model.document.is("file", &path)) {
+            None => match self.editors.models.iter().position(|model| model.document.is_file(&path)) {
                 Some(index) => self.editors.show_model(index, !pinned),
                 None => match self.read_document(&path) {
                     Ok(document) => self.editors.open(document, !pinned),
@@ -461,9 +495,7 @@ impl Workbench {
 
     /// Keeps the Explorer selection and the extension host in step with the group.
     fn editors_changed(&mut self, cx: &mut Context<Self>) {
-        if let (Some(tree), Some(editor)) = (self.folder.as_mut(), self.editors.active()) {
-            tree.reveal(&editor.document.path);
-        }
+        self.reveal_active_file();
         self.record_editor_history();
         self.drop_closed_search_editors();
         self.load_search_editor_widget();
@@ -843,7 +875,12 @@ impl Workbench {
             .text_color(foreground)
             .child(title)
             .child(self.explorer_pane_view(view_panes::ExplorerPane { id: view_panes::FILE_VIEW, title: folder_name, body:
-                div().relative().flex_1().min_h_0().flex().flex_col().child(
+                div().id("explorer-pane").relative().flex_1().min_h_0().flex().flex_col()
+                .on_hover(cx.listener(|workbench, hovered: &bool, _, cx| {
+                    workbench.explorer.pane_hovered = *hovered;
+                    cx.notify();
+                }))
+                .child(
                 div()
                     .id("explorer-tree")
                     .track_focus(&self.explorer.focus)
@@ -933,7 +970,7 @@ impl Workbench {
                 let radius = px(if is_tahoe_or_newer() { 16. } else { 10. });
                 bar.child(div().absolute().inset_0().border_1().rounded_bl(radius).rounded_br(radius).border_color(border))
             })
-            .child(div().h(px(24.)).flex().child(self.icon("remote", 28., 16., foreground).h_full().cursor_pointer().child(self.hover_target("status.host", HoverContent::Text("Open a Remote Window".into()), HoverOptions::status_bar()))).children(self.notifications_status_item(true, foreground, cx)).child(self.extension_status_items(true, |priority| priority > PROBLEMS_PRIORITY, foreground, cx)).child(problems).child(self.extension_status_items(true, |priority| priority <= PROBLEMS_PRIORITY, foreground, cx)).children(self.status_bar_message()).children(self.window_progress_entry(cx.background_executor().now()).map(|entry| self.extension_status_item(&entry, foreground, cx))))
+            .child(div().h(px(24.)).flex().child(self.icon("remote", 28., 16., foreground).h_full().cursor_pointer().child(self.hover_target("status.host", HoverContent::Text("Open a Remote Window".into()), HoverOptions::status_bar()))).children(self.restricted_mode_status_item(foreground, cx)).children(self.notifications_status_item(true, foreground, cx)).child(self.extension_status_items(true, |priority| priority > PROBLEMS_PRIORITY, foreground, cx)).child(problems).child(self.extension_status_items(true, |priority| priority <= PROBLEMS_PRIORITY, foreground, cx)).children(self.status_bar_message()).children(self.window_progress_entry(cx.background_executor().now()).map(|entry| self.extension_status_item(&entry, foreground, cx))))
             .child(div().h(px(24.)).flex().child(self.extension_status_items(false, |priority| priority > EDITOR_STATUS_PRIORITY, foreground, cx)).child(self.editor_status_items(foreground, window, cx)).child(self.extension_status_items(false, |priority| priority <= EDITOR_STATUS_PRIORITY, foreground, cx)).children(self.notifications_status_item(false, foreground, cx)))
     }
 

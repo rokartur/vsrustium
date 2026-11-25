@@ -119,7 +119,7 @@ impl Workbench {
         let timestamp = metadata.modified().ok().and_then(|modified| modified.duration_since(UNIX_EPOCH).ok()).map_or(0, |since| since.as_millis() as i64);
         let (resource, path) = (uri_string("file", path), path.to_path_buf());
         cx.background_executor().spawn(async move {
-            if let Err(error) = local_history::add_entry(&history_home, &resource, &path, None, timestamp, &limits) {
+            if let Err(error) = local_history::add_entry(&history_home, &resource, &path, None, None, timestamp, &limits) {
                 eprintln!("local history of {}: {error}", path.display());
             }
         })

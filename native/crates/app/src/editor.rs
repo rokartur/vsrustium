@@ -149,6 +149,11 @@ impl TextDocument {
         self.scheme == scheme && self.path == path
     }
 
+    /// uriIdentityService.ts `extUri.isEqual` for the disk, which has no PathCaseSensitive: a path in any case.
+    pub fn is_file(&self, path: &Path) -> bool {
+        self.scheme == "file" && self.path.to_string_lossy().to_lowercase() == path.to_string_lossy().to_lowercase()
+    }
+
     pub fn name(&self) -> String {
         split_query(&self.scheme, &self.path).0.file_name().unwrap_or_default().to_string_lossy().into_owned()
     }
@@ -647,7 +652,7 @@ impl EditorGroup {
 
     /// The open editor of `path`, if any.
     pub fn find(&self, path: &Path) -> Option<usize> {
-        self.editors.iter().position(|editor| editor.document.is("file", path))
+        self.editors.iter().position(|editor| editor.document.is_file(path))
     }
 
     /// Opens a document right of the active editor, or in place of the preview editor when this open is a preview too.

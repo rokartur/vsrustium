@@ -22,7 +22,6 @@ impl Workbench {
             ("MainThreadWebviews" | "MainThreadWebviewPanels", method) => self.handle_webview_request(method, &request.args, window, cx),
             ("MainThreadSCM", method) => self.handle_scm_request(method, &request.args, window, cx),
             ("MainThreadWebviewViews", method) => self.handle_webview_views_request(method, &request.args, window, cx),
-            ("MainThreadUrls", method) => self.handle_urls_request(method, &request.args),
             ("MainThreadCustomEditors", method) => self.handle_custom_editors_request(method, &request.args, window, cx),
             ("MainThreadStatusBar", "$setEntry") => self.set_extension_status_entry(&request.args, cx),
             ("MainThreadStatusBar", "$disposeEntry") => self.dispose_extension_status_entry(&request.args, cx),
@@ -72,6 +71,26 @@ impl Workbench {
             ("MainThreadEditorTabs", "$moveTab") => self.move_tab(arg(0).as_str().unwrap_or_default(), arg(1).as_i64().unwrap_or(-1), arg(2).as_i64().unwrap_or(-1), cx),
             ("MainThreadEditorTabs", "$closeTab") => self.close_tabs(arg(0).as_array().map_or(&[], Vec::as_slice), window, cx),
             ("MainThreadEditorTabs", "$closeGroup") => self.close_groups(arg(0).as_array().map_or(&[], Vec::as_slice), window, cx),
+            ("MainThreadWindow", "$openUri") => self.api_open_uri(&request.args, window, cx),
+            ("MainThreadUrls", "$registerUriHandler") => {
+                // ExtensionIdentifier serializes as `{ value, _lower }`.
+                let extension = arg(1)["value"].as_str().unwrap_or_default().to_owned();
+                self.register_uri_handler(arg(0).as_u64().unwrap_or_default(), &extension, arg(2).as_str().unwrap_or_default());
+                Outcome::done()
+            }
+            ("MainThreadUrls", "$unregisterUriHandler") => {
+                self.unregister_uri_handler(arg(0).as_u64().unwrap_or_default());
+                Outcome::done()
+            }
+            // shortcut: milestones 12 (url_handler.rs) and 17 (url_handlers.rs) both ported MainThreadUrls; the rest goes to 17's until one module remains.
+            ("MainThreadUrls", method) => self.handle_urls_request(method, &request.args),
+            ("MainThreadUriOpeners", "$registerUriOpener") => self.register_uri_opener(&request.args),
+            ("MainThreadUriOpeners", "$unregisterUriOpener") => {
+                self.urls.openers.retain(|opener| Some(opener.id.as_str()) != arg(0).as_str());
+                Outcome::done()
+            }
+            ("MainThreadWorkspace", "$requestWorkspaceTrust") => self.request_workspace_trust(&arg(0), window, cx),
+            ("MainThreadWorkspace", "$isResourceTrusted") => self.is_resource_trusted(&arg(0)),
             ("workbench", "applyTextEdits") => Outcome::Ready(self.apply_workspace_text_edits(&arg(0), &arg(1), cx)),
             ("workbench", "didRunFileOperation") => {
                 self.models_after_file_operation(arg(0).as_u64().unwrap_or_default(), &arg(1), cx);

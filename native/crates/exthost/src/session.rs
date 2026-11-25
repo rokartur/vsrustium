@@ -171,6 +171,8 @@ pub struct Session {
     pub files: Option<MainThreadFiles>,
     /// Workspace search; without it `findFiles` and `findTextInFiles` answer `undefined`.
     pub workspace: Option<MainThreadWorkspace>,
+    /// `isWorkspaceTrusted` for `$initializeWorkspace`; trust granted later reaches the host as `$onDidGrantWorkspaceTrust`.
+    pub workspace_trusted: bool,
     forward: Option<Forward>,
     /// The workbench's handler for the MainThread* requests it answers while the session thread waits.
     pub main_thread: Option<Box<dyn MainThread>>,
@@ -210,6 +212,7 @@ impl Session {
             secrets: None,
             files: None,
             workspace: None,
+            workspace_trusted: true,
             forward: None,
             main_thread: None,
             waiting: Waiting::default(),
@@ -222,7 +225,7 @@ impl Session {
         self.extensions = extensions.iter().map(|e| (e.id.to_lowercase(), e.description.clone())).collect();
         let configuration = self.configuration.as_ref().map_or_else(|| configuration_init_data(extensions), MainThreadConfiguration::configuration_data);
         self.notify("ExtHostConfiguration", "$initializeConfiguration", vec![configuration]);
-        self.notify("ExtHostWorkspace", "$initializeWorkspace", vec![workspace.unwrap_or(Value::Null), json!(true)]);
+        self.notify("ExtHostWorkspace", "$initializeWorkspace", vec![workspace.unwrap_or(Value::Null), json!(self.workspace_trusted)]);
         // TelemetryLevel.NONE and supportsTelemetry = false: the port has no telemetry.
         self.notify("ExtHostTelemetry", "$initializeTelemetryLevel", vec![json!(0), json!(false), json!({ "usage": false, "error": false })]);
         // MainThreadEditorTabs sends the model on construction; an empty window has one active group with no tabs.
@@ -337,7 +340,8 @@ impl Session {
         })
     }
 
-    /// Hands requests to `proxies` to `send` instead of answering them here; `pump` sends the answers that arrive on `replies`.
+    /// Hands requests to `proxies` (a proxy, or `Proxy.$method` for one method) to `send` instead of answering them here;
+    /// `pump` sends the answers that arrive on `replies`.
     pub fn forward(&mut self, proxies: &'static [&'static str], send: impl FnMut(ForwardedRequest) + Send + 'static, replies: std::sync::mpsc::Receiver<(u32, Result<Value, Value>)>) {
         self.forward = Some(Forward { proxies, send: Box::new(send), replies, asks: Vec::new() });
     }
@@ -534,13 +538,15 @@ impl Session {
             }
             Message::Request { req, rpc_id, method, args, .. } => {
                 self.host.send(rpc::encode(&Message::Acknowledged { req }));
-                if let Some(forward) = self.forward.as_mut().filter(|forward| forward.proxies.contains(&proxy_name(rpc_id))) {
-                    *self.log.host_calls.entry(format!("{}.{method}", proxy_name(rpc_id))).or_default() += 1;
+                let proxy = proxy_name(rpc_id);
+                let forwards = |entry: &&str| *entry == proxy || entry.strip_prefix(proxy).and_then(|rest| rest.strip_prefix('.')) == Some(method.as_str());
+                if let Some(forward) = self.forward.as_mut().filter(|forward| forward.proxies.iter().any(forwards)) {
+                    *self.log.host_calls.entry(format!("{proxy}.{method}")).or_default() += 1;
                     if std::env::var_os("EXTHOST_TRACE").is_some() {
-                        eprintln!("forward> {}.{method} {args:?}", proxy_name(rpc_id));
+                        eprintln!("forward> {proxy}.{method} {args:?}");
                     }
                     let args = args.into_iter().map(forwarded_arg).collect();
-                    (forward.send)(ForwardedRequest { req, proxy: proxy_name(rpc_id), method, args });
+                    (forward.send)(ForwardedRequest { req, proxy, method, args });
                     return Ok(true);
                 }
                 self.serve(req, rpc_id, method, args);
