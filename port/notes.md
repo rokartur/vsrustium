@@ -405,6 +405,7 @@ Done when (first item): api-tests `vscode API - editors` passes as in the refere
 - Log levels: `Output::log_level` is `LoggerService.logLevel`, a logger's own level is stored only when it differs (`logs_actions.rs`). The startup level is argv.json `log-level` (`<home>/.vscode-oss/argv.json`, product.json `dataFolderName`), which main.ts turns into `--log` arguments; Set As Default and the Set Log Level picker's button write it back with `json_edit::set_property`. shortcut: the `--log` and `--verbose` command line arguments are not read; the port's main.rs parses only the arguments it needs.
 - `logsDataCleaner.ts` runs in the window process ten seconds after startup (the port has no shared process): the session folders of `<userData>/logs` but the current one and the nine newest are removed.
 - shortcut: Open Logs Folder reveals the session folder when it has no `main.log`; the port has no main process writing one.
+- Toggle Keyboard Shortcuts Troubleshooting writes `[KeybindingService]:` lines to the Window log from `dispatch_key` and `Resolver::resolve_logged`. shortcut: the keydown lines print GPUI's key name for the DOM `code` and `keyCode`, chords print as user settings labels for the scan code dispatch strings, and no focus marker is drawn (GPUI does not expose the focused element's bounds).
 
 ## Benchmarks
 

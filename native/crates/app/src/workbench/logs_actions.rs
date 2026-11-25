@@ -42,6 +42,15 @@ impl Workbench {
             workbench.show_output_channel(WINDOW_LOG_ID, false, window, cx);
             Outcome::done()
         });
+        // keybindings.contribution.ts ToggleKeybindingsLogAction.
+        // shortcut: no focus marker over the key's target; GPUI does not expose the focused element's bounds.
+        self.commands.register("workbench.action.toggleKeybindingsLog", |workbench, _, window, cx| {
+            workbench.keybindings.logging = !workbench.keybindings.logging;
+            if workbench.keybindings.logging {
+                return workbench.execute_command("workbench.action.showWindowLog", Vec::new(), window, cx);
+            }
+            Outcome::done()
+        });
         self.commands.register("workbench.action.openLogsFolder", |workbench, _, _, cx| {
             if let Some(logs_home) = workbench.window_logs_folder().and_then(|folder| folder.parent().map(Path::to_path_buf)) {
                 // shortcut: the port has no main process writing main.log; its session folder is revealed instead.

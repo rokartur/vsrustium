@@ -231,3 +231,26 @@ fn set_default_log_level_writes_argv(cx: &mut TestAppContext) {
     assert_eq!(sent, [vec![json!(5), exthost::scan::file_uri(&file)]]);
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+/// keybindings.contribution.ts ToggleKeybindingsLogAction: the Window log shows, and keys log how they resolve.
+#[gpui::test]
+fn keybindings_troubleshooting_logs_to_the_window_log(cx: &mut TestAppContext) {
+    let (workbench, cx, _receiver, dir) = open(cx);
+    let log = dir.join("renderer.log");
+    workbench.update(cx, |workbench, _| workbench.register_window_log(log.clone()));
+    run(&workbench, cx, "workbench.action.toggleKeybindingsLog");
+    assert_eq!(shown_text(&workbench, cx).map(|(id, _)| id), Some(crate::output::WINDOW_LOG_ID.to_owned()));
+    let press = |workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext| {
+        workbench.update_in(cx, |workbench, window, cx| workbench.dispatch_key(&gpui::Keystroke::parse("cmd-k").unwrap(), window, cx));
+    };
+    press(&workbench, cx);
+    let lines = std::fs::read_to_string(&log).unwrap();
+    assert!(lines.contains("[info] [KeybindingService]: / Received  keydown event - modifiers: [meta], key: k"), "{lines}");
+    assert!(lines.contains("[KeybindingService]: | Resolving cmd+k\n"), "{lines}");
+    assert!(lines.contains("[KeybindingService]: \\ No keybinding entries.\n"), "{lines}");
+
+    run(&workbench, cx, "workbench.action.toggleKeybindingsLog");
+    press(&workbench, cx);
+    assert_eq!(std::fs::read_to_string(&log).unwrap(), lines, "nothing logs once troubleshooting is off");
+    std::fs::remove_dir_all(dir).unwrap();
+}

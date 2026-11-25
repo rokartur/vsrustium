@@ -3,7 +3,7 @@
 //! (keybindingResolver.ts) and the default, extension and user keybindings it is built from
 //! (keybindingsRegistry.ts, workbench/services/keybinding/browser/keybindingService.ts).
 
-mod key_codes;
+pub(crate) mod key_codes;
 #[cfg(test)]
 mod tests;
 
@@ -221,11 +221,12 @@ pub struct Item {
 pub struct ExtensionSource {
     pub id: String,
     pub display_name: Option<String>,
+    pub is_builtin: bool,
 }
 
 impl ExtensionSource {
     pub fn of(extension: &ScannedExtension) -> ExtensionSource {
-        ExtensionSource { id: extension.id.clone(), display_name: extension.description["displayName"].as_str().map(str::to_string) }
+        ExtensionSource { id: extension.id.clone(), display_name: extension.description["displayName"].as_str().map(str::to_string), is_builtin: extension.description["isBuiltin"] == true }
     }
 }
 
@@ -235,6 +236,16 @@ impl Item {
         let command = command.strip_prefix('^').unwrap_or(command).to_string();
         let chords = if keybinding.iter().any(Chord::is_modifier_key) { Vec::new() } else { keybinding.clone() };
         Item { keybinding, chords, bubble, command, args, when, is_default, extension: None, system_wide: false }
+    }
+
+    /// keybindingResolver.ts `printSourceExplanation`.
+    fn source_explanation(&self) -> String {
+        match &self.extension {
+            Some(extension) if extension.is_builtin => format!("built-in extension {}", extension.id),
+            Some(extension) => format!("user extension {}", extension.id),
+            None if self.is_default => "built-in".into(),
+            None => "user".into(),
+        }
     }
 }
 
@@ -366,17 +377,35 @@ impl Resolver {
     }
 
     pub fn resolve(&self, context: &dyn Context, current_chords: &[Chord], keypress: Chord) -> Resolution {
+        self.resolve_logged(context, current_chords, keypress, &mut Vec::new())
+    }
+
+    /// `resolve`, pushing the lines of Keyboard Shortcuts Troubleshooting to `log`.
+    pub fn resolve_logged(&self, context: &dyn Context, current_chords: &[Chord], keypress: Chord, log: &mut Vec<String>) -> Resolution {
         let pressed: Vec<Chord> = current_chords.iter().copied().chain([keypress]).collect();
-        let Some(candidates) = self.map.get(&pressed[0]) else { return Resolution::NoMatchingKb };
-        let candidates = candidates.iter().map(|&index| &self.keybindings[index]).filter(|candidate| {
-            pressed.len() == 1 || (pressed.len() <= candidate.chords.len() && (1..pressed.len()).all(|i| candidate.chords[i] == pressed[i]))
-        });
-        let found = candidates.collect::<Vec<_>>().into_iter().rev().find(|item| item.when.as_ref().is_none_or(|when| when.evaluate(context)));
-        match found {
-            None => Resolution::NoMatchingKb,
-            Some(item) if pressed.len() < item.chords.len() => Resolution::MoreChordsNeeded,
-            Some(item) => Resolution::KbFound { command: item.command.clone(), args: item.args.clone(), bubble: item.bubble },
+        // shortcut: chords print as user settings labels; upstream prints scan code dispatch strings, and the port has no scan code mapper (milestone 9).
+        log.push(format!("| Resolving {}", pressed.iter().map(Chord::user_settings_label).collect::<Vec<_>>().join(",")));
+        let Some(candidates) = self.map.get(&pressed[0]) else {
+            log.push("\\ No keybinding entries.".into());
+            return Resolution::NoMatchingKb;
+        };
+        let candidates: Vec<&Item> = candidates
+            .iter()
+            .map(|&index| &self.keybindings[index])
+            .filter(|candidate| pressed.len() == 1 || (pressed.len() <= candidate.chords.len() && (1..pressed.len()).all(|i| candidate.chords[i] == pressed[i])))
+            .collect();
+        let entries = candidates.len();
+        let Some(item) = candidates.into_iter().rev().find(|item| item.when.as_ref().is_none_or(|when| when.evaluate(context))) else {
+            log.push(format!("\\ From {entries} keybinding entries, no when clauses matched the context."));
+            return Resolution::NoMatchingKb;
+        };
+        let explanation = format!("when: {}, source: {}", item.when.as_ref().map_or("no when condition".into(), Expr::serialize), item.source_explanation());
+        if pressed.len() < item.chords.len() {
+            log.push(format!("\\ From {entries} keybinding entries, awaiting {} more chord(s), {explanation}.", item.chords.len() - pressed.len()));
+            return Resolution::MoreChordsNeeded;
         }
+        log.push(format!("\\ From {entries} keybinding entries, matched {}, {explanation}.", item.command));
+        Resolution::KbFound { command: item.command.clone(), args: item.args.clone(), bubble: item.bubble }
     }
 }
 
