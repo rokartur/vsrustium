@@ -283,6 +283,7 @@ fn main() -> anyhow::Result<()> {
                 workbench.extension_development = development.is_some();
                 workbench.load_keybindings(keybindings::default_keybindings(&extensions), keybindings_file.clone(), cx);
                 workbench.watch_settings_files(cx);
+                workbench.watch_policies(cx);
                 workbench.start_file_watcher(cx);
                 workbench.start_system_wide_keybindings(window, cx);
                 workbench.register_update_actions(window, cx);
