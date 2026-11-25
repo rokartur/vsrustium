@@ -134,3 +134,52 @@ fn the_host_moves_and_closes_tabs_by_their_ids(cx: &mut TestAppContext) {
     assert_eq!(request("$closeGroup", vec![json!([0])], cx), Ok(json!(true)));
     assert!(open_names(&workbench, cx).is_empty());
 }
+
+#[gpui::test]
+fn the_line_number_menu_selects_the_line_and_shows_contributed_items(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = workbench_with("line-number-menu", &["a.txt"], cx);
+    let extension = exthost::scan::ScannedExtension {
+        id: "test.lines".into(),
+        location: dir.clone(),
+        description: json!({ "contributes": {
+            "commands": [{ "command": "lines.copy", "title": "Copy Line Link" }, { "command": "lines.other", "title": "Other Line" }],
+            "menus": { "editor/lineNumber/context": [{ "command": "lines.copy", "when": "editorLineNumber == 2" }, { "command": "lines.other", "when": "editorLineNumber == 1" }] }
+        } }),
+    };
+    workbench.update(cx, |workbench, _| workbench.menus.extend(crate::menus::extension_menus(&[extension])));
+    let pointer = point(px(30.), px(100.));
+    workbench.update_in(cx, |workbench, window, cx| workbench.show_line_number_context_menu(1, pointer, window, cx));
+    assert_eq!(menu_titles(&workbench, cx), ["Copy Line Link"]);
+    let selections = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().selections.clone());
+    assert_eq!(selections, [Selection { anchor: Position::new(1, 0), head: Position::new(1, 11) }]);
+    cx.simulate_keystrokes("escape");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[gpui::test]
+fn gutter_presses_select_whole_lines_and_drags_extend_them(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = workbench_with("gutter-select", &["a.txt"], cx);
+    workbench.update(cx, |workbench, _| {
+        let edit = (Position::new(0, 0), Position::new(1, 11), "one\ntwo\nthree\nfour".to_string(), false);
+        workbench.editors.active_mut().unwrap().execute_edits(vec![edit], None, crate::editor::EditReason::Unknown("test"));
+    });
+    let selections = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().selections.clone());
+    let none = gpui::Modifiers::none();
+    workbench.update(cx, |workbench, cx| workbench.gutter_line_select(1, none, cx));
+    assert_eq!(selections(cx), [Selection { anchor: Position::new(1, 0), head: Position::new(2, 0) }]);
+    workbench.update(cx, |workbench, cx| workbench.gutter_line_select_drag(3, cx));
+    assert_eq!(selections(cx), [Selection { anchor: Position::new(1, 0), head: Position::new(3, 4) }], "the last line ends at its end");
+    workbench.update(cx, |workbench, cx| workbench.gutter_line_select_drag(0, cx));
+    assert_eq!(selections(cx), [Selection { anchor: Position::new(2, 0), head: Position::new(0, 0) }], "above, from the entering line's end");
+    workbench.update(cx, |workbench, _| workbench.line_select_start = None);
+    let alt = gpui::Modifiers { alt: true, ..none };
+    workbench.update(cx, |workbench, cx| workbench.gutter_line_select(3, alt, cx));
+    assert_eq!(selections(cx).len(), 2, "Alt adds a cursor selecting the line");
+    let shift = gpui::Modifiers { shift: true, ..none };
+    workbench.update(cx, |workbench, cx| {
+        workbench.editors.active_mut().unwrap().set_selections(vec![Selection::caret(Position::new(0, 2))]);
+        workbench.gutter_line_select(2, shift, cx);
+    });
+    assert_eq!(selections(cx), [Selection { anchor: Position::new(0, 2), head: Position::new(3, 0) }], "Shift extends from the cursor");
+    std::fs::remove_dir_all(dir).unwrap();
+}

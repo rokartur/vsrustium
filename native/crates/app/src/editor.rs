@@ -74,6 +74,8 @@ pub struct TextDocument {
     /// `comments.blockComment` start and end tokens of the language.
     pub block_comment: Option<(String, String)>,
     pub tokens: Tokenization,
+    /// `TextModel.isTooLargeForTokenization`, decided at creation: no tokens, folding, word highlights or sticky scroll.
+    pub too_large_for_tokenization: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -126,8 +128,9 @@ impl TextDocument {
         let block_comment = languages.block_comment(&language_id).map(|(start, end)| (start.to_string(), end.to_string()));
         let indentation = creation_indentation(&lines, settings, path, &language_id);
         let eol = found_eol.unwrap_or_else(|| default_eol(settings, path, &language_id));
-        let tokens = Tokenization::new(languages.grammars.grammar(&language_id));
-        TextDocument { scheme: scheme.to_string(), path: path.to_path_buf(), lines, eol, encoding, language_id, indentation, off_side, folding_markers, block_comment, tokens }
+        let too_large_for_tokenization = too_large_for_tokenization(text, lines.len(), settings, path, &language_id);
+        let tokens = Tokenization::new(languages.grammars.grammar(&language_id).filter(|_| !too_large_for_tokenization));
+        TextDocument { scheme: scheme.to_string(), path: path.to_path_buf(), lines, eol, encoding, language_id, indentation, off_side, folding_markers, block_comment, tokens, too_large_for_tokenization }
     }
 
     pub fn uri_string(&self) -> String {
@@ -420,7 +423,21 @@ pub fn column_at_visible(line: &str, target: f32, tab_size: usize) -> usize {
     line.chars().count()
 }
 
-/// The line as drawn: tabs become spaces up to the next tab stop; the whitespace marks are drawn apart (`editor::whitespace`).
+/// textModel.ts `LARGE_FILE_SIZE_THRESHOLD` (UTF-16 units) and `LARGE_FILE_LINE_COUNT_THRESHOLD`, with
+/// `editor.largeFileOptimizations` on.
+fn too_large_for_tokenization(text: &str, line_count: usize, settings: &Settings, path: &Path, language_id: &str) -> bool {
+    const LARGE_FILE_SIZE_THRESHOLD: usize = 20 * 1024 * 1024;
+    const LARGE_FILE_LINE_COUNT_THRESHOLD: usize = 300 * 1000;
+    let overrides = Overrides { resource: Some(path), override_identifier: Some(language_id) };
+    if settings.get_value(Some("editor.largeFileOptimizations"), &overrides) == Some(serde_json::Value::Bool(false)) {
+        return false;
+    }
+    // A UTF-16 length is at most the UTF-8 one, so only a long text needs counting.
+    line_count > LARGE_FILE_LINE_COUNT_THRESHOLD || (text.len() > LARGE_FILE_SIZE_THRESHOLD && text.encode_utf16().count() > LARGE_FILE_SIZE_THRESHOLD)
+}
+
+/// The line as drawn: tabs become spaces up to the next tab stop, control characters a space under their picture;
+/// the whitespace marks and control pictures are drawn apart (`editor::whitespace`, `workbench::control_characters`).
 pub fn expand_tabs(line: &str, tab_size: usize) -> String {
     let mut out = String::with_capacity(line.len());
     let mut visible = 0;
@@ -429,6 +446,9 @@ pub fn expand_tabs(line: &str, tab_size: usize) -> String {
             let width = tab_size - visible % tab_size;
             out.extend(std::iter::repeat_n(' ', width));
             visible += width;
+        } else if c.is_ascii_control() {
+            out.push(' ');
+            visible += 1;
         } else {
             out.push(c);
             visible += 1;
@@ -517,7 +537,7 @@ impl OpenEditor {
         document.off_side = languages.off_side(language_id);
         document.folding_markers = languages.folding_markers(language_id);
         document.block_comment = languages.block_comment(language_id).map(|(start, end)| (start.to_string(), end.to_string()));
-        document.tokens = Tokenization::new(languages.grammars.grammar(language_id));
+        document.tokens = Tokenization::new(languages.grammars.grammar(language_id).filter(|_| !document.too_large_for_tokenization));
         let indentation = match (old == new, new.detect_indentation) {
             (true, _) => document.indentation,
             (false, true) => guess_indentation(&document.lines, Indentation { tab_size: new.tab_size, indent_size: None, insert_spaces: new.insert_spaces }),
@@ -843,6 +863,7 @@ mod tests {
             folding_markers: None,
             block_comment: None,
             tokens: Tokenization::default(),
+            too_large_for_tokenization: false,
         };
         let names = |group: &EditorGroup| group.editors.iter().map(|editor| editor.document.name()).collect::<Vec<_>>();
         let mut group = EditorGroup::default();
@@ -872,6 +893,7 @@ mod tests {
             folding_markers: None,
             block_comment: None,
             tokens: Tokenization::default(),
+            too_large_for_tokenization: false,
         };
         group.open(document, false);
         let editor = group.active_mut().unwrap();

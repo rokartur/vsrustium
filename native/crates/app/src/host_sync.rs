@@ -489,6 +489,7 @@ mod tests {
             off_side: false,
             folding_markers: None,
             block_comment: None,
+            too_large_for_tokenization: false,
             tokens: Default::default(),
         }
     }

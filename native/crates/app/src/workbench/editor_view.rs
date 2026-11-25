@@ -364,10 +364,12 @@ impl Workbench {
             }))
             .on_mouse_up(MouseButton::Left, cx.listener(|workbench, _, _, cx| {
                 workbench.selecting_text = false;
+                workbench.line_select_start = None;
                 workbench.cancel_text_drag(cx);
             }))
             .on_mouse_up_out(MouseButton::Left, cx.listener(|workbench, _, _, cx| {
                 workbench.selecting_text = false;
+                workbench.line_select_start = None;
                 workbench.cancel_text_drag(cx);
             }))
             .child(
@@ -753,6 +755,7 @@ impl Workbench {
         let rounded_selection = self.setting("editor.roundedSelection") != json!(false);
         let render_whitespace = self.setting("editor.renderWhitespace");
         let render_whitespace = render_whitespace.as_str().unwrap_or_default();
+        let render_control_characters = self.setting("editor.renderControlCharacters") != serde_json::Value::Bool(false);
         let whitespace_color = self.color("editorWhitespace.foreground");
         let line_height = metrics.line_height;
         // selections.css: high contrast themes square the corners.
@@ -963,6 +966,9 @@ impl Workbench {
                         show_more = Some(div().absolute().left(px(metrics.content_left())).right_0().top(px(-3.)).h(px(24.)).overflow_hidden().child(span));
                     }
                 }
+                if render_control_characters {
+                    content = content.children(self.control_character_boxes(text, tab_size, char_width, rendered_len));
+                }
                 // folding.css .inline-folded:after: an ellipsis 0.2em after the line's last char.
                 if collapsed == Some(true) {
                     let end = visible_column(text, text.chars().count(), tab_size) as f32 * char_width + 0.2 * metrics.font_size;
@@ -1047,6 +1053,7 @@ impl Workbench {
                     .on_mouse_move(cx.listener(move |workbench, event: &MouseMoveEvent, _, cx| {
                         workbench.editor_message_mouse_moved(index, cx);
                         match event.pressed_button {
+                            Some(MouseButton::Left) if workbench.line_select_start.is_some() => workbench.gutter_line_select_drag(index, cx),
                             Some(MouseButton::Left) if workbench.text_drag.is_some() => workbench.drag_text(index, visible_at(workbench, event.position.x), event.modifiers.alt, cx),
                             Some(MouseButton::Left) if workbench.selecting_text => workbench.click_text(index, visible_at(workbench, event.position.x), event.modifiers, true, 1, cx),
                             Some(MouseButton::Middle) if workbench.selecting_text => workbench.column_select_text(index, visible_at(workbench, event.position.x), true, cx),
@@ -1057,8 +1064,8 @@ impl Workbench {
                     .w_full()
                     .h(px(metrics.line_height))
                     .flex()
-                    .child(div().w(px(metrics.glyph_margin_width())).flex_none())
-                    .child(number)
+                    .child(self.gutter_mouse(div().w(px(metrics.glyph_margin_width())).h_full().flex_none(), index, cx))
+                    .child(self.gutter_mouse(number, index, cx))
                     .child(self.fold_control(index, collapsed, metrics, fold_control_color, fold_controls, cx))
                     .child(content)
                     .children(show_more)

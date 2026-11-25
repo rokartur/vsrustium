@@ -21,8 +21,10 @@ pub struct Configuration {
     pub has_workspace: bool,
     /// `_workspaceConsolidatedConfiguration`, `_foldersConsolidatedConfigurations` and `overrideConfigurations`:
     /// the merged model per folder and language. A write to a layer field must call `layers_changed`.
-    pub(crate) consolidated: RefCell<HashMap<(Option<PathBuf>, Option<String>), ConfigurationModel>>,
+    pub(crate) consolidated: RefCell<HashMap<FolderAndLanguage, ConfigurationModel>>,
 }
+
+type FolderAndLanguage = (Option<PathBuf>, Option<String>);
 
 /// `IConfigurationOverrides`: a file the value is read for, and a language.
 #[derive(Clone, Debug, Default)]

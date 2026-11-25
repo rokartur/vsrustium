@@ -46,6 +46,9 @@ use status_entries::{EDITOR_STATUS_PRIORITY, PROBLEMS_PRIORITY};
 pub mod themes;
 mod quick_input_view;
 mod text_files;
+mod control_characters;
+mod large_file;
+mod gutter_mouse;
 mod text_input;
 mod title_bar_actions;
 mod unicode_highlight;
@@ -145,6 +148,8 @@ pub struct Workbench {
     marked_text: Option<Range<usize>>,
     /// A left button press in the text is held, so moves extend the selection.
     selecting_text: bool,
+    /// The line range a gutter press selected, which a drag extends (`selectionStart` of a line selection).
+    line_select_start: Option<(crate::editor::Position, crate::editor::Position)>,
     text_drag: Option<editor_view::drag_and_drop::TextDrag>,
     /// editorOptions.ts `stopRenderingLineAfter` (10000) of the group's code editor; longLinesHelper.ts clears it.
     stop_rendering_line_after: Option<usize>,
@@ -284,6 +289,7 @@ impl Workbench {
             input_carets_hidden: false,
             marked_text: None,
             selecting_text: false,
+            line_select_start: None,
             text_drag: None,
             stop_rendering_line_after: Some(10_000),
             editor_zoom: Default::default(),
@@ -310,6 +316,7 @@ impl Workbench {
         workbench.editors.disposed.settings = Some(workbench.settings.clone());
         workbench.register_workbench_actions();
         workbench.register_text_file_commands();
+        workbench.register_large_file_commands();
         workbench.register_editor_commands();
         workbench.register_find_commands();
         workbench.register_sticky_scroll_commands();

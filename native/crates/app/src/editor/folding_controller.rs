@@ -12,6 +12,10 @@ impl OpenEditor {
     /// cursors leave the lines it hides. While extension providers fold the model their regions stay, moved by
     /// the edits, until the workbench applies their next answer (`apply_syntax_folding`).
     pub fn refresh_folding_ranges(&mut self) {
+        // folding.ts `onModelChanged`: a model too large for tokenization gets no folding model.
+        if self.document.too_large_for_tokenization {
+            return;
+        }
         if self.syntax_folding {
             return self.adjust_selections_to_folds();
         }
@@ -27,6 +31,9 @@ impl OpenEditor {
     /// none answered with an array, which falls back to the indentation provider. With `editor.foldingImportsByDefault`
     /// the first regions of kind `imports` collapse.
     pub fn apply_syntax_folding(&mut self, regions: Option<FoldingRegions>, fold_imports: bool) {
+        if self.document.too_large_for_tokenization {
+            return;
+        }
         let Some(mut regions) = regions else {
             self.syntax_folding = false;
             return self.refresh_folding_ranges();

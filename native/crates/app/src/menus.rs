@@ -31,6 +31,7 @@ pub enum MenuId {
     SearchContext,
     EditorContext,
     EditorTitleContext,
+    EditorLineNumberContext,
     TitleBarContext,
     TitleBarTitleContext,
     /// A `contributes.submenus` entry, `MenuId.for('api:<id>')`, by registration order.
@@ -228,8 +229,12 @@ pub fn workbench_menus() -> Vec<MenuItem> {
 
 /// menusExtensionPoint.ts `apiMenus`: the `contributes.menus` keys of the menus the port shows. `commandPalette`
 /// is read by `command_palette::menu`.
-const API_MENUS: [(&str, MenuId); 3] =
-    [("editor/context", MenuId::EditorContext), ("explorer/context", MenuId::ExplorerContext), ("editor/title/context", MenuId::EditorTitleContext)];
+const API_MENUS: [(&str, MenuId); 4] = [
+    ("editor/context", MenuId::EditorContext),
+    ("explorer/context", MenuId::ExplorerContext),
+    ("editor/title/context", MenuId::EditorTitleContext),
+    ("editor/lineNumber/context", MenuId::EditorLineNumberContext),
+];
 
 /// menusExtensionPoint.ts, the `submenus` and `menus` handlers: every extension's `contributes.menus` items of the
 /// port's menus and of contributed submenus, with their command's title and enablement from `contributes.commands`.

@@ -230,6 +230,12 @@ impl Workbench {
             cx.notify();
             Outcome::done()
         });
+        self.commands.register("editor.action.toggleRenderControlCharacter", |workbench, _, _, cx| {
+            let on = workbench.setting("editor.renderControlCharacters") == json!(true);
+            workbench.update_setting("editor.renderControlCharacters", json!(!on));
+            cx.notify();
+            Outcome::done()
+        });
         self.commands.register("editor.action.toggleMinimap", |workbench, _, _, cx| {
             let enabled = workbench.setting("editor.minimap.enabled") != json!(false);
             workbench.update_setting("editor.minimap.enabled", json!(!enabled));

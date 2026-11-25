@@ -329,6 +329,10 @@ impl OpenEditor {
     /// The word highlights of the primary selection (wordHighlighter.ts `_run`): none for a multi-line selection
     /// or one that reaches past the word at its start.
     pub fn refresh_highlights(&mut self) {
+        // wordHighlighter.ts `createWordHighlighterIfPossible`: none for a model too large for tokenization.
+        if self.document.too_large_for_tokenization {
+            return;
+        }
         let selection = self.selection();
         let (start, end) = (selection.start(), selection.end());
         let text = &self.document.lines[start.line];
@@ -1264,6 +1268,7 @@ pub(super) mod tests {
             folding_markers: None,
             block_comment: None,
             tokens: Default::default(),
+            too_large_for_tokenization: false,
         };
         let mut group = EditorGroup::default();
         group.open(document, true);

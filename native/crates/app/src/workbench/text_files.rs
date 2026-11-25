@@ -70,6 +70,8 @@ pub(super) struct TextFiles {
     /// editorService.ts `activeOutOfWorkspaceWatchers`, by watch id.
     watched_files: HashMap<PathBuf, u64>,
     next_watch: u64,
+    /// The model the group's code editor showed at the last editors change (`onDidChangeModel`).
+    shown_model: Option<u32>,
 }
 
 impl Workbench {
@@ -643,6 +645,10 @@ impl Workbench {
         let models: HashSet<(&str, &Path)> = self.editors.editors.iter().chain(&self.editors.models).map(|model| (model.document.scheme.as_str(), model.document.path.as_path())).collect();
         self.text_files.preferred_languages.retain(|(scheme, path)| models.contains(&(scheme.as_str(), path.as_path())));
         self.watch_visible_file();
+        let shown = self.editors.active().map(|editor| editor.model_id);
+        if shown != std::mem::replace(&mut self.text_files.shown_model, shown) {
+            self.warn_large_file();
+        }
     }
 
     /// `WorkspaceWatcher.watchWorkspace`: the folders recursively, minus `files.watcherExclude`; the changes reach
