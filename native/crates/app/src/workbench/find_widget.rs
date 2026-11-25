@@ -457,8 +457,9 @@ impl Workbench {
             _ => AutoFindInSelection::Never,
         };
         let is_loop = self.setting("editor.find.loop").as_bool().unwrap_or(true);
+        let cursor_move_on_type = self.setting("editor.find.cursorMoveOnType").as_bool().unwrap_or(true);
         let global_find_clipboard = self.setting("editor.find.globalFindClipboard").as_bool().unwrap_or(false);
-        FindOptions { seed_search_string_from_selection: seed, auto_find_in_selection, is_loop, global_find_clipboard, ..FindOptions::default() }
+        FindOptions { seed_search_string_from_selection: seed, auto_find_in_selection, is_loop, global_find_clipboard, cursor_move_on_type, ..FindOptions::default() }
     }
 
     /// Typing in an input changes the state: the search string moves the cursor to the nearest match.
@@ -468,7 +469,8 @@ impl Workbench {
         edit(input);
         let value = input.value.clone();
         cx.notify();
-        if value == before {
+        // `editor.find.findOnType` off: the search string waits for Enter (`find_input_key_down`).
+        if value == before || (id == InputId::Find && self.setting("editor.find.findOnType") == Value::Bool(false)) {
             return;
         }
         let (new, move_cursor) = match id {
@@ -477,6 +479,19 @@ impl Workbench {
         };
         self.run_find(window, cx, move |find, editor, viewport| {
             find.change(editor, viewport, new, move_cursor);
+            (FocusAction::NoFocusChange, None)
+        });
+    }
+
+    /// The find input's keydown, before the keybindings: with `editor.find.findOnType` off Enter searches.
+    pub(super) fn find_input_key_down(&mut self, keystroke: &Keystroke, window: &mut Window, cx: &mut Context<Self>) {
+        let modifiers = keystroke.modifiers;
+        if keystroke.key != "enter" || modifiers.modified() || !self.find.find_focus.is_focused(window) || self.setting("editor.find.findOnType") != Value::Bool(false) {
+            return;
+        }
+        let new = NewFindState { search_string: Some(self.find.find_input.value.clone()), ..Default::default() };
+        self.run_find(window, cx, move |find, editor, viewport| {
+            find.change(editor, viewport, new, true);
             (FocusAction::NoFocusChange, None)
         });
     }
@@ -1169,3 +1184,6 @@ fn go_to_match_parses_like_parse_int() {
     assert_eq!(find_match_index("-0", 4), None);
     assert_eq!(find_match_index("x", 4), None);
 }
+
+#[cfg(test)]
+mod tests;

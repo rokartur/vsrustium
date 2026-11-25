@@ -38,11 +38,13 @@ pub struct FindOptions {
     pub close_on_result: bool,
     /// The search string is read from and written to the macOS find pasteboard.
     pub global_find_clipboard: bool,
+    /// `editor.find.cursorMoveOnType`: a research that may move the cursor moves it to the next match.
+    pub cursor_move_on_type: bool,
 }
 
 impl Default for FindOptions {
     fn default() -> Self {
-        FindOptions { seed_search_string_from_selection: SeedFromSelection::Always, auto_find_in_selection: AutoFindInSelection::Never, is_loop: true, close_on_result: false, global_find_clipboard: false }
+        FindOptions { seed_search_string_from_selection: SeedFromSelection::Always, auto_find_in_selection: AutoFindInSelection::Never, is_loop: true, close_on_result: false, global_find_clipboard: false, cursor_move_on_type: true }
     }
 }
 
@@ -137,6 +139,7 @@ impl FindController {
             self.model = None;
         }
         if let Some(model) = &mut self.model {
+            model.cursor_move_on_type = self.options.cursor_move_on_type;
             model.state_changed(editor, &mut self.state, viewport, changed);
         }
         Some(changed)
@@ -258,7 +261,9 @@ impl FindController {
         }
         changes.is_loop = Some(opts.is_loop);
         self.change(editor, viewport, changes, false);
-        self.model = Some(FindModel::new(editor, &mut self.state, viewport));
+        let mut model = FindModel::new(editor, &mut self.state, viewport);
+        model.cursor_move_on_type = self.options.cursor_move_on_type;
+        self.model = Some(model);
     }
 
     /// `StartFindAction` (Cmd+F): the find input gets focus.
