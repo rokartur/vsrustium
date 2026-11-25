@@ -177,6 +177,7 @@ impl Workbench {
         for (id, forward) in [("editor.action.smartSelect.expand", true), ("editor.action.smartSelect.grow", true), ("editor.action.smartSelect.shrink", false)] {
             self.commands.register(id, move |workbench, _, _, cx| workbench.run_smart_select(forward, cx));
         }
+        self.register_selection_ranges();
         for (id, up) in [("editor.action.inPlaceReplace.up", false), ("editor.action.inPlaceReplace.down", true)] {
             self.commands.register(id, move |workbench, _, _, cx| match workbench.edit_blocked(false, cx) {
                 true => Outcome::done(),
@@ -579,8 +580,19 @@ impl Workbench {
         drop(settings);
         let selections_before = editor.selections.clone();
         drop(document);
-        editor.smart_select(forward, &self.languages, options);
+        if !editor.smart_select_state_valid() && let Some(outcome) = self.smart_select_with_providers(forward, options, cx) {
+            return outcome;
+        }
+        let editor = self.editors.active_mut().expect("checked above");
+        editor.smart_select(forward, &self.languages, options, None);
         self.editor_command_ran(None, selections_before, cx)
+    }
+
+    /// The end of a smart select whose extension providers answered; nothing when the editor moved meanwhile.
+    pub(super) fn finish_smart_select(&mut self, forward: bool, options: smart_select::Options, model_id: u32, selections_before: Vec<Selection>, provided: &[Vec<smart_select::Span>], cx: &mut Context<Self>) {
+        let Some(editor) = self.editors.active_mut().filter(|editor| editor.model_id == model_id && editor.selections == selections_before) else { return };
+        editor.smart_select(forward, &self.languages, options, Some(provided));
+        drop(self.editor_command_ran(None, selections_before, cx));
     }
 
     /// inPlaceReplace.ts `InPlaceReplaceController.run`: the replaced value stays outlined for 350 ms.

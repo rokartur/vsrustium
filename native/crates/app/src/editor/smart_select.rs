@@ -1,9 +1,8 @@
 //! smartSelect.ts: Expand and Shrink Selection over the ranges of the selection range providers, the
 //! word (wordSelections.ts) and bracket (bracketSelections.ts) ones. Inside, a column is upstream's
 //! 1-based column, where 0 is the column before the line that `getLineFirstNonWhitespaceColumn` gives a
-//! blank line; lines stay 0-based.
-//! shortcut: no extension `SelectionRangeProvider`s (MainThreadLanguageFeatures, milestone 13), so every
-//! language gets the word and bracket ranges upstream gives a language without a provider.
+//! blank line; lines stay 0-based. The workbench asks the extension providers first
+//! (workbench/selection_ranges.rs); without one, the bracket ranges join the word ones.
 
 use std::cmp::Reverse;
 use std::collections::{HashMap, VecDeque};
@@ -14,7 +13,7 @@ use crate::brackets::PairBracket;
 use crate::languages::Languages;
 
 /// A range from its start to its end, columns 1-based.
-type Span = (Position, Position);
+pub type Span = (Position, Position);
 
 /// `editor.smartSelect`.
 #[derive(Clone, Copy)]
@@ -48,12 +47,18 @@ impl SelectionRanges {
 }
 
 impl OpenEditor {
+    /// The ranges of the last run still apply: the selections are the ones it set.
+    pub fn smart_select_state_valid(&self) -> bool {
+        self.smart_select.as_ref().is_some_and(|(_, selections)| *selections == self.selections)
+    }
+
     /// `SmartSelectController.run`: the ranges are computed once per cursor and kept while the selections
-    /// are the ones the last run set (upstream drops them on `onDidChangeCursorPosition`).
-    pub fn smart_select(&mut self, forward: bool, languages: &Languages, options: Options) {
+    /// are the ones the last run set (upstream drops them on `onDidChangeCursorPosition`). `provided` holds the
+    /// extension providers' ranges per cursor, `None` without a provider.
+    pub fn smart_select(&mut self, forward: bool, languages: &Languages, options: Options, provided: Option<&[Vec<Span>]>) {
         let mut states = match self.smart_select.take() {
             Some((states, selections)) if selections == self.selections => states,
-            _ => self.selection_ranges(languages, options),
+            _ => self.selection_ranges(languages, options, provided),
         };
         for state in &mut states {
             state.index = state.moved(forward);
@@ -67,16 +72,13 @@ impl OpenEditor {
         self.smart_select = Some((states, self.selections.clone()));
     }
 
-    fn selection_ranges(&self, languages: &Languages, options: Options) -> Vec<SelectionRanges> {
-        let lines = &self.document().lines;
-        let brackets = self.document().tokens.pairs(languages, lines, &self.document().language_id).brackets;
-        let brackets = char_brackets(lines, &brackets);
-        let word_pattern = languages.rules(&self.document().language_id).and_then(|rules| rules.word_pattern.as_ref());
+    fn selection_ranges(&self, languages: &Languages, options: Options, provided: Option<&[Vec<Span>]>) -> Vec<SelectionRanges> {
         let one_based = |position: Position| Position::new(position.line, position.column + 1);
+        let positions: Vec<Position> = self.selections.iter().map(|selection| one_based(selection.head)).collect();
+        let all_ranges = self.provide_selection_ranges(languages, options, &positions, provided);
         let mut states = Vec::new();
-        for selection in &self.selections {
+        for (selection, mut ranges) in self.selections.iter().zip(all_ranges) {
             let (start, end) = (one_based(selection.start()), one_based(selection.end()));
-            let mut ranges = provide_selection_ranges(lines, &brackets, word_pattern, one_based(selection.head), options);
             ranges.retain(|range| contains_position(*range, start) && contains_position(*range, end));
             ranges.insert(0, (start, end));
             states.push(SelectionRanges { index: 0, ranges });
@@ -85,10 +87,32 @@ impl OpenEditor {
     }
 }
 
-/// `provideSelectionRanges` with the bracket and word providers: the ranges around `position`, inner first,
-/// each holding the one before, with the lines' leading and trailing whitespace as extra steps.
-fn provide_selection_ranges(lines: &[String], brackets: &[CharBracket], word_pattern: Option<&onig::Regex>, position: Position, options: Options) -> Vec<Span> {
-    let mut raw = bracket_ranges(lines, brackets, position);
+impl OpenEditor {
+    /// `provideSelectionRanges` per position (1-based columns): the extension providers' ranges, else the bracket
+    /// ones, and always the word ones.
+    pub fn provide_selection_ranges(&self, languages: &Languages, options: Options, positions: &[Position], provided: Option<&[Vec<Span>]>) -> Vec<Vec<Span>> {
+        let lines = &self.document().lines;
+        let brackets = match provided {
+            Some(_) => Vec::new(),
+            None => self.document().tokens.pairs(languages, lines, &self.document().language_id).brackets,
+        };
+        let brackets = char_brackets(lines, &brackets);
+        let word_pattern = languages.rules(&self.document().language_id).and_then(|rules| rules.word_pattern.as_ref());
+        let mut all = Vec::new();
+        for (index, &position) in positions.iter().enumerate() {
+            let raw = match provided {
+                Some(provided) => provided.get(index).cloned().unwrap_or_default(),
+                None => bracket_ranges(lines, &brackets, position),
+            };
+            all.push(position_selection_ranges(lines, raw, word_pattern, position, options));
+        }
+        all
+    }
+}
+
+/// The ranges around `position`, inner first, each holding the one before, with the lines' leading and trailing
+/// whitespace as extra steps.
+fn position_selection_ranges(lines: &[String], mut raw: Vec<Span>, word_pattern: Option<&onig::Regex>, position: Position, options: Options) -> Vec<Span> {
     raw.extend(word_ranges(lines, word_pattern, position, options.select_subwords));
     raw.retain(|range| contains_position(*range, position));
     raw.sort_by_key(|&(start, end)| (Reverse(start), end));

@@ -33,9 +33,8 @@ fn brackets_of(editor: &OpenEditor, languages: &Languages) -> Vec<PairBracket> {
 /// `assertGetRangesToPosition`: `expected` lists the outermost range first.
 fn assert_ranges_to_position(text: &[&str], line: usize, column: usize, expected: &[Expected], select_leading_and_trailing_whitespace: bool) {
     let (editor, languages) = mock_js(&text.join("\n"));
-    let brackets = brackets_of(&editor, &languages);
     let options = Options { select_leading_and_trailing_whitespace, select_subwords: true };
-    let actual = provide_selection_ranges(&editor.document().lines, &char_brackets(&editor.document().lines, &brackets), word_pattern(&editor, &languages), Position::new(line - 1, column), options);
+    let actual = editor.provide_selection_ranges(&languages, options, &[Position::new(line - 1, column)], None).remove(0);
     let mut expected = spans(expected);
     expected.reverse();
     assert_eq!(actual, expected);
@@ -179,19 +178,32 @@ fn expand_and_shrink_walk_the_ranges() {
     let selected = |editor: &OpenEditor| (editor.selection().anchor.column, editor.selection().head.column);
     let mut expected = vec![(4, 7), (4, 10), (3, 11), (0, 11)];
     for &step in &expected {
-        editor.smart_select(true, &languages, OPTIONS);
+        editor.smart_select(true, &languages, OPTIONS, None);
         assert_eq!(selected(&editor), step);
     }
-    editor.smart_select(true, &languages, OPTIONS);
+    editor.smart_select(true, &languages, OPTIONS, None);
     assert_eq!(selected(&editor), (0, 11), "the last range stays");
     expected.pop();
     for &step in expected.iter().rev() {
-        editor.smart_select(false, &languages, OPTIONS);
+        editor.smart_select(false, &languages, OPTIONS, None);
         assert_eq!(selected(&editor), step);
     }
-    editor.smart_select(false, &languages, OPTIONS);
+    editor.smart_select(false, &languages, OPTIONS, None);
     assert_eq!(selected(&editor), (5, 5), "back to the cursor");
     editor.set_selections(vec![Selection::caret(Position::new(0, 1))]);
-    editor.smart_select(true, &languages, OPTIONS);
+    editor.smart_select(true, &languages, OPTIONS, None);
     assert_eq!(selected(&editor), (0, 3), "a moved cursor starts over");
+}
+
+/// A provider's ranges replace the bracket ones; the word ranges stay (`providers.length === 1` adds brackets only
+/// without a provider).
+#[test]
+fn provider_ranges_replace_the_bracket_ranges() {
+    let (editor, languages) = mock_js("foo(barBaz)");
+    let position = Position::new(0, 6);
+    let provided = vec![vec![(Position::new(0, 1), Position::new(0, 12))]];
+    let ranges = editor.provide_selection_ranges(&languages, OPTIONS, &[position], Some(&provided)).remove(0);
+    assert_eq!(ranges, spans(&[(1, 5, 1, 8), (1, 5, 1, 11), (1, 1, 1, 12)]));
+    let without = editor.provide_selection_ranges(&languages, OPTIONS, &[position], None).remove(0);
+    assert!(without.contains(&(Position::new(0, 4), Position::new(0, 12))), "the bracket pair");
 }

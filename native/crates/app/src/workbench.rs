@@ -138,6 +138,7 @@ mod standalone_color_picker;
 mod inlay_hints;
 mod rename;
 mod links;
+mod selection_ranges;
 mod semantic_tokens;
 mod linked_editing;
 mod language_status;
