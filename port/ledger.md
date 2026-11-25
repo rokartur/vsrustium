@@ -187,7 +187,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/progress | src/vs/platform | todo |  |
 | platform/protocol | src/vs/platform | n/a | Electron process, IPC or DOM layer; replaced by the single-process Rust/GPUI architecture (port/notes.md) |
 | platform/quickinput | src/vs/platform | ported | cargo test -p app quick_input, filters, tf_idf, command_palette; api-tests quick input 11/11; ad-hoc palette screenshot 0.28% pixels differ at 2% fuzz |
-| platform/registry | src/vs/platform | todo |  |
+| platform/registry | src/vs/platform | n/a | Registry.add/as, a string-keyed registry of registries for the JS module graph; the port passes its typed registries directly (config::registry::Registry, Commands, the menus and keybindings modules), so there is no lookup by id to port |
 | platform/remote | src/vs/platform | removed | no remote or tunnels by decision (port/notes.md); one local extension host |
 | platform/remoteTunnel | src/vs/platform | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | platform/request | src/vs/platform | todo |  |
