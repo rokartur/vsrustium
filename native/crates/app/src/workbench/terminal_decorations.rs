@@ -43,9 +43,38 @@ impl Workbench {
             }
             Outcome::done()
         });
+        // xtermTerminal.ts `getSelectionAsHtml(command)`: the rows after the prompt, the output as the plain text.
+        self.commands.register("terminal.copyOutputAsHtml", |workbench, args, _, cx| {
+            let Some((instance, command)) = workbench.decorated_command(&args) else { return Outcome::done() };
+            let (Some(start), Some(end)) = (command.prompt_line.or(command.command_line), command.end_line) else { return Outcome::done() };
+            let (colors, family, size) = workbench.terminal_html_style();
+            let Some(terminal) = workbench.terminal_view.instance(instance) else { return Outcome::done() };
+            let html = terminal.serialize_html((start + 1, 0), (end - 1, usize::MAX), &colors.palette, &family, size);
+            cx.write_to_clipboard(ClipboardItem::new_string(command.output.trim_end().to_owned()));
+            crate::clipboard::write_html(&html);
+            Outcome::done()
+        });
+        self.commands.register("workbench.action.terminal.copySelectionAsHtml", |workbench, _, _, cx| {
+            let (colors, family, size) = workbench.terminal_html_style();
+            let Some(terminal) = workbench.terminal_view.active_instance_mut() else { return Outcome::done() };
+            let (Some(text), Some(html)) = (terminal.selection_text(), terminal.selection_html(&colors, &family, size)) else {
+                workbench.notify(crate::notifications::Notification::new(crate::notifications::Severity::Warning, "The terminal has no selection to copy"));
+                return Outcome::done();
+            };
+            cx.write_to_clipboard(ClipboardItem::new_string(text));
+            crate::clipboard::write_html(&html);
+            Outcome::done()
+        });
         self.commands.register("terminal.learnShellIntegration", |workbench, _, window, cx| {
             workbench.execute_command("vscode.open", vec![json!("https://code.visualstudio.com/docs/terminal/shell-integration")], window, cx)
         });
+    }
+
+    /// The theme's ANSI colors and xterm's `fontFamily` and `fontSize` options, which the HTML copy carries.
+    fn terminal_html_style(&self) -> (crate::terminal::colors::TerminalColors, String, f32) {
+        let family = Some(self.setting("terminal.integrated.fontFamily")).filter(|family| family.as_str().is_some_and(|family| !family.is_empty())).unwrap_or_else(|| self.setting("editor.fontFamily"));
+        let size = self.setting("terminal.integrated.fontSize").as_f64().unwrap_or(12.) as f32;
+        (crate::terminal::colors::TerminalColors::new(&self.theme), family.as_str().unwrap_or_default().to_owned(), size)
     }
 
     fn decorated_command(&self, args: &[Value]) -> Option<(u32, crate::terminal::FinishedCommand)> {
@@ -63,7 +92,7 @@ impl Workbench {
             actions.extend([action("terminal.rerunCommand", "Rerun Command"), MenuAction::Separator, action("terminal.copyCommand", "Copy Command")]);
         }
         if !command.output.is_empty() {
-            actions.extend([action("terminal.copyCommandAndOutput", "Copy Command and Output"), action("terminal.copyOutput", "Copy Output")]);
+            actions.extend([action("terminal.copyCommandAndOutput", "Copy Command and Output"), action("terminal.copyOutput", "Copy Output"), action("terminal.copyOutputAsHtml", "Copy Output as HTML")]);
         }
         if !actions.is_empty() {
             actions.push(MenuAction::Separator);

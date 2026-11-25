@@ -230,6 +230,7 @@ const WORKBENCH_MENUS: &[Row] = &[
     // terminalMenus.ts: the TerminalInstanceContext items of the commands the port has.
     (MenuId::TerminalInstanceContext, None, "workbench.action.terminal.killViewOrEditor", "Kill Terminal", "7_kill", 0., None, None),
     (MenuId::TerminalInstanceContext, None, "workbench.action.terminal.copySelection", "Copy", "3_edit", 1., None, None),
+    (MenuId::TerminalInstanceContext, None, "workbench.action.terminal.copySelectionAsHtml", "Copy as HTML", "3_edit", 2., None, None),
     (MenuId::TerminalInstanceContext, None, "workbench.action.terminal.paste", "Paste", "3_edit", 3., None, None),
     (MenuId::TerminalInstanceContext, None, "workbench.action.terminal.clear", "Clear", "5_clear", 0., None, None),
     (MenuId::TerminalInstanceContext, None, "workbench.action.terminal.selectAll", "Select All", "3_edit", 3., None, None),

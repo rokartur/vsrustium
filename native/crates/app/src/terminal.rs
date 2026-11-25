@@ -18,6 +18,7 @@ pub mod marks;
 pub mod injection;
 pub mod pty;
 pub mod search;
+pub mod serialize_html;
 pub mod shell_integration;
 pub mod skip_shell;
 
@@ -589,6 +590,15 @@ impl TerminalInstance {
 
     pub fn selection_text(&self) -> Option<String> {
         self.term.selection_to_string().filter(|text| !text.is_empty())
+    }
+
+    /// `serializeAsHTML({ onlySelection: true })`.
+    pub fn selection_html(&self, colors: &colors::TerminalColors, font_family: &str, font_size: f32) -> Option<String> {
+        let range = self.term.selection.as_ref()?.to_range(&self.term)?;
+        let history = self.term.history_size() as i64;
+        let start = (range.start.line.0 as i64 + history, range.start.column.0);
+        let end = (range.end.line.0 as i64 + history, range.end.column.0 + 1);
+        Some(self.serialize_html(start, end, &colors.palette, font_family, font_size))
     }
 
     fn viewport_point(&self, line: i32, column: usize) -> Point {
