@@ -22,14 +22,16 @@ use crate::local_history;
 use crate::host_sync::FileJob;
 
 impl Workbench {
-    /// Enter reaches the editor as typed text, the line break the browser's textarea would insert.
+    /// Enter reaches the editor as typed text, the line break the browser's textarea would insert. codeEditorWidget.ts
+    /// `trigger` runs `Handler.Type` itself, not through the command service, so typing never waits for an activation.
     pub(super) fn editor_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let modifiers = event.keystroke.modifiers;
         if event.keystroke.key != "enter" || modifiers.platform || modifiers.control || modifiers.alt || self.marked_text.is_some() {
             return;
         }
         cx.stop_propagation();
-        self.execute_command("type", vec![json!({ "text": "\n" })], window, cx);
+        let typing = self.commands.get("type").expect("editor_commands registers type");
+        drop(typing(self, vec![json!({ "text": "\n" })], window, cx));
     }
 
     /// Tells the host about a content change or a cursor move, and reveals the cursor (cursor.ts `revealAll`).

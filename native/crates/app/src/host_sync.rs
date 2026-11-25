@@ -3,11 +3,13 @@
 //! (`$acceptTabOperation`), mainThreadEditors.ts (`$acceptEditorPropertiesChanged`) and the
 //! `onLanguage` activation languageService.ts sends when a model of a new language is created.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 
+use futures::FutureExt;
 use futures::channel::oneshot;
+use futures::future::Shared;
 
 use config::model::Change;
 use config::service::Settings;
@@ -32,6 +34,9 @@ pub struct HostMessage {
     /// An install or uninstall, run on the host thread, which owns the extensions and tells the host.
     pub extensions: Option<(Job, ExtensionsReply)>,
 }
+
+/// The answer of one `$activateByEvent`, shared by every caller that asks for the same event.
+pub type Activation = Shared<oneshot::Receiver<Result<Value, Value>>>;
 
 /// The running extensions after a `Job`, or why it failed.
 pub type ExtensionsReply = oneshot::Sender<Result<Vec<ScannedExtension>, String>>;
@@ -81,7 +86,10 @@ pub struct HostSync {
     pub search_tabs: HashMap<PathBuf, SearchTab>,
     /// The webview panels' tabs by their editor's path; no text model backs them.
     pub webview_tabs: HashMap<PathBuf, WebviewTab>,
-    activation_events: HashSet<String>,
+    activations: HashMap<String, Activation>,
+    /// `whenInstalledExtensionsRegistered`: set once the host's handshake is done; until then commands do not wait for
+    /// their `onCommand` activation.
+    pub installed_extensions_registered: bool,
     /// `configurationScopes` go to the host in a development build only (`MainThreadConfiguration.send_scopes`).
     pub configuration_scopes: bool,
 }
@@ -97,7 +105,7 @@ const CODE_EDITOR_ID: &str = "vs.editor.ICodeEditor:1";
 
 impl HostSync {
     pub fn new(sender: Sender<HostMessage>) -> Self {
-        HostSync { sender, documents: Vec::new(), editor: None, visible_lines: None, tabs: Vec::new(), search_tabs: HashMap::new(), webview_tabs: HashMap::new(), activation_events: HashSet::new(), configuration_scopes: false }
+        HostSync { sender, documents: Vec::new(), editor: None, visible_lines: None, tabs: Vec::new(), search_tabs: HashMap::new(), webview_tabs: HashMap::new(), activations: HashMap::new(), installed_extensions_registered: false, configuration_scopes: false }
     }
 
     /// Sends what changed in `group` since the last call: activation for new languages, the document
@@ -110,9 +118,10 @@ impl HostSync {
             self.documents.iter().filter(|(uri, _)| !open.iter().any(|editor| editor.document.uri_string() == *uri)).cloned().collect();
         for editor in &added {
             for event in [format!("onLanguage:{}", editor.document.language_id), "onLanguage".to_string()] {
-                if self.activation_events.insert(event.clone()) {
-                    // ActivationKind.Normal
-                    self.send("ExtHostExtensionService", "$activateByEvent", vec![json!(event), json!(0)]);
+                // `activate_by_event`, inlined: `is_text` still borrows `self.webview_tabs`.
+                if !self.activations.contains_key(&event) {
+                    let activation = self.call("ExtHostExtensionService", "$activateByEvent", vec![json!(event), json!(0)]).shared();
+                    self.activations.insert(event, activation);
                 }
             }
         }
@@ -300,15 +309,15 @@ impl HostSync {
         receiver
     }
 
-    /// `ExtensionHostManager.activateByEvent`: one request per event; a repeat resolves at once.
-    pub fn activate_by_event(&mut self, event: &str) -> oneshot::Receiver<Result<Value, Value>> {
-        if !self.activation_events.insert(event.to_owned()) {
-            let (sender, receiver) = oneshot::channel();
-            let _ = sender.send(Ok(Value::Null));
-            return receiver;
+    /// `ExtensionHostManager.activateByEvent`: one request per event; a repeat shares the first one's answer.
+    pub fn activate_by_event(&mut self, event: &str) -> Activation {
+        if let Some(activation) = self.activations.get(event) {
+            return activation.clone();
         }
         // ActivationKind.Normal
-        self.call("ExtHostExtensionService", "$activateByEvent", vec![json!(event), json!(0)])
+        let activation = self.call("ExtHostExtensionService", "$activateByEvent", vec![json!(event), json!(0)]).shared();
+        self.activations.insert(event.to_owned(), activation.clone());
+        activation
     }
 
     /// Sends a request whose answer arrives on the receiver; a host that is gone drops the sender.

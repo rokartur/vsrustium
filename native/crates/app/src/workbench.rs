@@ -95,6 +95,8 @@ pub struct Workbench {
     pub settings: Arc<Mutex<Settings>>,
     pub(crate) host: HostSync,
     pub commands: Commands,
+    /// MainThreadCommands `_commandRegistrations`: the host's registration of each id it registered.
+    pub(crate) extension_commands: HashMap<String, crate::commands::Registration>,
     /// Extension tests run: dialogs answer their default without showing (abstractFileDialogService.ts skipDialogs).
     pub skip_dialogs: bool,
     pub keybindings: keyboard::Keybindings,
@@ -242,6 +244,7 @@ impl Workbench {
             settings,
             host,
             commands: Commands::default(),
+            extension_commands: HashMap::new(),
             skip_dialogs: false,
             keybindings: keyboard::Keybindings::default(),
             keybindings_editor: keybindings_editor_view::KeybindingsEditor::new(cx),

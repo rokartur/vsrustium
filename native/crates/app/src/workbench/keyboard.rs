@@ -74,8 +74,13 @@ impl Workbench {
 
     /// The keybindings the core and extensions contribute; `set_user_keybindings` puts them in the resolver.
     pub fn set_default_keybindings(&mut self, defaults: Vec<Item>) {
+        self.keybindings.defaults = self.with_user_keybindings_resource(defaults);
+    }
+
+    /// The default rules with the reference profile's `resource ==` clauses naming the port's keybindings.json.
+    pub(super) fn with_user_keybindings_resource(&self, defaults: Vec<Item>) -> Vec<Item> {
         let resource = self.keybindings.user_file.as_ref().map(|file| crate::editor::uri_string("file", file)).unwrap_or_default();
-        self.keybindings.defaults = defaults.into_iter().map(|item| Item { when: keybindings::with_keybindings_resource(item.when, &resource), ..item }).collect();
+        defaults.into_iter().map(|item| Item { when: keybindings::with_keybindings_resource(item.when, &resource), ..item }).collect()
     }
 
     /// The Command Palette's items, whose `resource ==` clauses of the reference's profile name the port's
@@ -395,3 +400,6 @@ pub(super) fn report_failure(outcome: Outcome, cx: &mut Context<Workbench>) {
     })
     .detach();
 }
+
+#[cfg(test)]
+mod tests;

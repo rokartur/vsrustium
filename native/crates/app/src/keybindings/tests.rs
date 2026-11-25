@@ -354,3 +354,47 @@ fn a_shifted_symbol_keystroke_resolves_to_its_us_key_with_shift() {
     assert_eq!(super::Chord::from_keystroke(&keystroke("p", true)), chord("shift+cmd+p"));
     assert_eq!(super::Chord::from_keystroke(&keystroke(".", false)), chord("cmd+."));
 }
+
+// keybindingIO.test.ts `readUserKeybindingItem` cases. A rule whose command is not a string is dropped where upstream
+// keeps it with a null command, which binds nothing.
+#[test]
+fn read_user_keybinding_item() {
+    let read = |rule: Value| super::rule_item(&rule, rule["key"].as_str().unwrap_or(""), false);
+    assert!(read(json!({ "key": "ctrl+k ctrl+f", "command": ["firstcommand", "seccondcommand"] })).is_none(), "issue #10452 - invalid command");
+    assert!(read(json!({ "key": "ctrl+k ctrl+f", "command": "firstcommand", "when": [] })).unwrap().when.is_none(), "issue #10452 - invalid when");
+    assert!(read(json!({ "key": [], "command": "firstcommand" })).unwrap().keybinding.is_empty(), "issue #10452 - invalid key");
+    assert!(read(json!({ "key": "", "command": "firstcommand" })).unwrap().keybinding.is_empty(), "issue #10452 - invalid key 2");
+    let with_args = read(json!({ "key": "ctrl+k ctrl+f", "command": "firstcommand", "when": [], "args": { "text": "theText" } })).unwrap();
+    assert_eq!(with_args.args, Some(json!({ "text": "theText" })));
+    assert!(!read(json!({ "key": "ctrl+cmd+a", "command": "firstcommand" })).unwrap().system_wide);
+    assert!(!read(json!({ "key": "ctrl+cmd+a", "command": "firstcommand", "systemWide": "yes" })).unwrap().system_wide);
+    assert!(read(json!({ "key": "ctrl+cmd+a", "command": "firstcommand", "systemWide": true })).unwrap().system_wide);
+}
+
+// keybindingLabels.test.ts 'Electron Accelerator label', macOS cases.
+#[test]
+fn electron_accelerator_label() {
+    let accelerator = |key: &str| super::electron_accelerator(&parse_keybinding(key));
+    assert_eq!(accelerator("cmd+shift+alt+ctrl+a"), Some("Ctrl+Shift+Alt+Cmd+A".into()));
+    assert_eq!(accelerator("cmd+a cmd+b"), None);
+    assert_eq!(accelerator("numpad1"), None);
+    for (key, expected) in [("left", "Left"), ("up", "Up"), ("right", "Right"), ("down", "Down")] {
+        assert_eq!(accelerator(key), Some(expected.into()));
+    }
+}
+
+// abstractKeybindingService.test.ts suite 'appendKeybinding'; a missing command id is the empty string here, and the
+// `enforceContextCheck` cases are left out: only inline completion and chat callers pass it.
+#[test]
+fn append_keybinding() {
+    let resolver = Resolver::new(vec![kb_item("cmd+k", "myCommand", None, None, true)], Vec::new());
+    let none = context(&[]);
+    assert_eq!(resolver.append_keybinding("My Label", "myCommand", &none), "My Label (⌘K)");
+    assert_eq!(Resolver::new(Vec::new(), Vec::new()).append_keybinding("My Label", "myCommand", &none), "My Label");
+    assert_eq!(resolver.append_keybinding("My Label", "", &none), "My Label");
+    assert_eq!(resolver.append_keybinding("", "myCommand", &none), " (⌘K)");
+
+    let with_context = Resolver::new(vec![kb_item("cmd+k", "myCommand", None, Some(Expr::has("key1")), true)], Vec::new());
+    assert_eq!(with_context.append_keybinding("My Label", "myCommand", &context(&[("key1", json!(true))])), "My Label (⌘K)");
+    assert_eq!(with_context.append_keybinding("My Label", "myCommand", &none), "My Label (⌘K)");
+}

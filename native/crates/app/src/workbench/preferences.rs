@@ -101,15 +101,28 @@ impl Workbench {
         }
     }
 
-    /// `defaultKeybindingsContents`: the default keybindings as `KeybindingIO.writeKeybindingItem` writes them, then the
-    /// commands no default keybinding binds (`getAllUnboundCommands`).
+    /// `defaultKeybindingsContents`: the header, then `getDefaultKeybindingsContent` of the workbench's defaults.
     fn default_keybindings_content(&self) -> String {
-        let defaults = &self.keybindings.defaults;
+        format!("// Override key bindings by placing them into your key bindings file.\n{}", self.keybindings_content(&self.keybindings.defaults))
+    }
+
+    /// keybindingsExport.contribution.ts `exportDefaultKeybindingsAndQuit`: writes `doc.keybindings.osx.json` into
+    /// `folder`. shortcut: the Windows and Linux files are not written; the port has only the macOS default table.
+    pub fn export_default_keybindings(&self, folder: &Path) -> std::io::Result<PathBuf> {
+        std::fs::create_dir_all(folder)?;
+        let path = folder.join("doc.keybindings.osx.json");
+        std::fs::write(&path, self.keybindings_content(&self.with_user_keybindings_resource(keybindings::exported_default_keybindings(&self.extensions))))?;
+        Ok(path)
+    }
+
+    /// `getDefaultKeybindingsContent`: `defaults` as `KeybindingIO.writeKeybindingItem` writes them, then the commands
+    /// none of them binds (`getAllUnboundCommands`).
+    fn keybindings_content(&self, defaults: &[KeybindingItem]) -> String {
         let bound: HashSet<&str> = defaults.iter().map(|item| item.command.as_str()).filter(|command| !command.is_empty() && !command.starts_with('-')).collect();
         let registered: Vec<&str> = self.commands.ids().collect();
         let mut unbound = keybindings_editor::unbound_command_ids(&self.quick_access.menu, &registered, &bound);
         unbound.sort();
-        let mut lines = vec!["// Override key bindings by placing them into your key bindings file.".to_string(), "[".to_string()];
+        let mut lines = vec!["[".to_string()];
         for (index, item) in defaults.iter().enumerate() {
             let mut line = write_keybinding_item(item);
             line.push_str(if index + 1 < defaults.len() { "," } else { "" });

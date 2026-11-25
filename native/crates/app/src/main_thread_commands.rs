@@ -6,6 +6,7 @@ use gpui::{Context, Window};
 use serde_json::{Value, json};
 
 use crate::commands::{Outcome, error_value};
+use crate::host_sync::Activation;
 use crate::workbench::Workbench;
 
 impl Workbench {
@@ -24,15 +25,23 @@ impl Workbench {
             ("MainThreadOutputService" | "MainThreadLogger", _) => self.handle_output_request(request, window, cx),
             ("MainThreadCommands", "$registerCommand") => {
                 let id = arg(0).as_str().unwrap_or_default().to_owned();
-                self.commands.register(id.clone(), move |workbench, args, _, _| {
-                    let mut call_args = vec![json!(id)];
+                let handler_id = id.clone();
+                let registration = self.commands.register(id.clone(), move |workbench, args, _, _| {
+                    let mut call_args = vec![json!(handler_id)];
                     call_args.extend(args);
                     Outcome::Pending(workbench.host.call("ExtHostCommands", "$executeContributedCommand", call_args))
                 });
+                // DisposableMap.set disposes the registration it replaces.
+                if let Some(replaced) = self.extension_commands.insert(id.clone(), registration) {
+                    self.commands.dispose(&id, replaced);
+                }
                 Outcome::done()
             }
             ("MainThreadCommands", "$unregisterCommand") => {
-                self.commands.unregister(arg(0).as_str().unwrap_or_default());
+                let id = arg(0).as_str().unwrap_or_default().to_owned();
+                if let Some(registration) = self.extension_commands.remove(&id) {
+                    self.commands.dispose(&id, registration);
+                }
                 Outcome::done()
             }
             ("MainThreadCommands", "$fireCommandActivationEvent") => {
@@ -78,7 +87,7 @@ impl Workbench {
 }
 
 /// The host runs the command again once `onCommand:<id>` activated the extension that registers it.
-fn retry_after_activation(activation: oneshot::Receiver<Result<Value, Value>>, cx: &mut Context<Workbench>) -> Outcome {
+fn retry_after_activation(activation: Activation, cx: &mut Context<Workbench>) -> Outcome {
     let (sender, receiver) = oneshot::channel();
     cx.background_executor()
         .spawn(async move {

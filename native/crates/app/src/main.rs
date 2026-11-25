@@ -1,6 +1,6 @@
 //! The native app: the workbench, themed from the built-in theme files, over the running extension host.
 //! Usage: vsrustium [folder or .code-workspace file [file]] [--theme <settings id>] [--user-data-dir <dir>] [--screenshot <png>]
-//! [--screenshot-keys "<keystroke> ..."] [--screenshot-input <steps>] [--node]
+//! [--screenshot-keys "<keystroke> ..."] [--screenshot-input <steps>] [--node] [--export-default-keybindings [<folder>]]
 //!   [--extensionDevelopmentPath=<dir> [--extensionTestsPath=<path>]]: the app exits with the test runner's code.
 
 #[cfg_attr(not(test), expect(dead_code, reason = "the code action menu of milestone 13 is its first desktop caller"))]
@@ -99,7 +99,7 @@ fn main() -> anyhow::Result<()> {
     let screenshot_input = flag_value("--screenshot-input").unwrap_or_default();
     // Typed before the capture, as port/tools/ref-screenshot types KEYS into the reference.
     let screenshot_keys: Vec<Keystroke> = flag_value("--screenshot-keys").unwrap_or_default().split_whitespace().map(Keystroke::parse).collect::<Result<_, _>>()?;
-    let value_flags = ["--user-data-dir", "--extensions-dir", "--screenshot", "--screenshot-keys", "--screenshot-input", "--theme"];
+    let value_flags = ["--user-data-dir", "--extensions-dir", "--screenshot", "--screenshot-keys", "--screenshot-input", "--theme", "--export-default-keybindings"];
     let positional: Vec<&String> = args.iter().enumerate().skip(1).filter(|(i, arg)| !arg.starts_with("--") && !value_flags.contains(&args[i - 1].as_str())).map(|(_, arg)| arg).collect();
     let canonical = |path: &String| std::fs::canonicalize(path).with_context(|| format!("opening {path}"));
     let workspace = positional.first().map(|path| canonical(path)).transpose()?.map(Workspace::open);
@@ -107,6 +107,10 @@ fn main() -> anyhow::Result<()> {
     let development = ExtensionDevelopment::from_args(&args)?;
 
     let app_root = std::env::current_dir()?;
+    // main.ts: `--export-default-keybindings [folder]`, a folder relative to the working directory, else `<appRoot>/doc`.
+    let export_default_keybindings = args.iter().any(|arg| arg == "--export-default-keybindings").then(|| {
+        flag_value("--export-default-keybindings").filter(|folder| !folder.starts_with("--")).map_or_else(|| app_root.join("doc"), |folder| app_root.join(folder))
+    });
     let extensions_dir = std::env::var_os("VSCODE_GPUI_EXTENSIONS").map(PathBuf::from).unwrap_or_else(|| app_root.join("extensions"));
     let builtins = scan_builtin_extensions(&extensions_dir)?;
     // Artur: user extensions live in ~/.vsrustium/extensions, the default user data dir's extensions folder.
@@ -170,6 +174,13 @@ fn main() -> anyhow::Result<()> {
                 workbench.file_icons = file_icons;
                 workbench.color_themes = color_themes;
                 workbench.extensions = extensions.clone();
+                if let Some(folder) = &export_default_keybindings {
+                    match workbench.export_default_keybindings(folder) {
+                        Ok(path) => eprintln!("[workbench.contrib.keybindingsExport] Wrote {}", path.display()),
+                        Err(error) => eprintln!("[workbench.contrib.keybindingsExport] Failed to generate default keybindings {error}"),
+                    }
+                    cx.quit();
+                }
                 workbench.restore_profile_state(storage.profile.clone());
                 workbench.restore_workspace_state(storage.workspace.clone());
                 workbench.watch_editor_focus(window, cx);
@@ -223,6 +234,9 @@ fn main() -> anyhow::Result<()> {
                 cx.spawn_in(window, async move |workbench, cx| {
                     while let Some(line) = receiver.next().await {
                         eprintln!("{line}");
+                        if line.starts_with(HANDSHAKE_PREFIX) {
+                            let _ = workbench.update(cx, |workbench, _| workbench.host.installed_extensions_registered = true);
+                        }
                         let (true, Some(path)) = (line.starts_with(ACTIVATED_PREFIX), screenshot.as_ref()) else { continue };
                         // Captured once eager extensions are up, so the frame shows the workbench as the host left it.
                         cx.background_executor().timer(Duration::from_millis(500)).await;
@@ -300,7 +314,7 @@ fn run_extension_host(
     let entry = app_root.join("out-exthost/bootstrap-exthost.js");
 
     let host = ExtensionHost::start(HostOptions { runtime, entry: &entry, extra_env: vec![], extra_args: vec![] }, &init)?;
-    let _ = status.unbounded_send(format!("handshake done, pid {}", host.child.id()));
+    let _ = status.unbounded_send(format!("{HANDSHAKE_PREFIX}{}", host.child.id()));
     let mut session = Session::new(host);
     let folders: Vec<PathBuf> = workspace.iter().flat_map(|workspace| workspace.folders.iter().map(|folder| folder.path.clone())).collect();
     let mut watched = Vec::new();
@@ -353,6 +367,7 @@ fn run_extension_host(
 const VERSION: &str = "1.147.0";
 
 const ACTIVATED_PREFIX: &str = "eager extensions activated: ";
+const HANDSHAKE_PREFIX: &str = "handshake done, pid ";
 
 /// A step of `--screenshot-input`: `right X Y` (a right click), `move X Y` or `key KEYSTROKE`, in window points.
 fn screenshot_step(step: &str) -> anyhow::Result<gpui::PlatformInput> {
