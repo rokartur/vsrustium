@@ -52,7 +52,7 @@ impl Workbench {
         self.workspace_storage = storage;
         let stored = self.workspace_storage.lock().unwrap().get(HISTORY_STORAGE_KEY).map(str::to_owned);
         let excluded = self.history_exclude_matcher();
-        self.quick_access.editor_history = EditorHistory::load(stored.as_deref(), |path| !excluded(path));
+        self.quick_access.editor_history = EditorHistory::load(stored.as_deref(), |path| !excluded(path, None));
         self.restore_find_state();
         self.restore_search_history();
         self.restore_explorer_view_state();
@@ -63,7 +63,7 @@ impl Workbench {
     pub(super) fn record_editor_history(&mut self) {
         let Some(editor) = self.editors.active() else { return };
         let path = editor.document.path.clone();
-        if self.quick_access.editor_history.entries.first() == Some(&path) || self.history_exclude_matcher()(&path) {
+        if self.quick_access.editor_history.entries.first() == Some(&path) || self.history_exclude_matcher()(&path, None) {
             return;
         }
         self.quick_access.editor_history.add(&path);
@@ -88,14 +88,14 @@ impl Workbench {
     }
 
     /// `includeInHistory`: `ExcludeResourceGlobMatcher` over `files.exclude` and `search.exclude`.
-    fn history_exclude_matcher(&self) -> impl Fn(&Path) -> bool + use<> {
+    fn history_exclude_matcher(&self) -> impl Fn(&Path, Option<&dyn Fn(&str) -> bool>) -> bool + use<> {
         self.resource_glob_matcher(&|setting, root| search::query::excludes(root.unwrap_or(Path::new("/")), setting, true).unwrap_or_default())
     }
 
     /// `ResourceGlobMatcher`: matches the path relative to its workspace folder with that folder's expression, and
     /// the absolute path too when a pattern is absolute; a path outside every folder matches the global expression
-    /// by its absolute path.
-    pub(super) fn resource_glob_matcher(&self, expression_for: &ExpressionFor) -> impl Fn(&Path) -> bool + use<> {
+    /// by its absolute path. `has_sibling` answers an expression's `when` clauses.
+    pub(super) fn resource_glob_matcher(&self, expression_for: &ExpressionFor) -> impl Fn(&Path, Option<&dyn Fn(&str) -> bool>) -> bool + use<> {
         let workspace = self.workspace().cloned();
         let settings = self.settings.lock().unwrap();
         let matcher_for = |root: Option<&Path>| {
@@ -106,7 +106,7 @@ impl Workbench {
         };
         let folder_matchers: Vec<_> = workspace.iter().flat_map(|workspace| &workspace.folders).map(|folder| matcher_for(Some(&folder.path))).collect();
         let global_matcher = matcher_for(None);
-        move |path: &Path| {
+        move |path: &Path, has_sibling: Option<&dyn Fn(&str) -> bool>| {
             let absolute = path.to_string_lossy();
             let folder = workspace.as_ref().and_then(|workspace| workspace.folder_of(path).map(|folder| (workspace, folder)));
             let ((matcher, has_absolute_path), relative) = match folder {
@@ -117,11 +117,11 @@ impl Workbench {
                 }
                 None => (&global_matcher, None),
             };
-            if matcher.matches(relative.as_deref().unwrap_or(&absolute), None, None).is_some() {
+            if matcher.matches(relative.as_deref().unwrap_or(&absolute), None, has_sibling).is_some() {
                 return true;
             }
             let Some(relative) = relative.filter(|_| *has_absolute_path) else { return false };
-            matcher.matches(&absolute, None, None).is_some() && !matcher.is_excepted(&relative, None)
+            matcher.matches(&absolute, None, has_sibling).is_some() && !matcher.is_excepted(&relative, None)
         }
     }
 

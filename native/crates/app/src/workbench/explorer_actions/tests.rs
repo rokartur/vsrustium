@@ -341,6 +341,40 @@ fn closing_the_window_stores_the_tree_view_state_for_the_next_open(cx: &mut Test
     assert_eq!(restored, (true, Some(dir.join("sub/b.txt"))));
     std::fs::remove_dir_all(&dir).unwrap();
 }
+#[gpui::test]
+fn opening_a_file_reveals_it_unless_auto_reveal_is_off_or_excludes_it(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = explorer("explorer-auto-reveal", cx);
+    std::fs::create_dir_all(dir.join("node_modules/lib")).unwrap();
+    std::fs::write(dir.join("node_modules/lib/x.js"), "").unwrap();
+    // More rows than the 1080px test window shows.
+    for index in 0..150 {
+        std::fs::write(dir.join(format!("sub/f{index:03}.txt")), "").unwrap();
+    }
+    let user = std::env::temp_dir().join(format!("code-gpui-auto-reveal-user-{}", std::process::id()));
+    let settings = config::service::Settings::load(config::registry::Registry::with_extensions(&[]), user.clone(), None);
+    workbench.update(cx, |workbench, _| *workbench.settings.lock().unwrap() = settings);
+    let open = |path: PathBuf, cx: &mut VisualTestContext| {
+        workbench.update_in(cx, |workbench, window, cx| workbench.open_file(path, true, window, cx));
+        cx.run_until_parked();
+    };
+
+    open(dir.join("sub/f149.txt"), cx);
+    assert_eq!(focused(&workbench, cx), Some(dir.join("sub/f149.txt")));
+    let scroll_top = workbench.read_with(cx, |workbench, _| -workbench.explorer.scroll.offset().y);
+    assert!(scroll_top > px(0.), "the row below the view scrolls in");
+
+    workbench.update(cx, |workbench, _| workbench.settings.lock().unwrap().update_value_derived("explorer.autoReveal", Some(&serde_json::json!(false))).unwrap());
+    open(dir.join("a.txt"), cx);
+    assert_eq!(focused(&workbench, cx), Some(dir.join("sub/f149.txt")), "explorer.autoReveal false keeps the selection");
+
+    workbench.update(cx, |workbench, _| workbench.settings.lock().unwrap().update_value_derived("explorer.autoReveal", Some(&serde_json::json!(true))).unwrap());
+    open(dir.join("node_modules/lib/x.js"), cx);
+    assert_eq!(focused(&workbench, cx), Some(dir.join("sub/f149.txt")), "the default explorer.autoRevealExclude has **/node_modules");
+    assert!(!rows(&workbench, cx).contains(&"x.js".to_string()));
+    std::fs::remove_dir_all(&dir).unwrap();
+    std::fs::remove_dir_all(&user).unwrap();
+}
+
 
 fn rows(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<String> {
     workbench.read_with(cx, |workbench, _| workbench.folder.as_ref().unwrap().rows().into_iter().map(|row| row.name).collect())

@@ -190,6 +190,8 @@ impl Render for Workbench {
             .child(
                 div()
                     .flex_1()
+                    // Without it a tall Explorer grows the row past the window instead of scrolling.
+                    .min_h_0()
                     .flex()
                     .flex_row()
                     .gap(px(4.))
@@ -386,9 +388,7 @@ impl Workbench {
 
     /// Keeps the Explorer selection and the extension host in step with the group.
     fn editors_changed(&mut self, cx: &mut Context<Self>) {
-        if let (Some(tree), Some(editor)) = (self.folder.as_mut(), self.editors.active()) {
-            tree.reveal(&editor.document.path);
-        }
+        self.reveal_active_file();
         self.record_editor_history();
         self.drop_closed_search_editors();
         self.load_search_editor_widget();

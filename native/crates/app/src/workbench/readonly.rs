@@ -104,8 +104,8 @@ impl Workbench {
         }
         drop(settings);
         let expression = |key: &'static str| move |setting: search::query::Setting, _: Option<&Path>| setting(Path::new(""), key).as_object().cloned().unwrap_or_default();
-        if self.resource_glob_matcher(&expression("files.readonlyInclude"))(path) {
-            return (!self.resource_glob_matcher(&expression("files.readonlyExclude"))(path)).then_some(Readonly::Configured);
+        if self.resource_glob_matcher(&expression("files.readonlyInclude"))(path, None) {
+            return (!self.resource_glob_matcher(&expression("files.readonlyExclude"))(path, None)).then_some(Readonly::Configured);
         }
         let locked = || std::fs::metadata(path).is_ok_and(|stat| stat.permissions().mode() & 0o200 == 0);
         (scheme == "file" && self.setting("files.readonlyFromPermissions") == Value::Bool(true) && locked()).then_some(Readonly::Locked)

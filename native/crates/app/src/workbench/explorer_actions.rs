@@ -77,10 +77,19 @@ impl Workbench {
     }
 
     pub(super) fn restore_explorer_view_state(&mut self) {
+        let expand_single_folder = self.setting("explorer.expandSingleFolderWorkspaces") == json!(true);
         let Some(tree) = &mut self.folder else { return };
         let stored = self.workspace_storage.lock().unwrap().get(TREE_VIEW_STATE_KEY).and_then(|raw| serde_json::from_str::<Value>(raw).ok());
         let Some(state) = stored else { return };
         let scroll_top = tree.restore_view_state(&state);
+        // `setTreeInput`: a workspace file with one folder expands it on load even when the stored state has it collapsed.
+        if let [folder] = tree.workspace.folders.as_slice()
+            && tree.shows_roots()
+            && expand_single_folder
+        {
+            let folder = folder.path.clone();
+            tree.set_expanded(&folder, true);
+        }
         self.explorer.scroll.set_offset(gpui::point(px(0.), px(-scroll_top)));
     }
 
@@ -257,6 +266,45 @@ impl Workbench {
 
     pub(super) fn setting(&self, key: &str) -> Value {
         self.settings.lock().unwrap().get_value(Some(key), &Overrides::default()).unwrap_or(Value::Null)
+    }
+
+    /// explorerView.ts `selectActiveFile` with `explorer.autoReveal`: selects the active file unless
+    /// `explorer.autoRevealExclude` matches it, and with `true` scrolls a row out of view to the middle (`reveal(item, 0.5)`).
+    pub(super) fn reveal_active_file(&mut self) {
+        let Some(path) = self.editors.active().map(|editor| editor.document.path.clone()) else { return };
+        let auto_reveal = self.setting("explorer.autoReveal");
+        if auto_reveal == json!(false) || self.auto_reveal_excluded(&path) {
+            return;
+        }
+        let Some(tree) = self.folder.as_mut() else { return };
+        if tree.focused.as_ref() == Some(&path) && tree.selected == [path.clone()] {
+            return;
+        }
+        tree.reveal(&path);
+        if auto_reveal != json!(true) {
+            return;
+        }
+        let rows = tree.rows();
+        let Some(index) = rows.iter().position(|row| tree.focused.as_ref() == Some(&row.path)) else { return };
+        let (row_height, viewport) = (px(22.), self.explorer.scroll.bounds().size.height);
+        let (top, scroll_top) = (row_height * index as f32, -self.explorer.scroll.offset().y);
+        if top < scroll_top || top + row_height > scroll_top + viewport {
+            let max_scroll_top = (row_height * rows.len() as f32 - viewport).max(px(0.));
+            let scroll_top = (top - (viewport - row_height) * 0.5).clamp(px(0.), max_scroll_top);
+            self.explorer.scroll.set_offset(gpui::point(px(0.), -scroll_top));
+        }
+    }
+
+    /// explorerService.ts `shouldAutoRevealItem`: the pattern matches the file, with its siblings for `when`, or a
+    /// folder above it inside its workspace folder.
+    fn auto_reveal_excluded(&self, path: &Path) -> bool {
+        let excluded = self.resource_glob_matcher(&|setting, root| setting(root.unwrap_or(Path::new("/")), "explorer.autoRevealExclude").as_object().cloned().unwrap_or_default());
+        let Some(parent) = path.parent() else { return false };
+        if excluded(path, Some(&|name: &str| parent.join(name).exists())) {
+            return true;
+        }
+        let Some(root) = self.workspace().and_then(|workspace| workspace.folder_of(path)) else { return false };
+        path.ancestors().skip(1).take_while(|folder| *folder != root.path).any(|folder| excluded(folder, None))
     }
 
     /// `openExplorerAndCreate`: the new item's row with the name editor, in the focused folder or the focused
