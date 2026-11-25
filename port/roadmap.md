@@ -6,7 +6,7 @@ Rule for every milestone (Artur): a feature ships end to end and 1:1 with VS Cod
 
 Mouse cursors are part of the look (Artur): every element gets the cursor the reference CSS gives it (`rg 'cursor:' src/vs --glob '*.css'`): `pointer` on clickable items (activity bar, tabs, list rows, status bar items with a command, buttons, links), `text` over editor text and input fields, the resize cursors on sashes, `default` elsewhere. GPUI: `.cursor_pointer()`, `.cursor_text()`, `.cursor_ew_resize()` and the like on the element, never a window-wide cursor.
 
-Ledger today: 89 verified, 113 ported, 52 stub, 221 todo, 104 removed, 14 n/a (of 593 rows).
+Ledger today: 93 verified, 115 ported, 51 stub, 213 todo, 104 removed, 17 n/a (of 593 rows).
 
 ## Done
 
