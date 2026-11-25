@@ -87,6 +87,8 @@ pub struct TerminalView {
     pub(super) history: super::terminal_history::TerminalHistories,
     /// The instance whose sticky scroll overlay the pointer is over.
     pub(super) sticky_hovered: Option<u32>,
+    /// The last resize: its instance, `cols x rows` and when.
+    pub(super) resize_overlay: Option<(u32, String, std::time::Instant)>,
 }
 
 #[derive(Default)]
@@ -147,6 +149,7 @@ impl TerminalView {
             suggest: Default::default(),
             history: Default::default(),
             sticky_hovered: None,
+            resize_overlay: None,
         }
     }
 
@@ -343,6 +346,7 @@ impl Workbench {
         self.register_terminal_panel_view();
         self.register_terminal_history_actions();
         self.register_terminal_sticky_scroll_actions();
+        self.register_terminal_environment_actions();
         self.register_terminal_find_actions();
     }
 
@@ -982,6 +986,7 @@ impl Workbench {
             .when(border_left, |pane| pane.border_l_1().border_color(border))
             .child(canvas(|_, _, _| {}, move |bounds, _, window, cx| entity.update(cx, |workbench, _| workbench.paint_terminal_pane(id, bounds, window))).size_full())
             .children(self.terminal_sticky_scroll_hit_area(id, cx))
+            .children(self.terminal_resize_overlay(id))
             .on_hover(cx.listener(move |workbench, hovered: &bool, _, cx| {
                 workbench.terminal_view.hovered = hovered.then_some(id);
                 cx.notify();
@@ -1041,7 +1046,9 @@ impl Workbench {
         });
         if resized {
             self.terminal_resized(id);
+            self.show_resize_overlay(id);
         }
+        self.repaint_while_resize_overlay_shows(id, window);
     }
 
     pub(super) fn terminal_scrollbar_width(&self) -> f32 {

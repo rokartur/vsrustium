@@ -97,6 +97,8 @@ pub struct TerminalInstance {
     events: Listener,
     pty: Option<Pty>,
     pub pid: Option<i32>,
+    /// When the instance was created; the resize overlay waits a second after it.
+    pub started: Instant,
     /// The name the user gave with Rename (`TitleEventSource.Api` from the rename command).
     pub user_title: Option<String>,
     /// `${process}`: the foreground process of the PTY.
@@ -204,6 +206,7 @@ impl TerminalInstance {
             shell_integration: ShellIntegration::new(nonce),
             utf8_tail: Vec::new(),
             process_input: None,
+            started: Instant::now(),
             on_input: None,
             shell_type: None,
             prompt_input: prompt_input::PromptInputModel::default(),
