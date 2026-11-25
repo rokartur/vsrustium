@@ -446,7 +446,6 @@ fn registry_default(key: &str, kind: ThemeKind) -> ColorValue {
         "inputOption.activeBackground" => (Transparent(&Key("focusBorder"), 0.4), Transparent(&Key("focusBorder"), 0.2), Hex("#0000")),
         "inputOption.activeForeground" => (Hex("#FFFFFF"), Hex("#000000"), Key("foreground")),
         // workbench/common/theme.ts, for the notification toasts and center.
-        "editorError.foreground" => (Hex("#F14C4C"), Hex("#E51400"), Hex("#F48771")),
         "notificationCenter.border" | "notificationToast.border" => (Key("widget.border"), Key("widget.border"), Key("contrastBorder")),
         "notifications.foreground" => (Key("editorWidget.foreground"), Key("editorWidget.foreground"), Key("editorWidget.foreground")),
         "notifications.background" => (Key("editorWidget.background"), Key("editorWidget.background"), Key("editorWidget.background")),
@@ -581,7 +580,6 @@ fn hc_light_default(key: &str) -> ColorValue {
         "inputOption.activeBorder" => Key("contrastBorder"),
         "inputOption.activeBackground" => Hex("#0000"),
         "inputOption.activeForeground" => Key("foreground"),
-        "editorError.foreground" => Hex("#B5200D"),
         "notificationCenter.border" | "notificationToast.border" => Key("contrastBorder"),
         "notifications.foreground" => Key("editorWidget.foreground"),
         "notifications.background" | "notificationCenterHeader.background" => Key("editorWidget.background"),
