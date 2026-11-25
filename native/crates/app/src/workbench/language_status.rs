@@ -32,7 +32,8 @@ const WARNING: u64 = 2;
 const ERROR: u64 = 3;
 /// actionbar.css: a 16px codicon in a 3px padded `.action-label`.
 const PIN_BOX: f32 = 22.;
-const ROW_HEIGHT: f32 = PIN_BOX;
+/// The hover's 19px line; the pin's box overflows it (ui-pair: rows 20px apart with the border in the reference).
+const ROW_HEIGHT: f32 = super::hover::LINE_HEIGHT;
 /// `.right:not(:empty)`.
 const RIGHT_PADDING: f32 = 16.;
 
