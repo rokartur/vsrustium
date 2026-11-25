@@ -416,6 +416,7 @@ impl Workbench {
         self.search_editor_context(window, &mut context);
         self.output_context(window, &mut context);
         self.terminal_context(window, &mut context);
+        self.task_context(&mut context);
         self.accessibility_context(&mut context);
         context
     }

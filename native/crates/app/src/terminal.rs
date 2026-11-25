@@ -12,6 +12,8 @@ pub mod mouse;
 pub mod profiles;
 pub mod prompt_input;
 pub mod environment_collection;
+pub mod history;
+pub mod sticky_scroll;
 pub mod injection;
 pub mod pty;
 pub mod search;
@@ -133,6 +135,30 @@ pub struct TerminalInstance {
     pub shell_type: Option<&'static str>,
     /// commandDetectionCapability.ts `promptInputModel`, fed by the B, C, D and P sequences.
     pub prompt_input: prompt_input::PromptInputModel,
+    /// commandDetectionCapability.ts `commands`: the finished commands of this session, oldest first.
+    pub commands: Vec<FinishedCommand>,
+    /// cwdDetectionCapability.ts `cwds`: each cwd once, the last one entered last.
+    pub cwds: Vec<String>,
+    /// The marks and output of the command being entered or run.
+    current: FinishedCommand,
+}
+
+/// `ITerminalCommand`: lines are absolute buffer lines, as `BufferPoint` counts them.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FinishedCommand {
+    pub command: String,
+    pub cwd: Option<String>,
+    pub exit_code: Option<i32>,
+    /// Milliseconds since the Unix epoch when it finished.
+    pub timestamp: u64,
+    pub output: String,
+    /// The A (prompt start), B (command start), C (executed) and D (finished) lines.
+    pub prompt_line: Option<i64>,
+    pub command_line: Option<i64>,
+    pub executed_line: Option<i64>,
+    pub end_line: Option<i64>,
+    /// The cursor column at C (`executedX`).
+    pub executed_column: Option<usize>,
 }
 
 /// What one chunk of process output did: its text (`onData`) and the shell integration events in stream order.
@@ -181,6 +207,9 @@ impl TerminalInstance {
             on_input: None,
             shell_type: None,
             prompt_input: prompt_input::PromptInputModel::default(),
+            commands: Vec::new(),
+            cwds: Vec::new(),
+            current: FinishedCommand::default(),
         };
         if instance.launch.extension_pty {
             return (instance, None);
@@ -223,7 +252,7 @@ impl TerminalInstance {
         let mut input_changed = false;
         for sequence in self.shell_integration.scan(&text) {
             if self.shell_integration.executing() && sequence.start > fed {
-                shell_events.push(ShellEvent::ExecutionData(text[fed..sequence.start].to_owned()));
+                self.push_shell_event(&mut shell_events, ShellEvent::ExecutionData(text[fed..sequence.start].to_owned()));
             }
             self.feed(&text[fed..sequence.end], colors);
             fed = sequence.end;
@@ -231,7 +260,7 @@ impl TerminalInstance {
             let command_start = self.shell_integration.command_start_point();
             input_changed |= self.prompt_sequence(&sequence.payload, cursor);
             for event in self.shell_integration.handle(&sequence.payload, cursor) {
-                shell_events.push(match event {
+                let event = match event {
                     ShellEvent::CommandExecuted(command) if command.command_line.is_empty() => match command_start {
                         Some((start, single_line_after_prompt)) => {
                             let line = self.buffer_text(start, cursor);
@@ -241,15 +270,38 @@ impl TerminalInstance {
                         None => ShellEvent::CommandExecuted(command),
                     },
                     event => event,
-                });
+                };
+                self.push_shell_event(&mut shell_events, event);
             }
         }
         if self.shell_integration.executing() && fed < text.len() {
-            shell_events.push(ShellEvent::ExecutionData(text[fed..].to_owned()));
+            self.push_shell_event(&mut shell_events, ShellEvent::ExecutionData(text[fed..].to_owned()));
         }
         self.feed(&text[fed..], colors);
         input_changed |= self.prompt_input.sync(&self.term);
         Processed { text, shell_events, input_changed }
+    }
+
+    /// Keeps `commands` and `cwds` as the command and cwd detection capabilities do, then queues the event.
+    fn push_shell_event(&mut self, events: &mut Vec<ShellEvent>, event: ShellEvent) {
+        match &event {
+            ShellEvent::ExecutionData(data) => self.current.output.push_str(data),
+            ShellEvent::CommandFinished(command) => {
+                let mut finished = std::mem::take(&mut self.current);
+                finished.command = command.command_line.clone();
+                finished.cwd = command.cwd.clone();
+                finished.exit_code = command.exit_code;
+                finished.timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |elapsed| elapsed.as_millis() as u64);
+                self.commands.push(finished);
+            }
+            ShellEvent::Cwd(cwd) => {
+                self.cwds.retain(|seen| seen != cwd);
+                self.cwds.push(cwd.clone());
+            }
+            ShellEvent::CommandExecuted(command) => self.current.command = command.command_line.clone(),
+            ShellEvent::CommandDetectionAdded => {}
+        }
+        events.push(event);
     }
 
     /// The prompt input model's side of shellIntegrationAddon.ts: B starts the input, C and D end it, `P;Prompt=`
@@ -261,12 +313,22 @@ impl TerminalInstance {
         }
         let mut args = pt.split(';');
         match args.next() {
-            Some("B") => self.prompt_input.command_start(&self.term, cursor),
+            Some("A") => {
+                self.current = FinishedCommand { prompt_line: Some(cursor.line), ..FinishedCommand::default() };
+                false
+            }
+            Some("B") => {
+                self.current.command_line = Some(cursor.line);
+                self.prompt_input.command_start(&self.term, cursor)
+            }
             Some("C") => {
+                self.current.executed_line = Some(cursor.line);
+                self.current.executed_column = Some(cursor.column);
                 self.prompt_input.command_executed();
                 true
             }
             Some("D") => {
+                self.current.end_line = Some(cursor.line);
                 self.prompt_input.command_finished();
                 true
             }

@@ -566,6 +566,8 @@ fn registry_default(key: &str, kind: ThemeKind) -> ColorValue {
         "editorStickyScrollHover.background" => (Hex("#2A2D2E"), Hex("#F0F0F0"), None),
         "editorStickyScroll.border" => (None, None, Key("contrastBorder")),
         "editorStickyScroll.shadow" => (Key("scrollbar.shadow"), Key("scrollbar.shadow"), Key("scrollbar.shadow")),
+        "terminalStickyScrollHover.background" => (Hex("#2A2D2E"), Hex("#F0F0F0"), Hex("#E48B39")),
+        "terminalStickyScroll.border" => (None, None, Hex("#6fc3df")),
         "scrollbar.shadow" => (Hex("#000000"), Hex("#DDDDDD"), None),
         "editor.selectionHighlightBackground" => (
             LessProminent(&Key("editor.selectionBackground"), &Key("editor.background"), 0.3, 0.6),
@@ -650,6 +652,7 @@ fn hc_light_default(key: &str) -> ColorValue {
         "editorStickyScrollHover.background" => Transparent(&Hex("#0F4A85"), 0.1),
         "editorStickyScroll.border" => Key("contrastBorder"),
         "editorStickyScroll.shadow" => Key("scrollbar.shadow"),
+        "terminalStickyScrollHover.background" | "terminalStickyScroll.border" => Hex("#0f4a85"),
         "editor.background" => Hex("#ffffff"),
         "sideBar.background" => Hex("#FFFFFF"),
         "panel.background" => Key("editor.background"),

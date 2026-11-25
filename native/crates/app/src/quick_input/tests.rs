@@ -208,6 +208,20 @@ fn filtering_does_not_carry_a_section_label_across_an_unlabelled_boundary() {
 }
 
 #[test]
+fn a_header_shows_above_its_first_visible_item_and_not_beside_it() {
+    let mut entries = items(&["---A", "apple", "avocado"]);
+    entries.insert(2, Entry::Header(Header { handle: -1, label: "B".into(), ..Header::default() }));
+    let mut input = QuickInput::new(1, Kind::QuickPick);
+    input.set_items(entries);
+    input.sort_by_label = false;
+    input.show();
+    let headers = |input: &QuickInput| input.order.iter().map(|row| (input.rows[*row].item.label.clone(), input.rows[*row].header.as_ref().map(|header| header.label.clone()), input.rows[*row].separator.clone())).collect::<Vec<_>>();
+    assert_eq!(headers(&input), [("apple".into(), None, Some("A".into())), ("avocado".into(), Some("B".into()), None)]);
+    input.set_value("apple".into());
+    assert_eq!(headers(&input), [("apple".to_owned(), None, Some("A".to_owned()))]);
+}
+
+#[test]
 fn api_create_quick_pick_select_second() {
     let mut input = pick(&["eins", "zwei", "drei"]);
     input.show();

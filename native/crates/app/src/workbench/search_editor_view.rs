@@ -124,7 +124,6 @@ impl Workbench {
         match self.search_editors.get(&editor.document.path).filter(|_| editor.document.scheme == SEARCH_EDITOR_SCHEME) {
             Some(search_editor) => search_editor_name(search_editor.backing_file.as_deref(), &search_editor.config.query),
             None if editor.document.scheme == crate::output::OUTPUT_SCHEME => "Output".into(),
-            None if editor.document.scheme == super::terminal_view::TERMINAL_SCHEME => "Terminal".into(),
             None if editor.document.scheme == "untitled" => crate::untitled::name(editor, self.untitled_names_from_content()),
             None if editor.document.scheme == super::local_history_actions::LOCAL_HISTORY_SCHEME => {
                 self.local_history_labels.get(&editor.document.path).cloned().unwrap_or_else(|| editor.document.name())

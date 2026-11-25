@@ -4,12 +4,14 @@
 use std::collections::HashMap;
 
 use alacritty_terminal::grid::Dimensions;
-use alacritty_terminal::index::Side;
-use alacritty_terminal::term::cell::Flags;
+use alacritty_terminal::index::{Column, Line, Side};
+use alacritty_terminal::term::cell::{Cell, Flags};
+use alacritty_terminal::term::color::Colors;
 use alacritty_terminal::vte::ansi::{Color, CursorShape, NamedColor};
-use gpui::{Bounds, Font, FontStyle, FontWeight, Hsla, Pixels, Rgba, SharedString, StrikethroughStyle, TextRun, UnderlineStyle, Window, fill, font, outline, point, px, size};
+use gpui::{BoxShadow, Corners, Bounds, Font, FontStyle, FontWeight, Hsla, Pixels, Rgba, SharedString, StrikethroughStyle, TextRun, UnderlineStyle, Window, fill, font, outline, point, px, size};
 
 use crate::terminal::TerminalInstance;
+use crate::terminal::sticky_scroll::StickyScroll;
 use crate::terminal::colors::{TerminalColors, ensure_contrast_ratio};
 
 /// xtermTerminal.ts `TerminalScrollbarWidth` under `workbench.experimental.modernUI`, else the classic width.
@@ -122,28 +124,7 @@ pub fn paint(bounds: Bounds<Pixels>, instance: &TerminalInstance, look: &Look, w
     let content = term.renderable_content();
     let offset = content.display_offset as i32;
     let colors = look.colors;
-    let resolve = |color: Color, bold: bool| -> Rgba {
-        let index = match color {
-            Color::Spec(rgb) => return rgba(rgb.r, rgb.g, rgb.b),
-            Color::Indexed(index) if bold && look.draw_bold_text_in_bright_colors && index < 8 => index as usize + 8,
-            Color::Indexed(index) => index as usize,
-            Color::Named(named) if bold && look.draw_bold_text_in_bright_colors && (named as usize) < 8 => named as usize + 8,
-            Color::Named(named) => named as usize,
-        };
-        if let Some(rgb) = content.colors[index] {
-            return rgba(rgb.r, rgb.g, rgb.b);
-        }
-        match index {
-            0..256 => colors.palette[index],
-            index if index == NamedColor::Background as usize => colors.background,
-            index if index == NamedColor::Cursor as usize => colors.cursor,
-            index if (NamedColor::DimBlack as usize..=NamedColor::DimWhite as usize).contains(&index) => {
-                let color = colors.palette[index - NamedColor::DimBlack as usize];
-                Rgba { a: color.a * 0.5, ..color }
-            }
-            _ => colors.foreground,
-        }
-    };
+    let resolve = |color: Color, bold: bool| resolve_color(color, bold, content.colors, look);
     let cursor = content.cursor;
     let cursor_row = cursor.point.line.0 + offset;
     let cursor_shown = cursor.shape != CursorShape::Hidden && !(look.focused && look.cursor_blink_off);
@@ -206,27 +187,7 @@ pub fn paint(bounds: Bounds<Pixels>, instance: &TerminalInstance, look: &Look, w
             let selection = if look.focused { colors.selection } else { colors.inactive_selection };
             window.paint_quad(fill(cell_bounds, selection));
         }
-        let character = indexed.cell.c;
-        if character == ' ' || character == '\0' || flags.contains(Flags::HIDDEN) {
-            continue;
-        }
-        let line = &mut rows_text[row];
-        let start = line.text.len();
-        line.text.push(character);
-        for &zero_width in indexed.cell.zerowidth().into_iter().flatten() {
-            line.text.push(zero_width);
-        }
-        line.cells.push(CellText { start, column, fg, bold, italic: flags.contains(Flags::ITALIC) });
-        let decoration_width = px(metrics.cell_width * width as f32);
-        if flags.intersects(Flags::ALL_UNDERLINES) {
-            let underline_color = indexed.cell.underline_color().map_or(fg, |color| resolve(color, false));
-            let style = UnderlineStyle { thickness: px(1.), color: Some(Hsla::from(underline_color)), wavy: flags.contains(Flags::UNDERCURL) };
-            window.paint_underline(point(cell_bounds.origin.x, cell_bounds.bottom() - px(metrics.descent.max(2.)) + px(1.)), decoration_width, &style);
-        }
-        if flags.contains(Flags::STRIKEOUT) {
-            let style = StrikethroughStyle { thickness: px(1.), color: Some(Hsla::from(fg)) };
-            window.paint_strikethrough(point(cell_bounds.origin.x, cell_bounds.origin.y + px((metrics.cell_height / 2.).round())), decoration_width, &style);
-        }
+        push_cell_text(indexed.cell, column, fg, cell_bounds, &mut rows_text[row], &resolve, metrics, window);
     }
 
     let baseline = |row: usize| {
@@ -253,6 +214,144 @@ pub fn paint(bounds: Bounds<Pixels>, instance: &TerminalInstance, look: &Look, w
     let history = term.history_size();
     if look.hovered && history > 0 {
         paint_scrollbar(bounds, rows, history, content.display_offset, look, window);
+    }
+}
+
+/// terminalStickyScroll.css `.terminal-sticky-scroll`: its colors, the hover one while the pointer is over it.
+pub struct StickyLook {
+    pub background: Rgba,
+    pub hover: Option<Rgba>,
+    pub border: Option<Rgba>,
+    pub shadow: Option<Rgba>,
+}
+
+/// The overlay: left of the gutter to the scrollbar, its top `shift` rows above the grid's.
+pub fn sticky_scroll_bounds(bounds: Bounds<Pixels>, rows: usize, sticky: &StickyScroll, metrics: &CellMetrics, scrollbar_width: f32) -> Bounds<Pixels> {
+    let top = grid_origin(bounds, rows, metrics).y - px(sticky.shift as f32 * metrics.cell_height);
+    Bounds::new(point(bounds.origin.x, top), size(bounds.size.width - px(scrollbar_width), px(sticky.count as f32 * metrics.cell_height)))
+}
+
+/// The sticky overlay's own xterm: the buffer lines `sticky` names, without cursor or selection, ` …` after the
+/// last when truncated, a `0 3px 2px -2px` shadow and a bottom border.
+pub fn paint_sticky_scroll(bounds: Bounds<Pixels>, instance: &TerminalInstance, sticky: &StickyScroll, sticky_look: &StickyLook, look: &Look, window: &mut Window) {
+    let metrics = look.metrics;
+    let term = &instance.term;
+    let overlay = sticky_scroll_bounds(bounds, term.screen_lines(), sticky, metrics, look.scrollbar_width);
+    if let Some(shadow) = sticky_look.shadow {
+        let shadow = BoxShadow { color: Hsla::from(shadow), offset: point(px(0.), px(3.)), blur_radius: px(2.), spread_radius: px(-2.), inset: false };
+        window.paint_drop_shadows(overlay, Corners::default(), &[shadow]);
+    }
+    let background = sticky_look.hover.unwrap_or(sticky_look.background);
+    window.paint_quad(fill(overlay, background));
+    if let Some(border) = sticky_look.border {
+        window.paint_quad(fill(Bounds::new(point(overlay.origin.x, overlay.bottom()), size(overlay.size.width, px(1.))), border));
+    }
+
+    let origin = point(overlay.origin.x + px(GUTTER), overlay.origin.y);
+    let resolve = |color: Color, bold: bool| resolve_color(color, bold, term.colors(), look);
+    let mut contrast_cache: HashMap<([u32; 4], [u32; 4]), Option<Rgba>> = HashMap::new();
+    for row in 0..sticky.count {
+        let line = sticky.start + row as i64;
+        let y = origin.y + px(row as f32 * metrics.cell_height);
+        let mut text = RowText::default();
+        let mut last_column = None;
+        for column in 0..term.columns() {
+            let cell = &term.grid()[Line((line - term.history_size() as i64) as i32)][Column(column)];
+            if cell.flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER) {
+                continue;
+            }
+            let bold = cell.flags.contains(Flags::BOLD);
+            let mut fg = resolve(cell.fg, bold);
+            let mut bg = match cell.bg {
+                Color::Named(NamedColor::Background) => None,
+                color => Some(resolve(color, false)),
+            };
+            if cell.flags.contains(Flags::INVERSE) {
+                let cell_background = bg.unwrap_or(background);
+                bg = Some(fg);
+                fg = cell_background;
+            }
+            if cell.flags.contains(Flags::DIM) {
+                fg.a *= 0.5;
+            }
+            if look.minimum_contrast_ratio > 1. {
+                let cell_background = bg.unwrap_or(background);
+                let adjusted = *contrast_cache.entry((key(cell_background), key(fg))).or_insert_with(|| ensure_contrast_ratio(cell_background, Rgba { a: 1., ..fg }, look.minimum_contrast_ratio));
+                if let Some(adjusted) = adjusted {
+                    fg = Rgba { a: fg.a, ..adjusted };
+                }
+            }
+            let width = if cell.flags.contains(Flags::WIDE_CHAR) { 2. } else { 1. };
+            let cell_bounds = Bounds::new(point(origin.x + px(column as f32 * metrics.cell_width), y), size(px(metrics.cell_width * width), px(metrics.cell_height)));
+            if let Some(bg) = bg {
+                window.paint_quad(fill(cell_bounds, bg));
+            }
+            if cell.c != ' ' && cell.c != '\0' {
+                last_column = Some(column);
+            }
+            push_cell_text(cell, column, fg, cell_bounds, &mut text, &resolve, metrics, window);
+        }
+        if sticky.truncated && row + 1 == sticky.count {
+            let column = last_column.map_or(0, |column| column + 2);
+            if column < term.columns() {
+                let start = text.text.len();
+                text.text.push('…');
+                text.cells.push(CellText { start, column, fg: look.colors.foreground, bold: false, italic: false });
+            }
+        }
+        let baseline = f32::from(y) + metrics.cell_height - metrics.descent;
+        paint_row_text(text, origin.x, px((baseline * metrics.scale).round() / metrics.scale), metrics, window);
+    }
+}
+
+/// The cell's text joins its row's, shaped and painted later; underline and strikethrough paint now.
+#[allow(clippy::too_many_arguments)]
+fn push_cell_text(cell: &Cell, column: usize, fg: Rgba, cell_bounds: Bounds<Pixels>, line: &mut RowText, resolve: &dyn Fn(Color, bool) -> Rgba, metrics: &CellMetrics, window: &mut Window) {
+    let flags = cell.flags;
+    if cell.c == ' ' || cell.c == '\0' || flags.contains(Flags::HIDDEN) {
+        return;
+    }
+    let start = line.text.len();
+    line.text.push(cell.c);
+    for &zero_width in cell.zerowidth().into_iter().flatten() {
+        line.text.push(zero_width);
+    }
+    line.cells.push(CellText { start, column, fg, bold: flags.contains(Flags::BOLD), italic: flags.contains(Flags::ITALIC) });
+    let decoration_width = cell_bounds.size.width;
+    if flags.intersects(Flags::ALL_UNDERLINES) {
+        let underline_color = cell.underline_color().map_or(fg, |color| resolve(color, false));
+        let style = UnderlineStyle { thickness: px(1.), color: Some(Hsla::from(underline_color)), wavy: flags.contains(Flags::UNDERCURL) };
+        window.paint_underline(point(cell_bounds.origin.x, cell_bounds.bottom() - px(metrics.descent.max(2.)) + px(1.)), decoration_width, &style);
+    }
+    if flags.contains(Flags::STRIKEOUT) {
+        let style = StrikethroughStyle { thickness: px(1.), color: Some(Hsla::from(fg)) };
+        window.paint_strikethrough(point(cell_bounds.origin.x, cell_bounds.origin.y + px((metrics.cell_height / 2.).round())), decoration_width, &style);
+    }
+}
+
+/// xterm's color lookup: an OSC 4/10/11 override, else the theme palette, bold colors brightened when
+/// `drawBoldTextInBrightColors` is on.
+fn resolve_color(color: Color, bold: bool, overrides: &Colors, look: &Look) -> Rgba {
+    let colors = look.colors;
+    let index = match color {
+        Color::Spec(rgb) => return rgba(rgb.r, rgb.g, rgb.b),
+        Color::Indexed(index) if bold && look.draw_bold_text_in_bright_colors && index < 8 => index as usize + 8,
+        Color::Indexed(index) => index as usize,
+        Color::Named(named) if bold && look.draw_bold_text_in_bright_colors && (named as usize) < 8 => named as usize + 8,
+        Color::Named(named) => named as usize,
+    };
+    if let Some(rgb) = overrides[index] {
+        return rgba(rgb.r, rgb.g, rgb.b);
+    }
+    match index {
+        0..256 => colors.palette[index],
+        index if index == NamedColor::Background as usize => colors.background,
+        index if index == NamedColor::Cursor as usize => colors.cursor,
+        index if (NamedColor::DimBlack as usize..=NamedColor::DimWhite as usize).contains(&index) => {
+            let color = colors.palette[index - NamedColor::DimBlack as usize];
+            Rgba { a: color.a * 0.5, ..color }
+        }
+        _ => colors.foreground,
     }
 }
 

@@ -1,11 +1,10 @@
 //! The Terminal view (terminalView.ts `TerminalViewPane` with terminalTabbedView.ts): the groups of terminals,
 //! side by side when split, with the tabs list at their right once there are two terminals.
-// shortcut: the view is an editor tab of the group, not a panel view; the panel part is milestone 11's.
 
 pub(super) mod grid;
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use alacritty_terminal::grid::{Dimensions, Scroll};
@@ -22,8 +21,9 @@ use serde_json::{Value, json};
 
 use self::grid::{CellMetrics, GUTTER, Look, SCROLLBAR_WIDTH, SCROLLBAR_WIDTH_MODERN};
 use super::Workbench;
+use super::layout::Part;
+use super::panel::PanelView;
 use crate::commands::Outcome;
-use crate::editor::TextDocument;
 use crate::keybindings::Resolution;
 use crate::main_thread_quick_open::Owner;
 use crate::menus::MenuId;
@@ -44,8 +44,6 @@ pub(super) const EXIT_REASON_EXTENSION: u8 = 4;
 
 /// terminal.ts `TERMINAL_VIEW_ID`.
 pub const TERMINAL_VIEW_ID: &str = "terminal";
-/// The scheme of the editor tab that hosts the view (`Schemas.vscodeTerminal`).
-pub const TERMINAL_SCHEME: &str = "vscode-terminal";
 
 /// terminalInstance.ts `_setupTitlePolling`: node-pty's process title is read every 200 ms on macOS.
 const TITLE_POLL_INTERVAL: Duration = Duration::from_millis(200);
@@ -86,6 +84,9 @@ pub struct TerminalView {
     /// What the extension host was told (mainThreadTerminalService.ts): the active terminal and the events it asked for.
     pub(super) host: HostTerminals,
     pub(super) suggest: super::terminal_suggest::TerminalSuggest,
+    pub(super) history: super::terminal_history::TerminalHistories,
+    /// The instance whose sticky scroll overlay the pointer is over.
+    pub(super) sticky_hovered: Option<u32>,
 }
 
 #[derive(Default)]
@@ -118,6 +119,8 @@ pub enum TerminalInput {
     /// Send Signal's picker, then its manual entry.
     Signal,
     ManualSignal,
+    /// Run Recent Command and Go to Recent Directory: what each pick runs, in which terminal.
+    RunRecent { kind: super::terminal_history::RecentKind, picks: Vec<super::terminal_history::RecentPick>, fuzzy: bool, instance: u32 },
 }
 
 impl TerminalView {
@@ -142,6 +145,8 @@ impl TerminalView {
             has_been_created: false,
             host: HostTerminals::default(),
             suggest: Default::default(),
+            history: Default::default(),
+            sticky_hovered: None,
         }
     }
 
@@ -161,6 +166,11 @@ impl TerminalView {
     pub(super) fn active_instance_mut(&mut self) -> Option<&mut TerminalInstance> {
         let id = self.active_instance_id()?;
         self.instance_mut(id)
+    }
+
+    /// The instance ids of each group, in order.
+    pub(super) fn group_instances(&self) -> Vec<Vec<u32>> {
+        self.groups.iter().map(|group| group.instances.clone()).collect()
     }
 
     /// `showBackgroundTerminal`: a terminal hidden from the user joins the view as its own group.
@@ -228,7 +238,7 @@ impl Workbench {
             }
             Outcome::done()
         });
-        self.commands.register("workbench.action.terminal.killEditor", |workbench, _, window, cx| {
+        self.commands.register("workbench.action.terminal.killViewOrEditor", |workbench, _, window, cx| {
             if let Some(id) = workbench.terminal_view.active_instance_id() {
                 workbench.kill_terminal(id, window, cx);
             }
@@ -330,12 +340,25 @@ impl Workbench {
         self.register_external_terminal_actions();
         self.register_terminal_contrib_actions();
         self.register_terminal_suggest_actions();
+        self.register_terminal_panel_view();
+        self.register_terminal_history_actions();
+        self.register_terminal_sticky_scroll_actions();
         self.register_terminal_find_actions();
     }
 
-    /// `isViewVisible(TERMINAL_VIEW_ID)`: the group shows the Terminal view's tab.
+    /// `isViewVisible(TERMINAL_VIEW_ID)`: the panel shows the Terminal view.
     pub(crate) fn terminal_view_visible(&self) -> bool {
-        self.editors.active().is_some_and(|editor| editor.document.scheme == TERMINAL_SCHEME)
+        self.is_part_visible(Part::Panel) && self.active_panel_view().is_some_and(|view| view.id == TERMINAL_VIEW_ID)
+    }
+
+    /// terminal.contribution.ts `registerTerminalViewContainer`: the Terminal view in the panel.
+    pub(super) fn register_terminal_panel_view(&mut self) {
+        self.register_panel_view(PanelView {
+            id: TERMINAL_VIEW_ID,
+            title: "Terminal",
+            render: |workbench, window, cx| workbench.terminal_body(window, cx).into_any_element(),
+            actions: Some(|workbench, cx| workbench.terminal_title_actions(cx).into_any_element()),
+        });
     }
 
     /// `terminalGroupService.showPanel(true)`: shows the view, creating a terminal when there is none.
@@ -348,23 +371,16 @@ impl Workbench {
     }
 
     pub(super) fn show_terminal_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        match self.editors.editors.iter().position(|editor| editor.document.scheme == TERMINAL_SCHEME) {
-            Some(index) => self.editors.activate(index),
-            None => {
-                let document = TextDocument::from_text(TERMINAL_SCHEME, Path::new(TERMINAL_VIEW_ID), "", "utf8".into(), None, &self.languages, &self.settings.lock().unwrap());
-                self.editors.open(document, false);
-            }
-        }
-        self.editors_changed(cx);
+        self.open_panel_view(TERMINAL_VIEW_ID, cx);
         window.focus(&self.terminal_view.focus, cx);
         self.sync_terminals_to_host();
     }
 
     /// `viewsService.closeView(TERMINAL_VIEW_ID)`: the terminals keep running.
     pub(super) fn close_terminal_view(&mut self, cx: &mut Context<Self>) {
-        let Some(index) = self.editors.editors.iter().position(|editor| editor.document.scheme == TERMINAL_SCHEME) else { return };
-        self.editors.close(index);
-        self.editors_changed(cx);
+        if self.terminal_view_visible() {
+            self.hide_panel(cx);
+        }
     }
 
     /// `createTerminal`: a new group, or a pane after the active one with `split`; the split's cwd is its parent's
@@ -532,6 +548,7 @@ impl Workbench {
         }
         instance.bell = false;
         self.task_output(id, &processed.text, cx);
+        self.record_terminal_history(id, &processed.shell_events);
         self.terminal_output_to_host(id, processed);
         cx.notify();
         input_changed
@@ -765,6 +782,7 @@ impl Workbench {
                     Err(error) => eprintln!("writing {key}: {error}"),
                 }
             }
+            (event, TerminalInput::RunRecent { kind, picks, fuzzy, instance }) => self.run_recent_input_event(id, event, kind, picks, fuzzy, instance, window, cx),
             (Event::Hide, _) => self.quick_inputs.remove(id),
             (event, input @ (TerminalInput::SendSequence | TerminalInput::Signal | TerminalInput::ManualSignal)) => self.terminal_contrib_input_event(id, event, input, window, cx),
             _ => {}
@@ -959,9 +977,11 @@ impl Workbench {
             .flex_1()
             .min_w_0()
             .h_full()
+            .relative()
             .cursor_text()
             .when(border_left, |pane| pane.border_l_1().border_color(border))
             .child(canvas(|_, _, _| {}, move |bounds, _, window, cx| entity.update(cx, |workbench, _| workbench.paint_terminal_pane(id, bounds, window))).size_full())
+            .children(self.terminal_sticky_scroll_hit_area(id, cx))
             .on_hover(cx.listener(move |workbench, hovered: &bool, _, cx| {
                 workbench.terminal_view.hovered = hovered.then_some(id);
                 cx.notify();
@@ -977,7 +997,8 @@ impl Workbench {
     /// Lays out and paints one pane: the instance takes the columns and rows its pane fits (`_evaluateColsAndRows`).
     fn paint_terminal_pane(&mut self, id: u32, bounds: Bounds<Pixels>, window: &mut Window) {
         let metrics = self.terminal_metrics(window);
-        let scrollbar_width = if self.setting("workbench.experimental.modernUI") == true { SCROLLBAR_WIDTH_MODERN } else { SCROLLBAR_WIDTH };
+        let scrollbar_width = self.terminal_scrollbar_width();
+        let sticky_look = self.terminal_sticky_look(id);
         let colors = TerminalColors::new(&self.theme);
         let cursor_inactive_style = self.setting("terminal.integrated.cursorStyleInactive");
         let find_matches = if self.terminal_view.active_instance_id() == Some(id) { self.terminal_view.find.matches.clone() } else { Vec::new() };
@@ -1010,10 +1031,21 @@ impl Workbench {
         instance.cell_size = (metrics.cell_width, metrics.cell_height);
         let resized = instance.resize(cols, rows);
         instance.configure(config);
-        window.with_content_mask(Some(gpui::ContentMask { bounds }), |window| grid::paint(bounds, instance, &look, window));
+        let sticky = self.terminal_sticky_scroll(id);
+        let instance = self.terminal_view.instance(id).expect("resized above");
+        window.with_content_mask(Some(gpui::ContentMask { bounds }), |window| {
+            grid::paint(bounds, instance, &look, window);
+            if let Some(sticky) = &sticky {
+                grid::paint_sticky_scroll(bounds, instance, sticky, &sticky_look, &look, window);
+            }
+        });
         if resized {
             self.terminal_resized(id);
         }
+    }
+
+    pub(super) fn terminal_scrollbar_width(&self) -> f32 {
+        if self.setting("workbench.experimental.modernUI") == true { SCROLLBAR_WIDTH_MODERN } else { SCROLLBAR_WIDTH }
     }
 
     /// The xterm.js options the settings set: `scrollback`, `wordSeparator` and `cursorStyle`, which a program's
@@ -1088,7 +1120,7 @@ impl Workbench {
         self.sync_terminals_to_host();
         let context = self.key_context(window);
         let anchor = Bounds { origin: position, size: Size::default() };
-        self.show_context_menu(MenuId::TerminalEditorInstanceContext, &context, anchor, Vec::new(), window, cx);
+        self.show_context_menu(MenuId::TerminalInstanceContext, &context, anchor, Vec::new(), window, cx);
     }
 
     fn terminal_mouse_down(&mut self, id: u32, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {

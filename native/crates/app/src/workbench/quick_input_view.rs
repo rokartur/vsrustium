@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use gpui::{
     Animation, AnimationExt, AnyElement, App, Bounds, BoxShadow, ClickEvent, DispatchPhase, Context, Div, FocusHandle, FontWeight, HighlightStyle, ListAlignment, ListOffset, ListState,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Rgba, StyledText, Subscription, Task, Window, canvas, div, fill, list, point, prelude::*, px, rgba,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Rgba, Stateful, StyledText, Subscription, Task, Window, canvas, div, fill, list, point, prelude::*, px, rgba,
 };
 use serde_json::Value;
 
@@ -18,7 +18,7 @@ use super::Workbench;
 use super::input_box_view::{InputId, InputLook, InputView};
 use crate::commands::Outcome;
 use crate::main_thread_quick_open::Owner;
-use crate::quick_input::{Button, Event, Focus, Kind, QuickInput, Row, Severity, drag_layout};
+use crate::quick_input::{Button, Event, Focus, Header, Kind, QuickInput, Row, Severity, drag_layout};
 
 /// `QuickInputController.MAX_WIDTH`.
 const MAX_WIDTH: f32 = 600.;
@@ -28,6 +28,8 @@ const TOP: f32 = 6.;
 const TITLE_BAR_HEIGHT: f32 = 35.;
 const ROW_HEIGHT: f32 = 22.;
 const DETAIL_ROW_HEIGHT: f32 = 44.;
+/// quickInputList.ts `QuickInputItemDelegate.getHeight` of a `QuickPickSeparatorElement`.
+const HEADER_HEIGHT: f32 = 30.;
 const RADIUS: f32 = 8.;
 /// quickInputController.ts, in StorageScope.APPLICATION.
 const VIEWSTATE_STORAGE_KEY: &str = "workbench.quickInput.viewState";
@@ -45,6 +47,8 @@ pub struct QuickInputs {
     listed: (Option<i64>, Vec<usize>, u64),
     revealed: Option<usize>,
     hovered: Option<usize>,
+    /// The row whose header the pointer is over.
+    hovered_header: Option<usize>,
     /// The hidden input, drawn while the close animation runs.
     closing: Option<(QuickInput, Task<()>)>,
     /// Counts the times the widget opened; a new count restarts the open animation.
@@ -74,6 +78,7 @@ impl QuickInputs {
             listed: (None, Vec::new(), 0),
             revealed: None,
             hovered: None,
+            hovered_header: None,
             closing: None,
             opened: 0,
             busy: None,
@@ -825,10 +830,11 @@ impl Workbench {
         // listWidget.ts: the focused row of the unfocused list gets a 1px dotted listInactiveFocusOutline (activeContrastBorder).
         // shortcut: dashed, GPUI has no dotted border.
         let outline = self.theme.color("contrastActiveBorder").filter(|_| focused).map(|color| div().absolute().inset_0().rounded(px(3.)).border_1().border_dashed().border_color(color));
-        div()
+        let header = row.header.clone();
+        let row_element = div()
             .id(("quick-input-row", row_index))
             .relative()
-            .h(px(row_height(row)))
+            .h(px(item_height(row)))
             .cursor_pointer()
             .rounded(px(3.))
             .when_some(background, |row, background| row.bg(background))
@@ -848,8 +854,55 @@ impl Workbench {
                 .on_click(cx.listener(move |workbench, _: &ClickEvent, window, cx| {
                     workbench.with_current_quick_input(window, cx, |input| input.click_row(row_index));
                 }))
+            });
+        match header {
+            Some(header) => div().flex().flex_col().child(self.quick_input_separator_row(header, position, row_index, cx)).child(row_element).into_any_element(),
+            None => row_element.into_any_element(),
+        }
+    }
+
+    /// `QuickPickSeparatorElementRenderer` (`.quick-input-list-separator-as-item`): the label in semibold, its
+    /// description, and the separator's buttons while the pointer is over it.
+    fn quick_input_separator_row(&self, header: Header, position: usize, row_index: usize, cx: &mut Context<Self>) -> Stateful<Div> {
+        let color = self.color("descriptionForeground");
+        let hovered = self.quick_inputs.hovered_header == Some(row_index);
+        let handle = header.handle;
+        div()
+            .id(("quick-input-header", row_index))
+            .h(px(HEADER_HEIGHT))
+            .flex()
+            .items_center()
+            .pl(px(9.))
+            .pr(px(2.))
+            .text_size(px(12.))
+            .text_color(color)
+            .when(position > 0, |header| header.border_t_1().border_color(self.color("pickerGroup.border")))
+            .on_hover(cx.listener(move |workbench, hovered: &bool, _, cx| {
+                let inputs = &mut workbench.quick_inputs;
+                if *hovered {
+                    inputs.hovered_header = Some(row_index);
+                } else if inputs.hovered_header == Some(row_index) {
+                    inputs.hovered_header = None;
+                }
+                cx.notify();
+            }))
+            .child(div().font_weight(FontWeight::SEMIBOLD).whitespace_nowrap().child(header.label))
+            .children(header.description.map(|description| div().ml(px(5.4)).min_w_0().overflow_hidden().whitespace_nowrap().text_size(px(10.8)).child(description)))
+            .child(div().flex_1())
+            .when(hovered, |row| {
+                row.children(header.buttons.iter().enumerate().map(|(index, button)| {
+                    self.icon(button.codicon.as_deref().unwrap_or("blank"), 20., 16., self.foreground_or("icon.foreground"))
+                        .id(("quick-input-header-button", index))
+                        .mr(px(2.))
+                        .rounded(px(5.))
+                        .cursor_pointer()
+                        .hover(|button| button.bg(self.color("toolbar.hoverBackground")))
+                        .on_click(cx.listener(move |workbench, _: &ClickEvent, window, cx| {
+                            cx.stop_propagation();
+                            workbench.with_current_quick_input(window, cx, |input| input.events.push(Event::TriggerItemButton(handle, index as i64, None)));
+                        }))
+                }))
             })
-            .into_any_element()
     }
 
     /// iconlabel.css `.monaco-icon-label::before`: 16px wide, 22px tall, 6px before the label.
@@ -967,6 +1020,10 @@ fn reveal_row(list: &ListState, heights: &[f32], position: usize, viewport: f32)
 }
 
 fn row_height(row: &Row) -> f32 {
+    item_height(row) + if row.header.is_some() { HEADER_HEIGHT } else { 0. }
+}
+
+fn item_height(row: &Row) -> f32 {
     if row.item.detail.as_ref().is_some_and(|detail| !detail.is_empty()) { DETAIL_ROW_HEIGHT } else { ROW_HEIGHT }
 }
 

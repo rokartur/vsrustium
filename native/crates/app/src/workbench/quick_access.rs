@@ -9,6 +9,7 @@ use serde_json::Value;
 
 use super::Workbench;
 use super::quick_open::{self, FilePickState};
+use super::terminal_quick_access;
 use crate::command_palette::{self, CommandsHistory, MenuItem, PaletteEntry};
 use crate::commands::Outcome;
 use crate::editor::Position;
@@ -50,6 +51,8 @@ pub enum Accept {
     /// A help pick: shows the provider of `prefix`.
     Show { prefix: &'static str, include_help: bool },
     Position(Position),
+    /// A `term ` pick: the terminal instance to show.
+    Terminal(u32),
     Nothing,
 }
 
@@ -62,11 +65,12 @@ const HELP_ENTRIES: [(&str, Provider, Option<&str>); 3] = [
 ];
 
 /// The `helpEntries` of each provider the port has, as the `?` picker lists them: provider, description, command.
-const PROVIDER_HELP: [(Provider, &str, &str); 4] = [
+const PROVIDER_HELP: [(Provider, &str, &str); 5] = [
     (Provider::Files, "Go to File", "workbench.action.quickOpen"),
     (Provider::GotoLine, "Go to Line/Column", "workbench.action.gotoLine"),
     (Provider::GotoOffset, "Go to Offset", "workbench.action.gotoOffset"),
     (Provider::Commands, "Show and Run Commands", "workbench.action.showCommands"),
+    (Provider::Terminal, "Show All Opened Terminals", "workbench.action.quickOpenTerm"),
 ];
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -76,6 +80,7 @@ enum Provider {
     GotoLine,
     GotoOffset,
     Help,
+    Terminal,
 }
 
 impl Provider {
@@ -87,6 +92,7 @@ impl Provider {
             _ if value.starts_with(goto_line::GO_TO_LINE_PREFIX) => Provider::GotoLine,
             _ if value.starts_with(COMMANDS_PREFIX) => Provider::Commands,
             _ if value.starts_with(HELP_PREFIX) => Provider::Help,
+            _ if value.starts_with(terminal_quick_access::TERMINAL_PREFIX) => Provider::Terminal,
             _ => Provider::Files,
         }
     }
@@ -98,6 +104,7 @@ impl Provider {
             Provider::GotoLine => goto_line::GO_TO_LINE_PREFIX,
             Provider::GotoOffset => goto_line::GO_TO_OFFSET_PREFIX,
             Provider::Help => HELP_PREFIX,
+            Provider::Terminal => terminal_quick_access::TERMINAL_PREFIX,
         }
     }
 
@@ -107,12 +114,17 @@ impl Provider {
             Provider::Files => Some(quick_open::PLACEHOLDER.into()),
             Provider::GotoLine | Provider::GotoOffset => Some(goto_line::PLACEHOLDER.into()),
             Provider::Help => Some("Type '?' to get help on the actions you can take from here.".into()),
+            Provider::Terminal => Some(terminal_quick_access::PLACEHOLDER.into()),
         }
     }
 }
 
 impl Workbench {
     pub(super) fn register_quick_access_commands(&mut self) {
+        self.commands.register("workbench.action.quickOpenTerm", |workbench, _, window, cx| {
+            workbench.show_quick_access(terminal_quick_access::TERMINAL_PREFIX, false, false, window, cx);
+            Outcome::done()
+        });
         self.commands.register("workbench.action.showCommands", |workbench, _, window, cx| {
             workbench.show_quick_access(COMMANDS_PREFIX, false, false, window, cx);
             Outcome::done()
@@ -229,6 +241,10 @@ impl Workbench {
                 Some((entries, accepts, false))
             }
             Provider::Files => self.file_picks(id, &filter, window, cx),
+            Provider::Terminal => {
+                let (entries, accepts) = self.terminal_picks(&filter);
+                Some((entries, accepts, false))
+            }
             Provider::GotoLine | Provider::GotoOffset => Some((Vec::new(), self.goto_line_picks(id, &value, cx), false)),
         };
         let input = self.quick_inputs.get_mut(id).expect("checked above");
@@ -360,6 +376,14 @@ impl Workbench {
                     input.remove_item(handle);
                 }
             }
+            Event::TriggerItemButton(handle, button, _) if matches!(self.quick_access_pick(id, handle), Some(Accept::Terminal(_))) => {
+                let Some(Accept::Terminal(terminal)) = self.quick_access_pick(id, handle) else { return };
+                if self.trigger_terminal_pick_button(terminal, button, window, cx)
+                    && let Some(input) = self.quick_inputs.get_mut(id)
+                {
+                    input.remove_item(handle);
+                }
+            }
             Event::TriggerItemButton(handle, button, _) => {
                 let Some(Accept::Command { id: command, .. }) = self.quick_access_pick(id, handle) else { return };
                 if button == 0 {
@@ -404,6 +428,7 @@ impl Workbench {
             Accept::File { path, .. } => return self.open_file_pick(path, in_background, window, cx),
             Accept::Show { prefix, include_help } => return self.show_quick_access(prefix, true, include_help, window, cx),
             Accept::Position(position) => return self.go_to_position(position, in_background, window, cx),
+            Accept::Terminal(terminal) => return self.accept_terminal_pick(terminal, in_background, window, cx),
             Accept::Nothing => return,
         };
         self.quick_access.history.push(&id);

@@ -28,7 +28,6 @@ use serde_json::json;
 use super::Workbench;
 use super::minimap_view::minimap_info;
 use super::search_editor_view::SEARCH_EDITOR_SCHEME;
-use super::terminal_view::TERMINAL_SCHEME;
 use super::webview_panels::WEBVIEW_PANEL_SCHEME;
 use crate::brackets::BracketRange;
 use crate::editor::minimap::MinimapLayoutInfo;
@@ -80,7 +79,6 @@ impl Workbench {
                 // searchEditor.ts draws its query widget where a text editor has its breadcrumbs.
                 SEARCH_EDITOR_SCHEME => part.child(self.search_editor_query(window, cx)),
                 crate::output::OUTPUT_SCHEME => part.child(self.output_title_actions(window, cx)),
-                TERMINAL_SCHEME => part.child(self.terminal_title_actions(cx)).child(self.terminal_body(window, cx)),
                 // breadcrumbsControl.ts `update`: no breadcrumbs for a resource without a file system provider.
                 "untitled" => part,
                 _ if self.setting("breadcrumbs.enabled") == json!(false) => part,
@@ -92,7 +90,7 @@ impl Workbench {
                 None if editor.document.scheme == super::debug_console::DEBUG_CONSOLE_SCHEME => part.child(self.debug_console_body(window, cx)),
                 None if editor.document.scheme == super::testing_view::TEST_RESULTS_SCHEME => part.child(self.test_results_body(cx)),
                 None if self.shows_webview(editor) => part.child(self.webview_editor_body(editor)),
-                None => part.when(editor.document.scheme != TERMINAL_SCHEME, |part| part.children(self.unicode_banner(editor, cx)).child(self.text_area(editor, window, cx).opacity(self.unfocused_editor_opacity(window)))),
+                None => part.children(self.unicode_banner(editor, cx)).child(self.text_area(editor, window, cx).opacity(self.unfocused_editor_opacity(window))),
             })
             // The active tab reaches into the part's top border, which Chrome still draws over it.
             .child(div().absolute().inset(px(-1.)).border_1().rounded(px(8.)).border_color(self.color("surface.border")))
@@ -178,7 +176,7 @@ impl Workbench {
         // `getTitle(Verbosity.LONG)`: a search editor's and a webview's is its name.
         let title = match (self.editors.diffs.get(&editor.model_id), editor.document.scheme.as_str()) {
             (Some(diff), _) => diff.title(|side| crate::quick_input::path_label(crate::editor::split_query(&side.scheme, &side.path).0, None)),
-            (None, SEARCH_EDITOR_SCHEME | WEBVIEW_PANEL_SCHEME | TERMINAL_SCHEME | super::extension_editor::EXTENSION_EDITOR_SCHEME) => self.editor_name(editor),
+            (None, SEARCH_EDITOR_SCHEME | WEBVIEW_PANEL_SCHEME | super::extension_editor::EXTENSION_EDITOR_SCHEME) => self.editor_name(editor),
             // labels.ts: an untitled label's title is its name and its path.
             (None, "untitled") if !editor.associated_file => match self.untitled_description(editor) {
                 Some(path) => format!("{} \u{2022} {path}", self.editor_name(editor)),
@@ -1615,8 +1613,8 @@ impl Workbench {
             items.push(("OVR".to_string(), "Enable Insert Mode", "editor.action.toggleOvertypeInsertMode"));
         }
         let prominent_items = items.len();
-        // A webview editor or terminal shows no editor status entries.
-        if let Some(editor) = self.editors.active().filter(|editor| !self.shows_webview(editor) && !matches!(editor.document.scheme.as_str(), TERMINAL_SCHEME | super::extension_editor::EXTENSION_EDITOR_SCHEME)) {
+        // A webview editor shows no editor status entries.
+        if let Some(editor) = self.editors.active().filter(|editor| !self.shows_webview(editor) && editor.document.scheme != super::extension_editor::EXTENSION_EDITOR_SCHEME) {
             items.extend(Self::editor_status_entries(editor, &self.languages));
         }
         items.extend(self.media_preview_status_entries());

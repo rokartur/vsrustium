@@ -53,7 +53,8 @@ pub enum MenuId {
     DiffEditorHunkToolbar,
     EditorTitle,
     EditorContent,
-    TerminalEditorInstanceContext,
+    TerminalInstanceContext,
+    TerminalStickyScrollContext,
     /// A `contributes.submenus` entry, `MenuId.for('api:<id>')`, by registration order.
     Api(usize),
     #[cfg(test)]
@@ -226,14 +227,12 @@ const WORKBENCH_MENUS: &[Row] = &[
     // output.contribution.ts and viewsService.ts `openCommandActionDescriptor.mnemonicTitle`
     (MenuId::EditorContext, None, "workbench.output.action.clearOutput", "Clear Output", "", 0., Some("inOutput"), None),
     (MenuId::MenubarViewMenu, None, "workbench.action.output.toggleOutput", "&&Output", "5_panel", 1., Some("workbench.panel.output.active"), None),
-    // terminalMenus.ts: the TerminalEditorInstanceContext items of the commands the port has.
-    (MenuId::TerminalEditorInstanceContext, None, "workbench.action.terminal.split", "Split Terminal", "1_create", 0., None, None),
-    (MenuId::TerminalEditorInstanceContext, None, "workbench.action.terminal.new", "New Terminal", "1_create", 0., None, None),
-    (MenuId::TerminalEditorInstanceContext, None, "workbench.action.terminal.killEditor", "Kill Terminal", "7_kill", 0., None, None),
-    (MenuId::TerminalEditorInstanceContext, None, "workbench.action.terminal.copySelection", "Copy", "3_edit", 1., None, None),
-    (MenuId::TerminalEditorInstanceContext, None, "workbench.action.terminal.paste", "Paste", "3_edit", 3., None, None),
-    (MenuId::TerminalEditorInstanceContext, None, "workbench.action.terminal.clear", "Clear", "5_clear", 0., None, None),
-    (MenuId::TerminalEditorInstanceContext, None, "workbench.action.terminal.selectAll", "Select All", "3_edit", 3., None, None),
+    // terminalMenus.ts: the TerminalInstanceContext items of the commands the port has.
+    (MenuId::TerminalInstanceContext, None, "workbench.action.terminal.killViewOrEditor", "Kill Terminal", "7_kill", 0., None, None),
+    (MenuId::TerminalInstanceContext, None, "workbench.action.terminal.copySelection", "Copy", "3_edit", 1., None, None),
+    (MenuId::TerminalInstanceContext, None, "workbench.action.terminal.paste", "Paste", "3_edit", 3., None, None),
+    (MenuId::TerminalInstanceContext, None, "workbench.action.terminal.clear", "Clear", "5_clear", 0., None, None),
+    (MenuId::TerminalInstanceContext, None, "workbench.action.terminal.selectAll", "Select All", "3_edit", 3., None, None),
     // editor.contribution.ts: the EditorTitleContext items of the commands the port has.
     (MenuId::EditorTitleContext, None, "workbench.action.closeActiveEditor", "Close", "1_close", 10., Some("!activeEditorCannotClose"), None),
     (MenuId::EditorTitleContext, None, "workbench.action.closeOtherEditors", "Close Others", "1_close", 20., None, Some("groupEditorsCount != '1'")),
@@ -323,6 +322,9 @@ pub fn workbench_menus() -> Vec<MenuItem> {
         let entry = Entry::Command { id: id.into(), precondition: None, toggled: Toggled::when(Expr::deserialize(&format!("config.{setting} == true"))), alt: None };
         items.push(MenuItem { menu: MenuId::StickyScrollContext, entry, title: title.into(), group: String::new(), order: 0., when: None });
     }
+    // terminal.stickyScroll.contribution.ts: Toggle Sticky Scroll, checked by its setting.
+    let entry = Entry::Command { id: "workbench.action.terminal.toggleStickyScroll".into(), precondition: None, toggled: Toggled::when(Expr::deserialize("config.terminal.integrated.stickyScroll.enabled == true")), alt: None };
+    items.push(MenuItem { menu: MenuId::TerminalStickyScrollContext, entry, title: "Sticky Scroll".into(), group: String::new(), order: 0., when: None });
     // toggleWordWrap.ts: checked while the active editor wraps, enabled while it can toggle.
     let entry = Entry::Command { id: "editor.action.toggleWordWrap".into(), precondition: Some(Expr::has("canToggleWordWrap")), toggled: Toggled::when(Some(Expr::has("editorWordWrap"))), alt: None };
     items.push(MenuItem { menu: MenuId::MenubarViewMenu, entry, title: "&&Word Wrap".into(), group: "6_editor".into(), order: 1., when: None });

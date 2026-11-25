@@ -32,6 +32,9 @@ pub struct TaskService {
     active: Vec<ActiveTask>,
     /// The last task a user ran, for `reRunTask`.
     pub(super) last: Option<Task>,
+    /// `registerSupportedExecutions`: the `customExecutionSupported`, `shellExecutionSupported` and
+    /// `processExecutionSupported` context keys, unset until the host registers them.
+    supported_executions: [Option<bool>; 3],
 }
 
 struct ActiveTask {
@@ -76,7 +79,10 @@ impl Workbench {
     pub fn start_tasks(&mut self) {
         let contributions: Vec<(&str, &Value)> = self.extensions.iter().map(|extension| (extension.id.as_str(), &extension.description["contributes"])).collect();
         self.tasks = TaskService::new(&contributions);
-        self.commands.register("workbench.action.tasks.runTask", |workbench, args, window, cx| workbench.run_task_command(args.into_iter().next().unwrap_or(Value::Null), window, cx));
+        self.commands.register("workbench.action.tasks.runTask", |workbench, args, window, cx| {
+            let argument = args.into_iter().next().unwrap_or(Value::Null);
+            workbench.with_task_trust(window, cx, move |workbench, window, cx| workbench.run_task_command(argument, window, cx))
+        });
         self.register_task_pick_actions();
     }
 
@@ -163,8 +169,25 @@ impl Workbench {
                 self.kill_terminal(terminal, window, cx);
                 Outcome::done()
             }
-            // `$registerSupportedExecutions` and `$registerTaskSystem`: the port runs every execution kind locally.
+            "$registerSupportedExecutions" => {
+                for (index, supported) in self.tasks.supported_executions.iter_mut().enumerate() {
+                    if let Some(value) = arg(index).as_bool() {
+                        *supported = Some(value);
+                    }
+                }
+                cx.notify();
+                Outcome::done()
+            }
+            // `$registerTaskSystem`: the port runs every execution kind locally.
             _ => Outcome::done(),
+        }
+    }
+
+    pub(super) fn task_context(&self, context: &mut HashMap<String, Value>) {
+        for (key, supported) in ["customExecutionSupported", "shellExecutionSupported", "processExecutionSupported"].into_iter().zip(self.tasks.supported_executions) {
+            if let Some(supported) = supported {
+                context.insert(key.into(), Value::Bool(supported));
+            }
         }
     }
 
