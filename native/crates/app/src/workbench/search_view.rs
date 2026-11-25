@@ -587,21 +587,22 @@ impl Workbench {
             count,
             cx.processor(move |workbench, range: std::ops::Range<usize>, _window, cx| {
                 // The row's content box starts 4px into the element search_row returns.
-                range.map(|index| div().relative().w_full().when(horizontal, |row| row.whitespace_nowrap()).child(workbench.search_row(&rows[index], index, tree_focused, cx)).children(guides.row(index, 4.)).into_any_element()).collect::<Vec<_>>()
+                range.map(|index| div().relative().w_full().when(horizontal, |row| row.whitespace_nowrap()).child(workbench.search_row(&rows[index], index, tree_focused, false, cx)).children(guides.row(index, 4.)).into_any_element()).collect::<Vec<_>>()
             }),
         )
         .track_scroll(&self.search.scroll)
         .when(horizontal, |list| list.with_horizontal_sizing_behavior(gpui::ListHorizontalSizingBehavior::Unconstrained).with_width_from_item(Some(widest)))
         .size_full();
-        let sticky_elements = sticky.iter().map(|row| self.search_row(&sticky_rows[row.index], row.index, tree_focused, cx)).collect();
+        let sticky_elements = sticky.iter().map(|row| self.search_row(&sticky_rows[row.index], row.index, tree_focused, true, cx)).collect();
         let sticky_container = self.tree_sticky_container(ListId::Search, &sticky, sticky_elements, cx);
         div().id("search-results").relative().track_focus(&self.search.focus).flex_1().min_h_0().child(list).child(self.list_scroll_layer(ListId::Search, cx)).children(sticky_container)
     }
 
-    fn search_row(&self, row: &ResultRow, index: usize, tree_focused: bool, cx: &mut Context<Self>) -> gpui::AnyElement {
+    /// A sticky row is never drawn focused or selected (`StickyScrollWidget`).
+    fn search_row(&self, row: &ResultRow, index: usize, tree_focused: bool, sticky: bool, cx: &mut Context<Self>) -> gpui::AnyElement {
         let foreground = self.foreground_or("sideBar.foreground");
-        let is_focused = self.search.focused.as_ref() == Some(&row.key);
-        let is_selected = self.search.selected.contains(&row.key);
+        let is_focused = !sticky && self.search.focused.as_ref() == Some(&row.key);
+        let is_selected = !sticky && self.search.selected.contains(&row.key);
         let (selection, selection_foreground) = match tree_focused {
             true => (self.color("list.activeSelectionBackground"), self.theme.color("list.activeSelectionForeground")),
             false => (self.color("list.inactiveSelectionBackground"), self.theme.color("list.inactiveSelectionForeground")),

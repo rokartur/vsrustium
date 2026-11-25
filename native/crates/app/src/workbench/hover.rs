@@ -203,7 +203,7 @@ impl Workbench {
     }
 
     /// The pointer left the target: a pending hover is cancelled, a shown one hides once the mouse tracker's delay passes.
-    fn leave_hover_target(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn leave_hover_target(&mut self, cx: &mut Context<Self>) {
         if self.hovers.target.take().is_none() {
             return;
         }

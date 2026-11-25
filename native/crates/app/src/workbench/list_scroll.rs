@@ -153,6 +153,8 @@ impl Workbench {
     }
 
     fn list_scrolled(&mut self, list: ListId, cx: &mut Context<Self>) {
+        // Chromium's mouse move after a scroll leaves the row the content took from under the pointer; GPUI sends none.
+        self.leave_hover_target(cx);
         let scroll = self.list_scroll(list);
         scroll.bars.set_shown(true, Instant::now());
         scroll.hide_timer = None;
@@ -333,7 +335,8 @@ impl Workbench {
                 let wheel_hitbox = list_hitbox.clone();
                 // Capture phase: the list's own GPUI scrolling must not see the wheel.
                 window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
-                    if phase == DispatchPhase::Capture && wheel_hitbox.is_hovered(window) {
+                    // Not `is_hovered`: it is false after a key press until the pointer moves, and a wheel does not move it.
+                    if phase == DispatchPhase::Capture && wheel_hitbox.should_handle_scroll(window) {
                         cx.stop_propagation();
                         workbench_wheel.update(cx, |workbench, cx| workbench.list_wheel(list, event, window, cx));
                     }

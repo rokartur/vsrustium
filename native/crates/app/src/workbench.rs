@@ -811,7 +811,8 @@ impl Workbench {
         // abstractTree.ts `AbstractFindController`: its 30px paddingTop keeps the sticky rows away while find is open.
         let sticky = if self.explorer.find.is_open() { Vec::new() } else { self.tree_sticky_rows(list_scroll::ListId::Explorer, &tree_rows.iter().map(|row| row.depth).collect::<Vec<_>>()) };
         let sticky_rows: Vec<_> = sticky.iter().map(|sticky| (sticky.index, tree_rows[sticky.index].clone())).collect();
-        let mut render_row = |(index, row): (usize, crate::explorer::Row)| {
+        // abstractTree.ts `StickyScrollWidget` toggles only `focused` on its rows, never `selected`.
+        let mut render_row = |(index, row): (usize, crate::explorer::Row), sticky: bool| {
             let row_guides = guides.row(index, 0.);
             let twistie = match (row.is_dir || row.has_nests, row.expanded) {
                 (true, true) => Some("chevron-down"),
@@ -831,8 +832,8 @@ impl Workbench {
                 Some(renamed) => *renamed == path || row.compressed.iter().any(|(folder, _)| folder == renamed),
                 None => row.is_new,
             });
-            let is_selected = !row.is_new && tree.selected.contains(&path);
-            let is_focused = !row.is_new && tree.focused.as_ref() == Some(&path);
+            let is_selected = !sticky && !row.is_new && tree.selected.contains(&path);
+            let is_focused = !sticky && !row.is_new && tree.focused.as_ref() == Some(&path);
             let name = match (is_edited, navigation) {
                 (true, _) => self.explorer_input_box(label_line, edit_focused, cx).into_any_element(),
                 (false, Some(navigation)) => self.compressed_label(&row.compressed, &navigation, is_focused, segment_drop_target, cx).into_any_element(),
@@ -972,8 +973,8 @@ impl Workbench {
                     }))
                 })
         };
-        let rows: Vec<_> = tree_rows.into_iter().enumerate().map(&mut render_row).collect();
-        let sticky_elements = sticky_rows.into_iter().map(|row| render_row(row).into_any_element()).collect();
+        let rows: Vec<_> = tree_rows.into_iter().enumerate().map(|row| render_row(row, false)).collect();
+        let sticky_elements = sticky_rows.into_iter().map(|row| render_row(row, true).into_any_element()).collect();
         let sticky_container = self.tree_sticky_container(list_scroll::ListId::Explorer, &sticky, sticky_elements, cx);
         // explorerView.ts `setEditable`: no horizontal scrolling while a name is edited.
         let horizontal = self.horizontal_scrolling(list_scroll::ListId::Explorer) && self.explorer.edit.is_none();

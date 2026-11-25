@@ -129,3 +129,28 @@ fn the_tree_commands_move_to_the_parent_show_its_hover_and_collapse_it(cx: &mut 
     assert_eq!((rows, selected), (3, vec![dir.join("deep")]));
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+/// The real ui-pair steps: a key press (GPUI's keyboard modality) and then the wheel, the pointer still.
+#[gpui::test]
+fn the_wheel_scrolls_after_a_key_press(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = explorer("scroll-after-key", cx);
+    cx.simulate_keystrokes("down");
+    wheel(&workbench, -1., Modifiers::none(), cx);
+    assert_eq!(scroll_top(&workbench, cx), 50.);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// A scroll moves the row out from under its hover: Chromium's mouse move after the scroll leaves the row.
+#[gpui::test]
+fn scrolling_hides_the_rows_hover(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = explorer("scroll-hover", cx);
+    let hover = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.hovers.shown_text().map(str::to_string));
+    run(&workbench, "list.focusParent", cx);
+    run(&workbench, "list.showHover", cx);
+    assert!(hover(cx).is_some());
+    run(&workbench, "list.scrollDown", cx);
+    cx.executor().advance_clock(std::time::Duration::from_secs(1));
+    cx.run_until_parked();
+    assert_eq!(hover(cx), None);
+    std::fs::remove_dir_all(dir).unwrap();
+}
