@@ -16,7 +16,7 @@ impl Workbench {
     // shortcut: `${command:}` and `${input:}` stay as written; their prompts come with tasks and launch (milestones 15, 16).
     pub(super) fn resolve_string_arguments(&self, mut args: Value) -> Result<Value, VariableError> {
         let Some(entries) = args.as_object_mut() else { return Ok(args) };
-        let context = self.variable_context();
+        let context = self.resolver_variable_context();
         let root = self.last_active_workspace_root();
         for value in entries.values_mut().filter(|value| value.is_string()) {
             *value = variables::resolve(root.as_deref(), value, &context)?;
@@ -32,7 +32,7 @@ impl Workbench {
         Some(folder.or(workspace.folders.first())?.path.to_string_lossy().into_owned())
     }
 
-    fn variable_context(&self) -> Context {
+    fn resolver_variable_context(&self) -> Context {
         let folders = self.workspace().map(|workspace| workspace.folders.iter().map(|folder| (folder.name.clone(), folder.path.to_string_lossy().into_owned())).collect()).unwrap_or_default();
         let settings = self.settings.clone();
         let config = move |folder: Option<&str>, section: &str| {
