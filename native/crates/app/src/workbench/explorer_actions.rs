@@ -796,7 +796,7 @@ async fn apply_bulk_edit(workbench: &WeakEntity<Workbench>, cx: &mut AsyncWindow
 }
 
 /// `dialogService.confirm`: true for the primary button; with dialogs skipped, confirmed.
-async fn confirm(workbench: &WeakEntity<Workbench>, cx: &mut AsyncWindowContext, level: PromptLevel, message: String, detail: Option<String>, primary: &str) -> bool {
+pub(super) async fn confirm(workbench: &WeakEntity<Workbench>, cx: &mut AsyncWindowContext, level: PromptLevel, message: String, detail: Option<String>, primary: &str) -> bool {
     let answer = workbench.update_in(cx, |workbench, window, cx| match workbench.skip_dialogs {
         true => None,
         false => Some(window.prompt(level, &message, detail.as_deref(), &[primary, "Cancel"], cx)),

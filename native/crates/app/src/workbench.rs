@@ -17,6 +17,8 @@ pub mod menubar;
 mod minimap_view;
 pub mod quick_access;
 mod quick_open;
+mod search_actions;
+mod search_view;
 pub mod themes;
 mod quick_input_view;
 mod text_input;
@@ -39,6 +41,7 @@ use crate::commands::Commands;
 use crate::editor::{EditorGroup, TextDocument};
 use crate::explorer::FileTree;
 use explorer_actions::DraggedItems;
+use search_view::SideBarView;
 use crate::file_icons::FileIconTheme;
 use crate::host_sync::HostSync;
 use crate::languages::Languages;
@@ -85,6 +88,8 @@ pub struct Workbench {
     pub quick_inputs: quick_input_view::QuickInputs,
     pub quick_access: quick_access::QuickAccess,
     pub explorer: explorer_actions::ExplorerState,
+    pub side_bar_view: search_view::SideBarView,
+    pub search: search_view::SearchView,
     /// `MenuRegistry`.
     pub menus: Vec<crate::menus::MenuItem>,
     pub(crate) context_menu: Option<context_menu::ContextMenu>,
@@ -122,7 +127,7 @@ impl Render for Workbench {
                     .px(px(4.))
                     .pb(px(4.))
                     // The side bar meets the activity bar flush; the bar draws the seam (floatingPanels.css).
-                    .child(div().flex().child(self.activity_bar()).when(self.folder.is_some(), |row| row.child(self.side_bar(window, cx))))
+                    .child(div().flex().child(self.activity_bar(cx)).when(self.side_bar_visible(), |row| row.child(self.side_bar(window, cx))))
                     .child(if self.editors.active().is_some() { self.text_editor_part(window, cx) } else { self.editor_part() }),
             )
             .child(self.status_bar());
@@ -174,6 +179,8 @@ impl Workbench {
             quick_inputs: quick_input_view::QuickInputs::new(cx),
             quick_access: quick_access::QuickAccess::default(),
             explorer: explorer_actions::ExplorerState::new(cx),
+            side_bar_view: search_view::SideBarView::Explorer,
+            search: search_view::SearchView::new(cx),
             menus: crate::menus::workbench_menus(),
             context_menu: None,
             context_menus_shown: 0,
@@ -190,6 +197,7 @@ impl Workbench {
         workbench.register_quick_access_commands();
         workbench.register_theme_commands();
         workbench.register_explorer_actions();
+        workbench.register_search_actions();
         workbench.register_file_participant_commands();
         // Keybindings resolve before the focused element sees the key, and with nothing focused too.
         let entity = cx.entity().downgrade();
@@ -222,10 +230,14 @@ impl Workbench {
                     self.editors.pin(index);
                 }
             }
-            None => match TextDocument::read(&path, &self.languages, &self.settings.lock().unwrap()) {
-                Ok(document) => self.editors.open(document, !pinned),
-                // shortcut: a read error is logged, not shown as the reference's editor error placeholder.
-                Err(error) => eprintln!("opening {}: {error}", path.display()),
+            // A model without an editor, as a search replace leaves it, keeps its text.
+            None => match self.editors.models.iter().position(|model| model.document.is("file", &path)) {
+                Some(index) => self.editors.show_model(index, !pinned),
+                None => match TextDocument::read(&path, &self.languages, &self.settings.lock().unwrap()) {
+                    Ok(document) => self.editors.open(document, !pinned),
+                    // shortcut: a read error is logged, not shown as the reference's editor error placeholder.
+                    Err(error) => eprintln!("opening {}: {error}", path.display()),
+                },
             },
         }
         self.marked_text = None;
@@ -299,10 +311,26 @@ impl Workbench {
         div().relative().h(px(35.)).flex_none().child(center).child(right)
     }
 
-    fn activity_bar(&self) -> Div {
-        let views = ["search-large", "source-control", "debug-alt", "extensions"];
+    /// The Explorer shows only with a folder; the Search view searches the open editors without one.
+    fn side_bar_visible(&self) -> bool {
+        match self.side_bar_view {
+            SideBarView::Explorer => self.folder.is_some(),
+            SideBarView::Search => true,
+        }
+    }
+
+    fn activity_bar(&self, cx: &mut Context<Self>) -> Div {
+        let views = ["source-control", "debug-alt", "extensions"];
         let inactive = self.color("activityBar.inactiveForeground");
-        let explorer = if self.folder.is_some() { self.active_view_icon("files") } else { self.icon("files", 36., 24., inactive) };
+        let view_icon = |icon: &str, view: SideBarView, command: &'static str| {
+            let active = self.side_bar_view == view && self.side_bar_visible();
+            let icon = if active { self.active_view_icon(icon) } else { self.icon(icon, 36., 24., inactive) };
+            icon.id(command).cursor_pointer().on_click(cx.listener(move |workbench, _: &ClickEvent, window, cx| {
+                workbench.execute_command(command, Vec::new(), window, cx);
+            }))
+        };
+        let explorer = view_icon("files", SideBarView::Explorer, "workbench.view.explorer");
+        let search = view_icon("search-large", SideBarView::Search, "workbench.view.search");
         div()
             .w(px(44.))
             .flex()
@@ -311,11 +339,11 @@ impl Workbench {
             .justify_between()
             .py(px(3.))
             .border_1()
-            .when(self.folder.is_some(), |bar| bar.rounded_l(px(8.)))
-            .when(self.folder.is_none(), |bar| bar.rounded(px(8.)))
+            .when(self.side_bar_visible(), |bar| bar.rounded_l(px(8.)))
+            .when(!self.side_bar_visible(), |bar| bar.rounded(px(8.)))
             .bg(self.color("activityBar.background"))
             .border_color(self.color("surface.border"))
-            .child(div().flex().flex_col().gap(px(8.)).child(explorer.cursor_pointer()).children(views.map(|name| self.icon(name, 36., 24., inactive).cursor_pointer())))
+            .child(div().flex().flex_col().gap(px(8.)).child(explorer).child(search).children(views.map(|name| self.icon(name, 36., 24., inactive).cursor_pointer())))
             .child(self.icon("settings-gear", 36., 24., inactive).cursor_pointer())
     }
 
@@ -333,18 +361,14 @@ impl Workbench {
 
     /// The Explorer: title, the folder section with its tree, and the collapsed Outline and Timeline sections.
     fn side_bar(&self, window: &Window, cx: &mut Context<Self>) -> Div {
-        let tree = self.folder.as_ref().expect("side bar is drawn only with a folder");
         let foreground = self.foreground_or("sideBar.foreground");
-        let title = div()
-            .h(px(32.))
-            .flex_none()
-            .flex()
-            .items_center()
-            .justify_between()
-            .px(px(4.))
-            .when_some(self.theme.color("sideBarTitle.border"), |title, border| title.border_b_1().border_color(border))
-            // The h2 keeps its 32px line under the HC border-bottom, so it is laid out from the top, not centered.
-            .child(div().self_start().pl(px(8.)).line_height(px(32.)).text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).text_color(self.foreground_or("sideBarTitle.foreground")).child("Explorer"))
+        if self.side_bar_view == SideBarView::Search {
+            let title = self.side_bar_title("Search").child(self.search_title_actions(cx));
+            return self.side_bar_frame().text_color(foreground).child(title).child(self.search_view(window, cx));
+        }
+        let tree = self.folder.as_ref().expect("the Explorer is drawn only with a folder");
+        let title = self
+            .side_bar_title("Explorer")
             // actionbar.css: .monaco-action-bar .action-item is cursor: pointer.
             .child(self.icon("ellipsis", 22., 16., foreground).cursor_pointer());
         // explorerviewlet.css: in high contrast an explorer item has a 20px line from the row top, 1px above center.
@@ -469,18 +493,7 @@ impl Workbench {
                 })
         });
         let rows: Vec<_> = rows.collect();
-        div()
-            .w(px(256.))
-            .flex()
-            .flex_col()
-            // The seam with the activity bar is the bar's border; the side bar keeps a transparent 1px edge.
-            .pl(px(1.))
-            .border_t_1()
-            .border_r_1()
-            .border_b_1()
-            .rounded_r(px(8.))
-            .bg(self.color("sideBar.background"))
-            .border_color(self.color("surface.border"))
+        self.side_bar_frame()
             .text_color(foreground)
             .child(title)
             .child(div().flex_1().overflow_hidden().flex().flex_col().child(self.section_header(&folder_name, true, false)).child(
@@ -497,6 +510,35 @@ impl Workbench {
             .child(self.section_header("Timeline", false, true))
             // The pane view is laid out 5px shorter than the side bar content.
             .child(div().h(px(5.)).flex_none())
+    }
+
+    fn side_bar_frame(&self) -> Div {
+        div()
+            .w(px(256.))
+            .flex()
+            .flex_col()
+            // The seam with the activity bar is the bar's border; the side bar keeps a transparent 1px edge.
+            .pl(px(1.))
+            .border_t_1()
+            .border_r_1()
+            .border_b_1()
+            .rounded_r(px(8.))
+            .bg(self.color("sideBar.background"))
+            .border_color(self.color("surface.border"))
+    }
+
+    /// The composite title bar: the view's name and its actions.
+    fn side_bar_title(&self, name: &'static str) -> Div {
+        div()
+            .h(px(32.))
+            .flex_none()
+            .flex()
+            .items_center()
+            .justify_between()
+            .px(px(4.))
+            .when_some(self.theme.color("sideBarTitle.border"), |title, border| title.border_b_1().border_color(border))
+            // The h2 keeps its 32px line under the HC border-bottom, so it is laid out from the top, not centered.
+            .child(div().self_start().pl(px(8.)).line_height(px(32.)).text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).text_color(self.foreground_or("sideBarTitle.foreground")).child(name))
     }
 
     /// A pane header (paneview.ts): 28px, sideBarSectionHeader colors, a top border on every section but the first.

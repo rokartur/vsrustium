@@ -13,14 +13,16 @@ use gpui::{
 };
 
 use super::Workbench;
+use super::search_view::{SEARCH_FIELDS, SearchField};
 use crate::commands::Outcome;
 use crate::input_box::{InputBox, Motion};
 
-/// Which input element: the quick input's, or the Explorer's inline editor.
+/// Which input element: the quick input's, the Explorer's inline editor, or one of the Search view's inputs.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum InputId {
     QuickInput,
     Explorer,
+    Search(SearchField),
 }
 
 /// The view state of one input element.
@@ -69,6 +71,7 @@ impl Workbench {
         match id {
             InputId::QuickInput => &self.quick_inputs.input,
             InputId::Explorer => &self.explorer.input,
+            InputId::Search(field) => &self.search.input(field).view,
         }
     }
 
@@ -76,6 +79,7 @@ impl Workbench {
         match id {
             InputId::QuickInput => &mut self.quick_inputs.input,
             InputId::Explorer => &mut self.explorer.input,
+            InputId::Search(field) => &mut self.search.input_mut(field).view,
         }
     }
 
@@ -83,6 +87,7 @@ impl Workbench {
         match id {
             InputId::QuickInput => &self.quick_inputs.focus,
             InputId::Explorer => &self.explorer.input_focus,
+            InputId::Search(field) => &self.search.input(field).focus,
         }
     }
 
@@ -90,17 +95,19 @@ impl Workbench {
         match id {
             InputId::QuickInput => self.quick_inputs.current().map(|input| &input.input_box),
             InputId::Explorer => self.explorer.edit.as_ref().map(|edit| &edit.input),
+            InputId::Search(field) => Some(&self.search.input(field).value),
         }
     }
 
     /// The input element with the keyboard focus.
     pub(super) fn focused_input(&self, window: &Window) -> Option<InputId> {
-        [InputId::QuickInput, InputId::Explorer].into_iter().find(|id| self.input_focus(*id).is_focused(window))
+        let search = SEARCH_FIELDS.map(InputId::Search);
+        [InputId::QuickInput, InputId::Explorer].into_iter().chain(search).find(|id| self.input_focus(*id).is_focused(window))
     }
 
     /// Any input element in an IME composition: the IME owns the keys.
     pub(super) fn input_composing(&self) -> bool {
-        self.quick_inputs.input.marked.is_some() || self.explorer.input.marked.is_some()
+        self.quick_inputs.input.marked.is_some() || self.explorer.input.marked.is_some() || self.search.inputs.iter().any(|input| input.view.marked.is_some())
     }
 
     /// Runs `edit` on the element's value and restarts the caret blink.
@@ -110,6 +117,10 @@ impl Workbench {
             InputId::QuickInput => self.with_current_quick_input(window, cx, |input| input.edit_input(edit)),
             InputId::Explorer => {
                 self.edit_explorer_input(edit, cx);
+                Outcome::done()
+            }
+            InputId::Search(field) => {
+                self.edit_search_input(field, edit, window, cx);
                 Outcome::done()
             }
         }
@@ -167,6 +178,12 @@ impl Workbench {
             (true, false, false) => Motion::Left,
             (false, false, false) => Motion::Right,
         };
+        if let InputId::Search(field) = id
+            && self.search_input_key(field, keystroke, window, cx)
+        {
+            cx.stop_propagation();
+            return;
+        }
         if id == InputId::Explorer && self.explorer_input_key(&keystroke.key, window, cx) {
             cx.stop_propagation();
             return;
@@ -263,8 +280,9 @@ impl Workbench {
         let workbench = cx.entity();
         div()
             .id(match id {
-                InputId::QuickInput => "quick-input-text",
-                InputId::Explorer => "explorer-input-text",
+                InputId::QuickInput => gpui::ElementId::from("quick-input-text"),
+                InputId::Explorer => "explorer-input-text".into(),
+                InputId::Search(field) => ("search-input-text", field as usize).into(),
             })
             .flex_1()
             .h_full()

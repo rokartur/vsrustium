@@ -56,6 +56,8 @@ pub struct Query {
     pub preview_options: Option<PreviewOptions>,
     pub surrounding_context: usize,
     pub max_file_size: Option<u64>,
+    /// `usingSearchPaths`: the include input named folders to search in.
+    pub using_search_paths: bool,
 }
 
 /// Reads a setting for a folder; `Value::Null` when unset.
@@ -81,6 +83,31 @@ pub fn text_query(pattern: &Value, folders: &[PathBuf], options: &Value, setting
     query.max_file_size = options["maxFileSize"].as_u64();
     query.surrounding_context = options["surroundingContext"].as_u64().unwrap_or_default() as usize;
     query
+}
+
+/// `pathIncludedInQuery` (search.ts): whether a file outside the searched folders, as an open editor is, passes the
+/// query's include and exclude patterns.
+pub fn path_included_in_query(query: &Query, path: &Path) -> bool {
+    let options = glob::Options { ignore_case: query.ignore_glob_case, ..glob::Options::default() };
+    let fs_path = path.to_string_lossy();
+    if let Some(exclude) = &query.exclude_pattern
+        && glob::parse_exclude_expression(exclude, options).matches(&fs_path, None, None).is_some()
+    {
+        return false;
+    }
+    if query.include_pattern.is_none() && !query.using_search_paths {
+        return true;
+    }
+    if let Some(include) = &query.include_pattern
+        && glob::parse_expression(include, options).matches(&fs_path, None, None).is_some()
+    {
+        return true;
+    }
+    query.using_search_paths
+        && query.folder_queries.iter().any(|folder_query| {
+            let Ok(relative) = path.strip_prefix(&folder_query.folder) else { return false };
+            folder_query.include_pattern.as_ref().is_none_or(|include| glob::parse_expression(include, options).matches(&relative.to_string_lossy(), None, None).is_some())
+        })
 }
 
 /// `getContentPattern`.
@@ -166,12 +193,12 @@ fn pattern_list_to_expression(patterns: &[String]) -> Option<Expression> {
 }
 
 /// `escapeExcludeExceptionKeys`: a `!` in a pattern the caller typed is a literal, not an exception.
-fn escape_exclude_exception_keys(expression: &Expression) -> Expression {
+pub(crate) fn escape_exclude_exception_keys(expression: &Expression) -> Expression {
     expression.iter().map(|(key, value)| (glob::escape_exclude_exception(key), value.clone())).collect()
 }
 
 /// `getFolderQueryForRoot`.
-fn folder_query_for_root(folder: &Path, options: &Value, setting: Setting, include_folder_name: bool) -> FolderQuery {
+pub(crate) fn folder_query_for_root(folder: &Path, options: &Value, setting: Setting, include_folder_name: bool) -> FolderQuery {
     let flag = |key: &str| options[key].as_bool();
     let search = |key: &str| setting(folder, &format!("search.{key}")) == true;
     let settings_excludes = match options["disregardExcludeSettings"] == true {

@@ -2,7 +2,7 @@
 //! (IME, dead keys) through GPUI's input handler. Keybindings run before this (workbench/keyboard.rs).
 
 use std::ops::Range;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use gpui::{Bounds, Context, EntityInputHandler, KeyDownEvent, Pixels, UTF16Selection, Window};
 
@@ -41,6 +41,9 @@ impl Workbench {
         // The edit can unfold a region or change the line count, which changes the visible lines.
         if change.is_some() {
             self.host.send_visible_ranges(&self.editors);
+            let document = &self.editors.active().expect("still open").document;
+            let (scheme, path) = (document.scheme.clone(), document.path.clone());
+            self.search_model_changed(&scheme, &path);
         }
         if scrolled {
             self.editor_scrolled(cx);
@@ -53,9 +56,15 @@ impl Workbench {
     /// shortcut: no save participants (`$participateInSave`, only `$trySaveDocument` runs them), no format on save,
     /// no conflict check against the file on disk.
     pub(super) fn save_editor(&mut self, index: usize, cx: &mut Context<Self>) -> oneshot::Receiver<bool> {
+        let document = &self.editors.editors[index].document;
+        let (scheme, path) = (document.scheme.clone(), document.path.clone());
+        self.save_model(scheme, path, cx)
+    }
+
+    /// `save_editor` for any open model, one without an editor too.
+    pub(super) fn save_model(&mut self, scheme: String, path: PathBuf, cx: &mut Context<Self>) -> oneshot::Receiver<bool> {
         let (sender, receiver) = oneshot::channel();
-        let editor = &self.editors.editors[index];
-        let (scheme, path) = (editor.document.scheme.clone(), editor.document.path.clone());
+        let editor = self.editors.model(&scheme, &path).expect("saving an open model");
         let version = editor.alternative_version_id();
         let bytes = editor.saved_bytes();
         if scheme == "file" {

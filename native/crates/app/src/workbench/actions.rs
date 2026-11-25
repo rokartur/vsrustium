@@ -174,6 +174,9 @@ impl Workbench {
         let change = editor.execute_edits(vec![(Position::new(0, 0), end, disk.lines.join("\n"), false)], None, EditReason::Unknown("revert"));
         if let Some(change) = change {
             self.host.send_content_change(&self.editors, index, &change);
+            let document = &self.editors.editors[index].document;
+            let (scheme, path) = (document.scheme.clone(), document.path.clone());
+            self.search_model_changed(&scheme, &path);
         }
         drop(self.save_editor(index, cx));
     }

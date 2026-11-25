@@ -280,7 +280,7 @@ impl Workbench {
     }
 
     /// `applyTextEditorOptions`: the selection, validated against the text, then revealed in the center.
-    fn select_range(&mut self, path: &Path, range: TextRange, cx: &mut Context<Self>) {
+    pub(super) fn select_range(&mut self, path: &Path, range: TextRange, cx: &mut Context<Self>) {
         let viewport = self.editors.viewport;
         let Some(editor) = self.editors.active_mut().filter(|editor| editor.document.path == path) else { return };
         let lines = &editor.document.lines;
