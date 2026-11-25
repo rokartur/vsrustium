@@ -78,6 +78,8 @@ pub struct TerminalView {
     cursor_blinking: bool,
     cursor_blink_off: bool,
     cursor_blink_running: bool,
+    /// The Cmd+trackpad zoom's fraction of a step not applied yet.
+    pub(super) zoom_remainder: f32,
     /// Set once a terminal was created: `terminalHasBeenCreated`.
     has_been_created: bool,
     /// What the extension host was told (mainThreadTerminalService.ts): the active terminal and the events it asked for.
@@ -109,6 +111,11 @@ pub enum TerminalInput {
     Rename(u32),
     /// The "Configure Terminal Profile" button's name input: the profile to copy and the names already configured.
     ProfileName { profile: Profile, existing: Vec<String> },
+    /// Send Sequence's input box.
+    SendSequence,
+    /// Send Signal's picker, then its manual entry.
+    Signal,
+    ManualSignal,
 }
 
 impl TerminalView {
@@ -128,6 +135,7 @@ impl TerminalView {
             cursor_blinking: false,
             cursor_blink_off: false,
             cursor_blink_running: false,
+            zoom_remainder: 0.,
             has_been_created: false,
             host: HostTerminals::default(),
         }
@@ -146,7 +154,7 @@ impl TerminalView {
         self.instances.iter_mut().find(|instance| instance.id == id)
     }
 
-    fn active_instance_mut(&mut self) -> Option<&mut TerminalInstance> {
+    pub(super) fn active_instance_mut(&mut self) -> Option<&mut TerminalInstance> {
         let id = self.active_instance_id()?;
         self.instance_mut(id)
     }
@@ -316,6 +324,7 @@ impl Workbench {
             });
         }
         self.register_external_terminal_actions();
+        self.register_terminal_contrib_actions();
     }
 
     /// `isViewVisible(TERMINAL_VIEW_ID)`: the group shows the Terminal view's tab.
@@ -742,6 +751,7 @@ impl Workbench {
                 }
             }
             (Event::Hide, _) => self.quick_inputs.remove(id),
+            (event, input @ (TerminalInput::SendSequence | TerminalInput::Signal | TerminalInput::ManualSignal)) => self.terminal_contrib_input_event(id, event, input, window, cx),
             _ => {}
         }
     }
@@ -1135,6 +1145,11 @@ impl Workbench {
     /// `fastScrollSensitivity` with Alt.
     fn terminal_wheel(&mut self, id: u32, event: &ScrollWheelEvent, cx: &mut Context<Self>) {
         cx.stop_propagation();
+        let modifiers = event.modifiers;
+        if (modifiers.platform || modifiers.control) && !modifiers.shift && !modifiers.alt && self.setting("terminal.integrated.mouseWheelZoom") == true {
+            self.terminal_wheel_zoom(event.delta);
+            return;
+        }
         let Some(metrics) = self.terminal_view.metrics.clone() else { return };
         let units = match event.delta {
             ScrollDelta::Pixels(delta) => f32::from(delta.y) / 40.,

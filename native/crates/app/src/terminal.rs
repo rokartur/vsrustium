@@ -367,6 +367,13 @@ impl TerminalInstance {
         true
     }
 
+    /// `sendSignal`: node-pty `kill(signal)` on the shell process.
+    pub fn send_signal(&self, signal: i32) {
+        if let Some(pty) = &self.pty {
+            pty.kill(signal);
+        }
+    }
+
     /// `kill`: SIGHUP to the shell (node-pty `kill()`).
     pub fn kill(&mut self) {
         self.killed_by_user = true;
