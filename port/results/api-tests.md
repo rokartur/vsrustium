@@ -201,3 +201,7 @@ On the Studio at 1ed0e932 (settings.json reload in the workbench, `.vsrustium` f
 ## M12 workspace trust
 
 `MOCHA_GREP="vscode API - env|vscode API - workspace" SUITE_TIMEOUT=900 port/tools/api-tests` on the Studio, the working tree of the workspace trust commit (`--disable-workspace-trust`, as the reference run has `security.workspace.trust.enabled: false`). api-folder 113 passing, 2 pending, 7 failing, 280 not reached (exit 1 after 13s); api-workspace 4/0/0. The 7 failing are the 6 `env.power` tests and `env.remoteName`, as at e9ae1460.
+
+## Milestone 15: terminal and tasks
+
+On the Studio at b9d74655619, `SHELL=/bin/bash MOCHA_GREP='vscode API - ([tT]erminal|tasks)' SUITE_TIMEOUT=600 port/tools/api-tests`: api-folder 47 passing, 4 pending, 0 failing, 351 not reached (exit 0 after 20s); api-workspace 0/0/0/4. terminal.test.ts, terminal.shellIntegration.test.ts and workspace.tasks.test.ts all pass; the 4 pending are upstream `test.skip` ("Test if env is set", "should listen to all future terminal data events", "should respect dimension overrides", "dependsOn task should start with a different processId (#118256)").

@@ -29,6 +29,8 @@ impl Workbench {
             ("MainThreadConsole" | "MainThreadErrors" | "MainThreadExtensionService", _) => self.handle_observed_request(&request),
             ("MainThreadDebugService", _) => self.handle_debug_request(request, window, cx),
             ("MainThreadTesting", _) => self.handle_testing_request(request, cx),
+            ("MainThreadTerminalService" | "MainThreadTerminalShellIntegration", _) => self.handle_terminal_request(request, window, cx),
+            ("MainThreadTask", _) => self.handle_task_request(request, window, cx),
             ("MainThreadCommands", "$registerCommand") => {
                 let id = arg(0).as_str().unwrap_or_default().to_owned();
                 let handler_id = id.clone();

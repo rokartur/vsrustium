@@ -68,6 +68,10 @@ pub enum Owner {
     MeteredConnection,
     /// A pick or input of the debug start flow, answered with the picked handle or the typed value.
     Debug(Option<futures::channel::oneshot::Sender<Option<String>>>),
+    /// A task picker (run, build, test, terminate, restart).
+    Tasks(crate::workbench::task_quick_pick::TaskPicker),
+    /// The tasks.json template picker of the folder.
+    TaskTemplates(std::path::PathBuf),
 }
 
 impl Workbench {
@@ -256,6 +260,8 @@ impl Workbench {
             Owner::ExtensionsFolder(_) => self.extensions_folder_pick_event(id, event, window, cx),
             Owner::DisplayLanguage(_) => self.display_language_pick_event(id, event, window, cx),
             Owner::Debug(_) => self.debug_pick_event(id, event, window, cx),
+            Owner::Tasks(_) => self.task_pick_event(id, event, window, cx),
+            Owner::TaskTemplates(_) => self.task_template_event(id, event, window, cx),
         }
     }
 

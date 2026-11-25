@@ -58,6 +58,18 @@ impl Workbench {
         self.markers_changed(changed, cx);
     }
 
+    /// The files that have markers of `owner` (`IMarkerService.read({ owner })`).
+    pub(super) fn marker_resources_of(&self, owner: &str) -> Vec<std::path::PathBuf> {
+        let mut paths = Vec::new();
+        for marker in self.diagnostics.service.read(ReadOptions { owner: Some(owner), ..Default::default() }) {
+            let path = self.diagnostics.uris.get(&marker.resource).and_then(|uri| uri["path"].as_str()).map(std::path::PathBuf::from);
+            if let Some(path) = path.filter(|path| !paths.contains(path)) {
+                paths.push(path);
+            }
+        }
+        paths
+    }
+
     /// `$clear(owner)`.
     pub(crate) fn clear_markers(&mut self, owner: &str, cx: &mut Context<Self>) {
         let changed = self.diagnostics.service.change_all(owner, &[]);

@@ -80,7 +80,7 @@ impl Workbench {
                 // searchEditor.ts draws its query widget where a text editor has its breadcrumbs.
                 SEARCH_EDITOR_SCHEME => part.child(self.search_editor_query(window, cx)),
                 crate::output::OUTPUT_SCHEME => part.child(self.output_title_actions(window, cx)),
-                TERMINAL_SCHEME => part.child(self.terminal_title_actions(cx)).child(self.terminal_body(cx)),
+                TERMINAL_SCHEME => part.child(self.terminal_title_actions(cx)).child(self.terminal_body(window, cx)),
                 // breadcrumbsControl.ts `update`: no breadcrumbs for a resource without a file system provider.
                 "untitled" => part,
                 _ if self.setting("breadcrumbs.enabled") == json!(false) => part,

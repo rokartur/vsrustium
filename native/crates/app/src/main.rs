@@ -38,6 +38,7 @@ mod system_wide_keybindings;
 mod language_features;
 mod languages;
 mod list_tree;
+mod link_computer;
 mod local_history;
 mod main_thread;
 mod main_thread_commands;
@@ -67,12 +68,14 @@ mod search_editor;
 mod scm;
 mod search_model;
 mod settings_editor;
+mod shell_env;
 mod smart_snippet_inserter;
 mod snippets;
 mod split_view;
 mod suggest;
 mod symbol_icons;
 mod syntax;
+mod tasks;
 mod terminal;
 mod testing;
 mod tf_idf;
@@ -80,6 +83,7 @@ mod theme;
 mod trusted_domains;
 mod undo_redo;
 mod untitled;
+mod variables;
 mod webview;
 mod uri;
 mod workbench;
@@ -151,6 +155,7 @@ fn main() -> anyhow::Result<()> {
     let development = ExtensionDevelopment::from_args(&args)?;
     // shortcut: the port is no app bundle, so no CFBundleURLTypes routes `code-oss://` here; `--open-url <url>` does.
     let open_url = flag_value("--open-url");
+    apply_shell_env(args.iter().any(|arg| arg == "--force-disable-user-env"));
 
     // Packaged as VSRustium.app (port/tools/package-app) the app files sit in Contents/Resources/app; run from the
     // checkout they are the working directory.
@@ -278,6 +283,7 @@ fn main() -> anyhow::Result<()> {
                 workbench.color_themes = color_themes;
                 workbench.extensions = extensions.clone();
                 workbench.register_webview_view_commands();
+                workbench.start_tasks();
                 if let Some(folder) = &export_default_keybindings {
                     match workbench.export_default_keybindings(folder) {
                         Ok(path) => eprintln!("[workbench.contrib.keybindingsExport] Wrote {}", path.display()),
@@ -293,6 +299,7 @@ fn main() -> anyhow::Result<()> {
                 workbench.watch_recently_opened(window, cx);
                 workbench.watch_window_focus(window, cx);
                 workbench.set_installed_extensions(builtins.clone(), UserExtensions { folder: user_extensions.folder.clone(), product_version: VERSION.into() }, developed.clone(), cx);
+                workbench.start_terminal_host();
                 workbench.watch_editor_focus(window, cx);
                 workbench.show_trust_modal_on_start(window, cx);
                 if let Some(file) = file {
@@ -452,7 +459,7 @@ fn run_extension_host(
             MainThreadSecretState::in_memory()
         }),
     });
-    session.forward(&["MainThreadCommands", "MainThreadCustomEditors", "MainThreadDebugService", "MainThreadDiagnostics", "MainThreadDownloadService", "MainThreadEditorTabs", "MainThreadLanguageFeatures", "MainThreadLogger", "MainThreadMessageService", "MainThreadOutputService", "MainThreadProgress", "MainThreadQuickOpen", "MainThreadSCM", "MainThreadStatusBar", "MainThreadTesting", "MainThreadUriOpeners", "MainThreadUrls", "MainThreadUrls.$registerUriHandler", "MainThreadUrls.$unregisterUriHandler", "MainThreadWebviewPanels", "MainThreadWebviewViews", "MainThreadWebviews", "MainThreadWindow.$openUri", "MainThreadWorkspace"], move |request| {
+    session.forward(&["MainThreadCommands", "MainThreadCustomEditors", "MainThreadDebugService", "MainThreadDiagnostics", "MainThreadDownloadService", "MainThreadEditorTabs", "MainThreadLanguageFeatures", "MainThreadLogger", "MainThreadMessageService", "MainThreadOutputService", "MainThreadProgress", "MainThreadQuickOpen", "MainThreadSCM", "MainThreadStatusBar", "MainThreadTask", "MainThreadTerminalService", "MainThreadTerminalShellIntegration", "MainThreadTesting", "MainThreadUriOpeners", "MainThreadUrls", "MainThreadUrls.$registerUriHandler", "MainThreadUrls.$unregisterUriHandler", "MainThreadWebviewPanels", "MainThreadWebviewViews", "MainThreadWebviews", "MainThreadWindow.$openUri", "MainThreadWorkspace"], move |request| {
         let _ = workbench_requests.unbounded_send(request);
     }, workbench_replies);
     session.main_thread = Some(Box::new(main_thread));
@@ -582,6 +589,23 @@ fn open_shared_storage(shared_data: Option<PathBuf>) -> anyhow::Result<storage::
     let dir = shared_data.join("sharedStorage");
     std::fs::create_dir_all(&dir)?;
     Ok(storage::Storage::open(&dir.join("state.vscdb")))
+}
+
+/// main.ts `resolveShellEnv` merged into `process.env`: a Dock launch gets the login shell's PATH for the host,
+/// terminals and tasks. Runs before any thread starts, so changing the environment is sound.
+// shortcut: the timeout is the 10 s default, `application.shellEnvironmentResolutionTimeout` is read later than this; read it here once settings load first.
+fn apply_shell_env(force_disable: bool) {
+    let env: std::collections::HashMap<String, String> = std::env::vars_os().filter_map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?))).collect();
+    match shell_env::resolve_shell_env(&env, force_disable, std::time::Duration::from_secs(10)) {
+        Some(Ok(resolved)) => {
+            for (key, value) in resolved {
+                // SAFETY: called from main before the host, the UI or any other thread starts.
+                unsafe { std::env::set_var(key, value) };
+            }
+        }
+        Some(Err(message)) => eprintln!("[shellEnv] {message}"),
+        None => {}
+    }
 }
 
 fn default_user_data() -> anyhow::Result<PathBuf> {

@@ -76,6 +76,13 @@ mod output_view;
 mod preferences;
 pub(crate) mod terminal_view;
 pub(crate) mod opener;
+mod terminal_host;
+mod external_terminal;
+mod terminal_contrib;
+mod terminal_find;
+mod terminal_links;
+pub mod task_quick_pick;
+pub(crate) mod task_service;
 pub mod quick_access;
 mod quick_open;
 mod readonly;
@@ -191,6 +198,7 @@ pub struct Workbench {
     pub output: crate::output::Output,
     output_view: output_view::OutputView,
     terminal_view: terminal_view::TerminalView,
+    tasks: task_service::TaskService,
     /// The status bar message and the task that hides it.
     status_message: Option<(String, Task<()>)>,
     scrollbars: editor_view::Scrollbars,
@@ -411,6 +419,7 @@ impl Workbench {
             output: Default::default(),
             output_view: output_view::OutputView::new(cx),
             terminal_view: terminal_view::TerminalView::new(cx),
+            tasks: Default::default(),
             status_message: None,
             scrollbars: Default::default(),
             fold_controls: Default::default(),

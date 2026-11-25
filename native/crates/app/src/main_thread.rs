@@ -125,7 +125,7 @@ impl MainThread for WorkbenchMainThread {
             let req = if message.cancellable {
                 session.notify_cancellable(message.proxy, message.method, message.args)
             } else {
-                let mut args: Vec<Arg> = message.args.into_iter().map(Arg::Json).collect();
+                let mut args: Vec<Arg> = message.args.into_iter().map(Arg::from_value).collect();
                 // extHostWebview.ts `$onMessage` reads its last argument as a SerializableObjectWithBuffers of VSBuffers,
                 // which the workbench passes as base64 strings.
                 if (message.proxy, message.method) == ("ExtHostWebviews", "$onMessage") && let Some(Arg::Json(encoded)) = args.pop() {

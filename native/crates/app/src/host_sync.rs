@@ -312,6 +312,14 @@ impl HostSync {
         self.send("ExtHostTheming", "$onColorThemeChange", vec![json!(scheme)]);
     }
 
+    /// `send` for callbacks that outlive a borrow of the workbench (a terminal's input).
+    pub fn notifier(&self) -> impl Fn(&'static str, &'static str, Vec<Value>) + 'static {
+        let sender = self.sender.clone();
+        move |proxy, method, args| {
+            let _ = sender.send(HostMessage { proxy, method, args, reply: None, cancellable: false, files: None, extensions: None });
+        }
+    }
+
     pub(crate) fn send(&self, proxy: &'static str, method: &'static str, args: Vec<Value>) {
         // The session thread is gone once the host exits; the workbench keeps working without it.
         let _ = self.sender.send(HostMessage { proxy, method, args, reply: None, cancellable: false, files: None, extensions: None });

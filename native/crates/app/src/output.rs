@@ -10,10 +10,13 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 pub mod filter;
+pub mod links;
 pub mod log_levels;
 pub mod logger;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod upstream_tests;
 
 /// `Schemas.outputChannel`.
 pub const OUTPUT_SCHEME: &str = "output";

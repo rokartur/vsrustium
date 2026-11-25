@@ -113,7 +113,7 @@ impl MainThreadStorage {
 }
 
 /// `generateUuid()`: a version 4 UUID.
-fn generate_uuid() -> String {
+pub fn generate_uuid() -> String {
     let mut bytes = [0u8; 16];
     std::fs::File::open("/dev/urandom").and_then(|mut random| random.read_exact(&mut bytes)).expect("/dev/urandom is readable");
     bytes[6] = bytes[6] & 0x0f | 0x40;

@@ -41,9 +41,10 @@ pub enum InputId {
     DebugView,
     BreakpointWidget,
     DebugConsole,
+    TerminalFind,
 }
 
-const INPUTS: [InputId; 17] = [
+const INPUTS: [InputId; 18] = [
     InputId::QuickInput,
     InputId::Explorer,
     InputId::ExplorerFind,
@@ -61,6 +62,7 @@ const INPUTS: [InputId; 17] = [
     InputId::DebugView,
     InputId::BreakpointWidget,
     InputId::DebugConsole,
+    InputId::TerminalFind,
 ];
 
 /// The view state of one input element.
@@ -134,6 +136,7 @@ impl Workbench {
             InputId::DebugView => &self.debug_view.input_view,
             InputId::BreakpointWidget => &self.debug_view.widget_view,
             InputId::DebugConsole => &self.debug_console.input_view,
+            InputId::TerminalFind => &self.terminal_view.find.view,
         }
     }
 
@@ -158,6 +161,7 @@ impl Workbench {
             InputId::DebugView => &mut self.debug_view.input_view,
             InputId::BreakpointWidget => &mut self.debug_view.widget_view,
             InputId::DebugConsole => &mut self.debug_console.input_view,
+            InputId::TerminalFind => &mut self.terminal_view.find.view,
         }
     }
 
@@ -182,6 +186,7 @@ impl Workbench {
             InputId::DebugView => &self.debug_view.input_focus,
             InputId::BreakpointWidget => &self.debug_view.widget_focus,
             InputId::DebugConsole => &self.debug_console.input_focus,
+            InputId::TerminalFind => &self.terminal_view.find.focus,
         }
     }
 
@@ -206,6 +211,7 @@ impl Workbench {
             InputId::DebugView => self.debug_view.editing.as_ref().map(|_| &self.debug_view.input),
             InputId::BreakpointWidget => self.breakpoint_widget.as_ref().map(|widget| &widget.input),
             InputId::DebugConsole => Some(&self.debug_console.input),
+            InputId::TerminalFind => Some(&self.terminal_view.find.input),
         }
     }
 
@@ -286,6 +292,10 @@ impl Workbench {
             }
             InputId::DebugConsole => {
                 self.edit_debug_console_input(edit, cx);
+                Outcome::done()
+            }
+            InputId::TerminalFind => {
+                self.edit_terminal_find_input(edit, cx);
                 Outcome::done()
             }
         }
@@ -482,6 +492,7 @@ impl Workbench {
                 InputId::DebugView => "debug-view-input-text".into(),
                 InputId::BreakpointWidget => "breakpoint-widget-input-text".into(),
                 InputId::DebugConsole => "debug-console-input-text".into(),
+                InputId::TerminalFind => "terminal-find-text".into(),
             })
             .flex_1()
             .h_full()
