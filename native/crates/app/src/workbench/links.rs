@@ -351,7 +351,14 @@ impl Workbench {
             }
             let mut result = Vec::new();
             for (index, link) in links.into_iter().enumerate() {
-                let mut dto = json!({ "range": link.dto["range"], "url": link.dto["url"], "tooltip": link.dto["tooltip"] });
+                // `Link.toJSON`: the range, url and tooltip a link has, without its cache id.
+                let mut dto = serde_json::Map::new();
+                for key in ["range", "url", "tooltip"] {
+                    if !link.dto[key].is_null() {
+                        dto.insert(key.into(), link.dto[key].clone());
+                    }
+                }
+                let mut dto = Value::Object(dto);
                 let supports_resolve = registrations.iter().any(|(handle, resolves)| *handle == link.handle && *resolves);
                 if index < resolve_count && dto["url"].is_null() && supports_resolve
                     && let Ok(Ok(resolved)) = call("ExtHostLanguageFeatures", "$resolveDocumentLink", vec![json!(link.handle), link.dto["cacheId"].clone()]).await

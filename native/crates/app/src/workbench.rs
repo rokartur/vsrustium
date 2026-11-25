@@ -40,7 +40,6 @@ pub(crate) mod extension_host_restart;
 mod user_data_profile;
 mod profiles_editor_view;
 mod icon_select_box;
-mod document_links;
 mod settings_import;
 pub use profiles_editor_view::NEW_WINDOW_PROFILE_SETTING;
 mod explorer_find;
@@ -631,7 +630,6 @@ impl Workbench {
         workbench.register_parameter_hints();
         workbench.register_code_actions();
         workbench.register_code_lens();
-        workbench.register_document_links();
         workbench.register_inlay_hints();
         workbench.register_rename();
         workbench.register_links();

@@ -47,7 +47,7 @@ pub enum InputId {
     IconSelectSearch,
 }
 
-const INPUTS: [InputId; 20] = [
+const INPUTS: [InputId; 21] = [
     InputId::QuickInput,
     InputId::Explorer,
     InputId::ExplorerFind,
