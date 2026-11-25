@@ -243,3 +243,12 @@ fn a_hover_shows_after_the_delay_and_hides_when_the_pointer_leaves(cx: &mut Test
     cx.simulate_keystrokes("x");
     assert_eq!(shown(cx), None);
 }
+
+/// A `---` paragraph is a 1px rule, 8px below the paragraph before it and 4px above the one after it.
+#[test]
+fn a_rule_paragraph_collapses_its_margins() {
+    use crate::notifications::Node;
+    let text = || vec![Node::Text("a".into())];
+    assert_eq!(super::paragraphs_height(&[text(), text()]), 19. + 8. + 19.);
+    assert_eq!(super::paragraphs_height(&[text(), Vec::new(), text()]), 19. + 8. + 1. + 4. + 19.);
+}

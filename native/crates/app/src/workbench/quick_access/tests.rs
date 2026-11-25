@@ -176,6 +176,7 @@ fn help_lists_the_providers_and_shows_the_picked_one(cx: &mut TestAppContext) {
         "@:|Go to Symbol in Editor by Category|[]",
         r#"#|Go to Symbol in Workspace|[["⌘", "T"]]"#,
         r#">|Show and Run Commands|[["⇧", "⌘", "P"]]"#,
+        "term |Show All Opened Terminals|[]",
     ]);
     cx.simulate_keystrokes("down enter");
     assert_eq!(picker(cx).0, ":", "accept shows the picked provider");

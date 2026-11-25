@@ -24,7 +24,7 @@ pub struct TaskService {
     /// `$registerTaskProvider`: handle and task type.
     pub(super) providers: Vec<(i64, String)>,
     definitions: Vec<TaskDefinition>,
-    matchers: Registry,
+    pub(super) matchers: Registry,
     /// `UUIDMap`: custom task ids by folder and label, stable across reads.
     uuids: HashMap<(PathBuf, String), String>,
     /// Tasks the host referred to by id (`$executeTask` with a DTO), for `$getTaskExecution`.
@@ -32,6 +32,9 @@ pub struct TaskService {
     active: Vec<ActiveTask>,
     /// The last task a user ran, for `reRunTask`.
     pub(super) last: Option<Task>,
+    /// `registerSupportedExecutions`: the `customExecutionSupported`, `shellExecutionSupported` and
+    /// `processExecutionSupported` context keys, unset until the host registers them.
+    supported_executions: [Option<bool>; 3],
 }
 
 struct ActiveTask {
@@ -76,7 +79,10 @@ impl Workbench {
     pub fn start_tasks(&mut self) {
         let contributions: Vec<(&str, &Value)> = self.extensions.iter().map(|extension| (extension.id.as_str(), &extension.description["contributes"])).collect();
         self.tasks = TaskService::new(&contributions);
-        self.commands.register("workbench.action.tasks.runTask", |workbench, args, window, cx| workbench.run_task_command(args.into_iter().next().unwrap_or(Value::Null), window, cx));
+        self.commands.register("workbench.action.tasks.runTask", |workbench, args, window, cx| {
+            let argument = args.into_iter().next().unwrap_or(Value::Null);
+            workbench.with_task_trust(window, cx, move |workbench, window, cx| workbench.run_task_command(argument, window, cx))
+        });
         self.register_task_pick_actions();
     }
 
@@ -163,8 +169,35 @@ impl Workbench {
                 self.kill_terminal(terminal, window, cx);
                 Outcome::done()
             }
-            // `$registerSupportedExecutions` and `$registerTaskSystem`: the port runs every execution kind locally.
+            "$registerSupportedExecutions" => {
+                for (index, supported) in self.tasks.supported_executions.iter_mut().enumerate() {
+                    if let Some(value) = arg(index).as_bool() {
+                        *supported = Some(value);
+                    }
+                }
+                cx.notify();
+                Outcome::done()
+            }
+            // `$registerTaskSystem`: the port runs every execution kind locally.
             _ => Outcome::done(),
+        }
+    }
+
+    /// `taskTypes`: with `task.autoDetect` on, every declared type whose `when` holds.
+    pub(super) fn task_types(&self, window: &Window) -> Vec<String> {
+        if self.setting("task.autoDetect") == "off" {
+            return Vec::new();
+        }
+        let context = self.key_context(window);
+        let enabled = |when: &Option<String>| when.as_deref().and_then(crate::contextkey::Expr::deserialize).is_none_or(|when| when.evaluate(&context));
+        self.tasks.definitions.iter().filter(|definition| enabled(&definition.when)).map(|definition| definition.task_type.clone()).collect()
+    }
+
+    pub(super) fn task_context(&self, context: &mut HashMap<String, Value>) {
+        for (key, supported) in ["customExecutionSupported", "shellExecutionSupported", "processExecutionSupported"].into_iter().zip(self.tasks.supported_executions) {
+            if let Some(supported) = supported {
+                context.insert(key.into(), Value::Bool(supported));
+            }
         }
     }
 
@@ -554,13 +587,24 @@ impl Workbench {
                 let _ = reply.send(Ok(Value::Null));
                 return;
             };
+            // `_runTaskCommand`: a task identifier runs as it is, a name asks for a problem matcher first.
+            // shortcut: a name answers once the prompt shows, without the exit code an identifier's run answers with.
             let Ok(ended) = workbench.update_in(cx, |workbench, window, cx| {
                 workbench.add_recent_task(&task);
-                workbench.run_task(task, window, cx)
+                match argument.is_string() {
+                    true => {
+                        workbench.run_attaching_problem_matcher(task, window, cx);
+                        None
+                    }
+                    false => Some(workbench.run_task(task, window, cx)),
+                }
             }) else {
                 return;
             };
-            let code = ended.await.ok().flatten();
+            let code = match ended {
+                Some(ended) => ended.await.ok().flatten(),
+                None => None,
+            };
             let _ = reply.send(Ok(json!({ "exitCode": code })));
         })
         .detach();

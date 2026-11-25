@@ -19,6 +19,8 @@ use crate::notifications::{Notification, Severity};
 const REGISTER: &str = "$registerDocumentLinkProvider";
 /// The editor worker's link provider (`editorWorkerService.ts` registers `computeLinks` for every model).
 pub(super) const WORKER_LINK_PROVIDER: u64 = u64::MAX - 3;
+/// outputLinkProvider.ts registers its worker's `$computeLinks` for the Output and log languages.
+const OUTPUT_LINK_PROVIDER: u64 = u64::MAX - 4;
 /// `languageFeatureDebounceService.for(linkProvider, 'Links', { min: 1000, max: 4000 })`.
 const DEBOUNCE: Duration = Duration::from_millis(1000);
 
@@ -48,6 +50,8 @@ pub(super) struct Link {
 impl Workbench {
     pub(super) fn register_links(&mut self) {
         self.language_features.register(REGISTER, vec![json!(WORKER_LINK_PROVIDER), json!({ "language": "*", "hasAccessToAllModels": true }), json!(false)]);
+        let output_selector = json!([{ "language": crate::output::OUTPUT_LANGUAGE, "scheme": "*" }, { "language": crate::output::LOG_LANGUAGE, "scheme": "*" }]);
+        self.language_features.register(REGISTER, vec![json!(OUTPUT_LINK_PROVIDER), output_selector, json!(false)]);
         self.commands.register("editor.action.openLink", |workbench, _, window, cx| {
             workbench.open_links_at_selections(window, cx);
             Outcome::done()
@@ -108,12 +112,18 @@ impl Workbench {
         let candidate = Candidate { uri: &uri, language: &editor.document().language_id };
         let handles: Vec<u64> = self.language_features.ordered(REGISTER, &candidate).iter().rev().map(|registration| registration.handle).collect();
         let lines = editor.document().lines.clone();
+        let folders = self.workspace_folders();
         let calls = handles
             .into_iter()
             .map(|handle| match handle {
                 WORKER_LINK_PROVIDER => {
                     let (sender, receiver) = futures::channel::oneshot::channel();
                     let _ = sender.send(Ok(worker_links(&lines)));
+                    (handle, receiver)
+                }
+                OUTPUT_LINK_PROVIDER => {
+                    let (sender, receiver) = futures::channel::oneshot::channel();
+                    let _ = sender.send(Ok(crate::output::links::compute_links(&lines, &folders)));
                     (handle, receiver)
                 }
                 _ => (handle, self.host.call_cancellable("ExtHostLanguageFeatures", "$provideDocumentLinks", vec![json!(handle), uri.clone()])),
@@ -329,6 +339,7 @@ impl Workbench {
         let uri = editor.document().uri();
         let candidate = Candidate { uri: &uri, language: &editor.document().language_id };
         let lines = editor.document().lines.clone();
+        let folders = self.workspace_folders();
         let registrations: Vec<(u64, bool)> = self.language_features.ordered(REGISTER, &candidate).iter().rev().map(|registration| (registration.handle, registration.args.get(2) == Some(&json!(true)))).collect();
         let call = self.host.caller();
         let (sender, receiver) = futures::channel::oneshot::channel();
@@ -338,6 +349,7 @@ impl Workbench {
             for (handle, _) in &registrations {
                 let list = match *handle {
                     WORKER_LINK_PROVIDER => worker_links(&lines),
+                    OUTPUT_LINK_PROVIDER => crate::output::links::compute_links(&lines, &folders),
                     _ => match call("ExtHostLanguageFeatures", "$provideDocumentLinks", vec![json!(handle), uri.clone()]).await {
                         Ok(Ok(list)) if list.is_object() => list,
                         _ => continue,

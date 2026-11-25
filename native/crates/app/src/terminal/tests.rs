@@ -78,6 +78,28 @@ fn paste_uses_carriage_returns_and_bracketed_paste_markers() {
     assert_eq!(instance.selection_text().as_deref(), Some("abc\ndef\n"));
 }
 
+/// Record Terminal Session: output, typed input and sent text are separate events, a resize records the new size.
+#[test]
+fn a_recording_keeps_each_kind_of_event() {
+    let launch = ShellLaunchConfig { extension_pty: true, cwd: std::env::temp_dir(), ..Default::default() };
+    let (mut instance, _receiver) = TerminalInstance::new(1, launch, 20, 3, Config::default());
+    instance.process_input = Some(Box::new(|_: &str| {}));
+    instance.input("not recorded");
+    instance.recording = Some(Recording { events: Vec::new(), last_event: Instant::now() });
+    let colors = dark_colors();
+    instance.process(b"out", &colors);
+    instance.input("a");
+    instance.send_text("ls", true);
+    instance.resize(30, 4);
+    let events = instance.recording.unwrap().events;
+    assert_eq!(serde_json::Value::Array(events), json!([
+        { "type": "output", "data": "out" },
+        { "type": "input", "data": "a" },
+        { "type": "sendText", "data": "ls\r" },
+        { "type": "resize", "cols": 30, "rows": 4 },
+    ]));
+}
+
 #[test]
 fn osc_52_stores_and_reads_the_clipboard() {
     let launch = ShellLaunchConfig { extension_pty: true, cwd: std::env::temp_dir(), ..Default::default() };

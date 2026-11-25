@@ -107,6 +107,19 @@ mod external_terminal;
 mod terminal_contrib;
 mod terminal_find;
 mod terminal_links;
+mod terminal_suggest;
+mod terminal_quick_access;
+mod terminal_history;
+mod terminal_decorations;
+mod terminal_environment;
+mod terminal_notifications;
+mod terminal_initial_hint;
+mod terminal_quick_fix;
+mod terminal_resize_overlay;
+mod output_compound;
+mod terminal_sticky_scroll;
+mod task_configure;
+pub mod task_matcher_prompt;
 pub mod task_quick_pick;
 pub(crate) mod task_service;
 pub mod quick_access;
@@ -457,7 +470,10 @@ impl Render for Workbench {
             .children(dialog)
             .children(action_widget)
             .children(hover)
-            .on_modifiers_changed(cx.listener(|workbench, event: &gpui::ModifiersChangedEvent, _, cx| workbench.hover_modifiers_changed(event.modifiers.alt, cx)))
+            .on_modifiers_changed(cx.listener(|workbench, event: &gpui::ModifiersChangedEvent, _, cx| {
+                workbench.hover_modifiers_changed(event.modifiers.alt, cx);
+                workbench.terminal_link_modifiers_changed(event.modifiers, cx);
+            }))
             .child(self.aria_live_region())
             .capture_any_mouse_down(cx.listener(|workbench, _, _, cx| workbench.user_activity(cx)))
             // style.css: .macos-tahoe windows round 16px, older macOS 10px.
@@ -1385,7 +1401,7 @@ impl Workbench {
                 let radius = px(if is_tahoe_or_newer() { 16. } else { 10. });
                 bar.child(div().absolute().inset_0().border_1().rounded_bl(radius).rounded_br(radius).border_color(border))
             })
-            .child(div().h(px(24.)).flex().child(self.icon("remote", 28., 16., foreground).h_full().cursor_pointer().child(self.hover_target("status.host", HoverContent::Text("Open a Remote Window".into()), HoverOptions::status_bar()))).children(self.restricted_mode_status_item(foreground, cx)).children(self.notifications_status_item(true, foreground, cx)).child(self.extension_status_items(true, |priority| priority > PROBLEMS_PRIORITY, foreground, cx)).child(problems).child(self.extension_status_items(true, |priority| priority <= PROBLEMS_PRIORITY, foreground, cx)).children(self.status_bar_message()).children(self.window_progress_entry(cx.background_executor().now()).map(|entry| self.extension_status_item(&entry, foreground, cx))))
+            .child(div().h(px(24.)).flex().child(self.icon("remote", 28., 16., foreground).h_full().cursor_pointer().child(self.hover_target("status.host", HoverContent::Text("Open a Remote Window".into()), HoverOptions::status_bar()))).children(self.restricted_mode_status_item(foreground, cx)).children(self.notifications_status_item(true, foreground, cx)).child(self.extension_status_items(true, |priority| priority > PROBLEMS_PRIORITY, foreground, cx)).child(problems).child(self.extension_status_items(true, |priority| priority <= PROBLEMS_PRIORITY, foreground, cx)).children(self.status_bar_message()).children(self.window_progress_entry(cx.background_executor().now()).map(|entry| self.extension_status_item(&entry, foreground, cx))).children(self.terminal_recording_status_entry().map(|entry| self.extension_status_item(&entry, foreground, cx))))
             .child(div().h(px(24.)).flex().child(self.extension_status_items(false, |priority| priority > EDITOR_STATUS_PRIORITY, foreground, cx)).child(self.editor_status_items(foreground, window, cx)).child(self.extension_status_items(false, |priority| priority <= EDITOR_STATUS_PRIORITY, foreground, cx)).children(self.notifications_status_item(false, foreground, cx)))
     }
 
@@ -1398,7 +1414,7 @@ impl Workbench {
     /// A codicon centered in a square box. Drawn from the icon's SVG: Wu's text system skips fonts
     /// without an 'm' glyph, so codicon.ttf cannot load (gpui_macos text_system.rs load_family).
     fn icon(&self, name: &str, box_size: f32, icon_size: f32, color: Rgba) -> Div {
-        let path = self.app_root.join("node_modules/@vscode/codicons/src/icons").join(format!("{}.svg", crate::symbol_icons::svg_name(name)));
+        let path = crate::codicons::svg_path(&self.app_root, crate::symbol_icons::svg_name(name));
         div()
             .relative()
             .size(px(box_size))

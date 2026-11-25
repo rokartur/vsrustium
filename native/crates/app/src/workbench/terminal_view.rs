@@ -1,8 +1,7 @@
 //! The Terminal view (terminalView.ts `TerminalViewPane` with terminalTabbedView.ts): the groups of terminals,
 //! side by side when split, with the tabs list at their right once there are two terminals.
-// shortcut: the view is an editor tab of the group, not a panel view; the panel part is milestone 11's.
 
-mod grid;
+pub(super) mod grid;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -63,9 +62,9 @@ pub struct TerminalView {
     groups: Vec<Group>,
     active_group: usize,
     next_id: u32,
-    metrics: Option<CellMetrics>,
+    pub(super) metrics: Option<CellMetrics>,
     /// Where each instance's pane painted, for its mouse events.
-    pane_bounds: HashMap<u32, Bounds<Pixels>>,
+    pub(super) pane_bounds: HashMap<u32, Bounds<Pixels>>,
     hovered: Option<u32>,
     /// The instance a left button drag selects in.
     selecting: Option<u32>,
@@ -83,6 +82,22 @@ pub struct TerminalView {
     pub(super) find: super::terminal_find::TerminalFind,
     /// What the extension host was told (mainThreadTerminalService.ts): the active terminal and the events it asked for.
     pub(super) host: HostTerminals,
+    pub(super) suggest: super::terminal_suggest::TerminalSuggest,
+    pub(super) history: super::terminal_history::TerminalHistories,
+    /// The instance whose sticky scroll overlay the pointer is over.
+    pub(super) sticky_hovered: Option<u32>,
+    /// The command guide under the pointer: its instance and buffer rows.
+    pub(super) command_guide: Option<(u32, std::ops::Range<i64>)>,
+    /// The shown OSC 99 notifications: instance, the handler's key, the notification's key.
+    pub(super) osc99_notifications: Vec<(u32, u64, u64)>,
+    /// The last resize: its instance, `cols x rows` and when.
+    pub(super) resize_overlay: Option<(u32, String, std::time::Instant)>,
+    pub(super) quick_fixes: super::terminal_quick_fix::TerminalQuickFixes,
+    /// The link under the pointer and whether the link modifier is down.
+    pub(super) hovered_link: Option<super::terminal_links::HoveredLink>,
+    pub(super) link_modifier: bool,
+    /// The instances whose initial hint a key or a click dismissed for good.
+    pub(super) initial_hint_dismissed: std::collections::HashSet<u32>,
 }
 
 #[derive(Default)]
@@ -112,9 +127,15 @@ pub enum TerminalInput {
     ProfileName { profile: Profile, existing: Vec<String> },
     /// Send Sequence's input box.
     SendSequence,
+    /// Write Data to Terminal's input box.
+    WriteData,
     /// Send Signal's picker, then its manual entry.
     Signal,
     ManualSignal,
+    /// Run Recent Command and Go to Recent Directory: what each pick runs, in which terminal.
+    RunRecent { kind: super::terminal_history::RecentKind, picks: Vec<super::terminal_history::RecentPick>, fuzzy: bool, instance: u32 },
+    /// The command decorations' Toggle Visibility picker.
+    DecorationVisibility,
 }
 
 impl TerminalView {
@@ -138,6 +159,16 @@ impl TerminalView {
             find: super::terminal_find::TerminalFind::new(cx),
             has_been_created: false,
             host: HostTerminals::default(),
+            suggest: Default::default(),
+            history: Default::default(),
+            sticky_hovered: None,
+            command_guide: None,
+            osc99_notifications: Vec::new(),
+            resize_overlay: None,
+            quick_fixes: Default::default(),
+            hovered_link: None,
+            link_modifier: false,
+            initial_hint_dismissed: Default::default(),
         }
     }
 
@@ -157,6 +188,11 @@ impl TerminalView {
     pub(super) fn active_instance_mut(&mut self) -> Option<&mut TerminalInstance> {
         let id = self.active_instance_id()?;
         self.instance_mut(id)
+    }
+
+    /// The instance ids of each group, in order.
+    pub(super) fn group_instances(&self) -> Vec<Vec<u32>> {
+        self.groups.iter().map(|group| group.instances.clone()).collect()
     }
 
     /// `showBackgroundTerminal`: a terminal hidden from the user joins the view as its own group.
@@ -331,6 +367,13 @@ impl Workbench {
         }
         self.register_external_terminal_actions();
         self.register_terminal_contrib_actions();
+        self.register_terminal_suggest_actions();
+        self.register_terminal_quick_fix_actions();
+        self.register_terminal_initial_hint_actions();
+        self.register_terminal_history_actions();
+        self.register_terminal_sticky_scroll_actions();
+        self.register_terminal_environment_actions();
+        self.register_terminal_decoration_actions();
         self.register_terminal_find_actions();
     }
 
@@ -381,7 +424,7 @@ impl Workbench {
 
     /// `createTerminal`: a new group, or a pane after the active one with `split`; the split's cwd is its parent's
     /// (`terminal.integrated.splitCwd` inherited).
-    fn create_terminal(&mut self, profile: Option<Profile>, split: bool, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn create_terminal(&mut self, profile: Option<Profile>, split: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.create_terminal_with_cwd(profile, split, None, window, cx);
     }
 
@@ -460,16 +503,25 @@ impl Workbench {
         profiles::detect(&self.setting("terminal.integrated.profiles.osx"), &shells, std::env::var("PATH").ok().as_deref())
     }
 
-    /// `getCwd`: `terminal.integrated.cwd` against the workspace folder, else the folder, else the home directory.
+    /// `getCwd`: `terminal.integrated.cwd` with its variables resolved, against the workspace folder, else the
+    /// folder, else the home directory; one that fails to resolve is dropped (`_resolveCwd`).
     pub(super) fn terminal_initial_cwd(&self) -> PathBuf {
         let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/"));
         let root = self.workspace().and_then(|workspace| workspace.folders.first()).map(|folder| folder.path.clone());
-        let configured = self.setting("terminal.integrated.cwd").as_str().filter(|cwd| !cwd.is_empty()).map(PathBuf::from);
-        match (configured, root) {
-            (Some(cwd), Some(root)) if cwd.is_relative() => root.join(cwd),
-            (Some(cwd), _) => cwd,
-            (None, Some(root)) => root,
-            (None, None) => home,
+        let configured = self.setting("terminal.integrated.cwd").as_str().filter(|cwd| !cwd.is_empty()).map(str::to_owned);
+        let resolved = configured.and_then(|cwd| match self.resolve_variables(&Value::String(cwd), root.clone()) {
+            Ok(Value::String(cwd)) if !cwd.is_empty() => Some(PathBuf::from(cwd)),
+            Ok(_) => None,
+            Err(error) => {
+                eprintln!("Could not resolve terminal cwd {error}");
+                None
+            }
+        });
+        match (resolved, root) {
+            (Some(cwd), _) if cwd.is_absolute() => cwd,
+            (Some(cwd), Some(root)) => root.join(cwd),
+            (_, Some(root)) => root,
+            (_, None) => home,
         }
     }
 
@@ -517,7 +569,11 @@ impl Workbench {
     fn terminal_events(&mut self, id: u32, events: Vec<PtyEvent>, window: &mut Window, cx: &mut Context<Self>) -> bool {
         for event in events {
             match event {
-                PtyEvent::Data(bytes) => self.terminal_data(id, &bytes, cx),
+                PtyEvent::Data(bytes) => {
+                    if self.terminal_data(id, &bytes, window, cx) {
+                        self.sync_terminal_suggest(id, window, cx);
+                    }
+                }
                 PtyEvent::Exit(code) => {
                     if let Some(instance) = self.terminal_view.instance_mut(id) {
                         instance.exited(code);
@@ -531,11 +587,13 @@ impl Workbench {
     }
 
     /// Output of the process, a PTY's or an extension pty's: the screen, the clipboard and what the host listens to.
-    pub(super) fn terminal_data(&mut self, id: u32, bytes: &[u8], cx: &mut Context<Self>) {
+    /// Returns whether the prompt input changed.
+    pub(super) fn terminal_data(&mut self, id: u32, bytes: &[u8], window: &mut Window, cx: &mut Context<Self>) -> bool {
         let colors = TerminalColors::new(&self.theme);
         let auto_replies = self.setting("terminal.integrated.autoReplies");
-        let Some(instance) = self.terminal_view.instance_mut(id) else { return };
+        let Some(instance) = self.terminal_view.instance_mut(id) else { return false };
         let processed = instance.process(bytes, &colors);
+        let input_changed = processed.input_changed;
         instance.answer_auto_replies(&auto_replies, &processed.text);
         // xtermTerminal.ts loads ClipboardAddon: OSC 52 writes go to the clipboard and `?` reads it back.
         if let Some(text) = instance.clipboard_requests.drain(..).last() {
@@ -547,8 +605,15 @@ impl Workbench {
         }
         instance.bell = false;
         self.task_output(id, &processed.text, cx);
+        self.record_terminal_history(id, &processed.shell_events);
+        let finished = processed.shell_events.iter().any(|event| matches!(event, crate::terminal::shell_integration::ShellEvent::CommandFinished(_)));
         self.terminal_output_to_host(id, processed);
+        if finished {
+            self.terminal_command_finished_quick_fixes(id, cx);
+        }
+        self.terminal_osc99(id, window, cx);
         cx.notify();
+        input_changed
     }
 
     /// terminalInstance.ts `_onProcessExit`: a non-zero exit shows its message, then the instance goes.
@@ -779,8 +844,11 @@ impl Workbench {
                     Err(error) => eprintln!("writing {key}: {error}"),
                 }
             }
+            (event, TerminalInput::RunRecent { kind, picks, fuzzy, instance }) => self.run_recent_input_event(id, event, kind, picks, fuzzy, instance, window, cx),
             (Event::Hide, _) => self.quick_inputs.remove(id),
-            (event, input @ (TerminalInput::SendSequence | TerminalInput::Signal | TerminalInput::ManualSignal)) => self.terminal_contrib_input_event(id, event, input, window, cx),
+            (Event::Accept(_), TerminalInput::DecorationVisibility) => self.hide_quick_input_by_id(id, window, cx),
+            (event, TerminalInput::DecorationVisibility) => self.decoration_visibility_event(event),
+            (event, input @ (TerminalInput::SendSequence | TerminalInput::WriteData | TerminalInput::Signal | TerminalInput::ManualSignal)) => self.terminal_contrib_input_event(id, event, input, window, cx),
             _ => {}
         }
     }
@@ -819,6 +887,7 @@ impl Workbench {
         let alt_buffer = view.active_instance_id().and_then(|id| view.instance(id)).is_some_and(|instance| instance.term.mode().contains(TermMode::ALT_SCREEN));
         context.insert("terminalAltBufferActive".into(), json!(alt_buffer));
         context.insert("terminal.active".into(), json!(true));
+        self.terminal_suggest_context(context);
         if self.terminal_view_visible() {
             context.insert("view".into(), json!(TERMINAL_VIEW_ID));
         }
@@ -828,7 +897,8 @@ impl Workbench {
     /// commands to skip the shell go to the workbench, every other key the terminal turns into input. Returns
     /// whether the terminal took the key.
     pub(super) fn terminal_key(&mut self, keystroke: &Keystroke, resolution: &Resolution, window: &Window, cx: &mut Context<Self>) -> bool {
-        if !self.terminal_view.focus.is_focused(window) {
+        // The quick fix widget takes the keys while it shows, as its list has the focus upstream.
+        if !self.terminal_view.focus.is_focused(window) || self.action_widget_visible() {
             return false;
         }
         // `restartBlinkAnimation` on a key: the cursor shows.
@@ -847,7 +917,13 @@ impl Workbench {
                 let id = instance.id;
                 cx.defer_in(window, move |workbench, window, cx| workbench.dispose_terminal(id, EXIT_REASON_USER, window, cx));
             }
-            KeyResult::Send(data) => instance.input(&data),
+            KeyResult::Send(data) => {
+                instance.input(&data);
+                let id = instance.id;
+                self.terminal_view.initial_hint_dismissed.insert(id);
+                self.terminal_view.suggest.user_data(&data);
+                self.terminal_view.command_guide = None;
+            }
             KeyResult::PageUp => instance.scroll(Scroll::PageUp),
             KeyResult::PageDown => instance.scroll(Scroll::PageDown),
             KeyResult::SelectAll => instance.select_all(),
@@ -939,11 +1015,15 @@ impl Workbench {
         let mut panes = div().relative().flex_1().min_w_0().h_full().flex();
         if let Some(group) = view.groups.get(view.active_group) {
             for (index, &id) in group.instances.iter().enumerate() {
-                panes = panes.child(self.terminal_pane(id, index > 0, border, cx));
+                let focused = view.focus.is_focused(window) && view.active_instance_id() == Some(id);
+                panes = panes.child(self.terminal_pane(id, index > 0, border, focused, cx));
             }
         }
         if let Some(find) = self.terminal_find_widget(window, cx) {
             panes = panes.child(find);
+        }
+        if let Some(suggest) = self.terminal_suggest_widget(window, cx) {
+            panes = panes.child(suggest);
         }
         let tabs_left = self.setting("terminal.integrated.tabs.location") == "left";
         div()
@@ -958,24 +1038,33 @@ impl Workbench {
             .when(self.terminal_tabs_shown(), |body| body.child(self.terminal_tabs_list(tabs_left, cx)))
     }
 
-    fn terminal_pane(&self, id: u32, border_left: bool, border: gpui::Rgba, cx: &mut Context<Self>) -> impl IntoElement {
+    fn terminal_pane(&self, id: u32, border_left: bool, border: gpui::Rgba, focused: bool, cx: &mut Context<Self>) -> impl IntoElement {
         let entity = cx.entity();
         div()
             .id(("terminal-pane", id as usize))
             .flex_1()
             .min_w_0()
             .h_full()
+            .relative()
             .cursor_text()
             .when(border_left, |pane| pane.border_l_1().border_color(border))
             .child(canvas(|_, _, _| {}, move |bounds, _, window, cx| entity.update(cx, |workbench, _| workbench.paint_terminal_pane(id, bounds, window))).size_full())
+            .children(self.terminal_sticky_scroll_hit_area(id, cx))
+            .children(self.terminal_resize_overlay(id))
+            .children(self.terminal_command_guide(id))
+            .children(self.terminal_decorations(id, cx))
+            .children(self.terminal_initial_hint(id, focused, cx))
             .on_hover(cx.listener(move |workbench, hovered: &bool, _, cx| {
                 workbench.terminal_view.hovered = hovered.then_some(id);
+                if !hovered {
+                    workbench.terminal_view.command_guide = None;
+                }
                 cx.notify();
             }))
             .on_mouse_down(MouseButton::Left, cx.listener(move |workbench, event: &MouseDownEvent, window, cx| workbench.terminal_mouse_down(id, event, window, cx)))
             .on_mouse_down(MouseButton::Right, cx.listener(move |workbench, event: &MouseDownEvent, window, cx| workbench.terminal_mouse_down(id, event, window, cx)))
             .on_mouse_down(MouseButton::Middle, cx.listener(move |workbench, event: &MouseDownEvent, window, cx| workbench.terminal_mouse_down(id, event, window, cx)))
-            .on_mouse_move(cx.listener(move |workbench, event: &MouseMoveEvent, _, cx| workbench.terminal_mouse_move(id, event, cx)))
+            .on_mouse_move(cx.listener(move |workbench, event: &MouseMoveEvent, window, cx| workbench.terminal_mouse_move(id, event, window, cx)))
             .on_mouse_up(MouseButton::Left, cx.listener(move |workbench, event: &MouseUpEvent, _, cx| workbench.terminal_mouse_up(id, event, cx)))
             .on_scroll_wheel(cx.listener(move |workbench, event: &ScrollWheelEvent, _, cx| workbench.terminal_wheel(id, event, cx)))
     }
@@ -983,7 +1072,8 @@ impl Workbench {
     /// Lays out and paints one pane: the instance takes the columns and rows its pane fits (`_evaluateColsAndRows`).
     fn paint_terminal_pane(&mut self, id: u32, bounds: Bounds<Pixels>, window: &mut Window) {
         let metrics = self.terminal_metrics(window);
-        let scrollbar_width = if self.setting("workbench.experimental.modernUI") == true { SCROLLBAR_WIDTH_MODERN } else { SCROLLBAR_WIDTH };
+        let scrollbar_width = self.terminal_scrollbar_width();
+        let sticky_look = self.terminal_sticky_look(id);
         let colors = TerminalColors::new(&self.theme);
         let cursor_inactive_style = self.setting("terminal.integrated.cursorStyleInactive");
         let find_matches = if self.terminal_view.active_instance_id() == Some(id) { self.terminal_view.find.matches.clone() } else { Vec::new() };
@@ -992,6 +1082,8 @@ impl Workbench {
             // `cursorBlinking` is the default style's; a program's DECSCUSR overrides it.
             self.terminal_view.cursor_blinking = self.terminal_view.instance(id).is_some_and(|instance| instance.term.cursor_style().blinking);
         }
+        let link_underline = self.terminal_link_underline(id).map(<[_]>::to_vec).unwrap_or_default();
+        let overview_ruler = self.terminal_overview_ruler(id);
         let look = Look {
             colors: &colors,
             metrics: &metrics,
@@ -1004,6 +1096,8 @@ impl Workbench {
             scrollbar_width,
             hovered: self.terminal_view.hovered == Some(id),
             scrollbar_slider: self.color("scrollbarSlider.background"),
+            overview_ruler,
+            link_underline: &link_underline,
             find_matches: &find_matches,
             find_current: self.terminal_view.find.current,
             find_match: self.color("terminal.findMatchBackground"),
@@ -1016,10 +1110,23 @@ impl Workbench {
         instance.cell_size = (metrics.cell_width, metrics.cell_height);
         let resized = instance.resize(cols, rows);
         instance.configure(config);
-        window.with_content_mask(Some(gpui::ContentMask { bounds }), |window| grid::paint(bounds, instance, &look, window));
+        let sticky = self.terminal_sticky_scroll(id);
+        let instance = self.terminal_view.instance(id).expect("resized above");
+        window.with_content_mask(Some(gpui::ContentMask { bounds }), |window| {
+            grid::paint(bounds, instance, &look, window);
+            if let Some(sticky) = &sticky {
+                grid::paint_sticky_scroll(bounds, instance, sticky, &sticky_look, &look, window);
+            }
+        });
         if resized {
             self.terminal_resized(id);
+            self.show_resize_overlay(id);
         }
+        self.repaint_while_resize_overlay_shows(id, window);
+    }
+
+    pub(super) fn terminal_scrollbar_width(&self) -> f32 {
+        if self.setting("workbench.experimental.modernUI") == true { SCROLLBAR_WIDTH_MODERN } else { SCROLLBAR_WIDTH }
     }
 
     /// The xterm.js options the settings set: `scrollback`, `wordSeparator` and `cursorStyle`, which a program's
@@ -1099,14 +1206,15 @@ impl Workbench {
 
     fn terminal_mouse_down(&mut self, id: u32, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.terminal_view.set_active(id);
+        // terminalSuggestAddon.ts: a click in the terminal hides the widget.
+        self.hide_terminal_suggest(false);
         window.focus(&self.terminal_view.focus, cx);
         cx.stop_propagation();
         let force_selection = event.modifiers.alt && self.setting("terminal.integrated.macOptionClickForcesSelection") == true;
         let (Some(bounds), Some(metrics)) = (self.terminal_view.pane_bounds.get(&id).copied(), self.terminal_view.metrics.clone()) else { return };
         let Some(instance) = self.terminal_view.instance_mut(id) else { return };
         let (row, column, side) = grid::cell_at(bounds, event.position, instance, &metrics);
-        // `editor.multiCursorModifier` alt (the default) makes Cmd the link modifier.
-        let link_modifier = if self.setting("editor.multiCursorModifier") == "ctrlCmd" { event.modifiers.alt } else { event.modifiers.platform };
+        let link_modifier = self.terminal_link_modifier(event.modifiers);
         if event.button == MouseButton::Left && link_modifier && self.open_terminal_link(id, row, column, window, cx) {
             return;
         }
@@ -1145,11 +1253,21 @@ impl Workbench {
         cx.notify();
     }
 
-    fn terminal_mouse_move(&mut self, id: u32, event: &MouseMoveEvent, cx: &mut Context<Self>) {
+    fn terminal_mouse_move(&mut self, id: u32, event: &MouseMoveEvent, window: &mut Window, cx: &mut Context<Self>) {
         let (Some(bounds), Some(metrics)) = (self.terminal_view.pane_bounds.get(&id).copied(), self.terminal_view.metrics.clone()) else { return };
         let selecting = self.terminal_view.selecting == Some(id) && event.pressed_button == Some(MouseButton::Left);
-        let Some(instance) = self.terminal_view.instance_mut(id) else { return };
+        let show_command_guide = self.setting("terminal.integrated.shellIntegration.showCommandGuide") != false;
+        let Some(instance) = self.terminal_view.instance(id) else { return };
         let (row, column, side) = grid::cell_at(bounds, event.position, instance, &metrics);
+        let guide = show_command_guide.then(|| instance.command_guide_rows(instance.viewport_y() + row as i64)).flatten().map(|rows| (id, rows));
+        if guide != self.terminal_view.command_guide {
+            self.terminal_view.command_guide = guide;
+            cx.notify();
+        }
+        if event.pressed_button.is_none() {
+            self.terminal_link_hover(id, row, column, event.modifiers, window, cx);
+        }
+        let Some(instance) = self.terminal_view.instance_mut(id) else { return };
         if selecting {
             instance.extend_selection(row, column, side);
             return cx.notify();

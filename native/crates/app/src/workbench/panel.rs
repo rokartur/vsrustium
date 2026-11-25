@@ -146,7 +146,7 @@ impl Workbench {
         self.panel.views.iter().filter(|view| (view.visible)(self)).collect()
     }
 
-    fn active_panel_view(&self) -> Option<&PanelView> {
+    pub(super) fn active_panel_view(&self) -> Option<&PanelView> {
         let storage = self.workspace_storage.lock().unwrap();
         let id = self.panel.active.or(storage.get(ACTIVE_PANEL_KEY));
         // terminal.contribution.ts registers the Terminal container with `isDefault`.

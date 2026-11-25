@@ -57,6 +57,10 @@ enum Provider {
     Editor,
     Hover,
     Notification(u64),
+    /// terminalAccessibleBufferProvider.ts: the terminal instance's buffer.
+    Terminal(u32),
+    /// terminalAccessibilityHelp.ts.
+    TerminalHelp(u32),
 }
 
 impl Provider {
@@ -66,6 +70,8 @@ impl Provider {
             Provider::Editor => "editor",
             Provider::Hover => "hover",
             Provider::Notification(_) => "notification",
+            Provider::Terminal(_) => "terminal",
+            Provider::TerminalHelp(_) => "terminal-help",
         }
     }
 
@@ -74,6 +80,7 @@ impl Provider {
             Provider::Editor => "accessibility.verbosity.editor",
             Provider::Hover => "accessibility.verbosity.hover",
             Provider::Notification(_) => "accessibility.verbosity.notification",
+            Provider::Terminal(_) | Provider::TerminalHelp(_) => "accessibility.verbosity.terminal",
         }
     }
 }
@@ -115,6 +122,11 @@ impl Workbench {
                 workbench.show_accessible_view_help(window, cx);
             } else if workbench.content_hover_visible() {
                 workbench.show_accessible_view(Provider::Hover, true, window, cx);
+            } else if workbench.terminal_view.focus.is_focused(window) || workbench.accessibility.view.shown.as_ref().is_some_and(|shown| matches!(shown.provider, Provider::Terminal(_))) {
+                // terminal.accessibility.contribution.ts `TerminalAccessibilityHelpContribution` (priority 105).
+                if let Some(id) = workbench.terminal_view.active_instance_id() {
+                    workbench.show_accessible_view(Provider::TerminalHelp(id), true, window, cx);
+                }
             } else {
                 if workbench.editors.active().is_none() {
                     let outcome = workbench.execute_command("workbench.action.files.newUntitledFile", Vec::new(), window, cx);
@@ -129,7 +141,33 @@ impl Workbench {
         self.commands.register("editor.action.accessibleView", |workbench, _, window, cx| {
             if let Some(key) = workbench.notification_focused(window) {
                 workbench.show_accessible_view(Provider::Notification(key), false, window, cx);
+            } else if workbench.terminal_view.focus.is_focused(window) {
+                workbench.show_terminal_accessible_buffer(window, cx);
             }
+            Outcome::done()
+        });
+        // terminal.accessibility.contribution.ts.
+        self.commands.register("workbench.action.terminal.focusAccessibleBuffer", |workbench, _, window, cx| {
+            if workbench.terminal_view.instances.is_empty() {
+                workbench.create_terminal(None, false, window, cx);
+            }
+            workbench.show_terminal_accessible_buffer(window, cx);
+            Outcome::done()
+        });
+        self.commands.register("workbench.action.terminal.accessibleBufferGoToNextCommand", |workbench, _, window, cx| {
+            workbench.accessible_buffer_go_to_command(true, window, cx);
+            Outcome::done()
+        });
+        self.commands.register("workbench.action.terminal.accessibleBufferGoToPreviousCommand", |workbench, _, window, cx| {
+            workbench.accessible_buffer_go_to_command(false, window, cx);
+            Outcome::done()
+        });
+        self.commands.register("workbench.action.terminal.scrollToBottomAccessibleView", |workbench, _, window, cx| {
+            workbench.set_terminal_accessible_view_line(None, window, cx);
+            Outcome::done()
+        });
+        self.commands.register("workbench.action.terminal.scrollToTopAccessibleView", |workbench, _, window, cx| {
+            workbench.set_terminal_accessible_view_line(Some(0), window, cx);
             Outcome::done()
         });
         self.commands.register("editor.action.accessibleViewDisableHint", |workbench, _, _, cx| {
@@ -210,7 +248,11 @@ impl Workbench {
     /// it and the read more, verbosity and exit hints after it, `<keybinding:id>` resolved, then the configure hints.
     fn accessible_view_content(&self, provider: Provider, help: bool, view_help: bool, window: &Window) -> Option<(String, Vec<String>, Vec<String>)> {
         let content = match (provider, view_help) {
+            // The terminal buffer's `customHelp` is the terminal's accessibility help.
+            (Provider::Terminal(id), true) => self.terminal_accessibility_help(id),
             (_, true) => self.accessible_view_help_dialog_content(provider),
+            (Provider::Terminal(id), _) => self.terminal_view.instance(id)?.accessible_buffer().lines.join("\n"),
+            (Provider::TerminalHelp(id), _) => self.terminal_accessibility_help(id),
             (Provider::Editor, _) => self.editor_accessibility_help(),
             (Provider::Hover, _) => self.hover_accessible_content()?,
             (Provider::Notification(key), _) => self.notification_accessible_content(key)?,
@@ -345,6 +387,88 @@ impl Workbench {
         with_severity_prefix(&label, item.severity)
     }
 
+    /// `TerminalAccessibleViewContribution.show` with the `terminal.integrated.accessibleViewPreserveCursorPosition`
+    /// position: the bottom line, or with the setting on, where the view last closed.
+    fn show_terminal_accessible_buffer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(id) = self.terminal_view.active_instance_id() else { return };
+        let provider = Provider::Terminal(id);
+        let Some(content) = self.accessible_view_content(provider, false, false, window) else { return };
+        let preserve = self.setting("terminal.integrated.accessibleViewPreserveCursorPosition") == json!(true);
+        let remembered = preserve && self.accessibility.view.last_positions.contains_key(provider.id());
+        self.show_accessible_view_content(provider, false, false, content, window, cx);
+        if !remembered {
+            self.set_terminal_accessible_view_line(None, window, cx);
+        }
+    }
+
+    /// `setPosition(new Position(line, 1), true)`: the cursor at the line's start, revealed; the last line for none.
+    fn set_terminal_accessible_view_line(&mut self, line: Option<usize>, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(shown) = self.accessibility.view.shown.as_mut().filter(|shown| matches!(shown.provider, Provider::Terminal(_)) && !shown.help) else { return };
+        let line = line.unwrap_or(shown.lines.len().saturating_sub(1));
+        shown.selection = Selection::caret(Position::new(line, 0));
+        shown.leftover = 0;
+        self.reveal_accessible_view_cursor(window);
+        cx.notify();
+    }
+
+    /// `navigateToCommand`: the cursor to the next or previous command's line, its command line announced.
+    fn accessible_buffer_go_to_command(&mut self, next: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((id, current)) = self.accessibility.view.shown.as_ref().and_then(|shown| match shown.provider {
+            Provider::Terminal(id) if !shown.help => Some((id, shown.selection.head.line + 1)),
+            _ => None,
+        }) else {
+            return;
+        };
+        let Some(instance) = self.terminal_view.instance(id) else { return };
+        let commands = instance.accessible_buffer().commands;
+        let target = match next {
+            true => commands.into_iter().filter(|(line, _, _)| *line > current).min_by_key(|(line, _, _)| *line),
+            false => commands.into_iter().filter(|(line, _, _)| *line < current).max_by_key(|(line, _, _)| *line),
+        };
+        let Some((line, command, _)) = target else { return };
+        self.set_terminal_accessible_view_line(Some(line - 1), window, cx);
+        if !command.is_empty() {
+            self.aria_alert(&command);
+        }
+    }
+
+    /// terminalAccessibilityHelp.ts `provideContent`, without the voice and Windows parts.
+    fn terminal_accessibility_help(&self, id: u32) -> String {
+        let mut content = vec![
+            "The Focus Accessible Terminal View command<keybinding:workbench.action.terminal.focusAccessibleBuffer> enables screen readers to read terminal contents.".to_owned(),
+            "Customize the behavior of the cursor when toggling between the terminal and accessible view with `terminal.integrated.accessibleViewPreserveCursorPosition.`".to_owned(),
+            "The Open Detected Link command<keybinding:workbench.action.terminal.openDetectedLink> enables screen readers to easily open links found in the terminal.".to_owned(),
+            "The Create New Terminal (With Profile) command<keybinding:workbench.action.terminal.newWithProfile> allows for easy terminal creation using a specific profile.".to_owned(),
+            "Configure what gets focused after running selected text in the terminal with `terminal.integrated.focusAfterRun`.".to_owned(),
+            "Change Icon opens a searchable icon grid. Enter a name to filter, then press Down Arrow to enter the grid. Arrow keys move between icons, Home and End move to the first and last icon, and Up Arrow from the top row returns to search. Tab and Shift+Tab move between search, the grid, and the Reset to default button below the grid. Press Enter to choose an icon or reset the default terminal icon without changing its color. Escape cancels without changing the icon.".to_owned(),
+        ];
+        if self.setting("terminal.integrated.accessibleViewFocusOnCommandExecution") != json!(true) {
+            content.push("Enable `terminal.integrated.accessibleViewFocusOnCommandExecution` to automatically focus the terminal accessible view when a command is executed in the terminal.".into());
+        }
+        if self.setting("terminal.integrated.suggest.enabled") == json!(true) {
+            content.extend([
+                "The terminal request completions command can be invoked manually<keybinding:workbench.action.terminal.triggerSuggest>, but also appears while typing.",
+                "When the terminal suggest widget is focused:",
+                "- Accept the suggestion<keybinding:workbench.action.terminal.acceptSelectedSuggestion> and configure suggest settings<keybinding:workbench.action.terminal.configureSuggestSettings>.",
+                "- Toggle between the widget and terminal<keybinding:workbench.action.terminal.suggestToggleDetails> and toggle details focus<keybinding:workbench.action.terminal.suggestToggleDetailsFocus> to learn more about the suggestion.",
+                "- Learn more about the suggestion<keybinding:workbench.action.terminal.suggestLearnMore>.",
+                "-Configure suggest settings<keybinding:workbench.action.terminal.configureSuggestSettings> ",
+            ].map(str::to_owned));
+        }
+        match self.terminal_view.instance(id).is_some_and(|instance| instance.shell_integration.has_command_detection) {
+            true => content.extend([
+                "The terminal has a feature called shell integration that offers an enhanced experience and provides useful commands for screen readers such as:",
+                "- Go to Next Command<keybinding:workbench.action.terminal.accessibleBufferGoToNextCommand> in the accessible view",
+                "- Go to Previous Command<keybinding:workbench.action.terminal.accessibleBufferGoToPreviousCommand> in the accessible view",
+                "- Go to Symbol<keybinding:editor.action.accessibleViewGoToSymbol>",
+                "- Run Recent Command<keybinding:workbench.action.terminal.runRecentCommand>",
+                "- Go to Recent Directory<keybinding:workbench.action.terminal.goToRecentDirectory>",
+            ].map(str::to_owned)),
+            false => content.push("Shell integration is not enabled. Some accessibility features may not be available.".into()),
+        }
+        content.join("\n")
+    }
+
     /// `_accessibleViewHelpDialogContent`.
     fn accessible_view_help_dialog_content(&self, provider: Provider) -> String {
         let mut hint = "In the accessible view, you can:\n".to_owned();
@@ -392,6 +516,7 @@ impl Workbench {
                 window.focus(&self.notifications.focus, cx);
             }
             Provider::Editor | Provider::Hover => window.focus(&self.editor_focus, cx),
+            Provider::Terminal(_) | Provider::TerminalHelp(_) => window.focus(&self.terminal_view.focus, cx),
         }
         self.accessibility.view.previous_focus = None;
     }
@@ -892,5 +1017,46 @@ mod tests {
     fn selected_text_spans_lines() {
         let lines = vec!["one".to_owned(), "two".to_owned()];
         assert_eq!(selected_text(&lines, Selection { anchor: Position::new(0, 1), head: Position::new(1, 2) }), "ne\ntw");
+    }
+
+    /// The terminal's accessible view: its buffer with the cursor on the last line, command navigation, the
+    /// terminal help as its help, and Escape back to the terminal.
+    #[gpui::test]
+    fn the_terminal_buffer_shows_in_the_accessible_view(cx: &mut gpui::TestAppContext) {
+        use std::path::Path;
+        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let themes = exthost::scan::scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
+        let theme = crate::theme::load_theme(&[themes], "Dark Modern").unwrap();
+        let (workbench, cx) = cx.add_window_view(|_, cx| Workbench::new(theme, app_root.clone(), None, crate::languages::Languages::new(&[]), crate::default_settings(), crate::host_sync::HostSync::new(std::sync::mpsc::channel().0), cx));
+        cx.update(|window, _| window.activate_window());
+        let command = |name: &str| format!("\x1b]633;A\x07$ \x1b]633;B\x07{name}\r\n\x1b]633;C\x07out\r\n\x1b]633;D;0\x07");
+        workbench.update_in(cx, |workbench, window, cx| {
+            let launch = crate::terminal::ShellLaunchConfig { extension_pty: true, cwd: std::env::temp_dir(), ..Default::default() };
+            let id = workbench.add_terminal(launch, None, window, cx);
+            let colors = crate::terminal::colors::TerminalColors::new(&workbench.theme);
+            let instance = workbench.terminal_view.instance_mut(id).unwrap();
+            instance.process(format!("{}{}\x1b]633;A\x07$ ", command("a"), command("b")).as_bytes(), &colors);
+            window.focus(&workbench.terminal_view.focus, cx);
+            drop(workbench.execute_command("editor.action.accessibleView", Vec::new(), window, cx));
+        });
+        let shown = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.accessibility.view.shown.as_ref().map(|shown| (shown.provider, shown.help, shown.lines.clone(), shown.selection.head.line)));
+        let (provider, help, lines, line) = shown(cx).unwrap();
+        assert_eq!((provider.id(), help, lines.as_slice(), line), ("terminal", false, ["$ a", "out", "$ b", "out", "$"].map(str::to_owned).as_slice(), 4));
+        let run = |cx: &mut gpui::VisualTestContext, command: &str| workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command(command, Vec::new(), window, cx)));
+        run(cx, "workbench.action.terminal.accessibleBufferGoToPreviousCommand");
+        assert_eq!(shown(cx).unwrap().3, 2);
+        run(cx, "workbench.action.terminal.accessibleBufferGoToPreviousCommand");
+        assert_eq!(shown(cx).unwrap().3, 0);
+        run(cx, "workbench.action.terminal.accessibleBufferGoToNextCommand");
+        assert_eq!(shown(cx).unwrap().3, 2);
+        run(cx, "editor.action.accessibilityHelp");
+        let (_, help, lines, _) = shown(cx).unwrap();
+        assert!(help && lines.iter().any(|line| line.starts_with("The Focus Accessible Terminal View command")), "{lines:#?}");
+        assert!(lines.iter().any(|line| line.starts_with("The terminal has a feature called shell integration")));
+        cx.simulate_keystrokes("escape");
+        assert!(!shown(cx).unwrap().1, "Escape leaves the help for the buffer");
+        cx.simulate_keystrokes("escape");
+        let terminal_focused = workbench.update_in(cx, |workbench, window, _| workbench.terminal_view.focus.is_focused(window));
+        assert!(shown(cx).is_none() && terminal_focused);
     }
 }

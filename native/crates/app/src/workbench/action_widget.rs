@@ -13,6 +13,7 @@ use super::code_actions::{CodeActionSet, RowLook};
 use crate::action_list::{ActionList, Item, ItemKind, Options};
 use crate::commands::Outcome;
 use crate::editor::{Position, visible_column};
+use crate::terminal::quick_fix::QuickFix;
 
 const UI_FONT: &str = ".SystemUIFont";
 const FONT_SIZE: f32 = 13.;
@@ -48,13 +49,19 @@ pub(super) struct ActionWidget {
     pub(super) content_left: Rc<Cell<f32>>,
 }
 
+/// What the rows are: an editor's code actions, or a terminal instance's quick fixes.
+enum Source {
+    CodeActions(Rc<CodeActionSet>),
+    TerminalQuickFixes(u32, Rc<Vec<QuickFix>>),
+}
+
 struct Shown {
     list: ActionList<usize>,
     looks: Vec<RowLook>,
     anchor: Anchor,
     /// The action bar: documentation commands, then Show or Hide Disabled (no command).
     bar: Vec<(String, Option<Value>)>,
-    set: Rc<CodeActionSet>,
+    source: Source,
     include_disabled: bool,
     from_lightbulb: bool,
     show_above: Option<bool>,
@@ -65,8 +72,7 @@ struct Shown {
 impl Workbench {
     pub(super) fn register_action_widget_commands(&mut self) {
         self.commands.register("hideCodeActionWidget", |workbench, _, window, cx| {
-            workbench.hide_action_widget(cx);
-            window.focus(&workbench.editor_focus, cx);
+            workbench.hide_action_widget_to_owner(window, cx);
             Outcome::done()
         });
         self.commands.register("selectNextCodeAction", |workbench, _, _, cx| {
@@ -132,7 +138,8 @@ impl Workbench {
     pub(super) fn action_widget_focused_action(&self) -> Option<&Value> {
         let shown = self.action_widget.shown.as_ref()?;
         let index = shown.list.focused_item()?.item?;
-        shown.set.all.iter().chain(&shown.set.valid).nth(index).map(|item| &item.action)
+        let Source::CodeActions(set) = &shown.source else { return None };
+        set.all.iter().chain(&set.valid).nth(index).map(|item| &item.action)
     }
 
     /// `ActionWidgetService.show`: the rows with the first focusable one focused.
@@ -141,15 +148,38 @@ impl Workbench {
         self.hide_action_widget(cx);
         let mut list = ActionList::new(items, Options::default());
         list.focus();
-        self.action_widget.shown = Some(Shown { list, looks, anchor, bar, set, include_disabled, from_lightbulb, show_above: None, mouse_navigation: false });
+        self.action_widget.shown = Some(Shown { list, looks, anchor, bar, source: Source::CodeActions(set), include_disabled, from_lightbulb, show_above: None, mouse_navigation: false });
         self.action_widget.scroll = ScrollHandle::new();
         cx.notify();
+    }
+
+    /// quickFixAddon.ts `showMenu`: the widget over a terminal's quick fixes, without an action bar.
+    pub(super) fn show_terminal_quick_fix_widget(&mut self, items: Vec<Item<usize>>, looks: Vec<RowLook>, anchor: Anchor, instance: u32, fixes: Rc<Vec<QuickFix>>, cx: &mut Context<Self>) {
+        self.hide_action_widget(cx);
+        let mut list = ActionList::new(items, Options::default());
+        list.focus();
+        let source = Source::TerminalQuickFixes(instance, fixes);
+        self.action_widget.shown = Some(Shown { list, looks, anchor, bar: Vec::new(), source, include_disabled: false, from_lightbulb: false, show_above: None, mouse_navigation: false });
+        self.action_widget.scroll = ScrollHandle::new();
+        cx.notify();
+    }
+
+    /// The widget hides and the focus goes back to what showed it: the editor or the terminal.
+    fn hide_action_widget_to_owner(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let terminal = matches!(self.action_widget.shown.as_ref().map(|shown| &shown.source), Some(Source::TerminalQuickFixes(..)));
+        self.hide_action_widget(cx);
+        match terminal {
+            true => window.focus(&self.terminal_view.focus, cx),
+            false => window.focus(&self.editor_focus, cx),
+        }
     }
 
     /// `hide`: the rows go and the set is released unless the light bulb still shows it.
     pub(super) fn hide_action_widget(&mut self, cx: &mut Context<Self>) {
         if let Some(shown) = self.action_widget.shown.take() {
-            self.release_code_action_set(shown.set);
+            if let Source::CodeActions(set) = shown.source {
+                self.release_code_action_set(set);
+            }
             cx.notify();
         }
     }
@@ -172,9 +202,18 @@ impl Workbench {
             None => shown.list.accept_selected(false, false),
         };
         let crate::action_list::Accepted::Select { item, .. } = accepted else { return cx.notify() };
-        let set = shown.set.clone();
-        self.hide_action_widget(cx);
-        self.accept_code_action(item, set, window, cx);
+        match &shown.source {
+            Source::CodeActions(set) => {
+                let set = set.clone();
+                self.hide_action_widget(cx);
+                self.accept_code_action(item, set, window, cx);
+            }
+            Source::TerminalQuickFixes(instance, fixes) => {
+                let (instance, fix) = (*instance, fixes[item].clone());
+                self.hide_action_widget_to_owner(window, cx);
+                self.run_terminal_quick_fix(instance, &fix, window, cx);
+            }
+        }
     }
 
     /// An action bar entry: a documentation command runs, Show or Hide Disabled shows the list again.
@@ -189,7 +228,8 @@ impl Workbench {
                 drop(self.execute_command(command["id"].as_str().unwrap_or_default(), args, window, cx));
             }
             None => {
-                let (set, anchor, include_disabled, from_lightbulb) = (shown.set.clone(), shown.anchor, shown.include_disabled, shown.from_lightbulb);
+                let Source::CodeActions(set) = &shown.source else { return };
+                let (set, anchor, include_disabled, from_lightbulb) = (set.clone(), shown.anchor, shown.include_disabled, shown.from_lightbulb);
                 self.action_widget.show_disabled = !self.action_widget.show_disabled;
                 self.show_code_action_list(set, anchor, include_disabled, from_lightbulb, cx);
             }
@@ -284,8 +324,7 @@ impl Workbench {
             .child(list)
             .children(bar);
         let block = div().id("action-widget-block").absolute().inset_0().occlude().on_any_mouse_down(cx.listener(|workbench, _, window, cx| {
-            workbench.hide_action_widget(cx);
-            window.focus(&workbench.editor_focus, cx);
+            workbench.hide_action_widget_to_owner(window, cx);
         }));
         Some(div().absolute().inset_0().child(block).child(widget).into_any_element())
     }

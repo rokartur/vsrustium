@@ -231,11 +231,6 @@ impl ShellIntegration {
         self.executed
     }
 
-    /// `promptInputModel.state === PromptInputState.Input`: a command start was seen and nothing runs.
-    pub fn prompt_ready(&self) -> bool {
-        self.command_start.is_some() && !self.executed
-    }
-
     /// `CwdDetection.getCwd`.
     pub fn cwd(&self) -> Option<&str> {
         self.cwd.as_deref()

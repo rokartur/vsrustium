@@ -7,6 +7,7 @@ use gpui::{Context, PromptLevel, Window};
 use serde_json::{Value, json};
 
 use super::Workbench;
+use super::task_matcher_prompt::MatcherChoice;
 use crate::commands::Outcome;
 use crate::dialog;
 use crate::main_thread_quick_open::Owner;
@@ -34,6 +35,12 @@ pub enum TaskPick {
     TerminateAll,
     /// One running instance of a task, by its terminal.
     Instance(Task, u32),
+    /// Configure Task's Create or Open tasks.json entry of a folder.
+    OpenConfig(PathBuf),
+    /// "No build task to run found. Configure Build Task...": Configure Default Build or Test Task.
+    ConfigureDefault(&'static str),
+    /// An entry of the problem matcher prompt for the task about to run.
+    Matcher(Task, MatcherChoice),
     Nothing,
 }
 
@@ -42,40 +49,84 @@ pub enum PickAction {
     Run,
     Terminate,
     Restart,
+    /// Configure Task: the picked task is customized or opened.
+    Configure,
+    /// Configure Default Build or Test Task.
+    ConfigureDefault(&'static str),
+    /// `_attachProblemMatcher`: dismissing it runs the task too.
+    AttachMatcher,
 }
 
 #[derive(Clone)]
 pub struct TaskPicker {
-    picks: Vec<TaskPick>,
-    action: PickAction,
+    pub picks: Vec<TaskPick>,
+    pub action: PickAction,
 }
 
 impl Workbench {
     pub(super) fn register_task_pick_actions(&mut self) {
-        self.commands.register("workbench.action.tasks.build", |workbench, _, window, cx| workbench.run_group_command("build", window, cx));
-        self.commands.register("workbench.action.tasks.test", |workbench, _, window, cx| workbench.run_group_command("test", window, cx));
+        // abstractTaskService.ts `_registerCommands`: each command asks for workspace trust first (`_trust`).
+        self.commands.register("workbench.action.tasks.build", |workbench, _, window, cx| workbench.with_task_trust(window, cx, |workbench, window, cx| workbench.run_group_command("build", window, cx)));
+        self.commands.register("workbench.action.tasks.test", |workbench, _, window, cx| workbench.with_task_trust(window, cx, |workbench, window, cx| workbench.run_group_command("test", window, cx)));
         self.commands.register("workbench.action.tasks.terminate", |workbench, args, window, cx| {
-            workbench.terminate_task_command(args.into_iter().next().unwrap_or(Value::Null), window, cx);
-            Outcome::done()
+            let argument = args.into_iter().next().unwrap_or(Value::Null);
+            workbench.with_task_trust(window, cx, move |workbench, window, cx| {
+                workbench.terminate_task_command(argument, window, cx);
+                Outcome::done()
+            })
         });
         self.commands.register("workbench.action.tasks.restartTask", |workbench, args, window, cx| {
-            workbench.restart_task_command(args.into_iter().next().unwrap_or(Value::Null), window, cx);
-            Outcome::done()
+            let argument = args.into_iter().next().unwrap_or(Value::Null);
+            workbench.with_task_trust(window, cx, move |workbench, window, cx| {
+                workbench.restart_task_command(argument, window, cx);
+                Outcome::done()
+            })
         });
         self.commands.register("workbench.action.tasks.reRunTask", |workbench, _, window, cx| {
-            match workbench.tasks.last.clone() {
-                Some(task) => drop(workbench.run_task(task, window, cx)),
-                None => workbench.show_run_task_picker(None, window, cx),
-            }
-            Outcome::done()
+            workbench.with_task_trust(window, cx, |workbench, window, cx| {
+                match workbench.tasks.last.clone() {
+                    Some(task) => drop(workbench.run_task(task, window, cx)),
+                    None => workbench.show_run_task_picker(None, window, cx),
+                }
+                Outcome::done()
+            })
+        });
+        self.commands.register("workbench.action.tasks.rerunAllRunningTasks", |workbench, _, window, cx| {
+            workbench.with_task_trust(window, cx, |workbench, window, cx| {
+                // `_runRerunAllRunningTasksCommand`.
+                let running = workbench.running_tasks();
+                if running.is_empty() {
+                    workbench.notify(Notification::new(Severity::Info, "No running tasks to restart"));
+                }
+                for task in &running {
+                    workbench.restart_task(task, window, cx);
+                }
+                Outcome::done()
+            })
         });
         self.commands.register("workbench.action.tasks.showTasks", |workbench, _, window, cx| {
-            workbench.terminate_or_show(PickAction::Restart, "Select the task to show its output", window, cx);
-            Outcome::done()
+            workbench.with_task_trust(window, cx, |workbench, window, cx| {
+                workbench.terminate_or_show(PickAction::Restart, "Select the task to show its output", window, cx);
+                Outcome::done()
+            })
         });
         self.commands.register("workbench.action.tasks.configureTaskRunner", |workbench, _, window, cx| {
-            workbench.configure_tasks(window, cx);
-            Outcome::done()
+            workbench.with_task_trust(window, cx, |workbench, window, cx| {
+                workbench.run_configure_tasks(window, cx);
+                Outcome::done()
+            })
+        });
+        self.commands.register("workbench.action.tasks.configureDefaultBuildTask", |workbench, _, window, cx| {
+            workbench.with_task_trust(window, cx, |workbench, window, cx| {
+                workbench.configure_default_task("build", window, cx);
+                Outcome::done()
+            })
+        });
+        self.commands.register("workbench.action.tasks.configureDefaultTestTask", |workbench, _, window, cx| {
+            workbench.with_task_trust(window, cx, |workbench, window, cx| {
+                workbench.configure_default_task("test", window, cx);
+                Outcome::done()
+            })
         });
     }
 
@@ -90,7 +141,7 @@ impl Workbench {
         let mut input = QuickInput::new(0, Kind::QuickPick);
         input.placeholder = Some("Select the task to run".into());
         input.match_on_description = true;
-        let picker = self.top_level_entries(&mut input, configured);
+        let picker = self.top_level_entries(&mut input, configured, window);
         let id = self.quick_inputs.add(input, Owner::Tasks(picker));
         if let Some(name) = name {
             self.quick_inputs.get_mut(id).expect("just added").set_value(name);
@@ -100,7 +151,7 @@ impl Workbench {
     }
 
     /// `getTopLevelEntries`: recently used, configured (or Configure a Task), then the contributed types.
-    fn top_level_entries(&mut self, input: &mut QuickInput, configured: Vec<Task>) -> TaskPicker {
+    fn top_level_entries(&mut self, input: &mut QuickInput, configured: Vec<Task>, window: &Window) -> TaskPicker {
         let mut entries = Vec::new();
         let mut picks = Vec::new();
         let recent = self.recent_tasks(&configured);
@@ -117,12 +168,7 @@ impl Workbench {
             entries.push(Entry::Separator(Some("configured".into())));
             push_entry(&mut entries, &mut picks, Item { label: "$(plus) Configure a Task".into(), ..Item::default() }, TaskPick::Configure);
         }
-        let mut types: Vec<String> = Vec::new();
-        for (_, task_type) in &self.tasks.providers {
-            if !types.contains(task_type) {
-                types.push(task_type.clone());
-            }
-        }
+        let types = self.task_types(window);
         if !types.is_empty() {
             entries.push(Entry::Separator(Some("contributed".into())));
             for task_type in types {
@@ -145,7 +191,7 @@ impl Workbench {
     }
 
     /// `_createTaskEntry`: the label with the task's icon, the folder in a multi-root workspace, the detail.
-    fn task_item(&self, task: &Task) -> Item {
+    pub(super) fn task_item(&self, task: &Task) -> Item {
         let configure = Button { handle: 0, codicon: Some("gear".into()), tooltip: Some(CONFIGURE_TOOLTIP.into()), ..Button::default() };
         let multi_root = self.workspace().is_some_and(|workspace| workspace.folders.len() > 1);
         let description = multi_root.then(|| task.workspace_folder.as_deref().and_then(Path::file_name).map(|name| name.to_string_lossy().into_owned())).flatten();
@@ -160,6 +206,15 @@ impl Workbench {
             Event::Accept(_) => {
                 let Some(handle) = self.quick_inputs.get(id).and_then(|input| input.selected_handles().first().copied()) else { return };
                 let pick = picker.picks[handle as usize].clone();
+                if let (PickAction::ConfigureDefault(group), TaskPick::Task(task)) = (picker.action, &pick) {
+                    let all: Vec<Task> = picker.picks.iter().filter_map(|pick| if let TaskPick::Task(task) = pick { Some(task.clone()) } else { None }).collect();
+                    self.hide_quick_input_by_id(id, window, cx);
+                    return self.set_default_task(group, task.clone(), all, window, cx);
+                }
+                if let Some(Owner::Tasks(picker)) = self.quick_inputs.owner_mut(id) {
+                    // Accepted: the Hide that follows must not run the task again.
+                    picker.action = PickAction::Run;
+                }
                 self.accept_task_pick(id, pick, picker.action, window, cx);
             }
             Event::TriggerItemButton(handle, button, _) => {
@@ -172,9 +227,16 @@ impl Workbench {
                     return;
                 }
                 self.hide_quick_input_by_id(id, window, cx);
-                self.open_task_config(task.workspace_folder.clone(), window, cx);
+                self.configure_task(task, window, cx);
             }
-            Event::Hide => self.quick_inputs.remove(id),
+            Event::Hide => {
+                self.quick_inputs.remove(id);
+                if picker.action == PickAction::AttachMatcher
+                    && let Some(TaskPick::Matcher(task, _)) = picker.picks.first()
+                {
+                    drop(self.run_task(task.clone(), window, cx));
+                }
+            }
             _ => {}
         }
     }
@@ -184,13 +246,13 @@ impl Workbench {
             TaskPick::Type(task_type) => return self.show_second_level(id, Some(task_type), window, cx),
             TaskPick::ShowAll => return self.show_second_level(id, None, window, cx),
             TaskPick::GoBack => {
+                let configured = self.configured_tasks().into_iter().filter(|task| !task.hide).collect();
                 let Some(input) = self.quick_inputs.get_mut(id) else { return };
                 input.set_value(String::new());
-                let configured = self.configured_tasks().into_iter().filter(|task| !task.hide).collect();
-                let mut input = std::mem::replace(self.quick_inputs.get_mut(id).expect("checked above"), QuickInput::new(0, Kind::QuickPick));
-                let picker = self.top_level_entries(&mut input, configured);
-                *self.quick_inputs.get_mut(id).expect("checked above") = input;
-                *self.quick_inputs.owner_mut(id).expect("checked above") = Owner::Tasks(picker);
+                let mut input = std::mem::replace(input, QuickInput::new(id, Kind::QuickPick));
+                let picker = self.top_level_entries(&mut input, configured, window);
+                *self.quick_inputs.get_mut(id).expect("placeholder keeps the id") = input;
+                *self.quick_inputs.owner_mut(id).expect("placeholder keeps the id") = Owner::Tasks(picker);
                 cx.notify();
                 return;
             }
@@ -198,13 +260,17 @@ impl Workbench {
         }
         self.hide_quick_input_by_id(id, window, cx);
         match (pick, action) {
+            (TaskPick::Task(task), PickAction::Configure) => self.configure_task(task, window, cx),
+            (TaskPick::OpenConfig(folder), _) => self.open_task_config(Some(folder), window, cx),
+            (TaskPick::ConfigureDefault(group), _) => self.configure_default_task(group, window, cx),
             (TaskPick::Task(task), PickAction::Run) => self.run_picked_task(task, window, cx),
             (TaskPick::Task(task), PickAction::Terminate) => self.terminate_task(&task, window, cx),
             (TaskPick::Task(task), PickAction::Restart) => self.restart_task(&task, window, cx),
             (TaskPick::Instance(task, terminal), _) => self.restart_task_instance(&task, terminal, window, cx),
             (TaskPick::TerminateAll, _) => self.terminate_all_tasks(window, cx),
-            (TaskPick::Configure, _) => self.configure_tasks(window, cx),
+            (TaskPick::Configure, _) => self.run_configure_tasks(window, cx),
             (TaskPick::EnableDetection(task_type), _) => self.enable_task_detection(task_type, window, cx),
+            (TaskPick::Matcher(task, choice), _) => self.accept_problem_matcher(task, choice, window, cx),
             _ => {}
         }
     }
@@ -281,7 +347,7 @@ impl Workbench {
     fn run_picked_task(&mut self, task: Task, window: &mut Window, cx: &mut Context<Self>) {
         self.add_recent_task(&task);
         if !task.configures {
-            drop(self.run_task(task, window, cx));
+            self.run_attaching_problem_matcher(task, window, cx);
             return;
         }
         let fetched = self.fetch_tasks(task.definition["type"].as_str().map(str::to_owned), cx);
@@ -289,7 +355,7 @@ impl Workbench {
             let tasks = fetched.await.unwrap_or_default();
             let resolved = tasks.into_iter().find(|candidate| candidate.definition["_key"] == task.definition["_key"]);
             let _ = workbench.update_in(cx, |workbench, window, cx| match resolved {
-                Some(resolved) => drop(workbench.run_task(resolved, window, cx)),
+                Some(resolved) => workbench.run_attaching_problem_matcher(resolved, window, cx),
                 None => workbench.notify_error(format!("There is no task provider registered for tasks of type \"{}\".", task.definition["type"].as_str().unwrap_or_default())),
             });
         })
@@ -317,7 +383,7 @@ impl Workbench {
                     "build" => ("Select the build task to run", "No build task to run found. Configure Build Task..."),
                     _ => ("Select the test task to run", "No test task to run found. Configure Tasks..."),
                 };
-                workbench.show_task_list(tasks, select, (not_found, TaskPick::Configure), None, PickAction::Run, window, cx);
+                workbench.show_task_list(tasks, select, (not_found, TaskPick::ConfigureDefault(group)), None, PickAction::Run, window, cx);
             });
         })
         .detach();
@@ -449,13 +515,8 @@ impl Workbench {
         }
     }
 
-    /// `configureTaskRunner` without a tasks.json: pick a template and write `.vscode/tasks.json`; with one, open it.
-    pub(super) fn configure_tasks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let folder = self.workspace().and_then(|workspace| workspace.folders.first()).map(|folder| folder.path.clone());
-        self.open_task_config(folder, window, cx);
-    }
-
-    fn open_task_config(&mut self, folder: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) {
+    /// `_openTaskFile`: an existing tasks.json opens; without one, a template is picked and written.
+    pub(super) fn open_task_config(&mut self, folder: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) {
         let Some(folder) = folder else {
             self.notify(Notification::new(Severity::Info, "Tasks are only available on a workspace folder."));
             return;
@@ -555,7 +616,7 @@ impl Workbench {
     }
 }
 
-fn push_entry(entries: &mut Vec<Entry>, picks: &mut Vec<TaskPick>, item: Item, pick: TaskPick) {
+pub(super) fn push_entry(entries: &mut Vec<Entry>, picks: &mut Vec<TaskPick>, item: Item, pick: TaskPick) {
     entries.push(Entry::Item(Item { handle: picks.len() as i64, ..item }));
     picks.push(pick);
 }
@@ -600,5 +661,22 @@ mod tests {
         let task = Task { group: Some(json!({ "_id": "build", "isDefault": true })), ..Task::default() };
         assert!(in_group(&task, "build") && task_is_default(&task));
         assert!(!in_group(&task, "test"));
+    }
+
+    #[gpui::test]
+    fn go_back_rebuilds_the_top_level_in_the_same_picker(cx: &mut gpui::TestAppContext) {
+        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let themes = exthost::scan::scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
+        let theme = crate::theme::load_theme(&[themes], "Dark Modern").unwrap();
+        let (workbench, cx) = cx.add_window_view(|_, cx| Workbench::new(theme, app_root.clone(), None, crate::languages::Languages::new(&[]), crate::default_settings(), crate::host_sync::HostSync::new(std::sync::mpsc::channel().0), cx));
+        workbench.update_in(cx, |workbench, window, cx| {
+            workbench.show_run_task_picker(None, window, cx);
+            let id = workbench.quick_inputs.find_id(|owner| matches!(owner, Owner::Tasks(_))).unwrap();
+            workbench.quick_inputs.get_mut(id).unwrap().set_value("gulp".into());
+            workbench.accept_task_pick(id, TaskPick::GoBack, PickAction::Run, window, cx);
+            assert_eq!(workbench.quick_inputs.get(id).unwrap().input_box.value, "");
+            let Some(Owner::Tasks(picker)) = workbench.quick_inputs.owner(id) else { panic!("the task picker is gone") };
+            assert!(matches!(picker.picks[0], TaskPick::Configure));
+        });
     }
 }

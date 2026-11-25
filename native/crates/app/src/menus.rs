@@ -78,6 +78,7 @@ pub enum MenuId {
     EditorContent,
     TerminalEditorInstanceContext,
     TerminalInstanceContext,
+    TerminalStickyScrollContext,
     /// A `contributes.submenus` entry, `MenuId.for('api:<id>')`, by registration order.
     Api(usize),
     #[cfg(test)]
@@ -328,12 +329,14 @@ const WORKBENCH_MENUS: &[Row] = &[
     (MenuId::TerminalEditorInstanceContext, None, "workbench.action.terminal.new", "New Terminal", "1_create", 0., None, None),
     (MenuId::TerminalEditorInstanceContext, None, "workbench.action.terminal.killEditor", "Kill Terminal", "7_kill", 0., None, None),
     (MenuId::TerminalEditorInstanceContext, None, "workbench.action.terminal.copySelection", "Copy", "3_edit", 1., None, None),
+    (MenuId::TerminalEditorInstanceContext, None, "workbench.action.terminal.copySelectionAsHtml", "Copy as HTML", "3_edit", 2., None, None),
     (MenuId::TerminalEditorInstanceContext, None, "workbench.action.terminal.paste", "Paste", "3_edit", 3., None, None),
     (MenuId::TerminalEditorInstanceContext, None, "workbench.action.terminal.clear", "Clear", "5_clear", 0., None, None),
     (MenuId::TerminalEditorInstanceContext, None, "workbench.action.terminal.selectAll", "Select All", "3_edit", 3., None, None),
     // terminalMenus.ts: the TerminalInstanceContext items of the commands the port has, the menu of the panel's terminal.
     (MenuId::TerminalInstanceContext, None, "workbench.action.terminal.killViewOrEditor", "Kill Terminal", "7_kill", 0., None, None),
     (MenuId::TerminalInstanceContext, None, "workbench.action.terminal.copySelection", "Copy", "3_edit", 1., None, None),
+    (MenuId::TerminalInstanceContext, None, "workbench.action.terminal.copySelectionAsHtml", "Copy as HTML", "3_edit", 2., None, None),
     (MenuId::TerminalInstanceContext, None, "workbench.action.terminal.paste", "Paste", "3_edit", 3., None, None),
     (MenuId::TerminalInstanceContext, None, "workbench.action.terminal.clear", "Clear", "5_clear", 0., None, None),
     (MenuId::TerminalInstanceContext, None, "workbench.action.terminal.selectAll", "Select All", "3_edit", 3., None, None),
@@ -428,6 +431,9 @@ pub fn workbench_menus() -> Vec<MenuItem> {
         let entry = Entry::Command { id: id.into(), precondition: None, toggled: Toggled::when(Expr::deserialize(&format!("config.{setting} == true"))), alt: None };
         items.push(MenuItem { menu: MenuId::StickyScrollContext, entry, title: title.into(), group: String::new(), order: 0., when: None });
     }
+    // terminal.stickyScroll.contribution.ts: Toggle Sticky Scroll, checked by its setting.
+    let entry = Entry::Command { id: "workbench.action.terminal.toggleStickyScroll".into(), precondition: None, toggled: Toggled::when(Expr::deserialize("config.terminal.integrated.stickyScroll.enabled == true")), alt: None };
+    items.push(MenuItem { menu: MenuId::TerminalStickyScrollContext, entry, title: "Sticky Scroll".into(), group: String::new(), order: 0., when: None });
     // toggleWordWrap.ts: checked while the active editor wraps, enabled while it can toggle.
     let entry = Entry::Command { id: "editor.action.toggleWordWrap".into(), precondition: Some(Expr::has("canToggleWordWrap")), toggled: Toggled::when(Some(Expr::has("editorWordWrap"))), alt: None };
     items.push(MenuItem { menu: MenuId::MenubarViewMenu, entry, title: "&&Word Wrap".into(), group: "6_editor".into(), order: 1., when: None });

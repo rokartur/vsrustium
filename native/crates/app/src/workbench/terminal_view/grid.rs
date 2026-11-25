@@ -4,12 +4,14 @@
 use std::collections::HashMap;
 
 use alacritty_terminal::grid::Dimensions;
-use alacritty_terminal::index::Side;
-use alacritty_terminal::term::cell::Flags;
+use alacritty_terminal::index::{Column, Line, Side};
+use alacritty_terminal::term::cell::{Cell, Flags};
+use alacritty_terminal::term::color::Colors;
 use alacritty_terminal::vte::ansi::{Color, CursorShape, NamedColor};
-use gpui::{Bounds, Font, FontStyle, FontWeight, Hsla, Pixels, Rgba, SharedString, StrikethroughStyle, TextRun, UnderlineStyle, Window, fill, font, outline, point, px, size};
+use gpui::{BoxShadow, Corners, Bounds, Font, FontStyle, FontWeight, Hsla, Pixels, Rgba, SharedString, StrikethroughStyle, TextRun, UnderlineStyle, Window, fill, font, outline, point, px, size};
 
 use crate::terminal::TerminalInstance;
+use crate::terminal::sticky_scroll::StickyScroll;
 use crate::terminal::colors::{TerminalColors, ensure_contrast_ratio};
 
 /// xtermTerminal.ts `TerminalScrollbarWidth` under `workbench.experimental.modernUI`, else the classic width.
@@ -101,11 +103,21 @@ pub struct Look<'a> {
     /// The scrollbar shows while the pointer is over the terminal (`ScrollbarVisibility.Auto`).
     pub hovered: bool,
     pub scrollbar_slider: Rgba,
+    /// `shellIntegration.decorationsEnabled` with the overview ruler: its border color and the command marks.
+    pub overview_ruler: Option<OverviewRuler>,
+    /// The hovered link's cells (grid line, column) while the link modifier is down: xterm's link underline.
+    pub link_underline: &'a [(i32, usize)],
     /// The find widget's matches, the selected one, and their `terminal.findMatch*Background` colors.
     pub find_matches: &'a [alacritty_terminal::term::search::Match],
     pub find_current: Option<usize>,
     pub find_match: Rgba,
     pub find_highlight: Rgba,
+}
+
+pub struct OverviewRuler {
+    pub border: Rgba,
+    /// Each decorated command's buffer line, its color and whether it sits right (failed) or left.
+    pub marks: Vec<(i64, Rgba, bool)>,
 }
 
 /// The grid's top left: bottom aligned in the pane (terminal.css `.xterm { bottom: 0 }`), right of the gutter.
@@ -122,28 +134,7 @@ pub fn paint(bounds: Bounds<Pixels>, instance: &TerminalInstance, look: &Look, w
     let content = term.renderable_content();
     let offset = content.display_offset as i32;
     let colors = look.colors;
-    let resolve = |color: Color, bold: bool| -> Rgba {
-        let index = match color {
-            Color::Spec(rgb) => return rgba(rgb.r, rgb.g, rgb.b),
-            Color::Indexed(index) if bold && look.draw_bold_text_in_bright_colors && index < 8 => index as usize + 8,
-            Color::Indexed(index) => index as usize,
-            Color::Named(named) if bold && look.draw_bold_text_in_bright_colors && (named as usize) < 8 => named as usize + 8,
-            Color::Named(named) => named as usize,
-        };
-        if let Some(rgb) = content.colors[index] {
-            return rgba(rgb.r, rgb.g, rgb.b);
-        }
-        match index {
-            0..256 => colors.palette[index],
-            index if index == NamedColor::Background as usize => colors.background,
-            index if index == NamedColor::Cursor as usize => colors.cursor,
-            index if (NamedColor::DimBlack as usize..=NamedColor::DimWhite as usize).contains(&index) => {
-                let color = colors.palette[index - NamedColor::DimBlack as usize];
-                Rgba { a: color.a * 0.5, ..color }
-            }
-            _ => colors.foreground,
-        }
-    };
+    let resolve = |color: Color, bold: bool| resolve_color(color, bold, content.colors, look);
     let cursor = content.cursor;
     let cursor_row = cursor.point.line.0 + offset;
     let cursor_shown = cursor.shape != CursorShape::Hidden && !(look.focused && look.cursor_blink_off);
@@ -206,27 +197,7 @@ pub fn paint(bounds: Bounds<Pixels>, instance: &TerminalInstance, look: &Look, w
             let selection = if look.focused { colors.selection } else { colors.inactive_selection };
             window.paint_quad(fill(cell_bounds, selection));
         }
-        let character = indexed.cell.c;
-        if character == ' ' || character == '\0' || flags.contains(Flags::HIDDEN) {
-            continue;
-        }
-        let line = &mut rows_text[row];
-        let start = line.text.len();
-        line.text.push(character);
-        for &zero_width in indexed.cell.zerowidth().into_iter().flatten() {
-            line.text.push(zero_width);
-        }
-        line.cells.push(CellText { start, column, fg, bold, italic: flags.contains(Flags::ITALIC) });
-        let decoration_width = px(metrics.cell_width * width as f32);
-        if flags.intersects(Flags::ALL_UNDERLINES) {
-            let underline_color = indexed.cell.underline_color().map_or(fg, |color| resolve(color, false));
-            let style = UnderlineStyle { thickness: px(1.), color: Some(Hsla::from(underline_color)), wavy: flags.contains(Flags::UNDERCURL) };
-            window.paint_underline(point(cell_bounds.origin.x, cell_bounds.bottom() - px(metrics.descent.max(2.)) + px(1.)), decoration_width, &style);
-        }
-        if flags.contains(Flags::STRIKEOUT) {
-            let style = StrikethroughStyle { thickness: px(1.), color: Some(Hsla::from(fg)) };
-            window.paint_strikethrough(point(cell_bounds.origin.x, cell_bounds.origin.y + px((metrics.cell_height / 2.).round())), decoration_width, &style);
-        }
+        push_cell_text(indexed.cell, column, fg, cell_bounds, &mut rows_text[row], &resolve, metrics, window);
     }
 
     let baseline = |row: usize| {
@@ -235,6 +206,15 @@ pub fn paint(bounds: Bounds<Pixels>, instance: &TerminalInstance, look: &Look, w
     };
     for (row, line) in rows_text.into_iter().enumerate() {
         paint_row_text(line, origin.x, baseline(row), metrics, window);
+    }
+
+    for &(line, column) in look.link_underline {
+        let row = line + offset;
+        if (0..rows as i32).contains(&row) && column < cols {
+            let bounds = cell(column, row as usize);
+            let style = UnderlineStyle { thickness: px(1.), color: Some(Hsla::from(colors.foreground)), wavy: false };
+            window.paint_underline(point(bounds.origin.x, bounds.bottom() - px(metrics.descent.max(2.)) + px(1.)), bounds.size.width, &style);
+        }
     }
 
     if cursor_shown && (0..rows as i32).contains(&cursor_row) {
@@ -251,8 +231,150 @@ pub fn paint(bounds: Bounds<Pixels>, instance: &TerminalInstance, look: &Look, w
     }
 
     let history = term.history_size();
+    if let Some(ruler) = look.overview_ruler.as_ref().filter(|_| !term.mode().contains(alacritty_terminal::term::TermMode::ALT_SCREEN)) {
+        let canvas = Bounds::new(point(bounds.right() - px(look.scrollbar_width), origin.y), size(px(look.scrollbar_width), px(rows as f32 * metrics.cell_height)));
+        paint_overview_ruler(canvas, history + rows, ruler, window);
+    }
     if look.hovered && history > 0 {
         paint_scrollbar(bounds, rows, history, content.display_offset, look, window);
+    }
+}
+
+/// terminalStickyScroll.css `.terminal-sticky-scroll`: its colors, the hover one while the pointer is over it.
+pub struct StickyLook {
+    pub background: Rgba,
+    pub hover: Option<Rgba>,
+    pub border: Option<Rgba>,
+    pub shadow: Option<Rgba>,
+}
+
+/// The overlay: left of the gutter to the scrollbar, its top `shift` rows above the grid's.
+pub fn sticky_scroll_bounds(bounds: Bounds<Pixels>, rows: usize, sticky: &StickyScroll, metrics: &CellMetrics, scrollbar_width: f32) -> Bounds<Pixels> {
+    let top = grid_origin(bounds, rows, metrics).y - px(sticky.shift as f32 * metrics.cell_height);
+    Bounds::new(point(bounds.origin.x, top), size(bounds.size.width - px(scrollbar_width), px(sticky.count as f32 * metrics.cell_height)))
+}
+
+/// The sticky overlay's own xterm: the buffer lines `sticky` names, without cursor or selection, ` …` after the
+/// last when truncated, a `0 3px 2px -2px` shadow and a bottom border.
+pub fn paint_sticky_scroll(bounds: Bounds<Pixels>, instance: &TerminalInstance, sticky: &StickyScroll, sticky_look: &StickyLook, look: &Look, window: &mut Window) {
+    let metrics = look.metrics;
+    let term = &instance.term;
+    let overlay = sticky_scroll_bounds(bounds, term.screen_lines(), sticky, metrics, look.scrollbar_width);
+    if let Some(shadow) = sticky_look.shadow {
+        let shadow = BoxShadow { color: Hsla::from(shadow), offset: point(px(0.), px(3.)), blur_radius: px(2.), spread_radius: px(-2.), inset: false };
+        window.paint_drop_shadows(overlay, Corners::default(), &[shadow]);
+    }
+    let background = sticky_look.hover.unwrap_or(sticky_look.background);
+    window.paint_quad(fill(overlay, background));
+    if let Some(border) = sticky_look.border {
+        window.paint_quad(fill(Bounds::new(point(overlay.origin.x, overlay.bottom()), size(overlay.size.width, px(1.))), border));
+    }
+
+    let origin = point(overlay.origin.x + px(GUTTER), overlay.origin.y);
+    let resolve = |color: Color, bold: bool| resolve_color(color, bold, term.colors(), look);
+    let mut contrast_cache: HashMap<([u32; 4], [u32; 4]), Option<Rgba>> = HashMap::new();
+    for row in 0..sticky.count {
+        let line = sticky.start + row as i64;
+        let y = origin.y + px(row as f32 * metrics.cell_height);
+        let mut text = RowText::default();
+        let mut last_column = None;
+        for column in 0..term.columns() {
+            let cell = &term.grid()[Line((line - term.history_size() as i64) as i32)][Column(column)];
+            if cell.flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER) {
+                continue;
+            }
+            let bold = cell.flags.contains(Flags::BOLD);
+            let mut fg = resolve(cell.fg, bold);
+            let mut bg = match cell.bg {
+                Color::Named(NamedColor::Background) => None,
+                color => Some(resolve(color, false)),
+            };
+            if cell.flags.contains(Flags::INVERSE) {
+                let cell_background = bg.unwrap_or(background);
+                bg = Some(fg);
+                fg = cell_background;
+            }
+            if cell.flags.contains(Flags::DIM) {
+                fg.a *= 0.5;
+            }
+            if look.minimum_contrast_ratio > 1. {
+                let cell_background = bg.unwrap_or(background);
+                let adjusted = *contrast_cache.entry((key(cell_background), key(fg))).or_insert_with(|| ensure_contrast_ratio(cell_background, Rgba { a: 1., ..fg }, look.minimum_contrast_ratio));
+                if let Some(adjusted) = adjusted {
+                    fg = Rgba { a: fg.a, ..adjusted };
+                }
+            }
+            let width = if cell.flags.contains(Flags::WIDE_CHAR) { 2. } else { 1. };
+            let cell_bounds = Bounds::new(point(origin.x + px(column as f32 * metrics.cell_width), y), size(px(metrics.cell_width * width), px(metrics.cell_height)));
+            if let Some(bg) = bg {
+                window.paint_quad(fill(cell_bounds, bg));
+            }
+            if cell.c != ' ' && cell.c != '\0' {
+                last_column = Some(column);
+            }
+            push_cell_text(cell, column, fg, cell_bounds, &mut text, &resolve, metrics, window);
+        }
+        if sticky.truncated && row + 1 == sticky.count {
+            let column = last_column.map_or(0, |column| column + 2);
+            if column < term.columns() {
+                let start = text.text.len();
+                text.text.push('…');
+                text.cells.push(CellText { start, column, fg: look.colors.foreground, bold: false, italic: false });
+            }
+        }
+        let baseline = f32::from(y) + metrics.cell_height - metrics.descent;
+        paint_row_text(text, origin.x, px((baseline * metrics.scale).round() / metrics.scale), metrics, window);
+    }
+}
+
+/// The cell's text joins its row's, shaped and painted later; underline and strikethrough paint now.
+#[allow(clippy::too_many_arguments)]
+fn push_cell_text(cell: &Cell, column: usize, fg: Rgba, cell_bounds: Bounds<Pixels>, line: &mut RowText, resolve: &dyn Fn(Color, bool) -> Rgba, metrics: &CellMetrics, window: &mut Window) {
+    let flags = cell.flags;
+    if cell.c == ' ' || cell.c == '\0' || flags.contains(Flags::HIDDEN) {
+        return;
+    }
+    let start = line.text.len();
+    line.text.push(cell.c);
+    for &zero_width in cell.zerowidth().into_iter().flatten() {
+        line.text.push(zero_width);
+    }
+    line.cells.push(CellText { start, column, fg, bold: flags.contains(Flags::BOLD), italic: flags.contains(Flags::ITALIC) });
+    let decoration_width = cell_bounds.size.width;
+    if flags.intersects(Flags::ALL_UNDERLINES) {
+        let underline_color = cell.underline_color().map_or(fg, |color| resolve(color, false));
+        let style = UnderlineStyle { thickness: px(1.), color: Some(Hsla::from(underline_color)), wavy: flags.contains(Flags::UNDERCURL) };
+        window.paint_underline(point(cell_bounds.origin.x, cell_bounds.bottom() - px(metrics.descent.max(2.)) + px(1.)), decoration_width, &style);
+    }
+    if flags.contains(Flags::STRIKEOUT) {
+        let style = StrikethroughStyle { thickness: px(1.), color: Some(Hsla::from(fg)) };
+        window.paint_strikethrough(point(cell_bounds.origin.x, cell_bounds.origin.y + px((metrics.cell_height / 2.).round())), decoration_width, &style);
+    }
+}
+
+/// xterm's color lookup: an OSC 4/10/11 override, else the theme palette, bold colors brightened when
+/// `drawBoldTextInBrightColors` is on.
+fn resolve_color(color: Color, bold: bool, overrides: &Colors, look: &Look) -> Rgba {
+    let colors = look.colors;
+    let index = match color {
+        Color::Spec(rgb) => return rgba(rgb.r, rgb.g, rgb.b),
+        Color::Indexed(index) if bold && look.draw_bold_text_in_bright_colors && index < 8 => index as usize + 8,
+        Color::Indexed(index) => index as usize,
+        Color::Named(named) if bold && look.draw_bold_text_in_bright_colors && (named as usize) < 8 => named as usize + 8,
+        Color::Named(named) => named as usize,
+    };
+    if let Some(rgb) = overrides[index] {
+        return rgba(rgb.r, rgb.g, rgb.b);
+    }
+    match index {
+        0..256 => colors.palette[index],
+        index if index == NamedColor::Background as usize => colors.background,
+        index if index == NamedColor::Cursor as usize => colors.cursor,
+        index if (NamedColor::DimBlack as usize..=NamedColor::DimWhite as usize).contains(&index) => {
+            let color = colors.palette[index - NamedColor::DimBlack as usize];
+            Rgba { a: color.a * 0.5, ..color }
+        }
+        _ => colors.foreground,
     }
 }
 
@@ -276,6 +398,22 @@ fn paint_scrollbar(bounds: Bounds<Pixels>, rows: usize, history: usize, display_
     let top = (track - slider_height) * first_row / history as f32;
     let slider = Bounds::new(point(bounds.right() - px(look.scrollbar_width), bounds.origin.y + px(top)), size(px(look.scrollbar_width), px(slider_height)));
     window.paint_quad(fill(slider, look.scrollbar_slider));
+}
+
+/// xterm.js OverviewRulerRenderer: a left and top border, then each mark a third of the ruler wide at its line,
+/// 6 to 12 pixels tall by the pixels a line gets.
+fn paint_overview_ruler(canvas: Bounds<Pixels>, buffer_lines: usize, ruler: &OverviewRuler, window: &mut Window) {
+    let (width, height) = (f32::from(canvas.size.width), f32::from(canvas.size.height));
+    window.paint_quad(fill(Bounds::new(canvas.origin, size(px(1.), canvas.size.height)), ruler.border));
+    window.paint_quad(fill(Bounds::new(canvas.origin + point(px(1.), px(0.)), size(px(width - 1.), px(1.))), ruler.border));
+    let outer = ((width - 1.) / 3.).floor();
+    let center = ((width - 1.) / 3.).ceil();
+    let mark_height = (height / buffer_lines as f32).clamp(6., 12.).round();
+    for &(line, color, right) in &ruler.marks {
+        let x = if right { 1. + outer + center } else { 1. };
+        let y = ((height - 1.) * line as f32 / buffer_lines as f32 - mark_height / 2.).round();
+        window.paint_quad(fill(Bounds::new(canvas.origin + point(px(x), px(y)), size(px(outer), px(mark_height))), color));
+    }
 }
 
 #[derive(Default)]

@@ -1,17 +1,27 @@
 //! The integrated terminal's model: one `TerminalInstance` per terminal (terminalInstance.ts), its shell in a
 //! PTY (terminalProcess.ts over node-pty) and its screen in alacritty_terminal standing in for xterm.js.
 
+pub mod accessible_buffer;
 pub mod auto_replies;
 pub mod colors;
+pub mod completion_item;
+pub mod completion_model;
+pub mod completion_service;
 pub mod keys;
 pub mod link_parsing;
 pub mod mouse;
 pub mod profiles;
 pub mod prompt_input;
+pub mod quick_fix;
 pub mod environment_collection;
+pub mod history;
+pub mod sticky_scroll;
+pub mod marks;
 pub mod injection;
 pub mod pty;
+pub mod osc99;
 pub mod search;
+pub mod serialize_html;
 pub mod shell_integration;
 pub mod skip_shell;
 
@@ -28,6 +38,7 @@ use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::term::{Config, Term, TermMode};
 use alacritty_terminal::vte::ansi::{ClearMode, Handler, Processor, Rgb};
 use futures::channel::mpsc::{UnboundedReceiver, unbounded};
+use serde_json::json;
 
 use self::pty::{Pty, PtyEvent};
 use self::shell_integration::{BufferPoint, ShellEvent, ShellIntegration};
@@ -92,6 +103,8 @@ pub struct TerminalInstance {
     events: Listener,
     pty: Option<Pty>,
     pub pid: Option<i32>,
+    /// When the instance was created; the resize overlay waits a second after it.
+    pub started: Instant,
     /// The name the user gave with Rename (`TitleEventSource.Api` from the rename command).
     pub user_title: Option<String>,
     /// `${process}`: the foreground process of the PTY.
@@ -107,6 +120,9 @@ pub struct TerminalInstance {
     pub cell_size: (f32, f32),
     /// Text the process asked to put on the clipboard (OSC 52).
     pub clipboard_requests: Vec<String>,
+    /// OSC 99 notification sequences, the data after `99;`, for the workbench's handler.
+    pub osc99_sequences: Vec<String>,
+    pub osc99: osc99::Osc99,
     /// OSC 52 `?` queries, each formatting the clipboard text into its reply.
     pub clipboard_loads: Vec<std::sync::Arc<dyn Fn(&str) -> String + Sync + Send>>,
     /// The bell rang since it was last read.
@@ -128,12 +144,48 @@ pub struct TerminalInstance {
     pub on_input: Option<Box<dyn FnMut()>>,
     /// terminalProcess.ts `shellType`, from the foreground process name.
     pub shell_type: Option<&'static str>,
+    /// Record Terminal Session: the events since recording started, and when the last one came.
+    pub recording: Option<Recording>,
+    /// commandDetectionCapability.ts `promptInputModel`, fed by the B, C, D and P sequences.
+    pub prompt_input: prompt_input::PromptInputModel,
+    /// commandDetectionCapability.ts `commands`: the finished commands of this session, oldest first.
+    pub commands: Vec<FinishedCommand>,
+    /// cwdDetectionCapability.ts `cwds`: each cwd once, the last one entered last.
+    pub cwds: Vec<String>,
+    /// The marks and output of the command being entered or run.
+    current: FinishedCommand,
+}
+
+/// `ITerminalCommand`: lines are absolute buffer lines, as `BufferPoint` counts them.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FinishedCommand {
+    pub command: String,
+    pub cwd: Option<String>,
+    pub exit_code: Option<i32>,
+    /// Milliseconds since the Unix epoch when it finished.
+    pub timestamp: u64,
+    pub output: String,
+    /// The A (prompt start), B (command start), C (executed) and D (finished) lines.
+    pub prompt_line: Option<i64>,
+    pub command_line: Option<i64>,
+    pub executed_line: Option<i64>,
+    pub end_line: Option<i64>,
+    /// The cursor column at C (`executedX`).
+    pub executed_column: Option<usize>,
+    /// Milliseconds since the Unix epoch at C (`commandExecutedTimestamp`).
+    pub executed_timestamp: Option<u64>,
+    /// Milliseconds from C to D, 0 without a C (`commandDuration || 0`).
+    pub duration: u64,
+    /// The command line came with the session's nonce (`isTrusted`).
+    pub is_trusted: bool,
 }
 
 /// What one chunk of process output did: its text (`onData`) and the shell integration events in stream order.
 pub struct Processed {
     pub text: String,
     pub shell_events: Vec<ShellEvent>,
+    /// The prompt input changed (`onDidChangeInput`).
+    pub input_changed: bool,
 }
 
 /// terminalProcessManager.ts `ErrorLaunchThresholdDuration`: an exit this soon after launch is a failed launch.
@@ -161,6 +213,9 @@ impl TerminalInstance {
             spawn_error: None,
             cell_size: (0., 0.),
             clipboard_requests: Vec::new(),
+            osc99_sequences: Vec::new(),
+            osc99: osc99::Osc99::default(),
+            recording: None,
             clipboard_loads: Vec::new(),
             bell: false,
             auto_reply_setting: serde_json::Value::Null,
@@ -171,8 +226,13 @@ impl TerminalInstance {
             shell_integration: ShellIntegration::new(nonce),
             utf8_tail: Vec::new(),
             process_input: None,
+            started: Instant::now(),
             on_input: None,
             shell_type: None,
+            prompt_input: prompt_input::PromptInputModel::default(),
+            commands: Vec::new(),
+            cwds: Vec::new(),
+            current: FinishedCommand::default(),
         };
         if instance.launch.extension_pty {
             return (instance, None);
@@ -210,18 +270,24 @@ impl TerminalInstance {
     /// handled where they occur in the stream, so the command output between them is known.
     pub fn process(&mut self, bytes: &[u8], colors: &colors::TerminalColors) -> Processed {
         let text = self.decode(bytes);
+        self.record(json!({ "type": "output", "data": text }));
         let mut shell_events = Vec::new();
         let mut fed = 0;
+        let mut input_changed = false;
         for sequence in self.shell_integration.scan(&text) {
             if self.shell_integration.executing() && sequence.start > fed {
-                shell_events.push(ShellEvent::ExecutionData(text[fed..sequence.start].to_owned()));
+                self.push_shell_event(&mut shell_events, ShellEvent::ExecutionData(text[fed..sequence.start].to_owned()));
             }
             self.feed(&text[fed..sequence.end], colors);
             fed = sequence.end;
+            if let Some(data) = sequence.payload.strip_prefix("99;") {
+                self.osc99_sequences.push(data.to_owned());
+            }
             let cursor = self.buffer_cursor();
             let command_start = self.shell_integration.command_start_point();
+            input_changed |= self.prompt_sequence(&sequence.payload, cursor);
             for event in self.shell_integration.handle(&sequence.payload, cursor) {
-                shell_events.push(match event {
+                let event = match event {
                     ShellEvent::CommandExecuted(command) if command.command_line.is_empty() => match command_start {
                         Some((start, single_line_after_prompt)) => {
                             let line = self.buffer_text(start, cursor);
@@ -231,14 +297,89 @@ impl TerminalInstance {
                         None => ShellEvent::CommandExecuted(command),
                     },
                     event => event,
-                });
+                };
+                self.push_shell_event(&mut shell_events, event);
             }
         }
         if self.shell_integration.executing() && fed < text.len() {
-            shell_events.push(ShellEvent::ExecutionData(text[fed..].to_owned()));
+            self.push_shell_event(&mut shell_events, ShellEvent::ExecutionData(text[fed..].to_owned()));
         }
         self.feed(&text[fed..], colors);
-        Processed { text, shell_events }
+        input_changed |= self.prompt_input.sync(&self.term);
+        if input_changed {
+            self.record(json!({ "type": "promptInputChange", "data": self.prompt_input.get_combined_string(false) }));
+        }
+        Processed { text, shell_events, input_changed }
+    }
+
+    /// Keeps `commands` and `cwds` as the command and cwd detection capabilities do, then queues the event.
+    fn push_shell_event(&mut self, events: &mut Vec<ShellEvent>, event: ShellEvent) {
+        match &event {
+            ShellEvent::ExecutionData(data) => self.current.output.push_str(data),
+            ShellEvent::CommandFinished(command) => {
+                let mut finished = std::mem::take(&mut self.current);
+                finished.command = command.command_line.clone();
+                finished.is_trusted = command.is_trusted;
+                finished.cwd = command.cwd.clone();
+                finished.exit_code = command.exit_code;
+                finished.timestamp = now_ms();
+                finished.duration = finished.executed_timestamp.map_or(0, |executed| finished.timestamp.saturating_sub(executed));
+                self.commands.push(finished);
+            }
+            ShellEvent::Cwd(cwd) => {
+                self.cwds.retain(|seen| seen != cwd);
+                self.cwds.push(cwd.clone());
+            }
+            ShellEvent::CommandExecuted(command) => self.current.command = command.command_line.clone(),
+            ShellEvent::CommandDetectionAdded => {}
+        }
+        events.push(event);
+    }
+
+    /// The prompt input model's side of shellIntegrationAddon.ts: B starts the input, C and D end it, `P;Prompt=`
+    /// and `P;ContinuationPrompt=` tell it the prompt. Returns whether the input changed.
+    fn prompt_sequence(&mut self, payload: &str, cursor: BufferPoint) -> bool {
+        let (ps, pt) = payload.split_once(';').unwrap_or((payload, ""));
+        if ps != "633" && ps != "133" {
+            return false;
+        }
+        let mut args = pt.split(';');
+        match args.next() {
+            Some("A") => {
+                self.current = FinishedCommand { prompt_line: Some(cursor.line), ..FinishedCommand::default() };
+                false
+            }
+            Some("B") => {
+                self.current.command_line = Some(cursor.line);
+                self.prompt_input.command_start(&self.term, cursor)
+            }
+            Some("C") => {
+                self.current.executed_line = Some(cursor.line);
+                self.current.executed_column = Some(cursor.column);
+                self.current.executed_timestamp.get_or_insert_with(now_ms);
+                self.prompt_input.command_executed();
+                true
+            }
+            Some("D") => {
+                self.current.end_line = Some(cursor.line);
+                self.prompt_input.command_finished();
+                true
+            }
+            Some("P") if ps == "633" => {
+                let value = shell_integration::deserialize_message(args.next().unwrap_or_default());
+                match value.split_once('=') {
+                    // `_updatePromptTerminator`: the prompt's last line without SGR sequences.
+                    Some(("Prompt", prompt)) => {
+                        let prompt = strip_sgr(prompt);
+                        let last_line = prompt.rsplit('\n').next().unwrap_or_default();
+                        self.prompt_input.set_last_prompt_line(&self.term, last_line)
+                    }
+                    Some(("ContinuationPrompt", prompt)) => self.prompt_input.set_continuation_prompt(&self.term, &strip_prompt_escapes(prompt)),
+                    _ => false,
+                }
+            }
+            _ => false,
+        }
     }
 
     fn feed(&mut self, text: &str, colors: &colors::TerminalColors) {
@@ -312,6 +453,7 @@ impl TerminalInstance {
         let changed = process.as_ref().is_some_and(|process| *process != self.process_title) || cwd != self.cwd;
         if let Some(process) = process {
             self.shell_type = shell_type(&process);
+            self.prompt_input.set_is_fish(self.shell_type == Some("fish"));
             self.process_title = process;
         }
         self.cwd = cwd;
@@ -339,8 +481,22 @@ impl TerminalInstance {
 
     /// `sendText` and typed input: the terminal follows the input (xterm.js `scrollOnUserInput`).
     pub fn input(&mut self, data: &str) {
+        self.record(json!({ "type": "input", "data": data }));
+        self.write_input(data);
+    }
+
+    /// `record` of Record Terminal Session: the event goes to the recording, if one runs.
+    pub fn record(&mut self, event: serde_json::Value) {
+        if let Some(recording) = &mut self.recording {
+            recording.events.push(event);
+            recording.last_event = Instant::now();
+        }
+    }
+
+    fn write_input(&mut self, data: &str) {
         self.term.scroll_display(Scroll::Bottom);
         self.term.selection = None;
+        self.prompt_input.user_input(data);
         self.write_to_pty(data.as_bytes());
         if let Some(on_input) = &mut self.on_input {
             on_input();
@@ -353,7 +509,8 @@ impl TerminalInstance {
         if should_execute && !text.ends_with('\r') {
             text.push('\r');
         }
-        self.input(&text);
+        self.record(json!({ "type": "sendText", "data": text }));
+        self.write_input(&text);
     }
 
     /// xterm.js `paste`: line breaks become carriage returns, wrapped in bracketed paste mode markers when the
@@ -387,6 +544,7 @@ impl TerminalInstance {
         if let Some(pty) = &self.pty {
             pty.resize(cols, rows);
         }
+        self.record(json!({ "type": "resize", "cols": cols, "rows": rows }));
         true
     }
 
@@ -477,6 +635,15 @@ impl TerminalInstance {
         self.term.selection_to_string().filter(|text| !text.is_empty())
     }
 
+    /// `serializeAsHTML({ onlySelection: true })`.
+    pub fn selection_html(&self, colors: &colors::TerminalColors, font_family: &str, font_size: f32) -> Option<String> {
+        let range = self.term.selection.as_ref()?.to_range(&self.term)?;
+        let history = self.term.history_size() as i64;
+        let start = (range.start.line.0 as i64 + history, range.start.column.0);
+        let end = (range.end.line.0 as i64 + history, range.end.column.0 + 1);
+        Some(self.serialize_html(start, end, &colors.palette, font_family, font_size))
+    }
+
     fn viewport_point(&self, line: i32, column: usize) -> Point {
         let offset = self.term.grid().display_offset() as i32;
         let last_line = self.term.screen_lines() as i32 - 1;
@@ -498,6 +665,28 @@ pub fn shell_type(process: &str) -> Option<&'static str> {
         ("python", "python"), ("julia", "julia"), ("nu", "nu"), ("node", "node"), ("xonsh", "xonsh"),
     ];
     types.iter().find(|(process, _)| *process == name).map(|(_, kind)| *kind)
+}
+
+/// Record Terminal Session's events (`type` resize, command, output, sendText, input, promptInputChange).
+pub struct Recording {
+    pub events: Vec<serde_json::Value>,
+    pub last_event: Instant,
+}
+
+pub(crate) fn now_ms() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |elapsed| elapsed.as_millis() as u64)
+}
+
+/// shellIntegrationAddon.ts `value.replace(/\x1b\[[0-9;]*m/g, '')`.
+fn strip_sgr(text: &str) -> String {
+    let sgr = regex::Regex::new(r"\x1b\[[0-9;]*m").unwrap();
+    sgr.replace_all(text, "").into_owned()
+}
+
+/// strings.ts `removeAnsiEscapeCodesFromPrompt`: escapes, then bash's `\[...\]` non-printing markers.
+fn strip_prompt_escapes(text: &str) -> String {
+    let non_printable = regex::Regex::new(r"\\\[.*?\\\]").unwrap();
+    non_printable.replace_all(&crate::tasks::problem_collector::strip_ansi(text), "").into_owned()
 }
 
 fn paste_data(text: &str, bracketed: bool) -> String {

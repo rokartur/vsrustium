@@ -10,6 +10,7 @@ mod anything_quick_access;
 mod brackets;
 mod bulk_edit_preview;
 mod clipboard;
+mod codicons;
 mod command_palette;
 mod commands;
 mod custom_tree;

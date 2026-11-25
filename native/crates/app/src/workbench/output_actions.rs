@@ -29,6 +29,10 @@ pub enum OutputPick {
     LogChannel(String),
     /// Set Log Level...: a log channel's level, with the Set as Default Log Level button.
     ChannelLevel(String, u8),
+    /// Add Compound Log...: a log channel to join.
+    AddToCompound(String),
+    /// Remove Output...: a compound log the user added.
+    Remove(String),
 }
 
 /// The level toggles of the filter menu, with `LogLevelToString` and `LogLevelToLocalizedString`.
@@ -36,6 +40,7 @@ const LEVEL_FILTERS: [(Level, &str, &str); 5] = [(Level::Trace, "trace", "Trace"
 
 impl Workbench {
     pub(super) fn register_output_actions(&mut self) {
+        self.register_output_compound_actions();
         // viewsService.ts `OpenViewAction` of the view's `openCommandActionDescriptor`.
         self.commands.register("workbench.action.output.toggleOutput", |workbench, args, window, cx| {
             let preserve_focus = args.first().is_some_and(|options| options["preserveFocus"] == true);
@@ -258,11 +263,16 @@ impl Workbench {
         match event {
             Event::Accept(_) => {
                 let Some(input) = self.quick_inputs.get(id) else { return };
-                let Some(&handle) = input.selected_handles().first() else { return };
+                let (handles, many) = (input.selected_handles(), input.can_select_many);
                 let Some(Owner::Output(picks)) = self.quick_inputs.owner(id) else { return };
-                let pick = picks[handle as usize].clone();
+                let picked: Vec<OutputPick> = handles.iter().map(|handle| picks[*handle as usize].clone()).collect();
                 self.hide_quick_input_by_id(id, window, cx);
-                self.accept_output_pick(pick, window, cx);
+                if many {
+                    return self.accept_many_output_picks(picked, window, cx);
+                }
+                if let Some(pick) = picked.into_iter().next() {
+                    self.accept_output_pick(pick, window, cx);
+                }
             }
             // logsActions.ts `onDidTriggerItemButton`: Set as Default Log Level.
             Event::TriggerItemButton(handle, _, _) => {
@@ -295,6 +305,7 @@ impl Workbench {
             OutputPick::Level(level) => self.set_log_level(level),
             OutputPick::LogChannel(id) => self.show_channel_log_level_picker(&id, window, cx),
             OutputPick::ChannelLevel(id, level) => self.set_output_log_level(&id, level),
+            OutputPick::AddToCompound(_) | OutputPick::Remove(_) => self.accept_many_output_picks(vec![pick], window, cx),
         }
     }
 

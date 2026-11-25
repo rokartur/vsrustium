@@ -18,6 +18,18 @@ fn should_parse_log_entry_with_all_components() {
 }
 
 #[test]
+fn should_parse_timestamp_correctly() {
+    // `new Date(text).getTime()` reads the text as local time.
+    let local = |text: &str| chrono::NaiveDateTime::parse_from_str(text, "%Y-%m-%d %H:%M:%S%.3f").unwrap().and_local_timezone(chrono::Local).unwrap().timestamp_millis();
+    for timestamp in ["2023-01-01 00:00:00.000", "2023-12-31 23:59:59.999", "2023-06-15 12:30:45.500"] {
+        let (entry, _) = entry_at(&format!("{timestamp} [info] Test message"), 0).unwrap();
+        assert_eq!(entry.timestamp, local(timestamp), "Failed for timestamp: {timestamp}");
+    }
+    let (entry, _) = entry_at("2023-01-01 00:00:00.001 [info] a", 0).unwrap();
+    assert_eq!(entry.timestamp - local("2023-01-01 00:00:00.000"), 1);
+}
+
+#[test]
 fn should_parse_multi_line_log_entry() {
     let text = ["2023-10-15 14:30:45.123 [error] [Extension] Failed with error:", "Error: Could not load extension", "    at Object.load (/path/to/file:10:5)"].join("\n");
     let (entry, range_text) = entry_at(&text, 0).unwrap();
