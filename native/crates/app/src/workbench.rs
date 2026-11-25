@@ -7,6 +7,7 @@ mod bulk_text_edits;
 mod context_menu;
 mod editor_commands;
 mod editor_menus;
+mod editor_message;
 pub mod editor_status;
 mod editor_view;
 mod explorer_actions;
@@ -21,6 +22,7 @@ pub mod menubar;
 mod minimap_view;
 pub mod quick_access;
 mod quick_open;
+mod readonly;
 mod search_actions;
 mod search_view;
 pub mod themes;
@@ -94,6 +96,10 @@ pub struct Workbench {
     fold_mouse_down: Option<(usize, bool)>,
     /// Window x of the text area, recorded at paint, to turn a click into a column.
     text_area_left: Rc<Cell<f32>>,
+    /// The text area's window bounds at paint, where content widgets that may overflow it lay out.
+    text_area_bounds: Rc<Cell<gpui::Bounds<f32>>>,
+    editor_message: editor_message::EditorMessages,
+    readonly_overrides: readonly::SessionOverrides,
     pub editor_focus: FocusHandle,
     /// bannerController.ts: the banner element is focusable (`tabIndex = 0`) inside the editor's DOM node.
     unicode_banner_focus: FocusHandle,
@@ -125,6 +131,8 @@ pub struct Workbench {
 
 impl Render for Workbench {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Cursors move and editors switch on many paths; every one of them renders.
+        self.close_editor_message_on_cursor_change(cx);
         let viewport = window.viewport_size();
         let window_border = self.theme.color("window.activeBorder");
         // The reference lays the grid out at the full window size and shifts it inside the 1px window border.
@@ -202,6 +210,9 @@ impl Workbench {
             find: find_widget::FindWidget::new(cx),
             fold_mouse_down: None,
             text_area_left: Rc::default(),
+            text_area_bounds: Rc::default(),
+            editor_message: Default::default(),
+            readonly_overrides: Default::default(),
             editor_focus: cx.focus_handle(),
             unicode_banner_focus: cx.focus_handle(),
             editor_focus_listeners: Vec::new(),
@@ -237,6 +248,8 @@ impl Workbench {
         workbench.register_search_actions();
         workbench.register_file_participant_commands();
         workbench.register_keybindings_editor_commands();
+        workbench.register_readonly_commands();
+        workbench.register_editor_message_commands();
         // Keybindings resolve before the focused element sees the key, and with nothing focused too.
         let entity = cx.entity().downgrade();
         cx.intercept_keystrokes(move |event, window, cx| {

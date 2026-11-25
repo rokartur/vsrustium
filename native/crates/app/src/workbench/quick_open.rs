@@ -19,6 +19,9 @@ use crate::editor_history::{EditorHistory, HISTORY_STORAGE_KEY};
 use crate::fuzzy_scorer::{self, FuzzyScorerCache};
 use crate::quick_input::{Button, Entry, Item};
 
+/// The glob expression a `ResourceGlobMatcher` reads from a folder's settings, or the global ones for `None`.
+pub(super) type ExpressionFor = dyn Fn(search::query::Setting, Option<&Path>) -> serde_json::Map<String, Value>;
+
 pub const PLACEHOLDER: &str = "Search files by name (append : to go to line or @ to go to symbol), or paste a link";
 /// `SYMBOL_PICKS_MERGE_DELAY`: how long the history picks wait for the file results before showing alone.
 const MERGE_DELAY: Duration = Duration::from_millis(200);
@@ -78,15 +81,20 @@ impl Workbench {
         self.workspace_storage.lock().unwrap().set(HISTORY_STORAGE_KEY, serialized);
     }
 
-    /// `includeInHistory`: `ExcludeResourceGlobMatcher` over `files.exclude` and `search.exclude`, matching the path
-    /// relative to its workspace folder with that folder's settings, and the absolute path too when a pattern is
-    /// absolute; a path outside every folder matches the global settings by its absolute path.
+    /// `includeInHistory`: `ExcludeResourceGlobMatcher` over `files.exclude` and `search.exclude`.
     fn history_exclude_matcher(&self) -> impl Fn(&Path) -> bool + use<> {
+        self.resource_glob_matcher(&|setting, root| search::query::excludes(root.unwrap_or(Path::new("/")), setting, true).unwrap_or_default())
+    }
+
+    /// `ResourceGlobMatcher`: matches the path relative to its workspace folder with that folder's expression, and
+    /// the absolute path too when a pattern is absolute; a path outside every folder matches the global expression
+    /// by its absolute path.
+    pub(super) fn resource_glob_matcher(&self, expression_for: &ExpressionFor) -> impl Fn(&Path) -> bool + use<> {
         let workspace = self.workspace().cloned();
         let settings = self.settings.lock().unwrap();
         let matcher_for = |root: Option<&Path>| {
             let setting = |_: &Path, key: &str| settings.get_value(Some(key), &Overrides { resource: root, ..Overrides::default() }).unwrap_or(Value::Null);
-            let expression = search::query::excludes(root.unwrap_or(Path::new("/")), &setting, true).unwrap_or_default();
+            let expression = expression_for(&setting, root);
             let has_absolute_path = expression.keys().any(|key| key.starts_with('/'));
             (files::glob::parse_exclude_expression(&expression, files::glob::Options::default()), has_absolute_path)
         };

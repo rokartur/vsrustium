@@ -258,14 +258,14 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | editor/contrib/linkedEditing | src/vs/editor/contrib | todo |  |
 | editor/contrib/links | src/vs/editor/contrib | todo |  |
 | editor/contrib/longLinesHelper | src/vs/editor/contrib | todo |  |
-| editor/contrib/message | src/vs/editor/contrib | todo |  |
+| editor/contrib/message | src/vs/editor/contrib | verified | `workbench/editor_message.rs`: message box with links above or below the cursor, its close rules and Escape (`leaveEditorMessage`); `alert` not read out (no GPUI announcements); messageController.test.ts covers Markdown images, which the port's plain messages do not have; cargo test -p app readonly; ui-pair ro.txt type, Escape, Delete, Down |
 | editor/contrib/middleScroll | src/vs/editor/contrib | todo |  |
 | editor/contrib/multicursor | src/vs/editor/contrib | stub | insertCursorAbove/Below, insertCursorAtEndOfEachLineSelected, addCursorsToTop/Bottom, column selection, Alt+click and drag (editor/multicursor.rs): cargo test -p app editor::multicursor::tests; no Cmd+D, selectHighlights or changeAll until find (port/notes.md milestone 8) |
 | editor/contrib/parameterHints | src/vs/editor/contrib | todo |  |
 | editor/contrib/peekView | src/vs/editor/contrib | todo |  |
 | editor/contrib/placeholderText | src/vs/editor/contrib | todo |  |
 | editor/contrib/quickAccess | src/vs/editor/contrib | ported | gotoLineQuickAccess and editorNavigationQuickAccess (`workbench/quick_access/goto_line.rs`); no open to the side, relative line numbers, aria status; gotoSymbol not ported |
-| editor/contrib/readOnlyMessage | src/vs/editor/contrib | todo |  |
+| editor/contrib/readOnlyMessage | src/vs/editor/contrib | verified | a cursor edit in a read-only editor shows the reason (session, settings, permissions) with its `command:` links; cargo test -p app readonly; ui-pair ro.txt matches the reference |
 | editor/contrib/rename | src/vs/editor/contrib | todo |  |
 | editor/contrib/sectionHeaders | src/vs/editor/contrib | todo |  |
 | editor/contrib/semanticTokens | src/vs/editor/contrib | todo |  |
@@ -329,7 +329,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/extensionRecommendations | workbench service | todo |  |
 | workbench/services/extensions | workbench service | todo |  |
 | workbench/services/files | workbench service | todo |  |
-| workbench/services/filesConfiguration | workbench service | todo |  |
+| workbench/services/filesConfiguration | workbench service | stub | read-only part only (`workbench/readonly.rs`): session override commands, `files.readonlyInclude`/`readonlyExclude`/`readonlyFromPermissions`, tab lock badge, edit guards; not ported: `updateReadonly` custom reasons and events (filesConfigurationService.test.ts, used by chat and extension services), auto save and hot exit settings |
 | workbench/services/github | workbench service | todo |  |
 | workbench/services/history | workbench service | stub | editor history only (`history.entries` in workspace storage, exclude matcher, 200 entries) for Quick Open: cargo test -p app editor_history quick_open; no navigation stack (back/forward) or recently closed editors |
 | workbench/services/host | workbench service | todo |  |

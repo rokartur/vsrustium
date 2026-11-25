@@ -63,6 +63,9 @@ impl Workbench {
         if setting == "off" || !has_unusual_line_terminators(&editor.document.lines) || self.unusual_line_terminators.ignored.contains(&resource) {
             return;
         }
+        if self.readonly(&resource.0, &resource.1).is_some() {
+            return;
+        }
         if setting == "auto" {
             self.remove_unusual_line_terminators(&resource);
             return cx.notify();

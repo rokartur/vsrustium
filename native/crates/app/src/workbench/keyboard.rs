@@ -227,7 +227,11 @@ impl Workbench {
             context.insert("activeEditor".into(), json!("workbench.editor.files"));
             // The port opens only files, never untitled editors (editorGroupView.ts).
             context.insert("activeEditorCanRevert".into(), json!(true));
-            context.insert("editorReadonly".into(), json!(false));
+            let readonly = self.active_editor_readonly().is_some();
+            context.insert("editorReadonly".into(), json!(readonly));
+            context.insert("activeEditorIsReadonly".into(), json!(readonly));
+            context.insert("activeEditorCanToggleReadonly".into(), json!(editor.document.scheme != "untitled"));
+            context.insert("messageVisible".into(), json!(self.editor_message_visible()));
             context.insert("editorHasSelection".into(), json!(editor.selections.iter().any(|selection| !selection.is_empty())));
             context.insert("editorHasMultipleSelections".into(), json!(editor.selections.len() > 1));
             context.insert("editorColumnSelection".into(), self.setting("editor.columnSelection"));

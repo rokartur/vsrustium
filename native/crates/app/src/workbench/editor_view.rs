@@ -142,6 +142,9 @@ impl Workbench {
             .when(editor.preview, |label| label.italic())
             .child(editor.document.name());
         let file_icon = self.document_icon(editor, 24., foreground);
+        // textFileService.ts decorations: a read-only file's label ends in the lockSmall badge at 0.75 opacity. The
+        // iconlabel.css `::after` font-size 90% (11.7px) wins over the decoration rule's 16px, which loads first.
+        let lock = self.readonly(&editor.document.scheme, &editor.document.path).map(|_| self.icon("lock-small", 11.7, 11.7, foreground).mt(px(9.5)).ml(px(5.)).opacity(0.75));
         // A dirty tab shows a filled circle where the close action goes, also when inactive (tabstitlecontrol.css).
         let close_icon = if editor.is_dirty() { "circle-filled" } else { "close-small" };
         let close = self.icon(close_icon, 20., 16., foreground).id(("close", index)).rounded(px(4.)).on_click(cx.listener(move |workbench, _, _, cx| {
@@ -161,6 +164,7 @@ impl Workbench {
                 Some(icon) => tab.pl(px(6.)).child(icon.mt(px(3.5))).child(label.ml(px(6.))),
                 None => tab.pl(px(8.)).child(label),
             })
+            .children(lock)
             .on_click(cx.listener(move |workbench, event: &gpui::ClickEvent, _, cx| {
                 workbench.editors.activate(index);
                 if event.click_count() == 2 {
@@ -244,6 +248,7 @@ impl Workbench {
     fn text_area(&self, editor: &OpenEditor, window: &mut Window, cx: &mut Context<Self>) -> Stateful<Div> {
         let metrics = EditorMetrics::measure(window, editor.document.lines.len());
         let area_left = self.text_area_left.clone();
+        let area_bounds = self.text_area_bounds.clone();
         let focus = self.editor_focus.clone();
         let workbench = cx.entity();
         let laid_out = cx.entity();
@@ -284,6 +289,7 @@ impl Workbench {
                 canvas(
                     move |bounds, window, cx| {
                         area_left.set(f32::from(bounds.left()));
+                        area_bounds.set(bounds.map(f32::from));
                         let (width, height) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
                         let pixel_ratio = window.scale_factor();
                         let minimap = minimap_info(width, height, metrics.content_left(), metrics.char_width, view_line_count, pixel_ratio);
@@ -320,6 +326,7 @@ impl Workbench {
             .children(self.minimap(editor, cx))
             .children(self.sticky_scroll_widget(editor, metrics, window, cx))
             .children(self.find_widget(self.editors.viewport.width + metrics.content_left() + minimap_width, metrics.content_left(), minimap_width, window, cx))
+            .children(self.editor_message_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
     }
 
     /// wordHighlighter.ts: `onDidBlurEditorWidget` stops the highlights once no code editor has the focus,
@@ -337,6 +344,7 @@ impl Workbench {
                 if workbench.editor_focus.contains_focused(window, cx) {
                     return deactivated.set(true);
                 }
+                workbench.editor_message_text_blurred(cx);
                 if !(workbench.unicode_banner_focus.is_focused(window) && workbench.unicode_banner_shown()) {
                     workbench.editor_widget_blurred(&blurred_at, cx);
                 }
@@ -788,6 +796,7 @@ impl Workbench {
                         }
                     }))
                     .on_mouse_move(cx.listener(move |workbench, event: &MouseMoveEvent, _, cx| {
+                        workbench.editor_message_mouse_moved(index, cx);
                         match event.pressed_button {
                             Some(MouseButton::Left) if workbench.selecting_text => workbench.click_text(index, visible_at(workbench, event.position.x), event.modifiers, true, 1, cx),
                             Some(MouseButton::Middle) if workbench.selecting_text => workbench.column_select_text(index, visible_at(workbench, event.position.x), true, cx),
