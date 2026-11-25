@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 use super::Workbench;
 use super::hover::{HoverContent, HoverOptions};
 use super::input_box_view::{InputId, InputLook, InputView};
+use super::scm_tree::TreeRow;
 use crate::commands::Outcome;
 use crate::editor::TextDocument;
 use crate::input_box::InputBox;
@@ -19,10 +20,10 @@ use crate::scm::{Group, Provider, Resource, Scm, ScmChange};
 use crate::workbench::host_requests::uri_parts;
 
 /// scm.css: list rows are 22px.
-const ROW_HEIGHT: f32 = 22.;
+pub(super) const ROW_HEIGHT: f32 = 22.;
 /// The tree's indent per level (`workbench.tree.indent` 8) plus the twistie (16).
-const INDENT: f32 = 8.;
-const TWISTIE: f32 = 16.;
+pub(super) const INDENT: f32 = 8.;
+pub(super) const TWISTIE: f32 = 16.;
 
 /// The view's state besides the model.
 pub struct ScmView {
@@ -39,6 +40,8 @@ pub struct ScmView {
     pub selected: Option<(u64, u64, Option<u64>)>,
     /// The handle the input box shows, so a provider switch reloads it.
     shown_input: Option<u64>,
+    /// Collapsed tree-mode folders: provider, group and the folder relative to the root.
+    pub(super) collapsed_folders: HashSet<(u64, u64, std::path::PathBuf)>,
 }
 
 impl ScmView {
@@ -53,6 +56,7 @@ impl ScmView {
             collapsed: HashSet::new(),
             selected: None,
             shown_input: None,
+            collapsed_folders: HashSet::new(),
         }
     }
 }
@@ -299,8 +303,14 @@ impl Workbench {
             if self.scm.collapsed.contains(&(provider.handle, group.handle)) {
                 continue;
             }
-            for resource in &group.resources {
-                rows.push(self.scm_resource_row(&provider, group, resource, window, cx).into_any_element());
+            let root = std::path::PathBuf::from(provider.root_uri["path"].as_str().unwrap_or_default());
+            let collapsed = |folder: &std::path::Path| self.scm.collapsed_folders.contains(&(provider.handle, group.handle, folder.to_path_buf()));
+            let tree = self.scm_tree_mode();
+            for row in self.scm_rows(&root, &group.resources, &collapsed) {
+                rows.push(match row {
+                    TreeRow::Folder { path, label, depth } => self.scm_folder_row(&provider, group, path, label, depth, cx).into_any_element(),
+                    TreeRow::Resource { index, depth } => self.scm_resource_row(&provider, group, &group.resources[index], tree.then_some(depth), window, cx).into_any_element(),
+                });
             }
         }
         frame.child(header).child(div().id("scm-list").flex_1().min_h_0().overflow_y_scroll().track_focus(&self.scm.list_focus).children(rows))
@@ -446,12 +456,16 @@ impl Workbench {
 
     /// scmViewPane.ts `ResourceRenderer`: file icon, name, the folder as description, inline actions on hover and the
     /// decoration letter from the resource's tooltip and color (git's `letter` via its decoration provider).
-    fn scm_resource_row(&self, provider: &Provider, group: &Group, resource: &Resource, window: &Window, cx: &mut Context<Self>) -> gpui::Stateful<Div> {
+    fn scm_resource_row(&self, provider: &Provider, group: &Group, resource: &Resource, tree_depth: Option<usize>, window: &Window, cx: &mut Context<Self>) -> gpui::Stateful<Div> {
         let foreground = self.foreground_or("sideBar.foreground");
         let path = std::path::PathBuf::from(resource.uri["path"].as_str().unwrap_or_default());
         let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
         let root = provider.root_uri["path"].as_str().unwrap_or_default();
-        let folder = path.parent().and_then(|parent| parent.strip_prefix(root).ok()).map(|folder| folder.to_string_lossy().into_owned()).unwrap_or_default();
+        // scmViewPane.ts `ResourceRenderer`: `hidePath` in tree mode.
+        let folder = match tree_depth {
+            Some(_) => String::new(),
+            None => path.parent().and_then(|parent| parent.strip_prefix(root).ok()).map(|folder| folder.to_string_lossy().into_owned()).unwrap_or_default(),
+        };
         let context = self.scm_context(provider, Some(group), Some(resource), window);
         let args = vec![Self::resource_arg(provider, group, resource)];
         let actions = self.inline_actions(MenuId::ScmResourceStateContext, &context, args.clone(), foreground, cx);
@@ -467,7 +481,7 @@ impl Workbench {
             .id(id.clone())
             .group(id.clone())
             .h(px(ROW_HEIGHT))
-            .pl(px(INDENT * 2. + TWISTIE))
+            .pl(px(INDENT * (2 + tree_depth.unwrap_or(0)) as f32 + TWISTIE))
             .pr(px(12.))
             .flex()
             .items_center()

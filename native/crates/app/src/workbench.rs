@@ -53,6 +53,7 @@ mod text_input;
 mod title_bar_actions;
 mod unicode_highlight;
 mod unusual_line_terminators;
+mod scm_tree;
 mod scm_view;
 mod webview_panels;
 
@@ -334,6 +335,7 @@ impl Workbench {
         workbench.register_diff_gutter_commands();
         workbench.register_unchanged_region_commands();
         workbench.register_scroll_locking_commands();
+        workbench.register_scm_view_mode_commands();
         workbench.register_scm_commands();
         workbench.register_editor_commands();
         workbench.register_find_commands();

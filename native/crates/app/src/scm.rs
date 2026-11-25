@@ -58,7 +58,7 @@ pub struct Group {
 }
 
 /// `SCMRawResource`.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Resource {
     pub handle: u64,
     pub uri: Value,
