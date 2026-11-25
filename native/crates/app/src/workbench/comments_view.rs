@@ -140,6 +140,7 @@ impl Workbench {
                 Some(threads.filter(|thread| thread.state == Some(0) && !thread.comments.is_empty()).count())
             },
         });
+        self.register_commenting_commands();
         self.commands.register("workbench.action.focusCommentsPanel", |workbench, _, window, cx| {
             workbench.open_panel_view(COMMENTS_VIEW_ID, cx);
             workbench.select_first_comment_thread();

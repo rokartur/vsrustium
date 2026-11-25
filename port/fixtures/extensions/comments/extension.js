@@ -2,6 +2,9 @@ const vscode = require('vscode');
 
 exports.activate = async function (context) {
 	const controller = vscode.comments.createCommentController('port-comments', 'Port Comments');
+	controller.commentingRangeProvider = {
+		provideCommentingRanges: document => [new vscode.Range(0, 0, document.lineCount - 1, 0)],
+	};
 	context.subscriptions.push(controller);
 	const folder = vscode.workspace.workspaceFolders?.[0];
 	if (!folder) {

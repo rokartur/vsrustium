@@ -20,13 +20,14 @@ pub(super) struct Comments {
     pub(super) reply_view: InputView,
     pub(super) reply_focus: FocusHandle,
     pub(super) view: super::comments_view::ViewState,
+    pub(super) commenting: super::commenting_ranges::CommentingRanges,
 }
 
 impl Comments {
     pub(super) fn new(cx: &mut Context<Workbench>) -> Comments {
         let reply_focus = cx.focus_handle();
         let view = super::comments_view::ViewState::new(cx);
-        Comments { controllers: Vec::new(), collapsed: Default::default(), widgets: Vec::new(), reply: None, reply_view: InputView::default(), reply_focus, view }
+        Comments { controllers: Vec::new(), collapsed: Default::default(), widgets: Vec::new(), reply: None, reply_view: InputView::default(), reply_focus, view, commenting: Default::default() }
     }
 }
 
@@ -37,7 +38,7 @@ pub(super) struct Controller {
     /// `CommentControllerFeatures.contextValue`, the `commentController` context key.
     pub(super) context_value: Option<String>,
     /// `updateCommentingRanges` was called, which registers the view upstream.
-    has_commenting_ranges: bool,
+    pub(super) has_commenting_ranges: bool,
     pub(super) threads: Vec<Thread>,
 }
 
@@ -97,6 +98,7 @@ impl Workbench {
                 if let Some(controller) = self.comment_controller_mut(handle) {
                     controller.has_commenting_ranges = true;
                 }
+                self.refresh_commenting_ranges(false, cx);
             }
             "$revealCommentThread" => self.reveal_comment_thread(handle, arg(1).as_u64().unwrap_or_default(), window, cx),
             "$hideCommentThread" => {
@@ -108,9 +110,23 @@ impl Workbench {
             _ => {}
         }
         self.sync_comment_widgets();
+        self.reveal_comment_template(window, cx);
         self.select_first_comment_thread();
         cx.notify();
         Outcome::done()
+    }
+
+    /// commentsController.ts `shouldReveal`: an expanded template without comments that can be replied to opens its
+    /// reply form, focused.
+    fn reveal_comment_template(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.comments.reply.is_some() {
+            return;
+        }
+        let threads = self.comments.controllers.iter().flat_map(|controller| controller.threads.iter().map(move |thread| (controller.handle, thread)));
+        let template = threads.filter(|(_, thread)| thread.is_template && thread.comments.is_empty() && thread.can_reply != false && thread.collapse_state == 1).last();
+        if let Some((controller, thread)) = template.map(|(controller, thread)| (controller, thread.handle)) {
+            self.expand_comment_reply(controller, thread, window, cx);
+        }
     }
 
     fn comment_controller_mut(&mut self, handle: u64) -> Option<&mut Controller> {

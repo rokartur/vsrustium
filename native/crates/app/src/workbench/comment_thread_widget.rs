@@ -110,7 +110,7 @@ impl Workbench {
     }
 
     /// `expandReplyArea`: the input shows, focused.
-    fn expand_comment_reply(&mut self, controller: u64, thread: u64, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn expand_comment_reply(&mut self, controller: u64, thread: u64, window: &mut Window, cx: &mut Context<Self>) {
         self.comments.reply = Some(Reply { controller, thread, input: InputBox::default() });
         self.comments.reply_view.reset();
         self.sync_comment_widgets();
@@ -120,8 +120,10 @@ impl Workbench {
 
     /// `hideReplyArea` (`workbench.action.hideComment`): the text is dropped and the button shows again.
     fn hide_comment_reply(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.comments.reply.take().is_none() {
-            return;
+        let Some(reply) = self.comments.reply.take() else { return };
+        // commentThreadZoneWidget.ts `collapse`: a thread without comments is deleted.
+        if self.comment_thread(reply.controller, reply.thread).is_some_and(|thread| thread.comments.is_empty()) {
+            self.delete_comment_thread(reply.controller, reply.thread, cx);
         }
         self.sync_comment_widgets();
         window.focus(&self.editor_focus, cx);
@@ -271,7 +273,8 @@ impl Workbench {
             let marshalled = json!({ "$mid": 7, "commentControlHandle": controller, "commentThreadHandle": thread_handle });
             actions.push(self.command_button(&id, title, vec![marshalled], icon_color, cx).ml(px(4.)).into_any_element());
         }
-        let (collapse_icon, collapse_title) = if thread.comments.is_empty() { ("trash", "Delete") } else { ("chevron-up", "Collapse") };
+        let empty = thread.comments.is_empty();
+        let (collapse_icon, collapse_title) = if empty { ("trash", "Delete") } else { ("chevron-up", "Collapse") };
         let collapse = self
             .icon(collapse_icon, 22., 16., icon_color)
             .id("comment-thread-collapse")
@@ -280,7 +283,10 @@ impl Workbench {
             .cursor_pointer()
             .hover(|button| button.bg(self.color("toolbar.hoverBackground")))
             .child(self.hover_target("comment-thread-collapse-hover", HoverContent::Text(collapse_title.into()), HoverOptions::mouse()))
-            .on_click(cx.listener(move |workbench, _, _, cx| workbench.toggle_comment_thread(controller, thread_handle, cx)));
+            .on_click(cx.listener(move |workbench, _, _, cx| match empty {
+                true => workbench.delete_comment_thread(controller, thread_handle, cx),
+                false => workbench.toggle_comment_thread(controller, thread_handle, cx),
+            }));
         actions.push(collapse.into_any_element());
         let background = Rgba { a: state_color.a * 0.1, ..state_color };
         div()

@@ -400,6 +400,7 @@ impl Workbench {
             self.code_actions_context(&mut context);
             self.action_widget_context(&mut context);
             self.paste_edits_context(&mut context);
+            self.commenting_context(&mut context);
             self.code_lens_context(&mut context);
             self.standalone_color_picker_context(&mut context);
             self.inline_completions_context(&mut context);

@@ -490,6 +490,7 @@ impl Workbench {
                         workbench.hide_scrollbars(cx);
                         workbench.content_hover_mouse_left(window.mouse_position(), cx);
                         workbench.definition_link_mouse_left();
+                        workbench.commenting_hover_moved(None, cx);
                     }
                 }
             }))
@@ -1348,6 +1349,7 @@ impl Workbench {
                     }))
                     .on_mouse_move(cx.listener(move |workbench, event: &MouseMoveEvent, _, cx| {
                         workbench.editor_message_mouse_moved(index, cx);
+                        workbench.commenting_hover_moved(Some(index), cx);
                         workbench.content_hover.row_target = Some((index, visible_at(workbench, event.position.x)));
                         workbench.definition_link_mouse_moved(index, visible_at(workbench, event.position.x), event.modifiers, event.pressed_button.is_some(), cx);
                         match event.pressed_button {

@@ -120,6 +120,7 @@ mod settings_editor_view;
 mod status_entries;
 mod parameter_hints;
 mod action_widget;
+mod commenting_ranges;
 mod inline_progress;
 mod paste_edits;
 mod code_actions;
@@ -853,6 +854,7 @@ impl Workbench {
         self.code_actions_model_changed(cx);
         self.code_lens_model_changed(cx);
         self.sync_comment_widgets();
+        self.refresh_commenting_ranges(false, cx);
         self.inlay_hints_model_changed(cx);
         self.color_detector_model_changed(cx);
         self.inline_completions_model_changed(cx);

@@ -87,6 +87,7 @@ impl Workbench {
         }
         if change.is_some() {
             self.code_lens_content_changed(cx);
+            self.refresh_commenting_ranges(true, cx);
             self.inlay_hints_content_changed(cx);
             self.color_detector_content_changed(cx);
             self.color_picker_content_changed(cx);
