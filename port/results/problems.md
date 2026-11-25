@@ -5,3 +5,11 @@ Reference: 1.147.0 dev build on the Studio; port: release `vsrustium`. Both driv
 Same: the Problems tab with its blue count badge, the resource row (twistie, JSON file icon, name, count badge after the name), the marker rows (error icon, message, `json(513)` source and code, `[Ln 3, Col 15]`) at the reference's indents, sort order, the status bar counts.
 
 Differences, all `shortcut:` in `workbench/problems_view.rs` or the handoff: the filter box with its filter and View as Table actions, the panel's "..." overflow and Views and More Actions menu (the reference moves Terminal into it at this width), the indent guide, and the first marker focused and selected when the view opens.
+
+## Filter box
+
+Steps `port/fixtures/problems/steps-filter.json` (open Problems, type `comma`, shot, select all, type `zzz`, shot). Pairs `raw/problems/filtered-pair.png` and `raw/problems/empty-pair.png`, reference left, port right.
+
+Same: the filter box in the panel title with `Showing 1 of 2` and `Showing 0 of 2` badges and the filter button, the one marker left with `comma` highlighted, "No results found with provided filter criteria. Clear Filters." with the underlined link.
+
+Differences: the port's panel keeps the Terminal tab in the title and squeezes the filter box, whose left part is cut off; the reference moves Terminal into the "..." overflow. The panel title's overflow belongs to the panel part (milestone 11).

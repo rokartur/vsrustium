@@ -13,3 +13,9 @@ Differences: the standalone picker is about 8px narrower than the reference's (t
 ## Inline completions
 
 `FILE=a.html`, `SETTINGS='{"emmet.useInlineCompletions":true}'`, steps `steps-ghost.json` (type `ul`, Tab).
+
+Pair `raw/inlay-hints/ghost-pair.png` (reference left, port right), quick suggestions off. Same: neither shows ghost text after `ul` within the run's wait, the Emmet extension answers no inline completion there, so the pair does not exercise the ghost text; it is checked by `cargo test -p app ghost_text inline_completions` instead.
+
+## Language detection
+
+`FILE=a.ts`, steps `steps-detect.json` (Cmd+N, type three lines of Python). Pair `raw/inlay-hints/detect-pair.png`. Same: the untitled tab named after its first line, the text, Plain Text in the status bar in both (neither switches the language for this sample within 3 s). The model itself is checked by `cargo test -p app language_detection` (the Bun worker on `@vscode/vscode-languagedetection`).
