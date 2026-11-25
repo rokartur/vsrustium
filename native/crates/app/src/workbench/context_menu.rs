@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use gpui::{
-    Animation, AnimationExt, AnyElement, Bounds, BoxShadow, Context, FocusHandle, Keystroke, ModifiersChangedEvent, MouseButton, MouseUpEvent, Pixels, Point, Size, Subscription,
+    Animation, AnimationExt, AnyElement, Bounds, BoxShadow, Context, FocusHandle, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseUpEvent, Pixels, Point, Size, Subscription,
     Task, TextRun, Window, div, point, prelude::*, px, rgba,
 };
 use serde_json::Value;
@@ -134,6 +134,16 @@ impl Workbench {
         let Some(menu) = self.context_menu.as_mut() else { return false };
         menu.keyboard_navigation = true;
         cx.notify();
+        let trigger_key = matches!(keystroke.key.as_str(), "enter" | "space");
+        // `isTriggerKeyEvent`: Alt+Enter and Alt+Space run the focused item's alt command when it shows one.
+        if trigger_key && keystroke.modifiers == (Modifiers { alt: true, ..Default::default() }) {
+            let Some(index) = menu.focused else { return false };
+            if !matches!(&menu.actions[index], MenuAction::Command { enabled: true, alt: Some(_), .. }) {
+                return false;
+            }
+            self.run_context_menu_item(index, true, window, cx);
+            return true;
+        }
         if keystroke.modifiers.modified() {
             return false;
         }
@@ -144,7 +154,7 @@ impl Workbench {
             "home" | "pageup" => menu.focused = focus_next(&menu.actions, last),
             "end" | "pagedown" => menu.focused = focus_previous(&menu.actions, 0),
             "escape" => self.hide_context_menu(window, cx),
-            // `triggerKeys` on macOS: Enter and Space on key down run the focused item, without its alt command.
+            // `triggerKeys` on macOS: Enter and Space on key down run the focused item.
             "enter" | "space" => {
                 if let Some(index) = menu.focused {
                     self.run_context_menu_item(index, false, window, cx);

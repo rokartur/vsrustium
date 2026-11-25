@@ -257,6 +257,23 @@ fn the_context_menu_selects_the_row_and_runs_its_items_with_keys_and_clicks(cx: 
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// menuEntryActionViewItem.test.ts 'Alt at open: false, Alt at activation: true': Alt+Enter runs the focused item's
+/// alt command, Delete Permanently for Delete.
+#[gpui::test]
+fn alt_enter_runs_the_alt_command_of_the_focused_item(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = explorer("explorer-context-menu-alt-enter", cx);
+    let file_row = point(px(120.), px(129.));
+    cx.simulate_mouse_down(file_row, MouseButton::Right, Modifiers::none());
+    cx.simulate_mouse_up(file_row, MouseButton::Right, Modifiers::none());
+    cx.run_until_parked();
+    cx.simulate_keystrokes("end shift-enter");
+    assert!(workbench.read_with(cx, |workbench, _| workbench.context_menu.is_some()), "Shift is no alt key on macOS");
+    cx.simulate_keystrokes("alt-enter");
+    cx.run_until_parked();
+    assert_eq!(names(&dir), ["sub"]);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// fileCommands.ts `copyPathCommandHandler` and `copyRelativePathCommandHandler` by their default keybindings,
 /// one line per selected item, then with `explorer.copyRelativePathSeparator`.
 #[gpui::test]

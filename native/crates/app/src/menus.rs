@@ -42,9 +42,29 @@ pub enum MenuId {
 #[derive(Clone, Debug)]
 #[allow(clippy::large_enum_variant, reason = "a few dozen items, built once")]
 pub enum Entry {
-    /// `alt` is the command and title shown while Alt is held (`IMenuItem.alt`).
-    Command { id: String, precondition: Option<Expr>, toggled: Option<Expr>, alt: Option<(String, String)> },
-    Submenu(MenuId),
+    Command { id: String, precondition: Option<Expr>, toggled: Option<Toggled>, alt: Option<Alt> },
+    Submenu { submenu: MenuId, toggled: Option<Expr> },
+}
+
+/// `ICommandAction.toggled`: checked while `condition` holds, with `title` as the label then.
+#[derive(Clone, Debug)]
+pub struct Toggled {
+    pub condition: Expr,
+    pub title: Option<String>,
+}
+
+impl Toggled {
+    pub fn when(condition: Option<Expr>) -> Option<Self> {
+        condition.map(|condition| Self { condition, title: None })
+    }
+}
+
+/// `IMenuItem.alt`: the command shown while Alt is held.
+#[derive(Clone, Debug)]
+pub struct Alt {
+    pub id: String,
+    pub title: String,
+    pub precondition: Option<Expr>,
 }
 
 /// `IMenuItem` or `ISubmenuItem`; `title` keeps upstream's `&&` mnemonics.
@@ -61,8 +81,9 @@ pub struct MenuItem {
 /// `MenuItemAction`, `SubmenuItemAction` or `Separator`, as a menu shows them.
 #[derive(Clone, Debug, PartialEq)]
 pub enum MenuAction {
+    /// `alt` is set only while its precondition holds, as `getActionForAltMode` shows it only then.
     Command { id: String, title: String, enabled: bool, checked: bool, alt: Option<(String, String)> },
-    Submenu { title: String, actions: Vec<MenuAction> },
+    Submenu { title: String, actions: Vec<MenuAction>, checked: bool },
     Separator,
 }
 
@@ -189,20 +210,20 @@ pub fn workbench_menus() -> Vec<MenuItem> {
     let mut items = Vec::new();
     for (menu, submenu, id, title, group, order, when, precondition) in WORKBENCH_MENUS.iter().copied() {
         let entry = match submenu {
-            Some(submenu) => Entry::Submenu(submenu),
+            Some(submenu) => Entry::Submenu { submenu, toggled: None },
             None => {
                 // The Delete item runs Delete Permanently with Alt held.
-                let alt = (id == "moveFileToTrash").then(|| ("deleteFile".to_string(), "Delete Permanently".to_string()));
+                let alt = (id == "moveFileToTrash").then(|| Alt { id: "deleteFile".into(), title: "Delete Permanently".into(), precondition: None });
                 Entry::Command { id: id.to_string(), precondition: precondition.and_then(Expr::deserialize), toggled: None, alt }
             }
         };
         items.push(MenuItem { menu, entry, title: title.to_string(), group: group.to_string(), order, when: when.and_then(Expr::deserialize) });
     }
     // fileActions.contribution.ts: checked unless `files.autoSave` is `off`.
-    let entry = Entry::Command { id: "workbench.action.toggleAutoSave".into(), precondition: None, toggled: Expr::deserialize("config.files.autoSave != 'off'"), alt: None };
+    let entry = Entry::Command { id: "workbench.action.toggleAutoSave".into(), precondition: None, toggled: Toggled::when(Expr::deserialize("config.files.autoSave != 'off'")), alt: None };
     items.push(MenuItem { menu: MenuId::MenubarFileMenu, entry, title: "A&&uto Save".into(), group: "5_autosave".into(), order: 1., when: None });
     // toggleColumnSelection.ts: checked while `config.editor.columnSelection` is true.
-    let entry = Entry::Command { id: "editor.action.toggleColumnSelection".into(), precondition: None, toggled: Some(Expr::has("config.editor.columnSelection")), alt: None };
+    let entry = Entry::Command { id: "editor.action.toggleColumnSelection".into(), precondition: None, toggled: Toggled::when(Some(Expr::has("config.editor.columnSelection"))), alt: None };
     items.push(MenuItem { menu: MenuId::MenubarSelectionMenu, entry, title: "Column &&Selection Mode".into(), group: "4_config".into(), order: 2., when: None });
     // toggleMultiCursorModifier.ts: the item names the modifier the toggle switches to.
     for (title, current) in [("Switch to Alt+Click for Multi-Cursor", "ctrlCmd"), ("Switch to Cmd+Click for Multi-Cursor", "altKey")] {
@@ -216,7 +237,7 @@ pub fn workbench_menus() -> Vec<MenuItem> {
     }
     for (setting, title, order, when) in TITLE_BAR_TOGGLES {
         for menu in [MenuId::TitleBarContext, MenuId::TitleBarTitleContext] {
-            let toggled = Some(Expr::has(&format!("config.{setting}")));
+            let toggled = Toggled::when(Some(Expr::has(&format!("config.{setting}"))));
             let entry = Entry::Command { id: format!("toggle.{setting}"), precondition: None, toggled, alt: None };
             items.push(MenuItem { menu, entry, title: title.to_string(), group: "2_config".into(), order, when: Expr::deserialize(when) });
         }
@@ -249,7 +270,7 @@ pub fn extension_menus(extensions: &[ScannedExtension]) -> Vec<MenuItem> {
                 let (entry_value, title) = match entry["command"].as_str() {
                     Some(id) => {
                         let Some(command) = find_command(id) else { continue };
-                        let alt = entry["alt"].as_str().and_then(find_command).map(|alt| (alt.id.clone(), alt.title.clone()));
+                        let alt = entry["alt"].as_str().and_then(find_command).map(|alt| Alt { id: alt.id.clone(), title: alt.title.clone(), precondition: alt.precondition.clone() });
                         (Entry::Command { id: command.id.clone(), precondition: command.precondition.clone(), toggled: None, alt }, command.title.clone())
                     }
                     None => {
@@ -258,7 +279,7 @@ pub fn extension_menus(extensions: &[ScannedExtension]) -> Vec<MenuItem> {
                             continue;
                         }
                         submenu_items.push((menu, *submenu));
-                        (Entry::Submenu(*submenu), label.clone())
+                        (Entry::Submenu { submenu: *submenu, toggled: None }, label.clone())
                     }
                 };
                 let (group, order) = group_and_order(entry["group"].as_str().unwrap_or_default());
@@ -313,15 +334,18 @@ pub fn menu_actions(registry: &[MenuItem], menu: MenuId, context: &dyn Context) 
     for item in items {
         let action = match &item.entry {
             Entry::Command { id, precondition, toggled, alt } => {
-                let checked = toggled.as_ref().is_some_and(|toggled| toggled.evaluate(context));
-                MenuAction::Command { id: id.clone(), title: item.title.clone(), enabled: holds(precondition), checked, alt: alt.clone() }
+                let toggled = toggled.as_ref().filter(|toggled| toggled.condition.evaluate(context));
+                let title = toggled.and_then(|toggled| toggled.title.clone()).unwrap_or_else(|| item.title.clone());
+                let alt = alt.as_ref().filter(|alt| holds(&alt.precondition)).map(|alt| (alt.id.clone(), alt.title.clone()));
+                MenuAction::Command { id: id.clone(), title, enabled: holds(precondition), checked: toggled.is_some(), alt }
             }
-            Entry::Submenu(submenu) => {
+            Entry::Submenu { submenu, toggled } => {
                 let submenu_actions = menu_actions(registry, *submenu, context);
                 if submenu_actions.is_empty() {
                     continue;
                 }
-                MenuAction::Submenu { title: item.title.clone(), actions: submenu_actions }
+                let checked = toggled.as_ref().is_some_and(|toggled| toggled.evaluate(context));
+                MenuAction::Submenu { title: item.title.clone(), actions: submenu_actions, checked }
             }
         };
         if group.is_some_and(|group| group != item.group) {

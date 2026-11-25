@@ -66,7 +66,7 @@ impl Workbench {
         let context = self.key_context(window);
         let mut menus = Vec::new();
         for action in menu_actions(&self.menus, MenuId::MenubarMainMenu, &context) {
-            if let MenuAction::Submenu { title, actions } = action {
+            if let MenuAction::Submenu { title, actions, .. } = action {
                 menus.push((mnemonic_menu_label(&title), actions));
             }
         }
@@ -158,7 +158,7 @@ fn native_items(actions: &[MenuAction], menubar: &Menubar, key_equivalents: &mut
     for action in actions {
         items.push(match action {
             MenuAction::Command { id, title, enabled, checked, .. } => native_command(id, title, *enabled, *checked, menubar, key_equivalents),
-            MenuAction::Submenu { title, actions } => MenuItem::submenu(Menu::new(native_label(title)).items(native_items(actions, menubar, key_equivalents))),
+            MenuAction::Submenu { title, actions, .. } => MenuItem::submenu(Menu::new(native_label(title)).items(native_items(actions, menubar, key_equivalents))),
             MenuAction::Separator => MenuItem::separator(),
         });
     }
