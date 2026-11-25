@@ -41,6 +41,15 @@ pub struct FileTree {
     pub new_item: Option<NewItem>,
     /// `CompressedNavigationController.index` of compact rows, keyed by the row's last folder; a row not here is at its last.
     compressed_index: HashMap<PathBuf, usize>,
+    /// explorerViewer.ts `ExplorerFindProvider` filter session: only the items `markItemAndParentsAsFiltered` marked
+    /// show, and the view state of the session's start comes back when it ends.
+    filter: Option<Filter>,
+}
+
+struct Filter {
+    marked: HashSet<PathBuf>,
+    start_state: Value,
+    expanded_before: HashSet<PathBuf>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -154,6 +163,7 @@ impl FileTree {
             cut: false,
             new_item: None,
             compressed_index: HashMap::new(),
+            filter: None,
         }
     }
 
@@ -401,6 +411,33 @@ impl FileTree {
         self.expanded.contains(path) || (self.nesting_setting(path, "explorer.fileNesting.expand").as_bool() == Some(true) && !self.collapsed_nests.contains(path))
     }
 
+    /// `doFilterFind`: shows only the `marked` items, every marked folder expanded, as the tree's new input
+    /// creates its nodes with `collapseByDefault` false while filter results show.
+    /// `scroll_top` is the tree's at the session's start.
+    pub fn set_filter(&mut self, marked: HashSet<PathBuf>, scroll_top: f32) {
+        let (start_state, expanded_before) = match self.filter.take() {
+            Some(filter) => (filter.start_state, filter.expanded_before),
+            None => (self.view_state(scroll_top), self.expanded.clone()),
+        };
+        self.expanded = expanded_before.clone();
+        self.expanded.extend(marked.iter().filter(|path| path.is_dir()).cloned());
+        self.filter = Some(Filter { marked, start_state, expanded_before });
+    }
+
+    /// `endFilterSession`: every item shows again, with the view state of the session's start; returns its scroll top.
+    pub fn end_filter(&mut self) -> Option<f32> {
+        let filter = self.filter.take()?;
+        Some(self.restore_view_state(&filter.start_state))
+    }
+
+    pub fn is_filtering(&self) -> bool {
+        self.filter.is_some()
+    }
+
+    fn is_filtered_out(&self, path: &Path) -> bool {
+        self.filter.as_ref().is_some_and(|filter| !filter.marked.contains(path))
+    }
+
     /// Read from disk on every call: no file watcher yet, so a redraw shows the folder as it is now.
     pub fn rows(&self) -> Vec<Row> {
         let mut rows = Vec::new();
@@ -409,6 +446,9 @@ impl FileTree {
             return rows;
         }
         for folder in &self.workspace.folders {
+            if self.is_filtered_out(&folder.path) {
+                continue;
+            }
             let expanded = self.expanded.contains(&folder.path);
             rows.push(Row { path: folder.path.clone(), name: folder.name.clone(), depth: 1, is_dir: true, has_nests: false, expanded, is_new: false, compressed: Vec::new() });
             if expanded {
@@ -428,6 +468,9 @@ impl FileTree {
         }
         let mut new_file = new_item.filter(|item| !item.is_dir);
         for Entry { path, name, is_dir, nested } in self.entries(folder) {
+            if self.is_filtered_out(&path) {
+                continue;
+            }
             if !is_dir && new_file.take().is_some() {
                 rows.push(new_row(false));
             }
@@ -446,7 +489,7 @@ impl FileTree {
                 self.push_children(&path, depth + 1, rows);
             }
             if expanded && has_nests {
-                rows.extend(nested.into_iter().map(|(path, name)| Row { path, name, depth: depth + 1, is_dir: false, has_nests: false, expanded: false, is_new: false, compressed: Vec::new() }));
+                rows.extend(nested.into_iter().filter(|(path, _)| !self.is_filtered_out(path)).map(|(path, name)| Row { path, name, depth: depth + 1, is_dir: false, has_nests: false, expanded: false, is_new: false, compressed: Vec::new() }));
             }
         }
         if new_file.is_some() {

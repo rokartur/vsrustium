@@ -10,6 +10,7 @@ mod editor_menus;
 pub mod editor_status;
 mod editor_view;
 mod explorer_actions;
+mod explorer_find;
 mod file_participants;
 mod find_widget;
 mod hover;
@@ -237,6 +238,7 @@ impl Workbench {
         workbench.register_editor_status_commands();
         workbench.register_title_bar_actions();
         workbench.register_explorer_actions();
+        workbench.register_explorer_find_commands();
         workbench.register_search_actions();
         workbench.register_search_editor_actions();
         workbench.register_search_editor_widget_actions();
@@ -556,7 +558,7 @@ impl Workbench {
             let name = match (is_edited, navigation) {
                 (true, _) => self.explorer_input_box(label_line, edit_focused, cx).into_any_element(),
                 (false, Some(navigation)) => self.compressed_label(&row.compressed, &navigation, is_focused, segment_drop_target, cx).into_any_element(),
-                (false, None) => row.name.into_any_element(),
+                (false, None) => self.explorer_find_label(row.name, &path, (is_dir || row.has_nests) && !row.expanded),
             };
             let is_cut = tree.is_cut(&path);
             let is_drop_target = !row.is_new && segment_drop_target.is_none() && drop_target.is_some_and(|target| path.starts_with(target));
@@ -672,6 +674,7 @@ impl Workbench {
             .text_color(foreground)
             .child(title)
             .child(div().flex_1().overflow_hidden().flex().flex_col().child(self.section_header(&folder_name, true, false)).child(
+                div().relative().flex_1().min_h_0().flex().flex_col().child(
                 div()
                     .id("explorer-tree")
                     .track_focus(&self.explorer.focus)
@@ -682,8 +685,10 @@ impl Workbench {
                     .flex()
                     .flex_col()
                     .on_mouse_down(MouseButton::Right, cx.listener(|workbench, event: &MouseDownEvent, window, cx| workbench.show_explorer_context_menu(None, event.position, window, cx)))
+                    // abstractTree.ts `AbstractFindController.open`: `paddingTop: 30` while the find widget shows.
+                    .when(self.explorer.find.is_open(), |tree| tree.pt(px(30.)))
                     .children(rows),
-            ))
+                ).children(self.explorer_find_widget(window, cx))))
             .child(self.section_header("Outline", false, true))
             .child(self.section_header("Timeline", false, true))
             // The pane view is laid out 5px shorter than the side bar content.

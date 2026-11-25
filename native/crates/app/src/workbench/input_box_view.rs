@@ -24,6 +24,7 @@ use crate::input_box::{InputBox, Motion};
 pub enum InputId {
     QuickInput,
     Explorer,
+    ExplorerFind,
     Find,
     Replace,
     Search(SearchField),
@@ -32,7 +33,7 @@ pub enum InputId {
     SearchEditor(SearchField),
 }
 
-const INPUTS: [InputId; 6] = [InputId::QuickInput, InputId::Explorer, InputId::Find, InputId::Replace, InputId::KeybindingsSearch, InputId::KeybindingsWhen];
+const INPUTS: [InputId; 7] = [InputId::QuickInput, InputId::Explorer, InputId::ExplorerFind, InputId::Find, InputId::Replace, InputId::KeybindingsSearch, InputId::KeybindingsWhen];
 
 /// The view state of one input element.
 pub struct InputView {
@@ -80,6 +81,7 @@ impl Workbench {
         match id {
             InputId::QuickInput => &self.quick_inputs.input,
             InputId::Explorer => &self.explorer.input,
+            InputId::ExplorerFind => &self.explorer.find.view,
             InputId::Find => &self.find.find_view,
             InputId::Replace => &self.find.replace_view,
             InputId::Search(field) => &self.search.input(field).view,
@@ -93,6 +95,7 @@ impl Workbench {
         match id {
             InputId::QuickInput => &mut self.quick_inputs.input,
             InputId::Explorer => &mut self.explorer.input,
+            InputId::ExplorerFind => &mut self.explorer.find.view,
             InputId::Find => &mut self.find.find_view,
             InputId::Replace => &mut self.find.replace_view,
             InputId::Search(field) => &mut self.search.input_mut(field).view,
@@ -106,6 +109,7 @@ impl Workbench {
         match id {
             InputId::QuickInput => &self.quick_inputs.focus,
             InputId::Explorer => &self.explorer.input_focus,
+            InputId::ExplorerFind => &self.explorer.find.focus,
             InputId::Find => &self.find.find_focus,
             InputId::Replace => &self.find.replace_focus,
             InputId::Search(field) => &self.search.input(field).focus,
@@ -119,6 +123,7 @@ impl Workbench {
         match id {
             InputId::QuickInput => self.quick_inputs.current().map(|input| &input.input_box),
             InputId::Explorer => self.explorer.edit.as_ref().map(|edit| &edit.input),
+            InputId::ExplorerFind => Some(&self.explorer.find.input),
             InputId::Find => Some(&self.find.find_input),
             InputId::Replace => Some(&self.find.replace_input),
             InputId::Search(field) => Some(&self.search.input(field).value),
@@ -145,6 +150,10 @@ impl Workbench {
             InputId::QuickInput => self.with_current_quick_input(window, cx, |input| input.edit_input(edit)),
             InputId::Explorer => {
                 self.edit_explorer_input(edit, cx);
+                Outcome::done()
+            }
+            InputId::ExplorerFind => {
+                self.edit_explorer_find_input(edit, window, cx);
                 Outcome::done()
             }
             InputId::Find | InputId::Replace => {
@@ -235,6 +244,10 @@ impl Workbench {
             return;
         }
         if id == InputId::Explorer && self.explorer_input_key(&keystroke.key, window, cx) {
+            cx.stop_propagation();
+            return;
+        }
+        if id == InputId::ExplorerFind && self.explorer_find_input_key(keystroke, window, cx) {
             cx.stop_propagation();
             return;
         }
@@ -336,6 +349,7 @@ impl Workbench {
             .id(match id {
                 InputId::QuickInput => gpui::ElementId::from("quick-input-text"),
                 InputId::Explorer => "explorer-input-text".into(),
+                InputId::ExplorerFind => "explorer-find-input-text".into(),
                 InputId::Find => "find-input-text".into(),
                 InputId::Replace => "replace-input-text".into(),
                 InputId::Search(field) => ("search-input-text", field as usize).into(),

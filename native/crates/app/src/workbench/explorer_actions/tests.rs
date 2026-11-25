@@ -303,3 +303,50 @@ fn closing_the_window_stores_the_tree_view_state_for_the_next_open(cx: &mut Test
     assert_eq!(restored, (true, Some(dir.join("sub/b.txt"))));
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+fn rows(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<String> {
+    workbench.read_with(cx, |workbench, _| workbench.folder.as_ref().unwrap().rows().into_iter().map(|row| row.name).collect())
+}
+
+fn focused(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext) -> Option<PathBuf> {
+    workbench.read_with(cx, |workbench, _| workbench.folder.as_ref().unwrap().focused.clone())
+}
+
+/// Past `AsyncFindController`'s 250ms throttle, with the file search done.
+fn settle_find(cx: &mut VisualTestContext) {
+    cx.executor().advance_clock(std::time::Duration::from_millis(300));
+    cx.run_until_parked();
+}
+
+#[gpui::test]
+fn find_filters_the_tree_by_a_file_search_and_restores_it_on_close(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = explorer("explorer-find", cx);
+    std::fs::write(dir.join("sub/needle.rs"), "").unwrap();
+    std::fs::write(dir.join("other.md"), "").unwrap();
+    select(&workbench, &dir.join("a.txt"), cx);
+    cx.simulate_keystrokes("alt-cmd-f");
+    assert!(workbench.update_in(cx, |workbench, window, _| workbench.explorer.find.is_open() && workbench.explorer.find.focus.is_focused(window)));
+
+    // Highlight mode keeps every row; no row's name matches, so the focus stays.
+    cx.simulate_input("needle");
+    settle_find(cx);
+    assert_eq!(rows(&workbench, cx), ["sub", "a.txt", "other.md"]);
+    assert_eq!(focused(&workbench, cx), Some(dir.join("a.txt")));
+
+    run(&workbench, "list.toggleFindMode", cx);
+    settle_find(cx);
+    assert_eq!(rows(&workbench, cx), ["sub", "needle.rs"], "the filter shows the matches and their folders, expanded");
+    assert_eq!(focused(&workbench, cx), Some(dir.join("sub/needle.rs")));
+
+    cx.simulate_keystrokes("escape");
+    settle_find(cx);
+    assert!(workbench.update_in(cx, |workbench, window, _| !workbench.explorer.find.is_open() && workbench.explorer.focus.is_focused(window)));
+    assert_eq!(rows(&workbench, cx), ["sub", "a.txt", "other.md"], "the session's view state comes back");
+    assert_eq!(focused(&workbench, cx), Some(dir.join("a.txt")));
+
+    cx.simulate_keystrokes("alt-cmd-f");
+    settle_find(cx);
+    assert_eq!(workbench.read_with(cx, |workbench, _| workbench.explorer.find.input.value.clone()), "needle", "the widget reopens with the last pattern");
+    assert_eq!(rows(&workbench, cx), ["sub", "needle.rs"]);
+    std::fs::remove_dir_all(&dir).unwrap();
+}

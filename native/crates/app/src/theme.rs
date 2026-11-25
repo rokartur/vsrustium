@@ -596,6 +596,11 @@ fn quick_input_default(key: &str) -> (ColorValue, ColorValue, ColorValue) {
         // listColors.ts, editorColors.ts and keybindingsEditor.ts, for the Keyboard Shortcuts editor.
         "list.focusOutline" => (Key("focusBorder"), Key("focusBorder"), Key("contrastActiveBorder")),
         "widget.shadow" => (Hex("#0000005C"), Hex("#00000029"), None),
+        // listColors.ts, for the tree find widget and its matches.
+        "listFilterWidget.background" => (Key("editorWidget.background"), Key("editorWidget.background"), Key("editorWidget.background")),
+        "listFilterWidget.shadow" => (Key("widget.shadow"), Key("widget.shadow"), Key("widget.shadow")),
+        "list.filterMatchBackground" => (Key("editor.findMatchHighlightBackground"), Key("editor.findMatchHighlightBackground"), None),
+        "list.filterMatchBorder" => (Key("editor.findMatchHighlightBorder"), Key("editor.findMatchHighlightBorder"), Key("contrastBorder")),
         "tree.tableOddRowsBackground" => (Transparent(&Key("foreground"), 0.04), Transparent(&Key("foreground"), 0.04), None),
         "tree.tableColumnsBorder" => (Hex("#CCCCCC20"), Hex("#61616120"), None),
         "keybindingTable.headerBackground" | "keybindingTable.rowsBackground" => {
@@ -658,6 +663,9 @@ fn quick_input_default_hc_light(key: &str) -> ColorValue {
         "editorHoverWidget.border" => Key("editorWidget.border"),
         "textLink.foreground" | "textLink.activeForeground" => Hex("#0F4A85"),
         "list.focusOutline" => Key("contrastActiveBorder"),
+        "listFilterWidget.background" => Key("editorWidget.background"),
+        "listFilterWidget.shadow" => Key("widget.shadow"),
+        "list.filterMatchBorder" => Key("contrastActiveBorder"),
         "keybindingTable.headerBackground" | "keybindingTable.rowsBackground" => Key("tree.tableOddRowsBackground"),
         _ => None,
     }

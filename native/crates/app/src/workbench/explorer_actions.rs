@@ -14,6 +14,7 @@ use gpui::{AsyncWindowContext, Context, Div, DragMoveEvent, FocusHandle, FontWei
 use serde_json::{Value, json};
 
 use super::Workbench;
+use super::explorer_find::ExplorerFind;
 use super::input_box_view::{InputId, InputLook, InputView};
 use crate::commands::Outcome;
 use crate::dialog;
@@ -44,6 +45,7 @@ pub struct ExplorerState {
     expand_timer: Option<Task<()>>,
     undo: UndoRedo<FileUndo>,
     pub scroll: ScrollHandle,
+    pub find: ExplorerFind,
 }
 
 pub struct ExplorerEdit {
@@ -58,7 +60,7 @@ pub struct ExplorerEdit {
 
 impl ExplorerState {
     pub fn new(cx: &mut gpui::App) -> Self {
-        ExplorerState { focus: cx.focus_handle(), input: InputView::default(), input_focus: cx.focus_handle(), edit: None, drop_target: None, expand_timer: None, undo: UndoRedo::default(), scroll: ScrollHandle::new() }
+        ExplorerState { focus: cx.focus_handle(), input: InputView::default(), input_focus: cx.focus_handle(), edit: None, drop_target: None, expand_timer: None, undo: UndoRedo::default(), scroll: ScrollHandle::new(), find: ExplorerFind::new(cx) }
     }
 }
 
@@ -167,7 +169,8 @@ impl Workbench {
     /// The Explorer's context keys (explorerView.ts `setContextKeys`, `onFocusChanged`, `itemsCopied`).
     pub(super) fn explorer_context(&self, window: &Window, context: &mut HashMap<String, Value>) {
         let Some(tree) = self.folder.as_ref() else { return };
-        let input_focused = self.explorer.input_focus.is_focused(window);
+        // The find widget is inside the tree's element, so the tree keeps the list's focus keys.
+        let input_focused = self.explorer.input_focus.is_focused(window) || self.explorer.find.focus.is_focused(window);
         let focused = input_focused || self.explorer.focus.is_focused(window);
         context.insert("foldersViewVisible".into(), json!(true));
         context.insert("filesExplorerFocus".into(), json!(focused));
@@ -191,6 +194,7 @@ impl Workbench {
         context.insert("fileCopied".into(), json!(!tree.clipboard.is_empty()));
         let navigation = tree.focused.as_ref().and_then(|focused| tree.navigation_at(focused));
         context.insert("explorerViewletCompressedFocus".into(), json!(navigation.is_some()));
+        self.explorer_find_context(context);
         if let Some(navigation) = navigation {
             context.insert("explorerViewletCompressedFirstFocus".into(), json!(navigation.index == 0));
             context.insert("explorerViewletCompressedLastFocus".into(), json!(navigation.index == navigation.items.len() - 1));
