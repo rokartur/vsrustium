@@ -122,6 +122,7 @@ impl Configuration {
         let change = compare(Some(&self.policy), Some(&policy));
         if !change.keys.is_empty() {
             self.policy = policy;
+            self.layers_changed();
         }
         change
     }
