@@ -1,22 +1,24 @@
 #!/bin/bash
 # Mirror this checkout to the Mac Studio and run a command there (bash -l, at the mirror root).
-# Copies .git, runs `git clean` there (drops files deleted here), then copies every tracked and untracked non-ignored file.
+# Pushes HEAD to one bare repo on the Studio (git.git, only missing objects travel), points the mirror's index at it,
+# runs `git clean` there (drops files deleted here), then copies every tracked and untracked non-ignored file.
 # Ignored files on the Studio (node_modules, out, native/target) survive between runs.
 # Each linked worktree gets its own mirror (port-src-<worktree>), first seeded as an APFS clone of port-src.
+# Mirrors borrow git.git's objects through objects/info/alternates; git.git was cloned once from GitHub on the Studio.
 set -euo pipefail
 root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 cd "$root"
-git_dir=$(git rev-parse --absolute-git-dir)
-common_dir=$(cd "$(git rev-parse --git-common-dir)" && pwd)
-remote_dir=Developer/vscode-gpui-work/port-src
-if [[ $git_dir != "$common_dir" ]]; then
-  remote_dir=$remote_dir-$(basename "$root")
-  ssh studio "cd ~/Developer/vscode-gpui-work && test -d $(basename "$remote_dir") || cp -cR port-src $(basename "$remote_dir")"
+work=Developer/vscode-gpui-work
+name=port-src
+if [[ $(git rev-parse --absolute-git-dir) != $(cd "$(git rev-parse --git-common-dir)" && pwd) ]]; then
+  name=$name-$(basename "$root")
+  ssh studio "cd ~/$work && test -d $name || cp -cR port-src $name"
 fi
-# Lock files are transient: another session's git command holds them for a moment and rsync fails on the vanished file.
-rsync -az --delete --exclude /worktrees/ --exclude '*.lock' "$common_dir/" "studio:$remote_dir/.git/"
-# A linked worktree keeps HEAD and index in its own git dir; the mirror is a plain checkout of that branch.
-[[ $git_dir == "$common_dir" ]] || rsync -az "$git_dir/HEAD" "$git_dir/index" "studio:$remote_dir/.git/"
-ssh studio "cd ~/$remote_dir && git clean -fdq"
-git ls-files -co --exclude-standard -z | rsync -az --from0 --files-from=- . "studio:$remote_dir/"
-ssh studio "cd ~/$remote_dir && bash -lc $(printf '%q' "$1")"
+head=$(git rev-parse HEAD)
+git push -qf "studio:$work/git.git" "HEAD:refs/mirror/$name"
+# A mirror without alternates still has the full .git of the old rsync copy: replace it with a light one.
+# A mixed reset moves only the index, so file mtimes and the cargo build stay as they are.
+ssh studio "cd ~/$work/$name && bash -c 'test -f .git/objects/info/alternates || { rm -rf .git && git init -q && echo ~/$work/git.git/objects > .git/objects/info/alternates; }; git reset -q $head && git clean -fdq'"
+git ls-files -co --exclude-standard -z | rsync -az --from0 --ignore-missing-args --files-from=- . "studio:$work/$name/"
+git ls-files -d -z | ssh studio "cd ~/$work/$name && xargs -0 rm -f"
+ssh studio "cd ~/$work/$name && bash -lc $(printf '%q' "$1")"
