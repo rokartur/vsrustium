@@ -71,7 +71,7 @@ impl Workbench {
             .rounded(px(8.))
             .bg(self.color("editor.background"))
             .border_color(self.color("surface.border"))
-            .child(self.tab_strip(cx))
+            .child(self.tab_strip(window, cx))
             .map(|part| match editor.document.scheme.as_str() {
                 // A webview editor has no breadcrumbs: its resource has no file system provider.
                 WEBVIEW_PANEL_SCHEME => part.child(self.webview_editor_body(editor)),
@@ -90,7 +90,7 @@ impl Workbench {
 
     /// One strip behind every tab; the active tab is an editor-colored fill whose bottom shoulders curve
     /// into the strip, so the active tab and the editor below read as one surface.
-    fn tab_strip(&self, cx: &mut Context<Self>) -> Div {
+    fn tab_strip(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         let active = self.editors.active_index().expect("tab strip is drawn only with an editor open");
         let icon_color = self.color("icon.foreground");
         // multieditortabscontrol.css: .editor-actions is cursor default, its action items pointer (actionbar.css).
@@ -109,7 +109,7 @@ impl Workbench {
                     workbench.execute_command("rerunSearchEditorSearch", Vec::new(), window, cx);
                 })))
             })
-            .children(self.diff_title_actions(cx))
+            .children(self.editor_title_actions(window, cx))
             .child(self.icon("split-horizontal", 22., 16., icon_color).cursor_pointer())
             .child(self.icon("ellipsis", 22., 16., icon_color).cursor_pointer());
         // The line under the strip (tabs-border-bottom) runs below the shoulders; the active fill covers it.
@@ -125,6 +125,21 @@ impl Workbench {
             .child(bottom_line)
             .children((0..self.editors.editors.len()).map(|index| self.tab(index, index == active, cx)))
             .child(actions)
+    }
+
+    /// The `navigation` group of `MenuId.EditorTitle` by order: the diff editor's built-in actions and the
+    /// extensions' `editor/title` items, run with the active editor's resource.
+    fn editor_title_actions(&self, window: &Window, cx: &mut Context<Self>) -> Vec<gpui::AnyElement> {
+        let mut actions = self.diff_title_actions(cx);
+        let context = self.key_context(window);
+        let resource = self.editors.active().map(|editor| editor.document.uri()).into_iter().collect::<Vec<_>>();
+        let foreground = self.color("icon.foreground");
+        for item in self.menus.iter().filter(|item| item.menu == crate::menus::MenuId::EditorTitle && item.group == "navigation" && item.when.as_ref().is_none_or(|when| when.evaluate(&context))) {
+            let crate::menus::Entry::Command { id, .. } = &item.entry else { continue };
+            actions.push((item.order, self.command_button(id, item.title.clone(), resource.clone(), foreground, cx).into_any_element()));
+        }
+        actions.sort_by(|a, b| a.0.total_cmp(&b.0));
+        actions.into_iter().map(|(_, element)| element).collect()
     }
 
     /// `--modern-ui-connected-tab-strip-background` (connectedEditorTabs.ts): the connected tabs background,

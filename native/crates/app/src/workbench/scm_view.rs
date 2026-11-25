@@ -524,29 +524,31 @@ impl Workbench {
             })
             .collect();
         for (id, title) in commands {
-            let icon = match self.command_icons.get(&id) {
-                Some(CommandIcon::Codicon(name)) => self.icon(name, 22., 16., foreground),
-                Some(CommandIcon::Image(light, dark)) => {
-                    let path = if self.theme.kind == crate::theme::ThemeKind::Light { light } else { dark };
-                    div().size(px(22.)).flex().items_center().justify_center().child(img(path.clone()).size(px(16.)))
-                }
-                None => div().px(px(4.)).child(title.clone()),
-            };
-            let args = args.clone();
-            let command = id.clone();
-            bar = bar.child(
-                icon.id(gpui::SharedString::from(format!("scm-action-{id}-{}", args.first().map(Value::to_string).unwrap_or_default())))
-                    .rounded(px(5.))
-                    .cursor_pointer()
-                    .hover(|icon| icon.bg(self.color("toolbar.hoverBackground")))
-                    .on_click(cx.listener(move |workbench, _: &ClickEvent, window, cx| {
-                        cx.stop_propagation();
-                        drop(workbench.execute_command(&command, args.clone(), window, cx));
-                    }))
-                    .child(self.hover_target(gpui::SharedString::from(format!("scm-action-hover-{id}")), HoverContent::Text(title), HoverOptions::mouse())),
-            );
+            bar = bar.child(self.command_button(&id, title, args.clone(), foreground, cx));
         }
         bar
+    }
+
+    /// A menu command as a toolbar button (`MenuEntryActionViewItem`): its icon, else its title, with its hover.
+    pub(in crate::workbench) fn command_button(&self, id: &str, title: String, args: Vec<Value>, foreground: Rgba, cx: &mut Context<Self>) -> gpui::Stateful<Div> {
+        let icon = match self.command_icons.get(id) {
+            Some(CommandIcon::Codicon(name)) => self.icon(name, 22., 16., foreground),
+            Some(CommandIcon::Image(light, dark)) => {
+                let path = if self.theme.kind == crate::theme::ThemeKind::Light { light } else { dark };
+                div().size(px(22.)).flex().items_center().justify_center().child(img(path.clone()).size(px(16.)))
+            }
+            None => div().px(px(4.)).child(title.clone()),
+        };
+        let command = id.to_string();
+        icon.id(gpui::SharedString::from(format!("command-button-{id}-{}", args.first().map(Value::to_string).unwrap_or_default())))
+            .rounded(px(5.))
+            .cursor_pointer()
+            .hover(|icon| icon.bg(self.color("toolbar.hoverBackground")))
+            .on_click(cx.listener(move |workbench, _: &ClickEvent, window, cx| {
+                cx.stop_propagation();
+                drop(workbench.execute_command(&command, args.clone(), window, cx));
+            }))
+            .child(self.hover_target(gpui::SharedString::from(format!("command-button-hover-{id}")), HoverContent::Text(title), HoverOptions::mouse()))
     }
 
     /// activityaction.css `.badge .badge-content`: a `NumberBadge` at the item's bottom right, 16px high, 9px bold.

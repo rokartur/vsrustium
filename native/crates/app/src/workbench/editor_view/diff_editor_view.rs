@@ -256,27 +256,28 @@ impl Workbench {
         self.update_diff_editor();
     }
 
-    /// The diff editor's `navigation` actions of the editor title, in menu order: previous and next change (11 and
-    /// 10), swap sides (15), whitespace (20) and collapse unchanged regions (22).
-    pub(in crate::workbench) fn diff_title_actions(&self, cx: &mut Context<Self>) -> Vec<gpui::AnyElement> {
+    /// The diff editor's `navigation` actions of the editor title with their menu orders: previous and next change,
+    /// swap sides, whitespace and collapse unchanged regions.
+    pub(in crate::workbench) fn diff_title_actions(&self, cx: &mut Context<Self>) -> Vec<(f64, gpui::AnyElement)> {
         let Some(input) = self.editors.active_diff() else { return Vec::new() };
         let has_changes = input.diff.as_ref().is_some_and(|diff| !diff.diff.changes.is_empty());
         let mut actions = vec![
-            ("workbench.action.compareEditor.previousChange", "arrow-up", "Previous Change", has_changes),
-            ("workbench.action.compareEditor.nextChange", "arrow-down", "Next Change", has_changes),
+            (10., "workbench.action.compareEditor.previousChange", "arrow-up", "Previous Change", has_changes),
+            (11., "workbench.action.compareEditor.nextChange", "arrow-down", "Next Change", has_changes),
         ];
         if self.diff_can_swap(input) {
-            actions.push(("workbench.action.compareEditor.swapSides", "arrow-swap", "Swap Left and Right Side", true));
+            actions.push((15., "workbench.action.compareEditor.swapSides", "arrow-swap", "Swap Left and Right Side", true));
         }
-        actions.push(("toggle.diff.ignoreTrimWhitespace", "whitespace", "Show Leading/Trailing Whitespace Differences", true));
-        actions.push(("diffEditor.toggleCollapseUnchangedRegions", "map", "Toggle Collapse Unchanged Regions", true));
+        actions.push((20., "toggle.diff.ignoreTrimWhitespace", "whitespace", "Show Leading/Trailing Whitespace Differences", true));
+        actions.push((22., "diffEditor.toggleCollapseUnchangedRegions", "map", "Toggle Collapse Unchanged Regions", true));
         let icon_color = self.color("icon.foreground");
         let disabled_color = self.color("disabledForeground");
         actions
             .into_iter()
-            .map(|(command, icon, title, enabled)| {
+            .map(|(order, command, icon, title, enabled)| {
                 let color = if enabled { icon_color } else { disabled_color };
-                self.icon(icon, 22., 16., color)
+                let element = self
+                    .icon(icon, 22., 16., color)
                     .id(command)
                     .rounded(px(5.))
                     .when(enabled, |icon| {
@@ -285,7 +286,8 @@ impl Workbench {
                         }))
                     })
                     .child(self.hover_target(gpui::SharedString::from(format!("diff-title-{command}")), HoverContent::Action { title, command }, HoverOptions::mouse()))
-                    .into_any_element()
+                    .into_any_element();
+                (order, element)
             })
             .collect()
     }
