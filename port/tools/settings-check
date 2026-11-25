@@ -1,5 +1,5 @@
 #!/bin/bash
-# Runs the extensions in port/tools/settings-checks against code-gpui and the reference and diffs what they print:
+# Runs the extensions in port/tools/settings-checks against vsrustium and the reference and diffs what they print:
 # configuration (writes, language overrides, write errors, an external settings.json edit and its change events),
 # state (globalState and workspaceState across a restart, and the state.vscdb rows), secrets and environment.
 # Run from the repo root on the Studio after a release build: port/tools/studio port/tools/settings-check [check...].
@@ -15,7 +15,7 @@ rm -rf "$OUT" && mkdir -p "$OUT"
 
 launch() { # <port|ref> <dir> [--extensionTestsPath=...]
   if [[ $1 == port ]]; then
-    SHELL=/bin/bash VSCODE_GPUI_EXTENSIONS=$REF/extensions timeout -k 5 120 native/target/release/code-gpui "$2/folder" \
+    SHELL=/bin/bash VSCODE_GPUI_EXTENSIONS=$REF/extensions timeout -k 5 120 native/target/release/vsrustium "$2/folder" \
       --user-data-dir "$2/udd" --extensionDevelopmentPath="$2/ext" "${@:3}"
   else
     VSCODE_DEV=1 NODE_ENV=development timeout -k 5 120 "$REF/.build/electron/Code - OSS.app/Contents/MacOS/Code - OSS" "$REF" "$2/folder" \

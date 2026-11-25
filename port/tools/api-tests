@@ -1,5 +1,5 @@
 #!/bin/bash
-# Runs extensions/vscode-api-tests against code-gpui the way scripts/test-integration.sh runs suites api-folder and
+# Runs extensions/vscode-api-tests against vsrustium the way scripts/test-integration.sh runs suites api-folder and
 # api-workspace against the reference, prints passing/pending/failing per suite and writes port/results/api-tests.md.
 # Run from the repo root on the Studio (port/tools/studio port/tools/api-tests), then copy the results file back.
 # The test extension, its compiled tests and mocha come from the untouched 1.147.0 reference checkout, copied so the
@@ -22,7 +22,7 @@ source port/tools/gui-lock.sh
 rows=()
 run_suite() { # <suite> <folder or workspace file> <tests folder> <tests in the reference run>
   local log=$OUT/$1.log started=$SECONDS
-  SHELL=/bin/bash VSCODE_GPUI_EXTENSIONS=$REF/extensions timeout "$SUITE_TIMEOUT" native/target/release/code-gpui "$2" \
+  SHELL=/bin/bash VSCODE_GPUI_EXTENSIONS=$REF/extensions timeout "$SUITE_TIMEOUT" native/target/release/vsrustium "$2" \
     --user-data-dir "$(mktemp -d)" --extensionDevelopmentPath="$tests" --extensionTestsPath="$tests/out/$3" >"$log" 2>&1
   local code=$? seconds=$((SECONDS - started)) text run passing pending failing
   text=$(sed $'s/\x1b\\[[0-9;]*m//g' "$log")

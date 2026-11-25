@@ -102,7 +102,7 @@ fn native_menus_show_keybindings_as_key_equivalents_or_in_the_label(cx: &mut Tes
     let menubar = cx.update(|window, cx| workbench.read(cx).menubar(window));
     let (menus, key_equivalents) = native_menus(&menubar);
     let names: Vec<&str> = menus.iter().map(|menu| menu.name.as_ref()).collect();
-    assert_eq!(names, ["Code - OSS", "File", "Edit", "Selection", "View", "Go", "Window", "Help"]);
+    assert_eq!(names, ["VSRustium", "File", "Edit", "Selection", "View", "Go", "Window", "Help"]);
     let MenuItem::Submenu(preferences) = &menus[0].items[0] else { panic!("Preferences first") };
     let themes = preferences.items.iter().find_map(|item| match item {
         MenuItem::Submenu(menu) if menu.name.as_ref() == "Themes" => Some(menu),

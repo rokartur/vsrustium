@@ -1,5 +1,5 @@
 //! The native app: the workbench, themed from the built-in theme files, over the running extension host.
-//! Usage: code-gpui [folder or .code-workspace file [file]] [--theme <settings id>] [--user-data-dir <dir>] [--screenshot <png>]
+//! Usage: vsrustium [folder or .code-workspace file [file]] [--theme <settings id>] [--user-data-dir <dir>] [--screenshot <png>]
 //! [--screenshot-keys "<keystroke> ..."] [--screenshot-input <steps>] [--node]
 //!   [--extensionDevelopmentPath=<dir> [--extensionTestsPath=<path>]]: the app exits with the test runner's code.
 

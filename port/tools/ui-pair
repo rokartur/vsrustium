@@ -70,7 +70,7 @@ function startPort(paths: string[]) {
 	const userData = mkdtempSync(join(scratch, 'port-user-'));
 	mkdirSync(join(userData, 'User'));
 	writeFileSync(join(userData, 'User/settings.json'), JSON.stringify(settings));
-	return Bun.spawn(['native/target/release/code-gpui', ...paths, ...extraArgs, '--user-data-dir', userData, '--theme', portTheme], {
+	return Bun.spawn(['native/target/release/vsrustium', ...paths, ...extraArgs, '--user-data-dir', userData, '--theme', portTheme], {
 		env: { ...process.env, VSCODE_GPUI_EXTENSIONS: join(ref, 'extensions') },
 		stdout: 'ignore',
 		stderr: Bun.file(join(outDir, 'port.log')),

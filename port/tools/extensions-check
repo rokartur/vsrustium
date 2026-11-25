@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Packs port/fixtures/extensions/vsix-* as VSIX files and runs port/fixtures/extensions/install-tests in code-gpui:
+# Packs port/fixtures/extensions/vsix-* as VSIX files and runs port/fixtures/extensions/install-tests in vsrustium:
 # installs and uninstalls them through the workbench commands while the host runs. Prints one line per check.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
@@ -13,7 +13,7 @@ done
 source port/tools/gui-lock.sh
 tests=$PWD/port/fixtures/extensions/install-tests
 code=0
-PORT_VSIX_DIR=$out VSCODE_GPUI_EXTENSIONS=$REF/extensions timeout 120 native/target/release/code-gpui --user-data-dir "$out/user-data" \
+PORT_VSIX_DIR=$out VSCODE_GPUI_EXTENSIONS=$REF/extensions timeout 120 native/target/release/vsrustium --user-data-dir "$out/user-data" \
   --extensionDevelopmentPath="$tests" --extensionTestsPath="$tests/tests" >"$out/log" 2>&1 || code=$?
 grep -E '^(ok|FAILED) ' "$out/log" || cat "$out/log"
 echo "exit $code"

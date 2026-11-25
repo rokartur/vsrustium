@@ -58,7 +58,7 @@ pub fn init_data(paths: &SessionPaths, extensions: &[ScannedExtension], version:
         "parentPid": std::process::id(),
         "environment": {
             "isExtensionDevelopmentDebug": false,
-            "appName": "Code - OSS",
+            "appName": "VSRustium",
             "appHost": "desktop",
             "appRoot": file_uri(paths.app_root),
             "appLanguage": "en",
@@ -664,7 +664,7 @@ impl Session {
 }
 
 /// product.json `urlProtocol`.
-const URL_PROTOCOL: &str = "code-oss";
+const URL_PROTOCOL: &str = "vsrustium";
 
 /// urlService.ts `NativeURLService.create`: the uri with the product's scheme.
 fn app_uri(uri: &Value) -> Value {
@@ -719,7 +719,7 @@ mod tests {
     #[test]
     fn app_uris_take_the_product_scheme() {
         let uri = json!({ "scheme": "vscode", "authority": "pub.ext", "path": "callback", "query": "a=1" });
-        assert_eq!(app_uri(&uri), json!({ "$mid": 1, "scheme": "code-oss", "authority": "pub.ext", "path": "/callback", "query": "a=1", "fragment": "" }));
+        assert_eq!(app_uri(&uri), json!({ "$mid": 1, "scheme": "vsrustium", "authority": "pub.ext", "path": "/callback", "query": "a=1", "fragment": "" }));
     }
 
     #[test]

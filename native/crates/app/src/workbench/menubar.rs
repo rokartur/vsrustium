@@ -37,7 +37,7 @@ pub struct DisabledMenuCommand {
 const MENU_KEY_EQUIVALENT: &str = "menubar_key_equivalent";
 
 /// `productService.nameLong`.
-pub const NAME_LONG: &str = "Code - OSS";
+pub const NAME_LONG: &str = "VSRustium";
 
 /// What the menu bar shows: the top-level menus with mnemonics dropped, and each command's primary keybinding.
 #[derive(Debug, PartialEq)]
