@@ -48,6 +48,7 @@ mod output;
 mod quick_input;
 mod search_editor;
 mod scm;
+mod scm_history;
 mod search_model;
 mod smart_snippet_inserter;
 mod split_view;
