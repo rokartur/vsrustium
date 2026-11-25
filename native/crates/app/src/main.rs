@@ -28,6 +28,7 @@ mod keybindings;
 mod keybindings_editor;
 mod keyboard_layout;
 mod system_wide_keybindings;
+mod language_features;
 mod languages;
 mod local_history;
 mod main_thread;
@@ -50,6 +51,7 @@ mod syntax;
 mod tf_idf;
 mod theme;
 mod undo_redo;
+mod untitled;
 mod webview;
 mod workbench;
 
@@ -163,6 +165,7 @@ fn main() -> anyhow::Result<()> {
                 workbench.skip_dialogs = development.as_ref().is_some_and(|development| development.tests_path.is_some());
                 workbench.load_keybindings(keybindings::default_keybindings(&extensions), keybindings_file.clone(), cx);
                 workbench.watch_settings_files(cx);
+                workbench.start_file_watcher(cx);
                 workbench.start_system_wide_keybindings(window, cx);
                 workbench.set_command_palette_menu(command_palette::menu(&extensions));
                 workbench.menus.extend(menus::extension_menus(&extensions));
@@ -321,7 +324,7 @@ fn run_extension_host(
             MainThreadSecretState::in_memory()
         }),
     });
-    session.forward(&["MainThreadCommands", "MainThreadDiagnostics", "MainThreadEditorTabs", "MainThreadLogger", "MainThreadMessageService", "MainThreadOutputService", "MainThreadProgress", "MainThreadQuickOpen", "MainThreadStatusBar", "MainThreadWebviewPanels", "MainThreadWebviews", "MainThreadWorkspace"], move |request| {
+    session.forward(&["MainThreadCommands", "MainThreadDiagnostics", "MainThreadEditorTabs", "MainThreadLanguageFeatures", "MainThreadLogger", "MainThreadMessageService", "MainThreadOutputService", "MainThreadProgress", "MainThreadQuickOpen", "MainThreadStatusBar", "MainThreadWebviewPanels", "MainThreadWebviews", "MainThreadWorkspace"], move |request| {
         let _ = workbench_requests.unbounded_send(request);
     }, workbench_replies);
     session.main_thread = Some(Box::new(main_thread));

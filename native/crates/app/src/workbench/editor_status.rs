@@ -379,7 +379,7 @@ impl Workbench {
                 let outcome = self.execute_command("workbench.action.openSettingsJson", args, window, cx);
                 show_failure("Preferences: Open User Settings (JSON)".into(), outcome, window, cx);
             }
-            StatusPick::Associate(language_id) => self.write_file_association(&language_id),
+            StatusPick::Associate(language_id) => self.write_file_association(&language_id, cx),
             StatusPick::EncodingAction { reopen } => self.show_encoding_picker(reopen, window, cx),
             StatusPick::Encoding { id, reopen } => self.set_active_encoding(id, reopen, window, cx),
             StatusPick::Nothing => {}
@@ -387,9 +387,10 @@ impl Workbench {
     }
 
     /// `setLanguageId` of the active editor's input.
-    fn set_active_language(&mut self, language_id: &str, cx: &mut Context<Self>) {
+    pub(super) fn set_active_language(&mut self, language_id: &str, cx: &mut Context<Self>) {
         let Some(editor) = self.editors.active() else { return };
         let (scheme, path) = (editor.document.scheme.clone(), editor.document.path.clone());
+        self.text_files.preferred_languages.insert((scheme.clone(), path.clone()));
         self.set_model_language(&scheme, &path, language_id, cx);
     }
 
@@ -411,7 +412,7 @@ impl Workbench {
 
     /// `configureFileAssociation`'s write: `*.ext`, or the file name when it has no extension or starts with a dot,
     /// into workspace settings when they already associate that key, else user settings.
-    fn write_file_association(&mut self, language_id: &str) {
+    fn write_file_association(&mut self, language_id: &str, cx: &mut Context<Self>) {
         let Some(editor) = self.editors.active() else { return };
         let key = association_key(&editor.document.path);
         let mut settings = self.settings.lock().unwrap();
@@ -421,7 +422,11 @@ impl Workbench {
         let mut associations = layer.filter(Value::is_object).unwrap_or_else(|| json!({}));
         associations[key] = json!(language_id);
         match settings.update_value("files.associations", Some(&associations), target, None, &[]) {
-            Ok(change) if !change.is_empty() => self.host.send_configuration_change(&settings, &change),
+            Ok(change) if !change.is_empty() => {
+                self.host.send_configuration_change(&settings, &change);
+                drop(settings);
+                self.files_associations_changed(cx);
+            }
             Ok(_) => {}
             Err(error) => eprintln!("writing files.associations: {error}"),
         }

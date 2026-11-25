@@ -79,7 +79,9 @@ const WORKBENCH_MENUS: &[Row] = &[
     (MenuId::MenubarMainMenu, Some(MenuId::MenubarHelpMenu), "", "&&Help", "", 8., None, None),
     (MenuId::MenubarMainMenu, Some(MenuId::MenubarPreferencesMenu), "", "&&Preferences", "", 9., Some("isMacNative"), None),
     // fileActions.contribution.ts
+    (MenuId::MenubarFileMenu, None, "workbench.action.files.newUntitledFile", "&&New Text File", "1_new", 1., None, None),
     (MenuId::MenubarFileMenu, None, "workbench.action.files.save", "&&Save", "4_save", 1., None, Some("activeEditor || foldersViewVisible && sideBarFocus")),
+    (MenuId::MenubarFileMenu, None, "workbench.action.files.saveAs", "Save &&As...", "4_save", 2., None, Some("activeEditor || foldersViewVisible && sideBarFocus")),
     (MenuId::MenubarFileMenu, None, "saveAll", "Save A&&ll", "4_save", 3., None, Some("dirtyWorkingCopies")),
     (
         MenuId::MenubarFileMenu,

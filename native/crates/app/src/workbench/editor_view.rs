@@ -75,6 +75,8 @@ impl Workbench {
                 // searchEditor.ts draws its query widget where a text editor has its breadcrumbs.
                 SEARCH_EDITOR_SCHEME => part.child(self.search_editor_query(window, cx)),
                 crate::output::OUTPUT_SCHEME => part.child(self.output_title_actions(window, cx)),
+                // breadcrumbsControl.ts `update`: no breadcrumbs for a resource without a file system provider.
+                "untitled" => part,
                 _ => part.child(self.breadcrumbs(editor)),
             })
             .when(editor.document.scheme != WEBVIEW_PANEL_SCHEME, |part| part.children(self.unicode_banner(editor, cx)).child(self.text_area(editor, window, cx)))
@@ -144,9 +146,14 @@ impl Workbench {
     fn tab_hover(&self, index: usize) -> impl IntoElement {
         let editor = &self.editors.editors[index];
         // `getTitle(Verbosity.LONG)`: a search editor's and a webview's is its name.
-        let title = match matches!(editor.document.scheme.as_str(), SEARCH_EDITOR_SCHEME | WEBVIEW_PANEL_SCHEME) {
-            true => self.editor_name(editor),
-            false => crate::quick_input::path_label(&editor.document.path, None),
+        let title = match editor.document.scheme.as_str() {
+            SEARCH_EDITOR_SCHEME | WEBVIEW_PANEL_SCHEME => self.editor_name(editor),
+            // labels.ts: an untitled label's title is its name and its path.
+            "untitled" if !editor.associated_file => match self.untitled_description(editor) {
+                Some(path) => format!("{} \u{2022} {path}", self.editor_name(editor)),
+                None => self.editor_name(editor),
+            },
+            _ => crate::quick_input::path_label(&editor.document.path, None),
         };
         let content = if editor.preview { super::hover::HoverContent::Preview(title) } else { super::hover::HoverContent::Text(title) };
         self.hover_target(("tab-hover", index), content, super::hover::HoverOptions::mouse())
@@ -160,13 +167,23 @@ impl Workbench {
         // tabs.css colors `.tab-label:not(.monaco-decoration-itemColor)`: a decorated label (read-only, no color of its
         // own) inherits the tab's color from multieditortabscontrol.css, `tab.activeForeground` when active.
         let foreground = if active && readonly { self.foreground_or("tab.activeForeground") } else { action_foreground };
+        // textFileService.ts decorations: a deleted file's label is struck through in `list.errorForeground`.
+        let orphaned = editor.document.scheme == "file" && self.text_files.orphaned.contains(&editor.document.path);
         let label = div()
             .mt(px(3.5))
             .h(px(24.))
             .line_height(px(24.))
             .whitespace_nowrap()
+            .flex()
+            .items_baseline()
             .when(editor.preview, |label| label.italic())
-            .child(self.editor_name(editor));
+            .when(orphaned, |label| label.line_through().text_color(self.foreground_or("list.errorForeground")))
+            .child(self.editor_name(editor))
+            .children(self.untitled_description(editor).map(|description| {
+                // iconlabel.css `.label-description`: 0.9em at 0.7 opacity (0.95 in light themes), 0.5em after the name.
+                let opacity = if self.theme.kind == ThemeKind::Light { 0.95 } else { 0.7 };
+                div().ml(px(6.5)).text_size(px(11.7)).opacity(opacity).child(description)
+            }));
         let file_icon = self.document_icon(editor, 24., foreground);
         // textFileService.ts decorations: a read-only file's label ends in the lockSmall badge at 0.75 opacity. The
         // iconlabel.css `::after` font-size 90% (11.7px) wins over the decoration rule's 16px, which loads first.
@@ -174,10 +191,9 @@ impl Workbench {
         // A dirty tab shows a filled circle where the close action goes, also when inactive (tabstitlecontrol.css).
         let dirty = editor.is_dirty() && !self.editor_is_saving(editor);
         let close_icon = if dirty { "circle-filled" } else { "close-small" };
-        let close = self.icon(close_icon, 20., 16., action_foreground).id(("close", index)).rounded(px(4.)).on_click(cx.listener(move |workbench, _, _, cx| {
+        let close = self.icon(close_icon, 20., 16., action_foreground).id(("close", index)).rounded(px(4.)).on_click(cx.listener(move |workbench, _, window, cx| {
             cx.stop_propagation();
-            workbench.editors.close(index);
-            workbench.editors_changed(cx);
+            drop(workbench.close_editors(vec![index], window, cx));
         }));
         let tab = div()
             .id(("tab", index))

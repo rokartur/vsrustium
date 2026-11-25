@@ -620,6 +620,7 @@ fn quick_input_default(key: &str) -> (ColorValue, ColorValue, ColorValue) {
         "inputOption.activeForeground" => (Hex("#FFFFFF"), Hex("#000000"), Key("foreground")),
         "editorWidget.border" => (Transparent(&Key("editorWidget.foreground"), 0.2), Transparent(&Key("editorWidget.foreground"), 0.2), Key("contrastBorder")),
         "errorForeground" => (Hex("#F48771"), Hex("#A1260D"), Hex("#F48771")),
+        "list.errorForeground" => (Hex("#F88070"), Hex("#B01011"), None),
         "inputValidation.infoBackground" => (Hex("#063B49"), Hex("#D6ECF2"), Hex("#000000")),
         "inputValidation.infoBorder" => (Hex("#007acc"), Hex("#007acc"), Key("contrastBorder")),
         "inputValidation.warningBackground" => (Hex("#352A05"), Hex("#F6F5D2"), Hex("#000000")),

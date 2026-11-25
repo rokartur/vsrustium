@@ -201,6 +201,7 @@ impl Workbench {
         if self.editors.model(scheme, path).is_none() {
             self.try_open_document(uri, &Value::Null, &Value::Null, false, cx)?;
         }
+        self.text_files.preferred_languages.insert((scheme.to_string(), path.clone()));
         self.set_model_language(scheme, path, language_id, cx);
         Ok(Value::Null)
     }
@@ -250,29 +251,18 @@ impl Workbench {
     fn try_save_document(&mut self, uri: &Value, cx: &mut Context<Self>) -> HostResult {
         let (scheme, ref path) = uri_parts(uri)?;
         let Some(model) = self.editors.model_mut(scheme, path) else { return Ok(json!(false)) };
-        // textFileService.ts `saveAs`: an untitled model with a path becomes the model of that file.
-        // shortcut: no Save As dialog asks for the path of an untitled model without one; its save answers false.
+        // textFileService.ts `save`: an untitled model saves as its associated file, or as the path the save dialog picks.
         if scheme == "untitled" {
-            if !model.associated_file {
-                return Ok(json!(false));
+            if model.associated_file && (self.skip_dialogs || !path.exists()) {
+                return Ok(json!(self.do_save_as(scheme, path, path.clone(), Default::default(), cx)));
             }
-            std::fs::write(path, model.saved_bytes()).map_err(|error| serialized_error(&format!("Unable to write file '{}' ({error})", path.display())))?;
-            model.document.scheme = "file".into();
-            model.associated_file = false;
-            model.mark_saved();
-            self.editors_changed(cx);
-            return Ok(json!(true));
+            // shortcut: this request answers on the session thread's wait, which cannot outlast a dialog; the save goes
+            // on after the dialogs and the answer is false. Move the request to the forwarded ones to await it.
+            drop(self.save_model(scheme.to_string(), path.clone(), SaveReason::Explicit, cx));
+            return Ok(json!(false));
         }
-        if !model.is_dirty() {
-            return Ok(json!(true));
-        }
-        self.run_save_participants(scheme, path, SaveReason::Explicit);
-        let model = self.editors.model_mut(scheme, path).expect("participants keep the model");
-        model.save().map_err(|error| serialized_error(&format!("Unable to write file '{}' ({error})", path.display())))?;
-        let model = self.editors.model(scheme, path).expect("just saved");
-        self.host.send_saved(&self.editors, model, true);
-        cx.notify();
-        Ok(json!(true))
+        let saved = self.save_model(scheme.to_string(), path.clone(), SaveReason::Explicit, cx);
+        Ok(json!(super::text_files::saved_now(saved) == Some(true)))
     }
 
     /// First half of `$trySaveDocument` through a provider: false without a model, true when clean, else the bytes to write.

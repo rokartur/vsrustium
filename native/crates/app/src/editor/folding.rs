@@ -174,6 +174,83 @@ fn starts_inside(selection: Option<&[usize]>, start: usize, end: usize) -> bool 
     selection.is_some_and(|lines| lines.iter().any(|line| (start..=end).contains(line)))
 }
 
+/// `IFoldingRangeData`: a provider's range, 1-based, with the provider's rank and the range's kind.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SyntaxRange {
+    pub start: usize,
+    pub end: usize,
+    pub rank: usize,
+    pub kind: Option<String>,
+}
+
+/// syntaxRangeProvider.ts `sanitizeRanges`: the ranges by start (then rank), each kept when it nests in the open
+/// ranges or starts after them, then `RangesCollector.toIndentRanges`: past `limit`, the deepest nesting levels go.
+pub fn sanitize_ranges(mut ranges: Vec<SyntaxRange>, limit: usize) -> FoldingRegions {
+    ranges.sort_by_key(|range| (range.start, range.rank));
+    let mut collected: Vec<(SyntaxRange, usize)> = Vec::new();
+    let mut top: Option<SyntaxRange> = None;
+    let mut previous: Vec<SyntaxRange> = Vec::new();
+    for entry in ranges {
+        let Some(current) = top.clone() else {
+            collected.push((entry.clone(), previous.len()));
+            top = Some(entry);
+            continue;
+        };
+        if entry.start <= current.start {
+            continue;
+        }
+        if entry.end <= current.end {
+            previous.push(current);
+            collected.push((entry.clone(), previous.len()));
+            top = Some(entry);
+            continue;
+        }
+        if entry.start > current.end {
+            let mut popped = Some(current);
+            while popped.as_ref().is_some_and(|range| entry.start > range.end) {
+                popped = previous.pop();
+            }
+            if let Some(range) = popped {
+                previous.push(range);
+            }
+            top = Some(entry.clone());
+        }
+        collected.push((entry, previous.len()));
+    }
+    collected.retain(|(range, _)| range.start <= MAX_LINE_NUMBER && range.end <= MAX_LINE_NUMBER);
+    if collected.len() > limit {
+        let mut counts: Vec<usize> = Vec::new();
+        for &(_, level) in &collected {
+            if level < 30 {
+                if counts.len() <= level {
+                    counts.resize(level + 1, 0);
+                }
+                counts[level] += 1;
+            }
+        }
+        let mut entries = 0;
+        let mut max_level = counts.len();
+        for (level, &count) in counts.iter().enumerate() {
+            if count > 0 && count + entries > limit {
+                max_level = level;
+                break;
+            }
+            entries += count;
+        }
+        let mut kept = Vec::with_capacity(limit);
+        for (range, level) in collected {
+            if level < max_level || (level == max_level && entries < limit) {
+                if level == max_level {
+                    entries += 1;
+                }
+                kept.push((range, level));
+            }
+        }
+        collected = kept;
+    }
+    FoldingRegions::new(collected.into_iter().map(|(range, _)| FoldRange { kind: range.kind, ..FoldRange::new(range.start, range.end) }).collect())
+}
+
 /// `foldingRules.markers`: one `(start)|(?:end)` pattern when both have the same JavaScript flags, as
 /// computeRanges.ts builds it, else the two patterns.
 pub struct FoldingMarkers {

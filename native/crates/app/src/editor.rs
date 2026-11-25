@@ -26,7 +26,7 @@ pub mod drag_and_drop;
 mod edit;
 pub mod find;
 pub mod folding;
-mod in_place_replace;
+pub(crate) mod in_place_replace;
 mod folding_controller;
 mod indentation;
 mod lines_operations;
@@ -34,6 +34,7 @@ pub mod marker_decorations;
 pub mod save_participants;
 pub mod view_zones;
 pub mod minimap;
+pub mod model_service;
 mod multicursor;
 pub mod section_headers;
 pub mod smart_select;
@@ -175,7 +176,7 @@ fn default_eol(settings: &Settings, path: &Path, language_id: &str) -> &'static 
 
 /// Lines split at `\r\n`, `\r` or `\n`; the EOL is CRLF when most line breaks hold a CR, else LF, and none for a
 /// text without line breaks (PieceTreeTextBufferBuilder `_getEOL`).
-fn split_lines(text: &str) -> (Vec<String>, Option<&'static str>) {
+pub(crate) fn split_lines(text: &str) -> (Vec<String>, Option<&'static str>) {
     let (mut lines, mut line) = (Vec::new(), String::new());
     let (mut breaks, mut with_cr) = (0, 0);
     let mut chars = text.chars().peekable();
@@ -466,6 +467,10 @@ pub struct OpenEditor {
     pub selection_anchor: Option<Position>,
     /// The folding regions, their collapse state and the lines it hides.
     pub folding: FoldingModel,
+    /// Extension `FoldingRangeProvider`s fold the model (`SyntaxRangeProvider`), not its indentation.
+    pub syntax_folding: bool,
+    /// folding.ts `_currentModelHasFoldedImports`: `editor.foldingImportsByDefault` already collapsed the imports.
+    pub folded_imports: bool,
     /// The sticky scroll scopes of the indentation and marker regions, without the folding model's manual ones.
     pub sticky_model: sticky_scroll::StickyElement,
     /// The editor's scroll position in pixels, kept with the editor like its view state.
@@ -495,7 +500,7 @@ impl OpenEditor {
     fn new(document: TextDocument, preview: bool, model_id: u32) -> Self {
         let indentation = document.indentation;
         let guides = indent_guides(&document.lines, indentation.tab_size, indentation.indent_size(), document.off_side);
-        let mut editor = OpenEditor { document, preview, model_id, selections: vec![Selection::default()], last_added: 0, leftovers: Vec::new(), column_select: None, smart_select: None, cursor_states: Default::default(), version_id: 1, history: History::default(), guides, highlights: Vec::new(), value_set_replacement: None, selection_anchor: None, folding: FoldingModel::default(), sticky_model: Default::default(), scroll: Scroll::default(), max_line_width: 0., host_reference: None, associated_file: false, markers: Vec::new(), view_zones: Vec::new() };
+        let mut editor = OpenEditor { document, preview, model_id, selections: vec![Selection::default()], last_added: 0, leftovers: Vec::new(), column_select: None, smart_select: None, cursor_states: Default::default(), version_id: 1, history: History::default(), guides, highlights: Vec::new(), value_set_replacement: None, selection_anchor: None, folding: FoldingModel::default(), syntax_folding: false, folded_imports: false, sticky_model: Default::default(), scroll: Scroll::default(), max_line_width: 0., host_reference: None, associated_file: false, markers: Vec::new(), view_zones: Vec::new() };
         editor.refresh_highlights();
         editor.refresh_folding_ranges();
         editor
@@ -534,6 +539,7 @@ pub struct EditorGroup {
     pub viewport: Viewport,
     /// unicodeHighlighter.ts `_bannerClosed`: the banner was closed for the model the code editor shows.
     pub unicode_banner_closed: bool,
+    pub disposed: model_service::DisposedModels,
 }
 
 impl EditorGroup {
@@ -559,28 +565,40 @@ impl EditorGroup {
 
     /// Opens a document right of the active editor, or in place of the preview editor when this open is a preview too.
     pub fn open(&mut self, document: TextDocument, preview: bool) {
-        self.next_model_id += 1;
-        let editor = OpenEditor::new(document, preview, self.next_model_id);
+        let editor = self.create_model(document, preview);
         self.insert(editor, preview);
     }
 
     /// Shows `document` in the editor at `index`, in place of the model it showed, and activates it.
     pub fn replace(&mut self, index: usize, document: TextDocument) {
-        self.next_model_id += 1;
-        let editor = OpenEditor::new(document, false, self.next_model_id);
+        let editor = self.create_model(document, false);
         let replaced = std::mem::replace(&mut self.editors[index], editor);
         self.recent.retain(|id| *id != replaced.model_id);
-        if replaced.host_reference.is_some() {
-            self.models.push(replaced);
-        }
+        self.keep_or_dispose(replaced);
         self.activate(index);
     }
 
     /// Creates a text model with no editor, as `$tryOpenDocument` does; returns its index in `models`.
     pub fn open_model(&mut self, document: TextDocument) -> usize {
-        self.next_model_id += 1;
-        self.models.push(OpenEditor::new(document, false, self.next_model_id));
+        let model = self.create_model(document, false);
+        self.models.push(model);
         self.models.len() - 1
+    }
+
+    /// `ModelService.createModel`, with the undo stack a closed model of the same text left.
+    fn create_model(&mut self, document: TextDocument, preview: bool) -> OpenEditor {
+        self.next_model_id += 1;
+        let mut model = OpenEditor::new(document, preview, self.next_model_id);
+        self.disposed.restore(&mut model);
+        model
+    }
+
+    /// A model whose editor went: the extension host may still hold it, else it is disposed.
+    fn keep_or_dispose(&mut self, model: OpenEditor) {
+        match model.host_reference {
+            Some(_) => self.models.push(model),
+            None => self.disposed.insert(model),
+        }
     }
 
     /// The model of `scheme`/`path`, in an editor or not.
@@ -601,7 +619,11 @@ impl EditorGroup {
 
     /// Drops the clean models without an editor whose host reference ran out; a dirty model stays, as text file models do.
     pub fn release_models(&mut self, now: Instant) {
-        self.models.retain(|model| model.is_dirty() || model.host_reference.is_some_and(|opened| now.duration_since(opened) < HOST_REFERENCE_AGE));
+        let (kept, released) = std::mem::take(&mut self.models).into_iter().partition(|model| model.is_dirty() || model.host_reference.is_some_and(|opened| now.duration_since(opened) < HOST_REFERENCE_AGE));
+        self.models = kept;
+        for model in released {
+            self.disposed.insert(model);
+        }
     }
 
     fn insert(&mut self, editor: OpenEditor, preview: bool) {
@@ -611,9 +633,7 @@ impl EditorGroup {
                 let replaced_id = self.editors[index].model_id;
                 self.recent.retain(|id| *id != replaced_id);
                 let replaced = std::mem::replace(&mut self.editors[index], editor);
-                if replaced.host_reference.is_some() {
-                    self.models.push(replaced);
-                }
+                self.keep_or_dispose(replaced);
                 index
             }
             None => {
@@ -668,9 +688,7 @@ impl EditorGroup {
         let shown = self.recent.first().copied();
         self.recent.retain(|id| *id != closed.model_id);
         self.shown_model_changed(shown);
-        if closed.host_reference.is_some() {
-            self.models.push(closed);
-        }
+        self.keep_or_dispose(closed);
     }
 }
 

@@ -107,6 +107,17 @@ impl Default for History {
     }
 }
 
+impl History {
+    /// `EditStackElement.heapSize` summed over the undo and redo groups; `None` without any.
+    pub(super) fn heap_size(&self) -> Option<usize> {
+        if self.undo.is_empty() && self.redo.is_empty() {
+            return None;
+        }
+        let edits = self.undo.iter().chain(&self.redo).flat_map(|group| &group.edits);
+        Some(edits.map(|edit| edit.removed.len() + edit.inserted.len()).sum())
+    }
+}
+
 #[derive(Debug)]
 struct UndoGroup {
     edits: Vec<AppliedEdit>,

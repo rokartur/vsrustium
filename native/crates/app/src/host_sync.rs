@@ -27,6 +27,8 @@ pub struct HostMessage {
     pub args: Vec<Value>,
     /// Where the host's answer goes, for `HostSync::call`.
     pub reply: Option<oneshot::Sender<Result<Value, Value>>>,
+    /// The host method takes a `CancellationToken`; dropping the reply's receiver cancels it.
+    pub cancellable: bool,
     /// Working copy file operations, run on the host thread so they reach its file operation participants.
     pub files: Option<FileWork>,
     /// An install or uninstall, run on the host thread, which owns the extensions and tells the host.
@@ -84,6 +86,8 @@ pub struct HostSync {
     activation_events: HashSet<String>,
     /// `configurationScopes` go to the host in a development build only (`MainThreadConfiguration.send_scopes`).
     pub configuration_scopes: bool,
+    /// `workbench.editor.untitled.labelFormat` is `content`: untitled tabs take their first line's words.
+    pub untitled_names_from_content: bool,
 }
 
 /// `TabModelOperationKind`.
@@ -97,7 +101,7 @@ const CODE_EDITOR_ID: &str = "vs.editor.ICodeEditor:1";
 
 impl HostSync {
     pub fn new(sender: Sender<HostMessage>) -> Self {
-        HostSync { sender, documents: Vec::new(), editor: None, visible_lines: None, tabs: Vec::new(), search_tabs: HashMap::new(), webview_tabs: HashMap::new(), activation_events: HashSet::new(), configuration_scopes: false }
+        HostSync { sender, documents: Vec::new(), editor: None, visible_lines: None, tabs: Vec::new(), search_tabs: HashMap::new(), webview_tabs: HashMap::new(), activation_events: HashSet::new(), configuration_scopes: false, untitled_names_from_content: true }
     }
 
     /// Sends what changed in `group` since the last call: activation for new languages, the document
@@ -150,7 +154,7 @@ impl HostSync {
     /// sends them: a whole `$acceptEditorTabModel` fires no `onDidChangeTabs`, which TypeScript's
     /// TabResourceTracker needs before it reports diagnostics.
     pub fn send_tabs(&mut self, group: &EditorGroup) {
-        let tabs: Vec<Value> = group.editors.iter().enumerate().map(|(index, editor)| tab_dto(editor, group.active_index() == Some(index), &self.search_tabs, &self.webview_tabs)).collect();
+        let tabs: Vec<Value> = group.editors.iter().enumerate().map(|(index, editor)| tab_dto(editor, group.active_index() == Some(index), self)).collect();
         let mut sent = std::mem::take(&mut self.tabs);
         for index in (0..sent.len()).rev() {
             if !tabs.iter().any(|tab| tab["id"] == sent[index]["id"]) {
@@ -287,13 +291,13 @@ impl HostSync {
 
     pub(crate) fn send(&self, proxy: &'static str, method: &'static str, args: Vec<Value>) {
         // The session thread is gone once the host exits; the workbench keeps working without it.
-        let _ = self.sender.send(HostMessage { proxy, method, args, reply: None, files: None, extensions: None });
+        let _ = self.sender.send(HostMessage { proxy, method, args, reply: None, cancellable: false, files: None, extensions: None });
     }
 
     /// Runs file edits on the host thread; with no host they run here on the disk, without participants.
     pub fn run_files(&self, job: FileJob) -> oneshot::Receiver<files::Result<FileUndo>> {
         let (reply, receiver) = oneshot::channel();
-        let message = HostMessage { proxy: "", method: "", args: Vec::new(), reply: None, files: Some(FileWork { job, reply }), extensions: None };
+        let message = HostMessage { proxy: "", method: "", args: Vec::new(), reply: None, cancellable: false, files: Some(FileWork { job, reply }), extensions: None };
         if let Err(unsent) = self.sender.send(message) {
             unsent.0.files.expect("the message carries file work").run(&mut files::disk::Disk);
         }
@@ -314,14 +318,21 @@ impl HostSync {
     /// Sends a request whose answer arrives on the receiver; a host that is gone drops the sender.
     pub fn call(&self, proxy: &'static str, method: &'static str, args: Vec<Value>) -> oneshot::Receiver<Result<Value, Value>> {
         let (reply, receiver) = oneshot::channel();
-        let _ = self.sender.send(HostMessage { proxy, method, args, reply: Some(reply), files: None, extensions: None });
+        let _ = self.sender.send(HostMessage { proxy, method, args, reply: Some(reply), cancellable: false, files: None, extensions: None });
+        receiver
+    }
+
+    /// `call` of a host method that takes a `CancellationToken`: dropping the receiver cancels the request.
+    pub fn call_cancellable(&self, proxy: &'static str, method: &'static str, args: Vec<Value>) -> oneshot::Receiver<Result<Value, Value>> {
+        let (reply, receiver) = oneshot::channel();
+        let _ = self.sender.send(HostMessage { proxy, method, args, reply: Some(reply), cancellable: true, files: None, extensions: None });
         receiver
     }
 
     /// Installs or uninstalls on the host thread; a host that is gone drops the sender.
     pub fn run_extensions(&self, job: Job) -> oneshot::Receiver<Result<Vec<ScannedExtension>, String>> {
         let (reply, receiver) = oneshot::channel();
-        let _ = self.sender.send(HostMessage { proxy: "", method: "", args: Vec::new(), reply: None, files: None, extensions: Some((job, reply)) });
+        let _ = self.sender.send(HostMessage { proxy: "", method: "", args: Vec::new(), reply: None, cancellable: false, files: None, extensions: Some((job, reply)) });
         receiver
     }
 }
@@ -406,11 +417,16 @@ pub fn tab_id(editor: &OpenEditor) -> String {
     format!("0~default-{type_id}-{} ", editor.document.uri_string())
 }
 
-fn tab_dto(editor: &OpenEditor, active: bool, search_tabs: &HashMap<PathBuf, SearchTab>, webview_tabs: &HashMap<PathBuf, WebviewTab>) -> Value {
+fn tab_dto(editor: &OpenEditor, active: bool, sync: &HostSync) -> Value {
+    let (search_tabs, webview_tabs) = (&sync.search_tabs, &sync.webview_tabs);
     let uri = editor.document.uri();
+    let label = match editor.document.scheme.as_str() {
+        "untitled" => crate::untitled::name(editor, sync.untitled_names_from_content),
+        _ => editor.document.name(),
+    };
     let mut tab = json!({
         "id": tab_id(editor),
-        "label": editor.document.name(),
+        "label": label,
         // TabInputKind.TextInput
         "input": { "kind": 1, "uri": uri },
         "editorId": "default",
