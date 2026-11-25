@@ -1,0 +1,7 @@
+[
+  {"wait": 8000},
+  {"shot": "prompt"},
+  {"hotkey": ["cmd", "shift", "x"]},
+  {"wait": 6000},
+  {"shot": "recommended"}
+]

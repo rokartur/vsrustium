@@ -311,6 +311,8 @@ pub enum Job {
     InstallVsix(PathBuf),
     InstallGallery(PathBuf, Box<GalleryExtension>),
     Uninstall(String),
+    /// An enablement change: the extensions to start and the ids to stop, nothing on disk.
+    Delta(Vec<ScannedExtension>, Vec<String>),
 }
 
 /// The window's extensions: the built-ins, the user folder and what the host runs.
@@ -340,6 +342,7 @@ impl WindowExtensions {
                 let builtin = self.builtins.iter().find(|builtin| builtin.id.eq_ignore_ascii_case(&id)).cloned();
                 (builtin.into_iter().collect(), vec![id])
             }
+            Job::Delta(to_add, to_remove) => (to_add, to_remove),
         };
         let (to_add, to_remove) = session.applicable_delta(&to_add, &to_remove);
         self.running.retain(|extension| !to_remove.contains(&extension.id.to_lowercase()));

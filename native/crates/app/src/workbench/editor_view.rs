@@ -72,12 +72,13 @@ impl Workbench {
             .map(|part| match editor.document.scheme.as_str() {
                 // A webview editor has no breadcrumbs: its resource has no file system provider.
                 WEBVIEW_PANEL_SCHEME => part.child(self.webview_editor_body(editor)),
+                super::extension_editor::EXTENSION_EDITOR_SCHEME => part.child(self.extension_editor_body(&editor.document.path, cx)),
                 // searchEditor.ts draws its query widget where a text editor has its breadcrumbs.
                 SEARCH_EDITOR_SCHEME => part.child(self.search_editor_query(window, cx)),
                 crate::output::OUTPUT_SCHEME => part.child(self.output_title_actions(window, cx)),
                 _ => part.child(self.breadcrumbs(editor)),
             })
-            .when(editor.document.scheme != WEBVIEW_PANEL_SCHEME, |part| part.children(self.unicode_banner(editor, cx)).child(self.text_area(editor, window, cx)))
+            .when(!matches!(editor.document.scheme.as_str(), WEBVIEW_PANEL_SCHEME | super::extension_editor::EXTENSION_EDITOR_SCHEME), |part| part.children(self.unicode_banner(editor, cx)).child(self.text_area(editor, window, cx)))
             // The active tab reaches into the part's top border, which Chrome still draws over it.
             .child(div().absolute().inset(px(-1.)).border_1().rounded(px(8.)).border_color(self.color("surface.border")))
     }
@@ -144,7 +145,7 @@ impl Workbench {
     fn tab_hover(&self, index: usize) -> impl IntoElement {
         let editor = &self.editors.editors[index];
         // `getTitle(Verbosity.LONG)`: a search editor's and a webview's is its name.
-        let title = match matches!(editor.document.scheme.as_str(), SEARCH_EDITOR_SCHEME | WEBVIEW_PANEL_SCHEME) {
+        let title = match matches!(editor.document.scheme.as_str(), SEARCH_EDITOR_SCHEME | WEBVIEW_PANEL_SCHEME | super::extension_editor::EXTENSION_EDITOR_SCHEME) {
             true => self.editor_name(editor),
             false => crate::quick_input::path_label(&editor.document.path, None),
         };
@@ -228,6 +229,10 @@ impl Workbench {
         // `SearchEditorInput.getIcon`.
         if document.scheme == SEARCH_EDITOR_SCHEME {
             return Some(self.icon("search", 16., 16., foreground).h(px(line_height)));
+        }
+        // `ExtensionsInput.getIcon`.
+        if document.scheme == super::extension_editor::EXTENSION_EDITOR_SCHEME {
+            return Some(self.icon("extensions", 16., 16., foreground).h(px(line_height)));
         }
         if let Some(icon) = self.webview_icon(&document.path) {
             return Some(div().flex().items_center().h(px(line_height)).child(gpui::img(icon.to_path_buf()).size(px(16.))));
@@ -1393,7 +1398,7 @@ impl Workbench {
         }
         let prominent_items = items.len();
         // A webview editor shows no editor status entries.
-        if let Some(editor) = self.editors.active().filter(|editor| editor.document.scheme != WEBVIEW_PANEL_SCHEME) {
+        if let Some(editor) = self.editors.active().filter(|editor| !matches!(editor.document.scheme.as_str(), WEBVIEW_PANEL_SCHEME | super::extension_editor::EXTENSION_EDITOR_SCHEME)) {
             items.extend(Self::editor_status_entries(editor, &self.languages));
         }
         let prominent = (self.theme.color("statusBarItem.prominentBackground"), self.color("statusBarItem.prominentForeground"));

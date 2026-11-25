@@ -16,6 +16,10 @@ mod editor_view;
 mod explorer_actions;
 mod extension_management;
 mod explorer_find;
+mod extension_editor;
+mod extensions_list_view;
+mod workspace_recommendations;
+pub(crate) mod extensions_view;
 mod file_participants;
 mod find_widget;
 mod auto_save;
@@ -152,6 +156,8 @@ pub struct Workbench {
     pub search_editors: search_editor_view::SearchEditors,
     pub search_editor_widget: search_editor_widget::SearchEditorWidget,
     pub webview_panels: webview_panels::WebviewPanels,
+    pub extensions_viewlet: extensions_view::ExtensionsViewlet,
+    pub extension_editors: Vec<extension_editor::ExtensionEditor>,
     /// `MenuRegistry`.
     pub menus: Vec<crate::menus::MenuItem>,
     pub(crate) context_menu: Option<context_menu::ContextMenu>,
@@ -176,6 +182,7 @@ impl Render for Workbench {
         self.follow_marker_navigation_cursor();
         self.refresh_selection_highlights(window);
         self.update_webview_panels(window, cx);
+        self.update_extension_editor_webviews(window, cx);
         self.auto_save_models_changed(cx);
         let viewport = window.viewport_size();
         let window_border = self.theme.color("window.activeBorder");
@@ -286,6 +293,8 @@ impl Workbench {
             search_editors: HashMap::new(),
             search_editor_widget: search_editor_widget::SearchEditorWidget::new(cx),
             webview_panels: Default::default(),
+            extensions_viewlet: extensions_view::ExtensionsViewlet::new(cx),
+            extension_editors: Vec::new(),
             menus: crate::menus::workbench_menus(),
             context_menu: None,
             context_menus_shown: 0,
@@ -324,6 +333,8 @@ impl Workbench {
         workbench.register_output_actions();
         workbench.register_logs_actions();
         workbench.register_extension_management_commands();
+        workbench.register_extensions_view_commands();
+        workbench.register_workspace_recommendations_commands();
         // Keybindings resolve before the focused element sees the key, and with nothing focused too.
         let entity = cx.entity().downgrade();
         cx.intercept_keystrokes(move |event, window, cx| {
@@ -532,7 +543,7 @@ impl Workbench {
     fn side_bar_visible(&self) -> bool {
         match self.side_bar_view {
             SideBarView::Explorer => self.folder.is_some(),
-            SideBarView::Search => true,
+            SideBarView::Search | SideBarView::Extensions => true,
         }
     }
 
@@ -540,7 +551,6 @@ impl Workbench {
         let views = [
             ("source-control", "Source Control", "workbench.view.scm"),
             ("debug-alt", "Run and Debug", "workbench.view.debug"),
-            ("extensions", "Extensions", "workbench.view.extensions"),
         ];
         // The side bar is on the left, so the hovers go right of the bar (activitybarPart.ts).
         let hover = HoverOptions::composite_bar(HoverPosition::Right);
@@ -554,6 +564,7 @@ impl Workbench {
         };
         let explorer = view_icon("files", SideBarView::Explorer, "workbench.view.explorer");
         let search = view_icon("search-large", SideBarView::Search, "workbench.view.search");
+        let extensions = view_icon("extensions", SideBarView::Extensions, extensions_view::VIEWLET_ID).relative().children(self.extensions_activity_badge());
         div()
             .w(px(44.))
             .flex()
@@ -573,7 +584,8 @@ impl Workbench {
                     .gap(px(8.))
                     .child(explorer.child(self.action_hover("Explorer", "workbench.view.explorer", hover)))
                     .child(search.child(self.action_hover("Search", "workbench.view.search", hover)))
-                    .children(views.map(|(name, title, command)| self.icon(name, 36., 24., inactive).cursor_pointer().child(self.action_hover(title, command, hover)))),
+                    .children(views.map(|(name, title, command)| self.icon(name, 36., 24., inactive).cursor_pointer().child(self.action_hover(title, command, hover))))
+                    .child(extensions.child(self.action_hover("Extensions", extensions_view::VIEWLET_ID, hover))),
             )
             .child(self.icon("settings-gear", 36., 24., inactive).cursor_pointer().child(self.hover_target("manage", HoverContent::Text("Manage".into()), hover)))
     }
@@ -593,6 +605,10 @@ impl Workbench {
     /// The Explorer: title, the folder section with its tree, and the collapsed Outline and Timeline sections.
     fn side_bar(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         let foreground = self.foreground_or("sideBar.foreground");
+        if self.side_bar_view == SideBarView::Extensions {
+            let title = self.side_bar_title_text(self.extensions_title()).child(self.extensions_title_actions(cx));
+            return self.side_bar_frame().text_color(foreground).child(title).child(self.extensions_view(window, cx));
+        }
         if self.side_bar_view == SideBarView::Search {
             let title = self.side_bar_title("Search").child(self.search_title_actions(cx));
             return self.side_bar_frame().text_color(foreground).child(title).child(self.search_view(window, cx));
@@ -812,6 +828,10 @@ impl Workbench {
 
     /// The composite title bar: the view's name and its actions.
     fn side_bar_title(&self, name: &'static str) -> Div {
+        self.side_bar_title_text(name.to_owned())
+    }
+
+    fn side_bar_title_text(&self, name: String) -> Div {
         div()
             .h(px(32.))
             .flex_none()

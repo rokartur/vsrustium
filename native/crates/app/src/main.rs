@@ -16,6 +16,9 @@ mod dialog;
 mod editor;
 mod editor_history;
 mod explorer;
+mod extension_enablement;
+mod extension_recommendations;
+mod extensions_model;
 mod file_actions;
 mod file_icons;
 mod filters;
@@ -117,7 +120,22 @@ fn main() -> anyhow::Result<()> {
     if let Some(development) = &development {
         development.add_extension(&mut extensions)?;
     }
-    let window_extensions = WindowExtensions { builtins, user: user_extensions, running: extensions.clone() };
+    // storageMainService.ts: no storage during extension tests, so each test run starts empty.
+    let extension_tests = development.as_ref().is_some_and(|development| development.tests_path.is_some());
+    let storage = match extension_tests {
+        true => MainThreadStorage::in_memory(),
+        false => MainThreadStorage::open(&SessionPaths { app_root: &app_root, user_data: &user_data, workspace: workspace.as_ref() })?,
+    };
+    // The extensions the user disabled stay out of the host and the registries (extensionEnablementService.ts).
+    let developed: Vec<String> = extensions.iter().filter(|extension| extension.description["isUnderDevelopment"] == true).map(|extension| extension.id.clone()).collect();
+    let installed = extensions.clone();
+    let disabled = {
+        let mut profile = storage.profile.lock().unwrap();
+        let mut workspace_storage = storage.workspace.lock().unwrap();
+        workbench::extensions_view::disabled_at_startup(&installed, &mut profile, workspace.is_some().then_some(&mut *workspace_storage), &developed)
+    };
+    extensions.retain(|extension| !disabled.contains(&extension.id));
+    let window_extensions = WindowExtensions { builtins: builtins.clone(), user: UserExtensions { folder: user_extensions.folder.clone(), product_version: VERSION.into() }, running: extensions.clone() };
     let described: Vec<(&str, &serde_json::Value)> = extensions.iter().map(|extension| (extension.id.as_str(), &extension.description)).collect();
     let settings = Settings::load(Registry::with_extensions(&described), user_data.join("User"), workspace.clone());
     let theme = match flag_value("--theme") {
@@ -128,12 +146,6 @@ fn main() -> anyhow::Result<()> {
     let color_themes = theme::color_themes(&extensions)?;
     let settings = Arc::new(Mutex::new(settings));
     let keybindings_file = user_data.join("User/keybindings.json");
-    // storageMainService.ts: no storage during extension tests, so each test run starts empty.
-    let extension_tests = development.as_ref().is_some_and(|development| development.tests_path.is_some());
-    let storage = match extension_tests {
-        true => MainThreadStorage::in_memory(),
-        false => MainThreadStorage::open(&SessionPaths { app_root: &app_root, user_data: &user_data, workspace: workspace.as_ref() })?,
-    };
 
     application().run(move |cx: &mut App| {
         // Same size as the reference capture in port/tools/ref-screenshot, so pixel diffs line up.
@@ -172,6 +184,7 @@ fn main() -> anyhow::Result<()> {
                 workbench.extensions = extensions.clone();
                 workbench.restore_profile_state(storage.profile.clone());
                 workbench.restore_workspace_state(storage.workspace.clone());
+                workbench.set_installed_extensions(builtins.clone(), UserExtensions { folder: user_extensions.folder.clone(), product_version: VERSION.into() }, developed.clone(), cx);
                 workbench.watch_editor_focus(window, cx);
                 if let Some(file) = file {
                     workbench.open_file(file, true, window, cx);

@@ -28,6 +28,8 @@ gpui.workspace = true
 gpui_platform = { workspace = true, features = ["font-kit"] }
 icu_normalizer = { version = "2.4", default-features = false, features = ["compiled_data"] }
 serde.workspace = true
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+semver = "1"
 sha2 = "0.10"
 serde_json.workspace = true
 storage = { path = "../storage" }

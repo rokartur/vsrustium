@@ -273,7 +273,8 @@ impl Workbench {
         context.insert("dirtyWorkingCopies".into(), json!(self.editors.editors.iter().any(|editor| editor.is_dirty())));
         // toggleMultiCursorModifier.ts `MultiCursorModifierContextKeyController`.
         context.insert("multiCursorModifier".into(), json!(if self.multi_cursor_modifier_is_cmd() { "ctrlCmd" } else { "altKey" }));
-        // viewDescriptorService.ts: the Explorer and Search containers always hold their view.
+        // viewDescriptorService.ts: the Explorer, Search and Extensions containers always hold their views.
+        context.insert("viewContainer.workbench.view.extensions.enabled".into(), json!(true));
         for (container, view) in [("workbench.view.explorer", "workbench.explorer.fileView"), ("workbench.view.search", "workbench.view.search")] {
             context.insert(format!("viewContainer.{container}.enabled"), json!(true));
             context.insert(format!("{view}.active"), json!(true));
@@ -322,6 +323,7 @@ impl Workbench {
         match self.side_bar_view {
             SideBarView::Explorer => self.explorer_context(window, &mut context),
             SideBarView::Search => self.search_context(window, &mut context),
+            SideBarView::Extensions => self.extensions_context(window, &mut context),
         }
         self.keybindings_editor_context(window, &mut context);
         self.search_editor_context(window, &mut context);
