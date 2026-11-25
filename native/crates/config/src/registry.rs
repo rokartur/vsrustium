@@ -363,4 +363,33 @@ mod tests {
         assert_eq!(registry.property("workbench.colorTheme").unwrap().default, json!("Dark 2026"));
         assert_eq!(registry.property("[yaml]").unwrap().default, json!({ "editor.insertSpaces": true, "editor.tabSize": 2 }));
     }
+
+    /// configurations.test.ts `DefaultConfiguration` cases without events: the port builds the registry once per
+    /// extension set (`with_extensions`), so the initialize, update and deregister cases have no counterpart.
+    #[test]
+    fn default_configuration_cases() {
+        let model = registry(json!({ "a": { "type": "boolean", "default": false } }), &[]).default_model();
+        assert_eq!(model.get_value(Some("a")), Some(json!(false)), "registering a property");
+
+        let model = registry(json!({ "a.b": { "type": "object", "default": {} }, "a.b.c": { "type": "object", "default": "2" } }), &[]).default_model();
+        assert_eq!(model.get_value(Some("a")), Some(json!({ "b": { "c": "2" } })), "nested properties");
+        assert_eq!(model.keys, ["a.b", "a.b.c"]);
+
+        let mut same = Registry::default();
+        for (id, default) in [("first", true), ("second", false)] {
+            same.register_configuration(id, &json!({ "contributes": { "configuration": { "id": "a", "properties": { "a": { "type": "boolean", "default": default } } } } }));
+        }
+        same.finish();
+        assert_eq!(same.default_model().get_value(Some("a")), Some(json!(true)), "the first registration wins");
+
+        let model = registry(json!({}), &[json!({ "[a]": { "b": true } })]).default_model();
+        assert_eq!(model.get_value(Some("[a]")), Some(json!({ "b": true })), "an override identifier");
+        assert_eq!(model.keys, ["[a]"]);
+        assert_eq!(model.get_override_value(Some("b"), "a"), Some(json!(true)));
+
+        let model = registry(json!({ "b": { "type": "boolean", "default": false } }), &[json!({ "[a]": { "b": true } })]).default_model();
+        assert_eq!((model.get_value(Some("b")), model.get_value(Some("[a]"))), (Some(json!(false)), Some(json!({ "b": true }))), "a property and an override identifier");
+        assert_eq!(model.keys, ["b", "[a]"]);
+        assert_eq!(model.get_override_value(Some("b"), "a"), Some(json!(true)));
+    }
 }

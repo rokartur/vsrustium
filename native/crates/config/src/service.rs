@@ -1029,6 +1029,52 @@ mod tests {
         assert!(fixture.settings.reload_changed_files().is_none());
     }
 
+    /// platform/configuration's configurationService.test.ts cases that read one user settings file.
+    #[test]
+    fn platform_configuration_service_cases() {
+        let root = std::env::temp_dir().join(format!("config-service-platform-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let load = || {
+            let mut registry = Registry::core();
+            let properties = json!({
+                "configuration.service.testSetting": { "type": "string", "default": "isSet" },
+                "lookup.service.testNullSetting": { "type": "null" },
+            });
+            registry.register_configuration("test", &json!({ "contributes": { "configuration": { "id": "_test", "properties": properties } } }));
+            registry.finish();
+            Settings::load(registry, root.join("User"), None)
+        };
+        let settings_file = root.join("User/settings.json");
+        let value = |settings: &Settings, key: &str| settings.get_value(Some(key), &Overrides::default());
+
+        let mut settings = load();
+        assert_eq!(value(&settings, "configuration.service.testSetting"), Some(json!("isSet")), "missing file does not explode, model defaults");
+
+        write_file(&settings_file, r#"{ "foo": "bar", "testworkbench.editor.tabs": true }"#);
+        settings.reload_changed_files().expect("the created file fires a change");
+        assert_eq!(value(&settings, "foo"), Some(json!("bar")));
+        assert_eq!(value(&settings, "testworkbench"), Some(json!({ "editor": { "tabs": true } })), "config gets flattened");
+
+        write_file(&settings_file, ",,,,");
+        assert!(load().get_value(None, &Overrides::default()).is_some(), "error case does not explode");
+
+        let missing = settings.configuration.inspect("something.missing", &Overrides::default());
+        assert_eq!((missing.value, missing.default_value, missing.user_local.value), (None, None, None));
+
+        write_file(&settings_file, r#"{ "configuration.service.testSetting": "bar" }"#);
+        settings.reload_changed_files().unwrap();
+        let lookup = settings.configuration.inspect("configuration.service.testSetting", &Overrides::default());
+        assert_eq!((lookup.value, lookup.default_value, lookup.user_local.value), (Some(json!("bar")), Some(json!("isSet")), Some(json!("bar"))));
+
+        let null = settings.configuration.inspect("lookup.service.testNullSetting", &Overrides::default());
+        assert_eq!((null.value, null.default_value, null.user_local.value), (Some(Value::Null), Some(Value::Null), None));
+        write_file(&settings_file, r#"{ "lookup.service.testNullSetting": null }"#);
+        settings.reload_changed_files().unwrap();
+        let null = settings.configuration.inspect("lookup.service.testNullSetting", &Overrides::default());
+        assert_eq!((null.value, null.default_value, null.user_local.value), (Some(Value::Null), Some(Value::Null), Some(Value::Null)), "lookup with null");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn a_workspace_file_is_the_workspace_layer() {
         let mut fixture = Fixture::with_workspace("multi-root", |root| {
