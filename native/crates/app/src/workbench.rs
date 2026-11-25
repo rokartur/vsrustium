@@ -111,6 +111,7 @@ pub struct Workbench {
     marked_text: Option<Range<usize>>,
     /// A left button press in the text is held, so moves extend the selection.
     selecting_text: bool,
+    text_drag: Option<editor_view::drag_and_drop::TextDrag>,
     /// editorOptions.ts `stopRenderingLineAfter` (10000) of the group's code editor; longLinesHelper.ts clears it.
     stop_rendering_line_after: Option<usize>,
     middle_scroll: Option<middle_scroll::MiddleScroll>,
@@ -223,6 +224,7 @@ impl Workbench {
             input_carets_hidden: false,
             marked_text: None,
             selecting_text: false,
+            text_drag: None,
             stop_rendering_line_after: Some(10_000),
             middle_scroll: None,
             quick_inputs: quick_input_view::QuickInputs::new(cx),
@@ -1044,6 +1046,50 @@ mod tests {
         assert_eq!(state(cx).0, None, "editor.action.cancelSelectionAnchor");
         cx.simulate_keystrokes("cmd-k cmd-b down cmd-k cmd-k");
         assert_eq!(state(cx), (None, vec![Selection { anchor: Position::new(0, 3), head: Position::new(1, 3) }]), "editor.action.selectFromAnchorToCursor");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[gpui::test]
+    fn dragging_selected_text_moves_it_and_a_key_cancels_the_drag(cx: &mut TestAppContext) {
+        use crate::editor::{Position, Selection};
+        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
+        let theme = load_theme(&[themes], "Dark Modern").unwrap();
+        let dir = std::env::temp_dir().join(format!("code-gpui-text-drag-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("a.txt");
+        std::fs::write(&file, "Port notes for\nthe editor").unwrap();
+        let (sender, _receiver) = std::sync::mpsc::channel();
+        let (workbench, cx) = cx.add_window_view(|window, cx| {
+            let mut workbench = Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), crate::default_settings(), HostSync::new(sender), cx);
+            workbench.open_file(file.clone(), true, window, cx);
+            workbench
+        });
+        cx.run_until_parked();
+        let notes = Selection { anchor: Position::new(0, 5), head: Position::new(0, 10) };
+        let alt = gpui::Modifiers { alt: true, ..Default::default() };
+        workbench.update(cx, |workbench, cx| {
+            workbench.editors.active_mut().unwrap().set_selections(vec![notes]);
+            assert!(!workbench.start_text_drag(0, 7., alt, 1), "Alt adds a cursor instead");
+            assert!(!workbench.start_text_drag(0, 7., Default::default(), 2), "a double click selects a word");
+            assert!(!workbench.start_text_drag(0, 2., Default::default(), 1), "outside the selection");
+            assert!(workbench.start_text_drag(0, 7., Default::default(), 1));
+            workbench.drag_text(0, 8., false, cx);
+            assert_eq!(workbench.text_drag.as_ref().unwrap().target, None, "no target inside the selection");
+            workbench.drag_text(1, 7., false, cx);
+            assert_eq!(workbench.text_drag.as_ref().unwrap().target, Some(Position::new(1, 7)));
+            assert_eq!(workbench.text_cursor_style(), gpui::CursorStyle::Arrow);
+            workbench.drop_text(1, 7., Default::default(), cx);
+            let editor = workbench.editors.active().unwrap();
+            assert_eq!(editor.document.lines, ["Port  for", "the edinotestor"]);
+            assert_eq!(editor.selections, [Selection { anchor: Position::new(1, 7), head: Position::new(1, 12) }]);
+            assert!(workbench.start_text_drag(1, 9., Default::default(), 1));
+            workbench.drag_text(1, 9., true, cx);
+            workbench.drag_text(0, 0., true, cx);
+            assert_eq!(workbench.text_cursor_style(), gpui::CursorStyle::DragCopy);
+        });
+        cx.simulate_keystrokes("escape");
+        workbench.read_with(cx, |workbench, _| assert!(workbench.text_drag.is_none(), "a key press cancels the drag"));
         std::fs::remove_dir_all(dir).unwrap();
     }
 

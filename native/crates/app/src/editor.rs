@@ -22,6 +22,7 @@ pub mod commands;
 pub mod cursor_undo;
 mod comment;
 mod cursor;
+pub mod drag_and_drop;
 mod edit;
 pub mod find;
 pub mod folding;

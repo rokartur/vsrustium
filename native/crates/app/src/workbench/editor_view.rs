@@ -16,6 +16,7 @@ use gpui::{
     Rgba, ScrollDelta, ScrollWheelEvent, Stateful, StyledText, Task, Window, canvas, div, fill, font, point, prelude::*, px, rgb, size,
 };
 
+pub(super) mod drag_and_drop;
 pub(super) mod sticky_scroll_view;
 
 use files::encoding::SUPPORTED_ENCODINGS;
@@ -285,6 +286,7 @@ impl Workbench {
             .on_key_down(cx.listener(Self::editor_key_down))
             .on_scroll_wheel(cx.listener(Self::editor_wheel))
             .on_modifiers_changed(cx.listener(Self::sticky_modifiers_changed))
+            .on_modifiers_changed(cx.listener(|workbench, event: &gpui::ModifiersChangedEvent, _, cx| workbench.text_drag_modifiers_changed(event.modifiers, cx)))
             .on_hover(cx.listener(|workbench, hovered: &bool, _, cx| {
                 workbench.scrollbars.mouse_over = *hovered;
                 match hovered {
@@ -298,9 +300,18 @@ impl Workbench {
                 }
             }))
             .capture_any_mouse_up(cx.listener(|workbench, _, _, cx| workbench.middle_scroll_mouse_up(cx)))
-            .capture_key_down(cx.listener(|workbench, _, _, cx| workbench.end_middle_scroll(cx)))
-            .on_mouse_up(MouseButton::Left, cx.listener(|workbench, _, _, _| workbench.selecting_text = false))
-            .on_mouse_up_out(MouseButton::Left, cx.listener(|workbench, _, _, _| workbench.selecting_text = false))
+            .capture_key_down(cx.listener(|workbench, _, _, cx| {
+                workbench.end_middle_scroll(cx);
+                workbench.cancel_text_drag(cx);
+            }))
+            .on_mouse_up(MouseButton::Left, cx.listener(|workbench, _, _, cx| {
+                workbench.selecting_text = false;
+                workbench.cancel_text_drag(cx);
+            }))
+            .on_mouse_up_out(MouseButton::Left, cx.listener(|workbench, _, _, cx| {
+                workbench.selecting_text = false;
+                workbench.cancel_text_drag(cx);
+            }))
             .child(
                 canvas(
                     move |bounds, window, cx| {
@@ -331,7 +342,7 @@ impl Workbench {
             )
             // .view-lines is monaco-mouse-cursor-text; the line numbers, glyph margin and the overview ruler over the
             // vertical scrollbar keep the default cursor.
-            .child(div().absolute().top_0().bottom_0().left(px(metrics.content_left())).right(px(OVERVIEW_RULER_WIDTH)).cursor_text().on_mouse_down(
+            .child(div().absolute().top_0().bottom_0().left(px(metrics.content_left())).right(px(OVERVIEW_RULER_WIDTH)).cursor(self.text_cursor_style()).on_mouse_down(
                 MouseButton::Right,
                 // Below the last line (MouseTargetType.CONTENT_EMPTY): the position is the end of the last line.
                 cx.listener(|workbench, event: &MouseDownEvent, window, cx| {
@@ -401,6 +412,7 @@ impl Workbench {
     }
 
     fn editor_widget_blurred(&mut self, blurred_at: &Cell<Option<(u32, u32)>>, cx: &mut Context<Self>) {
+        self.text_drag = None;
         if let Some(editor) = self.editors.active_mut() {
             editor.highlights.clear();
             blurred_at.set(Some((editor.model_id, editor.version_id)));
@@ -837,6 +849,9 @@ impl Workbench {
                     let left = if x >= 1. { x - 1. } else { x };
                     content = content.child(div().absolute().top_0().left(px(left)).w(px(2.)).h_full().bg(color));
                 }
+                if let Some(target) = self.text_drag.as_ref().and_then(|drag| drag.target).filter(|target| target.line == index) {
+                    content = content.child(self.drop_target_marker(visible_column(text, target.column, tab_size) as f32 * char_width));
+                }
                 let visible_at = move |workbench: &Workbench, x: gpui::Pixels| (f32::from(x) - workbench.text_area_left.get() - metrics.content_left() + scroll_left) / char_width;
                 let content = div()
                     .relative()
@@ -848,9 +863,12 @@ impl Workbench {
                     .child(content)
                     .on_mouse_down(MouseButton::Left, cx.listener(move |workbench, event: &MouseDownEvent, window, cx| {
                         window.focus(&workbench.editor_focus, cx);
-                        workbench.selecting_text = true;
                         let modifiers = event.modifiers;
                         let visible = visible_at(workbench, event.position.x);
+                        if workbench.start_text_drag(index, visible, modifiers, event.click_count) {
+                            return;
+                        }
+                        workbench.selecting_text = true;
                         workbench.fold_mouse_down = workbench.at_line_end(index, visible).then_some((index, false));
                         workbench.click_text(index, visible, modifiers, modifiers.shift, event.click_count, cx);
                         workbench.show_long_line(index, visible, char_width, cx);
@@ -869,6 +887,9 @@ impl Workbench {
                         workbench.show_long_line(index, visible, char_width, cx);
                     }))
                     .on_mouse_up(MouseButton::Left, cx.listener(move |workbench, event: &MouseUpEvent, _, cx| {
+                        if workbench.text_drag.is_some() {
+                            return workbench.drop_text(index, visible_at(workbench, event.position.x), event.modifiers, cx);
+                        }
                         if workbench.at_line_end(index, visible_at(workbench, event.position.x)) {
                             workbench.release_fold_click(index, false, event.modifiers, false, cx);
                         }
@@ -881,6 +902,7 @@ impl Workbench {
                     .on_mouse_move(cx.listener(move |workbench, event: &MouseMoveEvent, _, cx| {
                         workbench.editor_message_mouse_moved(index, cx);
                         match event.pressed_button {
+                            Some(MouseButton::Left) if workbench.text_drag.is_some() => workbench.drag_text(index, visible_at(workbench, event.position.x), event.modifiers.alt, cx),
                             Some(MouseButton::Left) if workbench.selecting_text => workbench.click_text(index, visible_at(workbench, event.position.x), event.modifiers, true, 1, cx),
                             Some(MouseButton::Middle) if workbench.selecting_text => workbench.column_select_text(index, visible_at(workbench, event.position.x), true, cx),
                             _ => {}

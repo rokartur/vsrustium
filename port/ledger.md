@@ -234,7 +234,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | editor/contrib/contextmenu | src/vs/editor/contrib | ported | right click on text or below the last line: focus, cursor to the pointer unless a selection holds it, `MenuId.EditorContext` with Cut, Copy, Paste and Command Palette... (port/results/contextmenu.md, cargo test -p app editor_menus); no Change All Occurrences or Refactor... (no such commands yet), no scrollbar menu, no Shift+F10 |
 | editor/contrib/cursorUndo | src/vs/editor/contrib | verified | Cursor Undo (Cmd+U) and Cursor Redo over the selections and scroll positions of cursor-only changes, cleared by an edit or another shown model: cargo test -p app cursor_undo (both cursorUndo.test.ts cases); ui-pair on a .ts file matches the reference |
 | editor/contrib/diffEditorBreadcrumbs | src/vs/editor/contrib | todo |  |
-| editor/contrib/dnd | src/vs/editor/contrib | todo |  |
+| editor/contrib/dnd | src/vs/editor/contrib | verified | `editor/drag_and_drop.rs` (DragAndDropCommand) and `workbench/editor_view/drag_and_drop.rs`: a press on the primary selection drags its text, the dotted `.dnd-target` bar, Alt copies, a key cancels: cargo test -p app drag; ui-pair notes.txt double click then drag |
 | editor/contrib/documentSymbols | src/vs/editor/contrib | todo |  |
 | editor/contrib/dropOrPasteInto | src/vs/editor/contrib | todo |  |
 | editor/contrib/editorState | src/vs/editor/contrib | todo |  |
