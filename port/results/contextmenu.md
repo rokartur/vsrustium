@@ -31,3 +31,11 @@ Reference: `FOLDER=port/fixtures/workspace port/tools/ref-contextmenu /tmp/ref-m
 
 - README.md: the port shows markdown-language-features' Open Preview (`navigation`) and Find File References (`4_search`) at the reference's places, then Cut, Copy | Rename..., Delete. The reference's other items (Open to the Side, Open With..., Reveal in Finder, Open in Integrated Terminal, Select for Compare, Open Timeline, Copy Path, Copy Relative Path) are core commands the port does not have yet.
 - `cargo test -p app`: 846 passed, 1 ignored.
+
+## Milestone 12: Copy Path, Copy Relative Path, Reveal in Finder
+
+`port/tools/ui-pair` on `port/fixtures/workspace` (copied to `~/m12-ws`), Dark Modern: click the `src` row, Alt+Cmd+C, Shift+Alt+Cmd+C (pasteboard read by the `clipboard` step), right click the row.
+
+- Pasteboard: `<folder>/src` and `src` in both.
+- Menu: New File..., New Folder..., Reveal in Finder [⌥⌘R] | Cut, Copy, Paste | Copy Path [⌥⌘C], Copy Relative Path [⇧⌥⌘C] | Rename..., Delete, at the reference's places. The reference also has Open in Images Preview, Open in Integrated Terminal, Find in Folder... and Open Timeline, which the port does not have, and shows Delete Permanently where the port shows Delete.
+- `cargo test -p app`: 888 passed, 1 ignored.

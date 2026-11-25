@@ -247,6 +247,7 @@ impl Workbench {
                 context.insert("historyNavigationBackwardsEnabled".into(), json!(true));
             }
             context.insert("resourceScheme".into(), json!(editor.document.scheme));
+            context.insert("isFileSystemResource".into(), json!(editor.document.scheme == "file"));
             let path = &editor.document.path;
             context.insert("resourceFilename".into(), json!(path.file_name().map(|name| name.to_string_lossy()).unwrap_or_default()));
             context.insert("resourceExtname".into(), json!(path.extension().map(|ext| format!(".{}", ext.to_string_lossy())).unwrap_or_default()));

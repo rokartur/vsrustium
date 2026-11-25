@@ -179,7 +179,7 @@ fn the_context_menu_selects_the_row_and_runs_its_items_with_keys_and_clicks(cx: 
     cx.simulate_mouse_down(file_row, MouseButton::Right, Modifiers::none());
     cx.simulate_mouse_up(file_row, MouseButton::Right, Modifiers::none());
     cx.run_until_parked();
-    assert_eq!(menu_titles(&workbench, cx), ["Cut", "Copy", "---", "Rename...", "Delete"]);
+    assert_eq!(menu_titles(&workbench, cx), ["Reveal in Finder", "---", "Cut", "Copy", "---", "Copy Path", "Copy Relative Path", "---", "Rename...", "Delete"]);
     assert_eq!(workbench.read_with(cx, |workbench, _| workbench.folder.as_ref().unwrap().selected.clone()), [dir.join("a.txt")]);
 
     // The pointer focuses the item under it; Down goes on from there and skips the separator; Enter runs it.
@@ -190,9 +190,9 @@ fn the_context_menu_selects_the_row_and_runs_its_items_with_keys_and_clicks(cx: 
     assert_eq!(focused(cx), None);
     cx.simulate_mouse_move(point(px(150.), px(148.)), None, Modifiers::none());
     cx.simulate_keystrokes("pagedown");
-    assert_eq!(focused(cx), Some(4));
-    cx.simulate_keystrokes("pageup down down");
-    assert_eq!(focused(cx), Some(3));
+    assert_eq!(focused(cx), Some(9));
+    cx.simulate_keystrokes("pageup down down down down down");
+    assert_eq!(focused(cx), Some(8));
     cx.simulate_keystrokes("enter");
     cx.run_until_parked();
     assert!(workbench.read_with(cx, |workbench, _| workbench.context_menu.is_none() && workbench.explorer.edit.as_ref().is_some_and(|edit| edit.renamed.is_some())));
@@ -207,9 +207,10 @@ fn the_context_menu_selects_the_row_and_runs_its_items_with_keys_and_clicks(cx: 
     assert!(workbench.update_in(cx, |workbench, window, _| workbench.context_menu.is_none() && workbench.explorer.focus.is_focused(window)));
 
     // A click runs the item only 100ms after the menu showed; with Alt, Delete is Delete Permanently.
-    // Items are 24px from y 136 (the 2px pointer, the border and the 4px padding), the separator 11px.
+    // Items are 24px from the border and the 4px padding, the separators 11px.
     cx.simulate_mouse_down(file_row, MouseButton::Right, Modifiers::none());
-    let delete = point(px(150.), px(136. + 24. * 2. + 11. + 24. + 12.));
+    let top = workbench.read_with(cx, |workbench, _| f32::from(workbench.context_menu.as_ref().unwrap().origin.y));
+    let delete = point(px(150.), px(top + 5. + 24. * 6. + 11. * 3. + 12.));
     cx.simulate_mouse_down(delete, MouseButton::Left, Modifiers::alt());
     cx.simulate_mouse_up(delete, MouseButton::Left, Modifiers::alt());
     assert!(workbench.read_with(cx, |workbench, _| workbench.context_menu.is_some()), "too early");
@@ -219,6 +220,35 @@ fn the_context_menu_selects_the_row_and_runs_its_items_with_keys_and_clicks(cx: 
     cx.run_until_parked();
     assert_eq!(names(&dir), ["sub"]);
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// fileCommands.ts `copyPathCommandHandler` and `copyRelativePathCommandHandler` by their default keybindings,
+/// one line per selected item, then with `explorer.copyRelativePathSeparator`.
+#[gpui::test]
+fn copy_path_copies_the_selected_items_paths(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = explorer("explorer-copy-path", cx);
+    let clipboard = |cx: &mut VisualTestContext| cx.read_from_clipboard().and_then(|item| item.text()).unwrap();
+    select(&workbench, &dir.join("sub"), cx);
+    cx.simulate_keystrokes("alt-cmd-c");
+    assert_eq!(clipboard(cx), dir.join("sub").to_string_lossy());
+    cx.simulate_keystrokes("shift-alt-cmd-c");
+    assert_eq!(clipboard(cx), "sub");
+
+    workbench.update(cx, |workbench, _| workbench.folder.as_mut().unwrap().click_select(&dir.join("a.txt"), true, false));
+    cx.simulate_keystrokes("shift-alt-cmd-c");
+    assert_eq!(clipboard(cx), "sub\na.txt");
+    let user = std::env::temp_dir().join(format!("code-gpui-copy-path-user-{}", std::process::id()));
+    let settings = config::service::Settings::load(config::registry::Registry::with_extensions(&[]), user.clone(), None);
+    workbench.update(cx, |workbench, _| {
+        *workbench.settings.lock().unwrap() = settings;
+        workbench.settings.lock().unwrap().update_value_derived("explorer.copyRelativePathSeparator", Some(&serde_json::json!("\\"))).unwrap();
+    });
+    std::fs::create_dir_all(dir.join("sub/deep")).unwrap();
+    workbench.update_in(cx, |workbench, window, cx| workbench.select_explorer_item(&dir.join("sub/deep"), window, cx));
+    cx.simulate_keystrokes("shift-alt-cmd-c");
+    assert_eq!(clipboard(cx), "sub\\deep");
+    std::fs::remove_dir_all(&dir).unwrap();
+    std::fs::remove_dir_all(&user).unwrap();
 }
 
 /// `contributes.menus` `explorer/context` items show by the right-clicked row's resource keys.
@@ -237,7 +267,7 @@ fn extension_items_follow_the_right_clicked_rows_resource(cx: &mut TestAppContex
     let file_row = point(px(120.), px(129.));
     cx.simulate_mouse_down(file_row, MouseButton::Right, Modifiers::none());
     cx.run_until_parked();
-    assert_eq!(menu_titles(&workbench, cx), ["Open Text Preview", "---", "Cut", "Copy", "---", "Rename...", "Delete"]);
+    assert_eq!(menu_titles(&workbench, cx), ["Open Text Preview", "Reveal in Finder", "---", "Cut", "Copy", "---", "Copy Path", "Copy Relative Path", "---", "Rename...", "Delete"]);
     cx.simulate_keystrokes("escape");
     let folder_row = point(px(120.), px(107.));
     cx.simulate_mouse_down(folder_row, MouseButton::Right, Modifiers::none());

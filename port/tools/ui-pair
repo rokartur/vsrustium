@@ -6,7 +6,7 @@
 // env FILE = file to open, relative to the folder; env ONLY = "reference" or "port" to run one of them; env ARGS = more arguments for both, space separated)
 // Steps, in window points (both windows are 1024x768):
 //   {"click": [x, y]}  {"click": [x, y], "modifier": ["cmd"]}  {"click": [x, y], "foreground": true}  {"doubleClick": [x, y]}  {"rightClick": [x, y]}  {"key": "return"}
-//   {"hotkey": ["cmd", "c"]}  {"type": "text"}  {"wait": ms}  {"shot": "name"}
+//   {"hotkey": ["cmd", "c"]}  {"type": "text"}  {"wait": ms}  {"shot": "name"}  {"clipboard": "name"} (the pasteboard text, the folder path as <folder>)
 //   {"dragShot": [x1, y1, x2, y2], "shot": "name", "modifier": ["option"]}: a slow drag, captured while held
 // Shots land in <out-dir>/<reference|port>-<name>.png at 2x; a sheet on the window is captured as its own window.
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { referenceArgs, referenceUserData } from './ref-user-data.ts';
 
-type Step = { click?: number[]; doubleClick?: number[]; rightClick?: number[]; modifier?: string[]; key?: string; hotkey?: string[]; type?: string; wait?: number; shot?: string; dragShot?: number[]; foreground?: boolean };
+type Step = { click?: number[]; doubleClick?: number[]; rightClick?: number[]; modifier?: string[]; key?: string; hotkey?: string[]; type?: string; wait?: number; shot?: string; dragShot?: number[]; foreground?: boolean; clipboard?: string };
 
 const [outDir, stepsFile, themeName = 'dark'] = process.argv.slice(2);
 const steps: Step[] = JSON.parse(readFileSync(stepsFile, 'utf8'));
@@ -39,7 +39,7 @@ for (const app of (process.env.ONLY ?? 'reference port').split(' ')) {
 	const paths = process.env.FILE ? [folder, join(folder, process.env.FILE)] : [folder];
 	const child = app === 'reference' ? startReference(paths) : startPort(paths);
 	try {
-		await run(app, child.pid);
+		await run(app, child.pid, folder);
 	} finally {
 		child.kill('SIGKILL');
 		await child.exited;
@@ -73,7 +73,7 @@ function startPort(paths: string[]) {
 	});
 }
 
-async function run(app: string, pid: number) {
+async function run(app: string, pid: number, folder: string) {
 	const window = await until(async () => {
 		const { windows } = await cua('list_windows', { pid });
 		return windows.find((w: { bounds: { width: number }; is_on_screen: boolean }) => w.is_on_screen && w.bounds.width === 1024);
@@ -113,6 +113,10 @@ async function run(app: string, pid: number) {
 			await drag;
 		} else if (step.shot) {
 			await shot(app, pid, target.window_id, step.shot);
+		} else if (step.clipboard) {
+			const text = (await Bun.$`pbpaste`.text()).replaceAll(folder, '<folder>');
+			writeFileSync(resolve(outDir, `${app}-${step.clipboard}.txt`), text);
+			console.log(`${app}-${step.clipboard}.txt: ${JSON.stringify(text)}`);
 		}
 		await Bun.sleep(400);
 	}

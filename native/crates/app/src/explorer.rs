@@ -188,14 +188,14 @@ impl FileTree {
 
     /// `ExplorerService.getContext`: the selection when it holds the focused row and `respect_multi_selection`,
     /// else the focused row.
-    /// With `respect_multi_selection`, a collapsed nest brings the files nested under it.
-    pub fn context(&self, respect_multi_selection: bool) -> Vec<PathBuf> {
+    /// With `respect_multi_selection` and not `ignore_nested_children`, a collapsed nest brings the files nested under it.
+    pub fn context(&self, respect_multi_selection: bool, ignore_nested_children: bool) -> Vec<PathBuf> {
         let Some(focused) = &self.focused else { return Vec::new() };
         if !respect_multi_selection || !self.selected.contains(focused) {
             return vec![focused.clone()];
         }
         let mut items = self.selected.clone();
-        for item in &self.selected {
+        for item in self.selected.iter().filter(|_| !ignore_nested_children) {
             let Some(folder) = item.parent().filter(|_| !item.is_dir()) else { continue };
             let Some(entry) = self.entries(folder).into_iter().find(|entry| entry.path == *item) else { continue };
             if !entry.nested.is_empty() && !self.nest_expanded(item) {
@@ -429,10 +429,10 @@ mod tests {
         assert_eq!(tree.selected.len(), 3, "Shift selects from the anchor");
         tree.click_select(&root.join("src"), true, false);
         assert_eq!(tree.selected, [root.join("Docs"), root.join("src/main.ts")], "Cmd toggles a row");
-        assert_eq!(tree.context(true), [root.join("src")], "the focused row outside the selection is the context");
+        assert_eq!(tree.context(true, false), [root.join("src")], "the focused row outside the selection is the context");
         tree.click_select(&root.join("Docs"), true, false);
         tree.click_select(&root.join("Docs"), true, false);
-        assert_eq!(tree.context(true), [root.join("src/main.ts"), root.join("Docs")]);
+        assert_eq!(tree.context(true, false), [root.join("src/main.ts"), root.join("Docs")]);
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -498,8 +498,9 @@ mod tests {
         tree.set_expanded(&root.join("a.ts"), false);
         assert_eq!(names(&tree).len(), 5);
         tree.click_select(&root.join("a.ts"), false, false);
-        assert_eq!(tree.context(true), [root.join("a.ts"), root.join("a.js"), root.join("a.js.map")], "a collapsed nest brings its files");
-        assert_eq!(tree.context(false), [root.join("a.ts")]);
+        assert_eq!(tree.context(true, false), [root.join("a.ts"), root.join("a.js"), root.join("a.js.map")], "a collapsed nest brings its files");
+        assert_eq!(tree.context(true, true), [root.join("a.ts")]);
+        assert_eq!(tree.context(false, false), [root.join("a.ts")]);
 
         settings.lock().unwrap().update_value_derived("explorer.fileNesting.expand", Some(&json!(false))).unwrap();
         tree.set_expanded(&root.join("a.ts"), true);
@@ -524,7 +525,7 @@ mod tests {
         assert_eq!(reopened.restore_view_state(&state), 44.);
         assert_eq!(names(&reopened), names(&tree));
         assert_eq!(reopened.selected, [root.join("src/lib/a b.ts")]);
-        assert_eq!(reopened.context(false), [root.join("src/lib/a b.ts")]);
+        assert_eq!(reopened.context(false, false), [root.join("src/lib/a b.ts")]);
 
         std::fs::remove_dir_all(root.join("src/lib")).unwrap();
         let mut reopened = FileTree::new(Workspace::folder(root.clone()), crate::default_settings());

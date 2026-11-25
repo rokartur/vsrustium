@@ -69,7 +69,7 @@ pub enum MenuAction {
 /// The workbench's registrations of the features the port has: menu, submenu or command id, title, group, order,
 /// `when`, and the command's precondition.
 type Row = (MenuId, Option<MenuId>, &'static str, &'static str, &'static str, f64, Option<&'static str>, Option<&'static str>);
-const WORKBENCH_MENUS: [Row; 61] = [
+const WORKBENCH_MENUS: [Row; 67] = [
     // menubar.contribution.ts
     (MenuId::MenubarMainMenu, Some(MenuId::MenubarFileMenu), "", "&&File", "", 1., None, None),
     (MenuId::MenubarMainMenu, Some(MenuId::MenubarEditMenu), "", "&&Edit", "", 2., None, None),
@@ -130,12 +130,19 @@ const WORKBENCH_MENUS: [Row; 61] = [
     (MenuId::EditorTitleContext, None, "workbench.action.closeUnmodifiedEditors", "Close Saved", "1_close", 40., None, None),
     (MenuId::EditorTitleContext, None, "workbench.action.closeEditorsInGroup", "Close All", "1_close", 50., None, None),
     (MenuId::EditorTitleContext, None, "workbench.action.keepEditor", "Keep Open", "3_preview", 10., Some("config.workbench.editor.enablePreview"), Some("!activeEditorIsNotPreview")),
+    // fileActions.contribution.ts and electron-browser/fileActions.contribution.ts `appendEditorTitleContextMenuItem`.
+    (MenuId::EditorTitleContext, None, "copyFilePath", "Copy Path", "1_cutcopypaste", 0., Some("isFileSystemResource"), None),
+    (MenuId::EditorTitleContext, None, "copyRelativeFilePath", "Copy Relative Path", "1_cutcopypaste", 0., Some("isFileSystemResource"), None),
+    (MenuId::EditorTitleContext, None, "revealFileInOS", "Reveal in Finder", "2_files", 0., Some("resourceScheme == 'file' || resourceScheme == 'vscode-userdata'"), Some("!multipleEditorsSelectedInGroup")),
     // fileActions.contribution.ts, the ExplorerContext items of the commands the port has.
     (MenuId::ExplorerContext, None, "explorer.newFile", "New File...", "navigation", 4., Some("explorerResourceIsFolder"), Some("!explorerResourceReadonly")),
     (MenuId::ExplorerContext, None, "explorer.newFolder", "New Folder...", "navigation", 6., Some("explorerResourceIsFolder"), Some("!explorerResourceReadonly")),
+    (MenuId::ExplorerContext, None, "revealFileInOS", "Reveal in Finder", "navigation", 20., Some("resourceScheme == 'file' || resourceScheme == 'vscode-userdata'"), None),
     (MenuId::ExplorerContext, None, "filesExplorer.cut", "Cut", "5_cutcopypaste", 8., Some("!explorerResourceIsRoot && !explorerResourceReadonly"), None),
     (MenuId::ExplorerContext, None, "filesExplorer.copy", "Copy", "5_cutcopypaste", 10., Some("!explorerResourceIsRoot"), None),
     (MenuId::ExplorerContext, None, "filesExplorer.paste", "Paste", "5_cutcopypaste", 20., Some("explorerResourceIsFolder"), Some("!explorerResourceReadonly && fileCopied")),
+    (MenuId::ExplorerContext, None, "copyFilePath", "Copy Path", "6_copypath", 10., Some("isFileSystemResource"), None),
+    (MenuId::ExplorerContext, None, "copyRelativeFilePath", "Copy Relative Path", "6_copypath", 20., Some("isFileSystemResource"), None),
     (MenuId::ExplorerContext, None, "renameFile", "Rename...", "7_modification", 10., Some("!explorerResourceIsRoot"), Some("!explorerResourceReadonly")),
     (MenuId::ExplorerContext, None, "moveFileToTrash", "Delete", "7_modification", 20., Some("!explorerResourceIsRoot && explorerResourceMoveableToTrash"), None),
     (MenuId::ExplorerContext, None, "deleteFile", "Delete Permanently", "7_modification", 20., Some("!explorerResourceIsRoot && !explorerResourceMoveableToTrash"), None),

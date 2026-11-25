@@ -99,6 +99,55 @@ impl Workbench {
             Outcome::done()
         });
         self.commands.register("filesExplorer.paste", |workbench, _, window, cx| workbench.paste_explorer_items(window, cx));
+        self.commands.register("copyFilePath", |workbench, args, window, cx| workbench.copy_paths_to_clipboard(false, &args, window, cx));
+        self.commands.register("copyRelativeFilePath", |workbench, args, window, cx| workbench.copy_paths_to_clipboard(true, &args, window, cx));
+        self.commands.register("revealFileInOS", |workbench, args, window, cx| workbench.reveal_in_os(&args, window, cx));
+    }
+
+    /// files.ts `getMultiSelectedResources`: the Explorer's context while it has focus, else the command's
+    /// resource, else the active editor's.
+    fn multi_selected_resources(&self, args: &[Value], window: &Window) -> Vec<PathBuf> {
+        if let Some(tree) = self.folder.as_ref().filter(|_| self.explorer.focus.is_focused(window)) {
+            let context = tree.context(true, true);
+            if !context.is_empty() {
+                return context;
+            }
+        }
+        if let Some(path) = args.first().and_then(|uri| uri["path"].as_str()) {
+            return vec![PathBuf::from(path)];
+        }
+        self.editors.active().map(|editor| editor.document.path.clone()).into_iter().collect()
+    }
+
+    /// fileCommands.ts `resourcesToClipboard`: one path per line, with `explorer.copyPathSeparator` or
+    /// `explorer.copyRelativePathSeparator` when it is `/` or `\`.
+    fn copy_paths_to_clipboard(&mut self, relative: bool, args: &[Value], window: &mut Window, cx: &mut Context<Self>) -> Outcome {
+        let resources = self.multi_selected_resources(args, window);
+        if resources.is_empty() {
+            return Outcome::done();
+        }
+        let key = if relative { "explorer.copyRelativePathSeparator" } else { "explorer.copyPathSeparator" };
+        let separator = match self.setting(key).as_str() {
+            Some(separator @ ("/" | "\\")) => separator.to_string(),
+            _ => "/".to_string(),
+        };
+        let workspace = self.workspace();
+        let labels: Vec<String> = resources.iter().map(|path| crate::quick_input::path_label_without_prefix(path, workspace, relative, &separator)).collect();
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(labels.join("\n")));
+        Outcome::done()
+    }
+
+    /// electron-browser fileCommands.ts `revealResourcesInOS`: each resource selected in Finder, else the first
+    /// workspace folder.
+    fn reveal_in_os(&mut self, args: &[Value], window: &mut Window, cx: &mut Context<Self>) -> Outcome {
+        let mut resources = self.multi_selected_resources(args, window);
+        if resources.is_empty() {
+            resources.extend(self.workspace().map(|workspace| workspace.folders[0].path.clone()));
+        }
+        for path in resources {
+            cx.reveal_path(&path);
+        }
+        Outcome::done()
     }
 
     /// The Explorer's context keys (explorerView.ts `setContextKeys`, `onFocusChanged`, `itemsCopied`).
@@ -190,7 +239,7 @@ impl Workbench {
             }
             return self.execute_command("workbench.action.files.newUntitledFile", Vec::new(), window, cx);
         };
-        let parent = match tree.context(false).first() {
+        let parent = match tree.context(false, false).first() {
             Some(stat) => tree.folder_for(stat),
             None => tree.workspace.folders[0].path.clone(),
         };
@@ -202,7 +251,7 @@ impl Workbench {
 
     /// `renameHandler`: the name editor on the focused item, the name before the extension selected.
     fn rename_explorer_item(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
-        let Some(stat) = self.folder.as_ref().and_then(|tree| tree.context(false).into_iter().next()) else { return Outcome::done() };
+        let Some(stat) = self.folder.as_ref().and_then(|tree| tree.context(false, false).into_iter().next()) else { return Outcome::done() };
         let name = file_name(&stat);
         let end = match name.rfind('.') {
             Some(dot) if dot > 0 && !stat.is_dir() => name[..dot].chars().count(),
@@ -418,7 +467,7 @@ impl Workbench {
     /// `moveFileToTrashHandler` and `deleteFileHandler`: the selection without the workspace folders.
     fn delete_explorer_items(&mut self, use_trash: bool, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
         let Some(tree) = self.folder.as_ref() else { return Outcome::done() };
-        let stats: Vec<PathBuf> = tree.context(true).into_iter().filter(|stat| !tree.is_root(stat)).collect();
+        let stats: Vec<PathBuf> = tree.context(true, false).into_iter().filter(|stat| !tree.is_root(stat)).collect();
         if stats.is_empty() {
             return Outcome::done();
         }
@@ -432,7 +481,7 @@ impl Workbench {
     /// `copyFileHandler` and `cutFileHandler`: `setToCopy` with the selection.
     fn copy_explorer_items(&mut self, cut: bool, cx: &mut Context<Self>) -> Outcome {
         let Some(tree) = self.folder.as_mut() else { return Outcome::done() };
-        let stats = tree.context(true);
+        let stats = tree.context(true, false);
         if !stats.is_empty() {
             tree.clipboard = stats;
             tree.cut = cut;
@@ -448,7 +497,7 @@ impl Workbench {
         if self.explorer.edit.is_some() {
             return Outcome::done();
         }
-        let element = tree.context(false).into_iter().next().unwrap_or_else(|| tree.workspace.folders[0].path.clone());
+        let element = tree.context(false, false).into_iter().next().unwrap_or_else(|| tree.workspace.folders[0].path.clone());
         let sources = tree.clipboard.clone();
         let cut = tree.cut;
         let naming = self.incremental_naming();
@@ -602,7 +651,7 @@ impl Workbench {
             return None;
         }
         let paths = match tree.selected.iter().any(|selected| selected == path) {
-            true => tree.context(true).into_iter().filter(|stat| !tree.is_root(stat)).collect(),
+            true => tree.context(true, false).into_iter().filter(|stat| !tree.is_root(stat)).collect(),
             false => vec![path.to_path_buf()],
         };
         Some(DraggedItems {

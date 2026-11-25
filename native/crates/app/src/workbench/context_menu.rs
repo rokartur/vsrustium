@@ -35,7 +35,7 @@ pub struct ContextMenu {
     pub(super) actions: Vec<MenuAction>,
     /// Each command's keybinding label, looked up when the menu showed.
     keybindings: HashMap<String, String>,
-    origin: Point<Pixels>,
+    pub(super) origin: Point<Pixels>,
     pub(super) focused: Option<usize>,
     /// `keyboard-navigation`: the last input was a key, so the focused item shows its selection border.
     keyboard_navigation: bool,

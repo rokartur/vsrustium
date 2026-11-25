@@ -814,6 +814,16 @@ pub fn path_label(path: &Path, workspace: Option<&Workspace>) -> String {
     path.to_string_lossy().into_owned()
 }
 
+/// `labelService.getUriLabel(uri, { relative, noPrefix: true, separator })` for a file: like `path_label` but
+/// without the folder name and the `~`, each `/` written as `separator`.
+pub fn path_label_without_prefix(path: &Path, workspace: Option<&Workspace>, relative: bool, separator: &str) -> String {
+    let label = match workspace.filter(|_| relative).and_then(|workspace| workspace.folder_of(path)) {
+        Some(folder) => path.iter().skip(folder.path.iter().count()).collect::<PathBuf>().to_string_lossy().into_owned(),
+        None => path.to_string_lossy().into_owned(),
+    };
+    label.replace('/', separator)
+}
+
 /// Where a dragged quick input lands (`QuickInputDragAndDropController._layout`): `top` and `left` of the widget
 /// kept inside the window and snapped within 20px to `top_snap`, the 25% line and the horizontal center.
 /// Returns the view state: top as a fraction of the window height, the widget's center as a fraction of its width.

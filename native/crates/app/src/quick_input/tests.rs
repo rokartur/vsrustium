@@ -350,3 +350,25 @@ fn path_labels_in_a_multi_root_workspace_start_with_the_folder_name() {
     assert_eq!(label("/folder1/other"), "/folder1/other");
     assert_eq!(label("/folder2/other"), "folder2 \u{2022} other");
 }
+
+/// label.test.ts 'file scheme' and 'relative label with explicit path separator', with the `noPrefix` that
+/// fileCommands.ts `resourcesToClipboard` passes: no folder name in a multi-root workspace and no `~`.
+#[test]
+fn copied_path_labels_have_no_prefix() {
+    let workspace = Workspace::folder(PathBuf::from("/testWorkspace"));
+    let label = |path: &str, relative: bool, separator: &str| path_label_without_prefix(Path::new(path), Some(&workspace), relative, separator);
+    assert_eq!(label("/testWorkspace/a/b/c/d", true, "/"), "a/b/c/d");
+    assert_eq!(label("/testWorkspace/a/b/c/d", false, "/"), "/testWorkspace/a/b/c/d");
+    assert_eq!(label("/testWorkspace/some/folder/test.txt", true, "\\"), "some\\folder\\test.txt");
+    assert_eq!(label("/testWorkspace", true, "/"), "");
+    assert_eq!(label("/other/file", true, "/"), "/other/file", "outside the workspace: absolute");
+    let home = std::env::var("HOME").unwrap();
+    assert_eq!(label(&format!("{home}/file"), false, "/"), format!("{home}/file"), "never tildified");
+
+    use config::workspace::WorkspaceFolder;
+    let folder = |path: &str, name: &str| WorkspaceFolder { path: PathBuf::from(path), name: name.into() };
+    let folders = vec![folder("/folder1/src", "Sources"), folder("/folder2", "folder2")];
+    let workspace = Workspace { file: Some(PathBuf::from("/test.code-workspace")), folders, transient: false };
+    assert_eq!(path_label_without_prefix(Path::new("/folder1/src/folder/file"), Some(&workspace), true, "/"), "folder/file");
+    assert_eq!(path_label_without_prefix(Path::new("/folder2/other"), Some(&workspace), true, "/"), "other");
+}

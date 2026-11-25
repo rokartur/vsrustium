@@ -78,7 +78,7 @@ fn the_tab_menu_closes_around_the_right_clicked_editor(cx: &mut TestAppContext) 
     let (dir, workbench, cx) = workbench_with("tab-menu", &["a.txt", "b.txt", "c.txt", "d.txt"], cx);
     let pointer = point(px(200.), px(50.));
     workbench.update_in(cx, |workbench, window, cx| workbench.show_tab_context_menu(1, pointer, window, cx));
-    assert_eq!(menu_titles(&workbench, cx), ["Close", "Close Others", "Close to the Right", "Close Saved", "Close All", "---", "(Keep Open)"]);
+    assert_eq!(menu_titles(&workbench, cx), ["Close", "Close Others", "Close to the Right", "Close Saved", "Close All", "---", "Copy Path", "Copy Relative Path", "---", "Reveal in Finder", "---", "(Keep Open)"]);
     cx.simulate_keystrokes("escape");
     workbench.update_in(cx, |workbench, window, cx| workbench.show_tab_context_menu(3, pointer, window, cx));
     assert_eq!(menu_titles(&workbench, cx)[2], "(Close to the Right)");
