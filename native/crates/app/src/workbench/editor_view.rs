@@ -561,7 +561,11 @@ impl Workbench {
         let minimap_changed = self.minimap.info != minimap;
         self.editors.viewport = viewport;
         self.minimap.info = minimap;
+        let reveal = self.editors.reveal_after_layout.take();
         let editor = self.editors.active_mut().expect("laid out only with an editor open");
+        if let Some(line) = reveal {
+            editor.reveal_range(line, line, VerticalReveal::CenterIfOutsideViewport, viewport);
+        }
         let scroll_width = editor.scroll_width(viewport);
         let visible_lines = editor.visible_lines(viewport);
         // viewLines.ts `_updateLineWidths`: with every line drawn, their widest is the content width.

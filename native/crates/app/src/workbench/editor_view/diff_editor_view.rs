@@ -97,6 +97,7 @@ impl Workbench {
             _ => None,
         };
         let options = args.get(3).map(|column_and_options| column_and_options[1].clone()).unwrap_or(Value::Null);
+        // shortcut: models key on scheme and path, so two `git:` refs of one file (index, HEAD) share a model; until text models keep the URI query.
         let missing: Vec<Value> = [(&original, &sides.0), (&modified, &sides.1)]
             .into_iter()
             .filter(|(_, side)| side.scheme != "file" && self.editors.model(&side.scheme, &side.path).is_none())
@@ -158,8 +159,11 @@ impl Workbench {
             // textDiffEditor.ts `revealFirstDiff`: an editor without view state shows its first change.
             let viewport = self.editors.viewport;
             let editor = self.editors.active_mut().expect("the diff editor's modified model");
-            let line = first.saturating_sub(1).min(editor.document.lines.len() - 1);
-            editor.reveal_range(Position::new(line, 0), Position::new(line, 0), VerticalReveal::CenterIfOutsideViewport, viewport);
+            let line = Position::new(first.saturating_sub(1).min(editor.document.lines.len() - 1), 0);
+            match viewport.height == 0. {
+                true => self.editors.reveal_after_layout = Some(line),
+                false => editor.reveal_range(line, line, VerticalReveal::CenterIfOutsideViewport, viewport),
+            }
         }
         if options["preserveFocus"] != json!(true) {
             window.focus(&self.editor_focus, cx);
@@ -474,7 +478,7 @@ impl Workbench {
             .flex()
             .when(change.is_some(), |row| row.children(self.margin_background(ZoneSide::Original, metrics.glyph_margin_width() + metrics.line_numbers_width + decorations_width)))
             .child(div().w(px(metrics.glyph_margin_width())).flex_none())
-            .child(div().w(px(metrics.line_numbers_width)).flex_none().text_right().text_color(self.color("editorLineNumber.foreground")).child(line_number.to_string()))
+            .child(div().w(px(metrics.line_numbers_width)).flex_none().flex().justify_end().whitespace_nowrap().text_color(self.color("editorLineNumber.foreground")).child(line_number.to_string()))
             .child(div().w(px(decorations_width)).flex_none().when(change.is_some() && self.diff_render_indicators(), |lane| lane.child(self.diff_sign(ZoneSide::Original, metrics))))
             .child(content)
     }

@@ -117,9 +117,10 @@ impl Workbench {
     }
 
     /// `BoundModelReferenceCollection`: models the host opened and no editor shows are disposed after 3 minutes.
-    fn release_host_models(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn release_host_models(&mut self, cx: &mut Context<Self>) {
         let count = self.editors.models.len();
-        self.editors.release_models(Instant::now());
+        let scm_inputs = self.scm_input_models();
+        self.editors.release_models(Instant::now(), |model| scm_inputs.iter().any(|(scheme, path)| model.document.is(scheme, path)));
         if self.editors.models.len() != count {
             self.editors_changed(cx);
         }

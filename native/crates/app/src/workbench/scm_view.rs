@@ -301,6 +301,11 @@ impl Workbench {
         cx.notify();
     }
 
+    /// The input boxes' text models, which live as long as their source control.
+    pub(super) fn scm_input_models(&self) -> Vec<(String, std::path::PathBuf)> {
+        self.scm.input_models.values().cloned().collect()
+    }
+
     pub(super) fn sync_scm_input_model(&mut self, handle: u64, value: &str, cx: &mut Context<Self>) {
         let Some((scheme, path)) = self.scm.input_models.get(&handle).cloned() else { return };
         self.replace_model_text(&scheme, &path, value.to_string(), true, cx);
@@ -719,6 +724,7 @@ impl Workbench {
         let id = gpui::SharedString::from(format!("scm-resource-{}-{}-{}", provider.handle, group.handle, resource.handle));
         let label_color = decoration.as_ref().map_or(foreground, |decoration| decoration.1);
         let handles = (provider.handle, group.handle, resource.handle);
+        let editor_command = resource.command.clone().filter(|command| matches!(command["id"].as_str(), Some("_workbench.open" | "_workbench.diff")));
         div()
             .id(id.clone())
             .group(id.clone())
@@ -731,12 +737,17 @@ impl Workbench {
             .when(resource.faded, |row| row.opacity(0.7))
             .when(selected, |row| row.bg(self.color("list.inactiveSelectionBackground")))
             .hover(|row| row.bg(self.color("list.hoverBackground")))
-            .on_click(cx.listener(move |workbench, event: &ClickEvent, _, cx| {
+            .on_click(cx.listener(move |workbench, event: &ClickEvent, window, cx| {
                 workbench.focus_scm_repository(Some(key.0));
                 workbench.scm.selected = Some(key);
-                // `ResourceTree.open`: a single click previews with the focus kept, a double click pins and focuses.
-                let preserve_focus = event.click_count() < 2;
-                drop(workbench.host.call("ExtHostSCM", "$executeResourceCommand", vec![json!(handles.0), json!(handles.1), json!(handles.2), json!(preserve_focus)]));
+                // scmViewPane.ts `open`: `_workbench.open`/`_workbench.diff` arrive converted and run here; the ext host keeps only other commands.
+                if let Some(command) = editor_command.as_ref() {
+                    drop(workbench.run_dto_command(command, window, cx));
+                } else {
+                    // `ResourceTree.open`: a single click previews with the focus kept, a double click pins and focuses.
+                    let preserve_focus = event.click_count() < 2;
+                    drop(workbench.host.call("ExtHostSCM", "$executeResourceCommand", vec![json!(handles.0), json!(handles.1), json!(handles.2), json!(preserve_focus)]));
+                }
                 cx.notify();
             }))
             .on_mouse_down(MouseButton::Right, cx.listener(move |workbench, event: &MouseDownEvent, window, cx| {

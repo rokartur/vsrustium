@@ -88,7 +88,7 @@ fn open_multi_diff_editor_shows_every_file_and_collapses_them(cx: &mut TestAppCo
     assert_eq!(workbench.read_with(cx, |workbench, _| workbench.editors.active_multi_diff().unwrap().cursor), Some((1, 1)));
 
     // The models stay open while the editor shows them.
-    workbench.update(cx, |workbench, _| workbench.editors.release_models(std::time::Instant::now() + std::time::Duration::from_secs(3600)));
+    workbench.update(cx, |workbench, _| workbench.editors.release_models(std::time::Instant::now() + std::time::Duration::from_secs(3600), |_| false));
     assert!(workbench.read_with(cx, |workbench, _| workbench.editors.model("file", &dir.join("c.txt")).is_some()));
 
     // Open File opens the modified file.

@@ -105,6 +105,21 @@ fn compute_document_diff_answers_with_line_ranges_and_inner_changes(cx: &mut Tes
 }
 
 #[gpui::test]
+fn first_diff_opened_keeps_a_visible_change_in_place(cx: &mut TestAppContext) {
+    let (dir, workbench, _receiver, cx) = workbench_in("diff-first-reveal", cx);
+    let original = "1\n\n3\n4\n\n6\n\t7\n    8\n9\n";
+    std::fs::write(dir.join("a.txt"), original).unwrap();
+    std::fs::write(dir.join("b.txt"), format!("{original}changed line\n")).unwrap();
+    let (a, b) = (file_uri(&dir.join("a.txt")), file_uri(&dir.join("b.txt")));
+    workbench.update(cx, |workbench, _| workbench.settings.lock().unwrap().update_value_derived("diffEditor.renderSideBySide", Some(&json!(false))).unwrap());
+    workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("_workbench.diff", vec![a, b], window, cx)));
+    cx.run_until_parked();
+    // textDiffEditor.ts `revealFirstDiff` centers the change only when it is outside the laid-out viewport.
+    assert_eq!(workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().scroll.top), 0.);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[gpui::test]
 fn swap_sides_shows_the_modified_file_as_the_original(cx: &mut TestAppContext) {
     let (dir, workbench, _receiver, cx) = workbench_in("diff-swap", cx);
     let (a, b) = (file_uri(&dir.join("a.txt")), file_uri(&dir.join("b.txt")));

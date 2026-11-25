@@ -75,3 +75,13 @@ fn scm_repositories_sort_by_name(cx: &mut TestAppContext) {
         assert_eq!(names, ["alpha", "zeta"]);
     });
 }
+
+#[gpui::test]
+fn scm_input_models_survive_the_release_of_host_models(cx: &mut TestAppContext) {
+    let (workbench, _receiver, cx) = workbench_in("scm-input-model", cx);
+    workbench.update_in(cx, |workbench, window, cx| {
+        drop(workbench.handle_scm_request("$registerSourceControl", &register(0, "/w/repo", false), window, cx));
+        workbench.release_host_models(cx);
+        assert!(workbench.editors.model("vscode-scm", Path::new("git/scm0/input")).is_some());
+    });
+}

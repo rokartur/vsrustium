@@ -566,6 +566,8 @@ pub struct EditorGroup {
     next_model_id: u32,
     /// The size of the group's one code editor, as last laid out; every editor of the group shows in it.
     pub viewport: Viewport,
+    /// A line to center once the code editor has its first size: a diff opened before any editor showed (`revealFirstDiff`).
+    pub reveal_after_layout: Option<Position>,
     /// unicodeHighlighter.ts `_bannerClosed`: the banner was closed for the model the code editor shows.
     pub unicode_banner_closed: bool,
     /// The diff editors among `editors`, by their entry's model id: each shows two models found with `model`.
@@ -714,12 +716,13 @@ impl EditorGroup {
         self.insert(editor, preview);
     }
 
-    /// Drops the clean models without an editor whose host reference ran out; a dirty model stays, as text file models do.
-    pub fn release_models(&mut self, now: Instant) {
+    /// Drops the clean models without an editor whose host reference ran out and that the workbench does not `hold`;
+    /// a dirty model stays, as text file models do.
+    pub fn release_models(&mut self, now: Instant, hold: impl Fn(&OpenEditor) -> bool) {
         let diffs = &self.diffs;
         let shown_in_diff = |model: &OpenEditor| diffs.values().any(|diff| [&diff.original, &diff.modified].iter().any(|side| model.document.is(&side.scheme, &side.path))) || self.multi_diffs.values().any(|input| input.shows(model))
             || self.merges.values().any(|merge| [&merge.base, &merge.input1.side, &merge.input2.side, &merge.result].iter().any(|side| model.document.is(&side.scheme, &side.path)));
-        self.models.retain(|model| model.is_dirty() || shown_in_diff(model) || model.host_reference.is_some_and(|opened| now.duration_since(opened) < HOST_REFERENCE_AGE));
+        self.models.retain(|model| model.is_dirty() || shown_in_diff(model) || hold(model) || model.host_reference.is_some_and(|opened| now.duration_since(opened) < HOST_REFERENCE_AGE));
     }
 
     fn insert(&mut self, editor: OpenEditor, preview: bool) {
