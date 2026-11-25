@@ -437,23 +437,41 @@ pub(crate) fn screen_reader_page(lines: &[String], anchor: crate::editor::Positi
 
 impl ScreenReaderPage {
     fn build(self, builder: &mut A11ySubtreeBuilder) {
-        let Some(&(last_line, _)) = self.lines.last() else { return };
         let mut runs = Vec::new();
-        for (line, text) in &self.lines {
+        let mut value = String::new();
+        for (index, (line, text)) in self.run_texts().into_iter().enumerate() {
             let mut run = accesskit::Node::new(Role::TextRun);
-            let text = if *line < last_line { format!("{text}\n") } else { text.clone() };
             run.set_character_lengths(text.chars().map(|char| char.len_utf8() as u8).collect::<Vec<_>>());
+            value.push_str(&text);
             run.set_value(text);
-            let id = builder.synthetic_node_id(*line);
+            let id = builder.synthetic_node_id(index);
             builder.push_child(id, run);
-            runs.push(id);
+            if let Some(line) = line {
+                runs.push((line, id));
+            }
         }
         let position = |(line, column): (usize, usize)| {
-            let index = self.lines.iter().position(|(known, _)| *known == line).unwrap_or(0);
-            accesskit::TextPosition { node: runs[index], character_index: column.min(self.lines[index].1.chars().count()) }
+            let index = runs.iter().position(|(known, _)| *known == line).unwrap_or(0);
+            accesskit::TextPosition { node: runs[index].1, character_index: column.min(self.lines[index].1.chars().count()) }
         };
         let selection = accesskit::TextSelection { anchor: position(self.anchor), focus: position(self.focus) };
+        // accesskit_consumer derives AXValue from the runs only for single-line inputs: give the text area the page.
+        builder.parent_node().set_value(value);
         builder.parent_node().set_text_selection(selection);
+    }
+
+    /// The text area's runs: each line with its newline (the last without), and the `…` upstream puts between the
+    /// two pages when pages lie between them.
+    fn run_texts(&self) -> Vec<(Option<usize>, String)> {
+        let mut runs = Vec::new();
+        let last = self.lines.len().saturating_sub(1);
+        for (index, (line, text)) in self.lines.iter().enumerate() {
+            if index > 0 && self.lines[index - 1].0 + 1 != *line {
+                runs.push((None, "\u{2026}".to_owned()));
+            }
+            runs.push((Some(*line), if index < last { format!("{text}\n") } else { text.clone() }));
+        }
+        runs
     }
 }
 
@@ -476,6 +494,8 @@ mod tests {
         let apart = screen_reader_page(&lines(25), Position { line: 3, column: 0 }, Position { line: 21, column: 1 }, 10);
         let numbers: Vec<usize> = apart.lines.iter().map(|(line, _)| *line).collect();
         assert_eq!(numbers, (0..10).chain(20..25).collect::<Vec<_>>());
+        let text: String = apart.run_texts().into_iter().map(|(_, text)| text).collect();
+        assert!(text.starts_with("line 0\n") && text.contains("line 9\n\u{2026}line 20\n") && text.ends_with("line 24"));
         let last = screen_reader_page(&lines(25), Position { line: 24, column: 0 }, Position { line: 24, column: 0 }, 10);
         assert_eq!((last.lines[0].0, last.lines.len()), (20, 5));
     }
