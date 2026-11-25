@@ -21,6 +21,7 @@ mod debug_console;
 mod problems_filter;
 mod problems_table;
 mod problems_view;
+mod refactor_preview;
 mod view_containers;
 mod debug_toolbar;
 pub(crate) mod debug_service;
@@ -343,6 +344,7 @@ pub struct Workbench {
     debug_console: debug_console::DebugConsole,
     problems: problems_view::ProblemsView,
     problems_focus: FocusHandle,
+    refactor_preview: refactor_preview::RefactorPreview,
     breakpoint_widget: Option<breakpoint_widget::BreakpointWidget>,
     pub testing: testing_service::TestingService,
     testing_view: testing_view::TestingView,
@@ -559,6 +561,7 @@ impl Workbench {
             debug_console: debug_console::DebugConsole::new(cx),
             problems: problems_view::ProblemsView::new(cx),
             problems_focus: cx.focus_handle(),
+            refactor_preview: Default::default(),
             breakpoint_widget: None,
             testing: Default::default(),
             testing_view: Default::default(),
@@ -628,6 +631,7 @@ impl Workbench {
         workbench.register_debug_console_panel_view();
         workbench.register_test_results_panel_view();
         workbench.register_terminal_panel_view();
+        workbench.register_refactor_preview();
         workbench.register_perf_view();
         workbench.register_accessibility_actions();
         workbench.start_system_events(cx);

@@ -131,7 +131,7 @@ impl Workbench {
 
     /// `openEditor` of a `DiffEditorInput`: an open diff editor of the same sides is activated, else a new one
     /// opens (a preview unless `pinned` or `preview: false`).
-    fn show_diff_editor(&mut self, original: Side, modified: Side, label: Option<String>, options: &Value, window: &mut Window, cx: &mut Context<Self>) {
+    pub(in crate::workbench) fn show_diff_editor(&mut self, original: Side, modified: Side, label: Option<String>, options: &Value, window: &mut Window, cx: &mut Context<Self>) {
         self.activate_column(&options["position"]);
         let existing = self.editors.editors.iter().position(|editor| self.editors.diffs.get(&editor.model_id).is_some_and(|diff| diff.original == original && diff.modified == modified));
         let pinned = options["pinned"] == json!(true) || options["preview"] == json!(false);

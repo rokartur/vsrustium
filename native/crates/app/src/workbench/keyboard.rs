@@ -349,6 +349,7 @@ impl Workbench {
         self.word_wrap_context(&mut context);
         self.problems_context(window, &mut context);
         self.view_containers_context(&mut context);
+        self.refactor_preview_context(&mut context);
         // contextkeys.ts WorkbenchContextKeysHandler: the desktop build supports every workspace kind.
         let workbench_state = match self.workspace() {
             None => "empty",
