@@ -28,6 +28,7 @@ mod quick_input_view;
 mod text_input;
 mod title_bar_actions;
 mod unicode_highlight;
+mod unusual_line_terminators;
 
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -87,6 +88,7 @@ pub struct Workbench {
     sticky_scroll: editor_view::sticky_scroll_view::StickyScroll,
     minimap: minimap_view::Minimap,
     unicode_highlight: unicode_highlight::UnicodeHighlight,
+    unusual_line_terminators: unusual_line_terminators::UnusualLineTerminators,
     find: find_widget::FindWidget,
     /// The line and whether on its folding control a press may toggle a fold (folding.ts `mouseDownInfo`).
     fold_mouse_down: Option<(usize, bool)>,
@@ -194,6 +196,7 @@ impl Workbench {
             sticky_scroll: editor_view::sticky_scroll_view::StickyScroll::new(cx),
             minimap: Default::default(),
             unicode_highlight: Default::default(),
+            unusual_line_terminators: Default::default(),
             find: find_widget::FindWidget::new(cx),
             fold_mouse_down: None,
             text_area_left: Rc::default(),

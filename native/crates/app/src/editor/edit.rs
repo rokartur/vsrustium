@@ -97,11 +97,13 @@ pub struct History {
     /// `getAlternativeVersionId`: undo returns to the id the text had, so undoing to the saved text is clean.
     alternative_version_id: u32,
     saved_alternative_version_id: u32,
+    /// The version id the last undo left: a model at it changed last by an undo (`isUndoing`).
+    undone_version_id: u32,
 }
 
 impl Default for History {
     fn default() -> Self {
-        History { undo: Vec::new(), redo: Vec::new(), open: false, last_kind: EditKind::Other, alternative_version_id: 1, saved_alternative_version_id: 1 }
+        History { undo: Vec::new(), redo: Vec::new(), open: false, last_kind: EditKind::Other, alternative_version_id: 1, saved_alternative_version_id: 1, undone_version_id: 0 }
     }
 }
 
@@ -602,7 +604,13 @@ impl OpenEditor {
         self.history.alternative_version_id = group.alternative_before;
         let selections = group.selections_before.clone();
         self.history.redo.push(group);
-        Some(self.finish_undo_redo(changes, selections, true, was_dirty))
+        let change = self.finish_undo_redo(changes, selections, true, was_dirty);
+        self.history.undone_version_id = self.version_id;
+        Some(change)
+    }
+
+    pub fn last_change_was_undo(&self) -> bool {
+        self.history.undone_version_id == self.version_id
     }
 
     pub fn redo(&mut self) -> Option<ContentChanged> {

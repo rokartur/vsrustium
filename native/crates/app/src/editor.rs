@@ -35,6 +35,7 @@ pub mod smart_select;
 mod snippet;
 pub mod sticky_scroll;
 pub mod unicode_highlighter;
+pub mod unusual_line_terminators;
 mod view;
 
 pub use comment::LineCommentKind;

@@ -52,6 +52,7 @@ const FOLD_CONTROLS_FADE: Duration = Duration::from_millis(500);
 impl Workbench {
     pub(super) fn text_editor_part(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let editor = self.editors.active().expect("text editor part is drawn only with an editor open");
+        self.schedule_unusual_line_terminators_check(editor, window, cx);
         div()
             .flex_1()
             .relative()
