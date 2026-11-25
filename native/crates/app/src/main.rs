@@ -10,6 +10,8 @@ mod brackets;
 mod clipboard;
 mod command_palette;
 mod commands;
+mod custom_tree;
+mod decorations;
 mod contextkey;
 mod default_settings;
 mod diff_editor;
@@ -185,6 +187,7 @@ fn main() -> anyhow::Result<()> {
                 workbench.status_entries = main_thread_status_bar::static_entries(&extensions);
                 workbench.file_icons = file_icons;
                 workbench.color_themes = color_themes;
+                workbench.set_tree_views(&extensions);
                 workbench.extensions = extensions.clone();
                 if let Some(folder) = &export_default_keybindings {
                     match workbench.export_default_keybindings(folder) {
@@ -347,7 +350,7 @@ fn run_extension_host(
             MainThreadSecretState::in_memory()
         }),
     });
-    session.forward(&["MainThreadCommands", "MainThreadDiagnostics", "MainThreadDownloadService", "MainThreadEditorTabs", "MainThreadLanguageFeatures", "MainThreadLogger", "MainThreadMessageService", "MainThreadOutputService", "MainThreadProgress", "MainThreadQuickOpen", "MainThreadSCM", "MainThreadStatusBar", "MainThreadWebviewPanels", "MainThreadWebviews", "MainThreadWorkspace"], move |request| {
+    session.forward(&["MainThreadCommands", "MainThreadDecorations", "MainThreadDiagnostics", "MainThreadDownloadService", "MainThreadEditorTabs", "MainThreadLanguageFeatures", "MainThreadLogger", "MainThreadMessageService", "MainThreadOutputService", "MainThreadProgress", "MainThreadQuickOpen", "MainThreadSCM", "MainThreadStatusBar", "MainThreadTreeViews", "MainThreadWebviewPanels", "MainThreadWebviews", "MainThreadWorkspace"], move |request| {
         let _ = workbench_requests.unbounded_send(request);
     }, workbench_replies);
     session.main_thread = Some(Box::new(main_thread));

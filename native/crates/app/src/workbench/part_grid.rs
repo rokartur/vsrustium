@@ -198,6 +198,7 @@ impl Workbench {
         if self.is_part_visible(Part::SideBar) {
             self.layout_explorer_panes(height - CARD_MARGIN, cx);
         }
+        self.sync_tree_views(cx);
         let side_bar = self.is_part_visible(Part::SideBar).then(|| self.side_bar(window, cx));
         let panel = panel_visible.then(|| self.panel_part(window, cx));
         let auxiliary_bar = auxiliary_bar_visible.then(|| self.auxiliary_bar_part(cx));
@@ -211,7 +212,7 @@ impl Workbench {
             // floatingPanels.css: a bottom panel under the editor has the gap as its margin-top, the editor none.
             .when(editor_visible, |part| part.child(div().h(px(column[0])).flex_none().flex().when(!panel_visible, |editor| editor.pb(px(CARD_MARGIN))).child(editor)))
             .when_some(panel, |part, panel| part.child(div().h(px(column[1])).flex_none().flex().when(editor_visible, |panel| panel.pt(px(CARD_MARGIN))).pb(px(CARD_MARGIN)).child(panel)));
-        div()
+        let section = div()
             .relative()
             .h(px(height))
             .flex_none()
@@ -225,7 +226,10 @@ impl Workbench {
             .when_some(auxiliary_bar, |section, auxiliary_bar| section.child(div().w(px(row[3])).flex_none().flex().px(px(CARD_MARGIN)).pb(px(CARD_MARGIN)).child(auxiliary_bar)))
             .children(sashes.into_iter().map(|(sash, state, bounds)| self.part_sash(sash, state, bounds, cx)))
             .when(dragging, |section| section.child(self.part_sash_drag(cx)))
-            .child(self.gripper_activity(cx))
+            .child(self.gripper_activity(cx));
+        // The labels drawn above asked for the decorations they lack.
+        self.send_decoration_requests(cx);
+        section
     }
 
     /// contrib/sash `SashGrippersController`: with `workbench.sash.autoHideGrippers`, the grippers show on mouse

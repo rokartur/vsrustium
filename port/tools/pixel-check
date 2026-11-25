@@ -8,6 +8,8 @@
 # file window with Cmd+K pressed: the status bar's chord message) and "titlebar" (the file window with
 # `window.commandCenter` off: the window title instead, 32px high on macOS 26) are not in the default list. "split"
 # (notes.txt split into a second group with Cmd+\) and "panel" (the split, then Cmd+J opens the panel's Terminal).
+# "git" (the folder as a git repository with notes.txt changed and an untracked file, for git's file decorations)
+# is not in the default list.
 # WINDOWS="file" checks only the listed windows, THEMES="dark hclight" only the listed themes.
 # Prints "window theme different anti_aliased total"; images land in $OUT/<window>.
 set -uo pipefail
@@ -29,7 +31,7 @@ capture() {
   kill $pid; wait $pid; return 124
 }
 for window in ${WINDOWS:-empty folder file main multiroot folded find quickopen split panel}; do
-  case $window in empty) folder= ;; multiroot) folder=$OUT/multi.code-workspace ;; *) folder=$OUT/workspace ;; esac
+  case $window in empty) folder= ;; multiroot) folder=$OUT/multi.code-workspace ;; git) folder=$OUT/gitspace ;; *) folder=$OUT/workspace ;; esac
   keys= settings=
   case $window in
     file) file=$OUT/workspace/notes.txt ;;
@@ -40,6 +42,10 @@ for window in ${WINDOWS:-empty folder file main multiroot folded find quickopen 
     chord) file=$OUT/workspace/notes.txt keys="cmd-k" ;;
     titlebar) file=$OUT/workspace/notes.txt settings='{ "window.commandCenter": false }' ;;
     main) file=$OUT/workspace/src/main.ts ;;
+    git)
+      rm -rf "$OUT/gitspace" && cp -R port/fixtures/workspace "$OUT/gitspace"
+      (cd "$OUT/gitspace" && git init -q && git add . && git -c user.name=port -c user.email=port@localhost commit -qm fixture && echo changed >>notes.txt && echo new >untracked.txt)
+      file=$OUT/gitspace/notes.txt ;;
     folded) folder=$OUT/folding file=$OUT/folding/long.py keys="cmd-down up alt-cmd-[ up up up up up up up up up up up up alt-cmd-[" ;;
     *) file= ;;
   esac

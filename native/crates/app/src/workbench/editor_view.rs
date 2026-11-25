@@ -196,6 +196,10 @@ impl Workbench {
         let foreground = if active && readonly { self.foreground_or("tab.activeForeground") } else { action_foreground };
         // textFileService.ts decorations: a deleted file's label is struck through in `list.errorForeground`.
         let orphaned = editor.document().scheme == "file" && self.text_files.orphaned.contains(&editor.document().path);
+        // multiEditorTabsControl.ts: the label takes the file's decorations per `workbench.editor.decorations`.
+        let decoration = (editor.document().scheme == "file").then(|| self.file_decoration(&editor.document().path, false)).flatten();
+        let decoration_color = self.decoration_color(decoration.as_ref(), self.setting("workbench.editor.decorations.colors") != json!(false));
+        let badge = self.decoration_badge(decoration.as_ref(), foreground).filter(|_| self.setting("workbench.editor.decorations.badges") != json!(false));
         let label = div()
             .mt(px(3.5))
             .h(px(24.))
@@ -204,6 +208,7 @@ impl Workbench {
             .flex()
             .items_baseline()
             .when(editor.preview, |label| label.italic())
+            .when_some(decoration_color, |label, color| label.text_color(color))
             .when(orphaned, |label| label.line_through().text_color(self.foreground_or("list.errorForeground")))
             .child(self.editor_name(editor))
             .children(self.untitled_description(editor).map(|description| {
@@ -235,6 +240,7 @@ impl Workbench {
                 None => tab.pl(px(8.)).child(label),
             })
             .children(lock)
+            .children(badge.map(|badge| badge.mt(px(3.5)).line_height(px(24.))))
             .map(|tab| self.tab_drag_and_drop(tab, index, cx))
             .on_click(cx.listener(move |workbench, event: &gpui::ClickEvent, _, cx| {
                 workbench.editors.activate(index);

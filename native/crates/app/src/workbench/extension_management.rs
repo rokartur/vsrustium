@@ -220,6 +220,7 @@ impl Workbench {
             Ok(themes) => self.color_themes = themes,
             Err(error) => eprintln!("[extensions] reading color themes: {error:#}"),
         }
+        self.set_tree_views(&running);
         self.extensions = running;
         cx.notify();
     }

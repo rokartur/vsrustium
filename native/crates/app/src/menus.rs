@@ -40,6 +40,8 @@ pub enum MenuId {
     ScmInputBox,
     DiffEditorHunkToolbar,
     EditorTitle,
+    ViewTitle,
+    ViewItemContext,
     /// A `contributes.submenus` entry, `MenuId.for('api:<id>')`, by registration order.
     Api(usize),
     #[cfg(test)]
@@ -235,7 +237,7 @@ pub fn workbench_menus() -> Vec<MenuItem> {
 
 /// menusExtensionPoint.ts `apiMenus`: the `contributes.menus` keys of the menus the port shows. `commandPalette`
 /// is read by `command_palette::menu`.
-const API_MENUS: [(&str, MenuId); 10] = [
+const API_MENUS: [(&str, MenuId); 12] = [
     ("editor/context", MenuId::EditorContext),
     ("explorer/context", MenuId::ExplorerContext),
     ("editor/title/context", MenuId::EditorTitleContext),
@@ -246,6 +248,8 @@ const API_MENUS: [(&str, MenuId); 10] = [
     ("scm/inputBox", MenuId::ScmInputBox),
     ("diffEditor/gutter/hunk", MenuId::DiffEditorHunkToolbar),
     ("editor/title", MenuId::EditorTitle),
+    ("view/title", MenuId::ViewTitle),
+    ("view/item/context", MenuId::ViewItemContext),
 ];
 
 /// The `icon` of each `contributes.commands` entry with one: a `$(codicon)` name, or the light and dark image paths.

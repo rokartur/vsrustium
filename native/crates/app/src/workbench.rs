@@ -66,6 +66,8 @@ mod title_bar_actions;
 mod unicode_highlight;
 mod unusual_line_terminators;
 mod scm_view;
+mod tree_view;
+mod file_decorations;
 mod webview_panels;
 
 use std::cell::Cell;
@@ -183,6 +185,8 @@ pub struct Workbench {
     pub search_editor_widget: search_editor_widget::SearchEditorWidget,
     pub webview_panels: webview_panels::WebviewPanels,
     pub scm: scm_view::ScmView,
+    tree_views: tree_view::TreeViews,
+    decorations: std::cell::RefCell<crate::decorations::Decorations>,
     quick_diffs: editor_view::quick_diff::QuickDiffs,
     /// `contributes.commands` icons, for the view toolbars.
     pub command_icons: HashMap<String, crate::menus::CommandIcon>,
@@ -329,6 +333,8 @@ impl Workbench {
             search_editor_widget: search_editor_widget::SearchEditorWidget::new(cx),
             webview_panels: Default::default(),
             scm: scm_view::ScmView::new(cx),
+            tree_views: Default::default(),
+            decorations: Default::default(),
             quick_diffs: Default::default(),
             command_icons: HashMap::new(),
             menus: crate::menus::workbench_menus(),
@@ -690,7 +696,7 @@ impl Workbench {
             // actionbar.css: .monaco-action-bar .action-item is cursor: pointer.
             .child(self.icon("ellipsis", 22., 16., foreground).cursor_pointer());
         let Some(tree) = self.folder.as_ref() else {
-            let empty = view_panes::ExplorerPane { id: view_panes::EMPTY_VIEW, title: "No Folder Opened".into(), body: self.empty_view(cx).into_any_element() };
+            let empty = view_panes::ExplorerPane { id: view_panes::EMPTY_VIEW, title: "No Folder Opened".into(), description: None, actions: None, body: self.empty_view(cx).into_any_element() };
             return self.side_bar_frame().text_color(foreground).child(title).child(self.explorer_pane_view(empty, window, cx)).child(div().h(px(5.)).flex_none());
         };
         // explorerviewlet.css: in high contrast an explorer item has a 20px line from the row top, 1px above center.
@@ -756,6 +762,10 @@ impl Workbench {
                 false => icons.file_icon(&icon_path, self.languages.language_of(&icon_path, ""), self.theme.kind, 13., label_line, foreground),
             });
             let indent = 8. * (row.depth - 1) as f32;
+            // explorerViewer.ts passes `explorer.decorations` as the label's `fileDecorations`.
+            let decoration = self.file_decoration(&path, is_dir);
+            let decoration_color = self.decoration_color(decoration.as_ref(), self.setting("explorer.decorations.colors") != Value::Bool(false));
+            let badge = self.decoration_badge(decoration.as_ref(), foreground).filter(|_| self.setting("explorer.decorations.badges") != Value::Bool(false));
             let has_nests = row.has_nests;
             let (twistie_path, row_expanded) = (path.clone(), row.expanded);
             let twistie_element = |chevron| {
@@ -766,7 +776,11 @@ impl Workbench {
                     cx.notify();
                 }))
             };
-            let hover = self.hover_target(("explorer-hover", index), HoverContent::Text(crate::quick_input::path_label(&path, None)), HoverOptions::mouse());
+            let hover = self.hover_target(("explorer-hover", index), HoverContent::Text(match decoration.as_ref().and_then(|decoration| decoration.tooltip.as_deref()) {
+                // labels.ts: the title, then the decoration's tooltip.
+                Some(tooltip) => format!("{} \u{2022} {tooltip}", crate::quick_input::path_label(&path, None)),
+                None => crate::quick_input::path_label(&path, None),
+            }), HoverOptions::mouse());
             div()
                 .id(index)
                 // list.css: .monaco-list.mouse-support .monaco-list-row is cursor: pointer.
@@ -793,6 +807,8 @@ impl Workbench {
                             .child(div().self_start().flex_1().ml(px(label_margin)).line_height(px(label_line)).child(name))
                     }
                 })
+                .children(badge)
+                .when_some(decoration_color, |row, color| row.text_color(color))
                 // explorerviewlet.css: .explorer-item.cut is at half opacity. Its 0.3 for the other rows while a name is
                 // edited needs `.explorer-folders-view` twice in the ancestry, which the reference DOM never has.
                 .when(is_cut, |row| row.opacity(0.5))
@@ -863,7 +879,7 @@ impl Workbench {
         self.side_bar_frame()
             .text_color(foreground)
             .child(title)
-            .child(self.explorer_pane_view(view_panes::ExplorerPane { id: view_panes::FILE_VIEW, title: folder_name, body:
+            .child(self.explorer_pane_view(view_panes::ExplorerPane { id: view_panes::FILE_VIEW, title: folder_name, description: None, actions: None, body:
                 div().relative().flex_1().min_h_0().flex().flex_col().child(
                 div()
                     .id("explorer-tree")
