@@ -71,7 +71,8 @@ const EDITOR_COMMANDS: [(&str, EditorCommand); 48] = [
 type IndentingCommand = fn(&mut OpenEditor, AutoIndent) -> Option<ContentChanged>;
 
 /// Edit commands that indent by the language's onEnter and indentation rules (`CursorConfiguration.autoIndent`).
-const INDENTING_EDITOR_COMMANDS: [(&str, IndentingCommand); 10] = [
+const INDENTING_EDITOR_COMMANDS: [(&str, IndentingCommand); 11] = [
+    ("lineBreakInsert", OpenEditor::line_break_insert),
     ("tab", OpenEditor::tab),
     ("outdent", OpenEditor::outdent),
     ("editor.action.indentLines", OpenEditor::indent_lines),

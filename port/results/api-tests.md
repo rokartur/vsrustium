@@ -187,3 +187,7 @@ On the Studio, the working tree of the diagnostics and Next Problem commit. `MOC
 | `vscode API - editors` | 13 | 0 | 0 |
 
 webview.test.ts ("loads many local resources concurrently without crashing") passes as in the reference. The other counts equal their baselines above (M12 `_workbench.open`, Milestone 11, Milestone 8): nothing lost.
+
+## M10 settings and storage
+
+On the Studio at 1ed0e932 (settings.json reload in the workbench, `.vsrustium` folders). `MOCHA_GREP="vscode API - configuration|vscode API - globalState" SUITE_TIMEOUT=300 port/tools/api-tests`: api-folder 5/0/0/397 (exit 0 after 1s), api-workspace 0/0/0/4. All three `configuration` tests and both `globalState / workspaceState` tests pass.

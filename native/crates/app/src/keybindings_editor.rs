@@ -121,10 +121,7 @@ impl Model {
             bound.insert(item.command.as_str());
         }
         let with_defaults: HashSet<&str> = defaults.iter().map(|item| item.command.as_str()).collect();
-        // The workbench's palette items list commands the port may not register; an extension's are registered on activation.
-        let contributed = menu.iter().filter(|item| item.source.is_some()).map(|item| item.id.as_str());
-        let candidates = contributed.chain(EDITOR_ACTIONS.iter().map(|action| action.0)).chain(registered.iter().copied());
-        for command in unbound_commands(candidates, &bound) {
+        for command in unbound_command_ids(menu, registered, &bound) {
             let item = Item::new(Vec::new(), command, None, None, !with_defaults.contains(command));
             by_precedence.push(row(command, &item, &commands));
         }
@@ -203,6 +200,13 @@ fn row(command: &str, item: &Item, commands: &HashMap<&str, &MenuItem>) -> Row {
         is_default: item.is_default,
         source,
     }
+}
+
+/// `getAllUnboundCommands` over the palette items, the editor actions and the registered commands.
+pub fn unbound_command_ids<'a>(menu: &'a [MenuItem], registered: &[&'a str], bound: &HashSet<&str>) -> Vec<&'a str> {
+    // The workbench's palette items list commands the port may not register; an extension's are registered on activation.
+    let contributed = menu.iter().filter(|item| item.source.is_some()).map(|item| item.id.as_str());
+    unbound_commands(contributed.chain(EDITOR_ACTIONS.iter().map(|action| action.0)).chain(registered.iter().copied()), bound)
 }
 
 /// `getAllUnboundCommands`: private commands (`_`, `vscode.`) are left out.

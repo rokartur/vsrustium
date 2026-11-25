@@ -60,7 +60,8 @@ impl MainThread for WorkbenchMainThread {
         let is_document_request = matches!(method, "$tryOpenDocument" | "$trySaveDocument");
         let scheme = if is_document_request { args[0]["scheme"].as_str().unwrap_or_default() } else { "" };
         let capabilities = if is_document_request { (Providers { session: &mut *session }).capabilities(scheme) } else { None };
-        let through_provider = scheme != "file" && capabilities.is_some();
+        // host_requests.rs opens `vscode` documents: the default settings content lives in the workbench.
+        let through_provider = scheme != "file" && scheme != "vscode" && capabilities.is_some();
         if method == "$tryOpenDocument" {
             // host_requests.rs reads the provider's bytes at 2 and whether paths ignore case at 3.
             args.resize(3, Value::Null);

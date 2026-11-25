@@ -36,6 +36,8 @@ pub enum Owner {
     ResizeColumn(Option<usize>),
     /// A picker of output channels, with what accepting each item does.
     Output(Vec<crate::workbench::output_actions::OutputPick>),
+    /// `_workbench.pickWorkspaceFolder` of Open Folder Settings (JSON): the folders, by item handle.
+    FolderSettings(Vec<std::path::PathBuf>),
 }
 
 impl Workbench {
@@ -208,6 +210,7 @@ impl Workbench {
             Owner::EditorStatus(_) => self.editor_status_event(id, event, window, cx),
             Owner::ResizeColumn(_) => self.resize_column_event(id, event, window, cx),
             Owner::Output(_) => self.output_pick_event(id, event, window, cx),
+            Owner::FolderSettings(_) => self.folder_settings_pick_event(id, event, window, cx),
         }
     }
 

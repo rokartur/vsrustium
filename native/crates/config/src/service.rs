@@ -52,6 +52,15 @@ enum Editable {
     WorkspaceFolder,
 }
 
+/// Port decision, not upstream: a folder's configuration is read from both, `.vsrustium` winning per key.
+pub const FOLDER_CONFIG_DIRS: [&str; 2] = [".vscode", ".vsrustium"];
+
+/// Where UI writes a folder's configuration: `.vsrustium` when that folder exists, else `.vscode`.
+pub fn folder_config_dir(folder: &Path) -> PathBuf {
+    let preferred = folder.join(".vsrustium");
+    if preferred.is_dir() { preferred } else { folder.join(".vscode") }
+}
+
 /// `TASKS_DEFAULT`: what configurationEditing.ts writes into a new tasks.json before editing it.
 const TASKS_DEFAULT: &str = "{\n\t\"version\": \"2.0.0\",\n\t\"tasks\": []\n}";
 
@@ -122,8 +131,7 @@ impl Settings {
         let single_folder = self.workspace_file().is_none();
         let folders: Vec<PathBuf> = self.configuration.folders.iter().map(|(folder, _)| folder.clone()).collect();
         for folder in folders {
-            let directory = folder.join(".vscode");
-            if changed_files.iter().any(|path| path.parent() == Some(directory.as_path())) {
+            if changed_files.iter().any(|path| FOLDER_CONFIG_DIRS.iter().any(|dir| path.parent() == Some(folder.join(dir).as_path()))) {
                 let model = self.load_folder(&folder);
                 changes.push(self.configuration.compare_and_update_folder(&folder, model, single_folder));
             }
@@ -179,6 +187,35 @@ impl Settings {
         Ok(merge_changes(&changes))
     }
 
+    /// preferencesService.ts `getEditableSettingsURI` then `createSettingsIfNotExists`: the target's settings file,
+    /// written as `{\n}` when missing, or the workspace file given a `settings` object. `None` without a folder.
+    pub fn create_settings_if_not_exists(&self, target: Target, resource: Option<&Path>) -> Option<Result<PathBuf, String>> {
+        let editable = match target {
+            Target::Workspace => Editable::Workspace,
+            Target::WorkspaceFolder => Editable::WorkspaceFolder,
+            _ => Editable::UserLocal,
+        };
+        let path = self.file_for(editable, "settings.json", resource)?;
+        if self.is_workspace_file(Some(&path)) {
+            let content = std::fs::read_to_string(&path).unwrap_or_default();
+            let parsed = json::parse(&content, &mut Vec::new(), ParseOptions { allow_trailing_comma: true, allow_empty_content: true, ..ParseOptions::default() });
+            if parsed.is_some_and(|workspace| workspace.get("settings").is_none()) {
+                let options = formatting_options(&content, &self.configuration, &path);
+                let edits = set_property(&content, &[Segment::Key("settings".into())], Some(&Value::Object(Map::new())), &options);
+                if let Err(error) = write_file(&path, &crate::json_edit::apply_edits(&content, &edits)) {
+                    return Some(Err(format!("Unable to create '{}' ({error}).", path.display())));
+                }
+            }
+            return Some(Ok(path));
+        }
+        if !path.exists()
+            && let Err(error) = write_file(&path, "{\n}")
+        {
+            return Some(Err(format!("Unable to create '{}' ({error}).", path.display())));
+        }
+        Some(Ok(path))
+    }
+
     fn reload_after_write(&mut self, editable: Editable) -> Change {
         for (path, last) in &mut self.stamps {
             *last = stamp(path);
@@ -214,7 +251,9 @@ impl Settings {
         let mut files: Vec<PathBuf> = ["settings.json", "tasks.json", "mcp.json"].iter().map(|name| self.user_home.join(name)).collect();
         files.extend(self.workspace_file().map(Path::to_path_buf));
         for (folder, _) in &self.configuration.folders {
-            files.extend(["settings.json", "tasks.json", "launch.json", "mcp.json"].iter().map(|name| folder.join(".vscode").join(name)));
+            for dir in FOLDER_CONFIG_DIRS {
+                files.extend(["settings.json", "tasks.json", "launch.json", "mcp.json"].iter().map(|name| folder.join(dir).join(name)));
+            }
         }
         files
     }
@@ -226,11 +265,15 @@ impl Settings {
         settings.merge(&standalone.into_iter().flatten().collect::<Vec<_>>())
     }
 
-    /// `FolderConfiguration`: `.vscode/settings.json` with WORKSPACE_SCOPES in a folder window and FOLDER_SCOPES in a
-    /// workspace (the window is trusted, as the reference runs with workspace trust off), plus tasks.json,
-    /// launch.json and mcp.json.
+    /// `FolderConfiguration` of each of FOLDER_CONFIG_DIRS, the later winning per key.
     fn load_folder(&self, folder: &Path) -> ConfigurationModel {
-        let directory = folder.join(".vscode");
+        let models: Vec<ConfigurationModel> = FOLDER_CONFIG_DIRS.iter().map(|dir| self.load_folder_dir(&folder.join(dir))).collect();
+        models[0].merge(&models[1..])
+    }
+
+    /// `.vscode/settings.json` with WORKSPACE_SCOPES in a folder window and FOLDER_SCOPES in a workspace (the window
+    /// is trusted, as the reference runs with workspace trust off), plus tasks.json, launch.json and mcp.json.
+    fn load_folder_dir(&self, directory: &Path) -> ConfigurationModel {
         let scopes = if self.workspace_file().is_some() { FOLDER_SCOPES.to_vec() } else { WORKSPACE_SCOPES.to_vec() };
         let filter = ParseFilter { scopes: Some(scopes), ..ParseFilter::default() };
         let settings = parse_content(&read_or_empty(&directory.join("settings.json")), Some(&self.registry), &filter).model;
@@ -291,15 +334,15 @@ impl Settings {
         Operation { key: key.to_owned(), json_path, path, standalone: None }
     }
 
-    /// `getConfigurationFileResource`: the user file, the workspace file, or the file in a folder's `.vscode`.
+    /// `getConfigurationFileResource`: the user file, the workspace file, or the file in a folder's `folder_config_dir`.
     fn file_for(&self, editable: Editable, name: &str, resource: Option<&Path>) -> Option<PathBuf> {
         match editable {
             Editable::UserLocal => Some(self.user_home.join(name)),
             Editable::Workspace => match self.workspace_file() {
                 Some(file) => Some(file.to_path_buf()),
-                None => self.configuration.folders.first().map(|(folder, _)| folder.join(".vscode").join(name)),
+                None => self.configuration.folders.first().map(|(folder, _)| folder_config_dir(folder).join(name)),
             },
-            Editable::WorkspaceFolder => self.folder_of(resource).map(|folder| folder.join(".vscode").join(name)),
+            Editable::WorkspaceFolder => self.folder_of(resource).map(|folder| folder_config_dir(folder).join(name)),
         }
     }
 
@@ -603,6 +646,26 @@ mod tests {
         assert_eq!(parsed(&fixture.user("settings.json")), json!({ "my.super.setting": "my.super.value" }));
         fixture.write("configurationEditing.service.testSetting", None, Target::User).unwrap();
         assert_eq!(parsed(&fixture.user("settings.json")), json!({ "my.super.setting": "my.super.value" }));
+    }
+
+    #[test]
+    fn vsrustium_wins_over_vscode_and_takes_writes_when_present() {
+        let mut fixture = Fixture::new("vsrustium", true);
+        let (test, two) = (Some("configurationEditing.service.testSetting"), Some("configurationEditing.service.testSettingTwo"));
+        write_file(&fixture.folder("settings.json"), r#"{ "configurationEditing.service.testSetting": "vscode", "configurationEditing.service.testSettingTwo": "vscode" }"#);
+        fixture.settings.reload_changed_files().unwrap();
+        fixture.write("configurationEditing.service.testSetting", Some(json!("written")), Target::Workspace).unwrap();
+        assert_eq!(parsed(&fixture.folder("settings.json"))["configurationEditing.service.testSetting"], "written", "without .vsrustium writes go to .vscode");
+
+        let vsrustium = fixture.root.join("folder/.vsrustium/settings.json");
+        write_file(&vsrustium, r#"{ "configurationEditing.service.testSetting": "vsrustium" }"#);
+        fixture.settings.reload_changed_files().expect("the .vsrustium file is watched");
+        assert_eq!(fixture.settings.get_value(test, &Overrides::default()), Some(json!("vsrustium")));
+        assert_eq!(fixture.settings.get_value(two, &Overrides::default()), Some(json!("vscode")));
+
+        fixture.write("configurationEditing.service.testSettingTwo", Some(json!("written")), Target::Workspace).unwrap();
+        assert_eq!(parsed(&vsrustium)["configurationEditing.service.testSettingTwo"], "written");
+        assert_eq!(fixture.settings.get_value(two, &Overrides::default()), Some(json!("written")));
     }
 
     #[test]

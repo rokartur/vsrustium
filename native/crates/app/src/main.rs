@@ -11,6 +11,7 @@ mod clipboard;
 mod command_palette;
 mod commands;
 mod contextkey;
+mod default_settings;
 mod dialog;
 mod editor;
 mod editor_history;
@@ -77,6 +78,7 @@ use futures::channel::mpsc::{UnboundedSender, unbounded};
 use gpui::{App, Bounds, Keystroke, TitlebarOptions, Window, WindowBounds, WindowOptions, point, prelude::*, px, size};
 use gpui_platform::application;
 use serde_json::json;
+use storage::state::FileStorage;
 use anyhow::Context as _;
 use commands::Outcome;
 use host_sync::HostSync;
@@ -160,6 +162,7 @@ fn main() -> anyhow::Result<()> {
                 workbench.start_logs(output::log_levels::argv_file(&home), window_logs.parent().expect("a session folder").to_path_buf(), cx);
                 workbench.skip_dialogs = development.as_ref().is_some_and(|development| development.tests_path.is_some());
                 workbench.load_keybindings(keybindings::default_keybindings(&extensions), keybindings_file.clone(), cx);
+                workbench.watch_settings_files(cx);
                 workbench.start_system_wide_keybindings(window, cx);
                 workbench.set_command_palette_menu(command_palette::menu(&extensions));
                 workbench.menus.extend(menus::extension_menus(&extensions));
@@ -287,7 +290,10 @@ fn run_extension_host(
     let paths = SessionPaths { app_root: &app_root, user_data: &user_data, workspace: workspace.as_ref() };
     let extension_tests = development.as_ref().is_some_and(|development| development.tests_path.is_some());
     let mut init = init_data(&paths, &extensions, VERSION);
-    init["telemetryInfo"] = storage.telemetry_info();
+    // StateService of main.ts: `storage.json` in the global storage folder.
+    let global_storage = user_data.join("User/globalStorage");
+    std::fs::create_dir_all(&global_storage)?;
+    init["telemetryInfo"] = storage.telemetry_info(&mut FileStorage::open(&global_storage.join("storage.json")));
     if let Some(development) = &development {
         development.add_to_init_data(&mut init);
     }

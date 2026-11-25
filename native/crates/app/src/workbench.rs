@@ -4,6 +4,7 @@
 
 mod actions;
 mod bulk_text_edits;
+mod configuration;
 mod context_menu;
 mod define_keybinding;
 mod diagnostics;
@@ -30,6 +31,7 @@ pub mod logs_actions;
 mod notifications_view;
 pub mod output_actions;
 mod output_view;
+mod preferences;
 pub mod quick_access;
 mod quick_open;
 mod readonly;
@@ -310,6 +312,7 @@ impl Workbench {
         workbench.register_file_participant_commands();
         workbench.register_keybindings_editor_commands();
         workbench.register_readonly_commands();
+        workbench.register_preferences_commands();
         workbench.register_editor_message_commands();
         workbench.register_marker_navigation_commands();
         workbench.register_define_keybinding_command();

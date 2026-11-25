@@ -1,7 +1,8 @@
 #!/bin/bash
 # Writes the reference's core settings registry to native/crates/config/core-settings.json: every setting VS Code
 # itself registers (no extensions), with its schema, default and scope, as the Settings editor reads it.
-# Run on the Studio: port/tools/studio port/tools/dump-core-settings, then copy the file back.
+# Also writes the schemas the settings schemas $ref to native/crates/config/schemas.
+# Run on the Studio: port/tools/studio port/tools/dump-settings, then copy the files back.
 set -euo pipefail
 REF=${REF:-$HOME/Developer/vscode-ref}
 electron="$REF/.build/electron/Code - OSS.app/Contents/MacOS/Code - OSS"
@@ -12,4 +13,5 @@ DUMP_OUT=$out VSCODE_DEV=1 NODE_ENV=development timeout 300 "$electron" "$REF" -
   --extensionDevelopmentPath="$PWD/port/tools/dump-core-settings" --extensionTestsPath="$PWD/port/tools/dump-core-settings/run.js" >"$out/electron.log" 2>&1 \
   || { tail -20 "$out/electron.log"; exit 1; }
 cp "$out/core-settings.json" native/crates/config/core-settings.json
+mkdir -p native/crates/config/schemas && cp "$out"/schemas/*.json native/crates/config/schemas/
 echo "$(jq 'length' native/crates/config/core-settings.json) settings, $out"

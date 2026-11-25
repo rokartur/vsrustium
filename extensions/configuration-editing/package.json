@@ -115,7 +115,15 @@
         "url": "vscode://schemas/settings/folder"
       },
       {
+        "fileMatch": "/.vsrustium/settings.json",
+        "url": "vscode://schemas/settings/folder"
+      },
+      {
         "fileMatch": "/.vscode/launch.json",
+        "url": "vscode://schemas/launch"
+      },
+      {
+        "fileMatch": "/.vsrustium/launch.json",
         "url": "vscode://schemas/launch"
       },
       {
@@ -123,7 +131,15 @@
         "url": "vscode://schemas/tasks"
       },
       {
+        "fileMatch": "/.vsrustium/tasks.json",
+        "url": "vscode://schemas/tasks"
+      },
+      {
         "fileMatch": "/.vscode/mcp.json",
+        "url": "vscode://schemas/mcp"
+      },
+      {
+        "fileMatch": "/.vsrustium/mcp.json",
         "url": "vscode://schemas/mcp"
       },
       {
@@ -168,6 +184,10 @@
       },
       {
         "fileMatch": "/.vscode/extensions.json",
+        "url": "vscode://schemas/extensions"
+      },
+      {
+        "fileMatch": "/.vsrustium/extensions.json",
         "url": "vscode://schemas/extensions"
       },
       {
