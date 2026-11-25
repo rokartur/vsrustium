@@ -771,17 +771,21 @@ impl Workbench {
                     }))
                     .on_click(cx.listener(move |workbench, event: &ClickEvent, window, cx| {
                         let modifiers = event.modifiers();
+                        let mode = workbench.list_click_mode();
+                        let multi_select = if mode.alt_multi_select { modifiers.alt } else { modifiers.platform };
+                        let double_click = event.click_count() == 2;
                         window.focus(&workbench.explorer.focus.clone(), cx);
                         let tree = workbench.folder.as_mut().expect("rows exist only with a folder");
-                        tree.click_select(&path, modifiers.platform, modifiers.shift);
+                        tree.click_select(&path, multi_select, modifiers.shift);
                         cx.notify();
-                        if modifiers.platform || modifiers.shift {
+                        if multi_select || modifiers.shift {
                             return;
                         }
-                        if is_dir {
-                            tree.toggle(&path);
-                        } else {
-                            workbench.open_file(path.clone(), event.click_count() == 2, window, cx);
+                        match is_dir {
+                            true if mode.expand_on_double_click && !double_click => {}
+                            true => tree.toggle(&path),
+                            false if mode.open_on_double_click && !double_click => {}
+                            false => workbench.open_file(path.clone(), double_click, window, cx),
                         }
                     }))
                 })

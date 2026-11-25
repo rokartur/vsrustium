@@ -412,3 +412,36 @@ fn tree_indent_is_clamped_and_defaults_to_8() {
     let indents: Vec<f32> = [json!(null), json!("12"), json!(12), json!(100), json!(-3)].iter().map(super::tree_indent).collect();
     assert_eq!(indents, [8., 8., 12., 40., 0.]);
 }
+
+/// listService.ts: `workbench.list.openMode` and `workbench.tree.expandMode` `doubleClick` need a double click to
+/// open a file or expand a folder; `workbench.list.multiSelectModifier` `alt` adds rows with Alt instead of Cmd.
+#[gpui::test]
+fn list_click_settings_change_what_clicks_do(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = explorer("list-click-settings", cx);
+    let user = dir.join("../list-click-settings-user");
+    std::fs::create_dir_all(&user).unwrap();
+    std::fs::write(user.join("settings.json"), r#"{ "workbench.list.openMode": "doubleClick", "workbench.tree.expandMode": "doubleClick", "workbench.list.multiSelectModifier": "alt" }"#).unwrap();
+    workbench.update(cx, |workbench, _| {
+        workbench.settings = std::sync::Arc::new(std::sync::Mutex::new(config::service::Settings::load(config::registry::Registry::with_extensions(&[]), user.clone(), None)));
+    });
+    let (sub_row, file_row) = (point(px(120.), px(107.)), point(px(120.), px(129.)));
+    let state = |cx: &mut VisualTestContext| {
+        workbench.read_with(cx, |workbench, _| {
+            let tree = workbench.folder.as_ref().unwrap();
+            (workbench.editors.active().is_some(), tree.is_expanded(&dir.join("sub")), tree.selected.len())
+        })
+    };
+
+    cx.simulate_click(file_row, Modifiers::none());
+    assert_eq!(state(cx), (false, false, 1), "a single click only selects the file");
+    cx.simulate_click(sub_row, Modifiers::none());
+    assert_eq!(state(cx), (false, false, 1), "a single click only selects the folder");
+    cx.simulate_click(file_row, Modifiers::alt());
+    assert_eq!(state(cx).2, 2, "Alt adds the file to the selection");
+    cx.simulate_click(sub_row, Modifiers::none());
+    cx.simulate_event(gpui::MouseDownEvent { position: sub_row, modifiers: Modifiers::none(), button: MouseButton::Left, click_count: 2, first_mouse: false });
+    cx.simulate_event(gpui::MouseUpEvent { position: sub_row, modifiers: Modifiers::none(), button: MouseButton::Left, click_count: 2 });
+    assert!(state(cx).1, "a double click expands the folder");
+    std::fs::remove_dir_all(user).unwrap();
+    std::fs::remove_dir_all(dir).unwrap();
+}
