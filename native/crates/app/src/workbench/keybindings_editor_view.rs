@@ -47,7 +47,6 @@ const COLUMN_LABELS: [&str; 4] = ["Command", "Keybinding", "When", "Source"];
 /// `--vscode-sash-size`.
 const SASH_SIZE: f32 = 4.;
 /// `workbench.sash.hoverDelay` default.
-const SASH_HOVER_DELAY: Duration = Duration::from_millis(300);
 /// The `border-color 0.2s ease-out` transition of the column borders on table hover.
 const TABLE_BORDER_FADE: Duration = Duration::from_millis(200);
 /// `DefineKeybindingWidget.WIDTH` and `HEIGHT`.
@@ -1127,11 +1126,12 @@ impl Workbench {
             _ => gpui::CursorStyle::ResizeColumn,
         })
         .on_hover(cx.listener(move |workbench, hovered: &bool, window, cx| {
+            let delay = workbench.sash_hover_delay();
             let editor = &mut workbench.keybindings_editor;
             editor.sash_hovered = None;
             editor.sash_hover = hovered.then(|| {
                 cx.spawn_in(window, async move |workbench, cx| {
-                    cx.background_executor().timer(SASH_HOVER_DELAY).await;
+                    cx.background_executor().timer(delay).await;
                     let _ = workbench.update(cx, |workbench, cx| {
                         workbench.keybindings_editor.sash_hovered = Some(index);
                         cx.notify();

@@ -7,6 +7,8 @@ mod bulk_text_edits;
 mod configuration;
 mod content_hover;
 mod content_hover_view;
+mod editor_groups;
+mod history_actions;
 mod context_menu;
 mod define_keybinding;
 mod diagnostics;
@@ -77,7 +79,7 @@ use config::service::Settings;
 use config::workspace::Workspace;
 use storage::Storage;
 
-use gpui::{ClickEvent, Context, Div, DragMoveEvent, ExternalPaths, FocusHandle, FontFeatures, FontWeight, MouseButton, MouseDownEvent, Rgba, Task, Window, div, prelude::*, px, rgb, svg, transparent_black};
+use gpui::{ClickEvent, Context, Div, DragMoveEvent, ExternalPaths, FocusHandle, FontFeatures, FontWeight, MouseButton, MouseDownEvent, Rgba, Stateful, Task, Window, div, prelude::*, px, rgb, svg, transparent_black};
 use serde_json::Value;
 
 use crate::commands::Commands;
@@ -200,6 +202,8 @@ pub struct Workbench {
     /// StorageScope.WORKSPACE of the opened folder, shared with the extension host's MainThreadStorage.
     workspace_storage: Arc<Mutex<Storage>>,
     part_grid: part_grid::PartGrid,
+    editor_groups: editor_groups::EditorGroups,
+    history: history_actions::History,
     panel: panel::Panel,
     explorer_panes: view_panes::ExplorerPanes,
 }
@@ -220,7 +224,8 @@ impl Render for Workbench {
         let window_border = self.theme.color("window.activeBorder");
         // The reference lays the grid out at the full window size and shifts it inside the 1px window border.
         let inset = if window_border.is_some() { 1. } else { 0. };
-        let editor = if self.editors.active().is_some() { self.text_editor_part(window, cx) } else { self.editor_part() };
+        self.editors.sync_editors();
+        let editor = self.editor_groups_part(window, cx);
         let grid = div()
             .absolute()
             .left(px(inset))
@@ -336,6 +341,8 @@ impl Workbench {
             profile_storage: Arc::new(Mutex::new(Storage::in_memory())),
             workspace_storage: Arc::new(Mutex::new(Storage::in_memory())),
             part_grid: part_grid::PartGrid::default(),
+            editor_groups: Default::default(),
+            history: Default::default(),
             panel: panel::Panel::default(),
             explorer_panes: view_panes::ExplorerPanes::default(),
         };
@@ -361,6 +368,8 @@ impl Workbench {
         workbench.register_explorer_find_commands();
         workbench.register_search_actions();
         workbench.register_layout_actions();
+        workbench.register_editor_group_actions();
+        workbench.register_history_actions();
         workbench.register_search_editor_actions();
         workbench.register_search_editor_widget_actions();
         workbench.register_file_participant_commands();
@@ -447,6 +456,14 @@ impl Workbench {
 
     /// Keeps the Explorer selection and the extension host in step with the group.
     fn editors_changed(&mut self, cx: &mut Context<Self>) {
+        if std::mem::take(&mut self.editors.closed_last_editor) {
+            self.close_group_if_empty(self.editors.id);
+        }
+        self.editors.columns = if self.editors.other_groups.is_empty() { Vec::new() } else { self.groups_in_grid_order() };
+        for (group, path, index) in std::mem::take(&mut self.editors.closed) {
+            self.remember_closed_editor(group, path, index);
+        }
+        self.record_navigation(None);
         if let (Some(tree), Some(editor)) = (self.folder.as_mut(), self.editors.active()) {
             tree.reveal(&editor.document().path);
         }
@@ -470,6 +487,21 @@ impl Workbench {
     /// A foreground key with no color inherits, as CSS `color` does; every part here inherits `foreground`.
     fn foreground_or(&self, key: &str) -> Rgba {
         self.theme.color(key).unwrap_or(self.color("foreground"))
+    }
+
+    /// The command center's Go Back and Go Forward (`MenuId.CommandCenter` orders 1 and 2): enabled by their
+    /// `canNavigateBack`/`canNavigateForward` precondition, pointer only then (actionbar.css `.disabled`).
+    fn navigation_button(&self, icon: &'static str, title: &'static str, command: &'static str, enabled: bool, foreground: Rgba, disabled: Rgba, cx: &mut Context<Self>) -> Stateful<Div> {
+        self.icon(icon, 22., 16., if enabled { foreground } else { disabled })
+            .id(command)
+            .rounded(px(4.))
+            .when(enabled, |button| {
+                button.cursor_pointer().hover(|button| button.bg(self.color("toolbar.hoverBackground"))).on_click(cx.listener(move |workbench, _, window, cx| {
+                    workbench.execute_command(command, Vec::new(), window, cx);
+                }))
+            })
+            .on_mouse_down(MouseButton::Right, cx.listener(show_command_center_context_menu))
+            .child(self.action_hover(title, command, HoverOptions::instant()))
     }
 
     fn title_bar(&self, viewport_width: f32, cx: &mut Context<Self>) -> Div {
@@ -508,8 +540,8 @@ impl Workbench {
             true => title
                 .when(contextkey::truthy(Some(&self.setting("workbench.navigationControl.enabled"))), |title| {
                     title
-                        .child(self.icon("arrow-left", 22., 16., disabled).on_mouse_down(MouseButton::Right, cx.listener(show_command_center_context_menu)).child(self.action_hover("Go Back", "workbench.action.navigateBack", HoverOptions::instant())))
-                        .child(self.icon("arrow-right", 22., 16., disabled).ml(px(4.)).mr(px(10.)).on_mouse_down(MouseButton::Right, cx.listener(show_command_center_context_menu)).child(self.action_hover("Go Forward", "workbench.action.navigateForward", HoverOptions::instant())))
+                        .child(self.navigation_button("arrow-left", "Go Back", "workbench.action.navigateBack", self.can_navigate(true), foreground, disabled, cx))
+                        .child(self.navigation_button("arrow-right", "Go Forward", "workbench.action.navigateForward", self.can_navigate(false), foreground, disabled, cx).ml(px(4.)).mr(px(10.)))
                 })
                 .child(command_center)
                 .child(div().w(px(6.))),
@@ -867,7 +899,8 @@ impl Workbench {
             .child(div().self_start().pl(px(8.)).line_height(px(32.)).text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).text_color(self.foreground_or("sideBarTitle.foreground")).child(name))
     }
 
-    fn editor_part(&self) -> Div {
+    /// The letterpress of an empty group, `size` wide (256px, 200px in a part of several groups).
+    fn watermark(&self, size: f32) -> Div {
         // The high contrast letterpress files paint their own fill; the others are black at the opacity the file sets (editorgroupview.css).
         let (file, color) = match self.theme.kind {
             ThemeKind::Dark => ("letterpress-dark.svg", rgb(0x000000)),
@@ -876,19 +909,8 @@ impl Workbench {
             ThemeKind::HighContrastLight => ("letterpress-hcLight.svg", rgb(0xd9d9d9)),
         };
         let path = self.app_root.join("src/vs/workbench/browser/parts/editor/media").join(file);
-        // .watermark-container is 280px tall and centered; the 256px letterpress sits at its top.
-        let watermark = div().h(px(280.)).child(svg().external_path(path.to_string_lossy().into_owned()).size(px(256.)).text_color(color));
-        div()
-            .flex_1()
-            .flex()
-            .flex_col()
-            .items_center()
-            .justify_center()
-            .border_1()
-            .rounded(px(8.))
-            .bg(self.color("editor.background"))
-            .border_color(self.color("surface.border"))
-            .child(watermark)
+        // .watermark-container is 280px tall and centered; the letterpress sits at its top.
+        div().h(px(size + 24.)).child(svg().external_path(path.to_string_lossy().into_owned()).size(px(size)).text_color(color))
     }
 
     fn status_bar(&self, window: &Window, cx: &mut Context<Self>) -> Div {

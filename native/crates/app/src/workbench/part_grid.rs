@@ -18,8 +18,9 @@ use crate::split_view::SashState;
 /// The title bar and status bar heights around the grid's middle row.
 const TITLE_BAR_HEIGHT: f32 = 35.;
 const STATUS_BAR_HEIGHT: f32 = 28.;
-/// `workbench.sash.hoverDelay`'s default.
-pub(super) const SASH_HOVER_DELAY: Duration = Duration::from_millis(300);
+/// `workbench.sash.hoverDelay` and `workbench.sash.size` defaults.
+const SASH_HOVER_DELAY: f64 = 300.;
+const SASH_SIZE: f32 = 4.;
 /// `LayoutStateModel.STORAGE_PREFIX`.
 const STORAGE_PREFIX: &str = "workbench.";
 
@@ -29,6 +30,11 @@ pub(super) struct PartGrid {
     pub(super) grid: Option<Grid>,
     hovered: Option<Sash>,
     hover: Option<(Sash, Task<()>)>,
+    /// `SASH_GRIPPERS_HIDDEN_ATTRIBUTE`: the grippers receded after `workbench.sash.autoHideGrippersDelay` without
+    /// a mouse move; the timer and the last pointer position.
+    grippers_hidden: bool,
+    grippers_timer: Option<Task<()>>,
+    last_pointer: Option<gpui::Point<Pixels>>,
 }
 
 /// `LayoutStateKeys`' visibility key of a part and its default; the side bar defaults to hidden in an empty window.
@@ -118,6 +124,21 @@ impl Workbench {
         window.focus(&self.editor_focus.clone(), cx);
     }
 
+    /// contrib/sash/browser/sash.ts: `workbench.sash.size` clamped to 4..20 is every sash's size (`setGlobalSashSize`).
+    pub(super) fn sash_size(&self) -> f32 {
+        self.setting("workbench.sash.size").as_f64().map_or(SASH_SIZE, |size| (size as f32).clamp(4., 20.))
+    }
+
+    /// The sash highlight's width, `--vscode-sash-hover-size`: the setting clamped to 1..8.
+    pub(super) fn sash_hover_size(&self) -> f32 {
+        self.setting("workbench.sash.size").as_f64().map_or(SASH_SIZE, |size| (size as f32).clamp(1., 8.))
+    }
+
+    /// `workbench.sash.hoverDelay` (0..2000 in its schema) before a hovered sash shows its border (`setGlobalHoverDelay`).
+    pub(super) fn sash_hover_delay(&self) -> Duration {
+        Duration::from_millis(self.setting("workbench.sash.hoverDelay").as_f64().map_or(SASH_HOVER_DELAY, |delay| delay.clamp(0., 2000.)) as u64)
+    }
+
     /// Forgets the laid out grid so the next render reads the folder's stored layout.
     pub(super) fn reset_part_grid(&mut self) {
         self.part_grid.grid = None;
@@ -203,6 +224,65 @@ impl Workbench {
             .when_some(auxiliary_bar, |section, auxiliary_bar| section.child(div().w(px(row[3])).flex_none().flex().px(px(CARD_MARGIN)).pb(px(CARD_MARGIN)).child(auxiliary_bar)))
             .children(sashes.into_iter().map(|(sash, state, bounds)| self.part_sash(sash, state, bounds, cx)))
             .when(dragging, |section| section.child(self.part_sash_drag(cx)))
+            .child(self.gripper_activity(cx))
+    }
+
+    /// contrib/sash `SashGrippersController`: with `workbench.sash.autoHideGrippers`, the grippers show on mouse
+    /// movement and recede after the delay; without it they always show.
+    fn gripper_activity(&mut self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let auto_hide = self.setting("workbench.sash.autoHideGrippers") != json!(false);
+        if !auto_hide {
+            self.part_grid.grippers_hidden = false;
+            self.part_grid.grippers_timer = None;
+        } else if self.part_grid.grippers_timer.is_none() && !self.part_grid.grippers_hidden {
+            self.show_grippers(cx);
+        }
+        let workbench = cx.entity();
+        canvas(
+            |_, _, _| (),
+            move |_, _, window, _| {
+                if !auto_hide {
+                    return;
+                }
+                window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, cx| {
+                    if phase != gpui::DispatchPhase::Capture {
+                        return;
+                    }
+                    workbench.update(cx, |workbench, cx| {
+                        if workbench.part_grid.last_pointer != Some(event.position) {
+                            workbench.part_grid.last_pointer = Some(event.position);
+                            workbench.show_grippers(cx);
+                        }
+                    });
+                });
+            },
+        )
+        .size_0()
+    }
+
+    fn show_grippers(&mut self, cx: &mut Context<Self>) {
+        let delay = self.setting("workbench.sash.autoHideGrippersDelay").as_f64().unwrap_or(2000.).max(0.);
+        if self.part_grid.grippers_hidden {
+            self.part_grid.grippers_hidden = false;
+            cx.notify();
+        }
+        self.part_grid.grippers_timer = Some(cx.spawn(async move |workbench, cx| {
+            cx.background_executor().timer(Duration::from_millis(delay as u64)).await;
+            let _ = workbench.update(cx, |workbench, cx| {
+                workbench.part_grid.grippers_hidden = true;
+                cx.notify();
+            });
+        }));
+    }
+
+    /// partGrid.css `.part-grid-gap-sash::after`: three 2px dots 4px apart across the sash's middle, hidden while
+    /// the sash highlights or the grippers receded.
+    fn sash_gripper(&self, vertical: bool, width: f32, height: f32) -> Div {
+        let color = self.color("modernSash.gripForeground");
+        let (cx, cy) = (width / 2., height / 2.);
+        let dot = |dx: f32, dy: f32| div().absolute().left(px(cx + dx - 1.)).top(px(cy + dy - 1.)).size(px(2.)).rounded_full().bg(color);
+        let offsets = [-4., 0., 4.];
+        div().absolute().inset_0().children(offsets.map(|offset| if vertical { dot(0., offset) } else { dot(offset, 0.) }))
     }
 
     /// A `.monaco-sash` of the grid (sash.css): mac cursors, `sash.hoverBorder` after the hover delay and while dragged.
@@ -227,6 +307,7 @@ impl Workbench {
             .top(px(y))
             .w(px(width))
             .h(px(height))
+            .when(!active && !self.part_grid.grippers_hidden, |element| element.child(self.sash_gripper(vertical, width, height)))
             .when(active, |sash| sash.child(div().absolute().top_0().left_0().right_0().bottom(px(highlight_inset)).bg(hover_border)));
         let cursor = match (vertical, state) {
             (true, SashState::AtMinimum) => CursorStyle::ResizeRight,
@@ -251,8 +332,9 @@ impl Workbench {
                     return;
                 }
                 workbench.part_grid.hovered = None;
+                let delay = workbench.sash_hover_delay();
                 workbench.part_grid.hover = Some((sash, cx.spawn_in(window, async move |workbench, cx| {
-                        cx.background_executor().timer(SASH_HOVER_DELAY).await;
+                        cx.background_executor().timer(delay).await;
                         let _ = workbench.update(cx, |workbench, cx| {
                             workbench.part_grid.hovered = Some(sash);
                             cx.notify();

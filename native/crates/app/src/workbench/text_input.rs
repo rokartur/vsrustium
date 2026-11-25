@@ -41,6 +41,11 @@ impl Workbench {
         let scrolled = editor.scroll != scroll;
         self.find_editor_edited(change.as_ref());
         match &change {
+            Some(_) => self.record_navigation(Some(crate::navigation::Reason::Edit)),
+            None if moved => self.record_navigation(Some(crate::navigation::Reason::of_source(source))),
+            None => {}
+        }
+        match &change {
             Some(change) => self.host.send_content_change(&self.editors, self.editors.active_index().expect("only the active editor is edited"), change),
             None if moved => self.host.send_selection(self.editors.active().expect("still open"), source),
             None => {}

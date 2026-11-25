@@ -60,18 +60,16 @@ const FOLD_CONTROLS_FADE: Duration = Duration::from_millis(500);
 impl Workbench {
     pub(super) fn text_editor_part(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let editor = self.editors.active().expect("text editor part is drawn only with an editor open");
-        self.schedule_unusual_line_terminators_check(editor, window, cx);
+        if !self.editor_groups.drawing_inactive {
+            self.schedule_unusual_line_terminators_check(editor, window, cx);
+        }
         div()
             .flex_1()
-            // A long breadcrumbs path must not widen the part past the window.
             .min_w_0()
+            .min_h_0()
             .relative()
             .flex()
             .flex_col()
-            .border_1()
-            .rounded(px(8.))
-            .bg(self.color("editor.background"))
-            .border_color(self.color("surface.border"))
             .child(self.tab_strip(window, cx))
             .map(|part| match editor.document().scheme.as_str() {
                 // A webview editor has no breadcrumbs: its resource has no file system provider.
@@ -88,8 +86,11 @@ impl Workbench {
                 Some(diff) => part.child(self.diff_editor_body(diff, editor, window, cx)),
                 None => part.when(!matches!(editor.document().scheme.as_str(), WEBVIEW_PANEL_SCHEME | TERMINAL_SCHEME), |part| part.children(self.unicode_banner(editor, cx)).child(self.text_area(editor, window, cx))),
             })
-            // The active tab reaches into the part's top border, which Chrome still draws over it.
-            .child(div().absolute().inset(px(-1.)).border_1().rounded(px(8.)).border_color(self.color("surface.border")))
+    }
+
+    /// The active tab reaches into the part's top border, which Chrome still draws over it.
+    pub(super) fn part_top_border(&self) -> Div {
+        div().absolute().inset(px(-1.)).border_1().rounded(px(8.)).border_color(self.color("surface.border"))
     }
 
     /// One strip behind every tab; the active tab is an editor-colored fill whose bottom shoulders curve
@@ -113,8 +114,12 @@ impl Workbench {
                     workbench.execute_command("rerunSearchEditorSearch", Vec::new(), window, cx);
                 })))
             })
-            .children(self.editor_title_actions(window, cx))
-            .child(self.icon("split-horizontal", 22., 16., icon_color).cursor_pointer())
+            // A group that is not active shows only the overflow menu.
+            .when(!self.editor_groups.drawing_inactive, |actions| {
+                actions.children(self.editor_title_actions(window, cx)).child(self.icon("split-horizontal", 22., 16., icon_color).id("split-editor").cursor_pointer().on_click(cx.listener(|workbench, _, window, cx| {
+                    workbench.execute_command("workbench.action.splitEditor", Vec::new(), window, cx);
+                })))
+            })
             .child(self.icon("ellipsis", 22., 16., icon_color).cursor_pointer());
         // The line under the strip (tabs-border-bottom) runs below the shoulders; the active fill covers it.
         let bottom_line = div().absolute().bottom_0().left_0().right_0().h(px(1.)).bg(self.connected_tab_border());
@@ -380,6 +385,8 @@ impl Workbench {
         let middle_scroll_dot = self.middle_scroll_dot(point(px(editor_origin.x), px(editor_origin.y)));
         let middle_scrolling = middle_scroll_dot.is_some();
         let scrolled = cx.entity();
+        let group = self.editors.id;
+        let inactive = self.editor_groups.drawing_inactive;
         div()
             .id("text-area")
             .flex_1()
@@ -388,7 +395,7 @@ impl Workbench {
             .font_family(EDITOR_FONT)
             .text_size(px(metrics.font_size))
             .line_height(px(metrics.line_height))
-            .track_focus(&self.editor_focus)
+            .when(!inactive, |area| area.track_focus(&self.editor_focus))
             .on_key_down(cx.listener(Self::editor_key_down))
             .on_scroll_wheel(cx.listener(Self::editor_wheel))
             .on_modifiers_changed(cx.listener(Self::sticky_modifiers_changed))
@@ -446,10 +453,13 @@ impl Workbench {
                         // editorOptions.ts: contentWidth = remainingWidth - minimapWidth.
                         let minimap_width = minimap.as_ref().map_or(0., |minimap| minimap.width as f32);
                         let viewport = Viewport { width: width - metrics.content_left() - minimap_width, height, char_width: metrics.char_width, line_height: metrics.line_height, sticky_scroll_lines, top_whitespace, stop_rendering_line_after };
-                        laid_out.update(cx, |workbench, cx| workbench.editor_laid_out(viewport, minimap.map(|minimap| (minimap, pixel_ratio as f64)), cx));
+                        let minimap = minimap.map(|minimap| (minimap, pixel_ratio as f64));
+                        laid_out.update(cx, |workbench, cx| workbench.group_laid_out(group, |workbench| workbench.editor_laid_out(viewport, minimap, cx)));
                     },
                     move |bounds, _, window, cx| {
-                        window.handle_input(&focus, ElementInputHandler::new(bounds, workbench), cx);
+                        if !inactive {
+                            window.handle_input(&focus, ElementInputHandler::new(bounds, workbench), cx);
+                        }
                         if middle_scrolling && scrolled.update(cx, |workbench, cx| workbench.middle_scroll_frame(cx)) {
                             // observeWindowMousePos: the pointer anywhere in the window steers the session.
                             window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, cx| {
@@ -489,10 +499,13 @@ impl Workbench {
             .children(self.minimap(editor, cx))
             .children(middle_scroll_dot)
             .children(self.sticky_scroll_widget(editor, metrics, window, cx))
-            .children(self.find_widget(self.editors.viewport.width + metrics.content_left() + minimap_width, metrics.content_left(), minimap_width, window, cx))
-            .children(self.editor_message_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
-            .children(self.content_hover_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
-            .children(self.keybindings_file_widgets(editor, self.editors.viewport.width + metrics.content_left() + minimap_width, viewport.height, minimap_width, window, cx))
+            // The find widget, messages, hovers and keybinding widgets are the focused editor's.
+            .when(!inactive, |area| {
+                area.children(self.find_widget(self.editors.viewport.width + metrics.content_left() + minimap_width, metrics.content_left(), minimap_width, window, cx))
+                    .children(self.editor_message_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
+                    .children(self.content_hover_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
+                    .children(self.keybindings_file_widgets(editor, self.editors.viewport.width + metrics.content_left() + minimap_width, viewport.height, minimap_width, window, cx))
+            })
     }
 
     /// wordHighlighter.ts: `onDidBlurEditorWidget` stops the highlights once no code editor has the focus,
@@ -564,7 +577,7 @@ impl Workbench {
 
     /// The text area got its size: the group's viewport follows it, which can clamp the scroll position and
     /// change the visible lines; the lines drawn widen the scrollable content (`ViewLines._ensureMaxLineWidth`).
-    fn editor_laid_out(&mut self, viewport: Viewport, minimap: Option<(MinimapLayoutInfo, f64)>, cx: &mut Context<Self>) {
+    pub(super) fn editor_laid_out(&mut self, viewport: Viewport, minimap: Option<(MinimapLayoutInfo, f64)>, cx: &mut Context<Self>) {
         let resized = self.editors.viewport != viewport;
         let font_changed = (self.editors.viewport.char_width, self.editors.viewport.line_height) != (viewport.char_width, viewport.line_height);
         let minimap_changed = self.minimap.info != minimap;
@@ -600,7 +613,7 @@ impl Workbench {
 
     /// The wheel scrolls the editor in `StandardWheelEvent` units: 40 browser pixels or one line per notch. With
     /// `editor.mouseWheelZoom`, Cmd or Ctrl without Shift and Alt zooms instead (mouseHandler.ts).
-    fn editor_wheel(&mut self, event: &ScrollWheelEvent, _: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn editor_wheel(&mut self, event: &ScrollWheelEvent, _: &mut Window, cx: &mut Context<Self>) {
         let (x, y) = match event.delta {
             ScrollDelta::Pixels(delta) => (f32::from(delta.x) / 40., f32::from(delta.y) / 40.),
             ScrollDelta::Lines(delta) => (delta.x, delta.y),
@@ -1341,6 +1354,7 @@ impl Workbench {
         }
         let (moved, scrolled) = (editor.selections != before, editor.scroll != scroll);
         if moved {
+            self.record_navigation(Some(crate::navigation::Reason::of_source(source)));
             self.output_cursor_moved();
             self.find_editor_edited(None);
             self.host.send_selection(self.editors.active().expect("still open"), source);

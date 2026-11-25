@@ -322,7 +322,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/decorations | workbench service | todo |  |
 | workbench/services/dialogs | workbench service | todo |  |
 | workbench/services/driver | workbench service | n/a | upstream test infrastructure; the port tests with cargo test and port/tools |
-| workbench/services/editor | workbench service | todo |  |
+| workbench/services/editor | workbench service | ported | editor groups (editor_grid.rs grid of gridview.ts, workbench/editor_groups.rs): split (Cmd+\, directions, orthogonal, `workbench.editor.splitSizing`, `openSideBySideDirection`), one text model per resource shared by its editors (editor.rs `SharedModel`), focus and move editors between groups, move group, close group and closeEmptyGroups, join, the 8 editor layouts, flip, even and expand widths, maximize group, group sashes with double click reset; groups reach the host as view columns (`$acceptEditorTabModel`, editorPosition); cargo test -p app editor_groups editor_grid host_sync; pixel-check window split (port/results/layout.md). Not yet: group drag and drop, persisted editor part state |
 | workbench/services/encryption | workbench service | todo |  |
 | workbench/services/environment | workbench service | todo |  |
 | workbench/services/extensionManagement | workbench service | ported | installVSIX, uninstall, Install from VSIX and their errors: port/tools/extensions-check (3 ok); gallery and the Extensions view are milestone 18 items 2 and 3 |
@@ -331,7 +331,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/files | workbench service | todo |  |
 | workbench/services/filesConfiguration | workbench service | stub | read-only part only (`workbench/readonly.rs`): session override commands, `files.readonlyInclude`/`readonlyExclude`/`readonlyFromPermissions`, tab lock badge, edit guards; not ported: `updateReadonly` custom reasons and events (filesConfigurationService.test.ts, used by chat and extension services), hot exit settings; auto save part: `computeAutoSaveConfiguration`, `getAutoSaveMode` with reasons, `autoSaveWorkspaceFilesOnly`, `autoSaveWhenNoErrors`, `toggleAutoSave` and File > Auto Save (workbench/auto_save.rs, cargo test -p app auto_save) |
 | workbench/services/github | workbench service | todo |  |
-| workbench/services/history | workbench service | stub | editor history only (`history.entries` in workspace storage, exclude matcher, 200 entries) for Quick Open: cargo test -p app editor_history quick_open; no navigation stack (back/forward) or recently closed editors |
+| workbench/services/history | workbench service | ported | navigation.rs (EditorNavigationStack: 50 entries, 10-line threshold, navigation and jump entries, flatten on remove) and workbench/history_actions.rs: navigateBack/Forward/Last and the edit and navigation location variants, navigationScope default/editorGroup/editor, reopenClosedEditor (20), clearEditorHistory, open next/previous recently used editor, the can* context keys, command center Back/Forward; Quick Open editor history (`history.entries`); cargo test -p app navigation editor_groups editor_history quick_open |
 | workbench/services/host | workbench service | todo |  |
 | workbench/services/imageResize | workbench service | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | workbench/services/inlineCompletions | workbench service | todo |  |
@@ -462,7 +462,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/remoteCodingAgents | workbench contribution | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/contrib/remoteTunnel | workbench contribution | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/contrib/replNotebook | workbench contribution | todo |  |
-| workbench/contrib/sash | workbench contribution | todo |  |
+| workbench/contrib/sash | workbench contribution | ported | `workbench.sash.size` (editor group sashes 4..20, their highlight 1..8; the part grid's sashes are its 4px gaps) and `workbench.sash.hoverDelay` on every sash (part grid, view panes, editor groups, find widget, keybindings table), three-dot grippers on the part sashes with `workbench.sash.autoHideGrippers` and its delay (part_grid.rs); cargo test -p app part_grid |
 | workbench/contrib/scm | workbench contribution | ported | SCM view: input box, action button, groups, resources with decorations, inline and title actions, activity badge, status bar commands (workbench/scm_view.rs); quick diff gutter (quick_diff.rs). Missing: SCM graph view, repositories view, multi-repository selection, tree view mode |
 | workbench/contrib/screenshotTool | workbench contribution | removed | Artur: internal infrastructure or developer tool with no 1:1 counterpart in the native port |
 | workbench/contrib/scrollLocking | workbench contribution | todo |  |

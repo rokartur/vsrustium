@@ -56,6 +56,8 @@ pub enum EditReason {
     EolChange,
 }
 
+/// How many replaces a model keeps for its other editors to follow (`sync_with_model`).
+const MAX_LOGGED_EDITS: usize = 1000;
 const TYPED: EditReason = EditReason::Cursor { kind: "type", detailed_source: "keyboard" };
 
 pub(super) fn command(id: &'static str) -> EditReason {
@@ -750,7 +752,10 @@ impl OpenEditor {
         model.version_id += 1;
         model.history.open = false;
         model.history.alternative_version_id = model.version_id;
-        Some(ContentChanged { changes: Vec::new(), version_id: model.version_id, is_undoing: false, is_redoing: false, reason: EditReason::EolChange, was_dirty })
+        let version_id = model.version_id;
+        drop(model);
+        self.seen_version = version_id;
+        Some(ContentChanged { changes: Vec::new(), version_id, is_undoing: false, is_redoing: false, reason: EditReason::EolChange, was_dirty })
     }
 
     pub fn mark_saved(&mut self) {
@@ -979,6 +984,41 @@ impl OpenEditor {
         Some(ContentChanged { changes, version_id, is_undoing: false, is_redoing: false, reason, was_dirty })
     }
 
+    /// Another editor of the shared model changed it: the cursors move with its edits as tracked ranges do
+    /// (`_onModelContentChanged`), or clamp to the text when the log no longer reaches back, and the
+    /// folding ranges are computed again.
+    pub fn sync_with_model(&mut self) {
+        let model = self.model.borrow();
+        if self.seen_version == model.version_id {
+            return;
+        }
+        let seen = self.seen_version;
+        let version = model.version_id;
+        let logged = model.edits.first().is_some_and(|(version, ..)| *version <= seen);
+        let mut selections = self.selections.clone();
+        for &(_, start, end, new_end) in model.edits.iter().filter(|(version, ..)| logged && *version >= seen) {
+            for selection in &mut selections {
+                selection.anchor = folding::tracked(selection.anchor, start, end, new_end, false);
+                selection.head = folding::tracked(selection.head, start, end, new_end, false);
+            }
+        }
+        let lines = &model.document.lines;
+        let clamp = |position: Position| {
+            let line = position.line.min(lines.len() - 1);
+            Position::new(line, position.column.min(cursor::line_len(lines, line)))
+        };
+        for selection in &mut selections {
+            *selection = Selection { anchor: clamp(selection.anchor), head: clamp(selection.head) };
+        }
+        drop(model);
+        self.seen_version = version;
+        self.selections = selections;
+        cursor::normalize(&mut self.selections, &mut self.last_added);
+        self.leftovers.clear();
+        self.highlights.clear();
+        self.refresh_folding_ranges();
+    }
+
     /// Word highlights stop while the text changes: wordHighlighter.ts ignores non-explicit cursor changes.
     fn after_text_change(&mut self, selections: Vec<Selection>) {
         self.selections = selections;
@@ -992,12 +1032,19 @@ impl OpenEditor {
         let guides = indent_guides(&document.lines, indentation.tab_size, indentation.indent_size(), document.off_side);
         model.guides = guides;
         drop(model);
+        let version = self.text_model().version_id;
+        self.seen_version = version;
         self.refresh_folding_ranges();
     }
 
     /// Replaces `start..end` with `text` in the lines and describes it in the text before it.
     fn replace(&mut self, start: Position, end: Position, text: &str) -> ContentChange {
         let mut model = self.model.borrow_mut();
+        let version = model.version_id;
+        model.edits.push((version, start, end, end_of(start, text)));
+        if model.edits.len() > MAX_LOGGED_EDITS {
+            model.edits.remove(0);
+        }
         let eol = model.document.eol;
         let lines = &mut model.document.lines;
         let removed = text_between(lines, start, end);

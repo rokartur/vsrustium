@@ -43,3 +43,15 @@ The panel's tab row is not compared: no panel view is registered before the Outp
 Checks (Studio):
 
 - `cargo test -p app -- view_panes explorer_pane part_grid layout split_view side_bar empty_view panel`: 37 passed.
+
+## Editor groups (milestone 11 item 1)
+
+`port/tools/pixel-check` window `split` (notes.txt, then Cmd+\ splits it into a second group), Dark Modern, 1024x768 at 2x: 15190 different and 38025 anti-aliased of 3145728 pixels. Pair in `raw/layout/split-reference.png` and `raw/layout/split-port.png`.
+
+What differs:
+
+- The reference's active group shows the breadcrumbs' editor type picker ("Text Editor" with a chevron, editorTypePicker.ts); the port has no editor type picker (breadcrumbs, milestone 8).
+- The part sash's three-dot gripper (partGrid.css `.part-grid-gap-sash::after`) was missing in this run; added after it, with `workbench.sash.autoHideGrippers` and `modernSash.gripForeground`.
+- Minimap and scrollbar edges in both groups, the tab's right edge, the activity bar's selected icon and glyph antialiasing.
+
+Checks (Studio): `cargo test -p app editor_groups` (split, cursor sync across groups, close empty group, close group merging, layouts, Go Back/Forward, Reopen Closed Editor: 7 passed), `cargo test -p app editor_grid` (gridview.ts and grid.test.ts cases: 14 passed), `cargo test -p app navigation` (historyService.test.ts stack cases: 16 passed), `cargo test -p app host_sync` (both groups reach the host on one document: 5 passed).

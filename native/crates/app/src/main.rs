@@ -15,6 +15,8 @@ mod default_settings;
 mod diff_editor;
 mod dialog;
 mod editor;
+mod editor_grid;
+mod navigation;
 mod editor_history;
 mod explorer;
 mod file_actions;

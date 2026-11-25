@@ -119,7 +119,7 @@ fn the_host_moves_and_closes_tabs_by_their_ids(cx: &mut TestAppContext) {
         result
     };
     let id = |name: &str, cx: &mut VisualTestContext| {
-        workbench.read_with(cx, |workbench, _| crate::host_sync::tab_id(workbench.editors.editors.iter().find(|editor| editor.document().name() == name).unwrap()))
+        workbench.read_with(cx, |workbench, _| crate::host_sync::tab_id(0, workbench.editors.editors.iter().find(|editor| editor.document().name() == name).unwrap()))
     };
     let a = id("a.txt", cx);
     // An index past the tabs moves the tab last, and the move pins it.

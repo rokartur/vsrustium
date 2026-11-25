@@ -1,0 +1,139 @@
+use std::path::{Path, PathBuf};
+
+use exthost::scan::scan_extension;
+use gpui::{TestAppContext, VisualTestContext};
+use serde_json::json;
+
+use crate::editor::Position;
+use crate::host_sync::HostSync;
+use crate::languages::Languages;
+use crate::theme::load_theme;
+use crate::workbench::Workbench;
+
+fn workbench_with<'a>(name: &str, files: &[&str], cx: &'a mut TestAppContext) -> (PathBuf, gpui::Entity<Workbench>, &'a mut VisualTestContext) {
+    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
+    let theme = load_theme(&[themes], "Dark Modern").unwrap();
+    let dir = std::env::temp_dir().join(format!("code-gpui-groups-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let paths: Vec<PathBuf> = files.iter().map(|file| dir.join(file)).collect();
+    for path in &paths {
+        std::fs::write(path, "hello world\nsecond line").unwrap();
+    }
+    let keybindings = dir.join("keybindings.json");
+    let (workbench, cx) = cx.add_window_view(|window, cx| {
+        let mut workbench = Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), crate::default_settings(), HostSync::new(std::sync::mpsc::channel().0), cx);
+        workbench.skip_dialogs = true;
+        workbench.load_keybindings(crate::keybindings::default_keybindings(&[]), keybindings, cx);
+        for path in &paths {
+            workbench.open_file(path.clone(), true, window, cx);
+        }
+        workbench
+    });
+    cx.run_until_parked();
+    (dir, workbench, cx)
+}
+
+fn run(workbench: &gpui::Entity<Workbench>, command: &str, cx: &mut VisualTestContext) {
+    workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command(command, vec![], window, cx)));
+    cx.run_until_parked();
+}
+
+/// The groups in grid order with their tab names, and the active group's index.
+fn groups(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext) -> (Vec<Vec<String>>, usize) {
+    workbench.read_with(cx, |workbench, _| {
+        let order = workbench.groups_in_grid_order();
+        let names = order.iter().map(|group| workbench.editors.group_tabs(*group).0.iter().map(|editor| editor.document().name()).collect()).collect();
+        (names, order.iter().position(|group| *group == workbench.editors.id).unwrap())
+    })
+}
+
+#[gpui::test]
+fn split_editor_shows_the_same_model_in_a_new_group_to_the_right(cx: &mut TestAppContext) {
+    let (_dir, workbench, cx) = workbench_with("split", &["a.txt"], cx);
+    workbench.update(cx, |workbench, _| workbench.editors.active_mut().unwrap().move_to(Position::new(1, 3), false));
+    cx.simulate_keystrokes("cmd-\\");
+    cx.run_until_parked();
+    assert_eq!(groups(&workbench, cx), (vec![vec!["a.txt".to_string()], vec!["a.txt".to_string()]], 1));
+    workbench.update(cx, |workbench, _| {
+        // splitEditor copies the view state: the cursor is where it was.
+        assert_eq!(workbench.editors.active().unwrap().selection().head, Position::new(1, 3));
+        let left = workbench.groups_in_grid_order()[0];
+        let shared = &workbench.editors.group_tabs(left).0[0].model;
+        assert!(std::rc::Rc::ptr_eq(shared, &workbench.editors.active().unwrap().model));
+    });
+    let context = workbench.update_in(cx, |workbench, window, _| workbench.key_context(window));
+    assert_eq!((context["multipleEditorGroups"].clone(), context["activeEditorGroupIndex"].clone(), context["activeEditorGroupLast"].clone()), (json!(true), json!(2), json!(true)));
+}
+
+#[gpui::test]
+fn an_edit_in_one_group_moves_the_cursor_of_the_other(cx: &mut TestAppContext) {
+    let (_dir, workbench, cx) = workbench_with("sync", &["a.txt"], cx);
+    workbench.update(cx, |workbench, _| workbench.editors.active_mut().unwrap().move_to(Position::new(0, 6), false));
+    run(&workbench, "workbench.action.splitEditor", cx);
+    workbench.update(cx, |workbench, _| {
+        let editor = workbench.editors.active_mut().unwrap();
+        editor.move_to(Position::new(0, 0), false);
+        editor.type_text(">> ");
+    });
+    run(&workbench, "workbench.action.focusFirstEditorGroup", cx);
+    workbench.update(cx, |workbench, _| {
+        let editor = workbench.editors.active().unwrap();
+        assert_eq!(editor.document().lines[0], ">> hello world");
+        assert_eq!(editor.selection().head, Position::new(0, 9));
+    });
+}
+
+#[gpui::test]
+fn closing_the_last_editor_of_a_group_closes_the_group(cx: &mut TestAppContext) {
+    let (_dir, workbench, cx) = workbench_with("close", &["a.txt", "b.txt"], cx);
+    run(&workbench, "workbench.action.moveEditorToNextGroup", cx);
+    assert_eq!(groups(&workbench, cx), (vec![vec!["a.txt".to_string()], vec!["b.txt".to_string()]], 1));
+    run(&workbench, "workbench.action.closeActiveEditor", cx);
+    assert_eq!(groups(&workbench, cx), (vec![vec!["a.txt".to_string()]], 0));
+}
+
+#[gpui::test]
+fn close_group_merges_its_editors_into_the_most_recent_group(cx: &mut TestAppContext) {
+    let (_dir, workbench, cx) = workbench_with("merge", &["a.txt", "b.txt"], cx);
+    run(&workbench, "workbench.action.splitEditorDown", cx);
+    run(&workbench, "workbench.action.focusPreviousGroup", cx);
+    run(&workbench, "workbench.action.moveEditorToNextGroup", cx);
+    assert_eq!(groups(&workbench, cx), (vec![vec!["a.txt".to_string()], vec!["b.txt".to_string()]], 1));
+    run(&workbench, "workbench.action.closeGroup", cx);
+    assert_eq!(groups(&workbench, cx), (vec![vec!["a.txt".to_string(), "b.txt".to_string()]], 0));
+}
+
+#[gpui::test]
+fn editor_layouts_add_and_merge_groups(cx: &mut TestAppContext) {
+    let (_dir, workbench, cx) = workbench_with("layouts", &["a.txt"], cx);
+    run(&workbench, "workbench.action.editorLayoutTwoByTwoGrid", cx);
+    assert_eq!(groups(&workbench, cx).0.len(), 4);
+    run(&workbench, "workbench.action.focusFourthEditorGroup", cx);
+    assert_eq!(groups(&workbench, cx).1, 3);
+    run(&workbench, "workbench.action.editorLayoutSingle", cx);
+    assert_eq!(groups(&workbench, cx), (vec![vec!["a.txt".to_string()]], 0));
+}
+
+#[gpui::test]
+fn go_back_returns_to_the_previous_editor_and_location(cx: &mut TestAppContext) {
+    let (_dir, workbench, cx) = workbench_with("navigate", &["a.txt", "b.txt"], cx);
+    let active = |workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document().name());
+    assert_eq!(active(&workbench, cx), "b.txt");
+    run(&workbench, "workbench.action.navigateBack", cx);
+    assert_eq!(active(&workbench, cx), "a.txt");
+    let context = workbench.update_in(cx, |workbench, window, _| workbench.key_context(window));
+    assert_eq!((context["canNavigateBack"].clone(), context["canNavigateForward"].clone()), (json!(false), json!(true)));
+    run(&workbench, "workbench.action.navigateForward", cx);
+    assert_eq!(active(&workbench, cx), "b.txt");
+}
+
+#[gpui::test]
+fn reopen_closed_editor_brings_back_the_last_closed_file(cx: &mut TestAppContext) {
+    let (_dir, workbench, cx) = workbench_with("reopen", &["a.txt", "b.txt"], cx);
+    run(&workbench, "workbench.action.closeActiveEditor", cx);
+    assert_eq!(groups(&workbench, cx).0, vec![vec!["a.txt".to_string()]]);
+    run(&workbench, "workbench.action.reopenClosedEditor", cx);
+    assert_eq!(groups(&workbench, cx).0, vec![vec!["a.txt".to_string(), "b.txt".to_string()]]);
+}

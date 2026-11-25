@@ -503,6 +503,8 @@ pub struct TextModel {
     pub associated_file: bool,
     /// The decorations of the model's problem markers.
     pub markers: Vec<marker_decorations::MarkerDecoration>,
+    /// Each replace as (version it applied to, start, end, new end), for the model's other editors to follow.
+    pub(crate) edits: Vec<(u32, Position, Position, Position)>,
 }
 
 /// One model shared by the editors of its resource in every group.
@@ -546,6 +548,8 @@ pub struct OpenEditor {
     /// The widest line drawn so far, in pixels: the content width grows with it and never shrinks.
     max_line_width: f32,
     pub view_zones: Vec<view_zones::ViewZone>,
+    /// The model version this editor's cursors and folding regions were last placed in (`sync_with_model`).
+    seen_version: u32,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -561,13 +565,14 @@ impl OpenEditor {
     fn new(document: TextDocument, preview: bool, model_id: u32) -> Self {
         let indentation = document.indentation;
         let guides = indent_guides(&document.lines, indentation.tab_size, indentation.indent_size(), document.off_side);
-        let model = TextModel { document, version_id: 1, history: History::default(), guides, host_reference: None, associated_file: false, markers: Vec::new() };
+        let model = TextModel { document, version_id: 1, history: History::default(), guides, host_reference: None, associated_file: false, markers: Vec::new(), edits: Vec::new() };
         Self::of_model(Rc::new(RefCell::new(model)), preview, model_id)
     }
 
     /// An editor of a model that is open already.
     pub fn of_model(model: SharedModel, preview: bool, model_id: u32) -> Self {
-        let mut editor = OpenEditor { model, preview, model_id, selections: vec![Selection::default()], last_added: 0, leftovers: Vec::new(), column_select: None, smart_select: None, cursor_states: Default::default(), highlights: Vec::new(), value_set_replacement: None, selection_anchor: None, folding: FoldingModel::default(), syntax_folding: false, folded_imports: false, sticky_model: Default::default(), scroll: Scroll::default(), max_line_width: 0., view_zones: Vec::new() };
+        let seen_version = model.borrow().version_id;
+        let mut editor = OpenEditor { seen_version, model, preview, model_id, selections: vec![Selection::default()], last_added: 0, leftovers: Vec::new(), column_select: None, smart_select: None, cursor_states: Default::default(), highlights: Vec::new(), value_set_replacement: None, selection_anchor: None, folding: FoldingModel::default(), syntax_folding: false, folded_imports: false, sticky_model: Default::default(), scroll: Scroll::default(), max_line_width: 0., view_zones: Vec::new() };
         editor.refresh_highlights();
         editor.refresh_folding_ranges();
         editor
@@ -612,12 +617,46 @@ impl OpenEditor {
     }
 }
 
+/// An editor group other than the active one (editorGroupView.ts): its editors, their MRU and the size of its
+/// code editor. `EditorGroup::activate_group` swaps it with the active group's fields.
+pub struct GroupState {
+    pub id: u32,
+    pub editors: Vec<OpenEditor>,
+    recent: Vec<u32>,
+    pub viewport: Viewport,
+    unicode_banner_closed: bool,
+}
+
+impl GroupState {
+    pub fn active_index(&self) -> Option<usize> {
+        let id = *self.recent.first()?;
+        self.editors.iter().position(|editor| editor.model_id == id)
+    }
+}
+
+/// The editor part's groups. The active group's editors and state are the fields below; the other groups wait
+/// in `other_groups`. Text models are shared by the editors of their resource in every group, so `models`,
+/// `diffs`, the disposed models and the view states are the part's.
 #[derive(Default)]
 pub struct EditorGroup {
+    /// The active group's id (`GroupIdentifier`); the first group is 0.
+    pub id: u32,
+    pub other_groups: Vec<GroupState>,
+    /// The other groups' ids, most recently active first (`mostRecentActiveGroups` without the active one).
+    group_mru: Vec<u32>,
+    next_group_id: u32,
+    /// The groups in grid order (`GroupsOrder.GRID_APPEARANCE`), which the host numbers as view columns; the
+    /// workbench sets it, empty while the part has one group.
+    pub columns: Vec<u32>,
+    /// Closed file editors as (group, path, tab index), for the workbench's Reopen Closed Editor.
+    pub closed: Vec<(u32, PathBuf, usize)>,
+    /// The active group's last editor closed (`closeEmptyGroups` closes the group then).
+    pub closed_last_editor: bool,
     pub editors: Vec<OpenEditor>,
     /// Text models open without an editor: documents the extension host opened, and closed editors it still holds.
     pub models: Vec<OpenEditor>,
-    /// Model ids, most recently active first: closing the active editor activates the next one (`focusRecentEditorAfterClose`).
+    /// The active group's model ids, most recently active first: closing the active editor activates the next one
+    /// (`focusRecentEditorAfterClose`).
     recent: Vec<u32>,
     next_model_id: u32,
     /// The size of the group's one code editor, as last laid out; every editor of the group shows in it.
@@ -710,9 +749,13 @@ impl EditorGroup {
         self.models.len() - 1
     }
 
-    /// `ModelService.createModel`, with the undo stack a closed model of the same text left.
+    /// `ModelService.createModel`, with the undo stack a closed model of the same text left; an editor of the
+    /// model another group shows when there is one.
     fn create_model(&mut self, document: TextDocument, preview: bool) -> OpenEditor {
         self.next_model_id += 1;
+        if let Some(open) = self.all_editors().find(|editor| editor.document().is(&document.scheme, &document.path)) {
+            return OpenEditor::of_model(open.model.clone(), preview, self.next_model_id);
+        }
         let mut model = OpenEditor::new(document, preview, self.next_model_id);
         self.disposed.restore(&mut model);
         model
@@ -722,6 +765,9 @@ impl EditorGroup {
     /// is disposed.
     fn keep_or_dispose(&mut self, model: OpenEditor) {
         self.save_view_state(&model);
+        if Rc::strong_count(&model.model) > 1 {
+            return;
+        }
         let held = model.text_model().host_reference.is_some();
         match held {
             true => self.models.push(model),
@@ -729,13 +775,145 @@ impl EditorGroup {
         }
     }
 
-    /// The model of `scheme`/`path`, in an editor or not.
+    /// The model of `scheme`/`path`, in an editor of any group or not; the active group's editor first.
     pub fn model(&self, scheme: &str, path: &Path) -> Option<&OpenEditor> {
-        self.editors.iter().chain(&self.models).find(|editor| editor.document().is(scheme, path))
+        let others = self.other_groups.iter().flat_map(|group| &group.editors);
+        self.editors.iter().chain(&self.models).chain(others).find(|editor| editor.document().is(scheme, path))
     }
 
     pub fn model_mut(&mut self, scheme: &str, path: &Path) -> Option<&mut OpenEditor> {
-        self.editors.iter_mut().chain(&mut self.models).find(|editor| editor.document().is(scheme, path))
+        let others = self.other_groups.iter_mut().flat_map(|group| &mut group.editors);
+        self.editors.iter_mut().chain(&mut self.models).chain(others).find(|editor| editor.document().is(scheme, path))
+    }
+
+    /// Every editor of every group and every model without an editor.
+    pub fn all_editors(&self) -> impl Iterator<Item = &OpenEditor> {
+        self.editors.iter().chain(&self.models).chain(self.other_groups.iter().flat_map(|group| &group.editors))
+    }
+
+    pub fn group_ids_mru(&self) -> Vec<u32> {
+        std::iter::once(self.id).chain(self.group_mru.iter().copied()).collect()
+    }
+
+    pub fn group(&self, id: u32) -> Option<&GroupState> {
+        self.other_groups.iter().find(|group| group.id == id)
+    }
+
+    /// A group's editors, the most recently active first.
+    pub fn group_editors_by_recency(&self, id: u32) -> Vec<&OpenEditor> {
+        let (editors, recent) = match self.group(id) {
+            Some(group) => (&group.editors, &group.recent),
+            None => (&self.editors, &self.recent),
+        };
+        recent.iter().filter_map(|model| editors.iter().find(|editor| editor.model_id == *model)).collect()
+    }
+
+    pub fn column_ids(&self) -> Vec<u32> {
+        if self.columns.is_empty() { vec![self.id] } else { self.columns.clone() }
+    }
+
+    /// A group's editors and the index of its active one.
+    pub fn group_tabs(&self, id: u32) -> (&[OpenEditor], Option<usize>) {
+        match self.group(id) {
+            Some(group) => (&group.editors, group.active_index()),
+            None => (&self.editors, self.active_index()),
+        }
+    }
+
+    /// The model a group's code editor edits, as `active` answers for the active group, and its viewport.
+    pub fn group_active(&self, id: u32) -> Option<(&OpenEditor, Viewport)> {
+        let Some(group) = self.group(id) else { return self.active().map(|editor| (editor, self.viewport)) };
+        let tab = &group.editors[group.active_index()?];
+        let editor = match self.diffs.get(&tab.model_id) {
+            Some(diff) => self.model(&diff.modified.scheme, &diff.modified.path)?,
+            None => tab,
+        };
+        Some((editor, group.viewport))
+    }
+
+    /// Makes group `id` the active one (`activateGroup`); its editor follows what other groups did to its model.
+    pub fn activate_group(&mut self, id: u32) {
+        if id == self.id {
+            return;
+        }
+        let index = self.other_groups.iter().position(|group| group.id == id).expect("activating an open group");
+        let mut group = self.other_groups.remove(index);
+        let previous = self.id;
+        std::mem::swap(&mut self.id, &mut group.id);
+        std::mem::swap(&mut self.editors, &mut group.editors);
+        std::mem::swap(&mut self.recent, &mut group.recent);
+        std::mem::swap(&mut self.viewport, &mut group.viewport);
+        std::mem::swap(&mut self.unicode_banner_closed, &mut group.unicode_banner_closed);
+        self.other_groups.push(group);
+        self.group_mru.retain(|group| *group != id);
+        self.group_mru.insert(0, previous);
+        if let Some(editor) = self.active_mut() {
+            editor.sync_with_model();
+        }
+    }
+
+    /// `addGroup`; with `copy_active` the new group shows the active editor as `splitEditor` copies it: an editor
+    /// of the same model with the same view state, pinned. The new group is not activated; answers its id.
+    pub fn add_group(&mut self, copy_active: bool) -> u32 {
+        self.next_group_id += 1;
+        let id = self.next_group_id;
+        let mut group = GroupState { id, editors: Vec::new(), recent: Vec::new(), viewport: self.viewport, unicode_banner_closed: false };
+        let copied = self.next_model_id + 1;
+        if let Some(tab) = self.active_tab().filter(|_| copy_active) {
+            let mut copy = OpenEditor::of_model(tab.model.clone(), false, copied);
+            copy.restore_view_state(&tab.view_state(self.viewport), self.viewport);
+            if let Some(diff) = self.diffs.get(&tab.model_id) {
+                let input = DiffInput { original: diff.original.clone(), modified: diff.modified.clone(), label: diff.label.clone(), diff: None, inline_now: diff.inline_now, zones: Vec::new(), placed_zones: Vec::new() };
+                self.diffs.insert(copy.model_id, input);
+            }
+            group.recent.push(copy.model_id);
+            group.editors.push(copy);
+            self.next_model_id = copied;
+        }
+        self.other_groups.push(group);
+        id
+    }
+
+    /// `removeGroup` of a group other than the active one: its editors close.
+    pub fn remove_group(&mut self, id: u32) {
+        let index = self.other_groups.iter().position(|group| group.id == id).expect("removing an open group");
+        let group = self.other_groups.remove(index);
+        self.group_mru.retain(|group| *group != id);
+        for editor in group.editors {
+            self.diffs.remove(&editor.model_id);
+            self.keep_or_dispose(editor);
+        }
+    }
+
+    /// Takes the active editor at `index` out of the active group to move it to another one (`moveEditor`).
+    pub fn take_editor(&mut self, index: usize) -> OpenEditor {
+        let editor = self.editors.remove(index);
+        let shown = self.recent.first().copied();
+        self.recent.retain(|id| *id != editor.model_id);
+        self.shown_model_changed(shown);
+        editor
+    }
+
+    /// Opens a moved editor in the active group after its active editor, or activates the group's editor of the
+    /// same resource in its place (`doMoveEditorAcrossGroups`).
+    pub fn insert_moved(&mut self, editor: OpenEditor) {
+        let existing = self.editors.iter().position(|open| Rc::ptr_eq(&open.model, &editor.model) && !self.diffs.contains_key(&open.model_id));
+        match existing.filter(|_| !self.diffs.contains_key(&editor.model_id)) {
+            Some(index) => {
+                self.activate(index);
+                self.diffs.remove(&editor.model_id);
+                self.keep_or_dispose(editor);
+            }
+            None => self.insert(editor, false),
+        }
+    }
+
+    /// Every editor's cursors follow the edits other editors of its model made (render calls it each frame).
+    pub fn sync_editors(&mut self) {
+        let others = self.other_groups.iter_mut().flat_map(|group| &mut group.editors);
+        for editor in self.editors.iter_mut().chain(others) {
+            editor.sync_with_model();
+        }
     }
 
     /// Shows the model at `index` of `models` in a new editor.
@@ -753,7 +931,7 @@ impl EditorGroup {
             .into_iter()
             .partition(|model| model.is_dirty() || shown_in_diff(model) || model.text_model().host_reference.is_some_and(|opened| now.duration_since(opened) < HOST_REFERENCE_AGE));
         self.models = kept;
-        for model in released {
+        for model in released.into_iter().filter(|model| Rc::strong_count(&model.model) == 1) {
             self.disposed.insert(model);
         }
     }
@@ -837,11 +1015,15 @@ impl EditorGroup {
 
     pub fn close(&mut self, index: usize) {
         let closed = self.editors.remove(index);
+        if closed.document().scheme == "file" && !self.diffs.contains_key(&closed.model_id) {
+            self.closed.push((self.id, closed.document().path.clone(), index));
+        }
         self.diffs.remove(&closed.model_id);
         let shown = self.recent.first().copied();
         self.recent.retain(|id| *id != closed.model_id);
         self.shown_model_changed(shown);
         self.keep_or_dispose(closed);
+        self.closed_last_editor = self.editors.is_empty();
     }
 }
 

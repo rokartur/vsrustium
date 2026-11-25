@@ -739,6 +739,7 @@ impl Workbench {
     }
 
     fn file_deleted(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        self.file_deleted_from_history(&path);
         let Some(model) = self.editors.model("file", &path) else { return };
         let close = !model.is_dirty() && self.settings.lock().unwrap().get_value(Some("workbench.editor.closeOnFileDelete"), &Overrides::default()) == Some(json!(true));
         if close {

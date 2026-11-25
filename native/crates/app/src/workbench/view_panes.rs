@@ -11,7 +11,6 @@ use gpui::{
 use serde_json::{Value, json};
 
 use super::Workbench;
-use super::part_grid::SASH_HOVER_DELAY;
 use crate::split_view::{SashState, SplitView, View};
 
 /// `--vscode-workbench-paneHeaderHeight` of the modern layout.
@@ -450,8 +449,9 @@ impl Workbench {
                     return;
                 }
                 panes.hovered_sash = None;
-                panes.sash_hover = Some((index, cx.spawn_in(window, async move |workbench, cx| {
-                    cx.background_executor().timer(SASH_HOVER_DELAY).await;
+                let delay = workbench.sash_hover_delay();
+                workbench.explorer_panes.sash_hover = Some((index, cx.spawn_in(window, async move |workbench, cx| {
+                    cx.background_executor().timer(delay).await;
                     let _ = workbench.update(cx, |workbench, cx| {
                         workbench.explorer_panes.hovered_sash = Some(index);
                         cx.notify();

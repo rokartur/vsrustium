@@ -125,32 +125,58 @@ impl Workbench {
     /// mainThreadEditorTabs.ts `$moveTab`: the tab moves inside its group and is pinned; `index` past the tabs
     /// moves it last.
     pub(crate) fn move_tab(&mut self, id: &str, index: i64, view_column: i64, cx: &mut Context<Self>) -> Outcome {
-        let Some(from) = self.editors.editors.iter().position(|editor| tab_id(editor) == id) else {
+        let Some((group, from)) = self.find_tab(id) else {
             return Outcome::error(format!("Attempted to close tab with id {id} which does not exist"));
         };
-        // shortcut: one editor group until milestone 11; a move to another view column (a new group upstream) does nothing.
-        if !matches!(view_column, 0 | ACTIVE_GROUP_COLUMN) {
-            return Outcome::done();
+        let columns = self.groups_in_grid_order();
+        // editorGroupColumn.ts `columnToEditorGroup`: a column past the last adds a group beside it.
+        let target = match view_column {
+            ACTIVE_GROUP_COLUMN => self.editors.id,
+            column if (column as usize) < columns.len() => columns[column as usize],
+            _ => self.add_group_beside(self.side_by_side_direction()),
+        };
+        if target == group {
+            self.with_group(group, |workbench| {
+                let len = workbench.editors.editors.len() as i64;
+                let index = if index < 0 || index > len { len } else { index };
+                workbench.editors.move_editor(from, index as usize);
+            });
+        } else {
+            let editor = self.with_group(group, |workbench| workbench.editors.take_editor(from));
+            self.with_group(target, |workbench| workbench.editors.insert_moved(editor));
+            self.close_group_if_empty(group);
         }
-        let len = self.editors.editors.len() as i64;
-        let index = if index < 0 || index > len { len } else { index };
-        self.editors.move_editor(from, index as usize);
         self.editors_changed(cx);
         Outcome::done()
+    }
+
+    /// The group and index of the tab the host names `id`.
+    fn find_tab(&self, id: &str) -> Option<(u32, usize)> {
+        self.groups_in_grid_order().into_iter().find_map(|group| {
+            let (editors, _) = self.editors.group_tabs(group);
+            editors.iter().position(|editor| tab_id(group, editor) == id).map(|index| (group, index))
+        })
     }
 
     /// mainThreadEditorTabs.ts `$closeTab`: the tabs named by `tab_ids` close as `closeEditors` closes them, dirty
     /// ones after the save prompt; true when every one of them closed.
     pub(crate) fn close_tabs(&mut self, tab_ids: &[Value], window: &mut Window, cx: &mut Context<Self>) -> Outcome {
-        let indices: Vec<usize> = (0..self.editors.editors.len()).filter(|index| tab_ids.iter().any(|id| *id == tab_id(&self.editors.editors[*index]))).collect();
+        let found: Vec<(u32, usize)> = tab_ids.iter().filter_map(|id| self.find_tab(id.as_str()?)).collect();
+        // shortcut: the tabs close in the first group that holds one of them; the host closes one group's tabs at a time.
+        let Some(&(group, _)) = found.first() else { return self.close_and_report(Vec::new(), window, cx) };
+        self.focus_group(group, window, cx);
+        let indices = found.into_iter().filter(|(found, _)| *found == group).map(|(_, index)| index).collect();
         self.close_and_report(indices, window, cx)
     }
 
-    /// mainThreadEditorTabs.ts `$closeGroup`: the one group closes all its editors and stays, as the last group does.
+    /// mainThreadEditorTabs.ts `$closeGroup`: the group closes all its editors, then closes as an empty group does.
     pub(crate) fn close_groups(&mut self, group_ids: &[Value], window: &mut Window, cx: &mut Context<Self>) -> Outcome {
-        if !group_ids.iter().any(|id| *id == 0) {
+        let groups = self.groups_in_grid_order();
+        // shortcut: the first named group closes; the host's closeGroups names one group per call in the API tests.
+        let Some(group) = group_ids.iter().filter_map(Value::as_u64).map(|id| id as u32).find(|id| groups.contains(id)) else {
             return Outcome::Ready(Ok(Value::Bool(true)));
-        }
+        };
+        self.focus_group(group, window, cx);
         self.close_and_report((0..self.editors.editors.len()).collect(), window, cx)
     }
 
