@@ -79,3 +79,11 @@ Drop into the editor (Shift while dragging files) is checked by `cargo test -p a
 ## Snippets file schema
 
 `FOLDER` a copy of port/fixtures/language-features/snippets, `FILE=.vscode/a.code-snippets` (`"prefix": 1`), steps `steps-snippets-schema.json`. Pair `snippets-schema-pair.png`: `Incorrect type. Expected one of string, array.` at Ln 3, Col 13 from the served `vscode://schemas/snippets`, as in the reference.
+
+## Go to Next Problem
+
+`FOLDER` a copy of port/fixtures/language-features/quickfix, `FILE=e.ts`, steps `steps-goto-error.json` (F8). Pair `goto-error-pair.png`: the zone below line 1 with the error border and arrow, `e.ts 1 of 1 problem` with the next, previous and close actions, the message with `ts(2552)` and the related `lib.es5.d.ts(767, 13)` link, the word selected at the marker, as in the reference. Neither draws a resize sash (gotoErrorWidget.ts creates its zone without `isResizeable`).
+
+## Semantic tokens and language status
+
+`FOLDER` a copy of port/fixtures/language-features/semantic, `FILE=f.ts` (`const value`, used twice), steps `steps-semantic.json`. Pair `semantic-pair.png`: the readonly `value` in #4FC1FF on all three lines, as in the reference. Pair `language-status-pair.png` (hover on `{}`): the same two TypeScript rows, "No tsconfig" with Configure TSConfig and "6.0.3 - TypeScript version" with Select Version, each with its pin. Left: the reference shows the `const` word highlight and a light bulb on line 1, the port neither; not traced yet, likely the reference asking before the TypeScript server was ready (a textual highlight); the hovered `{}` item has `statusBarItem.hoverBackground` in the reference only (the status bar part draws no item hover).
