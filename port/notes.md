@@ -454,6 +454,11 @@ Scope (roadmap section 13): diagnostics, hover, completion, go to definition and
 - Without workspace trust (not ported, see milestone 12) the restricted settings `terminal.integrated.profiles.osx`, `defaultProfile.osx`, `env.osx` and `cwd` are read from workspace settings too, as in the reference with `security.workspace.trust.enabled` off: a folder's `.vscode/settings.json` picks the shell and its arguments.
 - OSC 52 writes reach the clipboard (ClipboardAddon); the `?` read query is not answered. Bracketed paste replaces ESC with U+241B as xterm's `bracketTextForPaste` does.
 - The port opens a workspace folder by its resolved path, so a folder under `/var` shows as `/private/var` in the prompt where the reference shows `/var`; the cause is the workspace, not the terminal.
+- Handoff, in order:
+  1. ui-pair the profile picker (Create New Terminal (With Profile) from the palette), `exit` in the shell and the split tab rows (`┌`, icon, name); steps were in `/tmp/term/steps3.json` on the Studio. One GUI run at a time per session (coordinator rule).
+  2. `MainThreadTerminalService` (`main_thread_terminal.rs`, forwarded from the session like `main_thread_output.rs`): `$createTerminal`, `$show`, `$hide`, `$dispose`, `$sendText`, data and command events, extension pseudoterminals (`$startExtensionTerminal`, `$sendProcess*`), `$acceptTerminalOpened/Closed/ActiveTerminalChanged/ProcessId/TitleChange/Dimensions`, `$acceptDefaultProfile`. Then shell integration (`MainThreadTerminalShellIntegration`, the upstream shellIntegration scripts, OSC 633 parsing, gutter decorations). Done when `SHELL=/bin/bash port/tools/api-tests` passes `terminal.test` and `terminal.shellIntegration.test` as the reference does.
+  3. Tasks (`MainThreadTask`, tasks.json, problem matchers into diagnostics, npm/grunt/gulp/jake), `workspace.tasks.test`, `npm: build` from the fixture in a terminal.
+  4. External terminal, `extension/terminal-suggest`, and moving services/output, contrib/output, contrib/logs to verified.
 ## Milestone 18: extensions, install, update, gallery (in progress)
 
 Scope (roadmap section 18): extension management on disk with VSIX install and uninstall, add and remove in the running host; then the Open VSX gallery, the Extensions view, recommendations and language packs.
