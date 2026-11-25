@@ -22,6 +22,7 @@ mod keyboard;
 pub mod menubar;
 mod middle_scroll;
 mod minimap_view;
+mod notifications_view;
 pub mod quick_access;
 mod quick_open;
 mod readonly;
@@ -129,6 +130,7 @@ pub struct Workbench {
     pub menus: Vec<crate::menus::MenuItem>,
     pub(crate) context_menu: Option<context_menu::ContextMenu>,
     context_menus_shown: usize,
+    pub(crate) notifications: notifications_view::NotificationsUi,
     pub hovers: hover::Hovers,
     /// What the application menu shows now.
     installed_menubar: Option<menubar::Menubar>,
@@ -171,6 +173,7 @@ impl Render for Workbench {
             .child(self.status_bar(window, cx));
         let modal_editor = self.keybindings_editor_widget(window, cx);
         let quick_input = self.quick_input_widget(window, cx);
+        let notifications = self.notifications_widget(viewport, window, cx);
         let context_menu = self.context_menu_widget(cx);
         let hover = self.hover_widget(window, cx);
         self.update_menubar(window, cx);
@@ -185,6 +188,7 @@ impl Render for Workbench {
             .children(modal_editor)
             // The quick input lives in the workbench container, inside the window border as the grid.
             .children(quick_input.map(|widget| div().absolute().left(px(inset)).top(px(inset)).child(widget)))
+            .children(notifications)
             .children(context_menu)
             .children(hover)
             // style.css: .macos-tahoe windows round 16px, older macOS 10px.
@@ -242,6 +246,7 @@ impl Workbench {
             menus: crate::menus::workbench_menus(),
             context_menu: None,
             context_menus_shown: 0,
+            notifications: notifications_view::NotificationsUi::new(cx),
             hovers: hover::Hovers::default(),
             installed_menubar: None,
             profile_storage: Arc::new(Mutex::new(Storage::in_memory())),
@@ -268,6 +273,7 @@ impl Workbench {
         workbench.register_readonly_commands();
         workbench.register_editor_message_commands();
         workbench.register_define_keybinding_command();
+        workbench.register_notifications_commands();
         // Keybindings resolve before the focused element sees the key, and with nothing focused too.
         let entity = cx.entity().downgrade();
         cx.intercept_keystrokes(move |event, window, cx| {
@@ -288,6 +294,7 @@ impl Workbench {
         self.profile_storage = storage;
         self.load_command_history();
         self.load_quick_input_view_state();
+        self.load_notification_filters();
     }
 
     /// The opened folders, which quick pick items show their resource paths relative to.
@@ -427,6 +434,7 @@ impl Workbench {
             .flex()
             .gap(px(4.))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .children(self.notifications_title_bar_item(foreground, cx))
             .when(layout_control_enabled, |right| right.children(layout_actions.map(|(name, title, command)| self.icon(name, 22., 16., foreground).cursor_pointer().child(self.action_hover(title, command, HoverOptions::instant())))));
         // NativeTitlebarPart.minimumHeight: DEFAULT_CUSTOM_TITLEBAR_HEIGHT with the command center, else macTitlebarSize.
         let height = match (command_center_visible, is_tahoe_or_newer()) {
@@ -823,8 +831,8 @@ impl Workbench {
             .text_size(px(12.))
             // statusbarpart.css: font-variant-numeric: tabular-nums.
             .font_features(FontFeatures(Arc::new(vec![("tnum".into(), 1)])))
-            .child(div().h(px(24.)).flex().child(self.icon("remote", 28., 16., foreground).h_full().cursor_pointer().child(self.hover_target("status.host", HoverContent::Text("Open a Remote Window".into()), HoverOptions::status_bar()))).child(problems).children(self.status_bar_message()))
-            .child(div().h(px(24.)).flex().children(self.editor_status_items(foreground, window, cx)).child(self.icon("bell", 28., 16., foreground).h_full().cursor_pointer().child(self.hover_target("status.notifications", HoverContent::Text("No Notifications".into()), HoverOptions::status_bar()))))
+            .child(div().h(px(24.)).flex().child(self.icon("remote", 28., 16., foreground).h_full().cursor_pointer().child(self.hover_target("status.host", HoverContent::Text("Open a Remote Window".into()), HoverOptions::status_bar()))).children(self.notifications_status_item(true, foreground, cx)).child(problems).children(self.status_bar_message()))
+            .child(div().h(px(24.)).flex().children(self.editor_status_items(foreground, window, cx)).children(self.notifications_status_item(false, foreground, cx)))
     }
 
     /// The `status.message` entry: multi-chord mode, else the latest status message (notificationsStatus.ts).

@@ -118,8 +118,8 @@ impl<R: ShortcutRegistry> GlobalShortcuts<R> {
     }
 }
 
-/// SystemWideKeybindingsContribution: the warnings it gives on each sync and the registrations once started.
-/// shortcut: the warnings are logged, since the port has no notification toasts.
+/// SystemWideKeybindingsContribution: the registrations once started, and the warnings each sync returns for
+/// the workbench to notify.
 #[derive(Default)]
 pub struct SystemWide {
     pub shortcuts: Option<GlobalShortcuts<HotKeys>>,
@@ -129,7 +129,7 @@ pub struct SystemWide {
 }
 
 impl SystemWide {
-    pub fn set_keybindings(&mut self, items: &[Item]) {
+    pub fn set_keybindings(&mut self, items: &[Item]) -> Vec<String> {
         let selection = select(items);
         for rejection in &selection.unsupported {
             eprintln!("[SystemWideKeybindings] '{}' cannot be registered as a system-wide shortcut (only single key combinations are supported).", rejection.user_settings_label);
@@ -143,16 +143,18 @@ impl SystemWide {
                 newly_warned.push(candidate.user_settings_label.clone());
             }
         }
+        let mut warnings = Vec::new();
         if !newly_warned.is_empty() {
-            eprintln!("The \"when\" clause is ignored for system-wide keybindings ({}); they are always active while Code - OSS is running.", newly_warned.join(", "));
+            warnings.push(format!("The \"when\" clause is ignored for system-wide keybindings ({}); they are always active while Code - OSS is running.", newly_warned.join(", ")));
         }
         self.candidates = selection.candidates;
-        self.sync();
+        warnings.extend(self.sync());
+        warnings
     }
 
-    pub fn start(&mut self, hot_keys: HotKeys) {
+    pub fn start(&mut self, hot_keys: HotKeys) -> Option<String> {
         self.shortcuts = Some(GlobalShortcuts::new(hot_keys));
-        self.sync();
+        self.sync()
     }
 
     /// The binding of the hot key Carbon reported pressed.
@@ -161,16 +163,18 @@ impl SystemWide {
         shortcuts.binding(shortcuts.registry.accelerator(id)?)
     }
 
-    fn sync(&mut self) {
-        let Some(shortcuts) = &mut self.shortcuts else { return };
+    fn sync(&mut self) -> Option<String> {
+        let shortcuts = self.shortcuts.as_mut()?;
         let mut failed = shortcuts.update(self.candidates.clone());
         failed.sort();
-        if failed != self.reported_failures {
-            if !failed.is_empty() {
-                eprintln!("Some system-wide keybindings could not be registered ({}); the key combination may already be taken by the operating system or another application.", failed.join(", "));
-            }
-            self.reported_failures = failed;
+        if failed == self.reported_failures {
+            return None;
         }
+        let warning = (!failed.is_empty()).then(|| {
+            format!("Some system-wide keybindings could not be registered ({}); the key combination may already be taken by the operating system or another application.", failed.join(", "))
+        });
+        self.reported_failures = failed;
+        warning
     }
 }
 

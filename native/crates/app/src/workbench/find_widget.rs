@@ -177,8 +177,8 @@ impl Workbench {
     fn show_go_to_match(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
         let matches_count = self.find.controller.state.matches_count;
         if matches_count < 1 {
-            // shortcut: a logged warning, since the port has no notification toasts.
-            eprintln!("No matches. Try searching for something else.");
+            self.notify_warning("No matches. Try searching for something else.");
+            cx.notify();
             return Outcome::done();
         }
         let mut input = QuickInput::new(0, Kind::InputBox);

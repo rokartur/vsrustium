@@ -680,25 +680,14 @@ impl Workbench {
         }
     }
 
-    /// The 2px infinite progress bar (progressbar.css: a 2% bit crossing in 4s, scaling to 3x halfway).
+    /// The 2px infinite progress bar.
     fn quick_input_progress(&self, input: &QuickInput) -> AnyElement {
         let shown = self.quick_inputs.busy_shown && self.quick_inputs.busy.as_ref().is_some_and(|(id, _)| *id == input.id);
         let bar = div().relative().h(px(2.)).overflow_hidden();
         if !shown {
             return bar.into_any_element();
         }
-        let color = self.color("progressBar.background");
-        bar.child(
-            div().absolute().top_0().h_full().w(gpui::relative(0.02)).bg(color).with_animation(
-                "quick-input-progress",
-                Animation::new(Duration::from_secs(4)).repeat(),
-                |bit, delta| {
-                    let (offset, scale) = if delta < 0.5 { (delta * 2. * 25., 1. + delta * 4.) } else { (25. + (delta - 0.5) * 2. * 24., 3. - (delta - 0.5) * 4.) };
-                    bit.left(gpui::relative(offset * 0.02)).w(gpui::relative(0.02 * scale))
-                },
-            ),
-        )
-        .into_any_element()
+        bar.child(infinite_progress_bit("quick-input-progress", self.color("progressBar.background"))).into_any_element()
     }
 
     /// `.quick-input-list`: the visible rows, at most the layout's height, with 7px below them.
@@ -931,6 +920,14 @@ impl Workbench {
             .bg(self.color("checkbox.background"))
             .children(icon.map(|icon| self.icon(icon, 16., 16., self.color("checkbox.foreground"))))
     }
+}
+
+/// progressbar.css `infinite`: a 2% bit crossing in 4s, scaling to 3x halfway.
+pub(super) fn infinite_progress_bit(id: &'static str, color: Rgba) -> impl IntoElement {
+    div().absolute().top_0().h_full().w(gpui::relative(0.02)).bg(color).with_animation(id, Animation::new(Duration::from_secs(4)).repeat(), |bit, delta| {
+        let (offset, scale) = if delta < 0.5 { (delta * 2. * 25., 1. + delta * 4.) } else { (25. + (delta - 0.5) * 2. * 24., 3. - (delta - 0.5) * 4.) };
+        bit.left(gpui::relative(offset * 0.02)).w(gpui::relative(0.02 * scale))
+    })
 }
 
 fn row_height(row: &Row) -> f32 {

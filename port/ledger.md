@@ -33,7 +33,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | mainthread/MainThreadConsole | MainThread* shape (Rust side) | ported | console.rs formats `$logExtensionHostMessage` like util.format to the port log; cargo test -p exthost console tests; mocha spec output in port/tools/api-tests logs |
 | mainthread/MainThreadLanguageFeatures | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadLanguages | MainThread* shape (Rust side) | stub | $changeLanguage answered by host_requests.rs (setTextDocumentLanguage); $tokensAtPosition and the language status items answer undefined |
-| mainthread/MainThreadMessageService | MainThread* shape (Rust side) | stub | session.rs answers undefined |
+| mainthread/MainThreadMessageService | MainThread* shape (Rust side) | ported | main_thread_message.rs: `$showMessage` as a notification with the items as buttons and Manage Extension (answers the picked handle, undefined on close), modal messages as an NSAlert sheet with the close affordance or Cancel/OK last; cargo test -p app notifications_view; no urgent auth sources (no sign-in by decision) |
 | mainthread/MainThreadOutputService | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadProgress | MainThread* shape (Rust side) | stub | session.rs answers undefined |
 | mainthread/MainThreadTerminalService | MainThread* shape (Rust side) | stub | session.rs answers undefined |
@@ -174,7 +174,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/meteredConnection | src/vs/platform | todo |  |
 | platform/native | src/vs/platform | todo |  |
 | platform/networkFilter | src/vs/platform | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
-| platform/notification | src/vs/platform | todo |  |
+| platform/notification | src/vs/platform | ported | notifications.rs: severities, priorities, actions, progress, legacy link parsing (linkedText.ts), 1000-character messages; cargo test -p app notifications:: |
 | platform/observable | src/vs/platform | removed | Artur: internal infrastructure or developer tool with no 1:1 counterpart in the native port |
 | platform/onboarding | src/vs/platform | todo |  |
 | platform/opener | src/vs/platform | todo |  |
@@ -289,7 +289,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/parts/chat | workbench part | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/parts/dialogs | workbench part | todo |  |
 | workbench/parts/editor | workbench part | ported | one group: connected tab strip (preview/pinned, close, split and more actions drawn), breadcrumbs, text editor with gutter, current line, indent guides, word highlight, overview ruler, click, drag and keyboard selection, typing, undo, clipboard, save and dirty tabs (port/notes.md milestone 5); tab context menu with Close, Close Others, Close to the Right, Close Saved, Close All, Keep Open since milestone 9 (port/results/contextmenu.md, cargo test -p app editor_menus); `_workbench.open` and `vscode.open` open a file, an untitled file with its path or a web link (cargo test -p app workbench_open, port/results/api-tests.md M12 `_workbench.open`), every view column in the one group; no `_workbench.diff` (diff editor); no splits or scrolling sync; minimap since milestone 8; cargo test -p app (editor::tests, workbench keys_and_typed_text_edit_the_focused_editor_and_reach_the_host); pixel-check file window (port/results/pixels.md milestone 4, unchanged at milestone 5) |
-| workbench/parts/notifications | workbench part | todo |  |
+| workbench/parts/notifications | workbench part | ported | workbench/notifications_view.rs: toasts (3 at most, purge 10/12/15s unless sticky, focused or hovered, spam protection), notifications center (Clear All, Do Not Disturb menu with per-source filters, Hide), rows with expand, collapse, clear, More Actions, buttons, links, Copy Text, double-click toggle; status bar bell states and tooltips; notificationsCommands.ts commands and context keys; geometry from the reference DOM (port/tools/ref-dom); cargo test -p app notifications_view; `workbench.notifications.position` (bottom right, bottom left, top right with the title bar bell); no toast animation, no screen reader announcements |
 | workbench/parts/panel | workbench part | todo |  |
 | workbench/parts/partGrid | workbench part | stub | fixed floating layout drawn with flex (workbench.rs), no grid, sashes or hidden parts; pixel-check (port/results/pixels.md): part bounds match at 1024x768 |
 | workbench/parts/sessions | workbench part | removed | no sign-in/AI by decision (port/notes.md); not ported |
@@ -350,7 +350,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/menubar | workbench service | ported | menubar.rs Workbench::menubar: MenubarMainMenu as menubarControl.ts sends it, rebuilt when when/enablement change; enablement matches the reference in the empty, folder and file windows (port/results/menubar.md) |
 | workbench/services/model | workbench service | todo |  |
 | workbench/services/notebook | workbench service | todo |  |
-| workbench/services/notification | workbench service | todo |  |
+| workbench/services/notification | workbench service | ported | `notify`, `prompt` and the Do Not Disturb filters (global and per source, stored in application storage) on Workbench (notifications_view.rs); cargo test -p app notifications_view |
 | workbench/services/outline | workbench service | todo |  |
 | workbench/services/output | workbench service | todo |  |
 | workbench/services/panecomposite | workbench service | todo |  |
@@ -406,7 +406,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/chatWindow | workbench contribution | removed | no sign-in/AI by decision (port/notes.md); not ported |
 | workbench/contrib/codeActions | workbench contribution | todo |  |
 | workbench/contrib/codeEditor | workbench contribution | stub | quickaccess/gotoLineQuickAccess (Go to Line/Column, Go to Offset) ported; the rest todo |
-| workbench/contrib/commands | workbench contribution | verified | runCommands (commands.rs register_run_commands): cargo test -p app commands::, argument checks, spread args, order, stop at a failure; the notifications are logged until notifications are ported |
+| workbench/contrib/commands | workbench contribution | verified | runCommands (commands.rs register_run_commands): cargo test -p app commands::, argument checks, spread args, order, stop at a failure; argument errors and the failure notify (cargo test -p app run_commands_argument_errors_notify) |
 | workbench/contrib/comments | workbench contribution | todo |  |
 | workbench/contrib/customEditor | workbench contribution | todo |  |
 | workbench/contrib/debug | workbench contribution | todo |  |

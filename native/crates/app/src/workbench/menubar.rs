@@ -101,7 +101,7 @@ impl Workbench {
     /// `runActionInRenderer` of a menu click: the command gets `{ from: 'menu' }` (window.ts `vscode:runAction`).
     fn run_menu_command(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         let outcome = self.execute_command(id, vec![json!({ "from": "menu" })], window, cx);
-        super::keyboard::report_failure(id.to_string(), outcome, cx);
+        super::keyboard::report_failure(outcome, cx);
     }
 }
 

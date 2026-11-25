@@ -85,7 +85,9 @@ impl Workbench {
 
     /// Rebuilds the resolver over the defaults and the user's keybindings, and syncs the system-wide ones.
     pub(super) fn set_user_keybindings(&mut self, overrides: Vec<Item>) {
-        self.keybindings.system_wide.set_keybindings(&overrides);
+        for warning in self.keybindings.system_wide.set_keybindings(&overrides) {
+            self.notify_warning(warning);
+        }
         self.keybindings.resolver = Resolver::new(self.keybindings.defaults.clone(), overrides);
         self.keybindings.generation += 1;
     }
@@ -94,14 +96,16 @@ impl Workbench {
     /// `vscode:runAction` request of globalKeybindingsMainService.ts.
     pub fn start_system_wide_keybindings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let (sender, mut presses) = futures::channel::mpsc::unbounded();
-        self.keybindings.system_wide.start(HotKeys::new(sender));
+        if let Some(warning) = self.keybindings.system_wide.start(HotKeys::new(sender)) {
+            self.notify_warning(warning);
+        }
         cx.spawn_in(window, async move |workbench, cx| {
             while let Some(id) = presses.next().await {
                 let ran = workbench.update_in(cx, |workbench, window, cx| {
                     let Some(binding) = workbench.keybindings.system_wide.pressed(id) else { return };
                     let (command, args) = (binding.command.clone(), binding.args.clone().into_iter().collect());
                     let outcome = workbench.execute_command(&command, args, window, cx);
-                    report_failure(command, outcome, cx);
+                    report_failure(outcome, cx);
                 });
                 if ran.is_err() {
                     return;
@@ -150,7 +154,7 @@ impl Workbench {
                     cx.stop_propagation();
                 }
                 let outcome = self.execute_command(&command, args.into_iter().collect(), window, cx);
-                report_failure(command, outcome, cx);
+                report_failure(outcome, cx);
             }
             // Nothing bound, or bound to no command: only a chord sequence in progress ends with a message.
             _ if in_chord_mode => {
@@ -229,6 +233,7 @@ impl Workbench {
         context.insert("editorFocus".into(), json!(editor_focused || self.sticky_scroll.is_focused(window) || find_focused || replace_focused || button_focused));
         context.insert("editorTextFocus".into(), json!(editor_focused));
         context.insert("textInputFocus".into(), json!(editor_focused));
+        self.notifications_context(window, &mut context);
         context.insert("editorIsOpen".into(), json!(self.editors.active().is_some()));
         context.insert("dirtyWorkingCopies".into(), json!(self.editors.editors.iter().any(|editor| editor.is_dirty())));
         // viewDescriptorService.ts: the Explorer and Search containers always hold their view.
@@ -333,16 +338,19 @@ impl Workbench {
     }
 }
 
-/// `notificationService.warn(err)` of a failed keybinding command.
-/// shortcut: logged, since the port has no notifications toasts.
-pub(super) fn report_failure(command: String, outcome: Outcome, cx: &mut Context<Workbench>) {
-    let log = move |result: Result<Value, Value>| {
+/// `notificationService.warn(err)` of a failed keybinding command; the caller holds the workbench, so the warning waits a tick.
+pub(super) fn report_failure(outcome: Outcome, cx: &mut Context<Workbench>) {
+    cx.spawn(async move |workbench, cx| {
+        let result = match outcome {
+            Outcome::Ready(result) => result,
+            Outcome::Pending(pending) => pending.await.unwrap_or(Ok(Value::Null)),
+        };
         if let Err(error) = result {
-            eprintln!("keybinding command {command} failed: {}", error["message"].as_str().unwrap_or_default());
+            let _ = workbench.update(cx, |workbench, cx| {
+                workbench.notify_warning(error["message"].as_str().unwrap_or_default());
+                cx.notify();
+            });
         }
-    };
-    match outcome {
-        Outcome::Ready(result) => log(result),
-        Outcome::Pending(pending) => cx.background_executor().spawn(async move { log(pending.await.unwrap_or(Ok(Value::Null))) }).detach(),
-    }
+    })
+    .detach();
 }

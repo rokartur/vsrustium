@@ -29,8 +29,10 @@ mod system_wide_keybindings;
 mod languages;
 mod main_thread;
 mod main_thread_commands;
+mod main_thread_message;
 mod main_thread_quick_open;
 mod menus;
+mod notifications;
 mod quick_input;
 mod search_editor;
 mod search_model;
@@ -292,7 +294,7 @@ fn run_extension_host(
             MainThreadSecretState::in_memory()
         }),
     });
-    session.forward(&["MainThreadCommands", "MainThreadQuickOpen", "MainThreadWorkspace"], move |request| {
+    session.forward(&["MainThreadCommands", "MainThreadMessageService", "MainThreadQuickOpen", "MainThreadWorkspace"], move |request| {
         let _ = workbench_requests.unbounded_send(request);
     }, workbench_replies);
     session.main_thread = Some(Box::new(main_thread));

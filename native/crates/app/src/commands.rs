@@ -104,15 +104,16 @@ impl Workbench {
 
     /// `runCommands` (commands.contribution.ts): runs `{ commands }` in order, each an id or `{ command, args }`
     /// whose array `args` spreads; the first failure stops the rest.
-    /// shortcut: the argument errors and the failure are logged, since the port has no notification toasts.
     pub(crate) fn register_run_commands(&mut self) {
-        self.commands.register("runCommands", |_, args, window, cx| {
+        self.commands.register("runCommands", |workbench, args, window, cx| {
             let Some(commands) = runnable_commands(args.first()) else {
-                eprintln!("'runCommands' has received an argument with incorrect type. Please, review the argument passed to the command.");
+                workbench.notify_error("'runCommands' has received an argument with incorrect type. Please, review the argument passed to the command.");
+                cx.notify();
                 return Outcome::done();
             };
             if commands.is_empty() {
-                eprintln!("'runCommands' has not received commands to run. Did you forget to pass commands in the 'runCommands' argument?");
+                workbench.notify_warning("'runCommands' has not received commands to run. Did you forget to pass commands in the 'runCommands' argument?");
+                cx.notify();
                 return Outcome::done();
             }
             let (sender, receiver) = oneshot::channel();
@@ -124,7 +125,10 @@ impl Workbench {
                         Outcome::Pending(pending) => pending.await.unwrap_or(Ok(Value::Null)),
                     };
                     if let Err(error) = result {
-                        eprintln!("runCommands: {}", error["message"].as_str().unwrap_or_default());
+                        let _ = workbench.update(cx, |workbench, cx| {
+                            workbench.notify_error(error["message"].as_str().unwrap_or_default());
+                            cx.notify();
+                        });
                         break;
                     }
                 }
