@@ -83,13 +83,13 @@ impl Workbench {
                 TERMINAL_SCHEME => part.child(self.terminal_title_actions(cx)).child(self.terminal_body(cx)),
                 // breadcrumbsControl.ts `update`: no breadcrumbs for a resource without a file system provider.
                 "untitled" => part,
-                _ => part.child(self.breadcrumbs(editor)),
+                _ => part.child(self.breadcrumbs(editor).opacity(self.unfocused_editor_opacity(window))),
             })
             .map(|part| match self.editors.active_diff() {
                 Some(diff) => part.child(self.diff_editor_body(diff, editor, window, cx)),
                 None if editor.document.scheme == super::extension_editor::EXTENSION_EDITOR_SCHEME => part,
                 None if self.shows_webview(editor) => part.child(self.webview_editor_body(editor)),
-                None => part.when(editor.document.scheme != TERMINAL_SCHEME, |part| part.children(self.unicode_banner(editor, cx)).child(self.text_area(editor, window, cx))),
+                None => part.when(editor.document.scheme != TERMINAL_SCHEME, |part| part.children(self.unicode_banner(editor, cx)).child(self.text_area(editor, window, cx).opacity(self.unfocused_editor_opacity(window)))),
             })
             // The active tab reaches into the part's top border, which Chrome still draws over it.
             .child(div().absolute().inset(px(-1.)).border_1().rounded(px(8.)).border_color(self.color("surface.border")))

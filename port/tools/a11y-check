@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 // What VoiceOver reads (roadmap section 19): opens the port, or the reference with REF_APP=1, on a copy of
 // port/fixtures/workspace with notes.txt, then dumps the window's accessibility tree through cua-driver (the AX API
-// VoiceOver uses) after each step: the editor focused, two lines down, and the Explorer focused. For the port it exits 1
-// when the Explorer tree, its rows or the editor text area are missing from the last dump. Run on the Studio:
+// VoiceOver uses) after each step: the editor focused, two lines down, the Explorer focused, and Accessibility Help
+// (Alt+F1). For the port it exits 1 when the Explorer tree, its rows, the editor text area or the help's text are missing. Run on the Studio:
 //   port/tools/studio 'port/tools/a11y-check [out-dir]'      (rows matching QUERY, default all)
 import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -47,6 +47,17 @@ try {
 	if (!process.env.REF_APP && (editor.line !== 2 || !editor.value?.split('\n')[2]?.startsWith(line))) {
 		missing.push(`editor line 2 "${line}"`);
 	}
+	if (!process.env.REF_APP) {
+		await cua('hotkey', { ...target, keys: ['option', 'f1'] });
+		await Bun.sleep(500);
+		await dump('accessibility-help');
+		const help = await editorLine(child.pid, 'Accessibility Help');
+		console.log(`accessibility help: line ${help.line}, ${help.value?.length ?? 0} characters`);
+		if (!help.value?.includes('You are in a code editor.')) {
+			missing.push('Accessibility Help text area with "You are in a code editor."');
+		}
+		await cua('press_key', { ...target, key: 'escape' });
+	}
 	if (missing.length) {
 		console.log(`a11y check: missing ${missing.join(', ')}`);
 		process.exitCode = 1;
@@ -79,8 +90,8 @@ async function takeGuiLock() {
 	}
 }
 
-async function editorLine(pid: number): Promise<{ value?: string; line?: number; error?: string }> {
-	const child = Bun.spawn(['swift', 'port/tools/ax-text.swift', String(pid)], { stderr: 'pipe' });
+async function editorLine(pid: number, label = ''): Promise<{ value?: string; line?: number; error?: string }> {
+	const child = Bun.spawn(['swift', 'port/tools/ax-text.swift', String(pid), label], { stderr: 'pipe' });
 	const [stdout, stderr] = [await new Response(child.stdout).text(), await new Response(child.stderr).text()];
 	if (await child.exited) {
 		throw new Error(`ax-text.swift: ${stderr}`);

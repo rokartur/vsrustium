@@ -3,6 +3,7 @@
 //! Sizes are the reference's CSS pixels.
 
 pub mod accessibility;
+pub mod accessible_view;
 mod actions;
 mod bulk_text_edits;
 mod configuration;
@@ -293,6 +294,7 @@ impl Render for Workbench {
         let context_menu = self.context_menu_widget(cx);
         let hover = self.hover_widget(window, cx);
         let dialog = self.custom_dialog_widget(window, cx);
+        let accessible_view = self.accessible_view_widget(window, cx);
         self.update_menubar(window, cx);
         div()
             .relative()
@@ -306,6 +308,7 @@ impl Render for Workbench {
             // The quick input lives in the workbench container, inside the window border as the grid.
             .children(quick_input.map(|widget| div().absolute().left(px(inset)).top(px(inset)).child(widget)))
             .children(notifications)
+            .children(accessible_view)
             .children(context_menu)
             .children(dialog)
             .children(hover)
@@ -319,7 +322,7 @@ impl Render for Workbench {
 
 impl Workbench {
     pub fn new(theme: Theme, app_root: PathBuf, workspace: Option<Workspace>, languages: Languages, settings: Arc<Mutex<Settings>>, host: HostSync, cx: &mut Context<Self>) -> Self {
-        let accessibility = accessibility::AccessibilityState::new(&app_root);
+        let accessibility = accessibility::AccessibilityState::new(&app_root, cx);
         let mut workbench = Workbench {
             theme,
             color_themes: Vec::new(),

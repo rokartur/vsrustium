@@ -25,7 +25,7 @@ pub mod clipboard;
 pub mod commands;
 pub mod cursor_undo;
 mod comment;
-mod cursor;
+pub(crate) mod cursor;
 pub mod drag_and_drop;
 mod edit;
 pub mod find;
