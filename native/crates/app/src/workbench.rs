@@ -2,6 +2,7 @@
 //! (src/vs/workbench/browser/media/floatingPanels.css), empty or with a folder in the Explorer.
 //! Sizes are the reference's CSS pixels.
 
+pub mod accessibility;
 mod actions;
 mod bulk_text_edits;
 mod configuration;
@@ -19,7 +20,11 @@ mod explorer_find;
 mod file_participants;
 mod find_widget;
 mod auto_save;
+mod power;
+mod relauncher;
 mod update;
+mod perf_view;
+mod user_activity;
 mod hover;
 pub(crate) mod host_requests;
 mod input_box_view;
@@ -102,6 +107,10 @@ pub struct Workbench {
     pub keybindings_editor: keybindings_editor_view::KeybindingsEditor,
     keybinding_marks: define_keybinding::KeybindingMarks,
     diagnostics: diagnostics::Diagnostics,
+    accessibility: accessibility::AccessibilityState,
+    metered: power::MeteredConnection,
+    relauncher: relauncher::Relauncher,
+    user_activity: user_activity::UserActivity,
     /// Context keys set with the `setContext` command.
     context_keys: HashMap<String, Value>,
     pub output: crate::output::Output,
@@ -178,6 +187,9 @@ impl Render for Workbench {
         self.refresh_selection_highlights(window);
         self.update_webview_panels(window, cx);
         self.auto_save_models_changed(cx);
+        self.accessibility_frame(window, cx);
+        self.update_metered_connection(cx);
+        self.check_relaunch_settings(window, cx);
         let viewport = window.viewport_size();
         let window_border = self.theme.color("window.activeBorder");
         // The reference lays the grid out at the full window size and shifts it inside the 1px window border.
@@ -224,6 +236,8 @@ impl Render for Workbench {
             .children(notifications)
             .children(context_menu)
             .children(hover)
+            .child(self.aria_live_region())
+            .capture_any_mouse_down(cx.listener(|workbench, _, _, cx| workbench.user_activity(cx)))
             // style.css: .macos-tahoe windows round 16px, older macOS 10px.
             .when_some(window_border, |root, border| root.child(div().absolute().inset_0().border_1().rounded(px(if is_tahoe_or_newer() { 16. } else { 10. })).border_color(border)))
     }
@@ -231,6 +245,7 @@ impl Render for Workbench {
 
 impl Workbench {
     pub fn new(theme: Theme, app_root: PathBuf, workspace: Option<Workspace>, languages: Languages, settings: Arc<Mutex<Settings>>, host: HostSync, cx: &mut Context<Self>) -> Self {
+        let accessibility = accessibility::AccessibilityState::new(&app_root);
         let mut workbench = Workbench {
             theme,
             color_themes: Vec::new(),
@@ -248,6 +263,10 @@ impl Workbench {
             keybindings_editor: keybindings_editor_view::KeybindingsEditor::new(cx),
             keybinding_marks: Default::default(),
             diagnostics: Default::default(),
+            accessibility,
+            metered: Default::default(),
+            relauncher: Default::default(),
+            user_activity: Default::default(),
             context_keys: HashMap::new(),
             output: Default::default(),
             output_view: output_view::OutputView::new(cx),
@@ -324,11 +343,18 @@ impl Workbench {
         workbench.register_notifications_commands();
         workbench.register_output_actions();
         workbench.register_logs_actions();
+        workbench.register_perf_view();
+        workbench.register_accessibility_actions();
+        workbench.start_system_events(cx);
+        workbench.user_activity(cx);
         workbench.register_extension_management_commands();
         // Keybindings resolve before the focused element sees the key, and with nothing focused too.
         let entity = cx.entity().downgrade();
         cx.intercept_keystrokes(move |event, window, cx| {
-            let _ = entity.update(cx, |workbench, cx| workbench.dispatch_key(&event.keystroke, window, cx));
+            let _ = entity.update(cx, |workbench, cx| {
+                workbench.user_activity(cx);
+                workbench.dispatch_key(&event.keystroke, window, cx)
+            });
         })
         .detach();
         cx.on_app_quit(|workbench, _| {
@@ -634,6 +660,12 @@ impl Workbench {
                 (false, _) => None,
             };
             let navigation = tree.navigation(&row);
+            // explorerViewer.ts `ExplorerAccessibilityProvider.getAriaLabel`: the name, a compact row's names joined.
+            let aria_label = match row.compressed.is_empty() {
+                true => row.name.clone(),
+                false => row.compressed.iter().map(|(_, name)| name.as_str()).collect::<Vec<_>>().join("/"),
+            };
+            let (aria_level, aria_expanded) = (row.depth, (row.is_dir || row.has_nests).then_some(row.expanded));
             let path = row.path;
             let is_dir = row.is_dir;
             let is_edited = edited.as_ref().is_some_and(|renamed| match renamed {
@@ -679,6 +711,13 @@ impl Workbench {
             let hover = self.hover_target(("explorer-hover", index), HoverContent::Text(crate::quick_input::path_label(&path, None)), HoverOptions::mouse());
             div()
                 .id(index)
+                .role(gpui::Role::TreeItem)
+                .aria_label(aria_label)
+                .aria_level(aria_level)
+                .aria_selected(is_selected)
+                .when_some(aria_expanded, |row, expanded| row.aria_expanded(expanded))
+                // listWidget.ts: the list keeps the focus and points aria-activedescendant at the focused row.
+                .when(is_focused, |row| row.aria_active_descendant())
                 // list.css: .monaco-list.mouse-support .monaco-list-row is cursor: pointer.
                 .cursor_pointer()
                 .relative()
@@ -777,6 +816,8 @@ impl Workbench {
                 div().relative().flex_1().min_h_0().flex().flex_col().child(
                 div()
                     .id("explorer-tree")
+                    .role(gpui::Role::Tree)
+                    .aria_label("Files Explorer")
                     .track_focus(&self.explorer.focus)
                     .overflow_y_scroll()
                     .track_scroll(&self.explorer.scroll)

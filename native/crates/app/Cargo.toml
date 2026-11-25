@@ -19,9 +19,10 @@ futures = "0.3"
 icu_collator = "2"
 ttf-parser = "0.25"
 block2 = "0.6"
+core-foundation = "0.10"
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSAlert", "NSApplication", "NSButton", "NSCell", "NSControl", "NSMenu", "NSMenuItem", "NSPasteboard", "NSResponder", "NSView", "NSWindow", "block2", "objc2-core-foundation"] }
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSArray", "NSData", "NSDictionary", "NSError", "NSGeometry", "NSKeyValueCoding", "NSOperation", "NSProcessInfo", "NSString", "NSURL", "NSURLRequest", "NSURLResponse", "NSURLSession", "NSValue", "block2", "objc2-core-foundation"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSAlert", "NSApplication", "NSButton", "NSCell", "NSControl", "NSMenu", "NSMenuItem", "NSAccessibility", "NSPasteboard", "NSResponder", "NSSound", "NSView", "NSWindow", "NSWorkspace", "block2", "objc2-core-foundation"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSArray", "NSData", "NSDictionary", "NSDistributedNotificationCenter", "NSError", "NSGeometry", "NSKeyValueCoding", "NSNotification", "NSOperation", "NSProcessInfo", "NSString", "NSURL", "NSURLRequest", "NSURLResponse", "NSURLSession", "NSUserDefaults", "NSValue", "block2", "objc2-core-foundation"] }
 objc2-web-kit = { version = "0.3.2", default-features = false, features = ["WKNavigation", "WKPreferences", "WKScriptMessage", "WKScriptMessageHandler", "WKURLSchemeHandler", "WKURLSchemeTask", "WKUserContentController", "WKUserScript", "WKWebView", "WKWebViewConfiguration", "block2", "objc2-app-kit", "objc2-core-foundation"] }
 raw-window-handle = "0.6"
 gpui.workspace = true

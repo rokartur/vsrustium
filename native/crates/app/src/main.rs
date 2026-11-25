@@ -5,6 +5,7 @@
 
 #[cfg_attr(not(test), expect(dead_code, reason = "the code action menu of milestone 13 is its first desktop caller"))]
 mod action_list;
+mod accessibility_signals;
 mod anything_quick_access;
 mod brackets;
 mod clipboard;
@@ -20,6 +21,7 @@ mod file_actions;
 mod file_icons;
 mod filters;
 mod history;
+mod host_color;
 mod fuzzy_scorer;
 mod host_sync;
 mod input_box;
@@ -39,8 +41,11 @@ mod main_thread_quick_open;
 mod main_thread_status_bar;
 mod markers;
 mod menus;
+mod metered_connection;
 mod notifications;
 mod output;
+mod perf;
+mod power;
 mod product;
 mod quick_input;
 mod search_editor;
@@ -89,6 +94,7 @@ use theme::load_theme;
 use workbench::Workbench;
 
 fn main() -> anyhow::Result<()> {
+    perf::mark("code/didStartMain");
     let args: Vec<String> = std::env::args().collect();
     let runtime = if args.iter().any(|arg| arg == "--node") { Runtime::Node } else { Runtime::Bun };
     let flag_value = |flag: &str| args.iter().position(|arg| arg == flag).and_then(|i| args.get(i + 1)).cloned();
@@ -117,6 +123,7 @@ fn main() -> anyhow::Result<()> {
     product::load(&app_root);
     let extensions_dir = std::env::var_os("VSCODE_GPUI_EXTENSIONS").map(PathBuf::from).unwrap_or_else(|| app_root.join("extensions"));
     let builtins = scan_builtin_extensions(&extensions_dir)?;
+    perf::mark("code/didScanExtensions");
     // Artur: user extensions live in ~/.vsrustium/extensions, the default user data dir's extensions folder.
     let user_extensions = UserExtensions { folder: flag_value("--extensions-dir").map_or_else(|| user_data.join("extensions"), PathBuf::from), product_version: VERSION.into() };
     user_extensions.clean_up()?;
@@ -164,6 +171,7 @@ fn main() -> anyhow::Result<()> {
                 host.configuration_scopes = development.is_some();
                 host.send_color_theme(theme.kind);
                 let mut workbench = Workbench::new(theme, app_root.clone(), workspace.clone(), languages, settings.clone(), host, cx);
+                perf::mark("code/didCreateWorkbench");
                 let window_logs = exthost::session::window_logs_path(&user_data);
                 workbench.register_window_log(window_logs.join("renderer.log"));
                 let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
@@ -335,7 +343,9 @@ fn run_extension_host(
     }, workbench_replies);
     session.main_thread = Some(Box::new(main_thread));
     session.notify("ExtHostStatusBar", "$acceptStaticEntries", vec![json!(main_thread_status_bar::static_entry_dtos(&extensions))]);
+    perf::mark("code/willStartExtensionHost");
     session.start(&extensions, workspace.as_ref().map(|workspace| workspace_data(&init, workspace)))?;
+    perf::mark("code/didStartExtensionHost");
     let reply = session.call("ExtHostExtensionService", "$test_latency", vec![Arg::Json(json!(7))], Duration::from_secs(10))?;
     let _ = status.unbounded_send(format!("main -> host: $test_latency(7) = {reply:?}"));
     let _ = status.unbounded_send(format!("host -> main: {} requests so far", session.log.host_calls.values().sum::<u32>()));
@@ -390,7 +400,10 @@ fn save_screenshot(_window: &Window, _path: &std::path::Path) -> anyhow::Result<
 
 /// `workbench.colorTheme`; a theme no extension contributes falls back to the default, as ThemeService does.
 fn settings_theme(extensions: &[ScannedExtension], settings: &Settings) -> anyhow::Result<theme::Theme> {
-    let id = settings.get_value(Some("workbench.colorTheme"), &Overrides::default());
+    // workbenchThemeService.ts: a host in high contrast picks the preferred high contrast theme.
+    let detect_high_contrast = settings.get_value(Some("window.autoDetectHighContrast"), &Overrides::default()) != Some(serde_json::Value::Bool(false));
+    let key = host_color::preferred_high_contrast_setting(detect_high_contrast, host_color::high_contrast(), host_color::dark()).unwrap_or("workbench.colorTheme");
+    let id = settings.get_value(Some(key), &Overrides::default());
     if let Some(theme) = id.as_ref().and_then(|id| id.as_str()).and_then(|id| load_theme(extensions, id).ok()) {
         return Ok(theme);
     }

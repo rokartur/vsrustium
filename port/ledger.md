@@ -176,7 +176,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/networkFilter | src/vs/platform | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | platform/notification | src/vs/platform | ported | notifications.rs: severities, priorities, actions, progress, legacy link parsing (linkedText.ts), 1000-character messages; cargo test -p app notifications:: |
 | platform/observable | src/vs/platform | removed | Artur: internal infrastructure or developer tool with no 1:1 counterpart in the native port |
-| platform/onboarding | src/vs/platform | todo |  |
+| platform/onboarding | src/vs/platform | removed | the Agents window tryout handoff (onboardingTryoutHandoff.ts): no AI by decision (port/notes.md) |
 | platform/opener | src/vs/platform | todo |  |
 | platform/otel | src/vs/platform | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | platform/path | src/vs/platform | todo |  |
@@ -210,7 +210,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/userData | src/vs/platform | todo |  |
 | platform/userDataProfile | src/vs/platform | todo |  |
 | platform/userDataSync | src/vs/platform | removed | no sign-in/AI by decision (port/notes.md); not ported |
-| platform/userInteraction | src/vs/platform | todo |  |
+| platform/userInteraction | src/vs/platform | n/a | DOM observables for modifier keys, focus and hover that editor widgets read; GPUI gives each element its own focus, hover and modifier state |
 | platform/utilityProcess | src/vs/platform | n/a | Electron process, IPC or DOM layer; replaced by the single-process Rust/GPUI architecture (port/notes.md) |
 | platform/webContentExtractor | src/vs/platform | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | platform/webWorker | src/vs/platform | removed | Artur: internal infrastructure or developer tool with no 1:1 counterpart in the native port |
@@ -384,8 +384,8 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/services/untitled | workbench service | stub | Untitled-<n> models and untitled models with an associated file (host_requests.rs, editor/edit.rs is_dirty); no Save As |
 | workbench/services/update | workbench service | todo |  |
 | workbench/services/url | workbench service | todo |  |
-| workbench/services/userActivity | workbench service | todo |  |
-| workbench/services/userAttention | workbench service | todo |  |
+| workbench/services/userActivity | workbench service | verified | workbench/user_activity.rs: domActivityTracker.ts 30 s checks and the 10 s inactive debounce over every keystroke and mouse press, sent as $onDidChangeWindowActive (cargo test -p app user_activity); progressService.ts holding the mark during long progress is not ported |
+| workbench/services/userAttention | workbench service | n/a | its only consumer is editTelemetry (editSourceTrackingImpl.ts); the port has no telemetry by decision (port/notes.md) |
 | workbench/services/userData | workbench service | todo |  |
 | workbench/services/userDataProfile | workbench service | todo |  |
 | workbench/services/userDataSync | workbench service | removed | no sign-in/AI by decision (port/notes.md); not ported |
@@ -448,7 +448,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/modernUI | workbench contribution | todo |  |
 | workbench/contrib/multiDiffEditor | workbench contribution | todo |  |
 | workbench/contrib/notebook | workbench contribution | todo |  |
-| workbench/contrib/onboarding | workbench contribution | todo |  |
+| workbench/contrib/onboarding | workbench contribution | removed | the only registered tours are the Agents window ones (src/vs/sessions/contrib/onboardingTours): no AI by decision (port/notes.md) |
 | workbench/contrib/opener | workbench contribution | todo |  |
 | workbench/contrib/outline | workbench contribution | todo |  |
 | workbench/contrib/output | workbench contribution | ported | output_view.rs and output_actions.rs: read-only Output view with the channel dropdown, filter box with level and category menus, Clear Output, Toggle Auto Scrolling, log level gear, Open Output in Editor, Show Output Channels, `workbench.action.output.show.<id>`, Cmd+Shift+U toggle, the Window and Extension Host channels; the view is an editor tab until the milestone 11 panel lands (port/notes.md milestone 15): cargo test -p app output |
@@ -473,7 +473,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/share | workbench contribution | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | workbench/contrib/snippets | workbench contribution | todo |  |
 | workbench/contrib/speech | workbench contribution | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
-| workbench/contrib/splash | workbench contribution | todo |  |
+| workbench/contrib/splash | workbench contribution | n/a | partsSplash.ts stores the parts' layout and colors so Electron can paint them before the workbench loads; the GPUI window's first frame is the workbench, drawn from the theme |
 | workbench/contrib/surveys | workbench contribution | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | workbench/contrib/tags | workbench contribution | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | workbench/contrib/tasks | workbench contribution | todo |  |
@@ -491,9 +491,9 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/webview | workbench contribution | ported | webviewElement.ts host protocol, theme variables, focus handoff, local resource loading (webview.rs); api-tests `MOCHA_GREP="vscode API - webview"` webview.test passes as in the reference (625 local resources, postMessage both ways); cargo test -p app webview. Find widget and dev tools not ported |
 | workbench/contrib/webviewPanel | workbench contribution | ported | webview panels as editors (workbench/webview_panels.rs); api-tests `MOCHA_GREP="vscode API - webview"` webview.test passes as in the reference (625 local resources, postMessage both ways); cargo test -p app webview |
 | workbench/contrib/webviewView | workbench contribution | todo |  |
-| workbench/contrib/welcomeBanner | workbench contribution | todo |  |
+| workbench/contrib/welcomeBanner | workbench contribution | n/a | shows the web embedder's `welcomeBanner` option; a desktop window has none |
 | workbench/contrib/welcomeGettingStarted | workbench contribution | todo |  |
-| workbench/contrib/welcomeOnboarding | workbench contribution | todo |  |
+| workbench/contrib/welcomeOnboarding | workbench contribution | removed | Developer: Welcome Onboarding 2026 (onboardingVariationA.ts) is sign-in and Copilot setup: no sign-in or AI by decision (port/notes.md) |
 | workbench/contrib/welcomeViews | workbench contribution | todo |  |
 | workbench/contrib/welcomeWalkthrough | workbench contribution | todo |  |
 | workbench/contrib/workspace | workbench contribution | todo |  |

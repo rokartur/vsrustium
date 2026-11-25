@@ -52,6 +52,15 @@ impl MainThread for WorkbenchMainThread {
                 self.content_providers.retain(|(handle, _)| *handle != args[0]);
                 return Some(Ok(Reply::Empty));
             }
+            // Recorded for Developer: Startup Performance; the session still handles them.
+            ("MainThreadExtensionService", "$setPerformanceMarks") => {
+                crate::perf::set_ext_host_marks(&args[0]);
+                return None;
+            }
+            ("MainThreadExtensionService", "$onDidActivateExtension") => {
+                crate::perf::extension_activated(&args);
+                return None;
+            }
             _ if !HOST_REQUESTS.contains(&(proxy, method)) => return None,
             _ => {}
         }

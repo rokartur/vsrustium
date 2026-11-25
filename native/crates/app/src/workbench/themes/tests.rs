@@ -48,7 +48,7 @@ fn the_picker_previews_the_focused_theme_writes_the_accepted_one_and_escape_rest
     });
     cx.run_until_parked();
     let theme_id = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.theme.settings_id.clone());
-    let sent = || messages.try_iter().filter(|message| message.method != "$activateByEvent").map(|message| (message.method, message.args)).collect::<Vec<(&str, Vec<Value>)>>();
+    let sent = || messages.try_iter().filter(|message| !["$activateByEvent", "$initializeIsConnectionMetered"].contains(&message.method)).map(|message| (message.method, message.args)).collect::<Vec<(&str, Vec<Value>)>>();
     let user_settings = || std::fs::read_to_string(dir.join("User/settings.json")).ok();
 
     cx.simulate_keystrokes("cmd-k cmd-t");
