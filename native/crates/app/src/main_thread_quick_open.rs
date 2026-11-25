@@ -32,6 +32,8 @@ pub enum Owner {
     GoToMatch,
     /// A picker of the editor status bar entries, with what accepting each item does.
     EditorStatus(Vec<crate::workbench::editor_status::StatusPick>),
+    /// `list.resizeColumn`: the column pick, then the input box of the picked column's percentage.
+    ResizeColumn(Option<usize>),
 }
 
 impl Workbench {
@@ -202,6 +204,7 @@ impl Workbench {
             Owner::ColorThemes(_) => self.color_theme_picker_event(id, event, window, cx),
             Owner::GoToMatch => self.go_to_match_event(id, event, window, cx),
             Owner::EditorStatus(_) => self.editor_status_event(id, event, window, cx),
+            Owner::ResizeColumn(_) => self.resize_column_event(id, event, window, cx),
         }
     }
 

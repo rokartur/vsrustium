@@ -7,11 +7,11 @@ mod tests;
 
 use std::collections::HashMap;
 use std::ops::Range;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gpui::{
     AnyElement, BoxShadow, ClipboardItem, Context, Div, FocusHandle, FontWeight, HighlightStyle, ListAlignment, ListState, MouseButton, MouseDownEvent, PromptLevel, Rgba, Stateful,
-    StyledText, Subscription, Task, Window, div, list, point, prelude::*, px, rgb, rgba,
+    MouseMoveEvent, MouseUpEvent, StyledText, Subscription, Task, Window, canvas, div, list, point, prelude::*, px, rgb, rgba,
 };
 use serde_json::{Value, json};
 
@@ -22,7 +22,10 @@ use crate::input_box::InputBox;
 use crate::keybinding_editing::{self, Change};
 use crate::keybindings::{self, Chord, Resolution};
 use crate::keybindings_editor::{ChordMatch, Entry, Model, Source};
+use crate::main_thread_quick_open::Owner;
 use crate::menus::MenuAction;
+use crate::quick_input::{Entry as PickEntry, Event, Item, Kind, QuickInput, Severity};
+use crate::split_view::{SashState, SplitView, View};
 use crate::theme::ThemeKind;
 
 pub const OPEN_COMMAND: &str = "workbench.action.openGlobalKeybindings";
@@ -40,6 +43,13 @@ const ACTIONS_COLUMN_WIDTH: f32 = 40.;
 const COLUMN_WEIGHTS: [f32; 4] = [0.3, 0.2, 0.35, 0.15];
 /// `ColumnHeader.minimumSize` (tableWidget.ts) for a column without `minimumWidth`.
 const MIN_COLUMN_WIDTH: f32 = 120.;
+const COLUMN_LABELS: [&str; 4] = ["Command", "Keybinding", "When", "Source"];
+/// `--vscode-sash-size`.
+const SASH_SIZE: f32 = 4.;
+/// `workbench.sash.hoverDelay` default.
+const SASH_HOVER_DELAY: Duration = Duration::from_millis(300);
+/// The `border-color 0.2s ease-out` transition of the column borders on table hover.
+const TABLE_BORDER_FADE: Duration = Duration::from_millis(200);
 /// `DefineKeybindingWidget.WIDTH` and `HEIGHT`.
 const DEFINE_WIDTH: f32 = 400.;
 const DEFINE_HEIGHT: f32 = 110.;
@@ -118,6 +128,13 @@ pub struct KeybindingsEditor {
     define_focus: FocusHandle,
     modal_focus: FocusHandle,
     list: ListState,
+    /// The table's column headers, resized by their sashes and `list.resizeColumn`.
+    columns: SplitView,
+    /// The sash under the pointer, shown as hovered once `workbench.sash.hoverDelay` passed, and its timer.
+    sash_hovered: Option<usize>,
+    sash_hover: Option<Task<()>>,
+    /// Whether the pointer is over the table, and since when, for the column borders' fade.
+    table_hovered: (bool, Instant),
     listed: usize,
     revealed: Option<usize>,
     /// `delayedFiltering`: the search filters 300ms after the last change.
@@ -165,6 +182,10 @@ impl KeybindingsEditor {
             define_focus: cx.focus_handle(),
             modal_focus: cx.focus_handle(),
             list: ListState::new(0, ListAlignment::Top, px(200.)),
+            columns: table_columns(),
+            sash_hovered: None,
+            sash_hover: None,
+            table_hovered: (false, Instant::now() - TABLE_BORDER_FADE),
             listed: 0,
             revealed: None,
             filtering: None,
@@ -278,6 +299,13 @@ impl Workbench {
                 Outcome::done()
             });
         }
+        // ListResizeColumnAction: the last focused list is the keybindings table, the only table so far.
+        commands.register("list.resizeColumn", |workbench, _, window, cx| {
+            if workbench.keybindings_editor.table_focus.is_focused(window) {
+                workbench.show_resize_column_pick(window, cx);
+            }
+            Outcome::done()
+        });
         commands.register("keybindings.editor.focusKeybindings", |workbench, _, window, cx| {
             let editor = &mut workbench.keybindings_editor;
             if !editor.entries.is_empty() {
@@ -333,6 +361,66 @@ impl Workbench {
         Outcome::done()
     }
 
+    /// `TableColumnResizeQuickPick.show`: the columns with a label, by index.
+    fn show_resize_column_pick(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let mut input = QuickInput::new(0, Kind::QuickPick);
+        input.placeholder = Some("Select the column to resize, type to filter.".into());
+        input.set_items(COLUMN_LABELS.iter().enumerate().map(|(index, label)| PickEntry::Item(Item { handle: index as i64 + 1, label: label.to_string(), pickable: true, ..Item::default() })).collect());
+        let id = self.quick_inputs.add(input, Owner::ResizeColumn(None));
+        self.show_quick_input(id, window, cx);
+        self.flush_quick_input_events(window, cx);
+    }
+
+    pub(crate) fn resize_column_event(&mut self, id: i64, event: Event, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(&Owner::ResizeColumn(column)) = self.quick_inputs.owner(id) else { return };
+        match (event, column) {
+            (Event::Accept(_), None) => {
+                let Some(handle) = self.quick_inputs.get(id).and_then(|input| input.active_handles().first().copied()) else { return };
+                self.hide_quick_input_by_id(id, window, cx);
+                self.show_resize_column_input(handle as usize, window, cx);
+            }
+            (Event::ChangeValue(value), Some(_)) => {
+                // quickInputService.input validates 100ms after typing stops.
+                cx.spawn_in(window, async move |workbench, cx| {
+                    cx.background_executor().timer(Duration::from_millis(100)).await;
+                    let _ = workbench.update(cx, |workbench, cx| {
+                        let Some(input) = workbench.quick_inputs.get_mut(id).filter(|input| input.input_box.value == value) else { return };
+                        input.validation_message = column_resize_validation(&value);
+                        input.severity = if input.validation_message.is_some() { Severity::Error } else { Severity::Ignore };
+                        cx.notify();
+                    });
+                })
+                .detach();
+            }
+            (Event::Accept(_), Some(column)) => {
+                let Some(input) = self.quick_inputs.get_mut(id) else { return };
+                let value = input.input_box.value.clone();
+                if let Some(message) = column_resize_validation(&value) {
+                    (input.validation_message, input.severity) = (Some(message), Severity::Error);
+                    return cx.notify();
+                }
+                self.hide_quick_input_by_id(id, window, cx);
+                // `if (!percentageValue)`: an empty value or 0 leaves the column.
+                if let Some(percentage) = parse_int(&value).filter(|&percentage| percentage != 0) {
+                    let columns = &mut self.keybindings_editor.columns;
+                    columns.resize_view(column, (percentage as f32 / 100. * columns.size()).round());
+                }
+            }
+            (Event::Hide, _) => self.quick_inputs.remove(id),
+            _ => {}
+        }
+        cx.notify();
+    }
+
+    fn show_resize_column_input(&mut self, column: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let mut input = QuickInput::new(0, Kind::InputBox);
+        input.placeholder = Some("i.e. 20, 60, 100...".into());
+        input.prompt = Some(format!("Please enter a width in percentage for the '{}' column.", COLUMN_LABELS[column - 1]));
+        let id = self.quick_inputs.add(input, Owner::ResizeColumn(Some(column)));
+        self.show_quick_input(id, window, cx);
+        self.flush_quick_input_events(window, cx);
+    }
+
     /// `openGlobalKeybindingSettings(false, { query })`: shows the editor, focusing its search, and searches `query`.
     pub(super) fn open_keybindings_editor(&mut self, query: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
         let editor = &mut self.keybindings_editor;
@@ -344,6 +432,7 @@ impl Workbench {
             editor.recording = false;
             editor.recorded.clear();
             editor.selected = None;
+            editor.columns = table_columns();
             editor.search = InputBox::default();
             editor.search_view.reset();
             self.refresh_keybindings_model();
@@ -845,7 +934,7 @@ impl Workbench {
             .text_size(px(13.))
             .text_color(self.color("foreground"))
             .child(div().pr(px(10.)).pb(px(11.)).child(self.keybindings_search(window, cx)))
-            .child(self.keybindings_table(table_width, cx))
+            .child(self.keybindings_table(table_width, window, cx))
             .children(define)
     }
 
@@ -935,7 +1024,7 @@ impl Workbench {
     }
 
     /// The `WorkbenchTable` of the rows: a 30px header and rows 24px tall, or 40px with a matched id on a second line.
-    fn keybindings_table(&mut self, width: f32, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    fn keybindings_table(&mut self, width: f32, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let editor = &mut self.keybindings_editor;
         if editor.listed != editor.entries.len() {
             editor.list.reset(editor.entries.len());
@@ -947,8 +1036,12 @@ impl Workbench {
             }
             editor.revealed = editor.selected;
         }
-        let columns = column_widths(width);
-        let border = self.theme.color("tree.tableColumnsBorder").unwrap_or(transparent());
+        if editor.columns.size() != width {
+            editor.columns.layout(width);
+        }
+        let columns: [f32; 5] = editor.columns.sizes().try_into().expect("the table has five columns");
+        let sash_states = editor.columns.sash_states();
+        let border = self.table_columns_border(window);
         let header = div()
             .h(px(TABLE_HEADER_HEIGHT))
             .flex_none()
@@ -957,13 +1050,13 @@ impl Workbench {
             .font_weight(FontWeight::BOLD)
             .bg(self.color("keybindingTable.headerBackground"))
             .child(div().w(px(columns[0])).pl(px(20.)))
-            .children(["Command", "Keybinding", "When", "Source"].into_iter().zip(&columns[1..]).map(|(title, width)| div().w(px(*width)).pl(px(10.)).truncate().child(title)));
+            .children(COLUMN_LABELS.into_iter().zip(&columns[1..]).map(|(title, width)| div().w(px(*width)).pl(px(10.)).truncate().child(title)));
         let rows = list(self.keybindings_editor.list.clone(), cx.processor(move |workbench: &mut Workbench, index: usize, window, cx| workbench.keybinding_row(index, columns, window, cx))).size_full();
         let mut sashes = Vec::new();
         let mut x = 0.;
-        for column in &columns[..4] {
-            x += column;
-            sashes.push(div().absolute().top_0().bottom_0().left(px(x)).w(px(1.)).bg(border));
+        for (index, state) in sash_states.into_iter().enumerate() {
+            x += columns[index];
+            sashes.push(self.column_sash(index, x, state, border, cx));
         }
         let focus = self.keybindings_editor.table_focus.clone();
         div()
@@ -974,9 +1067,107 @@ impl Workbench {
             .flex()
             .flex_col()
             .track_focus(&focus)
+            .on_hover(cx.listener(|workbench, hovered: &bool, _, cx| {
+                workbench.keybindings_editor.table_hovered = (*hovered, Instant::now());
+                cx.notify();
+            }))
             .child(header)
-            .child(div().flex_1().min_h_0().border_t_1().border_color(transparent()).child(rows))
+            .child(div().flex_1().min_h_0().border_t_1().border_color(border).child(rows))
             .children(sashes)
+            .when(self.keybindings_editor.columns.dragged_sash().is_some(), |table| table.child(self.column_sash_drag(cx)))
+    }
+
+    /// `tree.tableColumnsBorder` while the pointer is over the table, fading in and out over 200ms.
+    fn table_columns_border(&self, window: &mut Window) -> Rgba {
+        let border = self.theme.color("tree.tableColumnsBorder").unwrap_or(transparent());
+        let (hovered, since) = self.keybindings_editor.table_hovered;
+        let progress = (since.elapsed().as_secs_f32() / TABLE_BORDER_FADE.as_secs_f32()).min(1.);
+        if progress < 1. {
+            window.request_animation_frame();
+        }
+        let shown = ease_out(progress);
+        Rgba { a: border.a * if hovered { shown } else { 1. - shown }, ..border }
+    }
+
+    /// The sash after column `index`: 4px wide over the boundary at `x`, its 1px border below the header in
+    /// `sash.hoverBorder` under the column border once hovered or dragged. A double click resets the column to its
+    /// weight (`onDidSashReset`).
+    fn column_sash(&self, index: usize, x: f32, state: SashState, border: Rgba, cx: &mut Context<Self>) -> AnyElement {
+        let editor = &self.keybindings_editor;
+        let active = editor.sash_hovered == Some(index) || editor.columns.dragged_sash() == Some(index);
+        let hover_border = self.theme.color("sash.hoverBorder").unwrap_or(self.color("focusBorder"));
+        let line = |color: Rgba| div().absolute().left(px(SASH_SIZE / 2.)).top(px(TABLE_HEADER_HEIGHT + 1.)).bottom_0().w(px(1.)).bg(color);
+        let sash = div()
+            .id(("column-sash", index))
+            .absolute()
+            .top_0()
+            .bottom_0()
+            .left(px(x - SASH_SIZE / 2.))
+            .w(px(SASH_SIZE))
+            .when(active, |sash| sash.child(line(hover_border)))
+            .child(line(border));
+        if state == SashState::Disabled {
+            return sash.into_any_element();
+        }
+        sash.cursor(match state {
+            SashState::AtMinimum => gpui::CursorStyle::ResizeRight,
+            SashState::AtMaximum => gpui::CursorStyle::ResizeLeft,
+            _ => gpui::CursorStyle::ResizeColumn,
+        })
+        .on_hover(cx.listener(move |workbench, hovered: &bool, window, cx| {
+            let editor = &mut workbench.keybindings_editor;
+            editor.sash_hovered = None;
+            editor.sash_hover = hovered.then(|| {
+                cx.spawn_in(window, async move |workbench, cx| {
+                    cx.background_executor().timer(SASH_HOVER_DELAY).await;
+                    let _ = workbench.update(cx, |workbench, cx| {
+                        workbench.keybindings_editor.sash_hovered = Some(index);
+                        cx.notify();
+                    });
+                })
+            });
+            cx.notify();
+        }))
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |workbench, event: &MouseDownEvent, _, cx| {
+                cx.stop_propagation();
+                let editor = &mut workbench.keybindings_editor;
+                if event.click_count == 2 {
+                    let width = editor.columns.size();
+                    editor.columns.resize_view(index, column_weight(index) / COLUMN_WEIGHTS.iter().sum::<f32>() * width);
+                } else {
+                    editor.columns.start_sash_drag(index, f32::from(event.position.x), event.modifiers.alt);
+                }
+                cx.notify();
+            }),
+        )
+        .into_any_element()
+    }
+
+    /// Follows the pointer anywhere in the window while a sash drags.
+    fn column_sash_drag(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let workbench = cx.entity();
+        canvas(
+            |_, _, _| (),
+            move |_, _, window, _| {
+                let moved = workbench.clone();
+                window.on_mouse_event(move |event: &MouseMoveEvent, _, _, cx| {
+                    moved.update(cx, |workbench, cx| {
+                        workbench.keybindings_editor.columns.drag_sash(f32::from(event.position.x), event.modifiers.alt);
+                        cx.notify();
+                    });
+                });
+                let released = workbench.clone();
+                window.on_mouse_event(move |_: &MouseUpEvent, _, _, cx| {
+                    released.update(cx, |workbench, cx| {
+                        workbench.keybindings_editor.columns.end_sash_drag();
+                        cx.notify();
+                    });
+                });
+            },
+        )
+        .size_0()
     }
 
     /// A `.monaco-list-row` of the table.
@@ -1199,21 +1390,59 @@ impl Workbench {
     }
 }
 
-/// The table's proportional `SplitView` layout: each column takes its weight of the whole width, clamped to its
-/// minimum (40 for the fixed actions column, 120 otherwise), then `distributeEmptySpace` evens the sum from the last
-/// column back.
-pub fn column_widths(width: f32) -> [f32; 5] {
-    let mut widths = [ACTIONS_COLUMN_WIDTH; 5];
-    for (index, weight) in COLUMN_WEIGHTS.iter().enumerate() {
-        widths[index + 1] = (weight * width).round().max(MIN_COLUMN_WIDTH);
+/// The table's `SplitView` of column headers as its descriptor gives them: the 40px actions column, then the
+/// columns by weight, each 120px at least.
+fn table_columns() -> SplitView {
+    let views = (0..5).map(|index| match index {
+        0 => View { size: 0., minimum: ACTIONS_COLUMN_WIDTH, maximum: ACTIONS_COLUMN_WIDTH },
+        _ => View { size: column_weight(index), minimum: MIN_COLUMN_WIDTH, maximum: f32::INFINITY },
+    });
+    SplitView::new(COLUMN_WEIGHTS.iter().sum(), views.collect())
+}
+
+/// `_validateColumnResizeValue`: `parseInt` must give an integer from 0 to 100.
+fn column_resize_validation(value: &str) -> Option<String> {
+    match parse_int(value) {
+        None if !value.is_empty() => Some("Please enter an integer.".into()),
+        Some(percentage) if !(0..=100).contains(&percentage) => Some("Please enter a number greater than 0 and less than or equal to 100.".into()),
+        _ => None,
     }
-    let mut empty = width - widths.iter().sum::<f32>();
-    for index in (1..widths.len()).rev() {
-        let size = (widths[index] + empty).max(MIN_COLUMN_WIDTH);
-        empty -= size - widths[index];
-        widths[index] = size;
+}
+
+/// `Number.parseInt(value)`: leading whitespace, an optional sign, then hex digits after `0x` or decimal digits.
+fn parse_int(value: &str) -> Option<i64> {
+    let value = value.trim_start();
+    let (sign, rest) = match value.strip_prefix('-') {
+        Some(rest) => (-1, rest),
+        None => (1, value.strip_prefix('+').unwrap_or(value)),
+    };
+    let (radix, digits) = match rest.get(..2) {
+        Some("0x" | "0X") => (16, &rest[2..]),
+        _ => (10, rest),
+    };
+    let end = digits.find(|c: char| !c.is_digit(radix)).unwrap_or(digits.len());
+    match i64::from_str_radix(&digits[..end], radix) {
+        Ok(number) => Some(sign * number),
+        // JavaScript numbers do not overflow; any too large value is out of the 0 to 100 range.
+        Err(error) if *error.kind() == std::num::IntErrorKind::PosOverflow => Some(sign * i64::MAX),
+        Err(_) => None,
     }
-    widths
+}
+
+/// The weight of column `index`; the actions column has none.
+fn column_weight(index: usize) -> f32 {
+    if index == 0 { 0. } else { COLUMN_WEIGHTS[index - 1] }
+}
+
+/// CSS `ease-out`, cubic-bezier(0, 0, 0.58, 1): the curve's x solved by bisection, then its y.
+fn ease_out(x: f32) -> f32 {
+    let bezier = |p1: f32, p2: f32, t: f32| 3. * p1 * t * (1. - t).powi(2) + 3. * p2 * t * t * (1. - t) + t.powi(3);
+    let (mut low, mut high) = (0., 1.);
+    for _ in 0..24 {
+        let mid = (low + high) / 2.;
+        if bezier(0., 0.58, mid) < x { low = mid } else { high = mid }
+    }
+    bezier(0., 1., (low + high) / 2.)
 }
 
 /// Which of the chord's key caps (`Chord::key_caps` order) a search matched.

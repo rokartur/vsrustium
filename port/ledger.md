@@ -164,7 +164,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/launch | src/vs/platform | todo |  |
 | platform/layout | src/vs/platform | todo |  |
 | platform/lifecycle | src/vs/platform | todo |  |
-| platform/list | src/vs/platform | todo |  |
+| platform/list | src/vs/platform | ported | split_view.rs SplitView (proportional layout, distributeEmptySpace, sash drag with Alt for both sides, sash states) under the Keyboard Shortcuts table's column headers: sash cursors, 300ms hover border, double-click reset to the column weight, tree.tableColumnsBorder fading in on table hover (cargo test -p app split_view keybindings_editor_view; ui-pair drag and reset land on the reference's columns); listWidget and the other lists stay with their views |
 | platform/localTranscription | src/vs/platform | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
 | platform/log | src/vs/platform | stub | the port log is code-gpui stderr: host console, errors, `$log` lines; no log levels, files or rotation |
 | platform/markdown | src/vs/platform | todo |  |
@@ -435,7 +435,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/languageDetection | workbench contribution | todo |  |
 | workbench/contrib/languageStatus | workbench contribution | todo |  |
 | workbench/contrib/limitIndicator | workbench contribution | todo |  |
-| workbench/contrib/list | workbench contribution | todo |  |
+| workbench/contrib/list | workbench contribution | ported | list.resizeColumn: TableColumnResizeQuickPick's column pick and percentage input with its validation (cargo test -p app keybindings_editor_view: resize_column_sets_the_picked_column_to_a_percentage_of_the_table, a_column_width_must_be_an_integer_percentage); the Keyboard Shortcuts table is the only table so far |
 | workbench/contrib/localHistory | workbench contribution | todo |  |
 | workbench/contrib/localization | workbench contribution | todo |  |
 | workbench/contrib/logs | workbench contribution | todo |  |

@@ -11,7 +11,10 @@ Reference: 1.147.0 dev build on the Studio; port: release `code-gpui`. Both driv
 - `escape.png`: Escape in the define widget closes the modal in both: the modal's capture listener runs `workbench.action.closeModalEditor` before the widget's key handler.
 - Fixed after the first pairs: the table columns take the proportional `SplitView` layout (weights of the whole width, 120 px minimum, the 40 px actions column taken from Source then When), and command ids and when expressions take the monospace `.code` style, `foreground` at 0.8 over `WORKBENCH_BACKGROUND` or over the row's selection, focus or hover colors.
 
+- `columns-hover-drag.png` (click a row; then drag the Command/Keybinding sash 100 pt right, captured mid-drag) and `columns-dragged-reset.png` (released; then double-click the sash): both show the sash in `sash.hoverBorder` while dragging, the Keybinding column shrinking to its 120 px minimum and pushing When, the same column edges once released (508, 628, 800 pt), and the double-click resetting Command to its weight with the other columns at the reference's sizes. The mid-drag frames differ by the moment cua-driver samples the drag. Column borders show always in the reference (`workbench.reduceMotion: on` in its ui-pair settings) and on table hover in the port.
+
 Checks (Studio):
 
+- `cargo test -p app split_view`: 5 passed. `cargo test -p app keybindings_editor_view`: 8 passed. `cargo test -p app`: 823 passed, 1 ignored.
 - `cargo test -p app keybindings_editor_view`: 6 passed.
 - `cargo test -p app`: 591 passed, 1 ignored. `cargo test -p config`: 50 passed.

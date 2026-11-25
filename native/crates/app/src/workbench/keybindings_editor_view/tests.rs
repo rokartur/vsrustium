@@ -8,7 +8,7 @@ use exthost::scan::scan_extension;
 use gpui::{TestAppContext, VisualTestContext};
 use serde_json::json;
 
-use super::{OPEN_COMMAND, column_widths, context_menu_actions, copied_entry, record_chord, row_height};
+use super::{OPEN_COMMAND, column_resize_validation, context_menu_actions, copied_entry, record_chord, row_height, table_columns};
 use crate::host_sync::HostSync;
 use crate::keybindings::parse_keybinding;
 use crate::keybindings_editor::{Entry, EntryMatches, Row, Source};
@@ -76,8 +76,51 @@ fn rows_grow_for_a_matched_id_and_columns_share_the_width_by_weight() {
     matched.matches.command_id = Some(vec![0..4]);
     assert_eq!(row_height(&matched), 40.);
     // Source drops to its 120 minimum and When gives the rest of the 40 the actions column takes.
-    assert_eq!(column_widths(1040.), [40., 312., 208., 360., 120.]);
-    assert_eq!(column_widths(2000.), [40., 600., 400., 700., 260.]);
+    let mut columns = table_columns();
+    columns.layout(1040.);
+    assert_eq!(columns.sizes(), [40., 312., 208., 360., 120.]);
+    columns.layout(2000.);
+    assert_eq!(columns.sizes(), [40., 600., 400., 700., 260.]);
+}
+
+#[test]
+fn a_column_width_must_be_an_integer_percentage() {
+    let invalid_type = Some("Please enter an integer.".to_string());
+    let invalid_range = Some("Please enter a number greater than 0 and less than or equal to 100.".to_string());
+    for (value, message) in [("", None), ("50", None), (" 50%", None), ("0", None), ("100", None), ("0x10", None), ("abc", invalid_type.clone()), (" ", invalid_type), ("101", invalid_range.clone()), ("-1", invalid_range.clone()), ("0x65", invalid_range.clone()), ("99999999999999999999", invalid_range)] {
+        assert_eq!(column_resize_validation(value), message, "{value:?}");
+    }
+}
+
+#[gpui::test]
+fn resize_column_sets_the_picked_column_to_a_percentage_of_the_table(cx: &mut TestAppContext) {
+    let (workbench, cx, _) = keybindings_editor_window(cx, "resize-column", "");
+    cx.simulate_keystrokes("cmd-k cmd-s");
+    workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("keybindings.editor.focusKeybindings", Vec::new(), window, cx)));
+    cx.run_until_parked();
+    let width = workbench.read_with(cx, |workbench, _| workbench.keybindings_editor.columns.size());
+
+    // The When column, then 50.
+    workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("list.resizeColumn", Vec::new(), window, cx)));
+    cx.run_until_parked();
+    cx.simulate_input("when");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter");
+    let prompt = workbench.read_with(cx, |workbench, _| workbench.quick_inputs.current().and_then(|input| input.prompt.clone()));
+    assert_eq!(prompt.as_deref(), Some("Please enter a width in percentage for the 'When' column."));
+    cx.simulate_input("150");
+    cx.executor().advance_clock(Duration::from_millis(100));
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter");
+    assert!(workbench.read_with(cx, |workbench, _| workbench.quick_inputs.current().is_some_and(|input| input.validation_message.is_some())), "an invalid value keeps the input open");
+    cx.simulate_keystrokes("backspace backspace backspace");
+    cx.simulate_input("50");
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    let sizes = workbench.read_with(cx, |workbench, _| workbench.keybindings_editor.columns.sizes());
+    assert_eq!(sizes[3], (width / 2.).round(), "{sizes:?}");
+    assert_eq!(sizes.iter().sum::<f32>(), width);
+    assert!(workbench.update_in(cx, |workbench, window, _| workbench.keybindings_editor.table_focus.is_focused(window)), "focus goes back to the table");
 }
 
 fn keybindings_editor_window<'a>(cx: &'a mut TestAppContext, name: &str, content: &str) -> (gpui::Entity<Workbench>, &'a mut VisualTestContext, std::path::PathBuf) {
