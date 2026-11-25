@@ -67,6 +67,7 @@ mod recently_opened;
 mod search_editor;
 mod scm;
 mod search_model;
+mod semantic_tokens;
 mod settings_editor;
 mod shell_env;
 mod smart_snippet_inserter;
