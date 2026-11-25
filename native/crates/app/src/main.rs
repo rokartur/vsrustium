@@ -183,7 +183,7 @@ fn main() -> anyhow::Result<()> {
                     }
                 })
                 .detach();
-                cx.spawn_in(window, async move |_, cx| {
+                cx.spawn_in(window, async move |workbench, cx| {
                     while let Some(line) = receiver.next().await {
                         eprintln!("{line}");
                         let (true, Some(path)) = (line.starts_with(ACTIVATED_PREFIX), screenshot.as_ref()) else { continue };
@@ -209,8 +209,8 @@ fn main() -> anyhow::Result<()> {
                         // The editor's scrollbars show at open and after a scroll, hide 500ms later and fade out
                         // over 800ms; ref-screenshot waits the same.
                         cx.background_executor().timer(Duration::from_millis(1500)).await;
-                        // The capture reads the last frame, which can be up to a blink old: draw one now, so an input's
-                        // caret shows its phase at capture time as Chromium's does (500 ms on, 500 ms off, from the last key).
+                        // The capture reads the last frame: draw one now without the input carets.
+                        workbench.update(cx, |workbench, _| workbench.input_carets_hidden = true).ok();
                         cx.update(|window, _| window.refresh()).ok();
                         cx.background_executor().timer(Duration::from_millis(100)).await;
                         let saved = cx.update(|window, _| save_screenshot(window, path)).and_then(|result| result);

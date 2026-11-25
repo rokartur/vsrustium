@@ -275,7 +275,7 @@ impl Workbench {
         let selection_color = self.color(if look.focused { "selection.background" } else { "editor.inactiveSelectionBackground" });
         let selection_color = if self.theme.color("selection.background").is_some() { selection_color } else { self.color("editor.selectionBackground") };
         // Native carets blink at a 1s period; edits and moves restart it.
-        let caret_on = look.focused && (view.caret_moved.elapsed().as_millis() / 500) % 2 == 0;
+        let caret_on = look.focused && !self.input_carets_hidden && (view.caret_moved.elapsed().as_millis() / 500) % 2 == 0;
         let layout = view.text.clone();
         let focus = self.input_focus(id).clone();
         let workbench = cx.entity();

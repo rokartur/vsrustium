@@ -87,6 +87,8 @@ pub struct Workbench {
     text_area_left: Rc<Cell<f32>>,
     pub editor_focus: FocusHandle,
     editor_focus_listeners: Vec<gpui::Subscription>,
+    /// `--screenshot` hides the input carets, as ref-screenshot does in the reference, so the blink phase drops out.
+    pub(crate) input_carets_hidden: bool,
     /// The IME's marked text: a UTF-16 range of the cursor's line.
     marked_text: Option<Range<usize>>,
     /// A left button press in the text is held, so moves extend the selection.
@@ -148,7 +150,8 @@ impl Render for Workbench {
             .text_color(self.color("foreground"))
             .text_size(px(13.))
             .child(grid)
-            .children(quick_input)
+            // The quick input lives in the workbench container, inside the window border as the grid.
+            .children(quick_input.map(|widget| div().absolute().left(px(inset)).top(px(inset)).child(widget)))
             .children(context_menu)
             .children(hover)
             // style.css: .macos-tahoe windows round 16px, older macOS 10px.
@@ -183,6 +186,7 @@ impl Workbench {
             text_area_left: Rc::default(),
             editor_focus: cx.focus_handle(),
             editor_focus_listeners: Vec::new(),
+            input_carets_hidden: false,
             marked_text: None,
             selecting_text: false,
             quick_inputs: quick_input_view::QuickInputs::new(cx),

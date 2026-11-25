@@ -61,6 +61,8 @@ async function capture(theme: string) {
 			await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 500, y: 754 });
 			await Bun.sleep(1500);
 		}
+		// Inputs blink their caret from the last key; hidden here and in the port's --screenshot, so the phase drops out.
+		await cdp('Runtime.evaluate', { expression: `document.head.append(Object.assign(document.createElement('style'), { textContent: '* { caret-color: transparent !important; }' }))` });
 		const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
 		const active = (await cdp('Runtime.evaluate', { expression: `!document.querySelector('.part.titlebar.inactive')`, returnByValue: true })).result.value === true;
 		return active ? Buffer.from(data, 'base64') : undefined;

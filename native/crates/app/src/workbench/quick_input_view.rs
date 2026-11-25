@@ -819,14 +819,19 @@ impl Workbench {
                 })))
             });
         let background = if focused { self.theme.color("quickInputList.focusBackground") } else if hovered { self.theme.color("list.hoverBackground") } else { None };
+        // listWidget.ts: the focused row of the unfocused list gets a 1px dotted listInactiveFocusOutline (activeContrastBorder).
+        // shortcut: dashed, GPUI has no dotted border.
+        let outline = self.theme.color("contrastActiveBorder").filter(|_| focused).map(|color| div().absolute().inset_0().rounded(px(3.)).border_1().border_dashed().border_color(color));
         div()
             .id(("quick-input-row", row_index))
+            .relative()
             .h(px(row_height(row)))
             .cursor_pointer()
             .rounded(px(3.))
             .when_some(background, |row, background| row.bg(background))
             .when_some(foreground, |row, color| row.text_color(color))
             .child(entry)
+            .children(outline)
             .when(interactive, |row| {
                 row.on_hover(cx.listener(move |workbench, hovered: &bool, _, cx| {
                     let inputs = &mut workbench.quick_inputs;
