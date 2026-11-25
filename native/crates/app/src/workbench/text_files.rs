@@ -23,6 +23,7 @@ use super::host_requests::uri_parts;
 use super::search_editor_view::SEARCH_EDITOR_SCHEME;
 use crate::commands::Outcome;
 use crate::editor::model_service::compute_edits;
+use crate::editor::view_state::{self, ViewStates};
 use crate::editor::{EditReason, OpenEditor, TextDocument, uri_string};
 use crate::host_sync::FileJob;
 use crate::languages::PLAINTEXT;
@@ -810,4 +811,23 @@ fn stat(path: &Path) -> Option<Stat> {
 /// The answer of a save that finished without waiting, as a file save does.
 pub(super) fn saved_now(mut saved: oneshot::Receiver<bool>) -> Option<bool> {
     saved.try_recv().ok().flatten()
+}
+
+impl Workbench {
+    /// The text file editor's `EditorMemento` from workspace storage.
+    pub(super) fn restore_editor_view_states(&mut self) {
+        let stored = self.workspace_storage.lock().unwrap().get(view_state::STORAGE_KEY).map(str::to_owned);
+        self.editors.view_states = stored.map(|raw| ViewStates::from_memento(&raw)).unwrap_or_default();
+    }
+
+    /// `saveState` on shutdown: the open file editors' view states, then the memento.
+    pub(super) fn store_editor_view_states(&mut self) {
+        let editors = std::mem::take(&mut self.editors.editors);
+        for editor in &editors {
+            self.editors.save_view_state(editor);
+        }
+        self.editors.editors = editors;
+        let memento = self.editors.view_states.to_memento();
+        self.workspace_storage.lock().unwrap().set(view_state::STORAGE_KEY, memento);
+    }
 }

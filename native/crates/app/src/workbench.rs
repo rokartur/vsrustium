@@ -344,10 +344,15 @@ impl Workbench {
         .detach();
         cx.on_app_quit(|workbench, _| {
             workbench.store_explorer_view_state();
+            workbench.store_editor_view_states();
             async {}
         })
         .detach();
-        cx.on_release(|workbench, _| workbench.store_explorer_view_state()).detach();
+        cx.on_release(|workbench, _| {
+            workbench.store_explorer_view_state();
+            workbench.store_editor_view_states();
+        })
+        .detach();
         workbench
     }
 

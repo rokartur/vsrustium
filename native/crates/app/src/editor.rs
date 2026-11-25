@@ -33,6 +33,7 @@ mod lines_operations;
 pub mod marker_decorations;
 pub mod save_participants;
 pub mod view_zones;
+pub mod view_state;
 pub mod minimap;
 pub mod model_service;
 mod multicursor;
@@ -540,6 +541,7 @@ pub struct EditorGroup {
     /// unicodeHighlighter.ts `_bannerClosed`: the banner was closed for the model the code editor shows.
     pub unicode_banner_closed: bool,
     pub disposed: model_service::DisposedModels,
+    pub view_states: view_state::ViewStates,
 }
 
 impl EditorGroup {
@@ -571,7 +573,8 @@ impl EditorGroup {
 
     /// Shows `document` in the editor at `index`, in place of the model it showed, and activates it.
     pub fn replace(&mut self, index: usize, document: TextDocument) {
-        let editor = self.create_model(document, false);
+        let mut editor = self.create_model(document, false);
+        self.restore_view_state(&mut editor);
         let replaced = std::mem::replace(&mut self.editors[index], editor);
         self.recent.retain(|id| *id != replaced.model_id);
         self.keep_or_dispose(replaced);
@@ -593,8 +596,10 @@ impl EditorGroup {
         model
     }
 
-    /// A model whose editor went: the extension host may still hold it, else it is disposed.
+    /// A model whose editor went: its file's view state is kept; the extension host may still hold it, else it
+    /// is disposed.
     fn keep_or_dispose(&mut self, model: OpenEditor) {
+        self.save_view_state(&model);
         match model.host_reference {
             Some(_) => self.models.push(model),
             None => self.disposed.insert(model),
@@ -626,7 +631,8 @@ impl EditorGroup {
         }
     }
 
-    fn insert(&mut self, editor: OpenEditor, preview: bool) {
+    fn insert(&mut self, mut editor: OpenEditor, preview: bool) {
+        self.restore_view_state(&mut editor);
         let preview_index = self.editors.iter().position(|editor| editor.preview).filter(|_| preview);
         let index = match preview_index {
             Some(index) => {
@@ -665,6 +671,23 @@ impl EditorGroup {
         }
         if let Some(editor) = self.active_mut() {
             editor.clear_cursor_states();
+        }
+    }
+
+    /// `updateEditorViewState` of a file editor (`tracksEditorViewState`: `FileEditorInput` only).
+    pub fn save_view_state(&mut self, editor: &OpenEditor) {
+        if editor.document.scheme == "file" {
+            self.view_states.save(&editor.document.uri_string(), editor.view_state(self.viewport));
+        }
+    }
+
+    /// `loadEditorViewState` for an editor new in the group: not with `workbench.editor.restoreViewState` off.
+    fn restore_view_state(&mut self, editor: &mut OpenEditor) {
+        if editor.document.scheme != "file" || !self.disposed.setting_enabled("workbench.editor.restoreViewState", &editor.document.path) {
+            return;
+        }
+        if let Some(state) = self.view_states.load(&editor.document.uri_string()) {
+            editor.restore_view_state(&state, self.viewport);
         }
     }
 

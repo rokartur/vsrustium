@@ -406,7 +406,6 @@ fn to_indent_ranges(mut collected: Vec<(usize, usize, usize)>, lines: &[String],
 /// `ILineMemento`: a folded or manual region as persisted per file, with a checksum of its first hidden
 /// line and last line.
 #[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(not(test), expect(dead_code, reason = "per-file fold state is saved once workspace storage lands with milestone 10"))]
 pub struct LineMemento {
     pub start: usize,
     pub end: usize,
@@ -508,7 +507,6 @@ impl FoldingModel {
     }
 
     /// `getMemento`: the folded and manual regions, for persistence only.
-    #[cfg_attr(not(test), expect(dead_code, reason = "per-file fold state is saved once workspace storage lands with milestone 10"))]
     pub fn get_memento(&self, lines: &[String]) -> Option<Vec<LineMemento>> {
         let mut result = Vec::new();
         for range in self.current_folded_or_manual_ranges(None) {
@@ -522,7 +520,6 @@ impl FoldingModel {
     }
 
     /// `applyMemento`: restores the persisted regions whose lines still have their checksum.
-    #[cfg_attr(not(test), expect(dead_code, reason = "per-file fold state is restored once workspace storage lands with milestone 10"))]
     pub fn apply_memento(&mut self, lines: &[String], state: &[LineMemento]) {
         let mut restore = Vec::new();
         for memento in state {

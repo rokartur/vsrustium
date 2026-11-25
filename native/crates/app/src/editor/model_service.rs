@@ -3,6 +3,7 @@
 //! text takes them back with its version ids.
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -75,6 +76,12 @@ impl DisposedModels {
     fn should_restore_undo_stack(&self) -> bool {
         let Some(settings) = &self.settings else { return true };
         settings.lock().unwrap().get_value(Some("files.restoreUndoStack"), &Overrides::default()) != Some(json!(false))
+    }
+
+    /// A boolean setting of `resource` that is on unless it is `false`.
+    pub fn setting_enabled(&self, key: &str, resource: &Path) -> bool {
+        let Some(settings) = &self.settings else { return true };
+        settings.lock().unwrap().get_value(Some(key), &Overrides { resource: Some(resource), override_identifier: None }) != Some(json!(false))
     }
 
     /// `_ensureDisposedModelsHeapSize`: the oldest entries go first.
