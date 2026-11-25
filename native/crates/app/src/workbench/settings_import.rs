@@ -26,11 +26,11 @@ impl Workbench {
     pub(crate) fn offer_settings_import(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let default_user_data = !std::env::args().any(|arg| arg == "--user-data-dir");
         let settings_file = self.settings.lock().unwrap().user_files().settings.clone();
-        let offered = self.profile_storage.lock().unwrap().get(OFFERED_KEY).is_some();
+        let offered = self.application_storage.lock().unwrap().get(OFFERED_KEY).is_some();
         if !default_user_data || offered || settings_file.exists() || self.skip_dialogs || import_sources().is_empty() {
             return;
         }
-        self.profile_storage.lock().unwrap().set(OFFERED_KEY, "true".into());
+        self.application_storage.lock().unwrap().set(OFFERED_KEY, "true".into());
         let reply = self.prompt_notification(Severity::Info, "Import settings, keyboard shortcuts, snippets and extensions from VS Code, Cursor or VSCodium?", &["Import", "Not Now"]);
         cx.spawn_in(window, async move |workbench, cx| {
             let Ok(Ok(Value::Number(choice))) = reply.await else { return };

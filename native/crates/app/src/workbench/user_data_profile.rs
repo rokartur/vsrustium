@@ -240,8 +240,12 @@ impl Workbench {
         if let Err(error) = std::fs::create_dir_all(&profile.global_storage_home) {
             self.notify_error(format!("{}: {error}", profile.global_storage_home.display()));
         }
-        let storage = Storage::open(&profile.global_storage_home.join("state.vscdb"));
-        self.restore_profile_state(Arc::new(Mutex::new(storage)));
+        let application = self.application_storage.clone();
+        let storage = match profile.is_default {
+            true => application.clone(),
+            false => Arc::new(Mutex::new(Storage::open(&profile.global_storage_home.join("state.vscdb")))),
+        };
+        self.restore_profile_state(storage, application);
         if let Some(user) = self.extensions_viewlet.user.as_mut() {
             user.extensions_file = profile.extensions_resource.clone();
         }

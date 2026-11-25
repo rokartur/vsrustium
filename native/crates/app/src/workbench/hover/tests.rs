@@ -140,7 +140,8 @@ fn open_workbench<'a>(name: &str, cx: &'a mut TestAppContext) -> (gpui::Entity<W
     let (workbench, cx) = cx.add_window_view(|_, cx| {
         let mut workbench = Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), crate::default_settings(), HostSync::new(std::sync::mpsc::channel().0), cx);
         workbench.load_keybindings(crate::keybindings::default_keybindings(&[]), dir.join("keybindings.json"), cx);
-        workbench.restore_profile_state(Arc::new(Mutex::new(Storage::in_memory())));
+        let storage = Arc::new(Mutex::new(Storage::in_memory()));
+        workbench.restore_profile_state(storage.clone(), storage);
         workbench
     });
     cx.run_until_parked();

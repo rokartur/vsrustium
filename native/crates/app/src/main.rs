@@ -180,6 +180,14 @@ fn main() -> anyhow::Result<()> {
         true => MainThreadStorage::in_memory(),
         false => MainThreadStorage::open(&SessionPaths { app_root: &app_root, user_data: &user_data, workspace: workspace.as_ref() }, &profile.current.global_storage_home)?,
     };
+    let application_storage = match extension_tests || profile.current.is_default {
+        true => storage.profile.clone(),
+        false => {
+            let home = &profile.profiles.default_profile().global_storage_home;
+            std::fs::create_dir_all(home)?;
+            Arc::new(Mutex::new(storage::Storage::open(&home.join("state.vscdb"))))
+        }
+    };
     // The extensions the user disabled stay out of the host and the registries (extensionEnablementService.ts).
     let developed: Vec<String> = extensions.iter().filter(|extension| extension.description["isUnderDevelopment"] == true).map(|extension| extension.id.clone()).collect();
     let installed = extensions.clone();
@@ -279,7 +287,7 @@ fn main() -> anyhow::Result<()> {
                     }
                     cx.quit();
                 }
-                workbench.restore_profile_state(storage.profile.clone());
+                workbench.restore_profile_state(storage.profile.clone(), application_storage);
                 workbench.restore_workspace_state(storage.workspace.clone());
                 let workspace_trusted = workspace_trust.is_trusted();
                 workbench.workspace_trust = workspace_trust;

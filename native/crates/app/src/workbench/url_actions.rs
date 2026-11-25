@@ -102,7 +102,7 @@ impl Workbench {
     /// `readFile`: the stored text while it still holds the help and every trusted domain, else a fresh one.
     fn trusted_domains_content(&self, configuring: Option<String>) -> String {
         let trusted = self.trusted_domains();
-        let stored = self.profile_storage.lock().unwrap().get(trusted_domains::CONTENT_STORAGE_KEY).map(str::to_owned);
+        let stored = self.application_storage.lock().unwrap().get(trusted_domains::CONTENT_STORAGE_KEY).map(str::to_owned);
         if let Some(stored) = stored {
             let current = stored.contains(CONFIG_HELP_TEXT_PRE)
                 && stored.contains(CONFIG_HELP_TEXT_AFTER)
@@ -122,7 +122,7 @@ impl Workbench {
         let version = model.alternative_version_id();
         let text = model.document.lines.join(&model.document.eol);
         let domains = config::json::parse(&text, &mut Vec::new(), ParseOptions::default()).map(|domains| domains.to_string());
-        let mut storage = self.profile_storage.lock().unwrap();
+        let mut storage = self.application_storage.lock().unwrap();
         storage.set(trusted_domains::CONTENT_STORAGE_KEY, text);
         storage.set(trusted_domains::STORAGE_KEY, domains.unwrap_or_default());
         drop(storage);

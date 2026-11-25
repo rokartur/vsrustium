@@ -41,7 +41,7 @@ fn command_palette_runs_an_extension_command_and_remembers_it(cx: &mut TestAppCo
         let mut workbench = Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), crate::default_settings(), HostSync::new(std::sync::mpsc::channel().0), cx);
         workbench.load_keybindings(crate::keybindings::default_keybindings(&[]), dir.join("keybindings.json"), cx);
         workbench.quick_access.menu = command_palette::menu(&[extension]);
-        workbench.restore_profile_state(profile);
+        workbench.restore_profile_state(profile.clone(), profile);
         let runs = runs.clone();
         workbench.commands.register("port.hello", move |_, _, _, _| {
             runs.set(runs.get() + 1);

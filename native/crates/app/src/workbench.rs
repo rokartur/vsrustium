@@ -246,9 +246,10 @@ pub struct Workbench {
     pub hovers: hover::Hovers,
     /// What the application menu shows now.
     installed_menubar: Option<menubar::Menubar>,
-    /// The application storage (StorageScope.PROFILE and APPLICATION in the default profile), shared with the
-    /// extension host's MainThreadStorage.
+    /// StorageScope.PROFILE of the current profile, shared with the extension host's MainThreadStorage.
     profile_storage: Arc<Mutex<Storage>>,
+    /// StorageScope.APPLICATION: the default profile's storage, the same as `profile_storage` in that profile.
+    application_storage: Arc<Mutex<Storage>>,
     /// StorageScope.WORKSPACE of the opened folder, shared with the extension host's MainThreadStorage.
     workspace_storage: Arc<Mutex<Storage>>,
     pub(crate) user_data_profiles: user_data_profile::UserDataProfiles,
@@ -421,6 +422,7 @@ impl Workbench {
             hovers: hover::Hovers::default(),
             installed_menubar: None,
             profile_storage: Arc::new(Mutex::new(Storage::in_memory())),
+            application_storage: Arc::new(Mutex::new(Storage::in_memory())),
             workspace_storage: Arc::new(Mutex::new(Storage::in_memory())),
             user_data_profiles: Default::default(),
             part_grid: part_grid::PartGrid::default(),
@@ -513,9 +515,11 @@ impl Workbench {
         workbench
     }
 
-    /// Switches to the app's profile storage and reads the command history and the quick input position from it.
-    pub fn restore_profile_state(&mut self, storage: Arc<Mutex<Storage>>) {
-        self.profile_storage = storage;
+    /// Switches to the profile's and the application's storage and reads the command history, the quick input
+    /// position and the notification filters from them.
+    pub fn restore_profile_state(&mut self, profile: Arc<Mutex<Storage>>, application: Arc<Mutex<Storage>>) {
+        self.profile_storage = profile;
+        self.application_storage = application;
         self.load_command_history();
         self.load_quick_input_view_state();
         self.load_notification_filters();
