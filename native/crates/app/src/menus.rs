@@ -294,6 +294,8 @@ const WORKBENCH_MENUS: &[Row] = &[
     (MenuId::EditorContext, None, "workbench.action.showCommands", "Command Palette...", "z_commands", 1., Some("!editorSimpleInput"), None),
     // output.contribution.ts and viewsService.ts `openCommandActionDescriptor.mnemonicTitle`
     (MenuId::EditorContext, None, "workbench.output.action.clearOutput", "Clear Output", "", 0., Some("inOutput"), None),
+    // markers.contribution.ts: Problems before Output in the panel group.
+    (MenuId::MenubarViewMenu, None, "workbench.actions.view.problems", "&&Problems", "5_panel", 0., None, None),
     (MenuId::MenubarViewMenu, None, "workbench.action.output.toggleOutput", "&&Output", "5_panel", 1., Some("workbench.panel.output.active"), None),
     // terminalMenus.ts: the TerminalEditorInstanceContext items of the commands the port has.
     (MenuId::TerminalEditorInstanceContext, None, "workbench.action.terminal.split", "Split Terminal", "1_create", 0., None, None),
