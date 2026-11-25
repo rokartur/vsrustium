@@ -11,6 +11,7 @@ use crate::configuration::{Configuration, Overrides};
 use crate::indentation::{creation_options, model_indentation};
 use crate::json::{self, ParseOptions, Segment};
 use crate::json_edit::{FormattingOptions, set_property};
+use crate::policy::{PolicyValues, policy_model};
 use crate::model::{Change, ConfigurationModel, ParseFilter, compare, is_override_key, key_from_override_identifiers, merge_changes, parse_content, parse_raw, to_values_tree};
 use crate::registry::{APPLICATION_SCOPES, FOLDER_SCOPES, Registry, Scope, WORKSPACE_SCOPES};
 use crate::workspace::Workspace;
@@ -73,6 +74,8 @@ pub struct Settings {
     pub workspace: Option<Workspace>,
     /// Size and modification time of every file a layer reads, to notice edits made outside the port.
     stamps: Vec<(PathBuf, Option<(SystemTime, u64)>)>,
+    /// What the policy service reports, kept to rebuild the policy layer when the registry changes.
+    policy_values: PolicyValues,
 }
 
 impl Settings {
@@ -80,7 +83,7 @@ impl Settings {
     pub fn load(registry: Registry, user_home: PathBuf, workspace: Option<Workspace>) -> Settings {
         let defaults = registry.default_model();
         let has_workspace = workspace.is_some();
-        let mut settings = Settings { registry, configuration: Configuration { defaults, has_workspace, ..Configuration::default() }, user_home, workspace, stamps: Vec::new() };
+        let mut settings = Settings { registry, configuration: Configuration { defaults, has_workspace, ..Configuration::default() }, user_home, workspace, stamps: Vec::new(), policy_values: PolicyValues::new() };
         settings.configuration.local_user = settings.load_user();
         let folders: Vec<PathBuf> = settings.workspace.iter().flat_map(|workspace| workspace.folders.iter().map(|folder| folder.path.clone())).collect();
         settings.configuration.folders = folders.into_iter().map(|folder| (folder.clone(), settings.load_folder(&folder))).collect();
@@ -95,7 +98,16 @@ impl Settings {
         let change = compare(Some(&self.configuration.defaults), Some(&defaults));
         self.configuration.defaults = defaults;
         self.registry = registry;
-        change
+        let policy = policy_model(&self.registry, &self.policy_values);
+        merge_changes(&[change, self.configuration.compare_and_update_policy(policy)])
+    }
+
+    /// `PolicyConfiguration.onDidChangePolicies`: the policy service's values, applied to the settings that
+    /// declare those policies.
+    pub fn set_policy_values(&mut self, values: PolicyValues) -> Change {
+        self.policy_values = values;
+        let policy = policy_model(&self.registry, &self.policy_values);
+        self.configuration.compare_and_update_policy(policy)
     }
 
     /// `<user data>/User`, `environmentService.userRoamingDataHome`.
@@ -354,6 +366,9 @@ impl Settings {
     /// `ConfigurationEditing.validate`.
     fn validate(&self, editable: Editable, operation: &Operation, value: Option<&Value>, override_identifiers: &[String]) -> Result<(), String> {
         let key = &operation.key;
+        if self.configuration.inspect(key, &Overrides::default()).policy_value.is_some() {
+            return Err(self.error(Error::PolicyConfiguration, editable, key));
+        }
         let scope = self.registry.property(key).map(|property| property.scope);
         if operation.standalone.is_none() && value.is_some() && !is_override_key(key) && !self.registry.keys().contains(key) {
             return Err(self.error(Error::UnknownKey, editable, key));
@@ -421,6 +436,7 @@ impl Settings {
     /// `toErrorMessage` for the API constraint errors `validate` raises.
     fn error(&self, error: Error, editable: Editable, key: &str) -> String {
         match error {
+            Error::PolicyConfiguration => format!("Unable to write {key} because it is configured in system policy."),
             Error::UnknownKey => format!("Unable to write to {} because {key} is not a registered configuration.", target_name(editable)),
             Error::InvalidWorkspaceConfigurationApplication | Error::InvalidWorkspaceConfigurationMachine => {
                 format!("Unable to write {key} to Workspace Settings. This setting can be written only into User settings.")
@@ -458,6 +474,7 @@ impl Settings {
 
 /// `ConfigurationEditingErrorCode`s `validate` raises.
 enum Error {
+    PolicyConfiguration,
     UnknownKey,
     InvalidWorkspaceConfigurationApplication,
     InvalidWorkspaceConfigurationMachine,
@@ -546,7 +563,7 @@ fn stringify(value: &Value, options: &FormattingOptions) -> String {
 
 /// The write cases of workbench/services/configuration/test/browser/configurationEditing.test.ts, on a real
 /// temporary directory. Left out: dirty-file, Save and Retry and profile cases (no text file model or profiles
-/// yet) and the policy cases (no policies).
+/// yet).
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -580,6 +597,8 @@ mod tests {
                 "configurationEditing.service.applicationSetting": { "type": "string", "default": "isSet", "scope": "application" },
                 "configurationEditing.service.windowSetting": { "type": "string", "default": "isSet", "scope": "window" },
                 "configurationEditing.service.languageSetting": { "type": "string", "default": "isSet", "scope": "language-overridable" },
+                "configurationEditing.service.policySetting": { "type": "string", "default": "isSet", "policy": { "name": "configurationEditing.service.policySetting" } },
+                "configurationEditing.service.policyObjectSetting": { "type": "object", "default": {}, "policy": { "name": "configurationEditing.service.policyObjectSetting" } },
             });
             registry.register_configuration("test", &json!({ "contributes": { "configuration": { "id": "_test", "properties": properties } } }));
             registry.finish();
@@ -606,6 +625,31 @@ mod tests {
 
     fn parsed(path: &Path) -> Value {
         json::parse(&std::fs::read_to_string(path).unwrap(), &mut Vec::new(), ParseOptions::default()).unwrap()
+    }
+
+    #[test]
+    fn a_policy_value_blocks_writes_and_overrides_every_layer() {
+        let mut fixture = Fixture::new("policy", true);
+        write_file(&fixture.user("settings.json"), r#"{ "configurationEditing.service.policyObjectSetting": {"b": true} }"#);
+        fixture.settings.reload_changed_files();
+        let values = PolicyValues::from([
+            ("configurationEditing.service.policySetting".to_string(), json!("policyValue")),
+            ("configurationEditing.service.policyObjectSetting".to_string(), json!(r#"{"a": true}"#)),
+        ]);
+        let mut keys = fixture.settings.set_policy_values(values).keys;
+        keys.sort();
+        assert_eq!(keys, ["configurationEditing.service.policyObjectSetting", "configurationEditing.service.policySetting"]);
+
+        let policy_setting = fixture.settings.configuration.inspect("configurationEditing.service.policySetting", &Overrides::default());
+        assert_eq!((policy_setting.value, policy_setting.policy_value), (Some(json!("policyValue")), Some(json!("policyValue"))));
+        assert_eq!(fixture.settings.get_value(Some("configurationEditing.service.policyObjectSetting"), &Overrides::default()), Some(json!({ "a": true })));
+        let error = fixture.write("configurationEditing.service.policySetting", Some(json!("value")), Target::UserLocal).unwrap_err();
+        assert_eq!(error, "Unable to write configurationEditing.service.policySetting because it is configured in system policy.");
+
+        let change = fixture.settings.set_policy_values(PolicyValues::new());
+        assert_eq!(change.keys.len(), 2);
+        assert_eq!(fixture.settings.get_value(Some("configurationEditing.service.policyObjectSetting"), &Overrides::default()), Some(json!({ "b": true })));
+        fixture.write("configurationEditing.service.policySetting", Some(json!("value")), Target::UserLocal).unwrap();
     }
 
     #[test]
