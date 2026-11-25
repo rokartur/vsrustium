@@ -147,7 +147,7 @@ impl Workbench {
 /// `on` or `--new-window`; folders and workspaces open as in `open_new_window`, files in the last active window.
 pub(crate) fn start_open_window(args: Vec<String>, cwd: PathBuf, cx: &mut App) {
     let paths: Vec<PathBuf> = crate::positional_indexes(&args).into_iter().map(|index| cwd.join(&args[index])).filter(|path| path.exists()).collect();
-    let new_window = args.iter().any(|arg| arg == "--new-window");
+    let new_window = args.iter().any(|arg| arg == "--new-window" || arg == "-n");
     let last_active = cx.window_stack().unwrap_or_else(|| cx.windows()).into_iter().find_map(|window| window.downcast::<Workbench>()).filter(|_| !new_window);
     if paths.is_empty() {
         let in_new_window = last_active.and_then(|handle| handle.read(cx).ok()).is_none_or(|workbench| workbench.setting("window.openWithoutArgumentsInNewWindow") == "on");
