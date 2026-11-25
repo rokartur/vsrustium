@@ -9,7 +9,7 @@ use serde_json::{Map, Value, json};
 use crate::model::{ConfigurationModel, is_override_key};
 
 /// `ConfigurationScope`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Scope {
     Application = 1,
     Machine = 2,
@@ -72,6 +72,8 @@ pub struct Registry {
     properties: HashMap<String, Property>,
     /// `configurationDefaultsOverrides`: the merged value each key's `configurationDefaults` contributions give it.
     default_overrides: Vec<(String, Value, Option<String>)>,
+    /// `registerOverrideIdentifiers`: the language ids languagesRegistry.ts registers.
+    pub override_identifiers: Vec<String>,
 }
 
 /// The core settings of VS Code 1.147.0 as its registry holds them, dumped with port/tools/dump-settings.
@@ -111,6 +113,15 @@ impl Registry {
         }
         for (id, description) in extensions {
             registry.register_configuration_defaults(id, description);
+        }
+        // The core plaintext language (modesRegistry.ts), then each `contributes.languages` id.
+        registry.override_identifiers.push("plaintext".into());
+        for (_, description) in extensions {
+            for language in description["contributes"]["languages"].as_array().into_iter().flatten() {
+                if let Some(id) = language["id"].as_str().filter(|id| !registry.override_identifiers.iter().any(|known| known == id)) {
+                    registry.override_identifiers.push(id.into());
+                }
+            }
         }
         registry.finish();
         registry
@@ -223,7 +234,15 @@ impl Registry {
     pub fn finish(&mut self) {
         for (key, value, source) in self.default_overrides.clone() {
             if is_override_key(&key) {
-                let schema = json!({ "type": "object", "default": value, "section": { "id": "defaultOverrides", "title": "Default Configuration Overrides" } });
+                // `getLanguageTagSettingPlainKey`: `[a][b]` reads `a, b`.
+                let plain_key = key.strip_prefix('[').and_then(|key| key.strip_suffix(']')).expect("an override key").replace("][", ", ");
+                let schema = json!({
+                    "type": "object",
+                    "default": value,
+                    "description": format!("Configure settings to be overridden for {plain_key}."),
+                    "$ref": "vscode://schemas/settings/resourceLanguage",
+                    "section": { "id": "defaultOverrides", "title": "Default Language Configuration Overrides" },
+                });
                 self.insert(key, Property { schema, scope: Scope::Window, restricted: false, default: Value::Null, default_default: Some(value), source });
             }
         }

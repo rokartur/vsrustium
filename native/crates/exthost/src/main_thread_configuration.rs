@@ -3,7 +3,6 @@
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
 
 use config::configuration::Overrides;
 use config::model::Change;
@@ -12,35 +11,20 @@ use serde_json::{Value, json};
 
 use crate::rpc::{Arg, Message, Reply};
 
-/// How often the settings files are checked for edits made outside the port; upstream debounces its file
-/// watcher events by 100 ms (`FileServiceBasedConfiguration`).
-const FILE_CHECK_INTERVAL: Duration = Duration::from_millis(100);
-
 pub struct MainThreadConfiguration {
     pub settings: Arc<Mutex<Settings>>,
     /// `configurationScopes` go to the host only in a development run, as upstream's `!isBuilt || isExtensionDevelopment`.
     pub send_scopes: bool,
-    last_file_check: Instant,
 }
 
 impl MainThreadConfiguration {
     pub fn new(settings: Arc<Mutex<Settings>>, send_scopes: bool) -> Self {
-        MainThreadConfiguration { settings, send_scopes, last_file_check: Instant::now() }
+        MainThreadConfiguration { settings, send_scopes }
     }
 
     /// `_getConfigurationData`: the argument of `$initializeConfiguration` and `$acceptConfigurationChanged`.
     pub fn configuration_data(&self) -> Value {
         configuration_data(&self.settings.lock().unwrap(), self.send_scopes)
-    }
-
-    /// The `$acceptConfigurationChanged` arguments when a settings file changed on disk since the last check.
-    pub fn check_files(&mut self) -> Option<Vec<Value>> {
-        if self.last_file_check.elapsed() < FILE_CHECK_INTERVAL {
-            return None;
-        }
-        self.last_file_check = Instant::now();
-        let change = self.settings.lock().unwrap().reload_changed_files()?;
-        Some(self.change_args(&change))
     }
 
     /// Request `req` from the host: the `$acceptConfigurationChanged` arguments to send first if a setting

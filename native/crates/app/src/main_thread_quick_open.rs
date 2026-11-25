@@ -34,6 +34,8 @@ pub enum Owner {
     EditorStatus(Vec<crate::workbench::editor_status::StatusPick>),
     /// `list.resizeColumn`: the column pick, then the input box of the picked column's percentage.
     ResizeColumn(Option<usize>),
+    /// `_workbench.pickWorkspaceFolder` of Open Folder Settings (JSON): the folders, by item handle.
+    FolderSettings(Vec<std::path::PathBuf>),
 }
 
 impl Workbench {
@@ -205,6 +207,7 @@ impl Workbench {
             Owner::GoToMatch => self.go_to_match_event(id, event, window, cx),
             Owner::EditorStatus(_) => self.editor_status_event(id, event, window, cx),
             Owner::ResizeColumn(_) => self.resize_column_event(id, event, window, cx),
+            Owner::FolderSettings(_) => self.folder_settings_pick_event(id, event, window, cx),
         }
     }
 

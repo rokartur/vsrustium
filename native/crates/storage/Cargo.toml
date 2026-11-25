@@ -7,3 +7,5 @@ license.workspace = true
 [dependencies]
 # SQLite as macOS ships it, like upstream's @vscode/sqlite3 behind base/parts/storage.
 rusqlite = "0.37"
+serde.workspace = true
+serde_json.workspace = true

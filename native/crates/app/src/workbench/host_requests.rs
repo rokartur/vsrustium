@@ -6,6 +6,8 @@ use std::time::Instant;
 
 use config::indentation::creation_options;
 use exthost::main_thread::serialized_error;
+use exthost::main_thread_files::resource;
+use exthost::settings_file_system;
 use files::encoding;
 use gpui::{ClipboardItem, Context, Window};
 use serde_json::{Value, json};
@@ -130,6 +132,17 @@ impl Workbench {
                 let mut document = TextDocument::untitled(path, "", None, &self.languages, &self.settings.lock().unwrap());
                 document.encoding = requested.map_or(document.encoding, str::to_string);
                 document
+            }
+            ("vscode", _) => {
+                let text = match self.preferences_content(path) {
+                    Some(text) => text,
+                    None => {
+                        let bytes = settings_file_system::read_file(&self.settings.lock().unwrap(), &resource(uri))
+                            .map_err(|error| serialized_error(&format!("cannot open {}. Detail: {error}", uri_string(scheme, path))))?;
+                        String::from_utf8(bytes).expect("schemas are JSON text")
+                    }
+                };
+                TextDocument::from_text(scheme, path, &text, encoding::UTF8.into(), None, &self.languages, &self.settings.lock().unwrap())
             }
             _ => return Err(serialized_error(&format!("cannot open {scheme}:{}. Detail: Unable to resolve resource {scheme}:{}", path.display(), path.display()))),
         };

@@ -360,9 +360,6 @@ impl Session {
 
     /// Handles one incoming message, waiting up to `timeout`. Returns false once the host is gone or the extension tests are done.
     pub fn pump(&mut self, mut timeout: Duration) -> anyhow::Result<bool> {
-        if let Some(args) = self.configuration.as_mut().and_then(MainThreadConfiguration::check_files) {
-            self.notify("ExtHostConfiguration", "$acceptConfigurationChanged", args);
-        }
         for event in self.files.as_mut().map(MainThreadFiles::take_events).unwrap_or_default() {
             self.notify("ExtHostFileSystemEventService", "$onFileEvent", vec![event]);
         }

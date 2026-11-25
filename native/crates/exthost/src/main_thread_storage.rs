@@ -11,6 +11,7 @@ use std::time::SystemTime;
 use config::workspace::Workspace;
 use serde_json::{Value, json};
 use storage::Storage;
+use storage::state::FileStorage;
 
 use crate::rpc::{Arg, Reply};
 use crate::session::{SessionPaths, workspace_id};
@@ -42,18 +43,27 @@ impl MainThreadStorage {
         MainThreadStorage { profile: Arc::new(Mutex::new(Storage::in_memory())), workspace: Arc::new(Mutex::new(Storage::in_memory())) }
     }
 
-    /// `telemetryInfo` as the browser workbench builds it (workbenchCommonProperties.ts): machine id and first
-    /// session date kept in application storage, a new session id per window. The port sends no telemetry;
-    /// extensions read these through `vscode.env`.
-    pub fn telemetry_info(&mut self) -> Value {
-        let machine_id = self.get_or_store("telemetry.machineId", generate_uuid);
+    /// `telemetryInfo` as the desktop workbench gets it: the machine and device ids main keeps in `storage.json`
+    /// (app.ts `resolveMachineId`, `resolveDevDeviceId`), the first session date in application storage, a new
+    /// session id per window. The port sends no telemetry; extensions read these through `vscode.env`.
+    pub fn telemetry_info(&mut self, state: &mut FileStorage) -> Value {
+        let mut state_item = |key: &str| match state.get_item(key).and_then(Value::as_str) {
+            Some(id) => id.to_owned(),
+            None => {
+                let id = generate_uuid();
+                state.set_item(key, Some(Value::String(id.clone())));
+                id
+            }
+        };
+        let machine_id = state_item("telemetry.machineId");
+        let dev_device_id = state_item("telemetry.devDeviceId");
         let first_session_date = self.get_or_store("telemetry.firstSessionDate", || utc_string(SystemTime::now()));
         let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).expect("the clock is after 1970").as_millis();
         json!({
             "sessionId": format!("{}{now}", generate_uuid()),
             "machineId": machine_id,
             "sqmId": "",
-            "devDeviceId": machine_id,
+            "devDeviceId": dev_device_id,
             "firstSessionDate": first_session_date,
         })
     }

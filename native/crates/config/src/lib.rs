@@ -6,6 +6,7 @@ pub mod configuration;
 pub mod indentation;
 pub mod json;
 pub mod json_edit;
+pub mod json_schema;
 pub mod model;
 pub mod registry;
 pub mod service;

@@ -10,6 +10,8 @@ use std::path::{Path, PathBuf};
 use rusqlite::types::{ToSql, ValueRef};
 use rusqlite::{Connection, params};
 
+pub mod state;
+
 pub struct Storage {
     items: BTreeMap<String, String>,
     /// `None` once dropped.

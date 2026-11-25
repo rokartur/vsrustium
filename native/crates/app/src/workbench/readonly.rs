@@ -16,9 +16,10 @@ use crate::commands::Outcome;
 #[cfg(test)]
 mod tests;
 
-/// Why a file is read-only (`READONLY_MESSAGES`); the port has no read-only file system provider.
+/// Why a file is read-only (`READONLY_MESSAGES`); `vscode` is the read-only provider of settingsFilesystemProvider.ts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Readonly {
+    Provider,
     Session,
     Configured,
     Locked,
@@ -31,6 +32,7 @@ impl Readonly {
     /// The `readOnlyMessage` markdown, its `command:` links as parts.
     pub fn message(self) -> Vec<MessagePart> {
         match self {
+            Readonly::Provider => vec![MessagePart::text("Editor is read-only because the file system of the file is read-only.")],
             Readonly::Session => vec![
                 MessagePart::text("Editor is read-only because the file was set read-only in this session. "),
                 MessagePart::link("Click here", SET_WRITEABLE, vec![]),
@@ -81,12 +83,15 @@ impl Workbench {
         Outcome::done()
     }
 
-    /// `isReadonly`: the session override wins; the user data and the workspace file are never read-only; then
+    /// `isReadonly`: a read-only file system provider wins over all; then the session override; the user data and the workspace file are never read-only; then
     /// `files.readonlyInclude` minus `files.readonlyExclude`; then a file without the owner's write permission
     /// under `files.readonlyFromPermissions`. Untitled models are never read-only.
     pub(super) fn readonly(&self, scheme: &str, path: &Path) -> Option<Readonly> {
         if scheme == "untitled" {
             return None;
+        }
+        if scheme == "vscode" {
+            return Some(Readonly::Provider);
         }
         if let Some(&readonly) = self.readonly_overrides.get(&(scheme.to_owned(), path.to_path_buf())) {
             return readonly.then_some(Readonly::Session);

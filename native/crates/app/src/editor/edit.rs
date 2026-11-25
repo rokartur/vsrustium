@@ -444,6 +444,17 @@ impl OpenEditor {
         change
     }
 
+    /// `TypeOperations.lineBreakInsert`: the line break of `enter` with each cursor kept before it.
+    pub fn line_break_insert(&mut self, auto: AutoIndent) -> Option<ContentChanged> {
+        self.push_undo_stop();
+        let model = auto.model(&self.document);
+        let edits = self.each_cursor(|selection| {
+            let (start, end, text, _) = model.enter_edit(selection.start(), selection.end());
+            CursorEdit::replace(start, end, text, start)
+        });
+        self.apply_cursor_edits(edits, command("lineBreakInsert"))
+    }
+
     pub fn delete_left(&mut self) -> Option<ContentChanged> {
         let indentation = self.document.indentation;
         self.delete(|lines, selection| cursor::delete_left_range(lines, selection, indentation), Some(EditKind::DeletingLeft), command("deleteLeft"))

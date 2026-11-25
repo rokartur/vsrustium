@@ -19,6 +19,7 @@ use serde_json::{Value, json};
 use crate::rpc::{Arg, Message, Reply};
 use crate::scan::{ScannedExtension, file_uri};
 use crate::session::{CallResult, Session};
+use crate::settings_file_system;
 
 /// The id of the first workspace folder's watch, the next folders count down; extension sessions are numbered by
 /// the host from 0 up.
@@ -208,6 +209,10 @@ fn watch(fs: &mut Providers, watch_session: u64, uri: &Value, options: &Value, c
     }
     // A failed stat keeps the request recursive, as upstream ignores the error.
     let recursive = options["recursive"] == true && !files::stat(fs, &resource).is_ok_and(|stat| stat.file_type & files::DIRECTORY == 0);
+    // settingsFilesystemProvider.ts `watch` is `Disposable.None`.
+    if resource.scheme == "vscode" {
+        return;
+    }
     if resource.scheme != "file" {
         let handle = files(fs.session).providers[&resource.scheme].handle;
         files(fs.session).provider_watches.insert(watch_session, handle);
@@ -285,6 +290,7 @@ impl FileSystem for Providers<'_> {
     fn capabilities(&mut self, scheme: &str) -> Option<u32> {
         let registered = |main_thread: &MainThreadFiles| match scheme {
             "file" => Some(files::disk::CAPABILITIES),
+            "vscode" => Some(settings_file_system::CAPABILITIES),
             _ => main_thread.providers.get(scheme).map(|provider| provider.capabilities),
         };
         let main_thread = files(self.session);
@@ -303,6 +309,9 @@ impl FileSystem for Providers<'_> {
         if resource.scheme == "file" {
             return Disk.stat(resource);
         }
+        if resource.scheme == "vscode" {
+            return settings_file_system::stat(&files(self.session).settings.lock().unwrap(), resource);
+        }
         let Reply::Json(stat) = self.remote("$stat", resource, vec![])? else { return Err(files::provider_error(files::UNKNOWN, "$stat answered no stat")) };
         let number = |key: &str| stat[key].as_u64().unwrap_or_default();
         Ok(Stat { file_type: number("type") as u32, ctime: number("ctime"), mtime: number("mtime"), size: number("size"), permissions: stat["permissions"].as_u64().map(|bits| bits as u32) })
@@ -311,6 +320,9 @@ impl FileSystem for Providers<'_> {
     fn read_dir(&mut self, resource: &Resource) -> files::Result<Vec<(String, u32)>> {
         if resource.scheme == "file" {
             return Disk.read_dir(resource);
+        }
+        if resource.scheme == "vscode" {
+            return Ok(Vec::new());
         }
         let Reply::Json(entries) = self.remote("$readdir", resource, vec![])? else { return Ok(Vec::new()) };
         let mut children = Vec::new();
@@ -323,6 +335,9 @@ impl FileSystem for Providers<'_> {
     fn read_file(&mut self, resource: &Resource) -> files::Result<Vec<u8>> {
         if resource.scheme == "file" {
             return Disk.read_file(resource);
+        }
+        if resource.scheme == "vscode" {
+            return settings_file_system::read_file(&files(self.session).settings.lock().unwrap(), resource);
         }
         match self.remote("$readFile", resource, vec![])? {
             Reply::Buffer(bytes) => Ok(bytes),

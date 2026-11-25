@@ -170,6 +170,35 @@ impl Settings {
         Ok(merge_changes(&changes))
     }
 
+    /// preferencesService.ts `getEditableSettingsURI` then `createSettingsIfNotExists`: the target's settings file,
+    /// written as `{\n}` when missing, or the workspace file given a `settings` object. `None` without a folder.
+    pub fn create_settings_if_not_exists(&self, target: Target, resource: Option<&Path>) -> Option<Result<PathBuf, String>> {
+        let editable = match target {
+            Target::Workspace => Editable::Workspace,
+            Target::WorkspaceFolder => Editable::WorkspaceFolder,
+            _ => Editable::UserLocal,
+        };
+        let path = self.file_for(editable, "settings.json", resource)?;
+        if self.is_workspace_file(Some(&path)) {
+            let content = std::fs::read_to_string(&path).unwrap_or_default();
+            let parsed = json::parse(&content, &mut Vec::new(), ParseOptions { allow_trailing_comma: true, allow_empty_content: true, ..ParseOptions::default() });
+            if parsed.is_some_and(|workspace| workspace.get("settings").is_none()) {
+                let options = formatting_options(&content, &self.configuration, &path);
+                let edits = set_property(&content, &[Segment::Key("settings".into())], Some(&Value::Object(Map::new())), &options);
+                if let Err(error) = write_file(&path, &crate::json_edit::apply_edits(&content, &edits)) {
+                    return Some(Err(format!("Unable to create '{}' ({error}).", path.display())));
+                }
+            }
+            return Some(Ok(path));
+        }
+        if !path.exists()
+            && let Err(error) = write_file(&path, "{\n}")
+        {
+            return Some(Err(format!("Unable to create '{}' ({error}).", path.display())));
+        }
+        Some(Ok(path))
+    }
+
     fn reload_after_write(&mut self, editable: Editable) -> Change {
         for (path, last) in &mut self.stamps {
             *last = stamp(path);

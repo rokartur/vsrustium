@@ -16,6 +16,7 @@ pub mod rpc;
 pub mod scan;
 pub mod main_thread;
 pub mod session;
+pub mod settings_file_system;
 pub mod utc;
 
 use std::io::{Read, Write};
