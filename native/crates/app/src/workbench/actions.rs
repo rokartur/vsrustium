@@ -48,8 +48,7 @@ impl Workbench {
             Outcome::done()
         });
         self.commands.register("workbench.action.closeAllEditors", |workbench, _, window, cx| workbench.close_all_editors(window, cx));
-        // The port has one editor group, so closing the group's editors closes them all.
-        self.commands.register("workbench.action.closeEditorsInGroup", |workbench, _, window, cx| workbench.close_all_editors(window, cx));
+        self.commands.register("workbench.action.closeEditorsInGroup", |workbench, _, window, cx| workbench.close_editors((0..workbench.editors.editors.len()).collect(), window, cx));
         // editorCommands.ts: these act on the editor a tab's context menu passes, else the active one.
         self.commands.register("workbench.action.closeActiveEditor", |workbench, args, window, cx| {
             let Some(index) = workbench.context_editor(&args) else { return Outcome::done() };
@@ -118,8 +117,13 @@ impl Workbench {
         (0..self.editors.editors.len()).filter(|index| self.editors.editors[*index].is_dirty()).collect()
     }
 
+    /// editorActions.ts `CloseAllEditorsAction`: every group closes its editors, the active one last.
     fn close_all_editors(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
-        self.close_editors((0..self.editors.editors.len()).collect(), window, cx)
+        self.leave_panel_group();
+        // `pop` takes the least recent group first.
+        let groups = self.editors.group_ids_mru();
+        let keep = self.editors.id;
+        self.close_editors_in_groups(groups, keep, window, cx)
     }
 
     /// mainThreadEditorTabs.ts `$moveTab`: the tab moves inside its group and is pinned; `index` past the tabs

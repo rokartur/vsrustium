@@ -70,6 +70,12 @@ fn copies_into_split(scheme: &str) -> bool {
 
 impl Workbench {
     pub(super) fn register_editor_group_actions(&mut self) {
+        self.commands.register("workbench.action.closeEditorsInOtherGroups", |workbench, _, window, cx| {
+            workbench.leave_panel_group();
+            let keep = workbench.editors.id;
+            let others = workbench.editors.group_ids_mru().into_iter().filter(|group| *group != keep && *group != PANEL_GROUP).collect();
+            workbench.close_editors_in_groups(others, keep, window, cx)
+        });
         let splits = [
             ("workbench.action.splitEditor", None),
             ("workbench.action.splitEditorRight", Some(Direction::Right)),
@@ -302,6 +308,38 @@ impl Workbench {
         self.focus_group(group, window, cx);
     }
 
+    /// editorActions.ts `CloseEditorsInOtherGroupsAction`: each group closes all its editors in turn (a save prompt
+    /// waits), then `keep` has the focus again.
+    pub(super) fn close_editors_in_groups(&mut self, mut groups: Vec<u32>, keep: u32, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
+        let Some(group) = groups.pop() else {
+            // An emptied group may have closed (`workbench.editor.closeEmptyGroups`).
+            if self.groups_in_grid_order().contains(&keep) {
+                self.focus_group(keep, window, cx);
+            }
+            return Outcome::done();
+        };
+        if !self.groups_in_grid_order().contains(&group) {
+            return self.close_editors_in_groups(groups, keep, window, cx);
+        }
+        self.focus_group(group, window, cx);
+        match self.close_editors((0..self.editors.editors.len()).collect(), window, cx) {
+            Outcome::Ready(_) => self.close_editors_in_groups(groups, keep, window, cx),
+            Outcome::Pending(closing) => {
+                let (sender, receiver) = futures::channel::oneshot::channel();
+                cx.spawn_in(window, async move |workbench, cx| {
+                    let _ = closing.await;
+                    let next = workbench.update_in(cx, |workbench, window, cx| workbench.close_editors_in_groups(groups, keep, window, cx));
+                    if let Ok(Outcome::Pending(next)) = next {
+                        let _ = next.await;
+                    }
+                    let _ = sender.send(Ok(Value::Null));
+                })
+                .detach();
+                Outcome::Pending(receiver)
+            }
+        }
+    }
+
     /// `addGroup` without an editor, beside the active group; answers the new group.
     pub(super) fn add_group_beside(&mut self, direction: Direction) -> u32 {
         let source = self.editors.id;
@@ -482,7 +520,8 @@ impl Workbench {
         let grid = self.editor_groups.grid.as_mut().expect("a neighbor is in the grid");
         grid.remove_group(group, sizing);
         grid.add_group(target, direction, group, sizing);
-        cx.notify();
+        // The columns change: the host hears the new view columns and tab model.
+        self.editors_changed(cx);
     }
 
     /// editorPart.ts `applyLayout`: the groups take the new layout in grid order; the editors of groups left

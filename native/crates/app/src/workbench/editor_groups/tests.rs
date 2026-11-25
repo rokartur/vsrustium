@@ -170,3 +170,18 @@ fn the_output_view_shows_in_the_panel_and_takes_the_focus_from_the_groups(cx: &m
     run(&workbench, "workbench.action.splitEditor", cx);
     assert_eq!(groups(&workbench, cx), (vec![vec!["a.txt".to_string()], vec!["a.txt".to_string()]], 1));
 }
+
+#[gpui::test]
+fn close_editors_in_other_groups_leaves_the_active_group(cx: &mut TestAppContext) {
+    let (_dir, workbench, cx) = workbench_with("close-others", &["a.txt"], cx);
+    cx.simulate_keystrokes("cmd-\\");
+    cx.simulate_keystrokes("cmd-\\");
+    cx.run_until_parked();
+    assert_eq!(groups(&workbench, cx).0.len(), 3);
+    run(&workbench, "workbench.action.closeEditorsInOtherGroups", cx);
+    assert_eq!(groups(&workbench, cx), (vec![vec!["a.txt".to_string()]], 0));
+    // CloseAllEditorsAction empties every group; the emptied ones close.
+    cx.simulate_keystrokes("cmd-\\");
+    run(&workbench, "workbench.action.closeAllEditors", cx);
+    assert_eq!(groups(&workbench, cx), (vec![Vec::<String>::new()], 0));
+}

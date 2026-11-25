@@ -81,6 +81,8 @@ pub struct HostSync {
     documents: Vec<(String, Value)>,
     /// The snapshot ids of the visible editors the host has, one per group showing a text editor.
     editors: Vec<String>,
+    /// mainThreadEditors.ts `_editorPositionData`: each visible text editor's view column, as last sent.
+    editor_positions: serde_json::Map<String, Value>,
     /// The id of the active editor the host has.
     active_editor: Option<String>,
     /// The lines of the visible editor the host has as its `visibleRanges`.
@@ -114,7 +116,7 @@ const CODE_EDITOR_ID: &str = "vs.editor.ICodeEditor:1";
 
 impl HostSync {
     pub fn new(sender: Sender<HostMessage>) -> Self {
-        HostSync { sender, documents: Vec::new(), editors: Vec::new(), active_editor: None, visible_lines: None, tabs: vec![(0, Vec::new())], active_group: 0, search_tabs: HashMap::new(), webview_tabs: HashMap::new(), activations: HashMap::new(), installed_extensions_registered: false, configuration_scopes: false, untitled_names_from_content: true }
+        HostSync { sender, documents: Vec::new(), editors: Vec::new(), editor_positions: serde_json::Map::new(), active_editor: None, visible_lines: None, tabs: vec![(0, Vec::new())], active_group: 0, search_tabs: HashMap::new(), webview_tabs: HashMap::new(), activations: HashMap::new(), installed_extensions_registered: false, configuration_scopes: false, untitled_names_from_content: true }
     }
 
     /// Sends what changed in `group` since the last call: activation for new languages, the document
@@ -190,6 +192,12 @@ impl HostSync {
         self.documents.extend(added.iter().map(|editor| (editor.document().uri_string(), editor.document().uri())));
         self.editors = ids;
         self.active_editor = active_id;
+        // `_updateActiveAndVisibleTextEditors`: the columns, when one changed (a group closed or moved).
+        let positions: serde_json::Map<String, Value> = visible.iter().filter_map(|(column, editor, _)| Some((snapshot_id(editor), json!((*column)?)))).collect();
+        if positions != self.editor_positions {
+            self.send("ExtHostEditors", "$acceptEditorPositionData", vec![Value::Object(positions.clone())]);
+            self.editor_positions = positions;
+        }
         self.send_tabs(group);
     }
 
@@ -583,8 +591,9 @@ mod tests {
         }
     }
 
+    /// The messages sent, without the view columns (`$acceptEditorPositionData`), which one test checks.
     fn drain(receiver: &Receiver<HostMessage>) -> Vec<HostMessage> {
-        receiver.try_iter().collect()
+        receiver.try_iter().filter(|message| message.method != "$acceptEditorPositionData").collect()
     }
 
     #[test]
@@ -654,9 +663,13 @@ mod tests {
         group.activate_group(second);
         group.columns = vec![0, second];
         sync.send_changes(&group);
-        let sent = drain(&receiver);
+        let mut sent: Vec<HostMessage> = receiver.try_iter().collect();
         let methods: Vec<_> = sent.iter().map(|message| message.method).collect();
-        assert_eq!(methods, ["$acceptDocumentsAndEditorsDelta", "$acceptEditorTabModel"]);
+        assert_eq!(methods, ["$acceptDocumentsAndEditorsDelta", "$acceptEditorPositionData", "$acceptEditorTabModel"]);
+        // mainThreadEditors.ts `_getTextEditorPositionData`: both editors with their group's column.
+        let mut columns: Vec<Value> = sent.remove(1).args[0].as_object().unwrap().values().cloned().collect();
+        columns.sort_by_key(|column| column.as_u64());
+        assert_eq!(columns, [json!(0), json!(1)]);
         let delta = &sent[0].args[0];
         assert!(delta.get("addedDocuments").is_none());
         assert_eq!(delta["addedEditors"].as_array().unwrap().len(), 1);
