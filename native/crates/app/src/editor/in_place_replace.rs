@@ -10,7 +10,7 @@ use super::{ContentChanged, OpenEditor, Position, Replace, Selection, text_betwe
 use crate::languages::Languages;
 
 /// wordHelper.ts `DEFAULT_WORD_REGEXP`: numbers with a fraction, else runs of chars that are not separators.
-static DEFAULT_WORD_REGEXP: LazyLock<onig::Regex> =
+pub(super) static DEFAULT_WORD_REGEXP: LazyLock<onig::Regex> =
     LazyLock::new(|| onig::Regex::new(r#"(-?\d*\.\d\w*)|([^\`\~\!\@\#\$\%\^\&\*\(\)\-\=\+\[\{\]\}\\\|\;\:\'\"\,\.\<\>\/\?\s]+)"#).expect("valid pattern"));
 
 impl OpenEditor {

@@ -128,6 +128,7 @@ impl Theme {
             ColorValue::Hex(hex) => Some(parse_hex(hex).expect("registry hex")),
             ColorValue::Key(key) => self.color(key),
             ColorValue::Transparent(inner, factor) => self.evaluate(inner).map(|color| Rgba { a: color.a * factor, ..color }),
+            ColorValue::Darken(inner, factor) => self.evaluate(inner).map(|color| darken(color, *factor)),
             ColorValue::Opaque(inner, background) => {
                 let (color, background) = (self.evaluate(inner)?, self.evaluate(background)?);
                 // Color.makeOpaque rounds each channel to a byte.
@@ -158,7 +159,27 @@ pub fn relative_luminance(color: Rgba) -> f64 {
 /// colorUtils.ts `lessProminent`: `Color.getLighterColor` or `getDarkerColor` relative to the background, then
 /// `transparent`, through `Color`'s HSLA with its rounding (hue to an integer, the rest to 3 decimals).
 fn less_prominent(color: Rgba, background: Rgba, factor: f32, transparency: f32) -> Rgba {
-    let round3 = |value: f64| (value.clamp(0., 1.) * 1000.).round() / 1000.;
+    let (h, s, l, a) = hsla(color);
+    let (lum, background_lum) = (relative_luminance(color), relative_luminance(background));
+    let l = match lum < background_lum {
+        true => round3(l + l * factor as f64 * (background_lum - lum) / background_lum),
+        false => round3(l - l * factor as f64 * (lum - background_lum) / lum),
+    };
+    from_hsla(h, s, l, round3(a * transparency as f64))
+}
+
+/// `Color.darken`: the HSLA lightness less `factor` of itself.
+fn darken(color: Rgba, factor: f32) -> Rgba {
+    let (h, s, l, a) = hsla(color);
+    from_hsla(h, s, round3(l - l * factor as f64), a)
+}
+
+fn round3(value: f64) -> f64 {
+    (value.clamp(0., 1.) * 1000.).round() / 1000.
+}
+
+/// `HSLA.fromRGBA`: hue in whole degrees, the rest to 3 decimals.
+fn hsla(color: Rgba) -> (f64, f64, f64, f64) {
     let (r, g, b) = ((color.r as f64 * 255.).round() / 255., (color.g as f64 * 255.).round() / 255., (color.b as f64 * 255.).round() / 255.);
     let (max, min) = (r.max(g).max(b), r.min(g).min(b));
     let l = (min + max) / 2.;
@@ -173,12 +194,11 @@ fn less_prominent(color: Rgba, background: Rgba, factor: f32, transparency: f32)
         };
         h = (h * 60.).round();
     }
-    let (s, l, a) = (round3(s), round3(l), round3(color.a as f64));
-    let (lum, background_lum) = (relative_luminance(color), relative_luminance(background));
-    let l = match lum < background_lum {
-        true => round3(l + l * factor as f64 * (background_lum - lum) / background_lum),
-        false => round3(l - l * factor as f64 * (lum - background_lum) / lum),
-    };
+    (h, round3(s), round3(l), round3(color.a as f64))
+}
+
+/// `HSLA.toRGBA`, each channel rounded to a byte.
+fn from_hsla(h: f64, s: f64, l: f64, a: f64) -> Rgba {
     let hue = |p: f64, q: f64, mut t: f64| {
         if t < 0. {
             t += 1.;
@@ -203,7 +223,7 @@ fn less_prominent(color: Rgba, background: Rgba, factor: f32, transparency: f32)
         }
     };
     let byte = |value: f64| (value * 255.).round() as f32 / 255.;
-    Rgba { r: byte(r), g: byte(g), b: byte(b), a: round3(a * transparency as f64) as f32 }
+    Rgba { r: byte(r), g: byte(g), b: byte(b), a: a as f32 }
 }
 
 enum ColorValue {
@@ -211,6 +231,7 @@ enum ColorValue {
     Hex(&'static str),
     Key(&'static str),
     Transparent(&'static ColorValue, f32),
+    Darken(&'static ColorValue, f32),
     Opaque(&'static ColorValue, &'static ColorValue),
     /// The color, the background, the factor and the transparency.
     LessProminent(&'static ColorValue, &'static ColorValue, f32, f32),
@@ -331,6 +352,13 @@ fn registry_default(key: &str, kind: ThemeKind) -> ColorValue {
         "tab.border" => (Hex("#252526"), Hex("#F3F3F3"), Key("contrastBorder")),
         "editorBracketMatch.background" => (Hex("#0064001A"), Hex("#0064001A"), Hex("#0064001A")),
         "editorBracketMatch.border" => (Hex("#888"), Hex("#B9B9B9"), Key("contrastBorder")),
+        "editorWarning.foreground" => (Hex("#CCA700"), Hex("#BF8803"), Hex("#FFD370")),
+        "editorInfo.foreground" => (Hex("#59a4f9"), Hex("#0063d3"), Hex("#59a4f9")),
+        "editorUnicodeHighlight.border" => (Key("editorWarning.foreground"), Key("editorWarning.foreground"), Key("editorWarning.foreground")),
+        "editorUnicodeHighlight.background" => (Key("editorWarning.background"), Key("editorWarning.background"), Key("editorWarning.background")),
+        "banner.background" => (Key("list.activeSelectionBackground"), Darken(&Key("list.activeSelectionBackground"), 0.3), Key("list.activeSelectionBackground")),
+        "banner.foreground" => (Key("list.activeSelectionForeground"), Key("list.activeSelectionForeground"), Key("list.activeSelectionForeground")),
+        "banner.iconForeground" => (Key("editorInfo.foreground"), Key("editorInfo.foreground"), Key("editorInfo.foreground")),
         "editorOverviewRuler.bracketMatchForeground" => (Hex("#A0A0A0"), Hex("#A0A0A0"), Hex("#A0A0A0")),
         "editorBracketHighlight.foreground1" => (Hex("#FFD700"), Hex("#0431FAFF"), Hex("#FFD700")),
         "editorBracketHighlight.foreground2" => (Hex("#DA70D6"), Hex("#319331FF"), Hex("#DA70D6")),
@@ -423,6 +451,13 @@ fn hc_light_default(key: &str) -> ColorValue {
         "focusBorder" => Hex("#006BBD"),
         "editorBracketMatch.background" => Hex("#0000"),
         "editorBracketMatch.border" => Key("contrastBorder"),
+        "editorWarning.foreground" => Hex("#895503"),
+        "editorInfo.foreground" => Hex("#0063d3"),
+        "editorUnicodeHighlight.border" => Key("editorWarning.foreground"),
+        "editorUnicodeHighlight.background" => Key("editorWarning.background"),
+        "banner.background" => Key("list.activeSelectionBackground"),
+        "banner.foreground" => Key("list.activeSelectionForeground"),
+        "banner.iconForeground" => Key("editorInfo.foreground"),
         "editorOverviewRuler.bracketMatchForeground" => Hex("#A0A0A0"),
         "editorBracketHighlight.foreground1" => Hex("#0431FAFF"),
         "editorBracketHighlight.foreground2" => Hex("#319331FF"),
@@ -693,12 +728,14 @@ mod tests {
         assert_eq!(value, serde_json::json!({ "a": "//x,}", "c": [1, 2] }));
     }
 
-    // Expected values: upstream color.ts `lessProminent` run under Bun on the same inputs.
+    // Expected values: upstream color.ts `lessProminent` and `darken` run under Bun on the same inputs.
     #[test]
     fn less_prominent_matches_upstream_color_math() {
         let color = |text| parse_hex(text).unwrap();
         assert_eq!(hex(less_prominent(color("#84613daa"), color("#221a0f"), 0.3, 0.6)), "#60462c66");
         assert_eq!(hex(less_prominent(color("#C9D0D9"), color("#F5F5F5"), 0.3, 0.6)), "#e0e4ea99");
+        assert_eq!(hex(darken(color("#0060C0"), 0.3)), "#004386ff");
+        assert_eq!(hex(darken(color("#3794ff80"), 0.3)), "#0065d980");
     }
 
     // Expected values: the reference workbench's --vscode-* variables per theme (port/results/pixels.md method).

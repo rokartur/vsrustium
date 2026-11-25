@@ -34,6 +34,8 @@ pub mod section_headers;
 pub mod smart_select;
 mod snippet;
 pub mod sticky_scroll;
+pub mod unicode_highlighter;
+pub mod unusual_line_terminators;
 mod view;
 
 pub use comment::LineCommentKind;
@@ -481,6 +483,8 @@ pub struct EditorGroup {
     next_model_id: u32,
     /// The size of the group's one code editor, as last laid out; every editor of the group shows in it.
     pub viewport: Viewport,
+    /// unicodeHighlighter.ts `_bannerClosed`: the banner was closed for the model the code editor shows.
+    pub unicode_banner_closed: bool,
 }
 
 impl EditorGroup {
@@ -570,9 +574,11 @@ impl EditorGroup {
 
     /// The group's code editor shows another model (`onDidChangeModel`).
     fn shown_model_changed(&mut self, previous: Option<u32>) {
-        if self.recent.first().copied() != previous
-            && let Some(editor) = self.active_mut()
-        {
+        if self.recent.first().copied() == previous {
+            return;
+        }
+        self.unicode_banner_closed = false;
+        if let Some(editor) = self.active_mut() {
             editor.clear_cursor_states();
         }
     }
