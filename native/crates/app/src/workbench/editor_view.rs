@@ -323,34 +323,53 @@ impl Workbench {
     }
 
     /// wordHighlighter.ts: `onDidBlurEditorWidget` stops the highlights once no code editor has the focus,
-    /// `onDidFocusEditorText` runs the query from the selection again. The find widget and sticky lines are inside the widget.
+    /// `onDidFocusEditorText` runs the query from the selection again. The find widget, sticky lines and the
+    /// unicode banner are inside the widget.
     pub fn watch_editor_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let focus = self.editor_focus.clone();
         let blurred_at = Rc::new(Cell::new(None));
+        let deactivated = Rc::new(Cell::new(false));
         let blur = cx.on_focus_out(&focus, window, {
-            let blurred_at = blurred_at.clone();
+            let (blurred_at, deactivated) = (blurred_at.clone(), deactivated.clone());
             move |workbench, _, window, cx| {
-                // GPUI reports a window deactivation as focus out; the DOM keeps the focus there.
+                // GPUI reports a window deactivation as focus out; the DOM keeps the focus there, so the
+                // reactivation is no focus event either.
                 if workbench.editor_focus.contains_focused(window, cx) {
-                    return;
+                    return deactivated.set(true);
                 }
-                if let Some(editor) = workbench.editors.active_mut() {
-                    editor.highlights.clear();
-                    blurred_at.set(Some((editor.model_id, editor.version_id)));
+                if !(workbench.unicode_banner_focus.is_focused(window) && workbench.unicode_banner_shown()) {
+                    workbench.editor_widget_blurred(&blurred_at, cx);
                 }
-                cx.notify();
+            }
+        });
+        // The banner holding the focus goes when its action disables the highlights: the focus leaves the editor.
+        let banner_blur = cx.on_blur(&self.unicode_banner_focus, window, {
+            let blurred_at = blurred_at.clone();
+            move |workbench, window, cx| {
+                if window.is_window_active() && !workbench.editor_focus.contains_focused(window, cx) {
+                    workbench.editor_widget_blurred(&blurred_at, cx);
+                }
             }
         });
         let text_focus = cx.on_focus(&focus, window, move |workbench, _, cx| {
             let Some(editor) = workbench.editors.active_mut() else { return };
             // A picked command runs before GPUI reports the restored focus; upstream's delayed query, started on
             // focus, is cancelled by that command's edit (`onDidChangeModelContent` stops it).
-            if blurred_at.take().is_none_or(|(model, version)| model != editor.model_id || version == editor.version_id) {
+            let returned = blurred_at.take().is_none_or(|(model, version)| model != editor.model_id || version == editor.version_id);
+            if returned && !deactivated.take() {
                 editor.refresh_highlights();
             }
             cx.notify();
         });
-        self.editor_focus_listeners = vec![blur, text_focus];
+        self.editor_focus_listeners = vec![blur, banner_blur, text_focus];
+    }
+
+    fn editor_widget_blurred(&mut self, blurred_at: &Cell<Option<(u32, u32)>>, cx: &mut Context<Self>) {
+        if let Some(editor) = self.editors.active_mut() {
+            editor.highlights.clear();
+            blurred_at.set(Some((editor.model_id, editor.version_id)));
+        }
+        cx.notify();
     }
 
     /// The text area got its size: the group's viewport follows it, which can clamp the scroll position and

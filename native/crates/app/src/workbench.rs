@@ -95,6 +95,8 @@ pub struct Workbench {
     /// Window x of the text area, recorded at paint, to turn a click into a column.
     text_area_left: Rc<Cell<f32>>,
     pub editor_focus: FocusHandle,
+    /// bannerController.ts: the banner element is focusable (`tabIndex = 0`) inside the editor's DOM node.
+    unicode_banner_focus: FocusHandle,
     editor_focus_listeners: Vec<gpui::Subscription>,
     /// `--screenshot` hides the input carets, as ref-screenshot does in the reference, so the blink phase drops out.
     pub(crate) input_carets_hidden: bool,
@@ -201,6 +203,7 @@ impl Workbench {
             fold_mouse_down: None,
             text_area_left: Rc::default(),
             editor_focus: cx.focus_handle(),
+            unicode_banner_focus: cx.focus_handle(),
             editor_focus_listeners: Vec::new(),
             input_carets_hidden: false,
             marked_text: None,
