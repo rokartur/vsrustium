@@ -428,10 +428,46 @@ fn hover_message(dto: &Value, kb: &str) -> Value {
         return json!({ "value": escape_markdown(&format!("{label} ({kb})")) });
     };
     let title = match is_command {
-        true => url["command:".len()..].split(['?', '#']).next().map(|id| format!(" \"Execute command {id}\"")).unwrap_or_default(),
+        true => url["command:".len()..].split(['?', '#']).next().filter(|id| !id.is_empty()).map(|id| format!(" \"{}\"", escape_link_title(&format!("Execute command {id}")))).unwrap_or_default(),
         false => String::new(),
     };
-    json!({ "value": format!("[{}]({}{title}) ({kb})", escape_link_text(&label), url.replace(' ', "%20")), "isTrusted": true })
+    let destination = escape_link_destination(&url.replace(' ', "%20"));
+    json!({ "value": format!("[{}]({destination}{title}) ({kb})", escape_link_text(&label)), "isTrusted": true })
+}
+
+/// htmlContent.ts `escapeMarkdownLinkDestination`: blanks and controls percent-encoded, `\()<>` escaped, so the url
+/// cannot close the trusted link and start another.
+fn escape_link_destination(target: &str) -> String {
+    let mut escaped = String::new();
+    for character in target.chars() {
+        match character {
+            c if c.is_whitespace() || c.is_ascii_control() => {
+                let mut buffer = [0; 4];
+                for byte in c.encode_utf8(&mut buffer).bytes() {
+                    escaped.push_str(&format!("%{byte:02X}"));
+                }
+            }
+            '\\' | '(' | ')' | '<' | '>' => {
+                escaped.push('\\');
+                escaped.push(character);
+            }
+            c => escaped.push(c),
+        }
+    }
+    escaped
+}
+
+/// htmlContent.ts `escapeMarkdownLinkTitle`: line breaks as spaces, NUL replaced, `&\"()` and tabs as character references.
+fn escape_link_title(title: &str) -> String {
+    let mut escaped = String::new();
+    for character in title.replace("\r\n", " ").replace(['\r', '\n'], " ").chars() {
+        match character {
+            '\0' => escaped.push('\u{FFFD}'),
+            '&' | '\\' | '"' | '(' | ')' | '\t' => escaped.push_str(&format!("&#{};", character as u32)),
+            c => escaped.push(c),
+        }
+    }
+    escaped
 }
 
 /// A link's url: a string as it is, a `UriComponents` written out (`toString(skipEncoding)`).
@@ -485,7 +521,7 @@ fn link_target(url: &Value, model_path: Option<&std::path::Path>) -> Target {
 }
 
 /// The UTF-16 position after `text` inserted at `start`.
-fn end_after(start: (usize, usize), text: &str) -> (usize, usize) {
+pub(super) fn end_after(start: (usize, usize), text: &str) -> (usize, usize) {
     let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
     match normalized.rsplit_once('\n') {
         None => (start.0, start.1 + normalized.encode_utf16().count()),
@@ -495,7 +531,7 @@ fn end_after(start: (usize, usize), text: &str) -> (usize, usize) {
 
 /// intervalTree.ts `nodeAcceptEdit` for one position of a `NeverGrowsWhenTypingAtEdges` range: its start sticks
 /// to the text after it, its end to the text before it.
-fn tracked(marker: (usize, usize), start: (usize, usize), end: (usize, usize), new_end: (usize, usize), stick_to_previous: bool) -> (usize, usize) {
+pub(super) fn tracked(marker: (usize, usize), start: (usize, usize), end: (usize, usize), new_end: (usize, usize), stick_to_previous: bool) -> (usize, usize) {
     if marker < start || (marker == start && (start != end || stick_to_previous)) {
         return marker;
     }

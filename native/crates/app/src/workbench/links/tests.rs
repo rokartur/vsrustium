@@ -30,6 +30,9 @@ fn the_hover_message_names_the_gesture() {
     assert_eq!(hover_message(&json!({ "url": "https://a.b/c d" }), "cmd + click"), json!({ "value": "[Follow link](https://a.b/c%20d) (cmd + click)", "isTrusted": true }));
     assert_eq!(hover_message(&json!({ "url": "command:foo.bar?1" }), "cmd + click"), json!({ "value": "[Execute command](command:foo.bar?1 \"Execute command foo.bar\") (cmd + click)", "isTrusted": true }));
     assert_eq!(hover_message(&json!({ "tooltip": "Open [x]" }), "option + click"), json!({ "value": "Open&nbsp;\\[x\\]&nbsp;\\(option&nbsp;\\+&nbsp;click\\)" }));
+    // A url cannot close the trusted link and open a command link of its own.
+    let injected = hover_message(&json!({ "url": "https://a.b/(x)[y](command:z)" }), "cmd + click");
+    assert_eq!(injected["value"], json!("[Follow link](https://a.b/\\(x\\)[y]\\(command:z\\)) (cmd + click)"));
 }
 
 #[test]
