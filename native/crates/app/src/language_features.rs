@@ -51,6 +51,11 @@ impl LanguageFeatures {
         self.registrations.iter().find(|registration| registration.handle == handle)
     }
 
+    /// `allNoModel`: every registration of `method`.
+    pub fn all(&self, method: &str) -> impl Iterator<Item = &Registration> {
+        self.registrations.iter().filter(move |registration| registration.method == method)
+    }
+
     /// `LanguageFeatureRegistry.ordered`: the providers registered with `method` whose selector matches, best score
     /// first, then extension providers before built-in ones, then the newest; an exclusive selector that matches
     /// takes the model alone.

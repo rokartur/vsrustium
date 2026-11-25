@@ -19,6 +19,15 @@ use crate::editor::save_participants::SaveParticipants;
 use crate::editor::{ContentChanged, Position, uri_string, utf16_column};
 use crate::local_history;
 
+/// The text participants to run: all, or the ones `SaveParticipantsContribution` registers before or after
+/// `FormatOnSaveParticipant`.
+#[derive(Clone, Copy, PartialEq)]
+pub(super) enum SavePhase {
+    All,
+    BeforeFormat,
+    AfterFormat,
+}
+
 impl Workbench {
     /// Enter reaches the editor as typed text, the line break the browser's textarea would insert. codeEditorWidget.ts
     /// `trigger` runs `Handler.Type` itself, not through the command service, so typing never waits for an activation.
@@ -49,6 +58,8 @@ impl Workbench {
             self.search_model_changed(&scheme, &path);
             if let Some(change) = &change {
                 self.search_editor_edited(&path, change);
+                self.format_on_type_content_changed(change);
+                self.links_content_changed(change, cx);
             }
             // untitledTextEditorModel.ts `onDidChangeName`: the first line names the tab.
             if scheme == "untitled" {
@@ -85,7 +96,7 @@ impl Workbench {
     }
 
     /// saveParticipants.ts: the text participants of the model's language and resource, their changes sent to the host.
-    pub(super) fn run_save_participants(&mut self, scheme: &str, path: &Path, reason: SaveReason) {
+    pub(super) fn run_save_participants(&mut self, scheme: &str, path: &Path, reason: SaveReason, phase: SavePhase) {
         // `findEditor`: only the group's one code editor, showing the active model, has cursors.
         let shown = self.editors.active().is_some_and(|editor| editor.document.is(scheme, path));
         let model = self.editors.model_mut(scheme, path).expect("saving an open model");
@@ -97,10 +108,10 @@ impl Workbench {
         let overrides = Overrides { resource: Some(path), override_identifier: Some(&model.document.language_id) };
         let on = |key: &str| settings.get_value(Some(key), &overrides) == Some(json!(true));
         let participants = SaveParticipants {
-            trim_trailing_whitespace: on("files.trimTrailingWhitespace"),
+            trim_trailing_whitespace: phase != SavePhase::AfterFormat && on("files.trimTrailingWhitespace"),
             trim_in_regex_and_strings: settings.get_value(Some("files.trimTrailingWhitespaceInRegexAndStrings"), &overrides) != Some(json!(false)),
-            insert_final_newline: on("files.insertFinalNewline"),
-            trim_final_newlines: on("files.trimFinalNewlines"),
+            insert_final_newline: phase != SavePhase::BeforeFormat && on("files.insertFinalNewline"),
+            trim_final_newlines: phase != SavePhase::BeforeFormat && on("files.trimFinalNewlines"),
             spared_cursors,
         };
         drop(settings);

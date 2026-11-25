@@ -99,6 +99,9 @@ mod action_widget;
 mod code_actions;
 mod code_lens;
 mod inlay_hints;
+mod rename;
+mod links;
+mod format;
 mod snippet_completions;
 mod snippet_controller;
 mod suggest_controller;
@@ -227,6 +230,9 @@ pub struct Workbench {
     code_actions: code_actions::CodeActions,
     action_widget: action_widget::ActionWidget,
     code_lenses: code_lens::CodeLenses,
+    rename: rename::Rename,
+    links: links::Links,
+    formatting: format::Formatting,
     snippet_files: snippet_completions::SnippetFiles,
     /// The snippet choice the controller last showed the suggest widget for.
     snippet_choice_shown: Option<(crate::editor::Position, crate::editor::Position)>,
@@ -325,6 +331,7 @@ impl Render for Workbench {
         self.update_extension_editor_webviews(window, cx);
         self.auto_save_models_changed(cx);
         self.follow_content_hover_editor();
+        self.follow_rename_editor_state(window, cx);
         self.folding_model_changed(cx);
         self.accessibility_frame(window, cx);
         self.update_metered_connection(cx);
@@ -443,6 +450,9 @@ impl Workbench {
             code_actions: Default::default(),
             action_widget: Default::default(),
             code_lenses: Default::default(),
+            rename: rename::Rename::new(cx),
+            links: links::Links::default(),
+            formatting: Default::default(),
             snippet_files: Default::default(),
             snippet_choice_shown: None,
             language_features: Default::default(),
@@ -548,6 +558,9 @@ impl Workbench {
         workbench.register_code_actions();
         workbench.register_code_lens();
         workbench.register_inlay_hints();
+        workbench.register_rename();
+        workbench.register_links();
+        workbench.register_format();
         workbench.register_snippet_completions();
         workbench.register_snippet_commands();
         workbench.register_marker_navigation_commands();
@@ -664,6 +677,7 @@ impl Workbench {
         self.update_marker_decorations(None);
         self.code_actions_model_changed(cx);
         self.code_lens_model_changed(cx);
+        self.links_model_changed(cx);
         self.sync_webview_panels();
         self.text_files_editors_changed();
         self.host.send_changes(&self.editors);

@@ -23,6 +23,7 @@ const port = 9338;
 const keys: Record<string, { key: string; code: string; windowsVirtualKeyCode: number }> = {
 	Escape: { key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 },
 	Enter: { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 },
+	F2: { key: 'F2', code: 'F2', windowsVirtualKeyCode: 113 },
 };
 
 mkdirSync(outDir, { recursive: true });

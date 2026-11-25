@@ -6,11 +6,13 @@ mod computer;
 mod heuristics;
 mod moved_lines;
 mod sequences;
+mod string_diff;
 #[cfg(test)]
 mod tests;
 
 pub use algorithms::Timeout;
 pub use computer::{compute_diff, verify_lines_diff, DiffOptions, LinesDiff, MovedText, Validity};
+pub use string_diff::string_diff;
 
 use std::fmt;
 

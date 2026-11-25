@@ -124,6 +124,7 @@ impl Workbench {
             let outcome = workbench.run_indenting(|editor, auto| editor.type_keyboard(&text, auto, overtype), cx);
             workbench.suggest_typed(cx);
             workbench.parameter_hints_typed(&text, cx);
+            workbench.format_on_type(&text, cx);
             outcome
         });
         for &id in commands::IDS {

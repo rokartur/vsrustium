@@ -8,6 +8,7 @@ use gpui::Context;
 use serde_json::{Value, json};
 
 use super::Workbench;
+use super::format::more_minimal_edits;
 use super::host_requests::{range, snippet_edits, uri_parts};
 use crate::editor::{ContentChanged, EditReason, Position, TextDocument, expand_snippet, uri_string};
 use crate::local_history;
@@ -59,20 +60,34 @@ impl Workbench {
                 if (text_edit["range"].is_null() || start == end) && text.is_empty() {
                     continue;
                 }
-                replaces.push((start, end, text, text_edit["insertAsSnippet"] == json!(true), text_edit["keepWhitespace"] == json!(true)));
+                replaces.push((start, end, text, text_edit["insertAsSnippet"] == json!(true), text_edit["keepWhitespace"] == json!(true), !edit["metadata"].is_null()));
             }
             model.push_undo_stop();
             // `EditorEditTask`: the snippet controller takes every edit when one is a snippet; without the editor a snippet is its text.
             let change = if in_active_editor && replaces.iter().any(|replace| replace.3) {
-                let templates: Vec<String> = replaces.iter().map(|&(_, _, text, is_snippet, _)| if is_snippet { text.to_string() } else { escape_snippet(text) }).collect();
-                let snippets: Vec<_> = replaces.iter().zip(&templates).map(|(&(start, end, _, _, keep_whitespace), template)| (start, end, template.as_str(), keep_whitespace)).collect();
+                let templates: Vec<String> = replaces.iter().map(|&(_, _, text, is_snippet, _, _)| if is_snippet { text.to_string() } else { escape_snippet(text) }).collect();
+                let snippets: Vec<_> = replaces.iter().zip(&templates).map(|(&(start, end, _, _, keep_whitespace, _), template)| (start, end, template.as_str(), keep_whitespace)).collect();
                 let (edits, selections, _) = snippet_edits(model, &snippets, clipboard.as_deref());
                 model.execute_edits(edits, Some(selections), EditReason::Unknown("snippet"))
+            } else if in_active_editor {
+                // `_createEditsTasks`: the active editor's edits are made more minimal, in runs split by edits with metadata.
+                let mut edits = Vec::new();
+                let mut run = Vec::new();
+                for &(start, end, text, _, _, has_metadata) in &replaces {
+                    if has_metadata {
+                        edits.extend(more_minimal_edits(&model.document.lines, std::mem::take(&mut run)));
+                        edits.push((start, end, text.to_string()));
+                    } else {
+                        run.push((start, end, text.to_string()));
+                    }
+                }
+                edits.extend(more_minimal_edits(&model.document.lines, run));
+                model.execute_edits(edits.into_iter().map(|(start, end, text)| (start, end, text, true)).collect(), None, EditReason::ApplyEdits)
             } else {
                 let indentation = model.document.indentation;
                 let edits = replaces
                     .iter()
-                    .map(|&(start, end, text, is_snippet, _)| {
+                    .map(|&(start, end, text, is_snippet, _, _)| {
                         let text = if is_snippet { expand_snippet(text, "", false, indentation, |_| None).text } else { text.to_string() };
                         (start, end, text, true)
                     })

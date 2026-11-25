@@ -215,6 +215,8 @@ impl Workbench {
             REGISTER => self.code_actions_model_changed(cx),
             "$registerCodeLensSupport" => self.code_lens_registrations_changed(cx),
             "$registerFoldingRangeProvider" => self.trigger_folding_model_changed(cx),
+            "$registerDocumentLinkProvider" => self.links_model_changed(cx),
+            "$registerDocumentFormattingSupport" | "$registerRangeFormattingSupport" => self.formatters_changed(),
             _ => {}
         }
     }

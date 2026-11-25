@@ -42,9 +42,10 @@ pub enum InputId {
     BreakpointWidget,
     DebugConsole,
     TerminalFind,
+    Rename,
 }
 
-const INPUTS: [InputId; 18] = [
+const INPUTS: [InputId; 19] = [
     InputId::QuickInput,
     InputId::Explorer,
     InputId::ExplorerFind,
@@ -63,6 +64,7 @@ const INPUTS: [InputId; 18] = [
     InputId::BreakpointWidget,
     InputId::DebugConsole,
     InputId::TerminalFind,
+    InputId::Rename,
 ];
 
 /// The view state of one input element.
@@ -137,6 +139,7 @@ impl Workbench {
             InputId::BreakpointWidget => &self.debug_view.widget_view,
             InputId::DebugConsole => &self.debug_console.input_view,
             InputId::TerminalFind => &self.terminal_view.find.view,
+            InputId::Rename => &self.rename.view,
         }
     }
 
@@ -162,6 +165,7 @@ impl Workbench {
             InputId::BreakpointWidget => &mut self.debug_view.widget_view,
             InputId::DebugConsole => &mut self.debug_console.input_view,
             InputId::TerminalFind => &mut self.terminal_view.find.view,
+            InputId::Rename => &mut self.rename.view,
         }
     }
 
@@ -187,6 +191,7 @@ impl Workbench {
             InputId::BreakpointWidget => &self.debug_view.widget_focus,
             InputId::DebugConsole => &self.debug_console.input_focus,
             InputId::TerminalFind => &self.terminal_view.find.focus,
+            InputId::Rename => &self.rename.focus,
         }
     }
 
@@ -212,6 +217,7 @@ impl Workbench {
             InputId::BreakpointWidget => self.breakpoint_widget.as_ref().map(|widget| &widget.input),
             InputId::DebugConsole => Some(&self.debug_console.input),
             InputId::TerminalFind => Some(&self.terminal_view.find.input),
+            InputId::Rename => self.rename.widget.as_ref().map(|widget| &widget.input),
         }
     }
 
@@ -296,6 +302,13 @@ impl Workbench {
             }
             InputId::TerminalFind => {
                 self.edit_terminal_find_input(edit, cx);
+                Outcome::done()
+            }
+            InputId::Rename => {
+                if let Some(widget) = self.rename.widget.as_mut() {
+                    edit(&mut widget.input);
+                    cx.notify();
+                }
                 Outcome::done()
             }
         }
@@ -493,6 +506,7 @@ impl Workbench {
                 InputId::BreakpointWidget => "breakpoint-widget-input-text".into(),
                 InputId::DebugConsole => "debug-console-input-text".into(),
                 InputId::TerminalFind => "terminal-find-text".into(),
+                InputId::Rename => "rename-input-text".into(),
             })
             .flex_1()
             .h_full()

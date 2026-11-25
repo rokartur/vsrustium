@@ -153,6 +153,12 @@ impl Workbench {
         .detach();
     }
 
+    /// The model's quick diff changes, `None` when its source control names no original (`getOriginalResource`).
+    pub(in crate::workbench) fn quick_diff_line_changes(&self, editor: &OpenEditor) -> Option<&[QuickDiffChange]> {
+        let key = (editor.document.scheme.clone(), editor.document.path.clone());
+        self.quick_diffs.entries.get(&key).filter(|entry| entry.original.is_some()).map(|entry| entry.changes.as_slice())
+    }
+
     /// The active editor's quick diff changes, empty when it has none.
     fn quick_diff_changes(&self, editor: &OpenEditor) -> &[QuickDiffChange] {
         let key = (editor.document.scheme.clone(), editor.document.path.clone());

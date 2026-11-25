@@ -320,6 +320,17 @@ impl HostSync {
         }
     }
 
+    /// `call_cancellable` for requests made one after another from a task (a provider asked when the one before it
+    /// gave no answer).
+    pub fn caller(&self) -> impl Fn(&'static str, &'static str, Vec<Value>) -> oneshot::Receiver<Result<Value, Value>> + use<> {
+        let sender = self.sender.clone();
+        move |proxy, method, args| {
+            let (reply, receiver) = oneshot::channel();
+            let _ = sender.send(HostMessage { proxy, method, args, reply: Some(reply), cancellable: true, files: None, extensions: None });
+            receiver
+        }
+    }
+
     pub(crate) fn send(&self, proxy: &'static str, method: &'static str, args: Vec<Value>) {
         // The session thread is gone once the host exits; the workbench keeps working without it.
         let _ = self.sender.send(HostMessage { proxy, method, args, reply: None, cancellable: false, files: None, extensions: None });

@@ -323,7 +323,7 @@ impl Workbench {
         // The sticky lines and the find widget are part of the editor's DOM, so their focus is the editor's but not its text's.
         let (find_focused, replace_focused) = (self.find.find_focus.is_focused(window), self.find.replace_focus.is_focused(window));
         let button_focused = self.find.button_focus.values().any(|focus| focus.is_focused(window));
-        context.insert("editorFocus".into(), json!(editor_focused || self.sticky_scroll.is_focused(window) || find_focused || replace_focused || button_focused));
+        context.insert("editorFocus".into(), json!(editor_focused || self.sticky_scroll.is_focused(window) || find_focused || replace_focused || button_focused || self.rename_input_focused(window)));
         context.insert("editorTextFocus".into(), json!(editor_focused));
         context.insert("textInputFocus".into(), json!(editor_focused));
         self.notifications_context(window, &mut context);
@@ -374,6 +374,8 @@ impl Workbench {
             self.code_actions_context(&mut context);
             self.action_widget_context(&mut context);
             self.code_lens_context(&mut context);
+            self.rename_context(&mut context);
+            self.format_context(&mut context);
             context.insert("editorHasSelection".into(), json!(editor.selections.iter().any(|selection| !selection.is_empty())));
             context.insert("editorHasMultipleSelections".into(), json!(editor.selections.len() > 1));
             context.insert("selectionAnchorSet".into(), json!(editor.selection_anchor.is_some()));
