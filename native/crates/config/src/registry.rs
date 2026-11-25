@@ -49,6 +49,7 @@ impl Scope {
 
 /// `APPLICATION_SCOPES`, `WORKSPACE_SCOPES` and `FOLDER_SCOPES` of workbench/services/configuration/common/configuration.ts.
 pub const APPLICATION_SCOPES: [Scope; 2] = [Scope::Application, Scope::ApplicationMachine];
+pub const PROFILE_SCOPES: [Scope; 5] = [Scope::Machine, Scope::Window, Scope::Resource, Scope::LanguageOverridable, Scope::MachineOverridable];
 pub const WORKSPACE_SCOPES: [Scope; 4] = [Scope::Window, Scope::Resource, Scope::LanguageOverridable, Scope::MachineOverridable];
 pub const FOLDER_SCOPES: [Scope; 3] = [Scope::Resource, Scope::LanguageOverridable, Scope::MachineOverridable];
 
