@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use rusqlite::types::{ToSql, ValueRef};
 use rusqlite::{Connection, params};
 
+pub mod profiles;
 pub mod state;
 
 pub struct Storage {

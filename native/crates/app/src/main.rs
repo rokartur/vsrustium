@@ -55,11 +55,13 @@ mod output;
 mod perf;
 mod power;
 mod product;
+mod policy;
 mod quick_input;
 mod recently_opened;
 mod search_editor;
 mod scm;
 mod search_model;
+mod settings_editor;
 mod smart_snippet_inserter;
 mod split_view;
 mod syntax;
@@ -185,7 +187,9 @@ fn main() -> anyhow::Result<()> {
     extensions.retain(|extension| !disabled.contains(&extension.id));
     let load_settings = |extensions: &[ScannedExtension]| {
         let described: Vec<(&str, &serde_json::Value)> = extensions.iter().map(|extension| (extension.id.as_str(), &extension.description)).collect();
-        Settings::load(Registry::with_extensions(&described), user_data.join("User"), workspace.clone())
+        let mut settings = Settings::load(Registry::with_extensions(&described), user_data.join("User"), workspace.clone());
+        settings.set_policy_values(policy::read_native_policies(&settings.registry, policy::BUNDLE_IDENTIFIER));
+        settings
     };
     let mut settings = load_settings(&extensions);
     let shared_storage = match extension_tests {

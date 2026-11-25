@@ -59,6 +59,7 @@ impl Workbench {
                 self.host.send_tabs(&self.editors);
             }
             self.schedule_keybinding_marks(cx);
+            self.schedule_unsupported_settings_markers(cx);
         }
         if scrolled {
             self.editor_scrolled(cx);

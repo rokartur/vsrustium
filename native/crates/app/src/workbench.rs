@@ -8,6 +8,7 @@ mod bulk_text_edits;
 mod configuration;
 mod content_hover;
 mod content_hover_view;
+mod configuration_resolver;
 mod context_menu;
 pub mod custom_editors;
 mod define_keybinding;
@@ -68,6 +69,7 @@ mod view_panes;
 mod search_editor_view;
 mod search_editor_widget;
 mod search_view;
+mod settings_editor_view;
 mod status_entries;
 use status_entries::{EDITOR_STATUS_PRIORITY, PROBLEMS_PRIORITY};
 pub mod themes;
@@ -147,7 +149,9 @@ pub struct Workbench {
     pub unexpected_errors: crate::output::logger::UnexpectedErrorHandler,
     pub keybindings: keyboard::Keybindings,
     pub keybindings_editor: keybindings_editor_view::KeybindingsEditor,
+    pub settings_editor: settings_editor_view::SettingsEditor,
     keybinding_marks: define_keybinding::KeybindingMarks,
+    unsupported_settings_render: Option<Task<()>>,
     diagnostics: diagnostics::Diagnostics,
     accessibility: accessibility::AccessibilityState,
     metered: power::MeteredConnection,
@@ -287,7 +291,7 @@ impl Render for Workbench {
             .children(self.restricted_mode_banner(cx))
             .child(self.middle_section(viewport, editor, window, cx))
             .child(self.status_bar(window, cx));
-        let modal_editor = self.keybindings_editor_widget(window, cx);
+        let modal_editor = self.keybindings_editor_widget(window, cx).or_else(|| self.settings_editor_widget(window, cx));
         let quick_input = self.quick_input_widget(window, cx);
         let notifications = self.notifications_widget(viewport, window, cx);
         let context_menu = self.context_menu_widget(cx);
@@ -339,7 +343,9 @@ impl Workbench {
             unexpected_errors: Default::default(),
             keybindings: keyboard::Keybindings::default(),
             keybindings_editor: keybindings_editor_view::KeybindingsEditor::new(cx),
+            settings_editor: settings_editor_view::SettingsEditor::new(cx),
             keybinding_marks: Default::default(),
+            unsupported_settings_render: None,
             diagnostics: Default::default(),
             accessibility,
             metered: Default::default(),
@@ -447,6 +453,7 @@ impl Workbench {
         workbench.register_search_editor_widget_actions();
         workbench.register_file_participant_commands();
         workbench.register_keybindings_editor_commands();
+        workbench.register_settings_editor_commands();
         workbench.register_readonly_commands();
         workbench.register_preferences_commands();
         workbench.register_editor_message_commands();
@@ -513,7 +520,7 @@ impl Workbench {
     pub fn open_file(&mut self, path: PathBuf, pinned: bool, window: &mut Window, cx: &mut Context<Self>) {
         // editorGroupFinder.ts `handleModalEditorPart`: an editor opened without preserveFocus closes the modal.
         if pinned {
-            self.close_keybindings_editor(window, cx);
+            self.close_modal_editor(window, cx);
         }
         if path.to_string_lossy().ends_with(crate::search_editor::SEARCH_EDITOR_EXT) {
             return self.open_search_editor_file(path, pinned, window, cx);
@@ -556,6 +563,7 @@ impl Workbench {
         self.load_search_editor_widget();
         self.find_editor_changed();
         self.schedule_keybinding_marks(cx);
+        self.schedule_unsupported_settings_markers(cx);
         self.update_marker_decorations(None);
         self.sync_webview_panels();
         self.text_files_editors_changed();

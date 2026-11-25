@@ -74,6 +74,8 @@ pub struct Registry {
     default_overrides: Vec<(String, Value, Option<String>)>,
     /// `registerOverrideIdentifiers`: the language ids languagesRegistry.ts registers.
     pub override_identifiers: Vec<String>,
+    /// `getExcludedConfigurationProperties`: the schemas of `included: false` properties, which only policies read.
+    pub excluded: HashMap<String, Value>,
 }
 
 /// The core settings of VS Code 1.147.0 as its registry holds them, dumped with port/tools/dump-settings.
@@ -153,6 +155,7 @@ impl Registry {
                 }
                 // `included: false` goes to the excluded properties, which only policies and experiments read.
                 if schema["included"] == false {
+                    self.excluded.insert(key.clone(), schema.clone());
                     continue;
                 }
                 let mut schema = schema.clone();

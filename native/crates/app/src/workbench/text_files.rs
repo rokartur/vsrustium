@@ -253,7 +253,14 @@ impl Workbench {
                 eprintln!("unlocking {}: {error}", path.display());
             }
         }
-        std::fs::write(path, bytes).map_err(|error| write_error(path, error, options.unlock))?;
+        // FileUserDataProvider: the user's settings, keybindings, tasks and extensions files are written atomically.
+        let user_data = ["settings.json", "keybindings.json", "tasks.json", "extensions.json"].iter().any(|name| path.ends_with(name))
+            && path.starts_with(self.settings.lock().unwrap().user_home());
+        let written = match user_data {
+            true => config::service::write_user_data_file(path, bytes),
+            false => std::fs::write(path, bytes),
+        };
+        written.map_err(|error| write_error(path, error, options.unlock))?;
         if let Some(stat) = stat(path) {
             self.text_files.stats.insert(path.to_path_buf(), stat);
         }

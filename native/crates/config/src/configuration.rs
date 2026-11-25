@@ -17,6 +17,8 @@ pub struct Configuration {
     pub workspace: ConfigurationModel,
     /// Each workspace folder and its `.vscode` settings; a folder window has one.
     pub folders: Vec<(PathBuf, ConfigurationModel)>,
+    /// The values policies force (`PolicyConfiguration`), over every other layer.
+    pub policy: ConfigurationModel,
     /// `WorkbenchState` is not EMPTY: a folder or a workspace file is open, so the workspace layer counts.
     pub has_workspace: bool,
     /// `_workspaceConsolidatedConfiguration`, `_foldersConsolidatedConfigurations` and `overrideConfigurations`:
@@ -38,6 +40,7 @@ pub struct Overrides<'a> {
 pub struct Inspected {
     pub value: Option<Value>,
     pub default_value: Option<Value>,
+    pub policy_value: Option<Value>,
     pub user_local: Layer,
     pub workspace: Layer,
     pub workspace_folder: Layer,
@@ -78,6 +81,7 @@ impl Configuration {
         Inspected {
             value: self.get_value(Some(key), overrides),
             default_value: layer(Some(&self.defaults)).value,
+            policy_value: self.policy.get_value(Some(key)),
             user_local: layer(Some(&self.local_user)),
             workspace: layer(self.has_workspace.then_some(&self.workspace)),
             workspace_folder: layer(self.folder_model_for(overrides.resource)),
@@ -85,17 +89,21 @@ impl Configuration {
     }
 
     /// `getConsolidatedConfigurationModel`: defaults, then user, workspace and the folder the resource is in,
-    /// then the `[language]` block.
+    /// then the `[language]` block, then the policy values.
     fn consolidated(&self, overrides: &Overrides) -> ConfigurationModel {
         let mut layers = vec![self.local_user.clone(), self.workspace.clone()];
         if let Some(folder) = self.folder_model_for(overrides.resource) {
             layers.push(folder.clone());
         }
         let merged = self.defaults.merge(&layers);
-        match overrides.override_identifier {
+        let mut merged = match overrides.override_identifier {
             Some(identifier) => merged.override_for(identifier),
             None => merged,
+        };
+        for key in &self.policy.keys {
+            merged.set_value(key, self.policy.get_value(Some(key)).expect("a model key has a value"));
         }
+        merged
     }
 
     /// `getFolderConfigurationModelForResource`: the model of the folder closest to the resource.
@@ -107,6 +115,15 @@ impl Configuration {
     fn folder_for(&self, resource: Option<&Path>) -> Option<&Path> {
         let resource = resource?;
         self.folders.iter().map(|(folder, _)| folder.as_path()).filter(|folder| resource.starts_with(folder)).max_by_key(|folder| folder.components().count())
+    }
+
+    /// `compareAndUpdatePolicyConfiguration`.
+    pub fn compare_and_update_policy(&mut self, policy: ConfigurationModel) -> Change {
+        let change = compare(Some(&self.policy), Some(&policy));
+        if !change.keys.is_empty() {
+            self.policy = policy;
+        }
+        change
     }
 
     /// `compareAndUpdateLocalUserConfiguration`.
@@ -150,7 +167,7 @@ impl Configuration {
         let folders: Vec<Value> = self.folders.iter().map(|(folder, model)| json!([file_uri(folder), model.to_json()])).collect();
         json!({
             "defaults": self.defaults.to_json(),
-            "policy": empty,
+            "policy": self.policy.to_json(),
             "application": empty,
             "userLocal": self.local_user.to_json_with_raw(),
             "userRemote": empty,

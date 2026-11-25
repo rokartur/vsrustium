@@ -58,7 +58,10 @@ impl Workbench {
             Outcome::done()
         });
         self.commands.register("workbench.action.findInFiles", |workbench, args, window, cx| {
-            let args = args.into_iter().next().unwrap_or(Value::Null);
+            let args = match workbench.resolve_string_arguments(args.into_iter().next().unwrap_or(Value::Null)) {
+                Ok(args) => args,
+                Err(error) => return Outcome::error(error.message),
+            };
             workbench.find_in_files(&args, window, cx);
             Outcome::done()
         });

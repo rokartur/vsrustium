@@ -35,6 +35,26 @@ pub fn matches_contiguous_sub_string(word: &str, target: &str) -> Option<Matches
     find(&target, &word, 0).map(|index| vec![index..index + word.len()])
 }
 
+/// `matchesSubString`: the word's chars in order, each at its first place after the previous one.
+pub fn matches_sub_string(word: &str, target: &str) -> Option<Matches> {
+    let word = lower_chars(word);
+    let target = lower_chars(target);
+    if word.len() > target.len() {
+        return None;
+    }
+    let mut matches: Matches = Vec::new();
+    let mut next = 0;
+    for char in word {
+        let index = next + target[next..].iter().position(|candidate| *candidate == char)?;
+        match matches.last_mut() {
+            Some(last) if last.end == index => last.end += 1,
+            _ => matches.push(index..index + 1),
+        }
+        next = index + 1;
+    }
+    Some(matches)
+}
+
 pub fn matches_camel_case(word: &str, camel_case_word: &str) -> Option<Matches> {
     let trimmed = camel_case_word.trim();
     if trimmed.is_empty() {
