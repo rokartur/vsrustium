@@ -69,18 +69,19 @@ impl Workbench {
             ("MainThreadTextEditors", "$tryShowTextDocument") => self.try_show_text_document(arg(0), arg(1), window, cx),
             ("MainThreadTextEditors", method) => {
                 let id = arg(0).as_str().unwrap_or_default();
-                // The group shows one editor at a time: the active one is the only one the host can address.
-                if self.editors.active().map(snapshot_id).as_deref() != Some(id) {
+                // Each group shows one editor at a time: a group's active editor is the only one the host can address.
+                let groups = self.groups_in_grid_order();
+                let Some(group) = groups.into_iter().find(|&group| self.editors.group_active(group).is_some_and(|(editor, _)| snapshot_id(editor) == id)) else {
                     return Err(serialized_error(&format!("Illegal argument: TextEditor({id})")));
-                }
-                match method {
-                    "$trySetSelections" => self.set_host_selections(arg(1), cx),
-                    "$tryRevealRange" => self.reveal_host_range(arg(1), arg(2), cx),
-                    "$trySetOptions" => self.set_host_options(arg(1), cx),
-                    "$tryApplyEdits" => self.apply_host_edits(arg(1), arg(2), arg(3), cx),
-                    "$tryInsertSnippet" => self.insert_host_snippet(arg(1), arg(2), arg(3), arg(4), window, cx),
+                };
+                self.with_group(group, |workbench| match method {
+                    "$trySetSelections" => workbench.set_host_selections(arg(1), cx),
+                    "$tryRevealRange" => workbench.reveal_host_range(arg(1), arg(2), cx),
+                    "$trySetOptions" => workbench.set_host_options(arg(1), cx),
+                    "$tryApplyEdits" => workbench.apply_host_edits(arg(1), arg(2), arg(3), cx),
+                    "$tryInsertSnippet" => workbench.insert_host_snippet(arg(1), arg(2), arg(3), arg(4), window, cx),
                     _ => unreachable!("not in HOST_REQUESTS: {method}"),
-                }
+                })
             }
             _ => unreachable!("not in HOST_REQUESTS: {proxy}.{method}"),
         }
@@ -292,6 +293,7 @@ impl Workbench {
     /// `$tryShowTextDocument`: opens the model in the group, preview unless pinned, and returns the editor's id.
     fn try_show_text_document(&mut self, uri: &Value, options: &Value, window: &mut Window, cx: &mut Context<Self>) -> HostResult {
         let (scheme, ref path) = uri_parts(uri)?;
+        self.activate_column(&options["position"]);
         let pinned = options["pinned"] == json!(true);
         if let Some(index) = self.editors.editors.iter().position(|editor| editor.document().is(scheme, path)) {
             self.editors.activate(index);
@@ -326,7 +328,6 @@ impl Workbench {
     }
 
     /// editorCommands.ts `_workbench.open`: a resource in the editor group, a web link in the browser.
-    // shortcut: one editor group, so every view column opens in it; ViewColumn.Two needs the editor groups row.
     pub(super) fn api_open_editor(&mut self, args: &[Value], window: &mut Window, cx: &mut Context<Self>) -> HostResult {
         let resource = args.first().unwrap_or(&Value::Null);
         if let Some(link) = resource.as_str() {
@@ -345,8 +346,12 @@ impl Workbench {
             "untitled" => drop(self.try_open_document(resource, &Value::Null, &Value::Null, false, cx)?),
             _ => {}
         }
-        let options = &args.get(1).unwrap_or(&Value::Null)[1];
-        self.try_show_text_document(resource, options, window, cx)?;
+        let column_and_options = args.get(1).unwrap_or(&Value::Null);
+        let mut options = column_and_options[1].clone();
+        if options.is_object() || options.is_null() {
+            options["position"] = column_and_options[0].clone();
+        }
+        self.try_show_text_document(resource, &options, window, cx)?;
         Ok(Value::Null)
     }
 

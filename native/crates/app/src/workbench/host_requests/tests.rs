@@ -56,3 +56,22 @@ fn workbench_open_shows_files_and_untitled_files_and_rejects_other_strings(cx: &
     assert_eq!(open(&workbench, vec![json!({ "scheme": "command", "path": "workbench.action.quit" })], cx), Ok(Value::Null));
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[gpui::test]
+fn view_columns_pick_or_add_groups_in_grid_order(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = workbench_in("view-columns", cx);
+    let show = |position: i64, cx: &mut VisualTestContext| {
+        let uri = file_uri(&dir.join("far.js"));
+        workbench.update_in(cx, |workbench, window, cx| workbench.try_show_text_document(&uri, &json!({ "position": position }), window, cx)).unwrap();
+        workbench.read_with(cx, |workbench, _| (workbench.groups_in_grid_order().len(), workbench.groups_in_grid_order().iter().position(|group| *group == workbench.editors.id).unwrap()))
+    };
+    // window.test.ts `editor, assign and check view columns`: One, Two and Three are the first three groups.
+    assert_eq!(show(0, cx), (1, 0));
+    assert_eq!(show(1, cx), (2, 1));
+    assert_eq!(show(2, cx), (3, 2));
+    assert_eq!(show(0, cx), (3, 0));
+    // ACTIVE keeps the group, SIDE takes the neighbour to the right.
+    assert_eq!(show(-1, cx), (3, 0));
+    assert_eq!(show(-2, cx), (3, 1));
+    std::fs::remove_dir_all(dir).unwrap();
+}

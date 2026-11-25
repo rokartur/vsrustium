@@ -310,6 +310,27 @@ impl Workbench {
         group
     }
 
+    /// editorGroupColumn.ts `columnToEditorGroup`: ACTIVE (-1) keeps the active group; column `n` is the nth group in
+    /// grid order, adding groups in the side-by-side direction up to it below 9; else SIDE (-2), the group beside
+    /// the active one, created when there is none.
+    pub(super) fn activate_column(&mut self, column: &Value) {
+        self.leave_panel_group();
+        let Some(column) = column.as_i64().filter(|column| *column >= 0 || *column == -2) else { return };
+        let direction = self.side_by_side_direction();
+        if (0..9).contains(&column) {
+            while self.groups_in_grid_order().len() <= column as usize {
+                let last = *self.groups_in_grid_order().last().expect("one group at least");
+                self.activate_group(last);
+                self.add_group_beside(direction);
+            }
+        }
+        let target = match self.groups_in_grid_order().get(column as usize) {
+            Some(&group) if column >= 0 => group,
+            _ => self.group_in_direction(direction).unwrap_or_else(|| self.add_group_beside(direction)),
+        };
+        self.activate_group(target);
+    }
+
     fn add_to_grid(&mut self, reference: u32, direction: Direction, group: u32) {
         let sizing = self.split_sizing();
         let bounds = self.editor_groups.part_bounds.get();
