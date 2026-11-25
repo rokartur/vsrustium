@@ -542,7 +542,7 @@ impl Workbench {
             .into_iter()
             .filter_map(|item| match &item.entry {
                 crate::menus::Entry::Command { id, .. } => Some((id.clone(), item.title.clone())),
-                crate::menus::Entry::Submenu(_) => None,
+                crate::menus::Entry::Submenu { .. } => None,
             })
             .collect();
         for (id, title) in commands {

@@ -90,7 +90,7 @@ impl Workbench {
             command("workbench.extensions.action.enableAll", "Enable All Extensions"),
             command("workbench.extensions.action.disableAll", "Disable All Installed Extensions"),
             MenuAction::Separator,
-            MenuAction::Submenu { title: "Views".into(), actions: Vec::new() },
+            MenuAction::Submenu { title: "Views".into(), actions: Vec::new(), checked: false },
             MenuAction::Separator,
             command("workbench.extensions.action.installVSIX", "Install from VSIX..."),
         ]
@@ -637,7 +637,7 @@ fn extensions_filter_actions() -> Vec<MenuAction> {
         command("workbench.extensions.action.showRecommendedExtensions".into(), "Recommended"),
         command("workbench.extensions.action.recentlyPublishedExtensions".into(), "Recently Published"),
         MenuAction::Separator,
-        MenuAction::Submenu { title: "Category".into(), actions: categories },
+        MenuAction::Submenu { title: "Category".into(), actions: categories, checked: false },
         MenuAction::Separator,
         command("workbench.extensions.action.listBuiltInExtensions".into(), "Built-in"),
         command("workbench.extensions.action.extensionUpdates".into(), "Updates"),
@@ -646,7 +646,7 @@ fn extensions_filter_actions() -> Vec<MenuAction> {
         command("workbench.extensions.action.showDisabledExtensions".into(), "Disabled"),
         command("workbench.extensions.action.installedExtensions".into(), "Installed"),
         MenuAction::Separator,
-        MenuAction::Submenu { title: "Sort By".into(), actions: sorts },
+        MenuAction::Submenu { title: "Sort By".into(), actions: sorts, checked: false },
     ]
 }
 

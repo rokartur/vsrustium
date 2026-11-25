@@ -142,7 +142,7 @@ fn shift_f10_shows_the_editor_menu_below_the_cursor_without_moving_it(cx: &mut T
     workbench.update(cx, |workbench, _| workbench.editors.active_mut().unwrap().set_selections(vec![cursor]));
     workbench.update_in(cx, |workbench, window, cx| workbench.execute_command("editor.action.showContextMenu", vec![], window, cx));
     assert_eq!(menu_titles(&workbench, cx), ["Change All Occurrences", "---", "Cut", "Copy", "Paste", "---", "Command Palette..."]);
-    let (origin, anchor, selections) = workbench.update_in(cx, |workbench, window, _| (workbench.context_menu.as_ref().unwrap().origin, workbench.cursor_anchor(window).unwrap(), workbench.editors.active().unwrap().selections.clone()));
+    let (origin, anchor, selections) = workbench.update_in(cx, |workbench, window, _| (workbench.context_menu.as_ref().unwrap().levels[0].origin, workbench.cursor_anchor(window).unwrap(), workbench.editors.active().unwrap().selections.clone()));
     assert_eq!(selections, [cursor]);
     assert!(origin.x >= anchor.x - px(1.) && origin.y >= anchor.y - px(1.), "{origin:?} at {anchor:?}");
     std::fs::remove_dir_all(dir).unwrap();
