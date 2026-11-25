@@ -21,6 +21,11 @@ mod explorer_actions;
 mod extension_management;
 mod explorer_find;
 mod explorer_keyboard;
+mod extension_editor;
+mod extensions_list_view;
+mod workspace_recommendations;
+pub(crate) mod localization;
+pub(crate) mod extensions_view;
 mod file_participants;
 mod find_widget;
 mod folding_providers;
@@ -202,6 +207,8 @@ pub struct Workbench {
     pub command_icons: HashMap<String, crate::menus::CommandIcon>,
     url_handlers: url_handlers::UrlHandlers,
     webview_views: webview_views::WebviewViews,
+    pub extensions_viewlet: extensions_view::ExtensionsViewlet,
+    pub extension_editors: Vec<extension_editor::ExtensionEditor>,
     /// `MenuRegistry`.
     pub menus: Vec<crate::menus::MenuItem>,
     pub(crate) context_menu: Option<context_menu::ContextMenu>,
@@ -238,6 +245,7 @@ impl Render for Workbench {
         self.update_webview_panels(window, cx);
         self.update_diff_editor();
         self.update_quick_diff(cx);
+        self.update_extension_editor_webviews(window, cx);
         self.auto_save_models_changed(cx);
         self.follow_content_hover_editor();
         self.folding_model_changed(cx);
@@ -358,6 +366,8 @@ impl Workbench {
             command_icons: HashMap::new(),
             url_handlers: Default::default(),
             webview_views: Default::default(),
+            extensions_viewlet: extensions_view::ExtensionsViewlet::new(cx),
+            extension_editors: Vec::new(),
             menus: crate::menus::workbench_menus(),
             context_menu: None,
             context_menus_shown: 0,
@@ -420,6 +430,9 @@ impl Workbench {
         workbench.register_workspace_commands();
         workbench.register_url_commands();
         workbench.register_local_history_commands();
+        workbench.register_extensions_view_commands();
+        workbench.register_workspace_recommendations_commands();
+        workbench.register_localization_commands();
         // Keybindings resolve before the focused element sees the key, and with nothing focused too.
         let entity = cx.entity().downgrade();
         cx.intercept_keystrokes(move |event, window, cx| {
@@ -650,6 +663,7 @@ impl Workbench {
                 .cursor_pointer()
                 .child(self.action_hover(title, command, hover))
                 .when(view == Some(SideBarView::Scm), |icon| icon.children(self.activity_badge(self.scm_badge())))
+                .when(view == Some(SideBarView::Extensions), |icon| icon.relative().children(self.extensions_activity_badge()))
                 .when(view.is_some(), |icon| icon.on_click(cx.listener(move |workbench, event: &ClickEvent, window, cx| workbench.activity_item_clicked(active, command, event, window, cx))))
         });
         div()
@@ -691,6 +705,10 @@ impl Workbench {
         let foreground = self.foreground_or("sideBar.foreground");
         if self.side_bar_view == SideBarView::Scm {
             return self.scm_side_bar(window, cx);
+        }
+        if self.side_bar_view == SideBarView::Extensions {
+            let title = self.side_bar_title_text(self.extensions_title()).child(self.extensions_title_actions(cx));
+            return self.side_bar_frame().text_color(foreground).child(title).child(self.extensions_view(window, cx));
         }
         if self.side_bar_view == SideBarView::Search {
             let title = self.side_bar_title("Search").child(self.search_title_actions(cx));
@@ -908,6 +926,10 @@ impl Workbench {
 
     /// The composite title bar: the view's name and its actions.
     fn side_bar_title(&self, name: &'static str) -> Div {
+        self.side_bar_title_text(name.to_owned())
+    }
+
+    fn side_bar_title_text(&self, name: String) -> Div {
         div()
             .h(px(32.))
             .flex_none()
@@ -917,7 +939,7 @@ impl Workbench {
             .px(px(4.))
             .when_some(self.theme.color("sideBarTitle.border"), |title, border| title.border_b_1().border_color(border))
             // The h2 keeps its 32px line under the HC border-bottom, so it is laid out from the top, not centered.
-            .child(div().self_start().pl(px(8.)).line_height(px(32.)).text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).text_color(self.foreground_or("sideBarTitle.foreground")).child(name))
+            .child(div().self_start().pl(px(8.)).line_height(px(32.)).text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).text_color(self.foreground_or("sideBarTitle.foreground")).child(crate::nls::localize(&name).into_owned()))
     }
 
     fn editor_part(&self) -> Div {

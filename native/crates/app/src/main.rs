@@ -17,6 +17,9 @@ mod dialog;
 mod editor;
 mod editor_history;
 mod explorer;
+mod extension_enablement;
+mod extension_recommendations;
+mod extensions_model;
 mod file_actions;
 mod file_icons;
 mod filters;
@@ -42,6 +45,7 @@ mod main_thread_status_bar;
 mod markdown;
 mod markers;
 mod menus;
+mod nls;
 mod notifications;
 mod output;
 mod quick_input;
@@ -98,7 +102,7 @@ use theme::load_theme;
 use workbench::Workbench;
 
 /// The flags followed by a value; the other arguments without `--` are the folder and the file.
-pub const VALUE_FLAGS: [&str; 9] = ["--user-data-dir", "--shared-data-dir", "--extensions-dir", "--screenshot", "--screenshot-keys", "--screenshot-input", "--theme", "--open-url", "--export-default-keybindings"];
+pub const VALUE_FLAGS: [&str; 10] = ["--user-data-dir", "--shared-data-dir", "--extensions-dir", "--locale", "--screenshot", "--screenshot-keys", "--screenshot-input", "--theme", "--open-url", "--export-default-keybindings"];
 
 /// The indexes of the folder and file arguments: those that are neither a flag nor a flag's value.
 pub(crate) fn positional_indexes(args: &[String]) -> Vec<usize> {
@@ -134,6 +138,12 @@ fn main() -> anyhow::Result<()> {
     let export_default_keybindings = args.iter().any(|arg| arg == "--export-default-keybindings").then(|| {
         flag_value("--export-default-keybindings").filter(|folder| !folder.starts_with("--")).map_or_else(|| app_root.join("doc"), |folder| app_root.join(folder))
     });
+    // Before any scan: the display language decides the manifests' messages.
+    let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
+    let locale = nls::user_locale(flag_value("--locale").as_deref(), &output::log_levels::argv_file(&home));
+    let resolved = exthost::language_packs::resolve_nls(&user_data, &locale);
+    nls::init(&resolved);
+    exthost::language_packs::set_nls(&user_data, resolved);
     let extensions_dir = std::env::var_os("VSCODE_GPUI_EXTENSIONS").map(PathBuf::from).unwrap_or_else(|| app_root.join("extensions"));
     let builtins = scan_builtin_extensions(&extensions_dir)?;
     // Artur: user extensions live in ~/.vsrustium/extensions, the default user data dir's extensions folder.
@@ -144,17 +154,26 @@ fn main() -> anyhow::Result<()> {
     if let Some(development) = &development {
         development.add_extension(&mut extensions)?;
     }
-    let load_settings = |extensions: &[ScannedExtension]| {
-        let described: Vec<(&str, &serde_json::Value)> = extensions.iter().map(|extension| (extension.id.as_str(), &extension.description)).collect();
-        Settings::load(Registry::with_extensions(&described), user_data.join("User"), workspace.clone())
-    };
-    let mut settings = load_settings(&extensions);
     // storageMainService.ts: no storage during extension tests, so each test run starts empty.
     let extension_tests = development.as_ref().is_some_and(|development| development.tests_path.is_some());
     let storage = match extension_tests {
         true => MainThreadStorage::in_memory(),
         false => MainThreadStorage::open(&SessionPaths { app_root: &app_root, user_data: &user_data, workspace: workspace.as_ref() })?,
     };
+    // The extensions the user disabled stay out of the host and the registries (extensionEnablementService.ts).
+    let developed: Vec<String> = extensions.iter().filter(|extension| extension.description["isUnderDevelopment"] == true).map(|extension| extension.id.clone()).collect();
+    let installed = extensions.clone();
+    let disabled = {
+        let mut profile = storage.profile.lock().unwrap();
+        let mut workspace_storage = storage.workspace.lock().unwrap();
+        workbench::extensions_view::disabled_at_startup(&installed, &mut profile, workspace.is_some().then_some(&mut *workspace_storage), &developed)
+    };
+    extensions.retain(|extension| !disabled.contains(&extension.id));
+    let load_settings = |extensions: &[ScannedExtension]| {
+        let described: Vec<(&str, &serde_json::Value)> = extensions.iter().map(|extension| (extension.id.as_str(), &extension.description)).collect();
+        Settings::load(Registry::with_extensions(&described), user_data.join("User"), workspace.clone())
+    };
+    let mut settings = load_settings(&extensions);
     let shared_storage = match extension_tests {
         true => Arc::new(Mutex::new(storage::Storage::in_memory())),
         false => Arc::new(Mutex::new(open_shared_storage(flag_value("--shared-data-dir").map(PathBuf::from))?)),
@@ -177,7 +196,7 @@ fn main() -> anyhow::Result<()> {
         }
         settings.update_workspace_trust(false);
     }
-    let window_extensions = WindowExtensions { builtins, user: user_extensions, running: extensions.clone() };
+    let window_extensions = WindowExtensions { builtins: builtins.clone(), user: UserExtensions { folder: user_extensions.folder.clone(), product_version: VERSION.into() }, running: extensions.clone() };
     let theme = match flag_value("--theme") {
         Some(theme_id) => load_theme(&extensions, &theme_id)?,
         None => settings_theme(&extensions, &settings)?,
@@ -240,6 +259,7 @@ fn main() -> anyhow::Result<()> {
                 workbench.shared_storage = shared_storage;
                 workbench.watch_recently_opened(window, cx);
                 workbench.watch_window_focus(window, cx);
+                workbench.set_installed_extensions(builtins.clone(), UserExtensions { folder: user_extensions.folder.clone(), product_version: VERSION.into() }, developed.clone(), cx);
                 workbench.watch_editor_focus(window, cx);
                 workbench.show_trust_modal_on_start(window, cx);
                 if let Some(file) = file {

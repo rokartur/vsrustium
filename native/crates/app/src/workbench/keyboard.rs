@@ -300,7 +300,8 @@ impl Workbench {
         for key in ["openFolderWorkspaceSupport", "enterMultiRootWorkspaceSupport", "emptyWorkspaceSupport"] {
             context.insert(key.into(), json!(true));
         }
-        // viewDescriptorService.ts: the Explorer and Search containers always hold their view.
+        // viewDescriptorService.ts: the Explorer, Search and Extensions containers always hold their views.
+        context.insert("viewContainer.workbench.view.extensions.enabled".into(), json!(true));
         for (container, view) in [("workbench.view.explorer", "workbench.explorer.fileView"), ("workbench.view.search", "workbench.view.search")] {
             context.insert(format!("viewContainer.{container}.enabled"), json!(true));
             context.insert(format!("{view}.active"), json!(true));
@@ -352,6 +353,7 @@ impl Workbench {
             SideBarView::Explorer => self.explorer_context(window, &mut context),
             SideBarView::Search => self.search_context(window, &mut context),
             SideBarView::Scm => {}
+            SideBarView::Extensions => self.extensions_context(window, &mut context),
         }
         self.scm_key_context(window, &mut context);
         self.keybindings_editor_context(window, &mut context);

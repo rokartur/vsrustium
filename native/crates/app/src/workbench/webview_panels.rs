@@ -221,7 +221,7 @@ impl Workbench {
     }
 
     /// The channel the webviews' host pages post on, read on the window's executor.
-    fn webview_events(&mut self, window: &mut Window, cx: &mut Context<Self>) -> UnboundedSender<WebviewEvent> {
+    pub(super) fn webview_events(&mut self, window: &mut Window, cx: &mut Context<Self>) -> UnboundedSender<WebviewEvent> {
         if let Some(events) = &self.webview_panels.events {
             return events.clone();
         }
@@ -240,6 +240,9 @@ impl Workbench {
 
     /// webviewElement.ts `on(...)` handlers, with mainThreadWebviews.ts forwarding to the extension host.
     fn handle_webview_event(&mut self, event: WebviewEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if event.id.starts_with("extension-editor-") {
+            return self.handle_extension_editor_event(&event.id, &event.channel, &event.data, window, cx);
+        }
         let Some(panel) = self.webview_panel_mut(&event.id) else { return };
         let data = event.data;
         match event.channel.as_str() {

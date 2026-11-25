@@ -63,7 +63,7 @@ pub fn init_data(paths: &SessionPaths, extensions: &[ScannedExtension], version:
             "appName": "VSRustium",
             "appHost": "desktop",
             "appRoot": file_uri(paths.app_root),
-            "appLanguage": "en",
+            "appLanguage": crate::language_packs::nls().language,
             "isExtensionTelemetryLoggingOnly": false,
             "appUriScheme": URL_PROTOCOL,
             "globalStorageHome": file_uri(&paths.user_data.join("User/globalStorage")),
@@ -668,6 +668,10 @@ impl Session {
             ("MainThreadStorage", _) if self.storage.is_some() => return self.storage.as_mut().expect("checked by the match guard").serve(method, args),
             ("MainThreadWindow", "$getInitialState") => return Reply::Json(json!({ "isFocused": true, "isActive": true })),
             ("MainThreadUrls", "$createAppUri") => return Reply::Json(app_uri(&arg(0))),
+            ("MainThreadLocalization", _) => {
+                let values: Vec<Value> = (0..args.len()).map(arg).collect();
+                return crate::language_packs::serve_localization(method, &values).map_or(Reply::Empty, Reply::Json);
+            }
             // No sign-in and no AI in the port: these APIs stay callable and report nothing.
             ("MainThreadLanguageModelTools", "$getTools")
             | ("MainThreadAuthentication", "$getAccounts")

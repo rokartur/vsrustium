@@ -258,7 +258,7 @@ fn truncate_middle(value: &str, max_length: usize) -> String {
 
 /// The label Electron's Cocoa menu shows: mnemonics dropped and "..." drawn as "…".
 fn native_label(title: &str) -> String {
-    mnemonic_menu_label(title).replace("...", "…")
+    mnemonic_menu_label(&crate::nls::localize(title)).replace("...", "…")
 }
 
 fn action_item<A: Action + Clone>(label: String, action: A, os_action: Option<OsAction>, key_equivalent: Option<String>, key_equivalents: &mut Vec<KeyBinding>) -> MenuItem {

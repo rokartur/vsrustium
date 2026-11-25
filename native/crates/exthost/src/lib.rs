@@ -8,6 +8,7 @@ pub mod extension_management;
 pub mod extension_validator;
 pub mod frame;
 pub mod gallery;
+pub mod language_packs;
 pub mod main_thread_bulk_edits;
 pub mod main_thread_configuration;
 pub mod main_thread_files;

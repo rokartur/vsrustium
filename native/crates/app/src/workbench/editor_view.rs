@@ -76,6 +76,7 @@ impl Workbench {
             .map(|part| match editor.document.scheme.as_str() {
                 // A webview editor has no breadcrumbs: its resource has no file system provider.
                 WEBVIEW_PANEL_SCHEME => part,
+                super::extension_editor::EXTENSION_EDITOR_SCHEME => part.child(self.extension_editor_body(&editor.document.path, cx)),
                 // searchEditor.ts draws its query widget where a text editor has its breadcrumbs.
                 SEARCH_EDITOR_SCHEME => part.child(self.search_editor_query(window, cx)),
                 crate::output::OUTPUT_SCHEME => part.child(self.output_title_actions(window, cx)),
@@ -86,6 +87,7 @@ impl Workbench {
             })
             .map(|part| match self.editors.active_diff() {
                 Some(diff) => part.child(self.diff_editor_body(diff, editor, window, cx)),
+                None if editor.document.scheme == super::extension_editor::EXTENSION_EDITOR_SCHEME => part,
                 None if self.shows_webview(editor) => part.child(self.webview_editor_body(editor)),
                 None => part.when(editor.document.scheme != TERMINAL_SCHEME, |part| part.children(self.unicode_banner(editor, cx)).child(self.text_area(editor, window, cx))),
             })
@@ -173,7 +175,7 @@ impl Workbench {
         // `getTitle(Verbosity.LONG)`: a search editor's and a webview's is its name.
         let title = match (self.editors.diffs.get(&editor.model_id), editor.document.scheme.as_str()) {
             (Some(diff), _) => diff.title(|side| crate::quick_input::path_label(crate::editor::split_query(&side.scheme, &side.path).0, None)),
-            (None, SEARCH_EDITOR_SCHEME | WEBVIEW_PANEL_SCHEME | TERMINAL_SCHEME) => self.editor_name(editor),
+            (None, SEARCH_EDITOR_SCHEME | WEBVIEW_PANEL_SCHEME | TERMINAL_SCHEME | super::extension_editor::EXTENSION_EDITOR_SCHEME) => self.editor_name(editor),
             // labels.ts: an untitled label's title is its name and its path.
             (None, "untitled") if !editor.associated_file => match self.untitled_description(editor) {
                 Some(path) => format!("{} \u{2022} {path}", self.editor_name(editor)),
@@ -270,6 +272,10 @@ impl Workbench {
         // `SearchEditorInput.getIcon`.
         if document.scheme == SEARCH_EDITOR_SCHEME {
             return Some(self.icon("search", 16., 16., foreground).h(px(line_height)));
+        }
+        // `ExtensionsInput.getIcon`.
+        if document.scheme == super::extension_editor::EXTENSION_EDITOR_SCHEME {
+            return Some(self.icon("extensions", 16., 16., foreground).h(px(line_height)));
         }
         if let Some(icon) = self.webview_icon(&document.path) {
             return Some(div().flex().items_center().h(px(line_height)).child(gpui::img(icon.to_path_buf()).size(px(16.))));
@@ -1494,7 +1500,7 @@ impl Workbench {
         }
         let prominent_items = items.len();
         // A webview editor or terminal shows no editor status entries.
-        if let Some(editor) = self.editors.active().filter(|editor| !self.shows_webview(editor) && editor.document.scheme != TERMINAL_SCHEME) {
+        if let Some(editor) = self.editors.active().filter(|editor| !self.shows_webview(editor) && !matches!(editor.document.scheme.as_str(), TERMINAL_SCHEME | super::extension_editor::EXTENSION_EDITOR_SCHEME)) {
             items.extend(Self::editor_status_entries(editor, &self.languages));
         }
         items.extend(self.media_preview_status_entries());

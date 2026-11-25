@@ -1,0 +1,12 @@
+[
+  {"wait": 2000},
+  {"hotkey": ["cmd", "shift", "x"]},
+  {"wait": 5000},
+  {"shot": "view"},
+  {"type": "yaml"},
+  {"wait": 5000},
+  {"shot": "search"},
+  {"click": [160, 170]},
+  {"wait": 6000},
+  {"shot": "details"}
+]
