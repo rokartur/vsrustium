@@ -249,7 +249,9 @@ impl Workbench {
     /// The editor part's context keys (editorPart.ts `handleContextKeys`, editorGroupView.ts).
     pub(super) fn editor_groups_context(&self, context: &mut HashMap<String, Value>) {
         let groups = self.groups_in_grid_order();
-        let index = groups.iter().position(|group| *group == self.editor_group_id()).expect("the active group is in the grid");
+        // The modal group is in no grid: its keys follow the part's group active before it.
+        let active = self.editors.group_ids_mru().into_iter().find(|group| groups.contains(group)).expect("the part has a group");
+        let index = groups.iter().position(|group| *group == active).expect("found in the grid above");
         let maximized = self.editor_groups.grid.as_ref().is_some_and(EditorGrid::is_maximized);
         context.insert("multipleEditorGroups".into(), json!(groups.len() > 1));
         context.insert("editorPartMultipleEditorGroups".into(), json!(groups.len() > 1));
@@ -265,7 +267,7 @@ impl Workbench {
     pub(super) fn groups_in_grid_order(&self) -> Vec<u32> {
         match &self.editor_groups.grid {
             Some(grid) => grid.groups(),
-            None => vec![self.editor_group_id()],
+            None => self.editors.group_ids_mru().into_iter().filter(|group| *group != MODAL_GROUP).take(1).collect(),
         }
     }
 
@@ -566,7 +568,8 @@ impl Workbench {
             .child(measure);
         let sash_size = self.sash_size();
         let Some(grid) = self.editor_groups.grid.as_mut() else {
-            let group = self.editor_group_id();
+            // The modal part's group draws in the modal; the part shows the group active before it.
+            let group = self.editors.group_ids_mru().into_iter().find(|group| *group != MODAL_GROUP).expect("the part has a group");
             if self.editors.group_tabs(group).0.is_empty() {
                 return card.flex().flex_col().items_center().justify_center().child(self.watermark(256.));
             }

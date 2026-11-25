@@ -295,7 +295,7 @@ impl Workbench {
 
     /// The file's path below its workspace folder, one item per segment (breadcrumbs.filePath relative), after the
     /// folder's name in a workspace (`BreadcrumbsModel._initFilePathInfo`).
-    fn breadcrumbs(&self, editor: &OpenEditor) -> Div {
+    pub(super) fn breadcrumbs(&self, editor: &OpenEditor) -> Div {
         let path = &editor.document().path;
         let workspace = self.workspace();
         let folder = workspace.and_then(|workspace| workspace.folder_of(path));
