@@ -829,6 +829,19 @@ impl OpenEditor {
         self.execute_tracked(edits, end, reason)
     }
 
+    /// linkedEditing.ts `_syncRanges`: `popUndoStop`, the edits, and the previous edit type kept, so the edits join
+    /// the typing's undo group and the typing after them still does.
+    pub fn execute_edits_in_last_undo_group(&mut self, edits: Vec<(Position, Position, String, bool)>, reason: EditReason) -> Option<ContentChanged> {
+        let last_kind = {
+            let mut model = self.text_model_mut();
+            model.history.open = !model.history.undo.is_empty();
+            model.history.last_kind
+        };
+        let change = self.execute_edits(edits, None, reason);
+        self.text_model_mut().history.last_kind = last_kind;
+        change
+    }
+
     /// `executeCommand` of a command whose cursor state is `trackSelection` of the primary selection
     /// (replaceAllCommand.ts): the primary cursor alone stays.
     pub fn execute_edits_tracking_primary(&mut self, edits: Vec<(Position, Position, String)>, reason: EditReason) -> Option<ContentChanged> {

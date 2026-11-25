@@ -91,6 +91,8 @@ impl Workbench {
         match &self.text_drag {
             Some(TextDrag { dragged: Some(_), copy: true, .. }) => CursorStyle::DragCopy,
             Some(TextDrag { dragged: Some(_), .. }) => CursorStyle::Arrow,
+            // links.css `.goto-link-active` (`cursor: pointer`).
+            _ if self.link_active() => CursorStyle::PointingHand,
             _ => CursorStyle::IBeam,
         }
     }

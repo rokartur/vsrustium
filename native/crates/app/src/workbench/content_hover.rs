@@ -455,6 +455,7 @@ impl Workbench {
             Some(editor) => {
                 let mut parts = marker_parts(editor, anchor);
                 parts.extend(self.unicode_parts(editor, anchor));
+                parts.extend(self.link_hover_parts(editor, anchor));
                 parts.extend(self.definition_link_hover_parts(editor, anchor));
                 parts
             }
@@ -575,7 +576,7 @@ fn marker_parts(editor: &OpenEditor, anchor: Anchor) -> Vec<Part> {
 
 /// contentHoverWidgetWrapper.ts `_findHoverAnchorCandidates` for a mouse target: the char under the mouse, or the
 /// end of the line when the mouse is less than half a char past it (mouseTarget.ts `createMouseTargetFromHitTestPosition`).
-fn anchor_at(editor: &OpenEditor, line: usize, visible: f32) -> Option<Anchor> {
+pub(super) fn anchor_at(editor: &OpenEditor, line: usize, visible: f32) -> Option<Anchor> {
     let document = editor.document();
     let text = document.lines.get(line)?;
     let tab_size = editor.document().indentation.tab_size;

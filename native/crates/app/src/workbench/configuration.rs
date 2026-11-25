@@ -51,12 +51,19 @@ impl Workbench {
                 Err(error) => eprintln!("loading the file icon theme: {error:#}"),
             }
         }
-        if affects(change, "workbench.colorCustomizations") || affects(change, "editor.tokenColorCustomizations") {
+        if ["workbench.colorCustomizations", "editor.tokenColorCustomizations", "editor.semanticTokenColorCustomizations"].iter().any(|key| affects(change, key)) {
             self.customize_theme();
+            self.semantic_tokens_settings_changed(cx);
         }
         self.update_model_options(before);
         if ["editor.folding", "editor.foldingStrategy", "editor.foldingMaximumRegions", "editor.defaultFoldingRangeProvider"].iter().any(|key| affects(change, key)) {
             self.trigger_folding_model_changed(cx);
+        }
+        if affects(change, "editor.semanticHighlighting.enabled") {
+            self.semantic_tokens_settings_changed(cx);
+        }
+        if affects(change, "editor.linkedEditing") || affects(change, "editor.renameOnType") {
+            self.linked_editing_reinitialize(false, cx);
         }
         if affects(change, "files.associations") {
             self.files_associations_changed(cx);

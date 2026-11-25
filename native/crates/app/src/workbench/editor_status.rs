@@ -425,6 +425,8 @@ impl Workbench {
         let active = self.editors.active().is_some_and(|editor| editor.document().scheme == scheme && editor.document().path == path);
         if active {
             self.send_indentation_if_changed(Some(before));
+            self.refresh_language_status(cx);
+            self.linked_editing_reinitialize(true, cx);
         }
         cx.notify();
     }

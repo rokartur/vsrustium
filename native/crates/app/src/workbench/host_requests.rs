@@ -289,7 +289,7 @@ impl Workbench {
         match self.editors.model(scheme, path) {
             None => return Ok(json!(false)),
             Some(model) if !model.is_dirty() => return Ok(json!(true)),
-            Some(_) => self.run_save_participants(scheme, path, SaveReason::Explicit),
+            Some(_) => self.run_save_participants(scheme, path, SaveReason::Explicit, super::text_input::SavePhase::All),
         }
         Ok(json!(self.editors.model(scheme, path).expect("participants keep the model").saved_bytes()))
     }

@@ -290,7 +290,13 @@ const WORKBENCH_MENUS: &[Row] = &[
     (MenuId::MenubarGoMenu, None, "editor.action.goToTypeDefinition", "Go to &&Type Definition", "4_symbol_nav", 3., None, None),
     (MenuId::MenubarGoMenu, None, "editor.action.goToImplementation", "Go to &&Implementations", "4_symbol_nav", 4., None, None),
     (MenuId::MenubarGoMenu, None, "editor.action.goToReferences", "Go to &&References", "4_symbol_nav", 5., None, None),
-    // multicursor.ts, clipboard.ts and quickAccess.contribution.ts: the EditorContext items of the commands the port has.
+    // rename.ts, multicursor.ts, clipboard.ts and quickAccess.contribution.ts: the EditorContext items of the commands the port has.
+    (MenuId::EditorContext, None, "editor.action.rename", "Rename Symbol", "1_modification", 1.1, Some("!editorReadonly && editorHasRenameProvider"), Some("!editorReadonly && editorHasRenameProvider")),
+    // formatActions.ts, formatActionsMultiple.ts
+    (MenuId::EditorContext, None, "editor.action.formatDocument", "Format Document", "1_modification", 1.3, Some("!inCompositeEditor && !editorReadonly && editorHasDocumentFormattingProvider"), Some("!inCompositeEditor && !editorReadonly && editorHasDocumentFormattingProvider")),
+    (MenuId::EditorContext, None, "editor.action.formatDocument.multiple", "Format Document With...", "1_modification", 1.3, Some("!editorReadonly && editorHasMultipleDocumentFormattingProvider"), Some("!editorReadonly && editorHasMultipleDocumentFormattingProvider")),
+    (MenuId::EditorContext, None, "editor.action.formatSelection", "Format Selection", "1_modification", 1.31, Some("!editorReadonly && editorHasDocumentSelectionFormattingProvider && editorHasSelection"), Some("!editorReadonly && editorHasDocumentSelectionFormattingProvider")),
+    (MenuId::EditorContext, None, "editor.action.formatSelection.multiple", "Format Selection With...", "1_modification", 1.31, Some("!editorReadonly && editorHasMultipleDocumentSelectionFormattingProvider && editorHasSelection"), Some("!editorReadonly && editorHasMultipleDocumentSelectionFormattingProvider")),
     (MenuId::EditorContext, None, "editor.action.changeAll", "Change All Occurrences", "1_modification", 1.2, Some("!editorReadonly && editorTextFocus"), None),
     (MenuId::EditorContext, None, "editor.action.clipboardCutAction", "Cut", "9_cutcopypaste", 1., Some("!editorReadonly"), None),
     (MenuId::EditorContext, None, "editor.action.clipboardCopyAction", "Copy", "9_cutcopypaste", 2., None, None),

@@ -443,6 +443,7 @@ impl Workbench {
             .on_modifiers_changed(cx.listener(|workbench, event: &gpui::ModifiersChangedEvent, _, cx| {
                 workbench.text_drag_modifiers_changed(event.modifiers, cx);
                 workbench.content_hover_modifiers_changed(event.modifiers, cx);
+                workbench.links_modifiers_changed(event.modifiers, cx);
                 workbench.definition_link_modifiers_changed(event.modifiers, cx);
             }))
             .on_hover(cx.listener(|workbench, hovered: &bool, window, cx| {
@@ -458,7 +459,9 @@ impl Workbench {
             }))
             // The line's row sets `row_target` first: moves bubble from the row up to the text area.
             .on_mouse_move(cx.listener(|workbench, event: &MouseMoveEvent, _, cx| {
-                let target = match workbench.content_hover.row_target.take() {
+                let row_target = workbench.content_hover.row_target.take();
+                workbench.links_mouse_moved(row_target, event.modifiers, cx);
+                let target = match row_target {
                     Some((line, visible)) => super::content_hover::MouseTarget::Text { line, visible },
                     None => super::content_hover::MouseTarget::Other,
                 };
@@ -571,6 +574,7 @@ impl Workbench {
                     .children(self.parameter_hints_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
                     .children(self.lightbulb_widget(editor, metrics.content_left(), metrics.char_width, cx))
                     .children(self.code_lens_widgets(editor, metrics.content_left(), metrics.char_width, cx))
+                    .children(self.rename_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
                     .children(self.suggest_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
                     .children(self.find_options_widget(minimap_width, cx))
                     .children(self.floating_menu(editor, viewport.height, minimap_width, window, cx))
@@ -647,6 +651,7 @@ impl Workbench {
         self.suggest_editor_blurred(cx);
         self.cancel_parameter_hints(cx);
         self.code_actions_editor_blurred(cx);
+        self.rename_editor_blurred();
         cx.notify();
     }
 
@@ -1145,6 +1150,9 @@ impl Workbench {
                     let colored: Vec<_> = matched.map(|(_, bytes)| (expanded(bytes.start)..expanded(bytes.end), gpui::Hsla::from(color))).collect();
                     highlights = crate::syntax::overlay_colors(highlights, &colored);
                 }
+                let highlights = super::semantic_tokens::overlay_semantic_styles(highlights, &self.semantic_token_styles(editor, index, tab_size));
+                let highlights = gpui::combine_highlights(highlights, self.link_styles(editor, index, tab_size));
+                let highlights = gpui::combine_highlights(highlights, self.linked_editing_styles(editor, index, tab_size));
                 let runs = gpui::combine_highlights(gpui::combine_highlights(highlights, find_colors), self.marker_text_styles(editor, index, tab_size));
                 let runs = gpui::combine_highlights(runs, self.definition_link_styles(editor, index, tab_size));
                 let mut show_more = None;
@@ -1255,13 +1263,19 @@ impl Workbench {
                         if workbench.text_drag.is_some() {
                             return workbench.drop_text(index, visible, event.modifiers, cx);
                         }
+                        if workbench.links_mouse_up(index, visible, event.modifiers, false, window, cx) {
+                            return;
+                        }
                         if workbench.at_line_end(index, visible) {
                             workbench.release_fold_click(index, false, event.modifiers, false, cx);
                         }
                         workbench.search_editor_mouse_up(index, visible, event.click_count, window, cx);
                         workbench.definition_link_mouse_up(index, visible, event.modifiers, event.click_count, window, cx);
                     }))
-                    .on_mouse_up(MouseButton::Middle, cx.listener(move |workbench, event: &MouseUpEvent, _, cx| {
+                    .on_mouse_up(MouseButton::Middle, cx.listener(move |workbench, event: &MouseUpEvent, window, cx| {
+                        if workbench.links_mouse_up(index, visible_at(workbench, event.position.x), event.modifiers, true, window, cx) {
+                            return;
+                        }
                         if workbench.at_line_end(index, visible_at(workbench, event.position.x)) {
                             workbench.release_fold_click(index, false, event.modifiers, true, cx);
                         }
@@ -1671,8 +1685,9 @@ impl Workbench {
         let text_width = |label: &str| window.text_system().shape_line(label.to_owned().into(), px(12.), &[style.to_run(label.len())], None).width;
         // A search editor's input supports neither encodings nor language changes (toEditorWithEncodingSupport, toEditorWithLanguageSupport).
         let search_editor = self.editors.active().is_some_and(|editor| editor.document().scheme == SEARCH_EDITOR_SCHEME);
-        let items = items.into_iter().filter(|(_, _, command)| !search_editor || !matches!(*command, "workbench.action.editor.changeEncoding" | "workbench.action.editor.changeLanguageMode"));
-        let items = items.enumerate().map(|(index, (label, tooltip, command))| {
+        let items: Vec<_> = items.into_iter().filter(|(_, _, command)| !search_editor || !matches!(*command, "workbench.action.editor.changeEncoding" | "workbench.action.editor.changeLanguageMode")).collect();
+        let language_index = items.iter().position(|(_, _, command)| *command == "workbench.action.editor.changeLanguageMode");
+        let items = items.into_iter().enumerate().map(|(index, (label, tooltip, command))| {
             // The media preview's dimensions and file size entries have neither tooltip nor command.
             let hover = (!tooltip.is_empty()).then(|| self.hover_target(tooltip, super::hover::HoverContent::Text(tooltip.into()), super::hover::HoverOptions::status_bar()));
             let item = div()
@@ -1702,6 +1717,15 @@ impl Workbench {
             // cornerRadius.small (4px).
             div().h_full().flex_none().rounded(px(4.)).text_color(prominent.1).when_some(prominent.0, |container, background| container.bg(background)).child(item).into_any_element()
         });
+        let mut items: Vec<gpui::AnyElement> = items.collect();
+        // languageStatus.ts: the combined entry sits left of the language entry, the pinned ones right of it.
+        if let Some(language_index) = language_index {
+            let (combined, pinned) = self.language_status_items(foreground, cx);
+            items.splice(language_index + 1..language_index + 1, pinned);
+            if let Some(combined) = combined {
+                items.insert(language_index, combined);
+            }
+        }
         div().h_full().flex().text_color(foreground).children(items)
     }
 

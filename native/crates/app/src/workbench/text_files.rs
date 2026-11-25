@@ -21,6 +21,7 @@ use super::actions::when_saved;
 use super::auto_save::SaveReason;
 use super::host_requests::uri_parts;
 use super::search_editor_view::SEARCH_EDITOR_SCHEME;
+use super::text_input::SavePhase;
 use crate::commands::Outcome;
 use crate::editor::model_service::compute_edits;
 use crate::editor::view_state::{self, ViewStates};
@@ -193,7 +194,10 @@ impl Workbench {
             return receiver;
         }
         if !options.skip_participants {
-            self.run_save_participants(&scheme, &path, reason);
+            if let Some(format) = self.format_on_save(&scheme, &path, reason, cx) {
+                return self.save_after_format(scheme, path, reason, options, format, cx);
+            }
+            self.run_save_participants(&scheme, &path, reason, SavePhase::All);
         }
         let editor = self.editors.model(&scheme, &path).expect("participants keep the model");
         let version = editor.alternative_version_id();

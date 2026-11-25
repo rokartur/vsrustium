@@ -26,6 +26,14 @@ impl Workbench {
             ("MainThreadWebviewViews", method) => self.handle_webview_views_request(method, &request.args, window, cx),
             ("MainThreadCustomEditors", method) => self.handle_custom_editors_request(method, &request.args, window, cx),
             ("MainThreadStatusBar", "$setEntry") => self.set_extension_status_entry(&request.args, cx),
+            ("MainThreadLanguages", "$setLanguageStatus") => {
+                self.set_language_status(request.args[0].as_u64().unwrap_or_default(), request.args[1].clone(), cx);
+                Outcome::done()
+            }
+            ("MainThreadLanguages", "$removeLanguageStatus") => {
+                self.remove_language_status(request.args[0].as_u64().unwrap_or_default(), cx);
+                Outcome::done()
+            }
             ("MainThreadStatusBar", "$disposeEntry") => self.dispose_extension_status_entry(&request.args, cx),
             ("MainThreadOutputService" | "MainThreadLogger", _) => self.handle_output_request(request, window, cx),
             ("MainThreadConsole" | "MainThreadErrors" | "MainThreadExtensionService", _) => self.handle_observed_request(&request),
@@ -119,6 +127,10 @@ impl Workbench {
             }
             ("MainThreadLanguageFeatures", "$emitFoldingRangeEvent") => {
                 self.folding_range_event(&arg(0), cx);
+                Outcome::done()
+            }
+            ("MainThreadLanguageFeatures", "$emitDocumentSemanticTokensEvent" | "$emitDocumentRangeSemanticTokensEvent") => {
+                self.semantic_tokens_event(arg(0).as_u64().unwrap_or_default(), cx);
                 Outcome::done()
             }
             ("MainThreadLanguageFeatures", "$emitCodeLensEvent") => {
