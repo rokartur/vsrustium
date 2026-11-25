@@ -60,6 +60,7 @@ impl MainThreadWorkspace {
     /// The methods this module answers; other MainThreadWorkspace calls keep their default reply.
     pub fn serves(method: &str) -> bool {
         matches!(method, "$startFileSearch" | "$startTextSearch" | "$resolveDecoding" | "$validateDetectedEncoding" | "$resolveEncoding")
+            || is_trust_request(method)
     }
 
     /// Starts request `req`; its reply comes later from `take_outgoing`.
@@ -68,6 +69,10 @@ impl MainThreadWorkspace {
             Some(Arg::Json(value)) => value.clone(),
             _ => Value::Null,
         };
+        if is_trust_request(method) {
+            let _ = self.sender.send((req, Outgoing::Reply(Message::ReplyOk { req, value: Reply::Json(json!(true)) })));
+            return;
+        }
         if !method.starts_with("$start") {
             let value = self.encoding(method, &json(0), &json(1), &json(2));
             let _ = self.sender.send((req, Outgoing::Reply(Message::ReplyOk { req, value: Reply::Json(value) })));
@@ -162,4 +167,10 @@ fn reply(req: u32, cancellation: &Cancellation, result: Result<Value, String>) -
         Ok(value) => Message::ReplyOk { req, value: Reply::Json(value) },
         Err(message) => Message::ReplyErr { req, error: Some(json!({ "$isError": true, "name": "Error", "message": message, "stack": format!("Error: {message}") })) },
     }
+}
+
+/// The port has no workspace trust: workspaceTrust.ts with `security.workspace.trust.enabled` off answers every
+/// trust request with true (git's openRepository registers no repository without it).
+fn is_trust_request(method: &str) -> bool {
+    matches!(method, "$requestResourceTrust" | "$requestWorkspaceTrust" | "$isResourceTrusted")
 }
