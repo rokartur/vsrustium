@@ -935,7 +935,7 @@ fn row_height(row: &Row) -> f32 {
 }
 
 /// `$(name)` or `$(name~spin)` at the start of `chars`: the codicon name and the chars it spans.
-fn icon_at(chars: &[char]) -> Option<(String, usize)> {
+pub(super) fn icon_at(chars: &[char]) -> Option<(String, usize)> {
     if chars.len() < 4 || chars[0] != '$' || chars[1] != '(' {
         return None;
     }

@@ -427,6 +427,8 @@ impl Workbench {
             .children(self.editor_message_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
             .children(self.content_hover_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
             .children(self.parameter_hints_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
+            .children(self.lightbulb_widget(editor, metrics.content_left(), metrics.char_width, cx))
+            .children(self.code_lens_widgets(editor, metrics.content_left(), metrics.char_width, cx))
             .children(self.suggest_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
             .children(self.keybindings_file_widgets(editor, self.editors.viewport.width + metrics.content_left() + minimap_width, viewport.height, minimap_width, window, cx))
     }
@@ -497,6 +499,7 @@ impl Workbench {
         self.editor_blurred_auto_save(cx);
         self.suggest_editor_blurred(cx);
         self.cancel_parameter_hints(cx);
+        self.code_actions_editor_blurred(cx);
         cx.notify();
     }
 
@@ -568,6 +571,7 @@ impl Workbench {
         self.host.send_visible_ranges(&self.editors);
         self.reveal_scrollbars(cx);
         self.minimap_scrolled(cx);
+        self.code_lens_scrolled(cx);
         cx.notify();
     }
 
@@ -898,6 +902,7 @@ impl Workbench {
                     content = content.child(highlight);
                 }
                 content = content.children(self.content_hover_highlight(editor, index, char_width));
+                content = content.children(self.code_action_highlights(editor, index, char_width));
                 content = content.children(self.snippet_placeholder_highlights(editor, index, char_width));
                 // bracketMatching.css .bracket-match: background and a 1px border inside the bracket's box.
                 for (_, bytes) in bracket_matches.iter().flat_map(|(pair, _)| pair).filter(|(line, _)| *line == index) {
@@ -1064,7 +1069,7 @@ impl Workbench {
                     .w_full()
                     .h(px(metrics.line_height))
                     .flex()
-                    .child(div().w(px(metrics.glyph_margin_width())).flex_none())
+                    .child(div().w(px(metrics.glyph_margin_width())).flex_none().children(self.lightbulb_glyph(editor, index, metrics.line_height, cx)))
                     .child(number)
                     .child(self.fold_control(index, collapsed, metrics, fold_control_color, fold_controls, cx))
                     .child(content)
@@ -1315,7 +1320,7 @@ impl Workbench {
         let [(marker_info_lines, marker_info), (marker_warning_lines, marker_warning), (marker_error_lines, marker_error)] = self.marker_ruler_lines(editor);
         let border = self.theme.color("editorOverviewRuler.border");
         let Viewport { top_whitespace, line_height, .. } = self.editors.viewport;
-        let zones: Vec<(usize, f32)> = editor.view_zones.iter().map(|zone| (zone.anchor.line + 1, zone.height)).collect();
+        let zones: Vec<(usize, f32)> = editor.view_zones.iter().map(|zone| (zone.anchor.line + usize::from(!zone.before), zone.height)).collect();
         let line_top = move |line: usize| top_whitespace + line as f32 * line_height + zones.iter().filter(|zone| zone.0 <= line).map(|zone| zone.1).sum::<f32>();
         canvas(
             |_, _, _| {},

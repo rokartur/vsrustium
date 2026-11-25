@@ -54,6 +54,7 @@ pub fn svg_name(codicon: &'static str) -> &'static str {
         "symbol-type-parameter" => "symbol-parameter",
         "symbol-null" => "symbol-boolean",
         "symbol-number" => "symbol-numeric",
+        "wrench" | "wrench-subaction" => "symbol-property",
         name => name,
     }
 }

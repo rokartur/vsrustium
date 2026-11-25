@@ -506,6 +506,7 @@ impl Workbench {
             self.content_hover.widget_bounds.set(None);
         }
         self.content_hover.shown = result;
+        self.code_actions_hover_changed(cx);
         cx.notify();
     }
 

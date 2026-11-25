@@ -28,6 +28,8 @@ const NO_EDITOR: &str = "No text editor active at this time";
 #[derive(Clone, Debug, PartialEq)]
 pub enum StatusPick {
     Command(&'static str),
+    /// A `Command` an extension gave (codelens.showLensesInCurrentLine): its id and arguments.
+    ExtensionCommand(String, Vec<Value>),
     TabSize { size: usize, insert_spaces: bool, display_only: bool },
     Eol(u64),
     AutoDetectLanguage,
@@ -345,6 +347,7 @@ impl Workbench {
                 let outcome = self.execute_command(command, Vec::new(), window, cx);
                 show_failure(command.into(), outcome, window, cx);
             }
+            StatusPick::ExtensionCommand(id, args) => self.run_code_lens_command(&id, args, window, cx),
             StatusPick::TabSize { size, insert_spaces, display_only } => self.update_active_indentation(
                 |editor| {
                     let indentation = editor.document.indentation;

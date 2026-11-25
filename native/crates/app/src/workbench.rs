@@ -45,6 +45,10 @@ mod search_editor_widget;
 mod search_view;
 mod status_entries;
 mod parameter_hints;
+mod action_widget;
+mod code_actions;
+mod code_lens;
+mod inlay_hints;
 mod snippet_completions;
 mod snippet_controller;
 mod suggest_controller;
@@ -136,6 +140,9 @@ pub struct Workbench {
     content_hover: content_hover::ContentHover,
     suggest: suggest_controller::Suggest,
     parameter_hints: parameter_hints::ParameterHints,
+    code_actions: code_actions::CodeActions,
+    action_widget: action_widget::ActionWidget,
+    code_lenses: code_lens::CodeLenses,
     snippet_files: snippet_completions::SnippetFiles,
     /// The snippet choice the controller last showed the suggest widget for.
     snippet_choice_shown: Option<(crate::editor::Position, crate::editor::Position)>,
@@ -226,6 +233,7 @@ impl Render for Workbench {
         let quick_input = self.quick_input_widget(window, cx);
         let notifications = self.notifications_widget(viewport, window, cx);
         let context_menu = self.context_menu_widget(cx);
+        let action_widget = self.action_widget(window, cx);
         let hover = self.hover_widget(window, cx);
         self.update_menubar(window, cx);
         div()
@@ -241,6 +249,7 @@ impl Render for Workbench {
             .children(quick_input.map(|widget| div().absolute().left(px(inset)).top(px(inset)).child(widget)))
             .children(notifications)
             .children(context_menu)
+            .children(action_widget)
             .children(hover)
             // style.css: .macos-tahoe windows round 16px, older macOS 10px.
             .when_some(window_border, |root, border| root.child(div().absolute().inset_0().border_1().rounded(px(if is_tahoe_or_newer() { 16. } else { 10. })).border_color(border)))
@@ -287,6 +296,9 @@ impl Workbench {
             content_hover: Default::default(),
             suggest: Default::default(),
             parameter_hints: Default::default(),
+            code_actions: Default::default(),
+            action_widget: Default::default(),
+            code_lenses: Default::default(),
             snippet_files: Default::default(),
             snippet_choice_shown: None,
             language_features: Default::default(),
@@ -347,6 +359,9 @@ impl Workbench {
         workbench.register_content_hover_commands();
         workbench.register_suggest();
         workbench.register_parameter_hints();
+        workbench.register_code_actions();
+        workbench.register_code_lens();
+        workbench.register_inlay_hints();
         workbench.register_snippet_completions();
         workbench.register_snippet_commands();
         workbench.register_marker_navigation_commands();
@@ -429,6 +444,8 @@ impl Workbench {
         self.find_editor_changed();
         self.schedule_keybinding_marks(cx);
         self.update_marker_decorations(None);
+        self.code_actions_model_changed(cx);
+        self.code_lens_model_changed(cx);
         self.sync_webview_panels();
         self.host.send_changes(&self.editors);
         cx.notify();

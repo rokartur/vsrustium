@@ -9,12 +9,21 @@ pub struct ViewZone {
     /// The model position the zone follows (`afterLineNumber`, `afterColumn`): the zone sits below its line.
     pub anchor: Position,
     pub height: f32,
+    /// The zone sits above its anchor's line instead (`afterLineNumber` of the line before, 0 above the first).
+    pub before: bool,
 }
 
 impl OpenEditor {
     pub fn add_view_zone(&mut self, anchor: Position, height: f32) -> u32 {
         let id = self.view_zones.iter().map(|zone| zone.id + 1).max().unwrap_or(1);
-        self.view_zones.push(ViewZone { id, anchor, height });
+        self.view_zones.push(ViewZone { id, anchor, height, before: false });
+        id
+    }
+
+    /// A zone above model line `line`, which follows the line's start.
+    pub fn add_view_zone_before(&mut self, line: usize, height: f32) -> u32 {
+        let id = self.add_view_zone(Position::new(line, 0), height);
+        self.view_zones.last_mut().expect("just added").before = true;
         id
     }
 
@@ -30,7 +39,7 @@ impl OpenEditor {
     /// (`showInHiddenAreas` false), `None`.
     fn zone_view_position(&self, zone: &ViewZone) -> Option<usize> {
         let view_line = self.view_line(zone.anchor.line);
-        (self.model_line(view_line) == zone.anchor.line).then_some(view_line + 1)
+        (self.model_line(view_line) == zone.anchor.line).then_some(view_line + usize::from(!zone.before))
     }
 
     /// The shown zones as (view lines above, height), in the order linesLayout.ts sorts them.
@@ -54,7 +63,9 @@ impl OpenEditor {
     pub fn view_zone_top(&self, id: u32, viewport: Viewport) -> Option<f32> {
         let zone = self.view_zone(id)?;
         let position = self.zone_view_position(zone)?;
-        Some(self.line_top(position - 1, viewport) + viewport.line_height)
+        // The zones at the same position lie in their order above the line: this one and the ones after it.
+        let below: f32 = self.view_zones.iter().skip_while(|other| other.id != id).filter(|other| self.zone_view_position(other) == Some(position)).map(|other| other.height).sum();
+        Some(self.line_top(position, viewport) - below)
     }
 
     /// `getLineNumberAtOrAfterVerticalOffset` as a 0-based view line, not clamped to the line count: an offset in
@@ -109,6 +120,17 @@ mod tests {
         assert_eq!(editor.view_line_at(LINE_HEIGHT + 1., VIEWPORT), 1);
         assert_eq!(editor.zones_between(0..4), vec![(2, 50.)]);
         assert_eq!(editor.zones_between(2..4), vec![]);
+    }
+
+    #[test]
+    fn a_zone_before_the_first_line_pushes_every_line_down() {
+        let mut editor = editor("a\nb", "\n");
+        let id = editor.add_view_zone_before(0, 20.);
+        assert_eq!(editor.view_zone_top(id, VIEWPORT), Some(0.));
+        assert_eq!(editor.line_top(0, VIEWPORT), 20.);
+        let below = editor.add_view_zone_before(1, 10.);
+        assert_eq!(editor.view_zone_top(below, VIEWPORT), Some(20. + LINE_HEIGHT));
+        assert_eq!(editor.line_top(1, VIEWPORT), 30. + LINE_HEIGHT);
     }
 
     #[test]

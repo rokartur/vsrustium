@@ -279,6 +279,7 @@ impl Workbench {
     /// markerHoverParticipant.ts `_renderMarkerStatusbar` for the most severe marker: View Problem, then the quick fix
     /// placeholder of a writable editor.
     fn marker_hover_status_bar(&self, marker: std::sync::Arc<Marker>, window: &Window, cx: &mut Context<Self>) -> Div {
+        let marker_for_fixes = marker.clone();
         let mut actions = div().w_full().flex().px(px(8.)).bg(self.color("editorHoverWidget.statusBarBackground"));
         if matches!(marker.severity, ERROR | WARNING | INFO) {
             let label = self.hover_action_label("View Problem", "editor.action.marker.next", window);
@@ -300,9 +301,28 @@ impl Workbench {
             actions = actions.child(action);
         }
         if self.active_editor_readonly().is_none() {
-            // shortcut: code actions are not ported yet (milestone 13 item 5), so `getCodeActions` finds none; ask the
-            // providers with the code action controller.
-            actions = actions.child(div().child("No quick fixes available"));
+            actions = match self.marker_quick_fix_status(&marker_for_fixes) {
+                super::code_actions::QuickFixStatus::Text(text) => actions.child(div().child(text)),
+                super::code_actions::QuickFixStatus::QuickFix => {
+                    let label = self.hover_action_label("Quick Fix...", "editor.action.quickFix", window);
+                    let bounds = self.code_actions.marker_fixes.label_bounds.clone();
+                    let measure = gpui::canvas(move |element_bounds, _, _| bounds.set(element_bounds.map(f32::from)), |_, _, _, _| ()).absolute().inset_0();
+                    let action = div()
+                        .id("content-hover-quick-fix")
+                        .relative()
+                        .mr(px(16.))
+                        .cursor_pointer()
+                        .whitespace_nowrap()
+                        .text_color(self.color("textLink.foreground"))
+                        .child(measure)
+                        .child(label)
+                        .on_click(cx.listener(|workbench, _: &ClickEvent, _, cx| {
+                            cx.stop_propagation();
+                            workbench.show_marker_quick_fixes(cx);
+                        }));
+                    actions.child(action)
+                }
+            };
         }
         div().flex().font_family(UI_FONT).text_size(px(12.)).line_height(px(22.)).child(actions)
     }
