@@ -1,0 +1,22 @@
+#!/bin/bash
+# Starts the packaged VSRustium.app (port/tools/package-app) from outside the checkout on a copy of
+# port/fixtures/workspace with notes.txt, without VSCODE_GPUI_EXTENSIONS, so every file comes from the bundle, and
+# checks the extension host started from the bundled bun and activated the eager built-ins. Run on the Studio.
+set -uo pipefail
+APP=${APP:-$PWD/native/target/VSRustium.app}
+source port/tools/gui-lock.sh
+dir=$(mktemp -d)
+cp -R port/fixtures/workspace "$dir/workspace"
+cd "$dir" || exit 1
+env -u VSCODE_GPUI_EXTENSIONS PATH=/usr/bin:/bin "$APP/Contents/MacOS/vsrustium" "$dir/workspace" "$dir/workspace/notes.txt" --user-data-dir "$dir/user-data" >"$dir/log" 2>&1 &
+pid=$!
+for _ in $(seq 40); do grep -q "eager extensions activated" "$dir/log" && break; sleep 1; done
+sleep 2
+host=$(pgrep -P "$pid" | head -1)
+echo "host: $(ps -o comm= -p "$host" 2>/dev/null)"
+kill "$pid"; wait "$pid" 2>/dev/null
+grep -E "eager extensions activated|failed|error" "$dir/log" | head -5
+grep -q "eager extensions activated: .*vscode.git" "$dir/log" && code=0 || code=1
+rm -rf "$dir"
+echo "app smoke: exit $code"
+exit $code

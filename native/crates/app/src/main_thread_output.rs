@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use exthost::session::{ForwardedRequest, log_level_name};
+use exthost::session::ForwardedRequest;
 use gpui::{Context, Window};
 use serde_json::{Value, json};
 
@@ -63,14 +63,25 @@ impl Workbench {
                 self.output_channels_changed(window, cx);
                 Outcome::done()
             }
-            // Loggers of files are written by the host itself (extHostLoggerService.ts); others log to the port log.
-            ("MainThreadLogger", "$log") => {
-                let file = path(arg(0));
-                for entry in arg(1).as_array().into_iter().flatten() {
-                    eprintln!("[{}] [{}] {}", file.display(), log_level_name(&entry[0]), entry[1].as_str().unwrap_or_default());
-                }
+            // The host writes `file` loggers itself (node extHostLoggerService.ts); the others it creates here.
+            ("MainThreadLogger", "$createLogger") => {
+                let uri = arg(0);
+                let uri_text = crate::editor::uri_string(uri["scheme"].as_str().unwrap_or("file"), &path(uri.clone()));
+                self.output.create_logger(path(uri), &uri_text, &arg(1));
+                self.output_channels_changed(window, cx);
                 Outcome::done()
             }
+            ("MainThreadLogger", "$log") => {
+                let messages: Vec<(u8, String)> = arg(1).as_array().into_iter().flatten().map(|entry| (entry[0].as_u64().unwrap_or(3) as u8, entry[1].as_str().unwrap_or_default().to_owned())).collect();
+                match self.output.log(&path(arg(0)), &messages) {
+                    Ok(()) => Outcome::done(),
+                    Err(message) => Outcome::error(&message),
+                }
+            }
+            ("MainThreadLogger", "$flush") => match self.output.flush_logger(&path(arg(0))) {
+                Ok(()) => Outcome::done(),
+                Err(message) => Outcome::error(&message),
+            },
             _ => Outcome::done(),
         }
     }

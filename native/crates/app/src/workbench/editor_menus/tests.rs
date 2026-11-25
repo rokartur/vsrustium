@@ -39,7 +39,7 @@ fn workbench_with<'a>(name: &str, files: &[&str], cx: &'a mut TestAppContext) ->
 fn menu_titles(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<String> {
     workbench.read_with(cx, |workbench, _| {
         let menu = workbench.context_menu.as_ref().expect("a context menu shows");
-        menu.actions
+        menu.levels[0].actions
             .iter()
             .map(|action| match action {
                 MenuAction::Command { title, enabled: true, .. } => title.clone(),
@@ -142,7 +142,7 @@ fn shift_f10_shows_the_editor_menu_below_the_cursor_without_moving_it(cx: &mut T
     workbench.update(cx, |workbench, _| workbench.editors.active_mut().unwrap().set_selections(vec![cursor]));
     workbench.update_in(cx, |workbench, window, cx| workbench.execute_command("editor.action.showContextMenu", vec![], window, cx));
     assert_eq!(menu_titles(&workbench, cx), ["Change All Occurrences", "---", "Cut", "Copy", "Paste", "---", "Command Palette..."]);
-    let (origin, anchor, selections) = workbench.update_in(cx, |workbench, window, _| (workbench.context_menu.as_ref().unwrap().origin, workbench.cursor_anchor(window).unwrap(), workbench.editors.active().unwrap().selections.clone()));
+    let (origin, anchor, selections) = workbench.update_in(cx, |workbench, window, _| (workbench.context_menu.as_ref().unwrap().levels[0].origin, workbench.cursor_anchor(window).unwrap(), workbench.editors.active().unwrap().selections.clone()));
     assert_eq!(selections, [cursor]);
     assert!(origin.x >= anchor.x - px(1.) && origin.y >= anchor.y - px(1.), "{origin:?} at {anchor:?}");
     std::fs::remove_dir_all(dir).unwrap();
@@ -166,6 +166,27 @@ fn the_line_number_menu_selects_the_line_and_shows_contributed_items(cx: &mut Te
     let selections = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().selections.clone());
     assert_eq!(selections, [Selection { anchor: Position::new(1, 0), head: Position::new(1, 11) }]);
     cx.simulate_keystrokes("escape");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// floatingMenu.ts: the floating toolbar shows the `editor/content` items whose `when` holds, from an extension with
+/// the `contribEditorContentMenu` proposal.
+#[gpui::test]
+fn the_floating_menu_shows_contributed_editor_content_items(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = workbench_with("floating-menu", &["a.txt"], cx);
+    let extension = exthost::scan::ScannedExtension {
+        id: "test.content".into(),
+        location: dir.clone(),
+        description: json!({ "enabledApiProposals": ["contribEditorContentMenu"], "contributes": {
+            "commands": [{ "command": "content.txt", "title": "Text Action" }, { "command": "content.md", "title": "Markdown Action" }],
+            "menus": { "editor/content": [{ "command": "content.txt", "when": "resourceExtname == .txt" }, { "command": "content.md", "when": "resourceExtname == .md" }] }
+        } }),
+    };
+    workbench.update(cx, |workbench, _| workbench.menus.extend(crate::menus::extension_menus(&[extension])));
+    let commands = workbench.update_in(cx, |workbench, window, _| {
+        workbench.floating_menu_actions(workbench.editors.active().unwrap(), window).into_iter().map(|action| action.command).collect::<Vec<_>>()
+    });
+    assert_eq!(commands, ["content.txt"]);
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -194,5 +215,56 @@ fn gutter_presses_select_whole_lines_and_drags_extend_them(cx: &mut TestAppConte
         workbench.gutter_line_select(2, shift, cx);
     });
     assert_eq!(selections(cx), [Selection { anchor: Position::new(0, 2), head: Position::new(3, 0) }], "Shift extends from the cursor");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[gpui::test]
+fn the_scrollbar_menu_writes_the_minimap_settings(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = workbench_with("scrollbar-menu", &["a.txt"], cx);
+    std::fs::create_dir_all(dir.join("User")).unwrap();
+    let settings = config::service::Settings::load(config::registry::Registry::with_extensions(&[]), dir.join("User"), None);
+    workbench.update(cx, |workbench, _| *workbench.settings.lock().unwrap() = settings);
+    let pointer = point(px(700.), px(100.));
+    let checked = |cx: &mut VisualTestContext| {
+        workbench.read_with(cx, |workbench, _| {
+            let menu = workbench.context_menu.as_ref().expect("a context menu shows");
+            menu.levels[0].actions.iter().filter_map(|action| if let MenuAction::Command { title, checked: true, .. } = action { Some(title.clone()) } else { None }).collect::<Vec<_>>()
+        })
+    };
+    workbench.update_in(cx, |workbench, window, cx| workbench.show_scrollbar_context_menu(pointer, window, cx));
+    assert_eq!(
+        menu_titles(&workbench, cx),
+        [
+            "Minimap",
+            "---",
+            "Render Characters",
+            "---",
+            "Vertical size: Proportional",
+            "Vertical size: Fill",
+            "Vertical size: Fit",
+            "---",
+            "Slider: Mouse Over",
+            "Slider: Always",
+            "---",
+            "Side: Right",
+            "Side: Left"
+        ]
+    );
+    assert_eq!(checked(cx), ["Minimap", "Render Characters", "Vertical size: Proportional", "Slider: Mouse Over", "Side: Right"]);
+    let id = workbench.read_with(cx, |workbench, _| {
+        workbench.context_menu.as_ref().unwrap().levels[0].actions.iter().find_map(|action| match action {
+            MenuAction::Command { id, title, .. } if title == "Vertical size: Fill" => Some(id.clone()),
+            _ => None,
+        })
+    });
+    cx.simulate_keystrokes("escape");
+    workbench.update_in(cx, |workbench, window, cx| workbench.execute_command(&id.unwrap(), vec![], window, cx));
+    assert_eq!(workbench.read_with(cx, |workbench, _| workbench.setting("editor.minimap.size")), json!("fill"));
+
+    workbench.update(cx, |workbench, _| workbench.update_setting("editor.minimap.enabled", json!(false)));
+    workbench.update_in(cx, |workbench, window, cx| workbench.show_scrollbar_context_menu(pointer, window, cx));
+    assert_eq!(menu_titles(&workbench, cx), ["Minimap", "---", "(Render Characters)", "(Vertical size)", "(Slider)", "(Side)"]);
+    assert_eq!(checked(cx), ["Render Characters"], "disabled, still checked as upstream");
+    cx.simulate_keystrokes("escape");
     std::fs::remove_dir_all(dir).unwrap();
 }

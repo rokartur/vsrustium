@@ -43,6 +43,33 @@ impl Workbench {
         self.markers_changed(changed, cx);
     }
 
+    /// `IMarkerService.changeOne` of a workbench owner; `_forwardMarkers` sends its markers to the host.
+    pub(super) fn change_workbench_markers(&mut self, owner: &str, uri: Value, markers: &[Value], cx: &mut Context<Self>) {
+        let Ok((scheme, path)) = uri_parts(&uri) else { return };
+        let resource = crate::editor::uri_string(scheme, &path);
+        self.diagnostics.uris.insert(resource.clone(), uri);
+        let changed = self.diagnostics.service.change_one(owner, &resource, markers, false);
+        self.markers_changed(changed, cx);
+    }
+
+    /// `IMarkerService.remove(owner, [resource])`.
+    pub(super) fn remove_workbench_markers(&mut self, owner: &str, resource: &str, cx: &mut Context<Self>) {
+        let changed = self.diagnostics.service.change_one(owner, resource, &[], false);
+        self.markers_changed(changed, cx);
+    }
+
+    /// The files that have markers of `owner` (`IMarkerService.read({ owner })`).
+    pub(super) fn marker_resources_of(&self, owner: &str) -> Vec<std::path::PathBuf> {
+        let mut paths = Vec::new();
+        for marker in self.diagnostics.service.read(ReadOptions { owner: Some(owner), ..Default::default() }) {
+            let path = self.diagnostics.uris.get(&marker.resource).and_then(|uri| uri["path"].as_str()).map(std::path::PathBuf::from);
+            if let Some(path) = path.filter(|path| !paths.contains(path)) {
+                paths.push(path);
+            }
+        }
+        paths
+    }
+
     /// `$clear(owner)`.
     pub(crate) fn clear_markers(&mut self, owner: &str, cx: &mut Context<Self>) {
         let changed = self.diagnostics.service.change_all(owner, &[]);
@@ -70,6 +97,7 @@ impl Workbench {
         self.update_marker_decorations(Some(&resources));
         self.marker_navigation_markers_changed();
         self.auto_save_markers_changed(&resources, cx);
+        self.code_actions_markers_changed(&resources, cx);
         cx.notify();
     }
 

@@ -25,6 +25,10 @@ pub struct GotoLineState {
 }
 
 impl GotoLineState {
+    pub fn previews(&self, model_id: u32) -> bool {
+        self.model_id == model_id
+    }
+
     /// The previewed position in the editor of `model_id`.
     pub fn highlight(&self, model_id: u32) -> Option<Position> {
         self.highlight.filter(|_| self.model_id == model_id)

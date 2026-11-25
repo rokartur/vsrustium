@@ -49,6 +49,10 @@ impl Workbench {
             self.commands.register(command, move |workbench, args, window, cx| {
                 let mut args = args.into_iter().next().filter(Value::is_object).unwrap_or_else(|| serde_json::json!({}));
                 args.as_object_mut().expect("checked above").entry("location").or_insert(location.into());
+                let args = match workbench.resolve_string_arguments(args) {
+                    Ok(args) => args,
+                    Err(error) => return Outcome::error(error.message),
+                };
                 workbench.open_new_search_editor(&args, window, cx);
                 Outcome::done()
             });
@@ -67,6 +71,10 @@ impl Workbench {
                 "useExcludeSettingsAndIgnoreFiles": config.use_exclude_settings_and_ignore_files,
                 "showIncludesExcludes": show_includes_excludes,
             });
+            let args = match workbench.resolve_string_arguments(args) {
+                Ok(args) => args,
+                Err(error) => return Outcome::error(error.message),
+            };
             workbench.open_new_search_editor(&args, window, cx);
             Outcome::done()
         });
@@ -117,6 +125,10 @@ impl Workbench {
             Some(search_editor) => search_editor_name(search_editor.backing_file.as_deref(), &search_editor.config.query),
             None if editor.document().scheme == crate::output::OUTPUT_SCHEME => "Output".into(),
             None if editor.document().scheme == "untitled" => crate::untitled::name(editor, self.untitled_names_from_content()),
+            None if editor.document().scheme == super::local_history_actions::LOCAL_HISTORY_SCHEME => {
+                self.local_history_labels.get(&editor.document().path).cloned().unwrap_or_else(|| editor.document().name())
+            }
+            None if editor.document().scheme == super::extension_editor::EXTENSION_EDITOR_SCHEME => self.extension_editor_name(&editor.document().path),
             None => super::preferences::editor_label(&editor.document())
                 .or_else(|| self.webview_title(&editor.document().path))
                 .or_else(|| self.diff_name(editor))
@@ -126,7 +138,6 @@ impl Workbench {
 
     /// `openNewSearchEditor`: the query is the active editor's selection, or the word at its cursor with
     /// `search.seedWithNearestWord`; location `reuse` opens the most recent search editor in place of a new one.
-    // shortcut: `${...}` variables in the arguments are not resolved, the port has no configuration resolver.
     fn open_new_search_editor(&mut self, args: &Value, window: &mut Window, cx: &mut Context<Self>) {
         let reuse = args["location"] == "reuse";
         // Upstream tests the setting for truthiness, so "never" seeds too.

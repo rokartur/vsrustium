@@ -7,6 +7,8 @@ use super::*;
 use crate::editor::cursor::Selection;
 use crate::editor::edit::tests::editor;
 
+mod indentation;
+
 /// `setupIndentRulesLanguage(indentRulesLanguageId, ...)` of the suite's setup.
 fn indent_rules_language() -> Value {
     json!({ "indentationRules": {

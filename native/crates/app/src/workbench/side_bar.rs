@@ -12,8 +12,8 @@ pub(super) const VIEW_CONTAINERS: [(&str, &str, &str, &str, Option<SideBarView>)
     ("files", "files", "Explorer", "workbench.view.explorer", Some(SideBarView::Explorer)),
     ("search-large", "search", "Search", "workbench.view.search", Some(SideBarView::Search)),
     ("source-control", "source-control", "Source Control", "workbench.view.scm", Some(SideBarView::Scm)),
-    ("debug-alt", "debug-alt", "Run and Debug", "workbench.view.debug", None),
-    ("extensions", "extensions", "Extensions", "workbench.view.extensions", None),
+    ("debug-alt", "debug-alt", "Run and Debug", "workbench.view.debug", Some(SideBarView::Debug)),
+    ("extensions", "extensions", "Extensions", "workbench.view.extensions", Some(SideBarView::Extensions)),
 ];
 
 impl Workbench {

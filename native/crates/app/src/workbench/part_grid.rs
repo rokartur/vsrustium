@@ -218,7 +218,7 @@ impl Workbench {
             .flex_none()
             .flex()
             .flex_row()
-            .when(activity_bar_visible, |section| section.child(div().w(px(row[0])).flex_none().flex().pl(px(CARD_MARGIN)).pb(px(CARD_MARGIN)).child(self.activity_bar(cx))))
+            .when(activity_bar_visible, |section| section.child(div().w(px(row[0])).flex_none().flex().pl(px(CARD_MARGIN)).pb(px(CARD_MARGIN)).child(self.activity_bar(window, cx))))
             .when_some(side_bar, |section, side_bar| {
                 section.child(div().w(px(row[1])).flex_none().flex().when(!activity_bar_visible, |part| part.pl(px(CARD_MARGIN))).pb(px(CARD_MARGIN)).child(side_bar))
             })

@@ -315,7 +315,7 @@ impl Workbench {
     /// selectBox.css `.monaco-select-box` in an action bar on macOS: 11px text, 24px high, 100px wide at least.
     fn output_select_box(&self, label: String, cx: &mut Context<Self>) -> impl IntoElement {
         let bounds = self.output_view.channel_menu_bounds.clone();
-        let foreground = self.foreground_or("select.foreground");
+        let foreground = self.foreground_or("dropdown.foreground");
         div()
             .id("output-channel-select")
             .relative()
@@ -330,8 +330,8 @@ impl Workbench {
             .cursor_pointer()
             .text_size(px(11.))
             .whitespace_nowrap()
-            .bg(self.color("select.background"))
-            .border_color(self.color("select.border"))
+            .bg(self.color("dropdown.background"))
+            .border_color(self.color("dropdown.border"))
             .text_color(foreground)
             .child(label)
             .child(self.icon("chevron-down", 16., 16., foreground).absolute().right(px(4.)))
@@ -413,6 +413,6 @@ impl Workbench {
 }
 
 /// Records where its parent painted.
-fn bounds_tracker(bounds: Rc<Cell<Bounds<Pixels>>>) -> impl IntoElement {
+pub(super) fn bounds_tracker(bounds: Rc<Cell<Bounds<Pixels>>>) -> impl IntoElement {
     canvas(move |painted, _, _| bounds.set(painted), |_, _, _, _| {}).absolute().size_full()
 }

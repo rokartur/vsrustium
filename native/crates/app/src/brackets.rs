@@ -214,6 +214,11 @@ impl DocumentBrackets {
         best.map(|(_, pair)| pair)
     }
 
+    /// `findNextBracket` (`getFirstBracketAfter`): the first bracket of a pair that ends after the position (line, byte).
+    pub fn next_bracket(&self, line: usize, offset: usize) -> Option<&BracketRange> {
+        self.brackets.iter().map(|bracket| &bracket.range).find(|(bracket_line, range)| (*bracket_line, range.end) > (line, offset))
+    }
+
     /// `findEnclosingBrackets`: the innermost closed pair strictly around the position (line, byte).
     pub fn enclosing_brackets(&self, line: usize, offset: usize) -> Option<[&BracketRange; 2]> {
         self.pairs.iter().rev().find_map(|pair| {

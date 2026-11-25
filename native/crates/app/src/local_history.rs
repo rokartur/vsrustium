@@ -17,7 +17,13 @@ use files::glob;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::editor::uri_string;
+use crate::editor_history;
+
 const ENTRIES_FILE: &str = "entries.json";
+
+/// Saves run on the background executor; one writer at a time keeps a listing from being read while it is written.
+static WRITING: Mutex<()> = Mutex::new(());
 
 /// An entry of `entries.json` (`ISerializedWorkingCopyHistoryModelEntry`); `source` is left out for "File Saved".
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -69,6 +75,13 @@ pub fn tracked(settings: &Settings, file: &Path, size: u64) -> Option<Limits> {
             return None;
         }
     }
+    limits(settings, file)
+}
+
+/// `workbench.localHistory.mergeWindow` and `maxFileEntries` for `file`.
+pub fn limits(settings: &Settings, file: &Path) -> Option<Limits> {
+    let overrides = Overrides { resource: Some(file), ..Overrides::default() };
+    let value = |key: &str| settings.get_value(Some(key), &overrides).unwrap_or(Value::Null);
     Some(Limits { merge_window: value("workbench.localHistory.mergeWindow").as_f64()?, max_entries: value("workbench.localHistory.maxFileEntries").as_f64()? as usize })
 }
 
@@ -80,9 +93,7 @@ pub fn entries_folder(history_home: &Path, resource: &str) -> PathBuf {
 /// `WorkingCopyHistoryModel.addEntry` followed by `store`: copies `file` into the history as a new entry, or over the
 /// last one when it has the same source and is at most `merge_window` seconds older, then drops the oldest entries
 /// past `max_entries` and writes `entries.json`.
-pub fn add_entry(history_home: &Path, resource: &str, file: &Path, source: Option<&str>, timestamp: i64, limits: &Limits) -> io::Result<Entry> {
-    // Saves run on the background executor; one at a time keeps a listing from being read while it is written.
-    static WRITING: Mutex<()> = Mutex::new(());
+pub fn add_entry(history_home: &Path, resource: &str, file: &Path, source: Option<&str>, source_description: Option<String>, timestamp: i64, limits: &Limits) -> io::Result<Entry> {
     let _writing = WRITING.lock().unwrap();
     let folder = entries_folder(history_home, resource);
     let mut entries = read_entries(&folder, file)?;
@@ -90,12 +101,12 @@ pub fn add_entry(history_home: &Path, resource: &str, file: &Path, source: Optio
     let entry = match merges_last {
         true => {
             let last = entries.last_mut().expect("checked above");
-            last.source_description = None;
+            last.source_description = source_description;
             last.timestamp = timestamp;
             last.clone()
         }
         false => {
-            let entry = Entry { id: format!("{}{}", random_name(4), extname(file)), source: source.map(str::to_string), source_description: None, timestamp };
+            let entry = Entry { id: format!("{}{}", random_name(4), extname(file)), source: source.map(str::to_string), source_description, timestamp };
             entries.push(entry.clone());
             entry
         }
@@ -108,9 +119,111 @@ pub fn add_entry(history_home: &Path, resource: &str, file: &Path, source: Optio
             let _ = std::fs::remove_file(folder.join(removed.id));
         }
     }
-    let listing = Listing { version: 1, resource: resource.to_string(), entries };
-    std::fs::write(folder.join(ENTRIES_FILE), serde_json::to_vec(&listing).expect("entries serialize"))?;
+    write_listing(&folder, resource, entries)?;
     Ok(entry)
+}
+
+/// `WorkingCopyHistoryService.removeAll`: the whole history folder.
+pub fn remove_all(history_home: &Path) -> io::Result<()> {
+    let _writing = WRITING.lock().unwrap();
+    match std::fs::remove_dir_all(history_home) {
+        Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
+        _ => Ok(()),
+    }
+}
+
+/// `WorkingCopyHistoryService.moveEntries` after `source` moved to `target`: the entries of `source` and of every
+/// file under it move to the new resource's folder, merged with the entries already there, and get a "File Renamed"
+/// (same parent) or "File Moved" entry of the moved file. Returns the moved files' new paths.
+/// The service moves the entries of the models it has loaded; the port reads every listing in the history instead.
+pub fn move_entries(history_home: &Path, source: &Path, target: &Path, timestamp: i64, limits: impl Fn(&Path) -> Option<Limits>) -> io::Result<Vec<PathBuf>> {
+    let Ok(folders) = std::fs::read_dir(history_home) else { return Ok(Vec::new()) };
+    let mut moved = Vec::new();
+    for folder in folders {
+        let folder = folder?.path();
+        let Some(listing) = std::fs::read(folder.join(ENTRIES_FILE)).ok().and_then(|bytes| serde_json::from_slice::<Listing>(&bytes).ok()) else { continue };
+        let Some(old_file) = editor_history::file_path(&listing.resource) else { continue };
+        let Ok(rest) = old_file.strip_prefix(source) else { continue };
+        let new_file = if rest.as_os_str().is_empty() { target.to_path_buf() } else { target.join(rest) };
+        let Some(limits) = limits(&new_file) else { continue };
+        move_model_entries(history_home, &folder, &old_file, &new_file, timestamp, &limits)?;
+        moved.push(new_file);
+    }
+    Ok(moved)
+}
+
+/// `WorkingCopyHistoryModel.moveEntries` of one resource.
+fn move_model_entries(history_home: &Path, source_folder: &Path, old_file: &Path, new_file: &Path, timestamp: i64, limits: &Limits) -> io::Result<()> {
+    let new_resource = uri_string("file", new_file);
+    {
+        let _writing = WRITING.lock().unwrap();
+        let mut entries = read_entries(source_folder, old_file)?;
+        let target_folder = entries_folder(history_home, &new_resource);
+        std::fs::create_dir_all(&target_folder)?;
+        for entry in &entries {
+            std::fs::rename(source_folder.join(&entry.id), target_folder.join(&entry.id))?;
+        }
+        std::fs::remove_dir_all(source_folder)?;
+        for existing in read_entries(&target_folder, new_file)? {
+            if !entries.iter().any(|entry| entry.id == existing.id) {
+                entries.push(existing);
+            }
+        }
+        entries.sort_by_key(|entry| entry.timestamp);
+        write_listing(&target_folder, &new_resource, entries)?;
+    }
+    let source = match old_file.parent() == new_file.parent() {
+        true => "renamed.source",
+        false => "moved.source",
+    };
+    // labelService.getUriLabel of the old resource: the absolute path with the home folder as `~`.
+    let description = crate::quick_input::path_label(old_file, None);
+    add_entry(history_home, &new_resource, new_file, Some(source), Some(description), timestamp, limits)?;
+    Ok(())
+}
+
+/// `WorkingCopyHistoryService.getAll`: the files whose listing in the history home has entries.
+pub fn all_files(history_home: &Path) -> Vec<PathBuf> {
+    let Ok(folders) = std::fs::read_dir(history_home) else { return Vec::new() };
+    let mut files = Vec::new();
+    for folder in folders.flatten() {
+        // A missing or corrupt listing is skipped, as upstream ignores it.
+        let Some(listing) = std::fs::read(folder.path().join(ENTRIES_FILE)).ok().and_then(|bytes| serde_json::from_slice::<Listing>(&bytes).ok()) else { continue };
+        if let Some(file) = editor_history::file_path(&listing.resource).filter(|_| !listing.entries.is_empty()) {
+            files.push(file);
+        }
+    }
+    files
+}
+
+/// localHistoryCommands.ts `toLocalHistoryEntryDateLabel`: `Intl.DateTimeFormat('en', { year: 'numeric', month:
+/// 'long', day: 'numeric', hour: 'numeric', minute: 'numeric' })` in the local time zone, `/` replaced by `-`.
+pub fn date_label(timestamp: i64) -> String {
+    use objc2::AllocAnyThread;
+    use objc2_foundation::{NSDate, NSDateFormatter, NSLocale, NSString};
+    let formatter = NSDateFormatter::new();
+    formatter.setLocale(Some(&NSLocale::initWithLocaleIdentifier(NSLocale::alloc(), &NSString::from_str("en"))));
+    formatter.setLocalizedDateFormatFromTemplate(&NSString::from_str("yMMMMdjmm"));
+    let date = NSDate::dateWithTimeIntervalSince1970(timestamp as f64 / 1000.);
+    // Apple's ICU puts U+202F before "PM"; V8's Intl prints a plain space.
+    formatter.stringFromDate(&date).to_string().replace('\u{202f}', " ").replace('/', "-")
+}
+
+fn write_listing(folder: &Path, resource: &str, entries: Vec<Entry>) -> io::Result<()> {
+    let listing = Listing { version: 1, resource: resource.to_string(), entries };
+    std::fs::write(folder.join(ENTRIES_FILE), serde_json::to_vec(&listing).expect("entries serialize"))
+}
+
+/// SaveSourceRegistry `getSourceLabel`: the label of a registered source, else the source itself.
+pub fn source_label(source: Option<&str>) -> &str {
+    match source {
+        None | Some("default.source") => "File Saved",
+        Some("moved.source") => "File Moved",
+        Some("renamed.source") => "File Renamed",
+        Some("localHistoryRestore.source") => "File Restored",
+        Some("undoRedo.source") => "Undo / Redo",
+        Some(source) => source,
+    }
 }
 
 /// `resolveEntriesFromDisk`: every entry file in the folder with its modification time, then the listing's timestamp

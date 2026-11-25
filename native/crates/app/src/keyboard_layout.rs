@@ -138,6 +138,37 @@ unsafe fn key_code_to_text(layout: *const c_void, key_code: u16, modifiers: u32)
     }
 }
 
+/// A native key down: its DOM `code` and modifiers, as `StandardKeyboardEvent` reads them.
+#[derive(Clone, Copy, Debug)]
+pub struct KeyEvent {
+    pub code: &'static str,
+    pub ctrl: bool,
+    pub shift: bool,
+    pub alt: bool,
+    pub meta: bool,
+}
+
+/// The key down AppKit is dispatching (`NSApp.currentEvent`), which GPUI's `Keystroke` reports without its key
+/// code; none for a synthesized keystroke.
+pub fn current_key_event() -> Option<KeyEvent> {
+    use objc2_app_kit::{NSApplication, NSEventModifierFlags, NSEventType};
+    let mtm = objc2::MainThreadMarker::new()?;
+    let event = NSApplication::sharedApplication(mtm).currentEvent()?;
+    if event.r#type() != NSEventType::KeyDown {
+        return None;
+    }
+    let key_code = event.keyCode();
+    let code = MAC_KEY_CODES.iter().find(|(_, code)| *code == key_code)?.0;
+    let flags = event.modifierFlags();
+    Some(KeyEvent {
+        code,
+        ctrl: flags.contains(NSEventModifierFlags::Control),
+        shift: flags.contains(NSEventModifierFlags::Shift),
+        alt: flags.contains(NSEventModifierFlags::Option),
+        meta: flags.contains(NSEventModifierFlags::Command),
+    })
+}
+
 /// `std::iscntrl` of macOS's libc on a UTF-16 unit: C0, DEL and C1.
 fn is_control(character: char) -> bool {
     matches!(character, '\0'..='\x1f' | '\x7f'..='\u{9f}')
@@ -145,10 +176,22 @@ fn is_control(character: char) -> bool {
 
 /// keybindingService.ts `_dumpDebugInfoJSON`, the text of Developer: Inspect Key Mappings (JSON).
 pub fn dump_debug_info_json() -> String {
-    let info = json!({ "layout": current_layout_info(), "rawMapping": current_raw_mapping() });
+    stringify(&json!({ "layout": current_layout_info(), "rawMapping": current_raw_mapping() }))
+}
+
+/// keybindingService.ts `_dumpDebugInfo`, the text of Developer: Inspect Key Mappings: the layout, the keybindings
+/// as the layout resolves them, the keyboard mapper's tables and the raw key map.
+pub fn dump_debug_info(resolved_keybindings: &str) -> String {
+    let mapper_info = crate::keyboard_mapper::current().map_or("FallbackKeyboardMapper dispatching on keyCode".into(), |mapper| mapper.dump_debug_info());
+    let (layout, raw) = (stringify(&current_layout_info()), stringify(&current_raw_mapping()));
+    format!("Layout info:\n{layout}\n\n{resolved_keybindings}\n\n{mapper_info}\n\nRaw mapping:\n{raw}")
+}
+
+/// `JSON.stringify(value, null, '\t')`.
+fn stringify(value: &Value) -> String {
     let mut text = Vec::new();
     let mut serializer = serde_json::Serializer::with_formatter(&mut text, serde_json::ser::PrettyFormatter::with_indent(b"\t"));
-    serde::Serialize::serialize(&info, &mut serializer).expect("JSON values serialize");
+    serde::Serialize::serialize(value, &mut serializer).expect("JSON values serialize");
     String::from_utf8(text).expect("serde_json writes UTF-8")
 }
 

@@ -14,26 +14,9 @@ use crate::languages::Languages;
 use crate::theme::load_theme;
 use crate::workbench::Workbench;
 
-/// The US layout's keys for the OEM codes, as `current_raw_mapping` reports them.
+/// The US layout as native-keymap reads it (macLinuxKeyboardMapper.test.ts's mac_en_us fixture).
 fn us_mapping() -> Value {
-    let keys = [
-        ("Semicolon", ";", ":"),
-        ("Equal", "=", "+"),
-        ("Comma", ",", "<"),
-        ("Minus", "-", "_"),
-        ("Period", ".", ">"),
-        ("Slash", "/", "?"),
-        ("Backquote", "`", "~"),
-        ("BracketLeft", "[", "{"),
-        ("Backslash", "\\", "|"),
-        ("BracketRight", "]", "}"),
-        ("Quote", "'", "\""),
-    ];
-    let mut mapping = serde_json::Map::new();
-    for (code, value, with_shift) in keys {
-        mapping.insert(code.into(), json!({ "value": value, "withShift": with_shift, "withAltGr": "", "withShiftAltGr": "" }));
-    }
-    Value::Object(mapping)
+    crate::keyboard_mapper::tests::raw_mapping("mac_en_us")
 }
 
 #[test]
@@ -56,8 +39,8 @@ fn keys_the_layout_cannot_type_are_errors_and_odd_spellings_info() {
     );
     // German: no key types `;` on its own, the semicolon is Shift+Comma.
     let german = json!({ "Comma": { "value": ",", "withShift": ";", "withAltGr": "", "withShiftAltGr": "" } });
-    // shortcut (key_mark): upstream marks it info as Shift+Comma; without a scan code mapper it is unmarked.
-    assert_eq!(key_mark("cmd+;", &german), None);
+    // `;` is Shift+Comma there, so the key string is not what the layout shows (`isWYSIWYG` false).
+    assert_eq!(key_mark("cmd+;", &german), Some((false, "⇧⌘, for your current keyboard layout.".into())));
     assert_eq!(key_mark("cmd+[", &german).map(|(error, _)| error), Some(true));
     assert_eq!(key_mark("cmd+oem_1", &us).map(|(error, _)| error), Some(false), "abnt_ and oem_ names are always info");
 }

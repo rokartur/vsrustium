@@ -203,7 +203,7 @@ impl Workbench {
         if missing.is_empty() {
             return Vec::new();
         }
-        vec![self.fetch_children(id.to_owned(), Some(missing), cx)]
+        vec![self.fetch_tree_children(id.to_owned(), Some(missing), cx)]
     }
 
     fn select_tree_item(&mut self, id: &str, handle: &str, select: bool, focus: bool, window: &mut Window, cx: &mut Context<Self>) {
@@ -220,7 +220,7 @@ impl Workbench {
     }
 
     /// `TreeViewDataProvider.getChildrenBatch`: `$getChildren` answers one `[index, ...items]` group per parent.
-    fn fetch_children(&mut self, id: String, parents: Option<Vec<String>>, cx: &mut Context<Self>) -> Task<()> {
+    fn fetch_tree_children(&mut self, id: String, parents: Option<Vec<String>>, cx: &mut Context<Self>) -> Task<()> {
         let tree = self.tree_views.trees.entry(id.clone()).or_default();
         let keys: Vec<Option<String>> = match &parents {
             None => vec![None],
@@ -268,7 +268,7 @@ impl Workbench {
         if let Some(fetch) = self.tree_views.root_fetches.get(id) {
             return fetch.clone();
         }
-        let fetch = self.fetch_children(id.to_owned(), None, cx).shared();
+        let fetch = self.fetch_tree_children(id.to_owned(), None, cx).shared();
         self.tree_views.root_fetches.insert(id.to_owned(), fetch.clone());
         fetch
     }
@@ -284,7 +284,7 @@ impl Workbench {
             }
             let missing: Vec<String> = tree.missing_children().into_iter().filter(|handle| !tree.fetching.contains(&Some(handle.clone()))).collect();
             if !missing.is_empty() {
-                self.fetch_children(id, Some(missing), cx).detach();
+                self.fetch_tree_children(id, Some(missing), cx).detach();
             }
         }
     }

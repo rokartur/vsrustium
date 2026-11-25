@@ -51,5 +51,15 @@ fn an_edit_of_settings_json_on_disk_reaches_the_host_the_theme_and_the_models(cx
 
     workbench.update(cx, |workbench, cx| workbench.reload_changed_settings_files(cx));
     assert_eq!(messages.try_iter().count(), 0, "an unchanged file is no change");
+
+    let looks = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| (workbench.file_icons.is_some(), workbench.theme.color("editor.background")));
+    let seti = scan_extension(&app_root.join("extensions/theme-seti"), true).unwrap();
+    workbench.update(cx, |workbench, _| workbench.extensions = vec![seti]);
+    std::fs::write(&user_settings, r##"{ "workbench.colorTheme": "Abyss", "workbench.iconTheme": "vs-seti", "workbench.colorCustomizations": { "[Abyss]": { "editor.background": "#123456" } } }"##).unwrap();
+    workbench.update(cx, |workbench, cx| workbench.reload_changed_settings_files(cx));
+    assert_eq!(looks(cx), (true, crate::theme::parse_hex("#123456")));
+    std::fs::write(&user_settings, r#"{ "workbench.colorTheme": "Abyss", "workbench.iconTheme": null }"#).unwrap();
+    workbench.update(cx, |workbench, cx| workbench.reload_changed_settings_files(cx));
+    assert_eq!(looks(cx), (false, crate::theme::parse_hex("#000c18")));
     std::fs::remove_dir_all(dir).unwrap();
 }

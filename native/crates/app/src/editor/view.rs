@@ -75,6 +75,10 @@ impl OpenEditor {
 
     /// `_computeContentWidth` without wrapping: the widest line drawn so far, 4 columns and the vertical scrollbar.
     pub fn scroll_width(&self, viewport: Viewport) -> f32 {
+        // With viewport wrapping the lines fit, so only the widest drawn line counts.
+        if self.word_wrap.options().is_some_and(|options| options.viewport_wrapping) {
+            return viewport.width.max(self.max_line_width);
+        }
         viewport.width.max(self.max_line_width + SCROLL_BEYOND_LAST_COLUMN * viewport.char_width + VERTICAL_SCROLLBAR_WIDTH)
     }
 
@@ -120,15 +124,24 @@ impl OpenEditor {
 
     /// The lines the view shows: the model lines without the ones folding hides.
     pub fn view_line_count(&self) -> usize {
+        if self.wraps() {
+            return self.wrapped_view_line_count();
+        }
         self.folding.view_line_count(self.document().lines.len())
     }
 
     /// The view line a model line shows on; a hidden line shows on the line it is folded into.
     pub fn view_line(&self, line: usize) -> usize {
+        if self.wraps() {
+            return self.wrapped_view_line(line);
+        }
         self.folding.view_line(line)
     }
 
     pub fn model_line(&self, view_line: usize) -> usize {
+        if self.wraps() {
+            return self.wrapped_model_line(view_line);
+        }
         self.folding.model_line(view_line)
     }
 
@@ -182,9 +195,9 @@ impl OpenEditor {
             true => vec![(self.selection().head, self.selection().head)],
             false => self.selections.iter().map(|selection| (selection.start(), selection.end())).collect(),
         };
-        let first = ranges.iter().map(|range| range.0.line).min().expect("an editor has a cursor");
-        let last = ranges.iter().map(|range| range.1.line).max().expect("an editor has a cursor");
-        let box_lines = (self.line_top(self.view_line(first), viewport), self.line_top(self.view_line(last), viewport) + LINE_HEIGHT);
+        let first = self.selections.iter().enumerate().map(|(index, selection)| if single { self.head_view_line(index) } else { self.position_view_line(selection.start(), false) }).min().expect("an editor has a cursor");
+        let last = self.selections.iter().enumerate().map(|(index, selection)| if single { self.head_view_line(index) } else { self.position_view_line(selection.end(), false) }).max().expect("an editor has a cursor");
+        let box_lines = (self.line_top(first, viewport), self.line_top(last, viewport) + LINE_HEIGHT);
         let Some(top) = scroll_top_to_reveal(self.scroll.top, viewport, box_lines, VerticalReveal::Simple, source == "mouse", single) else {
             return;
         };
@@ -197,7 +210,7 @@ impl OpenEditor {
     /// `revealRange` from the API (`TextEditor.revealRange`, source "api"): a range over several lines scrolls
     /// back to the left edge.
     pub fn reveal_range(&mut self, start: Position, end: Position, reveal: VerticalReveal, viewport: Viewport) {
-        let box_lines = (self.line_top(self.view_line(start.line), viewport), self.line_top(self.view_line(end.line), viewport) + LINE_HEIGHT);
+        let box_lines = (self.line_top(self.position_view_line(start, false), viewport), self.line_top(self.position_view_line(end, false), viewport) + LINE_HEIGHT);
         let Some(top) = scroll_top_to_reveal(self.scroll.top, viewport, box_lines, reveal, false, true) else {
             return;
         };
@@ -211,7 +224,8 @@ impl OpenEditor {
 
     /// `revealTopMostCursor`/`revealBottomMostCursor`: one cursor position, vertically and horizontally.
     pub fn reveal_position(&mut self, position: Position, source: &str, viewport: Viewport) {
-        let box_lines = (self.line_top(self.view_line(position.line), viewport), self.line_top(self.view_line(position.line), viewport) + LINE_HEIGHT);
+        let view_line = self.position_view_line(position, false);
+        let box_lines = (self.line_top(view_line, viewport), self.line_top(view_line, viewport) + LINE_HEIGHT);
         if let Some(top) = scroll_top_to_reveal(self.scroll.top, viewport, box_lines, VerticalReveal::Simple, source == "mouse", true) {
             self.set_scroll(top, self.scroll.left, viewport);
         }
@@ -234,6 +248,7 @@ impl OpenEditor {
             let text = &self.document().lines[position.line];
             let x = match super::line_overflow(text, viewport.stop_rendering_line_after) {
                 // Past the cut the position is the end of the "Show more" span.
+                _ if self.wraps() => self.segment_visible_column(self.segment(self.position_view_line(position, false)), position.column) as f32 * viewport.char_width,
                 Some((limit, _, label)) if position.column > limit => super::visible_column(text, limit, tab_size) as f32 * viewport.char_width + super::show_more_width(&label, viewport.char_width),
                 _ => super::visible_column(text, position.column, tab_size) as f32 * viewport.char_width,
             };
@@ -267,7 +282,7 @@ const MINIMUM_SLIDER_SIZE: f32 = 20.;
 
 impl Scrollbar {
     /// `_computeValues` with no arrows.
-    fn new(opposite_size: f32, visible: f32, scroll_size: f32, position: f32) -> Self {
+    pub fn new(opposite_size: f32, visible: f32, scroll_size: f32, position: f32) -> Self {
         let track = (visible - opposite_size).max(0.);
         if !(scroll_size > 0. && scroll_size > visible) {
             return Scrollbar { track: track.round(), needed: false, slider_size: track.round(), slider_position: 0., ratio: 0. };

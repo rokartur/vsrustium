@@ -31,6 +31,8 @@ use crate::notifications::{Action, Notification, Run, Severity};
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod untitled_tests;
 
 /// `ITextFileSaveOptions`: `force` writes a clean model too; `unlock` makes a write locked file writable first;
 /// `elevated` writes as the superuser.
@@ -131,20 +133,26 @@ impl Workbench {
         when_saved(vec![saved], |_| Value::Null, cx)
     }
 
-    /// `editorService.openEditor({ resource: undefined, options: { pinned: true }, languageId })`: a new untitled model
-    /// in `languageId`, else `files.defaultLanguage` (`${activeEditorLanguage}` the active editor's language).
+    /// `editorService.openEditor({ resource: undefined, options: { pinned: true }, languageId })`: a new untitled model.
     pub(super) fn open_untitled(&mut self, language: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
         let path = (1..).map(|n| PathBuf::from(format!("Untitled-{n}"))).find(|path| self.editors.model("untitled", path).is_none()).expect("a free name");
+        let language = self.untitled_language(language);
+        let document = TextDocument::untitled(&path, "", language.as_deref(), &self.languages, &self.settings.lock().unwrap());
+        self.editors.open(document, false);
+        window.focus(&self.editor_focus, cx);
+        self.editors_changed(cx);
+    }
+
+    /// untitledTextEditorService.ts `massageOptions` for a model without an associated file: `language`, else
+    /// `files.defaultLanguage` (`${activeEditorLanguage}` the active editor's language); unknown ids are plain text.
+    pub(super) fn untitled_language(&self, language: Option<String>) -> Option<String> {
         let configured = || self.settings.lock().unwrap().get_value(Some("files.defaultLanguage"), &Overrides::default()).and_then(|value| value.as_str().map(str::to_string));
         let language = language.or_else(configured).filter(|language| !language.is_empty());
         let language = match language.as_deref() {
             Some("${activeEditorLanguage}") => self.editors.active().map(|editor| editor.document().language_id.clone()),
             _ => language,
         };
-        let document = TextDocument::untitled(&path, "", language.as_deref().filter(|id| self.languages.is_registered(id)), &self.languages, &self.settings.lock().unwrap());
-        self.editors.open(document, false);
-        window.focus(&self.editor_focus, cx);
-        self.editors_changed(cx);
+        language.filter(|id| self.languages.is_registered(id))
     }
 
     /// A file's model from disk, its stat kept for the save conflict check.
@@ -165,6 +173,9 @@ impl Workbench {
         }
         if scheme == "untitled" {
             return self.save_untitled(path, options, cx);
+        }
+        if scheme == super::url_actions::TRUSTED_DOMAINS_SCHEME {
+            return self.save_trusted_domains(&path, cx);
         }
         let (sender, receiver) = oneshot::channel();
         let Some(model) = self.editors.model_mut(&scheme, &path) else {
@@ -198,7 +209,9 @@ impl Workbench {
                     if let Some(stat) = written.is_ok().then(|| stat(&path)).flatten() {
                         workbench.text_files.stats.insert(path.clone(), stat);
                     }
-                    workbench.finish_save(&scheme, &path, version, written, cx)
+                    let saved = workbench.finish_save(&scheme, &path, version, written, cx);
+                    workbench.save_signal(saved, reason);
+                    saved
                 });
                 let _ = sender.send(saved.unwrap_or(false));
             })
@@ -208,7 +221,9 @@ impl Workbench {
         if scheme == "file" {
             let language_id = editor.document().language_id.clone();
             let written = self.write_text_file(&path, &language_id, &bytes, options);
-            let _ = sender.send(self.finish_save(&scheme, &path, version, written, cx));
+            let saved = self.finish_save(&scheme, &path, version, written, cx);
+            self.save_signal(saved, reason);
+            let _ = sender.send(saved);
             return receiver;
         }
         let write = self.host.run_files(FileJob::Write(resource(&editor.document().uri()), bytes));
@@ -217,7 +232,11 @@ impl Workbench {
                 Ok(result) => result.map(drop).map_err(|error| SaveError::Other(error.to_string())),
                 Err(_) => Err(SaveError::Other("Canceled".to_string())),
             };
-            let saved = workbench.update(cx, |workbench, cx| workbench.finish_save(&scheme, &path, version, written, cx));
+            let saved = workbench.update(cx, |workbench, cx| {
+                let saved = workbench.finish_save(&scheme, &path, version, written, cx);
+                workbench.save_signal(saved, reason);
+                saved
+            });
             let _ = sender.send(saved.unwrap_or(false));
         })
         .detach();
@@ -243,7 +262,14 @@ impl Workbench {
                 eprintln!("unlocking {}: {error}", path.display());
             }
         }
-        std::fs::write(path, bytes).map_err(|error| write_error(path, error, options.unlock))?;
+        // FileUserDataProvider: the user's settings, keybindings, tasks and extensions files are written atomically.
+        let user_data = ["settings.json", "keybindings.json", "tasks.json", "extensions.json"].iter().any(|name| path.ends_with(name))
+            && path.starts_with(self.settings.lock().unwrap().user_home());
+        let written = match user_data {
+            true => config::service::write_user_data_file(path, bytes),
+            false => std::fs::write(path, bytes),
+        };
+        written.map_err(|error| write_error(path, error, options.unlock))?;
         if let Some(stat) = stat(path) {
             self.text_files.stats.insert(path.to_path_buf(), stat);
         }
@@ -516,14 +542,15 @@ impl Workbench {
 
     /// `fileDialogService.defaultFilePath`: `files.dialog.defaultPath`, else the folder of the last active file, else
     /// the first workspace folder, else the home folder.
-    fn default_file_path(&self) -> PathBuf {
+    pub(super) fn default_file_path(&self) -> PathBuf {
         let configured = self.settings.lock().unwrap().get_value(Some("files.dialog.defaultPath"), &Overrides::default());
         if let Some(configured) = configured.as_ref().and_then(Value::as_str).map(PathBuf::from).filter(|path| path.is_absolute()) {
             return configured;
         }
-        let last_file = self.editors.active().filter(|editor| editor.document().scheme == "file").and_then(|editor| editor.document().path.parent().map(Path::to_path_buf));
-        let folder = self.workspace().and_then(|workspace| workspace.folders.first()).map(|folder| folder.path.clone());
-        last_file.or(folder).unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or_default()))
+        // fileDialogService.ts `defaultFilePath`: the last active file's folder, then the first workspace folder, then home.
+        let last_active_folder = self.quick_access.editor_history.entries.first().and_then(|file| file.parent()).map(Path::to_path_buf);
+        let workspace_folder = || self.workspace().and_then(|workspace| workspace.folders.first()).map(|folder| folder.path.clone());
+        last_active_folder.or_else(workspace_folder).or_else(|| std::env::var_os("HOME").map(PathBuf::from)).unwrap_or_default()
     }
 
     /// textFileEditorModel.ts `onDidChangeFilesAssociation`: a file model without a picked language takes the one

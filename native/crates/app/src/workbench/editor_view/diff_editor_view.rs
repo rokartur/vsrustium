@@ -9,7 +9,7 @@ use diff::LineRange;
 use gpui::{Context, Div, PathBuilder, Rgba, ScrollWheelEvent, StyledText, Window, canvas, div, fill, point, prelude::*, px, size};
 use serde_json::{Value, json};
 
-use super::{EditorMetrics, Workbench};
+use super::{EditorMetrics, LineNumbers, Workbench};
 use crate::workbench::hover::{HoverContent, HoverOptions};
 use crate::commands::Outcome;
 use crate::diff_editor::{DIFF_EDITOR_SCHEME, DiffInput, DiffZone, Side, ZoneContent, ZoneSide, diff_options, range_alignment, view_zones};
@@ -104,7 +104,12 @@ impl Workbench {
             }
             let result = workbench.update_in(cx, |workbench, window, cx| {
                 for (uri, content) in resolved {
-                    workbench.try_open_document(&uri, &Value::Null, &content?, false, cx)?;
+                    // textModelResolverService.ts shares one resolution per uri: a model a concurrent call opened
+                    // stands, even once the provider it came from is gone.
+                    let (scheme, path) = uri_parts(&uri)?;
+                    if workbench.editors.model(scheme, &path).is_none() {
+                        workbench.try_open_document(&uri, &Value::Null, &content?, false, cx)?;
+                    }
                 }
                 for (uri, side) in [(&original, &sides.0), (&modified, &sides.1)] {
                     if side.scheme == "file" && workbench.editors.model(&side.scheme, &side.path).is_none() {
@@ -357,7 +362,7 @@ impl Workbench {
                 && self.setting("diffEditor.hideOriginalLineNumbers") != json!(true)
             {
                 // diffEditorWidget.ts: inline, the original editor shows up to its decorations, its line numbers.
-                let metrics = EditorMetrics::measure(window, original.document().lines.len(), false, self.editor_zoom.multiplier());
+                let metrics = EditorMetrics::measure(window, original.document().lines.len(), LineNumbers::Off, self.editor_zoom.multiplier());
                 let width = (metrics.glyph_margin_width() + metrics.line_numbers_width).max(5.);
                 body = body.child(self.original_pane(input, original, modified, false, window).w(px(width)).flex_none());
             }
@@ -380,7 +385,7 @@ impl Workbench {
     /// The original editor, read-only and scrolled with the modified one: its lines, the deleted line and character
     /// decorations, the `-` signs and the diagonal fill under the side with fewer lines.
     fn original_pane(&self, input: &DiffInput, original: &OpenEditor, modified: &OpenEditor, side_by_side: bool, window: &mut Window) -> Div {
-        let metrics = EditorMetrics::measure(window, original.document().lines.len(), side_by_side, self.editor_zoom.multiplier());
+        let metrics = EditorMetrics::measure(window, original.document().lines.len(), if side_by_side { LineNumbers::On } else { LineNumbers::Off }, self.editor_zoom.multiplier());
         let line_height = metrics.line_height;
         let decorations_width = diff_decorations_width(metrics.char_width);
         // `_adjustOptionsForLeftHandSide`: the glyph margin shows side by side.
@@ -490,7 +495,7 @@ impl Workbench {
             }
             let highlights = original.document().tokens.highlights(&self.theme, &self.languages, &original.document().lines, line_number - 1, tab_size);
             content = content.child(div().absolute().top_0().left_0().whitespace_nowrap().child(StyledText::new(expand_tabs(text, tab_size)).with_highlights(highlights)));
-            let metrics = EditorMetrics { font_size: 0., line_height, char_width, line_numbers_width: 0., decorations_width: 0. };
+            let metrics = EditorMetrics { font_size: 0., line_height, char_width, line_numbers: LineNumbers::Off, line_numbers_width: 0., decorations_width: 0. };
             let sign_left = content_left - diff_decorations_width(char_width);
             block = block.child(
                 div()

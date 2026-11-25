@@ -28,6 +28,7 @@ import { BidirectionalMap } from '../../../base/common/map.js';
 import { DisposableStore, IDisposable, toDisposable } from '../../../base/common/lifecycle.js';
 import { ExtensionDescriptionRegistry } from '../../services/extensions/common/extensionDescriptionRegistry.js';
 import { markNodeCompileCacheReady } from '../../../base/node/nodeCompileCache.js';
+import { inertModuleExports, inertModuleNames, inertModuleSource } from '../common/extHostInertModules.js';
 const require = nodeModule.createRequire(import.meta.url);
 
 class NodeModuleRequireInterceptor extends RequireInterceptor {
@@ -37,6 +38,7 @@ class NodeModuleRequireInterceptor extends RequireInterceptor {
 	}
 
 	private static _vscodeImportFnName = `_VSCODE_IMPORT_VSCODE_API`;
+	private static _inertImportFnName = `_VSCODE_IMPORT_INERT_MODULE`;
 
 	private readonly _store = new DisposableStore();
 
@@ -147,16 +149,26 @@ class NodeModuleRequireInterceptor extends RequireInterceptor {
 			}
 			return scriptDataUrlSrc;
 		};
+
+		Object.defineProperty(globalThis, NodeModuleRequireInterceptor._inertImportFnName, {
+			enumerable: false,
+			configurable: false,
+			writable: false,
+			value: inertModuleExports
+		});
+		const inertDataUrls = new Map(inertModuleNames.map(name => [name, NodeModuleRequireInterceptor._createDataUri(inertModuleSource(name, NodeModuleRequireInterceptor._inertImportFnName))]));
+		const resolveImport = (specifier: string, parentUrl: string) => specifier === 'vscode' ? lookup(parentUrl) : inertDataUrls.get(specifier);
+
 		if (process.versions.bun) {
-			this._store.add(installBunESMInterceptor(this._extensionRegistry.all, lookup));
+			this._store.add(installBunESMInterceptor(this._extensionRegistry.all, resolveImport));
 			return;
 		}
 		const hooks = nodeModule.registerHooks({
 			resolve: (specifier, context, nextResolve) => {
-				if (specifier !== 'vscode' || !context.parentURL) {
+				const otherUrl = context.parentURL && resolveImport(specifier, context.parentURL);
+				if (!otherUrl) {
 					return nextResolve(specifier, context);
 				}
-				const otherUrl = lookup(context.parentURL);
 				return {
 					url: otherUrl,
 					shortCircuit: true,
@@ -173,9 +185,9 @@ declare const Bun: {
 
 /**
  * Bun 1.4.5 has no `module.registerHooks` and its runtime `onResolve` does not see bare specifiers,
- * so ESM extensions get their `vscode` imports rewritten to the same data: URL the Node hook resolves to.
+ * so ESM extensions get their `vscode` (and inert module) imports rewritten to the same data: URL the Node hook resolves to.
  */
-function installBunESMInterceptor(registry: ExtensionDescriptionRegistry, lookup: (parentUrl: string) => string): IDisposable {
+function installBunESMInterceptor(registry: ExtensionDescriptionRegistry, lookup: ImportResolver): IDisposable {
 	const coveredRoots = new Set<string>();
 	const newESMRoots = () => {
 		// Bun matches the resolved path: /var/folders is /private/var/folders on macOS.
@@ -198,15 +210,18 @@ function esmRootsPattern(escapedRoots: string[]): string {
 	return `^(?:${escapedRoots.join('|')})/(?!.*/node_modules/).*\\.js$`;
 }
 
-function addVSCodeImportPlugin(filter: RegExp, lookup: (parentUrl: string) => string): void {
-	const vscodeImport = /(\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)(['"])vscode\2/g;
+type ImportResolver = (specifier: string, parentUrl: string) => string | undefined;
+
+function addVSCodeImportPlugin(filter: RegExp, lookup: ImportResolver): void {
+	const specifiers = ['vscode', ...inertModuleNames].map(escapeRegExpCharacters).join('|');
+	const vscodeImport = new RegExp(`(\\bfrom\\s*|\\bimport\\s*\\(\\s*|\\bimport\\s+)(['"])(${specifiers})\\2`, 'g');
 	Bun.plugin({
 		name: 'vscode-api',
 		setup(build) {
 			// onLoad must stay synchronous: an async onLoad turns every require() of a matched file into an error.
 			build.onLoad({ filter }, ({ path }) => {
 				const source = readFileSync(path, 'utf8');
-				const contents = source.includes('vscode') ? source.replace(vscodeImport, (_match, prefix: string) => `${prefix}'${lookup(URI.file(path).toString(true))}'`) : source;
+				const contents = source.includes('vscode') ? source.replace(vscodeImport, (_match, prefix: string, _quote: string, specifier: string) => `${prefix}'${lookup(specifier, URI.file(path).toString(true))}'`) : source;
 				return { contents, loader: 'js' };
 			});
 		}

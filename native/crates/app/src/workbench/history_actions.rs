@@ -251,7 +251,7 @@ impl Workbench {
         self.history.stacks.clear();
         self.history.closed.clear();
         self.history.recently_used = None;
-        self.clear_quick_open_history();
+        self.clear_editor_history();
     }
 
     /// `openNextRecentlyUsedEditor` / `openPreviousRecentlyUsedEditor`: a snapshot of the editors by recency

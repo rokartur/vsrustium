@@ -1,0 +1,13 @@
+{
+	"name": "webview-view-tests",
+	"publisher": "port",
+	"version": "0.0.1",
+	"main": "./extension.js",
+	"engines": { "vscode": "^1.90.0" },
+	"activationEvents": ["onView:webviewViewTests.view"],
+	"contributes": {
+		"views": {
+			"explorer": [{ "type": "webview", "id": "webviewViewTests.view", "name": "Port View" }]
+		}
+	}
+}

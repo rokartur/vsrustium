@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant, SystemTime};
 
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use config::configuration::Configuration;
 use config::registry::Registry;
 use config::workspace::Workspace;
@@ -61,7 +63,7 @@ pub fn init_data(paths: &SessionPaths, extensions: &[ScannedExtension], version:
             "appName": "VSRustium",
             "appHost": "desktop",
             "appRoot": file_uri(paths.app_root),
-            "appLanguage": "en",
+            "appLanguage": crate::language_packs::nls().language,
             "isExtensionTelemetryLoggingOnly": false,
             "appUriScheme": URL_PROTOCOL,
             "globalStorageHome": file_uri(&paths.user_data.join("User/globalStorage")),
@@ -169,11 +171,25 @@ pub struct Session {
     pub files: Option<MainThreadFiles>,
     /// Workspace search; without it `findFiles` and `findTextInFiles` answer `undefined`.
     pub workspace: Option<MainThreadWorkspace>,
+    /// `isWorkspaceTrusted` for `$initializeWorkspace`; trust granted later reaches the host as `$onDidGrantWorkspaceTrust`.
+    pub workspace_trusted: bool,
     forward: Option<Forward>,
     /// The workbench's handler for the MainThread* requests it answers while the session thread waits.
     pub main_thread: Option<Box<dyn MainThread>>,
     waiting: Waiting,
 }
+
+/// Host calls the session answers itself (the port log on stderr, which must keep up with the extension tests'
+/// output) and also hands to the workbench as `OBSERVED_REQ`, which it answers nothing: the Window log and
+/// notifications of mainThreadConsole.ts, mainThreadErrors.ts and mainThreadExtensionService.ts.
+const OBSERVED: [(&str, &str); 3] = [
+    ("MainThreadConsole", "$logExtensionHostMessage"),
+    ("MainThreadErrors", "$onUnexpectedError"),
+    ("MainThreadExtensionService", "$onExtensionActivationError"),
+];
+
+/// The `req` of an observed call; the host numbers its requests from 1.
+pub const OBSERVED_REQ: u32 = 0;
 
 /// A host request the app answers later with `Session::reply` (MainThread* shapes the workbench implements).
 #[derive(Debug)]
@@ -208,6 +224,7 @@ impl Session {
             secrets: None,
             files: None,
             workspace: None,
+            workspace_trusted: true,
             forward: None,
             main_thread: None,
             waiting: Waiting::default(),
@@ -220,7 +237,7 @@ impl Session {
         self.extensions = extensions.iter().map(|e| (e.id.to_lowercase(), e.description.clone())).collect();
         let configuration = self.configuration.as_ref().map_or_else(|| configuration_init_data(extensions), MainThreadConfiguration::configuration_data);
         self.notify("ExtHostConfiguration", "$initializeConfiguration", vec![configuration]);
-        self.notify("ExtHostWorkspace", "$initializeWorkspace", vec![workspace.unwrap_or(Value::Null), json!(true)]);
+        self.notify("ExtHostWorkspace", "$initializeWorkspace", vec![workspace.unwrap_or(Value::Null), json!(self.workspace_trusted)]);
         // TelemetryLevel.NONE and supportsTelemetry = false: the port has no telemetry.
         self.notify("ExtHostTelemetry", "$initializeTelemetryLevel", vec![json!(0), json!(false), json!({ "usage": false, "error": false })]);
         // MainThreadEditorTabs sends the model on construction; an empty window has one active group with no tabs.
@@ -335,7 +352,8 @@ impl Session {
         })
     }
 
-    /// Hands requests to `proxies` to `send` instead of answering them here; `pump` sends the answers that arrive on `replies`.
+    /// Hands requests to `proxies` (a proxy, or `Proxy.$method` for one method) to `send` instead of answering them here;
+    /// `pump` sends the answers that arrive on `replies`.
     pub fn forward(&mut self, proxies: &'static [&'static str], send: impl FnMut(ForwardedRequest) + Send + 'static, replies: std::sync::mpsc::Receiver<(u32, Result<Value, Value>)>) {
         self.forward = Some(Forward { proxies, send: Box::new(send), replies, asks: Vec::new() });
     }
@@ -380,12 +398,12 @@ impl Session {
 
     /// Sends a request without waiting for its reply.
     pub fn notify(&mut self, proxy: &str, method: &str, args: Vec<Value>) -> u32 {
-        self.send_request(proxy, method, args.into_iter().map(Arg::Json).collect())
+        self.send_request(proxy, method, args.into_iter().map(Arg::from_value).collect())
     }
 
     /// `notify` of a host method that takes a `CancellationToken`; `cancel` cancels it.
     pub fn notify_cancellable(&mut self, proxy: &str, method: &str, args: Vec<Value>) -> u32 {
-        self.send(proxy, method, args.into_iter().map(Arg::Json).collect(), true)
+        self.send(proxy, method, args.into_iter().map(Arg::from_value).collect(), true)
     }
 
     /// Cancels a request sent with `notify_cancellable`; the host still answers it, with a cancellation error.
@@ -395,6 +413,11 @@ impl Session {
 
     pub fn send_request(&mut self, proxy: &str, method: &str, args: Vec<Arg>) -> u32 {
         self.send(proxy, method, args, false)
+    }
+
+    /// A request whose host method's last parameter is a `CancellationToken`: the host appends the token.
+    pub fn send_cancellable_request(&mut self, proxy: &str, method: &str, args: Vec<Arg>) -> u32 {
+        self.send(proxy, method, args, true)
     }
 
     fn send(&mut self, proxy: &str, method: &str, args: Vec<Arg>, cancellable: bool) -> u32 {
@@ -434,7 +457,7 @@ impl Session {
     /// A request whose host method takes a `CancellationToken`, cancelled after `timeout` (`raceCancellation`):
     /// `None` once cancelled or when the host is gone.
     pub fn request_cancellable(&mut self, proxy: &str, method: &str, args: Vec<Value>, timeout: Duration) -> Option<CallResult> {
-        let req = self.send(proxy, method, args.into_iter().map(Arg::Json).collect(), true);
+        let req = self.send(proxy, method, args.into_iter().map(Arg::from_value).collect(), true);
         let deadline = Instant::now() + timeout;
         loop {
             if let Some(result) = self.results.remove(&req) {
@@ -532,10 +555,19 @@ impl Session {
             }
             Message::Request { req, rpc_id, method, args, .. } => {
                 self.host.send(rpc::encode(&Message::Acknowledged { req }));
-                if let Some(forward) = self.forward.as_mut().filter(|forward| forward.proxies.contains(&proxy_name(rpc_id))) {
-                    *self.log.host_calls.entry(format!("{}.{method}", proxy_name(rpc_id))).or_default() += 1;
-                    let args = args.into_iter().map(arg_value).collect();
-                    (forward.send)(ForwardedRequest { req, proxy: proxy_name(rpc_id), method, args });
+                let proxy = proxy_name(rpc_id);
+                if let Some(forward) = self.forward.as_mut().filter(|_| OBSERVED.contains(&(proxy, method.as_str()))) {
+                    let args = args.iter().cloned().map(forwarded_arg).collect();
+                    (forward.send)(ForwardedRequest { req: OBSERVED_REQ, proxy, method: method.clone(), args });
+                }
+                let forwards = |entry: &&str| *entry == proxy || entry.strip_prefix(proxy).and_then(|rest| rest.strip_prefix('.')) == Some(method.as_str());
+                if let Some(forward) = self.forward.as_mut().filter(|forward| forward.proxies.iter().any(forwards)) {
+                    *self.log.host_calls.entry(format!("{proxy}.{method}")).or_default() += 1;
+                    if std::env::var_os("EXTHOST_TRACE").is_some() {
+                        eprintln!("forward> {proxy}.{method} {args:?}");
+                    }
+                    let args = args.into_iter().map(forwarded_arg).collect();
+                    (forward.send)(ForwardedRequest { req, proxy, method, args });
                     return Ok(true);
                 }
                 self.serve(req, rpc_id, method, args);
@@ -657,6 +689,12 @@ impl Session {
             ("MainThreadStorage", _) if self.storage.is_some() => return self.storage.as_mut().expect("checked by the match guard").serve(method, args),
             ("MainThreadWindow", "$getInitialState") => return Reply::Json(json!({ "isFocused": true, "isActive": true })),
             ("MainThreadUrls", "$createAppUri") => return Reply::Json(app_uri(&arg(0))),
+            ("MainThreadLocalization", _) => {
+                let values: Vec<Value> = (0..args.len()).map(arg).collect();
+                return crate::language_packs::serve_localization(method, &values).map_or(Reply::Empty, Reply::Json);
+            }
+            // product.json has no `enableTelemetry`: upstream's NullTelemetryService drops extension events, and so does the port.
+            ("MainThreadTelemetry", "$publicLog" | "$publicLog2") => {}
             // No sign-in and no AI in the port: these APIs stay callable and report nothing.
             ("MainThreadLanguageModelTools", "$getTools")
             | ("MainThreadAuthentication", "$getAccounts")
@@ -673,10 +711,10 @@ impl Session {
 }
 
 /// product.json `urlProtocol`.
-const URL_PROTOCOL: &str = "vsrustium";
+pub const URL_PROTOCOL: &str = "vsrustium";
 
 /// urlService.ts `NativeURLService.create`: the uri with the product's scheme.
-fn app_uri(uri: &Value) -> Value {
+pub fn app_uri(uri: &Value) -> Value {
     let text = |key: &str| uri[key].as_str().unwrap_or_default().to_owned();
     let (authority, mut path) = (text("authority"), text("path"));
     // URI validation requires a path if there is an authority
@@ -686,12 +724,41 @@ fn app_uri(uri: &Value) -> Value {
     json!({ "$mid": 1, "scheme": URL_PROTOCOL, "authority": authority, "path": path, "query": text("query"), "fragment": text("fragment") })
 }
 
+/// A forwarded argument as JSON: a `VSBuffer` becomes the array of its bytes, also where a `{"$$ref$$": i}` stands for one.
 fn arg_value(arg: Arg) -> Value {
     match arg {
-        Arg::Json(value) | Arg::JsonWithBuffers { json: value, .. } => value,
-        Arg::Buffer(_) | Arg::Undefined => Value::Null,
+        Arg::Json(value) => value,
+        Arg::JsonWithBuffers { mut json, buffers } => {
+            restore_buffer_refs(&mut json, &buffers);
+            json
+        }
+        Arg::Buffer(buffer) => json!(buffer),
+        Arg::Undefined => Value::Null,
     }
 }
+
+fn restore_buffer_refs(value: &mut Value, buffers: &[Vec<u8>]) {
+    if let Some(buffer) = value.get("$$ref$$").and_then(Value::as_u64).and_then(|index| buffers.get(index as usize)) {
+        *value = json!(buffer);
+        return;
+    }
+    match value {
+        Value::Object(map) => map.values_mut().for_each(|value| restore_buffer_refs(value, buffers)),
+        Value::Array(items) => items.iter_mut().for_each(|value| restore_buffer_refs(value, buffers)),
+        _ => {}
+    }
+}
+
+/// A forwarded request's argument; a `VSBuffer` (mainThreadWebviews.ts `$postMessage` buffers) travels as
+/// `{"$vsbuffer": <base64>}` in the JSON the app reads.
+fn forwarded_arg(arg: Arg) -> Value {
+    match arg {
+        Arg::Buffer(bytes) => json!({ VSBUFFER_KEY: STANDARD.encode(bytes) }),
+        arg => arg_value(arg),
+    }
+}
+
+pub const VSBUFFER_KEY: &str = "$vsbuffer";
 
 /// A `SerializedError` (or any thrown value) as one string: its stack, else its message.
 fn error_text(error: &Value) -> String {
@@ -723,6 +790,13 @@ mod tests {
         assert_eq!(workspace_id(&workspace), "e36736311be12ff6d695feefe415b3e8");
         let upper = Workspace { file: Some(PathBuf::from("/Hello/Test")), ..workspace };
         assert_eq!(workspace_id(&upper), "e36736311be12ff6d695feefe415b3e8", "macOS paths are compared ignoring case");
+    }
+
+    #[test]
+    fn forwarded_buffers_become_byte_arrays() {
+        let arg = Arg::JsonWithBuffers { json: json!([{ "type": "output", "output": {"$$ref$$": 0} }]), buffers: vec![vec![104, 105]] };
+        assert_eq!(arg_value(arg), json!([{ "type": "output", "output": [104, 105] }]));
+        assert_eq!(arg_value(Arg::Buffer(vec![1])), json!([1]));
     }
 
     #[test]

@@ -1,0 +1,45 @@
+#!/usr/bin/env bun
+// Telemetry source search (roadmap section 19): no telemetry or experimentation endpoint string in what a VSRustium
+// build loads: the release binary, the extension host bundle, and the built-in extensions with the packages they
+// resolve (port/tools/shipped-files.ts). Run on the Studio after a release build and port/tools/build-exthost:
+//   port/tools/studio 'port/tools/telemetry-source-check'   (env VSCODE_GPUI_EXTENSIONS, default the reference's extensions)
+// SELF_TEST=1 also scans the inert packages, which hold the endpoints, to show the search finds them.
+// Exits 1 and lists each file and endpoint when one is found.
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { inertPackages, runtimeFiles, shippedBuiltins, shippedPackages } from './shipped-files.ts';
+
+// 1DS/OneCollector, Application Insights, Azure Monitor, the experimentation service (TAS), GitHub Copilot telemetry,
+// and an Application Insights connection string's ingestion endpoint. Bun's crash reporter (bun.report, in the bun
+// binary) is off through DO_NOT_TRACK, set by native/crates/exthost/src/lib.rs.
+const endpoints = /[a-z0-9.-]*events\.data\.microsoft\.com|vortex\.data\.microsoft\.com|dc\.services\.visualstudio\.com|dc\.applicationinsights\.[a-z.]+|[a-z0-9.-]*applicationinsights\.azure\.com|js\.monitor\.azure\.com|collector\.azure\.cn|[a-z0-9.-]*exp-tas\.com|copilot-telemetry\.githubusercontent\.com|IngestionEndpoint=[^;"']+/g;
+
+const extensionsDir = process.env.VSCODE_GPUI_EXTENSIONS ?? join(process.env.HOME!, 'Developer/vscode-ref/extensions');
+const builtins = shippedBuiltins(extensionsDir);
+const packages = shippedPackages(builtins);
+const files = ['native/target/release/vsrustium', 'out-exthost/bootstrap-exthost.js', ...[...builtins, ...packages].flatMap(runtimeFiles)];
+if (process.env.SELF_TEST) {
+	const { realpathSync, existsSync } = await import('node:fs');
+	for (const dir of builtins) {
+		for (const name of inertPackages) {
+			const path = join(dir, 'node_modules', name);
+			if (existsSync(path)) {
+				files.push(...runtimeFiles(realpathSync(path)));
+			}
+		}
+	}
+}
+
+const found = new Map<string, Set<string>>();
+for (const file of files) {
+	// latin1 keeps every byte, so the binary is searched as well as the text files.
+	for (const match of readFileSync(file, 'latin1').matchAll(endpoints)) {
+		found.set(file, (found.get(file) ?? new Set()).add(match[0]));
+	}
+}
+console.log(`scanned ${files.length} files: the binary, the extension host bundle, ${builtins.length} built-in extensions, ${packages.size} packages (inert, not loaded: ${inertPackages.join(', ')})`);
+for (const [file, names] of found) {
+	console.log(`${file}: ${[...names].join(', ')}`);
+}
+console.log(found.size ? `telemetry source search: ${found.size} files with an endpoint` : 'telemetry source search: no endpoint found');
+process.exit(found.size ? 1 : 0);

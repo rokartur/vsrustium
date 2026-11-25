@@ -34,11 +34,7 @@ impl Workbench {
 
     /// Tells the host about a content change or a cursor move, and reveals the cursor (cursor.ts `revealAll`).
     pub(super) fn editor_edited(&mut self, change: Option<ContentChanged>, moved: bool, source: &str, cx: &mut Context<Self>) {
-        let viewport = self.editors.viewport;
-        let editor = self.editors.active_mut().expect("only the active editor is edited");
-        let scroll = editor.scroll;
-        editor.reveal_cursors(source, viewport);
-        let scrolled = editor.scroll != scroll;
+        let scrolled = self.scroll_smoothly(cx, |editor, viewport| editor.reveal_cursors(source, viewport));
         self.find_editor_edited(change.as_ref());
         match &change {
             Some(_) => self.record_navigation(Some(crate::navigation::Reason::Edit)),
@@ -65,9 +61,19 @@ impl Workbench {
                 self.host.send_tabs(&self.editors);
             }
             self.schedule_keybinding_marks(cx);
+            self.schedule_unsupported_settings_markers(cx);
         }
         if scrolled {
             self.editor_scrolled(cx);
+        }
+        self.snippet_state_changed(cx);
+        self.suggest_editor_changed(change.is_some(), source, cx);
+        self.parameter_hints_editor_changed(source, cx);
+        if moved || change.is_some() {
+            self.code_actions_cursor_changed(change.is_some(), cx);
+        }
+        if change.is_some() {
+            self.code_lens_content_changed(cx);
         }
         cx.notify();
     }
@@ -127,7 +133,7 @@ impl Workbench {
         let timestamp = metadata.modified().ok().and_then(|modified| modified.duration_since(UNIX_EPOCH).ok()).map_or(0, |since| since.as_millis() as i64);
         let (resource, path) = (uri_string("file", path), path.to_path_buf());
         cx.background_executor().spawn(async move {
-            if let Err(error) = local_history::add_entry(&history_home, &resource, &path, None, timestamp, &limits) {
+            if let Err(error) = local_history::add_entry(&history_home, &resource, &path, None, None, timestamp, &limits) {
                 eprintln!("local history of {}: {error}", path.display());
             }
         })

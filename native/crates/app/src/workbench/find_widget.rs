@@ -83,6 +83,8 @@ pub struct FindWidget {
     history_update: Option<Task<()>>,
     /// multicursor.ts `SelectionHighlighter`: the matches of the selected text and what they were found for.
     pub selection_highlights: Option<(SelectionHighlightKey, Vec<Range<Position>>)>,
+    /// findOptionsWidget.ts while it shows, and findInput.ts `highlightFindOptions` flashing the input's options.
+    pub(super) options_widget: super::find_options_widget::FindOptionsWidget,
 }
 
 /// The model, its version, the selections and the search the selection highlights were found for.
@@ -111,6 +113,7 @@ impl FindWidget {
             replace_history: HistoryNavigator::new(Vec::new(), HISTORY_LIMIT),
             history_update: None,
             selection_highlights: None,
+            options_widget: Default::default(),
         }
     }
 }
@@ -268,6 +271,7 @@ impl Workbench {
         let Some(editor) = self.editors.active_mut() else { return };
         let find = &mut self.find;
         let (selections, scroll, revealed) = (editor.selections.clone(), editor.scroll, find.controller.state.is_revealed);
+        let options = (find.controller.state.is_regex, find.controller.state.whole_word, find.controller.state.match_case);
         let query = find.controller.query_options();
         // wordHighlighter.ts `_run`: without text focus the highlights keep the previous query's word.
         let highlighted_word = match self.editor_focus.is_focused(window) {
@@ -284,8 +288,10 @@ impl Workbench {
         }
         let adjust_scroll = !self.find.controller.state.is_revealed || revealed || !self.selection_under_find_widget(selections[0]);
         self.layout_find_zone(adjust_scroll);
+        let moved = self.editors.active().expect("checked above").selections != selections;
+        // findModel.ts reveals matches with `ScrollType.Smooth`.
+        let scrolled = self.animate_scroll_from(scroll, cx) || self.editors.viewport.top_whitespace != top_whitespace;
         let editor = self.editors.active().expect("checked above");
-        let (moved, scrolled) = (editor.selections != selections, editor.scroll != scroll || self.editors.viewport.top_whitespace != top_whitespace);
         match &change {
             Some(change) => {
                 self.host.send_content_change(&self.editors, self.editors.active_index().expect("checked above"), change);
@@ -319,6 +325,7 @@ impl Workbench {
             FocusAction::FocusFindInput => self.focus_find_input(InputId::Find, window, cx),
             FocusAction::FocusReplaceInput => self.focus_find_input(InputId::Replace, window, cx),
         }
+        self.highlight_find_options(options, cx);
         self.save_query_state(query);
         self.schedule_find_history(window, cx);
         cx.notify();
@@ -402,6 +409,10 @@ impl Workbench {
         }
         if let InputId::SearchEditor(field) = id {
             self.show_search_editor_history_value(field, previous, window, cx);
+            return Outcome::done();
+        }
+        if id == InputId::DebugConsole {
+            self.walk_repl_history(previous, cx);
             return Outcome::done();
         }
         if !matches!(id, InputId::Find | InputId::Replace) {
@@ -608,7 +619,7 @@ impl Workbench {
             return false;
         }
         let (start, end) = (selection.start(), selection.end());
-        let start_top = editor.line_top(editor.view_line(start.line), self.editors.viewport) - editor.scroll.top;
+        let start_top = editor.line_top(editor.position_view_line(start, false), self.editors.viewport) - editor.scroll.top;
         if start_top >= FIND_INPUT_AREA_HEIGHT {
             return false;
         }
@@ -769,9 +780,10 @@ impl Workbench {
                                 .top(px(2.))
                                 .right(px(1.))
                                 .flex()
-                                .child(self.option_toggle("case-sensitive", state.match_case, |state| NewFindState { match_case: Some(!state.match_case), ..Default::default() }, cx))
-                                .child(self.option_toggle("whole-word", state.whole_word, |state| NewFindState { whole_word: Some(!state.whole_word), ..Default::default() }, cx))
-                                .child(self.option_toggle("regex", state.is_regex, |state| NewFindState { is_regex: Some(!state.is_regex), ..Default::default() }, cx)),
+                                .when_some(self.find_options_flash(window), |controls, color| controls.bg(color))
+                                .child(self.option_toggle("case-sensitive", state.match_case, |state| NewFindState { match_case: Some(!state.match_case), ..Default::default() }, true, cx))
+                                .child(self.option_toggle("whole-word", state.whole_word, |state| NewFindState { whole_word: Some(!state.whole_word), ..Default::default() }, true, cx))
+                                .child(self.option_toggle("regex", state.is_regex, |state| NewFindState { is_regex: Some(!state.is_regex), ..Default::default() }, true, cx)),
                         )
                     }),
             )
@@ -825,6 +837,7 @@ impl Workbench {
                         "preserve-case",
                         state.preserve_case,
                         |state| NewFindState { preserve_case: Some(!state.preserve_case), ..Default::default() },
+                        true,
                         cx,
                     ))),
                 )
@@ -928,8 +941,8 @@ impl Workbench {
     }
 
     /// A find input option (toggle.css `.monaco-custom-toggle`); a click puts the focus back in its input
-    /// (`fixFocusOnOptionClickEnabled`).
-    fn option_toggle(&self, icon: &'static str, checked: bool, toggled: fn(&crate::editor::find::state::FindState) -> NewFindState, cx: &mut Context<Self>) -> Stateful<Div> {
+    /// (`fixFocusOnOptionClickEnabled`) unless `focus_input` is false, as in the find options widget.
+    pub(super) fn option_toggle(&self, icon: &'static str, checked: bool, toggled: fn(&crate::editor::find::state::FindState) -> NewFindState, focus_input: bool, cx: &mut Context<Self>) -> Stateful<Div> {
         let high_contrast = matches!(self.theme.kind, ThemeKind::HighContrastDark | ThemeKind::HighContrastLight);
         let color = if checked { self.foreground_or("inputOption.activeForeground") } else { self.foreground_or("editorWidget.foreground") };
         let input = if icon == "preserve-case" { InputId::Replace } else { InputId::Find };
@@ -950,7 +963,9 @@ impl Workbench {
                     find.change(editor, viewport, new, true);
                     (FocusAction::NoFocusChange, None)
                 });
-                workbench.focus_input_keeping_selection(input, window, cx);
+                if focus_input {
+                    workbench.focus_input_keeping_selection(input, window, cx);
+                }
             }))
     }
 

@@ -113,12 +113,14 @@ pub struct FindController {
     pub find_input_focused: bool,
     /// The `MultiCursorSelectionController` session of Cmd+D and Select All Occurrences.
     pub multicursor: Option<MultiCursorSession>,
+    /// `highlightFindOptions` was called by a multi-cursor session that searches with the find options.
+    pub highlight_find_options: bool,
 }
 
 impl FindController {
     /// The controller with the stored query options (`loadQueryState`).
     pub fn new(options: FindOptions, query: QueryOptions) -> Self {
-        let mut controller = FindController { state: FindState::default(), model: None, options, find_input_focused: false, multicursor: None };
+        let mut controller = FindController { state: FindState::default(), model: None, options, find_input_focused: false, multicursor: None, highlight_find_options: false };
         controller.state.change(query_change(query), false, true);
         controller
     }

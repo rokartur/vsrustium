@@ -21,17 +21,20 @@ use crate::syntax::Tokenization;
 
 mod anchor_select;
 pub mod auto_indent;
+mod bracket_matching;
 mod caret_operations;
+pub mod clipboard;
 pub mod commands;
 pub mod cursor_undo;
 mod comment;
-mod cursor;
+pub(crate) mod cursor;
 pub mod drag_and_drop;
 mod edit;
 pub mod find;
 pub mod folding;
 pub(crate) mod in_place_replace;
 mod folding_controller;
+mod graphemes;
 mod indentation;
 mod lines_operations;
 pub mod marker_decorations;
@@ -43,21 +46,25 @@ pub mod model_service;
 mod multicursor;
 pub mod section_headers;
 pub mod smart_select;
+pub mod smooth_scroll;
 mod snippet;
+pub mod snippet_session;
 pub mod sticky_scroll;
 pub mod unicode_highlighter;
 pub mod unusual_line_terminators;
 mod view;
 pub mod whitespace;
+pub mod word_operations;
+pub mod word_wrap;
 pub mod zoom;
 
 pub use comment::LineCommentKind;
 pub use lines_operations::CaseTransform;
 pub use cursor::{Position, Selection, column_from_visible};
 use folding::{FoldingMarkers, FoldingModel};
-pub use edit::{ContentChange, ContentChanged, Copied, CursorEdit, EditReason, History, Replace, char_column, end_of, selections_after, text_between, utf16_column};
+pub use edit::{ContentChange, ContentChanged, CursorEdit, EditReason, History, Pasted, Replace, char_column, end_of, selections_after, text_between, utf16_column};
 pub use multicursor::{ColumnSelectData, Reveal};
-pub use snippet::expand as expand_snippet;
+pub use snippet::{SnippetText, expand as expand_snippet};
 pub use view::{HORIZONTAL_SCROLLBAR_HEIGHT, LINE_HEIGHT, Scrollbar, VERTICAL_SCROLLBAR_WIDTH, VerticalReveal, Viewport};
 
 pub struct TextDocument {
@@ -149,6 +156,11 @@ impl TextDocument {
 
     pub fn is(&self, scheme: &str, path: &Path) -> bool {
         self.scheme == scheme && self.path == path
+    }
+
+    /// uriIdentityService.ts `extUri.isEqual` for the disk, which has no PathCaseSensitive: a path in any case.
+    pub fn is_file(&self, path: &Path) -> bool {
+        self.scheme == "file" && self.path.to_string_lossy().to_lowercase() == path.to_string_lossy().to_lowercase()
     }
 
     pub fn name(&self) -> String {
@@ -435,16 +447,35 @@ fn overflowing_char_count(count: usize) -> String {
     }
 }
 
-/// The visible column of char `column`, with tabs expanded to the next tab stop.
+/// The drawn column of char `column`: tabs expanded to the next tab stop, a bidi format character 8 wide.
 pub fn visible_column(line: &str, column: usize, tab_size: usize) -> usize {
+    line.chars().take(column).fold(0, |visible, c| visible + char_columns(c, visible, tab_size))
+}
+
+/// `CursorColumns.visibleColumnFromColumn`: tabs expanded, every other char one column, for cursor moves and Col.
+pub fn logical_visible_column(line: &str, column: usize, tab_size: usize) -> usize {
     line.chars().take(column).fold(0, |visible, c| if c == '\t' { visible + tab_size - visible % tab_size } else { visible + 1 })
+}
+
+/// viewLineRenderer.ts `isControlCharacter` past C0 and DEL: the bidi format characters, drawn as `[U+XXXX]`.
+pub fn is_bidi_format_character(c: char) -> bool {
+    matches!(c as u32, 0x202A..=0x202E | 0x2066..=0x2069 | 0x200E..=0x200F | 0x061C)
+}
+
+/// The columns char `c` takes when drawn at visible column `visible` (`producedCharacters` of `_renderLine`).
+pub fn char_columns(c: char, visible: usize, tab_size: usize) -> usize {
+    match c {
+        '\t' => tab_size - visible % tab_size,
+        c if is_bidi_format_character(c) => 8,
+        _ => 1,
+    }
 }
 
 /// The char index nearest to visible column `target`, for a click on the text.
 pub fn column_at_visible(line: &str, target: f32, tab_size: usize) -> usize {
     let mut visible = 0;
     for (index, c) in line.chars().enumerate() {
-        let width = if c == '\t' { tab_size - visible % tab_size } else { 1 };
+        let width = char_columns(c, visible, tab_size);
         if target < visible as f32 + width as f32 / 2. {
             return index;
         }
@@ -479,6 +510,9 @@ pub fn expand_tabs(line: &str, tab_size: usize) -> String {
         } else if c.is_ascii_control() {
             out.push(' ');
             visible += 1;
+        } else if is_bidi_format_character(c) {
+            out.push_str("        ");
+            visible += 8;
         } else {
             out.push(c);
             visible += 1;
@@ -550,6 +584,9 @@ pub struct OpenEditor {
     pub view_zones: Vec<view_zones::ViewZone>,
     /// The model version this editor's cursors and folding regions were last placed in (`sync_with_model`).
     seen_version: u32,
+    /// The snippet session of snippetController2.ts, its placeholders tracked through edits.
+    pub snippet_session: Option<snippet_session::SnippetSession>,
+    pub word_wrap: word_wrap::WordWrap,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -571,8 +608,11 @@ impl OpenEditor {
 
     /// An editor of a model that is open already.
     pub fn of_model(model: SharedModel, preview: bool, model_id: u32) -> Self {
-        let seen_version = model.borrow().version_id;
-        let mut editor = OpenEditor { seen_version, model, preview, model_id, selections: vec![Selection::default()], last_added: 0, leftovers: Vec::new(), column_select: None, smart_select: None, cursor_states: Default::default(), highlights: Vec::new(), value_set_replacement: None, selection_anchor: None, folding: FoldingModel::default(), syntax_folding: false, folded_imports: false, sticky_model: Default::default(), scroll: Scroll::default(), max_line_width: 0., view_zones: Vec::new() };
+        let (seen_version, word_wrap) = {
+            let model = model.borrow();
+            (model.version_id, word_wrap::WordWrap::new(&model.document.lines, model.document.too_large_for_tokenization))
+        };
+        let mut editor = OpenEditor { seen_version, model, preview, model_id, selections: vec![Selection::default()], last_added: 0, leftovers: Vec::new(), column_select: None, smart_select: None, cursor_states: Default::default(), highlights: Vec::new(), value_set_replacement: None, selection_anchor: None, folding: FoldingModel::default(), syntax_folding: false, folded_imports: false, sticky_model: Default::default(), scroll: Scroll::default(), max_line_width: 0., view_zones: Vec::new(), snippet_session: None, word_wrap };
         editor.refresh_highlights();
         editor.refresh_folding_ranges();
         editor
@@ -728,7 +768,7 @@ impl EditorGroup {
 
     /// The open editor of `path`, if any.
     pub fn find(&self, path: &Path) -> Option<usize> {
-        self.editors.iter().position(|editor| editor.document().is("file", path))
+        self.editors.iter().position(|editor| editor.document().is_file(path))
     }
 
     /// Opens a document right of the active editor, or in place of the preview editor when this open is a preview too.
@@ -767,17 +807,17 @@ impl EditorGroup {
         model
     }
 
-    /// A model whose editor went: its file's view state is kept; the extension host may still hold it, else it
+    /// A model whose editor went: its file's view state is kept; a model something else references stays, else it
     /// is disposed.
     fn keep_or_dispose(&mut self, model: OpenEditor) {
         self.save_view_state(&model);
         if Rc::strong_count(&model.model) > 1 {
             return;
         }
-        let held = model.text_model().host_reference.is_some();
-        match held {
-            true => self.models.push(model),
-            false => self.disposed.insert(model),
+        if self.is_referenced(&model, Instant::now()) {
+            self.models.push(model);
+        } else {
+            self.disposed.insert(model);
         }
     }
 
@@ -942,17 +982,20 @@ impl EditorGroup {
         self.insert(editor, preview);
     }
 
-    /// Drops the clean models without an editor whose host reference ran out; a dirty model stays, as text file models do.
+    /// Drops the models without an editor that nothing references any more.
     pub fn release_models(&mut self, now: Instant) {
-        let diffs = &self.diffs;
-        let shown_in_diff = |model: &OpenEditor| diffs.values().any(|diff| [&diff.original, &diff.modified].iter().any(|side| model.document().is(&side.scheme, &side.path)));
-        let (kept, released) = std::mem::take(&mut self.models)
-            .into_iter()
-            .partition(|model| model.is_dirty() || shown_in_diff(model) || model.text_model().host_reference.is_some_and(|opened| now.duration_since(opened) < HOST_REFERENCE_AGE));
+        let (kept, released) = std::mem::take(&mut self.models).into_iter().partition(|model| self.is_referenced(model, now));
         self.models = kept;
         for model in released.into_iter().filter(|model| Rc::strong_count(&model.model) == 1) {
             self.disposed.insert(model);
         }
+    }
+
+    /// textModelResolverService.ts `destroyReferencedObject`: a diff editor's side or an unexpired host reference holds
+    /// a model, and a dirty one waits for `canDispose`.
+    fn is_referenced(&self, model: &OpenEditor, now: Instant) -> bool {
+        let shown_in_diff = self.diffs.values().any(|diff| [&diff.original, &diff.modified].iter().any(|side| model.document().is(&side.scheme, &side.path)));
+        model.is_dirty() || shown_in_diff || model.text_model().host_reference.is_some_and(|opened| now.duration_since(opened) < HOST_REFERENCE_AGE)
     }
 
     fn insert(&mut self, mut editor: OpenEditor, preview: bool) {

@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 use super::Workbench;
 use super::host_requests::{range, snippet_edits, uri_parts};
 use crate::editor::{ContentChanged, EditReason, Position, TextDocument, expand_snippet, uri_string};
+use crate::local_history;
 
 impl Workbench {
     /// `BulkTextEdits.apply`: each resource's edits are one model change, made through the active editor when it shows
@@ -65,7 +66,7 @@ impl Workbench {
             let change = if in_active_editor && replaces.iter().any(|replace| replace.3) {
                 let templates: Vec<String> = replaces.iter().map(|&(_, _, text, is_snippet, _)| if is_snippet { text.to_string() } else { escape_snippet(text) }).collect();
                 let snippets: Vec<_> = replaces.iter().zip(&templates).map(|(&(start, end, _, _, keep_whitespace), template)| (start, end, template.as_str(), keep_whitespace)).collect();
-                let (edits, selections) = snippet_edits(model, &snippets, clipboard.as_deref());
+                let (edits, selections, _) = snippet_edits(model, &snippets, clipboard.as_deref());
                 model.execute_edits(edits, Some(selections), EditReason::Unknown("snippet"))
             } else {
                 let indentation = model.document().indentation;
@@ -125,6 +126,10 @@ impl Workbench {
                 2 => {
                     if let Ok((source_scheme, ref source)) = uri_parts(&pair["source"]) {
                         changed |= self.move_models(source_scheme, source, scheme, target);
+                        self.move_custom_editors(source_scheme, source, scheme, target);
+                        if source_scheme == "file" && scheme == "file" {
+                            self.move_local_history(source, target, cx);
+                        }
                     }
                 }
                 _ => {}
@@ -133,6 +138,7 @@ impl Workbench {
         if changed {
             self.editors_changed(cx);
         }
+        self.resolve_custom_editors(cx);
     }
 
     fn move_models(&mut self, source_scheme: &str, source: &Path, target_scheme: &str, target: &Path) -> bool {
@@ -145,6 +151,23 @@ impl Workbench {
             moved = true;
         }
         moved
+    }
+
+    /// workingCopyHistoryTracker.ts `onDidRunWorkingCopyFileOperation` for a move: the history of the moved files
+    /// follows them to `target`.
+    fn move_local_history(&self, source: &Path, target: &Path, cx: &mut Context<Self>) {
+        let settings = self.settings.clone();
+        let history_home = settings.lock().unwrap().user_home().join("History");
+        let (source, target) = (source.to_path_buf(), target.to_path_buf());
+        let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |since| since.as_millis() as i64);
+        cx.background_executor()
+            .spawn(async move {
+                let limits = |file: &Path| local_history::limits(&settings.lock().unwrap(), file);
+                if let Err(error) = local_history::move_entries(&history_home, &source, &target, timestamp, limits) {
+                    eprintln!("local history of {}: {error}", source.display());
+                }
+            })
+            .detach();
     }
 
     /// `TextFileEditorModel.revert`: the model takes the text of `bytes` and is clean.
@@ -178,6 +201,6 @@ pub(super) fn document_end(lines: &[String]) -> Position {
 }
 
 /// `SnippetParser.escape`: the text inserts as it is.
-fn escape_snippet(text: &str) -> String {
+pub(super) fn escape_snippet(text: &str) -> String {
     text.replace('\\', "\\\\").replace('$', "\\$").replace('}', "\\}")
 }

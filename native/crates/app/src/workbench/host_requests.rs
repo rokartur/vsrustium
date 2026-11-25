@@ -15,8 +15,9 @@ use serde_json::{Value, json};
 use super::Workbench;
 use super::auto_save::SaveReason;
 use super::bulk_text_edits::document_end;
+use super::snippet_controller::SnippetInsert;
 use crate::editor::{
-    CursorEdit, EditReason, OpenEditor, Position, Replace, Selection, TextDocument, VerticalReveal, char_column, end_of, expand_snippet,
+    CursorEdit, EditReason, OpenEditor, Position, Replace, Selection, SnippetText, TextDocument, VerticalReveal, char_column, end_of, expand_snippet,
     selections_after, text_between, uri_string, word_at,
 };
 use crate::host_sync::snapshot_id;
@@ -37,6 +38,13 @@ pub const HOST_REQUESTS: &[(&str, &str)] = &[
     ("MainThreadTextEditors", "$trySetOptions"),
     ("MainThreadTextEditors", "$tryApplyEdits"),
     ("MainThreadTextEditors", "$tryInsertSnippet"),
+    ("MainThreadPower", "$getSystemIdleState"),
+    ("MainThreadPower", "$getSystemIdleTime"),
+    ("MainThreadPower", "$getCurrentThermalState"),
+    ("MainThreadPower", "$isOnBatteryPower"),
+    ("MainThreadPower", "$startPowerSaveBlocker"),
+    ("MainThreadPower", "$stopPowerSaveBlocker"),
+    ("MainThreadPower", "$isPowerSaveBlockerStarted"),
 ];
 
 #[cfg(test)]
@@ -56,6 +64,7 @@ impl Workbench {
                 cx.write_to_clipboard(ClipboardItem::new_string(arg(0).as_str().unwrap_or_default().to_string()));
                 Ok(null)
             }
+            ("MainThreadPower", method) => crate::power::request(method, args).map_err(|error| serialized_error(&error)),
             ("MainThreadDocuments", "$tryOpenDocument") => self.try_open_document(arg(0), arg(1), arg(2), arg(3) == true, cx),
             ("MainThreadDocuments", "$trySaveDocument") => self.try_save_document(arg(0), cx),
             ("MainThreadDocuments", "$tryCreateDocument") => self.try_create_document(arg(0), cx),
@@ -148,6 +157,11 @@ impl Workbench {
                 };
                 TextDocument::from_text(scheme, path, &text, encoding::UTF8.into(), None, &self.languages, &self.settings.lock().unwrap())
             }
+            // textModelResolverService.ts `ensureResolvedTextModelContent`: an inmemory resource resolves only to a model it has.
+            ("inmemory", _) => {
+                let uri = uri_string(scheme, path);
+                return Err(serialized_error(&format!("cannot open {uri}. Detail: Unable to resolve text model content for resource {uri}")));
+            }
             _ => return Err(serialized_error(&format!("cannot open {scheme}:{}. Detail: Unable to resolve resource {scheme}:{}", path.display(), path.display()))),
         };
         let index = self.editors.open_model(document);
@@ -210,11 +224,11 @@ impl Workbench {
     }
 
     /// `$tryCreateDocument`: a new untitled model named `Untitled-<n>` with the first free n.
-    // shortcut: `files.defaultLanguage` is not read; an untitled model without a language is plain text.
     fn try_create_document(&mut self, options: &Value, cx: &mut Context<Self>) -> HostResult {
         let path = (1..).map(|n| PathBuf::from(format!("Untitled-{n}"))).find(|path| self.editors.model("untitled", path).is_none()).expect("a free name");
         let content = options["content"].as_str().unwrap_or_default();
-        let mut document = TextDocument::untitled(&path, content, options["language"].as_str(), &self.languages, &self.settings.lock().unwrap());
+        let language = self.untitled_language(options["language"].as_str().map(str::to_string));
+        let mut document = TextDocument::untitled(&path, content, language.as_deref(), &self.languages, &self.settings.lock().unwrap());
         document.encoding = options["encoding"].as_str().map_or(document.encoding, str::to_string);
         let uri = document.uri();
         let index = self.editors.open_model(document);
@@ -291,7 +305,7 @@ impl Workbench {
     }
 
     /// `$tryShowTextDocument`: opens the model in the group, preview unless pinned, and returns the editor's id.
-    fn try_show_text_document(&mut self, uri: &Value, options: &Value, window: &mut Window, cx: &mut Context<Self>) -> HostResult {
+    pub(super) fn try_show_text_document(&mut self, uri: &Value, options: &Value, window: &mut Window, cx: &mut Context<Self>) -> HostResult {
         let (scheme, ref path) = uri_parts(uri)?;
         self.activate_column(&options["position"]);
         let pinned = options["pinned"] == json!(true);
@@ -335,7 +349,7 @@ impl Workbench {
             if !matches!(link.split(':').next(), Some("http" | "https")) {
                 return Err(serialized_error(&format!("Unable to open '{link}'")));
             }
-            cx.open_url(link);
+            drop(self.open_link(super::opener::Target::Text(link.to_owned()), super::opener::OpenOptions::default(), window, cx));
             return Ok(Value::Null);
         }
         let (scheme, _) = uri_parts(resource)?;
@@ -384,12 +398,12 @@ impl Workbench {
             Some(3) => VerticalReveal::Top,
             _ => VerticalReveal::Simple,
         };
-        let viewport = self.editors.viewport;
-        let editor = self.editors.active_mut().expect("checked by host_request");
-        let (start, end) = range(editor, range_value);
-        let scroll = editor.scroll;
-        editor.reveal_range(start, end, reveal, viewport);
-        if editor.scroll != scroll {
+        // mainThreadEditor.ts `_revealRange` scrolls with `ScrollType.Smooth`.
+        let scrolled = self.scroll_smoothly(cx, |editor, viewport| {
+            let (start, end) = range(editor, range_value);
+            editor.reveal_range(start, end, reveal, viewport);
+        });
+        if scrolled {
             self.editor_scrolled(cx);
         }
         Ok(Value::Null)
@@ -474,34 +488,29 @@ impl Workbench {
         let template = template.as_str().unwrap_or_default();
         let keep_whitespace = options["keepWhitespace"] == json!(true);
         let snippets: Vec<_> = ranges.into_iter().map(|(start, end)| (start, end, template, keep_whitespace)).collect();
-        let (edits, selections) = snippet_edits(editor, &snippets, clipboard.as_deref());
-        if options["undoStopBefore"] == json!(true) {
-            editor.push_undo_stop();
-        }
-        let change = editor.execute_edits(edits, Some(selections), EditReason::Unknown("snippet"));
-        if options["undoStopAfter"] == json!(true) {
-            editor.push_undo_stop();
-        }
-        self.editor_edited(change, true, "snippet", cx);
+        let insert = SnippetInsert { snippets: &snippets, clipboard: clipboard.as_deref(), undo_stop_before: options["undoStopBefore"] == json!(true), undo_stop_after: options["undoStopAfter"] == json!(true), reason: "snippet" };
+        self.insert_snippets(insert, cx);
         Ok(json!(true))
     }
 }
 
 /// `SnippetSession`: each template, with whitespace adjusted unless kept, replaces its range; the selections are
-/// each copy's first tab stop.
-pub(super) fn snippet_edits(editor: &OpenEditor, snippets: &[(Position, Position, &str, bool)], clipboard: Option<&str>) -> (Vec<(Position, Position, String, bool)>, Vec<Selection>) {
+/// each copy's first tab stop. The expanded templates come back in the order given.
+pub(super) fn snippet_edits(editor: &OpenEditor, snippets: &[(Position, Position, &str, bool)], clipboard: Option<&str>) -> (Vec<(Position, Position, String, bool)>, Vec<Selection>, Vec<SnippetText>) {
     let mut cursor_edits = Vec::new();
+    let mut texts = Vec::new();
     for &(start, end, template, keep_whitespace) in snippets {
         let line_indent: String = editor.document().lines[start.line].chars().take(start.column).take_while(|c| *c == ' ' || *c == '\t').collect();
         let snippet = expand_snippet(template, &line_indent, !keep_whitespace, editor.document().indentation, |name| snippet_variable(name, editor, start, end, clipboard));
         let prefix = |chars: usize| snippet.text.chars().take(chars).collect::<String>();
         let selection = Selection { anchor: end_of(start, &prefix(snippet.selection.start)), head: end_of(start, &prefix(snippet.selection.end)) };
         cursor_edits.push(CursorEdit::new(vec![Replace::new(start, end, snippet.text.clone())], selection));
+        texts.push(snippet);
     }
     let before: Vec<Selection> = snippets.iter().map(|&(start, end, _, _)| Selection { anchor: start, head: end }).collect();
     let selections = selections_after(&cursor_edits, &before);
     let edits = cursor_edits.into_iter().flat_map(|edit| edit.replaces).map(|replace| (replace.start, replace.end, replace.text, false)).collect();
-    (edits, selections)
+    (edits, selections, texts)
 }
 
 /// snippetVariables.ts: the selection, model and file variables; the rest insert their default.

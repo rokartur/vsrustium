@@ -12,6 +12,7 @@ path = "src/main.rs"
 alacritty_terminal = "0.25"
 libc = "0.2"
 anyhow.workspace = true
+base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 config = { path = "../config" }
 diff = { path = "../diff" }
@@ -20,26 +21,34 @@ files = { path = "../files" }
 flate2 = "1"
 futures = "0.3"
 icu_collator = "2"
+icu_locale_core = "2"
+icu_segmenter = "2"
 ttf-parser = "0.25"
 block2 = "0.6"
+core-foundation = "0.10"
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSAlert", "NSApplication", "NSButton", "NSCell", "NSControl", "NSMenu", "NSMenuItem", "NSPasteboard", "NSResponder", "NSView", "NSWindow", "block2", "objc2-core-foundation"] }
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSArray", "NSData", "NSDictionary", "NSError", "NSGeometry", "NSKeyValueCoding", "NSOperation", "NSProcessInfo", "NSString", "NSURL", "NSURLRequest", "NSURLResponse", "NSURLSession", "NSValue", "block2", "objc2-core-foundation"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSAccessibility", "NSAlert", "NSApplication", "NSButton", "NSCell", "NSControl", "NSEvent", "NSMenu", "NSMenuItem", "NSPasteboard", "NSResponder", "NSSound", "NSView", "NSWindow", "NSWorkspace", "block2", "objc2-core-foundation"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSArray", "NSData", "NSDate", "NSDateFormatter", "NSDictionary", "NSDistributedNotificationCenter", "NSError", "NSFormatter", "NSGeometry", "NSKeyValueCoding", "NSLocale", "NSNotification", "NSOperation", "NSProcessInfo", "NSString", "NSTimeZone", "NSURL", "NSURLRequest", "NSURLResponse", "NSURLSession", "NSUserDefaults", "NSValue", "block2", "objc2-core-foundation"] }
 objc2-web-kit = { version = "0.3.2", default-features = false, features = ["WKNavigation", "WKPreferences", "WKScriptMessage", "WKScriptMessageHandler", "WKURLSchemeHandler", "WKURLSchemeTask", "WKUserContentController", "WKUserScript", "WKWebView", "WKWebViewConfiguration", "block2", "objc2-app-kit", "objc2-core-foundation"] }
 raw-window-handle = "0.6"
 gpui.workspace = true
 gpui_platform = { workspace = true, features = ["font-kit"] }
 icu_normalizer = { version = "2.4", default-features = false, features = ["compiled_data"] }
 serde.workspace = true
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+semver = "1"
 sha2 = "0.10"
 serde_json.workspace = true
 storage = { path = "../storage" }
 regex = "1"
 onig = { version = "6.5", default-features = false }
-pulldown-cmark = { version = "0.13", default-features = false }
 search = { path = "../search" }
 textmate = { path = "../textmate" }
 image = { version = "0.25", default-features = false, features = ["png"] }
+url = "2"
+
+[build-dependencies]
+regex = "1"
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

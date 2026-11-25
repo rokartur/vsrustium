@@ -1,0 +1,109 @@
+#!/usr/bin/env bun
+// What VoiceOver reads (roadmap section 19): opens the port, or the reference with REF_APP=1, on a copy of
+// port/fixtures/workspace with notes.txt, then dumps the window's accessibility tree through cua-driver (the AX API
+// VoiceOver uses) after each step: the editor focused, two lines down, the Explorer focused, and Accessibility Help
+// (Alt+F1). For the port it exits 1 when the Explorer tree, its rows, the editor text area or the help's text are missing. Run on the Studio:
+//   port/tools/studio 'port/tools/a11y-check [out-dir]'      (rows matching QUERY, default all)
+import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { referenceArgs, referenceUserData } from './ref-user-data.ts';
+
+const out = process.argv[2] ?? mkdtempSync(join(tmpdir(), 'a11y-check-'));
+mkdirSync(out, { recursive: true });
+const ref = process.env.REF ?? join(process.env.HOME!, 'Developer/vscode-ref');
+await takeGuiLock();
+const folder = join(mkdtempSync(join(tmpdir(), 'a11y-')), 'workspace');
+cpSync('port/fixtures/workspace', folder, { recursive: true });
+const file = join(folder, 'notes.txt');
+const child = process.env.REF_APP
+	? Bun.spawn([join(ref, '.build/electron/Code - OSS.app/Contents/MacOS/Code - OSS'), ref, folder, file, ...referenceArgs, '--user-data-dir', referenceUserData('Default Dark Modern')], { env: { ...process.env, VSCODE_DEV: '1', NODE_ENV: 'development' }, stdout: 'ignore', stderr: 'ignore' })
+	: Bun.spawn(['native/target/release/vsrustium', folder, file, '--user-data-dir', mkdtempSync(join(tmpdir(), 'a11y-user-'))], { env: { ...process.env, VSCODE_GPUI_EXTENSIONS: join(ref, 'extensions') }, stdout: 'ignore', stderr: 'ignore' });
+try {
+	await Bun.sleep(process.env.REF_APP ? 12000 : 6000);
+	const { windows } = await cua('list_windows', { pid: child.pid });
+	const target = { pid: child.pid, window_id: windows[0].window_id };
+	const dump = async (name: string) => {
+		const state = await cua('get_window_state', { ...target, query: process.env.QUERY, max_image_dimension: 1 });
+		writeFileSync(join(out, `${name}.json`), JSON.stringify(state, null, 1));
+		console.log(`== ${name}`);
+		console.log(state.tree_markdown);
+		return state;
+	};
+	await dump('open');
+	await cua('press_key', { ...target, key: 'down' });
+	await cua('press_key', { ...target, key: 'down' });
+	await Bun.sleep(500);
+	await dump('down-twice');
+	const editor = await editorLine(child.pid);
+	console.log(`editor text area: line ${editor.line}, ${editor.value?.length ?? 0} characters`);
+	await cua('hotkey', { ...target, keys: ['cmd', 'shift', 'e'] });
+	await Bun.sleep(500);
+	const tree = (await dump('explorer')).tree_markdown as string;
+	// The first dump only wakes AccessKit (gpui fills the tree once an AX client asks); the later ones carry it.
+	const missing = process.env.REF_APP ? [] : ['AXOutline "Files Explorer"', 'AXRow "notes.txt"', 'AXTextArea "Editor content"'].filter(node => !tree.includes(node));
+	// VoiceOver speaks the line of AXInsertionPointLineNumber from AXValue: two Downs from the top reach line 2.
+	const line = 'This file opens in the editor for the pixel check.';
+	if (!process.env.REF_APP && (editor.line !== 2 || !editor.value?.split('\n')[2]?.startsWith(line))) {
+		missing.push(`editor line 2 "${line}"`);
+	}
+	if (!process.env.REF_APP) {
+		await cua('hotkey', { ...target, keys: ['option', 'f1'] });
+		await Bun.sleep(500);
+		await dump('accessibility-help');
+		const help = await editorLine(child.pid, 'Accessibility Help');
+		console.log(`accessibility help: line ${help.line}, ${help.value?.length ?? 0} characters`);
+		if (!help.value?.includes('You are in a code editor.')) {
+			missing.push('Accessibility Help text area with "You are in a code editor."');
+		}
+		await cua('press_key', { ...target, key: 'escape' });
+	}
+	if (missing.length) {
+		console.log(`a11y check: missing ${missing.join(', ')}`);
+		process.exitCode = 1;
+	} else {
+		console.log('a11y check: ok');
+	}
+} finally {
+	child.kill('SIGKILL');
+}
+process.exit();
+
+// ui-pair's lock: /tmp/port-gui.lock holds the owner's pid; a dead owner's lock is taken over.
+async function takeGuiLock() {
+	const lock = '/tmp/port-gui.lock';
+	while (true) {
+		try {
+			mkdirSync(lock);
+			writeFileSync(join(lock, 'pid'), String(process.pid));
+			process.on('exit', () => rmSync(lock, { recursive: true, force: true }));
+			return;
+		} catch {
+			const owner = Number(await Bun.file(join(lock, 'pid')).text().catch(() => '0'));
+			const alive = (() => { try { process.kill(owner, 0); return true; } catch { return false; } })();
+			if (owner && !alive) {
+				rmSync(lock, { recursive: true, force: true });
+				continue;
+			}
+			await Bun.sleep(5000);
+		}
+	}
+}
+
+async function editorLine(pid: number, label = ''): Promise<{ value?: string; line?: number; error?: string }> {
+	const child = Bun.spawn(['swift', 'port/tools/ax-text.swift', String(pid), label], { stderr: 'pipe' });
+	const [stdout, stderr] = [await new Response(child.stdout).text(), await new Response(child.stderr).text()];
+	if (await child.exited) {
+		throw new Error(`ax-text.swift: ${stderr}`);
+	}
+	return JSON.parse(stdout);
+}
+
+async function cua(tool: string, args: object) {
+	const child = Bun.spawn(['cua-driver', 'call', tool, JSON.stringify({ session: 'a11y-check', ...args })], { stderr: 'pipe' });
+	const [stdout, stderr] = [await new Response(child.stdout).text(), await new Response(child.stderr).text()];
+	if (await child.exited) {
+		throw new Error(`cua-driver ${tool}: ${stderr}${stdout}`);
+	}
+	return JSON.parse(stdout);
+}

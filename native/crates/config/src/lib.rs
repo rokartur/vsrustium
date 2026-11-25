@@ -8,6 +8,8 @@ pub mod json;
 pub mod json_edit;
 pub mod json_schema;
 pub mod model;
+pub mod policy;
 pub mod registry;
 pub mod service;
+pub mod variables;
 pub mod workspace;

@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 use crate::editor_history::{file_path, file_uri_string};
 
 const FILE_FORMAT: &str = "code/file-list";
+/// `NSPasteboardTypeHTML`.
+const HTML_FORMAT: &str = "public.html";
 
 /// `writeResources`: the files' URIs, one per line, replace the clipboard; an empty list leaves it.
 pub fn write_resources(paths: &[PathBuf]) {
@@ -27,6 +29,12 @@ pub fn has_resources() -> bool {
     pasteboard::has(FILE_FORMAT)
 }
 
+/// The HTML of the text just copied, as Chromium puts a copy event's `text/html` beside its text: with the
+/// `<meta charset='utf-8'>` its macOS clipboard writer puts first.
+pub fn write_html(html: &str) {
+    pasteboard::add_data(HTML_FORMAT, format!("<meta charset='utf-8'>{html}").as_bytes());
+}
+
 /// `readFindText` and `writeFindText`.
 pub use pasteboard::{read_find_text, write_find_text};
 
@@ -46,6 +54,11 @@ mod pasteboard {
         let pasteboard = NSPasteboard::generalPasteboard();
         pasteboard.clearContents();
         pasteboard.setData_forType(Some(&NSData::with_bytes(data)), &NSString::from_str(format));
+    }
+
+    /// One more type beside what the clipboard holds.
+    pub fn add_data(format: &str, data: &[u8]) {
+        NSPasteboard::generalPasteboard().setData_forType(Some(&NSData::with_bytes(data)), &NSString::from_str(format));
     }
 
     pub fn read_data(format: &str) -> Option<Vec<u8>> {
@@ -85,6 +98,10 @@ mod pasteboard {
 
     pub fn write_data(format: &str, data: &[u8]) {
         GENERAL.with_borrow_mut(|general| *general = HashMap::from([(format.to_string(), data.to_vec())]));
+    }
+
+    pub fn add_data(format: &str, data: &[u8]) {
+        GENERAL.with_borrow_mut(|general| general.insert(format.to_string(), data.to_vec()));
     }
 
     pub fn read_data(format: &str) -> Option<Vec<u8>> {

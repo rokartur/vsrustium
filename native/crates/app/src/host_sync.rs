@@ -123,7 +123,9 @@ impl HostSync {
     /// and editor delta, then the tab model.
     pub fn send_changes(&mut self, group: &EditorGroup) {
         let is_text = |editor: &&OpenEditor| !self.webview_tabs.contains_key(&editor.document().path) && editor.document().scheme != DIFF_EDITOR_SCHEME;
-        let open: Vec<&OpenEditor> = group.all_editors().filter(is_text).collect();
+        // A custom text editor's model stays a document, without a text editor (customTextEditorModel.ts).
+        let is_document = |editor: &&OpenEditor| self.webview_tabs.get(&editor.document().path).is_none_or(|tab| tab.custom_text) && editor.document().scheme != DIFF_EDITOR_SCHEME;
+        let open: Vec<&OpenEditor> = group.all_editors().filter(is_document).collect();
         let mut added: Vec<&OpenEditor> = open.iter().copied().filter(|editor| !self.documents.iter().any(|(uri, _)| *uri == editor.document().uri_string())).collect();
         // Editors of one model in several groups are one document.
         let mut seen = Vec::new();
@@ -282,7 +284,7 @@ impl HostSync {
         self.send_selection(editor, "keyboard");
     }
 
-    /// The text of `editor`, shown or a model without an editor, changed: the change, then the dirty state and tabs when it flipped.
+    /// The text of `editor`, shown or a model without an editor, changed: the change, then the dirty state and tabs when it flipped, the tabs also for an untitled model.
     pub fn send_model_change(&mut self, group: &EditorGroup, editor: &OpenEditor, change: &ContentChanged) {
         let document = &editor.document();
         let uri = document.uri();
@@ -312,6 +314,9 @@ impl HostSync {
         self.send("ExtHostDocuments", "$acceptModelChanged", vec![uri.clone(), event, json!(dirty)]);
         if dirty != change.was_dirty {
             self.send("ExtHostDocuments", "$acceptDirtyStateChanged", vec![uri, json!(dirty)]);
+        }
+        // untitledTextEditorInput.ts `onDidChangeLabel`: a new first line renames an untitled tab.
+        if dirty != change.was_dirty || document.scheme == "untitled" {
             self.send_tabs(group);
         }
     }
@@ -367,6 +372,14 @@ impl HostSync {
             ThemeKind::HighContrastLight => "hcLight",
         };
         self.send("ExtHostTheming", "$onColorThemeChange", vec![json!(scheme)]);
+    }
+
+    /// `send` for callbacks that outlive a borrow of the workbench (a terminal's input).
+    pub fn notifier(&self) -> impl Fn(&'static str, &'static str, Vec<Value>) + 'static {
+        let sender = self.sender.clone();
+        move |proxy, method, args| {
+            let _ = sender.send(HostMessage { proxy, method, args, reply: None, cancellable: false, files: None, extensions: None });
+        }
     }
 
     pub(crate) fn send(&self, proxy: &'static str, method: &'static str, args: Vec<Value>) {
@@ -523,12 +536,15 @@ fn tab_dto(group: u32, editor: &OpenEditor, active: bool, sync: &HostSync) -> Va
         tab["input"] = json!({ "kind": 0 });
         tab["editorId"] = json!(type_id);
     }
-    // mainThreadEditorTabs.ts: TabInputKind.WebviewEditorInput, its editor id is the view type.
+    // mainThreadEditorTabs.ts: TabInputKind.WebviewEditorInput or CustomEditorInput, its editor id is the view type.
     if let Some(webview) = webview_tabs.get(&editor.document().path) {
-        let type_id = "workbench.editors.webviewInput";
+        let type_id = if webview.custom_resource.is_some() { "workbench.editors.webviewEditor" } else { "workbench.editors.webviewInput" };
         tab["id"] = json!(format!("{group}~{}-{type_id}-{} ", webview.view_type, editor.document().uri_string()));
         tab["label"] = json!(webview.label);
-        tab["input"] = json!({ "kind": 7, "viewType": webview.view_type });
+        tab["input"] = match &webview.custom_resource {
+            Some(uri) => json!({ "kind": 6, "viewType": webview.view_type, "uri": uri }),
+            None => json!({ "kind": 7, "viewType": webview.view_type }),
+        };
         tab["editorId"] = json!(webview.view_type);
     }
     tab
@@ -561,8 +577,12 @@ pub struct SearchTab {
 
 pub struct WebviewTab {
     pub label: String,
-    /// `mainThreadWebview-<viewType>`.
+    /// `mainThreadWebview-<viewType>`, a custom editor's own view type.
     pub view_type: String,
+    /// A custom editor's resource.
+    pub custom_resource: Option<Value>,
+    /// A custom text editor, whose tab is its resource's text model.
+    pub custom_text: bool,
 }
 
 
@@ -594,6 +614,16 @@ mod tests {
     /// The messages sent, without the view columns (`$acceptEditorPositionData`), which one test checks.
     fn drain(receiver: &Receiver<HostMessage>) -> Vec<HostMessage> {
         receiver.try_iter().filter(|message| message.method != "$acceptEditorPositionData").collect()
+    }
+
+    /// uriIdentityService.test.ts 'extUri (isEqual)' with the disk's path casing ignored.
+    #[test]
+    fn a_file_in_another_case_finds_the_editor_opened_first() {
+        let mut group = EditorGroup::default();
+        group.open(document("/w/Readme.md", "markdown"), false);
+        assert_eq!(group.find(std::path::Path::new("/w/README.md")), Some(0));
+        assert_eq!(group.find(std::path::Path::new("/w/Readme.md")), Some(0));
+        assert_eq!(group.find(std::path::Path::new("/W2/readme.md")), None);
     }
 
     #[test]

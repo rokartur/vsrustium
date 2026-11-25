@@ -382,8 +382,8 @@ impl Workbench {
         let focus = &self.explorer_panes.focus[id];
         let focused = focus.is_focused(window);
         let foreground = self.foreground_or("sideBarSectionHeader.foreground");
-        let background = self.color("sideBarSectionHeader.background");
-        let border = self.theme.color("sideBarSectionHeader.border").filter(|_| index > 0);
+        let background = self.color("sideBar.background");
+        let border = self.theme.color("sideBarSectionHeader.border").or(self.theme.color("surface.border")).filter(|_| index > 0);
         let chevron = if expanded { "chevron-down" } else { "chevron-right" };
         let dragged = DraggedPane {
             id,
@@ -408,8 +408,9 @@ impl Workbench {
                 .items_center()
                 .rounded(px(4.))
                 .bg(background)
+                .hover(|header| header.bg(self.color("list.hoverBackground")))
                 .text_color(foreground)
-                .when_some(border, |header, border| header.child(div().absolute().top_0().left_0().right_0().h(px(1.)).bg(border)))
+                .when_some(border, |header, border| header.child(div().absolute().top_0().left(px(4.)).right(px(4.)).h(px(1.)).bg(border)))
                 .child(self.icon(chevron, 16., 16., foreground).mx(px(2.)))
                 .child(div().text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).child(title.to_string()))
                 // paneviewlet.css `.pane-header .description`: 10px after the title, normal weight, only while expanded.
@@ -417,6 +418,7 @@ impl Workbench {
                     div().ml(px(10.)).text_size(px(12.)).text_color(self.color("panelTitle.inactiveForeground")).overflow_hidden().whitespace_nowrap().child(description)
                 }))
                 .children(actions.filter(|_| expanded).map(|actions| div().ml_auto().mr(px(4.)).invisible().group_hover(id, |actions| actions.visible()).when(focused, |actions| actions.visible()).child(actions)))
+                .when(id == FILE_VIEW, |header| header.children(self.explorer_title_actions(window, cx)))
                 .when(focused, |header| header.child(div().absolute().inset_0().rounded(px(4.)).border_1().border_color(self.color("focusBorder"))))
                 .on_click(cx.listener(move |workbench, _, window, cx| {
                     let focus = workbench.explorer_panes.focus[id].clone();

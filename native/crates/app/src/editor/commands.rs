@@ -53,6 +53,7 @@ pub const IDS: &[&str] = &[
 pub fn run(editor: &mut OpenEditor, command: &str, viewport: Viewport) -> Option<Reveal> {
     let page_size = viewport.page_size();
     Some(match command {
+        // shortcut: GPUI has no screen reader announcements, so multicursor.ts `announceCursorChange` is not read out; add it with them.
         "editor.action.insertCursorAbove" => editor.insert_cursors_vertically(false),
         "editor.action.insertCursorBelow" => editor.insert_cursors_vertically(true),
         "editor.action.insertCursorAtEndOfEachLineSelected" => editor.insert_cursors_at_line_ends(),

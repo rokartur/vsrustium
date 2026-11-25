@@ -224,8 +224,8 @@ pub fn menu(extensions: &[ScannedExtension]) -> Vec<MenuItem> {
         .iter()
         .map(|item| MenuItem {
             id: text(&item["id"]).expect("an id"),
-            title: text(&item["title"]).unwrap_or_default(),
-            category: text(&item["category"]),
+            title: text(&item["title"]).map(|title| crate::nls::localize(&title).into_owned()).unwrap_or_default(),
+            category: text(&item["category"]).map(|category| crate::nls::localize(&category).into_owned()),
             when: item["when"].as_str().and_then(Expr::deserialize),
             precondition: item["precondition"].as_str().and_then(Expr::deserialize),
             source: None,
@@ -397,6 +397,7 @@ pub const EDITOR_ACTIONS: &[(&str, &str, Option<&str>)] = &[
     ("editor.action.marker.prev", "Go to Previous Problem (Error, Warning, Info)", None),
     ("editor.action.marker.nextInFiles", "Go to Next Problem in Files (Error, Warning, Info)", None),
     ("editor.action.marker.prevInFiles", "Go to Previous Problem in Files (Error, Warning, Info)", None),
+    ("editor.action.inspectTMScopes", "Developer: Inspect Editor Tokens and Scopes", None),
 ];
 
 /// `getCodeEditorCommandPicks`: the active editor's supported actions, those whose precondition holds.

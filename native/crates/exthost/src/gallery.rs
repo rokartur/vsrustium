@@ -117,6 +117,8 @@ pub struct ExtensionInfo {
 pub struct QueryOptions {
     pub text: String,
     pub page_size: Option<usize>,
+    /// The pager's page, from 1; 0 reads as 1.
+    pub page_number: usize,
     pub sort_by: Option<SortBy>,
     pub sort_order: Option<u8>,
     pub include_pre_release: bool,
@@ -244,6 +246,7 @@ impl Gallery {
     /// `query`: the text's `category:`, `tag:` and `featured` become filters; returns the page and the total.
     pub fn query(&self, options: &QueryOptions) -> anyhow::Result<(Vec<GalleryExtension>, usize)> {
         let mut query = Query::new(options.page_size.unwrap_or(50));
+        query.page_number = options.page_number.max(1);
         let mut text = options.text.clone();
         if text.is_empty() {
             query.sort_by = SortBy::InstallCount;

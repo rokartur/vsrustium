@@ -1,11 +1,18 @@
 //! The integrated terminal's model: one `TerminalInstance` per terminal (terminalInstance.ts), its shell in a
 //! PTY (terminalProcess.ts over node-pty) and its screen in alacritty_terminal standing in for xterm.js.
 
+pub mod auto_replies;
 pub mod colors;
 pub mod keys;
+pub mod link_parsing;
 pub mod mouse;
 pub mod profiles;
+pub mod prompt_input;
+pub mod environment_collection;
+pub mod injection;
 pub mod pty;
+pub mod search;
+pub mod shell_integration;
 pub mod skip_shell;
 
 use std::cell::RefCell;
@@ -23,6 +30,7 @@ use alacritty_terminal::vte::ansi::{ClearMode, Handler, Processor, Rgb};
 use futures::channel::mpsc::{UnboundedReceiver, unbounded};
 
 use self::pty::{Pty, PtyEvent};
+use self::shell_integration::{BufferPoint, ShellEvent, ShellIntegration};
 
 struct GridSize {
     cols: u16,
@@ -54,6 +62,15 @@ pub struct ShellLaunchConfig {
     pub env: HashMap<String, String>,
     pub icon: Option<String>,
     pub color: Option<String>,
+    /// The extension host's id of a terminal it created (`extHostTerminalId`).
+    pub ext_host_terminal_id: Option<String>,
+    pub hide_from_user: bool,
+    /// `customPtyImplementation`: the process is an extension's `Pseudoterminal`, no PTY is spawned.
+    pub extension_pty: bool,
+    /// `isFeatureTerminal` (tasks): shell integration is not injected and `executeCommand` is not offered.
+    pub is_feature_terminal: bool,
+    /// `shellIntegrationNonce`.
+    pub nonce: String,
 }
 
 /// The events alacritty_terminal raises while it parses, handled after each chunk.
@@ -90,13 +107,33 @@ pub struct TerminalInstance {
     pub cell_size: (f32, f32),
     /// Text the process asked to put on the clipboard (OSC 52).
     pub clipboard_requests: Vec<String>,
+    /// OSC 52 `?` queries, each formatting the clipboard text into its reply.
+    pub clipboard_loads: Vec<std::sync::Arc<dyn Fn(&str) -> String + Sync + Send>>,
     /// The bell rang since it was last read.
     pub bell: bool,
+    /// `terminal.integrated.autoReplies` as last read, and its responders.
+    auto_reply_setting: serde_json::Value,
+    auto_responders: Vec<auto_replies::AutoResponder>,
     launched: Instant,
     /// `ProcessState.KilledByUser`: the kill command ended the process.
     pub killed_by_user: bool,
     /// What `Term` was last configured with: `set_options` resets its history size and damage, so it runs on change only.
     config: Config,
+    pub shell_integration: ShellIntegration,
+    /// The bytes of a UTF-8 character the last chunk cut off.
+    utf8_tail: Vec<u8>,
+    /// Where the input of an extension pty goes (`$acceptProcessInput`); set for `launch.extension_pty`.
+    pub process_input: Option<Box<dyn FnMut(&str)>>,
+    /// `onDidInputData`: typed, pasted or sent text reached the process.
+    pub on_input: Option<Box<dyn FnMut()>>,
+    /// terminalProcess.ts `shellType`, from the foreground process name.
+    pub shell_type: Option<&'static str>,
+}
+
+/// What one chunk of process output did: its text (`onData`) and the shell integration events in stream order.
+pub struct Processed {
+    pub text: String,
+    pub shell_events: Vec<ShellEvent>,
 }
 
 /// terminalProcessManager.ts `ErrorLaunchThresholdDuration`: an exit this soon after launch is a failed launch.
@@ -107,6 +144,7 @@ impl TerminalInstance {
         let events = Listener::default();
         let term = Term::new(config.clone(), &GridSize { cols, rows }, events.clone());
         let process_title = launch.executable.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+        let nonce = launch.nonce.clone();
         let mut instance = TerminalInstance {
             id,
             launch,
@@ -123,17 +161,29 @@ impl TerminalInstance {
             spawn_error: None,
             cell_size: (0., 0.),
             clipboard_requests: Vec::new(),
+            clipboard_loads: Vec::new(),
             bell: false,
+            auto_reply_setting: serde_json::Value::Null,
+            auto_responders: Vec::new(),
             launched: Instant::now(),
             killed_by_user: false,
             config,
+            shell_integration: ShellIntegration::new(nonce),
+            utf8_tail: Vec::new(),
+            process_input: None,
+            on_input: None,
+            shell_type: None,
         };
+        if instance.launch.extension_pty {
+            return (instance, None);
+        }
         let (sender, receiver) = unbounded();
         let launch = &instance.launch;
         match Pty::spawn(&launch.executable, &launch.args, &launch.cwd, &launch.env, cols, rows, sender) {
             Ok(pty) => {
                 instance.pid = Some(pty.pid);
                 instance.pty = Some(pty);
+                instance.shell_type = shell_type(&instance.process_title);
                 (instance, Some(receiver))
             }
             Err(error) => {
@@ -156,9 +206,43 @@ impl TerminalInstance {
         self.process_title.clone()
     }
 
-    /// Feeds the process's output to the parser and acts on what it raised.
-    pub fn process(&mut self, bytes: &[u8], colors: &colors::TerminalColors) {
-        self.parser.advance(&mut self.term, bytes);
+    /// Feeds the process's output to the parser and acts on what it raised; shell integration sequences are
+    /// handled where they occur in the stream, so the command output between them is known.
+    pub fn process(&mut self, bytes: &[u8], colors: &colors::TerminalColors) -> Processed {
+        let text = self.decode(bytes);
+        let mut shell_events = Vec::new();
+        let mut fed = 0;
+        for sequence in self.shell_integration.scan(&text) {
+            if self.shell_integration.executing() && sequence.start > fed {
+                shell_events.push(ShellEvent::ExecutionData(text[fed..sequence.start].to_owned()));
+            }
+            self.feed(&text[fed..sequence.end], colors);
+            fed = sequence.end;
+            let cursor = self.buffer_cursor();
+            let command_start = self.shell_integration.command_start_point();
+            for event in self.shell_integration.handle(&sequence.payload, cursor) {
+                shell_events.push(match event {
+                    ShellEvent::CommandExecuted(command) if command.command_line.is_empty() => match command_start {
+                        Some((start, single_line_after_prompt)) => {
+                            let line = self.buffer_text(start, cursor);
+                            let confidence = if single_line_after_prompt && !line.contains('\n') { shell_integration::CONFIDENCE_MEDIUM } else { shell_integration::CONFIDENCE_LOW };
+                            ShellEvent::CommandExecuted(self.shell_integration.set_buffer_command_line(line, confidence))
+                        }
+                        None => ShellEvent::CommandExecuted(command),
+                    },
+                    event => event,
+                });
+            }
+        }
+        if self.shell_integration.executing() && fed < text.len() {
+            shell_events.push(ShellEvent::ExecutionData(text[fed..].to_owned()));
+        }
+        self.feed(&text[fed..], colors);
+        Processed { text, shell_events }
+    }
+
+    fn feed(&mut self, text: &str, colors: &colors::TerminalColors) {
+        self.parser.advance(&mut self.term, text.as_bytes());
         let events = std::mem::take(&mut *self.events.0.borrow_mut());
         for event in events {
             match event {
@@ -167,6 +251,7 @@ impl TerminalInstance {
                 Event::ResetTitle => self.sequence_title = None,
                 Event::Bell => self.bell = true,
                 Event::ClipboardStore(_, text) => self.clipboard_requests.push(text),
+                Event::ClipboardLoad(_, format) => self.clipboard_loads.push(format),
                 Event::ColorRequest(index, format) => {
                     let color = match index {
                         0..256 => colors.palette[index],
@@ -187,6 +272,38 @@ impl TerminalInstance {
         }
     }
 
+    /// The chunk as text; a character cut at its end waits for the next chunk (the PTY reads in 64 KiB pieces).
+    fn decode(&mut self, bytes: &[u8]) -> String {
+        let mut data = std::mem::take(&mut self.utf8_tail);
+        data.extend_from_slice(bytes);
+        let complete = match std::str::from_utf8(&data) {
+            Ok(_) => data.len(),
+            // An incomplete sequence at the end (`error_len` is `None`) is kept; invalid bytes become U+FFFD.
+            Err(error) if error.error_len().is_none() => error.valid_up_to(),
+            Err(_) => data.len(),
+        };
+        self.utf8_tail = data.split_off(complete);
+        String::from_utf8_lossy(&data).into_owned()
+    }
+
+    fn buffer_cursor(&self) -> BufferPoint {
+        let cursor = self.term.grid().cursor.point;
+        BufferPoint { line: self.term.history_size() as i64 + cursor.line.0 as i64, column: cursor.column.0 }
+    }
+
+    /// `extractCommandLine`: the text from the command start to `end`, wrapped lines joined, trailing blanks gone.
+    fn buffer_text(&self, start: BufferPoint, end: BufferPoint) -> String {
+        let history = self.term.history_size() as i64;
+        let to_point = |point: BufferPoint| Point::new(Line((point.line - history).max(-history) as i32), Column(point.column.min(self.term.columns() - 1)));
+        let (start, end) = (to_point(start), to_point(end));
+        if end <= start {
+            return String::new();
+        }
+        let mut text = self.term.bounds_to_string(start, Point::new(end.line, Column(end.column.0.saturating_sub(1))));
+        text.truncate(text.trim_end().len());
+        text
+    }
+
     /// Reads the foreground process and the cwd the shell is in, for `${process}` and `${cwd}`. Returns whether
     /// either changed.
     pub fn refresh_process(&mut self) -> bool {
@@ -194,6 +311,7 @@ impl TerminalInstance {
         let (process, cwd) = (pty.foreground_process(), pty.cwd());
         let changed = process.as_ref().is_some_and(|process| *process != self.process_title) || cwd != self.cwd;
         if let Some(process) = process {
+            self.shell_type = shell_type(&process);
             self.process_title = process;
         }
         self.cwd = cwd;
@@ -205,11 +323,37 @@ impl TerminalInstance {
         self.pty = None;
     }
 
+    /// `TerminalAutoResponder`: the process output answered by the replies of `setting`; a changed setting
+    /// starts new responders.
+    pub fn answer_auto_replies(&mut self, setting: &serde_json::Value, data: &str) {
+        if self.auto_reply_setting != *setting {
+            self.auto_responders = auto_replies::responders(setting);
+            self.auto_reply_setting = setting.clone();
+        }
+        let now = Instant::now();
+        let replies: Vec<String> = self.auto_responders.iter_mut().filter_map(|responder| responder.feed(data, now)).collect();
+        for reply in replies {
+            self.write_to_pty(reply.as_bytes());
+        }
+    }
+
     /// `sendText` and typed input: the terminal follows the input (xterm.js `scrollOnUserInput`).
     pub fn input(&mut self, data: &str) {
         self.term.scroll_display(Scroll::Bottom);
         self.term.selection = None;
         self.write_to_pty(data.as_bytes());
+        if let Some(on_input) = &mut self.on_input {
+            on_input();
+        }
+    }
+
+    /// terminalInstance.ts `sendText`: line breaks become carriage returns and an executed line ends with one.
+    pub fn send_text(&mut self, text: &str, should_execute: bool) {
+        let mut text = text.replace("\r\n", "\r").replace('\n', "\r");
+        if should_execute && !text.ends_with('\r') {
+            text.push('\r');
+        }
+        self.input(&text);
     }
 
     /// xterm.js `paste`: line breaks become carriage returns, wrapped in bracketed paste mode markers when the
@@ -219,19 +363,37 @@ impl TerminalInstance {
         self.input(&data);
     }
 
-    fn write_to_pty(&mut self, data: &[u8]) {
-        if let Some(pty) = &mut self.pty {
-            pty.write(data);
+    /// Answers the OSC 52 queries with the clipboard's text.
+    pub fn answer_clipboard_loads(&mut self, text: &str) {
+        for format in std::mem::take(&mut self.clipboard_loads) {
+            self.write_to_pty(format(text).as_bytes());
         }
     }
 
-    pub fn resize(&mut self, cols: u16, rows: u16) {
+    fn write_to_pty(&mut self, data: &[u8]) {
+        if let Some(pty) = &mut self.pty {
+            pty.write(data);
+        } else if let Some(process_input) = &mut self.process_input {
+            process_input(&String::from_utf8_lossy(data));
+        }
+    }
+
+    /// Returns whether the size changed.
+    pub fn resize(&mut self, cols: u16, rows: u16) -> bool {
         if self.term.columns() == cols as usize && self.term.screen_lines() == rows as usize {
-            return;
+            return false;
         }
         self.term.resize(GridSize { cols, rows });
         if let Some(pty) = &self.pty {
             pty.resize(cols, rows);
+        }
+        true
+    }
+
+    /// `sendSignal`: node-pty `kill(signal)` on the shell process.
+    pub fn send_signal(&self, signal: i32) {
+        if let Some(pty) = &self.pty {
+            pty.kill(signal);
         }
     }
 
@@ -246,6 +408,13 @@ impl TerminalInstance {
     pub fn exit_message(&self, code: i32) -> Option<String> {
         if code == 0 {
             return None;
+        }
+        // An extension pty has no executable: the message names no command line.
+        if self.launch.extension_pty {
+            return Some(match self.failed_during_launch() {
+                true => format!("The terminal process failed to launch (exit code: {code})."),
+                false => format!("The terminal process terminated with exit code: {code}."),
+            });
         }
         let mut command_line = self.launch.executable.to_string_lossy().into_owned();
         // `args.map(a => ` '${a}'`).join()`: Array.join's default separator is a comma.
@@ -320,6 +489,17 @@ impl TerminalInstance {
     }
 }
 
+/// terminalProcess.ts `posixShellTypeMap` and `generalShellTypeMap` (AI agent CLIs left out) over the process name.
+pub fn shell_type(process: &str) -> Option<&'static str> {
+    // `_updateTitle` drops a leading `-` of a login shell and the path.
+    let name = process.trim_start_matches('-').rsplit('/').next().unwrap_or_default();
+    let types = [
+        ("bash", "bash"), ("csh", "csh"), ("fish", "fish"), ("ksh", "ksh"), ("sh", "sh"), ("zsh", "zsh"), ("pwsh", "pwsh"), ("powershell", "pwsh"),
+        ("python", "python"), ("julia", "julia"), ("nu", "nu"), ("node", "node"), ("xonsh", "xonsh"),
+    ];
+    types.iter().find(|(process, _)| *process == name).map(|(_, kind)| *kind)
+}
+
 fn paste_data(text: &str, bracketed: bool) -> String {
     let text = text.replace("\r\n", "\r").replace('\n', "\r");
     if !bracketed {
@@ -364,7 +544,7 @@ pub fn create_environment(base: impl Iterator<Item = (String, String)>, override
 }
 
 /// processes.ts `sanitizeProcessEnvironment`: the variables Electron, VS Code, Snap and GDK set for themselves.
-fn sanitized_away(key: &str) -> bool {
+pub(crate) fn sanitized_away(key: &str) -> bool {
     let kept_vscode = ["PORTABLE", "SHELL_LOGIN", "ENV_REPLACE", "ENV_APPEND", "ENV_PREPEND"];
     let has_rest = |prefix: &str| key.strip_prefix(prefix).is_some_and(|rest| !rest.is_empty());
     if has_rest("ELECTRON_") || has_rest("GDK_PIXBUF_") || key == "SNAP" || key.starts_with("SNAP_") {

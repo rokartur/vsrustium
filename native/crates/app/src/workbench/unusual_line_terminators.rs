@@ -46,7 +46,8 @@ impl Workbench {
     }
 
     fn unusual_line_terminators_setting(&self, editor: &OpenEditor) -> &'static str {
-        let overrides = Overrides { resource: Some(&editor.document().path), override_identifier: Some(&editor.document().language_id) };
+        let (resource, language) = (editor.document().path.clone(), editor.document().language_id.clone());
+        let overrides = Overrides { resource: Some(&resource), override_identifier: Some(&language) };
         let value = self.settings.lock().unwrap().get_value(Some("editor.unusualLineTerminators"), &overrides);
         match value.as_ref().and_then(|value| value.as_str()) {
             Some("auto") => "auto",

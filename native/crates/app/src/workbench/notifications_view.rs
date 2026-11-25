@@ -14,10 +14,12 @@ use serde_json::{Value, json};
 
 use super::Workbench;
 use super::hover::{HoverContent, HoverOptions};
+use super::opener::{OpenOptions, Target};
 use crate::commands::Outcome;
 use crate::main_thread_progress::ProgressTask;
 use crate::menus::MenuAction;
 use crate::notifications::{Action, Item, Node, Notification, Notifications, Priority, Run, Severity};
+use crate::uri::Uri;
 
 #[cfg(test)]
 mod tests;
@@ -60,7 +62,7 @@ pub(crate) struct NotificationsUi {
     sources: Vec<(String, String, bool)>,
     pub(crate) replies: HashMap<u64, oneshot::Sender<Result<Value, Value>>>,
     /// The focused row of the toasts or the center list.
-    focused: Option<u64>,
+    pub(super) focused: Option<u64>,
     hovered: Option<u64>,
     pub(super) focus: FocusHandle,
     purge: Option<Task<()>>,
@@ -304,7 +306,7 @@ impl Workbench {
         self.close_notification(key, window, cx);
     }
 
-    fn run_action(&mut self, key: u64, action: Action, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
+    pub(super) fn run_action(&mut self, key: u64, action: Action, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
         match action.run {
             Run::Reply(handle) => {
                 if let Some(reply) = self.notifications.replies.remove(&key) {
@@ -512,7 +514,7 @@ impl Workbench {
                     .child(toast),
             )
         }).collect::<Vec<_>>();
-        let container = div().flex().flex_col().occlude().track_focus(&self.notifications.focus).children(toasts);
+        let container = div().id("notification-toasts").role(gpui::Role::List).aria_label("Notification Toast").flex().flex_col().occlude().track_focus(&self.notifications.focus).children(toasts);
         Some(place(container, position, TOASTS_OFFSET).into_any_element())
     }
 
@@ -569,6 +571,8 @@ impl Workbench {
             .bg(self.color("notifications.background"))
             .text_color(self.color("notifications.foreground"))
             .occlude()
+            .role(gpui::Role::List)
+            .aria_label("Notifications List")
             .track_focus(&self.notifications.focus)
             .child(header)
             .child(div().id("notifications-center-list").h(px(list_height)).overflow_y_scroll().children(rows))
@@ -632,6 +636,9 @@ impl Workbench {
         let focus_border = self.color("focusBorder");
         div()
             .id(("notification", key))
+            .role(gpui::Role::ListItem)
+            .aria_label(self.notification_aria_label(item, window))
+            .when(focused, |row| row.aria_active_descendant())
             .h(px(height))
             .px(px(2.))
             .py(px(6.))
@@ -712,23 +719,11 @@ impl Workbench {
             .child(message)
     }
 
-    /// The opener service for a message link: a `command:` link runs the command with its JSON arguments.
-    fn open_notification_link(&mut self, href: &str, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(command) = href.strip_prefix("command:") {
-            let (id, query) = command.split_once('?').unwrap_or((command, ""));
-            let decoded = percent_decode(query);
-            let args = match serde_json::from_str::<Value>(&decoded) {
-                Ok(Value::Array(args)) => args,
-                Ok(arg) => vec![arg],
-                Err(_) => Vec::new(),
-            };
-            let outcome = self.execute_command(id, args, window, cx);
-            super::keyboard::report_failure(outcome, cx);
-        } else if let Some(path) = href.strip_prefix("file://") {
-            self.open_file(percent_decode(path).into(), true, window, cx);
-        } else {
-            cx.open_url(href);
-        }
+    /// notificationsViewer.ts: `openerService.open(URI.parse(link), { allowCommands: true })`.
+    pub(super) fn open_notification_link(&mut self, href: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Ok(uri) = Uri::parse(href) else { return };
+        let options = OpenOptions { allow_commands: true, ..OpenOptions::default() };
+        drop(self.open_link(Target::Uri(uri), options, window, cx));
     }
 
     /// `renderSecondaryActions`: More Actions when there are secondary actions, expand or collapse, and close.
@@ -1008,24 +1003,4 @@ fn text_width(text: &str, window: &Window) -> f32 {
 fn message_lines(text: &str, width: f32, window: &Window) -> usize {
     let lines = window.text_system().shape_text(SharedString::from(text.to_owned()), px(13.), &[text_run(text, window)], Some(px(width)), None);
     lines.map(|lines| lines.iter().map(|line| line.wrap_boundaries().len() + 1).sum()).unwrap_or(1).max(1)
-}
-
-fn percent_decode(text: &str) -> String {
-    let bytes = text.as_bytes();
-    let mut decoded = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        let hex = bytes.get(index + 1..index + 3).and_then(|hex| std::str::from_utf8(hex).ok()).and_then(|hex| u8::from_str_radix(hex, 16).ok());
-        match (bytes[index], hex) {
-            (b'%', Some(byte)) => {
-                decoded.push(byte);
-                index += 3;
-            }
-            (byte, _) => {
-                decoded.push(byte);
-                index += 1;
-            }
-        }
-    }
-    String::from_utf8_lossy(&decoded).into_owned()
 }

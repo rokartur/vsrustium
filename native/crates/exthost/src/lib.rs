@@ -8,6 +8,7 @@ pub mod extension_management;
 pub mod extension_validator;
 pub mod frame;
 pub mod gallery;
+pub mod language_packs;
 pub mod main_thread_bulk_edits;
 pub mod main_thread_configuration;
 pub mod main_thread_files;
@@ -43,11 +44,14 @@ pub enum Runtime {
 }
 
 impl Runtime {
-    pub fn executable(self) -> &'static str {
-        match self {
+    /// The runtime next to the running executable (VSRustium.app ships bun in Contents/MacOS), else the one on PATH.
+    pub fn executable(self) -> PathBuf {
+        let name = match self {
             Runtime::Bun => "bun",
             Runtime::Node => "node",
-        }
+        };
+        let bundled = std::env::current_exe().ok().and_then(|exe| exe.parent().map(|dir| dir.join(name))).filter(|path| path.is_file());
+        bundled.unwrap_or_else(|| PathBuf::from(name))
     }
 
     fn runtime_args(self) -> &'static [&'static str] {
@@ -116,6 +120,8 @@ impl ExtensionHost {
             .arg("--skipWorkspaceStorageLock")
             .env("VSCODE_EXTHOST_IPC_HOOK", &socket_path)
             .env("VSCODE_HANDLES_UNCAUGHT_ERRORS", "true")
+            // Bun uploads crash reports to bun.report unless DO_NOT_TRACK is set; the port sends nothing.
+            .env("DO_NOT_TRACK", "1")
             .envs(options.extra_env);
         let child = command.spawn()?;
 

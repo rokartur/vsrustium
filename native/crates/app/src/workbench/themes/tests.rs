@@ -48,7 +48,7 @@ fn the_picker_previews_the_focused_theme_writes_the_accepted_one_and_escape_rest
     });
     cx.run_until_parked();
     let theme_id = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.theme.settings_id.clone());
-    let sent = || messages.try_iter().filter(|message| message.method != "$activateByEvent").map(|message| (message.method, message.args)).collect::<Vec<(&str, Vec<Value>)>>();
+    let sent = || messages.try_iter().filter(|message| !["$activateByEvent", "$initializeIsConnectionMetered"].contains(&message.method)).map(|message| (message.method, message.args)).collect::<Vec<(&str, Vec<Value>)>>();
     let user_settings = || std::fs::read_to_string(dir.join("User/settings.json")).ok();
 
     cx.simulate_keystrokes("cmd-k cmd-t");
@@ -115,4 +115,102 @@ fn the_picker_previews_the_focused_theme_writes_the_accepted_one_and_escape_rest
     cx.simulate_keystrokes("enter");
     assert_eq!(theme_id(cx), "Dark 2026");
     assert_eq!(serde_json::from_str::<Value>(&user_settings().unwrap()).unwrap(), json!({}));
+}
+
+/// themes.contribution.ts `SelectFileIconThemeCommandId`: None and the installed file icon themes, previews that
+/// Escape undoes, and the accepted theme written to `workbench.iconTheme` (`null` for None).
+#[gpui::test]
+fn the_file_icon_theme_picker_previews_writes_and_restores(cx: &mut TestAppContext) {
+    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let extensions: Vec<_> = ["theme-seti", "theme-defaults", "theme-modern-icons"].iter().map(|name| scan_extension(&app_root.join("extensions").join(name), true).unwrap()).collect();
+    let theme = load_theme(&extensions, "Dark 2026").unwrap();
+    let dir = std::env::temp_dir().join(format!("code-gpui-icon-themes-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("User")).unwrap();
+    let settings = Arc::new(Mutex::new(Settings::load(Registry::with_extensions(&[]), dir.join("User"), None)));
+    let (workbench, cx) = cx.add_window_view(|_, cx| {
+        let mut workbench = Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), settings.clone(), HostSync::new(std::sync::mpsc::channel().0), cx);
+        workbench.load_keybindings(crate::keybindings::default_keybindings(&[]), dir.join("User/keybindings.json"), cx);
+        workbench.file_icons = crate::file_icons::FileIconTheme::load(&extensions, "vs-seti").ok();
+        workbench.extensions = extensions.clone();
+        workbench
+    });
+    cx.run_until_parked();
+    let icon_theme = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.file_icons.as_ref().map(|theme| theme.id.clone()));
+    let user_settings = || std::fs::read_to_string(dir.join("User/settings.json")).ok();
+    let run = |cx: &mut gpui::VisualTestContext| workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("workbench.action.selectIconTheme", Vec::new(), window, cx)));
+
+    run(cx);
+    let rows = workbench.read_with(cx, rows);
+    assert_eq!(rows[..2], ["--file icon themes--None (Disable File Icons)".to_string(), "Minimal (Visual Studio Code) (vs-minimal)".into()]);
+    assert!(rows.contains(&"Seti (Visual Studio Code) (vs-seti)".to_string()), "{rows:?}");
+    let active = workbench.read_with(cx, |workbench, _| workbench.quick_inputs.current().unwrap().active_handles());
+    let seti = rows.iter().position(|row| row.starts_with("Seti")).unwrap() as i64;
+    assert_eq!(active, [seti], "the current theme is focused");
+
+    cx.simulate_keystrokes(&vec!["up"; seti as usize].join(" "));
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.run_until_parked();
+    assert_eq!(icon_theme(cx), None, "None previews without icons");
+    cx.simulate_keystrokes("escape");
+    assert_eq!(icon_theme(cx).as_deref(), Some("vs-seti"));
+    assert_eq!(user_settings(), None);
+
+    run(cx);
+    cx.simulate_input("minimal");
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert_eq!(icon_theme(cx).as_deref(), Some("vs-minimal"), "a commented theme file loads");
+    assert_eq!(serde_json::from_str::<Value>(&user_settings().unwrap()).unwrap(), json!({ "workbench.iconTheme": "vs-minimal" }));
+
+    run(cx);
+    cx.simulate_input("none");
+    cx.simulate_keystrokes("enter");
+    assert_eq!(icon_theme(cx), None);
+    assert_eq!(serde_json::from_str::<Value>(&user_settings().unwrap()).unwrap(), json!({ "workbench.iconTheme": null }));
+}
+
+// themeConfiguration.ts `getColorThemeSettingId` and workbenchThemeService.ts `onDidChangeColorScheme`.
+#[gpui::test]
+fn the_host_color_scheme_picks_the_preferred_theme_setting(cx: &mut TestAppContext) {
+    use super::{HostColorScheme, SettingTarget, color_theme_setting_id};
+    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let mut extensions = Vec::new();
+    for name in ["theme-defaults", "theme-solarized-dark", "theme-solarized-light"] {
+        extensions.push(scan_extension(&app_root.join("extensions").join(name), true).unwrap());
+    }
+    let dir = std::env::temp_dir().join(format!("code-gpui-host-scheme-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("User")).unwrap();
+    let user = r#"{ "window.autoDetectColorScheme": true, "workbench.preferredLightColorTheme": "Solarized Light", "workbench.preferredDarkColorTheme": "Solarized Dark" }"#;
+    std::fs::write(dir.join("User/settings.json"), user).unwrap();
+    let settings = Settings::load(Registry::with_extensions(&[]), dir.join("User"), None);
+    let scheme = |dark, high_contrast| HostColorScheme { dark, high_contrast };
+    assert_eq!(color_theme_setting_id(&settings, scheme(true, false)), "workbench.preferredDarkColorTheme");
+    assert_eq!(color_theme_setting_id(&settings, scheme(false, false)), "workbench.preferredLightColorTheme");
+    // window.autoDetectHighContrast is on by default and wins over the color scheme.
+    assert_eq!(color_theme_setting_id(&settings, scheme(true, true)), "workbench.preferredHighContrastColorTheme");
+    assert_eq!(color_theme_setting_id(&settings, scheme(false, true)), "workbench.preferredHighContrastLightColorTheme");
+
+    let theme = load_theme(&extensions, "Dark Modern").unwrap();
+    let settings = Arc::new(Mutex::new(settings));
+    let (sender, _messages) = std::sync::mpsc::channel();
+    let (workbench, cx) = cx.add_window_view(|_, cx| {
+        let mut workbench = Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), settings.clone(), HostSync::new(sender), cx);
+        workbench.color_themes = color_themes(&extensions).unwrap();
+        workbench
+    });
+    workbench.update(cx, |workbench, cx| {
+        workbench.host_colors = scheme(false, false);
+        workbench.restore_color_theme(cx);
+        assert_eq!(workbench.theme.settings_id, "Solarized Light");
+        workbench.host_colors = scheme(true, false);
+        workbench.restore_color_theme(cx);
+        assert_eq!(workbench.theme.settings_id, "Solarized Dark");
+        // A pick writes the setting the scheme reads.
+        workbench.set_color_theme("Dark Modern", SettingTarget::Auto, cx);
+    });
+    let written: Value = serde_json::from_str(&std::fs::read_to_string(dir.join("User/settings.json")).unwrap()).unwrap();
+    assert_eq!(written["workbench.preferredDarkColorTheme"], "Dark Modern");
+    assert_eq!(written.get("workbench.colorTheme"), None);
 }

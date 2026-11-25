@@ -11,6 +11,7 @@ use gpui::{
 
 use super::Workbench;
 use super::context_menu::{LayoutAnchorPosition, layout2d};
+use crate::notifications::{Node, parse_linked_text};
 
 #[cfg(test)]
 mod tests;
@@ -25,6 +26,7 @@ const LINE_HEIGHT: f32 = 19.;
 const PADDING_X: f32 = 8.;
 const PADDING_Y: f32 = 2.;
 const MAX_WIDTH: f32 = 700.;
+const PARAGRAPH_GAP: f32 = 8.;
 /// CompositeMouseTracker's `_eventDebounceDelay` and WorkbenchHoverDelegate's `timeLimit`.
 const MOUSE_OUT_DELAY: Duration = Duration::from_millis(200);
 /// `.with-pointer` has 3px corners; roundedCorners.css gives other hovers cornerRadius.large.
@@ -46,6 +48,8 @@ pub enum HoverContent {
     Action { title: &'static str, command: &'static str },
     /// editorTabsControl.ts `getHoverTitle` of a preview editor: the title, then "(_preview_ $(gear))".
     Preview(String),
+    /// A trusted markdown tooltip: paragraphs split by a blank line, each linked text (`[label](href)`).
+    Markdown(String),
 }
 
 /// What the target's hover delegate decides.
@@ -89,8 +93,8 @@ struct HoverTarget {
     content: HoverContent,
     options: HoverOptions,
     bounds: Bounds<Pixels>,
-    /// `target.x` of a mouse placed hover: the last pointer x plus 10.
-    mouse_x: f32,
+    /// `target.x` of a mouse placed hover: the last pointer x plus 10; none for a hover shown from the keyboard.
+    mouse_x: Option<f32>,
 }
 
 struct ShownHover {
@@ -112,6 +116,10 @@ pub struct Hovers {
     hiding: Option<Task<()>>,
     /// WorkbenchHoverDelegate's `lastHoverHideTime`.
     last_hide: Option<Instant>,
+    /// `HoverWidget.isLocked`: Alt is held, so the hover stays when the pointer leaves for it.
+    locked: bool,
+    /// `HoverWidget.isMouseIn`.
+    mouse_in_hover: bool,
 }
 
 impl Hovers {
@@ -128,7 +136,7 @@ impl Workbench {
         canvas(
             |bounds, window, _| window.insert_hitbox(bounds, HitboxBehavior::Normal),
             move |bounds, hitbox, window, _| {
-                let target = HoverTarget { id: id.clone(), content: content.clone(), options, bounds, mouse_x: 0. };
+                let target = HoverTarget { id: id.clone(), content: content.clone(), options, bounds, mouse_x: None };
                 let pressed = hitbox.clone();
                 // Capture phase, as the reference's listeners: a target's own handlers may stop the event.
                 window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
@@ -168,12 +176,12 @@ impl Workbench {
             return;
         }
         if let Some(current) = self.hovers.target.as_mut().filter(|current| current.id == target.id) {
-            current.mouse_x = mouse_x;
+            current.mouse_x = Some(mouse_x);
             return;
         }
         // Entering a target leaves the previous one first, whichever target's handler runs first.
         self.leave_hover_target(cx);
-        let target = HoverTarget { mouse_x, ..target.clone() };
+        let target = HoverTarget { mouse_x: Some(mouse_x), ..target.clone() };
         // Back on the target within the mouse tracker's delay: the hover stays.
         if self.hovers.shown.as_ref().is_some_and(|shown| shown.target.id == target.id) {
             self.hovers.hiding = None;
@@ -195,7 +203,7 @@ impl Workbench {
     }
 
     /// The pointer left the target: a pending hover is cancelled, a shown one hides once the mouse tracker's delay passes.
-    fn leave_hover_target(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn leave_hover_target(&mut self, cx: &mut Context<Self>) {
         if self.hovers.target.take().is_none() {
             return;
         }
@@ -213,12 +221,19 @@ impl Workbench {
         self.hovers.hiding = Some(cx.spawn(async move |workbench, cx| {
             cx.background_executor().timer(MOUSE_OUT_DELAY).await;
             let _ = workbench.update(cx, |workbench, cx| {
-                if workbench.hovers.shown.as_ref().is_some_and(|shown| shown.serial == serial) {
+                if !workbench.hovers.locked && workbench.hovers.shown.as_ref().is_some_and(|shown| shown.serial == serial) {
                     workbench.hovers.shown = None;
                     cx.notify();
                 }
             });
         }));
+    }
+
+    /// hoverService.ts `showManagedHover` (`list.showHover`): the target's hover at once, placed by its bounds.
+    pub(super) fn show_managed_hover(&mut self, id: impl Into<ElementId>, content: HoverContent, options: HoverOptions, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
+        self.hovers.target = Some(HoverTarget { id: id.into(), content, options, bounds, mouse_x: None });
+        self.hovers.dismissed = false;
+        self.show_hover(false, window, cx);
     }
 
     fn show_hover(&mut self, fade_in: bool, window: &mut Window, cx: &mut Context<Self>) {
@@ -227,14 +242,34 @@ impl Workbench {
         self.hovers.hiding = None;
         self.hovers.shown_count += 1;
         let text = self.hover_text(&target.content, window);
+        // showInstantHover: no hover for empty content.
+        if text.is_empty() {
+            return;
+        }
         self.hovers.shown = Some(ShownHover { target, text, fade_in, serial: self.hovers.shown_count });
         cx.notify();
+    }
+
+    /// hoverService.ts `_keyDown` and `_keyUp` of Alt: Alt locks the shown hover; releasing it hides the hover
+    /// unless the pointer is on it or its target.
+    pub(super) fn hover_modifiers_changed(&mut self, alt: bool, cx: &mut Context<Self>) {
+        if self.hovers.shown.is_none() || alt == self.hovers.locked {
+            return;
+        }
+        self.hovers.locked = alt;
+        if !alt && !self.hovers.mouse_in_hover && self.hovers.target.is_none() {
+            self.hovers.shown = None;
+            self.hovers.last_hide = Some(cx.background_executor().now());
+            cx.notify();
+        }
     }
 
     /// `hideHover` on mouse down, and `hideOnKeyDown` for a key no keybinding takes.
     pub(super) fn dismiss_hover(&mut self, cx: &mut Context<Self>) {
         self.hovers.pending = None;
         self.hovers.dismissed = self.hovers.target.is_some();
+        self.hovers.locked = false;
+        self.hovers.mouse_in_hover = false;
         if self.hovers.shown.take().is_some() {
             self.hovers.last_hide = Some(cx.background_executor().now());
             cx.notify();
@@ -243,7 +278,7 @@ impl Workbench {
 
     fn hover_text(&self, content: &HoverContent, window: &Window) -> String {
         match content {
-            HoverContent::Text(text) | HoverContent::Preview(text) => text.clone(),
+            HoverContent::Text(text) | HoverContent::Preview(text) | HoverContent::Markdown(text) => text.clone(),
             HoverContent::Action { title, command } => self.keybindings.resolver.append_keybinding(title, command, &self.key_context(window)),
         }
     }
@@ -251,16 +286,24 @@ impl Workbench {
     pub(super) fn hover_widget(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         let hover = self.hovers.shown.as_ref()?;
         let preview = matches!(hover.target.content, HoverContent::Preview(_));
-        // shortcut: a hover is one line of text; wrap at max-width 700px when content longer than that shows.
-        let mut content_width = text_width(&hover.text, false, window);
+        let markdown = matches!(hover.target.content, HoverContent::Markdown(_));
+        let paragraphs: Vec<Vec<Node>> = match markdown {
+            true => hover.text.split("\n\n").map(parse_linked_text).collect(),
+            false => vec![vec![Node::Text(hover.text.clone())]],
+        };
+        // shortcut: a paragraph is one line of text; wrap at max-width 700px when content longer than that shows.
+        let mut content_width = paragraphs.iter().map(|nodes| text_width(&linked_text_label(nodes), false, window)).fold(0., f32::max);
         if preview {
             content_width += text_width(" (", false, window) + text_width("preview", true, window) + text_width(" )", false, window) + FONT_SIZE;
         }
-        let size = Size { width: (content_width + 2. * PADDING_X).min(MAX_WIDTH - HOVER_BORDER_WIDTH) + HOVER_BORDER_WIDTH, height: LINE_HEIGHT + 2. * PADDING_Y + HOVER_BORDER_WIDTH };
+        let lines = paragraphs.len() as f32;
+        // hover.css: a markdown paragraph has an 8px bottom margin except the last.
+        let content_height = lines * LINE_HEIGHT + (lines - 1.) * PARAGRAPH_GAP;
+        let size = Size { width: (content_width + 2. * PADDING_X).min(MAX_WIDTH - HOVER_BORDER_WIDTH) + HOVER_BORDER_WIDTH, height: content_height + 2. * PADDING_Y + HOVER_BORDER_WIDTH };
         let viewport = window.viewport_size();
         let target = hover.target.bounds;
         let target = Bounds { origin: point(f32::from(target.origin.x), f32::from(target.origin.y)), size: Size { width: f32::from(target.size.width), height: f32::from(target.size.height) } };
-        let mouse_x = hover.target.options.follows_mouse.then_some(hover.target.mouse_x);
+        let mouse_x = hover.target.mouse_x.filter(|_| hover.target.options.follows_mouse);
         let layout = layout_hover(Size { width: f32::from(viewport.width), height: f32::from(viewport.height) }, target, size, &hover.target.options, mouse_x);
         let radius = if layout.pointer.is_some() { POINTER_RADIUS } else { RADIUS };
         let foreground = self.color("editorHoverWidget.foreground");
@@ -294,7 +337,8 @@ impl Workbench {
                     inset: false,
                 }])
             })
-            .child(
+            .when(markdown, |panel| panel.child(self.markdown_paragraphs(paragraphs, cx)))
+            .when(!markdown, |panel| panel.child(
                 div()
                     .relative()
                     .flex()
@@ -312,15 +356,17 @@ impl Workbench {
                             }));
                         row.child(" (").child(div().italic().child("preview")).child(" ").child(gear).child(")")
                     }),
-            )
-            // hideOnHover is off for markdown with a link: the pointer may move onto the hover to click it.
-            .when(preview, |panel| {
-                panel.on_hover(cx.listener(|workbench, hovered: &bool, _, cx| match hovered {
-                    true => workbench.hovers.hiding = None,
-                    false if workbench.hovers.target.is_none() => workbench.hide_hover_later(cx),
-                    false => {}
-                }))
-            });
+            ))
+            // hideOnHover is off for markdown with a link: the pointer may move onto the hover to click it. A locked
+            // hover tracks the pointer too (`_lockMouseTracker`), to hide once Alt is up and the pointer leaves.
+            .on_hover(cx.listener(move |workbench, hovered: &bool, _, cx| {
+                workbench.hovers.mouse_in_hover = *hovered;
+                match hovered {
+                    true if preview || markdown || workbench.hovers.locked => workbench.hovers.hiding = None,
+                    false if workbench.hovers.target.is_none() && !workbench.hovers.locked => workbench.hide_hover_later(cx),
+                    _ => {}
+                }
+            }));
         let caret = layout.pointer.map(|offset| self.hover_pointer(layout.side, layout.origin, size, offset));
         let widget = div().absolute().inset_0().child(panel).children(caret);
         let element = match hover.fade_in {
@@ -328,6 +374,27 @@ impl Workbench {
             false => widget.into_any_element(),
         };
         Some(element)
+    }
+
+    fn markdown_paragraphs(&self, paragraphs: Vec<Vec<Node>>, cx: &mut Context<Self>) -> impl IntoElement {
+        let link_color = self.color("textLink.foreground");
+        let mut column = div().flex().flex_col().gap(px(PARAGRAPH_GAP));
+        for (paragraph, nodes) in paragraphs.into_iter().enumerate() {
+            let mut row = div().flex();
+            for (index, node) in nodes.into_iter().enumerate() {
+                row = match node {
+                    Node::Text(text) => row.child(text),
+                    Node::Link { label, href, .. } => row.child(
+                        div().id(("hover-link", paragraph * 100 + index)).cursor_pointer().text_color(link_color).child(label).on_click(cx.listener(move |workbench, _, window, cx| {
+                            workbench.dismiss_hover(cx);
+                            workbench.open_notification_link(&href, window, cx);
+                        })),
+                    ),
+                };
+            }
+            column = column.child(row);
+        }
+        column
     }
 
     /// `.workbench-hover-pointer:after`: a 6px square turned 45 degrees, centered on the hover's edge, showing the
@@ -377,6 +444,13 @@ impl Hovers {
     fn is_target(&self, id: &ElementId) -> bool {
         self.target.as_ref().is_some_and(|target| &target.id == id)
     }
+}
+
+fn linked_text_label(nodes: &[Node]) -> String {
+    nodes.iter().map(|node| match node {
+        Node::Text(text) => text.as_str(),
+        Node::Link { label, .. } => label.as_str(),
+    }).collect()
 }
 
 fn text_width(text: &str, italic: bool, window: &Window) -> f32 {

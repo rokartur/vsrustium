@@ -24,7 +24,7 @@ fn the_title_menu_reveals_each_folder_of_the_file_from_the_file_up() {
 fn menu_titles(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<String> {
     workbench.read_with(cx, |workbench, _| {
         let Some(menu) = workbench.context_menu.as_ref() else { return Vec::new() };
-        menu.actions
+        menu.levels[0].actions
             .iter()
             .map(|action| match action {
                 MenuAction::Command { title, checked: true, .. } => format!("{title} [x]"),
@@ -79,7 +79,7 @@ fn the_title_bar_menus_toggle_the_command_center_and_the_layout_controls(cx: &mu
         let rows = input.order.iter().map(|row| &input.rows[*row]);
         (input.input_box.value.clone(), rows.map(|row| format!("{}|{}|{:?}", row.item.label, row.item.description.clone().unwrap_or_default(), row.item.keybinding)).collect::<Vec<_>>())
     });
-    assert_eq!(picker, (String::new(), vec![r#"Go to File||[["⌘", "P"]]"#.to_string(), r#"Show and Run Commands|>|[["⇧", "⌘", "P"]]"#.into(), format!("notes.txt|{}|[]", dir.display())]));
+    assert_eq!(picker, (String::new(), vec![r#"Go to File||[["⌘", "P"]]"#.to_string(), r#"Show and Run Commands|>|[["⇧", "⌘", "P"]]"#.into(), "More|?|[]".into(), format!("notes.txt|{}|[]", dir.display())]));
     cx.simulate_click(point(px(width / 2.), px(20.)), Modifiers::default());
     assert!(workbench.read_with(cx, |workbench, _| workbench.quick_inputs.current().is_some()), "a press in the quick input over the bar keeps it");
     cx.simulate_keystrokes("down enter");

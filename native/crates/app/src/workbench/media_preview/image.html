@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<!-- imagePreviewEditor.ts and imageViewer.ts with their CSS, drawn in a webview where upstream draws them in the workbench DOM. -->
+<head>
+	<meta charset="UTF-8">
+	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src {{csp_source}}; script-src 'nonce-{{nonce}}'; style-src 'nonce-{{nonce}}';">
+	<style nonce="{{nonce}}">
+		html, body {
+			width: 100%;
+			height: 100%;
+			margin: 0;
+			padding: 0;
+			overflow: hidden;
+		}
+
+		.image-viewer {
+			display: flex;
+			width: 100%;
+			height: 100%;
+			box-sizing: border-box;
+			overflow: hidden;
+			-webkit-user-select: none;
+			user-select: none;
+		}
+
+		.image-viewer:focus {
+			outline: none;
+		}
+
+		.image-viewer.ready {
+			cursor: zoom-in;
+		}
+
+		.image-viewer.ready.zoom-out {
+			cursor: zoom-out;
+		}
+
+		.image-viewer img {
+			margin: auto;
+			background-size: 16px 16px;
+			background-image: conic-gradient(rgb(230, 230, 230) 25%, transparent 25% 50%, rgb(230, 230, 230) 50% 75%, transparent 75%);
+		}
+
+		body.vscode-dark .image-viewer img,
+		body.vscode-high-contrast:not(.vscode-high-contrast-light) .image-viewer img {
+			background-image: conic-gradient(rgb(20, 20, 20) 25%, transparent 25% 50%, rgb(20, 20, 20) 50% 75%, transparent 75%);
+		}
+
+		.image-viewer img.scale-to-fit {
+			max-width: calc(100% - 20px);
+			max-height: calc(100% - 20px);
+			object-fit: contain;
+		}
+
+		.image-viewer img:not(.scale-to-fit) {
+			flex-shrink: 0;
+		}
+
+		.image-viewer img.pixelated {
+			image-rendering: pixelated;
+		}
+
+		.image-viewer.zoomed {
+			overflow: auto;
+		}
+
+		.image-viewer.zoomed::-webkit-scrollbar {
+			width: 10px;
+			height: 10px;
+		}
+
+		.image-viewer.zoomed::-webkit-scrollbar-corner {
+			background: transparent;
+		}
+
+		.image-viewer.zoomed::-webkit-scrollbar-thumb {
+			background-color: var(--vscode-scrollbarSlider-background);
+		}
+
+		.image-viewer.zoomed::-webkit-scrollbar-thumb:hover {
+			background-color: var(--vscode-scrollbarSlider-hoverBackground);
+		}
+
+		.image-viewer.zoomed::-webkit-scrollbar-thumb:active {
+			background-color: var(--vscode-scrollbarSlider-activeBackground);
+		}
+
+		.image-preview-message {
+			width: 100%;
+			height: 100%;
+			padding: 0 16px;
+			box-sizing: border-box;
+			display: flex;
+			flex-direction: column;
+			align-items: center;
+			justify-content: center;
+			gap: 10px;
+		}
+
+		.image-preview-message p {
+			font-size: 14px;
+			max-width: 450px;
+			margin: 0;
+			text-align: center;
+			word-break: break-word;
+		}
+
+		.image-preview-message button {
+			margin: 4px 5px;
+			padding: 4px;
+			border: 1px solid var(--vscode-button-border, transparent);
+			border-radius: 2px;
+			color: var(--vscode-button-foreground);
+			background-color: var(--vscode-button-background);
+			font-family: var(--vscode-font-family);
+			font-size: 13px;
+			line-height: 18px;
+			cursor: pointer;
+		}
+
+		.image-preview-message button:hover {
+			background-color: var(--vscode-button-hoverBackground);
+		}
+
+		body:not(.has-message) .image-preview-message,
+		body.has-message .image-viewer {
+			display: none;
+		}
+	</style>
+</head>
+<body data-vscode-context='{ "preventDefaultContextMenuItems": true }'>
+	<div class="image-viewer" tabindex="0" role="img" aria-label="{{aria_label}}"><img class="scale-to-fit" alt=""></div>
+	<div class="image-preview-message">
+		<p></p>
+		<button>{{open_in_text_editor}}</button>
+	</div>
+	<script nonce="{{nonce}}">
+		(function () {
+			const vscode = acquireVsCodeApi();
+			const PIXELATION_THRESHOLD = 3;
+			const SCALE_PINCH_FACTOR = 0.075;
+			const MAX_SCALE = 20;
+			const MIN_SCALE = 0.1;
+			const ZOOM_LEVELS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1, 1.5, 2, 3, 5, 7, 10, 15, 20];
+			const nextZoomLevel = scale => ZOOM_LEVELS.find(level => level > scale) ?? MAX_SCALE;
+			const previousZoomLevel = scale => ZOOM_LEVELS.findLast(level => level < scale) ?? MIN_SCALE;
+			const largerDimension = (width, height) => width >= height ? { width } : { height };
+
+			const container = document.querySelector('.image-viewer');
+			const image = container.querySelector('img');
+			let scale = 'fit';
+			let hasImage = false;
+			let needsExplicitSize = false;
+			let lastFitSize;
+
+			const postInfo = () => vscode.postMessage({
+				type: 'image-info',
+				scale: hasImage ? scale : undefined,
+				width: hasImage ? image.naturalWidth : undefined,
+				height: hasImage ? image.naturalHeight : undefined,
+				viewState: hasImage ? { scale, scrollLeft: container.scrollLeft, scrollTop: container.scrollTop } : undefined,
+			});
+
+			const baseSize = () => {
+				if (image.classList.contains('scale-to-fit') && (image.clientWidth || image.clientHeight)) {
+					lastFitSize = largerDimension(image.clientWidth, image.clientHeight);
+				}
+				if (image.naturalWidth || image.naturalHeight) {
+					return largerDimension(image.naturalWidth, image.naturalHeight);
+				}
+				return lastFitSize;
+			};
+
+			const numericScale = () => {
+				if (scale !== 'fit') {
+					return scale;
+				}
+				const size = needsExplicitSize ? baseSize() : { width: image.naturalWidth };
+				if (size?.width) {
+					return image.clientWidth / size.width;
+				}
+				if (size?.height) {
+					return image.clientHeight / size.height;
+				}
+				return 1;
+			};
+
+			const applyScale = newScale => {
+				if (newScale === 'fit') {
+					scale = 'fit';
+					image.classList.add('scale-to-fit');
+					image.classList.remove('pixelated');
+					image.style.zoom = '';
+					image.style.width = '';
+					image.style.height = '';
+					const wasZoomed = container.classList.contains('zoomed');
+					container.classList.remove('zoomed');
+					if (wasZoomed) {
+						container.scrollTo(0, 0);
+					}
+					postInfo();
+					return;
+				}
+				if (!hasImage) {
+					return;
+				}
+				scale = Math.min(Math.max(newScale, MIN_SCALE), MAX_SCALE);
+				const dx = container.scrollWidth > 0 ? (container.scrollLeft + container.clientWidth / 2) / container.scrollWidth : 0.5;
+				const dy = container.scrollHeight > 0 ? (container.scrollTop + container.clientHeight / 2) / container.scrollHeight : 0.5;
+				const size = needsExplicitSize ? baseSize() : undefined;
+				image.classList.remove('scale-to-fit');
+				image.classList.toggle('pixelated', scale >= PIXELATION_THRESHOLD);
+				image.style.width = size?.width ? `${size.width}px` : '';
+				image.style.height = size?.height ? `${size.height}px` : '';
+				image.style.zoom = String(scale);
+				container.classList.add('zoomed');
+				container.scrollTo(container.scrollWidth * dx - container.clientWidth / 2, container.scrollHeight * dy - container.clientHeight / 2);
+				postInfo();
+			};
+
+			const zoomIn = () => hasImage && applyScale(nextZoomLevel(numericScale()));
+			const zoomOut = () => hasImage && applyScale(previousZoomLevel(numericScale()));
+
+			const hasIntrinsicWidth = loader => {
+				const probe = document.createElement('div');
+				probe.style.position = 'absolute';
+				probe.style.visibility = 'hidden';
+				probe.style.width = '100000px';
+				probe.appendChild(loader);
+				document.body.appendChild(probe);
+				const result = Math.abs(loader.clientWidth - loader.naturalWidth) <= 1;
+				probe.remove();
+				return result;
+			};
+
+			const showMessage = message => {
+				document.querySelector('.image-preview-message p').textContent = message ?? '';
+				document.body.classList.toggle('has-message', message !== undefined);
+			};
+
+			// imagePreviewEditor.ts `_showImage`: decoded before it replaces the current image, so a reload doesn't flash.
+			const setSource = async (src, viewState) => {
+				const loader = new Image();
+				loader.src = src;
+				let decoded = true;
+				try {
+					await loader.decode();
+				} catch {
+					decoded = false;
+				}
+				const keep = hasImage && scale !== 'fit' ? { scale, scrollLeft: container.scrollLeft, scrollTop: container.scrollTop } : viewState;
+				image.src = src;
+				hasImage = decoded;
+				container.classList.toggle('ready', decoded);
+				showMessage(decoded ? undefined : {{load_error}});
+				if (!decoded) {
+					applyScale('fit');
+					return;
+				}
+				needsExplicitSize = !hasIntrinsicWidth(loader);
+				lastFitSize = undefined;
+				applyScale('fit');
+				if (keep && keep.scale !== 'fit') {
+					applyScale(keep.scale);
+					container.scrollTo(keep.scrollLeft, keep.scrollTop);
+				}
+				postInfo();
+			};
+
+			container.addEventListener('wheel', e => {
+				if (e.ctrlKey) {
+					e.preventDefault();
+				}
+				if (!hasImage || (!e.altKey && !e.ctrlKey)) {
+					return;
+				}
+				e.preventDefault();
+				if (e.deltaY === 0) {
+					return;
+				}
+				const delta = e.deltaY > 0 ? 1 : -1;
+				applyScale(numericScale() * (1 - delta * SCALE_PINCH_FACTOR));
+			}, { passive: false });
+
+			let consumeClick = false;
+			let zoomOutOnClick = false;
+			container.addEventListener('mousedown', e => {
+				if (e.button !== 0) {
+					return;
+				}
+				consumeClick = !document.hasFocus() || document.activeElement !== container;
+				zoomOutOnClick = e.altKey;
+			});
+			container.addEventListener('click', e => {
+				if (e.button !== 0 || !hasImage) {
+					return;
+				}
+				if (consumeClick) {
+					consumeClick = false;
+					return;
+				}
+				zoomOutOnClick ? zoomOut() : zoomIn();
+			});
+			const updateZoomOutCursor = e => container.classList.toggle('zoom-out', e.altKey);
+			container.addEventListener('keydown', updateZoomOutCursor);
+			container.addEventListener('keyup', updateZoomOutCursor);
+			container.addEventListener('mousemove', updateZoomOutCursor);
+			container.addEventListener('scroll', () => hasImage && scale !== 'fit' && postInfo());
+
+			document.querySelector('.image-preview-message button').addEventListener('click', () => vscode.postMessage({ type: 'reopen-as-text' }));
+
+			window.addEventListener('message', e => {
+				switch (e.data?.type) {
+					case 'set-source': setSource(e.data.src, e.data.viewState); break;
+					case 'set-scale': applyScale(e.data.scale); break;
+					case 'zoom-in': zoomIn(); break;
+					case 'zoom-out': zoomOut(); break;
+					case 'focus': container.focus(); break;
+				}
+			});
+
+			setSource({{src}}, {{view_state}});
+		}());
+	</script>
+</body>
+</html>

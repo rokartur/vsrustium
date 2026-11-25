@@ -151,6 +151,43 @@ fn opening_a_result_selects_the_match_in_the_editor(cx: &mut TestAppContext) {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+/// listCommands.ts on the results (`multipleSelectionSupport: true`): Shift+Down and Up grow and shrink the selection,
+/// `focusParent`, `selectAll` of the top level, `toggleSelection`, and a Shift click selecting from the anchor.
+#[gpui::test]
+fn the_results_select_several_rows(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = search("search-multi-select", cx);
+    run(&workbench, "workbench.action.findInFiles", vec![json!({ "query": "alpha", "triggerSearch": true })], cx);
+    run(&workbench, "search.action.focusSearchList", Vec::new(), cx);
+    let state = |cx: &mut VisualTestContext| {
+        workbench.read_with(cx, |workbench, _| {
+            let rows = workbench.search.rows(&workbench.search_folders(), Some(&workbench.collapse_results()));
+            let index = |key: &RowKey| rows.iter().position(|row| row.key == *key).unwrap();
+            (workbench.search.focused.as_ref().map(index), workbench.search.selected.iter().map(index).collect::<Vec<_>>())
+        })
+    };
+    run(&workbench, "list.focusFirst", Vec::new(), cx);
+    assert_eq!(state(cx), (Some(0), vec![0]));
+    run(&workbench, "list.expandSelectionDown", Vec::new(), cx);
+    assert_eq!(state(cx), (Some(1), vec![0, 1]));
+    run(&workbench, "list.expandSelectionUp", Vec::new(), cx);
+    assert_eq!(state(cx), (Some(0), vec![0]));
+    run(&workbench, "list.focusAnyDown", Vec::new(), cx);
+    run(&workbench, "list.focusAnyDown", Vec::new(), cx);
+    run(&workbench, "search.action.focusSearchList", Vec::new(), cx);
+    run(&workbench, "list.focusParent", Vec::new(), cx);
+    assert_eq!(state(cx), (Some(0), vec![0]));
+    run(&workbench, "list.selectAll", Vec::new(), cx);
+    assert_eq!(state(cx).1, [0, 1, 2, 3, 4, 5]);
+    run(&workbench, "list.toggleSelection", Vec::new(), cx);
+    assert_eq!(state(cx).1, [1, 2, 3, 4, 5]);
+    workbench.update(cx, |workbench, cx| {
+        let rows = workbench.search.rows(&workbench.search_folders(), Some(&workbench.collapse_results()));
+        assert!(workbench.search_selection_click(&rows[4].key, Modifiers::shift(), cx));
+    });
+    assert_eq!(state(cx), (Some(4), vec![0, 1, 2, 3, 4]));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 #[gpui::test]
 fn find_in_files_seeds_the_query_from_the_editor_word(cx: &mut TestAppContext) {
     let (dir, workbench, cx) = search("search-seed", cx);
@@ -174,7 +211,7 @@ fn find_in_files_seeds_the_query_from_the_editor_word(cx: &mut TestAppContext) {
 fn menu_titles(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<String> {
     workbench.read_with(cx, |workbench, _| {
         let menu = workbench.context_menu.as_ref().expect("a context menu shows");
-        menu.actions
+        menu.levels[0].actions
             .iter()
             .map(|action| match action {
                 MenuAction::Command { title, .. } => title.clone(),
@@ -193,7 +230,7 @@ fn the_context_menu_focuses_the_row_and_its_items_change_the_inputs(cx: &mut Tes
     cx.run_until_parked();
     let titles = ["Dismiss", "Exclude File Type from Search", "Include File Type from Search", "---", "Copy", "Copy Path", "Copy All", "---", "Reveal in Explorer View"];
     assert_eq!(menu_titles(&workbench, cx), titles);
-    assert_eq!(workbench.read_with(cx, |workbench, _| (workbench.search.focused.clone(), workbench.search.selected.clone())), (Some(file), None));
+    assert_eq!(workbench.read_with(cx, |workbench, _| (workbench.search.focused.clone(), workbench.search.selected.clone())), (Some(file), Vec::new()));
 
     run(&workbench, "search.action.copyAll", Vec::new(), cx);
     let copied = cx.read_from_clipboard().and_then(|item| item.text()).unwrap();
@@ -248,7 +285,7 @@ fn a_right_click_on_a_hovered_row_opens_the_menu_without_selecting_it(cx: &mut T
     cx.simulate_mouse_up(row, MouseButton::Right, Modifiers::none());
     cx.run_until_parked();
     let (menu, focused, selected) = workbench.read_with(cx, |workbench, _| (workbench.context_menu.is_some(), workbench.search.focused.clone(), workbench.search.selected.clone()));
-    assert!(menu && focused.is_some() && selected.is_none());
+    assert!(menu && focused.is_some() && selected.is_empty());
     std::fs::remove_dir_all(dir).unwrap();
 }
 

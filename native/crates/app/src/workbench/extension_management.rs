@@ -77,6 +77,7 @@ impl Workbench {
                 return Outcome::error(format!("Extension '{id}' is a Built-in extension and cannot be uninstalled"));
             }
             let id = id.to_owned();
+            workbench.reset_extension_enablement(&id);
             workbench.run_extension_jobs(vec![Job::Uninstall(id.clone())], None, cx, move |error| {
                 error.replace(&format!("Extension '{id}' is not installed."), &format!("Extension '{id}' is not installed. Make sure you use the full extension ID, including the publisher, e.g.: ms-dotnettools.csharp."))
             })
@@ -95,15 +96,19 @@ impl Workbench {
 
     /// `extensionsWorkbenchService.install(id)`: the gallery lookup and the download run off the UI thread, then the
     /// host installs the VSIX and starts the extension. A built-in cannot be installed from the gallery.
-    fn install_from_gallery(&mut self, id: String, version: Option<String>, pre_release: bool, cx: &mut Context<Self>) -> Outcome {
+    pub(super) fn install_from_gallery(&mut self, id: String, version: Option<String>, pre_release: bool, cx: &mut Context<Self>) -> Outcome {
         let installed = self.extensions.iter().find(|extension| extension.id.eq_ignore_ascii_case(&id));
         let builtin = installed.is_some_and(|extension| extension.description["isBuiltin"] == true);
         let operation = if installed.is_some() { Operation::Update } else { Operation::Install };
         let settings = self.settings.lock().unwrap();
         let downloads = settings.user_home().parent().expect("the user home is <user data>/User").join("CachedExtensionVSIXs");
-        // shortcut: `extensions.verifySignature` is not registered yet, so only a user value reaches here; registered with the extensions settings.
         let verify_signature = settings.get_value(Some("extensions.verifySignature"), &Overrides::default()) != Some(Value::Bool(false));
         drop(settings);
+        let lower = id.to_lowercase();
+        if !self.extensions_viewlet.installing.contains(&lower) {
+            self.extensions_viewlet.installing.push(lower.clone());
+            self.refresh_extensions_views(cx);
+        }
         let download = cx.background_executor().spawn(async move {
             if builtin {
                 anyhow::bail!("The extension '{id}' cannot be installed because it was not found.");
@@ -129,6 +134,10 @@ impl Workbench {
                 Ok(Outcome::Pending(pending)) => pending.await.unwrap_or(Ok(Value::Null)),
                 Err(_) => Ok(Value::Null),
             };
+            let _ = workbench.update(cx, |workbench, cx| {
+                workbench.extensions_viewlet.installing.retain(|installing| *installing != lower);
+                workbench.refresh_extensions_views(cx);
+            });
             let _ = sender.send(result);
         })
         .detach();
@@ -170,7 +179,7 @@ impl Workbench {
 
     /// Runs the jobs one after another on the host thread, then reads the contributions of the running extensions.
     /// The first failure is shown and rejects the command, as `onUnexpectedError` and the rethrow upstream do.
-    fn run_extension_jobs(&mut self, jobs: Vec<Job>, done: Option<&'static str>, cx: &mut Context<Self>, error_text: impl Fn(String) -> String + 'static) -> Outcome {
+    pub(super) fn run_extension_jobs(&mut self, jobs: Vec<Job>, done: Option<&'static str>, cx: &mut Context<Self>, error_text: impl Fn(String) -> String + 'static) -> Outcome {
         let replies: Vec<_> = jobs.into_iter().map(|job| self.host.run_extensions(job)).collect();
         let (sender, receiver) = oneshot::channel();
         cx.spawn(async move |workbench, cx| {
@@ -222,6 +231,8 @@ impl Workbench {
         }
         self.set_tree_views(&running);
         self.extensions = running;
+        self.register_webview_view_commands();
+        self.refresh_extensions_views(cx);
         cx.notify();
     }
 }
