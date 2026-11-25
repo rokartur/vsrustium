@@ -145,7 +145,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | platform/extensionResourceLoader | src/vs/platform | todo |  |
 | platform/extensions | src/vs/platform | ported | extensionValidator.ts with the cases of extensionValidator.test.ts: cargo test -p exthost extension_validator; built-in extensions are not validated yet |
 | platform/externalServices | src/vs/platform | removed | no AI or Microsoft services by decision (port/notes.md); API stays inert |
-| platform/externalTerminal | src/vs/platform | todo |  |
+| platform/externalTerminal | src/vs/platform | ported | workbench/external_terminal.rs: macOS `open -a <osxExec> <cwd>` with the sanitized environment; cargo test -p app external_terminal |
 | platform/files | src/vs/platform | ported | native/crates/files: disk provider, Trash, FSEvents watcher with upstream coalescing, provider errors, glob port with upstream glob tests: cargo test -p files 44 passed; api-tests workspace.fs.test 12/12 |
 | platform/git | src/vs/platform | todo |  |
 | platform/github | src/vs/platform | todo |  |
@@ -417,7 +417,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | workbench/contrib/emmet | workbench contribution | todo |  |
 | workbench/contrib/encryption | workbench contribution | todo |  |
 | workbench/contrib/extensions | workbench contribution | todo |  |
-| workbench/contrib/externalTerminal | workbench contribution | todo |  |
+| workbench/contrib/externalTerminal | workbench contribution | ported | workbench/external_terminal.rs: Open New External Terminal (`workbench.action.terminal.openNativeConsole`, cmd+shift+c); no multi-root folder picker; cargo test -p app external_terminal |
 | workbench/contrib/externalUriOpener | workbench contribution | todo |  |
 | workbench/contrib/files | workbench contribution | stub | Explorer tree read from disk (explorer.rs): folders first, default excludes, click to expand, click opens a file as preview, double click pins, selection follows the active editor; Seti file icons and compareFileNamesDefault sort; workspace folders as roots, first five expanded (cargo test -p app); new file and folder, rename, delete, copy, cut, paste, drag and drop and undo through the working copy file operations (cargo test -p app explorer_actions, file_actions); "Do not ask me again" as the NSAlert suppression checkbox (dialog.rs); frames checked against the reference with port/tools/ui-pair; the context menu with the items whose commands the port has (port/results/contextmenu.md); tree view state in workspace storage (cargo test -p app view_state); file nesting with the explorerFileNestingTrie.test.ts cases (cargo test -p app nest); copyFilePath, copyRelativeFilePath and revealFileInOS with their Explorer, tab and palette entries (cargo test -p app copy_path, copied_path_labels); compact folders with their navigation commands and getContext (cargo test -p app compact, get_context, compressed_navigation); Explorer find with highlight and filter modes over a ripgrep file search (cargo test -p app explorer_find find_filters); Finder drops through ExternalFileImport (cargo test -p app files_dropped_from_finder); Add Folder to Workspace waits for workspace folder editing (port/notes.md milestones 3, 4, 12) |
 | workbench/contrib/folding | workbench contribution | todo | `editor.defaultFoldingRangeProvider` picks among extension `FoldingRangeProvider`s, which come with mainthread/MainThreadLanguageFeatures (port/notes.md milestone 8) |
