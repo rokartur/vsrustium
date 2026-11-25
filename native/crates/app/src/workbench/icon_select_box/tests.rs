@@ -8,17 +8,17 @@ fn key(picker: &IconSelectBox, key: &str) -> Option<KeyAction> {
 #[test]
 fn the_search_keeps_icons_whose_id_contains_it_and_the_focused_icon() {
     let mut picker = IconSelectBox::new(IconTarget::NewProfile);
-    assert_eq!(picker.rendered().len(), ICONS.len());
+    assert_eq!(picker.rendered.len(), ICONS.len());
     picker.focus_icon(16);
-    assert_eq!(picker.rendered()[16], "terminal-debian");
+    assert_eq!(picker.rendered[16], "terminal-debian");
     picker.search = crate::input_box::InputBox::new("TERMINAL".into());
     picker.filter();
-    assert_eq!(picker.rendered(), ["terminal", "terminal-debian", "terminal-linux", "terminal-ubuntu"]);
-    assert_eq!(picker.focused(), Some(1));
+    assert_eq!(picker.rendered, ["terminal", "terminal-debian", "terminal-linux", "terminal-ubuntu"]);
+    assert_eq!(picker.focused, Some(1));
     picker.search = crate::input_box::InputBox::new("nothing".into());
     picker.filter();
-    assert!(picker.rendered().is_empty());
-    assert_eq!(picker.focused(), None);
+    assert!(picker.rendered.is_empty());
+    assert_eq!(picker.focused, None);
 }
 
 #[test]
@@ -26,17 +26,17 @@ fn rows_move_twelve_icons_and_leave_the_grid_for_the_input_from_the_first_row() 
     let mut picker = IconSelectBox::new(IconTarget::NewProfile);
     picker.focus_next_row();
     assert!(picker.grid_focused);
-    assert_eq!(picker.focused(), Some(0));
+    assert_eq!(picker.focused, Some(0));
     picker.focus_next_row();
-    assert_eq!(picker.focused(), Some(12));
+    assert_eq!(picker.focused, Some(12));
     picker.focus_last();
     picker.focus_next_row();
-    assert_eq!(picker.focused(), Some(82));
+    assert_eq!(picker.focused, Some(82));
     picker.focus_previous_row();
-    assert_eq!(picker.focused(), Some(70));
+    assert_eq!(picker.focused, Some(70));
     picker.focus_first();
     picker.focus_previous();
-    assert_eq!(picker.focused(), Some(0));
+    assert_eq!(picker.focused, Some(0));
     picker.focus_previous_row();
     assert!(!picker.grid_focused);
 }

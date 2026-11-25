@@ -136,12 +136,11 @@ impl Workbench {
         editor.new_profile = Some(NewProfile { copy_from, template, error: None, default_name: name.clone(), icon: icon.clone(), default_icon: icon, preview: None, use_default: BTreeSet::new(), copy });
         editor.selected = None;
         editor.name = InputBox::new(name);
-        editor.name.select_all();
         editor.name_view.reset();
-        if let Some(focus) = editor.name_focus.clone() {
+        // `render`'s `profileTree.focusFirst()`: the form's tree takes the focus, not the Name input.
+        if let Some(focus) = editor.focus.clone() {
             window.focus(&focus, cx);
         }
-        self.blink_caret(InputId::ProfileName, window, cx);
         cx.notify();
     }
 
@@ -765,7 +764,8 @@ impl Workbench {
     fn new_profile_row(&self, profiles: &[Profile], cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
         let editor = &self.user_data_profiles.editor;
         let new_profile = editor.new_profile.as_ref()?;
-        let foreground = self.foreground_or("list.activeSelectionForeground");
+        // The focus is in the form, so the sidebar list shows its selection inactive.
+        let foreground = self.foreground_or("list.inactiveSelectionForeground");
         let exportable = new_profile.copy_from.as_ref().is_some_and(|id| profiles.iter().any(|profile| profile.id == *id));
         let actions = div()
             .flex_1()
@@ -793,7 +793,7 @@ impl Workbench {
             .pl(px(20.))
             .cursor_pointer()
             .text_color(foreground)
-            .bg(self.color("list.activeSelectionBackground"))
+            .bg(self.color("list.inactiveSelectionBackground"))
             .child(self.icon(super::icon_select_box::profile_icon_file(new_profile.icon.as_deref()), 22., 16., foreground))
             .child(div().ml(px(5.)).italic().truncate().child(editor.name.value.clone()))
             .child(self.icon("circle-filled", 16., 16., foreground).ml(px(5.)))
@@ -835,7 +835,9 @@ impl Workbench {
             .child(self.icon(super::icon_select_box::profile_icon_file(profile.icon.as_deref()), 22., 16., foreground))
             .child(div().ml(px(5.)).truncate().child(profile.name.clone()))
             .children(description)
-            .when(selected || active, |row| row.child(actions))
+            // `.profile-tree-item-actions-container` shows on the selected, focused or hovered row only.
+            .group("profile-row")
+            .child(actions.when(!selected, |actions| actions.invisible().group_hover("profile-row", |actions| actions.visible())))
     }
 
     fn profile_name_input(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
@@ -898,12 +900,16 @@ impl Workbench {
         };
         let copy_from = div()
             .id("profile-copy-from")
+            // `.profile-select-container`: 250px wide, 5px below the description; the select box's 18px line, 8px left padding and 2px corners.
+            .mt(px(5.))
             .w(px(250.))
-            .h(px(26.))
+            .h(px(20.))
             .flex()
             .items_center()
             .justify_between()
-            .px(px(6.))
+            .pl(px(8.))
+            .pr(px(4.))
+            .rounded(px(2.))
             .border_1()
             .border_color(self.color("dropdown.border"))
             .bg(self.color("dropdown.background"))
@@ -949,7 +955,7 @@ impl Workbench {
                     .ml(px(28.))
                     .child(self.profile_row_container("Name", div().flex().flex_col().gap(px(4.)).child(name).children(error)))
                     .child(self.profile_row_container("Icon", icon))
-                    .child(self.profile_row_container("Copy from", div().flex().flex_col().gap(px(4.)).child(div().opacity(0.9).child("Select the profile source from which you want to copy contents")).child(copy_from)))
+                    .child(self.profile_row_container("Copy from", div().flex().flex_col().child(div().opacity(0.9).child("Select the profile source from which you want to copy contents")).child(copy_from)))
                     .child(self.profile_row_container("Contents", self.new_profile_source_contents(bullets, rows, cx))),
             );
         // `.profile-button-container`: the secondary buttons, then the primary one, under the scrolling tree.
@@ -958,7 +964,7 @@ impl Workbench {
             .size_full()
             .flex()
             .flex_col()
-            .child(div().ml(px(27.)).h(px(40.)).flex_none().flex().items_center().text_size(px(26.)).font_weight(FontWeight::SEMIBOLD).italic().child(editor.name.value.clone()))
+            .child(div().ml(px(27.)).h(px(40.)).flex_none().flex().items_center().text_size(px(26.)).font_weight(FontWeight::SEMIBOLD).child(editor.name.value.clone()))
             .child(body)
             .child(buttons)
     }
@@ -1102,6 +1108,7 @@ impl Workbench {
             .rounded(px(4.))
             .bg(self.color(background))
             .text_color(self.color(foreground))
+            .when_some(self.theme.color(if primary { "button.border" } else { "button.secondaryBorder" }), |button, border| button.border_1().border_color(border))
             .when(!enabled, |button| button.opacity(0.4))
             .when(enabled, |button| {
                 button

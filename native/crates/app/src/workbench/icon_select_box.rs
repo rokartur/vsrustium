@@ -59,14 +59,6 @@ impl IconSelectBox {
         IconSelectBox { target, search: InputBox::new(String::new()), search_view: InputView::default(), rendered: ICONS.to_vec(), focused: Some(0), grid_focused: false }
     }
 
-    pub fn rendered(&self) -> &[&'static str] {
-        &self.rendered
-    }
-
-    pub fn focused(&self) -> Option<usize> {
-        self.focused
-    }
-
     /// `onDidChange` of the input: the icons whose id contains the value (`matchesContiguous`); the focused icon
     /// stays focused when it still shows, else the first one is.
     pub fn filter(&mut self) {
