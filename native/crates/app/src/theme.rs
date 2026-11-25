@@ -233,7 +233,8 @@ fn from_hsla(h: f64, s: f64, l: f64, a: f64) -> Rgba {
     Rgba { r: byte(r), g: byte(g), b: byte(b), a: a as f32 }
 }
 
-enum ColorValue {
+#[derive(Clone, Copy)]
+pub(crate) enum ColorValue {
     None,
     Hex(&'static str),
     Key(&'static str),
@@ -256,6 +257,14 @@ const MINIMAP_SELECTION: ColorValue = ColorValue::Key("editor.selectionBackgroun
 /// (theme.ts, baseColors.ts, editorColors.ts, miscColors.ts, minimapColors.ts). Keys not listed resolve to no color.
 fn registry_default(key: &str, kind: ThemeKind) -> ColorValue {
     use ColorValue::*;
+    if let Some([dark, light, hc, hc_light]) = crate::symbol_icons::color_default(key) {
+        return match kind {
+            ThemeKind::Dark => dark,
+            ThemeKind::Light => light,
+            ThemeKind::HighContrastDark => hc,
+            ThemeKind::HighContrastLight => hc_light,
+        };
+    }
     if kind == ThemeKind::HighContrastLight {
         return hc_light_default(key);
     }

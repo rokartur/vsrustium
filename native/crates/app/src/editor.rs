@@ -38,6 +38,7 @@ mod multicursor;
 pub mod section_headers;
 pub mod smart_select;
 mod snippet;
+pub mod snippet_session;
 pub mod sticky_scroll;
 pub mod unicode_highlighter;
 pub mod unusual_line_terminators;
@@ -51,7 +52,7 @@ pub use cursor::{Position, Selection, column_from_visible};
 use folding::{FoldingMarkers, FoldingModel};
 pub use edit::{ContentChange, ContentChanged, Copied, CursorEdit, EditReason, History, Replace, char_column, end_of, selections_after, text_between, utf16_column};
 pub use multicursor::{ColumnSelectData, Reveal};
-pub use snippet::expand as expand_snippet;
+pub use snippet::{SnippetText, expand as expand_snippet};
 pub use view::{HORIZONTAL_SCROLLBAR_HEIGHT, LINE_HEIGHT, Scrollbar, VERTICAL_SCROLLBAR_WIDTH, VerticalReveal, Viewport};
 
 pub struct TextDocument {
@@ -480,6 +481,8 @@ pub struct OpenEditor {
     /// The decorations of the model's problem markers.
     pub markers: Vec<marker_decorations::MarkerDecoration>,
     pub view_zones: Vec<view_zones::ViewZone>,
+    /// The snippet session of snippetController2.ts, its placeholders tracked through edits.
+    pub snippet_session: Option<snippet_session::SnippetSession>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -495,7 +498,7 @@ impl OpenEditor {
     fn new(document: TextDocument, preview: bool, model_id: u32) -> Self {
         let indentation = document.indentation;
         let guides = indent_guides(&document.lines, indentation.tab_size, indentation.indent_size(), document.off_side);
-        let mut editor = OpenEditor { document, preview, model_id, selections: vec![Selection::default()], last_added: 0, leftovers: Vec::new(), column_select: None, smart_select: None, cursor_states: Default::default(), version_id: 1, history: History::default(), guides, highlights: Vec::new(), value_set_replacement: None, selection_anchor: None, folding: FoldingModel::default(), sticky_model: Default::default(), scroll: Scroll::default(), max_line_width: 0., host_reference: None, associated_file: false, markers: Vec::new(), view_zones: Vec::new() };
+        let mut editor = OpenEditor { document, preview, model_id, selections: vec![Selection::default()], last_added: 0, leftovers: Vec::new(), column_select: None, smart_select: None, cursor_states: Default::default(), version_id: 1, history: History::default(), guides, highlights: Vec::new(), value_set_replacement: None, selection_anchor: None, folding: FoldingModel::default(), sticky_model: Default::default(), scroll: Scroll::default(), max_line_width: 0., host_reference: None, associated_file: false, markers: Vec::new(), view_zones: Vec::new(), snippet_session: None };
         editor.refresh_highlights();
         editor.refresh_folding_ranges();
         editor

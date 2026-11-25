@@ -61,6 +61,8 @@ impl Workbench {
         if scrolled {
             self.editor_scrolled(cx);
         }
+        self.snippet_state_changed(cx);
+        self.suggest_editor_changed(change.is_some(), source, cx);
         cx.notify();
     }
 

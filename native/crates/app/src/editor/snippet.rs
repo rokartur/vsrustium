@@ -1,7 +1,7 @@
 //! The text a snippet inserts and its first tab stop (snippetParser.ts, snippetSession.ts `adjustWhitespace`),
-//! for `$tryInsertSnippet`.
-// shortcut: no snippet session (Tab through the stops, linked placeholders, choice list) and no transforms; the
-// session is the `editor/contrib/snippet` row of milestone 11, which takes this parser over.
+//! for snippet_session.rs.
+// shortcut: no placeholder or variable transforms (`${1/(.*)/${1:/upcase}/}` is inserted as text); port
+// `Transform` when an extension's snippets need it.
 
 use std::collections::HashMap;
 use std::ops::Range;
@@ -11,17 +11,20 @@ use super::Indentation;
 #[derive(Clone, Debug, PartialEq)]
 enum Marker {
     Text(String),
-    /// A choice option: inserted as is, never re-indented.
-    Choice(String),
+    /// A choice's options: the first is inserted as is, never re-indented.
+    Choice(Vec<String>),
     Placeholder { index: u32, children: Vec<Marker> },
     Variable { name: String, children: Vec<Marker> },
 }
 
-/// What inserting a snippet writes, and the char range in it the cursor selects.
+/// What inserting a snippet writes, the char range in it the cursor selects, every placeholder's index and char
+/// range (nested ones before the ones around them), and the options of the choice placeholders.
 #[derive(Debug, PartialEq)]
 pub struct SnippetText {
     pub text: String,
     pub selection: Range<usize>,
+    pub stops: Vec<(u32, Range<usize>)>,
+    pub choices: Vec<(u32, Vec<String>)>,
 }
 
 /// `SnippetParser.parse(template, true)` then `adjustWhitespace` and `resolveVariables`: unknown variables insert their
@@ -35,12 +38,12 @@ pub fn expand(template: &str, line_indent: &str, adjust_indentation: bool, inden
     if has_placeholders(&markers) && !has_final_tabstop(&markers) {
         markers.push(Marker::Placeholder { index: 0, children: Vec::new() });
     }
-    let mut out = Output { text: String::new(), length: 0, stops: Vec::new(), line_indent, adjust_indentation, indentation, variable: &variable };
+    let mut out = Output { text: String::new(), length: 0, stops: Vec::new(), choices: Vec::new(), line_indent, adjust_indentation, indentation, variable: &variable };
     out.write(&markers);
     // snippetSession.ts `_move(true)`: the lowest index first, the final tab stop last; none puts the cursor at the end.
     let first = out.stops.iter().min_by_key(|(index, _)| if *index == 0 { u32::MAX } else { *index });
     let selection = first.map_or(out.length..out.length, |(_, range)| range.clone());
-    SnippetText { text: out.text, selection }
+    SnippetText { text: out.text, selection, stops: out.stops, choices: out.choices }
 }
 
 fn parse(chars: &[char], position: &mut usize, nested: bool) -> Vec<Marker> {
@@ -114,7 +117,7 @@ fn parse_dollar(chars: &[char], position: &mut usize) -> Option<Marker> {
         '|' if !index.is_empty() => {
             *position += 1;
             let options = parse_choice(chars, position)?;
-            Some(new_marker(vec![Marker::Choice(options.into_iter().next()?)]))
+            Some(new_marker(vec![Marker::Choice(options)]))
         }
         _ => None,
     }
@@ -210,6 +213,7 @@ struct Output<'a> {
     /// The length of `text` in chars.
     length: usize,
     stops: Vec<(u32, Range<usize>)>,
+    choices: Vec<(u32, Vec<String>)>,
     line_indent: &'a str,
     adjust_indentation: bool,
     indentation: Indentation,
@@ -224,9 +228,12 @@ impl Output<'_> {
                     let text = self.adjust_whitespace(text);
                     self.push(&text);
                 }
-                Marker::Choice(text) => self.push(text),
+                Marker::Choice(options) => self.push(&options[0]),
                 Marker::Placeholder { index, children } => {
                     let start = self.length;
+                    if let [Marker::Choice(options)] = children.as_slice() {
+                        self.choices.push((*index, options.clone()));
+                    }
                     self.write(children);
                     self.stops.push((*index, start..self.length));
                 }
@@ -278,29 +285,41 @@ mod tests {
 
     const SPACES: Indentation = Indentation { tab_size: 4, indent_size: None, insert_spaces: true };
 
-    fn plain(template: &str) -> SnippetText {
+    fn expanded(template: &str) -> SnippetText {
         expand(template, "", true, SPACES, |name| (name == "CLIPBOARD").then(|| "clip".to_string()))
+    }
+
+    fn plain(template: &str) -> (String, Range<usize>) {
+        let snippet = expanded(template);
+        (snippet.text, snippet.selection)
     }
 
     #[test]
     fn placeholders_insert_their_text_and_the_lowest_index_is_selected() {
-        assert_eq!(plain("This is a $1${2:placeholder} snippet"), SnippetText { text: "This is a placeholder snippet".into(), selection: 10..10 });
-        assert_eq!(plain("a ${2:two} ${1:one}"), SnippetText { text: "a two one".into(), selection: 6..9 });
-        assert_eq!(plain("${1:x} and $1"), SnippetText { text: "x and x".into(), selection: 0..1 });
-        assert_eq!(plain("${1|yes,no|}!"), SnippetText { text: "yes!".into(), selection: 0..3 });
+        assert_eq!(plain("This is a $1${2:placeholder} snippet"), ("This is a placeholder snippet".into(), 10..10));
+        assert_eq!(plain("a ${2:two} ${1:one}"), ("a two one".into(), 6..9));
+        assert_eq!(plain("${1:x} and $1"), ("x and x".into(), 0..1));
+        assert_eq!(plain("${1|yes,no|}!"), ("yes!".into(), 0..3));
+    }
+
+    #[test]
+    fn every_placeholder_and_choice_is_kept() {
+        let snippet = expanded("${1:x} ${2|yes,no|} $1");
+        assert_eq!(snippet.stops, [(1, 0..1), (2, 2..5), (1, 6..7), (0, 7..7)]);
+        assert_eq!(snippet.choices, [(2, vec!["yes".to_string(), "no".to_string()])]);
     }
 
     #[test]
     fn plain_text_puts_the_cursor_at_its_end_and_escapes_unescape() {
-        assert_eq!(plain("has been"), SnippetText { text: "has been".into(), selection: 8..8 });
-        assert_eq!(plain(r"cost \$5 \} \\ $"), SnippetText { text: r"cost $5 } \ $".into(), selection: 13..13 });
-        assert_eq!(plain("a$0b"), SnippetText { text: "ab".into(), selection: 1..1 });
+        assert_eq!(plain("has been"), ("has been".into(), 8..8));
+        assert_eq!(plain(r"cost \$5 \} \\ $"), (r"cost $5 } \ $".into(), 13..13));
+        assert_eq!(plain("a$0b"), ("ab".into(), 1..1));
     }
 
     #[test]
     fn variables_resolve_or_insert_their_default() {
-        assert_eq!(plain("running: $CLIPBOARD").text, "running: clip");
-        assert_eq!(plain("${UNKNOWN:fallback} ${NOPE}").text, "fallback ");
+        assert_eq!(plain("running: $CLIPBOARD").0, "running: clip");
+        assert_eq!(plain("${UNKNOWN:fallback} ${NOPE}").0, "fallback ");
     }
 
     #[test]

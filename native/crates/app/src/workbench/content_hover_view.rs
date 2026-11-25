@@ -60,7 +60,8 @@ impl Workbench {
         }
         let primary_left = visible_column(text, anchor.start, tab_size) as f32 * char_width;
         let secondary_left = visible_column(text, secondary, tab_size) as f32 * char_width;
-        let measured = self.content_hover.widget_bounds.get().map(|bounds| bounds.size);
+        // The measuring canvas fills the padding box: add the 1px border on each side.
+        let measured = self.content_hover.widget_bounds.get().map(|bounds| Size { width: bounds.size.width + 2., height: bounds.size.height + 2. });
         let size = measured.unwrap_or(Size { width: 0., height: 0. });
         // contentWidgets.ts `_reduceAnchorCoordinates`: a full-width glyph is 1em of the editor font.
         let left = secondary_left.max(primary_left - size.width + EDITOR_FONT_SIZE);

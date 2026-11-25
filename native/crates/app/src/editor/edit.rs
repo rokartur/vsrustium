@@ -963,6 +963,9 @@ impl OpenEditor {
         }
         self.track_markers(start, end, text);
         self.track_view_zones(start, end, text);
+        if let Some(session) = self.snippet_session.as_mut() {
+            session.track(start, end, text);
+        }
         let lines = &mut self.document.lines;
         let prefix: String = lines[start.line].chars().take(start.column).collect();
         let suffix: String = lines[end.line].chars().skip(end.column).collect();

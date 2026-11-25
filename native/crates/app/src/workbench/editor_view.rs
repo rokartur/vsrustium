@@ -426,6 +426,7 @@ impl Workbench {
             .children(self.find_widget(self.editors.viewport.width + metrics.content_left() + minimap_width, metrics.content_left(), minimap_width, window, cx))
             .children(self.editor_message_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
             .children(self.content_hover_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
+            .children(self.suggest_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
             .children(self.keybindings_file_widgets(editor, self.editors.viewport.width + metrics.content_left() + minimap_width, viewport.height, minimap_width, window, cx))
     }
 
@@ -493,6 +494,7 @@ impl Workbench {
             blurred_at.set(Some((editor.model_id, editor.version_id)));
         }
         self.editor_blurred_auto_save(cx);
+        self.suggest_editor_blurred(cx);
         cx.notify();
     }
 
@@ -894,6 +896,7 @@ impl Workbench {
                     content = content.child(highlight);
                 }
                 content = content.children(self.content_hover_highlight(editor, index, char_width));
+                content = content.children(self.snippet_placeholder_highlights(editor, index, char_width));
                 // bracketMatching.css .bracket-match: background and a 1px border inside the bracket's box.
                 for (_, bytes) in bracket_matches.iter().flat_map(|(pair, _)| pair).filter(|(line, _)| *line == index) {
                     let start = visible_column(text, text[..bytes.start].chars().count(), tab_size) as f32 * char_width;

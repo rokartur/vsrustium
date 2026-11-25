@@ -44,6 +44,9 @@ mod search_editor_view;
 mod search_editor_widget;
 mod search_view;
 mod status_entries;
+mod snippet_controller;
+mod suggest_controller;
+mod suggest_widget;
 use status_entries::{EDITOR_STATUS_PRIORITY, PROBLEMS_PRIORITY};
 pub mod themes;
 mod quick_input_view;
@@ -129,6 +132,9 @@ pub struct Workbench {
     editor_message: editor_message::EditorMessages,
     marker_navigation: marker_navigation::MarkerNavigation,
     content_hover: content_hover::ContentHover,
+    suggest: suggest_controller::Suggest,
+    /// The snippet choice the controller last showed the suggest widget for.
+    snippet_choice_shown: Option<(crate::editor::Position, crate::editor::Position)>,
     /// The providers extensions registered through MainThreadLanguageFeatures.
     pub(crate) language_features: crate::language_features::LanguageFeatures,
     readonly_overrides: readonly::SessionOverrides,
@@ -275,6 +281,8 @@ impl Workbench {
             editor_message: Default::default(),
             marker_navigation: Default::default(),
             content_hover: Default::default(),
+            suggest: Default::default(),
+            snippet_choice_shown: None,
             language_features: Default::default(),
             readonly_overrides: Default::default(),
             editor_focus: cx.focus_handle(),
@@ -331,6 +339,8 @@ impl Workbench {
         workbench.register_preferences_commands();
         workbench.register_editor_message_commands();
         workbench.register_content_hover_commands();
+        workbench.register_suggest();
+        workbench.register_snippet_commands();
         workbench.register_marker_navigation_commands();
         workbench.register_define_keybinding_command();
         workbench.register_notifications_commands();

@@ -14,10 +14,9 @@ use gpui::{
 use serde_json::Value;
 
 use super::Workbench;
-use super::host_requests::snippet_edits;
 use super::hover::{HoverContent, HoverOptions};
 use crate::commands::Outcome;
-use crate::editor::{EditReason, HORIZONTAL_SCROLLBAR_HEIGHT, OpenEditor, VERTICAL_SCROLLBAR_WIDTH, VerticalReveal};
+use crate::editor::{HORIZONTAL_SCROLLBAR_HEIGHT, OpenEditor, VERTICAL_SCROLLBAR_WIDTH, VerticalReveal};
 use crate::keybindings;
 use crate::smart_snippet_inserter::{insert_snippet, offset_to_position};
 
@@ -134,11 +133,8 @@ impl Workbench {
         .join("\n");
         let smart = insert_snippet(&editor.document.lines, editor.document.eol, editor.selections[0].head);
         let template = format!("{}{template}{}", smart.prepend, smart.append);
-        let (edits, selections) = snippet_edits(editor, &[(smart.position, smart.position, &template, false)], None);
-        editor.push_undo_stop();
-        let change = editor.execute_edits(edits, Some(selections), EditReason::Unknown("snippet"));
-        editor.push_undo_stop();
-        self.editor_edited(change, true, "snippet", cx);
+        let snippets = [(smart.position, smart.position, template.as_str(), false)];
+        self.insert_snippets(super::snippet_controller::SnippetInsert { snippets: &snippets, clipboard: None, undo_stop_before: true, undo_stop_after: true, reason: "snippet" }, cx);
     }
 
     /// `_updateDecorations.schedule()`: the marks follow the text and the keybindings 500ms later.

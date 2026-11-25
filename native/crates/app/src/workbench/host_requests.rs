@@ -15,8 +15,9 @@ use serde_json::{Value, json};
 use super::Workbench;
 use super::auto_save::SaveReason;
 use super::bulk_text_edits::document_end;
+use super::snippet_controller::SnippetInsert;
 use crate::editor::{
-    CursorEdit, EditReason, OpenEditor, Position, Replace, Selection, TextDocument, VerticalReveal, char_column, end_of, expand_snippet,
+    CursorEdit, EditReason, OpenEditor, Position, Replace, Selection, SnippetText, TextDocument, VerticalReveal, char_column, end_of, expand_snippet,
     selections_after, text_between, uri_string, word_at,
 };
 use crate::host_sync::snapshot_id;
@@ -477,34 +478,29 @@ impl Workbench {
         let template = template.as_str().unwrap_or_default();
         let keep_whitespace = options["keepWhitespace"] == json!(true);
         let snippets: Vec<_> = ranges.into_iter().map(|(start, end)| (start, end, template, keep_whitespace)).collect();
-        let (edits, selections) = snippet_edits(editor, &snippets, clipboard.as_deref());
-        if options["undoStopBefore"] == json!(true) {
-            editor.push_undo_stop();
-        }
-        let change = editor.execute_edits(edits, Some(selections), EditReason::Unknown("snippet"));
-        if options["undoStopAfter"] == json!(true) {
-            editor.push_undo_stop();
-        }
-        self.editor_edited(change, true, "snippet", cx);
+        let insert = SnippetInsert { snippets: &snippets, clipboard: clipboard.as_deref(), undo_stop_before: options["undoStopBefore"] == json!(true), undo_stop_after: options["undoStopAfter"] == json!(true), reason: "snippet" };
+        self.insert_snippets(insert, cx);
         Ok(json!(true))
     }
 }
 
 /// `SnippetSession`: each template, with whitespace adjusted unless kept, replaces its range; the selections are
-/// each copy's first tab stop.
-pub(super) fn snippet_edits(editor: &OpenEditor, snippets: &[(Position, Position, &str, bool)], clipboard: Option<&str>) -> (Vec<(Position, Position, String, bool)>, Vec<Selection>) {
+/// each copy's first tab stop. The expanded templates come back in the order given.
+pub(super) fn snippet_edits(editor: &OpenEditor, snippets: &[(Position, Position, &str, bool)], clipboard: Option<&str>) -> (Vec<(Position, Position, String, bool)>, Vec<Selection>, Vec<SnippetText>) {
     let mut cursor_edits = Vec::new();
+    let mut texts = Vec::new();
     for &(start, end, template, keep_whitespace) in snippets {
         let line_indent: String = editor.document.lines[start.line].chars().take(start.column).take_while(|c| *c == ' ' || *c == '\t').collect();
         let snippet = expand_snippet(template, &line_indent, !keep_whitespace, editor.document.indentation, |name| snippet_variable(name, editor, start, end, clipboard));
         let prefix = |chars: usize| snippet.text.chars().take(chars).collect::<String>();
         let selection = Selection { anchor: end_of(start, &prefix(snippet.selection.start)), head: end_of(start, &prefix(snippet.selection.end)) };
         cursor_edits.push(CursorEdit::new(vec![Replace::new(start, end, snippet.text.clone())], selection));
+        texts.push(snippet);
     }
     let before: Vec<Selection> = snippets.iter().map(|&(start, end, _, _)| Selection { anchor: start, head: end }).collect();
     let selections = selections_after(&cursor_edits, &before);
     let edits = cursor_edits.into_iter().flat_map(|edit| edit.replaces).map(|replace| (replace.start, replace.end, replace.text, false)).collect();
-    (edits, selections)
+    (edits, selections, texts)
 }
 
 /// snippetVariables.ts: the selection, model and file variables; the rest insert their default.

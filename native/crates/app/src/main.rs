@@ -48,6 +48,8 @@ mod search_editor;
 mod search_model;
 mod smart_snippet_inserter;
 mod split_view;
+mod suggest;
+mod symbol_icons;
 mod syntax;
 mod tf_idf;
 mod theme;
