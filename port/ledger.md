@@ -522,15 +522,15 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | extension/github-authentication | built-in extension | removed | scan.rs REMOVED_BUILTINS; cargo test -p exthost skips_removed_builtins |
 | extension/go | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/groovy | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
-| extension/grunt | built-in extension | todo |  |
-| extension/gulp | built-in extension | todo |  |
+| extension/grunt | built-in extension | ported | runs unchanged in the host through the same `$provideTasks` path as npm (verified); `grunt.autoDetect` is off by default and Show All Tasks offers to turn it on (port/results/terminal.md, Tasks); not run against a gruntfile, the fixture has none |
+| extension/gulp | built-in extension | ported | runs unchanged in the host through the same `$provideTasks` path as npm (verified); `gulp.autoDetect` is off by default and Show All Tasks offers to turn it on (port/results/terminal.md, Tasks); not run against a gulpfile, the fixture has none |
 | extension/handlebars | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/hlsl | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/html | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/html-language-features | built-in extension | todo |  |
 | extension/ini | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/ipynb | built-in extension | todo |  |
-| extension/jake | built-in extension | todo |  |
+| extension/jake | built-in extension | ported | runs unchanged in the host through the same `$provideTasks` path as npm (verified); `jake.autoDetect` is off by default and Show All Tasks offers to turn it on (port/results/terminal.md, Tasks); not run against a jakefile, the fixture has none |
 | extension/java | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/javascript | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/json | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
@@ -548,7 +548,7 @@ Evidence names the narrowest check that can fail on the row. Rows are generated 
 | extension/mermaid-markdown-features | built-in extension | todo |  |
 | extension/microsoft-authentication | built-in extension | removed | scan.rs REMOVED_BUILTINS; cargo test -p exthost skips_removed_builtins |
 | extension/notebook-renderers | built-in extension | todo |  |
-| extension/npm | built-in extension | todo |  |
+| extension/npm | built-in extension | verified | runs unchanged in the host; its `$provideTasks` reaches the Run Task picker and `npm: build` from the fixture runs in a terminal (port/results/terminal.md, Tasks); npm scripts view is off by default (`npm.enableScriptExplorer`) |
 | extension/objective-c | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/perl | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
 | extension/php | built-in extension | verified | grammar: cargo test -p app syntax::tests::colorize_fixtures_match_the_reference (its colorize-tests fixtures, scopes and 10 default theme colors) |
