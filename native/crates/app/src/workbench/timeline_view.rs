@@ -47,7 +47,7 @@ pub struct TimelineView {
     focused: Option<String>,
     /// Where a Shift range selection starts.
     anchor: Option<String>,
-    focus: FocusHandle,
+    pub(super) focus: FocusHandle,
     scroll: ScrollHandle,
     /// The type navigation prefix and when its last key came.
     typed: Option<(String, Instant)>,

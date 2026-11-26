@@ -839,6 +839,7 @@ impl Workbench {
         workbench.register_url_commands();
         workbench.register_local_history_commands();
         workbench.register_extensions_view_commands();
+        workbench.register_view_focus_commands();
         workbench.register_workspace_recommendations_commands();
         workbench.register_localization_commands();
         workbench.register_new_file_commands();
