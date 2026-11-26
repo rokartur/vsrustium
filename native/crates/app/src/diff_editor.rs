@@ -88,15 +88,17 @@ impl DiffInput {
 
     /// Recomputes the diff when either model or an option changed since the last one (diffEditorViewModel.ts
     /// `_diff`, which upstream debounces on a worker).
-    pub fn update(&mut self, original: &OpenEditor, modified: &OpenEditor, options: DiffOptions) {
+    /// Answers whether it computed a new diff (`onDidUpdateDiff`).
+    pub fn update(&mut self, original: &OpenEditor, modified: &OpenEditor, options: DiffOptions) -> bool {
         let versions = (original.text_model().version_id, modified.text_model().version_id);
         let key = (options.ignore_trim_whitespace, options.max_computation_time_ms, options.compute_moves);
         if self.diff.as_ref().is_some_and(|diff| diff.versions == versions && diff.options == key) {
-            return;
+            return false;
         }
         let (original_lines, modified_lines) = (&original.document().lines, &modified.document().lines);
         let diff = diff::compute_diff(original_lines, modified_lines, options);
         self.diff = Some(ComputedDiff { versions, options: key, diff });
+        true
     }
 
     /// `updateUnchangedRegions` when the diff or the line counts changed; without `hide_unchanged` (minimum and

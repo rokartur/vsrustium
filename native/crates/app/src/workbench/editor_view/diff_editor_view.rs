@@ -15,6 +15,7 @@ use crate::workbench::hover::{HoverContent, HoverOptions};
 use crate::commands::Outcome;
 use crate::diff_editor::{DIFF_EDITOR_SCHEME, DiffInput, DiffZone, Side, ZoneContent, ZoneSide, diff_options, range_alignment, view_zones};
 use crate::editor::{OpenEditor, Position, TextDocument, VerticalReveal, expand_tabs, visible_column};
+use crate::notifications::{Action, Notification, Run, Severity};
 use crate::workbench::host_requests::{range, uri_parts};
 
 /// textDiffEditor.ts `lineDecorationsWidth: '2ch'`, in whole pixels as `EditorIntOption.clampedInt` rounds it.
@@ -30,9 +31,17 @@ const INLINE_BREAKPOINT: f32 = 900.;
 /// diffEditorSash.ts `MINIMUM_EDITOR_WIDTH`.
 const MINIMUM_EDITOR_WIDTH: f32 = 100.;
 
+/// The Remove Limit action of the stopped-early prompt (an inline action upstream).
+const REMOVE_DIFF_LIMIT: &str = "_diffEditor.removeComputationLimit";
+
 impl Workbench {
     pub(in crate::workbench) fn register_diff_editor_commands(&mut self) {
         self.commands.register("_workbench.diff", |workbench, args, window, cx| workbench.open_diff_editor(args, window, cx));
+        self.commands.register(REMOVE_DIFF_LIMIT, |workbench, _, _, cx| {
+            workbench.update_setting("diffEditor.maxComputationTime", json!(0));
+            cx.notify();
+            Outcome::done()
+        });
         self.commands.register("workbench.action.compareEditor.nextChange", |workbench, _, _, cx| {
             workbench.navigate_diff(true, cx);
             Outcome::done()
@@ -196,6 +205,7 @@ impl Workbench {
         let side_by_side = self.diff_side_by_side();
         let active = self.editors.active_tab().map(|tab| tab.model_id);
         let ids: Vec<u32> = self.editors.diffs.keys().copied().collect();
+        let mut quit_early = false;
         for id in ids {
             let mut input = self.editors.diffs.remove(&id).expect("listed above");
             let placed = std::mem::take(&mut input.placed_zones);
@@ -212,7 +222,9 @@ impl Workbench {
             if Some(id) == active
                 && let (Some(original), Some(modified)) = (self.editors.model(&input.original.scheme, &input.original.path), self.editors.model(&input.modified.scheme, &input.modified.path))
             {
-                input.update(original, modified, options);
+                let updated = input.update(original, modified, options);
+                // diffEditorHelper.ts: a diff the algorithm stopped early is announced with each update.
+                quit_early |= updated && input.diff.as_ref().is_some_and(|computed| computed.diff.hit_timeout);
                 input.update_unchanged(original.document().lines.len(), modified.document().lines.len(), self.hide_unchanged_regions());
                 input.inline_now = !side_by_side;
                 let computed = input.diff.as_ref().expect("just computed");
@@ -229,6 +241,9 @@ impl Workbench {
             }
             self.editors.diffs.insert(id, input);
         }
+        if quit_early {
+            self.prompt_diff_quit_early(options.max_computation_time_ms);
+        }
     }
 
     /// diffEditorOptions.ts `renderSideBySide` with `useInlineViewWhenSpaceIsLimited` below the 900px breakpoint.
@@ -236,6 +251,13 @@ impl Workbench {
         let configured = self.setting("diffEditor.renderSideBySide") != json!(false);
         let limited = self.setting("diffEditor.useInlineViewWhenSpaceIsLimited") != json!(false);
         configured && !(limited && self.diff_part_width.get() > 0. && self.diff_part_width.get() < INLINE_BREAKPOINT)
+    }
+
+    /// diffEditorHelper.ts `hintTimeout`: Remove Limit sets `diffEditor.maxComputationTime` to 0.
+    fn prompt_diff_quit_early(&mut self, max_computation_time_ms: u64) {
+        let mut notification = Notification::new(Severity::Warning, format!("The diff algorithm was stopped early (after {max_computation_time_ms} ms.)"));
+        notification.primary = vec![Action { id: REMOVE_DIFF_LIMIT.into(), label: "Remove Limit".into(), run: Run::Command(REMOVE_DIFF_LIMIT.into(), Vec::new()) }];
+        self.notify(notification);
     }
 
     /// mainThreadDocumentDiff.ts `$computeDocumentDiff`: the advanced diff of two open models, null when either is
