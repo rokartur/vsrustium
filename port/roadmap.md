@@ -160,11 +160,26 @@ Done when: `port/tools/api-tests` gives 337/31/0 (folder) and 4/0/0 (workspace):
 
 Starts after milestones 11 to 20 close on 1.147.0; until then every reference, baseline and ui-pair stays on 1.147.0.
 
-Scope: the 1.147.0 to 1.148.0 diff outside removed features (`git diff 1.147.0 1.148.0`): `src/vs/editor` 27 files (+631/-46), `src/vs/workbench/api` 21 files (+1019/-114), `workbench/services` and `workbench/browser` 87 files (about +3000/-560), `workbench/contrib` without AI, chat, sessions and tests 139 files (+6139/-1700: empty editor hint, comments, extensions, SCM, media preview, workspaces, new `screenshotTool` and onboarding spotlight), proposed API `workspaceFolderLocations` and `scmProviderOptions`; stable `vscode.d.ts` is unchanged. The rest of the 2578 changed files is chat, agent host, copilot and remote agent host, already removed.
+Plan: `port/plans/uplift-1.147.0-to-1.148.0.md` (`bun port/tools/uplift-diff.ts 1.148.0`, every change triaged).
 
-Steps: build the 1.148.0 reference on the Studio and refresh the pixel-check and api-tests baselines; map every changed file outside removed features to its ledger row, with new rows for new contributions; port each delta 1:1 and verify the rows it touches again.
+Scope: of about 209,000 changed upstream lines, about 6,800 are ported. About 4,100 of those are Rust work. The rest is 1,265 lines of grammar data, about 1,400 that arrive with the merge or the reference's extensions, and the 1,022-line empty-editor hint rewrite, which goes in with that stub row's own work. About 98,900 lines are skipped: AI, chat, sessions, agent host, remote, GitHub sign-in, experiments, telemetry and the integrated browser. The largest items:
+- SCM providers hidden and shown at runtime: the new `$setSourceControlsHidden`, used by the git extension through `scmProviderOptions`.
+- `$getWorkspaceFolderLocations` for the git extension's `workspaceFolderLocations` proposal (primary locations only).
+- The add-tab menu and wrapped tabs.
+- The comment widgets.
+- The multi diff file list as a split button.
+- Folder merge on drop in the Explorer.
+- Named pipes in the disk provider.
+- Debug Console completion ranges.
+- Theme and modern UI color changes.
 
-Done when: the ledger names 1.148.0, every row the diff touches is `verified`, `removed` or `n/a` again, and the full check passes against the 1.148.0 reference.
+Steps:
+1. Session 1 does the setup and milestones 7 to 11. Setup: the 1.148.0 reference on the Studio, `git merge 1.148.0`, the extension host rebuilt, `gen-proxy-ids.ts` (the ids move after the new `MainThreadRemoteAgentHosts`), the reference dumps, the baselines and the version bump.
+2. Session 2 does milestones 12 and 14: files, workspace and SCM.
+3. Session 3 does milestones 13 and 15 to 19.
+Sessions 2 and 3 can run in parallel after session 1.
+
+Done when: the ledger names 1.148.0. Every row the diff touches is `verified`, `removed` or `n/a` again, or keeps its 1.147.0 status where the gap is older than the uplift (the empty-editor hint, floating comments, workspace editing, the action widget view). The full check passes against the 1.148.0 reference.
 
 ## Decisions (Artur)
 
