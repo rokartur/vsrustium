@@ -1,7 +1,7 @@
 //! emptyTextEditorHint.ts without its inline chat parts: an empty plain text untitled editor shows "Select a
 //! language (⌘K M) to get started. Start typing to dismiss or don't show this again." at its first line.
 
-use gpui::{AnyElement, Context, div, prelude::*, px};
+use gpui::{AnyElement, Context, InteractiveText, StyledText, div, prelude::*, px};
 use serde_json::json;
 
 use super::Workbench;
@@ -37,27 +37,33 @@ impl Workbench {
             Some(label) => format!(" ({label}) to get started. Start typing to dismiss or "),
             None => " to get started. Start typing to dismiss or ".to_string(),
         };
-        let link = self.color("textLink.foreground");
+        let link = gpui::HighlightStyle { color: Some(self.color("textLink.foreground").into()), ..Default::default() };
+        let text = format!("Select a language{after_link}don't show this again.");
+        let language = 0.."Select a language".len();
+        let dont_show_start = "Select a language".len() + after_link.len();
+        let dont_show = dont_show_start..dont_show_start + "don't show".len();
         let top = editor.line_top(0, self.editors.viewport) - editor.scroll.top;
+        let weak = cx.entity().downgrade();
+        let styled = StyledText::new(text).with_highlights([(language.clone(), link), (dont_show.clone(), link)]);
+        let links = InteractiveText::new("empty-editor-hint", styled).on_click(vec![language, dont_show], move |index, window, cx| {
+            let _ = weak.update(cx, |workbench, cx| {
+                window.focus(&workbench.editor_focus, cx);
+                match index {
+                    0 => drop(workbench.execute_command(CHANGE_LANGUAGE, Vec::new(), window, cx)),
+                    _ => workbench.update_setting(SETTING, json!("hidden")),
+                }
+                cx.notify();
+            });
+        });
+        // `width: max-content` inside the content widgets layer: the text wraps at the editor's content width.
         let hint = div()
             .absolute()
             .left(px(content_left - editor.scroll.left + 4.))
             .top(px(top))
-            .flex()
-            .whitespace_nowrap()
+            .max_w(px(self.editors.viewport.width - 4.))
             .italic()
             .text_color(self.color("input.placeholderForeground"))
-            .child(div().id("empty-editor-hint-language").cursor_pointer().text_color(link).child("Select a language").on_click(cx.listener(|workbench, _, window, cx| {
-                window.focus(&workbench.editor_focus, cx);
-                drop(workbench.execute_command(CHANGE_LANGUAGE, Vec::new(), window, cx));
-            })))
-            .child(after_link)
-            .child(div().id("empty-editor-hint-dont-show").cursor_pointer().text_color(link).child("don't show").on_click(cx.listener(|workbench, _, window, cx| {
-                workbench.update_setting(SETTING, json!("hidden"));
-                window.focus(&workbench.editor_focus, cx);
-                cx.notify();
-            })))
-            .child(" this again.");
+            .child(links);
         Some(hint.into_any_element())
     }
 }
