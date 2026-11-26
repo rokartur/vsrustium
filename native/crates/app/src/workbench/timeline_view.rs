@@ -488,13 +488,18 @@ impl Workbench {
     }
 
     /// The tree's `onDidOpen`: an item runs its command, "Load more" loads the next page.
-    fn open_timeline_row(&mut self, handle: &str, window: &mut Window, cx: &mut Context<Self>) {
+    /// `tree.onDidOpen`: `_workbench.open` and `_workbench.diff` get the open event's editor options after their
+    /// arguments (listService.ts: a click preserves focus, Enter and a double click pin and focus the editor).
+    fn open_timeline_row(&mut self, handle: &str, preserve_focus: bool, window: &mut Window, cx: &mut Context<Self>) {
         if handle == LOAD_MORE_HANDLE {
             return self.load_more_timeline(cx);
         }
         let Some(command) = self.timeline.model.item(handle).and_then(|item| item.command.clone()) else { return };
         let Some(id) = command["id"].as_str() else { return };
-        let args = command["arguments"].as_array().cloned().unwrap_or_default();
+        let mut args = command["arguments"].as_array().cloned().unwrap_or_default();
+        if matches!(id, "_workbench.open" | "_workbench.diff") {
+            args.push(json!({ "editorOptions": { "preserveFocus": preserve_focus, "pinned": !preserve_focus } }));
+        }
         drop(self.execute_command(id, args, window, cx));
     }
 
@@ -512,7 +517,7 @@ impl Workbench {
 
     /// A click on a row (listWidget.ts `MouseController`): Cmd toggles the row in the selection, Shift selects the
     /// range from the anchor, a plain click selects and opens it.
-    fn click_timeline_row(&mut self, handle: &str, modifiers: Modifiers, window: &mut Window, cx: &mut Context<Self>) {
+    fn click_timeline_row(&mut self, handle: &str, modifiers: Modifiers, click_count: usize, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.timeline.focus.clone(), cx);
         let view = &mut self.timeline;
         view.focused = Some(handle.to_string());
@@ -531,7 +536,7 @@ impl Workbench {
         let view = &mut self.timeline;
         view.selected = vec![handle.to_string()];
         view.anchor = Some(handle.to_string());
-        self.open_timeline_row(handle, window, cx);
+        self.open_timeline_row(handle, click_count < 2, window, cx);
     }
 
     fn select_timeline_range(&mut self, handle: &str) {
@@ -567,7 +572,7 @@ impl Workbench {
                 if let Some(current) = current {
                     let handle = handles[current].clone();
                     self.timeline.selected = vec![handle.clone()];
-                    self.open_timeline_row(&handle, window, cx);
+                    self.open_timeline_row(&handle, false, window, cx);
                 }
                 return cx.notify();
             }
@@ -656,7 +661,7 @@ impl Workbench {
             .overflow_y_scroll()
             .track_scroll(&self.timeline.scroll)
             .children(rows);
-        let body = div().relative().size_full().flex().flex_col().children(message).child(tree);
+        let body = div().relative().size_full().flex().flex_col().children(message).child(tree).children(self.high_contrast_list_outline(tree_focused, self.timeline.focused.is_some()));
         super::view_panes::ViewPane {
             id: TIMELINE_VIEW_ID,
             title: "Timeline".into(),
@@ -757,7 +762,7 @@ impl Workbench {
             .child(div().when(duplicate, |time| time.invisible().group_hover(id.clone(), |time| time.visible())).child(relative_time))
             .when(duplicate, |container| container.w(px(10.)).group_hover(id.clone(), |container| container.w_auto()));
         self.timeline_row(id.clone(), &item.handle, selected, tree_focused)
-            .on_click(cx.listener(move |workbench, event: &ClickEvent, window, cx| workbench.click_timeline_row(&click_handle, event.modifiers(), window, cx)))
+            .on_click(cx.listener(move |workbench, event: &ClickEvent, window, cx| workbench.click_timeline_row(&click_handle, event.modifiers(), event.click_count(), window, cx)))
             .on_mouse_down(MouseButton::Right, cx.listener(move |workbench, event: &MouseDownEvent, window, cx| workbench.show_timeline_item_menu(&menu_handle, event.position, window, cx)))
             .child(div().w(px(22.)).flex_none().children(icon))
             .child(
@@ -796,7 +801,7 @@ impl Workbench {
         .size_full();
         let selected = self.timeline.selected.iter().any(|handle| handle == LOAD_MORE_HANDLE);
         self.timeline_row("timeline-load-more".into(), LOAD_MORE_HANDLE, selected, tree_focused)
-            .on_click(cx.listener(|workbench, event: &ClickEvent, window, cx| workbench.click_timeline_row(LOAD_MORE_HANDLE, event.modifiers(), window, cx)))
+            .on_click(cx.listener(|workbench, event: &ClickEvent, window, cx| workbench.click_timeline_row(LOAD_MORE_HANDLE, event.modifiers(), event.click_count(), window, cx)))
             .child(div().w(px(22.)).flex_none())
             .child(if loading { "Loading..." } else { "Load more" })
             .when(page_on_scroll && !loading, |row| row.child(scrolled_to_end))
@@ -817,15 +822,19 @@ impl Workbench {
             .relative()
             .h(px(ROW_HEIGHT))
             .flex_none()
-            // The tree has `hide-arrows` (views.css: no twistie width); 4px more measured against the reference with ui-pair.
-            .pl(px(INDENT + 4.))
+            // list.css rows: 4px from the pane's edges with rounded corners, as the Explorer's; the tree has `hide-arrows`
+            // (views.css: no twistie width), the indent measured against the reference with ui-pair.
+            .mx(px(4.))
+            .rounded(px(4.))
+            .pl(px(INDENT))
             .pr(px(12.))
             .flex()
             .items_center()
             .cursor_pointer()
-            .hover(|row| row.bg(self.color("list.hoverBackground")))
+            // list.css: a selected row keeps its selection background under the pointer.
+            .when(!selected, |row| row.hover(|row| row.bg(self.color("list.hoverBackground"))))
             .when(selected, |row| row.bg(selection).when_some(selection_foreground, |row, foreground| row.text_color(foreground)))
-            .when_some(focus_outline, |row, outline| row.border_1().border_color(outline))
+            .when_some(focus_outline, |row, outline| row.child(div().absolute().inset_0().rounded(px(4.)).border_1().border_color(outline)))
     }
 }
 

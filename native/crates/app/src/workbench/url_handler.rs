@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 use super::Workbench;
 use super::opener::UriOpener;
 use super::workspace_actions::Openable;
+use crate::commands::Outcome;
 use crate::dialog;
 use crate::quick_input::path_label;
 use crate::uri::Uri;
@@ -26,8 +27,6 @@ pub struct Urls {
     handlers: Vec<UriHandler>,
     /// Urls for extensions that were activated to register their handler.
     buffer: Vec<(String, Instant, Uri)>,
-    /// The installed extensions: their lower-case id and `displayName ?? id`.
-    pub extensions: Vec<(String, String)>,
 }
 
 struct UriHandler {
@@ -160,14 +159,17 @@ async fn handle_extension_url(workbench: &WeakEntity<Workbench>, uri: Uri, trust
     let extension = uri.authority.to_lowercase();
     let Ok((handler, display_name, confirmed)) = workbench.update(cx, |workbench, _| {
         let handler = workbench.urls.handlers.iter().find(|handler| handler.extension == extension);
-        let installed = workbench.urls.extensions.iter().find(|(id, _)| *id == extension);
-        let display_name = handler.map(|handler| handler.display_name.clone()).or_else(|| installed.map(|(_, name)| name.clone()));
+        let installed = workbench.extensions.iter().find(|installed| installed.id.eq_ignore_ascii_case(&extension));
+        let installed_name = installed.map(|installed| installed.description["displayName"].as_str().unwrap_or(&installed.id).to_owned());
+        let display_name = handler.map(|handler| handler.display_name.clone()).or(installed_name);
         (handler.map(|handler| handler.handle), display_name, workbench.did_user_trust_extension(&extension))
     }) else {
         return false;
     };
     let Some(display_name) = display_name else {
-        install_and_handle(workbench, &uri, cx).await;
+        if install(workbench, &uri, cx).await {
+            Box::pin(handle_extension_url(workbench, uri, true, cx)).await;
+        }
         return true;
     };
     if !trusted && !confirmed {
@@ -197,14 +199,19 @@ async fn handle_extension_url(workbench: &WeakEntity<Workbench>, uri: Uri, trust
     true
 }
 
-/// `handleUnhandledURL`: the port has no extension gallery, so the install command fails and says so.
-async fn install_and_handle(workbench: &WeakEntity<Workbench>, uri: &Uri, cx: &mut AsyncWindowContext) {
+/// `handleUnhandledURL` up to the install: true once the extension runs, so the URI is handled again as trusted.
+/// A cancelled install prompt ends here; a failed one shows its error.
+async fn install(workbench: &WeakEntity<Workbench>, uri: &Uri, cx: &mut AsyncWindowContext) -> bool {
     let justification = json!({ "reason": format!("This extension wants to open a URI:\n{}", uri.to_string(false)), "action": "Open URI" });
     let args = vec![json!(uri.authority), json!({ "justification": justification, "enable": true, "installPreReleaseVersion": true })];
-    let _ = workbench.update_in(cx, |workbench, window, cx| {
-        let outcome = workbench.execute_command("workbench.extensions.installExtension", args, window, cx);
-        super::keyboard::report_failure(outcome, cx);
-    });
+    let Ok(outcome) = workbench.update_in(cx, |workbench, window, cx| workbench.execute_command("workbench.extensions.installExtension", args, window, cx)) else {
+        return false;
+    };
+    let installed = match outcome {
+        Outcome::Ready(result) => result.is_ok(),
+        Outcome::Pending(pending) => matches!(pending.await, Ok(Ok(_))),
+    };
+    installed && workbench.update(cx, |workbench, _| workbench.extensions.iter().any(|extension| extension.id.eq_ignore_ascii_case(&uri.authority))).unwrap_or(false)
 }
 
 fn is_extension_id(value: &str) -> bool {

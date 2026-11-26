@@ -66,6 +66,7 @@ pub enum ItemActivation {
     None,
     #[default]
     First,
+    Second,
 }
 
 /// `Severity` of a validation message.
@@ -512,6 +513,10 @@ impl QuickInput {
                     if had_focus {
                         self.on_focus_change();
                     }
+                }
+                ItemActivation::Second => {
+                    self.focus(Focus::Second, 0);
+                    self.item_activation = ItemActivation::First;
                 }
                 ItemActivation::First if !self.can_select_many => self.try_select_first(),
                 ItemActivation::First if had_focus => self.on_focus_change(),

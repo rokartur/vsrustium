@@ -279,7 +279,10 @@ impl Workbench {
                 workbench.open_panel_view(MARKERS_CONTAINER_ID, cx);
                 workbench.focus_problems(window, cx);
             },
-            render: |workbench, window, cx| workbench.problems_body(window, cx).into_any_element(),
+            render: |workbench, window, cx| {
+                let filter = (!workbench.view_filter_in_header(MARKERS_CONTAINER_ID)).then(|| workbench.problems_filter_box(window, cx));
+                div().flex_1().min_h_0().flex().flex_col().children(filter).child(workbench.problems_body(window, cx)).into_any_element()
+            },
             // The navigation group: the filter, View as Tree/Table (order 3), Collapse All in the tree (order 2).
             actions: |workbench, window, cx| {
                 let table = workbench.problems_table_mode();
@@ -290,8 +293,8 @@ impl Workbench {
                 div()
                     .flex()
                     .items_center()
-                    .child(workbench.problems_filter_box(window, cx))
-                    .when(!table, |actions| actions.child(workbench.search_action("collapse-all", "workbench.actions.treeView.workbench.panel.markers.view.collapseAll", true, cx)))
+                    .when(workbench.view_filter_in_header(MARKERS_CONTAINER_ID), |actions| actions.child(workbench.problems_filter_box(window, cx)))
+                    .when(!table, |actions| actions.child(workbench.search_action("collapse-all", "workbench.actions.treeView.workbench.panel.markers.view.collapseAll", true, cx).mr(px(4.))))
                     .child(workbench.search_action(icon, command, true, cx))
                     .into_any_element()
             },
@@ -595,6 +598,7 @@ impl Workbench {
         let (total, shown) = self.problems_counts();
         self.view_filter_box(
             ViewFilter {
+                container: MARKERS_CONTAINER_ID,
                 input: InputId::ProblemsFilter,
                 focused: self.problems.filter_focus.is_focused(window),
                 placeholder: FILTER_PLACEHOLDER,
@@ -681,7 +685,7 @@ impl Workbench {
         for resource in &shown {
             let collapsed = self.problems.collapsed.contains(&resource.resource.resource);
             let row = Row::Resource(resource.resource.resource.clone());
-            rows.push(self.list_row_selection(self.problems_resource_row(resource, collapsed, cx), selected(row), focused).into_any_element());
+            rows.push((self.list_row_selection(self.problems_resource_row(resource, collapsed, cx), selected(row.clone()), focused).into_any_element(), 1, selected(row)));
             if collapsed {
                 continue;
             }
@@ -689,30 +693,38 @@ impl Workbench {
                 let key = (marker.marker.resource.clone(), marker.index);
                 let related_collapsed = self.problems.collapsed_markers.contains(&key);
                 let row = Row::Marker(key.0.clone(), key.1);
-                rows.push(self.list_row_selection(self.problems_marker_row(marker, related_collapsed, cx), selected(row), focused).into_any_element());
+                rows.push((self.list_row_selection(self.problems_marker_row(marker, related_collapsed, focused, cx), selected(row.clone()), focused).into_any_element(), 2, selected(row)));
                 if !related_collapsed {
                     for (index, (related, highlights)) in marker.related.iter().enumerate() {
                         let row = Row::Related(key.0.clone(), key.1, index);
-                        rows.push(self.list_row_selection(self.problems_related_row(&key, index, related, highlights, cx), selected(row), focused).into_any_element());
+                        rows.push((self.list_row_selection(self.problems_related_row(&key, index, related, highlights, cx), selected(row.clone()), focused).into_any_element(), 3, selected(row)));
                     }
                 }
             }
         }
-        div().flex_1().min_h_0().flex().flex_col().child(list.children(rows))
+        let depths: Vec<usize> = rows.iter().map(|(_, depth, _)| *depth).collect();
+        let active: Vec<usize> = rows.iter().enumerate().filter(|(_, (_, _, selected))| *selected).map(|(index, _)| index).collect();
+        let group = gpui::SharedString::from("problems-tree");
+        let guides = self.tree_guides_in_group(group.clone(), depths, &active);
+        // `.monaco-tl-row` starts at the rows' 4px margin, its guides 16px further (TreeGuides adds 3px to the inset).
+        let rows = rows.into_iter().enumerate().map(|(index, (row, _, _))| div().relative().flex_none().child(row).children(guides.row(index, 1.)));
+        div().flex_1().min_h_0().flex().flex_col().child(list.group(group).children(rows))
     }
 
     /// `renderMessage`: no problems at all, none in the active file, or none the filters let through with a Clear
     /// Filters link.
     fn problems_message(&self, total: usize, resources: &[ResourceMarkers], cx: &mut Context<Self>) -> Div {
-        let message = div().pl(px(20.)).line_height(px(22.)).flex().flex_wrap();
+        let message = div().pl(px(20.)).line_height(px(22.));
         let filtered_out = match self.problems.active_file {
             true => !resources.is_empty(),
             false => total > 0,
         };
         if !filtered_out {
+            // A block, so the text wraps in a narrow view as the reference's does.
             let text = if self.problems.active_file { "No problems have been detected in the current file." } else { "No problems have been detected in the workspace." };
             return message.child(text);
         }
+        let message = message.flex().flex_wrap();
         let link = div()
             .id("problems-clear-filters")
             .ml(px(4.))
@@ -754,11 +766,13 @@ impl Workbench {
             .flex_none()
             .flex()
             .items_center()
-            .pl(px(15.))
+            .mx(px(4.))
+            .rounded(px(4.))
+            .pl(px(11.))
             .cursor_pointer()
             .child(self.icon(if collapsed { "chevron-right" } else { "chevron-down" }, 16., 16., foreground).mr(px(2.)))
             .children(icon.map(|icon| icon.mr(px(6.))))
-            .child(self.filter_match(&name, &shown.highlights.uri).flex_none())
+            .child(self.filter_match(&name, &shown.highlights.uri))
             .children(description.map(|description| div().ml(px(6.5)).text_size(px(11.7)).opacity(0.7).min_w_0().overflow_hidden().text_ellipsis().whitespace_nowrap().child(description)))
             .child(
                 div()
@@ -789,7 +803,7 @@ impl Workbench {
     /// `MarkerRenderer`: severity icon, the message (every line with multi-line on, the first otherwise),
     /// `source(code)` and `[Ln, Col]` at 70% opacity on the first line, the multi-line toggle for longer messages; a
     /// twistie before the icon when the marker has related information.
-    fn problems_marker_row(&self, shown: &ShownMarker, related_collapsed: bool, cx: &mut Context<Self>) -> gpui::Stateful<Div> {
+    fn problems_marker_row(&self, shown: &ShownMarker, related_collapsed: bool, tree_focused: bool, cx: &mut Context<Self>) -> gpui::Stateful<Div> {
         let marker = shown.marker;
         let (icon, color) = match marker.severity {
             ERROR => ("error", self.color("problemsErrorIcon.foreground")),
@@ -812,7 +826,7 @@ impl Workbench {
         let code = marker_code(marker);
         let mut details = div().flex().flex_none().items_center();
         if !source.is_empty() || code.is_some() {
-            details = details.child(div().ml(px(6.)).child(self.filter_match(&source, &shown.highlights.source)));
+            details = details.child(div().ml(px(6.)).opacity(0.7).child(self.filter_match(&source, &shown.highlights.source)));
             if let Some(code) = &code {
                 let code = format!("({code})");
                 let matches: Vec<_> = shown.highlights.code.iter().map(|range| range.start + 1..range.end + 1).collect();
@@ -844,7 +858,7 @@ impl Workbench {
             self.icon(if related_collapsed { "chevron-right" } else { "chevron-down" }, 16., 16., foreground)
                 .id(gpui::SharedString::from(format!("problems-twistie-{}-{}", key.0, key.1)))
                 .absolute()
-                .left(px(24.))
+                .left(px(20.))
                 .top(px(3.))
                 .on_click(cx.listener(move |workbench, _, _, cx| {
                     cx.stop_propagation();
@@ -858,9 +872,13 @@ impl Workbench {
         let group = gpui::SharedString::from(format!("problems-marker-{}-{}", key.0, key.1));
         // markers.css: on a hovered row the light bulb takes the severity icon's place.
         let quick_fix = self.problems_quick_fix_icon(marker);
+        let selected = self.problems.selected == Some(Row::Marker(key.0.clone(), key.1));
+        // listWidget.ts: a selected row of the focused list draws its codicons in `list.activeSelectionIconForeground`;
+        // unset, the CSS variable is invalid and the icon inherits the row's `list.activeSelectionForeground`.
+        let selection_icon = self.theme.color("list.activeSelectionIconForeground").or_else(|| self.theme.color("list.activeSelectionForeground"));
+        let color = selection_icon.filter(|_| selected && tree_focused).unwrap_or(color);
         let severity = self.icon(icon, 16., 16., color).mx(px(6.)).when(quick_fix.is_some(), |icon| icon.group_hover(group.clone(), |icon| icon.invisible()));
         // markers.css: the selected row shows its light bulb without the pointer over it.
-        let selected = self.problems.selected == Some(Row::Marker(key.0.clone(), key.1));
         let severity = severity.when(selected && quick_fix.is_some(), |icon| icon.invisible());
         let light_bulb = quick_fix.map(|light_bulb| {
             let bounds = if selected { self.problems.selected_light_bulb.clone() } else { Rc::default() };
@@ -888,8 +906,10 @@ impl Workbench {
             .relative()
             .flex_none()
             .flex()
-            .pl(px(42.))
-            .pr(px(10.))
+            .mx(px(4.))
+            .rounded(px(4.))
+            .pl(px(38.))
+            .pr(px(6.))
             .cursor_pointer()
             .whitespace_nowrap()
             .children(twistie)
@@ -918,8 +938,10 @@ impl Workbench {
             .flex_none()
             .flex()
             .items_center()
-            .pl(px(70.))
-            .pr(px(10.))
+            .mx(px(4.))
+            .rounded(px(4.))
+            .pl(px(66.))
+            .pr(px(6.))
             .cursor_pointer()
             .whitespace_nowrap()
             .child(self.filter_match(&basename, &highlights.uri).flex_none())

@@ -108,7 +108,10 @@ impl Workbench {
                 workbench.open_panel_view(OUTPUT_VIEW_ID, cx);
                 workbench.open_output_view(true, window, cx);
             },
-            render: |workbench, window, cx| workbench.output_panel_body(window, cx).into_any_element(),
+            render: |workbench, window, cx| {
+                let filter = (!workbench.view_filter_in_header(OUTPUT_VIEW_ID)).then(|| workbench.output_filter_box(window, cx));
+                div().flex_1().min_h_0().flex().flex_col().children(filter).child(workbench.output_panel_body(window, cx)).into_any_element()
+            },
             actions: |workbench, window, cx| workbench.output_title_actions(window, cx).into_any_element(),
             visible: |_| true,
             badge: |_| None,
@@ -282,7 +285,7 @@ impl Workbench {
             .flex()
             .items_center()
             .gap(px(4.))
-            .child(self.output_filter_box(window, cx))
+            .when(self.view_filter_in_header(OUTPUT_VIEW_ID), |actions| actions.child(self.output_filter_box(window, cx)))
             .child(self.output_select_box(label, cx))
             .child(self.search_action("clear-all", "workbench.output.action.clearOutput", true, cx))
             .child(self.search_action(scroll_icon, "workbench.output.action.toggleAutoScroll", true, cx))
@@ -293,6 +296,7 @@ impl Workbench {
     fn output_filter_box(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         self.view_filter_box(
             ViewFilter {
+                container: OUTPUT_VIEW_ID,
                 input: InputId::OutputFilter,
                 focused: self.output_view.filter_focus.is_focused(window),
                 placeholder: "Filter (e.g. text, !excludeText, text1,text2)",

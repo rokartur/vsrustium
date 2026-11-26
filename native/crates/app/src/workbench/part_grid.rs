@@ -30,6 +30,10 @@ const PANEL_ALIGNMENT_KEY: &str = "workbench.panel.alignment";
 const PANEL_LAST_HEIGHT_KEY: &str = "workbench.panel.lastNonMaximizedHeight";
 const PANEL_LAST_WIDTH_KEY: &str = "workbench.panel.lastNonMaximizedWidth";
 const PANEL_WAS_LAST_MAXIMIZED_KEY: &str = "workbench.panel.wasLastMaximized";
+/// `AUXILIARYBAR_WAS_LAST_MAXIMIZED` and `_LAST_NON_MAXIMIZED_VISIBILITY` (workspace), `_LAST_NON_MAXIMIZED_SIZE` (profile).
+const AUXILIARY_BAR_WAS_LAST_MAXIMIZED_KEY: &str = "workbench.auxiliaryBar.wasLastMaximized";
+const AUXILIARY_BAR_LAST_VISIBILITY_KEY: &str = "workbench.auxiliaryBar.lastNonMaximizedVisibility";
+const AUXILIARY_BAR_LAST_SIZE_KEY: &str = "workbench.auxiliaryBar.lastNonMaximizedSize";
 
 #[derive(Default)]
 pub(super) struct PartGrid {
@@ -135,6 +139,7 @@ impl Workbench {
         context.insert("panelPosition".into(), json!(arrangement.panel.name()));
         context.insert("panelAlignment".into(), json!(arrangement.alignment.name()));
         context.insert("auxiliaryBarVisible".into(), json!(self.is_part_visible(Part::AuxiliaryBar)));
+        context.insert("auxiliaryBarMaximized".into(), json!(self.is_auxiliary_bar_maximized()));
         context.insert("mainEditorAreaVisible".into(), json!(self.is_part_visible(Part::Editor)));
         context.insert("inZenMode".into(), json!(self.zen_mode.active));
         context.insert("isCenteredLayout".into(), json!(self.is_main_editor_centered()));
@@ -159,8 +164,18 @@ impl Workbench {
     }
 
     /// `setPartHidden`. A shown panel opens maximized per `workbench.panel.opensMaximized` (`panelOpensMaximized`); a
-    /// hidden one gives the editor back first; the editor and the panel never hide together (`setEditorHidden`).
+    /// hidden one gives the editor back first; the editor and the panel never hide together (`setEditorHidden`)
+    /// unless the secondary side bar is maximized. Showing another part, or hiding the secondary side bar, leaves its
+    /// maximized state first; done when that already showed or hid the part.
     pub(super) fn set_part_hidden(&mut self, part: Part, hidden: bool, cx: &mut Context<Self>) {
+        let leaves_maximized = match part {
+            Part::AuxiliaryBar => hidden,
+            Part::ActivityBar => false,
+            Part::SideBar | Part::Editor | Part::Panel => !hidden,
+        };
+        if leaves_maximized && self.set_auxiliary_bar_maximized(false, cx) && self.is_part_visible(part) != hidden {
+            return;
+        }
         let was_hidden = !self.is_part_visible(part);
         if part == Part::Panel && hidden && self.is_panel_maximized() {
             self.toggle_maximized_panel(cx);
@@ -172,16 +187,61 @@ impl Workbench {
         if part == Part::Panel && !hidden && was_hidden && self.panel_opens_maximized() && !self.is_panel_maximized() {
             self.toggle_maximized_panel(cx);
         }
-        if part == Part::Editor && hidden && !self.is_part_visible(Part::Panel) {
+        if part == Part::Editor && hidden && !self.is_part_visible(Part::Panel) && !self.is_auxiliary_bar_maximized() {
             self.set_part_hidden(Part::Panel, false, cx);
         }
         cx.notify();
     }
 
-    /// `isPanelMaximized`: the editor hidden while the panel is centered or on a side.
+    /// `isPanelMaximized`: the editor hidden while the panel is centered or on a side, the secondary side bar not maximized.
     pub(super) fn is_panel_maximized(&self) -> bool {
         let arrangement = self.arrangement();
-        (arrangement.alignment == Alignment::Center || !arrangement.panel.is_horizontal()) && !self.is_part_visible(Part::Editor)
+        (arrangement.alignment == Alignment::Center || !arrangement.panel.is_horizontal()) && !self.is_part_visible(Part::Editor) && !self.is_auxiliary_bar_maximized()
+    }
+
+    pub(super) fn is_auxiliary_bar_maximized(&self) -> bool {
+        self.workspace_storage.lock().unwrap().get(AUXILIARY_BAR_WAS_LAST_MAXIMIZED_KEY) == Some("true")
+    }
+
+    /// `setAuxiliaryBarMaximized`: the side bar, the panel and the editor hide around the shown secondary side bar,
+    /// and come back as they were with the bar at its earlier width. False when the state was already `maximized`.
+    pub(super) fn set_auxiliary_bar_maximized(&mut self, maximized: bool, cx: &mut Context<Self>) -> bool {
+        if maximized == self.is_auxiliary_bar_maximized() {
+            return false;
+        }
+        if maximized {
+            let visible = [Part::SideBar, Part::Editor, Part::Panel, Part::AuxiliaryBar].map(|part| self.is_part_visible(part));
+            let [side_bar, editor, panel, auxiliary_bar] = visible;
+            self.workspace_storage.lock().unwrap().set(AUXILIARY_BAR_WAS_LAST_MAXIMIZED_KEY, "true".into());
+            if !auxiliary_bar {
+                self.set_part_hidden(Part::AuxiliaryBar, false, cx);
+            }
+            if let Some(grid) = self.part_grid.grid.as_ref() {
+                self.profile_storage.lock().unwrap().set(AUXILIARY_BAR_LAST_SIZE_KEY, (grid.size(Part::AuxiliaryBar).round() as i64).to_string());
+            }
+            for (part, shown) in [(Part::SideBar, side_bar), (Part::Panel, panel), (Part::Editor, editor)] {
+                if shown {
+                    self.set_part_hidden(part, true, cx);
+                }
+            }
+            let state = json!({ "sideBarVisible": side_bar, "editorVisible": editor, "panelVisible": panel, "auxiliaryBarVisible": auxiliary_bar });
+            self.workspace_storage.lock().unwrap().set(AUXILIARY_BAR_LAST_VISIBILITY_KEY, state.to_string());
+        } else {
+            let mut workspace = self.workspace_storage.lock().unwrap();
+            let state: Value = workspace.get(AUXILIARY_BAR_LAST_VISIBILITY_KEY).and_then(|state| serde_json::from_str(state).ok()).unwrap_or_default();
+            workspace.set(AUXILIARY_BAR_WAS_LAST_MAXIMIZED_KEY, "false".into());
+            drop(workspace);
+            // layout.ts: this order brings the views back at the sizes they had.
+            for (part, key) in [(Part::Editor, "editorVisible"), (Part::Panel, "panelVisible"), (Part::SideBar, "sideBarVisible")] {
+                self.set_part_hidden(part, state[key] != true, cx);
+            }
+            let size = self.profile_storage.lock().unwrap().get(AUXILIARY_BAR_LAST_SIZE_KEY).and_then(|size| size.parse::<f32>().ok()).unwrap_or(300.);
+            if let Some(grid) = self.part_grid.grid.as_mut() {
+                grid.resize(Part::AuxiliaryBar, size);
+            }
+        }
+        cx.notify();
+        true
     }
 
     fn panel_opens_maximized(&self) -> bool {
@@ -351,7 +411,7 @@ impl Workbench {
     /// and the sashes. A changed `workbench.sideBar.location` moves the parts (`onDidChangeConfiguration`).
     pub(super) fn middle_section(&mut self, viewport: Size<Pixels>, editor: Div, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let status_bar_height = if self.is_status_bar_visible() { STATUS_BAR_HEIGHT } else { 0. };
-        let (width, height) = (f32::from(viewport.width), f32::from(viewport.height) - TITLE_BAR_HEIGHT - status_bar_height);
+        let (width, height) = (f32::from(viewport.width), f32::from(viewport.height) - TITLE_BAR_HEIGHT - self.banner_height() - status_bar_height);
         let activity_bar_visible = self.is_part_visible(Part::ActivityBar);
         let stored = self.stored_arrangement();
         if self.part_grid.grid.is_none() {
@@ -387,7 +447,7 @@ impl Workbench {
                 Part::SideBar => self.side_bar(window, cx),
                 Part::Editor => editor.take().expect("one editor part"),
                 Part::Panel => self.panel_part(window, cx),
-                Part::AuxiliaryBar => self.auxiliary_bar_part(cx),
+                Part::AuxiliaryBar => self.auxiliary_bar_part(window, cx),
             };
             let [x, y, w, h] = rect;
             section = section.child(div().absolute().left(px(x)).top(px(y)).w(px(w)).h(px(h)).flex().pl(px(left)).pt(px(top)).pr(px(right)).pb(px(bottom)).child(content));

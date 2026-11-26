@@ -181,6 +181,23 @@ Sessions 2 and 3 can run in parallel after session 1.
 
 Done when: the ledger names 1.148.0. Every row the diff touches is `verified`, `removed` or `n/a` again, or keeps its 1.147.0 status where the gap is older than the uplift (the empty-editor hint, floating comments, workspace editing, the action widget view). The full check passes against the 1.148.0 reference.
 
+## 22. Split the port from the VS Code tree
+
+Artur: in the end the repository holds two code bases apart, `main` with the Rust port only and a `vscode` branch with upstream VS Code. Order: milestones 11 to 20 finish, everything lands on `main` (after its full check), then this split, then milestone 21, which becomes moving `vscode` to the new tag.
+
+Today the port reads upstream from the same tree: the extension host is built from `src/` (`port/tools/build-exthost`) with 11 upstream files edited (288 lines: `src/bootstrap-exthost.ts`, `extHostExtensionService.ts`, `extensionHostProcess.ts`, `extHostInertModules.ts`, `extHostRequireInterceptor.ts`, `proxyResolver.ts`, `ipc.net.ts`, `product.json`, `extensions/configuration-editing/package.json`); the built-in extensions come from `extensions/`; `native/crates/app/build.rs` builds the NLS index from `src/vs`; `port/tools/package-app` copies media from `src/vs`; the tools (`gen-ledger.ts`, `gen-proxy-ids.ts`, `uplift-diff.ts`, `api-tests`, `extension-tests`, `ref-*`, `dump-settings`, `privacy-check`, `shipped-files.ts`) read `src/`, `extensions/` and `product.json`.
+
+Target:
+- `vscode`: upstream at the followed tag (1.147.0), never edited, updated by fast-forward to the next tag.
+- `main`: `native/`, `port/`, the port's skills, README and licenses. It checks out `vscode` as a git worktree at `upstream/` (ignored), or the path in `VSCODE_SRC`; every build step and tool reads upstream from there.
+- The 11 upstream edits move to `port/patches/*.patch`, applied to a build copy of `upstream/` by `build-exthost` and `package-app`, never committed to `vscode`; `product.json` changes become an overlay in `port/`.
+
+Steps: 1) route every upstream path through one setting (`VSCODE_SRC`, default `upstream/`) in build.rs, the tools and the app's dev paths, in today's tree, with the full check green; 2) turn the 11 edits into patches applied at build time, full check green; 3) create `vscode` at the 1.147.0 tag and the new `main` (decision below), add the `upstream/` worktree, rebuild the Studio mirrors and `vscode-ref`; 4) a clean clone builds, tests, packages and passes the full check.
+
+Decision for Artur: keep the port's history on the new `main` (`git filter-repo` to `native/`, `port/`, skills: every commit hash changes) or start `main` from one commit with today's tree (history stays readable on the old `gpui` branch).
+
+Done when: `main` holds no upstream file; `git worktree add upstream vscode` plus the documented build gives the same app, unit tests, api-tests and pixel-check as before the split.
+
 ## Decisions (Artur)
 
 Made: AI, Microsoft-service and telemetry parts and remote/tunnels are `removed` (41 rows); upstream test infrastructure (`base/test`, `editor/test`, `platform/test`, `workbench/services/driver`) is `n/a`; the api-tests suites of removed features leave the milestone 20 target; Electron process, IPC and DOM layers (`base/browser` `base/parts` `platform/domWidget` `platform/ipc` `platform/protocol` `platform/sandbox` `platform/sharedProcess` `platform/utilityProcess`) are `n/a`; `workbench/services/sharedProcess` and `workbench/services/utilityProcess` stay `todo`; internal infrastructure and developer tools with no 1:1 counterpart (base/common, base/node, platform/instantiation, platform/observable, platform/webWorker, platform/gpu, platform/cssDev, editor/standalone, editor/contrib/gpu, workbench/contrib/screenshotTool) are `removed`, replaced by the native architecture.

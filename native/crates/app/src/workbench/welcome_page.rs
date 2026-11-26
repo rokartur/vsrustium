@@ -14,6 +14,7 @@ use regex::Regex;
 use serde_json::{Value, json};
 
 use super::Workbench;
+use super::markdown_document::Sanitizer;
 use super::opener::{OpenOptions, Target};
 use super::search_view::SideBarView;
 use crate::commands::Outcome;
@@ -1274,7 +1275,7 @@ impl Workbench {
         let pre = self.app_root.join("src/vs/workbench/contrib/webview/browser/pre");
         let mut webview = Webview::new(window, WEBVIEW_ID, WEBVIEW_ORIGIN, "", pre, roots, events);
         let label = self.color_themes.iter().find(|entry| entry.settings_id == self.theme.settings_id).map_or(self.theme.settings_id.clone(), |entry| entry.label.clone());
-        webview.send("styles", webview::theme_data(&self.theme, &label, &self.setting("editor"), self.setting("accessibility.underlineLinks") == true));
+        webview.send("styles", webview::theme_data(&self.theme, &label, &self.setting("editor"), self.setting("accessibility.underlineLinks") == true, self.is_motion_reduced()));
         let allow_scripts = !matches!(media, Media::Svg { .. });
         webview.send("content", json!({ "contents": html, "title": "", "options": { "allowMultipleAPIAcquire": false, "allowScripts": allow_scripts, "allowForms": false }, "state": Value::Null, "cspSource": "'self' https://*.vscode-cdn.net", "confirmBeforeClose": "keyboardOnly" }));
         self.welcome.media = Some(MediaWebview { step, theme, webview, checked_on, enabled: None });
@@ -1316,7 +1317,7 @@ impl Workbench {
                         String::new()
                     }),
                 };
-                let body = super::extension_editor::render_markdown(&transform_uris(&text, base));
+                let body = super::markdown_document::render_markdown_document(&transform_uris(&text, base), &WALKTHROUGH_SANITIZER);
                 let checked_on = checked_on_expressions(&body);
                 (render_markdown_document(&nonce, &styles, &body), vec![root.clone()], checked_on)
             }
@@ -1434,6 +1435,9 @@ fn webview_uri(path: &str) -> String {
     }
     format!("https://file+.vscode-resource.vscode-cdn.net{}", path.replace('%', "%25").replace(' ', "%20").replace('#', "%23"))
 }
+
+/// gettingStartedDetailsRenderer.ts: links of any protocol (`override: '*'`), the media made absolute first.
+const WALKTHROUGH_SANITIZER: Sanitizer = Sanitizer { link_protocols: None, media_protocols: &["http", "https"], allow_relative_media: false };
 
 /// gettingStartedDetailsRenderer.ts `transformUris`: relative `src="..."` and `![](...)` to webview URIs under `base`.
 fn transform_uris(content: &str, base: &Path) -> String {
@@ -1599,7 +1603,7 @@ mod tests {
     fn transforms_media_uris_and_reads_checked_on() {
         let html = transform_uris(r#"<img src="./dark.png"/> <img src="https://x/y.png"> ![a](img/b.png)"#, Path::new("/media"));
         assert_eq!(html, r#"<img src="https://file+.vscode-resource.vscode-cdn.net/media/dark.png"/> <img src="https://x/y.png"> ![a](https://file+.vscode-resource.vscode-cdn.net/media/img/b.png)"#);
-        let rendered = super::super::extension_editor::render_markdown(walkthroughs::module_content("theme_picker"));
+        let rendered = super::super::markdown_document::render_markdown_document(walkthroughs::module_content("theme_picker"), &super::WALKTHROUGH_SANITIZER);
         assert_eq!(checked_on_expressions(&rendered), ["config.workbench.colorTheme == 'Dark 2026'", "config.workbench.colorTheme == 'Light 2026'", "config.workbench.colorTheme == 'Default High Contrast'", "config.workbench.colorTheme == 'Default High Contrast Light'", "false"]);
         assert_eq!(command_args("a.b?%5B1%2C%22x%22%5D"), ("a.b".into(), vec![json!(1), json!("x")]));
         assert_eq!(command_args("notebook.setProfile?%7B%22profile%22%3A%22jupyter%22%7D"), ("notebook.setProfile".into(), vec![json!({ "profile": "jupyter" })]));

@@ -227,8 +227,10 @@ fn main() -> anyhow::Result<()> {
         true => Arc::new(Mutex::new(storage::Storage::in_memory())),
         false => Arc::new(Mutex::new(open_shared_storage(flag_value("--shared-data-dir").map(PathBuf::from))?)),
     };
-    // windowsMainService.ts: a start without paths, or any start with `preserve`, opens the last session's windows.
-    let restored = match (development.is_some() || screenshot.is_some() || export_default_keybindings.is_some() || open_url.is_some(), positional.is_empty()) {
+    let cli_profile = CliProfile::from_args(&args);
+    // windowsMainService.ts: a start without paths, or any start with `preserve`, opens the last session's windows;
+    // app.ts: one with a forced profile opens only its new empty window.
+    let restored = match (development.is_some() || cli_profile.is_forced() || screenshot.is_some() || export_default_keybindings.is_some() || open_url.is_some(), positional.is_empty()) {
         (true, _) => Vec::new(),
         (false, no_paths) => {
             let user_settings = Settings::load(Registry::with_extensions(&[]), user_data.join("User"), None);
@@ -247,7 +249,7 @@ fn main() -> anyhow::Result<()> {
         }
     };
     let app = AppState { args: args.clone(), runtime, user_data, app_root, builtins, user_extensions_folder: extensions_folder, shared_storage };
-    let startup = (!positional.is_empty() || restored.is_empty()).then(|| WindowRequest { workspace, file, development, open_url, screenshot, screenshot_keys, screenshot_input, export_default_keybindings, ..WindowRequest::default() });
+    let startup = (!positional.is_empty() || restored.is_empty()).then(|| WindowRequest { workspace, file, development, open_url, screenshot, screenshot_keys, screenshot_input, export_default_keybindings, profile: cli_profile, ..WindowRequest::default() });
     let application = application();
     // A click on the Dock icon without a window opens an empty one, as `app.on('activate')` does in app.ts.
     application.on_reopen(|cx| {
@@ -313,6 +315,26 @@ pub(crate) struct WindowRequest {
     pub backup_folder: Option<PathBuf>,
     /// The size, place and mode of a restored window.
     pub ui: Option<windows_state::UiState>,
+    pub profile: CliProfile,
+}
+
+/// `--profile <name>` and `--profile-temp`: windowsMainService.ts `forceProfile` and `forceTempProfile`, given only
+/// to the windows a command line opens, never to the ones opened later from the menu.
+#[derive(Default, Clone)]
+pub(crate) struct CliProfile {
+    pub name: Option<String>,
+    pub temp: bool,
+}
+
+impl CliProfile {
+    pub fn from_args(args: &[String]) -> CliProfile {
+        let name = args.iter().position(|arg| arg == "--profile").and_then(|i| args.get(i + 1)).cloned();
+        CliProfile { name, temp: args.iter().any(|arg| arg == "--profile-temp") }
+    }
+
+    pub fn is_forced(&self) -> bool {
+        self.name.is_some() || self.temp
+    }
 }
 
 /// `open_window` from a window's command: a failure is logged, the other windows stay.
@@ -325,11 +347,11 @@ pub(crate) fn open_window_or_log(request: WindowRequest, cx: &mut App) {
 /// windowsMainService.ts `openInBrowserWindow`: a window with its own settings, storage, trust, extension host and
 /// workbench, as each reference window has.
 pub(crate) fn open_window(request: WindowRequest, cx: &mut App) -> anyhow::Result<gpui::WindowHandle<Workbench>> {
-    let WindowRequest { workspace, file, development, open_url, screenshot, screenshot_keys, screenshot_input, export_default_keybindings, backup_folder, ui } = request;
+    let WindowRequest { workspace, file, development, open_url, screenshot, screenshot_keys, screenshot_input, export_default_keybindings, backup_folder, ui, profile: cli_profile } = request;
     let app = cx.global::<AppState>();
     let (args, runtime, user_data, app_root, builtins, shared_storage) = (app.args.clone(), app.runtime, app.user_data.clone(), app.app_root.clone(), app.builtins.clone(), app.shared_storage.clone());
     let flag_value = |flag: &str| args.iter().position(|arg| arg == flag).and_then(|i| args.get(i + 1)).cloned();
-    let profile = user_data_profile::ProfileState::resolve(&user_data, &app.user_extensions_folder, workspace.as_ref(), flag_value("--profile").as_deref(), args.iter().any(|arg| arg == "--profile-temp"), development.is_some());
+    let profile = user_data_profile::ProfileState::resolve(&user_data, &app.user_extensions_folder, workspace.as_ref(), cli_profile.name.as_deref(), cli_profile.temp, development.is_some());
     let user_extensions = UserExtensions { extensions_file: profile.current.extensions_resource.clone(), profiles_home: Some(profile.profiles.profiles_home.clone()), ..UserExtensions::new(app.user_extensions_folder.clone(), VERSION) };
     let mut extensions = builtins.clone();
     add_user_extensions(&mut extensions, user_extensions.scan()?);
@@ -457,8 +479,9 @@ pub(crate) fn open_window(request: WindowRequest, cx: &mut App) -> anyhow::Resul
                 workbench.skip_dialogs = development.as_ref().is_some_and(|development| development.tests_path.is_some());
                 workbench.refresh_keyboard_mapper();
                 workbench.extension_development = development.is_some();
+                workbench.cli_profile = cli_profile.clone();
                 workbench.load_keybindings(keybindings::default_keybindings(&extensions), keybindings_file.clone(), cx);
-                workbench.watch_settings_files(cx);
+                workbench.watch_settings_files(window, cx);
                 workbench.watch_policies(cx);
                 workbench.start_file_watcher(cx);
                 workbench.start_system_wide_keybindings(window, cx);
@@ -467,7 +490,6 @@ pub(crate) fn open_window(request: WindowRequest, cx: &mut App) -> anyhow::Resul
                 workbench.menus.extend(menus::extension_menus(&extensions));
                 workbench.command_icons = menus::command_icons(&extensions);
                 workbench.status_entries = main_thread_status_bar::static_entries(&extensions);
-                workbench.urls.extensions = extensions.iter().map(|extension| (extension.id.to_lowercase(), extension.description["displayName"].as_str().unwrap_or(&extension.id).to_owned())).collect();
                 workbench.file_icons = file_icons;
                 workbench.color_themes = color_themes;
                 workbench.set_tree_views(&extensions);
@@ -500,6 +522,10 @@ pub(crate) fn open_window(request: WindowRequest, cx: &mut App) -> anyhow::Resul
                 perf::mark("code/willRestoreEditors");
                 if let Some(file) = file {
                     workbench.open_file(file, true, window, cx);
+                } else if workbench.editors.active().is_some() && window.focused(cx).is_none() {
+                    // editorGroupView.ts `restoreEditors`: the active group's restored editor takes the focus unless
+                    // something else took it meanwhile.
+                    window.focus(&workbench.editor_focus, cx);
                 }
                 workbench.run_startup_page(args.iter().any(|arg| arg == "--skip-welcome"), window, cx);
                 perf::set_startup_editors(workbench.visible_editor_ids());
@@ -632,7 +658,7 @@ fn run_extension_host(
             MainThreadSecretState::in_memory()
         }),
     });
-    session.forward(&["MainThreadCommands", "MainThreadComments", "MainThreadCustomEditors", "MainThreadDebugService", "MainThreadDecorations", "MainThreadDialogs", "MainThreadDiagnostics", "MainThreadDownloadService", "MainThreadEditorTabs", "MainThreadGitHub", "MainThreadLanguageFeatures", "MainThreadLanguages.$removeLanguageStatus", "MainThreadLanguages.$setLanguageStatus", "MainThreadLogger", "MainThreadMessageService", "MainThreadNotebook", "MainThreadNotebookDocuments", "MainThreadNotebookEditors", "MainThreadNotebookKernels", "MainThreadNotebookRenderers", "MainThreadOutputService", "MainThreadProgress", "MainThreadQuickDiff", "MainThreadQuickOpen", "MainThreadSCM", "MainThreadStatusBar", "MainThreadTask", "MainThreadTerminalService", "MainThreadTerminalShellIntegration", "MainThreadTesting", "MainThreadTimeline", "MainThreadTreeViews", "MainThreadUriOpeners", "MainThreadUrls", "MainThreadUrls.$registerUriHandler", "MainThreadUrls.$unregisterUriHandler", "MainThreadWebviewPanels", "MainThreadWebviewViews", "MainThreadWebviews", "MainThreadWindow.$openUri", "MainThreadWorkspace"], move |request| {
+    session.forward(&["MainThreadCommands", "MainThreadComments", "MainThreadCustomEditors", "MainThreadDebugService", "MainThreadDecorations", "MainThreadDiagnostics", "MainThreadDialogs", "MainThreadDownloadService", "MainThreadEditorInsets", "MainThreadEditorTabs", "MainThreadGitHub", "MainThreadLanguageFeatures", "MainThreadLanguages.$removeLanguageStatus", "MainThreadLanguages.$setLanguageStatus", "MainThreadLogger", "MainThreadMessageService", "MainThreadNotebook", "MainThreadNotebookDocuments", "MainThreadNotebookEditors", "MainThreadNotebookKernels", "MainThreadNotebookRenderers", "MainThreadOutputService", "MainThreadProgress", "MainThreadQuickDiff", "MainThreadQuickOpen", "MainThreadSCM", "MainThreadStatusBar", "MainThreadTask", "MainThreadTerminalService", "MainThreadTerminalShellIntegration", "MainThreadTesting", "MainThreadTimeline", "MainThreadTreeViews", "MainThreadUriOpeners", "MainThreadUrls", "MainThreadUrls.$registerUriHandler", "MainThreadUrls.$unregisterUriHandler", "MainThreadWebviewPanels", "MainThreadWebviewViews", "MainThreadWebviews", "MainThreadWindow.$openUri", "MainThreadWorkspace"], move |request| {
         let _ = workbench_requests.unbounded_send(request);
     }, workbench_replies);
     session.main_thread = Some(Box::new(main_thread));
@@ -744,7 +770,8 @@ fn icon_theme_follows_workbench_icon_theme() {
 /// windowsMainService.ts `open` with `addRecentlyOpened`: the window's folder or workspace and its file.
 fn add_recently_opened(shared: &mut storage::Storage, workspace: Option<&Workspace>, file: Option<&Path>) {
     let mut opened = Vec::new();
-    if let Some(workspace) = workspace {
+    // workspacesHistoryMainService.ts: untitled workspaces are not remembered.
+    if let Some(workspace) = workspace.filter(|workspace| !workspace.file.as_deref().is_some_and(config::workspace::is_untitled_workspace)) {
         opened.push(match &workspace.file {
             Some(file) => recently_opened::entry(recently_opened::Kind::Workspace, file, None),
             None => recently_opened::entry(recently_opened::Kind::Folder, &workspace.folders[0].path, None),

@@ -1,5 +1,5 @@
-//! viewFilter.ts `FilterWidget` in a panel title (views.css): the filter input, the "Showing N of M" badge and the
-//! More Filters button whose menu the view builds.
+//! viewFilter.ts `FilterWidget` in a panel title or at the top of the view (views.css): the filter input, the
+//! "Showing N of M" badge and the More Filters button whose menu the view builds.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -12,6 +12,8 @@ use super::output_view::bounds_tracker;
 use crate::theme::ThemeKind;
 
 pub(super) struct ViewFilter {
+    /// The view container, whose part and size place the filter.
+    pub container: &'static str,
     pub input: InputId,
     pub focused: bool,
     pub placeholder: &'static str,
@@ -24,9 +26,11 @@ pub(super) struct ViewFilter {
 }
 
 impl Workbench {
-    /// 200px, while focused up to 400px of the room the tabs leave, 10px right margin. The badge hides below 400px
-    /// (`.small`), so in a panel title it shows while the box is focused.
+    /// In the title (`view_filter_in_header`): 200px, while focused up to 400px of the room the tabs leave, 10px right
+    /// margin. At the top of the view: the view's width less 20px margins each side (`.pane-body .viewpane-filter-container`).
+    /// The badge hides in a view below 400px (`.small`), and in a panel title shows while the box is focused.
     pub(super) fn view_filter_box(&self, filter: ViewFilter, cx: &mut Context<Self>) -> Div {
+        let header = self.view_filter_in_header(filter.container);
         let height = if self.theme.kind == ThemeKind::Light { 25. } else { 24. };
         let border = if filter.focused { self.color("focusBorder") } else { self.theme.color("input.border").unwrap_or(self.color("input.background")) };
         let checked = filter.more_filters_checked;
@@ -48,7 +52,8 @@ impl Workbench {
                 cx.stop_propagation();
                 show_menu(workbench, bounds.get(), window, cx);
             }));
-        let badge = filter.badge.filter(|_| filter.focused).map(|badge| {
+        let small = self.view_filter_small(filter.container);
+        let badge = filter.badge.filter(|_| filter.focused && !small).map(|badge| {
             div()
                 .flex_none()
                 .my(px(4.))
@@ -62,12 +67,8 @@ impl Workbench {
                 .child(badge)
         });
         let look = InputLook { password: false, placeholder: Some(filter.placeholder.to_owned()), focused: filter.focused };
-        div()
+        let filter_box = div()
             .relative()
-            .w(px(self.panel_filter_width(filter.focused)))
-            .flex_shrink(1.)
-            .min_w(px(150.))
-            .mr(px(10.))
             .h(px(height))
             .flex()
             .items_center()
@@ -82,7 +83,11 @@ impl Workbench {
             .text_color(self.foreground_or("input.foreground"))
             .child(div().flex_1().min_w_0().h_full().flex().child(self.input_text(filter.input, look, cx)))
             .children(badge)
-            .child(filter_button)
-            .child(self.panel_filter_tracker())
+            .child(filter_button);
+        match header {
+            // paneCompositePart.css `.action-item { margin-right: 4px }` outranks views.css's 10px.
+            true => filter_box.w(px(self.panel_filter_width(filter.container, filter.focused))).flex_shrink(1.).min_w(px(150.)).mr(px(4.)).child(self.panel_filter_tracker(filter.container)),
+            false => div().flex_none().mx(px(20.)).my(px(10.)).flex().child(filter_box.flex_1()),
+        }
     }
 }

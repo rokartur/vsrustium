@@ -50,10 +50,7 @@ pub fn init_data(paths: &SessionPaths, extensions: &[ScannedExtension], version:
             activation_events.insert(extension.id.to_lowercase(), json!(events));
         }
     }
-    let workspace = paths.workspace.map(|workspace| {
-        let configuration = workspace.file.as_deref().map(file_uri);
-        json!({ "id": workspace_id(workspace), "name": workspace.label(), "transient": workspace.transient, "configuration": configuration, "isUntitled": false })
-    });
+    let workspace = paths.workspace.map(workspace_identity);
     json!({
         "version": version,
         "quality": null,
@@ -97,6 +94,21 @@ pub fn init_data(paths: &SessionPaths, extensions: &[ScannedExtension], version:
 }
 
 /// `MainThreadWorkspace.getWorkspaceData` for `$initializeWorkspace`, with the fields `init_data` gave the workspace.
+/// `IStaticWorkspaceData` without folders.
+fn workspace_identity(workspace: &Workspace) -> Value {
+    let configuration = workspace.file.as_deref().map(file_uri);
+    let untitled = workspace.file.as_deref().is_some_and(config::workspace::is_untitled_workspace);
+    json!({ "id": workspace_id(workspace), "name": workspace.label(), "transient": workspace.transient, "configuration": configuration, "isUntitled": untitled })
+}
+
+/// `IWorkspaceData` of mainThreadWorkspace.ts `getWorkspaceData` after a folder change.
+pub fn workspace_data_of(workspace: &Workspace) -> Value {
+    let mut data = workspace_identity(workspace);
+    let folders: Vec<Value> = workspace.folders.iter().enumerate().map(|(index, folder)| json!({ "uri": file_uri(&folder.path), "name": folder.name, "index": index })).collect();
+    data["folders"] = json!(folders);
+    data
+}
+
 pub fn workspace_data(init: &Value, workspace: &Workspace) -> Value {
     let mut data = init["workspace"].clone();
     let folders: Vec<Value> = workspace.folders.iter().enumerate().map(|(index, folder)| json!({ "uri": file_uri(&folder.path), "name": folder.name, "index": index })).collect();

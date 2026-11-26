@@ -45,7 +45,15 @@ impl Workbench {
         self.commands.register("_workbench.open", |workbench, args, window, cx| match &args[..] {
             [resource @ Value::Object(_), rest @ ..] => {
                 let column_and_options = rest.first().cloned().unwrap_or_default();
-                let mut options = column_and_options[1].clone();
+                // editorCommands.ts: without options or a numeric column the opener service opens it, whose
+                // EditorOpener reads a `#L<line>,<column>` fragment as the selection.
+                if !column_and_options[0].is_number() && column_and_options[1].is_null() && resource["fragment"].as_str().is_some_and(|fragment| !fragment.is_empty()) {
+                    if let Ok(uri) = crate::uri::Uri::from_json(resource) {
+                        let (selection, uri) = super::opener::extract_selection(uri);
+                        return workbench.open_with_resolver(&uri.to_json(), None, json!({ "selection": selection }), window, cx);
+                    }
+                }
+                let mut options = mixin_open_context(rest.get(2), column_and_options[1].clone());
                 if !column_and_options[0].is_null() {
                     options["position"] = column_and_options[0].clone();
                 }
@@ -130,6 +138,14 @@ impl Workbench {
 
     pub(super) fn dirty_editors(&self) -> Vec<usize> {
         (0..self.editors.editors.len()).filter(|index| self.editors.editors[*index].is_dirty()).collect()
+    }
+
+    /// dirtyFilesIndicator.ts: the explorer's badge counts the dirty working copies, each model once.
+    pub(super) fn dirty_working_copy_count(&self) -> u64 {
+        let mut models: Vec<u32> = self.editors.all_editors().filter(|editor| editor.is_dirty()).map(|editor| editor.model_id).collect();
+        models.sort_unstable();
+        models.dedup();
+        models.len() as u64
     }
 
     /// editorActions.ts `CloseAllEditorsAction`: every group closes its editors, the active one last.
@@ -310,6 +326,16 @@ impl Workbench {
     }
 }
 
+/// editorCommands.ts `mixinContext`: a list's open event (`{ editorOptions }`) passed after the command's arguments
+/// gives the options the arguments leave out.
+pub(super) fn mixin_open_context(context: Option<&Value>, options: Value) -> Value {
+    let Some(Value::Object(context_options)) = context.map(|context| &context["editorOptions"]) else { return options };
+    let mut merged = context_options.clone();
+    if let Value::Object(options) = options {
+        merged.extend(options);
+    }
+    Value::Object(merged)
+}
 /// The command's answer once every save is done; `answer` gets whether all of them succeeded.
 pub(super) fn when_saved(saves: Vec<oneshot::Receiver<bool>>, answer: impl FnOnce(bool) -> Value + Send + 'static, cx: &mut Context<Workbench>) -> Outcome {
     let (sender, receiver) = oneshot::channel();

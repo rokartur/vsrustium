@@ -2,8 +2,8 @@
 //! the workspace memento `memento/workbench.parts.editor` under `editorpart.state`, in upstream's shape
 //! (`ISerializedGrid` of `ISerializedEditorGroupModel` leaves, file editors as `workbench.editors.files.fileEditorInput`).
 //! Upstream saves on shutdown; the port saves on each editor change, as the editor history does.
-// Not ported yet: editors other than file editors (upstream serializes every editor with a serializer), sticky
-// editors, locked groups.
+// Not ported yet: editors other than file and untitled text editors (upstream serializes every editor with a
+// serializer), sticky editors, locked groups.
 
 use std::path::PathBuf;
 
@@ -16,6 +16,8 @@ use crate::editor_grid::{EditorGrid, Orientation, SerializedNode};
 const MEMENTO_KEY: &str = "memento/workbench.parts.editor";
 const STATE_KEY: &str = "editorpart.state";
 const FILE_EDITOR_INPUT: &str = "workbench.editors.files.fileEditorInput";
+/// untitledTextEditorInput.ts `UntitledTextEditorInput.ID`.
+const UNTITLED_EDITOR_INPUT: &str = "workbench.editors.untitledEditorInput";
 
 impl Workbench {
     pub(in crate::workbench) fn save_editor_part_state(&mut self) {
@@ -53,12 +55,20 @@ impl Workbench {
         }
     }
 
-    /// `EditorGroupModel.serialize`: the file editors in tab order, their MRU and the preview editor by index.
+    /// `EditorGroupModel.serialize`: the file editors and, with hot exit on (untitledTextEditorHandler.ts
+    /// `canSerialize`), the untitled ones in tab order, their MRU and the preview editor by index.
     fn serialized_group(&self, group: u32) -> Value {
-        let editors: Vec<_> = self.editors.group_tabs(group).0.iter().filter(|editor| editor.document().scheme == "file").collect();
+        let untitled = self.setting("files.hotExit") != "off";
+        let editors: Vec<_> = self.editors.group_tabs(group).0.iter().filter(|editor| editor.document().scheme == "file" || untitled && editor.document().scheme == "untitled").collect();
         let serialized: Vec<Value> = editors.iter().map(|editor| {
-            let uri = exthost::scan::file_uri(&editor.document().path);
-            json!({ "id": FILE_EDITOR_INPUT, "value": json!({ "resourceJSON": uri }).to_string() })
+            let document = editor.document();
+            match document.scheme.as_str() {
+                "file" => json!({ "id": FILE_EDITOR_INPUT, "value": json!({ "resourceJSON": exthost::scan::file_uri(&document.path) }).to_string() }),
+                _ => {
+                    let resource = json!({ "$mid": 1, "scheme": "untitled", "path": document.path.to_string_lossy() });
+                    json!({ "id": UNTITLED_EDITOR_INPUT, "value": json!({ "resourceJSON": resource, "modeId": document.language_id }).to_string() })
+                }
+            }
         }).collect();
         let by_recency = self.editors.group_editors_by_recency(group);
         let mru: Vec<usize> = by_recency.iter().filter_map(|recent| editors.iter().position(|editor| editor.model_id == recent.model_id)).collect();
@@ -104,13 +114,18 @@ impl Workbench {
     fn restore_group(&mut self, group: &Value) {
         let mut opened = Vec::new();
         for (index, editor) in group["editors"].as_array().into_iter().flatten().enumerate() {
-            if editor["id"] != FILE_EDITOR_INPUT {
-                continue;
-            }
             let value: Value = editor["value"].as_str().and_then(|value| serde_json::from_str(value).ok()).unwrap_or_default();
             let Some(path) = value["resourceJSON"]["path"].as_str().map(PathBuf::from) else { continue };
-            // A file deleted since is left out, as `FileEditorInput` would show its error placeholder.
-            let Ok(document) = self.read_document(&path) else { continue };
+            let document = match editor["id"].as_str() {
+                // A file deleted since is left out, as `FileEditorInput` would show its error placeholder.
+                Some(FILE_EDITOR_INPUT) => match self.read_document(&path) {
+                    Ok(document) => document,
+                    Err(_) => continue,
+                },
+                // Its text comes from its backup (backup_tracker.rs `restore_backups`).
+                Some(UNTITLED_EDITOR_INPUT) => crate::editor::TextDocument::untitled(&path, "", value["modeId"].as_str(), &self.languages, &self.settings.lock().unwrap()),
+                _ => continue,
+            };
             self.editors.open(document, group["preview"].as_u64() == Some(index as u64));
             opened.push(index);
         }

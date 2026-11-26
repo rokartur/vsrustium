@@ -212,6 +212,9 @@ async fn before_shutdown(workbench: &WeakEntity<Workbench>, reason: ShutdownReas
     if reason == ShutdownReason::Close && !confirm_before_close(workbench, keyboard, cx).await {
         return true;
     }
+    if super::workspace_editing::save_untitled_before_shutdown(workbench, reason, cx).await {
+        return true;
+    }
     let _ = workbench.update(cx, |workbench, _| workbench.suspend_backups(true));
     let veto = backup_tracker_before_shutdown(workbench, reason, cx).await;
     let _ = workbench.update(cx, |workbench, _| workbench.suspend_backups(false));

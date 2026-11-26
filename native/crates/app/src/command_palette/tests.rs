@@ -1,7 +1,7 @@
 use super::*;
 
 fn command(id: &str, label: &str, category: Option<&str>) -> CommandPick {
-    CommandPick { id: id.into(), label: label.into(), category: category.map(Into::into) }
+    CommandPick { id: id.into(), label: label.into(), category: category.map(Into::into), description: None }
 }
 
 fn commands() -> Vec<CommandPick> {
@@ -109,6 +109,15 @@ fn similar_commands_by_tf_idf_follow_the_matches() {
     let commands = vec![command("a", "Close Window", None), command("b", "Reopen Closed Editor", None), command("c", "Window: Zoom", None)];
     let entries = command_picks(&commands, "shut window", &CommandsHistory::new(DEFAULT_HISTORY_LENGTH));
     assert_eq!(labels(&entries), ["--similar commands", "Close Window", "Window: Zoom"]);
+}
+
+/// `getTfIdfChunk`: the description counts with the label.
+#[test]
+fn tf_idf_reads_the_description() {
+    let described = CommandPick { description: Some("Moves focus around the workbench, also called tab trapping.".into()), ..command("a", "Toggle Tab Key Moves Focus", None) };
+    let commands = vec![described, command("b", "Reopen Closed Editor", None), command("c", "Close Window", None)];
+    let entries = command_picks(&commands, "trapping", &CommandsHistory::new(DEFAULT_HISTORY_LENGTH));
+    assert_eq!(labels(&entries), ["--similar commands", "Toggle Tab Key Moves Focus"]);
 }
 
 #[test]

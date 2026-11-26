@@ -60,6 +60,8 @@ mod extensions_list_view;
 mod workspace_recommendations;
 pub(crate) mod localization;
 pub(crate) mod extensions_view;
+mod bulk_undo;
+mod file_compare;
 mod file_dialogs;
 mod file_participants;
 mod find_options_widget;
@@ -81,6 +83,7 @@ pub(crate) mod host_requests;
 mod input_box_view;
 mod keybindings_editor_view;
 mod keyboard;
+mod markdown_document;
 mod markdown_view;
 mod empty_view;
 mod layout;
@@ -101,8 +104,9 @@ pub mod menubar;
 mod middle_scroll;
 mod minimap_view;
 pub mod logs_actions;
+mod notebook_editor;
 mod notebooks;
-pub(crate) use notebooks::focused_cell;
+pub(crate) use notebooks::notebook_cells;
 mod notifications_view;
 mod panel;
 mod part_grid;
@@ -211,10 +215,14 @@ mod file_decorations;
 mod url_handlers;
 mod webview_views;
 mod media_preview;
+mod editor_insets;
+mod image_carousel;
 mod webview_panels;
 mod url_actions;
 pub(crate) mod url_handler;
 mod workspace_actions;
+mod workspace_editing;
+mod workspace_trust_editor;
 mod workspace_trust_view;
 
 use std::cell::Cell;
@@ -270,10 +278,13 @@ pub struct Workbench {
     /// `IEnvironmentService.isExtensionDevelopment`.
     pub extension_development: bool,
     proxy_auth: proxy_auth::ProxyAuth,
+    /// The command line profile this window was opened with, kept by a reload as the window's configuration is.
+    pub cli_profile: crate::CliProfile,
     /// workbench.ts `setUnexpectedErrorHandler(createUnexpectedErrorHandler(logService))`.
     pub unexpected_errors: crate::output::logger::UnexpectedErrorHandler,
     pub keybindings: keyboard::Keybindings,
     pub keybindings_editor: keybindings_editor_view::KeybindingsEditor,
+    pub trust_editor: workspace_trust_editor::TrustEditor,
     pub settings_editor: settings_editor_view::SettingsEditor,
     keybinding_marks: define_keybinding::KeybindingMarks,
     unsupported_settings_render: Option<Task<()>>,
@@ -381,6 +392,7 @@ pub struct Workbench {
     pub search_editors: search_editor_view::SearchEditors,
     pub search_editor_widget: search_editor_widget::SearchEditorWidget,
     pub webview_panels: webview_panels::WebviewPanels,
+    notebook_views: notebook_editor::NotebookViews,
     pub scm: scm_view::ScmView,
     timeline: timeline_view::TimelineView,
     scm_graph: scm_graph_view::ScmGraph,
@@ -423,6 +435,12 @@ pub struct Workbench {
     explorer_panes: view_panes::ContainerPanes,
     scm_panes: view_panes::ContainerPanes,
     pub workspace_trust: crate::workspace_trust::WorkspaceTrust,
+    /// fileCommands.ts `globalResourceToCompare`, set by Select for Compare (`resourceSelectedForCompare`).
+    resource_to_compare: Option<crate::diff_editor::Side>,
+    /// fileActions.ts `CompareWithClipboardAction.SCHEME_COUNTER`.
+    clipboard_compare_count: u32,
+    /// The multi-file text edits of `workspace.applyEdit`, the newest last.
+    workspace_text_edits: Vec<bulk_undo::WorkspaceTextEdit>,
     /// The APPLICATION_SHARED storage: trust and the recently opened list.
     pub shared_storage: Arc<Mutex<Storage>>,
     /// The recently opened list as last read, which the menu bar shows.
@@ -458,6 +476,7 @@ impl Render for Workbench {
         self.refresh_document_highlights(window, cx);
         self.refresh_outline_pane(cx);
         self.update_webview_panels(window, cx);
+        self.update_notebook_views(window, cx);
         self.update_diff_editor();
         self.update_merge_editor(cx);
         self.update_multi_diff_editor();
@@ -495,7 +514,7 @@ impl Render for Workbench {
             .children(self.banner_part(window, cx))
             .child(self.middle_section(viewport, editor, window, cx))
             .when(self.is_status_bar_visible(), |grid| grid.child(self.status_bar(window, cx)));
-        let modal_editor = self.keybindings_editor_widget(window, cx).or_else(|| self.settings_editor_widget(window, cx)).or_else(|| self.profiles_editor_widget(window, cx)).or_else(|| self.modal_group_widget(window, cx));
+        let modal_editor = self.keybindings_editor_widget(window, cx).or_else(|| self.settings_editor_widget(window, cx)).or_else(|| self.profiles_editor_widget(window, cx)).or_else(|| self.workspace_trust_editor_widget(window, cx)).or_else(|| self.modal_group_widget(window, cx));
         let quick_input = self.quick_input_widget(window, cx);
         let notifications = self.notifications_widget(viewport, window, cx);
         let context_menu = self.context_menu_widget(cx);
@@ -558,9 +577,11 @@ impl Workbench {
             host_colors: themes::host_color_scheme(),
             extension_development: false,
             proxy_auth: proxy_auth::ProxyAuth::default(),
+            cli_profile: Default::default(),
             unexpected_errors: Default::default(),
             keybindings: keyboard::Keybindings::default(),
             keybindings_editor: keybindings_editor_view::KeybindingsEditor::new(cx),
+            trust_editor: Default::default(),
             settings_editor: settings_editor_view::SettingsEditor::new(cx),
             keybinding_marks: Default::default(),
             unsupported_settings_render: None,
@@ -651,6 +672,7 @@ impl Workbench {
             search_editors: HashMap::new(),
             search_editor_widget: search_editor_widget::SearchEditorWidget::new(cx),
             webview_panels: Default::default(),
+            notebook_views: Default::default(),
             scm: scm_view::ScmView::new(cx),
             timeline: timeline_view::TimelineView::new(cx),
             scm_graph: Default::default(),
@@ -685,6 +707,9 @@ impl Workbench {
             explorer_panes: view_panes::ContainerPanes::default(),
             scm_panes: view_panes::ContainerPanes::default(),
             workspace_trust: Default::default(),
+            resource_to_compare: None,
+            clipboard_compare_count: 0,
+            workspace_text_edits: Vec::new(),
             shared_storage: Arc::new(Mutex::new(Storage::in_memory())),
             recently_opened: Default::default(),
             dialogs: Vec::new(),
@@ -706,6 +731,7 @@ impl Workbench {
         workbench.register_workbench_actions();
         workbench.register_notebook_commands();
         workbench.register_diff_editor_commands();
+        workbench.register_file_compare_commands();
         workbench.register_diff_gutter_commands();
         workbench.register_unchanged_region_commands();
         workbench.register_scroll_locking_commands();
@@ -720,6 +746,7 @@ impl Workbench {
         workbench.register_cancel_operation_command();
         workbench.register_large_file_commands();
         workbench.register_media_preview_commands();
+        workbench.register_image_carousel_commands();
         workbench.register_inspect_tokens_commands();
         workbench.register_word_wrap_commands();
         workbench.register_editor_commands();
@@ -742,6 +769,7 @@ impl Workbench {
         workbench.register_zen_mode_actions();
         workbench.register_centered_layout_actions();
         workbench.register_editor_group_actions();
+        workbench.register_webview_actions();
         workbench.register_history_actions();
         workbench.register_search_editor_actions();
         workbench.register_search_editor_widget_actions();
@@ -809,8 +837,10 @@ impl Workbench {
         workbench.register_profiles_editor_commands();
         workbench.register_settings_import_commands();
         workbench.register_workspace_trust_commands();
+        workbench.register_workspace_trust_editor_commands();
         workbench.register_host_commands();
         workbench.register_workspace_commands();
+        workbench.register_workspace_editing_commands();
         workbench.register_dialog_commands();
         workbench.register_lifecycle_commands();
         workbench.register_banner_commands();
@@ -941,6 +971,7 @@ impl Workbench {
         self.semantic_tokens_model_changed(cx);
         self.refresh_language_status(cx);
         self.sync_webview_panels();
+        self.sync_editor_insets();
         self.text_files_editors_changed();
         self.save_editor_part_state();
         self.send_notebook_changes();
@@ -1002,7 +1033,8 @@ impl Workbench {
             .text_color(if active { self.color("commandCenter.foreground") } else { foreground })
             .hover(|center| center.bg(self.color("commandCenter.activeBackground")).border_color(self.color("commandCenter.activeBorder")).text_color(self.color("commandCenter.activeForeground")))
             .text_size(px(12.))
-            .child(self.workspace().map_or("Search".into(), Workspace::label))
+            // windowTitle.ts `getCommandCenterLabel`: the workspace name after the title decorations.
+            .child(self.title_decorated(self.workspace().map_or("Search".into(), Workspace::label)))
             .child(self.hover_target("command-center", HoverContent::Text(self.command_center_tooltip()), HoverOptions::instant()))
             .on_mouse_down(MouseButton::Right, cx.listener(show_command_center_context_menu))
             // A Cmd+click belongs to the title's menu, which upstream takes in the capture phase.
@@ -1087,14 +1119,24 @@ impl Workbench {
 
     /// windowTitle.ts `getFullWindowTitle` with the macOS `window.title` default
     /// `${activeEditorShort}${separator}${rootName}${separator}${folderLocation}${separator}${profileName}`, the last two
-    /// empty here, or `nameLong` when it is empty.
+    /// empty here, or `nameLong` when it is empty, with the title decorations.
     pub(crate) fn window_title(&self) -> String {
         let root_name = self.workspace().map(Workspace::label).unwrap_or_default();
         let active_editor = self.editors.active().map(|editor| self.editor_name(editor)).unwrap_or_default();
         let parts: Vec<_> = [active_editor, root_name].into_iter().filter(|part| !part.is_empty()).collect();
-        match parts.is_empty() {
+        let title = match parts.is_empty() {
             true => menubar::NAME_LONG.to_string(),
             false => parts.join(" \u{2014} "),
+        };
+        self.title_decorated(title)
+    }
+
+    /// windowTitle.ts `getTitleDecorations`: "[Extension Development Host]" before the title in an extension
+    /// development window.
+    fn title_decorated(&self, title: String) -> String {
+        match self.extension_development {
+            true => format!("[Extension Development Host] {title}"),
+            false => title,
         }
     }
 
@@ -1184,6 +1226,13 @@ impl Workbench {
         div().relative().child(indicator).child(self.icon(name, 36., 24., self.color("modernActivityBarItem.activeForeground")))
     }
 
+    /// style.css `.hc-black .monaco-list:not(.element-focused):focus:before`: in high contrast a focused list
+    /// without a focused row is outlined in focusBorder, above its sticky rows.
+    fn high_contrast_list_outline(&self, list_focused: bool, has_focused_row: bool) -> Option<Div> {
+        let color = self.theme.color("focusBorder").filter(|_| self.theme.kind.is_high_contrast() && list_focused && !has_focused_row)?;
+        Some(div().absolute().inset_0().border_1().border_color(color))
+    }
+
     /// The Explorer: title, then the folder's view with its tree, Outline and Timeline as panes.
     fn side_bar_view(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         let foreground = self.foreground_or("sideBar.foreground");
@@ -1207,7 +1256,8 @@ impl Workbench {
         if self.side_bar_view == SideBarView::Testing {
             return self.testing_side_bar(cx).children(self.contributed_sections_of("test", window, cx));
         }
-        let Some(tree) = self.folder.as_ref() else {
+        // explorerViewlet.ts: the empty view shows while `workspaceFolderCount` is 0, in an empty workspace too.
+        let Some(tree) = self.folder.as_ref().filter(|tree| !tree.workspace.folders.is_empty()) else {
             let empty = view_panes::ViewPane { id: view_panes::EMPTY_VIEW, title: "No Folder Opened".into(), description: None, actions: None, show_actions: false, body: self.empty_view(window, cx).into_any_element() };
             return self.explorer_view_container(empty, window, cx).child(div().h(px(5.)).flex_none());
         };
@@ -1420,10 +1470,6 @@ impl Workbench {
         let explorer_focused = self.explorer.focus.is_focused(window);
         self.explorer_view_container(view_panes::ViewPane { id: view_panes::FILE_VIEW, title: folder_name, description: None, actions: None, show_actions: explorer_focused, body:
                 div().id("explorer-pane").relative().flex_1().min_h_0().flex().flex_col()
-                .on_hover(cx.listener(|workbench, hovered: &bool, _, cx| {
-                    workbench.explorer.pane_hovered = *hovered;
-                    cx.notify();
-                }))
                 .child(
                 div()
                     .id("explorer-tree")
@@ -1443,7 +1489,7 @@ impl Workbench {
                     // `horizontalScrolling`: unwrapped rows as wide as the widest, at least the view.
                     .child(div().flex_none().flex().flex_col().when(horizontal, |rows| rows.self_start().min_w_full().whitespace_nowrap()).children(rows))
                     .child(self.explorer_empty_area(cx)),
-                ).child(self.list_scroll_layer(list_scroll::ListId::Explorer, cx)).children(sticky_container).children(self.explorer_find_widget(window, cx)).into_any_element() }, window, cx)
+                ).child(self.list_scroll_layer(list_scroll::ListId::Explorer, cx)).children(sticky_container).children(self.high_contrast_list_outline(tree_focused, tree.focused.is_some())).children(self.explorer_find_widget(window, cx)).into_any_element() }, window, cx)
             // shortcut: extension webview views sit below the Explorer's panes, not in view_panes.rs; milestone 11 moves them in.
             .children(self.webview_view_panes(cx))
             // The pane view is laid out 5px shorter than the side bar content.
@@ -1480,7 +1526,8 @@ impl Workbench {
             .px(px(4.))
             .when_some(self.theme.color("sideBarTitle.border"), |title, border| title.border_b_1().border_color(border))
             // The h2 keeps its 32px line under the HC border-bottom, so it is laid out from the top, not centered.
-            .child(div().self_start().pl(px(8.)).line_height(px(32.)).text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).text_color(self.foreground_or("sideBarTitle.foreground")).child(crate::nls::localize(&name).into_owned()))
+            // part.css `.title-label h2`: ellipsis where `.title-actions` (8px padding-left) takes the room.
+            .child(div().self_start().min_w_0().truncate().pl(px(8.)).line_height(px(32.)).text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).text_color(self.foreground_or("sideBarTitle.foreground")).child(crate::nls::localize(&name).into_owned()))
     }
 
     /// The letterpress of an empty group, `size` wide (256px, 200px in a part of several groups).

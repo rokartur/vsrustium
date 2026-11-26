@@ -182,7 +182,7 @@ impl Workbench {
         if let [view] = views.as_slice() {
             let pane = self.tree_view_pane(view, window, cx);
             let title = if pane.title == container_title || pane.title.is_empty() { container_title } else { format!("{container_title}: {}", pane.title) };
-            let title = self.side_bar_title_text(title).children(pane.actions);
+            let title = self.side_bar_title_text(title).children(pane.actions.map(|actions| div().flex_none().pl(px(8.)).child(actions)));
             return frame.child(title).child(div().flex_1().min_h_0().flex().flex_col().child(pane.body));
         }
         frame.child(self.side_bar_title_text(container_title)).child(div().flex_1().min_h_0().flex().flex_col().children(self.contributed_view_sections(&views, window, cx)))

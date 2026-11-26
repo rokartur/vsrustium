@@ -1,0 +1,10 @@
+[
+	{ "wait": 3000 },
+	{ "click": [140, 106] }, { "wait": 1000 },
+	{ "hotkey": ["cmd", "shift", "p"] }, { "wait": 800 },
+	{ "type": "Compare Active File With..." }, { "wait": 800 },
+	{ "key": "return" }, { "wait": 1500 },
+	{ "type": "b.txt" }, { "wait": 1500 },
+	{ "key": "return" }, { "wait": 2500 },
+	{ "shot": "hint" }
+]

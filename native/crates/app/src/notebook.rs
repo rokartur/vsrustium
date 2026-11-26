@@ -3,6 +3,8 @@
 //! host. A cell's text is a workbench text model at the cell's `vscode-notebook-cell` URI, so it is not kept here.
 
 pub mod kernels;
+pub mod layout;
+pub mod renderers;
 
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE};
@@ -185,12 +187,24 @@ pub struct NotebookModel {
     pub dirty: bool,
     /// The serializer's `TransientOptions`: `transientOutputs`, `transientCellMetadata`, `transientDocumentMetadata`.
     pub transient: Value,
+    /// Cell edits of the notebook editor to undo and redo; the cells' text edits are on their models' stacks, all
+    /// in one order by stamp (notebookTextModel.ts pushes both to the notebook's undo group).
+    pub undo: Vec<CellsUndo>,
+    pub redo: Vec<CellsUndo>,
+}
+
+/// A cell edit on the undo stack: the edits that revert it and the ones that apply it again.
+#[derive(Clone, Debug)]
+pub struct CellsUndo {
+    pub stamp: u64,
+    pub undo: Vec<Value>,
+    pub redo: Vec<Value>,
 }
 
 impl NotebookModel {
     /// `NotebookTextModel` from `NotebookData` (a `NotebookDataDto`); the new cells' texts are returned with it.
     pub fn new(uri: Value, view_type: &str, data: &Value, transient: Value) -> (Self, Vec<NewCellText>) {
-        let mut model = NotebookModel { uri, view_type: view_type.to_owned(), metadata: object_or_empty(&data["metadata"]), cells: Vec::new(), version_id: 0, next_handle: 0, dirty: false, transient };
+        let mut model = NotebookModel { uri, view_type: view_type.to_owned(), metadata: object_or_empty(&data["metadata"]), cells: Vec::new(), version_id: 0, next_handle: 0, dirty: false, transient, undo: Vec::new(), redo: Vec::new() };
         let cells = data["cells"].as_array().cloned().unwrap_or_default();
         let (cells, texts) = model.create_cells(&cells);
         model.cells = cells;

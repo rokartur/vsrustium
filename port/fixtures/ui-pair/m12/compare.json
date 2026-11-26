@@ -1,0 +1,20 @@
+[
+	{ "click": [600, 200], "foreground": true },
+	{ "type": "x" },
+	{ "hotkey": ["cmd", "shift", "p"] },
+	{ "wait": 600 },
+	{ "type": "compare active file with..." },
+	{ "wait": 800 },
+	{ "key": "return" },
+	{ "wait": 1000 },
+	{ "shot": "compare-with-picker" },
+	{ "type": "readme" },
+	{ "wait": 1000 },
+	{ "key": "return" },
+	{ "wait": 1500 },
+	{ "shot": "compare-with" },
+	{ "rightClick": [120, 195] },
+	{ "wait": 800 },
+	{ "shot": "file-menu" },
+	{ "key": "escape" }
+]

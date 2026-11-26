@@ -166,15 +166,13 @@ impl HostSync {
             .column_ids()
             .into_iter()
             .enumerate()
-            .filter_map(|(column, id)| {
-                let (editor, viewport) = group.group_active(id)?;
-                // A notebook editor's focused cell is the code editor the host sees (`activeCodeEditor`).
-                // shortcut: only that cell of each notebook editor is a visible text editor, not every rendered cell.
-                let editor = match editor.document().scheme == NOTEBOOK_EDITOR_SCHEME {
-                    true => crate::workbench::focused_cell(&self.notebooks, group, editor)?,
-                    false => editor,
-                };
-                is_text(&editor).then_some((column, editor, viewport))
+            .flat_map(|(column, id)| {
+                let Some((editor, viewport)) = group.group_active(id) else { return Vec::new() };
+                // Every cell of a notebook editor is a code editor the host sees, the focused one first.
+                // shortcut: every cell, where the notebook list renders only the cells in view.
+                let cells = group.group_active_tab(id).map(|tab| crate::workbench::notebook_cells(&self.notebooks, group, tab)).unwrap_or_default();
+                let editors = std::iter::once(editor).chain(cells);
+                editors.filter(|editor| is_text(editor)).map(|editor| (column, editor, viewport)).collect()
             })
             .collect();
         let mut seen_cells = Vec::new();
@@ -209,11 +207,7 @@ impl HostSync {
         if !added_editors.is_empty() {
             delta.insert("addedEditors".into(), Value::Array(added_editors));
         }
-        let active = group.active().and_then(|editor| match editor.document().scheme == NOTEBOOK_EDITOR_SCHEME {
-            true => crate::workbench::focused_cell(&self.notebooks, group, editor),
-            false => Some(editor),
-        });
-        let active_id = active.filter(is_text).map(snapshot_id);
+        let active_id = group.active().filter(is_text).map(snapshot_id);
         if active_id != self.active_editor || delta.contains_key("removedEditors") || delta.contains_key("addedEditors") {
             delta.insert("newActiveEditor".into(), json!(active_id));
         }
@@ -464,6 +458,13 @@ impl HostSync {
         let _ = self.sender.send(HostMessage { proxy, method, args, reply: None, cancellable: false, files: None, extensions: None });
     }
 
+    /// mainThreadWorkspace.ts `_onDidChangeWorkspace`: the session's search folders, then `$acceptWorkspaceData`.
+    pub fn send_workspace_data(&self, workspace: &config::workspace::Workspace) {
+        let folders: Vec<Value> = workspace.folders.iter().map(|folder| Value::String(folder.path.to_string_lossy().into_owned())).collect();
+        self.send("workbench", "setWorkspaceFolders", folders);
+        self.send("ExtHostWorkspace", "$acceptWorkspaceData", vec![exthost::session::workspace_data_of(workspace)]);
+    }
+
     /// `MessageType.Terminate`: the session thread tells the host to deactivate its extensions and exit.
     pub fn stop_extension_host(&self) {
         self.send("workbench", "stopExtensionHost", Vec::new());
@@ -641,6 +642,7 @@ fn tab_dto(group: u32, editor: &OpenEditor, active: bool, sync: &HostSync) -> Va
         tab["label"] = json!(webview.label);
         tab["input"] = match &webview.custom_resource {
             Some(uri) => json!({ "kind": 6, "viewType": webview.view_type, "uri": uri }),
+            None if !webview.view_type.starts_with("mainThreadWebview-") => json!({ "kind": 0 }),
             None => json!({ "kind": 7, "viewType": webview.view_type }),
         };
         tab["editorId"] = json!(webview.view_type);

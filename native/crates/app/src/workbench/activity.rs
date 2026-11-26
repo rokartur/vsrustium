@@ -97,6 +97,7 @@ impl Workbench {
             }
         }
         match container {
+            "workbench.view.explorer" => badges.push(Badge::Number(self.dirty_working_copy_count())),
             "workbench.view.scm" => badges.push(Badge::Number(self.scm_badge())),
             "workbench.view.extensions" => badges.push(Badge::Number(self.extensions_badge().map_or(0, |(count, _)| count as u64))),
             _ => {}

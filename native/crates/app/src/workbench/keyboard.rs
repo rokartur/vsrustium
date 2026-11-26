@@ -361,6 +361,7 @@ impl Workbench {
         };
         context.insert("workbenchState".into(), json!(workbench_state));
         context.insert("workspaceFolderCount".into(), json!(self.workspace().map_or(0, |workspace| workspace.folders.len())));
+        context.insert("resourceSelectedForCompare".into(), json!(self.resource_to_compare.is_some()));
         // RemoteNameContext of a local window.
         context.insert("remoteName".into(), json!(""));
         // workspace.contribution.ts WorkspaceTrustContextKeys.
@@ -381,6 +382,7 @@ impl Workbench {
         if let Some(editor) = self.editors.active() {
             let pane = if editor.document().scheme == super::welcome_page::WALKTHROUGH_SCHEME { "gettingStartedPage" } else { "workbench.editor.files" };
             context.insert("activeEditor".into(), json!(pane));
+            self.webview_editor_context(&mut context);
             self.insert_diff_editor_context(&mut context);
             self.insert_multi_diff_editor_context(&mut context);
             self.insert_merge_editor_context(&mut context);
@@ -440,6 +442,20 @@ impl Workbench {
             context.insert("resourceScheme".into(), json!(editor.document().scheme));
             context.insert("resourceFilename".into(), json!(path.file_name().map(|name| name.to_string_lossy()).unwrap_or_default()));
             context.insert("resourceExtname".into(), json!(path.extension().map(|ext| format!(".{}", ext.to_string_lossy())).unwrap_or_default()));
+            // A notebook editor's resource keys are its notebook's (ResourceContextKey of the editor input), not a cell's.
+            if let Some((scheme, path)) = self.active_notebook_resource() {
+                context.insert("isFileSystemResource".into(), json!(scheme == "file"));
+                context.insert("resource".into(), json!(crate::editor::uri_string(&scheme, &path)));
+                context.insert("resourceScheme".into(), json!(scheme));
+                context.insert("resourceFilename".into(), json!(path.file_name().map(|name| name.to_string_lossy()).unwrap_or_default()));
+                context.insert("resourceExtname".into(), json!(path.extension().map(|ext| format!(".{}", ext.to_string_lossy())).unwrap_or_default()));
+                context.insert("resourceLangId".into(), json!(self.languages.guess_language(&path, "")));
+                // notebookContextKeys.ts; the list and its cells are the notebook editor's focus.
+                context.insert("notebookEditorFocused".into(), json!(true));
+                if let Some(model) = self.active_notebook_editor().and_then(|editor| self.host.notebooks.model(&editor.notebook)) {
+                    context.insert("notebookType".into(), json!(model.view_type));
+                }
+            }
         }
         self.quick_input_context(window, &mut context);
         match self.side_bar_view {

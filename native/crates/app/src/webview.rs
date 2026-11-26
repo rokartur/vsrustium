@@ -49,6 +49,11 @@ pub struct Webview {
     pending: Option<Vec<String>>,
 }
 
+/// WebKit needs AppKit's main thread, which unit tests do not run on.
+pub fn supported() -> bool {
+    MainThreadMarker::new().is_some()
+}
+
 impl Webview {
     /// A hidden webview over `window` loading the host page; `origin` is the webview's `this.origin`, the salt of its host name.
     pub fn new(window: &Window, id: &str, origin: &str, extension_id: &str, pre_dir: PathBuf, roots: Vec<PathBuf>, events: UnboundedSender<WebviewEvent>) -> Self {
@@ -58,6 +63,12 @@ impl Webview {
         let configuration = unsafe { WKWebViewConfiguration::new(mtm) };
         let handler = SchemeHandler::new(mtm, SchemeState { pre_dir, roots: roots.clone(), tasks: RefCell::default(), session: OnceLock::new() });
         unsafe { configuration.setURLSchemeHandler_forURLScheme(Some(ProtocolObject::from_ref(&*handler)), &NSString::from_str("https")) };
+        // WebKit blocks an http frame in the https host page as mixed content, loopback included, where Chromium lets
+        // http://localhost load (the Simple Browser's dev servers). SAFETY: WKProcessPoolPrivate.h, macOS 10.13+.
+        unsafe {
+            let pool: *mut objc2::runtime::AnyObject = msg_send![&*configuration, processPool];
+            let _: () = msg_send![pool, _registerURLSchemeAsSecure: &*NSString::from_str("http")];
+        }
         let content = unsafe { configuration.userContentController() };
         let bridge = MessageHandler::new(mtm, MessageState { id: id.to_string(), events });
         unsafe {
@@ -146,7 +157,11 @@ impl Webview {
     /// Gives the keyboard back to GPUI's view, the view's superview.
     pub fn release_keyboard(&self) {
         // SAFETY: the view is alive; its superview is GPUI's view or none.
-        let (Some(window), Some(parent)) = (self.view.window(), unsafe { self.view.superview() }) else { return };
+        let (Some(window), Some(mut parent)) = (self.view.window(), unsafe { self.view.superview() }) else { return };
+        if let Some(clip) = parent.downcast_ref::<ClipView>() {
+            let Some(gpui) = (unsafe { clip.superview() }) else { return };
+            parent = gpui;
+        }
         if self.is_first_responder(&window) {
             window.makeFirstResponder(Some(&parent));
         }
@@ -157,6 +172,34 @@ impl Webview {
         let Some(responder) = window.firstResponder() else { return false };
         let Ok(view) = responder.downcast::<NSView>() else { return false };
         view.isDescendantOf(&self.view)
+    }
+
+    /// webviewFindWidget.ts `reveal`: the find widget over the host page's top right, its input focused. `styles` is
+    /// `theme_data`; `icons` the arrow-up, arrow-down and close codicons as SVG markup.
+    pub fn show_find(&self, styles: &Value, icons: [String; 3]) {
+        self.take_keyboard();
+        self.evaluate(&format!("({FIND_SCRIPT})({styles}, {}).show()", json!(icons)));
+    }
+
+    pub fn hide_find(&self) {
+        self.evaluate("globalThis.__vscodeFind?.hide()");
+    }
+
+    /// `WebviewFindWidget.find`: the next or previous match of the widget's text.
+    pub fn find(&self, previous: bool) {
+        self.evaluate(&format!("globalThis.__vscodeFind?.find({previous})"));
+    }
+
+    /// The Web Inspector of the view, as the Electron webview's dev tools; WebKit has no public call to open it.
+    pub fn open_inspector(&self) {
+        // SAFETY: `_inspector` returns the view's `_WKInspector`, whose `show` opens its window; both exist since
+        // macOS 10.14 and the view is inspectable.
+        unsafe {
+            let inspector: *mut objc2::runtime::AnyObject = msg_send![&*self.view, _inspector];
+            if let Some(inspector) = inspector.as_ref() {
+                let _: () = msg_send![inspector, show];
+            }
+        }
     }
 
     fn evaluate(&self, script: &str) {
@@ -174,7 +217,7 @@ impl Drop for Webview {
 }
 
 /// Shows `view` over `bounds`, in GPUI window coordinates.
-pub fn place(view: &WKWebView, window: &Window, bounds: Bounds<Pixels>) {
+pub fn place(view: &NSView, window: &Window, bounds: Bounds<Pixels>) {
     let parent = gpui_view(window);
     let (x, width, height) = (f64::from(f32::from(bounds.origin.x)), f64::from(f32::from(bounds.size.width)), f64::from(f32::from(bounds.size.height)));
     let top = f64::from(f32::from(bounds.origin.y));
@@ -186,6 +229,72 @@ pub fn place(view: &WKWebView, window: &Window, bounds: Bounds<Pixels>) {
     if view.isHidden() {
         view.setHidden(false);
     }
+}
+
+/// The notebook's back layer webview (backLayerWebView.ts) lies behind the cells upstream; here it floats over GPUI's
+/// layer, so a clip view holds it: it shows the webview inside the notebook list only, and presses reach the
+/// webview over its outputs and markdown previews only, GPUI's cells everywhere else.
+pub struct ClipState {
+    hit_rects: RefCell<Vec<NSRect>>,
+}
+
+define_class!(
+    #[unsafe(super(NSView))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "CodeGpuiWebviewClip"]
+    #[ivars = ClipState]
+    pub struct ClipView;
+
+    impl ClipView {
+        #[unsafe(method(isFlipped))]
+        fn is_flipped(&self) -> bool {
+            true
+        }
+
+        #[unsafe(method(hitTest:))]
+        // The view `hitTest:` returns is not owned (+0), so it passes through as a pointer.
+        fn hit_test(&self, point: NSPoint) -> *mut NSView {
+            // SAFETY: the clip view is GPUI's view's subview while it is hit tested.
+            let local = self.convertPoint_fromView(point, unsafe { self.superview() }.as_deref());
+            let inside = |rect: &NSRect| local.x >= rect.origin.x && local.y >= rect.origin.y && local.x < rect.origin.x + rect.size.width && local.y < rect.origin.y + rect.size.height;
+            if !self.ivars().hit_rects.borrow().iter().any(inside) {
+                return std::ptr::null_mut();
+            }
+            unsafe { msg_send![super(self), hitTest: point] }
+        }
+    }
+);
+
+impl ClipView {
+    /// A hidden clip view over `window` holding `webview`.
+    pub fn new(window: &Window, webview: &Webview) -> Retained<Self> {
+        let mtm = MainThreadMarker::new().expect("webviews live on the main thread");
+        let this = Self::alloc(mtm).set_ivars(ClipState { hit_rects: RefCell::default() });
+        let this: Retained<Self> = unsafe { msg_send![super(this), initWithFrame: NSRect::ZERO] };
+        this.setClipsToBounds(true);
+        this.setHidden(true);
+        webview.view.removeFromSuperview();
+        this.addSubview(&webview.view);
+        webview.view.setHidden(false);
+        gpui_view(window).addSubview(&this);
+        this
+    }
+
+    /// Shows the clip over `bounds` in GPUI window coordinates, its webview at `webview` (relative to the clip's
+    /// origin, as `hit_rects` are).
+    pub fn place(&self, webview: &WKWebView, window: &Window, bounds: Bounds<Pixels>, webview_frame: Bounds<Pixels>, hit_rects: Vec<Bounds<Pixels>>) {
+        place(self, window, bounds);
+        let frame = ns_rect(webview_frame);
+        if webview.frame() != frame {
+            webview.setFrame(frame);
+        }
+        *self.ivars().hit_rects.borrow_mut() = hit_rects.into_iter().map(ns_rect).collect();
+    }
+}
+
+fn ns_rect(bounds: Bounds<Pixels>) -> NSRect {
+    let value = |pixels: Pixels| f64::from(f32::from(pixels));
+    NSRect::new(NSPoint::new(value(bounds.origin.x), value(bounds.origin.y)), NSSize::new(value(bounds.size.width), value(bounds.size.height)))
 }
 
 fn gpui_view(window: &Window) -> Retained<NSView> {
@@ -313,7 +422,7 @@ pub fn byte_range(header: &str, len: u64) -> Option<(u64, u64)> {
 }
 
 /// themeing.ts `getWebviewThemeData`: the `styles` message of the host page.
-pub fn theme_data(theme: &Theme, theme_label: &str, editor: &Value, underline_links: bool) -> Value {
+pub fn theme_data(theme: &Theme, theme_label: &str, editor: &Value, underline_links: bool, reduce_motion: bool) -> Value {
     let mut styles = serde_json::Map::new();
     let font = |key: &str| editor[key].as_str().filter(|value| !value.is_empty()).map(str::to_string);
     styles.insert("vscode-font-family".into(), json!("-apple-system, BlinkMacSystemFont, sans-serif"));
@@ -340,7 +449,7 @@ pub fn theme_data(theme: &Theme, theme_label: &str, editor: &Value, underline_li
         ThemeKind::HighContrastDark => "vscode-high-contrast",
         ThemeKind::HighContrastLight => "vscode-high-contrast-light",
     };
-    json!({ "styles": styles, "activeTheme": active_theme, "themeId": theme.settings_id, "themeLabel": theme_label, "reduceMotion": false, "screenReader": false })
+    json!({ "styles": styles, "activeTheme": active_theme, "themeId": theme.settings_id, "themeLabel": theme_label, "reduceMotion": reduce_motion, "screenReader": false })
 }
 
 /// editorOptions.ts `EditorFontLigatures.validate`.
@@ -355,7 +464,7 @@ fn font_ligatures(value: &Value) -> String {
 }
 
 /// color.ts `Color.Format.CSS.format`: `#rrggbb` when opaque, else `rgba(…)` with the alpha to 2 decimals.
-fn css_color(color: gpui::Rgba) -> String {
+pub fn css_color(color: gpui::Rgba) -> String {
     let byte = |value: f32| (value * 255.).round() as u8;
     let (r, g, b) = (byte(color.r), byte(color.g), byte(color.b));
     if color.a >= 1. {
@@ -487,6 +596,156 @@ const BRIDGE_SCRIPT: &str = r#"(() => {
     },
   };
 })();"#;
+
+/// webviewFindWidget.ts (a SimpleFindWidget without toggles or result count) in the host page, over its content
+/// frame: GPUI cannot draw over the native view, so the widget is upstream's markup and simpleFindWidget.css, the
+/// input box styles of defaultInputBoxStyles. Electron's `findInFrame` becomes the content window's `find`, which
+/// selects the match instead of highlighting every one. Called with the theme data and the three icons; answers
+/// `globalThis.__vscodeFind`, made once per host page.
+const FIND_SCRIPT: &str = r#"(theme, icons) => {
+  const setTheme = element => {
+    for (const [variable, value] of Object.entries(theme.styles)) {
+      element.style.setProperty(`--${variable}`, value);
+    }
+  };
+  if (globalThis.__vscodeFind) {
+    setTheme(globalThis.__vscodeFind.wrapper);
+    return globalThis.__vscodeFind;
+  }
+  const native = window.webkit.messageHandlers.vscodeWebviewHost;
+  const post = (channel, data) => native.postMessage(JSON.stringify({ channel, data }));
+  const style = document.createElement('style');
+  style.textContent = `
+    .simple-find-part-wrapper { overflow: hidden; z-index: 10; position: absolute; top: 0; right: 18px; max-width: calc(100% - 28px - 28px - 8px); pointer-events: none; padding: 0 10px 10px; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
+    .simple-find-part { visibility: hidden; z-index: 10; position: relative; top: -45px; display: flex; padding: 4px; align-items: center; pointer-events: all; transition: top 200ms linear; background-color: var(--vscode-editorWidget-background); color: var(--vscode-editorWidget-foreground); box-shadow: 0 0 8px 2px var(--vscode-widget-shadow); border: 1px solid var(--vscode-widget-border, transparent); border-top: none; border-bottom-left-radius: 4px; border-bottom-right-radius: 4px; font-size: 12px; }
+    .simple-find-part.visible { visibility: visible; }
+    .simple-find-part.visible-transition { top: 0; }
+    .simple-find-part .monaco-findInput { position: relative; flex: 1; }
+    .monaco-inputbox { position: relative; display: block; padding: 0; box-sizing: border-box; border-radius: 4px; font-size: 13px; width: 100%; background-color: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border, transparent); }
+    .monaco-inputbox:focus-within { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+    .monaco-inputbox > .ibwrapper { position: relative; width: 100%; }
+    .monaco-inputbox > .ibwrapper > input { display: inline-block; box-sizing: border-box; width: 100%; height: 100%; padding: 4px 6px; line-height: inherit; border: none; outline: none; font-family: inherit; font-size: inherit; color: inherit; background: transparent; text-overflow: clip; }
+    .monaco-inputbox > .ibwrapper > input::placeholder { color: var(--vscode-input-placeholderForeground); }
+    .simple-find-part .button { min-width: 20px; width: 20px; height: 20px; line-height: 20px; display: flex; flex: initial; justify-content: center; align-items: center; margin-left: 3px; cursor: pointer; border-radius: 5px; color: var(--vscode-icon-foreground); }
+    .simple-find-part .button.disabled { opacity: 0.3; cursor: default; }
+    .simple-find-part .button:hover:not(.disabled) { background-color: var(--vscode-toolbar-hoverBackground); outline: 1px dashed var(--vscode-toolbar-hoverOutline); outline-offset: -1px; }
+    .simple-find-part .button svg { width: 16px; height: 16px; }
+  `;
+  document.head.appendChild(style);
+  const element = (tag, className) => {
+    const node = document.createElement(tag);
+    node.className = className;
+    return node;
+  };
+  const wrapper = element('div', 'simple-find-part-wrapper');
+  const part = element('div', 'simple-find-part');
+  const findInput = element('div', 'monaco-findInput');
+  const inputBox = element('div', 'monaco-inputbox');
+  const ibwrapper = element('div', 'ibwrapper');
+  const input = element('input', 'input');
+  input.placeholder = 'Find';
+  input.setAttribute('aria-label', 'Find');
+  input.spellcheck = false;
+  ibwrapper.appendChild(input);
+  inputBox.appendChild(ibwrapper);
+  findInput.appendChild(inputBox);
+  part.appendChild(findInput);
+  const button = (label, icon, run) => {
+    const node = element('div', 'button');
+    node.title = label;
+    node.setAttribute('role', 'button');
+    node.setAttribute('aria-label', label);
+    node.innerHTML = icon;
+    node.addEventListener('click', e => {
+      e.preventDefault();
+      if (!node.classList.contains('disabled')) {
+        run();
+      }
+    });
+    part.appendChild(node);
+    return node;
+  };
+  let started = false;
+  const frame = () => document.getElementById('active-frame')?.contentWindow;
+  const updateButtons = found => {
+    prev.classList.toggle('disabled', !found);
+    next.classList.toggle('disabled', !found);
+  };
+  // webviewElement.ts `updateFind` starts a search from the top of the page, `find` continues it.
+  const search = previous => {
+    const target = frame();
+    if (!target || !input.value) {
+      return;
+    }
+    if (!started) {
+      target.getSelection()?.removeAllRanges();
+      started = true;
+    }
+    const found = target.find(input.value, false, previous, true, false, true, false);
+    updateButtons(found);
+    input.focus();
+  };
+  const find = {
+    wrapper,
+    show() {
+      part.classList.add('visible');
+      requestAnimationFrame(() => part.classList.add('visible-transition'));
+      input.select();
+      input.focus();
+    },
+    hide() {
+      if (!part.classList.contains('visible')) {
+        return;
+      }
+      part.classList.remove('visible-transition');
+      setTimeout(() => part.classList.contains('visible-transition') || part.classList.remove('visible'), 200);
+      started = false;
+      post('find-hidden', null);
+    },
+    find(previous) {
+      search(previous);
+    },
+  };
+  const prev = button('Previous Match', icons[0], () => search(true));
+  const next = button('Next Match', icons[1], () => search(false));
+  button('Close', icons[2], () => find.hide());
+  updateButtons(false);
+  wrapper.appendChild(part);
+  document.body.appendChild(wrapper);
+  setTheme(wrapper);
+  input.addEventListener('input', () => {
+    started = false;
+    if (input.value) {
+      search(false);
+    } else {
+      frame()?.getSelection()?.removeAllRanges();
+      updateButtons(false);
+    }
+  });
+  part.addEventListener('focusin', () => post('find-focus', { focused: true }));
+  part.addEventListener('focusout', () => post('find-focus', { focused: false }));
+  // Runs before index.html's keydown listener: the widget's own keys stay in the page; the others go on to the
+  // workbench as the host page forwards them.
+  window.addEventListener('keydown', e => {
+    if (!part.contains(e.target)) {
+      return;
+    }
+    const plain = !e.metaKey && !e.ctrlKey && !e.altKey;
+    const editKey = e.metaKey && !e.altKey && !e.ctrlKey && ['a', 'c', 'v', 'x', 'z'].includes(e.key.toLowerCase());
+    if (e.key === 'Enter' && plain) {
+      e.preventDefault();
+      search(e.shiftKey);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      find.hide();
+    } else if (!plain && !editKey) {
+      return;
+    }
+    e.stopImmediatePropagation();
+  }, true);
+  globalThis.__vscodeFind = find;
+  return find;
+}"#;
 
 struct MessageState {
     id: String,

@@ -904,8 +904,8 @@ impl Workbench {
         // `restartBlinkAnimation` on a key: the cursor shows.
         self.terminal_view.cursor_blink_off = false;
         match resolution {
-            Resolution::MoreChordsNeeded if self.setting("terminal.integrated.allowChords") == true && !keystroke.modifiers.alt => return false,
-            Resolution::KbFound { command, .. } if self.setting("terminal.integrated.sendKeybindingsToShell") != true && self.skips_shell(command) => return false,
+            Resolution::MoreChordsNeeded if self.setting("terminal.integrated.allowChords") == true && keystroke.key != "escape" => return false,
+            Resolution::KbFound { command, .. } if self.setting("terminal.integrated.sendKeybindingsToShell") != true && (keystroke.modifiers.platform || self.skips_shell(command)) => return false,
             _ => {}
         }
         let mac_option_is_meta = self.setting("terminal.integrated.macOptionIsMeta") == true;

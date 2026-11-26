@@ -172,8 +172,12 @@ impl WorkspaceTrust {
 
 /// extensionEnablementService.ts `_isDisabledByWorkspaceTrust` in an untrusted window: an extension inside the
 /// workspace, or one whose `getExtensionUntrustedWorkspaceSupportType` is `false`. `configured` is the
-/// `extensions.supportUntrustedWorkspaces` setting; the product overrides none.
+/// `extensions.supportUntrustedWorkspaces` setting; the product overrides none. `filterEnabledExtensions` never
+/// disables an extension under development.
 pub fn disabled_when_untrusted(extension: &ScannedExtension, workspace: Option<&Workspace>, configured: &Value) -> bool {
+    if extension.description["isUnderDevelopment"] == true {
+        return false;
+    }
     if workspace.is_some_and(|workspace| workspace.folders.iter().any(|folder| extension.location.starts_with(&folder.path))) {
         return true;
     }

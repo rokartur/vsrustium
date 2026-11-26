@@ -148,6 +148,40 @@ impl Settings {
         self.configuration.compare_and_update_policy(policy)
     }
 
+    /// `WorkspaceConfiguration.setFolders` then `onWorkspaceConfigurationChanged`: writes the workspace file's
+    /// `folders` and applies them. Errors without a workspace file or when the file cannot be written.
+    pub fn write_workspace_folders(&mut self, folders: &[Value]) -> Result<Change, String> {
+        let file = self.workspace_file().ok_or("Unable to write into workspace configuration file.")?.to_path_buf();
+        let content = std::fs::read_to_string(&file).map_err(|error| error.to_string())?;
+        let options = formatting_options(&content, &self.configuration, &file);
+        let edits = set_property(&content, &[Segment::Key("folders".into())], Some(&Value::Array(folders.to_vec())), &options);
+        std::fs::write(&file, crate::json_edit::apply_edits(&content, &edits)).map_err(|error| error.to_string())?;
+        Ok(self.set_workspace_folders(Workspace::from_file(file).folders))
+    }
+
+    /// `onFoldersChanged`: the settings layers of removed folders go, those of added folders are read.
+    fn set_workspace_folders(&mut self, folders: Vec<crate::workspace::WorkspaceFolder>) -> Change {
+        let Some(workspace) = self.workspace.as_mut() else { return Change::default() };
+        workspace.folders = folders;
+        let paths: Vec<PathBuf> = workspace.folders.iter().map(|folder| folder.path.clone()).collect();
+        let mut old = std::mem::take(&mut self.configuration.folders);
+        let mut changes: Vec<Change> = old.iter().filter(|(folder, _)| !paths.contains(folder)).map(|(_, model)| compare(Some(model), None)).collect();
+        for path in paths {
+            let model = match old.iter().position(|(folder, _)| *folder == path) {
+                Some(index) => old.swap_remove(index).1,
+                None => {
+                    let model = self.load_folder(&path);
+                    changes.push(compare(None, Some(&model)));
+                    model
+                }
+            };
+            self.configuration.folders.push((path, model));
+        }
+        self.configuration.layers_changed();
+        self.stamps = self.watched_files().into_iter().map(|path| (path.clone(), stamp(&path))).collect();
+        merge_changes(&changes)
+    }
+
     /// `updateWorkspaceTrust`: reparses the folder and workspace settings. Main calls it before the window opens,
     /// as a trust change later reloads the window, so no change event is computed.
     pub fn update_workspace_trust(&mut self, trusted: bool) {
@@ -214,7 +248,11 @@ impl Settings {
         if changed_files.iter().any(|path| self.is_user_file(path)) {
             changes.push(self.reload_user_layers());
         }
-        if self.workspace_file().is_some_and(|file| changed_files.iter().any(|path| path == file)) {
+        if let Some(file) = self.workspace_file().filter(|file| changed_files.iter().any(|path| path == file)).map(Path::to_path_buf) {
+            let folders = Workspace::from_file(file).folders;
+            if self.workspace.as_ref().is_some_and(|workspace| workspace.folders != folders) {
+                changes.push(self.set_workspace_folders(folders));
+            }
             let workspace = self.load_workspace();
             changes.push(self.configuration.compare_and_update_workspace(workspace));
         }

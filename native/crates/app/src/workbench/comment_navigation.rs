@@ -68,11 +68,16 @@ impl Workbench {
         // `CommentCommandId.Hide` in a comment input: `getParentThread().collapse()` selects the thread's range.
         self.commands.register("workbench.action.hideComment", |workbench, _, window, cx| {
             let Some((controller, thread)) = workbench.comments.reply.as_ref().map(|reply| (reply.controller, reply.thread)) else { return Outcome::done() };
-            workbench.hide_comment_reply(window, cx);
             let state = workbench.comments.controllers.iter_mut().find(|candidate| candidate.handle == controller).and_then(|owner| owner.threads.iter_mut().find(|candidate| candidate.handle == thread));
-            let Some(state) = state else { return Outcome::done() };
-            state.collapse_state = COLLAPSED;
-            if let Some(range) = state.range.clone() {
+            // The reference leaves a revealed template open on Escape, text typed or not, without the confirmation
+            // `collapse(true)` would ask for (ui-pair steps-comment-escape-typed.json): its collapse never runs.
+            let Some(state) = state.filter(|state| !state.revealed) else { return Outcome::done() };
+            let hides = state.set_collapse_state(COLLAPSED);
+            let range = state.range.clone();
+            if hides {
+                workbench.hide_comment_reply(window, cx);
+            }
+            if let Some(range) = range {
                 workbench.select_comment_range(&range);
             }
             workbench.sync_comment_widgets();
@@ -84,7 +89,7 @@ impl Workbench {
     /// `changeAllCollapseState`: every thread takes the state `new_state` gives for its `CommentThreadState`.
     fn change_all_collapse_states(&mut self, new_state: impl Fn(Option<u64>) -> u64, cx: &mut Context<Self>) -> Outcome {
         for thread in self.comments.controllers.iter_mut().flat_map(|controller| &mut controller.threads) {
-            thread.collapse_state = new_state(thread.state);
+            thread.set_collapse_state(new_state(thread.state));
         }
         self.sync_comment_widgets();
         cx.notify();
@@ -107,7 +112,7 @@ impl Workbench {
         let Some((controller, thread, range)) = nearest_thread(threads, after, reverse) else { return };
         self.select_comment_range(&range.unwrap_or_else(|| json!({})));
         if let Some(state) = self.comments.controllers.iter_mut().find(|candidate| candidate.handle == controller).and_then(|owner| owner.threads.iter_mut().find(|candidate| candidate.handle == thread)) {
-            state.collapse_state = EXPANDED;
+            state.set_collapse_state(EXPANDED);
         }
         self.sync_comment_widgets();
         window.focus(&self.editor_focus, cx);
@@ -141,7 +146,7 @@ impl Workbench {
         let threads = self.comments.controllers.iter_mut().flat_map(|controller| &mut controller.threads);
         let mut threads = threads.filter(|thread| thread.resource["path"] == uri["path"] && thread.resource["scheme"] == uri["scheme"]);
         let Some(thread) = threads.find(|thread| thread.range.as_ref().is_some_and(holds)) else { return false };
-        thread.collapse_state = EXPANDED;
+        thread.set_collapse_state(EXPANDED);
         self.sync_comment_widgets();
         true
     }

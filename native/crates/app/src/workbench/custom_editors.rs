@@ -100,6 +100,10 @@ impl Workbench {
             (None, Ok((scheme, path))) => self.custom_editor_for(scheme, &path),
         };
         match view_type {
+            Some(view_type) if self.is_notebook_type(&view_type) => {
+                self.detach_custom_editors(resource, None);
+                self.open_notebook(resource.clone(), view_type, options, window, cx)
+            }
             Some(view_type) => match media_kind(&view_type) {
                 Some(kind) => {
                     self.detach_custom_editors(resource, None);
@@ -326,6 +330,7 @@ impl Workbench {
         let scheme = scheme.to_owned();
         let provider = &self.webview_panels.custom_editors.providers[view_type];
         let (text, extension, retain) = (provider.text, provider.extension.clone(), provider.options["retainContextWhenHidden"] == true);
+        let find_enabled = provider.options["enableFindWidget"] == true;
         let title = path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
         let custom = Some(CustomEditor { resource: resource.clone(), resolved: false });
         let shows = |panel: &WebviewPanel| panel.view_type == view_type && panel.custom.as_ref().is_some_and(|custom| custom.resource == *resource);
@@ -346,10 +351,16 @@ impl Workbench {
                 handle
             }
         };
+        if let Some(panel) = self.webview_panel_mut(&handle) {
+            panel.find_enabled = find_enabled;
+        }
         if text {
             self.try_show_text_document(resource, options, window, cx)?;
         } else {
-            let index = self.webview_editor_index(&handle).expect("the panel's editor is open");
+            // shortcut: one panel per resource, so a custom editor open in another group shows there; upstream opens a
+            // second editor of the resource in the active group.
+            let (group, index) = self.webview_editor_group(&handle).expect("the panel's editor is open");
+            self.activate_group(group);
             self.editors.activate(index);
             if options["pinned"] == true {
                 self.editors.pin(index);
@@ -509,6 +520,18 @@ fn custom_editor_contributions(extensions: &[exthost::scan::ScannedExtension]) -
             };
             let selectors = contribution["selector"].as_array().into_iter().flatten();
             let patterns = selectors.filter_map(|selector| selector["filenamePattern"].as_str()).map(str::to_owned).collect();
+            let display_name = contribution["displayName"].as_str().unwrap_or_default().to_owned();
+            contributions.push(Contribution { view_type: view_type.to_owned(), display_name, provider: provider.clone(), patterns, rank });
+        }
+        // notebookServiceImpl.ts `_registerContributionPoint`: each notebook type is an editor, `default` unless it says otherwise.
+        for contribution in extension.description["contributes"]["notebooks"].as_array().into_iter().flatten() {
+            let Some(view_type) = contribution["type"].as_str() else { continue };
+            let rank = match contribution["priority"].as_str() {
+                None | Some("default") => RANK_DEFAULT,
+                Some(_) => 1,
+            };
+            let selectors = contribution["selector"].as_array().into_iter().flatten();
+            let patterns = selectors.filter_map(|selector| selector["filenamePattern"].as_str().or(selector["filenamePattern"]["include"].as_str())).map(str::to_owned).collect();
             let display_name = contribution["displayName"].as_str().unwrap_or_default().to_owned();
             contributions.push(Contribution { view_type: view_type.to_owned(), display_name, provider: provider.clone(), patterns, rank });
         }

@@ -105,3 +105,11 @@ Found by the pairs and fixed: a drag of a centered sash moved only that margin, 
 ## Activity badges (session m11f)
 
 `ui-pair` with `port/fixtures/ui-steps/activity-badge.json` (6 s, one shot) on a copy of `port/fixtures/workspace` made a git repository with one changed and one new file: AE 1808 over 2048x1536, glyph antialiasing only; the Source Control item's `2` badge has the reference's size, color and place.
+
+## Secondary side bar (port-m11e-verify)
+
+`bun port/tools/ui-pair <out> port/fixtures/ui-steps/auxiliarybar.json` on the Studio (no folder fixture), shots in `/tmp/aux/`, 2x: Alt+Cmd+B, hover Maximize Secondary Side Bar, click it, click it again, Cmd+Shift+M, drag the Problems tab from 345,505 onto the secondary side bar (shot while held), drop.
+
+Same: the empty part (title with Maximize Secondary Side Bar and Hide Secondary Side Bar, "Drag a view here to display."), the Maximize Secondary Side Bar tooltip below the action, right-aligned at the window edge; maximized, the side bar, the editor and the panel hidden with the part filling the window and the toggled action's `actionBar.toggledBackground`; restored, the earlier layout and width; the narrow panel (aux bar open) with the Problems filter at the top of the view; while dragging, the empty part's content in `editorGroup.dropBackground`; dropped, the Problems view in the secondary side bar (its tab, View as Table, Collapse All, the separator, Maximize, Hide, the filter at the top of the view, the message wrapped), the panel on Terminal with Output and the "..." overflow.
+
+Differences: the reference keeps the tooltip after the click (Restore Secondary Side Bar, and Maximize after the second click), the port hides it on click; the port draws the dragged tab's label as GPUI's drag preview, the reference's OS drag image is not in the capture; the port shows the sash grips while dragging; the terminal's own content and its "..." action (terminal rows).

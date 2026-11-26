@@ -1,0 +1,11 @@
+[
+	{ "hotkey": ["cmd", "shift", "h"] },
+	{ "wait": 800 },
+	{ "type": "the" },
+	{ "wait": 2000 },
+	{ "shot": "replace-query" },
+	{ "click": [90, 59] },
+	{ "type": "THE" },
+	{ "wait": 2000 },
+	{ "shot": "replace-preview" }
+]

@@ -48,9 +48,10 @@ pub enum InputId {
     IconSelectSearch,
     CommentReply,
     CommentsFilter,
+    TrustedPath,
 }
 
-const INPUTS: [InputId; 24] = [
+const INPUTS: [InputId; 25] = [
     InputId::QuickInput,
     InputId::Explorer,
     InputId::ExplorerFind,
@@ -75,6 +76,7 @@ const INPUTS: [InputId; 24] = [
     InputId::IconSelectSearch,
     InputId::CommentReply,
     InputId::CommentsFilter,
+    InputId::TrustedPath,
 ];
 
 /// The view state of one input element.
@@ -155,6 +157,7 @@ impl Workbench {
             InputId::DebugConsole => &self.debug_console.input_view,
             InputId::TerminalFind => &self.terminal_view.find.view,
             InputId::Rename => &self.rename.view,
+            InputId::TrustedPath => &self.trust_editor.path_view,
         }
     }
 
@@ -189,6 +192,7 @@ impl Workbench {
             InputId::DebugConsole => &mut self.debug_console.input_view,
             InputId::TerminalFind => &mut self.terminal_view.find.view,
             InputId::Rename => &mut self.rename.view,
+            InputId::TrustedPath => &mut self.trust_editor.path_view,
         }
     }
 
@@ -220,6 +224,7 @@ impl Workbench {
             InputId::DebugConsole => &self.debug_console.input_focus,
             InputId::TerminalFind => &self.terminal_view.find.focus,
             InputId::Rename => &self.rename.focus,
+            InputId::TrustedPath => self.trust_editor.path_focus.as_ref().unwrap_or(&self.rename.focus),
         }
     }
 
@@ -251,6 +256,7 @@ impl Workbench {
             InputId::DebugConsole => Some(&self.debug_console.input),
             InputId::TerminalFind => Some(&self.terminal_view.find.input),
             InputId::Rename => self.rename.widget.as_ref().map(|widget| &widget.input),
+            InputId::TrustedPath => self.trust_editor.edit.as_ref().map(|(_, input)| input),
         }
     }
 
@@ -364,6 +370,10 @@ impl Workbench {
                 }
                 Outcome::done()
             }
+            InputId::TrustedPath => {
+                self.edit_trusted_path_input(edit, cx);
+                Outcome::done()
+            }
         }
     }
 
@@ -432,6 +442,10 @@ impl Workbench {
             return;
         }
         if id == InputId::Explorer && self.explorer_input_key(&keystroke.key, window, cx) {
+            cx.stop_propagation();
+            return;
+        }
+        if id == InputId::TrustedPath && !modifiers.platform && !modifiers.alt && !modifiers.shift && self.trusted_path_input_key(&keystroke.key, window, cx) {
             cx.stop_propagation();
             return;
         }
@@ -565,6 +579,7 @@ impl Workbench {
                 InputId::DebugConsole => "debug-console-input-text".into(),
                 InputId::TerminalFind => "terminal-find-text".into(),
                 InputId::Rename => "rename-input-text".into(),
+                InputId::TrustedPath => "trusted-path-input-text".into(),
             })
             .flex_1()
             .h_full()
@@ -586,8 +601,17 @@ impl Workbench {
                         let line_height = px(18.);
                         let origin_y = bounds.origin.y + (bounds.size.height - line_height) / 2.;
                         if let Some(placeholder) = placeholder {
-                            let run = TextRun { len: placeholder.len(), font: font.clone(), color: placeholder_color.into(), background_color: None, underline: None, strikethrough: None };
-                            let line = window.text_system().shape_line(placeholder.into(), font_size, &[run], None);
+                            let shape = |text: String, window: &mut Window| {
+                                let run = TextRun { len: text.len(), font: font.clone(), color: placeholder_color.into(), background_color: None, underline: None, strikethrough: None };
+                                window.text_system().shape_line(text.into(), font_size, &[run], None)
+                            };
+                            // inputBox.css `text-overflow: ellipsis` on the placeholder.
+                            let mut line = shape(placeholder.clone(), window);
+                            let mut kept: Vec<char> = placeholder.chars().collect();
+                            while line.width > bounds.size.width && !kept.is_empty() {
+                                kept.pop();
+                                line = shape(format!("{}\u{2026}", kept.iter().collect::<String>()), window);
+                            }
                             let _ = line.paint(point(bounds.origin.x, origin_y), line_height, gpui::TextAlign::Left, None, window, cx);
                         }
                         let mut runs = Vec::new();

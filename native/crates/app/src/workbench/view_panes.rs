@@ -182,7 +182,7 @@ pub(super) struct ContainerPanes {
     sash_hover: Option<(usize, Task<()>)>,
     /// The pane a header is dragged over, and whether over its lower half.
     drop: Option<(&'static str, bool)>,
-    /// The header last focused by a pointer click, which `:focus-visible` leaves without an outline.
+    /// The header a pointer focused: paneHeaders.css `:focus:not(:focus-visible)` draws no outline until a key.
     pointer_focused: Option<&'static str>,
 }
 
@@ -248,7 +248,7 @@ impl Workbench {
     pub(super) fn layout_view_panes(&mut self, side_bar_height: f32, cx: &mut Context<Self>) {
         let compact = if self.compact_activity_bar_location().is_some() { 32. } else { 0. };
         let height = side_bar_height - 2. - 32. - compact - 5.;
-        let first = if self.folder.is_some() { FILE_VIEW } else { EMPTY_VIEW };
+        let first = if self.workspace().is_some_and(|workspace| !workspace.folders.is_empty()) { FILE_VIEW } else { EMPTY_VIEW };
         let built_in = [first, OUTLINE_VIEW, TIMELINE_VIEW].into_iter().filter(|&id| id == FILE_VIEW || !self.view_hidden("explorer", id));
         // viewsExtensionPoint.ts `showCollapsed`: an extension's view in the Explorer or Source Control starts collapsed.
         let explorer: Vec<_> = built_in.map(|id| (id, id != first)).chain(self.shown_tree_views().into_iter().map(|id| (id, true))).collect();
@@ -378,7 +378,7 @@ impl Workbench {
             // shortcut: a view with its own actions keeps only its "..." (panecomposite.ts puts the Views submenu before
             // the view's secondary actions); merge the menus when a merged view's Views submenu has an enabled toggle.
             let more = pane.actions.is_none().then(|| self.view_container_more_actions(container.key(), cx));
-            let title = self.side_bar_title_text(title).when(id == FILE_VIEW, |title| title.children(self.explorer_title_actions(window, cx))).children(pane.actions).children(more);
+            let title = self.side_bar_title_text(title).when(id == FILE_VIEW, |title| title.child(self.explorer_title_actions(window, cx))).children(pane.actions).children(more);
             return frame.child(title).child(div().flex_1().min_h_0().flex().flex_col().child(pane.body));
         }
         let expanded: Vec<bool> = (0..ids.len()).map(|index| view.is_expanded(index)).collect();
@@ -450,6 +450,12 @@ impl Workbench {
             .into_any_element()
     }
 
+    /// GPUI's group hover changes only on a mouse move, where a browser drops `:hover` once `.context-view-block`
+    /// covers the pointer: the pane counts as not hovered while a context menu is open.
+    pub(super) fn pane_hover_reachable(&self) -> bool {
+        self.context_menu.is_none()
+    }
+
     /// `.pane-header`: a click, Enter or Space toggles, Left collapses, Right expands, Up and Down move to the
     /// neighbouring header; dragged onto another pane it moves this one.
     #[allow(clippy::too_many_arguments)]
@@ -494,9 +500,8 @@ impl Workbench {
                 .children(description.filter(|_| expanded).map(|description| {
                     div().ml(px(10.)).text_size(px(12.)).text_color(self.color("panelTitle.inactiveForeground")).overflow_hidden().whitespace_nowrap().child(description)
                 }))
-                .children(actions.filter(|_| expanded).map(|actions| div().ml_auto().mr(px(4.)).invisible().group_hover(id, |actions| actions.visible()).when(show_actions, |actions| actions.visible()).child(actions)))
-                .when(id == FILE_VIEW, |header| header.children(self.explorer_title_actions(window, cx)))
-                // paneHeaders.css `.pane-header:focus:not(:focus-visible)`: a header focused by a click has no outline.
+                .children(actions.filter(|_| expanded).map(|actions| div().ml_auto().mr(px(4.)).invisible().when(self.pane_hover_reachable(), |actions| actions.group_hover(id, |actions| actions.visible())).when(show_actions, |actions| actions.visible()).child(actions)))
+                .when(id == FILE_VIEW, |header| header.child(self.explorer_title_actions(window, cx)))
                 .when(focused && self.panes(container).pointer_focused != Some(id), |header| header.child(div().absolute().inset_0().rounded(px(4.)).border_1().border_color(self.color("focusBorder"))))
                 .on_click(cx.listener(move |workbench, event: &gpui::ClickEvent, window, cx| {
                     let panes = workbench.panes_mut(container);
@@ -506,6 +511,9 @@ impl Workbench {
                     workbench.set_pane_expanded(container, index, !expanded, cx);
                 }))
                 .on_key_down(cx.listener(move |workbench, event: &KeyDownEvent, window, cx| {
+                    if workbench.panes_mut(container).pointer_focused.take().is_some() {
+                        cx.notify();
+                    }
                     let neighbour = match event.keystroke.key.as_str() {
                         // Enter and Space reach `on_click`: gpui clicks a focused element on its activation keys.
                         "left" => return workbench.set_pane_expanded(container, index, false, cx),
@@ -514,8 +522,7 @@ impl Workbench {
                         "down" if index + 1 < count => index + 1,
                         _ => return,
                     };
-                    let panes = workbench.panes_mut(container);
-                    panes.pointer_focused = None;
+                    let panes = workbench.panes(container);
                     let ids = panes.view.as_ref().expect("panes are laid out before they draw").ids();
                     let focus = panes.focus.get(ids[neighbour]).cloned();
                     if let Some(focus) = focus {

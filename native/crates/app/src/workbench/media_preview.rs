@@ -43,7 +43,7 @@ pub(super) enum MediaKind {
 /// What the status bar shows of a preview (mediaPreviewStatusBar.ts), and an image's view state.
 pub(super) struct MediaPreview {
     kind: MediaKind,
-    path: PathBuf,
+    pub(super) path: PathBuf,
     file_size: Option<u64>,
     /// `ImageViewerScale`: a number or `"fit"`, Null while no image shows.
     scale: Value,
@@ -122,7 +122,10 @@ impl Workbench {
                 handle
             }
         };
-        let index = self.webview_editor_index(&handle).expect("the preview's editor is open");
+        // shortcut: one preview per file, so a preview open in another group shows there; upstream opens a second
+        // preview of the file in the active group.
+        let (group, index) = self.webview_editor_group(&handle).expect("the preview's editor is open");
+        self.activate_group(group);
         self.editors.activate(index);
         if options["pinned"] == true {
             self.editors.pin(index);
@@ -292,7 +295,7 @@ fn escape(text: &str) -> String {
 }
 
 /// `URI.toString` path encoding of a file path.
-fn encode_path(path: &Path) -> String {
+pub(super) fn encode_path(path: &Path) -> String {
     let mut encoded = String::new();
     for byte in path.to_string_lossy().bytes() {
         match byte {

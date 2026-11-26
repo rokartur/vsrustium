@@ -347,7 +347,7 @@ const IMPORT_SETTINGS_COMMAND: &str = "workbench.action.importSettings";
 
 /// The settings import (port feature, Artur) in the Command Palette.
 fn import_settings_palette_item() -> PaletteItem {
-    PaletteItem { id: IMPORT_SETTINGS_COMMAND.into(), title: "Import from VS Code, Cursor or VSCodium...".into(), category: Some("Preferences".into()), when: None, precondition: None, source: None }
+    PaletteItem { id: IMPORT_SETTINGS_COMMAND.into(), title: "Import from VS Code, Cursor or VSCodium...".into(), category: Some("Preferences".into()), description: None, when: None, precondition: None, source: None }
 }
 
 /// `registerNewWindowAction`'s Command Palette item: "Open {name} Profile".
@@ -356,6 +356,7 @@ fn open_profile_palette_items(profiles: &[Profile]) -> Vec<PaletteItem> {
         id: open_profile_command(&profile.name),
         title: format!("Open {} Profile", profile.name),
         category: Some("Profiles".into()),
+        description: None,
         when: None,
         precondition: Expr::deserialize("hasProfiles"),
         source: None,

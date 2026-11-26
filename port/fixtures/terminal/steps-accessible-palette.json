@@ -1,0 +1,8 @@
+[
+	{ "wait": 2000 },
+	{ "hotkey": ["ctrl", "`"] },
+	{ "wait": 4000 },
+	{ "hotkey": ["cmd", "shift", "p"] }, { "wait": 800 },
+	{ "type": "focus accessible terminal view" }, { "wait": 1000 },
+	{ "shot": "palette" }
+]

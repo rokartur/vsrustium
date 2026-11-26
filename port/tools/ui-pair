@@ -6,16 +6,18 @@
 // env FILE = file to open, relative to the folder; env ONLY = "reference" or "port" to run one of them; env ARGS = more arguments for both, space separated;
 // env SETTINGS = a JSON object of user settings for both)
 // Steps, in window points (both windows are 1024x768):
-//   {"click": [x, y]}  {"click": [x, y], "modifier": ["cmd"]}  {"click": [x, y], "foreground": true}  {"doubleClick": [x, y]}  {"rightClick": [x, y]}  {"key": "return"}  {"key": "escape", "foreground": true} (a real HID key down and up)
+//   {"click": [x, y]}  {"click": [x, y], "modifier": ["cmd"]}  {"click": [x, y], "foreground": true}  {"doubleClick": [x, y]}  {"rightClick": [x, y], "foreground": true}  {"key": "return"}  {"key": "escape", "foreground": true} (a real HID key down and up, the window brought to front and left there; also on hotkey)
 //   {"scroll": [x, y], "amount": notches} (real wheel notches down, the pointer left there)  {"hover": [x, y]} (the real pointer, for hovers)  {"hotkey": ["cmd", "c"]}  {"type": "text"}  {"wait": ms}  {"shot": "name"}  {"clipboard": "name"} (the pasteboard text, the folder path as <folder>)
 //   {"dragShot": [x1, y1, x2, y2], "shot": "name", "modifier": ["option"], "button": "middle"}: a slow drag, captured while held
+//   {"restart": true}: after the app quit (a Cmd+Q step), start it again on the same user data and folder
+//   {"launch": ["docs/guide.md"]}: start the app a second time with these paths (relative to the folder), as a command line would
 // Shots land in <out-dir>/<reference|port>-<name>.png at 2x; a sheet on the window is captured as its own window.
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { referenceArgs, referenceUserData } from './ref-user-data.ts';
 
-type Step = { click?: number[]; scroll?: number[]; amount?: number; hover?: number[]; doubleClick?: number[]; rightClick?: number[]; modifier?: string[]; key?: string; hotkey?: string[]; type?: string; wait?: number; shot?: string; dragShot?: number[]; foreground?: boolean; clipboard?: string; button?: string };
+type Step = { click?: number[]; scroll?: number[]; amount?: number; hover?: number[]; doubleClick?: number[]; rightClick?: number[]; modifier?: string[]; key?: string; hotkey?: string[]; type?: string; wait?: number; shot?: string; dragShot?: number[]; foreground?: boolean; clipboard?: string; button?: string; restart?: boolean; launch?: string[] };
 
 const [outDir, stepsFile, themeName = 'dark'] = process.argv.slice(2);
 const steps: Step[] = JSON.parse(readFileSync(stepsFile, 'utf8'));
@@ -39,9 +41,24 @@ for (const app of (process.env.ONLY ?? 'reference port').split(' ')) {
 		cpSync('port/fixtures/workspace', folder, { recursive: true });
 	}
 	const paths = process.env.FOLDER === '' ? [] : process.env.FILE ? [folder, join(folder, process.env.FILE)] : [folder];
-	const child = app === 'reference' ? startReference(paths) : startPort(paths);
+	const userData = app === 'reference' ? referenceUserDataDir() : portUserDataDir();
+	const start = (openPaths = paths) => app === 'reference' ? startReference(openPaths, userData) : startPort(openPaths, userData);
+	let child = start();
+	// A `restart` step: the app quit by the steps before it (Cmd+Q) starts again on the same user data.
+	const restart = async () => {
+		await Promise.race([child.exited, Bun.sleep(30000)]);
+		child.kill('SIGKILL');
+		child = start();
+		return child.pid;
+	};
 	try {
-		await run(app, child.pid, folder);
+		// A `launch` step: a second start on the same user data, which hands its paths to the running app and exits.
+		const launch = async (relative: string[]) => {
+			const second = start(relative.map(path => join(folder, path)));
+			await Promise.race([second.exited, Bun.sleep(30000)]);
+			second.kill('SIGKILL');
+		};
+		await run(app, child.pid, folder, restart, launch);
 	} finally {
 		child.kill('SIGKILL');
 		await child.exited;
@@ -50,7 +67,7 @@ for (const app of (process.env.ONLY ?? 'reference port').split(' ')) {
 rmSync(scratch, { recursive: true, force: true });
 process.exit(0);
 
-function startReference(paths: string[]) {
+function referenceUserDataDir() {
 	const userData = referenceUserData(referenceTheme, settings);
 	// cua-driver reads the accessibility tree, which the reference takes for a screen reader (a notification
 	// and "Screen Reader Optimized"); the port has no screen reader mode yet.
@@ -58,6 +75,10 @@ function startReference(paths: string[]) {
 	writeFileSync(settingsFile, JSON.stringify({ ...JSON.parse(readFileSync(settingsFile, 'utf8')), 'editor.accessibilitySupport': 'off' }));
 	// windowsStateHandler.ts: the first window takes the last active window's size (WindowMode.Normal is 1).
 	writeFileSync(join(userData, 'User/globalStorage/storage.json'), JSON.stringify({ windowsState: { lastActiveWindow: { uiState: { mode: 1, x: 100, y: 100, width: 1024, height: 768 } } } }));
+	return userData;
+}
+
+function startReference(paths: string[], userData: string) {
 	const electron = join(ref, '.build/electron/Code - OSS.app/Contents/MacOS/Code - OSS');
 	return Bun.spawn([electron, ref, ...paths, ...referenceArgs, ...extraArgs, '--user-data-dir', userData, '--shared-data-dir', join(userData, 'shared')], {
 		env: { ...process.env, VSCODE_DEV: '1', NODE_ENV: 'development' },
@@ -66,11 +87,17 @@ function startReference(paths: string[]) {
 	});
 }
 
-function startPort(paths: string[]) {
+function portUserDataDir() {
 	const userData = mkdtempSync(join(scratch, 'port-user-'));
 	mkdirSync(join(userData, 'User'));
-	// Trust is off in referenceUserData; SETTINGS turns it on for both.
-	writeFileSync(join(userData, 'User/settings.json'), JSON.stringify({ 'security.workspace.trust.enabled': false, 'workbench.startupEditor': 'none', ...settings }));
+	// Trust is off in referenceUserData; SETTINGS turns it on for both. cua-driver reads the accessibility tree, which
+	// the port takes for a screen reader as the reference does, so both run with accessibility support off. Reduced
+	// motion as in referenceUserData.
+	writeFileSync(join(userData, 'User/settings.json'), JSON.stringify({ 'security.workspace.trust.enabled': false, 'workbench.startupEditor': 'none', 'editor.accessibilitySupport': 'off', 'workbench.reduceMotion': 'on', ...settings }));
+	return userData;
+}
+
+function startPort(paths: string[], userData: string) {
 	return Bun.spawn(['native/target/release/vsrustium', ...paths, ...extraArgs, '--user-data-dir', userData, '--shared-data-dir', join(userData, 'shared'), '--theme', portTheme], {
 		env: { ...process.env, VSCODE_GPUI_EXTENSIONS: join(ref, 'extensions') },
 		stdout: 'ignore',
@@ -78,17 +105,8 @@ function startPort(paths: string[]) {
 	});
 }
 
-async function run(app: string, pid: number, folder: string) {
-	const window = await until(async () => {
-		const { windows } = await cua('list_windows', { pid });
-		return windows.find((w: { bounds: { width: number }; is_on_screen: boolean }) => w.is_on_screen && w.bounds.width === 1024);
-	});
-	// The workbench and its extensions settle after the window appears.
-	await Bun.sleep(app === 'reference' ? 10000 : 6000);
-	const target = { pid, window_id: window.window_id };
-	// A first capture at the backing scale sets the screenshot pixel space the pixel actions use; the Studio's
-	// windows capture at 1x some runs, so steps stay in points and the scale comes from the capture.
-	const { screenshot_scale: scale } = await cua('get_window_state', { ...target, include_accessibility_tree: false, max_image_dimension: 2048 });
+async function run(app: string, firstPid: number, folder: string, restart: () => Promise<number>, launch: (paths: string[]) => Promise<void>) {
+	let { window, target, scale } = await attach(app, firstPid);
 	const at = (point: number[]) => ({ x: point[0] * scale, y: point[1] * scale });
 	for (const step of steps) {
 		if (step.click) {
@@ -102,11 +120,15 @@ async function run(app: string, pid: number, folder: string) {
 		} else if (step.doubleClick) {
 			await cua('double_click', { ...target, ...at(step.doubleClick) });
 		} else if (step.rightClick) {
-			await cua('right_click', { ...target, ...at(step.rightClick) });
-		} else if (step.key) {
-			await cua('press_key', { ...target, key: step.key, delivery_mode: step.foreground ? 'foreground' : undefined });
-		} else if (step.hotkey) {
-			await cua('hotkey', { ...target, keys: step.hotkey });
+			await cua('right_click', { ...target, ...at(step.rightClick), delivery_mode: step.foreground ? 'foreground' : undefined });
+		} else if (step.key || step.hotkey) {
+			if (step.foreground) {
+				// A foreground key alone restores the previous app after it: the window would turn inactive between
+				// the keys of a chord, which leaves chord mode (keybindingResolver `_scheduleLeaveChordMode`).
+				await cua('bring_to_front', target);
+			}
+			const delivery_mode = step.foreground ? 'foreground' : undefined;
+			await (step.key ? cua('press_key', { ...target, key: step.key, delivery_mode }) : cua('hotkey', { ...target, keys: step.hotkey, delivery_mode }));
 		} else if (step.type) {
 			// Key by key: type_text refuses windows without an accessible text field, as GPUI's.
 			// press_key knows no shifted symbols: they go as shift plus the US layout's base key.
@@ -120,6 +142,10 @@ async function run(app: string, pid: number, folder: string) {
 			}
 		} else if (step.wait) {
 			await Bun.sleep(step.wait);
+		} else if (step.launch) {
+			await launch(step.launch);
+		} else if (step.restart) {
+			({ window, target, scale } = await attach(app, await restart()));
 		} else if (step.dragShot) {
 			const [x1, y1, x2, y2] = step.dragShot;
 			// A background drag reaches only Electron's own drag and drop; GPUI needs the real pointer.
@@ -127,10 +153,10 @@ async function run(app: string, pid: number, folder: string) {
 			const delivery_mode = app === 'port' || step.foreground ? 'foreground' : 'background';
 			const drag = cua('drag', { ...target, from_x: x1 * scale, from_y: y1 * scale, to_x: x2 * scale, to_y: y2 * scale, duration_ms: 4000, steps: 40, modifier: step.modifier, button: step.button, delivery_mode });
 			await Bun.sleep(3500);
-			await shot(app, pid, target.window_id, step.shot!);
+			await shot(app, target.pid, target.window_id, step.shot!);
 			await drag;
 		} else if (step.shot) {
-			await shot(app, pid, target.window_id, step.shot);
+			await shot(app, target.pid, target.window_id, step.shot);
 		} else if (step.clipboard) {
 			const text = (await Bun.$`pbpaste`.text()).replaceAll(folder, '<folder>');
 			writeFileSync(resolve(outDir, `${app}-${step.clipboard}.txt`), text);
@@ -145,12 +171,33 @@ async function run(app: string, pid: number, folder: string) {
 	}
 }
 
+/** The app's 1024px window once the workbench settled. */
+async function attach(app: string, pid: number) {
+	const window = await until(async () => {
+		const { windows } = await cua('list_windows', { pid });
+		return windows.find((w: { bounds: { width: number }; is_on_screen: boolean }) => w.is_on_screen && w.bounds.width === 1024);
+	}, 120000);
+	// The workbench and its extensions settle after the window appears.
+	await Bun.sleep(app === 'reference' ? 10000 : 6000);
+	const target = { pid, window_id: window.window_id };
+	// A first capture sets the screenshot pixel space the pixel actions use: 2x on a Retina display, 1x on a
+	// headless or 1x one. The PNG's width (bytes 16 to 19 of its header) gives the scale.
+	const probe = join(outDir, `.${app}-scale.png`);
+	await cua('get_window_state', { ...target, include_accessibility_tree: false, max_image_dimension: 2048, screenshot_out_file: probe });
+	const scale = readFileSync(probe).readUInt32BE(16) / window.bounds.width;
+	rmSync(probe);
+	return { window, target, scale };
+}
+
 /** The window, or the sheet over it when one is open. */
 async function shot(app: string, pid: number, windowId: number, name: string) {
+	type Listed = { window_id: number; is_on_screen: boolean; bounds: { width: number } };
 	const { windows } = await cua('list_windows', { pid });
-	const sheet = windows.find((w: { window_id: number; is_on_screen: boolean; bounds: { width: number } }) => w.is_on_screen && w.window_id !== windowId && w.bounds.width < 1024);
+	// The port reopens its window when it enters a workspace: then the new 1024 wide window is the main one.
+	const main = windows.some((w: Listed) => w.window_id === windowId && w.is_on_screen) ? windowId : windows.find((w: Listed) => w.is_on_screen && w.bounds.width === 1024)?.window_id ?? windowId;
+	const sheet = windows.find((w: Listed) => w.is_on_screen && w.window_id !== main && w.bounds.width < 1024);
 	const file = resolve(outDir, `${app}-${name}.png`);
-	await cua('get_window_state', { pid, window_id: sheet?.window_id ?? windowId, include_accessibility_tree: false, max_image_dimension: 2048, screenshot_out_file: file });
+	await cua('get_window_state', { pid, window_id: sheet?.window_id ?? main, include_accessibility_tree: false, max_image_dimension: 2048, screenshot_out_file: file });
 	console.log(`${app}-${name}.png${sheet ? ' (sheet)' : ''}`);
 }
 

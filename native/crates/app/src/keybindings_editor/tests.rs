@@ -10,7 +10,7 @@ fn user(command: &str, keybinding: &str) -> Item {
 }
 
 fn titled(id: &str, title: &str) -> MenuItem {
-    MenuItem { id: id.into(), title: title.into(), category: None, when: None, precondition: None, source: None }
+    MenuItem { id: id.into(), title: title.into(), category: None, description: None, when: None, precondition: None, source: None }
 }
 
 /// `registerCommandWithTitle`: each menu item's command is registered too.

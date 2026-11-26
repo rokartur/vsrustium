@@ -32,6 +32,11 @@ fn scratch() -> PathBuf {
 
 /// A window on `<dir>/folder` with `a.txt` open, `settings_json` as user settings and its backups in `<dir>/user`.
 fn open<'a>(cx: &'a mut TestAppContext, dir: &Path, settings_json: &str) -> (gpui::Entity<Workbench>, &'a mut VisualTestContext) {
+    open_with_editor_part(cx, dir, settings_json, None)
+}
+
+/// `open`, with the editor part restored from `editor_part` first, as main.rs restores workspace state before backups.
+fn open_with_editor_part<'a>(cx: &'a mut TestAppContext, dir: &Path, settings_json: &str, editor_part: Option<String>) -> (gpui::Entity<Workbench>, &'a mut VisualTestContext) {
     let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
@@ -43,6 +48,11 @@ fn open<'a>(cx: &'a mut TestAppContext, dir: &Path, settings_json: &str) -> (gpu
     let user_data = dir.join("user");
     let (workbench, cx) = cx.add_window_view(|window, cx| {
         let mut workbench = Workbench::new(theme, app_root.clone(), Some(workspace), Languages::new(&[]), settings, HostSync::new(std::sync::mpsc::channel().0), cx);
+        if let Some(editor_part) = editor_part {
+            let storage = Arc::new(Mutex::new(storage::Storage::in_memory()));
+            storage.lock().unwrap().set("memento/workbench.parts.editor", editor_part);
+            workbench.restore_workspace_state(storage);
+        }
         workbench.start_backups(&user_data, None, cx);
         workbench.open_file(folder.join("a.txt"), true, window, cx);
         workbench
@@ -101,6 +111,32 @@ fn quit_backs_up_and_the_next_window_restores(cx: &mut TestAppContext) {
     });
     assert!(dirty);
     assert_eq!(text, "xa");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// untitledTextEditorHandler.ts: with hot exit the editor part keeps an untitled editor in its place, and the
+/// restored window shows it there with its backed up text instead of opening it again at the end.
+#[gpui::test]
+fn an_untitled_editor_comes_back_in_its_tab(cx: &mut TestAppContext) {
+    let dir = scratch();
+    let (workbench, vcx) = open(cx, &dir, "{}");
+    workbench.update_in(vcx, |workbench, window, cx| _ = workbench.execute_command("workbench.action.closeAllEditors", vec![], window, cx));
+    workbench.update_in(vcx, |workbench, window, cx| _ = workbench.execute_command("workbench.action.files.newUntitledFile", vec![], window, cx));
+    vcx.run_until_parked();
+    type_x(&workbench, vcx);
+    workbench.update_in(vcx, |workbench, window, cx| workbench.open_file(dir.join("folder/a.txt"), false, window, cx));
+    vcx.run_until_parked();
+    workbench.update_in(vcx, |workbench, window, cx| workbench.shutdown(ShutdownReason::Quit, window, cx, |_, _, _| {}));
+    vcx.run_until_parked();
+    let editor_part = workbench.read_with(vcx, |workbench, _| workbench.workspace_storage.lock().unwrap().get("memento/workbench.parts.editor").map(str::to_owned).unwrap());
+
+    let (restored, vcx) = open_with_editor_part(cx, &dir, "{}", Some(editor_part));
+    let tabs = restored.read_with(vcx, |workbench, _| {
+        let group = workbench.editor_group_id();
+        workbench.editors.group_tabs(group).0.iter().map(|editor| (editor.document().name(), editor.is_dirty(), editor.document().lines.join("\n"))).collect::<Vec<_>>()
+    });
+    assert_eq!(tabs, vec![("Untitled-1".to_string(), true, "x".to_string()), ("a.txt".to_string(), false, "a".to_string())]);
+    assert_eq!(restored.read_with(vcx, |workbench, _| workbench.dirty_working_copy_count()), 1, "the explorer's badge");
     std::fs::remove_dir_all(&dir).unwrap();
 }
 

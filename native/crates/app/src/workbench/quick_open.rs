@@ -68,7 +68,11 @@ impl Workbench {
     /// storage writes synchronously and the app can exit without a shutdown phase.
     pub(super) fn record_editor_history(&mut self) {
         let Some(editor) = self.editors.active() else { return };
-        let path = editor.document().path.clone();
+        // A notebook editor's history entry is its notebook (a cell model is what its code editor edits).
+        let path = match self.active_notebook_resource() {
+            Some((_, path)) => path,
+            None => editor.document().path.clone(),
+        };
         if self.quick_access.editor_history.entries.first() == Some(&path) || self.history_exclude_matcher()(&path, None) {
             return;
         }
