@@ -171,6 +171,7 @@ mod language_detection;
 pub mod snippet_actions;
 mod emmet;
 mod tab_completion;
+mod open_editors_view;
 mod outline_actions;
 mod inlay_hints_accessibility;
 mod comment_navigation;
@@ -199,6 +200,7 @@ mod text_files;
 mod trusted_publishers;
 pub(crate) mod text_model_resolver;
 mod control_characters;
+mod editor_placeholder;
 mod large_file;
 mod inspect_tokens;
 mod gutter_mouse;
@@ -339,6 +341,7 @@ pub struct Workbench {
     document_symbols: document_symbols::DocumentSymbols,
     references_peek: references_peek::ReferencesPeek,
     outline_pane: outline_pane::OutlinePane,
+    open_editors_focus: FocusHandle,
     hierarchy_peek: hierarchy_peek::HierarchyPeek,
     content_hover: content_hover::ContentHover,
     suggest: suggest_controller::Suggest,
@@ -404,9 +407,9 @@ pub struct Workbench {
     pub search_editor_widget: search_editor_widget::SearchEditorWidget,
     pub webview_panels: webview_panels::WebviewPanels,
     notebook_views: notebook_editor::NotebookViews,
-    /// The tab the command line opened before the editors registered (editorResolverService.ts): its breadcrumbs have
-    /// no editor type picker until the active editor changes, as breadcrumbsControl.ts computes it on that change.
-    editor_type_picker_pending: Option<u32>,
+    /// breadcrumbsControl.ts `_updateEditorTypeControl` per group: computed when the group's active editor (or the
+    /// two settings) changes, keyed by that state, never when extensions register editors afterwards.
+    editor_type_controls: std::cell::RefCell<HashMap<u32, (String, Option<editor_type_picker::EditorTypes>)>>,
     pub scm: scm_view::ScmView,
     timeline: timeline_view::TimelineView,
     scm_graph: scm_graph_view::ScmGraph,
@@ -642,6 +645,7 @@ impl Workbench {
             document_symbols: Default::default(),
             references_peek: references_peek::ReferencesPeek::new(cx),
             outline_pane: outline_pane::OutlinePane::new(cx),
+            open_editors_focus: cx.focus_handle(),
             hierarchy_peek: hierarchy_peek::HierarchyPeek::new(cx),
             content_hover: Default::default(),
             suggest: Default::default(),
@@ -696,7 +700,7 @@ impl Workbench {
             search_editor_widget: search_editor_widget::SearchEditorWidget::new(cx),
             webview_panels: Default::default(),
             notebook_views: notebook_editor::NotebookViews::new(cx),
-            editor_type_picker_pending: None,
+            editor_type_controls: Default::default(),
             scm: scm_view::ScmView::new(cx),
             timeline: timeline_view::TimelineView::new(cx),
             scm_graph: Default::default(),
@@ -968,11 +972,10 @@ impl Workbench {
             // A model without an editor, as a search replace leaves it, keeps its text.
             None => match self.editors.models.iter().position(|model| model.document().is_file(&path)) {
                 Some(index) => self.editors.show_model(index, !pinned),
-                None => match self.read_document(&path) {
-                    Ok(document) => self.editors.open(document, !pinned),
-                    // shortcut: a read error is logged, not shown as the reference's editor error placeholder.
-                    Err(error) => eprintln!("opening {}: {error}", path.display()),
-                },
+                None => {
+                    let document = self.read_file_editor_document(&path, false, false);
+                    self.editors.open(document, !pinned);
+                }
             },
         }
         self.marked_text = None;
@@ -985,9 +988,6 @@ impl Workbench {
 
     /// Keeps the Explorer selection and the extension host in step with the group.
     fn editors_changed(&mut self, cx: &mut Context<Self>) {
-        if self.editor_type_picker_pending.is_some() && self.editor_type_picker_pending != self.editors.active_tab().map(|tab| tab.model_id) {
-            self.editor_type_picker_pending = None;
-        }
         if std::mem::take(&mut self.editors.closed_last_editor) {
             self.close_group_if_empty(self.editors.id);
         }
@@ -1554,11 +1554,15 @@ impl Workbench {
     /// The Explorer's `ViewPaneContainer`: `first` (the folder's or the empty window's view), Outline and Timeline.
     fn explorer_view_container(&self, first: view_panes::ViewPane, window: &Window, cx: &mut Context<Self>) -> Div {
         let outline_focused = self.outline_pane.focus.is_focused(window);
-        let panes = vec![
+        let open_editors_shown = self.explorer_panes.view.as_ref().is_some_and(|view| view.ids().contains(&view_panes::OPEN_EDITORS_VIEW));
+        let mut panes = vec![
             first,
             view_panes::ViewPane { id: view_panes::OUTLINE_VIEW, title: "Outline".into(), description: None, actions: Some(self.outline_title_actions(window, cx).into_any_element()), show_actions: outline_focused, body: self.outline_pane_body(window, cx) },
             self.timeline_pane(window, cx),
         ];
+        if open_editors_shown {
+            panes.push(self.open_editors_pane(window, cx));
+        }
         self.view_pane_container(view_panes::PaneContainer::Explorer, "Explorer", panes, window, cx)
     }
 

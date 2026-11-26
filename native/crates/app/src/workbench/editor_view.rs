@@ -103,6 +103,7 @@ impl Workbench {
                 None if self.shows_webview(editor) => part.child(self.webview_editor_body(editor)),
                 None if self.editors.active_tab().is_some_and(|tab| tab.document().scheme == crate::notebook::NOTEBOOK_EDITOR_SCHEME) => part.child(self.notebook_editor_body(window, cx)),
                 None if editor.document().scheme == MULTI_DIFF_EDITOR_SCHEME => part,
+                None if editor.document().open_error.is_some() => part.child(self.editor_placeholder(cx)),
                 None => match (self.editors.active_merge(), secondary) {
                     (Some(merge), _) => part.child(self.merge_editor_body(merge, editor, window, cx)),
                     (None, Some(secondary)) => part.child(self.side_by_side_body(secondary, editor, window, cx)),
@@ -235,7 +236,11 @@ impl Workbench {
 
     /// editorTabsControl.ts `getHoverTitle`: the long title, with a preview note on a preview editor's tab.
     fn tab_hover(&self, index: usize) -> impl IntoElement {
-        let editor = &self.editors.editors[index];
+        self.editor_title_hover(("tab-hover", index), &self.editors.editors[index])
+    }
+
+    /// A tab's or an Open Editors row's hover: the editor's `getTitle(Verbosity.LONG)`.
+    pub(super) fn editor_title_hover(&self, id: impl Into<gpui::ElementId>, editor: &OpenEditor) -> impl IntoElement {
         // `getTitle(Verbosity.LONG)`: a search editor's and a webview's is its name.
         let title = match (self.editors.diffs.get(&editor.model_id), editor.document().scheme.as_str()) {
             (Some(diff), _) => diff.title(|side| crate::quick_input::path_label(crate::editor::split_query(&side.scheme, &side.path).0, None)),
@@ -252,17 +257,20 @@ impl Workbench {
             },
         };
         let content = if editor.preview { super::hover::HoverContent::Preview(title) } else { super::hover::HoverContent::Text(title) };
-        self.hover_target(("tab-hover", index), content, super::hover::HoverOptions::mouse())
+        self.hover_target(id, content, super::hover::HoverOptions::mouse())
     }
 
     /// A diff editor's tab is its modified side's (`DiffEditorInput.isDirty`); an auto saved one shows no dirty mark.
     pub(super) fn tab_shows_dirty(&self, index: usize) -> bool {
+        self.editor_shows_dirty(&self.editors.editors[index])
+    }
+
+    pub(super) fn editor_shows_dirty(&self, tab: &OpenEditor) -> bool {
         // A notebook tab is its notebook's working copy, not its focused cell's text model.
-        let tab = &self.editors.editors[index];
         if tab.document().scheme == crate::notebook::NOTEBOOK_EDITOR_SCHEME {
             return self.host.notebooks.model(&tab.document().path.to_string_lossy()).is_some_and(|model| model.dirty);
         }
-        let model = self.editors.tab_model(index);
+        let model = self.editors.editor_model(tab);
         model.is_dirty() && !self.editor_is_saving(model)
     }
 
@@ -325,7 +333,7 @@ impl Workbench {
             })
             .children(lock)
             .children(badge.map(|badge| badge.mt(px(3.5)).line_height(px(24.))))
-            .map(|tab| self.tab_drag_and_drop(tab, index, cx))
+            .map(|tab| self.tab_drag_and_drop(tab, self.editors.id, index, cx))
             .on_click(cx.listener(move |workbench, event: &gpui::ClickEvent, _, cx| {
                 workbench.editors.activate(index);
                 if event.click_count() == 2 {
@@ -1088,6 +1096,9 @@ impl Workbench {
         // Past the cap there are no marks, the banner shows instead.
         let unicode = self.unicode_highlights(editor).filter(|(_, highlights)| !highlights.has_more);
         let bracket_box = (self.theme.color("editorBracketMatch.background"), self.theme.color("editorBracketMatch.border"));
+        // indentGuides.ts: the guide around the primary cursor with `editor.guides.highlightActiveIndentation`.
+        let active_guide = (self.language_setting(editor, "editor.guides.highlightActiveIndentation") != json!(false))
+            .then(|| crate::editor::active_indent_guide(&editor.text_model().guides, editor.selections[0].head.line));
         let colors = LineColors {
             number: self.color("editorLineNumber.foreground"),
             active_number: self.color("editorLineNumber.activeForeground"),
@@ -1101,6 +1112,7 @@ impl Workbench {
             selection_highlight: self.theme.color("editor.selectionHighlightBackground"),
             selection_highlight_border: self.theme.color("editor.selectionHighlightBorder"),
             guide: self.color("editorIndentGuide.background1"),
+            active_guide: self.color("editorIndentGuide.activeBackground1"),
             cursor: self.color("editorCursor.foreground"),
             primary_cursor: self.color("editorMultiCursor.primary.foreground"),
             secondary_cursor: self.color("editorMultiCursor.secondary.foreground"),
@@ -1240,7 +1252,8 @@ impl Workbench {
                 content = content.children(inner_corners).children(pieces);
                 for level in 0..editor.text_model().guides[index] {
                     let x = (level * editor.document().indentation.indent_size()) as f32 * char_width;
-                    content = content.child(div().absolute().top_0().left(px(x)).w(px(1.)).h_full().bg(colors.guide));
+                    let active = active_guide.as_ref().is_some_and(|(lines, indent)| lines.contains(&index) && level + 1 == *indent);
+                    content = content.child(div().absolute().top_0().left(px(x)).w(px(1.)).h_full().bg(if active { colors.active_guide } else { colors.guide }));
                 }
                 // foldingDecorations.ts COLLAPSED_HIGHLIGHTED_VISUAL_DECORATION: .folded-background over the whole line.
                 if collapsed == Some(true) {
@@ -1908,6 +1921,11 @@ impl Workbench {
         let notebook_cell = self.active_notebook_editor().filter(|_| !self.editor_focus.is_focused(window)).and_then(|editor| Some((editor.focus, self.host.notebooks.model(&editor.notebook)?.cells.len())));
         if let Some((index, count)) = notebook_cell {
             items.push((format!("Cell {} of {count}", index + 1), "", "notebook.centerActiveCell"));
+        } else if let Some(editor) = self.editors.active().filter(|editor| editor.document().open_error.is_some()) {
+            // editorStatus.ts `updateMetadataElement`: a binary editor's size; a placeholder has no text editor entries.
+            if let Some(crate::editor::OpenError::Binary(size)) = editor.document().open_error {
+                items.push((super::media_preview::format_size(size), "", ""));
+            }
         } else if let Some(editor) = self.editors.active().filter(|editor| !self.shows_webview(editor) && !matches!(editor.document().scheme.as_str(), super::extension_editor::EXTENSION_EDITOR_SCHEME | super::welcome_page::WALKTHROUGH_SCHEME | MULTI_DIFF_EDITOR_SCHEME)) {
             items.extend(Self::editor_status_entries(editor, &self.languages));
         }
@@ -2057,6 +2075,7 @@ struct LineColors {
     selection_highlight: Option<Rgba>,
     selection_highlight_border: Option<Rgba>,
     guide: Rgba,
+    active_guide: Rgba,
     cursor: Rgba,
     primary_cursor: Rgba,
     secondary_cursor: Rgba,

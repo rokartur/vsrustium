@@ -140,12 +140,13 @@ impl Workbench {
         (0..self.editors.editors.len()).filter(|index| self.editors.editors[*index].is_dirty()).collect()
     }
 
-    /// dirtyFilesIndicator.ts: the explorer's badge counts the dirty working copies, each model once.
+    /// dirtyFilesIndicator.ts: the explorer's badge counts the dirty working copies, each resource once (a split
+    /// editor's copy in another group is the same working copy).
     pub(super) fn dirty_working_copy_count(&self) -> u64 {
-        let mut models: Vec<u32> = self.editors.all_editors().filter(|editor| editor.is_dirty()).map(|editor| editor.model_id).collect();
-        models.sort_unstable();
-        models.dedup();
-        models.len() as u64
+        let mut resources: Vec<_> = self.editors.all_editors().filter(|editor| editor.is_dirty()).map(|editor| (editor.document().scheme.clone(), editor.document().path.clone())).collect();
+        resources.sort_unstable();
+        resources.dedup();
+        resources.len() as u64
     }
 
     /// editorActions.ts `CloseAllEditorsAction`: every group closes its editors, the active one last.

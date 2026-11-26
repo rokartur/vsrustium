@@ -184,27 +184,3 @@ fn result_block_spans_the_file_and_its_lines() {
     assert!(ending.is_empty());
 }
 
-#[test]
-fn result_definition_maps_the_column_into_the_file() {
-    let lines = text_lines("a.txt:\n  9: one \u{27ea} 20 characters skipped \u{27eb} two\n  10  context\nb.txt:");
-    assert_eq!(result_definition(&lines, 1, 7), Some(("a.txt".to_string(), 8, 2)));
-    let after = "  9: one \u{27ea} 20 characters skipped \u{27eb} ".encode_utf16().count();
-    assert_eq!(result_definition(&lines, 1, after), Some(("a.txt".to_string(), 8, 4 + 20 + 1)));
-    assert_eq!(result_definition(&lines, 1, 2), Some(("a.txt".to_string(), 8, 2)));
-    assert_eq!(result_definition(&lines, 2, 6), Some(("a.txt".to_string(), 9, 0)));
-    assert_eq!(result_definition(&lines, 0, 1), None);
-    assert_eq!(result_definition(&lines, 3, 1), None);
-}
-
-#[test]
-fn result_paths_resolve_as_the_search_result_extension_does() {
-    let one = [("app".to_string(), PathBuf::from("/w/app"))];
-    let two = [("app".to_string(), PathBuf::from("/w/app")), ("lib".to_string(), PathBuf::from("/w/lib"))];
-    let home = Some(Path::new("/Users/me"));
-    assert_eq!(resolve_result_path("src/a.rs", &one, home), Some(PathBuf::from("/w/app/src/a.rs")));
-    assert_eq!(resolve_result_path("lib \u{2022} b.rs", &two, home), Some(PathBuf::from("/w/lib/b.rs")));
-    assert_eq!(resolve_result_path("other \u{2022} b.rs", &two, home), None);
-    assert_eq!(resolve_result_path("b.rs", &two, home), None);
-    assert_eq!(resolve_result_path("~/notes/c.md", &[], home), Some(PathBuf::from("/Users/me/notes/c.md")));
-    assert_eq!(resolve_result_path("/tmp/d.txt", &[], home), Some(PathBuf::from("/tmp/d.txt")));
-}

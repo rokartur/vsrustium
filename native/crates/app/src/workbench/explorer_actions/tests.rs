@@ -9,6 +9,7 @@ use crate::languages::Languages;
 use crate::menus::MenuAction;
 use crate::theme::load_theme;
 use crate::workbench::Workbench;
+use crate::workbench::view_panes::{FILE_VIEW, PaneContainer};
 
 fn explorer<'a>(name: &str, cx: &'a mut TestAppContext) -> (PathBuf, gpui::Entity<Workbench>, &'a mut VisualTestContext) {
     let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
@@ -231,6 +232,7 @@ fn the_context_menu_selects_the_row_and_runs_its_items_with_keys_and_clicks(cx: 
 
     // Below the rows: the folder's items; Escape hides the menu and gives the tree its focus back.
     let empty = point(px(120.), px(300.));
+    cx.simulate_mouse_move(empty, None, Modifiers::none());
     cx.simulate_mouse_down(empty, MouseButton::Right, Modifiers::none());
     cx.run_until_parked();
     // As the reference's (port/fixtures/ui-pair/m12/workspace-folders.json), less the commands the port lacks; imageCarousel.contribution.ts adds Open in Images Preview (navigation, order 25).
@@ -238,9 +240,11 @@ fn the_context_menu_selects_the_row_and_runs_its_items_with_keys_and_clicks(cx: 
     assert_eq!(menu_titles(&workbench, cx), below);
     // The menu takes the focus and `.context-view-block` the pane's hover: the title actions hide.
     assert!(workbench.update_in(cx, |workbench, window, _| !workbench.explorer_title_actions_shown(window)));
-    assert!(workbench.read_with(cx, |workbench, _| !workbench.pane_hover_reachable()));
+    assert!(workbench.update_in(cx, |workbench, window, _| !workbench.pane_hovered(PaneContainer::Explorer, FILE_VIEW, window)));
     cx.simulate_keystrokes("escape");
     assert!(workbench.update_in(cx, |workbench, window, _| workbench.context_menu.is_none() && workbench.explorer.focus.is_focused(window)));
+    // A key leaves `:hover` as it is: the header actions stay under the pointer (the reference with a quick pick open).
+    assert!(workbench.update_in(cx, |workbench, window, _| workbench.pane_hovered(PaneContainer::Explorer, FILE_VIEW, window)));
 
     // A click runs the item only 100ms after the menu showed; with Alt, Delete is Delete Permanently.
     // Items are 24px from the border and the 4px padding, the separators 11px.
@@ -595,6 +599,42 @@ fn new_file_creates_the_picked_file_next_to_the_last_active_file(cx: &mut TestAp
     assert_eq!(std::fs::read_to_string(&created).unwrap(), "");
     let active = workbench.read_with(cx, |workbench, _| workbench.editors.active().map(|editor| (editor.document().path.clone(), editor.preview)));
     assert_eq!(active, Some((created, false)), "the new file opens pinned");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// editorPlaceholder.ts: binary, too large and missing files open as placeholders whose actions resolve them.
+#[gpui::test]
+fn files_that_do_not_resolve_open_editor_placeholders_with_their_actions(cx: &mut TestAppContext) {
+    use crate::editor::OpenError;
+    let (dir, workbench, cx) = explorer("explorer-placeholders", cx);
+    let active = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.editors.active().map(|editor| (editor.document().open_error.clone(), editor.document().language_id.clone(), editor.document().lines.len())).unwrap());
+
+    std::fs::write(dir.join("a.bin"), [0x89, 0, 1, 2, 0, 0, b'\n', b'x']).unwrap();
+    workbench.update_in(cx, |workbench, window, cx| workbench.open_file(dir.join("a.bin"), true, window, cx));
+    assert_eq!(active(cx), (Some(OpenError::Binary(8)), "plaintext".into(), 1));
+    // Open Anyway, then the Open With picker's Text Editor: the file opens as text in the Binary language.
+    workbench.update_in(cx, |workbench, window, cx| {
+        let uri = workbench.editors.active().unwrap().document().uri();
+        drop(workbench.reopen_with(&uri, "default", "default", false, window, cx));
+    });
+    assert_eq!(active(cx), (None, "code-text-binary".into(), 2));
+
+    workbench.update(cx, |workbench, _| {
+        let settings = config::service::Settings::load(config::registry::Registry::with_extensions(&[]), dir.join("User"), Some(Workspace::folder(dir.clone())));
+        workbench.settings = std::sync::Arc::new(std::sync::Mutex::new(settings));
+        workbench.update_setting("workbench.editorLargeFileConfirmation", serde_json::json!(1));
+    });
+    std::fs::write(dir.join("large.txt"), vec![b'a'; 1024 * 1024 + 1]).unwrap();
+    workbench.update_in(cx, |workbench, window, cx| workbench.open_file(dir.join("large.txt"), true, window, cx));
+    assert_eq!(active(cx).0, Some(OpenError::TooLarge(1024 * 1024 + 1)));
+    workbench.update_in(cx, |workbench, window, cx| workbench.run_placeholder_action("Open Anyway", window, cx));
+    assert_eq!(active(cx), (None, "plaintext".into(), 1));
+
+    workbench.update_in(cx, |workbench, window, cx| workbench.open_file(dir.join("missing.txt"), true, window, cx));
+    assert_eq!(active(cx).0, Some(OpenError::NotFound));
+    workbench.update_in(cx, |workbench, window, cx| workbench.run_placeholder_action("Create File", window, cx));
+    assert!(dir.join("missing.txt").exists());
+    assert_eq!(active(cx).0, None);
     std::fs::remove_dir_all(&dir).unwrap();
 }
 

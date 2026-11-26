@@ -2,7 +2,7 @@
 //! parsed back as `extractSearchQueryFromLines`, and the search results serialized as the editor shows them, with
 //! the ranges of the matches in that text. Match columns are UTF-16 code units, as the search reports them.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::search_model::{FileMatch, Match, SearchResult, utf16_len};
 
@@ -385,74 +385,6 @@ pub fn result_block_lines(lines: &[String], selections: &[(usize, usize)]) -> (V
         }
     }
     (delete, ending_lines)
-}
-
-/// Where the search-result extension's `provideDefinition` leads from a result line: the file label of the block,
-/// the 0-based line in that file and the UTF-16 column, as `parseSearchResults` builds its locations, elided runs
-/// (`⟪ N characters skipped ⟫`) included. None off a result line, and on a file line, whose locations peek.
-pub fn result_definition(lines: &[String], line: usize, column: usize) -> Option<(String, usize, usize)> {
-    let file = lines[..=line].iter().rev().find_map(|text| text.strip_suffix(':').filter(|path| !path.is_empty() && !path.starts_with(char::is_whitespace)))?;
-    if lines[line].ends_with(':') && !lines[line].starts_with(char::is_whitespace) {
-        return None;
-    }
-    let text = &lines[line];
-    let indentation = text.len() - text.trim_start().len();
-    let digits = text[indentation..].len() - text[indentation..].trim_start_matches(|c: char| c.is_ascii_digit()).len();
-    let rest = &text[indentation + digits..];
-    if indentation == 0 || digits == 0 || !(rest.starts_with(": ") || rest.starts_with("  ")) {
-        return None;
-    }
-    let target_line = text[indentation..indentation + digits].parse::<usize>().ok()?.checked_sub(1)?;
-    let metadata = utf16_len(&text[..indentation + digits + 2]);
-    let length = utf16_len(text);
-    // Each location: the origin columns it covers and the target column its start leads to.
-    let mut locations = Vec::new();
-    let (mut last_end, mut offset) = (metadata, 0);
-    let units: Vec<u16> = text.encode_utf16().collect();
-    let content = String::from_utf16_lossy(&units[metadata..]);
-    let mut searched = 0;
-    const OPEN: &str = "\u{27ea} ";
-    const CLOSE: &str = " characters skipped \u{27eb}";
-    while let Some(found) = content[searched..].find(OPEN) {
-        let start = searched + found;
-        searched = start + OPEN.len();
-        let count = &content[searched..searched + content[searched..].find(|c: char| !c.is_ascii_digit()).unwrap_or(content.len() - searched)];
-        if count.is_empty() || !content[searched + count.len()..].starts_with(CLOSE) {
-            continue;
-        }
-        let skipped: usize = count.parse().expect("ASCII digits");
-        let end = searched + count.len() + CLOSE.len();
-        let (match_start, match_end) = (metadata + utf16_len(&content[..start]), metadata + utf16_len(&content[..end]));
-        locations.push((last_end, match_start, offset));
-        offset += match_start - last_end + skipped;
-        last_end = match_end;
-        searched = end;
-    }
-    if last_end < length {
-        locations.push((last_end, length, offset));
-    }
-    locations.push((0, metadata - 1, 0));
-    let (origin_start, _, target) = locations.into_iter().find(|(start, end, _)| (*start..=*end).contains(&column))?;
-    Some((file.to_string(), target_line, target + column - origin_start))
-}
-
-/// The search-result extension's `relativePathToUri`: an absolute path, a `~/` path, a `name • path` of a multi-root
-/// workspace, or a path in the only workspace folder. `folders` are the workspace folders' names and paths.
-// shortcut: `(Settings) ` and `/Untitled-N` labels resolve to nothing, the port's search does not search user data or untitled models.
-pub fn resolve_result_path(label: &str, folders: &[(String, PathBuf)], home: Option<&Path>) -> Option<PathBuf> {
-    if label.starts_with('/') {
-        return Some(PathBuf::from(label));
-    }
-    if let Some(relative) = label.strip_prefix("~/") {
-        return Some(home.unwrap_or(Path::new("")).join(relative));
-    }
-    if let Some((name, relative)) = label.split_once(" \u{2022} ") {
-        return folders.iter().find(|(folder, _)| folder == name).map(|(_, path)| path.join(relative));
-    }
-    match folders {
-        [(_, folder)] => Some(folder.join(label)),
-        _ => None,
-    }
 }
 
 #[cfg(test)]

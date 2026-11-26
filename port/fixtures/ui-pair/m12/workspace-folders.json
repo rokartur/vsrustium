@@ -4,6 +4,8 @@
 	{ "shot": "explorer-menu" },
 	{ "key": "escape" },
 	{ "wait": 400 },
+	{ "hover": [120, 600] },
+	{ "wait": 400 },
 	{ "hotkey": ["cmd", "shift", "p"] },
 	{ "wait": 600 },
 	{ "type": "remove folder from" },

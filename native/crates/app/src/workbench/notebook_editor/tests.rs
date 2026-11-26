@@ -218,7 +218,7 @@ fn the_cell_language_picker_changes_the_language_and_the_kind(cx: &mut TestAppCo
         let input = workbench.quick_inputs.current().unwrap();
         input.order.iter().map(|row| &input.rows[*row]).map(|row| format!("{}{} {}", row.separator.as_ref().map(|label| format!("--{label}--")).unwrap_or_default(), row.item.label, row.item.description.clone().unwrap_or_default())).collect::<Vec<_>>()
     });
-    assert_eq!(rows, ["Auto Detect ", "--languages (identifier)--Python (python) - Current Language", "Markdown (markdown)", "----CSS (css)", "Plain Text (plaintext)", "Rust (rust)"]);
+    assert_eq!(rows, ["Auto Detect ", "--languages (identifier)--Python (python) - Current Language", "Markdown (markdown)", "----Binary (code-text-binary)", "CSS (css)", "Plain Text (plaintext)", "Rust (rust)"]);
     workbench.update_in(cx, |workbench, window, cx| {
         let input = workbench.quick_inputs.find_mut(|owner| matches!(owner, crate::main_thread_quick_open::Owner::EditorStatus(_))).unwrap();
         let handle = input.rows.iter().find(|row| row.item.label == "Markdown").unwrap().item.handle;

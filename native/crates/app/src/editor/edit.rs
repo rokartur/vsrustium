@@ -1471,6 +1471,7 @@ pub(super) mod tests {
             block_comment: None,
             tokens: Default::default(),
             too_large_for_tokenization: false,
+            open_error: None,
         };
         let mut group = EditorGroup::default();
         group.open(document, true);

@@ -25,9 +25,9 @@ use super::text_input::SavePhase;
 use crate::commands::Outcome;
 use crate::editor::model_service::compute_edits;
 use crate::editor::view_state::{self, ViewStates};
-use crate::editor::{EditReason, OpenEditor, TextDocument, uri_string};
+use crate::editor::{EditReason, OpenEditor, OpenError, TextDocument, uri_string};
 use crate::host_sync::FileJob;
-use crate::languages::PLAINTEXT;
+use crate::languages::{BINARY_TEXT_FILE_MODE, PLAINTEXT};
 use crate::notifications::{Action, Notification, Run, Severity};
 
 #[cfg(test)]
@@ -171,6 +171,40 @@ impl Workbench {
             self.text_files.stats.insert(path.to_path_buf(), stat);
         }
         Ok(TextDocument::from_bytes("file", path, &bytes, None, &self.languages, &self.settings.lock().unwrap()))
+    }
+
+    /// A file editor's model as `TextFileEditor.setInput` resolves it: a file over `workbench.editorLargeFileConfirmation`
+    /// (unless `unlimited`, Open Anyway), one that seems binary (unless `as_text`) or one that does not read is an
+    /// empty model with its `OpenError`, which the editor placeholder shows.
+    pub(super) fn read_file_editor_document(&mut self, path: &Path, unlimited: bool, as_text: bool) -> TextDocument {
+        let settings = self.settings.clone();
+        let settings = settings.lock().unwrap();
+        let empty = |error| TextDocument { open_error: Some(error), ..TextDocument::from_text("file", path, "", "utf8".into(), None, &self.languages, &settings) };
+        let overrides = Overrides { resource: Some(path), ..Overrides::default() };
+        let limit_mb = settings.get_value(Some("workbench.editorLargeFileConfirmation"), &overrides).and_then(|value| value.as_f64()).unwrap_or(1024.);
+        if let Ok(metadata) = std::fs::metadata(path)
+            && !unlimited
+            && metadata.len() as f64 > limit_mb * 1024. * 1024.
+        {
+            return empty(OpenError::TooLarge(metadata.len()));
+        }
+        let bytes = match std::fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return empty(OpenError::NotFound),
+            Err(_) => return empty(OpenError::Failed),
+        };
+        if !as_text && encoding::detect(&bytes).seems_binary {
+            return empty(OpenError::Binary(bytes.len() as u64));
+        }
+        if let Some(stat) = stat(path) {
+            self.text_files.stats.insert(path.to_path_buf(), stat);
+        }
+        let document = TextDocument::from_bytes("file", path, &bytes, None, &self.languages, &settings);
+        match as_text {
+            // binaryFileEditor.ts `setPreferredLanguageId(BINARY_TEXT_FILE_MODE)`.
+            true => TextDocument::from_text("file", path, &encoding::decode(&bytes, &document.encoding), document.encoding, Some(BINARY_TEXT_FILE_MODE), &self.languages, &settings),
+            false => document,
+        }
     }
 
     /// `textFileService.save` of a model: an untitled one asks for a path (Save As), a read-only one is not saved, a
@@ -751,6 +785,14 @@ impl Workbench {
     pub(super) fn files_changed(&mut self, changes: Vec<Change>, cx: &mut Context<Self>) {
         for change in changes {
             let Some(model) = self.editors.model("file", &change.path) else { continue };
+            // editorPlaceholder.ts: a missing file's placeholder reopens once the file is there; other placeholders keep no model.
+            let open_error = model.document().open_error.clone();
+            if let Some(error) = open_error {
+                if error == OpenError::NotFound && matches!(change.kind, ChangeType::Added | ChangeType::Updated) {
+                    self.reopen_file_editor(&change.path, false, false, cx);
+                }
+                continue;
+            }
             let dirty = model.is_dirty();
             match change.kind {
                 ChangeType::Updated | ChangeType::Added => {

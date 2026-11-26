@@ -700,15 +700,9 @@ impl Workbench {
 
     /// multieditortabscontrol.ts: a tab drags to another place in its group, another group's tabs, or a group's
     /// drop area; over a tab the `tab.dragAndDropBorder` line marks where it goes.
-    pub(super) fn tab_drag_and_drop(&self, tab: Stateful<Div>, index: usize, cx: &mut Context<Self>) -> Stateful<Div> {
-        let group = self.editors.id;
-        let dragged = DraggedTab {
-            group,
-            index,
-            label: self.editor_name(&self.editors.editors[index]).into(),
-            foreground: self.foreground_or("tab.activeForeground"),
-            background: self.color("tab.activeBackground"),
-        };
+    /// A tab of `group` (a tab strip's, or an Open Editors row): dragged, and the drop before it.
+    pub(super) fn tab_drag_and_drop(&self, tab: Stateful<Div>, group: u32, index: usize, cx: &mut Context<Self>) -> Stateful<Div> {
+        let dragged = self.dragged_tab(group, index);
         let border = self.theme.color("tab.dragAndDropBorder").unwrap_or(self.foreground_or("tab.activeForeground"));
         tab.on_drag(dragged, |dragged, _, _, cx| cx.new(|_| dragged.clone()))
             .drag_over::<DraggedTab>(move |style, _, _, _| style.border_l_2().border_color(border))
@@ -716,6 +710,16 @@ impl Workbench {
                 workbench.editor_groups.drop_target = None;
                 workbench.move_dragged_tab(dragged, group, Some(index), window, cx);
             }))
+    }
+
+    pub(super) fn dragged_tab(&self, group: u32, index: usize) -> DraggedTab {
+        DraggedTab {
+            group,
+            index,
+            label: self.editor_name(&self.editors.group_tabs(group).0[index]).into(),
+            foreground: self.foreground_or("tab.activeForeground"),
+            background: self.color("tab.activeBackground"),
+        }
     }
 
     /// The drop area of a group (below its tabs): the half it would split into, or the whole of it.
@@ -811,7 +815,7 @@ impl Workbench {
     }
 
     /// `moveEditor` / `doMoveEditorAcrossGroups` of a dropped tab, to `index` or after the target's active editor.
-    fn move_dragged_tab(&mut self, dragged: &DraggedTab, target: u32, index: Option<usize>, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn move_dragged_tab(&mut self, dragged: &DraggedTab, target: u32, index: Option<usize>, window: &mut Window, cx: &mut Context<Self>) {
         if dragged.group == target {
             self.with_group(target, |workbench| workbench.editors.move_editor(dragged.index, index.unwrap_or(usize::MAX)));
         } else {

@@ -174,7 +174,7 @@ impl Workbench {
             true => self.open_file(path, true, window, cx),
             false => {
                 self.open_text_file(path, true, window, cx);
-                self.editor_type_picker_pending = self.editors.active_tab().map(|tab| tab.model_id);
+                self.set_editor_type_control_before_registration();
             }
         }
     }
@@ -254,6 +254,14 @@ impl Workbench {
     /// saved notebook's editor closes first.
     // shortcut: the replacement opens where the group opens editors, not in the closed one's place.
     pub(super) fn reopen_with(&mut self, resource: &Value, current: &str, editor_id: &str, preserve_focus: bool, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
+        // binaryFileEditor.ts `openInternal`: the text editor picked for a binary file opens it as text.
+        if editor_id == TEXT_EDITOR_ID
+            && let Some(editor) = self.editors.active().filter(|editor| matches!(editor.document().open_error, Some(crate::editor::OpenError::Binary(_))))
+        {
+            let path = editor.document().path.clone();
+            self.reopen_file_editor(&path, false, true, cx);
+            return Outcome::done();
+        }
         if current == editor_id {
             return Outcome::done();
         }
@@ -308,7 +316,7 @@ impl Workbench {
 
     /// openWithEditorPicker.ts `doPick`: the text editor, then the resource's editors by rank, and the entry that
     /// picks a new default; `configure_default` is the picker that entry opens.
-    fn show_open_with_picker(&mut self, resource: Value, current: String, configure_default: bool, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn show_open_with_picker(&mut self, resource: Value, current: String, configure_default: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Ok((scheme, path)) = uri_parts(&resource) else { return };
         let (default_id, pattern) = self.default_editor(scheme, &path, true, false);
         let mut entries = Vec::new();

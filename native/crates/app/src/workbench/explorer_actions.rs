@@ -194,7 +194,7 @@ impl Workbench {
         ];
         let hover = self.color("toolbar.hoverBackground");
         // 4px from the header's end, measured against the reference with ui-pair (m12/workspace-folders.json).
-        let mut bar = div().ml_auto().mr(px(4.)).flex().gap(px(4.)).when(!shown, |bar| bar.invisible().when(self.pane_hover_reachable(), |bar| bar.group_hover(super::view_panes::FILE_VIEW, |bar| bar.visible())));
+        let mut bar = div().ml_auto().mr(px(4.)).flex().gap(px(4.)).when(!shown && !self.pane_hovered(super::view_panes::PaneContainer::Explorer, super::view_panes::FILE_VIEW, window), |bar| bar.invisible());
         for (icon, title, command, enabled) in actions {
             let foreground = if enabled { self.foreground_or("icon.foreground") } else { self.color("disabledForeground") };
             bar = bar.child(self.icon(icon, 20., 16., foreground).id(command).rounded(px(4.)).when(enabled, |action| {
