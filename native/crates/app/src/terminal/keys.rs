@@ -17,6 +17,15 @@ pub enum KeyResult {
 
 pub fn evaluate(keystroke: &Keystroke, application_cursor: bool, mac_option_is_meta: bool) -> KeyResult {
     let m = &keystroke.modifiers;
+    // CoreBrowserTerminal.ts `_isThirdLevelShift`: Option without Ctrl or Cmd on a key past keyCode 47 is left to
+    // keypress, which types the key's character; a key without one (F1 to F12) sends nothing and reaches the workbench.
+    let below_key_code_48 = matches!(keystroke.key.as_str(), "backspace" | "tab" | "enter" | "escape" | "space" | "pageup" | "pagedown" | "end" | "home" | "left" | "up" | "right" | "down" | "insert" | "delete");
+    if !mac_option_is_meta && m.alt && !m.control && !m.platform && !below_key_code_48 {
+        return match keystroke.key_char.as_deref() {
+            Some(text) if !text.is_empty() => KeyResult::Send(text.into()),
+            _ => KeyResult::None,
+        };
+    }
     let modifiers = m.shift as u8 | (m.alt as u8) << 1 | (m.control as u8) << 2 | (m.platform as u8) << 3;
     let csi = |final_byte: &str| -> String {
         match modifiers {
@@ -187,5 +196,8 @@ mod tests {
         assert_eq!(key("shift-pageup"), KeyResult::PageUp);
         assert_eq!(key("cmd-a"), KeyResult::SelectAll);
         assert_eq!(key("cmd-x"), KeyResult::None);
+        assert_eq!(key("alt-f2"), KeyResult::None);
+        assert_eq!(key("alt-up"), send("\x1b[1;3A"));
+        assert_eq!(evaluate(&Keystroke::parse("alt-f2").unwrap(), false, true), send("\x1b[1;3Q"));
     }
 }
