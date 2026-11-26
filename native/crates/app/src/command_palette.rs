@@ -27,6 +27,8 @@ pub struct CommandPick {
     /// "Category: Title", or the title alone.
     pub label: String,
     pub category: Option<String>,
+    /// `metadata.description`, which the TF-IDF match reads with the label.
+    pub description: Option<String>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -187,6 +189,8 @@ pub struct MenuItem {
     pub id: String,
     pub title: String,
     pub category: Option<String>,
+    /// `metadata.description`: the localized value, then the English one when it differs.
+    pub description: Option<String>,
     pub when: Option<Expr>,
     pub precondition: Option<Expr>,
     /// The extension that contributed the command (`ICommandAction.source`).
@@ -226,6 +230,10 @@ pub fn menu(extensions: &[ScannedExtension]) -> Vec<MenuItem> {
             id: text(&item["id"]).expect("an id"),
             title: text(&item["title"]).map(|title| crate::nls::localize(&title).into_owned()).unwrap_or_default(),
             category: text(&item["category"]).map(|category| crate::nls::localize(&category).into_owned()),
+            description: text(&item["description"]).map(|original| match crate::nls::localize(&original) {
+                value if value == original => original,
+                value => format!("{value} ({original})"),
+            }),
             when: item["when"].as_str().and_then(Expr::deserialize),
             precondition: item["precondition"].as_str().and_then(Expr::deserialize),
             source: None,
@@ -263,6 +271,7 @@ pub fn contributed_commands(extension: &ScannedExtension) -> Vec<MenuItem> {
             id: id.to_string(),
             title,
             category: localized(&command["category"]),
+            description: None,
             when: None,
             precondition: command["enablement"].as_str().and_then(Expr::deserialize),
             source: Some(ExtensionSource::of(extension)),
@@ -280,7 +289,7 @@ pub fn enabled_commands(menu: &[MenuItem], context: &dyn Context, commands: &Com
         if (item.source.is_none() && commands.get(&item.id).is_none()) || !holds(&item.when) || !holds(&item.precondition) {
             continue;
         }
-        picks.push(CommandPick { id: item.id.clone(), label: strip_icons(&item.label()), category: item.category.clone() });
+        picks.push(CommandPick { id: item.id.clone(), label: strip_icons(&item.label()), category: item.category.clone(), description: item.description.clone() });
     }
     picks
 }
@@ -429,7 +438,7 @@ pub fn editor_action_picks(context: &dyn Context) -> Vec<CommandPick> {
     let mut picks = Vec::new();
     for (id, label, precondition) in EDITOR_ACTIONS {
         if precondition.and_then(Expr::deserialize).is_none_or(|expr| expr.evaluate(context)) {
-            picks.push(CommandPick { id: id.to_string(), label: label.to_string(), category: None });
+            picks.push(CommandPick { id: id.to_string(), label: label.to_string(), category: None, description: None });
         }
     }
     picks
@@ -481,11 +490,19 @@ pub fn word_filter(filter: &str, label: &str) -> Option<Matches> {
 
 fn tf_idf(commands: &[CommandPick], filter: &str) -> Vec<crate::tf_idf::Score> {
     let mut calculator = TfIdfCalculator::default();
-    calculator.update_documents(commands.iter().map(|command| Document { key: command.id.clone(), text_chunks: vec![command.label.clone()] }).collect());
+    calculator.update_documents(commands.iter().map(|command| Document { key: command.id.clone(), text_chunks: vec![tf_idf_chunk(command)] }).collect());
     let mut scores = normalize_scores(calculator.calculate_scores(filter));
     scores.retain(|score| score.score > TFIDF_THRESHOLD);
     scores.truncate(TFIDF_MAX_RESULTS);
     scores
+}
+
+/// `getTfIdfChunk`: the label, then the description when it is not the label.
+fn tf_idf_chunk(command: &CommandPick) -> String {
+    match &command.description {
+        Some(description) if *description != command.label => format!("{} - {description}", command.label),
+        _ => command.label.clone(),
+    }
 }
 
 /// TF-IDF matches last, then most recently used, then not Developer commands, then by label.

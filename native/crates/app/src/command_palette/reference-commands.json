@@ -1382,6 +1382,15 @@
 		"workbench.extensions.action.addToWorkspaceFolderIgnoredRecommendations": "Extensions: Add Extension to Workspace Folder Ignored Recommendations",
 		"workbench.extensions.action.configureWorkspaceRecommendedExtensions": "Extensions: Configure Recommended Extensions (Workspace)",
 		"workbench.extensions.action.manageTrustedPublishers": "Extensions: Manage Trusted Extension Publishers",
+		"workbench.action.terminal.newWithProfile": "Create New Terminal (With Profile)",
+		"workbench.view.extension.references-view": "View: Show References",
+		"jsBrowserBreakpoints.focus": "Run and Debug: Focus on Browser Options View",
+		"jsExcludedCallers.focus": "Run and Debug: Focus on Excluded Callers View",
+		"jsDebugNetworkTree.focus": "Run and Debug: Focus on Network View",
+		"npm.focus": "Explorer: Focus on NPM Scripts View",
+		"references-view.tree.focus": "References: Focus on Reference Search Results View",
+		"workbench.action.openRemoteSettings": "Preferences: Open Remote Settings (vscode-remote)",
+		"workbench.action.openRemoteSettingsFile": "Preferences: Open Remote Settings (JSON) (vscode-remote)",
 		"workbench.views.extensions.installed.focus": "Extensions: Focus on Installed View",
 		"workbench.views.extensions.popular.focus": "Extensions: Focus on Popular View",
 		"extensions.recommendedList.focus": "Extensions: Focus on Recommended View",
@@ -1421,27 +1430,18 @@
 		"workbench.action.openLogFile": "Developer: Open Log...",
 		"workbench.action.exportLogs": "Developer: Export Logs...",
 		"workbench.action.importLog": "Developer: Import Log...",
+		"~remote.forwardedPortsContainer": "View: Toggle Ports",
+		"~remote.forwardedPorts.focus": "Ports: Focus on Ports View",
 		"workbench.action.manageAccounts": "Accounts: Manage Accounts",
 		"_manageTrustedExtensionsForAccount": "Accounts: Manage Trusted Extensions For Account",
 		"_manageAccountPreferencesForExtension": "Accounts: Manage Extension Account Preferences...",
 		"_manageTrustedMCPServersForAccount": "Accounts: Manage Trusted MCP Servers For Account",
 		"workbench.action.removeDynamicAuthenticationProviders": "Authentication: Remove Dynamic Authentication Providers",
-		"workbench.action.terminal.newWithProfile": "Create New Terminal (With Profile)",
-		"workbench.view.extension.references-view": "View: Show References",
-		"jsBrowserBreakpoints.focus": "Run and Debug: Focus on Browser Options View",
-		"jsExcludedCallers.focus": "Run and Debug: Focus on Excluded Callers View",
-		"jsDebugNetworkTree.focus": "Run and Debug: Focus on Network View",
-		"npm.focus": "Explorer: Focus on NPM Scripts View",
-		"references-view.tree.focus": "References: Focus on Reference Search Results View",
-		"~remote.forwardedPortsContainer": "View: Toggle Ports",
-		"workbench.action.openRemoteSettings": "Preferences: Open Remote Settings (vscode-remote)",
-		"workbench.action.openRemoteSettingsFile": "Preferences: Open Remote Settings (JSON) (vscode-remote)",
-		"~remote.forwardedPorts.focus": "Ports: Focus on Ports View",
-		"workbench.editSessions.actions.resetAuth": "Cloud Changes: Turn off Cloud Changes...",
 		"workbench.extensions.action.openExtensionsFolder": "Developer: Open Extensions Folder",
 		"_workbench.extensions.action.cleanUpExtensionsFolder": "Developer: Cleanup Extensions Folder",
 		"workbench.action.openIssueReporter": "Help: Report Issue...",
 		"workbench.action.reportPerformanceIssueUsingReporter": "Help: Report Performance Issue...",
+		"workbench.editSessions.actions.resetAuth": "Cloud Changes: Turn off Cloud Changes...",
 		"workbench.extensions.installMissingDependencies": "Extensions: Install Missing Dependencies",
 		"workbench.action.toggleLockedScrolling": "View: Toggle Locked Scrolling Across Editors",
 		"workbench.action.configureLocale": "Configure Display Language",
@@ -1588,7 +1588,8 @@
 		},
 		{
 			"id": "editor.action.showOrFocusStandaloneColorPicker",
-			"title": "Show or Focus Standalone Color Picker"
+			"title": "Show or Focus Standalone Color Picker",
+			"description": "Show or focus a standalone color picker which uses the default color provider. It displays hex/rgb/hsl colors."
 		},
 		{
 			"id": "editor.action.inlineSuggest.snooze",
@@ -1605,7 +1606,8 @@
 		{
 			"id": "editor.action.toggleStickyScroll",
 			"title": "Toggle Editor Sticky Scroll",
-			"category": "View"
+			"category": "View",
+			"description": "Toggle/enable the editor sticky scroll which shows the nested scopes at the top of the viewport"
 		},
 		{
 			"id": "editor.action.focusStickyScroll",
@@ -1614,7 +1616,8 @@
 		},
 		{
 			"id": "editor.action.toggleTabFocusMode",
-			"title": "Toggle Tab Key Moves Focus"
+			"title": "Toggle Tab Key Moves Focus",
+			"description": "Determines whether the tab key moves focus around the workbench or inserts the tab character in the current editor. This is also called tab trapping, tab navigation, or tab focus mode."
 		},
 		{
 			"id": "files.participants.resetChoice",
@@ -1677,13 +1680,15 @@
 			"id": "workbench.action.chat.editToolApproval",
 			"title": "Manage Tool Approval",
 			"category": "Chat",
+			"description": "Edit/manage the tool approval and confirmation preferences for AI chat agents.",
 			"when": "chatIsEnabled",
 			"precondition": "chatIsEnabled"
 		},
 		{
 			"id": "workbench.action.toggleAuxiliaryBar",
 			"title": "Toggle Secondary Side Bar Visibility",
-			"category": "View"
+			"category": "View",
+			"description": "Open/Show and Close/Hide Secondary Side Bar"
 		},
 		{
 			"id": "workbench.action.closeAuxiliaryBar",
@@ -1729,7 +1734,8 @@
 		{
 			"id": "workbench.action.togglePanel",
 			"title": "Toggle Panel Visibility",
-			"category": "View"
+			"category": "View",
+			"description": "Open/Show and Close/Hide Panel"
 		},
 		{
 			"id": "workbench.action.closePanel",
@@ -1835,6 +1841,7 @@
 			"id": "workbench.action.toggleSidebarVisibility",
 			"title": "Toggle Primary Side Bar Visibility",
 			"category": "View",
+			"description": "Open/Show and Close/Hide Sidebar",
 			"when": "!layoutMode",
 			"precondition": "!layoutMode"
 		},
@@ -1849,6 +1856,7 @@
 			"id": "workbench.action.hideEditorTabs",
 			"title": "Hide Editor Tabs",
 			"category": "View",
+			"description": "Hide Tab Bar",
 			"when": "!inZenMode && !isSessionsWindow && config.workbench.editor.showTabs != 'none'",
 			"precondition": "!inZenMode && !isSessionsWindow && config.workbench.editor.showTabs != 'none'"
 		},
@@ -1856,6 +1864,7 @@
 			"id": "workbench.action.showMultipleEditorTabs",
 			"title": "Show Multiple Editor Tabs",
 			"category": "View",
+			"description": "Show Tab Bar with multiple tabs",
 			"when": "!inZenMode && !isSessionsWindow && config.workbench.editor.showTabs != 'multiple'",
 			"precondition": "!inZenMode && !isSessionsWindow && config.workbench.editor.showTabs != 'multiple'"
 		},
@@ -1863,6 +1872,7 @@
 			"id": "workbench.action.showEditorTab",
 			"title": "Show Single Editor Tab",
 			"category": "View",
+			"description": "Show Tab Bar with one Tab",
 			"when": "!inZenMode && !isSessionsWindow && config.workbench.editor.showTabs != 'single'",
 			"precondition": "!inZenMode && !isSessionsWindow && config.workbench.editor.showTabs != 'single'"
 		},
@@ -1870,6 +1880,7 @@
 			"id": "workbench.action.editorActionsTitleBar",
 			"title": "Move Editor Actions to Title Bar",
 			"category": "View",
+			"description": "Move Editor Actions from the tab bar to the title bar",
 			"when": "!isSessionsWindow && config.workbench.editor.editorActionsLocation != 'titleBar'",
 			"precondition": "!isSessionsWindow && config.workbench.editor.editorActionsLocation != 'titleBar'"
 		},
@@ -1877,6 +1888,7 @@
 			"id": "workbench.action.editorActionsDefault",
 			"title": "Move Editor Actions to Tab Bar",
 			"category": "View",
+			"description": "Move Editor Actions from the title bar to the tab bar",
 			"when": "!isSessionsWindow && config.workbench.editor.editorActionsLocation != 'default' && config.workbench.editor.showTabs != 'none'",
 			"precondition": "!isSessionsWindow && config.workbench.editor.editorActionsLocation != 'default' && config.workbench.editor.showTabs != 'none'"
 		},
@@ -1884,6 +1896,7 @@
 			"id": "workbench.action.hideEditorActions",
 			"title": "Hide Editor Actions",
 			"category": "View",
+			"description": "Hide Editor Actions in the tab and title bar",
 			"when": "!isSessionsWindow && config.workbench.editor.editorActionsLocation != 'hidden'",
 			"precondition": "!isSessionsWindow && config.workbench.editor.editorActionsLocation != 'hidden'"
 		},
@@ -1891,6 +1904,7 @@
 			"id": "workbench.action.showEditorActions",
 			"title": "Show Editor Actions",
 			"category": "View",
+			"description": "Make Editor Actions visible.",
 			"when": "!isSessionsWindow && config.workbench.editor.editorActionsLocation == 'hidden'",
 			"precondition": "!isSessionsWindow && config.workbench.editor.editorActionsLocation == 'hidden'"
 		},
@@ -1898,6 +1912,7 @@
 			"id": "workbench.action.toggleSeparatePinnedEditorTabs",
 			"title": "Separate Pinned Editor Tabs",
 			"category": "View",
+			"description": "Toggle whether pinned editor tabs are shown on a separate row above unpinned tabs.",
 			"when": "config.workbench.editor.showTabs == 'multiple'",
 			"precondition": "config.workbench.editor.showTabs == 'multiple'"
 		},
@@ -1969,6 +1984,7 @@
 			"id": "workbench.action.zenHideEditorTabs",
 			"title": "Hide Editor Tabs in Zen Mode",
 			"category": "View",
+			"description": "Hide Tab Bar in Zen Mode",
 			"when": "inZenMode && !isSessionsWindow && config.zenMode.showTabs != 'none'",
 			"precondition": "inZenMode && !isSessionsWindow && config.zenMode.showTabs != 'none'"
 		},
@@ -1976,6 +1992,7 @@
 			"id": "workbench.action.zenShowMultipleEditorTabs",
 			"title": "Show Multiple Editor Tabs in Zen Mode",
 			"category": "View",
+			"description": "Show Tab Bar in Zen Mode",
 			"when": "inZenMode && !isSessionsWindow && config.zenMode.showTabs != 'multiple'",
 			"precondition": "inZenMode && !isSessionsWindow && config.zenMode.showTabs != 'multiple'"
 		},
@@ -1983,6 +2000,7 @@
 			"id": "workbench.action.zenShowEditorTab",
 			"title": "Show Single Editor Tab in Zen Mode",
 			"category": "View",
+			"description": "Show Tab Bar in Zen Mode with one Tab",
 			"when": "inZenMode && !isSessionsWindow && config.zenMode.showTabs != 'single'",
 			"precondition": "inZenMode && !isSessionsWindow && config.zenMode.showTabs != 'single'"
 		},
@@ -2071,7 +2089,8 @@
 		{
 			"id": "tree.toggleStickyScroll",
 			"title": "Toggle Tree Sticky Scroll",
-			"category": "View"
+			"category": "View",
+			"description": "Toggles Sticky Scroll widget at the top of tree structures such as the File Explorer and Debug variables View."
 		},
 		{
 			"id": "workbench.action.navigateLeft",
@@ -2206,7 +2225,8 @@
 		},
 		{
 			"id": "workbench.action.quickOpen",
-			"title": "Go to File..."
+			"title": "Go to File...",
+			"description": "Quick access"
 		},
 		{
 			"id": "workbench.action.quickOpenSelectNext",
@@ -2247,6 +2267,7 @@
 		{
 			"id": "workbench.action.editor.changeLanguageMode",
 			"title": "Change Language Mode",
+			"description": "Change the language mode of the active text editor.",
 			"when": "!notebookEditorFocused",
 			"precondition": "!notebookEditorFocused"
 		},
@@ -3220,6 +3241,7 @@
 			"id": "_notebook.selectKernel",
 			"title": "Select Notebook Kernel",
 			"category": "Notebook",
+			"description": "Notebook Kernel Args",
 			"when": "activeEditor == 'workbench.editor.notebook'",
 			"precondition": "activeEditor == 'workbench.editor.notebook'"
 		},
@@ -3248,6 +3270,7 @@
 			"id": "notebook.fold",
 			"title": "Fold Cell",
 			"category": "Notebook",
+			"description": "Fold Cell",
 			"when": "activeEditor == 'workbench.editor.notebook'",
 			"precondition": "activeEditor == 'workbench.editor.notebook'"
 		},
@@ -3255,6 +3278,7 @@
 			"id": "notebook.unfold",
 			"title": "Unfold Cell",
 			"category": "Notebook",
+			"description": "Unfold Cell",
 			"when": "activeEditor == 'workbench.editor.notebook'",
 			"precondition": "activeEditor == 'workbench.editor.notebook'"
 		},
@@ -3304,12 +3328,14 @@
 			"id": "notebook.execute",
 			"title": "Run All",
 			"category": "Notebook",
+			"description": "Run All",
 			"when": "activeEditor == 'workbench.editor.interactive' || activeEditor == 'workbench.editor.notebook' || activeEditor == 'workbench.editor.repl'"
 		},
 		{
 			"id": "notebook.cell.execute",
 			"title": "Execute Cell",
 			"category": "Notebook",
+			"description": "Execute Cell",
 			"when": "activeEditor == 'workbench.editor.notebook'",
 			"precondition": "notebookMissingKernelExtension && !notebookCellExecuting && notebookCellType == 'code' || !notebookCellExecuting && notebookCellType == 'code' && notebookKernelCount > 0 || !notebookCellExecuting && notebookCellType == 'code' && notebookKernelSourceCount > 0"
 		},
@@ -3331,6 +3357,7 @@
 			"id": "notebook.cell.executeAndFocusContainer",
 			"title": "Execute Cell and Focus Container",
 			"category": "Notebook",
+			"description": "Execute Cell and Focus Container",
 			"when": "activeEditor == 'workbench.editor.notebook'",
 			"precondition": "notebookMissingKernelExtension && !notebookCellExecuting && notebookCellType == 'code' || !notebookCellExecuting && notebookCellType == 'code' && notebookKernelCount > 0 || !notebookCellExecuting && notebookCellType == 'code' && notebookKernelSourceCount > 0"
 		},
@@ -3338,6 +3365,7 @@
 			"id": "notebook.cell.cancelExecution",
 			"title": "Stop Cell Execution",
 			"category": "Notebook",
+			"description": "Stop Cell Execution",
 			"when": "activeEditor == 'workbench.editor.notebook'",
 			"precondition": "notebookCellExecutionState == 'executing' || notebookCellExecutionState == 'pending'"
 		},
@@ -3425,6 +3453,7 @@
 			"id": "workbench.files.action.compareFileWith",
 			"title": "Compare Active File With...",
 			"category": "File",
+			"description": "Opens a picker to select a file to diff with the active editor.",
 			"when": "activeEditor && !isSessionsWindow",
 			"precondition": "activeEditor && !isSessionsWindow"
 		},
@@ -3432,6 +3461,7 @@
 			"id": "workbench.files.action.focusFilesExplorer",
 			"title": "Focus on Files Explorer",
 			"category": "File",
+			"description": "Moves focus to the file explorer view container.",
 			"when": "!isSessionsWindow",
 			"precondition": "!isSessionsWindow"
 		},
@@ -3439,6 +3469,7 @@
 			"id": "workbench.files.action.showActiveFileInExplorer",
 			"title": "Reveal Active File in Explorer View",
 			"category": "File",
+			"description": "Reveals and selects the active file within the explorer view.",
 			"when": "!isSessionsWindow",
 			"precondition": "!isSessionsWindow"
 		},
@@ -3446,6 +3477,7 @@
 			"id": "workbench.files.action.compareWithClipboard",
 			"title": "Compare Active File with Clipboard",
 			"category": "File",
+			"description": "Opens a new diff editor to compare the active file with the contents of the clipboard.",
 			"when": "!isSessionsWindow",
 			"precondition": "!isSessionsWindow"
 		},
@@ -3453,6 +3485,7 @@
 			"id": "workbench.files.action.compareNewUntitledTextFiles",
 			"title": "Compare New Untitled Text Files",
 			"category": "File",
+			"description": "Opens a new diff editor with two untitled files.",
 			"when": "!isSessionsWindow",
 			"precondition": "!isSessionsWindow"
 		},
@@ -3460,6 +3493,7 @@
 			"id": "workbench.action.toggleAutoSave",
 			"title": "Toggle Auto Save",
 			"category": "File",
+			"description": "Toggle the ability to save files automatically after typing",
 			"when": "!isSessionsWindow",
 			"precondition": "!isSessionsWindow"
 		},
@@ -3467,6 +3501,7 @@
 			"id": "workbench.action.files.showOpenedFileInNewWindow",
 			"title": "Open Active Editor in New Empty Workspace",
 			"category": "File",
+			"description": "Opens the active editor in a new window with no folders open.",
 			"when": "emptyWorkspaceSupport && !isSessionsWindow",
 			"precondition": "emptyWorkspaceSupport && !isSessionsWindow"
 		},
@@ -3541,7 +3576,8 @@
 		{
 			"id": "workbench.files.action.compareWithSaved",
 			"title": "Compare Active File with Saved",
-			"category": "File"
+			"category": "File",
+			"description": "Opens a new diff editor to compare the active file with the version on disk."
 		},
 		{
 			"id": "workbench.action.files.saveAs",
@@ -3559,6 +3595,7 @@
 			"id": "explorer.newFolder",
 			"title": "New Folder...",
 			"category": "File",
+			"description": "Create a new folder or directory",
 			"when": "!isSessionsWindow && workspaceFolderCount != '0'"
 		},
 		{
@@ -3570,12 +3607,14 @@
 		{
 			"id": "workbench.files.action.refreshFilesExplorer",
 			"title": "Refresh Explorer",
+			"description": "Forces a refresh of the Explorer.",
 			"when": "!explorerFindProviderActive",
 			"precondition": "!explorerFindProviderActive"
 		},
 		{
 			"id": "workbench.files.action.collapseExplorerFolders",
-			"title": "Collapse Folders in Explorer"
+			"title": "Collapse Folders in Explorer",
+			"description": "Folds all folders in the Explorer."
 		},
 		{
 			"id": "chatEditing.viewChanges",
@@ -3701,6 +3740,7 @@
 			"id": "notebook.cell.changeLanguage",
 			"title": "Change Cell Language",
 			"category": "Notebook",
+			"description": "Change Cell Language",
 			"when": "activeEditor == 'workbench.editor.interactive' || activeEditor == 'workbench.editor.notebook' || activeEditor == 'workbench.editor.repl'"
 		},
 		{
@@ -3983,6 +4023,7 @@
 			"id": "notebook.cell.toggleOutputs",
 			"title": "Toggle Outputs",
 			"category": "Notebook",
+			"description": "Toggle Outputs",
 			"when": "activeEditor == 'workbench.editor.notebook'",
 			"precondition": "notebookCellListFocused"
 		},
@@ -5241,6 +5282,7 @@
 			"id": "workbench.mcp.addConfiguration",
 			"title": "Add Server...",
 			"category": "MCP",
+			"description": "Installs a new Model Context protocol to the mcp.json settings",
 			"when": "!chatSetupDisabledInWorkspace && !chatSetupHidden",
 			"precondition": "!chatSetupDisabledInWorkspace && !chatSetupHidden"
 		},
@@ -5248,6 +5290,7 @@
 			"id": "workbench.mcp.installFromManifest",
 			"title": "Install Server from Manifest...",
 			"category": "MCP",
+			"description": "Install an MCP server from a JSON manifest file",
 			"when": "!chatSetupDisabledInWorkspace && !chatSetupHidden",
 			"precondition": "!chatSetupDisabledInWorkspace && !chatSetupHidden"
 		},
@@ -5308,7 +5351,8 @@
 		},
 		{
 			"id": "workbench.debug.panel.action.clearReplAction",
-			"title": "Clear Console"
+			"title": "Clear Console",
+			"description": "Clears all program output from your debug REPL"
 		},
 		{
 			"id": "repl.focusLastItemExecuted",
@@ -5333,18 +5377,21 @@
 			"id": "testing.coverageToggleToolbar",
 			"title": "Show Test Coverage Toolbar",
 			"category": "Test",
+			"description": "Toggle the sticky coverage bar in the editor.",
 			"when": "testing.isTestCoverageOpen"
 		},
 		{
 			"id": "testing.toggleCoverageInExplorer",
 			"title": "Toggle Coverage in Explorer",
 			"category": "Test",
+			"description": "Toggle the display of test coverage in the File Explorer view.",
 			"when": "testing.isTestCoverageOpen"
 		},
 		{
 			"id": "testing.coverage.goToNextMissedLine",
 			"title": "Go to Next Uncovered Line",
 			"category": "Test",
+			"description": "Navigate to the next line that is not covered by tests.",
 			"when": "testing.isTestCoverageOpen",
 			"precondition": "testing.hasCoverageInFile"
 		},
@@ -5352,6 +5399,7 @@
 			"id": "testing.coverage.goToPreviousMissedLine",
 			"title": "Go to Previous Uncovered Line",
 			"category": "Test",
+			"description": "Navigate to the previous line that is not covered by tests.",
 			"when": "testing.isTestCoverageOpen",
 			"precondition": "testing.hasCoverageInFile"
 		},
@@ -5567,28 +5615,33 @@
 			"id": "testing.goToPreviousMessage",
 			"title": "Go to Previous Test Failure",
 			"category": "Test",
+			"description": "Shows the previous failure message in your file",
 			"when": "editorFocus && testing.isPeekVisible"
 		},
 		{
 			"id": "testing.goToPreviousMessage",
 			"title": "Go to Previous Test Failure",
-			"category": "Test"
+			"category": "Test",
+			"description": "Shows the previous failure message in your file"
 		},
 		{
 			"id": "testing.goToNextMessage",
 			"title": "Go to Next Test Failure",
 			"category": "Test",
+			"description": "Shows the next failure message in your file",
 			"when": "editorFocus && testing.isPeekVisible"
 		},
 		{
 			"id": "testing.goToNextMessage",
 			"title": "Go to Next Test Failure",
-			"category": "Test"
+			"category": "Test",
+			"description": "Shows the next failure message in your file"
 		},
 		{
 			"id": "testing.toggleTestingPeekHistory",
 			"title": "Toggle Test History in Peek",
-			"category": "Test"
+			"category": "Test",
+			"description": "Shows or hides the history of test runs in the peek view"
 		},
 		{
 			"id": "workbench.action.setLogLevel",
@@ -5612,6 +5665,7 @@
 			"id": "workbench.action.findInFiles",
 			"title": "Find in Files",
 			"category": "Search",
+			"description": "Open a workspace search",
 			"when": "!isSessionsWindow",
 			"precondition": "!isSessionsWindow"
 		},
@@ -5660,17 +5714,20 @@
 		{
 			"id": "search.action.openNewEditor",
 			"title": "New Search Editor",
-			"category": "Search Editor"
+			"category": "Search Editor",
+			"description": "Open a new search editor. Arguments passed can include variables like ${relativeFileDirname}."
 		},
 		{
 			"id": "search.action.openEditor",
 			"title": "Open Search Editor",
-			"category": "Search Editor"
+			"category": "Search Editor",
+			"description": "Open a new search editor. Arguments passed can include variables like ${relativeFileDirname}."
 		},
 		{
 			"id": "search.action.openNewEditorToSide",
 			"title": "Open New Search Editor to the Side",
-			"category": "Search Editor"
+			"category": "Search Editor",
+			"description": "Open a new search editor. Arguments passed can include variables like ${relativeFileDirname}."
 		},
 		{
 			"id": "search.action.openInEditor",
@@ -5761,7 +5818,8 @@
 		},
 		{
 			"id": "debug.action.toggleDisassemblyViewSourceCode",
-			"title": "Toggle Source Code in Disassembly View"
+			"title": "Toggle Source Code in Disassembly View",
+			"description": "Shows or hides source code in disassembly"
 		},
 		{
 			"id": "editor.debug.action.toggleBreakpoint",
@@ -5773,6 +5831,7 @@
 		{
 			"id": "workbench.action.debug.configure",
 			"title": "Open 'launch.json'",
+			"description": "Opens the file used to configure how your program is debugged",
 			"when": "debugUx != 'simple'",
 			"precondition": "debugUx != 'simple'"
 		},
@@ -6518,6 +6577,7 @@
 			"id": "workbench.action.terminal.newWithCwd",
 			"title": "Create New Terminal Starting in a Custom Working Directory",
 			"category": "Terminal",
+			"description": "Create New Terminal Starting in a Custom Working Directory",
 			"when": "terminalProcessSupported",
 			"precondition": "terminalProcessSupported"
 		},
@@ -6899,6 +6959,7 @@
 			"id": "workbench.action.terminal.goToRecentDirectory",
 			"title": "Go to Recent Directory...",
 			"category": "Terminal",
+			"description": "Goes to a recent folder",
 			"when": "terminalHasBeenCreated || terminalProcessSupported",
 			"precondition": "terminalHasBeenCreated || terminalProcessSupported"
 		},
@@ -6920,6 +6981,7 @@
 			"id": "workbench.action.terminal.openUrlLink",
 			"title": "Open Last URL Link",
 			"category": "Terminal",
+			"description": "Opens the last detected URL/URI link in the terminal",
 			"when": "terminalHasBeenCreated",
 			"precondition": "terminalHasBeenCreated"
 		},
@@ -6976,6 +7038,7 @@
 			"id": "workbench.action.terminal.sendSequence",
 			"title": "Send Sequence",
 			"category": "Terminal",
+			"description": "Send Sequence",
 			"when": "terminalProcessSupported",
 			"precondition": "terminalProcessSupported"
 		},
@@ -6983,6 +7046,7 @@
 			"id": "workbench.action.terminal.sendSignal",
 			"title": "Send Signal",
 			"category": "Terminal",
+			"description": "Send Signal",
 			"when": "terminalProcessSupported",
 			"precondition": "terminalProcessSupported"
 		},
@@ -7109,15 +7173,18 @@
 		{
 			"id": "resetGettingStartedProgress",
 			"title": "Reset Welcome Page Walkthrough Progress",
-			"category": "Developer"
+			"category": "Developer",
+			"description": "Reset the progress of all Walkthrough steps on the Welcome Page to make them appear as if they are being viewed for the first time, providing a fresh start to the getting started experience."
 		},
 		{
 			"id": "editor.action.toggleScreenReaderAccessibilityMode",
-			"title": "Toggle Screen Reader Accessibility Mode"
+			"title": "Toggle Screen Reader Accessibility Mode",
+			"description": "Toggles an optimized mode for usage with screen readers, braille devices, and other assistive technologies."
 		},
 		{
 			"id": "editor.action.announceCursorPosition",
-			"title": "Announce Cursor Position"
+			"title": "Announce Cursor Position",
+			"description": "Announce the current cursor position (line and column) via screen reader."
 		},
 		{
 			"id": "workbench.action.inspectKeyMappings",
@@ -7149,7 +7216,8 @@
 		{
 			"id": "editor.action.toggleOvertypeInsertMode",
 			"title": "Toggle Overtype/Insert Mode",
-			"category": "View"
+			"category": "View",
+			"description": "Toggle between overtype and insert mode"
 		},
 		{
 			"id": "workbench.action.toggleMultiCursorModifier",
@@ -7174,6 +7242,7 @@
 			"id": "editor.action.insertSnippet",
 			"title": "Insert Snippet",
 			"category": "Snippets",
+			"description": "Insert Snippet",
 			"when": "!editorReadonly",
 			"precondition": "!editorReadonly"
 		},
@@ -7284,7 +7353,8 @@
 		{
 			"id": "workbench.action.openWalkthrough",
 			"title": "Welcome",
-			"category": "Help"
+			"category": "Help",
+			"description": "Opens a Walkthrough to help you get started in VS Code."
 		},
 		{
 			"id": "welcome.goBack",
@@ -7301,7 +7371,8 @@
 		{
 			"id": "workbench.action.showInteractivePlayground",
 			"title": "Interactive Editor Playground",
-			"category": "Help"
+			"category": "Help",
+			"description": "Opens an interactive playground for learning about the editor."
 		},
 		{
 			"id": "welcome.showNewFileEntries",
@@ -7407,11 +7478,13 @@
 		},
 		{
 			"id": "signals.sounds.help",
-			"title": "Help: List Signal Sounds"
+			"title": "Help: List Signal Sounds",
+			"description": "List all accessibility sounds, noises, or audio cues and configure their settings"
 		},
 		{
 			"id": "accessibility.announcement.help",
-			"title": "Help: List Signal Announcements"
+			"title": "Help: List Signal Announcements",
+			"description": "List all accessibility announcements, alerts, braille messages, and configure their settings"
 		},
 		{
 			"id": "workbench.action.configureMeteredConnection",
@@ -7653,7 +7726,8 @@
 		{
 			"id": "workbench.action.webview.openDeveloperTools",
 			"title": "Open Webview Developer Tools",
-			"category": "Developer"
+			"category": "Developer",
+			"description": "Opens Developer Tools for active webviews"
 		},
 		{
 			"id": "workbench.action.browser.goBack",
@@ -7906,6 +7980,7 @@
 			"id": "workbench.action.chat.attachAppWindowScreenshot",
 			"title": "Attach Screenshot of App Window",
 			"category": "Chat",
+			"description": "Attaches a screenshot of the window of another app to chat: the window that you are using, or the one that you just left.",
 			"when": "chatIsEnabled && config.chat.appWindowScreenshots.enabled",
 			"precondition": "chatIsEnabled && config.chat.appWindowScreenshots.enabled"
 		},
@@ -8060,6 +8135,7 @@
 			"id": "workbench.panel.chat",
 			"title": "Toggle Chat",
 			"category": "View",
+			"description": "Opens view Chat",
 			"when": "workbench.panel.chat.view.copilot.active",
 			"precondition": "workbench.panel.chat.view.copilot.active"
 		},
@@ -8067,12 +8143,14 @@
 			"id": "workbench.panel.chat.view.copilot.focus",
 			"title": "Focus on Chat View",
 			"category": "Chat",
+			"description": "Focus on Chat View",
 			"when": "chatExtensionInvalid && !chatAccountPolicyGateActive && !chatAgentsViewActive || chatPanelParticipantRegistered && !chatAccountPolicyGateActive && !chatAgentsViewActive || !chatAccountPolicyGateActive && !chatAgentsViewActive && !chatSetupDisabledInWorkspace && !chatSetupHidden"
 		},
 		{
 			"id": "workbench.action.chat.showUpdateRequired",
 			"title": "Toggle Chat Update Requirement",
 			"category": "View",
+			"description": "Opens view Chat",
 			"when": "workbench.panel.chat.updateRequired.active",
 			"precondition": "workbench.panel.chat.updateRequired.active"
 		},
@@ -8080,6 +8158,7 @@
 			"id": "workbench.panel.chat.updateRequired.focus",
 			"title": "Focus on Chat View",
 			"category": "Chat",
+			"description": "Focus on Chat View",
 			"when": "managedSettingsUpdateRequired && !chatAgentsViewActive"
 		},
 		{
@@ -8093,6 +8172,7 @@
 			"id": "voiceTranscripts.focus",
 			"title": "Show Focus Voice Transcripts View",
 			"category": "View",
+			"description": "Opens view Voice Transcripts",
 			"when": "workbench.view.voiceTranscripts.active",
 			"precondition": "workbench.view.voiceTranscripts.active"
 		},
@@ -8100,6 +8180,7 @@
 			"id": "workbench.view.voiceTranscripts.focus",
 			"title": "Focus on Voice Transcripts View",
 			"category": "Voice Transcripts",
+			"description": "Focus on Voice Transcripts View",
 			"when": "voiceTranscripts.showView"
 		},
 		{
@@ -8113,12 +8194,14 @@
 			"id": "workbench.view.testing.focus",
 			"title": "Focus on Test Explorer View",
 			"category": "Testing",
+			"description": "Focus on Test Explorer View",
 			"when": "testing.providerCount > 0"
 		},
 		{
 			"id": "workbench.view.testCoverage.focus",
 			"title": "Focus on Test Coverage View",
 			"category": "Testing",
+			"description": "Focus on Test Coverage View",
 			"when": "testing.isTestCoverageOpen"
 		},
 		{
@@ -8131,12 +8214,14 @@
 		{
 			"id": "outline.focus",
 			"title": "Focus on Outline View",
-			"category": "Explorer"
+			"category": "Explorer",
+			"description": "Focus on Outline View"
 		},
 		{
 			"id": "timeline.focus",
 			"title": "Focus on Timeline View",
-			"category": "Explorer"
+			"category": "Explorer",
+			"description": "Focus on Timeline View"
 		},
 		{
 			"id": "workbench.view.explorer",
@@ -8149,72 +8234,84 @@
 			"id": "workbench.view.search",
 			"title": "Show Search",
 			"category": "View",
+			"description": "Opens view Search",
 			"when": "workbench.view.search.active",
 			"precondition": "workbench.view.search.active"
 		},
 		{
 			"id": "workbench.view.search.focus",
 			"title": "Focus on Search View",
-			"category": "Search"
+			"category": "Search",
+			"description": "Focus on Search View"
 		},
 		{
 			"id": "workbench.scm.repositories.focus",
 			"title": "Focus on Repositories View",
 			"category": "Source Control",
+			"description": "Focus on Repositories View",
 			"when": "scm.providerCount && scm.providerCount != '0'"
 		},
 		{
 			"id": "workbench.view.scm",
 			"title": "Show Changes",
 			"category": "View",
+			"description": "Opens view Changes",
 			"when": "workbench.scm.active",
 			"precondition": "workbench.scm.active"
 		},
 		{
 			"id": "workbench.scm.focus",
 			"title": "Focus on Changes View",
-			"category": "Source Control"
+			"category": "Source Control",
+			"description": "Focus on Changes View"
 		},
 		{
 			"id": "workbench.scm.history.focus",
 			"title": "Focus on Graph View",
 			"category": "Source Control",
+			"description": "Focus on Graph View",
 			"when": "scm.historyProviderCount && scm.historyProviderCount != '0'"
 		},
 		{
 			"id": "workbench.debug.welcome.focus",
 			"title": "Focus on Run View",
 			"category": "Run and Debug",
+			"description": "Focus on Run View",
 			"when": "debugUx == 'simple'"
 		},
 		{
 			"id": "workbench.debug.action.focusVariablesView",
 			"title": "Focus on Variables View",
 			"category": "Run and Debug",
+			"description": "Focus on Variables View",
 			"when": "debugUx == 'default'"
 		},
 		{
 			"id": "workbench.debug.action.focusWatchView",
 			"title": "Focus on Watch View",
 			"category": "Run and Debug",
+			"description": "Focus on Watch View",
 			"when": "debugUx == 'default'"
 		},
 		{
 			"id": "workbench.debug.action.focusCallStackView",
 			"title": "Focus on Call Stack View",
 			"category": "Run and Debug",
+			"description": "Focus on Call Stack View",
 			"when": "debugUx == 'default'"
 		},
 		{
 			"id": "workbench.debug.loadedScriptsView.focus",
 			"title": "Focus on Loaded Scripts View",
 			"category": "Run and Debug",
+			"description": "Focus on Loaded Scripts View",
 			"when": "loadedScriptsSupported && debugUx == 'default'"
 		},
 		{
 			"id": "workbench.debug.action.focusBreakpointsView",
 			"title": "Focus on Breakpoints View",
 			"category": "Run and Debug",
+			"description": "Focus on Breakpoints View",
 			"when": "breakpointsExist || hasDebugged || debugUx == 'default'"
 		},
 		{
@@ -8235,12 +8332,14 @@
 			"id": "workbench.panel.testResults.view.focus",
 			"title": "Focus on Test Results View",
 			"category": "Test Results",
+			"description": "Focus on Test Results View",
 			"when": "testing.hasAnyResults"
 		},
 		{
 			"id": "refactorPreview.focus",
 			"title": "Focus on Refactor Preview View",
 			"category": "Refactor Preview",
+			"description": "Focus on Refactor Preview View",
 			"when": "refactorPreview.enabled"
 		},
 		{
@@ -8254,6 +8353,7 @@
 			"id": "workbench.debug.action.toggleRepl",
 			"title": "Toggle Debug Console",
 			"category": "View",
+			"description": "Opens view Debug Console",
 			"when": "workbench.panel.repl.view.active",
 			"precondition": "workbench.panel.repl.view.active"
 		},
@@ -8261,43 +8361,50 @@
 			"id": "workbench.panel.repl.view.focus",
 			"title": "Focus on Debug Console View",
 			"category": "Debug Console",
+			"description": "Focus on Debug Console View",
 			"when": "debuggersAvailable"
 		},
 		{
 			"id": "workbench.actions.view.problems",
 			"title": "Toggle Problems",
 			"category": "View",
+			"description": "Opens view Problems",
 			"when": "workbench.panel.markers.view.active",
 			"precondition": "workbench.panel.markers.view.active"
 		},
 		{
 			"id": "workbench.panel.markers.view.focus",
 			"title": "Focus on Problems View",
-			"category": "Problems"
+			"category": "Problems",
+			"description": "Focus on Problems View"
 		},
 		{
 			"id": "workbench.action.output.toggleOutput",
 			"title": "Toggle Output",
 			"category": "View",
+			"description": "Opens view Output",
 			"when": "workbench.panel.output.active",
 			"precondition": "workbench.panel.output.active"
 		},
 		{
 			"id": "workbench.panel.output.focus",
 			"title": "Focus on Output View",
-			"category": "Output"
+			"category": "Output",
+			"description": "Focus on Output View"
 		},
 		{
 			"id": "workbench.action.terminal.toggleTerminal",
 			"title": "Toggle Terminal",
 			"category": "View",
+			"description": "Opens view Terminal",
 			"when": "terminal.active",
 			"precondition": "terminal.active"
 		},
 		{
 			"id": "terminal.focus",
 			"title": "Focus on Terminal View",
-			"category": "Terminal"
+			"category": "Terminal",
+			"description": "Focus on Terminal View"
 		},
 		{
 			"id": "workbench.action.focusTitleBar",
@@ -8314,7 +8421,8 @@
 		{
 			"id": "workbench.action.openSettingsJson",
 			"title": "Open User Settings (JSON)",
-			"category": "Preferences"
+			"category": "Preferences",
+			"description": "Opens the JSON file containing the current user profile settings"
 		},
 		{
 			"id": "workbench.action.openApplicationSettingsJson",
@@ -8433,8 +8541,8 @@
 		{
 			"id": "editor.action.defineKeybinding",
 			"title": "Define Keybinding",
-			"when": "resource == 'vscode-userdata:/var/folders/mn/xzbdlcgd5y98plnlr81z4hy40000gn/T/ref-commands-Uaj5sa/User/keybindings.json'",
-			"precondition": "resource == 'vscode-userdata:/var/folders/mn/xzbdlcgd5y98plnlr81z4hy40000gn/T/ref-commands-Uaj5sa/User/keybindings.json'"
+			"when": "resource == 'vscode-userdata:/var/folders/mn/xzbdlcgd5y98plnlr81z4hy40000gn/T/ref-commands-UiRLcV/User/keybindings.json'",
+			"precondition": "resource == 'vscode-userdata:/var/folders/mn/xzbdlcgd5y98plnlr81z4hy40000gn/T/ref-commands-UiRLcV/User/keybindings.json'"
 		},
 		{
 			"id": "workbench.action.chat.archiveAllAgentSessions",
@@ -8566,12 +8674,14 @@
 		{
 			"id": "workbench.files.action.focusOpenEditorsView",
 			"title": "Focus on Open Editors View",
-			"category": "Explorer"
+			"category": "Explorer",
+			"description": "Focus on Open Editors View"
 		},
 		{
 			"id": "workbench.explorer.fileView.focus",
 			"title": "Focus on No Folder Opened View",
-			"category": "Explorer"
+			"category": "Explorer",
+			"description": "Focus on No Folder Opened View"
 		},
 		{
 			"id": "workbench.action.showTelemetry",
@@ -8823,153 +8933,239 @@
 			"category": "Extensions"
 		},
 		{
+			"id": "workbench.action.terminal.newWithProfile",
+			"title": "Create New Terminal (With Profile)",
+			"description": "workbench.action.terminal.newWithProfile",
+			"when": "terminalProcessSupported || terminalWebExtensionContributedProfile",
+			"precondition": "terminalProcessSupported || terminalWebExtensionContributedProfile"
+		},
+		{
+			"id": "workbench.view.extension.references-view",
+			"title": "Show References",
+			"category": "View",
+			"when": "viewContainer.workbench.view.extension.references-view.enabled",
+			"precondition": "viewContainer.workbench.view.extension.references-view.enabled"
+		},
+		{
+			"id": "jsBrowserBreakpoints.focus",
+			"title": "Focus on Browser Options View",
+			"category": "Run and Debug",
+			"description": "Focus on Browser Options View",
+			"when": "debugType == 'pwa-chrome' || debugType == 'pwa-editor-browser' || debugType == 'pwa-msedge'"
+		},
+		{
+			"id": "jsExcludedCallers.focus",
+			"title": "Focus on Excluded Callers View",
+			"category": "Run and Debug",
+			"description": "Focus on Excluded Callers View",
+			"when": "jsDebugHasExcludedCallers && debugType == 'node-terminal' || jsDebugHasExcludedCallers && debugType == 'pwa-chrome' || jsDebugHasExcludedCallers && debugType == 'pwa-editor-browser' || jsDebugHasExcludedCallers && debugType == 'pwa-extensionHost' || jsDebugHasExcludedCallers && debugType == 'pwa-msedge' || jsDebugHasExcludedCallers && debugType == 'pwa-node'"
+		},
+		{
+			"id": "jsDebugNetworkTree.focus",
+			"title": "Focus on Network View",
+			"category": "Run and Debug",
+			"description": "Focus on Network View",
+			"when": "jsDebugNetworkAvailable"
+		},
+		{
+			"id": "npm.focus",
+			"title": "Focus on NPM Scripts View",
+			"category": "Explorer",
+			"description": "Focus on NPM Scripts View",
+			"when": "npm:showScriptExplorer"
+		},
+		{
+			"id": "references-view.tree.focus",
+			"title": "Focus on Reference Search Results View",
+			"category": "References",
+			"description": "Focus on Reference Search Results View",
+			"when": "reference-list.isActive"
+		},
+		{
+			"id": "workbench.action.openRemoteSettings",
+			"title": "Open Remote Settings (vscode-remote)",
+			"category": "Preferences",
+			"when": "remoteName != ''"
+		},
+		{
+			"id": "workbench.action.openRemoteSettingsFile",
+			"title": "Open Remote Settings (JSON) (vscode-remote)",
+			"category": "Preferences",
+			"when": "remoteName != ''"
+		},
+		{
 			"id": "workbench.views.extensions.installed.focus",
 			"title": "Focus on Installed View",
 			"category": "Extensions",
+			"description": "Focus on Installed View",
 			"when": "defaultExtensionViews"
 		},
 		{
 			"id": "workbench.views.extensions.popular.focus",
 			"title": "Focus on Popular View",
 			"category": "Extensions",
+			"description": "Focus on Popular View",
 			"when": "defaultExtensionViews && hasGallery && !hasInstalledExtensions"
 		},
 		{
 			"id": "extensions.recommendedList.focus",
 			"title": "Focus on Recommended View",
 			"category": "Extensions",
+			"description": "Focus on Recommended View",
 			"when": "defaultExtensionViews && hasGallery && !config.extensions.showRecommendationsOnlyOnDemand && !sortByUpdateDate"
 		},
 		{
 			"id": "workbench.views.extensions.enabled.focus",
 			"title": "Focus on Enabled View",
 			"category": "Extensions",
+			"description": "Focus on Enabled View",
 			"when": "defaultExtensionViews && hasInstalledExtensions"
 		},
 		{
 			"id": "workbench.views.extensions.disabled.focus",
 			"title": "Focus on Disabled View",
 			"category": "Extensions",
+			"description": "Focus on Disabled View",
 			"when": "defaultExtensionViews && hasInstalledExtensions"
 		},
 		{
 			"id": "workbench.views.extensions.marketplace.focus",
 			"title": "Focus on Marketplace View",
 			"category": "Extensions",
+			"description": "Focus on Marketplace View",
 			"when": "hasGallery && searchMarketplaceExtensions"
 		},
 		{
 			"id": "workbench.views.extensions.searchInstalled.focus",
 			"title": "Focus on Installed View",
 			"category": "Extensions",
+			"description": "Focus on Installed View",
 			"when": "installedExtensions || searchInstalledExtensions"
 		},
 		{
 			"id": "workbench.views.extensions.searchRecentlyUpdated.focus",
 			"title": "Focus on Recently Updated View",
 			"category": "Extensions",
+			"description": "Focus on Recently Updated View",
 			"when": "searchExtensionUpdates || searchRecentlyUpdatedExtensions"
 		},
 		{
 			"id": "workbench.views.extensions.searchEnabled.focus",
 			"title": "Focus on Enabled View",
 			"category": "Extensions",
+			"description": "Focus on Enabled View",
 			"when": "searchEnabledExtensions"
 		},
 		{
 			"id": "workbench.views.extensions.searchDisabled.focus",
 			"title": "Focus on Disabled View",
 			"category": "Extensions",
+			"description": "Focus on Disabled View",
 			"when": "searchDisabledExtensions"
 		},
 		{
 			"id": "workbench.views.extensions.searchOutdated.focus",
 			"title": "Focus on Available Updates View",
 			"category": "Extensions",
+			"description": "Focus on Available Updates View",
 			"when": "searchExtensionUpdates || searchOutdatedExtensions"
 		},
 		{
 			"id": "workbench.views.extensions.searchBuiltin.focus",
 			"title": "Focus on Builtin View",
 			"category": "Extensions",
+			"description": "Focus on Builtin View",
 			"when": "searchBuiltInExtensions"
 		},
 		{
 			"id": "workbench.views.extensions.searchWorkspaceUnsupported.focus",
 			"title": "Focus on Workspace Unsupported View",
 			"category": "Extensions",
+			"description": "Focus on Workspace Unsupported View",
 			"when": "searchWorkspaceUnsupportedExtensions"
 		},
 		{
 			"id": "workbench.views.extensions.workspaceRecommendations.focus",
 			"title": "Focus on Workspace Recommendations View",
 			"category": "Extensions",
+			"description": "Focus on Workspace Recommendations View",
 			"when": "recommendedExtensions && workbenchState != 'empty'"
 		},
 		{
 			"id": "workbench.views.extensions.otherRecommendations.focus",
 			"title": "Focus on Other Recommendations View",
 			"category": "Extensions",
+			"description": "Focus on Other Recommendations View",
 			"when": "recommendedExtensions"
 		},
 		{
 			"id": "workbench.views.extensions.builtinFeatureExtensions.focus",
 			"title": "Focus on Features View",
 			"category": "Extensions",
+			"description": "Focus on Features View",
 			"when": "builtInExtensions"
 		},
 		{
 			"id": "workbench.views.extensions.builtinThemeExtensions.focus",
 			"title": "Focus on Themes View",
 			"category": "Extensions",
+			"description": "Focus on Themes View",
 			"when": "builtInExtensions"
 		},
 		{
 			"id": "workbench.views.extensions.builtinProgrammingLanguageExtensions.focus",
 			"title": "Focus on Programming Languages View",
 			"category": "Extensions",
+			"description": "Focus on Programming Languages View",
 			"when": "builtInExtensions"
 		},
 		{
 			"id": "workbench.views.extensions.untrustedUnsupportedExtensions.focus",
 			"title": "Focus on Disabled in Restricted Mode View",
 			"category": "Extensions",
+			"description": "Focus on Disabled in Restricted Mode View",
 			"when": "searchUnsupportedWorkspaceExtensions"
 		},
 		{
 			"id": "workbench.views.extensions.untrustedPartiallySupportedExtensions.focus",
 			"title": "Focus on Limited in Restricted Mode View",
 			"category": "Extensions",
+			"description": "Focus on Limited in Restricted Mode View",
 			"when": "searchUnsupportedWorkspaceExtensions"
 		},
 		{
 			"id": "workbench.views.extensions.virtualUnsupportedExtensions.focus",
 			"title": "Focus on Disabled in Virtual Workspaces View",
 			"category": "Extensions",
+			"description": "Focus on Disabled in Virtual Workspaces View",
 			"when": "searchUnsupportedWorkspaceExtensions && virtualWorkspace"
 		},
 		{
 			"id": "workbench.views.extensions.virtualPartiallySupportedExtensions.focus",
 			"title": "Focus on Limited in Virtual Workspaces View",
 			"category": "Extensions",
+			"description": "Focus on Limited in Virtual Workspaces View",
 			"when": "searchUnsupportedWorkspaceExtensions && virtualWorkspace"
 		},
 		{
 			"id": "workbench.views.extensions.deprecatedExtensions.focus",
 			"title": "Focus on Deprecated View",
 			"category": "Extensions",
+			"description": "Focus on Deprecated View",
 			"when": "searchDeprecatedExtensions"
 		},
 		{
 			"id": "workbench.views.extensions.restartRequired.focus",
 			"title": "Focus on Restart Required View",
 			"category": "Extensions",
+			"description": "Focus on Restart Required View",
 			"when": "searchRestartRequiredExtensions"
 		},
 		{
 			"id": "workbench.views.extensions.marketplaceAccess.focus",
 			"title": "Focus on Marketplace View",
 			"category": "Extensions",
+			"description": "Focus on Marketplace View",
 			"when": "defaultExtensionViews && extensionsGalleryStatus == 'accessDenied' || defaultExtensionViews && extensionsGalleryStatus == 'requiresSignIn' || searchMarketplaceExtensions && extensionsGalleryStatus == 'accessDenied' || searchMarketplaceExtensions && extensionsGalleryStatus == 'requiresSignIn'"
 		},
 		{
@@ -8983,24 +9179,28 @@
 			"id": "workbench.views.agentPlugins.installed.focus",
 			"title": "Focus on Agent Plugins - Installed View",
 			"category": "Extensions",
+			"description": "Focus on Agent Plugins - Installed View",
 			"when": "defaultExtensionViews && hasInstalledAgentPlugins && !chatSetupDisabledInWorkspace && !chatSetupHidden"
 		},
 		{
 			"id": "workbench.views.agentPlugins.marketplace.focus",
 			"title": "Focus on Agent Plugins View",
 			"category": "Extensions",
+			"description": "Focus on Agent Plugins View",
 			"when": "searchAgentPlugins && !chatSetupDisabledInWorkspace && !chatSetupHidden"
 		},
 		{
 			"id": "workbench.views.mcp.installed.focus",
 			"title": "Focus on MCP Servers - Installed View",
 			"category": "Extensions",
+			"description": "Focus on MCP Servers - Installed View",
 			"when": "defaultExtensionViews && hasInstalledMcpServers && !chatSetupDisabledInWorkspace && !chatSetupHidden"
 		},
 		{
 			"id": "workbench.views.mcp.marketplace.focus",
 			"title": "Focus on MCP Servers View",
 			"category": "Extensions",
+			"description": "Focus on MCP Servers View",
 			"when": "searchMcpServers && !chatSetupDisabledInWorkspace && !chatSetupHidden"
 		},
 		{
@@ -9036,7 +9236,8 @@
 		{
 			"id": "workbench.action.openLogFile",
 			"title": "Open Log...",
-			"category": "Developer"
+			"category": "Developer",
+			"description": "workbench.action.openLogFile"
 		},
 		{
 			"id": "workbench.action.exportLogs",
@@ -9047,6 +9248,19 @@
 			"id": "workbench.action.importLog",
 			"title": "Import Log...",
 			"category": "Developer"
+		},
+		{
+			"id": "~remote.forwardedPortsContainer",
+			"title": "Toggle Ports",
+			"category": "View",
+			"when": "viewContainer.~remote.forwardedPortsContainer.enabled",
+			"precondition": "viewContainer.~remote.forwardedPortsContainer.enabled"
+		},
+		{
+			"id": "~remote.forwardedPorts.focus",
+			"title": "Focus on Ports View",
+			"category": "Ports",
+			"description": "Focus on Ports View"
 		},
 		{
 			"id": "workbench.action.manageAccounts",
@@ -9076,79 +9290,6 @@
 			"category": "Authentication"
 		},
 		{
-			"id": "workbench.action.terminal.newWithProfile",
-			"title": "Create New Terminal (With Profile)",
-			"when": "terminalProcessSupported || terminalWebExtensionContributedProfile",
-			"precondition": "terminalProcessSupported || terminalWebExtensionContributedProfile"
-		},
-		{
-			"id": "workbench.view.extension.references-view",
-			"title": "Show References",
-			"category": "View",
-			"when": "viewContainer.workbench.view.extension.references-view.enabled",
-			"precondition": "viewContainer.workbench.view.extension.references-view.enabled"
-		},
-		{
-			"id": "jsBrowserBreakpoints.focus",
-			"title": "Focus on Browser Options View",
-			"category": "Run and Debug",
-			"when": "debugType == 'pwa-chrome' || debugType == 'pwa-editor-browser' || debugType == 'pwa-msedge'"
-		},
-		{
-			"id": "jsExcludedCallers.focus",
-			"title": "Focus on Excluded Callers View",
-			"category": "Run and Debug",
-			"when": "jsDebugHasExcludedCallers && debugType == 'node-terminal' || jsDebugHasExcludedCallers && debugType == 'pwa-chrome' || jsDebugHasExcludedCallers && debugType == 'pwa-editor-browser' || jsDebugHasExcludedCallers && debugType == 'pwa-extensionHost' || jsDebugHasExcludedCallers && debugType == 'pwa-msedge' || jsDebugHasExcludedCallers && debugType == 'pwa-node'"
-		},
-		{
-			"id": "jsDebugNetworkTree.focus",
-			"title": "Focus on Network View",
-			"category": "Run and Debug",
-			"when": "jsDebugNetworkAvailable"
-		},
-		{
-			"id": "npm.focus",
-			"title": "Focus on NPM Scripts View",
-			"category": "Explorer",
-			"when": "npm:showScriptExplorer"
-		},
-		{
-			"id": "references-view.tree.focus",
-			"title": "Focus on Reference Search Results View",
-			"category": "References",
-			"when": "reference-list.isActive"
-		},
-		{
-			"id": "~remote.forwardedPortsContainer",
-			"title": "Toggle Ports",
-			"category": "View",
-			"when": "viewContainer.~remote.forwardedPortsContainer.enabled",
-			"precondition": "viewContainer.~remote.forwardedPortsContainer.enabled"
-		},
-		{
-			"id": "workbench.action.openRemoteSettings",
-			"title": "Open Remote Settings (vscode-remote)",
-			"category": "Preferences",
-			"when": "remoteName != ''"
-		},
-		{
-			"id": "workbench.action.openRemoteSettingsFile",
-			"title": "Open Remote Settings (JSON) (vscode-remote)",
-			"category": "Preferences",
-			"when": "remoteName != ''"
-		},
-		{
-			"id": "~remote.forwardedPorts.focus",
-			"title": "Focus on Ports View",
-			"category": "Ports"
-		},
-		{
-			"id": "workbench.editSessions.actions.resetAuth",
-			"title": "Turn off Cloud Changes...",
-			"category": "Cloud Changes",
-			"precondition": "editSessionsSignedIn"
-		},
-		{
 			"id": "workbench.extensions.action.openExtensionsFolder",
 			"title": "Open Extensions Folder",
 			"category": "Developer"
@@ -9169,6 +9310,12 @@
 			"category": "Help"
 		},
 		{
+			"id": "workbench.editSessions.actions.resetAuth",
+			"title": "Turn off Cloud Changes...",
+			"category": "Cloud Changes",
+			"precondition": "editSessionsSignedIn"
+		},
+		{
 			"id": "workbench.extensions.installMissingDependencies",
 			"title": "Install Missing Dependencies",
 			"category": "Extensions"
@@ -9176,11 +9323,13 @@
 		{
 			"id": "workbench.action.toggleLockedScrolling",
 			"title": "Toggle Locked Scrolling Across Editors",
-			"category": "View"
+			"category": "View",
+			"description": "Synchronize Scrolling Editors"
 		},
 		{
 			"id": "workbench.action.configureLocale",
-			"title": "Configure Display Language"
+			"title": "Configure Display Language",
+			"description": "Changes the locale of VS Code based on installed language packs. Common languages include French, Chinese, Spanish, Japanese, German, Korean, and more."
 		},
 		{
 			"id": "workbench.action.clearLocalePreference",
