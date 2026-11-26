@@ -52,7 +52,12 @@ fn outline_moved_to_a_new_panel_entry_gets_its_own_tab_and_comes_back_without_a_
     assert!(workbench.read_with(cx, |workbench, _| workbench.is_view_visible(OUTLINE_VIEW)));
     assert!(!explorer_panes(&workbench, cx).contains(&OUTLINE_VIEW));
 
-    workbench.update(cx, |workbench, cx| workbench.move_view_to_container(OUTLINE_VIEW, EXPLORER_CONTAINER, cx));
+    // The panel hides first: left without the generated container it would show the default Terminal, whose shell's
+    // pty-read thread the test scheduler aborts on.
+    workbench.update(cx, |workbench, cx| {
+        workbench.hide_panel(cx);
+        workbench.move_view_to_container(OUTLINE_VIEW, EXPLORER_CONTAINER, cx);
+    });
     cx.run_until_parked();
     assert_eq!(stored(&profile), json!({ "viewContainerLocations": {}, "viewLocations": {}, "viewContainerBadgeEnablementStates": {} }));
     assert!(explorer_panes(&workbench, cx).contains(&OUTLINE_VIEW));
