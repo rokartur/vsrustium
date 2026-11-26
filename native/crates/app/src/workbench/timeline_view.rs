@@ -733,7 +733,8 @@ impl Workbench {
         let foreground = self.foreground_or("sideBarSectionHeader.foreground");
         let args = vec![self.timeline.model.uri.clone().unwrap_or(Value::Null)];
         let toolbar_focused = self.timeline.toolbar_focus.is_focused(window);
-        let mut bar = div().id("timeline-toolbar").track_focus(&self.timeline.toolbar_focus).on_key_down(cx.listener(Self::timeline_toolbar_key_down)).flex().pr(px(8.));
+        // paneview.css: 20px action labels 4px apart; the port's icons are 22px.
+        let mut bar = div().id("timeline-toolbar").track_focus(&self.timeline.toolbar_focus).on_key_down(cx.listener(Self::timeline_toolbar_key_down)).flex().gap(px(2.));
         for (index, (icon, title, run)) in self.timeline_toolbar(window).into_iter().enumerate() {
             let item = match (icon, run) {
                 (None, ToolbarRun::Command(id)) => self.command_button(&id, title, args.clone(), foreground, cx),

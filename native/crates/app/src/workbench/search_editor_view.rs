@@ -3,13 +3,12 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures::StreamExt;
 use futures::channel::oneshot;
 use gpui::{Context, Div, Styled, Task, Window, div, prelude::FluentBuilder, px};
-use regex::Regex;
 use search::ripgrep::Cancellation;
 use serde_json::Value;
 
@@ -19,7 +18,7 @@ use crate::commands::Outcome;
 use crate::host_sync::SearchTab;
 use crate::editor::{uri_string, ContentChanged, EditReason, OpenEditor, Position, Selection, TextDocument, VerticalReveal, char_column, utf16_column, visible_column};
 use crate::search_editor::{
-    SearchConfiguration, TextRange, adjacent_match, parse_serialized_search_editor, result_block_lines, search_editor_name, serialize_search_configuration,
+    SearchConfiguration, TextRange, adjacent_match, parse_serialized_search_editor, resolve_result_path, result_block_lines, result_definition, search_editor_name, serialize_search_configuration,
     serialize_search_result_for_editor, suggest_file_name,
 };
 use crate::search_model::{SearchResult, utf16_len};
@@ -551,35 +550,32 @@ impl Workbench {
         cx.notify();
     }
 
-    /// searchEditor.ts `onMouseUp` of the results: a single click peeks with `singleClickBehaviour: peekDefinition`;
-    /// a double click on a result line goes to its location (`doubleClickBehaviour`), on a file line peeks. The
-    /// locations come from the search-result extension's definition provider.
+    /// `onMouseUp` of the results: a double click on a result line goes to its location
+    /// (`search.searchEditor.doubleClickBehaviour`), resolved as the search-result extension's definition provider does.
+    // shortcut: `peekDefinition` (the single click setting, the double click on a file line) does nothing, the peek
+    // view (editor/contrib/peekView) is not ported; `openLocationToSide` opens in the active group, the port has one.
     pub(super) fn search_editor_mouse_up(&mut self, index: usize, visible: f32, click_count: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(editor) = self.editors.active().filter(|editor| editor.document().scheme == SEARCH_EDITOR_SCHEME) else { return };
+        if click_count != 2 || self.setting("search.searchEditor.doubleClickBehaviour") == "selectWord" {
+            return;
+        }
         let document = editor.document();
-        let line = &document.lines[index];
-        let column = crate::editor::column_at_visible(line, visible, document.indentation.tab_size);
-        let (file_line, result_line) = (FILE_LINE.is_match(line), RESULT_LINE.is_match(line));
+        let lines = &document.lines;
+        let column = crate::editor::column_at_visible(&lines[index], visible, editor.document().indentation.tab_size);
+        let Some((label, line, utf16)) = result_definition(lines, index, utf16_column(&lines[index], column)) else { return };
+        let folders: Vec<(String, PathBuf)> = self.workspace().iter().flat_map(|workspace| &workspace.folders).map(|folder| (folder.name.clone(), folder.path.clone())).collect();
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        let Some(file) = resolve_result_path(&label, &folders, home.as_deref()) else { return };
+        let caret = Selection::caret(Position::new(index, column));
         drop(document);
-        let command = match click_count {
-            1 if self.setting("search.searchEditor.singleClickBehaviour") == "peekDefinition" && (file_line || result_line) => "editor.action.peekDefinition",
-            2 => match self.setting("search.searchEditor.doubleClickBehaviour").as_str() {
-                Some("selectWord") => return,
-                Some("goToLocation") if result_line => "editor.action.goToDeclaration",
-                _ if result_line => "editor.action.openDeclarationToTheSide",
-                _ if file_line => "editor.action.peekDefinition",
-                _ => return,
-            },
-            _ => return,
-        };
-        self.editors.active_mut().expect("checked above").set_selections(vec![Selection::caret(Position::new(index, column))]);
-        drop(self.execute_command(command, Vec::new(), window, cx));
+        self.editors.active_mut().expect("checked above").set_selections(vec![caret]);
+        self.open_file(file.clone(), false, window, cx);
+        let Some(target) = self.editors.active().filter(|editor| editor.document().is("file", &file)) else { return };
+        let column = char_column(target.document().lines.get(line).map_or("", String::as_str), utf16) + 1;
+        self.select_range(&file, crate::anything_quick_access::TextRange { start_line_number: line + 1, start_column: column, end_line_number: line + 1, end_column: column }, cx);
+        window.focus(&self.editor_focus, cx);
     }
 }
-
-/// The search-result extension's `FILE_LINE_REGEX` and `RESULT_LINE_REGEX`.
-static FILE_LINE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(\S.*):$").expect("a valid regex"));
-static RESULT_LINE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(\s+)(\d+)(: |  )(\s*)(.*)$").expect("a valid regex"));
 
 /// A 1-based UTF-16 range of the search editor's text as a selection.
 fn range_selection(lines: &[String], range: &TextRange) -> Selection {

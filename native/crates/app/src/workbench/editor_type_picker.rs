@@ -86,6 +86,7 @@ impl Workbench {
         Some(
             div()
                 .id("breadcrumbs-editor-type")
+                .relative()
                 .flex_none()
                 .ml_auto()
                 .max_w(gpui::relative(0.4))
