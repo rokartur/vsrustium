@@ -493,6 +493,7 @@ pub(crate) fn open_window(request: WindowRequest, cx: &mut App) -> anyhow::Resul
                 workbench.cli_profile = cli_profile.clone();
                 workbench.load_keybindings(keybindings::default_keybindings(&extensions), keybindings_file.clone(), cx);
                 workbench.watch_settings_files(window, cx);
+                workbench.migrate_configurations(cx);
                 workbench.watch_policies(cx);
                 workbench.start_file_watcher(cx);
                 workbench.start_system_wide_keybindings(window, cx);

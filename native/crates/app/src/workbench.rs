@@ -9,6 +9,7 @@ mod actions;
 mod breakpoint_widget;
 mod bulk_text_edits;
 mod configuration;
+mod configuration_migration;
 mod content_hover;
 mod content_hover_view;
 mod editor_groups;
