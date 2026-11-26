@@ -5,7 +5,9 @@
 #[cfg(test)]
 mod tests;
 
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 use std::sync::LazyLock;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -51,6 +53,16 @@ pub struct TimelineView {
     scroll: ScrollHandle,
     /// The type navigation prefix and when its last key came.
     typed: Option<(String, Instant)>,
+    /// The title toolbar's tab stop, its focused item and where each item painted.
+    toolbar_focus: FocusHandle,
+    toolbar_index: usize,
+    toolbar_bounds: Rc<RefCell<HashMap<usize, Bounds<Pixels>>>>,
+}
+
+/// What a title toolbar item runs.
+enum ToolbarRun {
+    Command(String),
+    Menu(Vec<MenuAction>, HashMap<String, Value>),
 }
 
 impl TimelineView {
@@ -66,6 +78,9 @@ impl TimelineView {
             focus: cx.focus_handle(),
             scroll: ScrollHandle::new(),
             typed: None,
+            toolbar_focus: cx.focus_handle(),
+            toolbar_index: 0,
+            toolbar_bounds: Rc::default(),
         }
     }
 }
@@ -568,6 +583,10 @@ impl Workbench {
             "home" => 0,
             "end" => last,
             // A browser fires `contextmenu` at the focused row on Shift+F10; the menu anchors at the row.
+            "tab" if modifiers.shift => {
+                cx.stop_propagation();
+                return self.focus_timeline_toolbar(window, cx);
+            }
             "f10" if modifiers.shift => {
                 let Some(current) = current else { return };
                 cx.stop_propagation();
@@ -680,30 +699,115 @@ impl Workbench {
 
     /// The pane's title toolbar (`MenuId.TimelineTitle`): the navigation actions as icons, the "Filter Timeline"
     /// submenu as a dropdown, the rest under "More Actions...". Its commands run with the shown uri.
-    fn timeline_title_actions(&self, window: &Window, cx: &mut Context<Self>) -> Div {
-        let foreground = self.foreground_or("sideBarSectionHeader.foreground");
+    /// The toolbar's items in order: their codicon (None for the command's own icon), title and what they run.
+    fn timeline_toolbar(&self, window: &Window) -> Vec<(Option<&'static str>, String, ToolbarRun)> {
         let menus = self.timeline_menus();
         let context = self.timeline_menu_context(&menus, window);
-        let args = vec![self.timeline.model.uri.clone().unwrap_or(Value::Null)];
         let navigation: Vec<MenuItem> = menus.iter().filter(|item| item.menu != MenuId::TimelineTitle || item.group == "navigation").cloned().collect();
         let secondary: Vec<MenuItem> = menus.iter().filter(|item| item.menu != MenuId::TimelineTitle || item.group != "navigation").cloned().collect();
-        let mut bar = div().flex().pr(px(8.));
+        let mut items = Vec::new();
         for action in menu_actions(&navigation, MenuId::TimelineTitle, &context) {
-            bar = match action {
-                MenuAction::Command { id, title, .. } => match id.as_str() {
-                    "timeline.refresh" => bar.child(self.timeline_action("refresh", id, title, args.clone(), foreground, cx)),
-                    "timeline.toggleFollowActiveEditor" => bar.child(self.timeline_action(if self.timeline.pinned { "pinned" } else { "pin" }, id, title, args.clone(), foreground, cx)),
-                    _ => bar.child(self.command_button(&id, title, args.clone(), foreground, cx)),
-                },
-                MenuAction::Submenu { title, actions, .. } => bar.child(self.timeline_dropdown("filter", title, actions, context.clone(), args.clone(), foreground, cx)),
-                MenuAction::Separator => bar,
-            };
+            match action {
+                MenuAction::Command { id, title, .. } => {
+                    let icon = match id.as_str() {
+                        "timeline.refresh" => Some("refresh"),
+                        "timeline.toggleFollowActiveEditor" => Some(if self.timeline.pinned { "pinned" } else { "pin" }),
+                        _ => None,
+                    };
+                    items.push((icon, title, ToolbarRun::Command(id)));
+                }
+                MenuAction::Submenu { title, actions, .. } => items.push((Some("filter"), title, ToolbarRun::Menu(actions, context.clone()))),
+                MenuAction::Separator => {}
+            }
         }
         let secondary_actions = menu_actions(&secondary, MenuId::TimelineTitle, &context);
         if !secondary_actions.is_empty() {
-            bar = bar.child(self.timeline_dropdown("ellipsis", "More Actions...".into(), secondary_actions, context, args, foreground, cx));
+            items.push((Some("ellipsis"), "More Actions...".into(), ToolbarRun::Menu(secondary_actions, context)));
+        }
+        items
+    }
+
+    /// The pane's title toolbar (`MenuId.TimelineTitle`), one tab stop (actionbar.ts): the focused item draws the focus
+    /// outline, Left and Right move it.
+    fn timeline_title_actions(&self, window: &Window, cx: &mut Context<Self>) -> Stateful<Div> {
+        let foreground = self.foreground_or("sideBarSectionHeader.foreground");
+        let args = vec![self.timeline.model.uri.clone().unwrap_or(Value::Null)];
+        let toolbar_focused = self.timeline.toolbar_focus.is_focused(window);
+        let mut bar = div().id("timeline-toolbar").track_focus(&self.timeline.toolbar_focus).on_key_down(cx.listener(Self::timeline_toolbar_key_down)).flex().pr(px(8.));
+        for (index, (icon, title, run)) in self.timeline_toolbar(window).into_iter().enumerate() {
+            let item = match (icon, run) {
+                (None, ToolbarRun::Command(id)) => self.command_button(&id, title, args.clone(), foreground, cx),
+                (Some(icon), ToolbarRun::Command(id)) => self.timeline_action(icon, id, title, args.clone(), foreground, cx),
+                (icon, ToolbarRun::Menu(actions, context)) => self.timeline_dropdown(icon.unwrap_or("ellipsis"), title, actions, context, args.clone(), foreground, cx),
+            };
+            let bounds = self.timeline.toolbar_bounds.clone();
+            let tracker = canvas(move |painted, _, _| bounds.borrow_mut().insert(index, painted), |_, _, _, _| {}).absolute().size_full();
+            let focused = toolbar_focused && index == self.timeline.toolbar_index;
+            bar = bar.child(item.relative().child(tracker).when(focused, |item| item.child(div().absolute().inset_0().rounded(px(5.)).border_1().border_color(self.color("focusBorder")))));
         }
         bar
+    }
+
+    /// `.pane:focus-within` of the tree or the toolbar.
+    pub(super) fn timeline_focus_within(&self, window: &Window) -> bool {
+        self.timeline.focus.is_focused(window) || self.timeline.toolbar_focus.is_focused(window)
+    }
+
+    /// Shift+Tab from the tree: the toolbar's tab stop, its first item focused with its hover shown.
+    pub(super) fn focus_timeline_toolbar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.timeline.toolbar_index = 0;
+        window.focus(&self.timeline.toolbar_focus.clone(), cx);
+        self.show_timeline_toolbar_hover(window, cx);
+    }
+
+    fn show_timeline_toolbar_hover(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let index = self.timeline.toolbar_index;
+        let Some((icon, title, _)) = self.timeline_toolbar(window).into_iter().nth(index) else { return };
+        let Some(bounds) = self.timeline.toolbar_bounds.borrow().get(&index).copied() else { return };
+        let id = SharedString::from(format!("timeline-action-hover-{}", icon.unwrap_or("command")));
+        self.show_managed_hover(id, HoverContent::Text(title), HoverOptions::managed(), bounds, window, cx);
+    }
+
+    fn timeline_toolbar_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let items = self.timeline_toolbar(window);
+        if items.is_empty() {
+            return;
+        }
+        let modifiers = event.keystroke.modifiers;
+        let index = self.timeline.toolbar_index.min(items.len() - 1);
+        match event.keystroke.key.as_str() {
+            "right" => self.timeline.toolbar_index = (index + 1) % items.len(),
+            "left" => self.timeline.toolbar_index = (index + items.len() - 1) % items.len(),
+            "tab" if modifiers.shift => {
+                cx.stop_propagation();
+                self.dismiss_hover(cx);
+                return self.focus_pane_header(super::view_panes::TIMELINE_VIEW, window, cx);
+            }
+            "tab" => {
+                cx.stop_propagation();
+                self.dismiss_hover(cx);
+                return window.focus(&self.timeline.focus.clone(), cx);
+            }
+            "enter" | "space" => {
+                cx.stop_propagation();
+                self.dismiss_hover(cx);
+                let args = vec![self.timeline.model.uri.clone().unwrap_or(Value::Null)];
+                let (_, _, run) = items.into_iter().nth(index).expect("index is below the item count");
+                match run {
+                    ToolbarRun::Command(id) => drop(self.execute_command(&id, args, window, cx)),
+                    ToolbarRun::Menu(actions, context) => {
+                        let bounds = self.timeline.toolbar_bounds.borrow().get(&index).copied().unwrap_or_default();
+                        let anchor = Bounds::new(gpui::point(bounds.origin.x, bounds.origin.y + bounds.size.height), Default::default());
+                        self.show_context_menu_actions(actions, &context, anchor, args, window, cx);
+                    }
+                }
+                return;
+            }
+            _ => return,
+        }
+        cx.stop_propagation();
+        self.show_timeline_toolbar_hover(window, cx);
+        cx.notify();
     }
 
     fn timeline_action(&self, icon: &'static str, command: String, title: String, args: Vec<Value>, foreground: Rgba, cx: &mut Context<Self>) -> Stateful<Div> {
