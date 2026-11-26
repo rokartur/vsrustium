@@ -1629,9 +1629,13 @@ impl Workbench {
 
     /// An icon rotated by `turns` of a full turn, clockwise.
     fn turned_icon(&self, name: &str, box_size: f32, icon_size: f32, color: Rgba, turns: f32) -> Div {
-        let icon = match self.product_icons.as_ref().and_then(|theme| theme.svg(name, icon_size)) {
+        let ids = crate::codicons::icon_ids(name);
+        let icon = match self.product_icons.as_ref().and_then(|theme| theme.svg(&ids, icon_size)) {
             Some(glyph) => svg().data(glyph.as_bytes()),
-            None => svg().external_path(crate::codicons::svg_path(&self.app_root, crate::symbol_icons::svg_name(name)).to_string_lossy().into_owned()),
+            None => {
+                let codicon = ids.last().expect("icon_ids starts with the id");
+                svg().external_path(crate::codicons::svg_path(&self.app_root, crate::symbol_icons::svg_name(codicon)).to_string_lossy().into_owned())
+            }
         };
         div()
             .relative()
