@@ -59,6 +59,11 @@ impl Workbench {
         true
     }
 
+    /// mainThreadWindow.ts `$getInitialState`: `hostService.hasFocus` and `userActivityService.isActive`.
+    pub(crate) fn window_initial_state(&self, window: &gpui::Window) -> serde_json::Value {
+        json!({ "isFocused": window.is_window_active(), "isActive": self.user_activity.is_active })
+    }
+
     fn set_user_active(&mut self, active: bool) {
         if self.user_activity.is_active != active {
             self.user_activity.is_active = active;
@@ -101,5 +106,20 @@ mod tests {
         // Without that press the window would turn inactive at 70 s; with it, at 100 s.
         cx.executor().advance_clock(CHECK_INTERVAL + Duration::from_secs(19));
         assert!(active_changes().is_empty(), "a press between checks keeps the window active");
+    }
+
+    #[gpui::test]
+    fn the_initial_window_state_is_the_window_focus(cx: &mut TestAppContext) {
+        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let themes = exthost::scan::scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
+        let theme = load_theme(&[themes], "Dark Modern").unwrap();
+        let (sender, _messages) = std::sync::mpsc::channel();
+        let (workbench, cx) = cx.add_window_view(|_, cx| Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), crate::default_settings(), HostSync::new(sender), cx));
+        let state = |cx: &mut gpui::VisualTestContext| cx.update(|window, cx| workbench.read(cx).window_initial_state(window));
+        cx.update(|window, _| window.activate_window());
+        cx.run_until_parked();
+        assert_eq!(state(cx), json!({ "isFocused": true, "isActive": true }));
+        cx.deactivate_window();
+        assert_eq!(state(cx), json!({ "isFocused": false, "isActive": true }));
     }
 }

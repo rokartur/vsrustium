@@ -26,6 +26,7 @@ use crate::host_sync::snapshot_id;
 /// The requests `host_request` answers; every other one stays with the session.
 pub const HOST_REQUESTS: &[(&str, &str)] = &[
     ("MainThreadClipboard", "$readText"),
+    ("MainThreadWindow", "$getInitialState"),
     ("MainThreadClipboard", "$writeText"),
     ("MainThreadDocuments", "$tryOpenDocument"),
     ("MainThreadDocuments", "$trySaveDocument"),
@@ -71,6 +72,7 @@ impl Workbench {
                 cx.write_to_clipboard(ClipboardItem::new_string(arg(0).as_str().unwrap_or_default().to_string()));
                 Ok(null)
             }
+            ("MainThreadWindow", "$getInitialState") => Ok(self.window_initial_state(window)),
             ("MainThreadPower", method) => crate::power::request(method, args).map_err(|error| serialized_error(&error)),
             ("MainThreadDocuments", "$tryOpenDocument") => self.try_open_document(arg(0), arg(1), arg(2), arg(3) == true, cx),
             ("MainThreadDocuments", "$trySaveDocument") => self.try_save_document(arg(0), cx),
