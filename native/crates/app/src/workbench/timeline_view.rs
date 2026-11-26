@@ -17,7 +17,7 @@ use serde_json::{Map, Value, json};
 
 use super::Workbench;
 use super::hover::{HoverContent, HoverOptions};
-use super::scm_view::{INDENT, ROW_HEIGHT};
+use super::scm_view::{INDENT, ROW_HEIGHT, stop_action_mouse_down};
 use super::search_view::SideBarView;
 use crate::commands::Outcome;
 use crate::contextkey::{Expr, JsRegex};
@@ -837,6 +837,7 @@ impl Workbench {
             .rounded(px(5.))
             .cursor_pointer()
             .hover(|action| action.bg(self.color("toolbar.hoverBackground")))
+            .on_mouse_down(MouseButton::Left, stop_action_mouse_down)
             .child(self.hover_target(SharedString::from(format!("timeline-action-hover-{icon}")), HoverContent::Text(title), HoverOptions::mouse()))
     }
 

@@ -837,6 +837,7 @@ impl Workbench {
             .rounded(px(5.))
             .cursor_pointer()
             .hover(|icon| icon.bg(self.color("toolbar.hoverBackground")))
+            .on_mouse_down(MouseButton::Left, stop_action_mouse_down)
             .on_click(cx.listener(move |workbench, _: &ClickEvent, window, cx| {
                 cx.stop_propagation();
                 drop(workbench.execute_command(&command, args.clone(), window, cx));
@@ -844,6 +845,13 @@ impl Workbench {
             .child(self.hover_target(gpui::SharedString::from(format!("command-button-hover-{id}")), HoverContent::Text(title), HoverOptions::mouse()))
     }
 
+}
+
+/// actionViewItems.ts `EventHelper.stop(e, true)` on mouse down: an action takes no focus and the header under it
+/// neither focuses nor starts a drag.
+pub(super) fn stop_action_mouse_down(_: &MouseDownEvent, window: &mut Window, cx: &mut gpui::App) {
+    window.prevent_default();
+    cx.stop_propagation();
 }
 
 #[cfg(test)]
