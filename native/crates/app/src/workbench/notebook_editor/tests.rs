@@ -353,7 +353,130 @@ fn the_customize_notebook_submenu(cx: &mut TestAppContext) {
         })
     };
     let entry = |title: &str, checked: bool| (title.to_owned(), checked);
-    assert_eq!(menu(cx), [entry("Customize Notebook Layout", false), entry("Line Numbers", false), entry("Breadcrumbs", true)]);
+    assert_eq!(menu(cx), [entry("Customize Notebook Layout", false), entry("Line Numbers", false), entry("Breadcrumbs", true), entry("Toggle Cell Toolbar Position", false)]);
     run(&workbench, "notebook.toggleLineNumbersFromEditorTitle", cx);
     assert_eq!(menu(cx)[1], entry("Line Numbers", true));
+}
+
+/// The titles of menu actions: separators as `-`, submenus as `<title> >`.
+fn titles(actions: &[crate::menus::MenuAction]) -> Vec<String> {
+    let mut titles = Vec::new();
+    for action in actions {
+        titles.push(match action {
+            crate::menus::MenuAction::Command { title, .. } => title.clone(),
+            crate::menus::MenuAction::Submenu { title, .. } => format!("{title} >"),
+            crate::menus::MenuAction::Separator => "-".to_owned(),
+        });
+    }
+    titles
+}
+
+fn run_on_cell(workbench: &gpui::Entity<Workbench>, id: &str, index: usize, cx: &mut VisualTestContext) {
+    let args = vec![json!({ "start": index, "end": index + 1, "ui": true })];
+    workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command(id, args, window, cx)));
+    cx.run_until_parked();
+}
+
+/// cellToolbars.ts: a cell's buttons, `...` dropdown and delete button from `MenuId.NotebookCellTitle` and
+/// `NotebookCellDelete`, as the reference shows them for an ipynb without the Jupyter extension.
+#[gpui::test]
+fn the_cell_toolbar_menus(cx: &mut TestAppContext) {
+    let cells = json!([
+        { "cellKind": 1, "language": "markdown", "source": "# Title", "outputs": [], "metadata": {} },
+        { "cellKind": 2, "language": "python", "source": "x", "outputs": [], "metadata": {} },
+    ]);
+    let (workbench, cx, _) = workbench_with_cells(cells, cx);
+    let toolbar = |index: usize, cx: &mut VisualTestContext| {
+        workbench.update_in(cx, |workbench, window, _| {
+            let model = &workbench.host.notebooks.models[0];
+            let row = workbench.notebook_rows(workbench.host.notebooks.editors[0].tab_model_id, model).into_iter().nth(index).unwrap();
+            let (primary, more, delete) = workbench.cell_toolbar_actions(model, &row, window);
+            (titles(&primary), titles(&more), titles(&delete))
+        })
+    };
+    let (primary, more, delete) = toolbar(0, cx);
+    assert_eq!(primary, ["Run Cells In Section", "Edit Cell", "Split Cell"]);
+    let overflow = ["Cut Cell", "Copy Cell", "Paste Cell", "-", "Insert Cell >", "-", "Change Cell to Code", "Join With Previous Cell", "Join With Next Cell", "Join Selected Cells", "Copy Cell Down", "-", "Show Cell Line Numbers", "Toggle Cell Toolbar Position"];
+    assert_eq!(more, overflow);
+    assert_eq!(delete, ["Delete Cell"]);
+    // `notebookMissingKernelExtension`: running above and below shows without a kernel.
+    let (primary, more, _) = toolbar(1, cx);
+    assert_eq!(primary, ["Execute Above Cells", "Execute Cell and Below", "Split Cell"]);
+    assert_eq!(more[6], "Change Cell to Markdown");
+}
+
+/// foldingController.ts: Fold Cell and Unfold Cell on the innermost section of the focused markdown cell; collapsed
+/// sections hide their cells and keep the sections inside them collapsed.
+#[gpui::test]
+fn markdown_headers_fold_their_sections(cx: &mut TestAppContext) {
+    let cells = json!([
+        { "cellKind": 1, "language": "markdown", "source": "# A", "outputs": [], "metadata": {} },
+        { "cellKind": 2, "language": "python", "source": "x", "outputs": [], "metadata": {} },
+        { "cellKind": 1, "language": "markdown", "source": "## B", "outputs": [], "metadata": {} },
+        { "cellKind": 2, "language": "python", "source": "y", "outputs": [], "metadata": {} },
+    ]);
+    let (workbench, cx, _) = workbench_with_cells(cells, cx);
+    let rows = |cx: &mut VisualTestContext| {
+        workbench.read_with(cx, |workbench, _| {
+            let model = &workbench.host.notebooks.models[0];
+            let rows = workbench.notebook_rows(workbench.host.notebooks.editors[0].tab_model_id, model);
+            (rows.iter().map(|row| row.hidden).collect::<Vec<_>>(), rows.iter().map(|row| row.fold).collect::<Vec<_>>(), workbench.host.notebooks.editors[0].focus)
+        })
+    };
+    assert_eq!(rows(cx), (vec![false; 4], vec![Some((false, 3)), None, Some((false, 1)), None], 0));
+    workbench.update(cx, |workbench, _| workbench.host.notebooks.editors[0].focus = 3);
+    // A code cell folds nothing downwards.
+    run(&workbench, "notebook.fold", cx);
+    assert_eq!(rows(cx).0, [false; 4]);
+    workbench.update(cx, |workbench, _| workbench.host.notebooks.editors[0].focus = 2);
+    run(&workbench, "notebook.fold", cx);
+    assert_eq!(rows(cx), (vec![false, false, false, true], vec![Some((false, 3)), None, Some((true, 1)), None], 2));
+    workbench.update(cx, |workbench, _| workbench.host.notebooks.editors[0].focus = 1);
+    run(&workbench, "notebook.fold", cx);
+    assert_eq!(rows(cx).0, [false, false, false, true], "a code cell folds nothing");
+    workbench.update(cx, |workbench, _| workbench.host.notebooks.editors[0].focus = 0);
+    run(&workbench, "notebook.fold", cx);
+    assert_eq!(rows(cx).0, [false, true, true, true]);
+    run(&workbench, "notebook.unfold", cx);
+    assert_eq!(rows(cx).0, [false, false, false, true], "the inner section stays collapsed");
+}
+
+/// cellCommands.ts, notebookClipboard.ts and cellEditorOptions.ts on the toolbar's cell.
+#[gpui::test]
+fn the_cell_toolbar_commands(cx: &mut TestAppContext) {
+    let cells = json!([
+        { "cellKind": 2, "language": "python", "source": "a\nb", "outputs": [], "metadata": {} },
+        { "cellKind": 2, "language": "python", "source": "c", "outputs": [], "metadata": {} },
+        { "cellKind": 1, "language": "markdown", "source": "# T", "outputs": [], "metadata": {} },
+    ]);
+    let (workbench, cx, _) = workbench_with_cells(cells, cx);
+    run_on_cell(&workbench, "notebook.cell.copy", 1, cx);
+    run_on_cell(&workbench, "notebook.cell.paste", 2, cx);
+    assert_eq!(sources(&workbench, cx), ["a\nb", "c", "# T", "c"]);
+    run_on_cell(&workbench, "notebook.cell.cut", 0, cx);
+    assert_eq!(sources(&workbench, cx), ["c", "# T", "c"]);
+    assert_eq!(cx.read_from_clipboard().and_then(|item| item.text()).as_deref(), Some("a\nb"));
+    run_on_cell(&workbench, "notebook.cell.joinBelow", 0, cx);
+    assert_eq!(sources(&workbench, cx), ["c\n# T", "c"]);
+    // From the toolbar the cell editor has no cursor: the split point is the start.
+    run_on_cell(&workbench, "notebook.cell.split", 0, cx);
+    assert_eq!(sources(&workbench, cx), ["", "c\n# T", "c"]);
+    run_on_cell(&workbench, "notebook.cell.changeToMarkdown", 2, cx);
+    run_on_cell(&workbench, "notebook.cell.moveUp", 2, cx);
+    let kinds = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.host.notebooks.models[0].cells.iter().map(|cell| cell.kind).collect::<Vec<_>>());
+    assert_eq!(kinds(cx), [crate::notebook::CODE, crate::notebook::MARKUP, crate::notebook::CODE]);
+    workbench.update_in(cx, |workbench, window, cx| window.focus(&workbench.editor_focus, cx));
+    run(&workbench, "undo", cx);
+    assert_eq!(kinds(cx), [crate::notebook::CODE, crate::notebook::CODE, crate::notebook::MARKUP]);
+    run_on_cell(&workbench, "notebook.cell.insertMarkdownCellAbove", 0, cx);
+    assert_eq!(sources(&workbench, cx), ["", "", "c\n# T", "c"]);
+    assert_eq!(kinds(cx)[0], crate::notebook::MARKUP);
+    let line_numbers = |cx: &mut VisualTestContext| {
+        workbench.read_with(cx, |workbench, _| {
+            let model = &workbench.host.notebooks.models[0];
+            model.cells.iter().map(|cell| workbench.cell_model(&cell.uri).is_some_and(|editor| workbench.cell_line_numbers(&editor.document().uri_string()))).collect::<Vec<_>>()
+        })
+    };
+    run_on_cell(&workbench, "notebook.cell.toggleLineNumbers", 1, cx);
+    assert_eq!(line_numbers(cx), [false, true, false, false]);
 }

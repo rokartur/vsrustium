@@ -142,6 +142,10 @@ impl Workbench {
                 self.restore_notebook_backup(backup.resource.to_json(), view_type.to_owned(), window, cx);
                 continue;
             }
+            if crate::notebook::repl_notebook_type_of_working_copy(&backup.type_id).is_some() {
+                self.restore_repl_backup(backup.resource.to_json(), window, cx);
+                continue;
+            }
             if !backup.type_id.is_empty() {
                 continue;
             }

@@ -166,7 +166,11 @@ impl Workbench {
     /// extensions' `editor/title` items, run with the active editor's resource.
     fn editor_title_actions(&self, window: &Window, cx: &mut Context<Self>) -> Vec<gpui::AnyElement> {
         let mut actions = self.diff_title_actions(cx);
-        let context = self.key_context(window);
+        let mut context = self.key_context(window);
+        // A notebook's cell editors keep `editorLangId` in their own scoped context, which the title does not see.
+        if self.active_notebook_editor().is_some() {
+            context.remove("editorLangId");
+        }
         actions.extend(self.multi_diff_title_actions(&context, cx));
         actions.extend(self.merge_title_actions(cx));
         let resource = self.editors.active().map(|editor| editor.document().uri()).into_iter().collect::<Vec<_>>();
@@ -521,8 +525,8 @@ impl Workbench {
             _ if self.zen_mode_hides_line_numbers() => LineNumbers::Off,
             // simpleEditorOptions.ts: an interactive window's or REPL editor's input has none.
             _ if self.is_interactive_input(editor) => LineNumbers::Off,
-            // notebookEditorWidget.ts: a cell editor's line numbers follow `notebook.lineNumbers`, off by default.
-            _ if editor.document().scheme == crate::notebook::CELL_SCHEME => match self.setting("notebook.lineNumbers") == "on" {
+            // cellEditorOptions.ts: a cell editor's line numbers follow its own `lineNumbers`, else `notebook.lineNumbers`.
+            _ if editor.document().scheme == crate::notebook::CELL_SCHEME => match self.cell_line_numbers(&editor.document().uri_string()) {
                 true => LineNumbers::On,
                 false => LineNumbers::Off,
             },
@@ -1920,6 +1924,12 @@ impl Workbench {
         // notebookIndicators.ts: a notebook editor whose cell editor has no focus shows its active cell instead.
         let notebook_cell = self.active_notebook_editor().filter(|_| !self.editor_focus.is_focused(window)).and_then(|editor| Some((editor.focus, self.host.notebooks.model(&editor.notebook)?.cells.len())));
         if let Some((index, count)) = notebook_cell {
+            // editorStatus.ts: the indentation of the active cell's editor (`activeCodeEditor`), which a markdown
+            // preview has not; seen in the reference with the list focused on a code cell.
+            if let Some(editor) = self.editors.active().filter(|editor| editor.document().scheme == crate::notebook::CELL_SCHEME && self.active_cell_has_editor()) {
+                let [_, indentation, ..] = Self::editor_status_entries(editor, &self.languages);
+                items.push(indentation);
+            }
             items.push((format!("Cell {} of {count}", index + 1), "", "notebook.centerActiveCell"));
         } else if let Some(editor) = self.editors.active().filter(|editor| editor.document().open_error.is_some()) {
             // editorStatus.ts `updateMetadataElement`: a binary editor's size; a placeholder has no text editor entries.
