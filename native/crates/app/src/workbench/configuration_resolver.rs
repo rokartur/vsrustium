@@ -35,7 +35,7 @@ impl Workbench {
     }
 
     /// `historyService.getLastActiveWorkspaceRoot`: the folder of the active file, else the first folder.
-    fn last_active_workspace_root(&self) -> Option<String> {
+    pub(super) fn last_active_workspace_root(&self) -> Option<String> {
         let workspace = self.workspace()?;
         let file = self.editors.active().filter(|editor| editor.document().scheme == "file").map(|editor| editor.document().path.clone());
         let folder = file.and_then(|file| workspace.folders.iter().filter(|folder| file.starts_with(&folder.path)).max_by_key(|folder| folder.path.as_os_str().len()));

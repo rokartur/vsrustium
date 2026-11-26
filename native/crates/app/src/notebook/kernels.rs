@@ -91,6 +91,13 @@ impl Kernels {
         associations
     }
 
+    /// `_tryAutoBindNotebook` of an added notebook: a kernel it is bound to (preselected) hears of it.
+    pub fn notebook_added(&self, view_type: &str, notebook: &str) -> Vec<Association> {
+        let Some((id, uri)) = self.bindings.get(&binding_key(view_type, notebook)) else { return Vec::new() };
+        let (all, _) = self.matching(view_type, notebook);
+        all.iter().filter(|kernel| kernel.id == *id).map(|kernel| Association { kernel_handle: kernel.handle, notebook: uri.clone(), selected: true }).collect()
+    }
+
     /// `$updateKernel`.
     pub fn update(&mut self, handle: u64, data: &Value) {
         let Some(kernel) = self.kernels.iter_mut().find(|kernel| kernel.handle == handle) else { return };

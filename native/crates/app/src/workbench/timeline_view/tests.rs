@@ -231,3 +231,32 @@ fn a_click_opens_the_comparison_and_keeps_the_row_selected_and_focused(cx: &mut 
         assert!(workbench.timeline.focus.is_focused(window), "a click opens the comparison with preserveFocus");
     });
 }
+
+#[gpui::test]
+fn shift_tab_reaches_the_title_toolbar_then_the_header(cx: &mut TestAppContext) {
+    let (dir, workbench, receiver, cx) = workbench_in("timeline-toolbar", cx);
+    workbench.update_in(cx, |workbench, window, cx| {
+        register_git(workbench, false, cx);
+        workbench.open_file(dir.join("a.txt"), true, window, cx);
+        workbench.update_timeline(cx);
+    });
+    cx.run_until_parked();
+    let mut requests = timeline_requests(&receiver);
+    answer(requests.last_mut().unwrap(), json!([{ "handle": "git|1", "label": "alpha", "timestamp": 3 }]));
+    cx.run_until_parked();
+    workbench.update_in(cx, |workbench, window, cx| window.focus(&workbench.timeline.focus.clone(), cx));
+    cx.simulate_keystrokes("down shift-tab");
+    let toolbar = |cx: &mut VisualTestContext| workbench.update_in(cx, |workbench, window, _| (workbench.timeline.toolbar_focus.is_focused(window), workbench.timeline.toolbar_index));
+    assert_eq!(toolbar(cx), (true, 0), "Shift+Tab from the tree focuses the toolbar's first item");
+    let first = workbench.update_in(cx, |workbench, window, _| workbench.timeline_toolbar(window)[0].1.clone());
+    assert_eq!(first, "Pin Current Timeline");
+    cx.simulate_keystrokes("right");
+    assert_eq!(toolbar(cx), (true, 1));
+    cx.simulate_keystrokes("tab");
+    assert!(workbench.update_in(cx, |workbench, window, _| workbench.timeline.focus.is_focused(window)), "Tab goes back to the tree");
+    cx.simulate_keystrokes("shift-tab shift-tab");
+    let header = workbench.update_in(cx, |workbench, window, _| workbench.pane_header_focused(crate::workbench::view_panes::TIMELINE_VIEW, window));
+    assert!(header, "Shift+Tab from the toolbar focuses the pane header");
+    cx.simulate_keystrokes("tab");
+    assert_eq!(toolbar(cx), (true, 0), "Tab from the header focuses the toolbar");
+}

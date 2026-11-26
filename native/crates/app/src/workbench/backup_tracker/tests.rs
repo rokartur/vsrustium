@@ -53,7 +53,7 @@ fn open_with_editor_part<'a>(cx: &'a mut TestAppContext, dir: &Path, settings_js
             storage.lock().unwrap().set("memento/workbench.parts.editor", editor_part);
             workbench.restore_workspace_state(storage);
         }
-        workbench.start_backups(&user_data, None, cx);
+        workbench.start_backups(&user_data, None, window, cx);
         workbench.open_file(folder.join("a.txt"), true, window, cx);
         workbench
     });
@@ -81,7 +81,7 @@ fn a_dirty_file_is_backed_up_after_a_second_and_saving_discards_it(cx: &mut Test
     cx.run_until_parked();
     let backups = backups_of(&workbench, cx);
     assert_eq!(backups.len(), 1);
-    assert_eq!(backups::resolve(&backups[0]).unwrap().content, "xa");
+    assert_eq!(backups::resolve(&backups[0]).unwrap().content, b"xa");
     workbench.update_in(cx, |workbench, window, cx| _ = workbench.execute_command("workbench.action.files.save", vec![], window, cx));
     cx.run_until_parked();
     assert!(backups_of(&workbench, cx).is_empty());
@@ -150,5 +150,110 @@ fn hot_exit_off_asks(cx: &mut TestAppContext) {
     workbench.update_in(cx, |workbench, window, cx| workbench.shutdown(ShutdownReason::Quit, window, cx, |_, _, _| {}));
     cx.run_until_parked();
     assert!(backups_of(&workbench, cx).is_empty());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+const NOTEBOOK: &str = "test-notebook";
+
+/// A window on `<dir>/folder` with a `test-notebook` type for `*.tnb` and its serializer, `a.txt` open; its host
+/// messages arrive on the receiver.
+fn open_with_notebooks<'a>(cx: &'a mut TestAppContext, dir: &Path) -> (gpui::Entity<Workbench>, std::sync::mpsc::Receiver<crate::host_sync::HostMessage>, &'a mut VisualTestContext) {
+    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
+    let theme = load_theme(&[themes], "Dark Modern").unwrap();
+    let folder = dir.join("folder");
+    std::fs::create_dir_all(dir.join("user/User")).unwrap();
+    let workspace = config::workspace::Workspace::folder(folder.clone());
+    let settings = Arc::new(Mutex::new(Settings::load(Registry::with_extensions(&[]), dir.join("user/User"), Some(workspace.clone()))));
+    let user_data = dir.join("user");
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let (workbench, cx) = cx.add_window_view(|window, cx| {
+        let mut workbench = Workbench::new(theme, app_root.clone(), Some(workspace), Languages::new(&[]), settings, HostSync::new(sender), cx);
+        let description = json!({ "contributes": { "notebooks": [{ "type": NOTEBOOK, "displayName": "Test", "selector": [{ "filenamePattern": "*.tnb" }] }] } });
+        workbench.extensions = vec![exthost::scan::ScannedExtension { id: "port.test".into(), location: "/ext".into(), description }];
+        workbench.host.notebooks.serializers.push(crate::notebook::Serializer { handle: 1, view_type: NOTEBOOK.into(), options: json!({}), registration: Value::Null });
+        workbench.start_backups(&user_data, None, window, cx);
+        workbench.open_file(folder.join("a.txt"), true, window, cx);
+        workbench
+    });
+    cx.run_until_parked();
+    (workbench, receiver, cx)
+}
+
+/// The next host message to `method`, the ones before it dropped.
+fn next_message(receiver: &std::sync::mpsc::Receiver<crate::host_sync::HostMessage>, method: &str) -> crate::host_sync::HostMessage {
+    loop {
+        let message = receiver.try_recv().unwrap_or_else(|_| panic!("no {method}"));
+        if message.method == method {
+            return message;
+        }
+    }
+}
+
+fn answer(message: crate::host_sync::HostMessage, value: Value, cx: &mut VisualTestContext) {
+    let _ = message.reply.expect("a call").send(Ok(value));
+    cx.run_until_parked();
+}
+
+fn notebook_data(source: &str) -> Value {
+    json!({ "metadata": {}, "cells": [{ "cellKind": 2, "language": "python", "source": source, "outputs": [], "metadata": {} }] })
+}
+
+/// notebookEditorModel.ts with workingCopyBackupTracker.ts: a dirty notebook backs up the serializer's bytes as a
+/// `notebook/<type>/<type>` working copy, a quit keeps it, the next window opens the notebook in the background
+/// from it (`$dataToNotebook` of the backed up bytes) and dirty, and a revert drops the backup.
+#[gpui::test]
+fn a_dirty_notebook_backs_up_through_its_serializer_and_opens_from_its_backup(cx: &mut TestAppContext) {
+    let dir = scratch();
+    std::fs::write(dir.join("folder/a.tnb"), "saved").unwrap();
+    let uri = crate::uri::Uri::new("file", "", &dir.join("folder/a.tnb").to_string_lossy(), "", "").unwrap();
+    let key = crate::notebook::uri_string(&uri.to_json());
+    let home;
+    {
+        let (workbench, receiver, cx) = open_with_notebooks(cx, &dir);
+        home = workbench.read_with(cx, |workbench, _| workbench.lifecycle.backups.home.clone().unwrap());
+        workbench.update_in(cx, |workbench, window, cx| drop(workbench.open_notebook(uri.to_json(), NOTEBOOK.into(), json!({}), window, cx)));
+        cx.run_until_parked();
+        answer(next_message(&receiver, "resolveTextContent"), json!("saved"), cx);
+        answer(next_message(&receiver, "$dataToNotebook"), notebook_data("x"), cx);
+        workbench.update_in(cx, |workbench, window, cx| {
+            window.focus(&workbench.editor_focus, cx);
+            _ = workbench.execute_command("type", vec![json!({ "text": "1" })], window, cx);
+        });
+        cx.run_until_parked();
+        assert!(workbench.read_with(cx, |workbench, _| workbench.host.notebooks.model(&key).unwrap().dirty));
+        cx.executor().advance_clock(BACKUP_DELAY);
+        cx.run_until_parked();
+        let to_data = next_message(&receiver, "$notebookToData");
+        assert_eq!(to_data.args[1]["$withBuffers"]["cells"][0]["source"], "1x");
+        answer(to_data, json!({ "$vsbuffer": "QkFDS1VQ" }), cx);
+        let backups = backups::list(&home);
+        assert_eq!(backups.len(), 1);
+        let backup = backups::resolve(&backups[0]).unwrap();
+        assert_eq!((backup.resource, backup.type_id.as_str(), backup.content.as_slice()), (uri.clone(), "notebook/test-notebook/test-notebook", b"BACKUP".as_slice()));
+        assert_eq!(backup.meta.unwrap()["size"], 5, "the file's stat");
+
+        let shut_down = Rc::new(Cell::new(false));
+        let done = shut_down.clone();
+        workbench.update_in(cx, |workbench, window, cx| workbench.shutdown(ShutdownReason::Quit, window, cx, move |_, _, _| done.set(true)));
+        cx.run_until_parked();
+        let pending: Vec<&str> = receiver.try_iter().map(|message| message.method).collect();
+        assert!(shut_down.get(), "no veto {pending:?}");
+        assert_eq!(backups::list(&home).len(), 1, "a dirty notebook alone keeps the backups");
+    }
+
+    let (workbench, receiver, cx) = open_with_notebooks(cx, &dir);
+    let from_backup = next_message(&receiver, "$dataToNotebook");
+    assert_eq!(from_backup.args[1], json!({ "$vsbuffer": "QkFDS1VQ" }));
+    answer(from_backup, notebook_data("1x"), cx);
+    let (dirty, active) = workbench.read_with(cx, |workbench, _| (workbench.host.notebooks.model(&key).unwrap().dirty, workbench.editors.active_tab().unwrap().document().name()));
+    assert!(dirty);
+    assert_eq!(active, "a.txt", "the notebook opens in the background");
+
+    workbench.update(cx, |workbench, cx| workbench.revert_notebook(&key, cx));
+    cx.run_until_parked();
+    answer(next_message(&receiver, "resolveTextContent"), json!("saved"), cx);
+    answer(next_message(&receiver, "$dataToNotebook"), notebook_data("x"), cx);
+    assert!(backups::list(&home).is_empty());
     std::fs::remove_dir_all(&dir).unwrap();
 }

@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use futures::channel::oneshot;
-use gpui::{Context, Task};
+use gpui::{Context, Task, Window};
 use serde_json::{Value, json};
 
 use super::Workbench;
@@ -32,9 +32,46 @@ pub struct BackupTracker {
     pending: HashMap<(String, PathBuf), (u32, Task<()>)>,
     /// `suspendBackupOperations` while the shutdown handles modified working copies.
     suspended: bool,
-    /// The version each backed up custom document had, by its resource as JSON and view type.
-    custom_backed_up: HashMap<(String, String), u64>,
-    custom_pending: HashMap<(String, String), (u64, Task<()>)>,
+    custom: DocumentBackups,
+    notebooks: DocumentBackups,
+    /// `pendingOperations` of the backup service: each backup being written holds its sender until it is done.
+    operations: Vec<oneshot::Receiver<()>>,
+}
+
+/// The backups of one kind of document backed up through the extension host, by its resource as JSON and view type.
+#[derive(Default)]
+struct DocumentBackups {
+    /// The version each backed up document had.
+    backed_up: HashMap<(String, String), u64>,
+    pending: HashMap<(String, String), (u64, Task<()>)>,
+}
+
+#[derive(Clone, Copy)]
+enum DocumentKind {
+    Custom,
+    Notebook,
+}
+
+impl BackupTracker {
+    fn documents(&mut self, kind: DocumentKind) -> &mut DocumentBackups {
+        match kind {
+            DocumentKind::Custom => &mut self.custom,
+            DocumentKind::Notebook => &mut self.notebooks,
+        }
+    }
+
+    /// A backup starts writing: the sender to drop once it is written or failed.
+    pub(super) fn start_operation(&mut self) -> oneshot::Sender<()> {
+        self.operations.retain_mut(|operation| matches!(operation.try_recv(), Ok(None)));
+        let (done, operation) = oneshot::channel();
+        self.operations.push(operation);
+        done
+    }
+
+    /// `joinBackups`: the backups being written now.
+    pub(super) fn take_operations(&mut self) -> Vec<oneshot::Receiver<()>> {
+        std::mem::take(&mut self.operations)
+    }
 }
 
 /// What the window's backup folder is: its workspace, its folder, or an empty window's folder.
@@ -77,7 +114,7 @@ fn file_uri(path: &Path) -> String {
 impl Workbench {
     /// Starts tracking with the window's backup folder in `user_data` (none while developing an extension, as
     /// `doOpenInBrowserWindow` registers none) and opens the backups the last session left in it.
-    pub fn start_backups(&mut self, user_data: &Path, restored_folder: Option<PathBuf>, cx: &mut Context<Self>) {
+    pub fn start_backups(&mut self, user_data: &Path, restored_folder: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) {
         if self.extension_development {
             return;
         }
@@ -90,17 +127,24 @@ impl Workbench {
             _ => BackupWorkspace::Empty(restored_folder.and_then(|folder| folder.file_name().map(|name| name.to_string_lossy().into_owned()))),
         };
         self.lifecycle.backups.home = Some(backup_home(user_data, backup_workspace));
-        self.restore_backups(cx);
+        self.restore_backups(window, cx);
     }
 
     /// `restoreBackups`: each backup without an open editor opens pinned in the background, its model holding the
     /// backed up text; an editor the editor part restored takes its backup's text (the model resolves from it).
-    fn restore_backups(&mut self, cx: &mut Context<Self>) {
+    fn restore_backups(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(home) = self.lifecycle.backups.home.clone() else { return };
         let active = self.editors.active_index().map(|index| self.editors.editors[index].model_id);
         let mut restored = false;
         for path in backups::list(&home) {
             let Some(backup) = backups::resolve(&path) else { continue };
+            if let Some(view_type) = crate::notebook::view_type_of_working_copy(&backup.type_id) {
+                self.restore_notebook_backup(backup.resource.to_json(), view_type.to_owned(), window, cx);
+                continue;
+            }
+            if !backup.type_id.is_empty() {
+                continue;
+            }
             if backup.resource.scheme == CUSTOM_EDITOR_SCHEME {
                 if let Some(meta) = &backup.meta {
                     self.restore_custom_document(meta);
@@ -129,7 +173,7 @@ impl Workbench {
                     self.editors.open(document, false);
                 }
             }
-            self.update_model(&scheme, &model_path, &backup.content, false);
+            self.update_model(&scheme, &model_path, &String::from_utf8_lossy(&backup.content), false);
             let version = self.editors.model(&scheme, &model_path).expect("just opened").alternative_version_id();
             self.lifecycle.backups.backed_up.insert((scheme, model_path), version);
             restored = true;
@@ -176,57 +220,89 @@ impl Workbench {
             });
             self.lifecycle.backups.pending.insert(key, (version, task));
         }
-        self.backup_custom_documents_changed(cx);
+        self.backup_documents_changed(DocumentKind::Custom, cx);
+        self.backup_documents_changed(DocumentKind::Notebook, cx);
     }
 
-    /// The same for custom documents: a dirty one backs up a second after its last change, a clean or closed one
-    /// loses its backup.
-    fn backup_custom_documents_changed(&mut self, cx: &mut Context<Self>) {
-        let documents = &self.webview_panels.custom_editors.documents;
-        let dirty: Vec<((String, String), u64)> = documents.iter().filter(|document| document.is_dirty()).map(|document| (custom_key(&document.resource, &document.view_type), document.version)).collect();
-        let tracker = &mut self.lifecycle.backups;
-        let gone: Vec<(String, String)> = tracker.custom_backed_up.keys().chain(tracker.custom_pending.keys()).filter(|key| !dirty.iter().any(|(dirty, _)| dirty == *key)).cloned().collect();
+    /// The same for custom documents and notebooks: a dirty one backs up a second after its last change, a clean
+    /// or closed one loses its backup.
+    fn backup_documents_changed(&mut self, kind: DocumentKind, cx: &mut Context<Self>) {
+        let dirty = self.dirty_documents(kind);
+        let documents = self.lifecycle.backups.documents(kind);
+        let gone: Vec<(String, String)> = documents.backed_up.keys().chain(documents.pending.keys()).filter(|key| !dirty.iter().any(|(dirty, _)| dirty == *key)).cloned().collect();
         for key in gone {
-            self.lifecycle.backups.custom_pending.remove(&key);
-            self.lifecycle.backups.custom_backed_up.remove(&key);
+            let documents = self.lifecycle.backups.documents(kind);
+            documents.pending.remove(&key);
+            documents.backed_up.remove(&key);
             if let Ok(resource) = serde_json::from_str::<Value>(&key.0) {
-                self.discard_custom_document_backup(&resource, &key.1);
+                match kind {
+                    DocumentKind::Custom => self.discard_custom_document_backup(&resource, &key.1),
+                    DocumentKind::Notebook => self.discard_notebook_backup(&resource, &key.1),
+                }
             }
         }
         for (key, version) in dirty {
-            let tracker = &self.lifecycle.backups;
-            if tracker.custom_backed_up.get(&key) == Some(&version) || tracker.custom_pending.get(&key).is_some_and(|(pending, _)| *pending == version) {
+            let documents = self.lifecycle.backups.documents(kind);
+            if documents.backed_up.get(&key) == Some(&version) || documents.pending.get(&key).is_some_and(|(pending, _)| *pending == version) {
                 continue;
             }
             let scheduled = key.clone();
             let task = cx.spawn(async move |workbench, cx| {
                 cx.background_executor().timer(BACKUP_DELAY).await;
-                let Ok(Some(backup)) = workbench.update(cx, |workbench, cx| {
-                    workbench.lifecycle.backups.custom_pending.remove(&scheduled);
-                    let index = workbench.webview_panels.custom_editors.documents.iter().position(|document| custom_key(&document.resource, &document.view_type) == scheduled)?;
-                    Some(workbench.backup_custom_document(index, cx))
+                let Ok(backup) = workbench.update(cx, |workbench, cx| {
+                    // Dropping this task would cancel it before it records the backup below.
+                    if let Some((_, running)) = workbench.lifecycle.backups.documents(kind).pending.remove(&scheduled) {
+                        running.detach();
+                    }
+                    workbench.backup_document(kind, &scheduled, cx)
                 }) else {
                     return;
                 };
                 if let Ok(Some(version)) = backup.await {
-                    let _ = workbench.update(cx, |workbench, _| workbench.lifecycle.backups.custom_backed_up.insert(scheduled, version));
+                    let _ = workbench.update(cx, |workbench, _| workbench.lifecycle.backups.documents(kind).backed_up.insert(scheduled, version));
                 }
             });
-            self.lifecycle.backups.custom_pending.insert(key, (version, task));
+            self.lifecycle.backups.documents(kind).pending.insert(key, (version, task));
         }
     }
 
-    /// `backupBeforeShutdown` of the custom documents not backed up at their version: answers whether each worked.
-    pub(super) fn backup_custom_documents_before_shutdown(&mut self, cx: &mut Context<Self>) -> Vec<oneshot::Receiver<Option<u64>>> {
-        self.lifecycle.backups.custom_pending.clear();
-        if self.lifecycle.backups.home.is_none() {
-            return Vec::new();
+    /// The dirty documents of `kind`, by key, with their versions.
+    fn dirty_documents(&self, kind: DocumentKind) -> Vec<((String, String), u64)> {
+        match kind {
+            DocumentKind::Custom => self.webview_panels.custom_editors.documents.iter().filter(|document| document.is_dirty()).map(|document| (document_key(&document.resource, &document.view_type), document.version)).collect(),
+            DocumentKind::Notebook => self.host.notebooks.models.iter().filter(|model| model.dirty).map(|model| (document_key(&model.uri, &model.view_type), model.version_id)).collect(),
         }
-        let documents = &self.webview_panels.custom_editors.documents;
-        let stale: Vec<usize> = (0..documents.len())
-            .filter(|index| documents[*index].is_dirty() && self.lifecycle.backups.custom_backed_up.get(&custom_key(&documents[*index].resource, &documents[*index].view_type)) != Some(&documents[*index].version))
-            .collect();
-        stale.into_iter().map(|index| self.backup_custom_document(index, cx)).collect()
+    }
+
+    /// The backup of the document at `key`: answers the version it is for, None when it failed or is gone.
+    fn backup_document(&mut self, kind: DocumentKind, key: &(String, String), cx: &mut Context<Self>) -> oneshot::Receiver<Option<u64>> {
+        let found = match kind {
+            DocumentKind::Custom => self.webview_panels.custom_editors.documents.iter().position(|document| document_key(&document.resource, &document.view_type) == *key).map(|index| self.backup_custom_document(index, cx)),
+            DocumentKind::Notebook => serde_json::from_str::<Value>(&key.0).ok().map(|uri| self.backup_notebook(&crate::notebook::uri_string(&uri), cx)),
+        };
+        found.unwrap_or_else(|| {
+            let (sender, receiver) = oneshot::channel();
+            let _ = sender.send(None);
+            receiver
+        })
+    }
+
+    /// `backupBeforeShutdown` of the custom documents and notebooks not backed up at their version: answers whether
+    /// each worked.
+    pub(super) fn backup_documents_before_shutdown(&mut self, cx: &mut Context<Self>) -> Vec<oneshot::Receiver<Option<u64>>> {
+        let mut backups = Vec::new();
+        for kind in [DocumentKind::Custom, DocumentKind::Notebook] {
+            self.lifecycle.backups.documents(kind).pending.clear();
+            if self.lifecycle.backups.home.is_none() {
+                continue;
+            }
+            for (key, version) in self.dirty_documents(kind) {
+                if self.lifecycle.backups.documents(kind).backed_up.get(&key) != Some(&version) {
+                    backups.push(self.backup_document(kind, &key, cx));
+                }
+            }
+        }
+        backups
     }
 
     /// `doBackup` of one model: its text and, for a file, the stat it was read with.
@@ -237,7 +313,7 @@ impl Workbench {
         let meta = (key.0 == "file").then(|| file_meta(&key.1, self.text_files.orphaned.contains(&key.1))).flatten();
         let content = model.document().lines.join(model.document().eol);
         let version = model.alternative_version_id();
-        match backups::write(&home, &resource, meta.as_ref(), &content) {
+        match backups::write(&home, &resource, "", meta.as_ref(), content.as_bytes()) {
             Ok(()) => {
                 self.lifecycle.backups.backed_up.insert(key.clone(), version);
                 true
@@ -254,7 +330,7 @@ impl Workbench {
         tracker.pending.remove(key);
         tracker.backed_up.remove(key);
         if let (Some(home), Ok(resource)) = (&tracker.home, Uri::new(&key.0, "", &key.1.to_string_lossy(), "", "")) {
-            backups::discard(home, &resource);
+            backups::discard(home, &resource, "");
         }
     }
 
@@ -298,8 +374,8 @@ impl Workbench {
         let tracker = &mut self.lifecycle.backups;
         tracker.pending.clear();
         tracker.backed_up.clear();
-        tracker.custom_pending.clear();
-        tracker.custom_backed_up.clear();
+        tracker.custom = DocumentBackups::default();
+        tracker.notebooks = DocumentBackups::default();
         if let Some(home) = &tracker.home {
             for backup in backups::list(home) {
                 let _ = std::fs::remove_file(backup);
@@ -312,12 +388,13 @@ impl Workbench {
         self.lifecycle.backups.suspended = suspended;
         if suspended {
             self.lifecycle.backups.pending.clear();
-            self.lifecycle.backups.custom_pending.clear();
+            self.lifecycle.backups.custom.pending.clear();
+            self.lifecycle.backups.notebooks.pending.clear();
         }
     }
 }
 
-fn custom_key(resource: &Value, view_type: &str) -> (String, String) {
+fn document_key(resource: &Value, view_type: &str) -> (String, String) {
     (resource.to_string(), view_type.to_owned())
 }
 
@@ -332,7 +409,7 @@ fn model_uri(model: &OpenEditor) -> Uri {
 }
 
 /// textFileEditorModel.ts `backup` meta: the file's `mtime`, `ctime`, `size`, `etag` and whether it is orphaned.
-fn file_meta(path: &Path, orphaned: bool) -> Option<Value> {
+pub(super) fn file_meta(path: &Path, orphaned: bool) -> Option<Value> {
     let metadata = std::fs::metadata(path).ok()?;
     let millis = |time: std::io::Result<SystemTime>| time.ok().and_then(|time| time.duration_since(UNIX_EPOCH).ok()).map_or(0, |since| since.as_millis() as u64);
     let (mtime, ctime, size) = (millis(metadata.modified()), millis(metadata.created()), metadata.len());

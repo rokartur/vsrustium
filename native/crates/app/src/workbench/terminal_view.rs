@@ -959,7 +959,7 @@ impl Workbench {
         };
         let show_active_terminal = tabs_enabled && shown_for("terminal.integrated.tabs.showActiveTerminal");
         let show_inline_actions = self.setting("terminal.integrated.tabs.hideCondition") != "never" && (!tabs_enabled || shown_for("terminal.integrated.tabs.showActions"));
-        let active_title = self.terminal_view.active_instance_id().and_then(|id| self.terminal_view.instance(id)).map(TerminalInstance::title);
+        let active_title = self.terminal_view.active_instance_id().and_then(|id| self.terminal_view.instance(id)).map(|instance| self.single_tab_title(instance));
         let foreground = self.foreground_or("icon.foreground");
         div()
             .flex()
@@ -991,6 +991,38 @@ impl Workbench {
             .when(show_inline_actions, |actions| {
                 actions.child(self.turned_action("split-horizontal", self.panel_title_icon_turns(), "workbench.action.terminal.split", true, cx)).child(self.search_action("trash", "workbench.action.terminal.kill", true, cx))
             })
+    }
+
+    /// terminalView.ts `getSingleTabTitle`: `<title> <separator> <description>`, its whitespace collapsed as HTML does.
+    fn single_tab_title(&self, instance: &TerminalInstance) -> String {
+        let description = self.terminal_description(instance);
+        if description.is_empty() {
+            return instance.title();
+        }
+        let separator = self.setting("terminal.integrated.tabs.separator");
+        let title = format!("{} {} {description}", instance.title(), separator.as_str().unwrap_or(" - "));
+        title.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
+    /// `TerminalInstance.description`, `terminal.integrated.tabs.description` resolved.
+    pub(super) fn terminal_description(&self, instance: &TerminalInstance) -> String {
+        let template = self.setting("terminal.integrated.tabs.description");
+        let separator = self.setting("terminal.integrated.tabs.separator");
+        let workspace = self.workspace();
+        let launch_folder = workspace.and_then(|workspace| workspace.folders.iter().filter(|folder| instance.launch.cwd.starts_with(&folder.path)).max_by_key(|folder| folder.path.as_os_str().len()));
+        let workspace_folder = launch_folder.map(|folder| folder.path.clone()).or_else(|| self.last_active_workspace_root().map(std::path::PathBuf::from));
+        let user_home = std::env::var("HOME").unwrap_or_default();
+        let input = crate::terminal::label::LabelInput {
+            process: &instance.process_title,
+            sequence: instance.sequence_title.as_deref(),
+            cwd: instance.cwd.as_deref(),
+            user_home: &user_home,
+            workspace_folder: workspace_folder.as_deref(),
+            multi_root: workspace.is_some_and(|workspace| workspace.folders.len() > 1),
+            task: instance.launch.is_feature_terminal,
+            shell_type: instance.shell_type,
+        };
+        crate::terminal::label::description(template.as_str().unwrap_or_default(), separator.as_str().unwrap_or(" - "), &input)
     }
 
     fn terminal_profile_chevron(&self, foreground: gpui::Rgba, cx: &mut Context<Self>) -> gpui::Stateful<Div> {
@@ -1366,6 +1398,7 @@ impl Workbench {
                     _ => "├",
                 };
                 let active = Some(id) == active_id;
+                let description = self.terminal_description(instance);
                 let row = div()
                     .id(("terminal-tab", id as usize))
                     .group("terminal-tab")
@@ -1385,7 +1418,12 @@ impl Workbench {
                     .when(active, |row| row.child(div().absolute().left_0().top_0().bottom_0().w(px(1.)).bg(self.color("terminal.tab.activeBorder"))))
                     .when(!prefix.is_empty(), |row| row.child(prefix))
                     .child(self.icon("terminal", 16., 16., foreground))
-                    .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().child(instance.title()))
+                    .child(
+                        // iconlabel.css `.label-description`: margin-left .5em, opacity .7, font-size .9em.
+                        div().flex_1().min_w_0().flex().items_center().overflow_hidden().whitespace_nowrap().child(div().min_w_0().overflow_hidden().text_ellipsis().child(instance.title())).when(!description.is_empty(), |label| {
+                            label.child(div().flex_none().ml(px(6.5)).opacity(0.7).text_size(px(11.7)).child(description))
+                        }),
+                    )
                     .when(TABS_DEFAULT_WIDTH >= TABS_ACTIONBAR_MINIMUM_WIDTH, |row| {
                         row.child(
                             // terminal.css: `.actions { display: none }`, shown on the hovered row.

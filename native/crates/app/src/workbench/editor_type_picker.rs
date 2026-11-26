@@ -1,5 +1,6 @@
 //! editorTypePicker.ts with breadcrumbsControl.ts `_updateEditorTypeControl`: the breadcrumbs' dropdown of the editors
-//! that can open the active editor's resource, which reopens it with another one or sets the default.
+//! that can open the active editor's resource, which reopens it with another one or sets the default; a diff editor's
+//! also opens either side.
 
 use std::cell::Cell;
 use std::path::Path;
@@ -9,15 +10,20 @@ use gpui::{Bounds, ClickEvent, Context, Div, MouseButton, Pixels, Stateful, Wind
 use serde_json::{Value, json};
 
 use super::Workbench;
-use super::custom_editors::TEXT_EDITOR_ID;
+use super::custom_editors::{RANK_EXCLUSIVE, TEXT_EDITOR_ID};
 use super::host_requests::uri_parts;
 use super::hover::{HoverContent, HoverOptions};
 use crate::commands::Outcome;
 use crate::menus::MenuAction;
 
+#[cfg(test)]
+mod tests;
+
 const REOPEN_PREFIX: &str = "editorType.reopen.";
 const SET_DEFAULT_PREFIX: &str = "editorType.setDefault.";
 const OPEN_TO_SIDE_PREFIX: &str = "editorType.openToSide.";
+const OPEN_ORIGINAL: &str = "editorType.openOriginal";
+const OPEN_MODIFIED: &str = "editorType.openModified";
 /// `SplitSettingsEditorInput.EDITOR_ID`, `SideBySideEditorInput.ID` kept for existing associations.
 const SPLIT_SETTINGS_EDITOR_ID: &str = "workbench.editorinputs.sidebysideEditorInput";
 
@@ -31,6 +37,8 @@ pub(super) struct EditorTypePicker {
 /// `editorMatches.defaultRule`'s editor id and glob.
 pub(super) struct EditorTypes {
     pub(super) resource: Value,
+    /// A diff editor's original and modified resources; `resource` is the modified one.
+    pub(super) diff: Option<(Value, Value)>,
     pub(super) current: String,
     pub(super) editors: Vec<(String, String, String)>,
     pub(super) default_id: String,
@@ -39,11 +47,14 @@ pub(super) struct EditorTypes {
 
 /// `getAvailableEditorTypes` over the resource's editors (id, label, provider, unconfigured `*` option): the `*`
 /// option editors and the hidden ones are left out unless active; nothing to switch between gives `None`.
-fn available_editors(editors: Vec<(String, String, String, bool)>, current: &str, hidden: &[&str]) -> Option<Vec<(String, String, String)>> {
+fn available_editors(editors: Vec<(String, String, String, u8, bool)>, current: &str, hidden: &[&str]) -> Option<Vec<(String, String, String)>> {
+    if editors.iter().any(|(_, _, _, rank, _)| *rank == RANK_EXCLUSIVE) {
+        return None;
+    }
     let editors: Vec<(String, String, String)> = editors
         .into_iter()
-        .filter(|(id, _, _, universal_option)| id == current || (!universal_option && !hidden.contains(&id.as_str())))
-        .map(|(id, label, provider, _)| (id, label, provider))
+        .filter(|(id, _, _, _, universal_option)| id == current || (!universal_option && !hidden.contains(&id.as_str())))
+        .map(|(id, label, provider, _, _)| (id, label, provider))
         .collect();
     (editors.len() > 1).then_some(editors)
 }
@@ -56,6 +67,16 @@ fn label_with_source(label: &str, provider: &str) -> String {
     }
 }
 
+impl EditorTypes {
+    /// `editorTypeDisplayLabel`: a diff's text editor is the "Text Diff Editor".
+    fn label(&self, id: &str, label: &str) -> String {
+        match self.diff.is_some() && id == "default" {
+            true => "Text Diff Editor".to_owned(),
+            false => label.to_owned(),
+        }
+    }
+}
+
 impl Workbench {
     /// `getAvailableEditorTypes` of the active editor, with `breadcrumbs.showEditorType` and
     /// `workbench.editor.hiddenEditorTypes`; a side by side settings editor is the split settings editor.
@@ -65,22 +86,33 @@ impl Workbench {
         }
         let hidden = self.setting("workbench.editor.hiddenEditorTypes");
         let hidden: Vec<&str> = hidden.as_array().into_iter().flatten().filter_map(|id| id.as_str()).collect();
-        let (resource, mut current) = self.active_editor_type()?;
+        let (resource, diff, mut current) = match self.editors.active_diff() {
+            Some(diff) => {
+                let modified = crate::editor::uri_value(&diff.modified.scheme, &diff.modified.path);
+                let original = crate::editor::uri_value(&diff.original.scheme, &diff.original.path);
+                (modified.clone(), Some((original, modified)), TEXT_EDITOR_ID.to_owned())
+            }
+            None => {
+                let (resource, current) = self.active_editor_type()?;
+                (resource, None, current)
+            }
+        };
         if self.editors.active_tab().is_some_and(|tab| self.editors.side_by_sides.contains_key(&tab.model_id)) {
             current = SPLIT_SETTINGS_EDITOR_ID.to_owned();
         }
         let (scheme, path) = uri_parts(&resource).ok()?;
-        let mut editors = self.resource_editors(scheme, &path);
-        let (mut default_id, mut pattern) = self.default_editor(scheme, &path, true);
-        if self.split_settings_enabled(scheme, &path) {
+        let is_diff = diff.is_some();
+        let mut editors = self.resource_editors(scheme, &path, is_diff);
+        let (mut default_id, mut pattern) = self.default_editor(scheme, &path, true, is_diff);
+        if !is_diff && self.split_settings_enabled(scheme, &path) {
             // The split settings editor ranks as the text editor and its glob is the longer one.
-            if default_id == TEXT_EDITOR_ID && (default_id.clone(), pattern.clone()) == self.default_editor(scheme, &path, false) {
+            if default_id == TEXT_EDITOR_ID && (default_id.clone(), pattern.clone()) == self.default_editor(scheme, &path, false, false) {
                 (default_id, pattern) = (SPLIT_SETTINGS_EDITOR_ID.to_owned(), "**/settings.json".to_owned());
             }
-            editors.insert(0, (SPLIT_SETTINGS_EDITOR_ID.to_owned(), "Split Settings Editor".to_owned(), "Built-in".to_owned(), false));
+            editors.insert(0, (SPLIT_SETTINGS_EDITOR_ID.to_owned(), "Split Settings Editor".to_owned(), "Built-in".to_owned(), 0, false));
         }
         let editors = available_editors(editors, &current, &hidden)?;
-        Some(EditorTypes { resource, current, editors, default_id, pattern })
+        Some(EditorTypes { resource, diff, current, editors, default_id, pattern })
     }
 
     /// preferencesContribution.ts: `**/settings.json` opens in the split settings editor while
@@ -94,7 +126,7 @@ impl Workbench {
     /// breadcrumbs' end; a click shows the editor type menu below it.
     pub(super) fn editor_type_picker(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         let types = self.available_editor_types()?;
-        let label = types.editors.iter().find(|(id, _, _)| *id == types.current).map_or(types.current.clone(), |(_, label, _)| label.clone());
+        let label = types.editors.iter().find(|(id, _, _)| *id == types.current).map_or(types.current.clone(), |(id, label, _)| types.label(id, label));
         let foreground = self.color("breadcrumb.foreground");
         let focus_foreground = self.color("breadcrumb.focusForeground");
         let bounds = self.editor_type_picker.bounds.clone();
@@ -138,10 +170,11 @@ impl Workbench {
     /// it to the side, then the "Set Default" submenu (the effective default checked).
     fn show_editor_type_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(types) = self.available_editor_types() else { return };
+        let diff = types.diff.is_some();
         let mut reopen = Vec::new();
         let mut set_default = Vec::new();
         for (id, label, provider) in &types.editors {
-            let title = label_with_source(label, provider);
+            let title = label_with_source(&types.label(id, label), provider);
             let reopen_id = format!("{REOPEN_PREFIX}{id}");
             let editor_id = id.clone();
             self.commands.register(&reopen_id, move |workbench, _, window, cx| match workbench.available_editor_types() {
@@ -161,7 +194,7 @@ impl Workbench {
             let editor_id = id.clone();
             let default_resource = types.resource.clone();
             self.commands.register(&default_command, move |workbench, _, window, cx| {
-                workbench.set_default_editor(&default_resource, &editor_id);
+                workbench.set_default_editor(&default_resource, &editor_id, diff);
                 match workbench.available_editor_types() {
                     Some(types) => workbench.reopen_editor_type(&types, &editor_id, window, cx),
                     None => Outcome::done(),
@@ -171,7 +204,18 @@ impl Workbench {
         }
         let mut actions = reopen;
         actions.push(MenuAction::Separator);
-        actions.push(MenuAction::Submenu { title: format!("Set Default for '{}'", types.pattern), actions: set_default, checked: false });
+        let submenu_title = match diff {
+            true => format!("Set Default (Diff Only) for '{}'", types.pattern),
+            false => format!("Set Default for '{}'", types.pattern),
+        };
+        actions.push(MenuAction::Submenu { title: submenu_title, actions: set_default, checked: false });
+        if let Some((original, modified)) = types.diff {
+            actions.push(MenuAction::Separator);
+            for (command, title, side) in [(OPEN_ORIGINAL, "Open Original", original), (OPEN_MODIFIED, "Open Modified", modified)] {
+                self.commands.register(command, move |workbench, _, window, cx| workbench.open_with_resolver(&side, None, json!({}), window, cx));
+                actions.push(MenuAction::Command { id: command.to_owned(), title: title.to_owned(), enabled: true, checked: false, alt: None });
+            }
+        }
         let anchor = self.editor_type_picker.bounds.get();
         let context = self.key_context(window);
         self.show_context_menu_actions(actions, &context, anchor, Vec::new(), window, cx);
@@ -214,46 +258,5 @@ impl Workbench {
             self.show_side_by_side(Path::new(secondary), window, cx);
         }
         Outcome::done()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn editor(id: &str, universal_option: bool) -> (String, String, String, bool) {
-        (id.into(), id.into(), "Built-in".into(), universal_option)
-    }
-
-    fn ids(editors: Option<Vec<(String, String, String)>>) -> Option<Vec<String>> {
-        editors.map(|editors| editors.into_iter().map(|(id, _, _)| id).collect())
-    }
-
-    // editorTypePicker.test.ts 'hidden editor types are omitted unless currently active'.
-    #[test]
-    fn hidden_editor_types_are_omitted_unless_currently_active() {
-        let editors = || vec![editor("default", false), editor("test.markdownEditor", false), editor("test.markdownPreview", false)];
-        let hidden = ["test.markdownPreview"];
-        assert_eq!(ids(available_editors(editors(), "test.markdownEditor", &hidden)), Some(vec!["default".into(), "test.markdownEditor".into()]));
-        assert_eq!(ids(available_editors(editors(), "test.markdownPreview", &hidden)), Some(vec!["default".into(), "test.markdownEditor".into(), "test.markdownPreview".into()]));
-    }
-
-    // editorTypePicker.test.ts 'unconfigured universal optional matches only make the picker visible while active'.
-    #[test]
-    fn unconfigured_universal_optional_matches_only_make_the_picker_visible_while_active() {
-        let editors = || vec![editor("default", false), editor("test.universalPreview", true)];
-        assert_eq!(ids(available_editors(editors(), "default", &[])), None);
-        assert_eq!(ids(available_editors(editors(), "test.universalPreview", &[])), Some(vec!["default".into(), "test.universalPreview".into()]));
-    }
-
-    #[test]
-    fn a_resource_with_only_the_text_editor_has_no_picker() {
-        assert_eq!(ids(available_editors(vec![editor("default", false)], "default", &[])), None);
-    }
-
-    #[test]
-    fn an_extension_editor_names_its_extension() {
-        assert_eq!(label_with_source("Markdown Preview", "Markdown Language Features"), "Markdown Preview - Markdown Language Features");
-        assert_eq!(label_with_source("Markdown Preview", "Built-in"), "Markdown Preview");
     }
 }

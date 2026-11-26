@@ -81,8 +81,8 @@ impl Workbench {
             .flex_col()
             .child(self.tab_strip(window, cx))
             .map(|part| match editor.document().scheme.as_str() {
-                // A webview editor has no breadcrumbs: its resource has no file system provider.
-                WEBVIEW_PANEL_SCHEME => part,
+                // A webview panel's resource has no file system provider, a custom editor's has.
+                WEBVIEW_PANEL_SCHEME if self.webview_resource(&editor.document().path).is_none() => part,
                 _ if self.active_notebook_resource().is_some_and(|(scheme, _)| scheme == "untitled") => part,
                 super::extension_editor::EXTENSION_EDITOR_SCHEME => part.child(self.extension_editor_body(&editor.document().path, cx)),
                 super::welcome_page::WALKTHROUGH_SCHEME => part.child(self.walkthrough_editor_body(&editor.document().path, window, cx)),
@@ -359,7 +359,9 @@ impl Workbench {
         let is_notebook = matches!(editor.document().scheme.as_str(), crate::notebook::CELL_SCHEME | crate::notebook::NOTEBOOK_EDITOR_SCHEME);
         let (notebook_path, notebook_items) = self.notebook_breadcrumbs(foreground, BREADCRUMBS_HEIGHT).filter(|_| is_notebook).unzip();
         let document = editor.document();
-        let path = notebook_path.as_ref().unwrap_or(&document.path);
+        // A custom editor's breadcrumbs are its resource's (`EditorResourceAccessor.getOriginalUri`).
+        let custom_resource = self.webview_resource(&document.path);
+        let path = notebook_path.as_ref().or(custom_resource.as_ref()).unwrap_or(&document.path);
         let workspace = self.workspace();
         let folder = workspace.and_then(|workspace| workspace.folder_of(path));
         let home = std::env::home_dir().filter(|home| folder.is_none() && path.starts_with(home));

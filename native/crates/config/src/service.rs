@@ -182,14 +182,27 @@ impl Settings {
         merge_changes(&changes)
     }
 
-    /// `updateWorkspaceTrust`: reparses the folder and workspace settings. Main calls it before the window opens,
-    /// as a trust change later reloads the window, so no change event is computed.
-    pub fn update_workspace_trust(&mut self, trusted: bool) {
+    /// `updateWorkspaceTrust`: reparses the folder and workspace settings and answers the keys whose folder or
+    /// workspace layers gained or lost: the restricted and unregistered keys set there (upstream also lists the
+    /// restricted keys of the user layers, whose values do not change).
+    pub fn update_workspace_trust(&mut self, trusted: bool) -> Change {
         self.trusted = trusted;
+        let before = self.configuration.clone();
         let folders: Vec<PathBuf> = self.configuration.folders.iter().map(|(folder, _)| folder.clone()).collect();
         self.configuration.folders = folders.into_iter().map(|folder| (folder.clone(), self.load_folder(&folder))).collect();
         self.configuration.workspace = self.load_workspace();
         self.configuration.layers_changed();
+        let mut layers = vec![(&before.workspace, &self.configuration.workspace)];
+        layers.extend(before.folders.iter().zip(&self.configuration.folders).map(|((_, from), (_, to))| (from, to)));
+        let mut keys: Vec<String> = Vec::new();
+        for (from, to) in layers {
+            for key in from.keys.iter().filter(|key| !to.keys.contains(key)).chain(to.keys.iter().filter(|key| !from.keys.contains(key))) {
+                if !keys.contains(key) {
+                    keys.push(key.clone());
+                }
+            }
+        }
+        Change { keys, overrides: Vec::new() }
     }
 
     /// `onDidChangeCurrentProfile`: the user layers of the new profile and what changed.
@@ -1160,7 +1173,9 @@ mod tests {
         assert_eq!(value(&fixture, "configurationEditing.service.restrictedSetting"), Some(json!("folder")));
         assert_eq!(value(&fixture, "unregistered.setting"), Some(json!("folder")));
 
-        fixture.settings.update_workspace_trust(false);
+        let change = fixture.settings.update_workspace_trust(false);
+        assert!(change.keys.contains(&"configurationEditing.service.restrictedSetting".to_owned()));
+        assert!(!change.keys.contains(&"configurationEditing.service.testSetting".to_owned()));
         assert_eq!(value(&fixture, "configurationEditing.service.restrictedSetting"), Some(json!("user")));
         assert_eq!(value(&fixture, "unregistered.setting"), None);
         assert_eq!(value(&fixture, "configurationEditing.service.testSetting"), Some(json!("folder")));

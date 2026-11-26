@@ -49,6 +49,13 @@ pub enum ConfirmResult {
 }
 
 impl Workbench {
+    /// The names of the modified working copies (`workingCopyService.modifiedWorkingCopies`): dirty editors, then
+    /// dirty notebooks, whose tabs are not dirty editors.
+    fn modified_working_copy_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.dirty_editors().into_iter().map(|index| self.editor_name(&self.editors.editors[index])).collect();
+        names.extend(self.host.notebooks.models.iter().filter(|model| model.dirty).map(|model| crate::notebook::label(&model.uri)));
+        names
+    }
     pub(super) fn register_lifecycle_commands(&mut self) {
         // menubar.ts: the Quit item asks first with `window.confirmBeforeClose`; the command itself does not.
         self.commands.register("workbench.action.quit", |_, args, window, cx| {
@@ -265,12 +272,15 @@ async fn backup_tracker_before_shutdown(workbench: &WeakEntity<Workbench>, reaso
     };
     // An error saving is left to the steps below, as `doSaveAllBeforeShutdown` errors are only logged.
     futures::future::join_all(auto_saves).await;
+    // `joinBackups`: a backup still being written lands before this one or the discard below.
+    let Ok(operations) = workbench.update(cx, |workbench, _| workbench.lifecycle.backups.take_operations()) else { return false };
+    futures::future::join_all(operations).await;
     let backed_up = workbench.update(cx, |workbench, cx| {
-        if workbench.dirty_editors().is_empty() {
+        if workbench.modified_working_copy_names().is_empty() {
             workbench.discard_all_backups();
             return Some((true, Vec::new()));
         }
-        workbench.backs_up_on_shutdown(reason).then(|| (workbench.backup_before_shutdown(), workbench.backup_custom_documents_before_shutdown(cx)))
+        workbench.backs_up_on_shutdown(reason).then(|| (workbench.backup_before_shutdown(), workbench.backup_documents_before_shutdown(cx)))
     });
     let backed_up = match backed_up {
         Ok(Some((text, custom))) => Some(text && futures::future::join_all(custom).await.iter().all(|backup| matches!(backup, Ok(Some(_))))),
@@ -296,7 +306,7 @@ async fn backup_failed(workbench: &WeakEntity<Workbench>, reason: ShutdownReason
         if workbench.extension_development {
             return None;
         }
-        let names: Vec<String> = workbench.dirty_editors().into_iter().map(|index| workbench.editor_name(&workbench.editors.editors[index])).collect();
+        let names = workbench.modified_working_copy_names();
         let advice = "Try saving or reverting the editors with unsaved changes first and then try again.";
         let detail = format!("{}\n{advice}", file_names_message(&names));
         Some(dialog::show_message_box(window, PromptLevel::Critical, "The following editors with unsaved changes could not be saved to the backup location.", Some(&detail), &["OK", force], None, cx))
@@ -310,14 +320,20 @@ async fn backup_failed(workbench: &WeakEntity<Workbench>, reason: ShutdownReason
 /// Cancel vetoes.
 async fn confirm_before_shutdown(workbench: &WeakEntity<Workbench>, cx: &mut AsyncWindowContext) -> bool {
     let Ok(confirm) = workbench.update_in(cx, |workbench, window, cx| {
-        let names: Vec<String> = workbench.dirty_editors().into_iter().map(|index| workbench.editor_name(&workbench.editors.editors[index])).collect();
+        let names = workbench.modified_working_copy_names();
         workbench.show_save_confirm(&names, window, cx)
     }) else {
         return false;
     };
     match confirm.await.unwrap_or(ConfirmResult::Cancel) {
         ConfirmResult::Save => {
-            let Ok(saves) = workbench.update(cx, |workbench, cx| workbench.dirty_editors().into_iter().map(|index| workbench.save_editor(index, cx)).collect::<Vec<_>>()) else { return false };
+            let Ok(saves) = workbench.update(cx, |workbench, cx| {
+                let mut saves: Vec<_> = workbench.dirty_editors().into_iter().map(|index| workbench.save_editor(index, cx)).collect();
+                saves.extend(workbench.save_dirty_notebook_editors(cx));
+                saves
+            }) else {
+                return false;
+            };
             let saved = futures::future::join_all(saves).await;
             !saved.into_iter().all(|saved| saved == Ok(true))
         }
@@ -326,6 +342,7 @@ async fn confirm_before_shutdown(workbench: &WeakEntity<Workbench>, cx: &mut Asy
                 for index in workbench.dirty_editors() {
                     workbench.revert_editor(index, cx);
                 }
+                workbench.revert_dirty_notebooks(cx);
             });
             false
         }

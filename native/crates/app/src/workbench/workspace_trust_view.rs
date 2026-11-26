@@ -1,6 +1,8 @@
 //! workspace.contribution.ts `WorkspaceTrustUXHandler`: the Restricted Mode status entry and banner of an untrusted
 //! window, and the Workspaces trust commands.
 
+use exthost::extension_management::Job;
+use exthost::scan::ScannedExtension;
 use futures::channel::oneshot;
 use gpui::{Context, Div, ParentElement, Rgba, Stateful, Window};
 use serde_json::{Value, json};
@@ -15,6 +17,9 @@ use crate::commands::Outcome;
 use crate::main_thread_status_bar::StatusEntry;
 use crate::quick_input::path_label;
 use crate::workspace_trust::{BANNER_DISMISSED_KEY, STARTUP_PROMPT_SHOWN_KEY};
+
+#[cfg(test)]
+mod tests;
 
 pub(super) const MANAGE_TRUST_COMMAND_ID: &str = "workbench.trust.manage";
 const CONFIGURE_TRUST_COMMAND_ID: &str = "workbench.trust.configure";
@@ -182,10 +187,27 @@ impl Workbench {
         }
     }
 
-    /// `onDidChangeTrust`. shortcut: a trust change reloads the window instead of delta-ing in the extensions it
-    /// enables (`$deltaExtensions`, which extension_management.rs uses) and their restricted settings; upgrade with that.
+    /// extensionEnablementWorkspaceTrustTransitionParticipant.ts, then `onDidChangeTrust`: trust starts the extensions
+    /// it enables (`$deltaExtensions`), losing it restarts the host without them; then the restricted settings and
+    /// mainThreadWorkspace.ts `$onDidGrantWorkspaceTrust`.
     fn workspace_trust_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.execute_command("workbench.action.reloadWindow", Vec::new(), window, cx);
+        let trusted = self.workspace_trust.is_trusted();
+        let before = self.model_creation_options();
+        let change = self.settings.lock().unwrap().update_workspace_trust(trusted);
+        if trusted {
+            let running: Vec<String> = self.extensions.iter().map(|extension| extension.id.to_lowercase()).collect();
+            let to_add: Vec<ScannedExtension> = self.extensions_to_run().into_iter().filter(|extension| !running.contains(&extension.id.to_lowercase())).collect();
+            if !to_add.is_empty() {
+                drop(self.run_extension_jobs(vec![Job::Delta(to_add, Vec::new())], None, cx, |error| error));
+            }
+        } else {
+            self.restart_extension_host(window, cx);
+        }
+        self.configuration_changed(&change, before, cx);
+        if trusted {
+            self.host.send("ExtHostWorkspace", "$onDidGrantWorkspaceTrust", Vec::new());
+        }
+        cx.notify();
     }
 
     /// `WorkbenchState`'s word in the Restricted Mode texts: window, folder or workspace.

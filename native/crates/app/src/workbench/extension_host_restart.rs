@@ -66,7 +66,7 @@ impl Workbench {
 
     /// The installed extensions less those disabled in the profile or workspace and those an untrusted workspace
     /// turns off, as main.rs picks them at startup.
-    fn extensions_to_run(&mut self) -> Vec<ScannedExtension> {
+    pub(super) fn extensions_to_run(&mut self) -> Vec<ScannedExtension> {
         let viewlet = &self.extensions_viewlet;
         let mut installed = viewlet.builtins.clone();
         match viewlet.user.as_ref().map(|user| user.scan()).transpose() {
