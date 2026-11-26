@@ -75,8 +75,15 @@ pub(crate) struct NotificationsUi {
 
 struct Toast {
     key: u64,
-    /// When the purge timeout ends; `None` while the window is in the background, which restarts it on return.
-    deadline: Option<Instant>,
+    timer: PurgeTimer,
+}
+
+/// `purgeNotification`'s timeout: running from when the toast shows, or ended while the window was in the
+/// background, waiting for it to come back to start again.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum PurgeTimer {
+    Running(Instant),
+    WaitingForFocus,
 }
 
 impl NotificationsUi {
@@ -430,40 +437,40 @@ impl Workbench {
     }
 
     /// Turns new notifications into toasts and removes the toasts whose timeout ended (`purgeNotification`):
-    /// never a sticky one, the focused one, the one under the pointer, or any while the window is in the background.
+    /// never a sticky one, the focused one or the one under the pointer.
     fn sync_toasts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let now = Instant::now();
         let active = window.is_window_active();
         let ui = &mut self.notifications;
-        for key in ui.new_toasts.drain(..) {
-            ui.toasts.insert(0, Toast { key, deadline: None });
+        for key in std::mem::take(&mut ui.new_toasts) {
+            let Some(item) = ui.model.item(key) else { continue };
+            ui.toasts.insert(0, Toast { key, timer: PurgeTimer::Running(now + purge_timeout(item.severity)) });
         }
         let focused = ui.focus.is_focused(window).then_some(ui.focused).flatten();
         let mut removed = false;
         let model = &ui.model;
         ui.toasts.retain_mut(|toast| {
             let Some(item) = model.item(toast.key) else { return false };
-            let timeout = purge_timeout(item.severity);
-            match toast.deadline {
-                None if active => toast.deadline = Some(now + timeout),
-                Some(_) if !active => toast.deadline = None,
-                Some(deadline) if deadline <= now => {
-                    if item.sticky() || focused == Some(toast.key) || ui.hovered == Some(toast.key) {
-                        toast.deadline = Some(deadline + timeout);
-                    } else {
-                        removed = true;
-                        return false;
-                    }
+            let kept = item.sticky() || focused == Some(toast.key) || ui.hovered == Some(toast.key);
+            match next_purge_timer(toast.timer, now, active, kept, purge_timeout(item.severity)) {
+                Some(timer) => {
+                    toast.timer = timer;
+                    true
                 }
-                _ => {}
+                None => {
+                    removed = true;
+                    false
+                }
             }
-            true
         });
         if removed && ui.toasts.is_empty() && ui.focus.is_focused(window) && !ui.center_visible {
             ui.focused = None;
             window.focus(&self.editor_focus, cx);
         }
-        let next = ui.toasts.iter().filter_map(|toast| toast.deadline).min();
+        let next = ui.toasts.iter().filter_map(|toast| match toast.timer {
+            PurgeTimer::Running(deadline) => Some(deadline),
+            PurgeTimer::WaitingForFocus => None,
+        }).min();
         ui.purge = next.map(|deadline| {
             cx.spawn(async move |workbench, cx| {
                 cx.background_executor().timer(deadline.saturating_duration_since(Instant::now())).await;
@@ -968,6 +975,18 @@ fn place<E: Styled>(element: E, position: Position, offset: f32) -> E {
         Position::BottomRight => element.right(px(offset)).bottom(px(STATUS_BAR_HEIGHT + offset)),
         Position::BottomLeft => element.left(px(offset)).bottom(px(STATUS_BAR_HEIGHT + offset)),
         Position::TopRight => element.right(px(offset)).top(px(TITLE_BAR_HEIGHT + offset)),
+    }
+}
+
+/// One check of `purgeNotification`'s timer: the timer after `now`, or `None` when the toast goes. A timeout that
+/// ends in the background waits for the window to come back and starts over; `kept` toasts start over at once.
+fn next_purge_timer(timer: PurgeTimer, now: Instant, active: bool, kept: bool, timeout: Duration) -> Option<PurgeTimer> {
+    match timer {
+        PurgeTimer::WaitingForFocus if active => Some(PurgeTimer::Running(now + timeout)),
+        PurgeTimer::Running(deadline) if deadline <= now && !active => Some(PurgeTimer::WaitingForFocus),
+        PurgeTimer::Running(deadline) if deadline <= now && kept => Some(PurgeTimer::Running(deadline + timeout)),
+        PurgeTimer::Running(deadline) if deadline <= now => None,
+        timer => Some(timer),
     }
 }
 
