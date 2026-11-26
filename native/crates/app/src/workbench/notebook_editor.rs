@@ -146,6 +146,8 @@ struct NotebookView {
     editor_focused: bool,
     /// The restored view state had the focus in the cell editor: the editor takes it when the notebook shows.
     restore_editor_focus: bool,
+    /// A dragged cell's drop place (cellDnd.ts): the dragged cell, the cell under the pointer and whether below it.
+    drop_target: Option<(u64, u64, bool)>,
 }
 
 /// backLayerWebView.ts: the webview, what it was sent and what it measured.
@@ -1129,7 +1131,7 @@ impl Workbench {
             let focused = focused_index == Some(row.index);
             list = list.child(self.notebook_cell(tab, model, row, focused, scroll_top, window, cx));
         }
-        let list = list.children(self.notebook_find_widget(tab, list_width, window, cx));
+        let list = list.children(self.cell_drop_indicator(tab, &rows, scroll_top)).children(self.notebook_find_widget(tab, list_width, window, cx));
         div().flex_1().min_h_0().flex().flex_col().child(list)
     }
 
@@ -1145,7 +1147,16 @@ impl Workbench {
             .right_0()
             .top(px(top))
             .h(px(row.layout.height))
-            .on_mouse_down(MouseButton::Left, cx.listener(move |workbench, _: &MouseDownEvent, window, cx| workbench.focus_notebook_cell(tab, handle, true, window, cx)));
+            .on_mouse_down(MouseButton::Left, cx.listener(move |workbench, _: &MouseDownEvent, window, cx| workbench.focus_notebook_cell(tab, handle, true, window, cx)))
+            .on_drag_move(cx.listener(move |workbench, event: &gpui::DragMoveEvent<dnd::CellDrag>, _, cx| workbench.cell_drag_move(tab, handle, event, cx)))
+            // The drop runs in the capture phase: a press's release in the cell's content stops before the bubble phase.
+            .capture_any_mouse_up(cx.listener(move |workbench, event: &gpui::MouseUpEvent, _, cx| {
+                if cx.has_active_drag() {
+                    workbench.drop_cell(tab, handle, event.modifiers.alt, cx);
+                }
+            }));
+        let first_line = self.cell_model(&cell.uri).map(|editor| editor.document().lines[0].clone()).unwrap_or_default();
+        container = container.children(self.cell_drag_handle(tab, row, first_line));
         // cellFocusIndicator.ts: the focused cell's left bars, one over its code and one over its outputs,
         // `notebook.focusedCellBorder` while the focus is in the list (`.monaco-list:focus-within`), else
         // `notebook.inactiveFocusedCellBorder`.
@@ -1493,6 +1504,7 @@ fn query_component(text: &str) -> String {
 }
 
 mod cell_actions;
+mod dnd;
 mod find;
 mod folding;
 mod outputs;

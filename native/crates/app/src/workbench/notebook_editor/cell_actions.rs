@@ -382,7 +382,7 @@ impl Workbench {
     }
 
     /// Replaces cells with one undo step and moves the editor's focus to `focus`.
-    fn edit_notebook_cells(&mut self, key: &str, edits: Vec<Value>, focus: Option<usize>, cx: &mut Context<Self>) -> bool {
+    pub(super) fn edit_notebook_cells(&mut self, key: &str, edits: Vec<Value>, focus: Option<usize>, cx: &mut Context<Self>) -> bool {
         let Ok(applied) = self.apply_notebook_edits(key, &edits, cx) else { return false };
         if !applied.undo.is_empty() {
             self.push_cells_undo(key, applied.undo, edits);

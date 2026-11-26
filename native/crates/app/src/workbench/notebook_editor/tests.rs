@@ -224,6 +224,33 @@ fn a_markdown_cell_toolbar_goes_with_its_more_menu(cx: &mut TestAppContext) {
     assert!(cx.debug_bounds(more).is_none(), "the hidden webview never reports the pointer leaving the preview for the menu");
 }
 
+/// cellDnd.ts: a cell dragged by its left column drops below the lower half of another cell, or with Alt is copied.
+#[gpui::test]
+fn a_cell_dragged_by_its_left_column_moves_or_copies_to_the_drop_place(cx: &mut TestAppContext) {
+    let cells = json!([
+        { "cellKind": 2, "language": "python", "source": "a", "outputs": [], "metadata": {} },
+        { "cellKind": 2, "language": "python", "source": "b", "outputs": [], "metadata": {} },
+        { "cellKind": 2, "language": "python", "source": "c", "outputs": [], "metadata": {} },
+    ]);
+    let (workbench, cx, _) = workbench_with_cells(cells, cx);
+    let drag = |from: usize, to: usize, lower: bool, modifiers: gpui::Modifiers, cx: &mut VisualTestContext| {
+        let handles: Vec<u64> = workbench.read_with(cx, |workbench, _| workbench.host.notebooks.models[0].cells.iter().map(|cell| cell.handle).collect());
+        let start = cx.debug_bounds(Box::leak(format!("notebook-cell-drag-handle-{}", handles[from]).into_boxed_str())).unwrap().center();
+        let target = cx.debug_bounds(Box::leak(format!("notebook-cell-drag-handle-{}", handles[to]).into_boxed_str())).unwrap();
+        let end = gpui::point(target.center().x, if lower { target.center().y + gpui::px(10.) } else { target.top() + gpui::px(4.) });
+        cx.simulate_mouse_down(start, gpui::MouseButton::Left, gpui::Modifiers::default());
+        cx.simulate_mouse_move(start + gpui::point(gpui::px(0.), gpui::px(10.)), Some(gpui::MouseButton::Left), gpui::Modifiers::default());
+        cx.simulate_mouse_move(end, Some(gpui::MouseButton::Left), modifiers);
+        cx.simulate_mouse_up(end, gpui::MouseButton::Left, modifiers);
+        cx.run_until_parked();
+    };
+    drag(0, 2, true, gpui::Modifiers::default(), cx);
+    assert_eq!(sources(&workbench, cx), ["b", "c", "a"]);
+    assert_eq!(workbench.read_with(cx, |workbench, _| workbench.active_notebook_editor().unwrap().focus), 2);
+    drag(2, 0, false, gpui::Modifiers::alt(), cx);
+    assert_eq!(sources(&workbench, cx), ["a", "b", "c", "a"]);
+}
+
 #[gpui::test]
 fn the_cell_list_takes_the_keyboard_and_enter_and_escape_move_into_and_out_of_a_cell(cx: &mut TestAppContext) {
     let cells = json!([
