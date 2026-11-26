@@ -9,6 +9,8 @@ use crate::json::{self, ParseOptions};
 
 /// `WORKSPACE_EXTENSION`.
 pub const WORKSPACE_EXTENSION: &str = "code-workspace";
+/// `UNTITLED_WORKSPACE_NAME`: the file of an untitled workspace, in its own folder under `<user data>/Workspaces`.
+pub const UNTITLED_WORKSPACE_NAME: &str = "workspace.json";
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Workspace {
@@ -26,9 +28,10 @@ pub struct WorkspaceFolder {
 }
 
 impl Workspace {
-    /// A folder, or a workspace file when the path has the `.code-workspace` extension (`hasWorkspaceFileExtension`).
+    /// A folder, or a workspace file when the path has the `.code-workspace` extension (`hasWorkspaceFileExtension`)
+    /// or is an untitled workspace's file.
     pub fn open(path: PathBuf) -> Workspace {
-        match path.extension().is_some_and(|extension| extension == WORKSPACE_EXTENSION) {
+        match path.extension().is_some_and(|extension| extension == WORKSPACE_EXTENSION) || is_untitled_workspace(&path) {
             true => Workspace::from_file(path),
             false => Workspace::folder(path),
         }
@@ -62,6 +65,7 @@ impl Workspace {
     /// extension and " (Workspace)".
     pub fn label(&self) -> String {
         match &self.file {
+            Some(file) if is_untitled_workspace(file) => "Untitled (Workspace)".to_owned(),
             Some(file) => {
                 let name = file.file_name().unwrap_or_default().to_string_lossy();
                 let name = name.strip_suffix(&format!(".{WORKSPACE_EXTENSION}")).unwrap_or(&name);
@@ -72,11 +76,23 @@ impl Workspace {
     }
 }
 
+/// `isUntitledWorkspace`: `<user data>/Workspaces/<id>/workspace.json`. Read from the path's shape, as the
+/// config crate does not know the user data folder.
+pub fn is_untitled_workspace(file: &Path) -> bool {
+    let home = file.parent().and_then(Path::parent);
+    file.file_name().is_some_and(|name| name == UNTITLED_WORKSPACE_NAME) && home.and_then(Path::file_name).is_some_and(|name| name == "Workspaces")
+}
+
 /// `toWorkspaceFolders`: `path` entries resolved against the workspace file's folder, `file:` `uri` entries,
 /// duplicates dropped.
 pub fn to_workspace_folders(configured: &[Value], workspace_file: &Path) -> Vec<WorkspaceFolder> {
+    stored_folders(configured, workspace_file).into_iter().map(|(folder, _)| folder).collect()
+}
+
+/// `toWorkspaceFolders` keeping each folder's entry (`IWorkspaceFolder.raw`).
+fn stored_folders(configured: &[Value], workspace_file: &Path) -> Vec<(WorkspaceFolder, Value)> {
     let relative_to = workspace_file.parent().unwrap_or(Path::new("/"));
-    let mut folders: Vec<WorkspaceFolder> = Vec::new();
+    let mut folders: Vec<(WorkspaceFolder, Value)> = Vec::new();
     for configured in configured {
         let name = configured["name"].as_str().filter(|name| !name.is_empty());
         let path = match (configured["path"].as_str(), configured["uri"].as_str()) {
@@ -87,13 +103,85 @@ pub fn to_workspace_folders(configured: &[Value], workspace_file: &Path) -> Vec<
             (None, None) => None,
         };
         let Some(path) = path else { continue };
-        if folders.iter().any(|folder| comparison_key(&folder.path) == comparison_key(&path)) {
+        if folders.iter().any(|(folder, _)| comparison_key(&folder.path) == comparison_key(&path)) {
             continue;
         }
         let name = name.map(str::to_owned).unwrap_or_else(|| path.file_name().map_or_else(|| path.to_string_lossy(), |name| name.to_string_lossy()).into_owned());
-        folders.push(WorkspaceFolder { path, name });
+        folders.push((WorkspaceFolder { path, name }, configured.clone()));
     }
     folders
+}
+
+/// configurationService.ts `doUpdateFolders` on the workspace file's `folders`: the entries of the folders left
+/// after `to_remove`, then `to_add` (folder and name) at `index` or the end, skipping folders already there and
+/// paths that are not folders. `None` when nothing changed.
+pub fn updated_folders(configured: &[Value], workspace_file: &Path, to_add: &[(PathBuf, Option<String>)], to_remove: &[PathBuf], index: Option<usize>) -> Option<Vec<Value>> {
+    let current = stored_folders(configured, workspace_file);
+    let removed = |path: &Path| to_remove.iter().any(|remove| comparison_key(remove) == comparison_key(path));
+    let mut entries: Vec<Value> = current.iter().filter(|(folder, _)| !removed(&folder.path)).map(|(_, entry)| entry.clone()).collect();
+    let mut changed = entries.len() != current.len();
+    let config_folder = workspace_file.parent().unwrap_or(Path::new("/"));
+    let kept = to_workspace_folders(&entries, workspace_file);
+    let mut added = Vec::new();
+    for (path, name) in to_add {
+        // A path that cannot be read is added, as the `stat` error is ignored.
+        if kept.iter().any(|folder| comparison_key(&folder.path) == comparison_key(path)) || path.metadata().is_ok_and(|metadata| !metadata.is_dir()) {
+            continue;
+        }
+        added.push(stored_folder(path, false, name.as_deref(), config_folder));
+    }
+    if !added.is_empty() {
+        changed = true;
+        let at = index.filter(|index| *index < entries.len()).unwrap_or(entries.len());
+        entries.splice(at..at, added);
+    }
+    changed.then_some(entries)
+}
+
+/// `getStoredWorkspaceFolder` for a `file` folder: a path relative to the workspace file's folder unless
+/// `force_absolute`, and the name when given.
+pub fn stored_folder(folder: &Path, force_absolute: bool, name: Option<&str>, config_folder: &Path) -> Value {
+    let path = match force_absolute {
+        true => folder.to_string_lossy().into_owned(),
+        false => match relative_path(config_folder, folder) {
+            relative if relative.is_empty() => ".".to_owned(),
+            relative => relative,
+        },
+    };
+    let mut entry = serde_json::Map::new();
+    if let Some(name) = name {
+        entry.insert("name".into(), Value::String(name.to_owned()));
+    }
+    entry.insert("path".into(), Value::String(path));
+    Value::Object(entry)
+}
+
+/// `rewriteWorkspaceFileForNewLocation`: the workspace file's text with its folders stored for `target`, relative
+/// where possible when it was untitled, else absolute as they were; the rest of the text kept.
+pub fn rewrite_for_new_location(content: &str, source: &Path, target: &Path) -> String {
+    let raw = json::parse(content, &mut Vec::new(), ParseOptions { allow_trailing_comma: true, allow_empty_content: true, ..ParseOptions::default() }).unwrap_or_default();
+    let configured: Vec<Value> = raw["folders"].as_array().cloned().unwrap_or_default();
+    let from_untitled = is_untitled_workspace(source);
+    let target_folder = target.parent().unwrap_or(Path::new("/"));
+    let mut rewritten = Vec::new();
+    for entry in &configured {
+        let Some((folder, _)) = stored_folders(std::slice::from_ref(entry), source).into_iter().next() else { continue };
+        let absolute = !from_untitled && entry["path"].as_str().is_none_or(|path| path.starts_with('/'));
+        rewritten.push(stored_folder(&folder.path, absolute, entry["name"].as_str(), target_folder));
+    }
+    let options = crate::json_edit::FormattingOptions { insert_spaces: false, tab_size: 4, eol: "\n".into() };
+    let edits = crate::json_edit::set_property(content, &[json::Segment::Key("folders".into())], Some(&Value::Array(rewritten)), &options);
+    crate::json_edit::apply_edits(content, &edits)
+}
+
+/// Node's `path.relative(from, to)` for absolute paths.
+fn relative_path(from: &Path, to: &Path) -> String {
+    let from: Vec<Component> = from.components().collect();
+    let to: Vec<Component> = to.components().collect();
+    let common = from.iter().zip(&to).take_while(|(a, b)| a == b).count();
+    let mut parts: Vec<String> = vec!["..".to_owned(); from.len() - common];
+    parts.extend(to[common..].iter().map(|component| component.as_os_str().to_string_lossy().into_owned()));
+    parts.join("/")
 }
 
 /// Node's `path.resolve(base, path)`: lexical, `..` and `.` removed, symbolic links kept.
@@ -199,5 +287,31 @@ mod tests {
     fn labels_a_workspace_file_by_its_name() {
         assert_eq!(Workspace::from_file(PathBuf::from("/nonexistent/testworkspace.code-workspace")).label(), "testworkspace (Workspace)");
         assert_eq!(Workspace::folder(PathBuf::from("/src/test")).label(), "test");
+        assert_eq!(Workspace::open(PathBuf::from("/data/Workspaces/1700000000000/workspace.json")).label(), "Untitled (Workspace)");
+    }
+
+    #[test]
+    fn updates_folders_like_do_update_folders() {
+        let file = Path::new("/nonexistent/src/test.code-workspace");
+        let configured = json!([{ "path": "a" }, { "path": "/nonexistent/b", "name": "B" }, { "path": "a" }]);
+        let configured = configured.as_array().unwrap();
+        let add = |path: &str, name: Option<&str>| (PathBuf::from(path), name.map(str::to_owned));
+        assert_eq!(updated_folders(configured, file, &[], &[PathBuf::from("/nonexistent/B")], None), Some(vec![json!({ "path": "a" })]), "removal compares ignoring case and drops duplicates");
+        assert_eq!(
+            updated_folders(configured, file, &[add("/nonexistent/c", Some("C")), add("/nonexistent/src/a", None)], &[], Some(1)),
+            Some(vec![json!({ "path": "a" }), json!({ "name": "C", "path": "../c" }), json!({ "path": "/nonexistent/b", "name": "B" })])
+        );
+        assert_eq!(updated_folders(configured, file, &[add("/nonexistent/src", None)], &[], Some(9)).unwrap().last(), Some(&json!({ "path": "." })));
+        assert_eq!(updated_folders(&configured[..2], file, &[add("/nonexistent/src/a", None)], &[], None), None, "a folder already there is not added");
+    }
+
+    #[test]
+    fn rewrites_an_untitled_workspace_for_its_new_location() {
+        let untitled = Path::new("/data/Workspaces/1/workspace.json");
+        let content = "{\n\t\"folders\": [\n\t\t{\n\t\t\t\"path\": \"/src/a\"\n\t\t}\n\t],\n\t\"settings\": {}\n}";
+        let rewritten = rewrite_for_new_location(content, untitled, Path::new("/src/w.code-workspace"));
+        assert_eq!(rewritten, "{\n\t\"folders\": [\n\t\t{\n\t\t\t\"path\": \"a\"\n\t\t}\n\t],\n\t\"settings\": {}\n}");
+        let saved = rewrite_for_new_location(content, Path::new("/src/w.code-workspace"), Path::new("/other/w.code-workspace"));
+        assert!(saved.contains("\"path\": \"/src/a\""), "an absolute path of a saved workspace stays absolute: {saved}");
     }
 }
