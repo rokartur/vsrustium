@@ -188,6 +188,8 @@ mod inspect_tokens;
 mod gutter_mouse;
 mod word_wrap;
 mod smooth_scrolling;
+mod sticky_outline;
+mod save_conflict;
 mod text_input;
 mod timeline_view;
 mod title_bar_actions;
@@ -333,6 +335,7 @@ pub struct Workbench {
     /// The providers extensions registered through MainThreadLanguageFeatures.
     pub(crate) language_features: crate::language_features::LanguageFeatures,
     folding_providers: folding_providers::FoldingProviders,
+    sticky_outline: sticky_outline::StickyOutline,
     readonly_overrides: readonly::SessionOverrides,
     /// The editor labels of opened local history entries (`openEntry`), by model path.
     local_history_labels: HashMap<PathBuf, String>,
@@ -458,6 +461,7 @@ impl Render for Workbench {
         self.follow_content_hover_editor();
         self.follow_rename_editor_state(window, cx);
         self.folding_model_changed(cx);
+        self.sticky_outline_frame(cx);
         self.accessibility_frame(window, cx);
         self.update_metered_connection(cx);
         self.check_relaunch_settings(window, cx);
@@ -605,6 +609,7 @@ impl Workbench {
             snippet_choice_shown: None,
             language_features: Default::default(),
             folding_providers: Default::default(),
+            sticky_outline: Default::default(),
             readonly_overrides: Default::default(),
             local_history_labels: HashMap::new(),
             local_history_selected_for_compare: None,
@@ -695,6 +700,7 @@ impl Workbench {
         workbench.register_scm_commands();
         workbench.register_scm_actions();
         workbench.register_text_file_commands();
+        workbench.register_save_conflict_commands();
         workbench.register_large_file_commands();
         workbench.register_media_preview_commands();
         workbench.register_inspect_tokens_commands();

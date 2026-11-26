@@ -259,6 +259,15 @@ impl Workbench {
     /// center, on text it goes to the clicked span's start, elsewhere on the line to the line's start.
     fn click_sticky_line(&mut self, end_line: usize, position: Option<Position>, event: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
         let modifiers = event.modifiers();
+        // `_createClickLinkGesture` `onExecute`: Cmd+click on text goes to the definition of the span (Alt opens it
+        // to the side). Not ported: the Cmd+hover underline of a span with definitions (port/notes.md milestone 20).
+        if modifiers.platform && !modifiers.control && event.standard_click() {
+            if let Some(position) = position {
+                window.focus(&self.editor_focus, cx);
+                self.go_to_definition_at(position, modifiers.alt, window, cx);
+            }
+            return;
+        }
         if modifiers.control || modifiers.alt || modifiers.platform || !event.standard_click() {
             return;
         }
