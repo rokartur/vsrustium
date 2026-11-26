@@ -175,18 +175,21 @@ impl Workbench {
         let history_home = settings.lock().unwrap().user_home().join("History");
         let (source, target) = (source.to_path_buf(), target.to_path_buf());
         let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |since| since.as_millis() as i64);
-        cx.background_executor()
-            .spawn(async move {
-                let limits = |file: &Path| local_history::limits(&settings.lock().unwrap(), file);
-                if let Err(error) = local_history::move_entries(&history_home, &source, &target, timestamp, limits) {
-                    eprintln!("local history of {}: {error}", source.display());
-                }
-            })
-            .detach();
+        let moved = cx.background_executor().spawn(async move {
+            let limits = |file: &Path| local_history::limits(&settings.lock().unwrap(), file);
+            if let Err(error) = local_history::move_entries(&history_home, &source, &target, timestamp, limits) {
+                eprintln!("local history of {}: {error}", source.display());
+            }
+        });
+        cx.spawn(async move |workbench, cx| {
+            moved.await;
+            let _ = workbench.update(cx, |workbench, cx| workbench.local_history_changed(cx));
+        })
+        .detach();
     }
 
     /// `TextFileEditorModel.revert`: the model takes the text of `bytes` and is clean.
-    fn revert_model(&mut self, scheme: &str, path: &Path, bytes: &[u8]) -> bool {
+    pub(super) fn revert_model(&mut self, scheme: &str, path: &Path, bytes: &[u8]) -> bool {
         let document = TextDocument::from_bytes(scheme, path, bytes, None, &self.languages, &self.settings.lock().unwrap());
         let Some(model) = self.editors.model_mut(scheme, path) else { return false };
         let end = document_end(&model.document().lines);

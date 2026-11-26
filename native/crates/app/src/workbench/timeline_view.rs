@@ -20,7 +20,7 @@ use super::search_view::SideBarView;
 use crate::commands::Outcome;
 use crate::contextkey::{Expr, JsRegex};
 use crate::menus::{Entry, MenuAction, MenuId, MenuItem, Toggled, menu_actions};
-use crate::timeline::{Row, Timeline, TimelineItem, TimelineProvider, TimelineRequest, TimelineResult, from_now_ago, uri_basename};
+use crate::timeline::{LOCAL_HISTORY_SOURCE, Row, Timeline, TimelineItem, TimelineProvider, TimelineRequest, TimelineResult, from_now_ago, uri_basename};
 
 const EXCLUDE_SOURCES_KEY: &str = "timeline.excludeSources";
 /// timeline.ts `TimelinePaneId`, the `view` context key of its menus.
@@ -31,10 +31,10 @@ const LOAD_MORE_HANDLE: &str = "vscode-command:loadMore";
 const TIMELINE_ACTION_CONTEXT_MID: u64 = 12;
 /// timeline.ts `TimelineTriggerKind`.
 const TRIGGER_INVOKE: u64 = 1;
-const TRIGGER_AUTOMATIC: u64 = 2;
+pub(super) const TRIGGER_AUTOMATIC: u64 = 2;
 
 pub struct TimelineView {
-    model: Timeline,
+    pub(super) model: Timeline,
     /// `followActiveEditor` turned off ("Pin Current Timeline", "Pin Workspace Timeline", "Open Timeline").
     pinned: bool,
     /// The body was visible on the last render; becoming visible runs `onActiveEditorChanged` again.
@@ -247,7 +247,7 @@ impl Workbench {
     }
 
     /// timelinePane.ts `loadTimeline`: every source, or `sources`, asked for the shown target.
-    fn load_timeline(&mut self, reset: bool, sources: Option<Vec<String>>, trigger: u64, cx: &mut Context<Self>) {
+    pub(super) fn load_timeline(&mut self, reset: bool, sources: Option<Vec<String>>, trigger: u64, cx: &mut Context<Self>) {
         let page_size = self.timeline_page_size();
         if sources.is_none() && reset {
             self.timeline.model.clear(true, page_size);
@@ -270,6 +270,11 @@ impl Workbench {
     /// mainThreadTimeline.ts `provideTimeline` and `provideWorkspaceTimeline`: `ExtHostTimeline.$getTimeline(id, uri,
     /// options, token)` with no uri for the workspace timeline, its answer handled as `handleRequest` does.
     fn send_timeline_request(&mut self, request: TimelineRequest, trigger: u64, cx: &mut Context<Self>) {
+        if request.source == LOCAL_HISTORY_SOURCE {
+            let answer = request.uri.as_ref().map(|uri| self.local_history_timeline(uri));
+            self.timeline.model.respond(&request, answer);
+            return cx.notify();
+        }
         let mut options = Map::new();
         if let Some(cursor) = &request.cursor {
             options.insert("cursor".into(), json!(cursor));
@@ -294,7 +299,7 @@ impl Workbench {
 
     /// `onTimelineChanged`: a change of the shown resource (or of every resource), or of the shown workspace
     /// timeline, reloads that source, or marks it stale while the body is hidden.
-    fn timeline_changed(&mut self, source: &str, workspace: bool, uris: Option<&Value>, cx: &mut Context<Self>) {
+    pub(super) fn timeline_changed(&mut self, source: &str, workspace: bool, uris: Option<&Value>, cx: &mut Context<Self>) {
         let model = &self.timeline.model;
         let affected = match (&model.uri, workspace) {
             (_, true) => model.workspace,
@@ -345,7 +350,7 @@ impl Workbench {
     }
 
     /// `updateTimelineSourceFilters`: `timeline.toggleExcludeSource:<id>`, then `onStorageServiceChanged`.
-    fn register_exclude_source_command(&mut self, source: &str) {
+    pub(super) fn register_exclude_source_command(&mut self, source: &str) {
         let source = source.to_string();
         self.commands.register(format!("timeline.toggleExcludeSource:{source}"), move |workbench, _, _, cx| {
             let mut excluded = workbench.timeline_excluded_sources();
@@ -396,6 +401,22 @@ impl Workbench {
         add(MenuId::TimelineTitle, Entry::Submenu { submenu: MenuId::TimelineFilterSubMenu, toggled: None }, "Filter Timeline", "navigation", 100., None);
         add(MenuId::TimelineTitle, command("timeline.showWorkspaceTimeline", None), "Pin Workspace Timeline", "1_workspace", 0., Some("timelineHasWorkspaceProvider && !timelineForWorkspace"));
         add(MenuId::TimelineItemContext, command("timeline.compareSelected", None), "Compare Selected", "3_compare", 0., Some("timelineCanCompareSelection"));
+        // localHistoryCommands.ts: the entry actions and the title's Find Entry to Restore.
+        let single = "timelineItem == 'localHistory:item' && !listMultiSelection";
+        let compare_with_selected = format!("{single} && localHistoryItemSelectedForCompare");
+        for (id, title, group, order, when) in [
+            ("compareWithFile", "Compare with File", "1_compare", 1., single),
+            ("compareWithPrevious", "Compare with Previous", "1_compare", 2., single),
+            ("compareWithSelected", "Compare with Selected", "2_compare_with", 1., &compare_with_selected),
+            ("selectForCompare", "Select for Compare", "2_compare_with", 2., single),
+            ("open", "Show Contents", "3_contents", 1., single),
+            ("restore", "Restore Contents", "3_contents", 2., single),
+            ("rename", "Rename", "5_edit", 1., single),
+            ("delete", "Delete", "5_edit", 2., "timelineItem == 'localHistory:item'"),
+        ] {
+            add(MenuId::TimelineItemContext, command(&format!("workbench.action.localHistory.{id}"), None), title, group, order, Some(when));
+        }
+        add(MenuId::TimelineTitle, command("workbench.action.localHistory.restoreViaPicker", None), "Local History: Find Entry to Restore...", "submenu", 1., Some("config.workbench.localHistory.enabled"));
         for source in self.timeline.model.sources() {
             let excluded = JsRegex::new(&format!(r"\b{}\b", regex::escape(&source.id)), "").map(|regex| Expr::regex("timelineExcludeSources", regex).negate());
             add(MenuId::TimelineFilterSubMenu, command(&format!("timeline.toggleExcludeSource:{}", source.id), excluded), &source.label, "navigation", 0., None);
@@ -409,6 +430,7 @@ impl Workbench {
         static CONFIG_KEY: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"config\.[\w.-]+").expect("valid pattern"));
         let mut context = self.key_context(window);
         context.insert("view".into(), json!(TIMELINE_VIEW_ID));
+        context.insert("localHistoryItemSelectedForCompare".into(), json!(self.local_history_selected_for_compare.is_some()));
         for when in menus.iter().filter_map(|item| item.when.as_ref()) {
             for key in CONFIG_KEY.find_iter(&when.serialize()) {
                 let key = key.as_str();

@@ -48,15 +48,20 @@ fn history_home(file: &Path) -> PathBuf {
     file.parent().unwrap().join("User/History")
 }
 
-#[gpui::test]
-fn create_entry_then_find_it_and_open_its_contents_read_only(cx: &mut TestAppContext) {
-    let (workbench, cx, file) = open(cx, "find");
-    run(&workbench, cx, "workbench.action.localHistory.create");
-    cx.simulate_input("Before refactor");
+/// Creates one entry named `source` through Create Entry and returns the file's entries.
+fn create_entry(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext, file: &Path, source: &str) -> Vec<local_history::Entry> {
+    run(workbench, cx, "workbench.action.localHistory.create");
+    cx.simulate_input(source);
     cx.simulate_keystrokes("enter");
     cx.run_until_parked();
-    let folder = local_history::entries_folder(&history_home(&file), &uri_string("file", &file));
-    let entries = local_history::read_entries(&folder, &file).unwrap();
+    let folder = local_history::entries_folder(&history_home(file), &uri_string("file", file));
+    local_history::read_entries(&folder, file).unwrap()
+}
+
+#[gpui::test]
+fn find_entry_to_restore_compares_the_entry_with_the_file(cx: &mut TestAppContext) {
+    let (workbench, cx, file) = open(cx, "find");
+    let entries = create_entry(&workbench, cx, &file, "Before refactor");
     assert_eq!(entries.iter().map(|entry| entry.source.as_deref()).collect::<Vec<_>>(), [Some("Before refactor")]);
 
     std::fs::write(&file, "changed").unwrap();
@@ -65,13 +70,51 @@ fn create_entry_then_find_it_and_open_its_contents_read_only(cx: &mut TestAppCon
     cx.run_until_parked();
     cx.simulate_keystrokes("enter");
     cx.run_until_parked();
-    let label = format!("notes.txt (Before refactor \u{2022} {})", local_history::date_label(entries[0].timestamp));
+    let date = local_history::date_label(entries[0].timestamp);
     workbench.read_with(cx, |workbench, _| {
-        let editor = workbench.editors.active().unwrap();
-        assert_eq!(editor.document().scheme, LOCAL_HISTORY_SCHEME);
-        assert_eq!(editor.document().lines, ["saved"]);
-        assert_eq!(workbench.editor_name(editor), label);
-        assert_eq!(workbench.readonly(&editor.document().scheme, &editor.document().path), Some(Readonly::Provider));
+        let diff = workbench.editors.active_diff().expect("a diff editor");
+        assert_eq!(diff.label.as_deref(), Some(&*format!("notes.txt (Before refactor \u{2022} {date}) \u{2194} notes.txt")));
+        assert_eq!(diff.original.scheme, LOCAL_HISTORY_SCHEME);
+        assert_eq!(diff.modified.scheme, "file");
+        let original = workbench.editors.model(LOCAL_HISTORY_SCHEME, &diff.original.path).unwrap();
+        assert_eq!(original.document().lines, ["saved"]);
+        assert_eq!(original.document().name(), "notes.txt");
+        assert_eq!(workbench.readonly(LOCAL_HISTORY_SCHEME, &diff.original.path), Some(Readonly::Provider));
     });
+    std::fs::remove_dir_all(file.parent().unwrap()).unwrap();
+}
+
+#[gpui::test]
+fn the_timeline_lists_the_entries_and_their_commands_run(cx: &mut TestAppContext) {
+    let (workbench, cx, file) = open(cx, "timeline");
+    create_entry(&workbench, cx, &file, "First");
+    std::fs::write(&file, "second").unwrap();
+    let entries = create_entry(&workbench, cx, &file, "Second");
+    let uri = crate::editor::uri_value("file", &file);
+    let timeline = workbench.read_with(cx, |workbench, _| workbench.local_history_timeline(&uri));
+    let labels: Vec<_> = timeline.items.iter().map(|item| (item.label.as_str(), item.context_value.as_deref(), item.handle.as_str())).collect();
+    // timelineService.ts sorts newest first.
+    assert_eq!(labels, [("Second", Some("localHistory:item"), &*entries[1].id), ("First", Some("localHistory:item"), &*entries[0].id)]);
+    assert_eq!(timeline.items[0].command.as_ref().unwrap()["id"], "_workbench.diff");
+    assert_eq!(timeline.items[0].theme_icon, Some(("circle-outline".into(), None)));
+
+    let item = |handle: &str| serde_json::json!({ "handle": handle, "source": "timeline.localHistory", "uri": uri });
+    let second = item(&entries[1].id);
+    workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("workbench.action.localHistory.compareWithPrevious", vec![second.clone()], window, cx)));
+    cx.run_until_parked();
+    workbench.read_with(cx, |workbench, _| {
+        let diff = workbench.editors.active_diff().expect("a diff editor");
+        let text = |path| workbench.editors.model(LOCAL_HISTORY_SCHEME, path).unwrap().document().lines.clone();
+        assert_eq!((text(&diff.original.path), text(&diff.modified.path)), (vec!["saved".to_string()], vec!["second".to_string()]));
+    });
+
+    workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("workbench.action.localHistory.rename", vec![second.clone()], window, cx)));
+    cx.simulate_keystrokes("cmd-a");
+    cx.simulate_input("Renamed");
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    let folder = local_history::entries_folder(&history_home(&file), &uri_string("file", &file));
+    let sources = || local_history::read_entries(&folder, &file).unwrap().into_iter().map(|entry| entry.source.unwrap_or_default()).collect::<Vec<_>>();
+    assert_eq!(sources(), ["First", "Renamed"]);
     std::fs::remove_dir_all(file.parent().unwrap()).unwrap();
 }

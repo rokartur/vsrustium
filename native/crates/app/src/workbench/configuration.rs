@@ -105,6 +105,11 @@ impl Workbench {
         if affects(change, "editor.inlayHints") {
             self.inlay_hints_registrations_changed(cx);
         }
+        if affects(change, "workbench.localHistory.enabled") {
+            self.update_local_history_timeline_registration();
+            let source = crate::timeline::LOCAL_HISTORY_SOURCE.to_string();
+            self.load_timeline(true, Some(vec![source]), super::timeline_view::TRIGGER_AUTOMATIC, cx);
+        }
         if affects(change, "editor.defaultFormatter") {
             self.refresh_language_status(cx);
         }

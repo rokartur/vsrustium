@@ -455,6 +455,9 @@ pub fn workbench_menus() -> Vec<MenuItem> {
         let entry = Entry::Command { id: "editor.action.toggleWordWrap".into(), precondition: None, toggled: None, alt: None };
         items.push(MenuItem { menu: MenuId::EditorTitle, entry, title: title.into(), group: "navigation".into(), order: 1., when: Expr::deserialize(when) });
     }
+    // localHistoryCommands.ts: Restore Contents on the editor of a local history entry.
+    let entry = Entry::Command { id: "workbench.action.localHistory.restoreViaEditor".into(), precondition: None, toggled: None, alt: None };
+    items.push(MenuItem { menu: MenuId::EditorTitle, entry, title: "Restore Contents".into(), group: "navigation".into(), order: -10., when: Expr::deserialize("resourceScheme == 'vscode-local-history'") });
     // toggleColumnSelection.ts: checked while `config.editor.columnSelection` is true.
     let entry = Entry::Command { id: "editor.action.toggleColumnSelection".into(), precondition: None, toggled: Toggled::when(Some(Expr::has("config.editor.columnSelection"))), alt: None };
     items.push(MenuItem { menu: MenuId::MenubarSelectionMenu, entry, title: "Column &&Selection Mode".into(), group: "4_config".into(), order: 2., when: None });
@@ -525,6 +528,8 @@ pub fn command_icons(extensions: &[ScannedExtension]) -> std::collections::HashM
     let mut icons = crate::workbench::scm_actions::command_icons();
     // toggleWordWrap.ts: the editor title items' `Codicon.wordWrap`.
     icons.insert("editor.action.toggleWordWrap".to_string(), CommandIcon::Codicon("word-wrap".into()));
+    // localHistory.ts `LOCAL_HISTORY_ICON_RESTORE`.
+    icons.insert("workbench.action.localHistory.restoreViaEditor".to_string(), CommandIcon::Codicon("check".into()));
     for extension in extensions {
         let commands = match &extension.description["contributes"]["commands"] {
             Value::Array(commands) => commands.iter().collect(),

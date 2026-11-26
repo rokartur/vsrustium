@@ -97,6 +97,14 @@ impl Workbench {
             _ => None,
         };
         // shortcut: models key on scheme and path, so two `git:` refs of one file (index, HEAD) share a model; until text models keep the URI query.
+        // localHistoryFileSystemProvider.ts: the file service reads an entry's side from the history folder.
+        for side in [&sides.0, &sides.1] {
+            if side.scheme == crate::workbench::local_history_actions::LOCAL_HISTORY_SCHEME && self.editors.model(&side.scheme, &side.path).is_none() {
+                if let Err(error) = self.open_local_history_model(&side.path) {
+                    return Outcome::Ready(Err(exthost::main_thread::serialized_error(&error)));
+                }
+            }
+        }
         let column_and_options = args.get(3).cloned().unwrap_or_default();
         let mut options = column_and_options[1].clone();
         if !column_and_options[0].is_null() {

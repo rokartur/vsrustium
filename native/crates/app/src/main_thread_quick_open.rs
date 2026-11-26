@@ -50,6 +50,8 @@ pub enum Owner {
     LocalHistoryEntries(std::path::PathBuf, Vec<crate::local_history::Entry>),
     /// `workbench.action.localHistory.create`: the input box of the new entry's source for the file.
     LocalHistoryCreate(std::path::PathBuf),
+    /// `workbench.action.localHistory.rename`: the input box of the entry's new name, for the file and entry id.
+    LocalHistoryRename(std::path::PathBuf, String),
     /// A workbench `quickInputService.pick` of one item, answered with its handle or null.
     Choose(Reply),
     /// The folder pick of Configure Recommended Extensions (Workspace Folder).
@@ -259,6 +261,7 @@ impl Workbench {
             Owner::LocalHistoryFiles(_) => self.local_history_files_event(id, event, window, cx),
             Owner::LocalHistoryEntries(..) => self.local_history_entries_event(id, event, window, cx),
             Owner::LocalHistoryCreate(_) => self.create_local_history_entry_event(id, event, window, cx),
+            Owner::LocalHistoryRename(..) => self.rename_local_history_entry_event(id, event, window, cx),
             Owner::Choose(_) => self.choose_event(id, event, window, cx),
             Owner::ExtensionsFolder(_) => self.extensions_folder_pick_event(id, event, window, cx),
             Owner::DisplayLanguage(_) => self.display_language_pick_event(id, event, window, cx),

@@ -123,6 +123,26 @@ pub fn add_entry(history_home: &Path, resource: &str, file: &Path, source: Optio
     Ok(entry)
 }
 
+/// `WorkingCopyHistoryModel.updateEntry`: the entry `id` takes `source` as its name.
+pub fn rename_entry(history_home: &Path, resource: &str, file: &Path, id: &str, source: &str) -> io::Result<()> {
+    let _writing = WRITING.lock().unwrap();
+    let folder = entries_folder(history_home, resource);
+    let mut entries = read_entries(&folder, file)?;
+    let Some(entry) = entries.iter_mut().find(|entry| entry.id == id) else { return Ok(()) };
+    entry.source = Some(source.to_string());
+    write_listing(&folder, resource, entries)
+}
+
+/// `WorkingCopyHistoryModel.removeEntry`: the entry's file and its line of the listing.
+pub fn remove_entry(history_home: &Path, resource: &str, file: &Path, id: &str) -> io::Result<()> {
+    let _writing = WRITING.lock().unwrap();
+    let folder = entries_folder(history_home, resource);
+    let mut entries = read_entries(&folder, file)?;
+    entries.retain(|entry| entry.id != id);
+    std::fs::remove_file(folder.join(id))?;
+    write_listing(&folder, resource, entries)
+}
+
 /// `WorkingCopyHistoryService.removeAll`: the whole history folder.
 pub fn remove_all(history_home: &Path) -> io::Result<()> {
     let _writing = WRITING.lock().unwrap();

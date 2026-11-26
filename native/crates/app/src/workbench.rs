@@ -330,8 +330,10 @@ pub struct Workbench {
     pub(crate) language_features: crate::language_features::LanguageFeatures,
     folding_providers: folding_providers::FoldingProviders,
     readonly_overrides: readonly::SessionOverrides,
-    /// The editor labels of opened local history entries (`openEntry`), by entry file.
+    /// The editor labels of opened local history entries (`openEntry`), by model path.
     local_history_labels: HashMap<PathBuf, String>,
+    /// localHistoryCommands.ts `itemSelectedForCompare`: the timeline item of Select for Compare.
+    local_history_selected_for_compare: Option<Value>,
     pub(crate) urls: url_handler::Urls,
     pub editor_focus: FocusHandle,
     /// bannerController.ts: the banner element is focusable (`tabIndex = 0`) inside the editor's DOM node.
@@ -600,6 +602,7 @@ impl Workbench {
             folding_providers: Default::default(),
             readonly_overrides: Default::default(),
             local_history_labels: HashMap::new(),
+            local_history_selected_for_compare: None,
             urls: url_handler::Urls::default(),
             editor_focus: cx.focus_handle(),
             unicode_banner_focus: cx.focus_handle(),

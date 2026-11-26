@@ -147,8 +147,8 @@ impl Workbench {
     }
 
     /// workingCopyHistoryTracker.ts `onDidSave`: the saved file goes into the local history with its modification
-    /// time. shortcut: every save has the "File Saved" source; the undo stack's label as the source
-    /// (`resolveSourceFromUndoRedo`) shows only in the Timeline, which is not ported.
+    /// time. shortcut: every save has the "File Saved" source, where upstream names a save after an undo or redo
+    /// with the undo stack's label (`resolveSourceFromUndoRedo`).
     pub(super) fn add_local_history_entry(&self, path: &Path, cx: &mut Context<Self>) {
         let Ok(metadata) = std::fs::metadata(path) else { return };
         let settings = self.settings.lock().unwrap();
@@ -157,10 +157,14 @@ impl Workbench {
         drop(settings);
         let timestamp = metadata.modified().ok().and_then(|modified| modified.duration_since(UNIX_EPOCH).ok()).map_or(0, |since| since.as_millis() as i64);
         let (resource, path) = (uri_string("file", path), path.to_path_buf());
-        cx.background_executor().spawn(async move {
+        let added = cx.background_executor().spawn(async move {
             if let Err(error) = local_history::add_entry(&history_home, &resource, &path, None, None, timestamp, &limits) {
                 eprintln!("local history of {}: {error}", path.display());
             }
+        });
+        cx.spawn(async move |workbench, cx| {
+            added.await;
+            let _ = workbench.update(cx, |workbench, cx| workbench.local_history_changed(cx));
         })
         .detach();
     }
