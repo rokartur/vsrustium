@@ -183,7 +183,8 @@ impl Workbench {
                 let (icon, _) = breakpoint_icon(breakpoint, model, debug_active, dirty);
                 cell = cell.child(div().absolute().inset_0().flex().items_center().justify_center().child(self.breakpoint_icon(icon, 16.)));
             }
-            None if frame.is_none() && self.debug_view_hint_line() == Some((uri_string.clone(), index)) => {
+            // breakpointEditorContribution.ts `onMouseMove`: the hint only where breakpoints can be set.
+            None if frame.is_none() && self.debug_view_hint_line() == Some((uri_string.clone(), index)) && self.can_set_breakpoints_in(editor) => {
                 cell = cell.child(div().absolute().inset_0().flex().items_center().justify_center().opacity(0.4).child(self.breakpoint_icon("debug-hint", 16.)));
             }
             None if frame.is_none() => cell = cell.children(self.test_glyph(editor, line, cx)),

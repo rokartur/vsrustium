@@ -22,6 +22,7 @@ use crate::keybindings::{self, Item as KeybindingItem};
 use crate::keybindings_editor;
 use crate::quick_input::{Entry, Item, Kind, QuickInput, path_label};
 
+pub(super) mod edit_setting;
 mod unsupported_settings;
 
 #[cfg(test)]
@@ -38,6 +39,17 @@ fn default_settings_resource(target: Target) -> &'static str {
         Target::Workspace => "//defaultsettings/workspaceSettings.json",
         Target::WorkspaceFolder => "//defaultsettings/resourceSettings.json",
         _ => "//defaultsettings/settings.json",
+    }
+}
+
+impl Workbench {
+    /// preferencesContribution.ts `createEditorInput`: the default settings beside a settings file the split settings
+    /// editor opens: the user's, a single folder's, or a folder's of a multi-root workspace.
+    pub(super) fn split_settings_secondary(&self, path: &Path) -> Option<&'static str> {
+        match unsupported_settings::settings_file_target(&self.settings.lock().unwrap(), path)? {
+            (_, true) => None,
+            (target, false) => Some(default_settings_resource(target)),
+        }
     }
 }
 

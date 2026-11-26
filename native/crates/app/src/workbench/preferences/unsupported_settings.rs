@@ -25,10 +25,12 @@ const EXPERIMENTAL_INDICATOR_DESCRIPTION: &str =
 
 /// `ISetting` as `parse` reads it: the key, and its range from the key's quote to the value's end, 1-based with
 /// UTF-16 columns.
-struct ParsedSetting {
-    key: String,
-    range: [usize; 4],
-    overrides: Vec<ParsedSetting>,
+pub(super) struct ParsedSetting {
+    pub(super) key: String,
+    pub(super) range: [usize; 4],
+    /// `valueRange`'s start and end.
+    pub(super) value_range: [usize; 4],
+    pub(super) overrides: Vec<ParsedSetting>,
 }
 
 impl Workbench {
@@ -76,7 +78,7 @@ impl Workbench {
 
 /// The settings target of `path` and whether its settings sit under the workspace file's `settings` key; `None` for
 /// any other file. A single folder's settings file is the workspace's, as `getEditableSettingsURI` has it.
-fn settings_file_target(settings: &Settings, path: &Path) -> Option<(Target, bool)> {
+pub(super) fn settings_file_target(settings: &Settings, path: &Path) -> Option<(Target, bool)> {
     let user_files = settings.user_files();
     if path == user_files.settings || user_files.default_settings.as_deref() == Some(path) {
         return Some((Target::UserLocal, false));
@@ -213,7 +215,7 @@ fn hint(range: &[usize; 4], message: &str, unnecessary: bool) -> Value {
 /// `parse` of `SettingsEditorModel`, or of `WorkspaceConfigurationEditorModel` whose settings sit under `settings`:
 /// the properties of the settings object with the overrides of their `[language]` keys. A property without a value
 /// is dropped, as `onError` drops a setting whose value range is unset.
-fn parse_settings(text: &str, in_workspace_file: bool) -> Vec<ParsedSetting> {
+pub(super) fn parse_settings(text: &str, in_workspace_file: bool) -> Vec<ParsedSetting> {
     let tree = parse_tree(text, &mut Vec::new(), ParseOptions { allow_trailing_comma: true, ..ParseOptions::default() });
     let root = match in_workspace_file {
         true => tree.find(tree.root, &[config::json::Segment::Key("settings".into())]),
@@ -241,8 +243,10 @@ fn properties(tree: &Tree, object: usize, text: &str) -> Vec<ParsedSetting> {
         let (key, value) = (tree.node(key), tree.node(value));
         let Some(name) = key.value.as_str() else { continue };
         let (start_line, start_column) = position_at(text, key.offset);
+        let (value_line, value_column) = position_at(text, value.offset);
         let (end_line, end_column) = position_at(text, value.offset + value.length);
-        settings.push(ParsedSetting { key: name.to_string(), range: [start_line, start_column, end_line, end_column], overrides: Vec::new() });
+        let (range, value_range) = ([start_line, start_column, end_line, end_column], [value_line, value_column, end_line, end_column]);
+        settings.push(ParsedSetting { key: name.to_string(), range, value_range, overrides: Vec::new() });
     }
     settings
 }

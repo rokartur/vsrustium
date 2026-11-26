@@ -21,7 +21,7 @@ use crate::main_thread_quick_open::Owner;
 use crate::quick_input::{Entry, Event, Item, Kind, QuickInput};
 
 /// `DEFAULT_EDITOR_ASSOCIATION.id`: the text editor.
-const TEXT_EDITOR_ID: &str = "default";
+pub(super) const TEXT_EDITOR_ID: &str = "default";
 const CONFIGURE_DEFAULT_ID: &str = "promptOpenWith.configureDefault";
 const ASSOCIATIONS_SETTING: &str = "workbench.editorAssociations";
 
@@ -135,7 +135,7 @@ impl Workbench {
         contributions
     }
 
-    fn default_editor(&self, scheme: &str, path: &Path, associations: bool) -> (String, String) {
+    pub(super) fn default_editor(&self, scheme: &str, path: &Path, associations: bool) -> (String, String) {
         let extension_pattern = format!("*{}", path.extension().map(|extension| format!(".{}", extension.to_string_lossy())).unwrap_or_default());
         let text_editor = (TEXT_EDITOR_ID.to_owned(), extension_pattern.clone());
         let Some(matches) = resource_matcher(scheme, path) else { return text_editor };
@@ -189,7 +189,7 @@ impl Workbench {
     /// `group.replaceEditors`: a text model's editor stays and gains or loses its webview; a custom document's editor
     /// closes first.
     // shortcut: the custom document's replacement opens where the group opens editors, not in the closed one's place.
-    fn reopen_with(&mut self, resource: &Value, current: &str, editor_id: &str, preserve_focus: bool, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
+    pub(super) fn reopen_with(&mut self, resource: &Value, current: &str, editor_id: &str, preserve_focus: bool, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
         if current == editor_id {
             return Outcome::done();
         }
@@ -270,7 +270,7 @@ impl Workbench {
 
     /// editorResolverService.ts `setDefaultEditor`: the association for the default rule's glob, removed when the
     /// editor is the one the resource opens with without it.
-    fn set_default_editor(&mut self, resource: &Value, editor_id: &str) {
+    pub(super) fn set_default_editor(&mut self, resource: &Value, editor_id: &str) {
         let Ok((scheme, path)) = uri_parts(resource) else { return };
         let (default_id, pattern) = self.default_editor(scheme, &path, true);
         let (natural_id, _) = self.default_editor(scheme, &path, false);
@@ -288,6 +288,23 @@ impl Workbench {
         }
         associations.insert(pattern, json!(editor_id));
         self.update_setting(ASSOCIATIONS_SETTING, Value::Object(associations));
+    }
+
+    /// `getEditorMatches(resource).matches`: the text editor (registered for `*`) and the custom editors whose pattern
+    /// or user association matches, by rank, the longer glob first within a rank (`findMatchingEditors`).
+    pub(super) fn editor_matches(&self, scheme: &str, path: &Path) -> Vec<EditorMatch> {
+        let mut editors = vec![EditorMatch { id: TEXT_EDITOR_ID.into(), label: "Text Editor".into(), detail: Some("Built-in".into()), rank: RANK_BUILTIN, glob: "*".into() }];
+        let Some(matches) = resource_matcher(scheme, path) else { return editors };
+        let associated: Vec<String> = self.editor_associations().into_iter().filter(|(pattern, _)| matches(pattern)).map(|(_, view_type)| view_type).collect();
+        for contribution in self.editor_contributions() {
+            let glob = contribution.patterns.iter().filter(|pattern| matches(pattern)).max_by_key(|pattern| pattern.len()).cloned();
+            if glob.is_none() && !associated.contains(&contribution.view_type) {
+                continue;
+            }
+            editors.push(EditorMatch { id: contribution.view_type, label: contribution.display_name, detail: Some(contribution.provider), rank: contribution.rank, glob: glob.unwrap_or_default() });
+        }
+        editors.sort_by(|a, b| b.rank.cmp(&a.rank).then(b.glob.len().cmp(&a.glob.len())));
+        editors
     }
 
     /// `workbench.editorAssociations` as glob and editor id, the longest glob first.
@@ -487,6 +504,23 @@ pub(super) fn resource_matcher(scheme: &str, path: &Path) -> Option<impl Fn(&str
         let target = if pattern.contains('/') { full_path.as_str() } else { basename.as_str() };
         glob::match_pattern(pattern, target, Options { ignore_case: true, ..Options::default() })
     })
+}
+
+/// An `EditorMatchRule`: the editor's id, label, `detail` (its provider) and rank, and the glob it matched by.
+#[derive(Clone, Debug)]
+pub(super) struct EditorMatch {
+    pub(super) id: String,
+    pub(super) label: String,
+    pub(super) detail: Option<String>,
+    pub(super) rank: u8,
+    pub(super) glob: String,
+}
+
+impl EditorMatch {
+    /// `isUnconfiguredUniversalOptionalEditorMatch`: registered for `*` with `option` priority.
+    pub(super) fn is_universal_option(&self) -> bool {
+        self.glob == "*" && self.rank == 1
+    }
 }
 
 /// A `contributes.customEditors` entry as contributedCustomEditors.ts reads it.

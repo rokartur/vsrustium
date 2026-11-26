@@ -1138,15 +1138,19 @@ impl EditorGroup {
         self.diffs.remove(model_id);
         self.multi_diffs.remove(model_id);
         self.merges.remove(model_id);
-        if let Some(side) = self.side_by_sides.remove(model_id) {
-            let index = self.other_groups.iter().position(|group| group.id == side).expect("the secondary side is not the active group when its editor closes");
-            let group = self.other_groups.remove(index);
-            self.group_mru.retain(|id| *id != side);
-            for editor in group.editors {
-                self.keep_or_dispose(editor);
-            }
-        }
+        self.remove_side_by_side(*model_id);
         self.stacked_editors.remove(model_id);
+    }
+
+    /// Makes the side by side editor `entry` its primary side's editor again: its secondary group closes.
+    pub fn remove_side_by_side(&mut self, entry: u32) {
+        let Some(side) = self.side_by_sides.remove(&entry) else { return };
+        let index = self.other_groups.iter().position(|group| group.id == side).expect("the secondary side is not the active group when its editor closes");
+        let group = self.other_groups.remove(index);
+        self.group_mru.retain(|id| *id != side);
+        for editor in group.editors {
+            self.keep_or_dispose(editor);
+        }
     }
 
     fn insert(&mut self, mut editor: OpenEditor, preview: bool) {

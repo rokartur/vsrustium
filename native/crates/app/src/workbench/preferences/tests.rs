@@ -231,3 +231,80 @@ fn split_json_opens_the_default_settings_beside_settings_json(cx: &mut TestAppCo
     });
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+/// sideBySideEditor.ts `lastFocusedSide`: a workbench action from the read-only side acts on the group and the side
+/// keeps the focus after it; Go to Line acts on the side's code editor (`activeTextEditorControl`).
+#[gpui::test]
+fn a_workbench_action_from_the_secondary_side_leaves_it_active(cx: &mut TestAppContext) {
+    let (workbench, cx, dir) = workbench(cx, "split-side");
+    workbench.update(cx, |workbench, _| {
+        workbench.settings.lock().unwrap().update_value("workbench.settings.useSplitJSON", Some(&json!(true)), config::service::Target::User, None, &[]).unwrap();
+    });
+    run(&workbench, cx, "workbench.action.openSettingsJson", vec![]);
+    let side = workbench.update(cx, |workbench, _| {
+        let side = workbench.editors.side_group().expect("a side by side editor");
+        workbench.activate_group(side);
+        side
+    });
+
+    run(&workbench, cx, "workbench.action.toggleSplitEditorInGroupLayout", vec![]);
+    workbench.read_with(cx, |workbench, _| assert_eq!(workbench.editors.id, side, "the side keeps the focus"));
+    run(&workbench, cx, "workbench.action.gotoLine", vec![]);
+    workbench.read_with(cx, |workbench, _| assert_eq!(workbench.editors.active().unwrap().document().scheme, "vscode", "Go to Line on the read-only side"));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// editorTypePicker.ts with preferencesContribution.ts's registration: settings.json offers the split settings editor
+/// (the longer glob first) and the text editor; picking the text editor turns the side by side editor into
+/// settings.json's text editor, and the split settings editor brings the default settings back beside it.
+#[gpui::test]
+fn the_editor_type_picker_switches_settings_json_between_split_and_text(cx: &mut TestAppContext) {
+    let (workbench, cx, dir) = workbench(cx, "editor-type");
+    workbench.update(cx, |workbench, _| {
+        workbench.settings.lock().unwrap().update_value("workbench.settings.useSplitJSON", Some(&json!(true)), config::service::Target::User, None, &[]).unwrap();
+    });
+    run(&workbench, cx, "workbench.action.openSettingsJson", vec![]);
+    workbench.update_in(cx, |workbench, window, cx| {
+        let available = workbench.available_editor_types().expect("two editors for settings.json");
+        let ids: Vec<&str> = available.editors.iter().map(|editor| editor.id.as_str()).collect();
+        assert_eq!(ids, ["workbench.editorinputs.sidebysideEditorInput", "default"]);
+        assert_eq!((available.current.as_str(), available.glob.as_str()), ("workbench.editorinputs.sidebysideEditorInput", "**/settings.json"));
+        drop(workbench.reopen_editor_type(&available, "default", window, cx));
+        assert!(workbench.editors.side_by_sides.is_empty());
+        assert_eq!(workbench.editors.active().unwrap().document().path, dir.join("User/settings.json"));
+        let available = workbench.available_editor_types().expect("still two editors");
+        assert_eq!(available.current, "default");
+        drop(workbench.reopen_editor_type(&available, "workbench.editorinputs.sidebysideEditorInput", window, cx));
+        assert!(workbench.editors.side_group().is_some());
+    });
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// preferencesRenderers.ts `EditSettingRenderer`: the cursor's enum setting gets the pencil on its value's line, and
+/// a value picked from its menu is written into the file and selected.
+#[gpui::test]
+fn the_edit_setting_pencil_writes_the_picked_value(cx: &mut TestAppContext) {
+    let (workbench, cx, dir) = workbench(cx, "pencil");
+    std::fs::create_dir_all(dir.join("User")).unwrap();
+    std::fs::write(dir.join("User/settings.json"), "{\n\t\"editor.wordWrap\": \"off\",\n\t\"editor.tabSize\": 2\n}").unwrap();
+    run(&workbench, cx, "workbench.action.openSettingsJson", vec![]);
+    let pencil = |workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext, line: usize| {
+        workbench.update(cx, |workbench, _| {
+            workbench.editors.active_mut().unwrap().set_selections(vec![crate::editor::Selection::caret(Position::new(line, 1))]);
+            workbench.edit_setting_line(workbench.editors.active().unwrap())
+        })
+    };
+    assert_eq!(pencil(&workbench, cx, 1), Some(2));
+    assert_eq!(pencil(&workbench, cx, 2), None, "a number has no values to pick");
+
+    workbench.update_in(cx, |workbench, window, cx| {
+        let model = workbench.editors.active().unwrap().model_id;
+        workbench.show_edit_setting_menu(model, 2, gpui::Point::default(), window, cx);
+    });
+    run(&workbench, cx, "editSetting.value.1", vec![]);
+    let expected = "{\n\t\"editor.wordWrap\": \"on\",\n\t\"editor.tabSize\": 2\n}";
+    assert_eq!(std::fs::read_to_string(dir.join("User/settings.json")).unwrap(), expected);
+    let selection = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().selection());
+    assert_eq!((selection.anchor, selection.head), (Position::new(1, 20), Position::new(1, 24)), "the value with its quotes");
+    std::fs::remove_dir_all(dir).unwrap();
+}

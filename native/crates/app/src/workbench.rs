@@ -42,6 +42,7 @@ mod lifecycle;
 mod editor_commands;
 mod editor_menus;
 mod side_by_side_editor;
+mod editor_type_picker;
 mod editor_message;
 pub mod editor_status;
 mod editor_view;
@@ -429,6 +430,9 @@ pub struct Workbench {
     zen_mode: zen_mode::ZenMode,
     activities: activity::Activities,
     centered_layout: centered_layout::CenteredLayout,
+    side_by_side_splits: side_by_side_editor::SideBySideSplits,
+    editor_type_picker: editor_type_picker::EditorTypePicker,
+    edit_setting: preferences::edit_setting::EditSetting,
     editor_groups: editor_groups::EditorGroups,
     history: history_actions::History,
     panel: panel::Panel,
@@ -701,6 +705,9 @@ impl Workbench {
             zen_mode: Default::default(),
             activities: Default::default(),
             centered_layout: Default::default(),
+            side_by_side_splits: Default::default(),
+            editor_type_picker: Default::default(),
+            edit_setting: Default::default(),
             editor_groups: Default::default(),
             history: Default::default(),
             panel: panel::Panel::default(),
@@ -906,6 +913,8 @@ impl Workbench {
     }
 
     pub(super) fn open_file_in_active_group(&mut self, path: PathBuf, pinned: bool, window: &mut Window, cx: &mut Context<Self>) {
+        // The group of a side by side editor opens the file, not its secondary side's.
+        self.leave_side_group();
         if path.to_string_lossy().ends_with(crate::search_editor::SEARCH_EDITOR_EXT) {
             return self.open_search_editor_file(path, pinned, window, cx);
         }

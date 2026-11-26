@@ -79,7 +79,7 @@ impl Workbench {
                 let secondary = workbench.side_by_side_secondary(window, cx);
                 let editor = workbench.editors.active().expect("an open modal group has an active editor");
                 // `NoEditorTabsControl` keeps the breadcrumbs (breadcrumbs.enabled) without the tabs.
-                let breadcrumbs = (workbench.setting("breadcrumbs.enabled") != json!(false)).then(|| workbench.breadcrumbs(editor));
+                let breadcrumbs = (workbench.setting("breadcrumbs.enabled") != json!(false)).then(|| workbench.breadcrumbs(editor, cx));
                 let part = div().flex_1().min_h_0().flex().flex_col().children(breadcrumbs);
                 match secondary {
                     Some(secondary) => part.child(workbench.side_by_side_body(secondary, editor, window, cx)),

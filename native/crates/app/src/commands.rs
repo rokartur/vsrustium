@@ -96,17 +96,18 @@ impl Workbench {
     pub fn execute_command(&mut self, id: &str, args: Vec<Value>, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
         self.welcome_command_executed(id);
         self.record_terminal_command(id);
-        // The workbench's actions act on the group of a side by side editor, not on its secondary side's own group.
-        if id.starts_with("workbench.action.") {
-            self.leave_side_group();
-        }
+        let side = self.leave_side_group_for(id);
         let event = format!("onCommand:{id}");
         let activation = self.host.activate_by_event(&event);
         // `activationEventIsDone` is also true for an event no running extension declares: waiting for the host
         // there would run a key's command after the keys typed behind it.
         let run_now = !self.host.activation_events.contains(&event) || activation.clone().now_or_never().is_some() || !self.host.installed_extensions_registered;
         if let Some(handler) = self.commands.get(id).filter(|_| run_now) {
-            return handler(self, args, window, cx);
+            let outcome = handler(self, args, window, cx);
+            if let Some(side) = side {
+                self.return_to_side_group(side);
+            }
+            return outcome;
         }
         let (sender, receiver) = oneshot::channel();
         let id = id.to_owned();
