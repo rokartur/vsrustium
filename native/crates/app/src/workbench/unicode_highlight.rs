@@ -35,8 +35,12 @@ impl Workbench {
         let (resource, language) = (editor.document().path.clone(), editor.document().language_id.clone());
         let overrides = Overrides { resource: Some(&resource), override_identifier: Some(&language) };
         let value = |key: &str| settings.get_value(Some(&format!("editor.unicodeHighlight.{key}")), &overrides).unwrap_or(Value::Null);
-        // shortcut: the port has no workspace trust yet, so `inUntrustedWorkspace` resolves as in a trusted workspace (false).
-        let resolved = |key: &str| value(key) == Value::Bool(true);
+        // `resolveOptions`: `inUntrustedWorkspace` is on only while the workspace is not trusted.
+        let trusted = self.workspace_trust.is_trusted();
+        let resolved = |key: &str| match value(key) {
+            Value::String(text) if text == "inUntrustedWorkspace" => !trusted,
+            value => value == Value::Bool(true),
+        };
         let boolean = |key: &str| value(key).as_bool().unwrap_or(true);
         let true_keys = |key: &str, default: &[&str]| match value(key).as_object() {
             Some(map) => map.iter().filter(|(_, enabled)| **enabled == Value::Bool(true)).map(|(key, _)| key.clone()).collect(),

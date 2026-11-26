@@ -327,6 +327,9 @@ const WORKBENCH_MENUS: &[Row] = &[
     (MenuId::EditorContext, None, "editor.action.formatSelection", "Format Selection", "1_modification", 1.31, Some("!editorReadonly && editorHasDocumentSelectionFormattingProvider && editorHasSelection"), Some("!editorReadonly && editorHasDocumentSelectionFormattingProvider")),
     (MenuId::EditorContext, None, "editor.action.formatSelection.multiple", "Format Selection With...", "1_modification", 1.31, Some("!editorReadonly && editorHasMultipleDocumentSelectionFormattingProvider && editorHasSelection"), Some("!editorReadonly && editorHasMultipleDocumentSelectionFormattingProvider")),
     (MenuId::EditorContext, None, "editor.action.changeAll", "Change All Occurrences", "1_modification", 1.2, Some("!editorReadonly && editorTextFocus"), None),
+    // codeActionCommands.ts `contextKeyForSupportedActions`: shown when a provider offers the kind.
+    (MenuId::EditorContext, None, "editor.action.refactor", "Refactor...", "1_modification", 2., Some("!editorReadonly && supportedCodeAction =~ /(\\s|^)refactor\\b/"), Some("!editorReadonly && editorHasCodeActionsProvider")),
+    (MenuId::EditorContext, None, "editor.action.sourceAction", "Source Action...", "1_modification", 2.1, Some("!editorReadonly && supportedCodeAction =~ /(\\s|^)source\\b/"), Some("!editorReadonly && editorHasCodeActionsProvider")),
     (MenuId::EditorContext, None, "editor.action.clipboardCutAction", "Cut", "9_cutcopypaste", 1., Some("!editorReadonly"), None),
     (MenuId::EditorContext, None, "editor.action.clipboardCopyAction", "Copy", "9_cutcopypaste", 2., None, None),
     (MenuId::EditorContext, None, "editor.action.clipboardPasteAction", "Paste", "9_cutcopypaste", 4., Some("!editorReadonly"), None),

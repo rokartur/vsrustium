@@ -48,6 +48,32 @@ fn the_banner_action_takes_the_focus_out_of_the_editor_with_the_banner(cx: &mut 
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+#[gpui::test]
+fn non_basic_ascii_defaults_on_only_in_an_untrusted_workspace(cx: &mut TestAppContext) {
+    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
+    let theme = load_theme(&[themes], "Dark Modern").unwrap();
+    let dir = std::env::temp_dir().join(format!("code-gpui-unicode-trust-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("a.ts");
+    std::fs::write(&file, "let caf\u{e9} = 1").unwrap();
+    let settings = Arc::new(Mutex::new(Settings::load(Registry::with_extensions(&[]), dir.join("User"), None)));
+    let (workbench, cx) = cx.add_window_view(|window, cx| {
+        let mut workbench = Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), settings, HostSync::new(std::sync::mpsc::channel().0), cx);
+        workbench.open_file(file.clone(), true, window, cx);
+        workbench
+    });
+    let non_basic_ascii = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.unicode_highlighter_options(workbench.editors.active().unwrap()).is_some_and(|options| options.non_basic_ascii));
+    assert!(!non_basic_ascii(cx), "trusted: `inUntrustedWorkspace` is off");
+    let mut storage = storage::Storage::in_memory();
+    let startup = crate::workspace_trust::Startup { enabled: true, workspace: None, empty_window_trusted: false, workspace_storage: &mut storage };
+    let untrusted = crate::workspace_trust::WorkspaceTrust::new(Arc::new(Mutex::new(storage::Storage::in_memory())), startup);
+    assert!(!untrusted.is_trusted());
+    workbench.update(cx, |workbench, _| workbench.workspace_trust = untrusted);
+    assert!(non_basic_ascii(cx), "untrusted: `inUntrustedWorkspace` is on");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 #[test]
 fn hover_reasons_read_as_the_reference_writes_them() {
     let options = UnicodeHighlighterOptions { ambiguous_characters: true, invisible_characters: true, allowed_locales: vec!["en".into()], ..Default::default() };

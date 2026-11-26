@@ -159,7 +159,16 @@ impl Workbench {
             });
         } else {
             let editor = self.with_group(group, |workbench| workbench.editors.take_editor(from));
-            self.with_group(target, |workbench| workbench.editors.insert_moved(editor));
+            let model = editor.model_id;
+            self.with_group(target, |workbench| {
+                let len = workbench.editors.editors.len() as i64;
+                let index = if index < 0 || index > len { len } else { index };
+                workbench.editors.insert_moved(editor);
+                // `moveEditor(..., { index })`: the moved tab lands at the host's index, not after the active one.
+                if let Some(at) = workbench.editors.editors.iter().position(|open| open.model_id == model) {
+                    workbench.editors.move_editor(at, (index as usize).min(workbench.editors.editors.len() - 1));
+                }
+            });
             self.close_group_if_empty(group);
         }
         self.editors_changed(cx);
