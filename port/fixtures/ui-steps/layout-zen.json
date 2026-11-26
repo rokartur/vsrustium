@@ -46,7 +46,8 @@
    520,
    300
   ],
-  "shot": "centered-drag"
+  "shot": "centered-drag",
+  "foreground": true
  },
  {
   "wait": 800
