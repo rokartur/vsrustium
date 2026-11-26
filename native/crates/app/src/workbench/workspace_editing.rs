@@ -411,8 +411,9 @@ pub(super) async fn save_untitled_before_shutdown(workbench: &WeakEntity<Workben
         return false;
     }
     let asked = workbench.update_in(cx, |workbench, window, cx| {
+        let file = workbench.workspace().and_then(|workspace| workspace.file.clone())?;
         let user_data = cx.global::<crate::AppState>().user_data.clone();
-        let untitled = workbench.workspace().and_then(|workspace| workspace.file.clone()).filter(|file| is_own_untitled_workspace(&user_data, file))?;
+        let untitled = Some(file).filter(|file| is_own_untitled_workspace(&user_data, file))?;
         if workbench.settings.lock().unwrap().get_value(Some("window.confirmSaveUntitledWorkspace"), &Overrides::default()) == Some(json!(false)) {
             delete_untitled_workspace(&user_data, &untitled);
             return None;
