@@ -198,7 +198,7 @@ fn main() -> anyhow::Result<()> {
     let workspace = paths.next_if(|_| opens_workspace).map(Workspace::open);
     let file = paths.next();
     let development = ExtensionDevelopment::from_args(&args)?;
-    // shortcut: the port is no app bundle, so no CFBundleURLTypes routes `code-oss://` here; `--open-url <url>` does.
+    // An unbundled build gets no `open-url` event: `--open-url <url>` hands the url in.
     let open_url = flag_value("--open-url");
     let shell_env_error = apply_shell_env(args.iter().any(|arg| arg == "--force-disable-user-env"), &user_data);
     // main.ts: `--export-default-keybindings [folder]`, a folder relative to the working directory, else `<appRoot>/doc`.
@@ -257,8 +257,17 @@ fn main() -> anyhow::Result<()> {
             open_window_or_log(WindowRequest::default(), cx);
         }
     });
+    // app.ts `open-url` (ElectronURLListener): the bundle's CFBundleURLTypes route `code-oss://` urls here.
+    let (url_sender, mut urls) = futures::channel::mpsc::unbounded::<String>();
+    application.on_open_urls(move |opened| opened.into_iter().for_each(|url| drop(url_sender.unbounded_send(url))));
     application.run(move |cx: &mut App| {
         perf::mark("code/mainAppReady");
+        cx.spawn(async move |cx| {
+            while let Some(url) = futures::StreamExt::next(&mut urls).await {
+                drop(cx.update(|cx| workbench::url_handler::open_system_url(url, cx)));
+            }
+        })
+        .detach();
         cx.set_global(app);
         for window in restored {
             let workspace = window.workspace.clone().or(window.folder.clone()).map(Workspace::open);

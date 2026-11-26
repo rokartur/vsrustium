@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use gpui::{App, Bounds, ClickEvent, Context, Div, FocusHandle, KeyDownEvent, Modifiers, MouseButton, MouseDownEvent, Pixels, Point, Rgba, ScrollHandle, SharedString, Stateful, Window, canvas, div, prelude::*, px};
+use gpui::{App, Bounds, ClickEvent, Context, Div, FocusHandle, KeyDownEvent, Modifiers, MouseButton, MouseDownEvent, Pixels, Rgba, ScrollHandle, SharedString, Stateful, Window, canvas, div, prelude::*, px};
 use regex::Regex;
 use serde_json::{Map, Value, json};
 
@@ -47,7 +47,7 @@ pub struct TimelineView {
     focused: Option<String>,
     /// Where a Shift range selection starts.
     anchor: Option<String>,
-    focus: FocusHandle,
+    pub(super) focus: FocusHandle,
     scroll: ScrollHandle,
     /// The type navigation prefix and when its last key came.
     typed: Option<(String, Instant)>,
@@ -476,7 +476,7 @@ impl Workbench {
     }
 
     /// `TimelinePane.onContextMenu`: focuses the row and shows `MenuId.TimelineItemContext` but its inline group.
-    fn show_timeline_item_menu(&mut self, handle: &str, position: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
+    fn show_timeline_item_menu(&mut self, handle: &str, anchor: Bounds<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.timeline.focus.clone(), cx);
         self.timeline.focused = Some(handle.to_string());
         let Some(item) = self.timeline.model.item(handle) else { return };
@@ -484,7 +484,7 @@ impl Workbench {
         let context = self.timeline_item_context(item, self.timeline_menu_context(&menus, window));
         let actions = menu_actions(&menus, MenuId::TimelineItemContext, &context);
         let args = self.timeline_item_args(item);
-        self.show_context_menu_actions(actions, &context, Bounds::new(position, Default::default()), args, window, cx);
+        self.show_context_menu_actions(actions, &context, anchor, args, window, cx);
     }
 
     /// The tree's `onDidOpen`: an item runs its command, "Load more" loads the next page.
@@ -567,6 +567,13 @@ impl Workbench {
             "pageup" => current.map_or(0, |current| current.saturating_sub(page)),
             "home" => 0,
             "end" => last,
+            // A browser fires `contextmenu` at the focused row on Shift+F10; the menu anchors at the row.
+            "f10" if modifiers.shift => {
+                let Some(current) = current else { return };
+                cx.stop_propagation();
+                let anchor = self.timeline.scroll.bounds_for_item(current).unwrap_or(self.timeline.scroll.bounds());
+                return self.show_timeline_item_menu(&handles[current].clone(), anchor, window, cx);
+            }
             "enter" => {
                 cx.stop_propagation();
                 if let Some(current) = current {
@@ -601,7 +608,7 @@ impl Workbench {
         if modifiers.shift {
             self.select_timeline_range(&handle);
         } else {
-            self.timeline.selected = vec![handle.clone()];
+            // timelinePane.ts creates its tree without `selectionNavigation`: arrows move the focus, not the selection.
             self.timeline.anchor = Some(handle);
         }
         self.timeline.scroll.scroll_to_item(target);
@@ -762,7 +769,7 @@ impl Workbench {
             .when(duplicate, |container| container.w(px(10.)).group_hover(id.clone(), |container| container.w_auto()));
         self.timeline_row(id.clone(), &item.handle, selected, tree_focused)
             .on_click(cx.listener(move |workbench, event: &ClickEvent, window, cx| workbench.click_timeline_row(&click_handle, event.modifiers(), event.click_count(), window, cx)))
-            .on_mouse_down(MouseButton::Right, cx.listener(move |workbench, event: &MouseDownEvent, window, cx| workbench.show_timeline_item_menu(&menu_handle, event.position, window, cx)))
+            .on_mouse_down(MouseButton::Right, cx.listener(move |workbench, event: &MouseDownEvent, window, cx| workbench.show_timeline_item_menu(&menu_handle, Bounds::new(event.position, Default::default()), window, cx)))
             .child(div().w(px(22.)).flex_none().children(icon))
             .child(
                 div()

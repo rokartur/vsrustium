@@ -182,11 +182,12 @@ impl Workbench {
             editor.move_to(start, false);
             editor.move_to(end, true);
             editor.reveal_range(start, end, VerticalReveal::Center, viewport);
-        } else if let Some(first) = self.editors.active_diff().and_then(|diff| diff.diff.as_ref()).and_then(|diff| diff.diff.changes.first().map(|change| change.modified.start)) {
-            // textDiffEditor.ts `revealFirstDiff`: an editor without view state shows its first change.
+        } else if let Some(first) = self.editors.active_diff().and_then(|diff| diff.diff.as_ref()).and_then(|diff| diff.diff.changes.first().map(|change| change.modified.start)).filter(|_| existing.is_none()) {
+            // textDiffEditor.ts `revealFirstDiff`: a new editor puts its cursor on the first change and shows it.
             let viewport = self.editors.viewport;
             let editor = self.editors.active_mut().expect("the diff editor's modified model");
             let line = Position::new(first.saturating_sub(1).min(editor.document().lines.len() - 1), 0);
+            editor.move_to(line, false);
             match viewport.height == 0. {
                 true => self.editors.reveal_after_layout = Some(line),
                 false => editor.reveal_range(line, line, VerticalReveal::CenterIfOutsideViewport, viewport),
@@ -198,8 +199,8 @@ impl Workbench {
         self.editors_changed(cx);
     }
 
-    /// Recomputes the active diff and places its view zones in the modified editor; other diff editors take theirs
-    /// back, so a text editor of the same model shows none.
+    /// Recomputes the active diff and places its view zones in its modified editor; other diff editors take theirs
+    /// back.
     pub(in crate::workbench) fn update_diff_editor(&mut self) {
         let options = diff_options(|key| self.setting(key));
         let side_by_side = self.diff_side_by_side();
@@ -210,7 +211,7 @@ impl Workbench {
             let mut input = self.editors.diffs.remove(&id).expect("listed above");
             let placed = std::mem::take(&mut input.placed_zones);
             let placed_unchanged = std::mem::take(&mut input.placed_unchanged);
-            if let Some(modified) = self.editors.model_mut(&input.modified.scheme, &input.modified.path) {
+            if let Some(modified) = self.editors.diff_modified_mut(&mut input.modified_editor, &input.modified) {
                 for zone in &placed {
                     modified.remove_view_zone(zone.0);
                 }
@@ -231,7 +232,7 @@ impl Workbench {
                 let alignments = range_alignment(&computed.diff, &original.document().lines, side_by_side);
                 input.zones = view_zones(&computed.diff, &alignments, side_by_side);
                 let line_height = self.editors.viewport.line_height;
-                let modified = self.editors.model_mut(&input.modified.scheme, &input.modified.path).expect("found above");
+                let modified = self.editors.diff_modified_mut(&mut input.modified_editor, &input.modified).expect("found above");
                 for zone in input.zones.iter().filter(|zone| zone.side == ZoneSide::Modified) {
                     let anchor = zone.after_line.checked_sub(1).map(|line| Position::new(line, 0));
                     let id = modified.add_view_zone(anchor, zone.lines as f32 * line_height);
@@ -335,15 +336,18 @@ impl Workbench {
     /// diffEditorCommandsService.ts `swapDiffSides`: the diff editor shows the modified side as the original.
     fn swap_diff_sides(&mut self) {
         let Some(id) = self.editors.active_tab().map(|tab| tab.model_id) else { return };
-        let Some(input) = self.editors.diffs.get(&id).filter(|input| self.diff_can_swap(input)) else { return };
-        let modified = input.modified.clone();
+        if !self.editors.diffs.get(&id).is_some_and(|input| self.diff_can_swap(input)) {
+            return;
+        }
         let mut input = self.editors.diffs.remove(&id).expect("found above");
-        if let Some(model) = self.editors.model_mut(&modified.scheme, &modified.path) {
-            for (zone, _) in std::mem::take(&mut input.placed_zones) {
+        let placed = std::mem::take(&mut input.placed_zones);
+        if let Some(model) = self.editors.diff_modified_mut(&mut input.modified_editor, &input.modified) {
+            for (zone, _) in placed {
                 model.remove_view_zone(zone);
             }
         }
-        let swapped = DiffInput::new(input.modified, input.original, input.label);
+        let mut swapped = DiffInput::new(input.modified, input.original, input.label);
+        self.editors.attach_modified_editor(&mut swapped);
         self.editors.diffs.insert(id, swapped);
         self.update_diff_editor();
     }

@@ -177,7 +177,7 @@ fn two_selected_items_compare_older_against_newer(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn keys_move_the_selection_and_type_to_a_label(cx: &mut TestAppContext) {
+fn keys_move_the_focus_select_a_range_and_type_to_a_label(cx: &mut TestAppContext) {
     let (dir, workbench, receiver, cx) = workbench_in("timeline-keys", cx);
     workbench.update_in(cx, |workbench, window, cx| {
         register_git(workbench, false, cx);
@@ -190,13 +190,24 @@ fn keys_move_the_selection_and_type_to_a_label(cx: &mut TestAppContext) {
     answer(requests.last_mut().unwrap(), items);
     cx.run_until_parked();
     workbench.update_in(cx, |workbench, window, cx| window.focus(&workbench.timeline.focus.clone(), cx));
-    cx.simulate_keystrokes("down shift-down");
+    cx.simulate_keystrokes("down");
+    workbench.read_with(cx, |workbench, _| {
+        assert!(workbench.timeline.selected.is_empty(), "an arrow moves the focus only");
+        assert_eq!(workbench.timeline.focused.as_deref(), Some("git|1"));
+    });
+    cx.simulate_keystrokes("shift-down");
     workbench.read_with(cx, |workbench, _| assert_eq!(workbench.timeline.selected, ["git|1", "git|2"]));
     cx.simulate_keystrokes("escape g");
     workbench.read_with(cx, |workbench, _| {
         assert!(workbench.timeline.selected.is_empty());
         assert_eq!(workbench.timeline.focused.as_deref(), Some("git|3"));
     });
+    workbench.update(cx, |workbench, _| {
+        let entry = crate::menus::Entry::Command { id: "test.item".into(), precondition: None, toggled: None, alt: None };
+        workbench.menus.push(crate::menus::MenuItem { menu: MenuId::TimelineItemContext, entry, title: "Test Item".into(), group: "1_test".into(), order: 1., when: None });
+    });
+    cx.simulate_keystrokes("shift-f10");
+    workbench.read_with(cx, |workbench, _| assert!(workbench.context_menu.is_some(), "Shift+F10 shows the focused row's menu"));
 }
 
 #[gpui::test]

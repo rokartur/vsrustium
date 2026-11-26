@@ -10,7 +10,7 @@ use super::Workbench;
 use crate::commands::Outcome;
 use crate::diff_editor::unchanged_regions::{OutlineSymbol, RevealPreference, UnchangedDrag, breadcrumb_items, flatten_symbols};
 use crate::diff_editor::{DiffInput, ZoneSide};
-use crate::editor::{OpenEditor, Position};
+use crate::editor::Position;
 use crate::workbench::hover::{HoverContent, HoverOptions};
 
 /// `PlaceholderViewZone` height of the non-compact widget.
@@ -47,7 +47,7 @@ impl Workbench {
     /// The hidden areas and placeholder view zones of the active diff's regions in its modified editor. A cursor
     /// that moved onto a hidden line reveals it first (`ensureModifiedLineIsVisible` on cursor change).
     pub(super) fn place_unchanged_regions(&mut self, input: &mut DiffInput) {
-        let Some(modified) = self.editors.model_mut(&input.modified.scheme, &input.modified.path) else { return };
+        let Some(modified) = self.editors.diff_modified_mut(&mut input.modified_editor, &input.modified) else { return };
         let cursors: Vec<usize> = modified.selections.iter().flat_map(|selection| [selection.start().line + 1, selection.end().line + 1]).collect();
         // The cursor the editor opened with is no cursor change.
         if input.unchanged_cursors.is_empty() {
@@ -127,16 +127,10 @@ impl Workbench {
             cx,
         );
         let viewport = self.editors.viewport;
-        if let Some(editor) = self.active_diff_modified_mut() {
+        if let Some(editor) = self.editors.active_mut() {
             let (top, left) = (editor.scroll.top + added * viewport.line_height, editor.scroll.left);
             editor.set_scroll(top, left, viewport);
         }
-    }
-
-    fn active_diff_modified_mut(&mut self) -> Option<&mut OpenEditor> {
-        let input = self.editors.active_diff()?;
-        let (scheme, path) = (input.modified.scheme.clone(), input.modified.path.clone());
-        self.editors.model_mut(&scheme, &path)
     }
 
     /// The `diff-hidden-lines` widget of region `index` on one side, as tall as its view zone; `hide` (the original

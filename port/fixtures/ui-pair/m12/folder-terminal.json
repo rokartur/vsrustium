@@ -1,0 +1,7 @@
+[
+	{ "rightClick": [100, 107], "foreground": true },
+	{ "wait": 800 },
+	{ "click": [178, 221], "foreground": true },
+	{ "wait": 3000 },
+	{ "shot": "folder-terminal" }
+]
