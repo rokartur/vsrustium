@@ -1,0 +1,5 @@
+[
+	{ "hotkey": ["cmd", "shift", "e"] },
+	{ "wait": 800 },
+	{ "shot": "explorer-icons" }
+]

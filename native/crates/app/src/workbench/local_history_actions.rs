@@ -88,6 +88,13 @@ impl Workbench {
             workbench.restore_local_history_entry(Some(&item), window, cx);
             Outcome::done()
         });
+        // electron-browser/localHistoryCommands.ts: the entry's file in Finder.
+        self.commands.register("workbench.action.localHistory.revealInOS", |workbench, args, _, cx| {
+            if let Some((file, entry, _)) = workbench.find_local_history_entry(args.first()) {
+                cx.reveal_path(&local_history::entries_folder(&workbench.history_home(), &uri_string("file", &file)).join(&entry.id));
+            }
+            Outcome::done()
+        });
         self.commands.register("workbench.action.localHistory.rename", |workbench, args, window, cx| {
             workbench.show_rename_local_history_entry(args.first(), window, cx);
             Outcome::done()

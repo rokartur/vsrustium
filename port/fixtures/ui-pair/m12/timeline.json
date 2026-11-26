@@ -1,0 +1,16 @@
+[
+	{ "click": [500, 280] },
+	{ "type": "x" },
+	{ "hotkey": ["cmd", "s"] },
+	{ "wait": 1500 },
+	{ "click": [95, 716] },
+	{ "wait": 2000 },
+	{ "shot": "timeline" },
+	{ "rightClick": [120, 621] },
+	{ "wait": 800 },
+	{ "shot": "timeline-menu" },
+	{ "key": "escape" },
+	{ "click": [120, 621] },
+	{ "wait": 2000 },
+	{ "shot": "timeline-compare" }
+]

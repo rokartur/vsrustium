@@ -15,7 +15,7 @@ use serde_json::{Map, Value, json};
 
 use super::Workbench;
 use super::hover::{HoverContent, HoverOptions};
-use super::scm_view::{INDENT, ROW_HEIGHT, TWISTIE};
+use super::scm_view::{INDENT, ROW_HEIGHT};
 use super::search_view::SideBarView;
 use crate::commands::Outcome;
 use crate::contextkey::{Expr, JsRegex};
@@ -404,6 +404,7 @@ impl Workbench {
         // localHistoryCommands.ts: the entry actions and the title's Find Entry to Restore.
         let single = "timelineItem == 'localHistory:item' && !listMultiSelection";
         let compare_with_selected = format!("{single} && localHistoryItemSelectedForCompare");
+        let reveal = format!("{single} && resourceScheme == 'file'");
         for (id, title, group, order, when) in [
             ("compareWithFile", "Compare with File", "1_compare", 1., single),
             ("compareWithPrevious", "Compare with Previous", "1_compare", 2., single),
@@ -411,6 +412,7 @@ impl Workbench {
             ("selectForCompare", "Select for Compare", "2_compare_with", 2., single),
             ("open", "Show Contents", "3_contents", 1., single),
             ("restore", "Restore Contents", "3_contents", 2., single),
+            ("revealInOS", "Reveal in Finder", "4_reveal", 1., &reveal),
             ("rename", "Rename", "5_edit", 1., single),
             ("delete", "Delete", "5_edit", 2., "timelineItem == 'localHistory:item'"),
         ] {
@@ -814,7 +816,8 @@ impl Workbench {
             .relative()
             .h(px(ROW_HEIGHT))
             .flex_none()
-            .pl(px(INDENT + TWISTIE))
+            // The tree has `hide-arrows` (views.css: no twistie width); 4px more measured against the reference with ui-pair.
+            .pl(px(INDENT + 4.))
             .pr(px(12.))
             .flex()
             .items_center()
