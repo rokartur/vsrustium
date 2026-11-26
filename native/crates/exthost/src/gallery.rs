@@ -15,7 +15,6 @@ use crate::zip::Archive;
 /// product.json `extensionsGallery`: Code - OSS ships none, VSRustium uses Open VSX as VSCodium does.
 pub const SERVICE_URL: &str = "https://open-vsx.org/vscode/gallery";
 pub const ITEM_URL: &str = "https://open-vsx.org/vscode/item";
-pub const PUBLISHER_URL: &str = "https://open-vsx.org/namespace";
 
 const VSIX: &str = "Microsoft.VisualStudio.Services.VSIXPackage";
 const MANIFEST: &str = "Microsoft.VisualStudio.Code.Manifest";
@@ -38,14 +37,14 @@ const UNIVERSAL: &str = "universal";
 const UNKNOWN: &str = "unknown";
 const WEB: &str = "web";
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Asset {
     pub uri: String,
     pub fallback_uri: String,
 }
 
 /// `IGalleryExtension`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct GalleryExtension {
     pub id: String,
     pub uuid: String,
@@ -85,7 +84,10 @@ pub struct GalleryExtension {
     pub blocked: bool,
     pub private: bool,
     pub detail_link: String,
-    pub publisher_link: String,
+    /// `publisherLink`: none, as the Open VSX product configuration has no `publisherUrl`.
+    pub publisher_link: Option<String>,
+    /// `publisherDomain`: the domain link and whether the gallery verified it.
+    pub publisher_domain: Option<(String, bool)>,
 }
 
 impl GalleryExtension {
@@ -951,7 +953,8 @@ fn to_extension(raw: &Value, version: &Value, all_target_platforms: &[&'static s
         blocked: !raw["blocking"].is_null() || raw["flags"].as_str().is_some_and(|flags| flags.split(',').any(|flag| flag.trim() == "blocked")) || is_blocked(version),
         private: property(latest, "PrivateMarketplace") == Some("true"),
         detail_link: format!("{ITEM_URL}?itemName={publisher}.{name}"),
-        publisher_link: format!("{PUBLISHER_URL}/{publisher}"),
+        publisher_link: None,
+        publisher_domain: raw["publisher"]["domain"].as_str().filter(|domain| !domain.is_empty()).map(|domain| (domain.to_owned(), raw["publisher"]["isDomainVerified"] == true)),
         publisher,
         name,
     }

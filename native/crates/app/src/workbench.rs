@@ -194,6 +194,7 @@ use status_entries::{EDITOR_STATUS_PRIORITY, PROBLEMS_PRIORITY};
 pub mod themes;
 mod quick_input_view;
 mod text_files;
+mod trusted_publishers;
 pub(crate) mod text_model_resolver;
 mod control_characters;
 mod large_file;
@@ -845,6 +846,7 @@ impl Workbench {
         workbench.start_system_events(cx);
         workbench.user_activity(cx);
         workbench.register_extension_management_commands();
+        workbench.register_trusted_publisher_commands();
         workbench.register_extension_host_commands();
         workbench.register_user_data_profile_commands();
         workbench.register_profiles_editor_commands();
