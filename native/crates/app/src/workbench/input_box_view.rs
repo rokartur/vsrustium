@@ -586,8 +586,17 @@ impl Workbench {
                         let line_height = px(18.);
                         let origin_y = bounds.origin.y + (bounds.size.height - line_height) / 2.;
                         if let Some(placeholder) = placeholder {
-                            let run = TextRun { len: placeholder.len(), font: font.clone(), color: placeholder_color.into(), background_color: None, underline: None, strikethrough: None };
-                            let line = window.text_system().shape_line(placeholder.into(), font_size, &[run], None);
+                            let shape = |text: String, window: &mut Window| {
+                                let run = TextRun { len: text.len(), font: font.clone(), color: placeholder_color.into(), background_color: None, underline: None, strikethrough: None };
+                                window.text_system().shape_line(text.into(), font_size, &[run], None)
+                            };
+                            // inputBox.css `text-overflow: ellipsis` on the placeholder.
+                            let mut line = shape(placeholder.clone(), window);
+                            let mut kept: Vec<char> = placeholder.chars().collect();
+                            while line.width > bounds.size.width && !kept.is_empty() {
+                                kept.pop();
+                                line = shape(format!("{}\u{2026}", kept.iter().collect::<String>()), window);
+                            }
                             let _ = line.paint(point(bounds.origin.x, origin_y), line_height, gpui::TextAlign::Left, None, window, cx);
                         }
                         let mut runs = Vec::new();

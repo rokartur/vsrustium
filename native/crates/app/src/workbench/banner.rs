@@ -10,6 +10,9 @@ use super::Workbench;
 use super::hover::{HoverContent, HoverOptions};
 use crate::commands::Outcome;
 
+/// bannerPart.ts `height`.
+pub(super) const BANNER_HEIGHT: f32 = 26.;
+
 /// `IBannerItem`: actions are (label, href) links.
 pub(super) struct BannerItem {
     pub id: &'static str,
@@ -122,6 +125,11 @@ impl Workbench {
         cx.notify();
     }
 
+    /// The grid row the banner takes: none while it is hidden.
+    pub(super) fn banner_height(&self) -> f32 {
+        if self.banner_item().is_some() { BANNER_HEIGHT } else { 0. }
+    }
+
     /// The part: 26px, the icon, the message cut with an ellipsis, the action links and the close button.
     pub(super) fn banner_part(&self, window: &Window, cx: &mut Context<Self>) -> Option<Div> {
         let item = self.banner_item()?;
@@ -157,14 +165,14 @@ impl Workbench {
         Some(
             div()
                 .track_focus(&self.banner.focus)
-                .h(px(26.))
+                .h(px(BANNER_HEIGHT))
                 .flex_none()
                 .flex()
                 .cursor_default()
                 .bg(self.color("banner.background"))
                 .text_color(foreground)
                 .text_size(px(12.))
-                .line_height(px(26.))
+                .line_height(px(BANNER_HEIGHT))
                 // The links and the close button take Enter and Space as the focused DOM elements do.
                 .on_key_down(cx.listener(move |workbench, event: &KeyDownEvent, window, cx| {
                     let Some(index) = workbench.banner.focused_action.filter(|_| matches!(event.keystroke.key.as_str(), "enter" | "space")) else { return };

@@ -358,12 +358,20 @@ impl Workbench {
         context.insert("view".into(), json!(id));
         // treeView.ts `CollapseAllAction`: last in the navigation group of a view made with `showCollapseAll`.
         let collapse_all = tree.show_collapse_all.then(|| self.search_action("collapse-all", static_id(&format!("workbench.actions.treeView.{id}.collapseAll")), true, cx));
-        let actions = div().flex().child(self.inline_actions(MenuId::ViewTitle, &context, Vec::new(), foreground, cx)).children(collapse_all).into_any_element();
-        let message = tree.message.clone().map(|message| div().pt(px(4.)).pb(px(4.)).pl(px(18.)).pr(px(12.)).child(message));
+        // paneCompositePart.css: 4px after each title action.
+        let actions = div().flex().gap(px(4.)).child(self.inline_actions(MenuId::ViewTitle, &context, Vec::new(), foreground, cx).gap(px(4.))).children(collapse_all).into_any_element();
+        let message = tree.message.clone().map(|message| div().pt(px(4.)).pb(px(4.)).pl(px(18.)).pr(px(12.)).line_height(px(18.2)).child(message));
         let focused = focus.is_focused(window);
-        let rows: Vec<AnyElement> = tree.rows().into_iter().enumerate().map(|(index, (item, depth))| self.tree_row(id, tree, item, depth, index, focused, window, cx).into_any_element()).collect();
+        let tree_rows = tree.rows();
+        let depths: Vec<usize> = tree_rows.iter().map(|(_, depth)| depth + 1).collect();
+        let active: Vec<usize> = tree_rows.iter().enumerate().filter(|(_, (item, _))| tree.selection.contains(&item.handle) || tree.focus.as_ref() == Some(&item.handle)).map(|(index, _)| index).collect();
+        let group = gpui::SharedString::from(format!("tree-body-{id}"));
+        let guides = self.tree_guides_in_group(group.clone(), depths, &active);
+        // `.monaco-tl-row` starts at the 4px row margin, its guides 16px further (TreeGuides adds 3px to the inset).
+        let rows: Vec<AnyElement> = tree_rows.into_iter().enumerate().map(|(index, (item, depth))| div().relative().child(self.tree_row(id, tree, item, depth, index, focused, window, cx)).children(guides.row(index, 1.)).into_any_element()).collect();
         let body = div()
             .id(id)
+            .group(group)
             .track_focus(&focus)
             .size_full()
             .flex()
@@ -420,7 +428,7 @@ impl Workbench {
             .relative()
             .h(px(22.))
             .mx(px(4.))
-            .pl(px(11. + 8. * depth as f32))
+            .pl(px(11. + self.tree_indent() * depth as f32))
             .pr(px(12.))
             .flex()
             .items_center()
@@ -433,9 +441,10 @@ impl Workbench {
             .when_some(tooltip, |row, tooltip| row.child(self.hover_target(("tree-hover", index), HoverContent::Text(tooltip), HoverOptions::mouse())))
             .child(twistie)
             .children(self.tree_item_icon(item, foreground).map(|icon| icon.ml(px(3.)).mr(px(6.))))
-            .child(div().flex_none().whitespace_nowrap().when(item.strikethrough(), |label| label.line_through()).child(label))
-            .children(description.map(|description| div().flex_1().min_w_0().ml(px(6.5)).overflow_hidden().whitespace_nowrap().text_size(px(11.7)).opacity(0.7).child(description)))
-            .child(div().ml_auto().invisible().group_hover(row_id, |actions| actions.visible()).when(selected || is_focus, |actions| actions.visible()).child(actions))
+            // iconLabel.ts: the label shrinks with an ellipsis once its description is gone.
+            .child(div().min_w_0().truncate().when(item.strikethrough(), |label| label.line_through()).child(label))
+            .children(description.map(|description| div().flex_1().min_w_0().ml(px(6.5)).truncate().text_size(px(11.7)).opacity(0.7).child(description)))
+            .child(div().flex_none().ml_auto().invisible().group_hover(row_id, |actions| actions.visible()).when(selected || is_focus, |actions| actions.visible()).child(actions))
             .on_click(cx.listener(move |workbench, _: &ClickEvent, window, cx| workbench.tree_item_clicked(id, &clicked, &command, window, cx)))
             .on_mouse_down(MouseButton::Right, cx.listener(move |workbench, event: &MouseDownEvent, window, cx| {
                 workbench.show_context_menu(MenuId::ViewItemContext, &context_menu, gpui::Bounds::new(event.position, Default::default()), menu_args.clone(), window, cx);

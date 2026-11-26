@@ -380,7 +380,11 @@ impl Workbench {
         row.relative()
             .bg(background)
             .when_some(foreground, |row, color| row.text_color(color))
-            .when_some(outline, |row, color| row.child(div().absolute().inset_0().border_1().border_color(color)))
+            // The row's own rounding (the Problems rows' 4px) shows only on the background; the outline takes it too.
+            .when_some(outline, |mut row, color| {
+                let radius = row.style().corner_radii.top_left;
+                row.child(div().absolute().inset_0().border_1().border_color(color).when_some(radius, |outline, radius| outline.rounded(radius)))
+            })
     }
 
     /// `ResourceWithCommentsRenderer`: the file label, then `· owner` when several controllers have comments.

@@ -351,7 +351,7 @@ impl Workbench {
     /// and the sashes. A changed `workbench.sideBar.location` moves the parts (`onDidChangeConfiguration`).
     pub(super) fn middle_section(&mut self, viewport: Size<Pixels>, editor: Div, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let status_bar_height = if self.is_status_bar_visible() { STATUS_BAR_HEIGHT } else { 0. };
-        let (width, height) = (f32::from(viewport.width), f32::from(viewport.height) - TITLE_BAR_HEIGHT - status_bar_height);
+        let (width, height) = (f32::from(viewport.width), f32::from(viewport.height) - TITLE_BAR_HEIGHT - self.banner_height() - status_bar_height);
         let activity_bar_visible = self.is_part_visible(Part::ActivityBar);
         let stored = self.stored_arrangement();
         if self.part_grid.grid.is_none() {

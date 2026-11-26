@@ -108,6 +108,9 @@ fn the_title_bar_menus_toggle_the_command_center_and_the_layout_controls(cx: &mu
     workbench.update_in(cx, |workbench, window, cx| workbench.execute_command("toggle.window.commandCenter", Vec::new(), window, cx));
     assert_eq!(user_settings(), json!({ "window.commandCenter": false }));
     assert_eq!(workbench.read_with(cx, |workbench, _| workbench.window_title()), "notes.txt");
+    workbench.update(cx, |workbench, _| workbench.extension_development = true);
+    assert_eq!(workbench.read_with(cx, |workbench, _| workbench.window_title()), "[Extension Development Host] notes.txt");
+    workbench.update(cx, |workbench, _| workbench.extension_development = false);
     right_click(title, cx);
     let titles = menu_titles(&workbench, cx);
     assert_eq!(titles[0], "notes.txt");

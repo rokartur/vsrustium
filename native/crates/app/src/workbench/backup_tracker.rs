@@ -89,7 +89,7 @@ impl Workbench {
     }
 
     /// `restoreBackups`: each backup without an open editor opens pinned in the background, its model holding the
-    /// backed up text.
+    /// backed up text; an editor the editor part restored takes its backup's text (the model resolves from it).
     fn restore_backups(&mut self, cx: &mut Context<Self>) {
         let Some(home) = self.lifecycle.backups.home.clone() else { return };
         let active = self.editors.active_index().map(|index| self.editors.editors[index].model_id);
@@ -98,22 +98,25 @@ impl Workbench {
             let Some(backup) = backups::resolve(&path) else { continue };
             let scheme = backup.resource.scheme.clone();
             let model_path = PathBuf::from(&backup.resource.path);
-            if self.editors.model(&scheme, &model_path).is_some() {
-                continue;
+            match self.editors.model(&scheme, &model_path) {
+                Some(model) if model.is_dirty() => continue,
+                Some(_) => {}
+                None => {
+                    let document = match scheme.as_str() {
+                        "file" => match self.read_document(&model_path) {
+                            Ok(document) => document,
+                            // shortcut: a backup of a file that is gone stays on disk; upstream opens it as an orphaned model.
+                            Err(error) => {
+                                eprintln!("[backup tracker] restoring {}: {error}", model_path.display());
+                                continue;
+                            }
+                        },
+                        "untitled" => TextDocument::untitled(&model_path, "", None, &self.languages, &self.settings.lock().unwrap()),
+                        _ => continue,
+                    };
+                    self.editors.open(document, false);
+                }
             }
-            let document = match scheme.as_str() {
-                "file" => match self.read_document(&model_path) {
-                    Ok(document) => document,
-                    // shortcut: a backup of a file that is gone stays on disk; upstream opens it as an orphaned model.
-                    Err(error) => {
-                        eprintln!("[backup tracker] restoring {}: {error}", model_path.display());
-                        continue;
-                    }
-                },
-                "untitled" => TextDocument::untitled(&model_path, "", None, &self.languages, &self.settings.lock().unwrap()),
-                _ => continue,
-            };
-            self.editors.open(document, false);
             self.update_model(&scheme, &model_path, &backup.content, false);
             let version = self.editors.model(&scheme, &model_path).expect("just opened").alternative_version_id();
             self.lifecycle.backups.backed_up.insert((scheme, model_path), version);

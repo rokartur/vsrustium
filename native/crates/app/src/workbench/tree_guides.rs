@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use gpui::{AnyElement, Context, Div, DispatchPhase, MouseButton, MouseDownEvent, Rgba, Window, canvas, div, point, prelude::*, px};
+use gpui::{AnyElement, Context, Div, DispatchPhase, MouseButton, MouseDownEvent, Rgba, SharedString, Window, canvas, div, point, prelude::*, px};
 use serde_json::json;
 
 use super::Workbench;
@@ -24,6 +24,8 @@ pub struct TreeGuides {
     indent: f32,
     inactive: Rgba,
     active: Rgba,
+    /// The element group whose hover shows the inactive guides, for a tree without list scroll state (no fade).
+    hover_group: Option<SharedString>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -47,7 +49,12 @@ impl TreeGuides {
         let mut layer = div().absolute().top_0().bottom_0().left_0();
         for (level, active) in guides.into_iter().enumerate() {
             let color = if active { self.active } else { self.inactive };
-            layer = layer.child(div().absolute().top_0().bottom_0().left(px(inset + GUIDES_LEFT + level as f32 * self.indent)).w(px(1.)).bg(color));
+            let guide = div().absolute().top_0().bottom_0().left(px(inset + GUIDES_LEFT + level as f32 * self.indent)).w(px(1.)).bg(color);
+            let guide = match (&self.hover_group, active || self.mode == GuidesMode::Always) {
+                (Some(group), false) => guide.invisible().group_hover(group.clone(), |guide| guide.visible()),
+                _ => guide,
+            };
+            layer = layer.child(guide);
         }
         Some(layer)
     }
@@ -57,11 +64,7 @@ impl Workbench {
     /// abstractTree.ts `style`: inactive guides show while the pointer is over the list (or always), active ones
     /// always, in `tree.inactiveIndentGuidesStroke` and `tree.indentGuidesStroke`.
     pub(super) fn tree_guides(&self, list: ListId, depths: Vec<usize>, active: &[usize], window: &Window) -> TreeGuides {
-        let mode = match self.setting("workbench.tree.renderIndentGuides").as_str() {
-            Some("none") => GuidesMode::None,
-            Some("always") => GuidesMode::Always,
-            _ => GuidesMode::OnHover,
-        };
+        let mode = self.guides_mode();
         let opacity = match mode {
             GuidesMode::Always => 1.,
             _ => self.list_hover_fade(list, GUIDE_FADE, window),
@@ -74,6 +77,29 @@ impl Workbench {
             indent: self.tree_indent(),
             inactive: Rgba { a: inactive.a * opacity, ..inactive },
             active: self.color("tree.indentGuidesStroke"),
+            hover_group: None,
+        }
+    }
+
+    /// `tree_guides` for a tree drawn in a plain element group: inactive guides show while the pointer is over
+    /// `group`, without the fade.
+    pub(super) fn tree_guides_in_group(&self, group: SharedString, depths: Vec<usize>, active: &[usize]) -> TreeGuides {
+        TreeGuides {
+            active_parents: active_guide_parents(&depths, active),
+            depths,
+            mode: self.guides_mode(),
+            indent: self.tree_indent(),
+            inactive: self.color("tree.inactiveIndentGuidesStroke"),
+            active: self.color("tree.indentGuidesStroke"),
+            hover_group: Some(group),
+        }
+    }
+
+    fn guides_mode(&self) -> GuidesMode {
+        match self.setting("workbench.tree.renderIndentGuides").as_str() {
+            Some("none") => GuidesMode::None,
+            Some("always") => GuidesMode::Always,
+            _ => GuidesMode::OnHover,
         }
     }
 

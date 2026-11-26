@@ -13,7 +13,13 @@
 			{ "command": "portMessages.warning", "title": "Port Messages: Warning" },
 			{ "command": "portMessages.error", "title": "Port Messages: Error" },
 			{ "command": "portMessages.long", "title": "Port Messages: Long" },
-			{ "command": "portMessages.modal", "title": "Port Messages: Modal" }
+			{ "command": "portMessages.modal", "title": "Port Messages: Modal" },
+			{ "command": "portMessages.progress", "title": "Port Messages: Progress" },
+			{ "command": "portMessages.windowProgress", "title": "Port Messages: Window Progress" },
+			{ "command": "portMessages.status", "title": "Port Messages: Status" },
+			{ "command": "portMessages.openDialog", "title": "Port Messages: Open Dialog" },
+			{ "command": "portMessages.saveDialog", "title": "Port Messages: Save Dialog" },
+			{ "command": "portMessages.decorations", "title": "Port Messages: Decorations" }
 		]
 	}
 }
