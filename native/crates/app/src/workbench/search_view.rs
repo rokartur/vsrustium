@@ -562,21 +562,27 @@ impl Workbench {
         let parts = self.search.message.as_ref()?;
         let link_color = self.color("textLink.foreground");
         let link_hover = self.color("textLink.activeForeground");
-        let children = parts.iter().enumerate().map(|(index, part)| match part {
-            MessagePart::Text(text) => div().whitespace_nowrap().child(text.clone()).into_any_element(),
-            MessagePart::Link(link) => {
-                let link = *link;
-                div()
-                    .id(("search-message-link", index))
-                    .whitespace_nowrap()
-                    .cursor_pointer()
-                    .text_color(link_color)
-                    .hover(|style| style.text_color(link_hover))
-                    .child(link.label())
-                    .on_click(cx.listener(move |workbench, _: &ClickEvent, window, cx| workbench.search_message_link(link, window, cx)))
-                    .into_any_element()
+        // The message is inline text that wraps between words, the link's words included: one flex child per word.
+        let mut children = Vec::new();
+        for (index, part) in parts.iter().enumerate() {
+            match part {
+                MessagePart::Text(text) => children.extend(text.split_inclusive(' ').map(|word| div().whitespace_nowrap().child(word.to_string()).into_any_element())),
+                MessagePart::Link(link) => {
+                    let link = *link;
+                    for (word_index, word) in link.label().split_inclusive(' ').enumerate() {
+                        let word = div()
+                            .id(("search-message-link", index * 100 + word_index))
+                            .whitespace_nowrap()
+                            .cursor_pointer()
+                            .text_color(link_color)
+                            .hover(|style| style.text_color(link_hover))
+                            .child(word.to_string())
+                            .on_click(cx.listener(move |workbench, _: &ClickEvent, window, cx| workbench.search_message_link(link, window, cx)));
+                        children.push(word.into_any_element());
+                    }
+                }
             }
-        });
+        }
         // searchview.css: .messages pulls 5px up into the widgets' padding; .message has 22px at each side and 8px below.
         Some(div().mt(px(-5.)).px(px(22.)).pb(px(8.)).flex_none().flex().flex_wrap().line_height(px(18.2)).text_color(self.color("search.resultsInfoForeground")).children(children))
     }
@@ -608,7 +614,7 @@ impl Workbench {
         .size_full();
         let sticky_elements = sticky.iter().map(|row| self.search_row(&sticky_rows[row.index], row.index, tree_focused, true, cx)).collect();
         let sticky_container = self.tree_sticky_container(ListId::Search, &sticky, sticky_elements, cx);
-        div().id("search-results").relative().track_focus(&self.search.focus).flex_1().min_h_0().child(list).child(self.list_scroll_layer(ListId::Search, cx)).children(sticky_container)
+        div().id("search-results").relative().track_focus(&self.search.focus).flex_1().min_h_0().child(list).child(self.list_scroll_layer(ListId::Search, cx)).children(sticky_container).children(self.high_contrast_list_outline(tree_focused, self.search.focused.is_some()))
     }
 
     /// A sticky row is never drawn focused or selected (`StickyScrollWidget`).

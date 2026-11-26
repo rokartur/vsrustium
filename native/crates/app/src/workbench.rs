@@ -1218,6 +1218,13 @@ impl Workbench {
         div().relative().child(indicator).child(self.icon(name, 36., 24., self.color("modernActivityBarItem.activeForeground")))
     }
 
+    /// style.css `.hc-black .monaco-list:not(.element-focused):focus:before`: in high contrast a focused list
+    /// without a focused row is outlined in focusBorder, above its sticky rows.
+    fn high_contrast_list_outline(&self, list_focused: bool, has_focused_row: bool) -> Option<Div> {
+        let color = self.theme.color("focusBorder").filter(|_| self.theme.kind.is_high_contrast() && list_focused && !has_focused_row)?;
+        Some(div().absolute().inset_0().border_1().border_color(color))
+    }
+
     /// The Explorer: title, then the folder's view with its tree, Outline and Timeline as panes.
     fn side_bar_view(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         let foreground = self.foreground_or("sideBar.foreground");
@@ -1479,7 +1486,7 @@ impl Workbench {
                     // `horizontalScrolling`: unwrapped rows as wide as the widest, at least the view.
                     .child(div().flex_none().flex().flex_col().when(horizontal, |rows| rows.self_start().min_w_full().whitespace_nowrap()).children(rows))
                     .child(self.explorer_empty_area(cx)),
-                ).child(self.list_scroll_layer(list_scroll::ListId::Explorer, cx)).children(sticky_container).children(self.explorer_find_widget(window, cx)).into_any_element() }, window, cx))
+                ).child(self.list_scroll_layer(list_scroll::ListId::Explorer, cx)).children(sticky_container).children(self.high_contrast_list_outline(tree_focused, tree.focused.is_some())).children(self.explorer_find_widget(window, cx)).into_any_element() }, window, cx))
             // shortcut: extension webview views sit below the Explorer's panes, not in view_panes.rs; milestone 11 moves them in.
             .children(self.webview_view_panes(cx))
             // The pane view is laid out 5px shorter than the side bar content.

@@ -1,10 +1,6 @@
 [
 	{ "click": [600, 200], "foreground": true },
 	{ "type": "x" },
-	{ "hotkey": ["cmd", "k"] },
-	{ "key": "d" },
-	{ "wait": 1500 },
-	{ "shot": "compare-saved" },
 	{ "hotkey": ["cmd", "shift", "p"] },
 	{ "wait": 600 },
 	{ "type": "compare active file with..." },

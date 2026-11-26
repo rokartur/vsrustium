@@ -216,6 +216,12 @@ impl Workbench {
         self.hover_target(("tab-hover", index), content, super::hover::HoverOptions::mouse())
     }
 
+    /// A diff editor's tab is its modified side's (`DiffEditorInput.isDirty`); an auto saved one shows no dirty mark.
+    pub(super) fn tab_shows_dirty(&self, index: usize) -> bool {
+        let model = self.editors.tab_model(index);
+        model.is_dirty() && !self.editor_is_saving(model)
+    }
+
     /// A tab sized to its label (tab.sizing fit): 8px before the label, 30.5px after it for the close action.
     fn tab(&self, index: usize, active: bool, cx: &mut Context<Self>) -> Div {
         let editor = &self.editors.editors[index];
@@ -251,7 +257,7 @@ impl Workbench {
         // iconlabel.css `::after` font-size 90% (11.7px) wins over the decoration rule's 16px, which loads first.
         let lock = readonly.then(|| self.icon("lock-small", 11.7, 11.7, foreground).mt(px(9.5)).ml(px(5.)).opacity(0.75));
         // A dirty tab shows a filled circle where the close action goes, also when inactive (tabstitlecontrol.css).
-        let dirty = editor.is_dirty() && !self.editor_is_saving(editor);
+        let dirty = self.tab_shows_dirty(index);
         let close_icon = if dirty { "circle-filled" } else { "close-small" };
         let close = self.icon(close_icon, 20., 16., action_foreground).id(("close", index)).rounded(px(4.)).on_click(cx.listener(move |workbench, _, window, cx| {
             cx.stop_propagation();

@@ -6,7 +6,7 @@
 // env FILE = file to open, relative to the folder; env ONLY = "reference" or "port" to run one of them; env ARGS = more arguments for both, space separated;
 // env SETTINGS = a JSON object of user settings for both)
 // Steps, in window points (both windows are 1024x768):
-//   {"click": [x, y]}  {"click": [x, y], "modifier": ["cmd"]}  {"click": [x, y], "foreground": true}  {"doubleClick": [x, y]}  {"rightClick": [x, y]}  {"key": "return"}  {"key": "escape", "foreground": true} (a real HID key down and up)
+//   {"click": [x, y]}  {"click": [x, y], "modifier": ["cmd"]}  {"click": [x, y], "foreground": true}  {"doubleClick": [x, y]}  {"rightClick": [x, y], "foreground": true}  {"key": "return"}  {"key": "escape", "foreground": true} (a real HID key down and up, the window brought to front and left there; also on hotkey)
 //   {"scroll": [x, y], "amount": notches} (real wheel notches down, the pointer left there)  {"hover": [x, y]} (the real pointer, for hovers)  {"hotkey": ["cmd", "c"]}  {"type": "text"}  {"wait": ms}  {"shot": "name"}  {"clipboard": "name"} (the pasteboard text, the folder path as <folder>)
 //   {"dragShot": [x1, y1, x2, y2], "shot": "name", "modifier": ["option"], "button": "middle"}: a slow drag, captured while held
 //   {"restart": true}: after the app quit (a Cmd+Q step), start it again on the same user data and folder
@@ -120,11 +120,15 @@ async function run(app: string, firstPid: number, folder: string, restart: () =>
 		} else if (step.doubleClick) {
 			await cua('double_click', { ...target, ...at(step.doubleClick) });
 		} else if (step.rightClick) {
-			await cua('right_click', { ...target, ...at(step.rightClick) });
-		} else if (step.key) {
-			await cua('press_key', { ...target, key: step.key, delivery_mode: step.foreground ? 'foreground' : undefined });
-		} else if (step.hotkey) {
-			await cua('hotkey', { ...target, keys: step.hotkey });
+			await cua('right_click', { ...target, ...at(step.rightClick), delivery_mode: step.foreground ? 'foreground' : undefined });
+		} else if (step.key || step.hotkey) {
+			if (step.foreground) {
+				// A foreground key alone restores the previous app after it: the window would turn inactive between
+				// the keys of a chord, which leaves chord mode (keybindingResolver `_scheduleLeaveChordMode`).
+				await cua('bring_to_front', target);
+			}
+			const delivery_mode = step.foreground ? 'foreground' : undefined;
+			await (step.key ? cua('press_key', { ...target, key: step.key, delivery_mode }) : cua('hotkey', { ...target, keys: step.hotkey, delivery_mode }));
 		} else if (step.type) {
 			// Key by key: type_text refuses windows without an accessible text field, as GPUI's.
 			// press_key knows no shifted symbols: they go as shift plus the US layout's base key.

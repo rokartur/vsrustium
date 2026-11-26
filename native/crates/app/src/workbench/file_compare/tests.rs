@@ -45,6 +45,8 @@ fn the_compare_commands_open_diff_editors(cx: &mut TestAppContext) {
     assert_eq!(active_diff(cx), ("showModifications".into(), a.clone(), a.clone(), "a.txt (in file) \u{2194} a.txt".into()));
     let saved_text = workbench.read_with(cx, |workbench, _| workbench.editors.model("showModifications", &a).unwrap().document().lines.clone());
     assert_eq!(saved_text, ["one", "two", ""], "the original side is the file on disk");
+    let diff_tab_dirty = workbench.read_with(cx, |workbench, _| workbench.tab_shows_dirty(workbench.editors.active_index().unwrap()));
+    assert!(diff_tab_dirty, "the diff tab shows its modified side's dirty state");
 
     run("selectForCompare", vec![uri(&a)], cx);
     let selected = workbench.update_in(cx, |workbench, window, _| workbench.key_context(window)["resourceSelectedForCompare"].clone());
