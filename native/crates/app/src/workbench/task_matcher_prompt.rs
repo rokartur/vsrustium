@@ -144,9 +144,9 @@ mod tests {
         });
     }
 
-    /// `_runTaskCommand`: a task name that matches runs with `attachProblemMatcher`, so the prompt comes first.
+    /// `_runTaskCommand`: a name the resolver finds by label runs as it is (`this.run(task)`), with no prompt.
     #[gpui::test]
-    fn run_task_with_a_name_asks_for_a_problem_matcher(cx: &mut gpui::TestAppContext) {
+    fn run_task_with_a_label_runs_without_the_problem_matcher_prompt(cx: &mut gpui::TestAppContext) {
         let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
         let themes = exthost::scan::scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
         let theme = crate::theme::load_theme(&[themes], "Dark Modern").unwrap();
@@ -170,7 +170,7 @@ mod tests {
             cx.run_until_parked();
         }
         let asks = workbench.read_with(cx, |workbench, _| workbench.quick_inputs.find_id(|owner| matches!(owner, Owner::Tasks(picker) if picker.action == PickAction::AttachMatcher)).is_some());
-        assert!(asks);
+        assert!(!asks);
         std::fs::remove_dir_all(folder).unwrap();
     }
 }
