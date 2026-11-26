@@ -125,7 +125,7 @@ async function run(app: string, firstPid: number, folder: string, restart: () =>
 			if (step.foreground) {
 				// A foreground key alone restores the previous app after it: the window would turn inactive between
 				// the keys of a chord, which leaves chord mode (keybindingResolver `_scheduleLeaveChordMode`).
-				await cua('bring_to_front', target);
+				await bringToFront(target);
 			}
 			const delivery_mode = step.foreground ? 'foreground' : undefined;
 			await (step.key ? cua('press_key', { ...target, key: step.key, delivery_mode }) : cua('hotkey', { ...target, keys: step.hotkey, delivery_mode }));
@@ -134,7 +134,7 @@ async function run(app: string, firstPid: number, folder: string, restart: () =>
 			// press_key knows no shifted symbols: they go as shift plus the US layout's base key.
 			const shifted: Record<string, string> = { '!': '1', '@': '2', '#': '3', '$': '4', '%': '5', '^': '6', '&': '7', '*': '8', '(': '9', ')': '0', '_': '-', '+': '=', '{': '[', '}': ']', '|': '\\', ':': ';', '"': "'", '<': ',', '>': '.', '?': '/', '~': '`' };
 			if (step.foreground) {
-				await cua('bring_to_front', target);
+				await bringToFront(target);
 			}
 			const delivery_mode = step.foreground ? 'foreground' : undefined;
 			for (const key of step.type) {
@@ -204,6 +204,15 @@ async function shot(app: string, pid: number, windowId: number, name: string) {
 	const file = resolve(outDir, `${app}-${name}.png`);
 	await cua('get_window_state', { pid, window_id: sheet?.window_id ?? main, include_accessibility_tree: false, max_image_dimension: 2048, screenshot_out_file: file });
 	console.log(`${app}-${name}.png${sheet ? ' (sheet)' : ''}`);
+}
+
+async function bringToFront(target: object) {
+	// A sheet (the delete confirmation) keeps the window from turning key: the app is in front all the same.
+	await cua('bring_to_front', target).catch(error => {
+		if (!String(error).includes('"front_process_matches_target": true')) {
+			throw error;
+		}
+	});
 }
 
 async function cua(tool: string, args: object) {
