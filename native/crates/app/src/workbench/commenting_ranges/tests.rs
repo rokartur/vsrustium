@@ -35,10 +35,10 @@ fn a_commenting_range_click_creates_a_template_thread(cx: &mut TestAppContext) {
     let replying = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.comments.reply.as_ref().map(|reply| reply.thread));
     assert_eq!(replying(cx), Some(9), "the template opens its reply form");
 
+    // The reference keeps a new template open on Escape (port/notes.md, milestone 20 comment Escape).
     cx.simulate_keystrokes("escape");
-    assert_eq!(replying(cx), None);
-    assert!(receiver.try_iter().any(|message| message.method == "$deleteCommentThread" && message.args == [json!(1), json!(9)]));
-    assert!(workbench.read_with(cx, |workbench, _| workbench.comments.controllers[0].threads.is_empty()));
+    assert_eq!(replying(cx), Some(9));
+    assert!(receiver.try_iter().all(|message| message.method != "$deleteCommentThread"));
 
     run(&workbench, cx, "cursorTop");
     run(&workbench, cx, "workbench.action.addComment");

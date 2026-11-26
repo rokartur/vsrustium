@@ -63,6 +63,7 @@ fn the_height_counts_the_head_comments_and_form_in_whole_lines() {
         context_value: None,
         comments,
         collapse_state: 1,
+        revealed: false,
         can_reply: json!(true),
         state: None,
         is_template: false,

@@ -58,6 +58,9 @@ pub(super) struct Thread {
     pub(super) context_value: Option<String>,
     pub(super) comments: Vec<Value>,
     pub(super) collapse_state: u64,
+    /// A new empty template shown by `shouldReveal` (ReviewZoneWidget `makeVisible`), until a collapse other than
+    /// Dismiss Comment.
+    pub(super) revealed: bool,
     pub(super) can_reply: Value,
     /// `CommentThreadState`: 0 unresolved, 1 resolved.
     pub(super) state: Option<u64>,
@@ -85,12 +88,11 @@ impl Workbench {
                 let range = Some(arg(4)).filter(|range| !range.is_null());
                 let comments = arg(5).as_array().cloned().unwrap_or_default();
                 // `MainThreadCommentThread`: a new thread is collapsed and can be replied to.
-                let mut thread = Thread { handle: arg(1).as_u64().unwrap_or_default(), resource: arg(3), range, label: None, context_value: None, comments, collapse_state: 0, can_reply: Value::Bool(true), state: None, is_template: arg(7) == true };
-                // commentsController.ts `shouldReveal`: a new template without comments shows, its reply form focused.
+                let mut thread = Thread { handle: arg(1).as_u64().unwrap_or_default(), resource: arg(3), range, label: None, context_value: None, comments, collapse_state: 0, revealed: false, can_reply: Value::Bool(true), state: None, is_template: arg(7) == true };
+                // commentsController.ts `shouldReveal`: a new template without comments shows, its reply form focused,
+                // without touching its Collapsed state, so a later collapse changes nothing and the zone stays.
                 let reveal = thread.is_template && thread.comments.is_empty();
-                if reveal {
-                    thread.collapse_state = 1;
-                }
+                thread.revealed = reveal;
                 let thread_handle = thread.handle;
                 controller.threads.push(thread);
                 if reveal {
@@ -121,7 +123,7 @@ impl Workbench {
             "$hideCommentThread" => {
                 let thread_handle = arg(1).as_u64().unwrap_or_default();
                 if let Some(thread) = self.comment_controller_mut(handle).and_then(|controller| controller.threads.iter_mut().find(|thread| thread.handle == thread_handle)) {
-                    thread.collapse_state = 0;
+                    thread.set_collapse_state(0);
                 }
             }
             _ => {}
@@ -153,6 +155,22 @@ impl Workbench {
 }
 
 impl Thread {
+    /// `MainThreadCommentThread.collapsibleState`'s setter: only a change reaches the zone, which then follows it.
+    pub(super) fn set_collapse_state(&mut self, state: u64) -> bool {
+        if state == self.collapse_state {
+            return false;
+        }
+        self.collapse_state = state;
+        // The host's Expanded echo of a revealed template keeps it revealed; a collapse closes it.
+        self.revealed &= state == 1;
+        true
+    }
+
+    /// The zone is shown: Expanded, or revealed and not collapsed since.
+    pub(super) fn zone_shown(&self) -> bool {
+        self.collapse_state == 1 || self.revealed
+    }
+
     /// `MainThreadCommentThread.batchUpdate`: only the fields the changes carry.
     fn update(&mut self, changes: &Value) {
         let Some(changes) = changes.as_object() else { return };
@@ -169,7 +187,7 @@ impl Thread {
             self.comments = comments.as_array().cloned().unwrap_or_default();
         }
         if let Some(collapse_state) = changes.get("collapseState").and_then(Value::as_u64) {
-            self.collapse_state = collapse_state;
+            self.set_collapse_state(collapse_state);
         }
         if let Some(can_reply) = changes.get("canReply") {
             self.can_reply = can_reply.clone();
