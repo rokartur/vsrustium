@@ -238,6 +238,8 @@ pub fn place(view: &NSView, window: &Window, bounds: Bounds<Pixels>) {
 /// webview over its outputs and markdown previews only, GPUI's cells everywhere else.
 pub struct ClipState {
     hit_rects: RefCell<Vec<NSRect>>,
+    /// A GPUI widget over the clip (the notebook find widget): neither drawn over nor pressed, with the clip's size.
+    hole: std::cell::Cell<Option<(NSRect, NSSize)>>,
 }
 
 define_class!(
@@ -259,7 +261,7 @@ define_class!(
             // SAFETY: the clip view is GPUI's view's subview while it is hit tested.
             let local = self.convertPoint_fromView(point, unsafe { self.superview() }.as_deref());
             let inside = |rect: &NSRect| local.x >= rect.origin.x && local.y >= rect.origin.y && local.x < rect.origin.x + rect.size.width && local.y < rect.origin.y + rect.size.height;
-            if !self.ivars().hit_rects.borrow().iter().any(inside) {
+            if !self.ivars().hit_rects.borrow().iter().any(inside) || self.ivars().hole.get().is_some_and(|(hole, _)| inside(&hole)) {
                 return std::ptr::null_mut();
             }
             unsafe { msg_send![super(self), hitTest: point] }
@@ -271,7 +273,7 @@ impl ClipView {
     /// A hidden clip view over `window` holding `webview`.
     pub fn new(window: &Window, webview: &Webview) -> Retained<Self> {
         let mtm = MainThreadMarker::new().expect("webviews live on the main thread");
-        let this = Self::alloc(mtm).set_ivars(ClipState { hit_rects: RefCell::default() });
+        let this = Self::alloc(mtm).set_ivars(ClipState { hit_rects: RefCell::default(), hole: std::cell::Cell::new(None) });
         let this: Retained<Self> = unsafe { msg_send![super(this), initWithFrame: NSRect::ZERO] };
         this.setClipsToBounds(true);
         this.setHidden(true);
@@ -284,14 +286,68 @@ impl ClipView {
 
     /// Shows the clip over `bounds` in GPUI window coordinates, its webview at `webview` (relative to the clip's
     /// origin, as `hit_rects` are).
-    pub fn place(&self, webview: &WKWebView, window: &Window, bounds: Bounds<Pixels>, webview_frame: Bounds<Pixels>, hit_rects: Vec<Bounds<Pixels>>) {
+    pub fn place(&self, webview: &WKWebView, window: &Window, bounds: Bounds<Pixels>, webview_frame: Bounds<Pixels>, hit_rects: Vec<Bounds<Pixels>>, hole: Option<Bounds<Pixels>>) {
         place(self, window, bounds);
         let frame = ns_rect(webview_frame);
         if webview.frame() != frame {
             webview.setFrame(frame);
         }
         *self.ivars().hit_rects.borrow_mut() = hit_rects.into_iter().map(ns_rect).collect();
+        self.set_hole(hole.map(|hole| (ns_rect(hole), self.frame().size)));
     }
+
+    /// Masks the clip's layer to all of it but `hole`: the part above the hole's bottom left and right of it, and the
+    /// part below.
+    fn set_hole(&self, hole: Option<(NSRect, NSSize)>) {
+        if self.ivars().hole.get() == hole {
+            return;
+        }
+        self.ivars().hole.set(hole);
+        self.setWantsLayer(true);
+        // SAFETY: CALayer and NSColor messages on the main thread; the view is layer-backed after `setWantsLayer`.
+        unsafe {
+            let layer: *mut objc2::runtime::AnyObject = msg_send![self, layer];
+            let Some(layer) = layer.as_ref() else { return };
+            let Some((hole, size)) = hole else {
+                let _: () = msg_send![layer, setMask: std::ptr::null_mut::<objc2::runtime::AnyObject>()];
+                return;
+            };
+            let flipped: Bool = msg_send![layer, isGeometryFlipped];
+            let class = AnyClass::get(c"CALayer").expect("QuartzCore is loaded with AppKit");
+            let mask: Retained<NSObject> = msg_send![class, layer];
+            let _: () = msg_send![&*mask, setFrame: NSRect::new(NSPoint::new(0., 0.), size)];
+            let black: *mut objc2::runtime::AnyObject = msg_send![AnyClass::get(c"NSColor").expect("AppKit"), blackColor];
+            let color: CGColorRef = msg_send![black, CGColor];
+            let bottom = hole.origin.y + hole.size.height;
+            let right = hole.origin.x + hole.size.width;
+            let parts = [
+                NSRect::new(NSPoint::new(0., 0.), NSSize::new(hole.origin.x.max(0.), bottom)),
+                NSRect::new(NSPoint::new(right, 0.), NSSize::new((size.width - right).max(0.), bottom)),
+                NSRect::new(NSPoint::new(0., bottom), NSSize::new(size.width, (size.height - bottom).max(0.))),
+            ];
+            for part in parts {
+                let part = match flipped.as_bool() {
+                    true => part,
+                    false => NSRect::new(NSPoint::new(part.origin.x, size.height - part.origin.y - part.size.height), part.size),
+                };
+                let sublayer: Retained<NSObject> = msg_send![class, layer];
+                let _: () = msg_send![&*sublayer, setFrame: part];
+                let _: () = msg_send![&*sublayer, setBackgroundColor: color];
+                let _: () = msg_send![&*mask, addSublayer: &*sublayer];
+            }
+            let _: () = msg_send![layer, setMask: &*mask];
+        }
+    }
+}
+
+/// A `CGColorRef`, encoded as CALayer's `backgroundColor` expects.
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+struct CGColorRef(*const std::ffi::c_void);
+
+// SAFETY: a pointer to the opaque `CGColor` struct, as `^{CGColor=}`.
+unsafe impl objc2::Encode for CGColorRef {
+    const ENCODING: objc2::Encoding = objc2::Encoding::Pointer(&objc2::Encoding::Struct("CGColor", &[]));
 }
 
 fn ns_rect(bounds: Bounds<Pixels>) -> NSRect {

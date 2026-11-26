@@ -245,6 +245,9 @@ fn the_github_share_items_fill_the_share_submenus() {
     assert_eq!(share(MenuId::ExplorerContext), (false, link("github.copyVscodeDevLinkWithoutRange", "Copy vscode.dev Link")));
     assert_eq!(share(MenuId::EditorContext), (false, link("github.copyVscodeDevLink", "Copy vscode.dev Link")));
     assert_eq!(share(MenuId::EditorTitleContext), (false, link("github.copyVscodeDevLinkWithoutRange", "Copy vscode.dev Link")));
+    // coreActions.ts: a notebook cell's toolbar menu shows the editor context Share submenu.
+    let cell_context = HashMap::from([("github.hasGitHubRepo".to_string(), json!(true)), ("resourceScheme".to_string(), json!("vscode-notebook-cell")), ("activeEditor".to_string(), json!("workbench.editor.notebook"))]);
+    assert!(menu_actions(&registry, MenuId::NotebookCellTitle, &cell_context).contains(&link("github.copyVscodeDevLink", "Copy vscode.dev Link").unwrap()));
     assert!(!ids(&menu_actions(&registry, MenuId::ExplorerContext, &no_context())).contains(&"Share"), "no repository, no Share");
 }
 

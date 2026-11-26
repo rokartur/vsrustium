@@ -144,6 +144,19 @@ impl Workbench {
     pub(super) fn register_find_commands(&mut self) {
         for (id, action) in FIND_COMMANDS {
             self.commands.register(id, move |workbench, _, window, cx| {
+                // notebookFind.ts: in a notebook editor the find actions act on the notebook find.
+                if workbench.notebook_find_target() {
+                    match id {
+                        "actions.find" => workbench.show_notebook_find(false, window, cx),
+                        "editor.action.startFindReplaceAction" => workbench.show_notebook_find(true, window, cx),
+                        "editor.action.nextMatchFindAction" | "editor.action.previousMatchFindAction" if workbench.notebook_find_visible() => {
+                            workbench.notebook_find_move(id == "editor.action.previousMatchFindAction", window, cx)
+                        }
+                        "editor.action.nextMatchFindAction" | "editor.action.previousMatchFindAction" => workbench.show_notebook_find(false, window, cx),
+                        _ => workbench.run_find(window, cx, action),
+                    }
+                    return Outcome::done();
+                }
                 // findController.ts: StartFindReplaceAction does not run on a read-only editor.
                 if id == "editor.action.startFindReplaceAction" && workbench.active_editor_readonly().is_some() {
                     return Outcome::done();
@@ -657,28 +670,35 @@ impl Workbench {
         if goto_line || self.edit_setting_highlights(editor, index) {
             whole_lines.push(range_highlight());
         }
-        let Some(model) = self.find.controller.model.as_ref().filter(|_| self.find.model_id == Some(editor.model_id)) else {
-            return (whole_lines, boxes, text_colors);
-        };
+        let model = self.find.controller.model.as_ref().filter(|_| self.find.model_id == Some(editor.model_id));
         let on_line = |range: &Range<Position>| range.start.line <= index && index <= range.end.line;
-        for _ in model.find_scopes(editor).unwrap_or_default().iter().filter(|scope| on_line(scope)) {
-            whole_lines.push(bordered(whole_line(), self.theme.color("editor.findRangeHighlightBackground"), self.theme.color("editor.findRangeHighlightBorder"), 1.));
-        }
-        for range in [&model.range_highlight, &self.find.go_to_match_highlight] {
-            if range.as_ref().is_some_and(on_line) {
-                whole_lines.push(range_highlight());
+        if let Some(model) = model {
+            for _ in model.find_scopes(editor).unwrap_or_default().iter().filter(|scope| on_line(scope)) {
+                whole_lines.push(bordered(whole_line(), self.theme.color("editor.findRangeHighlightBackground"), self.theme.color("editor.findRangeHighlightBorder"), 1.));
+            }
+            for range in [&model.range_highlight, &self.find.go_to_match_highlight] {
+                if range.as_ref().is_some_and(on_line) {
+                    whole_lines.push(range_highlight());
+                }
             }
         }
+        // A notebook cell's matches come from the notebook find (notebookFindDecorations.ts).
+        let notebook = self.notebook_find_cell_matches(editor);
+        let (matches, highlighted) = match (&notebook, model) {
+            (Some((matches, highlighted)), _) => (matches.as_slice(), *highlighted),
+            (None, Some(model)) => (model.matches.as_slice(), model.highlighted),
+            (None, None) => return (whole_lines, boxes, text_colors),
+        };
 
         let text = &editor.document().lines[index];
         let tab_size = editor.document().indentation.tab_size;
         let layout = editor.line_layout(index);
         let byte = |column: usize| expand_tabs(&text.chars().take(column).collect::<String>(), tab_size).len();
-        let first = model.matches.partition_point(|range| range.end.line < index);
+        let first = matches.partition_point(|range| range.end.line < index);
         let mut current = None;
-        for (match_index, range) in model.matches.iter().enumerate().skip(first).take_while(|(_, range)| range.start.line <= index) {
+        for (match_index, range) in matches.iter().enumerate().skip(first).take_while(|(_, range)| range.start.line <= index) {
             let Some((start, end, line_break)) = selected_columns(Selection { anchor: range.start, head: range.end }, index, text) else { continue };
-            let is_current = model.highlighted == Some(match_index);
+            let is_current = highlighted == Some(match_index);
             // `linesVisibleRangesForRange` includes the line break for `findMatch` only.
             let (left, right) = layout.range(start, end);
             let (left, right) = (left * char_width, right * char_width + if line_break && !is_current { char_width } else { 0. });

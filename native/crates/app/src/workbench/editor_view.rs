@@ -1923,7 +1923,22 @@ impl Workbench {
         // A webview, extension, walkthrough or multi diff editor shows no editor status entries.
         // notebookIndicators.ts: a notebook editor whose cell editor has no focus shows its active cell instead.
         let notebook_cell = self.active_notebook_editor().filter(|_| !self.editor_focus.is_focused(window)).and_then(|editor| Some((editor.focus, self.host.notebooks.model(&editor.notebook)?.cells.len())));
-        if let Some((index, count)) = notebook_cell {
+        if let Some((input, cells)) = self.repl_input_status(window) {
+            // Seen in the reference with the REPL input focused: its end of line only, between the indentation and
+            // active cell entries of the list once it has a cell.
+            let [_, _, _, eol, _] = Self::editor_status_entries(input, &self.languages);
+            match cells {
+                None => items.push(eol),
+                Some((editor, index, count)) => {
+                    if let Some(editor) = editor {
+                        let [_, indentation, ..] = Self::editor_status_entries(editor, &self.languages);
+                        items.push(indentation);
+                    }
+                    items.push(eol);
+                    items.push((format!("Cell {} of {count}", index + 1), "", "notebook.centerActiveCell"));
+                }
+            }
+        } else if let Some((index, count)) = notebook_cell {
             // editorStatus.ts: the indentation of the active cell's editor (`activeCodeEditor`), which a markdown
             // preview has not; seen in the reference with the list focused on a code cell.
             if let Some(editor) = self.editors.active().filter(|editor| editor.document().scheme == crate::notebook::CELL_SCHEME && self.active_cell_has_editor()) {

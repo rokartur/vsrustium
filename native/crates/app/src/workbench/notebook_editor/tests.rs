@@ -135,6 +135,96 @@ fn a_click_on_the_text_of_another_code_cell_edits_that_cell(cx: &mut TestAppCont
 }
 
 #[gpui::test]
+fn notebook_find_goes_through_the_matches_of_all_cells_and_replaces_them(cx: &mut TestAppContext) {
+    let cells = json!([
+        { "cellKind": 2, "language": "python", "source": "x = 1\nx", "outputs": [], "metadata": {} },
+        { "cellKind": 2, "language": "python", "source": "y = x", "outputs": [], "metadata": {} },
+        { "cellKind": 1, "language": "markdown", "source": "x md", "outputs": [], "metadata": {} },
+    ]);
+    let (workbench, cx, _) = workbench_with_cells(cells, cx);
+    cx.simulate_keystrokes("cmd-f");
+    workbench.update_in(cx, |workbench, window, cx| {
+        assert!(workbench.notebook_views.find.find_focus.is_focused(window), "Cmd+F in the cell list focuses the notebook find input");
+        workbench.edit_notebook_find_input(super::super::input_box_view::InputId::NotebookFind, |input| input.set_value("x".into()), cx);
+    });
+    cx.run_until_parked();
+    let label = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.notebook_find_count_label());
+    assert_eq!(label(cx), "1 of 3", "a markdown preview's source is left to the rendered markdown filter");
+    cx.simulate_keystrokes("enter");
+    cx.simulate_keystrokes("enter");
+    assert_eq!(label(cx), "3 of 3");
+    workbench.update_in(cx, |workbench, window, _| {
+        assert_eq!(workbench.active_notebook_editor().unwrap().focus, 1, "the match's cell takes the focus");
+        assert!(workbench.notebook_views.find.find_focus.is_focused(window), "the find input keeps the keyboard");
+        let editor = workbench.editors.active().unwrap();
+        assert_eq!((editor.selection().start(), editor.selection().end()), (crate::editor::Position::new(0, 4), crate::editor::Position::new(0, 5)));
+    });
+    cx.simulate_keystrokes("shift-enter");
+    assert_eq!(label(cx), "2 of 3");
+    run(&workbench, "_notebook.find.filter.markupPreview", cx);
+    assert_eq!(label(cx), "2 of 4", "without the rendered markdown filter the markdown source counts");
+    workbench.update_in(cx, |workbench, _, cx| {
+        workbench.notebook_views.find.state.replace_string = "z".into();
+        workbench.notebook_find_replace_all(cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(sources(&workbench, cx), ["z = 1\nz", "y = z", "z md"]);
+    assert_eq!(label(cx), "No results");
+    cx.simulate_keystrokes("escape");
+    workbench.update_in(cx, |workbench, window, _| {
+        assert!(!workbench.notebook_find_visible());
+        assert!(workbench.notebook_views.list_focus.is_focused(window), "the focus returns to the cell list");
+    });
+}
+
+#[gpui::test]
+fn a_reopened_notebook_editor_brings_back_its_focused_cell_editor_and_selection(cx: &mut TestAppContext) {
+    let cells = json!([
+        { "cellKind": 2, "language": "python", "source": "a = 1", "outputs": [], "metadata": {} },
+        { "cellKind": 2, "language": "python", "source": "b = 22", "outputs": [], "metadata": {} },
+    ]);
+    let (workbench, cx, _) = workbench_with_cells(cells, cx);
+    cx.simulate_keystrokes("down enter end shift-left");
+    let key = workbench.read_with(cx, |workbench, _| workbench.host.notebooks.models[0].uri_string());
+    workbench.update_in(cx, |workbench, window, cx| {
+        workbench.host.notebooks.held.push(key.clone());
+        drop(workbench.execute_command("workbench.action.closeActiveEditor", Vec::new(), window, cx));
+    });
+    cx.run_until_parked();
+    workbench.read_with(cx, |workbench, _| assert!(workbench.active_notebook_editor().is_none()));
+    workbench.update_in(cx, |workbench, window, cx| workbench.show_notebook(&key, &json!({}), window, cx).unwrap());
+    cx.run_until_parked();
+    workbench.update_in(cx, |workbench, window, _| {
+        assert_eq!(workbench.active_notebook_editor().unwrap().focus, 1);
+        assert!(workbench.editor_focus.is_focused(window), "the cell editor had the keyboard");
+        let editor = workbench.editors.active().unwrap();
+        assert_eq!(editor.document().lines[0], "b = 22");
+        assert_eq!((editor.selection().anchor, editor.selection().head), (crate::editor::Position::new(0, 6), crate::editor::Position::new(0, 5)));
+    });
+}
+
+#[gpui::test]
+fn a_markdown_cell_toolbar_goes_with_its_more_menu(cx: &mut TestAppContext) {
+    let cells = json!([
+        { "cellKind": 2, "language": "python", "source": "x", "outputs": [], "metadata": {} },
+        { "cellKind": 1, "language": "markdown", "source": "# Title", "outputs": [], "metadata": {} },
+    ]);
+    let (workbench, cx, _) = workbench_with_cells(cells, cx);
+    let (tab, handle) = workbench.read_with(cx, |workbench, _| (workbench.host.notebooks.editors[0].tab_model_id, workbench.host.notebooks.models[0].cells[1].handle));
+    workbench.update(cx, |workbench, cx| {
+        workbench.notebook_views.views.entry(tab).or_default().hovered = Some(handle);
+        cx.notify();
+    });
+    cx.run_until_parked();
+    let more = Box::leak(format!("notebook-cell-toolbar-more-{handle}").into_boxed_str());
+    let center = cx.debug_bounds(more).unwrap().center();
+    cx.simulate_click(center, gpui::Modifiers::default());
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    assert!(cx.debug_bounds(more).is_none(), "the hidden webview never reports the pointer leaving the preview for the menu");
+}
+
+#[gpui::test]
 fn the_cell_list_takes_the_keyboard_and_enter_and_escape_move_into_and_out_of_a_cell(cx: &mut TestAppContext) {
     let cells = json!([
         { "cellKind": 1, "language": "markdown", "source": "# Title\ntext", "outputs": [], "metadata": {} },

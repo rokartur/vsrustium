@@ -43,6 +43,8 @@ pub enum InputId {
     BreakpointWidget,
     DebugConsole,
     TerminalFind,
+    NotebookFind,
+    NotebookReplace,
     Rename,
     ProfileName,
     IconSelectSearch,
@@ -51,7 +53,7 @@ pub enum InputId {
     TrustedPath,
 }
 
-const INPUTS: [InputId; 25] = [
+const INPUTS: [InputId; 27] = [
     InputId::QuickInput,
     InputId::Explorer,
     InputId::ExplorerFind,
@@ -71,6 +73,8 @@ const INPUTS: [InputId; 25] = [
     InputId::BreakpointWidget,
     InputId::DebugConsole,
     InputId::TerminalFind,
+    InputId::NotebookFind,
+    InputId::NotebookReplace,
     InputId::Rename,
     InputId::ProfileName,
     InputId::IconSelectSearch,
@@ -156,6 +160,8 @@ impl Workbench {
             InputId::CommentsFilter => &self.comments.view.filter_view,
             InputId::DebugConsole => &self.debug_console.input_view,
             InputId::TerminalFind => &self.terminal_view.find.view,
+            InputId::NotebookFind => &self.notebook_views.find.find_view,
+            InputId::NotebookReplace => &self.notebook_views.find.replace_view,
             InputId::Rename => &self.rename.view,
             InputId::TrustedPath => &self.trust_editor.path_view,
         }
@@ -191,6 +197,8 @@ impl Workbench {
             InputId::CommentsFilter => &mut self.comments.view.filter_view,
             InputId::DebugConsole => &mut self.debug_console.input_view,
             InputId::TerminalFind => &mut self.terminal_view.find.view,
+            InputId::NotebookFind => &mut self.notebook_views.find.find_view,
+            InputId::NotebookReplace => &mut self.notebook_views.find.replace_view,
             InputId::Rename => &mut self.rename.view,
             InputId::TrustedPath => &mut self.trust_editor.path_view,
         }
@@ -223,6 +231,8 @@ impl Workbench {
             InputId::CommentsFilter => &self.comments.view.filter_focus,
             InputId::DebugConsole => &self.debug_console.input_focus,
             InputId::TerminalFind => &self.terminal_view.find.focus,
+            InputId::NotebookFind => &self.notebook_views.find.find_focus,
+            InputId::NotebookReplace => &self.notebook_views.find.replace_focus,
             InputId::Rename => &self.rename.focus,
             InputId::TrustedPath => self.trust_editor.path_focus.as_ref().unwrap_or(&self.rename.focus),
         }
@@ -255,6 +265,8 @@ impl Workbench {
             InputId::CommentsFilter => Some(&self.comments.view.filter),
             InputId::DebugConsole => Some(&self.debug_console.input),
             InputId::TerminalFind => Some(&self.terminal_view.find.input),
+            InputId::NotebookFind => Some(&self.notebook_views.find.find_input),
+            InputId::NotebookReplace => Some(&self.notebook_views.find.replace_input),
             InputId::Rename => self.rename.widget.as_ref().map(|widget| &widget.input),
             InputId::TrustedPath => self.trust_editor.edit.as_ref().map(|(_, input)| input),
         }
@@ -363,6 +375,10 @@ impl Workbench {
                 self.edit_terminal_find_input(edit, cx);
                 Outcome::done()
             }
+            InputId::NotebookFind | InputId::NotebookReplace => {
+                self.edit_notebook_find_input(id, edit, cx);
+                Outcome::done()
+            }
             InputId::Rename => {
                 if let Some(widget) = self.rename.widget.as_mut() {
                     edit(&mut widget.input);
@@ -458,6 +474,10 @@ impl Workbench {
             return;
         }
         if matches!(id, InputId::Find | InputId::Replace) && self.find_input_key(id, keystroke, window, cx) {
+            cx.stop_propagation();
+            return;
+        }
+        if matches!(id, InputId::NotebookFind | InputId::NotebookReplace) && self.notebook_find_input_key(id, keystroke, window, cx) {
             cx.stop_propagation();
             return;
         }
@@ -578,6 +598,8 @@ impl Workbench {
                 InputId::CommentsFilter => "comments-filter-text".into(),
                 InputId::DebugConsole => "debug-console-input-text".into(),
                 InputId::TerminalFind => "terminal-find-text".into(),
+                InputId::NotebookFind => "notebook-find-text".into(),
+                InputId::NotebookReplace => "notebook-replace-text".into(),
                 InputId::Rename => "rename-input-text".into(),
                 InputId::TrustedPath => "trusted-path-input-text".into(),
             })
