@@ -105,3 +105,71 @@ fn the_focus_command_shows_the_hidden_view_and_focuses_it(cx: &mut TestAppContex
         assert!(workbench.open_editors_focus.is_focused(window));
     });
 }
+
+fn menu_titles(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<String> {
+    workbench.read_with(cx, |workbench, _| {
+        let menu = workbench.context_menu.as_ref().expect("a context menu shows");
+        let title = |action: &crate::menus::MenuAction| match action {
+            crate::menus::MenuAction::Command { title, enabled: true, .. } => title.clone(),
+            crate::menus::MenuAction::Command { title, .. } => format!("({title})"),
+            _ => "---".into(),
+        };
+        menu.levels[0].actions.iter().map(title).collect()
+    })
+}
+
+/// listCommands.ts on the Open Editors list: arrows move the focus from the active editor's row, Space opens the
+/// focused editor keeping the focus, Enter opens it pinned with the focus.
+#[gpui::test]
+fn the_keyboard_moves_the_focus_and_opens_rows(cx: &mut TestAppContext) {
+    let (_dir, workbench, cx) = workbench_with("keyboard", &["a.txt", "b.txt", "c.txt"], cx);
+    let run = |command: &str, cx: &mut VisualTestContext| {
+        workbench.update_in(cx, |workbench, window, cx| {
+            window.focus(&workbench.open_editors_focus.clone(), cx);
+            drop(workbench.execute_command(command, vec![], window, cx));
+        })
+    };
+    let state = |cx: &mut VisualTestContext| {
+        workbench.update_in(cx, |workbench, window, _| (workbench.open_editors_focused_row, workbench.editors.active().unwrap().document().name(), workbench.open_editors_focus.is_focused(window)))
+    };
+    run("list.focusUp", cx);
+    assert_eq!(state(cx), (Some(1), "c.txt".to_string(), true), "from the active editor's row");
+    run("list.focusUp", cx);
+    run("list.focusUp", cx);
+    assert_eq!(state(cx).0, Some(0));
+    workbench.update(cx, |workbench, _| workbench.editors.editors[0].preview = true);
+    run("list.toggleExpand", cx);
+    assert_eq!(state(cx), (None, "a.txt".to_string(), true), "Space opens it, the focus stays in the list");
+    assert!(workbench.read_with(cx, |workbench, _| workbench.editors.editors[0].preview), "as a preview");
+    run("list.focusLast", cx);
+    run("list.select", cx);
+    assert_eq!(state(cx), (None, "c.txt".to_string(), false), "Enter opens it with the focus");
+}
+
+/// fileActions.contribution.ts `MenuId.OpenEditorsContext`: an editor row's and a group row's items; a sticky row's
+/// action unpins it.
+#[gpui::test]
+fn rows_show_the_open_editors_menu(cx: &mut TestAppContext) {
+    let (_dir, workbench, cx) = workbench_with("menu", &["a.txt", "b.txt"], cx);
+    let pointer = gpui::point(gpui::px(100.), gpui::px(100.));
+    workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("workbench.action.pinEditor", vec![json!({ "editorIndex": 1 })], window, cx)));
+    assert_eq!(names(&workbench, cx), ["b.txt", "a.txt"], "the pinned editor's row comes first");
+    workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("workbench.action.unpinEditor", vec![json!({ "editorIndex": 0 })], window, cx)));
+    assert!(workbench.read_with(cx, |workbench, _| workbench.editors.editors.iter().all(|editor| !editor.sticky)));
+    workbench.update_in(cx, |workbench, window, cx| workbench.show_open_editors_context_menu(0, Row::Editor(0, 0), pointer, window, cx));
+    assert_eq!(
+        menu_titles(&workbench, cx),
+        ["Open to the Side", "Reveal in Finder", "---", "Copy Path", "Copy Relative Path", "---", "Reopen Editor With...", "---", "(Save)", "(Revert File)", "---", "(Compare with Saved)", "Select for Compare", "---", "Close", "Close Others", "Close Saved", "Close All"]
+    );
+    cx.simulate_keystrokes("escape");
+    workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("workbench.action.splitEditor", vec![], window, cx)));
+    cx.run_until_parked();
+    workbench.update_in(cx, |workbench, window, cx| workbench.show_open_editors_context_menu(0, Row::Group(0, 1), pointer, window, cx));
+    assert_eq!(menu_titles(&workbench, cx), ["(Save All)", "---", "Close Saved", "Close All"]);
+    cx.simulate_keystrokes("escape");
+
+    let a = workbench.read_with(cx, |workbench, _| workbench.editors.group_tabs(0).0.iter().find(|editor| editor.document().name() == "a.txt").unwrap().document().uri());
+    workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("explorer.openToSide", vec![a], window, cx)));
+    cx.run_until_parked();
+    assert_eq!(names(&workbench, cx), ["GROUP 1", "b.txt", "a.txt", "GROUP 2", "b.txt", "a.txt"], "Open to the Side opens in the group beside");
+}

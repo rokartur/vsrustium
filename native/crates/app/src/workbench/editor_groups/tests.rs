@@ -205,6 +205,39 @@ fn the_grid_and_its_editors_come_back_from_workspace_storage(cx: &mut TestAppCon
     assert_eq!(active, "b.txt");
 }
 
+/// editorCommands.ts `moveEditorToRightGroup` (the tab menu's Split & Move > Move Right): a new group when there is
+/// none that way, the existing one after.
+#[gpui::test]
+fn move_right_moves_the_editor_into_the_group_on_the_right(cx: &mut TestAppContext) {
+    let (_dir, workbench, cx) = workbench_with("move-right", &["a.txt", "b.txt"], cx);
+    run(&workbench, "workbench.action.moveEditorToRightGroup", cx);
+    assert_eq!(groups(&workbench, cx), (vec![vec!["a.txt".to_string()], vec!["b.txt".to_string()]], 1));
+    run(&workbench, "workbench.action.focusFirstEditorGroup", cx);
+    run(&workbench, "workbench.action.moveEditorToRightGroup", cx);
+    assert_eq!(groups(&workbench, cx).0, vec![vec!["b.txt".to_string(), "a.txt".to_string()]], "into the existing group, the emptied one closes");
+}
+
+/// editorGroupModel.ts `serialize`/`deserialize`: the last sticky editor's index is stored and the sticky ones come
+/// back sticky.
+#[gpui::test]
+fn sticky_editors_come_back_sticky_from_workspace_storage(cx: &mut TestAppContext) {
+    let (_dir, workbench, cx) = workbench_with("part-state-sticky", &["a.txt", "b.txt", "c.txt"], cx);
+    run(&workbench, "workbench.action.pinEditor", cx);
+    let saved = workbench.read_with(cx, |workbench, _| workbench.workspace_storage.lock().unwrap().get("memento/workbench.parts.editor").map(str::to_owned).unwrap());
+    let state: serde_json::Value = serde_json::from_str(&saved).unwrap();
+    assert_eq!(state["editorpart.state"]["serializedGrid"]["root"]["data"][0]["data"]["sticky"], json!(0));
+    workbench.update(cx, |workbench, _| {
+        for index in (0..3).rev() {
+            workbench.editors.close(index);
+        }
+    });
+    let storage = std::sync::Arc::new(std::sync::Mutex::new(storage::Storage::in_memory()));
+    storage.lock().unwrap().set("memento/workbench.parts.editor", saved);
+    workbench.update(cx, |workbench, _| workbench.restore_workspace_state(storage));
+    let tabs = workbench.read_with(cx, |workbench, _| workbench.editors.editors.iter().map(|editor| (editor.document().name(), editor.sticky)).collect::<Vec<_>>());
+    assert_eq!(tabs, [("c.txt".to_string(), true), ("a.txt".to_string(), false), ("b.txt".to_string(), false)]);
+}
+
 /// dnd.ts `ResourcesDropHandler`: a file dropped from Finder on a group's right half opens pinned in a new group there.
 #[gpui::test]
 fn files_dropped_from_outside_open_in_the_group_the_overlay_shows(cx: &mut TestAppContext) {

@@ -3,7 +3,7 @@
 //! (`ISerializedGrid` of `ISerializedEditorGroupModel` leaves, file editors as `workbench.editors.files.fileEditorInput`).
 //! Upstream saves on shutdown; the port saves on each editor change, as the editor history does.
 // Not ported yet: editors other than file, untitled text, webview panel, notebook, interactive and REPL editors
-// (upstream serializes every editor with a serializer), sticky editors, locked groups.
+// (upstream serializes every editor with a serializer), locked groups.
 
 use std::path::PathBuf;
 
@@ -59,7 +59,7 @@ impl Workbench {
 
     /// `EditorGroupModel.serialize`: the file editors, with hot exit on (untitledTextEditorHandler.ts
     /// `canSerialize`) the untitled ones, and the webview panels that persist, in tab order, their MRU and the
-    /// preview editor by index.
+    /// preview editor and the last sticky one by index.
     fn serialized_group(&self, group: u32) -> Value {
         let untitled = self.setting("files.hotExit") != "off";
         let mut editors = Vec::new();
@@ -87,7 +87,8 @@ impl Workbench {
         let by_recency = self.editors.group_editors_by_recency(group);
         let mru: Vec<usize> = by_recency.iter().filter_map(|recent| editors.iter().position(|editor| editor.model_id == recent.model_id)).collect();
         let preview = editors.iter().position(|editor| editor.preview);
-        json!({ "id": group, "editors": serialized, "mru": mru, "preview": preview })
+        let sticky = editors.iter().filter(|editor| editor.sticky).count().checked_sub(1);
+        json!({ "id": group, "editors": serialized, "mru": mru, "preview": preview, "sticky": sticky })
     }
 
     /// The stored grid and its groups' file editors, in place of the one empty group a window starts with.
@@ -128,12 +129,14 @@ impl Workbench {
     fn restore_group(&mut self, group: &Value) {
         let mut opened = Vec::new();
         let active = group["mru"][0].as_u64();
+        // `deserialize`: the editors up to index `sticky` are sticky.
+        let is_sticky = |index: usize| group["sticky"].as_u64().is_some_and(|sticky| index as u64 <= sticky);
         for (index, editor) in group["editors"].as_array().into_iter().flatten().enumerate() {
             let value: Value = editor["value"].as_str().and_then(|value| serde_json::from_str(value).ok()).unwrap_or_default();
             // Notebook, interactive and REPL editors resolve their notebook first (notebooks.rs).
             if let Some(input) = NotebookInput::parse(editor["id"].as_str().unwrap_or_default(), &value) {
                 let preview = group["preview"].as_u64() == Some(index as u64);
-                self.notebook_views.restores.push(NotebookRestore { group: self.editors.id, index, preview, active: active == Some(index as u64), input });
+                self.notebook_views.restores.push(NotebookRestore { group: self.editors.id, index, preview, sticky: is_sticky(index), active: active == Some(index as u64), input });
                 continue;
             }
             let path = value["resourceJSON"]["path"].as_str().map(PathBuf::from);
@@ -152,6 +155,10 @@ impl Workbench {
                 _ => continue,
             };
             self.editors.open(document, group["preview"].as_u64() == Some(index as u64));
+            if is_sticky(index) {
+                let active = self.editors.active_index().expect("the editor just opened");
+                self.editors.stick(active);
+            }
             opened.push(index);
         }
         let mru = group["mru"].as_array().into_iter().flatten().filter_map(|index| index.as_u64());

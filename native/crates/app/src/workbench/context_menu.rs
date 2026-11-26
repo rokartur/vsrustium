@@ -237,6 +237,14 @@ impl Workbench {
                 None => window.blur(cx),
             }
         }
+        // Chromium's fake mouse move after layout: what the closed menu uncovers under a still pointer gets its hover.
+        // Next-frame callbacks run before that frame's draw, so the move waits one more frame for the menu-less hit test.
+        window.on_next_frame(|window, _| {
+            window.on_next_frame(|window, cx| {
+                let event = gpui::MouseMoveEvent { position: window.mouse_position(), pressed_button: None, modifiers: window.modifiers() };
+                window.dispatch_event(gpui::PlatformInput::MouseMove(event), cx);
+            })
+        });
         cx.notify();
     }
 

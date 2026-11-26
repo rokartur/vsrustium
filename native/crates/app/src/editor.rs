@@ -610,6 +610,8 @@ pub struct OpenEditor {
     pub model: SharedModel,
     /// A preview editor shows in italics and is replaced by the next preview open (`workbench.editor.enablePreview`).
     pub preview: bool,
+    /// A pinned editor (editorGroupModel.ts `isSticky`): the group's sticky editors come first, never preview.
+    pub sticky: bool,
     /// The `$model<N>` id the text model gets, so the extension host sees a new editor per opened model.
     pub model_id: u32,
     /// The cursors' selections, the primary one first (`CursorCollection`).
@@ -683,7 +685,7 @@ impl OpenEditor {
             let model = model.borrow();
             (model.version_id, word_wrap::WordWrap::new(&model.document.lines, model.document.too_large_for_tokenization))
         };
-        let mut editor = OpenEditor { seen_version, model, preview, model_id, selections: vec![Selection::default()], last_added: 0, leftovers: Vec::new(), column_select: None, smart_select: None, cursor_states: Default::default(), highlights: Vec::new(), value_set_replacement: None, selection_anchor: None, folding: FoldingModel::default(), syntax_folding: false, folded_imports: false, sticky_model: Default::default(), folding_limit: folding::MAX_FOLDING_REGIONS_FOR_INDENT, folding_limited: None, sticky_outline: None, scroll: Scroll::default(), max_line_width: 0., view_zones: Vec::new(), snippet_session: None, word_wrap, text_decorations: Vec::new(), injected_text: Vec::new() };
+        let mut editor = OpenEditor { seen_version, model, preview, sticky: false, model_id, selections: vec![Selection::default()], last_added: 0, leftovers: Vec::new(), column_select: None, smart_select: None, cursor_states: Default::default(), highlights: Vec::new(), value_set_replacement: None, selection_anchor: None, folding: FoldingModel::default(), syntax_folding: false, folded_imports: false, sticky_model: Default::default(), folding_limit: folding::MAX_FOLDING_REGIONS_FOR_INDENT, folding_limited: None, sticky_outline: None, scroll: Scroll::default(), max_line_width: 0., view_zones: Vec::new(), snippet_session: None, word_wrap, text_decorations: Vec::new(), injected_text: Vec::new() };
         editor.refresh_highlights();
         editor.refresh_folding_ranges();
         editor
@@ -946,6 +948,7 @@ impl EditorGroup {
     /// Shows `document` in the editor at `index`, in place of the model it showed, and activates it.
     pub fn replace(&mut self, index: usize, document: TextDocument) {
         let mut editor = self.create_model(document, false);
+        editor.sticky = self.editors[index].sticky;
         self.restore_view_state(&mut editor);
         let replaced = std::mem::replace(&mut self.editors[index], editor);
         self.recent.retain(|id| *id != replaced.model_id);
@@ -959,6 +962,7 @@ impl EditorGroup {
     pub fn reload(&mut self, index: usize, document: TextDocument) {
         self.next_model_id += 1;
         let mut editor = OpenEditor::new(document, self.editors[index].preview, self.next_model_id);
+        editor.sticky = self.editors[index].sticky;
         self.restore_view_state(&mut editor);
         let replaced = std::mem::replace(&mut self.editors[index], editor);
         self.recent.retain(|id| *id != replaced.model_id);
@@ -1178,6 +1182,7 @@ impl EditorGroup {
         let existing = self.editors.iter().position(|open| Rc::ptr_eq(&open.model, &editor.model) && !self.diffs.contains_key(&open.model_id));
         match existing.filter(|_| !self.diffs.contains_key(&editor.model_id)) {
             Some(index) => {
+                let index = if editor.sticky { self.stick(index) } else { index };
                 self.activate(index);
                 self.remove_input(&editor.model_id);
                 self.keep_or_dispose(editor);
@@ -1259,7 +1264,10 @@ impl EditorGroup {
                 index
             }
             None => {
-                let index = self.active_index().map_or(self.editors.len(), |active| active + 1);
+                // `openEditor`: a new editor goes after the sticky ones, a sticky one last among them.
+                let sticky_count = self.sticky_count();
+                let after_active = self.active_index().map_or(self.editors.len(), |active| active + 1);
+                let index = if editor.sticky { after_active.min(sticky_count) } else { after_active.max(sticky_count) };
                 self.editors.insert(index, editor);
                 index
             }
@@ -1312,13 +1320,45 @@ impl EditorGroup {
         self.editors[index].preview = false;
     }
 
+    pub fn sticky_count(&self) -> usize {
+        self.editors.iter().take_while(|editor| editor.sticky).count()
+    }
+
+    /// editorGroupModel.ts `doStick`: the editor is pinned and becomes the last sticky one; answers its index.
+    pub fn stick(&mut self, index: usize) -> usize {
+        if self.editors[index].sticky {
+            return index;
+        }
+        self.pin(index);
+        let to = self.sticky_count();
+        let editor = self.editors.remove(index);
+        self.editors.insert(to, editor);
+        self.editors[to].sticky = true;
+        to
+    }
+
+    /// editorGroupModel.ts `doUnstick`: the editor becomes the first non-sticky one; answers its index.
+    pub fn unstick(&mut self, index: usize) -> usize {
+        if !self.editors[index].sticky {
+            return index;
+        }
+        let to = self.sticky_count() - 1;
+        let editor = self.editors.remove(index);
+        self.editors.insert(to, editor);
+        self.editors[to].sticky = false;
+        to
+    }
+
     /// editorGroupModel.ts `moveEditor` then `pin`, as a move inside the group does; `to` is clamped to the tabs.
+    /// A move into the sticky range makes the editor sticky, a move out of it unsticks it.
     pub fn move_editor(&mut self, from: usize, to: usize) {
         let to = to.min(self.editors.len() - 1);
         if from == to {
             return;
         }
-        let editor = self.editors.remove(from);
+        let sticky = to < self.sticky_count();
+        let mut editor = self.editors.remove(from);
+        editor.sticky = sticky;
         self.editors.insert(to, editor);
         self.pin(to);
     }
@@ -1492,6 +1532,65 @@ mod tests {
         assert_eq!(names(&group), ["a", "d", "c"]);
         group.close(1);
         assert_eq!(group.active().unwrap().document().name(), "a");
+    }
+
+    #[test]
+    fn sticky_editors_come_first_and_move_in_and_out_of_the_sticky_range() {
+        // editorGroupModel.test.ts 'Sticky Editors'.
+        let document = |name: &str| TextDocument {
+            scheme: "file".into(),
+            path: PathBuf::from(name),
+            lines: vec![String::new()],
+            eol: "\n",
+            encoding: "utf8".into(),
+            language_id: "plaintext".into(),
+            indentation: DEFAULT_INDENTATION,
+            off_side: false,
+            folding_markers: None,
+            block_comment: None,
+            tokens: Tokenization::default(),
+            too_large_for_tokenization: false,
+            open_error: None,
+        };
+        // A sticky editor's name ends in `*`.
+        let order = |group: &EditorGroup| group.editors.iter().map(|editor| format!("{}{}", editor.document().name(), if editor.sticky { "*" } else { "" })).collect::<Vec<_>>();
+        let index = |group: &EditorGroup, name: &str| group.editors.iter().position(|editor| editor.document().name() == name).unwrap();
+        let mut group = EditorGroup::default();
+        group.open(document("1"), false);
+        group.open(document("2"), false);
+        group.open(document("3"), true);
+        assert_eq!(group.sticky_count(), 0);
+        group.stick(index(&group, "3"));
+        assert_eq!(order(&group), ["3*", "1", "2"]);
+        assert!(!group.editors[0].preview, "sticking pins");
+        group.stick(0);
+        assert_eq!(group.sticky_count(), 1, "sticking a sticky editor is a no-op");
+        group.stick(index(&group, "2"));
+        assert_eq!(order(&group), ["3*", "2*", "1"]);
+        group.stick(index(&group, "1"));
+        assert_eq!(group.sticky_count(), 3);
+        group.unstick(index(&group, "3"));
+        assert_eq!(order(&group), ["2*", "1*", "3"]);
+        group.unstick(index(&group, "1"));
+        group.unstick(index(&group, "2"));
+        assert_eq!(group.sticky_count(), 0);
+        group.move_editor(index(&group, "1"), 0);
+        group.move_editor(index(&group, "2"), 1);
+        group.move_editor(index(&group, "3"), 2);
+        group.stick(0);
+        group.stick(1);
+        group.activate(0);
+        group.open(document("4"), false);
+        assert_eq!(index(&group, "4"), 2, "a new editor opens after the sticky ones");
+        group.close(2);
+        group.move_editor(index(&group, "1"), 1);
+        assert_eq!(order(&group), ["2*", "1*", "3"], "moved within the sticky range");
+        group.move_editor(index(&group, "1"), 2);
+        assert_eq!(order(&group), ["2*", "3", "1"], "moved out of the sticky range");
+        group.move_editor(index(&group, "1"), 0);
+        assert_eq!(order(&group), ["1*", "2*", "3"], "moved into the sticky range");
+        group.close(0);
+        assert_eq!(group.sticky_count(), 1, "closing a sticky editor");
     }
 
     #[test]

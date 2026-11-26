@@ -1220,6 +1220,7 @@ pub(super) struct NotebookRestore {
     pub group: u32,
     pub index: usize,
     pub preview: bool,
+    pub sticky: bool,
     /// The group's active editor.
     pub active: bool,
     pub input: NotebookInput,
@@ -1309,6 +1310,9 @@ impl Workbench {
                         workbench.editors.move_editor(from, restore.index);
                         let to = restore.index.min(workbench.editors.editors.len() - 1);
                         workbench.editors.editors[to].preview = restore.preview;
+                        if restore.sticky {
+                            workbench.editors.stick(to);
+                        }
                     }
                 }
                 if workbench.editors.group_ids_mru().contains(&previous_group) && !restore.active {

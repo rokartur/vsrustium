@@ -57,6 +57,16 @@ const DECORATIONS_WIDTH: f32 = 26.;
 const LINE_NUMBERS_MIN_CHARS: usize = 3;
 const OVERVIEW_RULER_WIDTH: f32 = 14.;
 const TAB_STRIP_HEIGHT: f32 = 32.;
+/// The sticky tabs' own bar above the strip (`pinnedTabsOnSeparateRow`), measured in the reference.
+const UPPER_TAB_BAR_HEIGHT: f32 = 30.;
+
+#[derive(Clone, Copy, PartialEq)]
+enum TabRow {
+    /// The strip connected to the editor; its first tab meets the part's rounded corner.
+    Main { first: bool },
+    /// The sticky tabs' bar above it (`pinnedTabsOnSeparateRow`).
+    Upper,
+}
 const BREADCRUMBS_HEIGHT: f32 = 22.;
 /// scrollableElement.ts `HIDE_TIMEOUT`; scrollbars.css fades in over 100ms and out over 800ms.
 const SCROLLBAR_HIDE_TIMEOUT: Duration = Duration::from_millis(500);
@@ -149,8 +159,14 @@ impl Workbench {
             }));
         // The line under the strip (tabs-border-bottom) runs below the shoulders; the active fill covers it.
         let bottom_line = div().absolute().bottom_0().left_0().right_0().h(px(1.)).bg(self.connected_tab_border());
+        // multiRowEditorTabsControl.ts: with `workbench.editor.pinnedTabsOnSeparateRow` the sticky tabs get a bar of
+        // their own above the others while the group has both (`two-tab-bars`); only the lower bar has the actions.
+        let count = self.editors.editors.len();
+        let sticky_count = self.editors.sticky_count();
+        let two_bars = sticky_count > 0 && sticky_count < count && self.setting("workbench.editor.pinnedTabsOnSeparateRow") == json!(true);
+        let lower_tabs = if two_bars { sticky_count..count } else { 0..count };
         // editortabscontrol.css: the whole title, tabs and their close buttons included, is cursor pointer.
-        div()
+        let lower = div()
             .relative()
             .h(px(TAB_STRIP_HEIGHT))
             .flex_none()
@@ -158,8 +174,22 @@ impl Workbench {
             .flex()
             .bg(self.tab_strip_background())
             .child(bottom_line)
-            .children((0..self.editors.editors.len()).map(|index| self.tab(index, index == active, cx)))
-            .child(actions)
+            .children(lower_tabs.clone().map(|index| self.tab(index, index == active, TabRow::Main { first: index == lower_tabs.start }, cx)))
+            .child(actions);
+        if !two_bars {
+            return lower;
+        }
+        // connectedEditorTabs.css `.connected-tab-upper-bar`: 2px above and before its tabs, none of them connected.
+        let upper = div()
+            .h(px(UPPER_TAB_BAR_HEIGHT))
+            .flex_none()
+            .cursor_pointer()
+            .pt(px(2.))
+            .pl(px(2.))
+            .flex()
+            .bg(self.tab_strip_background())
+            .children((0..sticky_count).map(|index| self.tab(index, index == active, TabRow::Upper, cx)));
+        div().flex_none().flex().flex_col().child(upper).child(lower)
     }
 
     /// The `navigation` group of `MenuId.EditorTitle` by order: the diff editor's built-in actions and the
@@ -275,8 +305,19 @@ impl Workbench {
     }
 
     /// A tab sized to its label (tab.sizing fit): 8px before the label, 30.5px after it for the close action.
-    fn tab(&self, index: usize, active: bool, cx: &mut Context<Self>) -> Div {
+    fn tab(&self, index: usize, active: bool, row: TabRow, cx: &mut Context<Self>) -> Div {
         let editor = &self.editors.editors[index];
+        let upper = row == TabRow::Upper;
+        // connectedEditorTabs.css: the upper bar's tabs are 28px high, their label and icon 2px from the top.
+        let content_top = if upper { 2. } else { 3.5 };
+        // multiEditorTabsControl.ts `getStickyTabWidth`: `workbench.editor.pinnedTabSizing` compact (28px with the
+        // modern UI tabs, icon only, no actions) and shrink (80px, label cut) size the sticky tabs.
+        let sticky_sizing = match self.setting("workbench.editor.pinnedTabSizing").as_str() {
+            Some("compact") if editor.sticky => Some(28.),
+            Some("shrink") if editor.sticky => Some(80.),
+            _ => None,
+        };
+        let compact = sticky_sizing == Some(28.);
         let readonly = self.readonly(&editor.document().scheme, &editor.document().path).is_some();
         let action_foreground = if active { self.foreground_or("modernEditorTab.activeForeground") } else { self.foreground_or("tab.inactiveForeground") };
         // tabs.css colors `.tab-label:not(.monaco-decoration-itemColor)`: a decorated label (read-only, no color of its
@@ -289,7 +330,7 @@ impl Workbench {
         let decoration_color = self.decoration_color(decoration.as_ref(), self.setting("workbench.editor.decorations.colors") != json!(false));
         let badge = self.decoration_badge(decoration.as_ref(), foreground).filter(|_| self.setting("workbench.editor.decorations.badges") != json!(false));
         let label = div()
-            .mt(px(3.5))
+            .mt(px(content_top))
             .h(px(24.))
             .line_height(px(24.))
             .whitespace_nowrap()
@@ -298,7 +339,11 @@ impl Workbench {
             .when(editor.preview, |label| label.italic())
             .when_some(decoration_color, |label, color| label.text_color(color))
             .when(orphaned, |label| label.line_through().text_color(self.foreground_or("list.errorForeground")))
-            .child(self.editor_name(editor))
+            // A flex item's text never shrinks, so the cut name gets its own box for the ellipsis.
+            .map(|label| match sticky_sizing {
+                Some(_) => label.min_w_0().pr(px(5.)).child(div().min_w_0().overflow_hidden().text_ellipsis().child(self.editor_name(editor))),
+                None => label.child(self.editor_name(editor)),
+            })
             .children(self.untitled_description(editor).map(|description| {
                 // iconlabel.css `.label-description`: 0.9em at 0.7 opacity (0.95 in light themes), 0.5em after the name.
                 let opacity = if self.theme.kind == ThemeKind::Light { 0.95 } else { 0.7 };
@@ -312,27 +357,52 @@ impl Workbench {
         // textFileService.ts decorations: a read-only file's label ends in the lockSmall badge at 0.75 opacity. The
         // iconlabel.css `::after` font-size 90% (11.7px) wins over the decoration rule's 16px, which loads first.
         let lock = readonly.then(|| self.icon("lock-small", 11.7, 11.7, foreground).mt(px(9.5)).ml(px(5.)).opacity(0.75));
-        // A dirty tab shows a filled circle where the close action goes, also when inactive (tabstitlecontrol.css).
+        // A dirty tab shows a filled circle where the close action goes, also when inactive, and the action itself
+        // while hovered (multieditortabscontrol.css `.dirty .action-label:not(:hover)`); a sticky tab always shows its
+        // unpin action (`pinned`, `pinned-dirty` while dirty).
         let dirty = self.tab_shows_dirty(index);
-        let close_icon = if dirty { "circle-filled" } else { "close-small" };
-        let close = self.icon(close_icon, 20., 16., action_foreground).id(("close", index)).rounded(px(4.)).on_click(cx.listener(move |workbench, _, window, cx| {
-            cx.stop_propagation();
-            drop(workbench.close_editors(vec![index], window, cx));
-        }));
+        let sticky = editor.sticky;
+        let action_icon = if sticky { "pinned" } else { "close-small" };
+        let rest_icon = match (sticky, dirty) {
+            (true, true) => "pinned-dirty",
+            (false, true) => "circle-filled",
+            _ => action_icon,
+        };
+        let action_group = gpui::SharedString::from(format!("tab-action-{index}"));
+        let tab_group = gpui::SharedString::from(format!("tab-{index}"));
+        let close = div()
+            .id(("close", index))
+            .group(action_group.clone())
+            .relative()
+            .rounded(px(4.))
+            .hover(|action| action.bg(self.color("toolbar.hoverBackground")))
+            .child(self.icon(rest_icon, 20., 16., action_foreground).group_hover(action_group.clone(), |icon| icon.invisible()))
+            .child(self.icon(action_icon, 20., 16., action_foreground).absolute().top_0().left_0().invisible().group_hover(action_group, |icon| icon.visible()))
+            .when(sticky, |close| close.child(self.hover_target(("tab-unpin-hover", index), super::hover::HoverContent::Text("Unpin Editor".into()), super::hover::HoverOptions::mouse())))
+            .on_click(cx.listener(move |workbench, _, window, cx| {
+                cx.stop_propagation();
+                match sticky {
+                    true => drop(workbench.execute_command("workbench.action.unpinEditor", vec![json!({ "editorIndex": index })], window, cx)),
+                    false => drop(workbench.close_editors(vec![index], window, cx)),
+                }
+            }));
         let tab = div()
             .id(("tab", index))
             .relative()
             .h_full()
             .flex_none()
             .flex()
-            .pr(px(30.5))
             .text_color(foreground)
-            .map(|tab| match file_icon {
-                Some(icon) => tab.pl(px(6.)).child(icon.mt(px(3.5))).child(label.ml(px(6.))),
-                None => tab.pl(px(8.)).child(label),
+            .when_some(sticky_sizing, |tab, width| tab.w(px(width)))
+            .map(|tab| match (file_icon, compact) {
+                (Some(icon), true) => tab.pl(px(5.)).child(icon.mt(px(content_top))),
+                (None, true) => tab.px(px(4.)).child(label.flex_1().justify_center()),
+                (Some(icon), false) => tab.pl(px(6.)).pr(px(30.5)).child(icon.mt(px(content_top))).child(label.ml(px(6.))),
+                (None, false) => tab.pl(px(8.)).pr(px(30.5)).child(label),
             })
             .children(lock)
-            .children(badge.map(|badge| badge.mt(px(3.5)).line_height(px(24.))))
+            // In a tab the badge sits right before the action's padding, without the list rows' 16px end margin.
+            .children(badge.map(|badge| badge.mt(px(3.5)).mr(px(0.)).line_height(px(24.))))
             .map(|tab| self.tab_drag_and_drop(tab, self.editors.id, index, cx))
             .on_click(cx.listener(move |workbench, event: &gpui::ClickEvent, _, cx| {
                 workbench.editors.activate(index);
@@ -342,10 +412,27 @@ impl Workbench {
                 workbench.editors_changed(cx);
             }))
             .on_mouse_down(MouseButton::Right, cx.listener(move |workbench, event: &MouseDownEvent, window, cx| workbench.show_tab_context_menu(index, event.position, window, cx)))
+            // multiEditorTabsControl.ts: a middle click closes the tab unless `preventPinnedEditorClose` keeps it.
+            .on_mouse_up(MouseButton::Middle, cx.listener(move |workbench, _: &gpui::MouseUpEvent, window, cx| {
+                if !workbench.prevents_mouse_close(&workbench.editors.editors[index]) {
+                    drop(workbench.close_editors(vec![index], window, cx));
+                }
+            }))
             .child(self.tab_hover(index))
-            .when(active || dirty, |tab| tab.child(div().absolute().top(px(5.5)).right(px(6.5)).child(close)));
+            // connectedEditorTabs.css: an inactive tab's close action is transparent until the tab is hovered.
+            .group(tab_group.clone())
+            .when(!compact, |tab| {
+                let close_top = if upper { 4. } else { 5.5 };
+                tab.child(div().absolute().top(px(close_top)).right(px(6.5)).when(!(active || dirty || sticky), |close| close.invisible().group_hover(tab_group, |close| close.visible())).child(close))
+            });
+        // multieditortabscontrol.css: tabs abut; only the last one keeps 8px after it, before the editor actions.
         if !active {
-            return div().h_full().flex_none().child(tab).mr(px(8.));
+            return div().h_full().flex_none().child(tab);
+        }
+        // connectedEditorTabs.css: an active tab in the upper bar is not connected to the editor, only a 24px fill inset 2px.
+        if upper {
+            let fill = div().absolute().inset(px(2.)).rounded(px(4.)).bg(self.color("editor.background"));
+            return div().h_full().flex_none().relative().child(fill).child(tab);
         }
         // The fill starts in the part's top border row; its caps and shoulders are cornerRadius-medium plus the stroke.
         let surface = self.color("editor.background");
@@ -360,7 +447,7 @@ impl Workbench {
             .child(div().absolute().top(px(-1.)).left_0().right_0().h(px(TAB_STRIP_HEIGHT + 1.)).bg(surface).border_t_1().border_r_1().rounded_t(radius).border_color(border))
             .when_some(self.theme.color("tab.activeBorder"), |tab, color| tab.child(div().absolute().bottom_0().left_0().right_0().h(px(1.)).bg(color)))
             // The first tab meets the part's own rounded corner, so it has no left shoulder.
-            .when(index > 0, |tab| tab.child(shoulder(div().left(-radius)).child(strip_corner().border_r_1().rounded_br(radius))))
+            .when(row == TabRow::Main { first: false }, |tab| tab.child(shoulder(div().left(-radius)).child(strip_corner().border_r_1().rounded_br(radius))))
             .child(shoulder(div().left_full()).child(strip_corner().border_l_1().rounded_bl(radius)))
             .child(tab)
     }
