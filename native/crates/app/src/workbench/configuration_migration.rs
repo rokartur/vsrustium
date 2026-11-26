@@ -1,5 +1,6 @@
-//! `ConfigurationMigrationWorkbenchContribution` (workbench/common/configuration.ts) with the migrations of the
-//! codeEditor contribution: editorSettingsMigration.ts over migrateOptions.ts, and diffEditorHelper.ts.
+//! `ConfigurationMigrationWorkbenchContribution` (workbench/common/configuration.ts) with every registered
+//! migration of the kept features: editorSettingsMigration.ts over migrateOptions.ts, diffEditorHelper.ts,
+//! workbench.contribution.ts, accessibility, terminal, debug, extensions, search, testing and the startup editor.
 
 use config::model::{Change, ConfigurationModel, get_configuration_value, merge_changes};
 use config::service::{Settings, Target};
@@ -91,7 +92,223 @@ fn migrations() -> Vec<Migration> {
         key: "diffEditor.experimental.collapseUnchangedRegions".into(),
         migrate: Box::new(|value, _| vec![("diffEditor.hideUnchangedRegions.enabled".into(), Some(value.clone())), ("diffEditor.experimental.collapseUnchangedRegions".into(), None)]),
     });
+    migrations.extend(workbench_migrations());
+    migrations.extend(accessibility_migrations());
+    migrations.extend(contribution_migrations());
     migrations
+}
+
+fn migration(key: &str, migrate: impl Fn(&Value, &dyn Fn(&str) -> Option<Value>) -> Pairs + 'static) -> Migration {
+    Migration { key: key.into(), migrate: Box::new(migrate) }
+}
+
+fn pair(key: &str, value: Option<Value>) -> (String, Option<Value>) {
+    (key.into(), value)
+}
+
+/// The old key goes, its value moves to the new key unless that one is set.
+fn move_unless_set(old: &'static str, new: &'static str) -> Migration {
+    migration(old, move |value, read| {
+        let mut pairs = vec![pair(old, None)];
+        if read(new).is_none() {
+            pairs.push(pair(new, Some(value.clone())));
+        }
+        pairs
+    })
+}
+
+/// The old key goes, its value moves to the new key.
+fn rename(old: &'static str, new: &'static str) -> Migration {
+    migration(old, move |value, _| vec![pair(new, Some(value.clone())), pair(old, None)])
+}
+
+/// workbench.contribution.ts; `includeApplication` adds nothing since the port's application settings are the user's.
+fn workbench_migrations() -> Vec<Migration> {
+    vec![
+        move_unless_set("workbench.experimental.modernUIFrostedGlass", "workbench.modernUIFrostedGlass"),
+        move_unless_set("workbench.experimental.modernUIFrostedGlassOpacity", "workbench.modernUIFrostedGlassOpacity"),
+        migration("workbench.activityBar.visible", |value, _| {
+            let mut pairs = vec![pair("workbench.activityBar.visible", None)];
+            if *value == json!(false) {
+                pairs.push(pair("workbench.activityBar.location", Some(json!("hidden"))));
+            }
+            pairs
+        }),
+        migration("workbench.activityBar.location", |value, _| {
+            if *value == json!("side") { vec![pair("workbench.activityBar.location", Some(json!("default")))] } else { vec![] }
+        }),
+        migration("workbench.editor.doubleClickTabToToggleEditorGroupSizes", |value, _| match value {
+            Value::Bool(expand) => vec![pair("workbench.editor.doubleClickTabToToggleEditorGroupSizes", Some(json!(if *expand { "expand" } else { "off" })))],
+            _ => vec![],
+        }),
+        migration("workbench.editor.showTabs", |value, _| match value {
+            Value::Bool(multiple) => vec![pair("workbench.editor.showTabs", Some(json!(if *multiple { "multiple" } else { "single" })))],
+            _ => vec![],
+        }),
+        migration("workbench.editor.tabCloseButton", |value, _| match value.as_str() {
+            Some("left" | "right") => vec![pair("workbench.editor.tabActionLocation", Some(value.clone()))],
+            Some("off") => vec![pair("workbench.editor.tabActionCloseVisibility", Some(json!(false)))],
+            _ => vec![],
+        }),
+        migration("zenMode.hideTabs", |value, _| {
+            let mut pairs = vec![pair("zenMode.hideTabs", None)];
+            if *value == json!(true) {
+                pairs.push(pair("zenMode.showTabs", Some(json!("single"))));
+            }
+            pairs
+        }),
+        migration("workbench.experimental.floatingPanels", |value, read| {
+            let mut pairs = vec![pair("workbench.experimental.floatingPanels", None)];
+            if *value == json!(true) && read("workbench.experimental.modernUI").is_none() {
+                pairs.push(pair("workbench.experimental.modernUI", Some(json!(true))));
+            }
+            pairs
+        }),
+        migration("workbench.experimental.styleOverrides", |value, read| {
+            let mut pairs = vec![pair("workbench.experimental.styleOverrides", None)];
+            if value.as_array().is_some_and(|overrides| !overrides.is_empty()) && read("workbench.experimental.modernUI").is_none() {
+                pairs.push(pair("workbench.experimental.modernUI", Some(json!(true))));
+            }
+            pairs
+        }),
+    ]
+}
+
+/// `(legacySoundSettingsKey, legacyAnnouncementSettingsKey, settingsKey)` of accessibilitySignalService.ts, without the
+/// chat and voice signals of removed features.
+const LEGACY_SIGNAL_KEYS: &[(&str, Option<&str>, &str)] = &[
+    ("audioCues.lineHasError", Some("accessibility.alert.error"), "accessibility.signals.lineHasError"),
+    ("audioCues.lineHasWarning", Some("accessibility.alert.warning"), "accessibility.signals.lineHasWarning"),
+    ("audioCues.lineHasFoldedArea", Some("accessibility.alert.foldedArea"), "accessibility.signals.lineHasFoldedArea"),
+    ("audioCues.lineHasBreakpoint", Some("accessibility.alert.breakpoint"), "accessibility.signals.lineHasBreakpoint"),
+    ("audioCues.lineHasInlineSuggestion", None, "accessibility.signals.lineHasInlineSuggestion"),
+    ("audioCues.nextEditSuggestion", None, "accessibility.signals.nextEditSuggestion"),
+    ("audioCues.terminalQuickFix", Some("accessibility.alert.terminalQuickFix"), "accessibility.signals.terminalQuickFix"),
+    ("audioCues.onDebugBreak", Some("accessibility.alert.onDebugBreak"), "accessibility.signals.onDebugBreak"),
+    ("audioCues.noInlayHints", Some("accessibility.alert.noInlayHints"), "accessibility.signals.noInlayHints"),
+    ("audioCues.taskCompleted", Some("accessibility.alert.taskCompleted"), "accessibility.signals.taskCompleted"),
+    ("audioCues.taskFailed", Some("accessibility.alert.taskFailed"), "accessibility.signals.taskFailed"),
+    ("audioCues.terminalCommandFailed", Some("accessibility.alert.terminalCommandFailed"), "accessibility.signals.terminalCommandFailed"),
+    ("audioCues.terminalBell", Some("accessibility.alert.terminalBell"), "accessibility.signals.terminalBell"),
+    ("audioCues.notebookCellCompleted", Some("accessibility.alert.notebookCellCompleted"), "accessibility.signals.notebookCellCompleted"),
+    ("audioCues.notebookCellFailed", Some("accessibility.alert.notebookCellFailed"), "accessibility.signals.notebookCellFailed"),
+    ("audioCues.diffLineInserted", None, "accessibility.signals.diffLineInserted"),
+    ("audioCues.diffLineDeleted", None, "accessibility.signals.diffLineDeleted"),
+    ("audioCues.diffLineModified", None, "accessibility.signals.diffLineModified"),
+    ("audioCues.codeActionRequestTriggered", Some("accessibility.alert.codeActionRequestTriggered"), "accessibility.signals.codeActionTriggered"),
+    ("audioCues.codeActionApplied", None, "accessibility.signals.codeActionApplied"),
+    ("audioCues.chatResponsePending", Some("accessibility.alert.progress"), "accessibility.signals.progress"),
+    ("audioCues.clear", Some("accessibility.alert.clear"), "accessibility.signals.clear"),
+    ("audioCues.save", Some("accessibility.alert.save"), "accessibility.signals.save"),
+    ("audioCues.format", Some("accessibility.alert.format"), "accessibility.signals.format"),
+];
+
+/// accessibilityConfiguration.ts, without `accessibility.voice.autoSynthesize` (voice chat is removed).
+fn accessibility_migrations() -> Vec<Migration> {
+    let mut migrations = vec![
+        rename("audioCues.volume", "accessibility.signalOptions.volume"),
+        rename("audioCues.debouncePositionChanges", "accessibility.signalOptions.debouncePositionChanges"),
+        migration("accessibility.signalOptions", |_, read| {
+            let options = read("accessibility.signalOptions");
+            let option = |path: &[&str]| path.iter().try_fold(options.as_ref()?, |value, key| value.get(*key)).cloned();
+            let first_truthy = |values: Vec<Option<Value>>| values.into_iter().flatten().find(is_truthy);
+            let delays = |kind: &str| {
+                first_truthy(vec![read(&format!("accessibility.signalOptions.experimental.delays.{kind}")), option(&["experimental.delays", kind]), option(&["delays", kind])])
+            };
+            let volume = first_truthy(vec![read("accessibility.signalOptions.volume"), option(&["volume"]), read("accessibility.signals.sounds.volume"), read("audioCues.volume")]);
+            let debounce = first_truthy(vec![
+                read("accessibility.signalOptions.debouncePositionChanges"),
+                option(&["debouncePositionChanges"]),
+                read("accessibility.signals.debouncePositionChanges"),
+                read("audioCues.debouncePositionChanges"),
+            ]);
+            let mut pairs = Pairs::new();
+            let found = [
+                ("accessibility.signalOptions.volume", volume),
+                ("accessibility.signalOptions.experimental.delays.general", delays("general")),
+                ("accessibility.signalOptions.experimental.delays.errorAtPosition", delays("errorAtPosition")),
+                ("accessibility.signalOptions.experimental.delays.warningAtPosition", delays("warningAtPosition")),
+                ("accessibility.signalOptions.debouncePositionChanges", debounce),
+            ];
+            for (key, value) in found {
+                if value.is_some() {
+                    pairs.push(pair(key, value));
+                }
+            }
+            pairs.push(pair("accessibility.signalOptions", None));
+            pairs
+        }),
+        rename("accessibility.signals.sounds.volume", "accessibility.signalOptions.volume"),
+        rename("accessibility.signals.debouncePositionChanges", "accessibility.signalOptions.debouncePositionChanges"),
+        rename("accessibility.signals.chatResponsePending", "accessibility.signals.progress"),
+    ];
+    for &(sound_key, announcement_key, settings_key) in LEGACY_SIGNAL_KEYS {
+        migrations.push(migration(sound_key, move |sound, read| {
+            let announcement = announcement_key.and_then(|key| read(key)).filter(|value| !value.is_null()).map(|value| announcement_value(&value));
+            vec![pair(sound_key, None), pair(settings_key, Some(signal_value(Some(sound.clone()), announcement)))]
+        }));
+    }
+    for &(sound_key, announcement_key, settings_key) in LEGACY_SIGNAL_KEYS {
+        let Some(announcement_key) = announcement_key else { continue };
+        migrations.push(migration(announcement_key, move |announcement, read| {
+            let sound = [read(settings_key).and_then(|value| value.get("sound").cloned()), read(sound_key)].into_iter().flatten().find(is_truthy);
+            vec![pair(settings_key, Some(signal_value(sound, Some(announcement_value(announcement))))), pair(announcement_key, None), pair(sound_key, None)]
+        }));
+    }
+    migrations
+}
+
+/// A legacy announcement that is not a string: `auto` when truthy, else `off`.
+fn announcement_value(value: &Value) -> Value {
+    if value.is_string() { value.clone() } else { json!(if is_truthy(value) { "auto" } else { "off" }) }
+}
+
+/// `{ announcement, sound }` with an `undefined` member left out, as JSON.stringify does.
+fn signal_value(sound: Option<Value>, announcement: Option<Value>) -> Value {
+    let mut signal = serde_json::Map::new();
+    if let Some(announcement) = announcement {
+        signal.insert("announcement".into(), announcement);
+    }
+    if let Some(sound) = sound {
+        signal.insert("sound".into(), sound);
+    }
+    Value::Object(signal)
+}
+
+/// terminalConfiguration.ts, debugSettingMigration.ts, extensions.contribution.ts, search.contribution.ts,
+/// testing/common/configuration.ts and gettingStarted.contribution.ts.
+fn contribution_migrations() -> Vec<Migration> {
+    vec![
+        migration("terminal.integrated.enableBell", |enable_bell, read| {
+            let announcement = read("accessibility.signals.terminalBell")
+                .and_then(|value| value.get("announcement").cloned())
+                .filter(|value| !value.is_null())
+                .or_else(|| read("accessibility.alert.terminalBell"))
+                .map(|value| announcement_value(&value));
+            let sound = json!(if is_truthy(enable_bell) { "on" } else { "off" });
+            vec![
+                pair("accessibility.signals.terminalBell", Some(signal_value(Some(sound), announcement))),
+                pair("terminal.integrated.enableBell", None),
+                pair("terminal.integrated.enableVisualBell", Some(enable_bell.clone())),
+            ]
+        }),
+        migration("debug.autoExpandLazyVariables", |value, _| match value {
+            Value::Bool(on) => vec![pair("debug.autoExpandLazyVariables", Some(json!(if *on { "on" } else { "off" })))],
+            _ => vec![],
+        }),
+        migration("extensions.autoUpdate", |value, _| {
+            if *value == json!("on") || *value == json!("off") {
+                return vec![];
+            }
+            let off = *value == json!(false) || *value == json!("onlySelectedExtensions");
+            vec![pair("extensions.autoUpdate", Some(json!(if off { "off" } else { "on" })))]
+        }),
+        rename("search.experimental.quickAccess.preserveInput", "search.quickAccess.preserveInput"),
+        migration("testing.openTesting", |value, _| vec![pair("testing.automaticallyOpenTestResults", Some(value.clone()))]),
+        migration("workbench.startupEditor", |value, _| {
+            if *value == json!("agentSessionsWelcomePage") { vec![pair("workbench.startupEditor", Some(json!("welcomePage")))] } else { vec![] }
+        }),
+    ]
 }
 
 type EditorMigration = Box<dyn Fn(&Value, &dyn Fn(&str) -> Option<Value>, &mut dyn FnMut(&str, Option<Value>))>;
@@ -336,6 +553,46 @@ mod tests {
         assert_eq!(user.get_value(Some("editor.autoClosingQuotes")), Some(json!("never")));
         assert_eq!(user.get_value(Some("editor.autoSurround")), Some(json!("quotes")));
         assert_eq!(user.get_value(Some("editor.codeActionsOnSave")), Some(json!({ "source.fixAll": "explicit", "source.organizeImports": "always" })));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn workbench_and_contribution_migrations_rewrite_their_keys() {
+        let user = r#"{
+	"workbench.activityBar.visible": false,
+	"workbench.editor.showTabs": false,
+	"zenMode.hideTabs": true,
+	"terminal.integrated.enableBell": true,
+	"accessibility.alert.terminalBell": false,
+	"audioCues.save": "on",
+	"accessibility.alert.save": true,
+	"accessibility.signalOptions": { "volume": 40 },
+	"debug.autoExpandLazyVariables": true,
+	"extensions.autoUpdate": "onlyEnabledExtensions",
+	"search.experimental.quickAccess.preserveInput": true,
+	"workbench.startupEditor": "agentSessionsWelcomePage"
+}"#;
+        let (dir, mut settings) = settings_with("contributions", user, "{}");
+        migrate_configurations(&mut settings);
+        let user = &settings.configuration.local_user;
+        let value = |key: &str| user.get_value(Some(key));
+        assert_eq!(value("workbench.activityBar.visible"), None);
+        assert_eq!(value("workbench.activityBar.location"), Some(json!("hidden")));
+        assert_eq!(value("workbench.editor.showTabs"), Some(json!("single")));
+        assert_eq!(value("zenMode.hideTabs"), None);
+        assert_eq!(value("zenMode.showTabs"), Some(json!("single")));
+        assert_eq!(value("terminal.integrated.enableBell"), None);
+        assert_eq!(value("terminal.integrated.enableVisualBell"), Some(json!(true)));
+        assert_eq!(value("accessibility.signals.terminalBell"), Some(json!({ "announcement": "off", "sound": "on" })));
+        assert_eq!(value("audioCues.save"), None);
+        assert_eq!(value("accessibility.alert.save"), None);
+        assert_eq!(value("accessibility.signals.save"), Some(json!({ "announcement": "auto", "sound": "on" })));
+        assert_eq!(value("accessibility.signalOptions.volume"), Some(json!(40)));
+        assert_eq!(value("debug.autoExpandLazyVariables"), Some(json!("on")));
+        assert_eq!(value("extensions.autoUpdate"), Some(json!("on")));
+        assert_eq!(value("search.experimental.quickAccess.preserveInput"), None);
+        assert_eq!(value("search.quickAccess.preserveInput"), Some(json!(true)));
+        assert_eq!(value("workbench.startupEditor"), Some(json!("welcomePage")));
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
