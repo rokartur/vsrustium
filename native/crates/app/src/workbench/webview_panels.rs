@@ -347,6 +347,9 @@ impl Workbench {
         if event.id.starts_with(super::editor_insets::INSET_ID_PREFIX) {
             return self.handle_editor_inset_event(event);
         }
+        if let Some(tab) = event.id.strip_prefix(super::notebook_editor::WEBVIEW_ID_PREFIX) {
+            return self.handle_notebook_webview_event(tab.parse().unwrap_or_default(), &event.channel, &event.data, window, cx);
+        }
         let Some(panel) = self.webview_panel_mut(&event.id) else { return };
         let data = event.data;
         match event.channel.as_str() {
@@ -413,7 +416,7 @@ impl Workbench {
     }
 
     /// mainThreadWebviews.ts `onDidClickLink`: `isSupportedLink`, then the opener service.
-    fn open_webview_link(&mut self, link: &str, enable_command_uris: &Value, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn open_webview_link(&mut self, link: &str, enable_command_uris: &Value, window: &mut Window, cx: &mut Context<Self>) {
         let (scheme, rest) = link.split_once(':').unwrap_or_default();
         match scheme {
             "http" | "https" | "mailto" => cx.open_url(link),
@@ -716,7 +719,7 @@ pub(super) fn percent_decode(text: &str) -> String {
 
 /// A `did-keydown` from the host page as the keystroke GPUI would have seen: index.html forwards the keys its
 /// frame does not handle, which upstream go to the workbench's keybinding service.
-fn keystroke(data: &Value) -> Option<Keystroke> {
+pub(super) fn keystroke(data: &Value) -> Option<Keystroke> {
     let code = data["code"].as_str().unwrap_or_default();
     let key = data["key"].as_str()?;
     let key = if let Some(letter) = code.strip_prefix("Key") {

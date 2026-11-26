@@ -442,6 +442,20 @@ impl Workbench {
             context.insert("resourceScheme".into(), json!(editor.document().scheme));
             context.insert("resourceFilename".into(), json!(path.file_name().map(|name| name.to_string_lossy()).unwrap_or_default()));
             context.insert("resourceExtname".into(), json!(path.extension().map(|ext| format!(".{}", ext.to_string_lossy())).unwrap_or_default()));
+            // A notebook editor's resource keys are its notebook's (ResourceContextKey of the editor input), not a cell's.
+            if let Some((scheme, path)) = self.active_notebook_resource() {
+                context.insert("isFileSystemResource".into(), json!(scheme == "file"));
+                context.insert("resource".into(), json!(crate::editor::uri_string(&scheme, &path)));
+                context.insert("resourceScheme".into(), json!(scheme));
+                context.insert("resourceFilename".into(), json!(path.file_name().map(|name| name.to_string_lossy()).unwrap_or_default()));
+                context.insert("resourceExtname".into(), json!(path.extension().map(|ext| format!(".{}", ext.to_string_lossy())).unwrap_or_default()));
+                context.insert("resourceLangId".into(), json!(self.languages.guess_language(&path, "")));
+                // notebookContextKeys.ts; the list and its cells are the notebook editor's focus.
+                context.insert("notebookEditorFocused".into(), json!(true));
+                if let Some(model) = self.active_notebook_editor().and_then(|editor| self.host.notebooks.model(&editor.notebook)) {
+                    context.insert("notebookType".into(), json!(model.view_type));
+                }
+            }
         }
         self.quick_input_context(window, &mut context);
         match self.side_bar_view {
