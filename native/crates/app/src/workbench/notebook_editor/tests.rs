@@ -22,7 +22,10 @@ fn workbench_with_cells(cells: serde_json::Value, cx: &mut TestAppContext) -> (g
     let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
-    let dir = std::env::temp_dir().join(format!("vsrustium-notebook-editor-{}", std::process::id()));
+    // One folder per call: tests run in parallel threads of one process and would remove each other's.
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let run = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("vsrustium-notebook-editor-{}-{run}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("User")).unwrap();
     let settings = config::service::Settings::load(config::registry::Registry::with_extensions(&[]), dir.join("User"), None);
