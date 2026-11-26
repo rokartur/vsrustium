@@ -493,6 +493,23 @@ impl Workbench {
         true
     }
 
+    /// layoutActions.ts and cellEditorOptions.ts: the Customize Notebook... submenu's commands.
+    pub(super) fn register_notebook_layout_commands(&mut self) {
+        let forward = [("notebook.toggleLineNumbersFromEditorTitle", "notebook.toggleLineNumbers"), ("breadcrumbs.toggleFromEditorTitle", "breadcrumbs.toggle")];
+        for (id, target) in forward {
+            self.commands.register(id, move |workbench, _, window, cx| workbench.execute_command(target, Vec::new(), window, cx));
+        }
+        for id in ["workbench.notebook.layout.configure", "workbench.notebook.layout.configure.editorTitle"] {
+            self.commands.register(id, |workbench, _, window, cx| workbench.execute_command("workbench.action.openSettings", vec![json!({ "query": "@tag:notebookLayout" })], window, cx));
+        }
+        self.commands.register("notebook.toggleLineNumbers", |workbench, _, _, cx| {
+            let on = workbench.setting("notebook.lineNumbers") == "on";
+            workbench.update_setting("notebook.lineNumbers", json!(if on { "off" } else { "on" }));
+            cx.notify();
+            crate::commands::Outcome::done()
+        });
+    }
+
     /// The notebook's own navigation (arrow.ts `FocusNextCellAction`, `FocusPreviousCellAction`,
     /// `NOTEBOOK_FOCUS_TOP`/`BOTTOM`, editActions.ts `EditCellAction`, `QuitEditCellAction`).
     pub(super) fn register_notebook_list_commands(&mut self) {

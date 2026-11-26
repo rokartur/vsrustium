@@ -170,11 +170,36 @@ impl Workbench {
         let resource = self.editors.active().map(|editor| editor.document().uri()).into_iter().collect::<Vec<_>>();
         let foreground = self.color("icon.foreground");
         for item in self.menus.iter().filter(|item| item.menu == crate::menus::MenuId::EditorTitle && item.group == "navigation" && item.when.as_ref().is_none_or(|when| when.evaluate(&context))) {
-            let crate::menus::Entry::Command { id, .. } = &item.entry else { continue };
-            actions.push((item.order, self.command_button(id, item.title.clone(), resource.clone(), foreground, cx).into_any_element()));
+            match &item.entry {
+                crate::menus::Entry::Command { id, .. } => actions.push((item.order, self.command_button(id, item.title.clone(), resource.clone(), foreground, cx).into_any_element())),
+                // layoutActions.ts: the only workbench submenu here, with its `Codicon.gear` icon.
+                crate::menus::Entry::Submenu { submenu: submenu @ crate::menus::MenuId::NotebookEditorLayoutConfigure, .. } => {
+                    actions.push((item.order, self.submenu_button(*submenu, "gear", item.title.clone(), foreground, cx).into_any_element()));
+                }
+                crate::menus::Entry::Submenu { .. } => {}
+            }
         }
         actions.sort_by(|a, b| a.0.total_cmp(&b.0));
         actions.into_iter().map(|(_, element)| element).collect()
+    }
+
+    /// A title icon whose dropdown shows `submenu` below it (WorkbenchToolBar's `SubmenuItemAction` dropdown).
+    fn submenu_button(&self, submenu: crate::menus::MenuId, icon: &str, title: String, foreground: Rgba, cx: &mut Context<Self>) -> gpui::Stateful<Div> {
+        let bounds = Rc::new(Cell::new(Bounds::default()));
+        let measured = bounds.clone();
+        self.icon(icon, 22., 16., foreground)
+            .id(gpui::SharedString::from(format!("submenu-button-{submenu:?}")))
+            .rounded(px(5.))
+            .cursor_pointer()
+            .hover(|icon| icon.bg(self.color("toolbar.hoverBackground")))
+            .on_click(cx.listener(move |workbench, _: &gpui::ClickEvent, window, cx| {
+                cx.stop_propagation();
+                let context = workbench.key_context(window);
+                let actions = crate::menus::menu_actions(&workbench.menus, submenu, &context);
+                workbench.show_context_menu_actions(actions, &context, bounds.get(), Vec::new(), window, cx);
+            }))
+            .child(canvas(move |element_bounds, _, _| measured.set(element_bounds), |_, _, _, _| {}).absolute().size_full())
+            .child(self.hover_target(gpui::SharedString::from(format!("submenu-button-hover-{submenu:?}")), super::hover::HoverContent::Text(title), super::hover::HoverOptions::mouse()))
     }
 
     /// `--modern-ui-connected-tab-strip-background` (connectedEditorTabs.ts): the connected tabs background,

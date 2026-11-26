@@ -2,9 +2,11 @@
 //! `MenuId.NotebookOutputToolbar` actions and Change Presentation, the output commands, and which outputs show
 //! (codeCellViewModel.ts `updateOutputHeight`).
 
+use std::cell::Cell;
 use std::collections::HashMap;
+use std::rc::Rc;
 
-use gpui::{Bounds, ClickEvent, Context, Div, Image, ImageFormat, MouseButton, Window, point, prelude::*, px, size};
+use gpui::{Bounds, ClickEvent, Context, Div, Image, ImageFormat, MouseButton, Pixels, Window, canvas, prelude::*, px};
 use serde_json::{Value, json};
 
 use super::super::Workbench;
@@ -106,6 +108,8 @@ impl Workbench {
                 continue;
             }
             let (handle, output_id) = (cell.handle, output.id.clone());
+            let bounds = Rc::new(Cell::new(Bounds::default()));
+            let measured = bounds.clone();
             let id = gpui::SharedString::from(format!("notebook-output-more-{}", output.id));
             let toolbar = self
                 .icon("toolbar-more", 22., 16., self.color("icon.foreground"))
@@ -117,8 +121,9 @@ impl Workbench {
                 .cursor_pointer()
                 .hover(|button| button.bg(self.color("toolbar.hoverBackground")))
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .child(canvas(move |element_bounds, _, _| measured.set(element_bounds), |_, _, _, _| {}).absolute().size_full())
                 .child(self.hover_target(gpui::SharedString::from(format!("notebook-output-more-hover-{output_id}")), HoverContent::Text("More Actions...".into()), HoverOptions::mouse()))
-                .on_click(cx.listener(move |workbench, _: &ClickEvent, window, cx| workbench.show_output_menu(tab, handle, &output_id, top, window, cx)));
+                .on_click(cx.listener(move |workbench, _: &ClickEvent, window, cx| workbench.show_output_menu(tab, handle, &output_id, bounds.get(), window, cx)));
             toolbars.push(toolbar);
         }
         toolbars
@@ -126,7 +131,7 @@ impl Workbench {
 
     /// The toolbar's dropdown: Change Presentation when the output has more than one presentation, then the
     /// `MenuId.NotebookOutputToolbar` actions for this output, Copy Cell Output only where copying is enabled.
-    fn show_output_menu(&mut self, tab: u32, handle: u64, output_id: &str, output_top: f32, window: &mut Window, cx: &mut Context<Self>) {
+    fn show_output_menu(&mut self, tab: u32, handle: u64, output_id: &str, anchor: Bounds<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
         let Some(editor) = self.host.notebooks.editor(tab) else { return };
         let Some(model) = self.host.notebooks.model(&editor.notebook) else { return };
         let Some(cell_index) = model.index_of_handle(handle) else { return };
@@ -134,10 +139,6 @@ impl Workbench {
         let Some(index) = cell.outputs.iter().position(|output| output.id == output_id) else { return };
         let actions = self.output_menu_actions(tab, model, cell_index, index, window);
         let args = vec![json!({ "start": cell_index, "end": cell_index + 1, "outputId": output_id }), model.uri.clone()];
-        let view = &self.notebook_views.views[&tab];
-        let list = view.bounds.get();
-        let top = model_row_top(self, tab, model, cell_index) + output_top + 7. - view.scroll_top;
-        let anchor = Bounds::new(list.origin + point(px(layout::CODE_CELL_LEFT_MARGIN + layout::CELL_RUN_GUTTER - 32.), px(top)), size(px(22.), px(22.)));
         let context = self.key_context(window);
         self.show_context_menu_actions(actions, &context, anchor, args, window, cx);
     }
@@ -296,11 +297,6 @@ impl Workbench {
         })
         .detach();
     }
-}
-
-/// The top of cell `index` in the list of the notebook editor of `tab`.
-fn model_row_top(workbench: &Workbench, tab: u32, model: &NotebookModel, index: usize) -> f32 {
-    workbench.notebook_rows(tab, model).into_iter().find(|row| row.index == index).map_or(0., |row| row.layout.top)
 }
 
 /// cellOutput.ts `shouldEnableCopy`. Upstream tests `TEXT_BASED_MIMETYPES.indexOf(mime)` for truth, so every mime

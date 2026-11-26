@@ -334,3 +334,26 @@ fn a_notebook_editor_comes_back_from_workspace_storage(cx: &mut TestAppContext) 
     let tabs = workbench.read_with(cx, |workbench, _| workbench.editors.editors.iter().map(|editor| (editor.document().path.to_string_lossy().into_owned(), editor.preview)).collect::<Vec<_>>());
     assert_eq!(tabs, [(key, false)]);
 }
+
+/// layoutActions.ts: the notebook editor title's gear opens Customize Notebook..., whose toggles show their short
+/// titles, checked by and flipping their settings.
+#[gpui::test]
+fn the_customize_notebook_submenu(cx: &mut TestAppContext) {
+    let (workbench, cx, _) = workbench_with_cells(json!([{ "cellKind": 2, "language": "python", "source": "x", "outputs": [], "metadata": {} }]), cx);
+    let menu = |cx: &mut VisualTestContext| {
+        workbench.update_in(cx, |workbench, window, _| {
+            let context = workbench.key_context(window);
+            let title = crate::menus::menu_actions(&workbench.menus, crate::menus::MenuId::EditorTitle, &context).into_iter().any(|action| matches!(action, crate::menus::MenuAction::Submenu { ref title, .. } if title == "Customize Notebook..."));
+            assert!(title, "the gear is in the notebook's editor title");
+            let actions = crate::menus::menu_actions(&workbench.menus, crate::menus::MenuId::NotebookEditorLayoutConfigure, &context);
+            actions.into_iter().filter_map(|action| match action {
+                crate::menus::MenuAction::Command { title, checked, .. } => Some((title, checked)),
+                _ => None,
+            }).collect::<Vec<_>>()
+        })
+    };
+    let entry = |title: &str, checked: bool| (title.to_owned(), checked);
+    assert_eq!(menu(cx), [entry("Customize Notebook Layout", false), entry("Line Numbers", false), entry("Breadcrumbs", true)]);
+    run(&workbench, "notebook.toggleLineNumbersFromEditorTitle", cx);
+    assert_eq!(menu(cx)[1], entry("Line Numbers", true));
+}

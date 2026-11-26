@@ -1,0 +1,22 @@
+[
+	{ "wait": 15000 },
+	{ "hotkey": ["cmd", "p"] },
+	{ "wait": 800 },
+	{ "type": "sample.ipynb" },
+	{ "wait": 800 },
+	{ "key": "return" },
+	{ "wait": 30000 },
+	{ "click": [580, 103] },
+	{ "wait": 1000 },
+	{ "shot": "toolbar-more" },
+	{ "key": "escape" },
+	{ "wait": 500 },
+	{ "click": [951, 51] },
+	{ "wait": 1000 },
+	{ "shot": "title-gear" },
+	{ "key": "escape" },
+	{ "wait": 500 },
+	{ "click": [936, 133] },
+	{ "wait": 1000 },
+	{ "shot": "markup-more" }
+]
