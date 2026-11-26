@@ -48,6 +48,21 @@ fn a_hidden_panel_gives_its_height_to_the_editor() {
 }
 
 #[test]
+fn every_arrangement_lays_out_with_any_part_hidden() {
+    let alignments = [Alignment::Left, Alignment::Center, Alignment::Right, Alignment::Justify];
+    for side_bar in [Position::Left, Position::Right] {
+        for panel in [Position::Bottom, Position::Top, Position::Left, Position::Right] {
+            for alignment in alignments {
+                for hidden in [None, Some(Part::SideBar), Some(Part::AuxiliaryBar), Some(Part::Panel)] {
+                    let grid = Grid::new(1024., 705., PartSizes::defaults(1024., 768., panel), arrangement(side_bar, panel, alignment), |part| Some(part) != hidden);
+                    assert!(grid.part_bounds(Part::Editor).is_some());
+                    grid.sashes();
+                }
+            }
+        }
+    }
+}
+#[test]
 fn a_window_resize_goes_to_the_editor_first() {
     let mut grid = reference_grid(Arrangement::default());
     grid.layout(1124., 805.);

@@ -203,6 +203,9 @@ fn the_panel_moves_and_aligns_and_comes_back_where_it_was(cx: &mut TestAppContex
     window_cx.run_until_parked();
     run("workbench.action.positionPanelTop", window_cx);
     window_cx.run_until_parked();
+    run("workbench.action.alignPanelJustify", window_cx);
+    window_cx.run_until_parked();
+    assert_eq!(bounds(Part::Panel, window_cx).unwrap()[..2], [48., 0.]);
     run("workbench.action.positionPanelLeft", window_cx);
     window_cx.run_until_parked();
     run("workbench.action.toggleMaximizedPanel", window_cx);
