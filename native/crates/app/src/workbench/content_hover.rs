@@ -138,7 +138,7 @@ pub(super) struct Shown {
 /// `editor.hover` of the model's language.
 pub(super) struct HoverSettings {
     enabled: String,
-    delay: u64,
+    pub(super) delay: u64,
     sticky: bool,
     hiding_delay: u64,
     pub above: bool,

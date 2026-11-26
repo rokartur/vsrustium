@@ -9,7 +9,7 @@ use config::json::Segment;
 use config::json_edit::{FormattingOptions, set_property};
 use config::registry::Scope;
 use config::service::Target;
-use gpui::{Context, Div, MouseButton, MouseDownEvent, MouseMoveEvent, Task, Window, div, prelude::*, px};
+use gpui::{Context, Div, MouseButton, MouseDownEvent, MouseMoveEvent, Task, Window, deferred, div, prelude::*, px};
 use serde_json::{Value, json};
 
 use super::super::Workbench;
@@ -28,6 +28,9 @@ pub(in crate::workbench) struct EditSetting {
     /// The cursor's pencil was hidden by the pointer's while the cursor was this one.
     cursor_hidden: Option<(u32, Selection)>,
     toggle: Option<Task<()>>,
+    /// glyphHoverWidget.ts: the pencil's "Edit" hover, shown after `editor.hover.delay` on the pencil (model, 0-based line).
+    pub(in crate::workbench) glyph_hover: Option<(u32, usize)>,
+    glyph_hover_delay: Option<Task<()>>,
     /// `SettingHighlighter`: the setting's lines while the pointer is on its pencil, and after an update while the
     /// selection set on its value stays.
     hovered: Option<(u32, usize, usize)>,
@@ -131,6 +134,7 @@ impl Workbench {
         if self.edit_setting.hovered.take().is_some() {
             cx.notify();
         }
+        self.hide_edit_setting_glyph_hover(cx);
         self.edit_setting.toggle = Some(cx.spawn_in(window, async move |workbench, cx| {
             cx.background_executor().timer(MOUSE_MOVE_DELAY).await;
             let _ = workbench.update(cx, |workbench, cx| workbench.toggle_edit_setting_for_mouse(model, index + 1, cx));
@@ -165,11 +169,24 @@ impl Workbench {
             .top_0()
             .left_0()
             .cursor_pointer()
+            .debug_selector(|| format!("edit-setting-pencil-{index}"))
             .child(icon)
-            .on_mouse_move(cx.listener(move |workbench, _: &MouseMoveEvent, _, cx| {
+            .when(self.edit_setting.glyph_hover == Some((model, index)), |glyph| glyph.child(self.edit_setting_glyph_hover(glyph_margin_width)))
+            .on_mouse_move(cx.listener(move |workbench, _: &MouseMoveEvent, window, cx| {
                 cx.stop_propagation();
                 workbench.edit_setting.toggle = None;
                 let Some(editor) = workbench.editors.all_editors().find(|editor| editor.model_id == model) else { return };
+                if workbench.edit_setting.glyph_hover != Some((model, index)) && workbench.edit_setting.glyph_hover_delay.is_none() {
+                    let delay = Duration::from_millis(workbench.hover_settings(editor).delay);
+                    workbench.edit_setting.glyph_hover_delay = Some(cx.spawn_in(window, async move |workbench, cx| {
+                        cx.background_executor().timer(delay).await;
+                        let _ = workbench.update(cx, |workbench, cx| {
+                            workbench.edit_setting.glyph_hover_delay = None;
+                            workbench.edit_setting.glyph_hover = Some((model, index));
+                            cx.notify();
+                        });
+                    }));
+                }
                 let setting = workbench.editable_settings(editor, index + 1).into_iter().next();
                 let hovered = setting.map(|setting| (model, setting.first_line, setting.last_line));
                 if workbench.edit_setting.hovered != hovered {
@@ -179,9 +196,41 @@ impl Workbench {
             }))
             .on_mouse_down(MouseButton::Left, cx.listener(move |workbench, event: &MouseDownEvent, window, cx| {
                 cx.stop_propagation();
+                workbench.hide_edit_setting_glyph_hover(cx);
                 workbench.show_edit_setting_menu(model, index + 1, event.position, window, cx);
             }));
         Some(glyph)
+    }
+
+    /// `GlyphHoverWidget._showAt`: right of the glyph margin, its top on the line's; the pencil's `glyphMarginHoverMessage`.
+    fn edit_setting_glyph_hover(&self, glyph_margin_width: f32) -> impl IntoElement {
+        let hover = div()
+            .absolute()
+            .top_0()
+            .left(px(glyph_margin_width))
+            .border_1()
+            .border_color(self.color("editorHoverWidget.border"))
+            .rounded(px(super::super::content_hover_view::RADIUS))
+            .px(px(8.))
+            .py(px(4.))
+            .font_family(".SystemUIFont")
+            .text_size(px(13.))
+            .line_height(px(19.5))
+            .text_color(self.foreground_or("editorHoverWidget.foreground"))
+            .whitespace_nowrap()
+            .cursor_default()
+            .occlude()
+            .child(self.frosted_glass("editorHoverWidget.background", super::super::content_hover_view::RADIUS))
+            .child("Edit")
+            .on_mouse_move(|_, _, cx| cx.stop_propagation());
+        deferred(hover).with_priority(1)
+    }
+
+    fn hide_edit_setting_glyph_hover(&mut self, cx: &mut Context<Self>) {
+        self.edit_setting.glyph_hover_delay = None;
+        if self.edit_setting.glyph_hover.take().is_some() {
+            cx.notify();
+        }
     }
 
     /// `onEditSettingClicked`: one setting's values, or a submenu of values per setting on the line.

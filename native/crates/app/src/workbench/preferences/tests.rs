@@ -308,3 +308,32 @@ fn the_edit_setting_pencil_writes_the_picked_value(cx: &mut TestAppContext) {
     assert_eq!((selection.anchor, selection.head), (Position::new(1, 20), Position::new(1, 24)), "the value with its quotes");
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+/// glyphHoverWidget.ts: the pointer resting on the pencil shows its "Edit" hover after `editor.hover.delay`; moving
+/// off it into the text hides the hover.
+#[gpui::test]
+fn the_edit_setting_pencil_shows_its_hover_after_the_delay(cx: &mut TestAppContext) {
+    let (workbench, cx, dir) = workbench(cx, "pencil-hover");
+    std::fs::create_dir_all(dir.join("User")).unwrap();
+    std::fs::write(dir.join("User/settings.json"), "{\n\t\"editor.wordWrap\": \"off\"\n}").unwrap();
+    run(&workbench, cx, "workbench.action.openSettingsJson", vec![]);
+    workbench.update(cx, |workbench, cx| {
+        workbench.editors.active_mut().unwrap().set_selections(vec![crate::editor::Selection::caret(Position::new(1, 1))]);
+        cx.notify();
+    });
+    cx.run_until_parked();
+    assert_eq!(workbench.read_with(cx, |workbench, _| workbench.edit_setting_line(workbench.editors.active().unwrap())), Some(2));
+    let pencil = cx.debug_bounds("edit-setting-pencil-1").expect("the pencil on the value's line");
+    let shown = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.edit_setting.glyph_hover.is_some());
+    cx.simulate_mouse_move(pencil.center(), None, gpui::Modifiers::none());
+    cx.executor().advance_clock(std::time::Duration::from_millis(200));
+    cx.run_until_parked();
+    assert!(!shown(cx), "not before the delay");
+    cx.executor().advance_clock(std::time::Duration::from_millis(150));
+    cx.run_until_parked();
+    assert!(shown(cx), "shown after the 300 ms delay");
+    cx.simulate_mouse_move(pencil.center() + gpui::point(gpui::px(300.), gpui::px(0.)), None, gpui::Modifiers::none());
+    cx.run_until_parked();
+    assert!(!shown(cx), "the pointer in the text hides it");
+    std::fs::remove_dir_all(dir).unwrap();
+}
