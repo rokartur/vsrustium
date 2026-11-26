@@ -36,6 +36,8 @@ pub enum StatusPick {
     ConfigureFileAssociation,
     ConfigureLanguageSettings,
     Language(String),
+    /// A language of a notebook cell's picker, by notebook URI string and cell handle; None is Auto Detect.
+    CellLanguage { notebook: String, handle: u64, language: Option<String> },
     Associate(String),
     EncodingAction { reopen: bool },
     Encoding { id: String, reopen: bool },
@@ -395,6 +397,7 @@ impl Workbench {
                 .detach();
             }
             StatusPick::Language(language_id) => self.set_active_language(&language_id, cx),
+            StatusPick::CellLanguage { notebook, handle, language } => self.accept_cell_language(&notebook, handle, language, window, cx),
             StatusPick::ConfigureFileAssociation => self.show_file_association_picker(window, cx),
             StatusPick::ConfigureLanguageSettings => {
                 let Some(editor) = self.editors.active() else { return };

@@ -20,15 +20,13 @@ use crate::notebook::kernels::ExecutionState;
 use crate::notebook::layout::{self, CellInput, CellLayout};
 use crate::notebook::outline;
 use crate::notebook::renderers::{self, Renderer};
-use crate::notebook::{self, CODE, NOTEBOOK_EDITOR_SCHEME, NotebookModel};
+use crate::notebook::{self, CODE, MARKUP, NOTEBOOK_EDITOR_SCHEME, NotebookModel};
 use crate::webview::{ClipView, Webview};
 
 /// The webview ids of notebook editors, followed by the tab's model id.
 pub(super) const WEBVIEW_ID_PREFIX: &str = "notebook-";
 /// The notebook toolbar (notebookEditorToolbar.ts) above the list.
 const TOOLBAR_HEIGHT: f32 = 26.;
-/// `CellKind.Markup`.
-const MARKUP: u64 = 1;
 const BACK_LAYER_HTML: &str = include_str!("../notebook/back_layer.html");
 const WEBVIEW_PRELOADS: &str = include_str!("../notebook/webview_preloads.js");
 
@@ -448,6 +446,7 @@ impl Workbench {
     /// Focuses cell `handle` of the notebook editor of `tab`; with `editor` the code editor takes the keyboard.
     fn focus_notebook_cell(&mut self, tab: u32, handle: u64, editor: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some(notebook_editor) = self.host.notebooks.editors.iter_mut().find(|notebook_editor| notebook_editor.tab_model_id == tab) else { return };
+        notebook_editor.input_focused = false;
         let Some(index) = self.host.notebooks.models.iter().find(|model| model.uri_string() == notebook_editor.notebook).and_then(|model| model.index_of_handle(handle)) else { return };
         notebook_editor.focus = index;
         notebook_editor.selections = vec![(index, index + 1)];
@@ -516,6 +515,17 @@ impl Workbench {
     /// editor, the focused cell's type and edit mode, and where the cell editor's cursor sits.
     pub(super) fn notebook_context(&self, cell_editor: &OpenEditor, editor_focused: bool, window: &Window, context: &mut HashMap<String, Value>) {
         let list_focused = self.notebook_views.list_focus.is_focused(window);
+        // An interactive window: `isCompositeNotebook` inside it; its input editor is no cell editor.
+        if self.active_interactive().is_some() {
+            context.insert("activeEditor".into(), json!("workbench.editor.interactive"));
+            context.insert("isCompositeNotebook".into(), json!(list_focused || editor_focused));
+            if editor_focused && cell_editor.document().scheme == super::interactive::INPUT_SCHEME {
+                context.insert("inputFocus".into(), json!(true));
+                context.insert("notebookEditorFocused".into(), json!(false));
+                context.insert("interactiveInputCursorAtBoundary".into(), json!(cursor_boundaries(cell_editor).0));
+                return;
+            }
+        }
         context.insert("notebookEditorFocused".into(), json!(list_focused || editor_focused));
         context.insert("notebookCellListFocused".into(), json!(list_focused || editor_focused));
         context.insert("notebookCellEditorFocused".into(), json!(editor_focused));
@@ -526,7 +536,10 @@ impl Workbench {
         let Some(editor) = self.active_notebook_editor() else { return };
         let Some(model) = self.host.notebooks.model(&editor.notebook) else { return };
         context.insert("notebookType".into(), json!(model.view_type));
+        // notebookEditorWidget.ts and cellContextKeys.ts: `!isReadOnly`; only the interactive window's list is read-only.
+        context.insert("notebookEditable".into(), json!(model.view_type != super::interactive::VIEW_TYPE));
         let Some(cell) = model.cells.get(editor.focus) else { return };
+        context.insert("notebookCellEditable".into(), json!(model.view_type != super::interactive::VIEW_TYPE));
         context.insert("notebookCellType".into(), json!(if cell.kind == MARKUP { "markup" } else { "code" }));
         let editing = self.notebook_views.views.get(&editor.tab_model_id).is_some_and(|view| view.editing.contains(&cell.handle));
         context.insert("notebookCellMarkdownEditMode".into(), json!(cell.kind == MARKUP && editing));
@@ -728,6 +741,36 @@ impl Workbench {
         view.scroll_top = scroll_top.clamp(0., (content_height - height).max(0.));
     }
 
+    /// mainThreadNotebookEditors.ts `onDidChangeVisibleRanges`: each shown notebook editor's cells overlapping its
+    /// viewport (all of them before its first layout), sent when they change.
+    pub(super) fn send_notebook_visible_ranges(&mut self) {
+        let mut changed = Vec::new();
+        for editor in &self.host.notebooks.editors {
+            let Some(model) = self.host.notebooks.model(&editor.notebook) else { continue };
+            if !self.host.notebooks.sent_editors.contains(&editor.id) {
+                continue;
+            }
+            let rows = self.notebook_rows(editor.tab_model_id, model);
+            let view = self.notebook_views.views.get(&editor.tab_model_id);
+            let (top, height) = view.map_or((0., 0.), |view| (view.scroll_top, f32::from(view.bounds.get().size.height)));
+            let visible: Vec<usize> = rows.iter().filter(|row| height <= 0. || (row.layout.top < top + height && row.layout.top + row.layout.height > top)).map(|row| row.index).collect();
+            let ranges = match (visible.first(), visible.last()) {
+                (Some(first), Some(last)) => vec![(*first, last + 1)],
+                _ => Vec::new(),
+            };
+            if editor.visible_ranges.as_ref() != Some(&ranges) {
+                changed.push((editor.id.clone(), ranges));
+            }
+        }
+        for (id, ranges) in changed {
+            let wire: Vec<Value> = ranges.iter().map(|(start, end)| json!({ "start": start, "end": end })).collect();
+            self.host.send("ExtHostNotebookEditors", "$acceptEditorPropertiesChanged", vec![json!(id), json!({ "visibleRanges": { "ranges": wire } })]);
+            if let Some(editor) = self.host.notebooks.editors.iter_mut().find(|editor| editor.id == id) {
+                editor.visible_ranges = Some(ranges);
+            }
+        }
+    }
+
     /// The outline entries of a notebook's cells (`NotebookCellOutlineDataSource.recomputeState`).
     pub(super) fn notebook_outline(&self, model: &NotebookModel) -> Vec<outline::Entry> {
         let key = model.uri_string();
@@ -789,7 +832,14 @@ impl Workbench {
     pub(super) fn notebook_editor_body(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let Some((tab, notebook)) = self.active_notebook_tab() else { return div() };
         let Some(model) = self.host.notebooks.model(&notebook) else { return div().flex_1() };
-        div().flex_1().min_h_0().flex().flex_col().child(self.notebook_toolbar(model, cx)).child(self.notebook_list(tab, model, window, cx))
+        div()
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .child(self.notebook_toolbar(model, cx))
+            .child(self.notebook_list(tab, model, window, cx))
+            .children(self.interactive_input_cell(model, window, cx))
     }
 
     /// notebookEditorToolbar.ts: `+ Code`, `+ Markdown`, Run All, and the kernel picker on the right.
@@ -815,15 +865,12 @@ impl Workbench {
         };
         let kernel = self.host.notebooks.kernels.matching(&model.view_type, &model.uri_string()).1.map(|kernel| kernel.label.clone());
         let kernel_label = kernel.unwrap_or("Select Kernel".into());
-        div()
-            .h(px(TOOLBAR_HEIGHT))
-            .flex_none()
-            .px(px(8.))
-            .flex()
-            .items_center()
-            .gap(px(4.))
-            .text_size(px(13.))
-            .text_color(foreground)
+        let toolbar = div().h(px(TOOLBAR_HEIGHT)).flex_none().px(px(8.)).flex().items_center().gap(px(4.)).text_size(px(13.)).text_color(foreground);
+        // The interactive window's toolbar (`MenuId.InteractiveToolbar`) holds the kernel picker only.
+        if model.view_type == super::interactive::VIEW_TYPE {
+            return toolbar.child(div().flex_1()).child(button("notebook-kernel", "server-environment", &kernel_label, "notebook.selectKernel", Vec::new(), cx));
+        }
+        toolbar
             .child(button("notebook-insert-code", "add", "Code", "notebook.cell.insertCodeCellBelowAndFocusContainer", Vec::new(), cx))
             .child(button("notebook-insert-markdown", "add", "Markdown", "notebook.cell.insertMarkdownCellBelow", Vec::new(), cx))
             .child(div().w(px(1.)).h(px(16.)).bg(self.color("menu.separatorBackground")))

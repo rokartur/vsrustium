@@ -13,22 +13,43 @@ const PREAMBLE_MAX_LENGTH: usize = 10000;
 /// `WORKING_COPY_BACKUP_TEMP_FILE_SUFFIX`: written first, then renamed over the backup.
 const TEMP_SUFFIX: &str = ".vsctmp";
 
-/// A resolved backup: the working copy's resource, its meta (without `typeId`) and the backed up text.
+/// A resolved backup: the working copy's resource and type id, its meta (without `typeId`) and the backed up bytes.
 #[derive(Debug, PartialEq)]
 pub struct Backup {
     pub resource: Uri,
+    pub type_id: String,
     pub meta: Option<Value>,
-    pub content: String,
+    pub content: Vec<u8>,
 }
 
-/// `hashIdentifier` of a working copy without a type id: the hash of the file system path for `file` and
-/// `untitled` resources, of the URI for the others, in hex as JavaScript's `toString(16)` writes an int32.
-pub fn hash_identifier(resource: &Uri) -> String {
-    let text = match resource.scheme.as_str() {
+/// `hashIdentifier`: the hash of the file system path for `file` and `untitled` resources, of the URI for the
+/// others; a type id (empty for text files and untitled editors) joins its own hash to the resource path first.
+pub fn hash_identifier(resource: &Uri, type_id: &str) -> String {
+    let typed;
+    let resource = match type_id.is_empty() {
+        true => resource,
+        false => {
+            let type_hash = hash_string(type_id);
+            typed = resource
+                .with(|uri| {
+                    uri.path = match uri.path.is_empty() {
+                        true => type_hash,
+                        false => format!("{}/{type_hash}", uri.path.trim_end_matches('/')),
+                    }
+                })
+                .expect("a path segment keeps the URI valid");
+            &typed
+        }
+    };
+    hash_string(&match resource.scheme.as_str() {
         "file" | "untitled" => resource.path.clone(),
         _ => resource.to_string(false),
-    };
-    let hash = string_hash(&text);
+    })
+}
+
+/// `hash(str).toString(16)`: hex as JavaScript writes an int32.
+fn hash_string(text: &str) -> String {
+    let hash = string_hash(text);
     match hash < 0 {
         true => format!("-{:x}", hash.unsigned_abs()),
         false => format!("{hash:x}"),
@@ -36,45 +57,52 @@ pub fn hash_identifier(resource: &Uri) -> String {
 }
 
 /// `toBackupResource`: `<home>/<scheme>/<hash>`.
-pub fn backup_path(home: &Path, resource: &Uri) -> PathBuf {
-    home.join(&resource.scheme).join(hash_identifier(resource))
+pub fn backup_path(home: &Path, resource: &Uri, type_id: &str) -> PathBuf {
+    home.join(&resource.scheme).join(hash_identifier(resource, type_id))
 }
 
 /// `backup`: the preamble with the meta (left out when the preamble would get too long), then the content,
 /// written to a temporary file that replaces the backup.
-pub fn write(home: &Path, resource: &Uri, meta: Option<&Value>, content: &str) -> std::io::Result<()> {
-    let path = backup_path(home, resource);
-    let mut preamble = preamble(resource, meta);
+pub fn write(home: &Path, resource: &Uri, type_id: &str, meta: Option<&Value>, content: &[u8]) -> std::io::Result<()> {
+    let path = backup_path(home, resource, type_id);
+    let mut preamble = preamble(resource, type_id, meta);
     if preamble.encode_utf16().count() >= PREAMBLE_MAX_LENGTH {
-        preamble = self::preamble(resource, None);
+        preamble = self::preamble(resource, type_id, None);
     }
     std::fs::create_dir_all(path.parent().expect("a backup has a scheme folder"))?;
     let temporary = PathBuf::from(format!("{}{TEMP_SUFFIX}", path.display()));
-    std::fs::write(&temporary, preamble + content)?;
+    std::fs::write(&temporary, [preamble.as_bytes(), content].concat())?;
     std::fs::rename(&temporary, &path)
 }
 
-fn preamble(resource: &Uri, meta: Option<&Value>) -> String {
+fn preamble(resource: &Uri, type_id: &str, meta: Option<&Value>) -> String {
     let mut meta = meta.cloned().filter(Value::is_object).unwrap_or_else(|| json!({}));
-    meta["typeId"] = json!("");
+    meta["typeId"] = json!(type_id);
     format!("{} {meta}\n", resource.to_string(false))
 }
 
 /// `resolve`: `None` for a file without a preamble end (a write cut short) or with a resource that does not parse.
 pub fn resolve(path: &Path) -> Option<Backup> {
-    let text = std::fs::read_to_string(path).ok()?;
-    let (preamble, content) = text.split_once('\n')?;
+    let bytes = std::fs::read(path).ok()?;
+    let end = bytes.iter().position(|byte| *byte == b'\n')?;
+    let preamble = std::str::from_utf8(&bytes[..end]).ok()?;
     let (resource, meta) = preamble.split_once(' ').unwrap_or((preamble, ""));
-    Some(Backup { resource: Uri::parse(resource).ok()?, meta: parse_meta(meta), content: content.to_owned() })
+    let (type_id, meta) = parse_meta(meta);
+    Some(Backup { resource: Uri::parse(resource).ok()?, type_id, meta, content: bytes[end + 1..].to_vec() })
 }
 
-/// `parsePreambleMeta`: the JSON without its `typeId`, `None` when that leaves nothing or it does not parse.
-fn parse_meta(raw: &str) -> Option<Value> {
-    let mut meta: Value = serde_json::from_str(raw).ok()?;
+/// `parsePreambleMeta`: the type id (empty without one) and the JSON without it, `None` when that leaves nothing
+/// or it does not parse.
+fn parse_meta(raw: &str) -> (String, Option<Value>) {
+    let Ok(Value::Object(mut meta)) = serde_json::from_str::<Value>(raw) else { return (String::new(), None) };
+    let type_id = match meta.get("typeId") {
+        Some(Value::String(type_id)) => type_id.clone(),
+        _ => String::new(),
+    };
     if meta["typeId"].is_string() {
-        meta.as_object_mut()?.remove("typeId");
+        meta.remove("typeId");
     }
-    meta.as_object().is_some_and(|meta| !meta.is_empty()).then_some(meta)
+    (type_id, (!meta.is_empty()).then_some(Value::Object(meta)))
 }
 
 /// The backups in `home` (WorkingCopyBackupsModel `resolve`), without temporary files.
@@ -92,8 +120,8 @@ pub fn list(home: &Path) -> Vec<PathBuf> {
 }
 
 /// `discardBackup`.
-pub fn discard(home: &Path, resource: &Uri) {
-    let _ = std::fs::remove_file(backup_path(home, resource));
+pub fn discard(home: &Path, resource: &Uri, type_id: &str) {
+    let _ = std::fs::remove_file(backup_path(home, resource, type_id));
 }
 
 /// `Backups/workspaces.json` (backupMainService.ts `ISerializedBackupWorkspaces`).

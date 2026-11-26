@@ -289,6 +289,7 @@ impl Workbench {
             meta["extension"] = json!({ "id": panel.extension_id, "location": extension["location"] });
         }
         let backup = self.host.call_cancellable("ExtHostCustomEditors", "$backup", vec![resource.clone(), json!(view_type)]);
+        let done = self.lifecycle.backups.start_operation();
         cx.background_executor()
             .spawn(async move {
                 let Ok(Ok(Value::String(backup_id))) = backup.await else {
@@ -296,11 +297,12 @@ impl Workbench {
                     return;
                 };
                 meta["backupId"] = json!(backup_id);
-                let written = working_copy_uri(&resource, &view_type).and_then(|uri| backups::write(&home, &uri, Some(&meta), "").map_err(|error| error.to_string()));
+                let written = working_copy_uri(&resource, &view_type).and_then(|uri| backups::write(&home, &uri, "", Some(&meta), b"").map_err(|error| error.to_string()));
                 if let Err(error) = &written {
                     eprintln!("[backup tracker] backing up {view_type} document: {error}");
                 }
                 let _ = sender.send(written.ok().map(|()| version));
+                drop(done);
             })
             .detach();
         receiver
@@ -308,7 +310,7 @@ impl Workbench {
 
     pub(super) fn discard_custom_document_backup(&self, resource: &Value, view_type: &str) {
         if let (Some(home), Ok(uri)) = (&self.lifecycle.backups.home, working_copy_uri(resource, view_type)) {
-            backups::discard(home, &uri);
+            backups::discard(home, &uri, "");
         }
     }
 
