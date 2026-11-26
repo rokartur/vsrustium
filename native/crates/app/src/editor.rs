@@ -120,8 +120,9 @@ impl TextDocument {
     /// encoding, else the one its BOM or zero bytes show, else `files.encoding`.
     // shortcut: binary files open as text; upstream refuses them (FILE_IS_BINARY) and shows the binary editor.
     pub fn from_bytes(scheme: &str, path: &Path, bytes: &[u8], requested: Option<&str>, languages: &Languages, settings: &Settings) -> Self {
-        let detected = encoding::detect(bytes).encoding;
-        let encoding = encoding::read_encoding(settings, (scheme == "file").then_some(path), requested, detected);
+        let resource = (scheme == "file").then_some(path);
+        let detected = crate::encoding_guess::detect(bytes, settings, resource, false);
+        let encoding = encoding::read_encoding(settings, resource, requested, detected.as_deref());
         let text = encoding::decode(bytes, &encoding);
         Self::from_text(scheme, path, &text, encoding, None, languages, settings)
     }

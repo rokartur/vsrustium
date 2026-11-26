@@ -92,6 +92,7 @@ mod semantic_tokens;
 mod default_document_colors;
 mod ghost_text;
 mod language_detection;
+mod encoding_guess;
 mod settings_editor;
 mod shell_env;
 mod settings_import;
@@ -176,6 +177,7 @@ fn main() -> anyhow::Result<()> {
     let working_dir = std::env::current_dir()?;
     let app_root = bundled.unwrap_or_else(|| working_dir.clone());
     product::load(&app_root);
+    encoding_guess::set_app_root(&app_root);
     let socket = launch::socket_path(&user_data);
     if args.iter().any(|arg| arg == "--status" || arg == "-s") {
         diagnostics::print_status(&socket);
