@@ -205,8 +205,7 @@ impl Workbench {
             .into_any_element()
     }
 
-    /// Follows the pointer anywhere in the window while a centered layout sash drags: the margin and the editor share
-    /// the change (the other margin stays), each kept at its minimum.
+    /// Follows the pointer anywhere in the window while a centered layout sash drags.
     pub(super) fn centered_sash_drag(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let (left_margin, start, (left, right)) = self.centered_layout.drag?;
         let workbench = cx.entity();
@@ -218,11 +217,7 @@ impl Workbench {
                 window.on_mouse_event(move |event: &MouseMoveEvent, _, _, cx| {
                     moved.update(cx, |workbench, cx| {
                         let delta = f32::from(event.position.x) - start;
-                        let room = width - EDITOR_MINIMUM_WIDTH;
-                        let margins = match left_margin {
-                            true => ((left + delta).clamp(MARGIN_MINIMUM, (room - right).max(MARGIN_MINIMUM)), right),
-                            false => (left, (right - delta).clamp(MARGIN_MINIMUM, (room - left).max(MARGIN_MINIMUM))),
-                        };
+                        let margins = dragged_margins(left_margin, event.modifiers.alt, delta, width, (left, right));
                         // centeredViewLayout.ts `updateState` on every sash change.
                         let state = CenteredViewState { target_width: width - margins.0 - margins.1, left_margin_ratio: margins.0 / width, right_margin_ratio: margins.1 / width };
                         workbench.centered_layout.state = Some(state);
@@ -246,9 +241,32 @@ impl Workbench {
     }
 }
 
+/// splitview.ts `onSashChange` with `inverseAltBehavior`: a sash moved `delta` grows both margins alike, the editor
+/// between them giving twice that; with Alt only the dragged margin and the editor share it. Each stays at its minimum.
+fn dragged_margins(left_margin: bool, alt: bool, delta: f32, width: f32, (left, right): (f32, f32)) -> (f32, f32) {
+    let room = width - EDITOR_MINIMUM_WIDTH;
+    if alt {
+        return match left_margin {
+            true => ((left + delta).clamp(MARGIN_MINIMUM, (room - right).max(MARGIN_MINIMUM)), right),
+            false => (left, (right - delta).clamp(MARGIN_MINIMUM, (room - left).max(MARGIN_MINIMUM))),
+        };
+    }
+    let grow = if left_margin { delta } else { -delta };
+    let grow = grow.min((room - left - right) / 2.).max(MARGIN_MINIMUM - left.min(right));
+    (left + grow, right + grow)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::CenteredViewState;
+    use super::{CenteredViewState, dragged_margins};
+
+    #[test]
+    fn a_sash_moves_both_margins_unless_alt_is_held() {
+        assert_eq!(dragged_margins(true, false, 30., 1000., (200., 200.)), (230., 230.));
+        assert_eq!(dragged_margins(false, false, 30., 1000., (200., 200.)), (170., 170.));
+        assert_eq!(dragged_margins(true, true, 30., 1000., (200., 200.)), (230., 200.));
+        assert_eq!(dragged_margins(false, true, 30., 1000., (200., 200.)), (200., 170.));
+    }
 
     #[test]
     fn the_default_margins_are_a_fifth_of_the_width_each() {
