@@ -63,7 +63,7 @@ impl Workbench {
         // `removeCommentWidgetsAndStoreCache` while commenting is off.
         let controllers = if self.comments.commenting_disabled { &[][..] } else { &self.comments.controllers[..] };
         for controller in controllers {
-            for thread in controller.threads.iter().filter(|thread| thread.collapse_state == EXPANDED) {
+            for thread in controller.threads.iter().filter(|thread| thread.zone_shown()) {
                 let Some(range) = thread.range.as_ref() else { continue };
                 let reply = self.comments.reply.as_ref().filter(|reply| reply.controller == controller.handle && reply.thread == thread.handle);
                 let height = widget_height(thread, reply.map(|reply| reply.comment), controller.reaction_handler, line_height);
@@ -98,10 +98,10 @@ impl Workbench {
         self.comments.widgets = kept;
     }
 
-    /// `toggleExpand` from the gutter glyph: an expanded thread collapses, a collapsed one expands.
+    /// `toggleExpand` from the gutter glyph: a shown zone collapses, a hidden one expands.
     pub(super) fn toggle_comment_thread(&mut self, controller: u64, thread: u64, cx: &mut Context<Self>) {
         let Some(thread) = self.comment_thread_mut(controller, thread) else { return };
-        thread.collapse_state = if thread.collapse_state == EXPANDED { 0 } else { EXPANDED };
+        thread.set_collapse_state(if thread.zone_shown() { 0 } else { EXPANDED });
         self.sync_comment_widgets();
         cx.notify();
     }

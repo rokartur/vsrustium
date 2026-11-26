@@ -535,6 +535,7 @@ mod tests {
             context_value: None,
             comments: vec![json!({ "body": body, "userName": author })],
             collapse_state: 0,
+            revealed: false,
             can_reply: json!(true),
             state,
             is_template: false,

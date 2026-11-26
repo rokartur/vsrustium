@@ -60,3 +60,32 @@ fn dismissing_a_reply_collapses_its_thread(cx: &mut gpui::TestAppContext) {
     workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("workbench.action.toggleCommenting", Vec::new(), window, cx)));
     assert_eq!(zones(cx), 1);
 }
+
+/// A new empty template shows through `shouldReveal`; after the host's Expanded echo, Dismiss Comment changes nothing:
+/// the zone and the focused reply stay, as in the reference. Collapse All closes it.
+#[gpui::test]
+fn dismissing_a_new_template_keeps_it_open(cx: &mut gpui::TestAppContext) {
+    let (workbench, cx, _, dir) = crate::workbench::goto_symbol::tests::open(cx, "comment-template", "one\ntwo\nthree\n");
+    let resource = json!({ "scheme": "file", "path": dir.join("a.txt").to_string_lossy() });
+    let range = json!({ "startLineNumber": 3, "startColumn": 1, "endLineNumber": 3, "endColumn": 1 });
+    let state = |cx: &mut gpui::VisualTestContext| {
+        workbench.read_with(cx, |workbench, _| {
+            let thread = &workbench.comments.controllers[0].threads[0];
+            (thread.collapse_state, workbench.comments.widgets.len(), workbench.comments.reply.is_some())
+        })
+    };
+    workbench.update_in(cx, |workbench, window, cx| {
+        let request = |workbench: &mut Workbench, method: &str, args: Vec<Value>, window: &mut Window, cx: &mut Context<Workbench>| drop(workbench.handle_comments_request(method, &args, window, cx));
+        request(workbench, "$registerCommentController", vec![json!(1), json!("review"), json!("Review"), json!("test.ext")], window, cx);
+        request(workbench, "$createCommentThread", vec![json!(1), json!(7), json!("t"), resource.clone(), range, json!([]), json!({ "value": "test.ext" }), json!(true)], window, cx);
+    });
+    assert_eq!(state(cx), (COLLAPSED, 1, true));
+    workbench.update_in(cx, |workbench, window, cx| {
+        drop(workbench.handle_comments_request("$updateCommentThread", &[json!(1), json!(7), json!("t"), resource.clone(), json!({ "collapseState": 1, "isTemplate": false })], window, cx));
+        drop(workbench.execute_command("workbench.action.hideComment", Vec::new(), window, cx));
+    });
+    assert_eq!(state(cx), (EXPANDED, 1, true));
+    workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("workbench.action.collapseAllComments", Vec::new(), window, cx)));
+    let (collapse_state, zones, _) = state(cx);
+    assert_eq!((collapse_state, zones), (COLLAPSED, 0));
+}
