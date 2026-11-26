@@ -190,6 +190,7 @@ mod word_wrap;
 mod smooth_scrolling;
 mod sticky_outline;
 mod save_conflict;
+mod editor_state;
 mod text_input;
 mod timeline_view;
 mod title_bar_actions;
@@ -336,6 +337,7 @@ pub struct Workbench {
     pub(crate) language_features: crate::language_features::LanguageFeatures,
     folding_providers: folding_providers::FoldingProviders,
     sticky_outline: sticky_outline::StickyOutline,
+    cancellable_operations: editor_state::CancellableOperations,
     readonly_overrides: readonly::SessionOverrides,
     /// The editor labels of opened local history entries (`openEntry`), by model path.
     local_history_labels: HashMap<PathBuf, String>,
@@ -610,6 +612,7 @@ impl Workbench {
             language_features: Default::default(),
             folding_providers: Default::default(),
             sticky_outline: Default::default(),
+            cancellable_operations: Default::default(),
             readonly_overrides: Default::default(),
             local_history_labels: HashMap::new(),
             local_history_selected_for_compare: None,
@@ -701,6 +704,7 @@ impl Workbench {
         workbench.register_scm_actions();
         workbench.register_text_file_commands();
         workbench.register_save_conflict_commands();
+        workbench.register_cancel_operation_command();
         workbench.register_large_file_commands();
         workbench.register_media_preview_commands();
         workbench.register_inspect_tokens_commands();

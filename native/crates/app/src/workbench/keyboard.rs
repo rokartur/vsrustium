@@ -422,6 +422,7 @@ impl Workbench {
             context.insert("editorLangId".into(), json!(editor.document().language_id));
             context.insert("resourceLangId".into(), json!(editor.document().language_id));
             self.sticky_scroll_context(window, &mut context);
+            self.cancellable_operation_context(&mut context);
             // findModel.ts CONTEXT_FIND_WIDGET_VISIBLE, CONTEXT_FIND_INPUT_FOCUSED, CONTEXT_REPLACE_INPUT_FOCUSED.
             context.insert("findWidgetVisible".into(), json!(self.find.controller.state.is_revealed));
             context.insert("findInputFocussed".into(), json!(find_focused));

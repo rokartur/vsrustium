@@ -237,10 +237,11 @@ impl Workbench {
             None => self.provide_locations(action.kind, editor, position, action.compact, cx),
         };
         let title = if generic.is_some() { "Locations" } else { action.kind.title };
+        let operation = self.start_cancellable_operation();
         cx.spawn_in(window, async move |workbench, cx| {
             let links = task.await;
             let _ = workbench.update_in(cx, |workbench, window, cx| {
-                if workbench.editors.active().is_none_or(|editor| (editor.model_id, editor.text_model().version_id, editor.selection().head) != state) {
+                if super::editor_state::is_cancelled(&operation) || workbench.editors.active().is_none_or(|editor| (editor.model_id, editor.text_model().version_id, editor.selection().head) != state) {
                     return;
                 }
                 workbench.symbol_navigation_result(action, ReferencesModel::new(links, title), generic, window, cx);

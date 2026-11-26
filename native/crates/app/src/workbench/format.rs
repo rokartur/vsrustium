@@ -446,9 +446,16 @@ impl Workbench {
             }
         };
         let state = self.edit_state(&key);
+        // format.ts: `EditorStateCancellationTokenSource` with the editor, `TextModelCancellationTokenSource` without.
+        let operation = if state.1.is_some() { self.start_cancellable_operation() } else { None };
         cx.spawn(async move |workbench, cx| {
-            let Ok(Ok(edits)) = call.await else { return false };
-            workbench.update(cx, |workbench, cx| workbench.apply_formatting_edits(&key, state, vec![edits], mode, cx)).unwrap_or(false)
+            let edits = call.await;
+            workbench
+                .update(cx, |workbench, cx| {
+                    let Ok(Ok(edits)) = edits else { return false };
+                    !super::editor_state::is_cancelled(&operation) && workbench.apply_formatting_edits(&key, state, vec![edits], mode, cx)
+                })
+                .unwrap_or(false)
         })
     }
 
@@ -462,43 +469,53 @@ impl Workbench {
         let options = formatting_options(editor);
         let ranges = merge_touching(ranges);
         let state = self.edit_state(&key);
+        let operation = if state.1.is_some() { self.start_cancellable_operation() } else { None };
         let call = self.host.caller();
         cx.spawn(async move |workbench, cx| {
-            let ask = |range: (Position, Position)| call("ExtHostLanguageFeatures", "$provideDocumentRangeFormattingEdits", vec![json!(formatter.handle), uri.clone(), range_value(&lines, range.0, range.1), options.clone()]);
-            let mut raw_edits: Vec<Value> = Vec::new();
-            let mut ranges = ranges;
-            if formatter.supports_ranges {
-                let values: Vec<Value> = ranges.iter().map(|&(start, end)| range_value(&lines, start, end)).collect();
-                let Ok(Ok(edits)) = call("ExtHostLanguageFeatures", "$provideDocumentRangesFormattingEdits", vec![json!(formatter.handle), uri.clone(), json!(values), options.clone()]).await else { return false };
-                raw_edits.push(edits);
-            } else {
-                for &range in &ranges {
-                    let Ok(Ok(edits)) = ask(range).await else { return false };
+            let raw_edits = async {
+                let ask = |range: (Position, Position)| call("ExtHostLanguageFeatures", "$provideDocumentRangeFormattingEdits", vec![json!(formatter.handle), uri.clone(), range_value(&lines, range.0, range.1), options.clone()]);
+                let mut raw_edits: Vec<Value> = Vec::new();
+                let mut ranges = ranges;
+                if formatter.supports_ranges {
+                    let values: Vec<Value> = ranges.iter().map(|&(start, end)| range_value(&lines, start, end)).collect();
+                    let Ok(Ok(edits)) = call("ExtHostLanguageFeatures", "$provideDocumentRangesFormattingEdits", vec![json!(formatter.handle), uri.clone(), json!(values), options.clone()]).await else { return None };
                     raw_edits.push(edits);
-                }
-                let mut i = 0;
-                while i < ranges.len() {
-                    let mut j = i + 1;
-                    let mut merged = false;
-                    while j < ranges.len() {
-                        if edits_intersect(&raw_edits[i], &raw_edits[j]) {
-                            let union = (ranges[i].0.min(ranges[j].0), ranges[i].1.max(ranges[j].1));
-                            let Ok(Ok(edits)) = ask(union).await else { return false };
-                            ranges.remove(j);
-                            ranges.remove(i);
-                            ranges.push(union);
-                            raw_edits.remove(j);
-                            raw_edits.remove(i);
-                            raw_edits.push(edits);
-                            merged = true;
-                            break;
-                        }
-                        j += 1;
+                } else {
+                    for &range in &ranges {
+                        let Ok(Ok(edits)) = ask(range).await else { return None };
+                        raw_edits.push(edits);
                     }
-                    i = if merged { 0 } else { i + 1 };
+                    let mut i = 0;
+                    while i < ranges.len() {
+                        let mut j = i + 1;
+                        let mut merged = false;
+                        while j < ranges.len() {
+                            if edits_intersect(&raw_edits[i], &raw_edits[j]) {
+                                let union = (ranges[i].0.min(ranges[j].0), ranges[i].1.max(ranges[j].1));
+                                let Ok(Ok(edits)) = ask(union).await else { return None };
+                                ranges.remove(j);
+                                ranges.remove(i);
+                                ranges.push(union);
+                                raw_edits.remove(j);
+                                raw_edits.remove(i);
+                                raw_edits.push(edits);
+                                merged = true;
+                                break;
+                            }
+                            j += 1;
+                        }
+                        i = if merged { 0 } else { i + 1 };
+                    }
                 }
+                Some(raw_edits)
             }
-            workbench.update(cx, |workbench, cx| workbench.apply_formatting_edits(&key, state, raw_edits, Mode::Explicit, cx)).unwrap_or(false)
+            .await;
+            workbench
+                .update(cx, |workbench, cx| {
+                    let Some(raw_edits) = raw_edits else { return false };
+                    !super::editor_state::is_cancelled(&operation) && workbench.apply_formatting_edits(&key, state, raw_edits, Mode::Explicit, cx)
+                })
+                .unwrap_or(false)
         })
     }
 
