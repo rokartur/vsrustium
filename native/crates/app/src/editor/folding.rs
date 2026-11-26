@@ -11,7 +11,7 @@ use super::indent_level;
 pub const MAX_FOLDING_REGIONS: usize = 0xFFFF;
 const MAX_LINE_NUMBER: usize = 0xFFFFFF;
 /// `MAX_FOLDING_REGIONS_FOR_INDENT_DEFAULT`, the `editor.foldingMaximumRegions` default.
-const MAX_FOLDING_REGIONS_FOR_INDENT: usize = 5000;
+pub const MAX_FOLDING_REGIONS_FOR_INDENT: usize = 5000;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum FoldSource {
@@ -49,6 +49,8 @@ impl FoldRange {
 pub struct FoldingRegions {
     ranges: Vec<FoldRange>,
     parents: Vec<Option<usize>>,
+    /// `FoldingLimitReporter.limited`: the limit the provider's ranges were cut to.
+    pub limited: Option<usize>,
 }
 
 impl FoldingRegions {
@@ -64,7 +66,7 @@ impl FoldingRegions {
             parents.push(stack.last().copied());
             stack.push(index);
         }
-        FoldingRegions { ranges, parents }
+        FoldingRegions { ranges, parents, limited: None }
     }
 
     pub fn len(&self) -> usize {
@@ -218,7 +220,8 @@ pub fn sanitize_ranges(mut ranges: Vec<SyntaxRange>, limit: usize) -> FoldingReg
         collected.push((entry, previous.len()));
     }
     collected.retain(|(range, _)| range.start <= MAX_LINE_NUMBER && range.end <= MAX_LINE_NUMBER);
-    if collected.len() > limit {
+    let limited = (collected.len() > limit).then_some(limit);
+    if limited.is_some() {
         let mut counts: Vec<usize> = Vec::new();
         for &(_, level) in &collected {
             if level < 30 {
@@ -248,7 +251,8 @@ pub fn sanitize_ranges(mut ranges: Vec<SyntaxRange>, limit: usize) -> FoldingReg
         }
         collected = kept;
     }
-    FoldingRegions::new(collected.into_iter().map(|(range, _)| FoldRange { kind: range.kind, ..FoldRange::new(range.start, range.end) }).collect())
+    let ranges = collected.into_iter().map(|(range, _)| FoldRange { kind: range.kind, ..FoldRange::new(range.start, range.end) }).collect();
+    FoldingRegions { limited, ..FoldingRegions::new(ranges) }
 }
 
 /// `foldingRules.markers`: one `(start)|(?:end)` pattern when both have the same JavaScript flags, as
@@ -318,7 +322,7 @@ pub fn compute_ranges(lines: &[String], tab_size: usize, off_side: bool, markers
     compute_ranges_limited(lines, tab_size, off_side, markers, MAX_FOLDING_REGIONS_FOR_INDENT)
 }
 
-fn compute_ranges_limited(lines: &[String], tab_size: usize, off_side: bool, markers: Option<&FoldingMarkers>, limit: usize) -> FoldingRegions {
+pub fn compute_ranges_limited(lines: &[String], tab_size: usize, off_side: bool, markers: Option<&FoldingMarkers>, limit: usize) -> FoldingRegions {
     let mut collected: Vec<(usize, usize, usize)> = Vec::new();
     let sentinel = lines.len() + 1;
     let mut previous = vec![PreviousRegion { indent: -1, end_above: sentinel, line: sentinel }];
@@ -371,7 +375,8 @@ fn compute_ranges_limited(lines: &[String], tab_size: usize, off_side: bool, mar
 fn to_indent_ranges(mut collected: Vec<(usize, usize, usize)>, lines: &[String], tab_size: usize, limit: usize) -> FoldingRegions {
     collected.retain(|&(start, end, _)| start <= MAX_LINE_NUMBER && end <= MAX_LINE_NUMBER);
     collected.reverse();
-    if collected.len() > limit {
+    let limited = (collected.len() > limit).then_some(limit);
+    if limited.is_some() {
         let mut occurrences = vec![0; 1000];
         for &(_, _, indent) in &collected {
             if indent < 1000 {
@@ -400,7 +405,7 @@ fn to_indent_ranges(mut collected: Vec<(usize, usize, usize)>, lines: &[String],
         }
         collected = kept;
     }
-    FoldingRegions::new(collected.into_iter().map(|(start, end, _)| FoldRange::new(start, end)).collect())
+    FoldingRegions { limited, ..FoldingRegions::new(collected.into_iter().map(|(start, end, _)| FoldRange::new(start, end)).collect()) }
 }
 
 /// `ILineMemento`: a folded or manual region as persisted per file, with a checksum of its first hidden

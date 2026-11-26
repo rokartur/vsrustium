@@ -98,6 +98,7 @@ impl Workbench {
         }
         self.host.send("ExtHostDiagnostics", "$acceptMarkersChange", vec![json!(data)]);
         self.update_marker_decorations(Some(&resources));
+        self.refresh_language_status(cx);
         self.marker_navigation_markers_changed();
         self.auto_save_markers_changed(&resources, cx);
         self.code_actions_markers_changed(&resources, cx);
@@ -112,8 +113,11 @@ impl Workbench {
             if resources.is_some_and(|resources| !resources.contains(&resource)) {
                 continue;
             }
-            let markers = service.read(ReadOptions { resource: Some(&resource), take: Some(MAX_MARKER_DECORATIONS), ..Default::default() });
+            let mut markers = service.read(ReadOptions { resource: Some(&resource), take: Some(MAX_MARKER_DECORATIONS + 1), ..Default::default() });
+            let truncated = markers.len() > MAX_MARKER_DECORATIONS;
+            markers.truncate(MAX_MARKER_DECORATIONS);
             editor.update_markers(&markers);
+            editor.text_model_mut().markers_truncated = truncated;
         }
     }
 

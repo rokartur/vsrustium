@@ -105,6 +105,9 @@ pub(crate) use notebooks::focused_cell;
 mod notifications_view;
 mod panel;
 mod part_grid;
+mod zen_mode;
+mod activity;
+mod centered_layout;
 pub mod output_actions;
 mod output_view;
 mod view_filter;
@@ -410,6 +413,9 @@ pub struct Workbench {
     workspace_storage: Arc<Mutex<Storage>>,
     pub(crate) user_data_profiles: user_data_profile::UserDataProfiles,
     part_grid: part_grid::PartGrid,
+    zen_mode: zen_mode::ZenMode,
+    activities: activity::Activities,
+    centered_layout: centered_layout::CenteredLayout,
     editor_groups: editor_groups::EditorGroups,
     history: history_actions::History,
     panel: panel::Panel,
@@ -486,7 +492,7 @@ impl Render for Workbench {
             .child(self.title_bar(f32::from(viewport.width), window.is_window_active(), cx))
             .children(self.banner_part(window, cx))
             .child(self.middle_section(viewport, editor, window, cx))
-            .child(self.status_bar(window, cx));
+            .when(self.is_status_bar_visible(), |grid| grid.child(self.status_bar(window, cx)));
         let modal_editor = self.keybindings_editor_widget(window, cx).or_else(|| self.settings_editor_widget(window, cx)).or_else(|| self.profiles_editor_widget(window, cx)).or_else(|| self.modal_group_widget(window, cx));
         let quick_input = self.quick_input_widget(window, cx);
         let notifications = self.notifications_widget(viewport, window, cx);
@@ -668,6 +674,9 @@ impl Workbench {
             workspace_storage: Arc::new(Mutex::new(Storage::in_memory())),
             user_data_profiles: Default::default(),
             part_grid: part_grid::PartGrid::default(),
+            zen_mode: Default::default(),
+            activities: Default::default(),
+            centered_layout: Default::default(),
             editor_groups: Default::default(),
             history: Default::default(),
             panel: panel::Panel::default(),
@@ -727,6 +736,8 @@ impl Workbench {
         workbench.register_list_scroll_commands();
         workbench.register_search_actions();
         workbench.register_layout_actions();
+        workbench.register_zen_mode_actions();
+        workbench.register_centered_layout_actions();
         workbench.register_editor_group_actions();
         workbench.register_history_actions();
         workbench.register_search_editor_actions();
@@ -1094,8 +1105,9 @@ impl Workbench {
     }
 
     fn activity_bar(&self, window: &Window, cx: &mut Context<Self>) -> Div {
-        // The side bar is on the left, so the hovers go right of the bar (activitybarPart.ts).
-        let hover = HoverOptions::composite_bar(HoverPosition::Right);
+        // activitybarPart.ts: the hovers go away from the side bar's edge of the window.
+        let left = self.arrangement().side_bar == layout::Position::Left;
+        let hover = HoverOptions::composite_bar(if left { HoverPosition::Right } else { HoverPosition::Left });
         let inactive = self.color("activityBar.inactiveForeground");
         let items = side_bar::VIEW_CONTAINERS.map(|(icon, _, title, command, view)| {
             let active = view.is_some_and(|view| self.side_bar_view == view) && self.side_bar_visible();
@@ -1103,8 +1115,8 @@ impl Workbench {
             icon.id(command)
                 .cursor_pointer()
                 .child(self.action_hover(title, command, hover))
-                .when(view == Some(SideBarView::Scm), |icon| icon.children(self.activity_badge(self.scm_badge())))
-                .when(view == Some(SideBarView::Extensions), |icon| icon.relative().children(self.extensions_activity_badge()))
+                .relative()
+                .children(self.container_activity_badge(command))
                 .when(view.is_some(), |icon| icon.on_click(cx.listener(move |workbench, event: &ClickEvent, window, cx| workbench.activity_item_clicked(active, command, event, window, cx))))
         });
         div()
@@ -1115,7 +1127,8 @@ impl Workbench {
             .justify_between()
             .py(px(3.))
             .border_1()
-            .when(self.side_bar_visible(), |bar| bar.rounded_l(px(8.)))
+            .when(self.side_bar_visible() && left, |bar| bar.rounded_l(px(8.)))
+            .when(self.side_bar_visible() && !left, |bar| bar.rounded_r(px(8.)))
             .when(!self.side_bar_visible(), |bar| bar.rounded(px(8.)))
             // activitybarPart.ts `updateStyles` with the modern UI: the inactive background while the window is not focused.
             .bg(self.color(if window.is_window_active() { "modernActivityBar.background" } else { "modernActivityBar.inactiveBackground" }))
@@ -1514,6 +1527,11 @@ impl Workbench {
     /// A codicon centered in a square box. Drawn from the icon's SVG: Wu's text system skips fonts
     /// without an 'm' glyph, so codicon.ttf cannot load (gpui_macos text_system.rs load_family).
     fn icon(&self, name: &str, box_size: f32, icon_size: f32, color: Rgba) -> Div {
+        self.turned_icon(name, box_size, icon_size, color, 0.)
+    }
+
+    /// An icon rotated by `turns` of a full turn, clockwise.
+    fn turned_icon(&self, name: &str, box_size: f32, icon_size: f32, color: Rgba, turns: f32) -> Div {
         let path = crate::codicons::svg_path(&self.app_root, crate::symbol_icons::svg_name(name));
         div()
             .relative()
@@ -1522,7 +1540,7 @@ impl Workbench {
             .flex()
             .items_center()
             .justify_center()
-            .child(svg().external_path(path.to_string_lossy().into_owned()).size(px(icon_size)).text_color(color))
+            .child(svg().external_path(path.to_string_lossy().into_owned()).size(px(icon_size)).text_color(color).with_transformation(gpui::Transformation::rotate(gpui::percentage(turns))))
     }
 }
 

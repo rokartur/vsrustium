@@ -389,7 +389,7 @@ impl Workbench {
             title: title.to_string(),
             chevron: self.app_root.join("node_modules/@vscode/codicons/src/icons").join(format!("{chevron}.svg")).to_string_lossy().into_owned(),
             // The side bar part less the card's borders and the header's margins.
-            width: self.part_grid.grid.as_ref().map_or(0., |grid| grid.row_sizes()[1]) - 10.,
+            width: self.part_grid.grid.as_ref().map_or(0., |grid| grid.size(super::layout::Part::SideBar)) - 10.,
             background,
             foreground,
         };

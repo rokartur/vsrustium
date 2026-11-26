@@ -204,3 +204,21 @@ fn the_grid_and_its_editors_come_back_from_workspace_storage(cx: &mut TestAppCon
     let active = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document().name());
     assert_eq!(active, "b.txt");
 }
+
+/// dnd.ts `ResourcesDropHandler`: a file dropped from Finder on a group's right half opens pinned in a new group there.
+#[gpui::test]
+fn files_dropped_from_outside_open_in_the_group_the_overlay_shows(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = workbench_with("external-drop", &["a.txt"], cx);
+    let dropped = dir.join("b.txt");
+    std::fs::write(&dropped, "dropped").unwrap();
+    workbench.update_in(cx, |workbench, window, cx| {
+        let group = workbench.editor_group_id();
+        workbench.editor_groups.drop_target = Some((group, Some(crate::editor_grid::Direction::Right)));
+        let target = workbench.drop_target_group(group).unwrap();
+        workbench.drop_external_paths(vec![dropped.clone()], target, window, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(groups(&workbench, cx), (vec![vec!["a.txt".to_owned()], vec!["b.txt".to_owned()]], 1));
+    assert!(workbench.read_with(cx, |workbench, _| !workbench.editors.active().unwrap().preview));
+    std::fs::remove_dir_all(&dir).unwrap();
+}

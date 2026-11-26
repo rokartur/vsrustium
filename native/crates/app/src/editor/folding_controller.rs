@@ -2,7 +2,7 @@
 
 use super::cursor::{self, Position, Selection};
 use super::folding::{
-    self, FoldRange, FoldSource, FoldingRegions, compute_ranges, next_fold_line, parent_fold_line, previous_fold_line, set_collapse_state_at_level, set_collapse_state_for_matching_lines,
+    self, FoldRange, FoldSource, FoldingRegions, compute_ranges_limited, next_fold_line, parent_fold_line, previous_fold_line, set_collapse_state_at_level, set_collapse_state_for_matching_lines,
     set_collapse_state_for_rest, set_collapse_state_for_type, set_collapse_state_levels_down, set_collapse_state_up, toggle_collapse_state,
 };
 use super::{OpenEditor, Reveal};
@@ -20,8 +20,9 @@ impl OpenEditor {
             return self.adjust_selections_to_folds();
         }
         let document = self.document();
-        let regions = compute_ranges(&document.lines, document.indentation.tab_size, document.off_side, document.folding_markers.as_deref());
+        let regions = compute_ranges_limited(&document.lines, document.indentation.tab_size, document.off_side, document.folding_markers.as_deref(), self.folding_limit);
         drop(document);
+        self.folding_limited = regions.limited;
         self.sticky_model = super::sticky_scroll::from_folding_regions(&regions);
         let lines = self.selection_start_lines();
         self.folding.update(regions, self.model.borrow().document.lines.len(), Some(&lines));
@@ -40,6 +41,7 @@ impl OpenEditor {
             return self.refresh_folding_ranges();
         };
         self.syntax_folding = true;
+        self.folding_limited = regions.limited;
         if fold_imports && !self.folded_imports {
             for index in 0..regions.len() {
                 if regions.get(index).kind.as_deref() == Some("imports") {

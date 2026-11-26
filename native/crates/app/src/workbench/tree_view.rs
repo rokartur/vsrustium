@@ -154,6 +154,11 @@ impl Workbench {
         Outcome::done()
     }
 
+    /// The `$setBadge` value of a contributed view (`{ value, tooltip }`).
+    pub(super) fn tree_view_badge(&self, id: &str) -> Option<&Value> {
+        self.tree_views.trees.get(id).and_then(|tree| tree.badge.as_ref())
+    }
+
     fn update_tree(&mut self, id: &str, update: impl FnOnce(&mut CustomTree), cx: &mut Context<Self>) {
         update(self.tree_views.trees.entry(id.to_owned()).or_default());
         cx.notify();

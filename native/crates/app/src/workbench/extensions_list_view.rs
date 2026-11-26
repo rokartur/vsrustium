@@ -27,30 +27,6 @@ pub(super) struct ButtonSpec {
 }
 
 impl Workbench {
-    /// StatusUpdater's NumberBadge on the activity item (activityaction.css, Modern UI activityBar.css: 18px
-    /// from the top, 3px from the right, 16px high, 10px text).
-    pub(super) fn extensions_activity_badge(&self) -> Option<Div> {
-        let (count, _) = self.extensions_badge()?;
-        Some(
-            div()
-                .absolute()
-                .top(px(18.))
-                .right(px(3.))
-                .min_w(px(8.))
-                .h(px(16.))
-                .px(px(4.))
-                .rounded(px(20.))
-                .text_size(px(10.))
-                .line_height(px(16.))
-                .flex()
-                .justify_center()
-                .bg(self.color("activityBarBadge.background"))
-                .text_color(self.color("activityBarBadge.foreground"))
-                .when_some(self.theme.color("contrastBorder"), |badge, border| badge.border_1().border_color(border))
-                .child(count.to_string()),
-        )
-    }
-
     /// The Extensions view's title: "Extensions", or "Extensions: <view>" while one view shows.
     pub(super) fn extensions_title(&self) -> String {
         match self.extensions_viewlet.panes.as_slice() {

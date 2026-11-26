@@ -164,7 +164,7 @@ impl Workbench {
                 }
             };
             let title: &'static str = static_id(&container.title);
-            items.push(icon.id(id).cursor_pointer().child(self.action_hover(title, id, hover)).on_click(cx.listener(move |workbench, event: &ClickEvent, window, cx| workbench.activity_item_clicked(active, id, event, window, cx))));
+            items.push(icon.id(id).relative().children(self.container_activity_badge(id)).cursor_pointer().child(self.action_hover(title, id, hover)).on_click(cx.listener(move |workbench, event: &ClickEvent, window, cx| workbench.activity_item_clicked(active, id, event, window, cx))));
         }
         items
     }

@@ -63,8 +63,11 @@ impl Workbench {
             Some(LOCATION_NOTIFICATION) => (Priority::Default, false),
             // Window progress from the API has no command, so it is a silent notification first shown in the status bar.
             Some(LOCATION_WINDOW) => (Priority::Silent, true),
-            // Source Control progress shows on the SCM view, which the port does not have yet (ledger).
-            _ => return Outcome::done(),
+            // progressService.ts `withPaneCompositeProgress` and `withViewProgress`: the activity bar badge.
+            _ => {
+                self.start_activity_progress(handle, &options["location"], options["delay"].as_u64(), window, cx);
+                return Outcome::done();
+            }
         };
         let cancellable = match &options["cancellable"] {
             Value::String(label) => Some(label.clone()),
@@ -108,6 +111,7 @@ impl Workbench {
     /// without a delay; a shown window progress entry stays `WINDOW_DELAY` at least.
     pub(crate) fn end_progress(&mut self, args: &[Value], window: &mut Window, cx: &mut Context<Self>) -> Outcome {
         let handle = args[0].as_u64().unwrap_or_default();
+        self.end_activity_progress(handle, window, cx);
         let Some(task) = self.notifications.progress.get_mut(&handle) else { return Outcome::done() };
         task.ended = true;
         let now = cx.background_executor().now();

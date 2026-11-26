@@ -343,6 +343,11 @@ fn child_folder(folder: &Path, path: &Path) -> Option<PathBuf> {
 }
 
 impl Workbench {
+    /// historyWidgetKeybindingHint.ts `showHistoryKeybindingHint`: history.showPrevious and showNext are Up and Down.
+    pub(super) fn show_history_keybinding_hint(&self) -> bool {
+        let label = |command| self.keybindings.resolver.lookup_primary_keybinding(command, &self.context_keys).map(|item| crate::keybindings::label(&item.keybinding));
+        label("history.showPrevious").as_deref() == Some("↑") && label("history.showNext").as_deref() == Some("↓")
+    }
     /// `SearchContext.ViewHasSomeCollapsibleKey`: some folder or file row of the results is expanded.
     pub(super) fn search_has_expanded_rows(&self) -> bool {
         let rows = self.search.rows(&self.search_folders(), Some(&self.collapse_results()));
@@ -382,9 +387,13 @@ impl Workbench {
 
     /// An action of an action bar: 22px, hover background, disabled in disabledForeground.
     pub(super) fn search_action(&self, icon: &str, command: &'static str, enabled: bool, cx: &mut Context<Self>) -> gpui::Stateful<Div> {
+        self.turned_action(icon, 0., command, enabled, cx)
+    }
+
+    pub(super) fn turned_action(&self, icon: &str, turns: f32, command: &'static str, enabled: bool, cx: &mut Context<Self>) -> gpui::Stateful<Div> {
         let foreground = if enabled { self.foreground_or("icon.foreground") } else { self.color("disabledForeground") };
         let hover = self.color("toolbar.hoverBackground");
-        self.icon(icon, 22., 16., foreground).id(command).rounded(px(4.)).when(enabled, |action| {
+        self.turned_icon(icon, 22., 16., foreground, turns).id(command).rounded(px(4.)).when(enabled, |action| {
             action.cursor_pointer().hover(|action| action.bg(hover)).on_click(cx.listener(move |workbench, _: &ClickEvent, window, cx| {
                 cx.stop_propagation();
                 workbench.execute_command(command, Vec::new(), window, cx);
@@ -507,9 +516,9 @@ impl Workbench {
                 .child(message)
         });
         // The pattern inputs show their placeholder only while focused (`showPlaceholderOnFocus`); HistoryInputBox
-        // `addSuffix` names the Up and Down keys on a focused input with a history.
+        // `addSuffix` names the Up and Down keys on a focused input with a history (`showHistoryKeybindingHint`).
         let pattern = matches!(field, SearchField::Include | SearchField::Exclude);
-        let placeholder = match focused && !view.input(field).history.elements().is_empty() {
+        let placeholder = match focused && !view.input(field).history.elements().is_empty() && self.show_history_keybinding_hint() {
             true => format!("{placeholder} (\u{21C5} for history)"),
             false => placeholder.to_string(),
         };

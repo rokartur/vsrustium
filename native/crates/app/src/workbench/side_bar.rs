@@ -29,6 +29,7 @@ impl Workbench {
     /// The side bar card: without the activity bar left of it, its own left border and corners.
     pub(super) fn side_bar(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         let activity_bar_visible = self.is_part_visible(super::layout::Part::ActivityBar);
+        let left = self.arrangement().side_bar == super::layout::Position::Left;
         let compact = self.compact_activity_bar_location();
         div()
             .flex_1()
@@ -37,13 +38,13 @@ impl Workbench {
             .flex()
             .flex_col()
             .border_t_1()
-            .border_r_1()
             .border_b_1()
             .bg(self.color("sideBar.background"))
             .border_color(self.color("surface.border"))
-            // The seam with the activity bar is the bar's border; the side bar keeps a transparent 1px edge.
-            .when(activity_bar_visible, |card| card.pl(px(1.)).rounded_r(px(8.)))
-            .when(!activity_bar_visible, |card| card.border_l_1().rounded(px(8.)))
+            // The seam with the activity bar is the bar's border; the side bar keeps a transparent 1px edge there.
+            .when(activity_bar_visible && left, |card| card.border_r_1().pl(px(1.)).rounded_r(px(8.)))
+            .when(activity_bar_visible && !left, |card| card.border_l_1().pr(px(1.)).rounded_l(px(8.)))
+            .when(!activity_bar_visible, |card| card.border_l_1().border_r_1().rounded(px(8.)))
             .when(compact == Some(false), |card| card.child(self.compact_activity_bar(false, cx)))
             .child(self.side_bar_view(window, cx))
             .when(compact == Some(true), |card| card.child(self.compact_activity_bar(true, cx)))

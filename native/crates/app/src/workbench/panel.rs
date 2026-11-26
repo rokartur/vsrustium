@@ -10,7 +10,7 @@ use gpui::{AnyElement, Bounds, Context, Div, InteractiveElement, IntoElement, Mo
 
 use super::Workbench;
 use super::hover::HoverOptions;
-use super::layout::Part;
+use super::layout::{Alignment, Part, Position};
 use crate::commands::Outcome;
 use crate::menus::MenuAction;
 
@@ -78,12 +78,21 @@ impl Workbench {
             workbench.hide_panel(cx);
             Outcome::done()
         });
+        // panelActions.ts: maximizing needs a centered panel or one on a side.
         self.commands.register("workbench.action.toggleMaximizedPanel", |workbench, _, _, cx| {
-            let maximize = !workbench.is_panel_maximized();
-            if maximize && !workbench.is_part_visible(Part::Panel) {
-                workbench.show_panel(cx);
+            let arrangement = workbench.arrangement();
+            if arrangement.alignment != Alignment::Center && arrangement.panel.is_horizontal() {
+                workbench.notify_warning("Maximizing the panel is only supported when it is center aligned.");
+                return Outcome::done();
             }
-            workbench.set_editor_hidden(maximize, cx);
+            if !workbench.is_part_visible(Part::Panel) {
+                workbench.show_panel(cx);
+                if !workbench.is_panel_maximized() {
+                    workbench.toggle_maximized_panel(cx);
+                }
+            } else {
+                workbench.toggle_maximized_panel(cx);
+            }
             Outcome::done()
         });
         self.commands.register("workbench.action.toggleAuxiliaryBar", |workbench, _, _, cx| {
@@ -129,9 +138,6 @@ impl Workbench {
 
     /// `setPanelHidden(true)`: a maximized panel gives the editor back first.
     pub(super) fn hide_panel(&mut self, cx: &mut Context<Self>) {
-        if self.is_panel_maximized() {
-            self.set_editor_hidden(false, cx);
-        }
         self.set_part_hidden(Part::Panel, true, cx);
         self.editors_changed(cx);
     }
@@ -154,6 +160,16 @@ impl Workbench {
         self.panel.views.iter().find(|view| Some(view.id) == id).or(self.panel.views.iter().find(|view| view.id == default))
     }
 
+    /// panelpart.css: a left, right or top panel turns its split and maximize icons to face the editor.
+    pub(super) fn panel_title_icon_turns(&self) -> f32 {
+        match self.arrangement().panel {
+            Position::Bottom => 0.,
+            Position::Right => -0.25,
+            Position::Left => 0.25,
+            Position::Top => 0.5,
+        }
+    }
+
     /// The panel card: the views' tabs, maximize and close, and the active view.
     pub(super) fn panel_part(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let active = self.active_panel_view().map(|view| view.id);
@@ -173,7 +189,13 @@ impl Workbench {
             true => ("screen-normal", "Restore Panel Size"),
             false => ("screen-full", "Maximize Panel Size"),
         };
-        let actions = vec![(maximize_icon, maximize_title, "workbench.action.toggleMaximizedPanel"), ("close", "Hide Panel", "workbench.action.closePanel")];
+        let arrangement = self.arrangement();
+        // panelActions.ts `panelMaximizationSupportedWhen`.
+        let maximizes = arrangement.alignment == Alignment::Center || !arrangement.panel.is_horizontal();
+        let mut actions = vec![(maximize_icon, maximize_title, "workbench.action.toggleMaximizedPanel"), ("close", "Hide Panel", "workbench.action.closePanel")];
+        if !maximizes {
+            actions.remove(0);
+        }
         let view = self.active_panel_view().map(|view| (view.render, view.actions));
         let view_actions = view.map(|(_, actions)| actions(self, window, cx));
         let content = match view {

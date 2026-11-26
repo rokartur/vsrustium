@@ -1,0 +1,179 @@
+[
+ {
+  "wait": 4000
+ },
+ {
+  "hotkey": [
+   "cmd",
+   "j"
+  ]
+ },
+ {
+  "wait": 2500
+ },
+ {
+  "shot": "bottom"
+ },
+ {
+  "hotkey": [
+   "cmd",
+   "shift",
+   "p"
+  ]
+ },
+ {
+  "wait": 1200
+ },
+ {
+  "type": "View: Move Panel Right"
+ },
+ {
+  "wait": 2000
+ },
+ {
+  "key": "return"
+ },
+ {
+  "wait": 2500
+ },
+ {
+  "shot": "panel-right"
+ },
+ {
+  "hotkey": [
+   "cmd",
+   "shift",
+   "p"
+  ]
+ },
+ {
+  "wait": 1200
+ },
+ {
+  "type": "View: Move Panel Left"
+ },
+ {
+  "wait": 2000
+ },
+ {
+  "key": "return"
+ },
+ {
+  "wait": 2500
+ },
+ {
+  "shot": "panel-left"
+ },
+ {
+  "hotkey": [
+   "cmd",
+   "shift",
+   "p"
+  ]
+ },
+ {
+  "wait": 1200
+ },
+ {
+  "type": "View: Move Panel To Top"
+ },
+ {
+  "wait": 2000
+ },
+ {
+  "key": "return"
+ },
+ {
+  "wait": 2500
+ },
+ {
+  "shot": "panel-top"
+ },
+ {
+  "hotkey": [
+   "cmd",
+   "shift",
+   "p"
+  ]
+ },
+ {
+  "wait": 1200
+ },
+ {
+  "type": "View: Set Panel Alignment to Justify"
+ },
+ {
+  "wait": 2000
+ },
+ {
+  "key": "return"
+ },
+ {
+  "wait": 2500
+ },
+ {
+  "shot": "justify"
+ },
+ {
+  "hotkey": [
+   "cmd",
+   "shift",
+   "p"
+  ]
+ },
+ {
+  "wait": 1200
+ },
+ {
+  "type": "View: Toggle Primary Side Bar Position"
+ },
+ {
+  "wait": 2000
+ },
+ {
+  "key": "return"
+ },
+ {
+  "wait": 2500
+ },
+ {
+  "shot": "side-bar-right"
+ },
+ {
+  "hotkey": [
+   "cmd",
+   "shift",
+   "p"
+  ]
+ },
+ {
+  "wait": 1200
+ },
+ {
+  "type": "View: Set Panel Alignment to Left"
+ },
+ {
+  "wait": 2000
+ },
+ {
+  "key": "return"
+ },
+ {
+  "wait": 2500
+ },
+ {
+  "shot": "align-left"
+ },
+ {
+  "hotkey": [
+   "cmd",
+   "b"
+  ]
+ },
+ {
+  "wait": 2000
+ },
+ {
+  "shot": "right-rail"
+ }
+]

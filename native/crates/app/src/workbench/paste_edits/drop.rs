@@ -103,12 +103,13 @@ impl Workbench {
         }
     }
 
-    /// Files dropped on the text: with Shift they go into it, else the editor group's drop (not ported) takes them.
+    /// Files dropped on the text: with Shift they go into it, else the editor group's drop opens them.
     pub(in crate::workbench) fn drop_files_on_text(&mut self, line: usize, visible: f32, paths: Vec<PathBuf>, window: &mut Window, cx: &mut Context<Self>) {
         if !window.modifiers().shift {
             self.paste_edits.drop_target = None;
             return cx.notify();
         }
+        cx.stop_propagation();
         let position = self.position_at(line, visible);
         self.drop_into_editor(position, paths, window, cx);
     }

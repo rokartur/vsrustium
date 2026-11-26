@@ -5,11 +5,12 @@
 
 use std::cell::Cell;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, Bounds, Context, CursorStyle, DispatchPhase, Div, DragMoveEvent, InteractiveElement, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Render, ScrollWheelEvent, SharedString, Stateful,
-    StatefulInteractiveElement, Styled, Task, Window, canvas, div, prelude::*, px,
+    AnyElement, Bounds, Context, CursorStyle, DispatchPhase, Div, DragMoveEvent, ExternalPaths, InteractiveElement, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Render, ScrollWheelEvent,
+    SharedString, Stateful, StatefulInteractiveElement, Styled, Task, Window, canvas, div, prelude::*, px,
 };
 use serde_json::{Value, json};
 
@@ -552,10 +553,21 @@ impl Workbench {
         self.focus_group(focus, window, cx);
     }
 
+    /// layout.ts `hasMoreThanOneColumn` unless a group is maximized.
+    pub(super) fn editor_groups_have_several_columns(&self) -> bool {
+        let Some(grid) = self.editor_groups.grid.as_ref().filter(|grid| !grid.is_maximized()) else { return false };
+        let bounds = grid.bounds();
+        bounds.iter().any(|(_, rect)| rect.x != bounds[0].1.x)
+    }
+
     /// The editor part: one card holding every group at its place in the grid, the separators and sashes between them.
     pub(super) fn editor_groups_part(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let part_bounds = self.editor_groups.part_bounds.clone();
-        let measure = canvas(move |bounds, _, _| part_bounds.set(bounds.map(f32::from)), |_, _, _, _| ()).absolute().inset_0();
+        // The centered layout's margins beside the groups (centeredViewLayout.ts), measured out of the groups' room.
+        let margins = self.centered_margins();
+        let (left, right) = margins.unwrap_or_default();
+        let measure = canvas(move |bounds, _, _| part_bounds.set(bounds.map(f32::from)), |_, _, _, _| ()).absolute().top_0().bottom_0().left(px(left)).right(px(right));
+        let centered_chrome = self.centered_layout_chrome(margins, cx);
         let card = div()
             .flex_1()
             // A long breadcrumbs path must not widen the part past the window.
@@ -565,7 +577,11 @@ impl Workbench {
             .rounded(px(8.))
             .bg(self.color("editor.background"))
             .border_color(self.color("surface.border"))
-            .child(measure);
+            .pl(px(left))
+            .pr(px(right))
+            .child(measure)
+            .children(centered_chrome)
+            .children(self.centered_sash_drag(cx));
         let sash_size = self.sash_size();
         let Some(grid) = self.editor_groups.grid.as_mut() else {
             // The modal part's group draws in the modal; the part shows the group active before it.
@@ -602,7 +618,8 @@ impl Workbench {
         let separators: Vec<Div> = separators.collect();
         let sash_elements: Vec<AnyElement> = sashes.into_iter().map(|sash| self.group_sash(sash, cx)).collect();
         let dragging = self.editor_groups.grid.as_ref().is_some_and(|grid| grid.dragged_sash().is_some());
-        card.children(groups).children(separators).children(sash_elements).when(dragging, |card| card.child(self.group_sash_drag(cx))).child(self.part_top_border())
+        let groups_area = div().absolute().top_0().bottom_0().left(px(left)).right(px(right)).children(groups).children(separators).children(sash_elements);
+        card.child(groups_area).when(dragging, |card| card.child(self.group_sash_drag(cx))).child(self.part_top_border())
     }
 
     /// A group's tabs and editor, or the watermark of an empty group (editorgroupview.css: at most 200px in a part of
@@ -706,29 +723,73 @@ impl Workbench {
         });
         body.id(("group-drop", group as usize))
             .on_drag_move::<DraggedTab>(cx.listener(move |workbench, event: &DragMoveEvent<DraggedTab>, _, cx| {
-                let bounds = event.bounds;
-                let (x, y) = (f32::from(event.event.position.x - bounds.origin.x), f32::from(event.event.position.y - bounds.origin.y) - title_height);
-                let (width, height) = (f32::from(bounds.size.width), f32::from(bounds.size.height) - title_height);
-                let inside = x >= 0. && y >= 0. && x <= width && y <= height;
-                let target = inside.then(|| (group, split_direction(x, y, width, height, prefer_vertical)));
-                let over_this = workbench.editor_groups.drop_target.is_some_and(|(over, _)| over == group);
-                if (target.is_some() || over_this) && workbench.editor_groups.drop_target != target {
-                    workbench.editor_groups.drop_target = target;
-                    cx.notify();
-                }
+                workbench.drag_over_group(group, event.bounds, event.event.position, title_height, prefer_vertical, cx);
+            }))
+            // editorDropTarget.ts: files from outside the window take the same drop overlay as a tab.
+            .on_drag_move::<ExternalPaths>(cx.listener(move |workbench, event: &DragMoveEvent<ExternalPaths>, _, cx| {
+                workbench.drag_over_group(group, event.bounds, event.event.position, title_height, prefer_vertical, cx);
             }))
             .on_drop(cx.listener(move |workbench, dragged: &DraggedTab, window, cx| {
-                let Some((_, direction)) = workbench.editor_groups.drop_target.take().filter(|(over, _)| *over == group) else { return };
-                let target = match direction {
-                    Some(direction) => {
-                        workbench.activate_group(group);
-                        workbench.add_group_beside(direction)
-                    }
-                    None => group,
-                };
+                let Some(target) = workbench.drop_target_group(group) else { return };
                 workbench.move_dragged_tab(dragged, target, None, window, cx);
             }))
+            .on_drop(cx.listener(move |workbench, paths: &ExternalPaths, window, cx| {
+                let Some(target) = workbench.drop_target_group(group) else { return };
+                workbench.drop_external_paths(paths.paths().to_vec(), target, window, cx);
+            }))
             .children(overlay)
+    }
+
+    /// `getSplitDirection` for the pointer over a group's drop area (below its tabs).
+    fn drag_over_group(&mut self, group: u32, bounds: Bounds<Pixels>, position: gpui::Point<Pixels>, title_height: f32, prefer_vertical: bool, cx: &mut Context<Self>) {
+        let (x, y) = (f32::from(position.x - bounds.origin.x), f32::from(position.y - bounds.origin.y) - title_height);
+        let (width, height) = (f32::from(bounds.size.width), f32::from(bounds.size.height) - title_height);
+        let inside = x >= 0. && y >= 0. && x <= width && y <= height;
+        let target = inside.then(|| (group, split_direction(x, y, width, height, prefer_vertical)));
+        let over_this = self.editor_groups.drop_target.is_some_and(|(over, _)| over == group);
+        if (target.is_some() || over_this) && self.editor_groups.drop_target != target {
+            self.editor_groups.drop_target = target;
+            cx.notify();
+        }
+    }
+
+    /// The group a drop on `group` goes to: `group`, or a new group on the side its overlay showed.
+    fn drop_target_group(&mut self, group: u32) -> Option<u32> {
+        let (_, direction) = self.editor_groups.drop_target.take().filter(|(over, _)| *over == group)?;
+        Some(match direction {
+            Some(direction) => {
+                self.activate_group(group);
+                self.add_group_beside(direction)
+            }
+            None => group,
+        })
+    }
+
+    /// dnd.ts `ResourcesDropHandler.handleDrop` for files from outside the window: a workspace file or a single folder
+    /// opens in a new window (`handleWorkspaceDrop`), the files open pinned in the target group and join the recently
+    /// opened list.
+    pub(super) fn drop_external_paths(&mut self, paths: Vec<PathBuf>, target: u32, window: &mut Window, cx: &mut Context<Self>) {
+        let workspaces: Vec<&PathBuf> = paths.iter().filter(|path| path.is_dir() || path.extension().is_some_and(|extension| extension == "code-workspace")).collect();
+        if !workspaces.is_empty() {
+            // shortcut: several folders open a window each; upstream enters an untitled multi-root workspace, which the port has not.
+            for path in workspaces {
+                super::host::open_new_window(Some(path.clone()), cx);
+            }
+            return;
+        }
+        let files: Vec<PathBuf> = paths.into_iter().filter(|path| path.is_file()).collect();
+        if files.is_empty() {
+            return;
+        }
+        let entries = files.iter().map(|path| crate::recently_opened::entry(crate::recently_opened::Kind::File, path, None)).collect();
+        crate::recently_opened::add(&mut self.shared_storage.lock().unwrap(), entries);
+        self.recently_opened_changed(window, cx);
+        self.activate_group(target);
+        for path in files {
+            self.open_file(path, true, window, cx);
+        }
+        window.focus(&self.editor_focus.clone(), cx);
+        cx.notify();
     }
 
     /// `moveEditor` / `doMoveEditorAcrossGroups` of a dropped tab, to `index` or after the target's active editor.

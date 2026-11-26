@@ -1,0 +1,144 @@
+[
+ {
+  "wait": 4000
+ },
+ {
+  "shot": "start"
+ },
+ {
+  "hotkey": [
+   "cmd",
+   "shift",
+   "p"
+  ]
+ },
+ {
+  "wait": 800
+ },
+ {
+  "type": "View: Toggle Centered Layout"
+ },
+ {
+  "wait": 800
+ },
+ {
+  "key": "return"
+ },
+ {
+  "wait": 1500
+ },
+ {
+  "shot": "centered"
+ },
+ {
+  "hover": [
+   445,
+   300
+  ]
+ },
+ {
+  "wait": 200
+ },
+ {
+  "dragShot": [
+   445,
+   300,
+   520,
+   300
+  ],
+  "shot": "centered-drag",
+  "foreground": true
+ },
+ {
+  "wait": 800
+ },
+ {
+  "shot": "centered-dragged"
+ },
+ {
+  "hotkey": [
+   "cmd",
+   "shift",
+   "p"
+  ]
+ },
+ {
+  "wait": 800
+ },
+ {
+  "type": "View: Toggle Centered Layout"
+ },
+ {
+  "wait": 800
+ },
+ {
+  "key": "return"
+ },
+ {
+  "wait": 1500
+ },
+ {
+  "shot": "uncentered"
+ },
+ {
+  "hotkey": [
+   "cmd",
+   "k"
+  ]
+ },
+ {
+  "key": "z"
+ },
+ {
+  "wait": 2000
+ },
+ {
+  "shot": "zen"
+ },
+ {
+  "hotkey": ["cmd", "shift", "p"]
+ },
+ {
+  "wait": 800
+ },
+ {
+  "type": "View: Toggle Zen Mode"
+ },
+ {
+  "wait": 800
+ },
+ {
+  "key": "return"
+ },
+ {
+  "wait": 2000
+ },
+ {
+  "shot": "zen-exited"
+ },
+ {
+  "hotkey": [
+   "cmd",
+   "shift",
+   "p"
+  ]
+ },
+ {
+  "wait": 800
+ },
+ {
+  "type": "View: Toggle Status Bar Visibility"
+ },
+ {
+  "wait": 800
+ },
+ {
+  "key": "return"
+ },
+ {
+  "wait": 1500
+ },
+ {
+  "shot": "no-status-bar"
+ }
+]

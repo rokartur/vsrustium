@@ -67,3 +67,41 @@ What differs:
 - The breadcrumbs' editor type picker, as in the split window.
 
 Checks (Studio): `cargo test -p app editor_groups` (9 passed, with `the_output_view_shows_in_the_panel_and_takes_the_focus_from_the_groups` and the drop target split areas), `cargo test -p app output_view` (8 passed), `cargo test -p app terminal` (9 passed), `cargo test -p app part_grid` (5 passed), `cargo test -p app panel` (6 passed).
+
+## Part positions (session m11f)
+
+`ui-pair` with `port/fixtures/ui-steps/layout-positions.json`, Dark Modern, 1024x768 at 2x: Cmd+J, then from the Command Palette Move Panel Right, Move Panel Left, Move Panel To Top, Set Panel Alignment to Justify, Toggle Primary Side Bar Position, Set Panel Alignment to Left, then Cmd+B. AE at 6% fuzz over 2048x1536.
+
+| Step | AE | Cause |
+|---|---|---|
+| bottom | 10653 | the shell's own output (fish's suggestion line) and the Ports tab |
+| panel-right | 7723 | the shell's output; the terminal's dimension overlay after the resize |
+| panel-left | 7634 | the same |
+| panel-top | 12649 | the same |
+| justify | 14087 | the shell's output and the Ports tab; the Explorer's Outline header 3 pt lower in the port |
+| side-bar-right | 14285 | the same |
+| align-left | 16641 | the same, plus the terminal's dimension overlay |
+| right-rail | 16018 | the same |
+
+Every part sits where the reference puts it: a side panel beside the editor, the top panel above it, a justified panel under (or over) the side bars, the left-aligned panel under the side bar only, the side bar and activity bar on the right; the maximize action shows only where `panelMaximizationSupportedWhen` allows it. The first two runs froze or dropped keys midway while other sessions drove windows on the Studio; the third ran clean.
+
+Checks (Studio): `cargo test -p app -- layout part_grid`: `the_panel_moves_and_aligns_and_comes_back_where_it_was`, `every_arrangement_lays_out_with_any_part_hidden` and the grid's 16 layout tests pass.
+
+## Zen mode and centered layout (session m11f)
+
+`ui-pair` with `port/fixtures/ui-steps/layout-zen.json`, FILE=notes.txt, `zenMode.fullScreen: false`, Dark Modern, 1024x768 at 2x: Toggle Centered Layout, a drag of the left centered sash, Toggle Centered Layout, Cmd+K Z, Toggle Zen Mode, Toggle Status Bar Visibility. AE at 6% fuzz over 2048x1536 (the clean run).
+
+| Step | AE | Cause |
+|---|---|---|
+| start | 1169 | glyph antialiasing |
+| centered | 4760 | the editor's margins and sash lines at the reference's places; the reference's fading scrollbars |
+| uncentered | 4199 | glyph antialiasing, the fading scrollbars |
+| zen | 9221 | the centered margins the asymmetric sash drag had left (fixed below); side bars, activity bar and status bar hidden in both |
+| zen-exited | 4207 | the parts back in both |
+| no-status-bar | 4083 | the status bar hidden in both |
+
+Found by the pairs and fixed: a drag of a centered sash moved only that margin, where splitview.ts `inverseAltBehavior` moves both (Alt moves one); covered by `a_sash_moves_both_margins_unless_alt_is_held` (cargo test -p app -- centered_layout). The drag frames themselves could not be compared after the fix: the reruns lost keys and changed the capture scale while other sessions drove the Studio's screen. Escape Escape leaves zen mode in the port only with the window in front: cua-driver's background keys leave the window inactive, and the chord checker then drops the chord after its 500 ms tick, as upstream's `_scheduleLeaveChordMode` does; the fixture leaves zen mode through the Command Palette, and `zen_mode_hides_the_parts_and_puts_back_the_ones_it_hid` sends Escape Escape with an editor focused.
+
+## Activity badges (session m11f)
+
+`ui-pair` with `port/fixtures/ui-steps/activity-badge.json` (6 s, one shot) on a copy of `port/fixtures/workspace` made a git repository with one changed and one new file: AE 1808 over 2048x1536, glyph antialiasing only; the Source Control item's `2` badge has the reference's size, color and place.

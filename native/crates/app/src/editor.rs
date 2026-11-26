@@ -555,6 +555,8 @@ pub struct TextModel {
     pub associated_file: bool,
     /// The decorations of the model's problem markers.
     pub markers: Vec<marker_decorations::MarkerDecoration>,
+    /// More markers than `MAX_MARKER_DECORATIONS` (`_isMarkerLimitExceeded`): only that many are decorated.
+    pub markers_truncated: bool,
     /// Each replace as (version it applied to, start, end, new end), for the model's other editors to follow.
     pub(crate) edits: Vec<(u32, Position, Position, Position)>,
 }
@@ -593,6 +595,9 @@ pub struct OpenEditor {
     pub syntax_folding: bool,
     /// folding.ts `_currentModelHasFoldedImports`: `editor.foldingImportsByDefault` already collapsed the imports.
     pub folded_imports: bool,
+    /// `editor.foldingMaximumRegions` of the indentation provider, and the limit its last regions were cut to.
+    pub folding_limit: usize,
+    pub folding_limited: Option<usize>,
     /// The sticky scroll scopes of the indentation and marker regions, without the folding model's manual ones.
     pub sticky_model: sticky_scroll::StickyElement,
     /// The scopes of the document symbols and their provider id, used before `sticky_model` (`StickyModelProvider`
@@ -627,7 +632,7 @@ impl OpenEditor {
     fn new(document: TextDocument, preview: bool, model_id: u32) -> Self {
         let indentation = document.indentation;
         let guides = indent_guides(&document.lines, indentation.tab_size, indentation.indent_size(), document.off_side);
-        let model = TextModel { document, version_id: 1, history: History::default(), guides, host_reference: None, associated_file: false, markers: Vec::new(), edits: Vec::new() };
+        let model = TextModel { document, version_id: 1, history: History::default(), guides, host_reference: None, associated_file: false, markers: Vec::new(), markers_truncated: false, edits: Vec::new() };
         Self::of_model(Rc::new(RefCell::new(model)), preview, model_id)
     }
 
@@ -637,7 +642,7 @@ impl OpenEditor {
             let model = model.borrow();
             (model.version_id, word_wrap::WordWrap::new(&model.document.lines, model.document.too_large_for_tokenization))
         };
-        let mut editor = OpenEditor { seen_version, model, preview, model_id, selections: vec![Selection::default()], last_added: 0, leftovers: Vec::new(), column_select: None, smart_select: None, cursor_states: Default::default(), highlights: Vec::new(), value_set_replacement: None, selection_anchor: None, folding: FoldingModel::default(), syntax_folding: false, folded_imports: false, sticky_model: Default::default(), sticky_outline: None, scroll: Scroll::default(), max_line_width: 0., view_zones: Vec::new(), snippet_session: None, word_wrap, text_decorations: Vec::new(), injected_text: Vec::new() };
+        let mut editor = OpenEditor { seen_version, model, preview, model_id, selections: vec![Selection::default()], last_added: 0, leftovers: Vec::new(), column_select: None, smart_select: None, cursor_states: Default::default(), highlights: Vec::new(), value_set_replacement: None, selection_anchor: None, folding: FoldingModel::default(), syntax_folding: false, folded_imports: false, sticky_model: Default::default(), folding_limit: folding::MAX_FOLDING_REGIONS_FOR_INDENT, folding_limited: None, sticky_outline: None, scroll: Scroll::default(), max_line_width: 0., view_zones: Vec::new(), snippet_session: None, word_wrap, text_decorations: Vec::new(), injected_text: Vec::new() };
         editor.refresh_highlights();
         editor.refresh_folding_ranges();
         editor
