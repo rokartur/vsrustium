@@ -1,0 +1,18 @@
+[
+	{ "rightClick": [120, 600] },
+	{ "wait": 800 },
+	{ "shot": "explorer-menu" },
+	{ "key": "escape" },
+	{ "wait": 400 },
+	{ "hotkey": ["cmd", "shift", "p"] },
+	{ "wait": 600 },
+	{ "type": "remove folder from" },
+	{ "wait": 800 },
+	{ "shot": "palette" },
+	{ "key": "return" },
+	{ "wait": 1000 },
+	{ "shot": "folder-pick" },
+	{ "key": "return" },
+	{ "wait": 5000 },
+	{ "shot": "untitled-workspace" }
+]

@@ -1,0 +1,5 @@
+[
+	{ "click": [600, 600] },
+	{ "wait": 800 },
+	{ "shot": "click-below" }
+]
