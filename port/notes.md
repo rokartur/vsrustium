@@ -604,6 +604,13 @@ Scope (roadmap section 13): diagnostics, hover, completion, go to definition and
   3. `workbench/services/auxiliaryWindow`, `platform/auxiliaryWindow`, and the cross-window part of `platform/dnd`: unchanged from the handoff above (one workbench entity per window; groups' models must be shared across windows first).
   4. (done in part: side by side editor, split JSON and openDefaultKeybindings, see Side by side editor for what the pair still shows)
   5. (done: SCM Changes header as a view pane, see View panes)
+- Handoff, session m11f second pass (limitIndicator verified, SCM as a ViewPaneContainer, side by side editor), what is left in order:
+  1. Side by side editor gaps: the breadcrumbs' editor type control (breadcrumbsControl.ts `_createEditorTypeControl`, editorTypePicker.ts; the port's resolver in workbench/custom_editors.rs `show_open_with_picker` has the editor list) for every resource with more than one editor, the side by side sash drag (sideBySideEditor.ts SplitView), preferencesRenderers.ts `EditSettingRenderer` (the pencil of a setting line in the user settings editor); then the split-settings pair again and workbench/services/preferences to verified.
+  2. SCM pair leftovers outside the headers (View panes entry): the Graph header's "Auto" history ref picker, and the Changes list's tree indent (group row 7px left, resource rows 12px right of the reference).
+  3. `workbench/contrib/modernUI` compact density and classic layout, each with its ui-pairs (item 1 above).
+  4. Auxiliary windows and cross-window drag (item 3 above).
+  5. From the m11e session (coordinator): moving side bar view containers and the Move View command, with a pair; opening an editor while the secondary side bar or the panel is maximized restores the layout as upstream; title-action tooltips below the action as the reference (the port shows some above); webviews follow a live change of the macOS Reduce Motion setting when `workbench.reduceMotion` is `auto`.
+  6. port/tools/ui-pair takes the click scale from the first capture (`screenshot_scale`): the Studio's windows capture at 1x in some runs and 2x in others, so compare shots after `magick -resize 1024x768`.
 
 ## Milestone 15: Output panel and logs (in progress)
 
