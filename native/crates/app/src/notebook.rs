@@ -81,6 +81,8 @@ impl Notebooks {
     }
 }
 
+/// `CellKind.Markup`.
+pub const MARKUP: u64 = 1;
 /// `CellKind.Code`.
 pub const CODE: u64 = 2;
 
@@ -256,7 +258,17 @@ impl NotebookModel {
                 })
             })
             .collect();
-        json!({ "metadata": without_keys(&self.metadata, &self.transient["transientDocumentMetadata"]), "cells": cells })
+        let mut metadata = without_keys(&self.metadata, &self.transient["transientDocumentMetadata"]);
+        // notebookServiceImpl.ts keeps it for the ipynb serializer to write the file's indentation back.
+        if let Some(indent) = self.metadata["indentAmount"].as_str().filter(|indent| !indent.is_empty()) {
+            metadata["indentAmount"] = json!(indent);
+        }
+        json!({ "metadata": metadata, "cells": cells })
+    }
+
+    /// The bytes of every output item: `createSnapshot` refuses a backup past `notebook.backup.sizeLimit`.
+    pub fn output_size(&self) -> usize {
+        self.cells.iter().flat_map(|cell| &cell.outputs).flat_map(|output| &output.items).map(|item| item.data.len()).sum()
     }
 
     /// `applyEdits` (`ICellEditOperation`s, as `ICellEditOperationDto`s): applied from the last index to the first, as
@@ -539,6 +551,18 @@ pub fn uri_string(uri: &Value) -> String {
         text.push_str(part("fragment"));
     }
     text
+}
+
+/// `NotebookWorkingCopyTypeIdentifier.create` with the view type as the notebook type: a notebook's backup type id.
+pub fn working_copy_type_id(view_type: &str) -> String {
+    format!("notebook/{view_type}/{view_type}")
+}
+
+/// SimpleNotebookWorkingCopyEditorHandler `_getViewType`: the view type of a notebook backup's type id, `None` for
+/// other type ids, a notebook type differing from its view type, and the interactive window.
+pub fn view_type_of_working_copy(type_id: &str) -> Option<&str> {
+    let (notebook_type, view_type) = type_id.strip_prefix("notebook/")?.split_once('/')?;
+    (notebook_type == view_type && !view_type.contains('/') && view_type != "interactive").then_some(view_type)
 }
 
 /// The tab label of a notebook: its resource's base name (`EditorInput.getName`).

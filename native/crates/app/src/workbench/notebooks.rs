@@ -17,6 +17,7 @@ use serde_json::{Value, json};
 use super::Workbench;
 use super::host_requests::uri_parts;
 use super::notebook_editor::CellReveal;
+use crate::backups;
 use crate::commands::Outcome;
 use crate::editor::{OpenEditor, TextDocument};
 use crate::host_sync::FileJob;
@@ -129,6 +130,10 @@ impl Workbench {
     }
 
     pub(super) fn register_notebook_commands(&mut self) {
+        self.commands.register("notebook.cell.changeLanguage", |workbench, args, window, cx| {
+            workbench.change_cell_language(&args, window, cx);
+            Outcome::done()
+        });
         self.commands.register("_executeNotebookVariableProvider", |workbench, args, _, cx| workbench.execute_notebook_variable_provider(args.first(), cx));
         self.commands.register("_resolveNotebookContentProvider", |workbench, _, _, _| Outcome::Ready(Ok(json!(workbench.notebook_types().iter().map(NotebookType::info).collect::<Vec<_>>()))));
         self.commands.register("_executeDataToNotebook", |_, args, _, cx| {
@@ -514,9 +519,74 @@ impl Workbench {
         self.editors_changed(cx);
     }
 
+    /// The stored or untitled file working copy's `backup`: the serializer's bytes of a snapshot (outputs past
+    /// `notebook.backup.sizeLimit` KB fail it) with a file's stat as meta. Answers the version the backup is for, None
+    /// when it failed.
+    pub(super) fn backup_notebook(&mut self, key: &str, cx: &mut Context<Self>) -> oneshot::Receiver<Option<u64>> {
+        let (sender, receiver) = oneshot::channel();
+        let (Some(home), Some(model)) = (self.lifecycle.backups.home.clone(), self.host.notebooks.model(key)) else {
+            let _ = sender.send(None);
+            return receiver;
+        };
+        let limit = self.setting("notebook.backup.sizeLimit").as_u64().unwrap_or(10000) * 1024;
+        let (uri, view_type, version) = (model.uri.clone(), model.view_type.clone(), model.version_id);
+        if limit > 0 && model.output_size() as u64 > limit {
+            eprintln!("[backup tracker] backing up {}: Notebook too large to backup", notebook::label(&uri));
+            let _ = sender.send(None);
+            return receiver;
+        }
+        let snapshot = model.snapshot(|cell| self.cell_text(&cell.uri));
+        let meta = match uri_parts(&uri) {
+            Ok((scheme, path)) if scheme == "file" => super::backup_tracker::file_meta(&path, false),
+            _ => None,
+        };
+        let done = self.lifecycle.backups.start_operation();
+        cx.spawn(async move |workbench, cx| {
+            let written = match notebook_to_data(&workbench, cx, &view_type, snapshot).await {
+                Ok(bytes) => crate::uri::Uri::from_json(&uri).and_then(|resource| backups::write(&home, &resource, &notebook::working_copy_type_id(&view_type), meta.as_ref(), &bytes).map_err(|error| error.to_string())),
+                Err(error) => Err(error.to_string()),
+            };
+            if let Err(error) = &written {
+                eprintln!("[backup tracker] backing up {}: {error}", notebook::label(&uri));
+            }
+            let _ = sender.send(written.ok().map(|()| version));
+            drop(done);
+        })
+        .detach();
+        receiver
+    }
+
+    pub(super) fn discard_notebook_backup(&self, uri: &Value, view_type: &str) {
+        if let (Some(home), Ok(resource)) = (&self.lifecycle.backups.home, crate::uri::Uri::from_json(uri)) {
+            backups::discard(home, &resource, &notebook::working_copy_type_id(view_type));
+        }
+    }
+
+    /// The backed up bytes of a notebook (`resolveFromBackup`), None without a backup.
+    fn notebook_backup(&self, uri: &Value, view_type: &str) -> Option<Vec<u8>> {
+        let home = self.lifecycle.backups.home.as_ref()?;
+        let resource = crate::uri::Uri::from_json(uri).ok()?;
+        backups::resolve(&backups::backup_path(home, &resource, &notebook::working_copy_type_id(view_type))).map(|backup| backup.content)
+    }
+
+    /// SimpleNotebookWorkingCopyEditorHandler `createEditor` for a backup without an open notebook: the notebook
+    /// opens pinned in the background and resolves from its backup.
+    pub(super) fn restore_notebook_backup(&mut self, uri: Value, view_type: String, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.is_notebook_type(&view_type) || self.host.notebooks.model(&notebook::uri_string(&uri)).is_some() {
+            return;
+        }
+        drop(self.open_notebook(uri, view_type, json!({ "pinned": true, "preserveFocus": true, "inactive": true }), window, cx));
+    }
+
     pub(super) fn save_dirty_notebooks(&mut self, cx: &mut Context<Self>) -> Vec<oneshot::Receiver<bool>> {
         let dirty: Vec<String> = self.host.notebooks.models.iter().filter(|model| model.dirty && model.uri["scheme"] != "untitled").map(|model| model.uri_string()).collect();
         dirty.iter().map(|key| self.save_notebook(key, cx)).collect()
+    }
+
+    /// Every dirty notebook saved as its editor saves it: an untitled one through the save dialog.
+    pub(super) fn save_dirty_notebook_editors(&mut self, cx: &mut Context<Self>) -> Vec<oneshot::Receiver<bool>> {
+        let dirty: Vec<String> = self.host.notebooks.models.iter().filter(|model| model.dirty).map(NotebookModel::uri_string).collect();
+        dirty.iter().map(|key| self.save_notebook_editor(key, cx)).collect()
     }
 
     /// `_workbench.revertAllDirty` for notebooks: a file notebook reads its resource again, an untitled one is clean.
@@ -595,6 +665,7 @@ impl Workbench {
     pub(super) fn show_notebook(&mut self, key: &str, options: &Value, window: &mut Window, cx: &mut Context<Self>) -> NotebookResult {
         self.activate_column(&options["position"]);
         let pinned = options["pinned"] != false;
+        let previous = self.editors.active_tab().map(|editor| editor.model_id);
         let path = Path::new(key);
         match self.editors.editors.iter().position(|editor| editor.document().is(NOTEBOOK_EDITOR_SCHEME, path)) {
             Some(index) => {
@@ -609,6 +680,11 @@ impl Workbench {
             }
         }
         let tab_model_id = self.editors.active_tab().expect("just shown").model_id;
+        if options["inactive"] == true
+            && let Some(index) = previous.and_then(|id| self.editors.editors.iter().position(|editor| editor.model_id == id))
+        {
+            self.editors.activate(index);
+        }
         self.sync_notebook_editors();
         if let Some(selections) = options["selections"].as_array().filter(|selections| !selections.is_empty()) {
             let selections = cell_ranges(&json!(selections));
@@ -1216,12 +1292,18 @@ async fn read_notebook(workbench: &WeakEntity<Workbench>, cx: &mut AsyncApp, uri
     data_to_notebook(workbench, cx, view_type, &bytes).await
 }
 
-/// `NotebookEditorModelResolverService.resolve`: the model of `uri`, created from `content` (dirty) or its resource.
+/// `NotebookEditorModelResolverService.resolve`: the model of `uri`, created from `content` (dirty), its backup
+/// (dirty) or its resource.
 async fn resolve_notebook(workbench: &WeakEntity<Workbench>, cx: &mut AsyncApp, uri: Value, view_type: String, content: Option<Value>) -> NotebookResult {
-    let dirty = content.is_some();
-    let data = match content {
-        Some(content) => content,
-        None => read_notebook(workbench, cx, &uri, &view_type).await?,
+    let backup = match content {
+        Some(_) => None,
+        None => workbench.update(cx, |workbench, _| workbench.notebook_backup(&uri, &view_type)).map_err(canceled)?,
+    };
+    let dirty = content.is_some() || backup.is_some();
+    let data = match (content, backup) {
+        (Some(content), _) => content,
+        (None, Some(bytes)) => data_to_notebook(workbench, cx, &view_type, &bytes).await?,
+        (None, None) => read_notebook(workbench, cx, &uri, &view_type).await?,
     };
     workbench.update(cx, |workbench, cx| workbench.add_notebook(uri, &view_type, &data, dirty, cx)).map_err(canceled)?;
     Ok(Value::Null)

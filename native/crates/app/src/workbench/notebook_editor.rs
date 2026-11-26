@@ -20,15 +20,13 @@ use crate::notebook::kernels::ExecutionState;
 use crate::notebook::layout::{self, CellInput, CellLayout};
 use crate::notebook::outline;
 use crate::notebook::renderers::{self, Renderer};
-use crate::notebook::{self, CODE, NOTEBOOK_EDITOR_SCHEME, NotebookModel};
+use crate::notebook::{self, CODE, MARKUP, NOTEBOOK_EDITOR_SCHEME, NotebookModel};
 use crate::webview::{ClipView, Webview};
 
 /// The webview ids of notebook editors, followed by the tab's model id.
 pub(super) const WEBVIEW_ID_PREFIX: &str = "notebook-";
 /// The notebook toolbar (notebookEditorToolbar.ts) above the list.
 const TOOLBAR_HEIGHT: f32 = 26.;
-/// `CellKind.Markup`.
-const MARKUP: u64 = 1;
 const BACK_LAYER_HTML: &str = include_str!("../notebook/back_layer.html");
 const WEBVIEW_PRELOADS: &str = include_str!("../notebook/webview_preloads.js");
 
@@ -526,7 +524,10 @@ impl Workbench {
         let Some(editor) = self.active_notebook_editor() else { return };
         let Some(model) = self.host.notebooks.model(&editor.notebook) else { return };
         context.insert("notebookType".into(), json!(model.view_type));
+        // notebookEditorWidget.ts and cellContextKeys.ts: `!isReadOnly`; the port has no read-only notebooks.
+        context.insert("notebookEditable".into(), json!(true));
         let Some(cell) = model.cells.get(editor.focus) else { return };
+        context.insert("notebookCellEditable".into(), json!(true));
         context.insert("notebookCellType".into(), json!(if cell.kind == MARKUP { "markup" } else { "code" }));
         let editing = self.notebook_views.views.get(&editor.tab_model_id).is_some_and(|view| view.editing.contains(&cell.handle));
         context.insert("notebookCellMarkdownEditMode".into(), json!(cell.kind == MARKUP && editing));
