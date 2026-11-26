@@ -191,6 +191,7 @@ mod smooth_scrolling;
 mod sticky_outline;
 mod save_conflict;
 mod editor_state;
+mod empty_editor_hint;
 mod text_input;
 mod timeline_view;
 mod title_bar_actions;

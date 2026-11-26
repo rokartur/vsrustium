@@ -598,6 +598,7 @@ impl Workbench {
             .child(
                 shifted()
                     .children(middle_scroll_dot)
+                    .children(self.empty_editor_hint(editor, metrics.content_left(), cx))
                     .children(self.sticky_scroll_widget(editor, metrics, window, cx))
                     // Messages, hovers and the overlay widgets are the focused editor's.
                     .when(!inactive, |shifted| {
