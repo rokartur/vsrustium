@@ -77,6 +77,17 @@ pub enum MenuId {
     NotebookOutputToolbar,
     /// `MenuId.NotebookEditorLayoutConfigure`: the notebook editor title's Customize Notebook... submenu.
     NotebookEditorLayoutConfigure,
+    /// `MenuId.NotebookToolbar`: the notebook editor's toolbar, its secondary items in the `...` dropdown.
+    NotebookToolbar,
+    /// `MenuId.NotebookCellTitle`: a cell's toolbar, `inline*` groups as buttons, the rest in its `...` dropdown.
+    NotebookCellTitle,
+    /// `MenuId.NotebookCellDelete`: the cell toolbar's last button.
+    NotebookCellDelete,
+    /// `MenuId.NotebookCellInsert`: the cell toolbar's Insert Cell submenu.
+    NotebookCellInsert,
+    /// `MenuId.InteractiveCellTitle` and `InteractiveCellDelete`: the cell toolbar of an interactive window or REPL.
+    InteractiveCellTitle,
+    InteractiveCellDelete,
     TimelineTitle,
     TimelineItemContext,
     /// timeline.contribution.ts "Filter Timeline": a toggle per timeline source.
@@ -430,6 +441,40 @@ const WORKBENCH_MENUS: &[Row] = &[
     (MenuId::NotebookOutputToolbar, None, "notebook.cellOuput.showEmptyOutputs", "Show Empty Outputs", "", 0., Some("notebookCellHasOutputs && notebookCellHasHiddenOutputs"), None),
     (MenuId::NotebookOutputToolbar, None, "notebook.cellOutput.copy", "Copy Cell Output", "", 0., Some("notebookCellHasOutputs"), None),
     (MenuId::NotebookOutputToolbar, None, "notebook.cellOutput.saveImage", "Save Image", "", 0., Some("notebookCellOutputMimetype =~ /^image\\//"), None),
+    // The cell toolbar: sectionActions.ts, editActions.ts, executeActions.ts (`executeCondition`) and cellCommands.ts
+    // in `CellToolbarOrder`; editActions.ts `DeleteCellAction` in NotebookCellDelete.
+    (MenuId::NotebookCellTitle, None, "notebook.section.runCells", "Run Cells In Section", "inline/cell", 0., Some("notebookCellType == 'markup'"), None),
+    (MenuId::NotebookCellTitle, None, "notebook.cell.edit", "Edit Cell", "inline/cell", 1., Some("notebookEditable && notebookCellType == 'markup' && !notebookCellMarkdownEditMode && notebookCellEditable"), None),
+    (MenuId::NotebookCellTitle, None, "notebook.cell.executeCellsAbove", "Execute Above Cells", "inline/cell", 2., Some("notebookCellType == 'code' && (notebookKernelCount > 0 || notebookKernelSourceCount > 0 || notebookMissingKernelExtension) && config.notebook.consolidatedRunButton == false"), None),
+    (MenuId::NotebookCellTitle, None, "notebook.cell.executeCellAndBelow", "Execute Cell and Below", "inline/cell", 3., Some("notebookCellType == 'code' && (notebookKernelCount > 0 || notebookKernelSourceCount > 0 || notebookMissingKernelExtension) && config.notebook.consolidatedRunButton == false"), None),
+    (MenuId::NotebookCellTitle, None, "notebook.cell.quitEdit", "Stop Editing Cell", "inline/cell", 4., Some("notebookCellType == 'markup' && notebookCellMarkdownEditMode && notebookCellEditable"), None),
+    (MenuId::NotebookCellTitle, None, "notebook.cell.split", "Split Cell", "inline/cell", 5., Some("notebookEditable && notebookCellEditable && !notebookCellInputIsCollapsed"), None),
+    (MenuId::NotebookCellTitle, None, "notebook.cell.clearOutputs", "Clear Cell Outputs", "inline/output", 6., Some("notebookCellType == 'code' && (notebookKernelCount > 0 || notebookKernelSourceCount > 0) && notebookCellHasOutputs && notebookEditable && notebookCellEditable && !config.notebook.consolidatedOutputButton"), None),
+    (MenuId::NotebookCellDelete, None, "notebook.cell.delete", "Delete Cell", "inline/cell", 0., Some("notebookEditable"), None),
+    (MenuId::InteractiveCellDelete, None, "notebook.cell.delete", "Delete Cell", "inline/cell", 0., None, None),
+    // The cell toolbar's `...`: notebookClipboard.ts, coreActions.ts, cellCommands.ts and layoutActions.ts in
+    // `CellOverflowToolbarGroups`; Show Cell Line Numbers is added in `workbench_menus` for its check.
+    (MenuId::NotebookCellTitle, None, "notebook.cell.cut", "Cut Cell", "1_copy", 1., Some("notebookEditorFocused && notebookEditable && notebookCellEditable"), None),
+    (MenuId::NotebookCellTitle, None, "notebook.cell.copy", "Copy Cell", "1_copy", 2., Some("notebookEditorFocused"), None),
+    (MenuId::NotebookCellTitle, None, "notebook.cell.paste", "Paste Cell", "1_copy", 3., Some("notebookEditorFocused && notebookEditable"), None),
+    (MenuId::NotebookCellTitle, Some(MenuId::NotebookCellInsert), "", "Insert Cell", "2_insert", 0., Some("notebookEditable"), None),
+    (MenuId::NotebookCellTitle, None, "notebook.cell.changeToCode", "Change Cell to Code", "3_edit", 0., Some("notebookEditorFocused && notebookEditable && notebookCellEditable && notebookCellType == 'markup'"), Some("activeEditor == 'workbench.editor.notebook' && notebookCellType == 'markup'")),
+    (MenuId::NotebookCellTitle, None, "notebook.cell.changeToMarkdown", "Change Cell to Markdown", "3_edit", 0., Some("notebookEditorFocused && notebookEditable && notebookCellEditable && notebookCellType == 'code'"), Some("activeEditor == 'workbench.editor.notebook' && notebookCellType == 'code'")),
+    (MenuId::NotebookCellTitle, None, "notebook.cell.joinAbove", "Join With Previous Cell", "3_edit", 10., Some("notebookEditorFocused && notebookEditable"), None),
+    (MenuId::NotebookCellTitle, None, "notebook.cell.joinBelow", "Join With Next Cell", "3_edit", 11., Some("notebookEditorFocused && notebookEditable"), None),
+    (MenuId::NotebookCellTitle, None, "notebook.cell.joinSelected", "Join Selected Cells", "3_edit", 12., Some("notebookEditorFocused && notebookEditable"), None),
+    (MenuId::NotebookCellTitle, None, "notebook.cell.copyDown", "Copy Cell Down", "3_edit", 13., Some("notebookEditorFocused && notebookEditable && notebookCellEditable"), None),
+    (MenuId::NotebookCellTitle, None, "notebook.cell.moveUp", "Move Cell Up", "3_edit", 14., Some("config.notebook.dragAndDropEnabled == false"), None),
+    (MenuId::NotebookCellTitle, None, "notebook.cell.moveDown", "Move Cell Down", "3_edit", 14., Some("config.notebook.dragAndDropEnabled == false"), None),
+    (MenuId::NotebookCellTitle, Some(MenuId::EditorContextShare), "", "Share", "4_share", 0., None, None),
+    (MenuId::NotebookCellTitle, None, "notebook.toggleCellToolbarPosition", "Toggle Cell Toolbar Position", "View", 1., None, None),
+    // insertCellActions.ts.
+    (MenuId::NotebookCellInsert, None, "notebook.cell.insertCodeCellAbove", "Insert Code Cell Above", "", 0., None, None),
+    (MenuId::NotebookCellInsert, None, "notebook.cell.insertCodeCellBelow", "Insert Code Cell Below", "", 1., None, None),
+    (MenuId::NotebookCellInsert, None, "notebook.cell.insertMarkdownCellAbove", "Insert Markdown Cell Above", "", 2., None, None),
+    (MenuId::NotebookCellInsert, None, "notebook.cell.insertMarkdownCellBelow", "Insert Markdown Cell Below", "", 3., None, None),
+    // layoutActions.ts: the notebook toolbar's `...`; Breadcrumbs and Line Numbers are added in `workbench_menus`.
+    (MenuId::NotebookToolbar, None, "workbench.notebook.layout.configure", "Customize Notebook Layout", "notebookLayout", 1., Some("config.notebook.globalToolbar == true"), None),
 ];
 
 /// windowActions.ts, layoutActions.ts, auxiliaryBarActions.ts, panelActions.ts, activitybarPart.ts, toggleMinimap.ts, stickyScrollActions.ts and
@@ -514,6 +559,23 @@ pub fn workbench_menus() -> Vec<MenuItem> {
         let entry = Entry::Command { id: id.into(), precondition: precondition.and_then(Expr::deserialize), toggled, alt: None };
         items.push(MenuItem { menu: MenuId::NotebookEditorLayoutConfigure, entry, title: title.into(), group: "notebookLayoutDetails".into(), order, when });
     }
+    let entry = Entry::Command { id: "notebook.toggleCellToolbarPositionFromEditorTitle".into(), precondition: None, toggled: None, alt: None };
+    items.push(MenuItem { menu: MenuId::NotebookEditorLayoutConfigure, entry, title: "Toggle Cell Toolbar Position".into(), group: "notebookLayoutDetails".into(), order: 3., when: None });
+    // cellEditorOptions.ts `ToggleActiveLineNumberAction`, checked by the cell's own setting, else the notebook's.
+    let toggled = Toggled::when(Expr::deserialize("notebookCellLineNumbers == 'on' || notebookCellLineNumbers == 'inherit' && config.notebook.lineNumbers == 'on'"));
+    let entry = Entry::Command { id: "notebook.cell.toggleLineNumbers".into(), precondition: notebook.clone(), toggled, alt: None };
+    items.push(MenuItem { menu: MenuId::NotebookCellTitle, entry, title: "Show Cell Line Numbers".into(), group: "View".into(), order: 1., when: None });
+    // breadcrumbsControl.ts and cellEditorOptions.ts in the notebook toolbar's `...`, titled as the toolbar renders
+    // them (Line Numbers' `shortTitle`).
+    let global_toolbar = Expr::deserialize("config.notebook.globalToolbar == true");
+    let toolbar_toggles = [
+        ("breadcrumbs.toggle", "Breadcrumbs", "config.breadcrumbs.enabled == true", None, None),
+        ("notebook.toggleLineNumbers", "Line Numbers", "config.notebook.lineNumbers != 'off'", Expr::deserialize("notebookEditorFocused"), global_toolbar),
+    ];
+    for (id, title, checked, precondition, when) in toolbar_toggles {
+        let entry = Entry::Command { id: id.into(), precondition, toggled: Toggled::when(Expr::deserialize(checked)), alt: None };
+        items.push(MenuItem { menu: MenuId::NotebookToolbar, entry, title: title.into(), group: "notebookLayout".into(), order: 2., when });
+    }
     // toggleWordWrap.ts: checked while the active editor wraps, enabled while it can toggle.
     let entry = Entry::Command { id: "editor.action.toggleWordWrap".into(), precondition: Some(Expr::has("canToggleWordWrap")), toggled: Toggled::when(Some(Expr::has("editorWordWrap"))), alt: None };
     items.push(MenuItem { menu: MenuId::MenubarViewMenu, entry, title: "&&Word Wrap".into(), group: "6_editor".into(), order: 1., when: None });
@@ -561,7 +623,7 @@ pub fn workbench_menus() -> Vec<MenuItem> {
 
 /// menusExtensionPoint.ts `apiMenus`: the `contributes.menus` keys of the menus the port shows. `commandPalette`
 /// is read by `command_palette::menu`.
-const API_MENUS: [(&str, MenuId); 32] = [
+const API_MENUS: [(&str, MenuId); 35] = [
     ("file/newFile", MenuId::NewFile),
     ("editor/context", MenuId::EditorContext),
     ("explorer/context", MenuId::ExplorerContext),
@@ -576,6 +638,9 @@ const API_MENUS: [(&str, MenuId); 32] = [
     ("multiDiffEditor/resource/title", MenuId::MultiDiffEditorFileToolbar),
     ("editor/title", MenuId::EditorTitle),
     ("interactive/toolbar", MenuId::InteractiveToolbar),
+    ("notebook/toolbar", MenuId::NotebookToolbar),
+    ("notebook/cell/title", MenuId::NotebookCellTitle),
+    ("interactive/cell/title", MenuId::InteractiveCellTitle),
     ("scm/sourceControl", MenuId::ScmSourceControl),
     ("scm/history/title", MenuId::ScmHistoryTitle),
     ("scm/historyItem/context", MenuId::ScmHistoryItemContext),
@@ -605,6 +670,22 @@ pub fn command_icons(extensions: &[ScannedExtension]) -> std::collections::HashM
     icons.insert("workbench.action.localHistory.restoreViaEditor".to_string(), CommandIcon::Codicon("check".into()));
     icons.insert("workbench.files.action.acceptLocalChanges".to_string(), CommandIcon::Codicon("check".into()));
     icons.insert("workbench.files.action.revertLocalChanges".to_string(), CommandIcon::Codicon("discard".into()));
+    // notebookIcons.ts: the cell toolbar's buttons.
+    let notebook_icons = [
+        ("notebook.section.runCells", "play"),
+        ("notebook.cell.edit", "pencil"),
+        ("notebook.cell.executeCellsAbove", "run-above"),
+        ("notebook.cell.executeCellAndBelow", "run-below"),
+        ("notebook.cell.quitEdit", "check"),
+        ("notebook.cell.split", "split-vertical"),
+        ("notebook.cell.clearOutputs", "clear-all"),
+        ("notebook.cell.delete", "trash"),
+        ("notebook.cell.moveUp", "arrow-up"),
+        ("notebook.cell.moveDown", "arrow-down"),
+    ];
+    for (id, icon) in notebook_icons {
+        icons.insert(id.to_string(), CommandIcon::Codicon(icon.into()));
+    }
     for extension in extensions {
         let commands = match &extension.description["contributes"]["commands"] {
             Value::Array(commands) => commands.iter().collect(),
@@ -717,8 +798,13 @@ fn group_and_order(group: &str) -> (String, f64) {
 /// `getFlatContextMenuActions(menu.getActions())`: the items of `menu` whose `when` holds, in groups joined by
 /// separators. A submenu without actions is left out.
 pub fn menu_actions(registry: &[MenuItem], menu: MenuId, context: &dyn Context) -> Vec<MenuAction> {
+    menu_group_actions(registry, menu, context, |_| true)
+}
+
+/// `menu_actions` of the groups `keep` takes, as `getActionBarActions` splits a toolbar's buttons from its `...`.
+pub fn menu_group_actions(registry: &[MenuItem], menu: MenuId, context: &dyn Context, keep: impl Fn(&str) -> bool) -> Vec<MenuAction> {
     let holds = |expr: &Option<Expr>| expr.as_ref().is_none_or(|expr| expr.evaluate(context));
-    let mut items: Vec<&MenuItem> = registry.iter().filter(|item| item.menu == menu && holds(&item.when)).collect();
+    let mut items: Vec<&MenuItem> = registry.iter().filter(|item| item.menu == menu && keep(&item.group) && holds(&item.when)).collect();
     items.sort_by(|a, b| compare_menu_items(a, b));
     let mut actions = Vec::new();
     let mut group: Option<&str> = None;

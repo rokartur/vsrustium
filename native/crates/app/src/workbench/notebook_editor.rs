@@ -97,11 +97,24 @@ pub struct NotebookViews {
     preferred_renderers: HashMap<(String, String), String>,
     /// Notebook editors the editor part restored, opened once their notebooks resolve (notebooks.rs).
     pub(super) restores: Vec<super::notebooks::NotebookRestore>,
+    /// notebookServiceImpl.ts `setToCopy`: the cells Copy Cell or Cut Cell took, and whether they were copied.
+    cell_clipboard: Option<(Vec<Value>, bool)>,
+    /// `CellViewModel.lineNumbers` other than `inherit`, by cell URI: whether the cell shows line numbers.
+    cell_line_numbers: HashMap<String, bool>,
 }
 
 impl NotebookViews {
     pub(super) fn new(cx: &mut Context<Workbench>) -> Self {
-        NotebookViews { views: HashMap::new(), status_bars: Default::default(), list_focus: cx.focus_handle(), mime_order: None, preferred_renderers: HashMap::new(), restores: Vec::new() }
+        NotebookViews {
+            views: HashMap::new(),
+            status_bars: Default::default(),
+            list_focus: cx.focus_handle(),
+            mime_order: None,
+            preferred_renderers: HashMap::new(),
+            restores: Vec::new(),
+            cell_clipboard: None,
+            cell_line_numbers: HashMap::new(),
+        }
     }
 }
 
@@ -117,6 +130,10 @@ struct NotebookView {
     hovered: Option<u64>,
     /// Outputs Show Empty Outputs made visible (cellOutputViewModel.ts `alwaysShow`), by id.
     shown_empty: HashSet<String>,
+    /// The cell whose toolbar `...` dropdown is open (`cell-toolbar-dropdown-active`).
+    toolbar_menu: Option<u64>,
+    /// Header cells whose section is collapsed (foldingModel.ts), by handle.
+    collapsed: HashSet<u64>,
 }
 
 /// backLayerWebView.ts: the webview, what it was sent and what it measured.
@@ -163,6 +180,10 @@ pub(super) struct CellRow {
     kind: u64,
     editing: bool,
     layout: CellLayout,
+    /// In a collapsed section: not drawn.
+    hidden: bool,
+    /// A header with a section (`CellFoldingState`): whether it is collapsed, and how many cells it folds.
+    fold: Option<(bool, usize)>,
 }
 
 impl Workbench {
@@ -529,14 +550,14 @@ impl Workbench {
             workbench.move_notebook_focus(-1, true, window, cx);
             crate::commands::Outcome::done()
         });
-        self.commands.register("notebook.cell.edit", |workbench, _, window, cx| {
-            let Some((tab, handle, _)) = workbench.focused_notebook_cell() else { return crate::commands::Outcome::done() };
+        self.commands.register("notebook.cell.edit", |workbench, args, window, cx| {
+            let Some((tab, handle)) = workbench.cell_target(&args) else { return crate::commands::Outcome::done() };
             workbench.notebook_views.views.entry(tab).or_default().editing.insert(handle);
             workbench.focus_notebook_cell(tab, handle, true, window, cx);
             crate::commands::Outcome::done()
         });
-        self.commands.register("notebook.cell.quitEdit", |workbench, _, window, cx| {
-            let Some((tab, handle, _)) = workbench.focused_notebook_cell() else { return crate::commands::Outcome::done() };
+        self.commands.register("notebook.cell.quitEdit", |workbench, args, window, cx| {
+            let Some((tab, handle)) = workbench.cell_target(&args) else { return crate::commands::Outcome::done() };
             if let Some(view) = workbench.notebook_views.views.get_mut(&tab) {
                 view.editing.remove(&handle);
             }
@@ -567,6 +588,7 @@ impl Workbench {
         let Some(editor) = self.active_notebook_editor() else { return };
         let Some(model) = self.host.notebooks.model(&editor.notebook) else { return };
         context.insert("notebookType".into(), json!(model.view_type));
+        self.notebook_kernel_context(model, context);
         // notebookEditorWidget.ts and cellContextKeys.ts: `!isReadOnly`; only the interactive window's and REPL
         // editor's lists are read-only.
         context.insert("notebookEditable".into(), json!(composite.is_none()));
@@ -583,16 +605,9 @@ impl Workbench {
         context.insert("notebookEditorCursorAtLineBoundary".into(), json!(line_boundary));
     }
 
-    /// The active notebook editor's tab, focused cell handle and kind.
-    fn focused_notebook_cell(&self) -> Option<(u32, u64, u64)> {
-        let editor = self.active_notebook_editor()?;
-        let cell = self.host.notebooks.model(&editor.notebook)?.cells.get(editor.focus)?;
-        Some((editor.tab_model_id, cell.handle, cell.kind))
-    }
-
     /// Moves the focused cell by `delta` (clamped, `isize::MIN`/`MAX` for the first and last) and reveals it; with
     /// `editor` the new cell's editor takes the keyboard, its cursor on the line next to the cell left
-    /// (`focusEditorLine`), unless it is a markup preview.
+    /// (`focusEditorLine`), unless it is a markup preview. Cells of collapsed sections are not in the list.
     fn move_notebook_focus(&mut self, delta: isize, editor: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some(notebook_editor) = self.active_notebook_editor() else { return };
         let (tab, focus) = (notebook_editor.tab_model_id, notebook_editor.focus);
@@ -600,8 +615,10 @@ impl Workbench {
         if model.cells.is_empty() {
             return;
         }
-        let last = model.cells.len() - 1;
-        let target = (focus as isize).saturating_add(delta).clamp(0, last as isize) as usize;
+        let visible: Vec<usize> = self.notebook_rows(tab, model).iter().filter(|row| !row.hidden).map(|row| row.index).collect();
+        let Some(last) = visible.len().checked_sub(1) else { return };
+        let position = visible.iter().rposition(|index| *index <= focus).unwrap_or(0);
+        let target = visible[(position as isize).saturating_add(delta).clamp(0, last as isize) as usize];
         if editor && target == focus {
             return;
         }
@@ -632,6 +649,10 @@ impl Workbench {
                 previews.push((cell.handle, self.cell_text(&cell.uri), cell.mime.clone().unwrap_or("text/markdown".into()), cell.metadata.clone(), row));
                 continue;
             }
+            // A collapsed section's outputs leave the webview and come back when it expands.
+            if row.hidden {
+                continue;
+            }
             let mut offset = row.layout.output_top;
             for (output, height) in cell.outputs.iter().zip(self.output_heights(tab, cell)) {
                 let picked = self.output_presentations(&model.view_type, output).into_iter().find_map(|(mime, renderer)| renderer.map(|renderer| (mime, renderer.id)));
@@ -640,7 +661,7 @@ impl Workbench {
             }
         }
         let Some(back_layer) = self.notebook_views.views.get_mut(&tab).and_then(|view| view.webview.as_mut()).filter(|layer| layer.initialized) else { return };
-        let shown: HashSet<u64> = previews.iter().filter(|preview| !preview.4.editing).map(|preview| preview.0).collect();
+        let shown: HashSet<u64> = previews.iter().filter(|preview| !preview.4.editing && !preview.4.hidden).map(|preview| preview.0).collect();
         let gone: Vec<u64> = back_layer.previews.keys().filter(|handle| !previews.iter().any(|preview| preview.0 == **handle)).copied().collect();
         if !gone.is_empty() {
             back_layer.post(json!({ "type": "deleteMarkupCell", "ids": gone.iter().map(|handle| cell_id(*handle)).collect::<Vec<_>>() }));
@@ -651,7 +672,7 @@ impl Workbench {
         }
         for (handle, content, mime, metadata, row) in &previews {
             let id = cell_id(*handle);
-            if row.editing {
+            if row.editing || row.hidden {
                 if back_layer.previews.contains_key(handle) && back_layer.hidden_previews.insert(*handle) {
                     back_layer.post(json!({ "type": "hideMarkupCells", "ids": [id] }));
                 }
@@ -732,24 +753,35 @@ impl Workbench {
         // notebookViewModelImpl.ts: a REPL editor's list leaves out its input cell, the last.
         let repl = self.host.notebooks.interactives.iter().any(|interactive| interactive.repl && interactive.notebook == model.uri_string());
         let cells = &model.cells[..model.cells.len() - usize::from(repl)];
-        for cell in cells {
+        // foldingModel.ts: the header cells with a section; those collapsed hide the rest of their section.
+        let ranges = if repl { Vec::new() } else { self.notebook_folding_ranges(model) };
+        let collapsed = |handle: u64| view.is_some_and(|view| view.collapsed.contains(&handle));
+        let mut hidden = HashSet::new();
+        for (start, end) in &ranges {
+            if collapsed(model.cells[*start].handle) && !hidden.contains(start) {
+                hidden.extend(start + 1..=*end);
+            }
+        }
+        for (index, cell) in cells.iter().enumerate() {
             let editing = view.is_some_and(|view| view.editing.contains(&cell.handle));
             let input = match cell.kind == CODE || editing {
+                _ if hidden.contains(&index) => CellInput::Hidden,
                 true => {
                     let outputs_height = self.output_heights(tab, cell).into_iter().flatten().sum();
                     CellInput::Editor { lines: self.cell_line_count(&cell.uri), outputs_height, markup: cell.kind != CODE }
                 }
-                false => CellInput::Preview { height: back_layer.and_then(|layer| layer.preview_heights.get(&cell.handle)).copied() },
+                false => CellInput::Preview { height: back_layer.and_then(|layer| layer.preview_heights.get(&cell.handle)).copied(), collapsed: collapsed(cell.handle) && ranges.iter().any(|(start, _)| *start == index) },
             };
             inputs.push(input);
         }
         let (layouts, _) = layout::layout(&inputs, self.notebook_line_height());
-        cells
-            .iter()
-            .zip(layouts)
-            .enumerate()
-            .map(|(index, (cell, layout))| CellRow { handle: cell.handle, index, kind: cell.kind, editing: view.is_some_and(|view| view.editing.contains(&cell.handle)), layout })
-            .collect()
+        let mut rows = Vec::new();
+        for (index, (cell, layout)) in cells.iter().zip(layouts).enumerate() {
+            let fold = ranges.iter().find(|(start, _)| *start == index).map(|(_, end)| (collapsed(cell.handle), end - index));
+            let editing = view.is_some_and(|view| view.editing.contains(&cell.handle));
+            rows.push(CellRow { handle: cell.handle, index, kind: cell.kind, editing, layout, hidden: hidden.contains(&index), fold });
+        }
+        rows
     }
 
     /// Scrolls the list of the notebook editor of `tab` to cells `start..end` (notebookEditorWidget.ts
@@ -929,8 +961,10 @@ impl Workbench {
         toolbar
             .child(button("notebook-insert-code", "add", "Code", "notebook.cell.insertCodeCellBelowAndFocusContainer", Vec::new(), cx))
             .child(button("notebook-insert-markdown", "add", "Markdown", "notebook.cell.insertMarkdownCellBelow", Vec::new(), cx))
-            .child(div().w(px(1.)).h(px(16.)).bg(self.color("menu.separatorBackground")))
+            // notebookToolbar.css: 8px item margins around the separator, as measured in the reference.
+            .child(div().ml(px(4.)).mr(px(2.)).w(px(1.)).h(px(16.)).bg(self.color("menu.separatorBackground")))
             .child(button("notebook-run-all", "run-all", "Run All", "notebook.execute", Vec::new(), cx))
+            .children(self.notebook_toolbar_more(window, cx).map(|more| more.ml(px(4.))))
             .child(div().flex_1())
             .child(button("notebook-kernel", "server-environment", &kernel_label, "notebook.selectKernel", Vec::new(), cx))
     }
@@ -947,7 +981,7 @@ impl Workbench {
         let covered = self.quick_inputs.current().is_some() || self.keybindings_editor.open || self.context_menu.is_some();
         // The webview takes presses over outputs and previews only (`ClipView`).
         let mut hit_rects = Vec::new();
-        for row in &rows {
+        for row in rows.iter().filter(|row| !row.hidden) {
             let top = row.layout.top - scroll_top;
             match row.kind == CODE || row.editing {
                 true => hit_rects.push(Bounds::new(point(px(layout::CODE_CELL_LEFT_MARGIN + layout::CELL_RUN_GUTTER), px(top + row.layout.output_top)), size(px(10000.), px(row.layout.height - row.layout.output_top - layout::BOTTOM_TOOLBAR_GAP - layout::CELL_BOTTOM_MARGIN)))),
@@ -986,7 +1020,7 @@ impl Workbench {
                 .absolute()
                 .inset_0(),
             );
-        for row in &rows {
+        for row in rows.iter().filter(|row| !row.hidden) {
             let focused = focused_index == Some(row.index);
             list = list.child(self.notebook_cell(tab, model, row, focused, scroll_top, window, cx));
         }
@@ -1026,11 +1060,14 @@ impl Workbench {
                 container = container.child(bar(row.layout.output_top + layout::FOCUS_INDICATOR_GAP, outputs_height - layout::FOCUS_INDICATOR_GAP));
             }
         }
-        // notebookCellTitleToolbar.css: the toolbar of the hovered row, or of the focused one while the list has the focus.
-        let shows_toolbar = hovered || (focused && list_focused);
+        // notebookCellTitleToolbar.css: the toolbar of the hovered row, of the focused one while the list has the
+        // focus, or of the row whose `...` dropdown is open.
+        let dropdown = self.context_menu.is_some() && self.notebook_views.views.get(&tab).is_some_and(|view| view.toolbar_menu == Some(row.handle));
+        let shows_toolbar = hovered || (focused && list_focused) || dropdown;
         container = container.child(self.insert_toolbar(tab, row, cx));
+        container = container.children(self.fold_indicator(tab, row, focused, hovered, cx)).children(self.folded_hint(tab, model, row, cx));
         if row.kind != CODE && !row.editing {
-            return container.children(shows_toolbar.then(|| self.cell_toolbar(tab, row, cx)));
+            return container.children(shows_toolbar.then(|| self.cell_toolbar(tab, model, row, window, cx)).flatten());
         }
         let left = layout::CODE_CELL_LEFT_MARGIN + layout::CELL_RUN_GUTTER;
         let editor_box = div()
@@ -1050,7 +1087,7 @@ impl Workbench {
         if row.kind == CODE {
             container = container.child(self.cell_run_gutter(tab, model, row, cx)).children(self.output_toolbars(tab, model, row, cx));
         }
-        container.children(shows_toolbar.then(|| self.cell_toolbar(tab, row, cx)))
+        container.children(shows_toolbar.then(|| self.cell_toolbar(tab, model, row, window, cx)).flatten())
     }
 
     /// The cell's code editor, between the editor paddings.
@@ -1111,53 +1148,6 @@ impl Workbench {
                     .child(label),
             )
             .when(shows_run, |gutter| gutter.child(run))
-    }
-
-    /// The focused cell's toolbar at its top right (`MenuId.NotebookCellTitle`): edit or stop editing a markup
-    /// cell, delete the cell.
-    fn cell_toolbar(&self, tab: u32, row: &CellRow, cx: &mut Context<Self>) -> Div {
-        let handle = row.handle;
-        let icon_color = self.color("icon.foreground");
-        let action = |icon: &str, title: &str, id: &'static str, hover_id: &'static str| {
-            self.icon(icon, 22., 16., icon_color)
-                .id((id, handle as usize))
-                .rounded(px(5.))
-                .cursor_pointer()
-                .hover(|button| button.bg(self.color("toolbar.hoverBackground")))
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .child(self.hover_target((hover_id, handle as usize), HoverContent::Text(title.to_owned()), HoverOptions::mouse()))
-        };
-        let mut toolbar = div()
-            .absolute()
-            // cellToolbars.ts: over the cell's top edge, left of the scrollbar.
-            .top(px(-14.))
-            .right(px(42.))
-            .h(px(28.))
-            .px(px(2.))
-            .flex()
-            .items_center()
-            .gap(px(2.))
-            .rounded(px(5.))
-            .border_1()
-            .border_color(self.color("notebook.cellToolbarSeparator"))
-            .bg(self.color("editor.background"));
-        if row.kind != CODE {
-            toolbar = match row.editing {
-                true => toolbar.child(action("check", "Stop Editing Cell", "notebook-stop-editing", "notebook-stop-editing-hover").on_click(cx.listener(move |workbench, _: &ClickEvent, _, cx| {
-                    if let Some(view) = workbench.notebook_views.views.get_mut(&tab) {
-                        view.editing.remove(&handle);
-                    }
-                    cx.notify();
-                }))),
-                false => toolbar.child(action("pencil", "Edit Cell", "notebook-edit-cell", "notebook-edit-cell-hover").on_click(cx.listener(move |workbench, _: &ClickEvent, window, cx| {
-                    workbench.notebook_views.views.entry(tab).or_default().editing.insert(handle);
-                    workbench.focus_notebook_cell(tab, handle, true, window, cx);
-                }))),
-            };
-        }
-        toolbar.child(action("trash", "Delete Cell", "notebook-delete-cell", "notebook-delete-cell-hover").on_click(cx.listener(move |workbench, _: &ClickEvent, window, cx| {
-            workbench.delete_notebook_cell(tab, handle, window, cx);
-        })))
     }
 
     /// cellToolbars.ts `BetweenCellToolbar`: `+ Code` and `+ Markdown` in the gap below the cell, shown on hover;
@@ -1379,6 +1369,8 @@ fn query_component(text: &str) -> String {
     encoded
 }
 
+mod cell_actions;
+mod folding;
 mod outputs;
 #[cfg(test)]
 mod tests;

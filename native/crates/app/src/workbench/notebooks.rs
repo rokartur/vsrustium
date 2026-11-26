@@ -186,12 +186,16 @@ impl Workbench {
             Outcome::Ready(workbench.apply_notebook_edits(&key, &edits, cx).map(|_| Value::Null))
         });
         for (id, kind) in [("notebook.cell.insertCodeCellBelow", notebook::CODE), ("notebook.cell.insertCodeCellBelowAndFocusContainer", notebook::CODE), ("notebook.cell.insertMarkdownCellBelow", 1)] {
-            self.commands.register(id, move |workbench, _, window, cx| workbench.insert_cell_below(kind, window, cx));
+            self.commands.register(id, move |workbench, args, window, cx| match args.first().is_some_and(|context| context["ui"] == true) {
+                true => workbench.insert_toolbar_cell(&args, kind, false, window, cx),
+                false => workbench.insert_cell_below(kind, window, cx),
+            });
         }
         self.commands.register("notebook.selectKernel", |workbench, _, window, cx| workbench.show_kernel_picker(window, cx));
         self.register_notebook_list_commands();
         self.register_notebook_output_commands();
         self.register_notebook_layout_commands();
+        self.register_notebook_cell_commands();
         self.commands.register("notebook.cell.copyDown", |workbench, args, _, cx| {
             let Some((key, indices)) = workbench.cells_from_args(&args) else { return Outcome::done() };
             let Some(&index) = indices.first() else { return Outcome::done() };
@@ -557,6 +561,10 @@ impl Workbench {
             return receiver;
         }
         let snapshot = model.snapshot(|cell| self.cell_text(&cell.uri));
+        let type_id = match self.host.notebooks.interactives.iter().any(|interactive| interactive.repl && interactive.notebook == key) {
+            true => notebook::repl_working_copy_type_id(&view_type),
+            false => notebook::working_copy_type_id(&view_type),
+        };
         let meta = match uri_parts(&uri) {
             Ok((scheme, path)) if scheme == "file" => super::backup_tracker::file_meta(&path, false),
             _ => None,
@@ -564,7 +572,7 @@ impl Workbench {
         let done = self.lifecycle.backups.start_operation();
         cx.spawn(async move |workbench, cx| {
             let written = match notebook_to_data(&workbench, cx, &view_type, snapshot).await {
-                Ok(bytes) => crate::uri::Uri::from_json(&uri).and_then(|resource| backups::write(&home, &resource, &notebook::working_copy_type_id(&view_type), meta.as_ref(), &bytes).map_err(|error| error.to_string())),
+                Ok(bytes) => crate::uri::Uri::from_json(&uri).and_then(|resource| backups::write(&home, &resource, &type_id, meta.as_ref(), &bytes).map_err(|error| error.to_string())),
                 Err(error) => Err(error.to_string()),
             };
             if let Err(error) = &written {
@@ -577,17 +585,35 @@ impl Workbench {
         receiver
     }
 
+    /// Both working copies' backups go: the notebook may have been shown as a REPL editor.
     pub(super) fn discard_notebook_backup(&self, uri: &Value, view_type: &str) {
         if let (Some(home), Ok(resource)) = (&self.lifecycle.backups.home, crate::uri::Uri::from_json(uri)) {
             backups::discard(home, &resource, &notebook::working_copy_type_id(view_type));
+            backups::discard(home, &resource, &notebook::repl_working_copy_type_id(view_type));
         }
     }
 
-    /// The backed up bytes of a notebook (`resolveFromBackup`), None without a backup.
+    /// The backed up bytes of a notebook (`resolveFromBackup`), its REPL editor's backup else, None without a backup.
     fn notebook_backup(&self, uri: &Value, view_type: &str) -> Option<Vec<u8>> {
         let home = self.lifecycle.backups.home.as_ref()?;
         let resource = crate::uri::Uri::from_json(uri).ok()?;
-        backups::resolve(&backups::backup_path(home, &resource, &notebook::working_copy_type_id(view_type))).map(|backup| backup.content)
+        let backup = |type_id: String| backups::resolve(&backups::backup_path(home, &resource, &type_id)).map(|backup| backup.content);
+        backup(notebook::working_copy_type_id(view_type)).or_else(|| backup(notebook::repl_working_copy_type_id(view_type)))
+    }
+
+    /// ReplWindowWorkingCopyEditorHandler `createEditor` for a REPL backup without an open notebook: a REPL editor
+    /// on it opens in the background, its notebook resolved from the backup.
+    pub(super) fn restore_repl_backup(&mut self, uri: Value, window: &mut Window, cx: &mut Context<Self>) {
+        let key = notebook::uri_string(&uri);
+        let restoring = self.notebook_views.restores.iter().any(|restore| notebook::uri_string(restore.input.resource()) == key);
+        if self.host.notebooks.model(&key).is_some() || self.host.notebooks.held.contains(&key) || restoring {
+            return;
+        }
+        let index = self.editors.editors.len();
+        self.notebook_views.restores.push(NotebookRestore { group: self.editors.id, index, preview: false, active: false, input: NotebookInput::Repl { resource: uri, label: None } });
+        if self.notebook_views.restores.len() == 1 {
+            self.restore_notebook_editors(window, cx);
+        }
     }
 
     /// SimpleNotebookWorkingCopyEditorHandler `createEditor` for a backup without an open notebook: the notebook

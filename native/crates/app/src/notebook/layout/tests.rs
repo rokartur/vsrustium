@@ -6,7 +6,7 @@ use super::*;
 #[test]
 fn lays_out_cells_as_the_reference_notebook() {
     let cells = [
-        CellInput::Preview { height: Some(143.) },
+        CellInput::Preview { height: Some(143.), collapsed: false },
         CellInput::Editor { lines: 2, outputs_height: 54., markup: false },
         CellInput::Editor { lines: 1, outputs_height: 36., markup: false },
         CellInput::Editor { lines: 1, outputs_height: 0., markup: false },
@@ -20,6 +20,16 @@ fn lays_out_cells_as_the_reference_notebook() {
 
 #[test]
 fn an_unmeasured_preview_takes_upstreams_first_height() {
-    let (layouts, _) = layout(&[CellInput::Preview { height: None }], 18.);
+    let (layouts, _) = layout(&[CellInput::Preview { height: None, collapsed: false }], 18.);
     assert_eq!(layouts[0].height, 118.);
+}
+
+/// markupCellViewModel.ts: a collapsed header adds the fold hint, the cells of its section take no space.
+#[test]
+fn a_collapsed_section_shows_its_hint_and_hides_its_cells() {
+    let cells = [CellInput::Preview { height: Some(40.), collapsed: true }, CellInput::Hidden, CellInput::Editor { lines: 1, outputs_height: 0., markup: false }];
+    let (layouts, _) = layout(&cells, 18.);
+    assert_eq!(layouts[0].height, 40. + 18. + 22.);
+    assert_eq!((layouts[1].top, layouts[1].height), (18. + 80., 0.));
+    assert_eq!(layouts[2].top, 18. + 80.);
 }

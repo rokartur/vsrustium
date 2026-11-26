@@ -1,0 +1,23 @@
+[
+	{ "wait": 15000 },
+	{ "hotkey": ["cmd", "p"] },
+	{ "wait": 800 },
+	{ "type": "sample.ipynb" },
+	{ "wait": 800 },
+	{ "key": "return" },
+	{ "wait": 30000 },
+	{ "click": [1000, 160] },
+	{ "wait": 500 },
+	{ "key": "down" },
+	{ "wait": 500 },
+	{ "key": "return" },
+	{ "wait": 500 },
+	{ "type": "# edited " },
+	{ "wait": 3000 },
+	{ "shot": "before-quit" },
+	{ "hotkey": ["cmd", "q"] },
+	{ "wait": 5000 },
+	{ "restart": true },
+	{ "wait": 30000 },
+	{ "shot": "restored" }
+]

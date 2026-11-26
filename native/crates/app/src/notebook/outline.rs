@@ -69,6 +69,18 @@ fn cell_entries(cell: &CellSource) -> Vec<(u8, String)> {
 
 /// `getMarkdownHeadersInCellFallbackToHtmlTags`: the top level headings, else the first `<hN>` tag.
 fn markdown_headers(content: &str) -> Vec<(u8, String)> {
+    let mut headers = markdown_headings(content);
+    if headers.is_empty()
+        && let Some(captures) = regex::Regex::new(r"(?i)<h([1-6]).*>(.*)</h([1-6])>").expect("a valid pattern").captures(content)
+        && captures[1] == captures[3]
+    {
+        headers.push((captures[1].parse().expect("one digit"), captures[2].trim().to_owned()));
+    }
+    headers
+}
+
+/// foldingModel.ts `getMarkdownHeadersInCell`: the top level headings with their depth.
+fn markdown_headings(content: &str) -> Vec<(u8, String)> {
     let mut headers = Vec::new();
     let mut depth = 0;
     let mut heading: Option<(u8, String)> = None;
@@ -89,13 +101,35 @@ fn markdown_headers(content: &str) -> Vec<(u8, String)> {
             _ => {}
         }
     }
-    if headers.is_empty()
-        && let Some(captures) = regex::Regex::new(r"(?i)<h([1-6]).*>(.*)</h([1-6])>").expect("a valid pattern").captures(content)
-        && captures[1] == captures[3]
-    {
-        headers.push((captures[1].parse().expect("one digit"), captures[2].trim().to_owned()));
-    }
     headers
+}
+
+/// foldingModel.ts `recompute`: one range per markdown cell with a heading, from it to the cell before the next one
+/// whose top heading is as high or higher, else to the last cell; ranges of one cell are left out. Inclusive
+/// `(start, end)` cell indices, outer ranges before the ranges they hold.
+pub fn folding_ranges(cells: &[CellSource]) -> Vec<(usize, usize)> {
+    let mut headers = Vec::new();
+    for (index, cell) in cells.iter().enumerate() {
+        if !cell.markup {
+            continue;
+        }
+        if let Some(level) = markdown_headings(cell.text).iter().map(|(level, _)| *level).min() {
+            headers.push((index, level));
+        }
+    }
+    let mut ranges = Vec::new();
+    for (position, (start, level)) in headers.iter().enumerate() {
+        let end = headers[position + 1..].iter().find(|(_, next)| next <= level).map_or(cells.len() - 1, |(next, _)| next - 1);
+        if end != *start {
+            ranges.push((*start, end));
+        }
+    }
+    ranges
+}
+
+/// `getFoldingStartIndex` and `getFoldedLength`: the innermost range holding cell `index`.
+pub fn section_of(ranges: &[(usize, usize)], index: usize) -> Option<(usize, usize)> {
+    ranges.iter().rev().find(|(start, end)| (*start..=*end).contains(&index)).copied()
 }
 
 /// `getCellFirstNonEmptyLine`.
@@ -169,5 +203,17 @@ mod tests {
         assert_eq!(markdown_headers("<h2 class=\"x\">Title</h2>"), [(2, "Title".to_owned())]);
         assert_eq!(markdown_headers("> # quoted"), []);
         assert_eq!(markdown_headers("Title\n====="), [(1, "Title".to_owned())]);
+    }
+
+    #[test]
+    fn headings_fold_the_cells_up_to_the_next_heading_as_high() {
+        // # A, code, ## B, code, <h1> (HTML, no fold), # C, code, ## D (last: one cell, no range)
+        let cells = [cell(true, "# A"), cell(false, "x"), cell(true, "## B"), cell(false, "y"), cell(true, "<h1>H</h1>"), cell(true, "# C"), cell(false, "z"), cell(true, "## D")];
+        let ranges = folding_ranges(&cells);
+        assert_eq!(ranges, [(0, 4), (2, 4), (5, 7)]);
+        assert_eq!(section_of(&ranges, 3), Some((2, 4)));
+        assert_eq!(section_of(&ranges, 1), Some((0, 4)));
+        assert_eq!(section_of(&ranges, 7), Some((5, 7)));
+        assert_eq!(folding_ranges(&[cell(true, "# only")]), []);
     }
 }
