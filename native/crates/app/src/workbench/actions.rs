@@ -44,6 +44,14 @@ impl Workbench {
         self.commands.register("_workbench.open", |workbench, args, window, cx| match &args[..] {
             [resource @ Value::Object(_), rest @ ..] => {
                 let column_and_options = rest.first().cloned().unwrap_or_default();
+                // editorCommands.ts: without options or a numeric column the opener service opens it, whose
+                // EditorOpener reads a `#L<line>,<column>` fragment as the selection.
+                if !column_and_options[0].is_number() && column_and_options[1].is_null() && resource["fragment"].as_str().is_some_and(|fragment| !fragment.is_empty()) {
+                    if let Ok(uri) = crate::uri::Uri::from_json(resource) {
+                        let (selection, uri) = super::opener::extract_selection(uri);
+                        return workbench.open_with_resolver(&uri.to_json(), None, json!({ "selection": selection }), window, cx);
+                    }
+                }
                 let mut options = column_and_options[1].clone();
                 if !column_and_options[0].is_null() {
                     options["position"] = column_and_options[0].clone();

@@ -58,6 +58,18 @@ fn workbench_open_shows_files_and_untitled_files_and_rejects_other_strings(cx: &
 }
 
 #[gpui::test]
+fn workbench_open_reads_a_line_fragment_as_the_selection(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = workbench_in("workbench-open-fragment", cx);
+    // markdown-language-features documentLink.test.ts `Should navigate to fragment by line`: `vscode.open` of `#L2`.
+    let uri = json!({ "scheme": "file", "path": dir.join("far.js").to_string_lossy(), "fragment": "L3" });
+    let outcome = workbench.update_in(cx, |workbench, window, cx| workbench.execute_command("_workbench.open", vec![uri, Value::Null], window, cx));
+    assert!(matches!(outcome, crate::commands::Outcome::Ready(Ok(_))));
+    let selection = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().selection());
+    assert_eq!(selection.head, Position { line: 2, column: 0 });
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[gpui::test]
 fn decoration_types_set_and_remove_editor_decorations(cx: &mut TestAppContext) {
     let (dir, workbench, cx) = workbench_in("decorations", cx);
     open(&workbench, vec![file_uri(&dir.join("far.js"))], cx).unwrap();

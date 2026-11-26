@@ -381,6 +381,7 @@ impl Workbench {
         if let Some(editor) = self.editors.active() {
             let pane = if editor.document().scheme == super::welcome_page::WALKTHROUGH_SCHEME { "gettingStartedPage" } else { "workbench.editor.files" };
             context.insert("activeEditor".into(), json!(pane));
+            self.webview_editor_context(&mut context);
             self.insert_diff_editor_context(&mut context);
             self.insert_multi_diff_editor_context(&mut context);
             self.insert_merge_editor_context(&mut context);

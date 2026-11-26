@@ -1,0 +1,23 @@
+[
+	{ "wait": 5000 },
+	{ "hotkey": ["cmd", "k"] },
+	{ "key": "v" },
+	{ "wait": 4000 },
+	{ "shot": "preview-side" },
+	{ "scroll": [500, 400], "amount": 10 },
+	{ "wait": 1500 },
+	{ "shot": "editor-scrolled" },
+	{ "scroll": [850, 400], "amount": 10 },
+	{ "wait": 1500 },
+	{ "shot": "preview-scrolled" },
+	{ "hotkey": ["cmd", "2"] },
+	{ "wait": 500 },
+	{ "hotkey": ["cmd", "f"] },
+	{ "wait": 500 },
+	{ "type": "item 2" },
+	{ "wait": 1000 },
+	{ "shot": "find" },
+	{ "key": "escape" },
+	{ "wait": 500 },
+	{ "shot": "find-closed" }
+]

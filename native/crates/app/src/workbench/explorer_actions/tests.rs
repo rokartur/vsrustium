@@ -237,7 +237,8 @@ fn the_context_menu_selects_the_row_and_runs_its_items_with_keys_and_clicks(cx: 
     let empty = point(px(120.), px(300.));
     cx.simulate_mouse_down(empty, MouseButton::Right, Modifiers::none());
     cx.run_until_parked();
-    assert_eq!(menu_titles(&workbench, cx), ["New File...", "New Folder...", "---", "(Paste)"]);
+    // imageCarousel.contribution.ts adds Open in Images Preview to folders (navigation, order 25).
+    assert_eq!(menu_titles(&workbench, cx), ["New File...", "New Folder...", "Open in Images Preview", "---", "(Paste)"]);
     cx.simulate_keystrokes("escape");
     assert!(workbench.update_in(cx, |workbench, window, _| workbench.context_menu.is_none() && workbench.explorer.focus.is_focused(window)));
 

@@ -107,3 +107,11 @@ fn an_empty_window_keeps_its_choice_in_the_memento() {
     assert_eq!(memento, json!({ "acceptsOutOfWorkspaceFiles": false, "isEmptyWorkspaceTrusted": false }));
     assert!(!open(Storage::in_memory(), None, &mut workspace_storage, true).is_trusted());
 }
+
+#[test]
+fn an_extension_under_development_is_never_disabled_by_trust() {
+    let workspace = Workspace::folder(PathBuf::from("/Folder"));
+    let extension = |description: Value| exthost::scan::ScannedExtension { id: "port.tests".into(), location: PathBuf::from("/Folder/tests"), description };
+    assert!(super::disabled_when_untrusted(&extension(json!({ "main": "./extension.js" })), Some(&workspace), &Value::Null));
+    assert!(!super::disabled_when_untrusted(&extension(json!({ "main": "./extension.js", "isUnderDevelopment": true })), Some(&workspace), &Value::Null));
+}

@@ -8,7 +8,7 @@ use std::sync::LazyLock;
 
 use exthost::gallery::{Gallery, GalleryExtension};
 use gpui::{ClickEvent, Context, Div, FontWeight, MouseButton, Window, canvas, div, prelude::*, px};
-use pulldown_cmark::{Event, Options, Parser, html};
+use super::markdown_document::{Sanitizer, render_markdown_document};
 use serde_json::{Value, json};
 
 use super::Workbench;
@@ -176,7 +176,7 @@ impl Workbench {
             let id = format!("extension-editor-{}", editor.id.to_lowercase());
             let mut webview = Webview::new(window, &id, &webview_origin(&editor.id), "", pre.clone(), Vec::new(), events.clone());
             webview.send("styles", theme_styles.clone());
-            webview.send("content", json!({ "contents": render_body(&styles, &render_markdown(text)), "title": if editor.tab == Tab::Details { "Readme" } else { "Changelog" }, "options": { "allowMultipleAPIAcquire": false, "allowScripts": false, "allowForms": false }, "state": Value::Null, "cspSource": "'self' https://*.vscode-cdn.net", "confirmBeforeClose": "keyboardOnly" }));
+            webview.send("content", json!({ "contents": render_body(&styles, &render_markdown_document(text, &README_SANITIZER)), "title": if editor.tab == Tab::Details { "Readme" } else { "Changelog" }, "options": { "allowMultipleAPIAcquire": false, "allowScripts": false, "allowForms": false }, "state": Value::Null, "cspSource": "'self' https://*.vscode-cdn.net", "confirmBeforeClose": "keyboardOnly" }));
             editor.webview = Some((editor.tab, webview));
         }
     }
@@ -538,6 +538,10 @@ impl Workbench {
     }
 }
 
+/// extensionEditor.ts `renderMarkdown`: links to the web and mail only.
+// shortcut: built-in extensions' `command:` links are dropped too; the editor does not run command links.
+const README_SANITIZER: Sanitizer = Sanitizer { link_protocols: Some(&["http", "https", "mailto"]), media_protocols: &["http", "https"], allow_relative_media: false };
+
 /// The feature ids of the Features tab with their labels (extensionFeaturesTab.ts and the registered renderers).
 const FEATURE_LABELS: [(&str, &str); 12] = [
     ("commands", "Commands"),
@@ -586,26 +590,6 @@ fn local_markdown_path(folder: &Path, name: &str) -> Option<PathBuf> {
 
 fn local_markdown(folder: &Path, name: &str) -> Option<String> {
     std::fs::read_to_string(local_markdown_path(folder, name)?).ok()
-}
-
-/// `renderMarkdownDocument` (marked with GitHub flavor). The webview's CSP blocks scripts, frames and forms; raw
-/// HTML that would act before or outside it (`<meta http-equiv="refresh">`, `<base>`, frames) is shown as text,
-/// as DOMPurify removes it.
-// shortcut: code blocks are not syntax highlighted (upstream tokenizes them with the language's grammar).
-pub fn render_markdown(text: &str) -> String {
-    let options = Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS | Options::ENABLE_GFM;
-    let events = Parser::new_ext(text, options).map(|event| match event {
-        Event::Html(raw) | Event::InlineHtml(raw) if is_unsafe_html(&raw) => Event::Text(raw),
-        other => other,
-    });
-    let mut out = String::new();
-    html::push_html(&mut out, events);
-    out
-}
-
-fn is_unsafe_html(raw: &str) -> bool {
-    let lower = raw.to_ascii_lowercase();
-    ["<meta", "<base", "<iframe", "<frame", "<object", "<embed", "<script", "<form", "<link"].iter().any(|tag| lower.contains(tag))
 }
 
 /// extensionEditor.ts `renderBody`: the document styles under a CSP without scripts.
@@ -710,12 +694,6 @@ mod tests {
         assert_eq!(from_now_at(now - 1. * day, now), "1 day ago");
         assert_eq!(from_now_at(now - 7. * 365. * day, now), "7 years ago");
         assert_eq!(from_now_at(now - 10_000., now), "10 seconds ago");
-    }
-
-    #[test]
-    fn renders_github_markdown() {
-        assert_eq!(render_markdown("# Title\n\n| a |\n|---|\n| b |\n\n~~x~~"), "<h1>Title</h1>\n<table><thead><tr><th>a</th></tr></thead><tbody>\n<tr><td>b</td></tr>\n</tbody></table>\n<p><del>x</del></p>\n");
-        assert_eq!(render_markdown("<meta http-equiv=\"refresh\" content=\"0;url=https://x\">\n\n<b>ok</b>"), "&lt;meta http-equiv=\"refresh\" content=\"0;url=https://x\"&gt;\n<p><b>ok</b></p>\n");
     }
 
     #[test]

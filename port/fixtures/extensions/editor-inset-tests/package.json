@@ -1,0 +1,8 @@
+{
+	"name": "editor-inset-tests",
+	"publisher": "port",
+	"version": "0.0.1",
+	"main": "./extension.js",
+	"enabledApiProposals": ["editorInsets"],
+	"engines": { "vscode": "^1.90.0" }
+}

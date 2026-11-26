@@ -19,6 +19,7 @@ impl Workbench {
             ("MainThreadProgress", "$startProgress") => self.start_progress(&request.args, window, cx),
             ("MainThreadProgress", "$progressReport") => self.report_progress(&request.args, window, cx),
             ("MainThreadProgress", "$progressEnd") => self.end_progress(&request.args, window, cx),
+            ("MainThreadEditorInsets", method) => self.handle_editor_insets_request(method, &request.args, cx),
             ("MainThreadWebviews" | "MainThreadWebviewPanels", method) => self.handle_webview_request(method, &request.args, window, cx),
             ("MainThreadDecorations", method) => self.handle_decorations_request(method, &request.args, cx),
             ("MainThreadTreeViews", method) => self.handle_tree_view_request(method, &request.args, window, cx),

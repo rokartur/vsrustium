@@ -369,6 +369,8 @@ const WORKBENCH_MENUS: &[Row] = &[
     // timeline.contribution.ts; the port's resource keys name `resourceSet` `hasResource`.
     (MenuId::ExplorerContext, None, "files.openTimeline", "Open Timeline", "4_timeline", 1., Some("hasResource && timelineHasProvider"), None),
     (MenuId::ExplorerContext, None, "revealFileInOS", "Reveal in Finder", "navigation", 20., Some("resourceScheme == 'file' || resourceScheme == 'vscode-userdata'"), None),
+    // imageCarousel.contribution.ts `OpenImagesInCarouselFromExplorerAction`.
+    (MenuId::ExplorerContext, None, "workbench.action.openImagesInCarousel", "Open in Images Preview", "navigation", 25., Some("config.imageCarousel.explorerContextMenu.enabled && (explorerResourceIsFolder || resourceExtname =~ /^\\.(png|jpg|jpeg|jpe|gif|webp|svg|bmp|ico|mp4|webm|mov)$/i)"), None),
     (MenuId::ExplorerContext, None, "filesExplorer.cut", "Cut", "5_cutcopypaste", 8., Some("!explorerResourceIsRoot && !explorerResourceReadonly"), None),
     (MenuId::ExplorerContext, None, "filesExplorer.copy", "Copy", "5_cutcopypaste", 10., Some("!explorerResourceIsRoot"), None),
     (MenuId::ExplorerContext, None, "filesExplorer.paste", "Paste", "5_cutcopypaste", 20., Some("explorerResourceIsFolder"), Some("!explorerResourceReadonly && fileCopied")),
