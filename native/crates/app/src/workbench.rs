@@ -983,6 +983,7 @@ impl Workbench {
         self.sync_editor_insets();
         self.text_files_editors_changed();
         self.save_editor_part_state();
+        self.show_editor_if_hidden(cx);
         self.send_notebook_changes();
         self.host.send_changes(&self.editors);
         cx.notify();
