@@ -32,6 +32,8 @@ pub enum SideBarView {
     Testing,
     /// A container of `viewsContainers.activitybar`, by its `workbench.view.extension.<id>` id.
     Contributed(&'static str),
+    /// A container generated for moved views (view_locations.rs), by its id.
+    Generated(&'static str),
 }
 
 /// The search view's inputs, in their tab order.

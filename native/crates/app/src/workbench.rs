@@ -150,6 +150,7 @@ mod quick_open;
 mod readonly;
 mod search_actions;
 mod side_bar;
+mod view_locations;
 mod view_panes;
 mod search_editor_view;
 mod search_editor_widget;
@@ -450,6 +451,10 @@ pub struct Workbench {
     panel: panel::Panel,
     explorer_panes: view_panes::ContainerPanes,
     scm_panes: view_panes::ContainerPanes,
+    /// The pane views of the containers generated for moved views, by container id.
+    generated_panes: HashMap<&'static str, view_panes::ContainerPanes>,
+    /// The panes of moved views, built with `&mut self` before a container draws them.
+    moved_view_panes: std::cell::RefCell<Vec<view_panes::ViewPane>>,
     pub workspace_trust: crate::workspace_trust::WorkspaceTrust,
     /// fileCommands.ts `globalResourceToCompare`, set by Select for Compare (`resourceSelectedForCompare`).
     resource_to_compare: Option<crate::diff_editor::Side>,
@@ -728,6 +733,8 @@ impl Workbench {
             panel: panel::Panel::default(),
             explorer_panes: view_panes::ContainerPanes::default(),
             scm_panes: view_panes::ContainerPanes::default(),
+            generated_panes: HashMap::new(),
+            moved_view_panes: Default::default(),
             workspace_trust: Default::default(),
             resource_to_compare: None,
             clipboard_compare_count: 0,
@@ -873,6 +880,7 @@ impl Workbench {
         workbench.register_local_history_commands();
         workbench.register_extensions_view_commands();
         workbench.register_view_focus_commands();
+        workbench.register_move_view_actions();
         workbench.register_workspace_recommendations_commands();
         workbench.register_localization_commands();
         workbench.register_new_file_commands();
@@ -1226,8 +1234,11 @@ impl Workbench {
                     .gap(px(8.))
                     .children(items)
                     .children(self.testing_activity_item(hover, inactive, cx))
-                    .children(self.contributed_activity_items(hover, inactive, cx)),
+                    .children(self.contributed_activity_items(hover, inactive, cx))
+                    .children(self.generated_activity_items(hover, inactive, cx)),
             )
+            // compositeBar.ts `CompositeBarDndCallbacks.drop`: a view dropped on the bar moves to a new side bar entry.
+            .on_drop(cx.listener(|workbench, dragged: &view_panes::DraggedPane, _, cx| workbench.drop_view_on_location(dragged.id, layout::Part::SideBar, cx)))
             .child(
                 self.icon(self.manage_activity_icon(), 36., 24., inactive)
                     .cursor_pointer()
@@ -1278,6 +1289,10 @@ impl Workbench {
         let foreground = self.foreground_or("sideBar.foreground");
         if let SideBarView::Contributed(id) = self.side_bar_view {
             return self.contributed_side_bar(id, window, cx);
+        }
+        if let SideBarView::Generated(id) = self.side_bar_view {
+            let title = self.generated_container_view(id).map_or("", |view| view.name);
+            return self.view_pane_container(view_panes::PaneContainer::Generated(id), title, Vec::new(), window, cx).child(div().h(px(5.)).flex_none());
         }
         if self.side_bar_view == SideBarView::Scm {
             return self.scm_side_bar(window, cx);

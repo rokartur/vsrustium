@@ -164,9 +164,9 @@ impl Workbench {
         context.insert("timelineExcludeSources".into(), json!(self.stored_excluded_sources()));
     }
 
-    /// `isBodyVisible`: expanded, in the Explorer on screen.
+    /// `isBodyVisible`: expanded, in its container on screen.
     fn timeline_visible(&self) -> bool {
-        self.view_pane_expanded(super::view_panes::PaneContainer::Explorer, TIMELINE_VIEW_ID) && self.side_bar_view == SideBarView::Explorer && self.side_bar_visible()
+        self.is_view_visible(TIMELINE_VIEW_ID)
     }
 
     /// `onActiveEditorChanged` and `setExpanded`, checked on every render: the body follows the active editor while
@@ -250,8 +250,10 @@ impl Workbench {
             Some(uri) => Some(uri.clone()),
             None => explorer_row.map(|path| crate::editor::uri_value("file", &path)).or_else(|| self.timeline_target()),
         };
-        self.side_bar_view = SideBarView::Explorer;
-        self.expand_pane(super::view_panes::PaneContainer::Explorer, TIMELINE_VIEW_ID, cx);
+        if !self.open_moved_view(TIMELINE_VIEW_ID, cx) {
+            self.side_bar_view = SideBarView::Explorer;
+            self.expand_pane(super::view_panes::PaneContainer::Explorer, TIMELINE_VIEW_ID, cx);
+        }
         self.timeline.shown = self.timeline_visible();
         if let Some(uri) = uri {
             self.timeline.pinned = true;

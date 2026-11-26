@@ -30,6 +30,7 @@ pub(super) fn container_storage_id(container: &str) -> String {
         "scm" => "workbench.scm.views.state".into(),
         "debug" => "workbench.view.debug.state".into(),
         "test" => "workbench.view.extension.test.state".into(),
+        generated if super::view_locations::is_generated_container(generated) => format!("{generated}.state"),
         other => format!("workbench.view.extension.{other}.state"),
     }
 }
@@ -72,8 +73,14 @@ impl Workbench {
                 true => entries.push(ViewEntry { id: FILE_VIEW, name: "Folders".into(), can_toggle: false }),
                 false => entries.push(ViewEntry { id: EMPTY_VIEW, name: "No Folder Opened".into(), can_toggle: true }),
             }
-            entries.push(ViewEntry { id: OUTLINE_VIEW, name: "Outline".into(), can_toggle: true });
-            entries.push(ViewEntry { id: TIMELINE_VIEW, name: "Timeline".into(), can_toggle: true });
+        }
+        let container_id = match container {
+            "explorer" => super::view_locations::EXPLORER_CONTAINER,
+            "scm" => super::view_locations::SCM_CONTAINER,
+            other => other,
+        };
+        for view in self.views_in(container_id) {
+            entries.push(ViewEntry { id: view.id, name: view.name.into(), can_toggle: view.id == OUTLINE_VIEW || view.id == TIMELINE_VIEW });
         }
         let contributed = self.tree_views.views.iter().filter(|view| view.container == container && view.when.as_ref().is_none_or(|when| when.evaluate(&self.context_keys)));
         entries.extend(contributed.map(|view| ViewEntry { id: view.id, name: view.name.clone(), can_toggle: true }));

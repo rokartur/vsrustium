@@ -632,6 +632,11 @@ Scope (roadmap section 13): diagnostics, hover, completion, go to definition and
   2. Item 5: modernUI compact density and classic layout, auxiliary windows and cross-window drag.
   3. In ui-pair m11/split-settings-edit.json the port misses the pointer's first move after Escape closes the editor type menu (the pencil hover and highlight wait for a second move); the reference reacts to the first one.
   4. The pane header keeps its `list.hoverBackground` while the pointer is on an action; in m11/title-action-hovers.json the reference shows no header background even on the label, so pair a slower hover on the label before changing it.
+- Handoff, session m11f sixth pass (merged port-integrate at ddb0b4f70f0; Move View ported in a252ccd6ab5), what is left in order:
+  1. Pair Move View: `port/tools/ui-pair /tmp/mv port/fixtures/ui-pair/m11/move-view.json dark`. Two earlier runs, made while the Studio GUI was shared, showed neither window reacting to the palette keys (the port ran Move Focused View, the reference showed no picker); the last run timed out on the GUI lock. Then widen `movable_views` (view_locations.rs): the folder view, SCM Changes and Graph, and tree views need their pane bodies built by view id; built-in panel containers need panes side by side to take added views. The Move View picker also lists only the movable views, where the reference lists every view.
+  2. Auxiliary windows and platform/dnd between windows (as item 2 above).
+  3. modernUI compact density and classic layout, each paired.
+  4. Items 3 and 4 above (the pointer's first move after Escape: gpui updates the modality before dispatch and hit-tests the rendered frame, so reproduce with a log in `edit_setting_mouse_moved` before changing anything).
 
 ## Milestone 15: Output panel and logs (in progress)
 

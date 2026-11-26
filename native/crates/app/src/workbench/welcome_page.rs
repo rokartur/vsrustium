@@ -1403,7 +1403,7 @@ fn side_bar_view_id(view: SideBarView) -> Option<&'static str> {
         SideBarView::Scm => Some("workbench.scm"),
         SideBarView::Debug => Some("workbench.debug.variablesView"),
         SideBarView::Testing => Some("workbench.view.testing"),
-        SideBarView::Extensions | SideBarView::Contributed(_) => None,
+        SideBarView::Extensions | SideBarView::Contributed(_) | SideBarView::Generated(_) => None,
     }
 }
 

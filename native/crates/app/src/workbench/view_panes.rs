@@ -12,6 +12,7 @@ use gpui::{
 use serde_json::{Value, json};
 
 use super::Workbench;
+use super::view_locations::{EXPLORER_CONTAINER, SCM_CONTAINER};
 use super::view_visibility::container_storage_id;
 use crate::split_view::{SashState, SplitView, View};
 
@@ -35,6 +36,8 @@ pub(super) const SCM_HISTORY_VIEW: &str = "workbench.scm.history";
 pub(super) enum PaneContainer {
     Explorer,
     Scm,
+    /// A container generated for moved views (view_locations.rs), by its id.
+    Generated(&'static str),
 }
 
 impl PaneContainer {
@@ -43,6 +46,15 @@ impl PaneContainer {
         match self {
             PaneContainer::Explorer => "explorer",
             PaneContainer::Scm => "scm",
+            PaneContainer::Generated(id) => id,
+        }
+    }
+
+    pub(super) fn container_id(self) -> &'static str {
+        match self {
+            PaneContainer::Explorer => EXPLORER_CONTAINER,
+            PaneContainer::Scm => SCM_CONTAINER,
+            PaneContainer::Generated(id) => id,
         }
     }
 }
@@ -208,7 +220,7 @@ pub(super) struct ViewPane {
 #[derive(Clone)]
 pub(super) struct DraggedPane {
     container: PaneContainer,
-    id: &'static str,
+    pub(super) id: &'static str,
     title: String,
     chevron: String,
     width: f32,
@@ -237,6 +249,7 @@ impl Workbench {
         match container {
             PaneContainer::Explorer => &self.explorer_panes,
             PaneContainer::Scm => &self.scm_panes,
+            PaneContainer::Generated(id) => self.generated_panes.get(id).expect("a generated container is laid out before use"),
         }
     }
 
@@ -244,6 +257,7 @@ impl Workbench {
         match container {
             PaneContainer::Explorer => &mut self.explorer_panes,
             PaneContainer::Scm => &mut self.scm_panes,
+            PaneContainer::Generated(id) => self.generated_panes.entry(id).or_default(),
         }
     }
 
@@ -254,9 +268,15 @@ impl Workbench {
         let height = side_bar_height - 2. - 32. - compact - BOTTOM_GAP;
         let first = if self.workspace().is_some_and(|workspace| !workspace.folders.is_empty()) { FILE_VIEW } else { EMPTY_VIEW };
         let built_in = [first, OUTLINE_VIEW, TIMELINE_VIEW].into_iter().filter(|&id| id == FILE_VIEW || !self.view_hidden("explorer", id));
+        let built_in: Vec<_> = built_in.filter(|&id| id == first || self.views_in(EXPLORER_CONTAINER).iter().any(|view| view.id == id)).collect();
         // viewsExtensionPoint.ts `showCollapsed`: an extension's view in the Explorer or Source Control starts collapsed.
-        let explorer: Vec<_> = built_in.map(|id| (id, id != first)).chain(self.shown_tree_views().into_iter().map(|id| (id, true))).collect();
+        let mut explorer: Vec<_> = built_in.into_iter().map(|id| (id, id != first)).chain(self.shown_tree_views().into_iter().map(|id| (id, true))).collect();
+        explorer.extend(self.moved_views_in(EXPLORER_CONTAINER));
         self.layout_panes(PaneContainer::Explorer, height, explorer, cx);
+        if let Some(container) = self.side_bar_container().filter(|container| super::view_locations::is_generated_container(container)) {
+            let views = self.moved_views_in(container);
+            self.layout_panes(PaneContainer::Generated(container), height, views, cx);
+        }
         let mut scm = Vec::new();
         if !self.view_hidden("scm", SCM_CHANGES_VIEW) {
             scm.push((SCM_CHANGES_VIEW, false));
@@ -266,12 +286,19 @@ impl Workbench {
             scm.push((SCM_HISTORY_VIEW, false));
         }
         scm.extend(self.shown_views_of("scm").into_iter().map(|id| (id, true)));
+        scm.extend(self.moved_views_in(SCM_CONTAINER));
         self.layout_panes(PaneContainer::Scm, height, scm, cx);
+    }
+
+    /// The shown views moved into the container from their own, expanded at first.
+    pub(super) fn moved_views_in(&self, container: &str) -> Vec<(&'static str, bool)> {
+        let views = self.views_in(container).into_iter().filter(|view| view.default_container != container && self.movable_view_shown(view));
+        views.map(|view| (view.id, false)).collect()
     }
 
     /// The container's views by id with whether each starts collapsed: viewContainerModel.ts order (stored, else
     /// declared) and collapsed state (stored, else the descriptor's `collapsed`).
-    fn layout_panes(&mut self, container: PaneContainer, height: f32, mut descriptors: Vec<(&'static str, bool)>, cx: &mut Context<Self>) {
+    pub(super) fn layout_panes(&mut self, container: PaneContainer, height: f32, mut descriptors: Vec<(&'static str, bool)>, cx: &mut Context<Self>) {
         let panes = self.panes_mut(container);
         for &(id, _) in &descriptors {
             panes.focus.entry(id).or_insert_with(|| cx.focus_handle());
@@ -322,12 +349,18 @@ impl Workbench {
 
     /// Whether the view's body shows: expanded, or merged into its container as its only view.
     pub(super) fn view_pane_expanded(&self, container: PaneContainer, id: &str) -> bool {
+        if let PaneContainer::Generated(generated) = container && !self.generated_panes.contains_key(generated) {
+            return false;
+        }
         let Some(view) = self.panes(container).view.as_ref() else { return false };
         view.ids().iter().position(|&pane| pane == id).is_some_and(|index| view.ids().len() == 1 || view.is_expanded(index))
     }
 
     /// `viewsService.openView`: expands the view's pane once it is laid out.
     pub(super) fn expand_pane(&mut self, container: PaneContainer, id: &str, cx: &mut Context<Self>) {
+        if let PaneContainer::Generated(generated) = container && !self.generated_panes.contains_key(generated) {
+            return;
+        }
         let index = self.panes(container).view.as_ref().and_then(|view| view.ids().iter().position(|&pane| pane == id));
         if let Some(index) = index {
             self.set_pane_expanded(container, index, true, cx);
@@ -355,20 +388,32 @@ impl Workbench {
         cx.notify();
     }
 
+    /// viewPaneContainer.ts `onDrop` of another container's view: only views the port can move.
+    pub(super) fn can_move_view(&self, view: &str) -> bool {
+        self.movable_views().iter().any(|movable| movable.id == view)
+    }
+
+    /// `moveViewsToContainer` at the drop position: the moved view takes the target's place in the stored order,
+    /// before it or after it by the half it was dropped on.
+    pub(super) fn drop_pane_from_container(&mut self, dragged: &'static str, container: PaneContainer, target: &'static str, below: bool, cx: &mut Context<Self>) {
+        self.panes_mut(container).drop = None;
+        let mut ids = self.panes(container).view.as_ref().expect("panes are laid out before they draw").ids().to_vec();
+        let index = ids.iter().position(|&id| id == target).expect("the target is a pane") + usize::from(below);
+        ids.insert(index, dragged);
+        let key = format!("{}.hidden", container_storage_id(container.key()));
+        let mut global: Vec<Value> = self.views_visibility_state(container.key()).into_iter().filter(|entry| !ids.iter().any(|&id| entry["id"] == id)).collect();
+        global.extend(ids.iter().enumerate().map(|(order, id)| json!({ "id": id, "isHidden": false, "order": order })));
+        self.profile_storage.lock().unwrap().set(&key, Value::Array(global).to_string());
+        self.move_view_to_container(dragged, container.container_id(), cx);
+    }
+
     /// A `ViewPaneContainer` in the side bar, laid out by `layout_view_panes`: the composite title, then the panes
     /// in their stored order; `panes` are the container's own views, a contributed one is a tree view. A single view
     /// merges into the container: no header, its title in the composite title (`getTitle`) beside its actions. The
     /// caller ends it with the pane view's 5px.
-    pub(super) fn view_pane_container(&self, container: PaneContainer, title: &str, mut panes: Vec<ViewPane>, window: &Window, cx: &mut Context<Self>) -> Div {
-        let view = self.panes(container).view.as_ref().expect("panes are laid out before they draw");
-        let (ids, sizes, sash_states) = (view.ids().to_vec(), view.sizes(), view.sash_states());
-        let mut ordered = Vec::new();
-        for &id in &ids {
-            ordered.push(match panes.iter().position(|pane| pane.id == id) {
-                Some(position) => panes.remove(position),
-                None => self.tree_view_pane(id, window, cx),
-            });
-        }
+    pub(super) fn view_pane_container(&self, container: PaneContainer, title: &str, panes: Vec<ViewPane>, window: &Window, cx: &mut Context<Self>) -> Div {
+        let ids = self.panes(container).view.as_ref().expect("panes are laid out before they draw").ids().to_vec();
+        let mut ordered = self.ordered_panes(&ids, panes, window, cx);
         let frame = self.side_bar_frame().text_color(self.foreground_or("sideBar.foreground"));
         if let [id] = ids[..] {
             let pane = ordered.remove(0);
@@ -385,6 +430,28 @@ impl Workbench {
             let title = self.side_bar_title_text(title).when(id == FILE_VIEW, |title| title.child(self.explorer_title_actions(window, cx))).children(pane.actions).children(more);
             return frame.child(title).child(div().flex_1().min_h_0().flex().flex_col().child(pane.body));
         }
+        frame.child(self.side_bar_title_text(title.to_string()).child(self.view_container_more_actions(container.key(), cx))).child(self.pane_view_element(container, ordered, window, cx))
+    }
+
+    /// The panes in the pane view's order: the given ones, the moved views' (`prepare_moved_view_panes`), else a
+    /// contributed tree view's.
+    pub(super) fn ordered_panes(&self, ids: &[&'static str], mut panes: Vec<ViewPane>, window: &Window, cx: &mut Context<Self>) -> Vec<ViewPane> {
+        let mut moved = self.moved_view_panes.borrow_mut();
+        let mut ordered = Vec::new();
+        for &id in ids {
+            ordered.push(match (panes.iter().position(|pane| pane.id == id), moved.iter().position(|pane| pane.id == id)) {
+                (Some(position), _) => panes.remove(position),
+                (None, Some(position)) => moved.remove(position),
+                (None, None) => self.tree_view_pane(id, window, cx),
+            });
+        }
+        ordered
+    }
+
+    /// The panes with their headers and the sashes between them.
+    pub(super) fn pane_view_element(&self, container: PaneContainer, ordered: Vec<ViewPane>, window: &Window, cx: &mut Context<Self>) -> Div {
+        let view = self.panes(container).view.as_ref().expect("panes are laid out before they draw");
+        let (ids, sizes, sash_states) = (view.ids().to_vec(), view.sizes(), view.sash_states());
         let expanded: Vec<bool> = (0..ids.len()).map(|index| view.is_expanded(index)).collect();
         let dragging_sash = view.dragged_sash().is_some();
         let mut elements = Vec::new();
@@ -398,7 +465,7 @@ impl Workbench {
             top += sizes[index];
             sashes.push(self.pane_sash(container, index, state, top, cx));
         }
-        let pane_view = div()
+        div()
             .relative()
             .h(px(sizes.iter().sum()))
             .flex_none()
@@ -406,8 +473,7 @@ impl Workbench {
             .flex_col()
             .children(elements)
             .children(sashes)
-            .when(dragging_sash, |view| view.child(self.pane_sash_drag(container, cx)));
-        frame.child(self.side_bar_title_text(title.to_string()).child(self.view_container_more_actions(container.key(), cx))).child(pane_view)
+            .when(dragging_sash, |view| view.child(self.pane_sash_drag(container, cx)))
     }
 
     /// `.pane` with its body under the header while expanded, and the drop overlay of a dragged header.
@@ -432,7 +498,8 @@ impl Workbench {
                 }
                 let dragged = event.drag(cx);
                 let below = event.event.position.y >= event.bounds.center().y;
-                let drop = (dragged.container == container && dragged.id != id).then_some((id, below));
+                let accepts = dragged.container == container || workbench.can_move_view(dragged.id);
+                let drop = (accepts && dragged.id != id).then_some((id, below));
                 let panes = workbench.panes_mut(container);
                 if panes.drop != drop {
                     panes.drop = drop;
@@ -440,8 +507,9 @@ impl Workbench {
                 }
             }))
             .on_drop(cx.listener(move |workbench, dragged: &DraggedPane, _, cx| {
-                let below = workbench.panes(container).drop.filter(|(target, _)| *target == id && dragged.container == container).map(|(_, below)| below);
+                let below = workbench.panes(container).drop.filter(|(target, _)| *target == id).map(|(_, below)| below);
                 match below {
+                    Some(below) if dragged.container != container => workbench.drop_pane_from_container(dragged.id, container, id, below, cx),
                     Some(below) => workbench.drop_pane(container, dragged.id, id, below, cx),
                     None => workbench.panes_mut(container).drop = None,
                 }
@@ -457,6 +525,13 @@ impl Workbench {
     #[cfg(test)]
     pub(super) fn pane_header_focused(&self, id: &'static str, window: &Window) -> bool {
         self.explorer_panes.focus[id].is_focused(window)
+    }
+
+    /// The movable view whose pane header has focus (viewPane.ts sets `focusedView` for the whole pane).
+    pub(super) fn focused_pane_header(&self, window: &Window) -> Option<&'static str> {
+        let containers = [&self.explorer_panes, &self.scm_panes].into_iter().chain(self.generated_panes.values());
+        let focused = containers.flat_map(|panes| panes.focus.iter()).find(|(_, focus)| focus.is_focused(window)).map(|(id, _)| *id);
+        focused.filter(|id| self.can_move_view(id))
     }
 
     /// A pane header focused by the keyboard, so it draws its focus outline.

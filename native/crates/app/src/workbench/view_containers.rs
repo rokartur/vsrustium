@@ -76,8 +76,10 @@ impl Workbench {
     pub(super) fn register_view_focus_commands(&mut self) {
         for id in [FILE_VIEW, OUTLINE_VIEW, TIMELINE_VIEW] {
             self.commands.register(format!("{id}.focus"), move |workbench, _, window, cx| {
-                drop(workbench.execute_command("workbench.view.explorer", Vec::new(), window, cx));
-                workbench.expand_pane(PaneContainer::Explorer, id, cx);
+                if !workbench.open_moved_view(id, cx) {
+                    drop(workbench.execute_command("workbench.view.explorer", Vec::new(), window, cx));
+                    workbench.expand_pane(PaneContainer::Explorer, id, cx);
+                }
                 let focus = match id {
                     OUTLINE_VIEW => workbench.outline_pane.focus.clone(),
                     TIMELINE_VIEW => workbench.timeline.focus.clone(),

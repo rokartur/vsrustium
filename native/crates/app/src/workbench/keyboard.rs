@@ -342,6 +342,9 @@ impl Workbench {
         self.banner_context(window, &mut context);
         self.host_context(window, &mut context);
         self.layout_context(&mut context);
+        if let Some(view) = self.focused_movable_view(window) {
+            context.insert("focusedView".into(), json!(view));
+        }
         self.editor_groups_context(&mut context);
         self.history_context(&mut context);
         self.list_scroll_context(window, &mut context);
@@ -472,7 +475,7 @@ impl Workbench {
             SideBarView::Search => self.search_context(window, &mut context),
             SideBarView::Scm => {}
             SideBarView::Extensions => self.extensions_context(window, &mut context),
-            SideBarView::Debug | SideBarView::Testing | SideBarView::Contributed(_) => {}
+            SideBarView::Debug | SideBarView::Testing | SideBarView::Contributed(_) | SideBarView::Generated(_) => {}
         }
         // After the side bar's keys, whose list is not focused: the notebook's cell list is a list (notebookCellList.ts).
         if self.notebook_views.list_focus.is_focused(window) {
