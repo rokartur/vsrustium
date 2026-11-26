@@ -376,6 +376,17 @@ impl Workbench {
             .into_any_element()
     }
 
+    #[cfg(test)]
+    pub(super) fn pane_header_focused(&self, id: &'static str, window: &Window) -> bool {
+        self.explorer_panes.focus[id].is_focused(window)
+    }
+
+    /// A pane header focused by the keyboard, so it draws its focus outline.
+    pub(super) fn focus_pane_header(&mut self, id: &'static str, window: &mut Window, cx: &mut Context<Self>) {
+        self.explorer_panes.pointer_focused = None;
+        window.focus(&self.explorer_panes.focus[id].clone(), cx);
+    }
+
     /// GPUI's group hover changes only on a mouse move, where a browser drops `:hover` once `.context-view-block`
     /// covers the pointer: the pane counts as not hovered while a context menu is open.
     pub(super) fn pane_hover_reachable(&self) -> bool {
@@ -390,7 +401,7 @@ impl Workbench {
         let focused = focus.is_focused(window);
         // paneview.css: the actions show on `.pane:focus-within` and with `workbench.view.alwaysShowHeaderActions`.
         let actions_shown = focused
-            || (id == TIMELINE_VIEW && self.timeline.focus.is_focused(window))
+            || (id == TIMELINE_VIEW && self.timeline_focus_within(window))
             || (id == OUTLINE_VIEW && self.outline_pane.focus.is_focused(window))
             || self.setting("workbench.view.alwaysShowHeaderActions") == json!(true);
         let foreground = self.foreground_or("sideBarSectionHeader.foreground");
@@ -446,6 +457,11 @@ impl Workbench {
                         // Enter and Space reach `on_click`: gpui clicks a focused element on its activation keys.
                         "left" => return workbench.set_pane_expanded(index, false, cx),
                         "right" => return workbench.set_pane_expanded(index, true, cx),
+                        // The header's toolbar is the next tab stop.
+                        "tab" if id == TIMELINE_VIEW && expanded && !event.keystroke.modifiers.shift => {
+                            cx.stop_propagation();
+                            return workbench.focus_timeline_toolbar(window, cx);
+                        }
                         "up" if index > 0 => index - 1,
                         "down" if index + 1 < count => index + 1,
                         _ => return,

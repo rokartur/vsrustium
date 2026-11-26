@@ -24,8 +24,11 @@ use crate::quick_input::{Entry, Event, Item, Kind, QuickInput};
 const TEXT_EDITOR_ID: &str = "default";
 const CONFIGURE_DEFAULT_ID: &str = "promptOpenWith.configureDefault";
 const ASSOCIATIONS_SETTING: &str = "workbench.editorAssociations";
+const DIFF_ASSOCIATIONS_SETTING: &str = "workbench.diffEditorAssociations";
 
 /// editorResolverService.ts `priorityToRank`; the text editor ranks 2.
+/// `hasExclusiveMatch`.
+pub(super) const RANK_EXCLUSIVE: u8 = 5;
 const RANK_DEFAULT: u8 = 4;
 pub(super) const RANK_BUILTIN: u8 = 3;
 const RANK_TEXT_EDITOR: u8 = 2;
@@ -131,7 +134,7 @@ impl Workbench {
     /// opens it, None for the text editor.
     // shortcut: of two default editors for one resource the first opens, where upstream also asks which to use.
     pub(super) fn custom_editor_for(&self, scheme: &str, path: &Path) -> Option<String> {
-        let (view_type, _) = self.default_editor(scheme, path, true);
+        let (view_type, _) = self.default_editor(scheme, path, true, false);
         (view_type != TEXT_EDITOR_ID).then_some(view_type)
     }
 
@@ -172,8 +175,6 @@ impl Workbench {
         }
     }
 
-    /// `getEditorMatches(resource).defaultRule`: the id of the editor that opens the resource, `default` for the text
-    /// editor, and the glob a new default would be written for. Without `associations` it is the natural default.
     /// The contributed custom editors, then the built-in media previews.
     fn editor_contributions(&self) -> Vec<Contribution> {
         let mut contributions = custom_editor_contributions(&self.extensions);
@@ -181,20 +182,24 @@ impl Workbench {
         contributions
     }
 
-    pub(super) fn default_editor(&self, scheme: &str, path: &Path, associations: bool) -> (String, String) {
+    /// `getEditorMatches(resource).defaultRule`: the id of the editor that opens the resource, `default` for the text
+    /// editor, and the glob a new default would be written for. Without `associations` it is the natural default;
+    /// with `diff`, the diff editor's (`EditorAssociationType.DiffEditor`).
+    pub(super) fn default_editor(&self, scheme: &str, path: &Path, associations: bool, diff: bool) -> (String, String) {
         let extension_pattern = format!("*{}", path.extension().map(|extension| format!(".{}", extension.to_string_lossy())).unwrap_or_default());
         let text_editor = (TEXT_EDITOR_ID.to_owned(), extension_pattern.clone());
         let Some(matches) = resource_matcher(scheme, path) else { return text_editor };
-        if associations && let Some((pattern, view_type)) = self.editor_associations().into_iter().find(|(pattern, _)| matches(pattern)) {
+        if associations && let Some((pattern, view_type)) = self.matching_associations(&matches, diff).into_iter().next() {
             return (view_type, pattern);
         }
         let mut best: Option<(u8, &str, String)> = None;
         let contributions = self.editor_contributions();
         for contribution in &contributions {
             let Some(pattern) = contribution.patterns.iter().filter(|pattern| matches(pattern)).max_by_key(|pattern| pattern.len()) else { continue };
-            let better = best.as_ref().is_none_or(|(rank, best_pattern, _)| (contribution.rank, pattern.len()) > (*rank, best_pattern.len()));
-            if contribution.rank > RANK_TEXT_EDITOR && better {
-                best = Some((contribution.rank, pattern, contribution.view_type.clone()));
+            let rank = contribution.rank_for(diff);
+            let better = best.as_ref().is_none_or(|(best_rank, best_pattern, _)| (rank, pattern.len()) > (*best_rank, best_pattern.len()));
+            if rank > RANK_TEXT_EDITOR && better {
+                best = Some((rank, pattern, contribution.view_type.clone()));
             }
         }
         best.map_or(text_editor, |(_, pattern, view_type)| (view_type, pattern.to_owned()))
@@ -257,32 +262,50 @@ impl Workbench {
         self.open_with_resolver(resource, Some(editor_id), json!({ "preserveFocus": preserve_focus }), window, cx)
     }
 
-    /// The editors that can open the resource: the text editor, then the contributed ones matching it (by glob or a
-    /// user association) by rank, as id, label, provider and whether it is a `*` option nobody associated.
-    pub(super) fn resource_editors(&self, scheme: &str, path: &Path) -> Vec<(String, String, String, bool)> {
+    /// The editors that can open the resource (in a diff editor with `diff`): the text editor, then the contributed
+    /// ones matching it (by glob or a user association) by rank, as id, label, provider, rank and whether it is a `*`
+    /// option nobody associated.
+    pub(super) fn resource_editors(&self, scheme: &str, path: &Path, diff: bool) -> Vec<(String, String, String, u8, bool)> {
         let mut editors = vec![(TEXT_EDITOR_ID.to_owned(), "Text Editor".to_owned(), "Built-in".to_owned(), RANK_TEXT_EDITOR, false)];
         if let Some(matches) = resource_matcher(scheme, path) {
-            let associated: Vec<String> = self.editor_associations().into_iter().filter(|(pattern, _)| matches(pattern)).map(|(_, view_type)| view_type).collect();
+            let associated: Vec<String> = self.matching_associations(&matches, diff).into_iter().map(|(_, view_type)| view_type).collect();
             for contribution in self.editor_contributions() {
                 let is_associated = associated.contains(&contribution.view_type);
                 if is_associated || contribution.patterns.iter().any(|pattern| matches(pattern)) {
-                    let universal_option = !is_associated && contribution.rank == RANK_OPTION && contribution.patterns.iter().all(|pattern| pattern == "*");
-                    editors.push((contribution.view_type, contribution.display_name, contribution.provider, contribution.rank, universal_option));
+                    let rank = contribution.rank_for(diff);
+                    let universal_option = !is_associated && rank == RANK_OPTION && contribution.patterns.iter().all(|pattern| pattern == "*");
+                    editors.push((contribution.view_type, contribution.display_name, contribution.provider, rank, universal_option));
                 }
             }
         }
         editors[1..].sort_by_key(|(_, _, _, rank, _)| std::cmp::Reverse(*rank));
-        editors.into_iter().map(|(id, label, provider, _, universal_option)| (id, label, provider, universal_option)).collect()
+        editors
+    }
+
+    /// `getAssociationsForResourceByType`: a diff takes `workbench.diffEditorAssociations`, else the editor
+    /// associations whose editor is not `explicit` for diffs; the longest glob first.
+    fn matching_associations(&self, matches: &impl Fn(&str) -> bool, diff: bool) -> Vec<(String, String)> {
+        let matching = |setting| self.associations(setting).into_iter().filter(|(pattern, _)| matches(pattern)).collect::<Vec<_>>();
+        if !diff {
+            return matching(ASSOCIATIONS_SETTING);
+        }
+        let diff_associations = matching(DIFF_ASSOCIATIONS_SETTING);
+        if !diff_associations.is_empty() {
+            return diff_associations;
+        }
+        let contributions = self.editor_contributions();
+        let explicit = |view_type: &str| contributions.iter().any(|contribution| contribution.view_type == view_type && contribution.diff_rank == 0);
+        matching(ASSOCIATIONS_SETTING).into_iter().filter(|(_, view_type)| !explicit(view_type)).collect()
     }
 
     /// openWithEditorPicker.ts `doPick`: the text editor, then the resource's editors by rank, and the entry that
     /// picks a new default; `configure_default` is the picker that entry opens.
     fn show_open_with_picker(&mut self, resource: Value, current: String, configure_default: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Ok((scheme, path)) = uri_parts(&resource) else { return };
-        let (default_id, pattern) = self.default_editor(scheme, &path, true);
+        let (default_id, pattern) = self.default_editor(scheme, &path, true, false);
         let mut entries = Vec::new();
         let mut ids = Vec::new();
-        for (id, label, detail, _) in self.resource_editors(scheme, &path) {
+        for (id, label, detail, _, _) in self.resource_editors(scheme, &path, false) {
             let description = match (id == current, id == default_id) {
                 (true, true) => Some("Active and Default".to_owned()),
                 (true, false) => Some("Active".to_owned()),
@@ -324,7 +347,7 @@ impl Workbench {
                     return self.show_open_with_picker(picker.resource, picker.current, true, window, cx);
                 }
                 if picker.configure_default {
-                    self.set_default_editor(&picker.resource, editor_id);
+                    self.set_default_editor(&picker.resource, editor_id, false);
                 }
                 drop(self.reopen_with(&picker.resource, &picker.current, editor_id, in_background, window, cx));
             }
@@ -334,31 +357,36 @@ impl Workbench {
     }
 
     /// editorResolverService.ts `setDefaultEditor`: the association for the default rule's glob, removed when the
-    /// editor is the one the resource opens with without it.
-    pub(super) fn set_default_editor(&mut self, resource: &Value, editor_id: &str) {
+    /// editor is the one the resource opens with without it; a diff's goes to `workbench.diffEditorAssociations`.
+    pub(super) fn set_default_editor(&mut self, resource: &Value, editor_id: &str, diff: bool) {
         let Ok((scheme, path)) = uri_parts(resource) else { return };
-        let (default_id, pattern) = self.default_editor(scheme, &path, true);
-        let (natural_id, _) = self.default_editor(scheme, &path, false);
-        let mut associations = match self.setting(ASSOCIATIONS_SETTING) {
+        let setting = if diff { DIFF_ASSOCIATIONS_SETTING } else { ASSOCIATIONS_SETTING };
+        let (default_id, pattern) = self.default_editor(scheme, &path, true, diff);
+        let (natural_id, _) = self.default_editor(scheme, &path, false, diff);
+        let mut associations = match self.setting(setting) {
             Value::Object(associations) => associations,
             _ => serde_json::Map::new(),
         };
         if editor_id == natural_id {
             if associations.remove(&pattern).is_some() {
-                return self.update_setting(ASSOCIATIONS_SETTING, Value::Object(associations));
+                return self.update_setting(setting, Value::Object(associations));
             }
             if default_id == editor_id {
                 return;
             }
         }
         associations.insert(pattern, json!(editor_id));
-        self.update_setting(ASSOCIATIONS_SETTING, Value::Object(associations));
+        self.update_setting(setting, Value::Object(associations));
     }
 
     /// `workbench.editorAssociations` as glob and editor id, the longest glob first.
     // shortcut: reads the merged value where upstream reads the user's; workspace associations come with settings scopes.
     fn editor_associations(&self) -> Vec<(String, String)> {
-        let mut associations: Vec<(String, String)> = match self.setting(ASSOCIATIONS_SETTING) {
+        self.associations(ASSOCIATIONS_SETTING)
+    }
+
+    fn associations(&self, setting: &str) -> Vec<(String, String)> {
+        let mut associations: Vec<(String, String)> = match self.setting(setting) {
             Value::Object(object) => object.into_iter().filter_map(|(pattern, view_type)| Some((pattern, view_type.as_str()?.to_owned()))).collect(),
             _ => Vec::new(),
         };
@@ -580,6 +608,25 @@ pub(super) struct Contribution {
     pub(super) patterns: Vec<String>,
     /// `priorityToRank` of `getPriorityFromContribution`.
     pub(super) rank: u8,
+    /// The rank in a diff editor: `priority.diffEditor`, `explicit` when only `textEditor` is given.
+    pub(super) diff_rank: u8,
+}
+
+impl Contribution {
+    fn rank_for(&self, diff: bool) -> u8 {
+        if diff { self.diff_rank } else { self.rank }
+    }
+}
+
+/// `getSinglePriorityFromContribution` as a rank.
+fn rank_of(priority: Option<&str>, is_builtin: bool) -> u8 {
+    match priority {
+        Some("exclusive") => RANK_EXCLUSIVE,
+        Some("option") => RANK_OPTION,
+        Some("explicit") => 0,
+        Some("builtin") if is_builtin => RANK_BUILTIN,
+        _ => RANK_DEFAULT,
+    }
 }
 
 fn custom_editor_contributions(extensions: &[exthost::scan::ScannedExtension]) -> Vec<Contribution> {
@@ -593,16 +640,15 @@ fn custom_editor_contributions(extensions: &[exthost::scan::ScannedExtension]) -
         for contribution in extension.description["contributes"]["customEditors"].as_array().into_iter().flatten() {
             let Some(view_type) = contribution["viewType"].as_str() else { continue };
             let priority = &contribution["priority"];
-            let rank = match priority.as_str().or(priority["textEditor"].as_str()) {
-                Some("option") => RANK_OPTION,
-                Some("explicit") => 0,
-                Some("builtin") if is_builtin => RANK_BUILTIN,
-                _ => RANK_DEFAULT,
+            let rank = rank_of(priority.as_str().or(priority["textEditor"].as_str()), is_builtin);
+            let diff_rank = match priority.as_str() {
+                Some(_) => rank,
+                None => priority["diffEditor"].as_str().map_or(0, |diff| rank_of(Some(diff), is_builtin)),
             };
             let selectors = contribution["selector"].as_array().into_iter().flatten();
             let patterns = selectors.filter_map(|selector| selector["filenamePattern"].as_str()).map(str::to_owned).collect();
             let display_name = contribution["displayName"].as_str().unwrap_or_default().to_owned();
-            contributions.push(Contribution { view_type: view_type.to_owned(), display_name, provider: provider.clone(), patterns, rank });
+            contributions.push(Contribution { view_type: view_type.to_owned(), display_name, provider: provider.clone(), patterns, rank, diff_rank });
         }
         // notebookServiceImpl.ts `_registerContributionPoint`: each notebook type is an editor, `default` unless it says otherwise.
         for contribution in extension.description["contributes"]["notebooks"].as_array().into_iter().flatten() {
@@ -614,7 +660,7 @@ fn custom_editor_contributions(extensions: &[exthost::scan::ScannedExtension]) -
             let selectors = contribution["selector"].as_array().into_iter().flatten();
             let patterns = selectors.filter_map(|selector| selector["filenamePattern"].as_str().or(selector["filenamePattern"]["include"].as_str())).map(str::to_owned).collect();
             let display_name = contribution["displayName"].as_str().unwrap_or_default().to_owned();
-            contributions.push(Contribution { view_type: view_type.to_owned(), display_name, provider: provider.clone(), patterns, rank });
+            contributions.push(Contribution { view_type: view_type.to_owned(), display_name, provider: provider.clone(), patterns, rank, diff_rank: rank });
         }
     }
     contributions
