@@ -418,6 +418,7 @@ impl Workbench {
                     Some(run) if workbench.search.focus.is_focused(window) => run(workbench, window, cx),
                     None if workbench.search.focus.is_focused(window) => workbench.run_search_list_command(id, window, cx),
                     _ if workbench.explorer.focus.is_focused(window) => workbench.run_explorer_list_command(id, window, cx),
+                    _ if workbench.open_editors_focus.is_focused(window) && workbench.open_editors_list_command(id, window, cx) => {}
                     _ => return Outcome::error(format!("command '{id}' not found")),
                 }
                 Outcome::done()

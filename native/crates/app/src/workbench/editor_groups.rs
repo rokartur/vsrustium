@@ -88,8 +88,12 @@ impl Workbench {
             ("workbench.action.splitEditorDown", Some(Direction::Down)),
         ];
         for (id, direction) in splits {
-            self.commands.register(id, move |workbench, _, window, cx| {
+            self.commands.register(id, move |workbench, args, window, cx| {
                 workbench.leave_panel_group();
+                // `resolveCommandsContext`: the tab menu's editor is the one split.
+                if let Some(index) = workbench.context_editor(&args) {
+                    workbench.editors.activate(index);
+                }
                 let direction = direction.unwrap_or_else(|| workbench.side_by_side_direction());
                 workbench.split_editor(direction, window, cx);
                 Outcome::done()
@@ -161,6 +165,24 @@ impl Workbench {
                 workbench.leave_panel_group();
                 let groups = workbench.groups_in_grid_order();
                 let target = if last { groups[groups.len() - 1] } else { groups[0] };
+                workbench.move_active_editor_to(target, window, cx);
+                Outcome::done()
+            });
+        }
+        // editorCommands.ts `moveCopyEditorsToGroup` by group: the tab menu's editor (else the active one) moves to the
+        // group in that direction, a new group there when there is none.
+        let moves = [
+            ("workbench.action.moveEditorToAboveGroup", Direction::Up),
+            ("workbench.action.moveEditorToBelowGroup", Direction::Down),
+            ("workbench.action.moveEditorToLeftGroup", Direction::Left),
+            ("workbench.action.moveEditorToRightGroup", Direction::Right),
+        ];
+        for (id, direction) in moves {
+            self.commands.register(id, move |workbench, args, window, cx| {
+                workbench.leave_panel_group();
+                let Some(index) = workbench.context_editor(&args) else { return Outcome::done() };
+                workbench.editors.activate(index);
+                let target = workbench.group_in_direction(direction).unwrap_or_else(|| workbench.add_group_beside(direction));
                 workbench.move_active_editor_to(target, window, cx);
                 Outcome::done()
             });
@@ -329,7 +351,8 @@ impl Workbench {
             return self.close_editors_in_groups(groups, keep, window, cx);
         }
         self.focus_group(group, window, cx);
-        match self.close_editors((0..self.editors.editors.len()).collect(), window, cx) {
+        // `closeAllEditors({ excludeSticky: true })`.
+        match self.close_editors((self.editors.sticky_count()..self.editors.editors.len()).collect(), window, cx) {
             Outcome::Ready(_) => self.close_editors_in_groups(groups, keep, window, cx),
             Outcome::Pending(closing) => {
                 let (sender, receiver) = futures::channel::oneshot::channel();
@@ -819,7 +842,11 @@ impl Workbench {
         if dragged.group == target {
             self.with_group(target, |workbench| workbench.editors.move_editor(dragged.index, index.unwrap_or(usize::MAX)));
         } else {
-            let editor = self.with_group(dragged.group, |workbench| workbench.editors.take_editor(dragged.index));
+            let mut editor = self.with_group(dragged.group, |workbench| workbench.editors.take_editor(dragged.index));
+            // multiEditorTabsControl.ts `onDrop` opens with `sticky: false`: only a drop into the sticky range sticks it.
+            if index.is_some() {
+                editor.sticky = false;
+            }
             self.with_group(target, |workbench| {
                 workbench.editors.insert_moved(editor);
                 if let (Some(index), Some(from)) = (index, workbench.editors.active_index()) {

@@ -211,7 +211,7 @@ fn the_context_menu_selects_the_row_and_runs_its_items_with_keys_and_clicks(cx: 
     cx.simulate_mouse_down(file_row, MouseButton::Right, Modifiers::none());
     cx.simulate_mouse_up(file_row, MouseButton::Right, Modifiers::none());
     cx.run_until_parked();
-    assert_eq!(menu_titles(&workbench, cx), ["Reveal in Finder", "Open in Integrated Terminal", "---", "Select for Compare", "---", "Open Timeline", "---", "Cut", "Copy", "---", "Copy Path", "Copy Relative Path", "---", "Rename...", "Delete"]);
+    assert_eq!(menu_titles(&workbench, cx), ["Open to the Side", "Reveal in Finder", "Open in Integrated Terminal", "---", "Select for Compare", "---", "Open Timeline", "---", "Cut", "Copy", "---", "Copy Path", "Copy Relative Path", "---", "Rename...", "Delete"]);
     assert_eq!(workbench.read_with(cx, |workbench, _| workbench.folder.as_ref().unwrap().selected.clone()), [dir.join("a.txt")]);
 
     // The pointer focuses the item under it; Down goes on from there and skips the separator; Enter runs it.
@@ -222,9 +222,9 @@ fn the_context_menu_selects_the_row_and_runs_its_items_with_keys_and_clicks(cx: 
     assert_eq!(focused(cx), None);
     cx.simulate_mouse_move(point(px(150.), px(148.)), None, Modifiers::none());
     cx.simulate_keystrokes("pagedown");
+    assert_eq!(focused(cx), Some(15));
+    cx.simulate_keystrokes("pageup down down down down down down down down down");
     assert_eq!(focused(cx), Some(14));
-    cx.simulate_keystrokes("pageup down down down down down down down down");
-    assert_eq!(focused(cx), Some(13));
     cx.simulate_keystrokes("enter");
     cx.run_until_parked();
     assert!(workbench.read_with(cx, |workbench, _| workbench.context_menu.is_none() && workbench.explorer.edit.as_ref().is_some_and(|edit| edit.renamed.is_some())));
@@ -250,7 +250,7 @@ fn the_context_menu_selects_the_row_and_runs_its_items_with_keys_and_clicks(cx: 
     // Items are 24px from the border and the 4px padding, the separators 11px.
     cx.simulate_mouse_down(file_row, MouseButton::Right, Modifiers::none());
     let top = workbench.read_with(cx, |workbench, _| f32::from(workbench.context_menu.as_ref().unwrap().levels[0].origin.y));
-    let delete = point(px(150.), px(top + 5. + 24. * 9. + 11. * 5. + 12.));
+    let delete = point(px(150.), px(top + 5. + 24. * 10. + 11. * 5. + 12.));
     cx.simulate_mouse_down(delete, MouseButton::Left, Modifiers::alt());
     cx.simulate_mouse_up(delete, MouseButton::Left, Modifiers::alt());
     assert!(workbench.read_with(cx, |workbench, _| workbench.context_menu.is_some()), "too early");
@@ -324,7 +324,7 @@ fn extension_items_follow_the_right_clicked_rows_resource(cx: &mut TestAppContex
     let file_row = point(px(120.), px(129.));
     cx.simulate_mouse_down(file_row, MouseButton::Right, Modifiers::none());
     cx.run_until_parked();
-    assert_eq!(menu_titles(&workbench, cx), ["Open Text Preview", "Reveal in Finder", "Open in Integrated Terminal", "---", "Select for Compare", "---", "Open Timeline", "---", "Cut", "Copy", "---", "Copy Path", "Copy Relative Path", "---", "Rename...", "Delete"]);
+    assert_eq!(menu_titles(&workbench, cx), ["Open Text Preview", "Open to the Side", "Reveal in Finder", "Open in Integrated Terminal", "---", "Select for Compare", "---", "Open Timeline", "---", "Cut", "Copy", "---", "Copy Path", "Copy Relative Path", "---", "Rename...", "Delete"]);
     // markdown.showPreview opens only a `vscode.Uri`, which the host revives from `$mid` 1.
     let resource = workbench.read_with(cx, |workbench, _| workbench.context_menu.as_ref().unwrap().args[0].clone());
     assert_eq!(resource["$mid"], 1);

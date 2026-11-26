@@ -342,6 +342,10 @@ pub struct Workbench {
     references_peek: references_peek::ReferencesPeek,
     outline_pane: outline_pane::OutlinePane,
     open_editors_focus: FocusHandle,
+    /// The Open Editors list's focused row by position, moved by the keyboard; `None` follows the active editor
+    /// (openEditorsView.ts `focusActiveEditor` on each refresh).
+    open_editors_focused_row: Option<usize>,
+    open_editors_scroll: gpui::ScrollHandle,
     hierarchy_peek: hierarchy_peek::HierarchyPeek,
     content_hover: content_hover::ContentHover,
     suggest: suggest_controller::Suggest,
@@ -646,6 +650,8 @@ impl Workbench {
             references_peek: references_peek::ReferencesPeek::new(cx),
             outline_pane: outline_pane::OutlinePane::new(cx),
             open_editors_focus: cx.focus_handle(),
+            open_editors_focused_row: None,
+            open_editors_scroll: Default::default(),
             hierarchy_peek: hierarchy_peek::HierarchyPeek::new(cx),
             content_hover: Default::default(),
             suggest: Default::default(),
@@ -997,6 +1003,7 @@ impl Workbench {
         }
         self.record_navigation(None);
         self.editors.panel_editor_shown = self.output_view_visible() && self.output_editor().is_some();
+        self.open_editors_focused_row = None;
         self.reveal_active_file();
         self.record_editor_history();
         self.drop_closed_search_editors();

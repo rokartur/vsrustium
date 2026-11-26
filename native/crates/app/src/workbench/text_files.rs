@@ -89,12 +89,13 @@ impl Workbench {
             workbench.open_untitled(language, window, cx);
             Outcome::done()
         });
-        self.commands.register("workbench.action.files.saveAs", |workbench, _, _, cx| {
+        self.commands.register("workbench.action.files.saveAs", |workbench, args, _, cx| {
             if let Some(key) = workbench.active_notebook_editor().map(|editor| editor.notebook.clone()) {
                 let saved = workbench.save_notebook_as(&key, cx);
                 return when_saved(vec![saved], |_| Value::Null, cx);
             }
-            let Some(editor) = workbench.editors.active() else { return Outcome::done() };
+            // The editor a tab menu passes, else the active one.
+            let Some(editor) = workbench.context_editor(&args).map(|index| workbench.editors.tab_model(index)) else { return Outcome::done() };
             let (scheme, path) = (editor.document().scheme.clone(), editor.document().path.clone());
             let saved = workbench.save_as(scheme, path, SaveOptions { force: true, ..SaveOptions::default() }, cx);
             when_saved(vec![saved], |_| Value::Null, cx)

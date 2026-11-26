@@ -54,6 +54,18 @@ impl Workbench {
             }
             Outcome::done()
         });
+        // fileCommands.ts `explorer.openToSide`: the resource a context menu passes, else the Explorer's context,
+        // opened pinned in the group beside the active one (`SIDE_GROUP`).
+        self.commands.register("explorer.openToSide", |workbench, args, window, cx| {
+            let resources = match args.first() {
+                Some(resource @ serde_json::Value::Object(_)) => vec![resource.clone()],
+                _ => workbench.explorer_context_files().iter().map(|path| crate::editor::uri_value("file", path)).collect(),
+            };
+            for resource in resources {
+                drop(workbench.execute_command("_workbench.open", vec![resource, serde_json::json!([-2, { "pinned": true, "preserveFocus": false }])], window, cx));
+            }
+            Outcome::done()
+        });
     }
 
     fn explorer_context_files(&self) -> Vec<PathBuf> {

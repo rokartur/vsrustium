@@ -44,6 +44,7 @@ fn menu_titles(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext) 
             .map(|action| match action {
                 MenuAction::Command { title, enabled: true, .. } => title.clone(),
                 MenuAction::Command { title, .. } => format!("({title})"),
+                MenuAction::Submenu { title, .. } => format!("{title} >"),
                 _ => "---".into(),
             })
             .collect()
@@ -59,7 +60,7 @@ fn the_editor_menu_moves_the_cursor_to_the_pointer_unless_a_selection_holds_it(c
     let (_dir, workbench, cx) = workbench_with("editor-menu", &["a.txt"], cx);
     let pointer = point(px(400.), px(200.));
     workbench.update_in(cx, |workbench, window, cx| workbench.show_editor_context_menu(1, 3.2, pointer, window, cx));
-    assert_eq!(menu_titles(&workbench, cx), ["(Go to Definition)", "(Go to Declaration)", "(Go to Type Definition)", "(Go to Implementations)", "(Go to References)", "---", "---", "Change All Occurrences", "Refactor...", "---", "Cut", "Copy", "Paste", "---", "Command Palette..."]);
+    assert_eq!(menu_titles(&workbench, cx), ["(Go to Definition)", "(Go to Declaration)", "(Go to Type Definition)", "(Go to Implementations)", "(Go to References)", "Peek >", "---", "Change All Occurrences", "Refactor...", "---", "Cut", "Copy", "Paste", "---", "Command Palette..."]);
     let selections = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().selections.clone());
     assert_eq!(selections(cx), [Selection::caret(Position::new(1, 3))]);
     cx.simulate_keystrokes("escape");
@@ -78,7 +79,7 @@ fn the_tab_menu_closes_around_the_right_clicked_editor(cx: &mut TestAppContext) 
     let (dir, workbench, cx) = workbench_with("tab-menu", &["a.txt", "b.txt", "c.txt", "d.txt"], cx);
     let pointer = point(px(200.), px(50.));
     workbench.update_in(cx, |workbench, window, cx| workbench.show_tab_context_menu(1, pointer, window, cx));
-    assert_eq!(menu_titles(&workbench, cx), ["Close", "Close Others", "Close to the Right", "Close Saved", "Close All", "---", "Copy Path", "Copy Relative Path", "---", "Reveal in Finder", "---", "(Keep Open)"]);
+    assert_eq!(menu_titles(&workbench, cx), ["Close", "Close Others", "Close to the Right", "Close Saved", "Close All", "---", "Copy Path", "Copy Relative Path", "---", "Reopen Editor With...", "---", "Reveal in Finder", "Reveal in Explorer View", "---", "(Keep Open)", "Pin", "---", "Split Right", "Split & Move >"]);
     cx.simulate_keystrokes("escape");
     workbench.update_in(cx, |workbench, window, cx| workbench.show_tab_context_menu(3, pointer, window, cx));
     assert_eq!(menu_titles(&workbench, cx)[2], "(Close to the Right)");
@@ -107,6 +108,42 @@ fn the_tab_menu_closes_around_the_right_clicked_editor(cx: &mut TestAppContext) 
     run("workbench.action.closeEditorsInGroup", 0, cx);
     assert!(open_names(&workbench, cx).is_empty());
     assert_eq!(std::fs::read_to_string(dir.join("a.txt")).unwrap(), "hello world\nsecond line");
+}
+
+/// editorCommands.ts: Pin Editor sticks the editor (Cmd+K Shift+Enter toggles it), the group's mass closes leave it,
+/// Cmd+W opens the next non-sticky editor instead (`preventPinnedEditorClose`), Close Pinned Editor closes it.
+#[gpui::test]
+fn pinned_editors_go_first_and_survive_the_mass_closes(cx: &mut TestAppContext) {
+    let (_dir, workbench, cx) = workbench_with("pinned-tabs", &["a.txt", "b.txt", "c.txt"], cx);
+    let sticky = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.editors.editors.iter().map(|editor| editor.sticky).collect::<Vec<_>>());
+    let active = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document().name());
+    workbench.update_in(cx, |workbench, window, cx| window.focus(&workbench.editor_focus, cx));
+    cx.simulate_keystrokes("cmd-k shift-enter");
+    assert_eq!(open_names(&workbench, cx), ["c.txt", "a.txt", "b.txt"]);
+    assert_eq!(sticky(cx), [true, false, false]);
+    workbench.update_in(cx, |workbench, window, cx| workbench.show_tab_context_menu(0, point(px(200.), px(50.)), window, cx));
+    assert!(menu_titles(&workbench, cx).contains(&"Unpin".to_string()));
+    cx.simulate_keystrokes("escape");
+
+    cx.simulate_keystrokes("cmd-w");
+    assert_eq!(open_names(&workbench, cx).len(), 3, "the keyboard does not close a sticky editor");
+    assert_eq!(active(cx), "b.txt", "the most recent non-sticky editor opens instead");
+    workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("workbench.action.closeEditorsInGroup", vec![], window, cx)));
+    cx.run_until_parked();
+    assert_eq!(open_names(&workbench, cx), ["c.txt"]);
+    workbench.update_in(cx, |workbench, window, cx| {
+        window.focus(&workbench.editor_focus, cx);
+        drop(workbench.execute_command("workbench.action.closeAllEditors", vec![], window, cx));
+    });
+    cx.run_until_parked();
+    assert_eq!(open_names(&workbench, cx), ["c.txt"]);
+    workbench.update_in(cx, |workbench, window, cx| window.focus(&workbench.editor_focus, cx));
+    cx.simulate_keystrokes("cmd-k shift-enter");
+    assert_eq!(sticky(cx), [false], "the chord unpins a pinned editor");
+    workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("workbench.action.pinEditor", vec![], window, cx)));
+    workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("workbench.action.closeActivePinnedEditor", vec![], window, cx)));
+    cx.run_until_parked();
+    assert!(open_names(&workbench, cx).is_empty());
 }
 
 #[gpui::test]
@@ -159,7 +196,7 @@ fn shift_f10_shows_the_editor_menu_below_the_cursor_without_moving_it(cx: &mut T
     let cursor = Selection::caret(Position::new(1, 3));
     workbench.update(cx, |workbench, _| workbench.editors.active_mut().unwrap().set_selections(vec![cursor]));
     workbench.update_in(cx, |workbench, window, cx| workbench.execute_command("editor.action.showContextMenu", vec![], window, cx));
-    assert_eq!(menu_titles(&workbench, cx), ["(Go to Definition)", "(Go to Declaration)", "(Go to Type Definition)", "(Go to Implementations)", "(Go to References)", "---", "---", "Change All Occurrences", "Refactor...", "---", "Cut", "Copy", "Paste", "---", "Command Palette..."]);
+    assert_eq!(menu_titles(&workbench, cx), ["(Go to Definition)", "(Go to Declaration)", "(Go to Type Definition)", "(Go to Implementations)", "(Go to References)", "Peek >", "---", "Change All Occurrences", "Refactor...", "---", "Cut", "Copy", "Paste", "---", "Command Palette..."]);
     let (origin, anchor, selections) = workbench.update_in(cx, |workbench, window, _| (workbench.context_menu.as_ref().unwrap().levels[0].origin, workbench.cursor_anchor(window).unwrap(), workbench.editors.active().unwrap().selections.clone()));
     assert_eq!(selections, [cursor]);
     assert!(origin.x >= anchor.x - px(1.) && origin.y >= anchor.y - px(1.), "{origin:?} at {anchor:?}");

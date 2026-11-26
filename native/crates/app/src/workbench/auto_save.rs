@@ -129,7 +129,7 @@ pub(super) struct AutoSave {
 
 impl Workbench {
     /// The `files.autoSave` configuration of a resource, or the global one without (`getAutoSaveConfiguration`).
-    fn auto_save_configuration(&self, model: Option<&OpenEditor>) -> AutoSaveConfiguration {
+    pub(super) fn auto_save_configuration(&self, model: Option<&OpenEditor>) -> AutoSaveConfiguration {
         let overrides = match model {
             Some(model) => Overrides { resource: Some(&model.document().path), override_identifier: Some(&model.document().language_id) },
             None => Overrides::default(),

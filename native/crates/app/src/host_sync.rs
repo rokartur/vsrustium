@@ -615,7 +615,7 @@ fn tab_dto(group: u32, editor: &OpenEditor, active: bool, sync: &HostSync) -> Va
         "input": { "kind": 1, "uri": uri },
         "editorId": "default",
         "isActive": active,
-        "isPinned": false,
+        "isPinned": editor.sticky,
         "isPreview": editor.preview,
         "isDirty": editor.is_dirty(),
     });
@@ -678,7 +678,7 @@ fn diff_tab_dto(group: u32, editor: &OpenEditor, diff: &DiffInput, active: bool,
         "input": { "kind": 2, "original": uri(&diff.original), "modified": uri(&diff.modified) },
         "editorId": "default",
         "isActive": active,
-        "isPinned": false,
+        "isPinned": editor.sticky,
         "isPreview": editor.preview,
         "isDirty": dirty,
     })
