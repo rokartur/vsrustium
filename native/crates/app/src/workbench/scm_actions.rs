@@ -12,6 +12,7 @@ use gpui::{Bounds, Context, Div, MouseButton, MouseDownEvent, Rgba, Window, div,
 use serde_json::{Value, json};
 
 use super::Workbench;
+use super::hover::{HoverContent, HoverOptions};
 use super::search_view::SideBarView;
 use crate::commands::Outcome;
 use crate::contextkey::Expr;
@@ -481,11 +482,47 @@ impl Workbench {
         let navigation: Vec<MenuItem> = self.menus.iter().filter(|item| item.menu == MenuId::ScmHistoryTitle && item.group == "navigation").cloned().collect();
         let mut bar = div().ml_auto().mr(px(4.)).flex().items_center();
         for action in menu_actions(&navigation, MenuId::ScmHistoryTitle, &context) {
-            if let MenuAction::Command { id, title, .. } = action {
-                bar = bar.child(self.command_button(&id, title, args.clone(), foreground, cx));
+            match action {
+                MenuAction::Command { id, .. } if id == PICK_HISTORY_ITEM_REFS => bar = bar.child(self.scm_history_item_picker()),
+                MenuAction::Command { id, title, enabled: true, .. } => bar = bar.child(self.command_button(&id, title, args.clone(), foreground, cx)),
+                // actionbar.css: a disabled action's label at 0.4 opacity, without a click or hover background.
+                MenuAction::Command { id, title, .. } => bar = bar.child(self.disabled_command_button(&id, title, foreground)),
+                _ => {}
             }
         }
         bar.child(self.more_actions_button("scm-graph-title-more", MenuId::ScmHistoryTitle, context, args, foreground, cx))
+    }
+
+    fn disabled_command_button(&self, id: &str, title: String, foreground: Rgba) -> Div {
+        let icon = match self.command_icons.get(id) {
+            Some(CommandIcon::Codicon(name)) => self.icon(name, 22., 16., foreground),
+            _ => div().px(px(4.)).child(title),
+        };
+        icon.opacity(0.4)
+    }
+
+    /// `SCMHistoryItemRefsActionViewItem` of the 'auto' filter: the `git-branch` codicon and "Auto" in
+    /// `icon.foreground` (scm.css `.scm-graph-history-item-picker`), the current, remote and base refs' names as its
+    /// tooltip.
+    fn scm_history_item_picker(&self) -> gpui::Stateful<Div> {
+        let foreground = self.color("icon.foreground");
+        let tooltip = self.scm_graph.refs.iter().flatten().map(|reference| reference.name.as_str()).collect::<Vec<_>>().join(", ");
+        div()
+            .id("scm-graph-history-item-picker")
+            .h(px(22.))
+            .px(px(2.))
+            .flex()
+            .items_center()
+            .rounded(px(5.))
+            .text_color(foreground)
+            .font_weight(gpui::FontWeight::NORMAL)
+            .text_size(px(11.))
+            .line_height(px(16.))
+            .cursor_pointer()
+            .hover(|picker| picker.bg(self.color("toolbar.hoverBackground")))
+            .child(self.icon("git-branch", 16., 16., foreground))
+            .child(div().max_w(px(100.)).pr(px(2.)).overflow_hidden().text_ellipsis().whitespace_nowrap().child("Auto"))
+            .child(self.hover_target("scm-graph-history-item-picker-hover", HoverContent::Text(tooltip), HoverOptions::mouse()))
     }
 
     /// `SCMHistoryViewPane._onContextMenu` of a history item: `MenuId.SCMHistoryItemContext` but its inline group,
@@ -662,6 +699,7 @@ const SCM_MENUS: &[Row] = &[
         None,
         None,
     ),
+    (MenuId::ScmHistoryTitle, PICK_HISTORY_ITEM_REFS, "History Item Reference Picker", "navigation", 1., None, Some("scmHistoryItemCount != 0"), None),
     (MenuId::ScmHistoryTitle, "workbench.scm.action.graph.revealCurrentHistoryItem", "Go to Current History Item", "navigation", 2., None, Some("scmHistoryItemCount != 0 && scmCurrentHistoryItemRefInFilter == true"), None),
     (MenuId::ScmHistoryTitle, "workbench.scm.action.graph.refresh", "Refresh", "navigation", 1000., None, None, None),
     (MenuId::ScmHistoryTitle, "workbench.scm.action.graph.setListViewMode", "View as List", "9_viewmode", 1., None, None, Some("scmHistoryViewMode == 'list'")),
@@ -681,6 +719,9 @@ const SCM_ICONS: [(&str, &str); 6] = [
     ("workbench.scm.action.graph.viewChanges", "diff-multiple"),
     ("workbench.scm.action.graph.openFile", "go-to-file"),
 ];
+
+/// scmHistoryViewPane.ts `PICK_HISTORY_ITEM_REFS_ACTION_ID`.
+const PICK_HISTORY_ITEM_REFS: &str = "workbench.scm.action.graph.pickHistoryItemRefs";
 
 pub fn menu_items() -> Vec<MenuItem> {
     let mut items = Vec::new();

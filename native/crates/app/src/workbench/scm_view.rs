@@ -707,7 +707,9 @@ impl Workbench {
             .id(id.clone())
             .group(id.clone())
             .h(px(ROW_HEIGHT))
-            .pl(px(INDENT * (1 + level) as f32))
+            // abstractTree.ts `indentSize`: the twistie 8px further in than the input row's and the actions, and the
+            // label after the twistie's 6px padding (tree.css), measured against the reference with ui-pair.
+            .pl(px(INDENT * (1 + level) as f32 + 7.))
             .pr(px(12.))
             .flex()
             .items_center()
@@ -726,7 +728,7 @@ impl Workbench {
                 workbench.show_context_menu(MenuId::ScmResourceGroupContext, &menu_context, Bounds::new(event.position, Default::default()), menu_args.clone(), window, cx);
             }))
             .child(self.icon(if collapsed { "chevron-right" } else { "chevron-down" }, TWISTIE, 16., foreground))
-            .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().child(group.label.clone()))
+            .child(div().flex_1().min_w_0().ml(px(3.)).overflow_hidden().whitespace_nowrap().child(group.label.clone()))
             .child(div().invisible().group_hover(id, |actions| actions.visible()).child(actions))
             .child(badge)
     }
@@ -752,14 +754,14 @@ impl Workbench {
         let key = (provider.handle, group.handle, Some(resource.handle));
         let selected = self.scm.selected == Some(key);
         let id = gpui::SharedString::from(format!("scm-resource-{}-{}-{}", provider.handle, group.handle, resource.handle));
-        let label_color = decoration.as_ref().map_or(foreground, |decoration| decoration.1);
         let handles = (provider.handle, group.handle, resource.handle);
         let editor_command = resource.command.clone().filter(|command| matches!(command["id"].as_str(), Some("_workbench.open" | "_workbench.diff")));
         div()
             .id(id.clone())
             .group(id.clone())
             .h(px(ROW_HEIGHT))
-            .pl(px(INDENT * (2 + level + tree_depth.unwrap_or(0)) as f32 + TWISTIE))
+            // The icon 4px past the indent, measured against the reference with ui-pair.
+            .pl(px(INDENT * (2 + level + tree_depth.unwrap_or(0)) as f32 + 4.))
             .pr(px(12.))
             .flex()
             .items_center()
@@ -784,7 +786,8 @@ impl Workbench {
                 workbench.show_context_menu(MenuId::ScmResourceStateContext, &context, Bounds::new(event.position, Default::default()), args.clone(), window, cx);
             }))
             .child(icon.mr(px(6.)))
-            .child(div().flex_none().whitespace_nowrap().text_color(label_color).when(resource.strike_through, |name| name.line_through()).child(name))
+            // scmViewPane.ts `fileDecorations: { colors: false }`: only the letter takes the decoration's color.
+            .child(div().flex_none().whitespace_nowrap().when(resource.strike_through, |name| name.line_through()).child(name))
             .child(div().flex_1().min_w_0().ml(px(6.)).overflow_hidden().whitespace_nowrap().text_size(px(12.)).opacity(0.7).child(folder))
             .child(div().invisible().group_hover(id, |actions| actions.visible()).child(actions))
             .children(decoration.map(|(letter, color)| div().w(px(16.)).ml(px(4.)).text_size(px(12.)).text_color(color).child(letter)))
