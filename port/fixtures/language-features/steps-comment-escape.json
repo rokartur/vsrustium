@@ -1,0 +1,1 @@
+[{"wait": 10000}, {"hotkey": ["ctrl", "g"]}, {"wait": 500}, {"type": "3"}, {"key": "return"}, {"wait": 500}, {"hotkey": ["cmd", "shift", "p"]}, {"wait": 800}, {"type": "Add Comment on Current Selection"}, {"wait": 800}, {"key": "return"}, {"wait": 2000}, {"shot": "add"}, {"key": "escape", "foreground": true}, {"wait": 1000}, {"shot": "dismissed"}]

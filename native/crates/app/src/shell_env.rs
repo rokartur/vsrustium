@@ -23,6 +23,14 @@ pub fn resolve_shell_env(
     Some(do_resolve_unix_shell_env(env, Instant::now() + timeout))
 }
 
+/// `application.shellEnvironmentResolutionTimeout` in seconds, clamped to 1..120; 10 s when it is not a number.
+pub fn resolution_timeout(configured: Option<serde_json::Value>) -> Duration {
+    match configured.as_ref().and_then(serde_json::Value::as_f64) {
+        Some(seconds) => Duration::from_secs_f64(seconds.clamp(1.0, 120.0)),
+        None => Duration::from_secs(10),
+    }
+}
+
 /// `doResolveUnixShellEnv`, including the timeout and error wrapping of `getResolvedShellEnv`.
 fn do_resolve_unix_shell_env(
     env: &HashMap<String, String>,
@@ -219,6 +227,17 @@ mod tests {
     fn missing_marks_parse_as_empty() {
         assert!(parse_marked_env("A=1\0", "abc123").is_empty());
         assert!(parse_marked_env("abc123A=1\0", "abc123").is_empty());
+    }
+
+    #[test]
+    fn resolution_timeout_clamps_the_setting() {
+        use serde_json::json;
+        assert_eq!(resolution_timeout(None), Duration::from_secs(10));
+        assert_eq!(resolution_timeout(Some(json!("30"))), Duration::from_secs(10));
+        assert_eq!(resolution_timeout(Some(json!(30))), Duration::from_secs(30));
+        assert_eq!(resolution_timeout(Some(json!(0))), Duration::from_secs(1));
+        assert_eq!(resolution_timeout(Some(json!(500))), Duration::from_secs(120));
+        assert_eq!(resolution_timeout(Some(json!(1.5))), Duration::from_millis(1500));
     }
 
     #[test]

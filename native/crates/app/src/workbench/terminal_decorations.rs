@@ -186,6 +186,47 @@ impl Workbench {
         Some(guide.into_any_element())
     }
 
+    /// markNavigationAddon.ts `registerTemporaryDecoration`: the rows a navigation revealed, 20px left of the text
+    /// (`.terminal-scroll-highlight`) with a 5px `focusBorder` bar, outlined for the first 350ms.
+    pub(super) fn terminal_navigation_highlight(&self, id: u32) -> Option<AnyElement> {
+        let (instance, pane, metrics) = (self.terminal_view.instance(id)?, self.terminal_view.pane_bounds.get(&id)?, self.terminal_view.metrics.as_ref()?);
+        let highlight = instance.navigation_highlight.as_ref()?;
+        let screen_rows = instance.term.screen_lines() as i64;
+        let viewport_y = instance.viewport_y();
+        let first = (highlight.rows.start() - viewport_y).max(0);
+        let last = (highlight.rows.end() - viewport_y + 1).min(screen_rows);
+        if first >= last {
+            return None;
+        }
+        let origin = grid::grid_origin(*pane, screen_rows as usize, metrics) - pane.origin;
+        let color = self.color("focusBorder");
+        let outlined = std::time::Instant::now() < highlight.outline_until;
+        let element = gpui::div()
+            .absolute()
+            .left(origin.x - px(20.))
+            .top(origin.y + px(first as f32 * metrics.cell_height))
+            .w(px(5. + instance.term.columns() as f32 * metrics.cell_width + if outlined { 1. } else { 0. }))
+            .h(px((last - first) as f32 * metrics.cell_height))
+            .border_color(color)
+            .border_l(px(5.))
+            .when(outlined, |element| {
+                element
+                    .border_r(px(1.))
+                    .when(*highlight.rows.start() - viewport_y == first, |element| element.border_t(px(1.)))
+                    .when(*highlight.rows.end() - viewport_y + 1 == last, |element| element.border_b(px(1.)))
+            });
+        Some(element.into_any_element())
+    }
+
+    /// Draws the navigation highlight again once its outline is gone.
+    pub(super) fn end_navigation_outline_later(&self, cx: &mut gpui::Context<Self>) {
+        cx.spawn(async |workbench, cx| {
+            cx.background_executor().timer(crate::terminal::marks::OUTLINE_DURATION).await;
+            let _ = workbench.update(cx, |_, cx| cx.notify());
+        })
+        .detach();
+    }
+
     /// The decorations of the rows on screen, where the grid painted last (`terminal.integrated.shellIntegration.decorationsEnabled`).
     pub(super) fn terminal_decorations(&self, id: u32, cx: &mut gpui::Context<Self>) -> Vec<AnyElement> {
         let enabled = self.setting("terminal.integrated.shellIntegration.decorationsEnabled");
@@ -292,7 +333,8 @@ impl Workbench {
             };
             marks.push((line, self.color(color), exit_code.is_some_and(|code| code != 0)));
         }
-        Some(grid::OverviewRuler { border: self.color("terminalOverviewRuler.border"), marks })
+        let navigation = instance.navigation_highlight.as_ref().map(|highlight| (*highlight.rows.start(), self.color("terminalOverviewRuler.cursorForeground")));
+        Some(grid::OverviewRuler { border: self.color("terminalOverviewRuler.border"), marks, navigation })
     }
 
     /// quickFixAddon.ts `_registerQuickFixDecoration`: a light bulb (a sparkle when every fix explains) over the gutter

@@ -261,3 +261,16 @@ fn mnemonic_menu_label_drops_mnemonics() {
     assert_eq!(mnemonic_menu_label("Open (&&O)"), "Open ");
     assert_eq!(mnemonic_menu_label("Fish & Chips"), "Fish & Chips");
 }
+
+#[test]
+fn refactor_and_source_action_show_for_the_kinds_the_providers_offer() {
+    let registry = workbench_menus();
+    let shown = |supported: &str| {
+        let context: HashMap<String, Value> = [("supportedCodeAction".to_owned(), json!(supported)), ("editorHasCodeActionsProvider".to_owned(), json!(true))].into();
+        let actions = menu_actions(&registry, MenuId::EditorContext, &context);
+        ids(&actions).into_iter().filter(|id| id.starts_with("editor.action.refactor") || id.starts_with("editor.action.sourceAction")).map(str::to_owned).collect::<Vec<_>>()
+    };
+    assert_eq!(shown(""), Vec::<String>::new());
+    assert_eq!(shown("quickfix refactor.extract source.organizeImports"), ["editor.action.refactor", "editor.action.sourceAction"]);
+    assert_eq!(shown("refactoring"), Vec::<String>::new(), "`\\b` ends the kind");
+}

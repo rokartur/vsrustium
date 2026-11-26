@@ -1,7 +1,7 @@
 //! terminalStickyScrollOverlay.ts `_refreshNow` and `_updateContent`: the prompt and command lines of the command
 //! at the top of the viewport, shown over it while its output scrolls by.
 
-use alacritty_terminal::grid::{Dimensions, Scroll};
+use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column, Line};
 use alacritty_terminal::term::TermMode;
 
@@ -19,8 +19,8 @@ pub struct StickyScroll {
     pub truncated: bool,
     /// Rows the overlay is moved up by as the command's last output line scrolls under it.
     pub shift: usize,
-    /// The command's first prompt line, where a click on the overlay scrolls to (`revealCommand`).
-    pub reveal_line: i64,
+    /// The command's first prompt line and last command line, which a click on the overlay reveals (`revealCommand`).
+    pub reveal: (i64, i64),
 }
 
 impl TerminalInstance {
@@ -75,7 +75,7 @@ impl TerminalInstance {
             let last_line = end.min(base_y + cursor.line.0 as i64);
             shift = (viewport_y + count - last_line).max(0) as usize;
         }
-        Some(StickyScroll { start, count: count as usize, truncated, shift, reveal_line: sticky_start })
+        Some(StickyScroll { start, count: count as usize, truncated, shift, reveal: (sticky_start, start_line + command_rows - 1) })
     }
 
     /// `getCommandForLine` for the finished commands: the last one whose prompt (or command start) is at or above it.
@@ -84,7 +84,7 @@ impl TerminalInstance {
     }
 
     /// `getPromptRowCount`: the prompt's rows up to the command start, leading blank lines left out.
-    fn prompt_row_count(&self, command: &FinishedCommand, start_line: i64) -> i64 {
+    pub(super) fn prompt_row_count(&self, command: &FinishedCommand, start_line: i64) -> i64 {
         let Some(mut prompt_line) = command.prompt_line else { return 1 };
         while prompt_line < start_line && self.row_text(prompt_line).is_empty() {
             prompt_line += 1;
@@ -103,23 +103,10 @@ impl TerminalInstance {
         let text: String = (0..self.term.columns()).map(|column| row[Column(column)].c).collect();
         text.trim_end_matches([' ', '\0']).to_owned()
     }
-
-    /// markNavigationAddon.ts `revealCommand` with `ScrollPosition.Middle`: the line a quarter of the rows below the
-    /// viewport top (`getTargetScrollLine`), unless it is in view already.
-    pub fn reveal_line(&mut self, line: i64) {
-        let base_y = self.term.history_size() as i64;
-        let rows = self.term.screen_lines() as i64;
-        let viewport_y = base_y - self.term.grid().display_offset() as i64;
-        if (viewport_y..viewport_y + rows).contains(&line) {
-            return;
-        }
-        let target = (line - rows / 4).clamp(0, base_y);
-        self.term.scroll_display(Scroll::Delta((viewport_y - target) as i32));
-    }
 }
 
 /// `getCommandRowCount`: the rows from the command start to C, less the last when C is at its first column.
-fn command_row_count(command: &FinishedCommand, start_line: i64) -> i64 {
+pub(super) fn command_row_count(command: &FinishedCommand, start_line: i64) -> i64 {
     let Some(executed_line) = command.executed_line else { return 1 };
     let rows = executed_line.max(start_line) - start_line + 1;
     if command.executed_column == Some(0) { rows - 1 } else { rows }

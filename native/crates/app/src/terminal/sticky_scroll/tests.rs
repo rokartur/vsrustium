@@ -24,7 +24,7 @@ fn ignored() -> Vec<String> {
 fn a_running_command_sticks_while_its_output_scrolls() {
     let (mut instance, colors) = terminal(10);
     instance.process(format!("\x1b]633;A\x07$ \x1b]633;B\x07ls\r\n\x1b]633;C\x07{}", output(30)).as_bytes(), &colors);
-    assert_eq!(instance.sticky_scroll(5, &ignored()), Some(super::StickyScroll { start: 0, count: 1, truncated: false, shift: 0, reveal_line: 0 }));
+    assert_eq!(instance.sticky_scroll(5, &ignored()), Some(super::StickyScroll { start: 0, count: 1, truncated: false, shift: 0, reveal: (0, 0) }));
     assert_eq!(instance.row_text(0), "$ ls");
 
     instance.term.scroll_display(Scroll::Top);
@@ -52,7 +52,7 @@ fn a_finished_command_sticks_until_its_end_scrolls_past_and_long_prompts_are_cap
     instance.term.scroll_display(Scroll::Top);
     instance.term.scroll_display(Scroll::Delta(-10));
     let sticky = instance.sticky_scroll(5, &ignored()).unwrap();
-    assert_eq!((sticky.start, sticky.count, sticky.truncated, sticky.reveal_line), (1, 3, false, 1));
+    assert_eq!((sticky.start, sticky.count, sticky.truncated, sticky.reveal), (1, 3, false, (1, 3)));
 
     let capped = instance.sticky_scroll(2, &ignored()).unwrap();
     assert_eq!((capped.count, capped.truncated), (2, true));
@@ -68,7 +68,7 @@ fn a_finished_command_sticks_until_its_end_scrolls_past_and_long_prompts_are_cap
 fn reveal_scrolls_a_quarter_of_the_rows_above_the_command() {
     let (mut instance, colors) = terminal(8);
     instance.process(output(40).as_bytes(), &colors);
-    instance.reveal_line(20);
+    instance.reveal_rows(20, 20);
     let viewport_y = instance.term.history_size() as i64 - instance.term.grid().display_offset() as i64;
     assert_eq!(viewport_y, 18);
 }

@@ -658,6 +658,7 @@ fn registry_default(key: &str, kind: ThemeKind) -> ColorValue {
         "terminalCommandGuide.foreground" => (Key("list.inactiveSelectionBackground"), Key("list.inactiveSelectionBackground"), Key("panel.border")),
         "terminal.initialHintForeground" => (Hex("#ffffff56"), Hex("#0007"), None),
         "terminalOverviewRuler.border" => (Key("editorOverviewRuler.border"), Key("editorOverviewRuler.border"), Key("editorOverviewRuler.border")),
+        "terminalOverviewRuler.cursorForeground" => (Hex("#A0A0A0CC"), Hex("#A0A0A0CC"), Hex("#A0A0A0CC")),
         "scrollbar.shadow" => (Hex("#000000"), Hex("#DDDDDD"), None),
         "editor.selectionHighlightBackground" => (
             LessProminent(&Key("editor.selectionBackground"), &Key("editor.background"), 0.3, 0.6),

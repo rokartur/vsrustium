@@ -69,7 +69,8 @@ pub(crate) mod host;
 mod power;
 mod relauncher;
 mod update;
-mod perf_view;
+pub(crate) mod perf_view;
+mod proxy_auth;
 mod user_activity;
 mod process_explorer;
 mod views_welcome;
@@ -258,6 +259,7 @@ pub struct Workbench {
     pub host_colors: themes::HostColorScheme,
     /// `IEnvironmentService.isExtensionDevelopment`.
     pub extension_development: bool,
+    proxy_auth: proxy_auth::ProxyAuth,
     /// workbench.ts `setUnexpectedErrorHandler(createUnexpectedErrorHandler(logService))`.
     pub unexpected_errors: crate::output::logger::UnexpectedErrorHandler,
     pub keybindings: keyboard::Keybindings,
@@ -538,6 +540,7 @@ impl Workbench {
             skip_dialogs: false,
             host_colors: themes::host_color_scheme(),
             extension_development: false,
+            proxy_auth: proxy_auth::ProxyAuth::default(),
             unexpected_errors: Default::default(),
             keybindings: keyboard::Keybindings::default(),
             keybindings_editor: keybindings_editor_view::KeybindingsEditor::new(cx),
@@ -1055,7 +1058,7 @@ impl Workbench {
     /// windowTitle.ts `getFullWindowTitle` with the macOS `window.title` default
     /// `${activeEditorShort}${separator}${rootName}${separator}${folderLocation}${separator}${profileName}`, the last two
     /// empty here, or `nameLong` when it is empty.
-    fn window_title(&self) -> String {
+    pub(crate) fn window_title(&self) -> String {
         let root_name = self.workspace().map(Workspace::label).unwrap_or_default();
         let active_editor = self.editors.active().map(|editor| self.editor_name(editor)).unwrap_or_default();
         let parts: Vec<_> = [active_editor, root_name].into_iter().filter(|part| !part.is_empty()).collect();

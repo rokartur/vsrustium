@@ -168,3 +168,19 @@ fn window_progress_is_a_silent_notification_shown_in_the_status_bar(cx: &mut Tes
     cx.run_until_parked();
     assert!(entry(cx).is_none());
 }
+
+#[test]
+fn the_purge_timeout_runs_in_the_background_and_waits_for_focus_only_once_it_ends() {
+    use super::{PurgeTimer, next_purge_timer};
+    use std::time::{Duration, Instant};
+    let timeout = Duration::from_secs(10);
+    let shown = Instant::now();
+    let running = PurgeTimer::Running(shown + timeout);
+    // A blur before the timeout ends leaves it running, as the reference's setTimeout does.
+    assert_eq!(next_purge_timer(running, shown + Duration::from_secs(3), false, false, timeout), Some(running));
+    assert_eq!(next_purge_timer(running, shown + timeout, true, false, timeout), None);
+    assert_eq!(next_purge_timer(running, shown + timeout, false, false, timeout), Some(PurgeTimer::WaitingForFocus));
+    let back = shown + Duration::from_secs(30);
+    assert_eq!(next_purge_timer(PurgeTimer::WaitingForFocus, back, true, false, timeout), Some(PurgeTimer::Running(back + timeout)));
+    assert_eq!(next_purge_timer(running, shown + timeout, true, true, timeout), Some(PurgeTimer::Running(shown + timeout * 2)));
+}

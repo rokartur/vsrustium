@@ -118,6 +118,8 @@ pub struct OverviewRuler {
     pub border: Rgba,
     /// Each decorated command's buffer line, its color and whether it sits right (failed) or left.
     pub marks: Vec<(i64, Rgba, bool)>,
+    /// The navigation highlight's first line, a mark across the whole ruler (`registerTemporaryDecoration`).
+    pub navigation: Option<(i64, Rgba)>,
 }
 
 /// The grid's top left: bottom aligned in the pane (terminal.css `.xterm { bottom: 0 }`), right of the gutter.
@@ -409,10 +411,13 @@ fn paint_overview_ruler(canvas: Bounds<Pixels>, buffer_lines: usize, ruler: &Ove
     let outer = ((width - 1.) / 3.).floor();
     let center = ((width - 1.) / 3.).ceil();
     let mark_height = (height / buffer_lines as f32).clamp(6., 12.).round();
+    let y = |line: i64| ((height - 1.) * line as f32 / buffer_lines as f32 - mark_height / 2.).round();
     for &(line, color, right) in &ruler.marks {
         let x = if right { 1. + outer + center } else { 1. };
-        let y = ((height - 1.) * line as f32 / buffer_lines as f32 - mark_height / 2.).round();
-        window.paint_quad(fill(Bounds::new(canvas.origin + point(px(x), px(y)), size(px(outer), px(mark_height))), color));
+        window.paint_quad(fill(Bounds::new(canvas.origin + point(px(x), px(y(line))), size(px(outer), px(mark_height))), color));
+    }
+    if let Some((line, color)) = ruler.navigation {
+        window.paint_quad(fill(Bounds::new(canvas.origin + point(px(1.), px(y(line))), size(px(width - 1.), px(mark_height))), color));
     }
 }
 

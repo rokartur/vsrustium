@@ -6,7 +6,7 @@
 // env FILE = file to open, relative to the folder; env ONLY = "reference" or "port" to run one of them; env ARGS = more arguments for both, space separated;
 // env SETTINGS = a JSON object of user settings for both)
 // Steps, in window points (both windows are 1024x768):
-//   {"click": [x, y]}  {"click": [x, y], "modifier": ["cmd"]}  {"click": [x, y], "foreground": true}  {"doubleClick": [x, y]}  {"rightClick": [x, y]}  {"key": "return"}
+//   {"click": [x, y]}  {"click": [x, y], "modifier": ["cmd"]}  {"click": [x, y], "foreground": true}  {"doubleClick": [x, y]}  {"rightClick": [x, y]}  {"key": "return"}  {"key": "escape", "foreground": true} (a real HID key down and up)
 //   {"scroll": [x, y], "amount": notches} (real wheel notches down, the pointer left there)  {"hover": [x, y]} (the real pointer, for hovers)  {"hotkey": ["cmd", "c"]}  {"type": "text"}  {"wait": ms}  {"shot": "name"}  {"clipboard": "name"} (the pasteboard text, the folder path as <folder>)
 //   {"dragShot": [x1, y1, x2, y2], "shot": "name", "modifier": ["option"], "button": "middle"}: a slow drag, captured while held
 // Shots land in <out-dir>/<reference|port>-<name>.png at 2x; a sheet on the window is captured as its own window.
@@ -103,7 +103,7 @@ async function run(app: string, pid: number, folder: string) {
 		} else if (step.rightClick) {
 			await cua('right_click', { ...target, ...at(step.rightClick) });
 		} else if (step.key) {
-			await cua('press_key', { ...target, key: step.key });
+			await cua('press_key', { ...target, key: step.key, delivery_mode: step.foreground ? 'foreground' : undefined });
 		} else if (step.hotkey) {
 			await cua('hotkey', { ...target, keys: step.hotkey });
 		} else if (step.type) {
