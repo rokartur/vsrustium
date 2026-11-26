@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use gpui::{
     Axis, Bounds, Context, DispatchPhase, Div, DragMoveEvent, ElementInputHandler, ExternalPaths, FontFeatures, Hitbox, HitboxBehavior, MouseButton, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, Pixels, Point,
-    PathBuilder, Rgba, ScrollDelta, ScrollWheelEvent, Stateful, StyledText, Task, Window, canvas, div, fill, font, point, prelude::*, px, rgb, size,
+    PathBuilder, Rgba, ScrollDelta, ScrollWheelEvent, Stateful, StyledText, Task, Window, canvas, div, fill, font, point, prelude::*, px, relative, rgb, size,
 };
 
 pub(super) mod diff_editor_view;
@@ -34,7 +34,9 @@ use files::encoding::SUPPORTED_ENCODINGS;
 use serde_json::json;
 
 use super::Workbench;
+use super::hover::{HoverContent, HoverOptions};
 use super::minimap_view::minimap_info;
+use super::output_view;
 use super::search_editor_view::SEARCH_EDITOR_SCHEME;
 use super::webview_panels::WEBVIEW_PANEL_SCHEME;
 use crate::brackets::BracketRange;
@@ -80,8 +82,9 @@ impl Workbench {
             .flex_col()
             .child(self.tab_strip(window, cx))
             .map(|part| match editor.document().scheme.as_str() {
-                // A webview editor has no breadcrumbs: its resource has no file system provider.
-                WEBVIEW_PANEL_SCHEME => part,
+                // A webview panel has no breadcrumbs: its resource has no file system provider. A custom editor or
+                // media preview has its file's.
+                WEBVIEW_PANEL_SCHEME if self.webview_resource(&editor.document().path).is_none() || self.setting("breadcrumbs.enabled") == json!(false) => part,
                 super::extension_editor::EXTENSION_EDITOR_SCHEME => part.child(self.extension_editor_body(&editor.document().path, cx)),
                 super::welcome_page::WALKTHROUGH_SCHEME => part.child(self.walkthrough_editor_body(&editor.document().path, window, cx)),
                 // searchEditor.ts draws its query widget where a text editor has its breadcrumbs.
@@ -93,7 +96,7 @@ impl Workbench {
                 // mergeEditor.ts: the merge editor has no breadcrumbs.
                 _ if self.editors.active_merge().is_some() => part,
                 _ if self.setting("breadcrumbs.enabled") == json!(false) => part,
-                _ => part.child(self.breadcrumbs(editor).opacity(self.unfocused_editor_opacity(window))),
+                _ => part.child(self.breadcrumbs(editor, cx).opacity(self.unfocused_editor_opacity(window))),
             })
             .map(|part| match self.editors.active_diff() {
                 Some(diff) => part.child(self.diff_editor_body(diff, editor, window, cx)),
@@ -317,6 +320,10 @@ impl Workbench {
         if document.scheme == super::extension_editor::EXTENSION_EDITOR_SCHEME {
             return Some(self.icon("extensions", 16., 16., foreground).h(px(line_height)));
         }
+        // `ImageCarouselEditorInput.getIcon`.
+        if self.is_image_carousel(&document.path) {
+            return Some(self.icon("file-media", 16., 16., foreground).h(px(line_height)));
+        }
         if let Some(icon) = self.webview_icon(&document.path) {
             return Some(div().flex().items_center().h(px(line_height)).child(gpui::img(icon.to_path_buf()).size(px(16.))));
         }
@@ -329,8 +336,10 @@ impl Workbench {
 
     /// The file's path below its workspace folder, one item per segment (breadcrumbs.filePath relative), after the
     /// folder's name in a workspace (`BreadcrumbsModel._initFilePathInfo`).
-    pub(super) fn breadcrumbs(&self, editor: &OpenEditor) -> Div {
-        let path = &editor.document().path;
+    pub(super) fn breadcrumbs(&self, editor: &OpenEditor, cx: &mut Context<Self>) -> Div {
+        let resource = self.webview_resource(&editor.document().path);
+        let document = editor.document();
+        let path = resource.as_ref().unwrap_or(&document.path);
         let workspace = self.workspace();
         let folder = workspace.and_then(|workspace| workspace.folder_of(path));
         let relative: PathBuf = match folder {
@@ -343,7 +352,8 @@ impl Workbench {
         }
         let foreground = self.color("breadcrumb.foreground");
         let file = segments.len() - 1;
-        let symbols = self.breadcrumb_symbols(editor);
+        // A webview editor has no outline.
+        let symbols = if resource.is_some() { Vec::new() } else { self.breadcrumb_symbols(editor) };
         let last = file + symbols.len();
         let symbol_items = symbols.into_iter().map(|(kind, name)| {
             let codicon = kind.map(crate::symbol_icons::codicon);
@@ -373,15 +383,56 @@ impl Workbench {
             .relative()
             .h(px(BREADCRUMBS_HEIGHT))
             .flex_none()
-            // shortcut: clips a long path at the right, where breadcrumbsWidget.ts reveals the last item; until breadcrumbs scroll.
-            .overflow_hidden()
-            // The breadcrumbs sit in the title (editortabscontrol.css) and each item is pointer (breadcrumbsWidget.css).
-            .cursor_pointer()
             .flex()
             .bg(self.color("breadcrumb.background"))
             .text_color(foreground)
-            .children(items)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    // shortcut: clips a long path at the right, where breadcrumbsWidget.ts reveals the last item; until breadcrumbs scroll.
+                    .overflow_hidden()
+                    // The breadcrumbs sit in the title (editortabscontrol.css) and each item is pointer (breadcrumbsWidget.css).
+                    .cursor_pointer()
+                    .children(items),
+            )
+            .children(self.breadcrumbs_editor_type(editor, cx))
             .when_some(title_border, |crumbs, color| crumbs.child(div().absolute().bottom_0().left_0().right_0().h(px(1.)).bg(color)))
+    }
+
+    /// breadcrumbsControl.ts `_updateEditorTypeControl` (breadcrumbscontrol.css `.breadcrumbs-editor-type`): at the
+    /// right, the label of the editor showing the file and a chevron, when another editor can open it.
+    fn breadcrumbs_editor_type(&self, editor: &OpenEditor, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        if self.setting("breadcrumbs.showEditorType") == json!(false) {
+            return None;
+        }
+        let (resource, current) = self.editor_resource_and_type(editor)?;
+        let editors = self.available_editor_types(&resource, &current)?;
+        let label = editors.into_iter().find(|editor| editor.id == current).map_or(current, |editor| editor.label);
+        let foreground = self.color("breadcrumb.foreground");
+        let bounds = Rc::new(Cell::new(Bounds::default()));
+        let anchor = bounds.clone();
+        Some(
+            div()
+                .id("breadcrumbs-editor-type")
+                .relative()
+                .flex_none()
+                .max_w(relative(0.4))
+                .flex()
+                .items_center()
+                .pl(px(8.))
+                .pr(px(4.))
+                .cursor_pointer()
+                .text_size(px(11.))
+                .text_color(foreground)
+                .hover(|control| control.text_color(self.color("breadcrumb.focusForeground")))
+                .child(div().overflow_hidden().whitespace_nowrap().text_ellipsis().child(label.clone()))
+                .child(self.icon("chevron-down", 13., 13., foreground).ml(px(2.)))
+                .child(output_view::bounds_tracker(bounds))
+                .child(self.hover_target("breadcrumbs-editor-type", HoverContent::Text(format!("Editor: {label}")), HoverOptions::mouse()))
+                .on_click(cx.listener(move |workbench, _, window, cx| workbench.show_editor_type_picker(anchor.get(), window, cx))),
+        )
     }
 
     fn editor_metrics(&self, editor: &OpenEditor, window: &mut Window) -> EditorMetrics {
@@ -1698,7 +1749,14 @@ impl Workbench {
                         let mut y2 = ((line_top(*end_line) + line_height) * ratio).floor();
                         if y2 - y1 < min_height {
                             let half = (min_height / 2.).floor();
-                            let center = ((y1 + y2) / 2.).floor().clamp(half, canvas_height - half);
+                            // decorationsOverviewRuler.ts checks the top first, then the bottom: a canvas not laid out
+                            // yet (height 0, a window restoring its editors) is not a range for `clamp`.
+                            let mut center = ((y1 + y2) / 2.).floor();
+                            if center < half {
+                                center = half;
+                            } else if center + half > canvas_height {
+                                center = canvas_height - half;
+                            }
                             (y1, y2) = (center - half, center + half);
                         }
                         previous = match previous {
@@ -1737,7 +1795,13 @@ impl Workbench {
                 let half = (height / 2.).floor();
                 let mut previous: Option<(f32, f32, Rgba)> = None;
                 for (line, color) in cursors.iter().filter_map(|(line, color)| Some((*line, (*color)?))) {
-                    let y1 = (line_top(line) * ratio).floor().clamp(half, canvas_height - half) - half;
+                    let mut center = (line_top(line) * ratio).floor();
+                    if center < half {
+                        center = half;
+                    } else if center + half > canvas_height {
+                        center = canvas_height - half;
+                    }
+                    let y1 = center - half;
                     let y2 = y1 + height;
                     previous = match previous {
                         Some((start, end, previous_color)) if y1 <= end + 1. && previous_color == color => Some((start, end.max(y2), color)),

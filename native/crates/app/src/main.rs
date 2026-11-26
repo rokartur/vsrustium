@@ -259,6 +259,7 @@ fn main() -> anyhow::Result<()> {
     });
     application.run(move |cx: &mut App| {
         perf::mark("code/mainAppReady");
+        workbench::accessibility::watch_assistive_apps(cx);
         cx.set_global(app);
         for window in restored {
             let workspace = window.workspace.clone().or(window.folder.clone()).map(Workspace::open);

@@ -31,7 +31,7 @@ impl Workbench {
 
     /// Opens the model pinned, or refreshes it in its open editor, as `PerfModelContentProvider._updateModel` does.
     fn show_perf_view(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
-        let text = self.perf_markdown(window);
+        let text = self.perf_markdown();
         let path = PathBuf::from(PERF_PATH);
         match self.editors.models.iter().position(|model| model.document().is(PERF_SCHEME, &path)) {
             Some(index) => {
@@ -49,10 +49,10 @@ impl Workbench {
         Outcome::done()
     }
 
-    fn perf_markdown(&self, window: &Window) -> String {
+    fn perf_markdown(&self) -> String {
         let mut md = String::new();
         heading(&mut md, "System Info");
-        for line in system_info(window.is_a11y_active(), self.workspace().is_none()) {
+        for line in system_info(super::accessibility::screen_reader_running(), self.workspace().is_none()) {
             md += &format!("* {line}\n");
         }
         md += "\n";

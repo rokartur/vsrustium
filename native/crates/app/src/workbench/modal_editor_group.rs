@@ -1,5 +1,5 @@
-//! The modal editor part (modalEditorPart.ts) for text editors: preferencesService.ts opens the settings and
-//! keybindings JSON files in `MODAL_GROUP` unless `workbench.editor.useModal` is `off`. The group lives outside the grid
+//! The modal editor part (modalEditorPart.ts) for text editors and Images Preview: preferencesService.ts opens the
+//! settings and keybindings JSON files, and image_carousel.rs its editor, in `MODAL_GROUP` unless `workbench.editor.useModal` is `off`. The group lives outside the grid
 //! like the panel's; the part shows its active editor without tabs, breadcrumbs or editor actions (`showTabs: none`,
 //! `editorActionsLocation: hidden`) under the header with the editor's label, and closes with its last editor.
 
@@ -38,7 +38,8 @@ impl Workbench {
     }
 
     pub(super) fn modal_group_focused(&self, window: &Window) -> bool {
-        self.editors.id == MODAL_GROUP && self.editor_focus.is_focused(window)
+        // A webview editor's keys come from its native view, which GPUI's focus does not see.
+        self.editors.id == MODAL_GROUP && (self.editor_focus.is_focused(window) || self.editors.active().is_some_and(|editor| self.shows_webview(editor)))
     }
 
     /// `ModalEditorPart.close`: its editors close, asking to save dirty ones; the group goes with the last.
@@ -78,7 +79,11 @@ impl Workbench {
             let body = |workbench: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
                 let editor = workbench.editors.active().expect("an open modal group has an active editor");
                 // `NoEditorTabsControl` keeps the breadcrumbs (breadcrumbs.enabled) without the tabs.
-                let breadcrumbs = (workbench.setting("breadcrumbs.enabled") != json!(false)).then(|| workbench.breadcrumbs(editor));
+                // An Images Preview (`RequiresModal`) is a webview editor without a resource, so without breadcrumbs.
+                if workbench.shows_webview(editor) {
+                    return div().flex_1().min_h_0().flex().flex_col().child(workbench.webview_editor_body(editor));
+                }
+                let breadcrumbs = (workbench.setting("breadcrumbs.enabled") != json!(false)).then(|| workbench.breadcrumbs(editor, cx));
                 div().flex_1().min_h_0().flex().flex_col().children(breadcrumbs).children(workbench.unicode_banner(editor, cx)).child(workbench.text_area(editor, window, cx))
             };
             match workbench.editors.id == MODAL_GROUP {
@@ -107,7 +112,8 @@ impl Workbench {
     fn modal_resource_label(&self, editor: &crate::editor::OpenEditor) -> AnyElement {
         let foreground = self.foreground_or("titleBar.activeForeground");
         let path = &editor.document().path;
-        let folder = path.parent().map(|folder| crate::quick_input::path_label(folder, self.workspace())).filter(|label| !label.is_empty());
+        // `EditorInput.getDescription` of an Images Preview is empty.
+        let folder = path.parent().filter(|_| !self.is_image_carousel(path)).map(|folder| crate::quick_input::path_label(folder, self.workspace())).filter(|label| !label.is_empty());
         // iconlabel.css `.label-description`: 0.9em at 0.7 opacity (0.95 in light themes), 0.5em after the name.
         let opacity = if self.theme.kind == ThemeKind::Light { 0.95 } else { 0.7 };
         div()
@@ -115,6 +121,8 @@ impl Workbench {
             .items_center()
             .min_w_0()
             .whitespace_nowrap()
+            // modalEditorPart.css `.modal-editor-title`.
+            .font_weight(gpui::FontWeight::SEMIBOLD)
             .children(self.document_icon(editor, 22., foreground).map(|icon| icon.mr(px(6.))))
             .child(self.editor_name(editor))
             .children(folder.map(|folder| div().ml(px(6.)).text_size(px(10.8)).opacity(opacity).truncate().child(folder)))

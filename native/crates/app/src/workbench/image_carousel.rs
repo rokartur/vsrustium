@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use super::Workbench;
 use super::webview_panels::{WEBVIEW_PANEL_SCHEME, WebviewPanel};
 use crate::commands::Outcome;
-use crate::editor::TextDocument;
+use crate::editor::{MODAL_GROUP, TextDocument};
 use crate::file_dialog::FileDialog;
 use crate::notifications::{Notification, Severity};
 
@@ -80,7 +80,8 @@ impl Workbench {
         Ok(images)
     }
 
-    /// `editorService.openEditor(new ImageCarouselEditorInput(collection, startIndex), { pinned: true })`.
+    /// `editorService.openEditor(new ImageCarouselEditorInput(collection, startIndex), { pinned: true })`, in the modal
+    /// group (`RequiresModal`, editorGroupFinder.ts) unless `workbench.editor.useModal` is `off`.
     fn open_carousel_editor(&mut self, images: Vec<PathBuf>, start_index: usize, window: &mut Window, cx: &mut Context<Self>) {
         static OPENED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let handle = format!("image-carousel-{}", OPENED.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
@@ -98,9 +99,18 @@ impl Workbench {
         panel.html = carousel_page(&self.app_root, &images, start_index);
         panel.carousel = Some(images);
         self.webview_panels.panels.push(panel);
+        if self.setting("workbench.editor.useModal") != json!("off") {
+            self.editors.ensure_detached_group(MODAL_GROUP);
+            self.activate_group(MODAL_GROUP);
+        }
         self.editors.open(document, false);
         self.editors_changed(cx);
         self.focus_webview_panel(&handle, window, cx);
+    }
+
+    /// An Images Preview editor, labeled with `imageCarouselEditorIcon` (`file-media`) and no description.
+    pub(super) fn is_image_carousel(&self, path: &Path) -> bool {
+        self.webview_panels.panels.iter().any(|panel| panel.carousel.is_some() && panel.path == path)
     }
 
     /// The page's messages: Download saves the image as `downloadFile` does, through the save dialog.
@@ -184,5 +194,19 @@ mod tests {
         assert!(!page.contains("{{"));
         assert!(!page.contains("\"</script>"));
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[gpui::test]
+    fn images_preview_opens_in_the_modal_group(cx: &mut gpui::TestAppContext) {
+        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let themes = exthost::scan::scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
+        let theme = crate::theme::load_theme(&[themes], "Dark Modern").unwrap();
+        let (workbench, cx) = cx.add_window_view(|_, cx| Workbench::new(theme, app_root.clone(), None, crate::languages::Languages::new(&[]), crate::default_settings(), crate::host_sync::HostSync::new(std::sync::mpsc::channel().0), cx));
+        workbench.update_in(cx, |workbench, window, cx| workbench.open_carousel_editor(vec![PathBuf::from("/a.png")], 0, window, cx));
+        workbench.read_with(cx, |workbench, _| {
+            assert!(workbench.modal_group_open());
+            let (editors, active) = workbench.editors.group_tabs(MODAL_GROUP);
+            assert!(workbench.is_image_carousel(&editors[active.unwrap()].document().path));
+        });
     }
 }

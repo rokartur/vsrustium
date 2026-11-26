@@ -18,6 +18,7 @@ use super::webview_panels::{WEBVIEW_PANEL_SCHEME, WebviewPanel};
 use crate::commands::Outcome;
 use crate::editor::{ContentChanged, OpenEditor, TextDocument};
 use crate::main_thread_quick_open::Owner;
+use crate::menus::MenuAction;
 use crate::quick_input::{Entry, Event, Item, Kind, QuickInput};
 
 /// `DEFAULT_EDITOR_ASSOCIATION.id`: the text editor.
@@ -29,6 +30,7 @@ const ASSOCIATIONS_SETTING: &str = "workbench.editorAssociations";
 const RANK_DEFAULT: u8 = 4;
 pub(super) const RANK_BUILTIN: u8 = 3;
 const RANK_TEXT_EDITOR: u8 = 2;
+const RANK_OPTION: u8 = 1;
 
 #[derive(Default)]
 pub struct CustomEditors {
@@ -164,15 +166,7 @@ impl Workbench {
     /// editorCommands.ts `reopenEditorWith` on the active editor: `override_id` is an editor id, None asks with the
     /// open with picker.
     pub(super) fn reopen_active_editor_with(&mut self, override_id: Option<String>, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
-        let Some(editor) = self.editors.active() else { return Outcome::done() };
-        let (resource, current) = match self.webview_panels.panels.iter().find(|panel| editor.document().is(&panel.scheme, &panel.path)) {
-            Some(panel) => match &panel.custom {
-                Some(custom) => (custom.resource.clone(), panel.view_type.clone()),
-                // A webview panel has no resource to reopen.
-                None => return Outcome::done(),
-            },
-            None => (editor.document().uri(), TEXT_EDITOR_ID.to_owned()),
-        };
+        let Some((resource, current)) = self.editors.active().and_then(|editor| self.editor_resource_and_type(editor)) else { return Outcome::done() };
         match override_id {
             Some(editor_id) => self.reopen_with(&resource, &current, &editor_id, false, window, cx),
             None => {
@@ -180,6 +174,92 @@ impl Workbench {
                 Outcome::done()
             }
         }
+    }
+
+    /// The resource an editor shows and the id of the editor showing it: a custom editor's or media preview's view
+    /// type, `default` for the text editor. None for a webview panel, which has no resource to reopen.
+    pub(super) fn editor_resource_and_type(&self, editor: &OpenEditor) -> Option<(Value, String)> {
+        match self.webview_panels.panels.iter().find(|panel| editor.document().is(&panel.scheme, &panel.path)) {
+            Some(panel) => panel.custom.as_ref().map(|custom| (custom.resource.clone(), panel.view_type.clone())),
+            None => Some((editor.document().uri(), TEXT_EDITOR_ID.to_owned())),
+        }
+    }
+
+    /// editorTypePicker.ts `getAvailableEditorTypes`: the editors that open the resource in `getEditorMatches` order
+    /// (priority, then the longer glob), without an unconfigured `*` option editor other than the current one. None
+    /// when only one editor opens it.
+    pub(super) fn available_editor_types(&self, resource: &Value, current: &str) -> Option<Vec<EditorType>> {
+        let (scheme, path) = uri_parts(resource).ok()?;
+        let matches = resource_matcher(scheme, &path)?;
+        let associated: Vec<String> = self.editor_associations().into_iter().filter(|(pattern, _)| matches(pattern)).map(|(_, view_type)| view_type).collect();
+        // The text editor registers `*` with builtin priority.
+        let text_editor = EditorType { id: TEXT_EDITOR_ID.to_owned(), label: "Text Editor".to_owned(), detail: "Built-in".to_owned() };
+        let mut editors = vec![(RANK_BUILTIN, 1, text_editor)];
+        for contribution in self.editor_contributions() {
+            let pattern = contribution.patterns.iter().filter(|pattern| matches(pattern)).max_by_key(|pattern| pattern.len());
+            let configured = associated.contains(&contribution.view_type);
+            let universal_option = pattern.is_some_and(|pattern| pattern == "*") && contribution.rank == RANK_OPTION;
+            if pattern.is_none() && !configured || universal_option && !configured && contribution.view_type != current {
+                continue;
+            }
+            let glob_length = pattern.map_or(0, String::len);
+            editors.push((contribution.rank, glob_length, EditorType { id: contribution.view_type, label: contribution.display_name, detail: contribution.provider }));
+        }
+        editors.sort_by_key(|(rank, glob_length, _)| std::cmp::Reverse((*rank, *glob_length)));
+        (editors.len() > 1).then(|| editors.into_iter().map(|(_, _, editor)| editor).collect())
+    }
+
+    /// breadcrumbsControl.ts `_showEditorTypePicker` with editorTypePicker.ts `createEditorTypeActions`: reopen with
+    /// each editor (the current one checked, Alt opens it to the side), then a submenu that sets the default editor
+    /// for the default rule's glob and reopens with it.
+    pub(super) fn show_editor_type_picker(&mut self, anchor: gpui::Bounds<gpui::Pixels>, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((resource, current)) = self.editors.active().and_then(|editor| self.editor_resource_and_type(editor)) else { return };
+        let Some(editors) = self.available_editor_types(&resource, &current) else { return };
+        let Ok((scheme, path)) = uri_parts(&resource) else { return };
+        let (default_id, pattern) = self.default_editor(scheme, &path, true);
+        let mut reopen = Vec::new();
+        let mut set_default = Vec::new();
+        for editor in editors {
+            // Only an extension's editor names its provider.
+            let label = match editor.detail.as_str() {
+                "Built-in" => editor.label.clone(),
+                detail => format!("{} - {detail}", editor.label),
+            };
+            let (reopen_resource, reopen_current, reopen_id) = (resource.clone(), current.clone(), editor.id.clone());
+            let reopen_command = self.register_editor_type_command("reopen", &editor.id, move |workbench, window, cx| workbench.reopen_with(&reopen_resource, &reopen_current, &reopen_id, false, window, cx));
+            // A custom editor or media preview is a singleton input: the current one has no Open to the Side.
+            let alt = (editor.id != current || current == TEXT_EDITOR_ID).then(|| {
+                let (side_resource, side_id) = (resource.clone(), editor.id.clone());
+                let command = self.register_editor_type_command("openToSide", &editor.id, move |workbench, window, cx| {
+                    let side = workbench.webview_target_group(&json!(super::webview_panels::SIDE_GROUP));
+                    if let Some(group) = side {
+                        workbench.activate_group(group);
+                    }
+                    workbench.open_with_resolver(&side_resource, Some(&side_id), json!({ "pinned": true }), window, cx)
+                });
+                (command, format!("{label} (Open to the Side)"))
+            });
+            reopen.push(MenuAction::Command { id: reopen_command, title: label.clone(), enabled: true, checked: editor.id == current, alt });
+            let (default_resource, default_current, default_editor_id) = (resource.clone(), current.clone(), editor.id.clone());
+            let set_default_command = self.register_editor_type_command("setDefault", &editor.id, move |workbench, window, cx| {
+                workbench.set_default_editor(&default_resource, &default_editor_id);
+                workbench.reopen_with(&default_resource, &default_current, &default_editor_id, false, window, cx)
+            });
+            set_default.push(MenuAction::Command { id: set_default_command, title: label, enabled: true, checked: editor.id == default_id, alt: None });
+        }
+        let mut actions = reopen;
+        actions.push(MenuAction::Separator);
+        actions.push(MenuAction::Submenu { title: format!("Set Default for '{pattern}'"), actions: set_default, checked: false });
+        let context = self.key_context(window);
+        self.show_context_menu_actions(actions, &context, anchor, Vec::new(), window, cx);
+    }
+
+    fn register_editor_type_command(&mut self, action: &str, editor_id: &str, run: impl Fn(&mut Workbench, &mut Window, &mut Context<Workbench>) -> Outcome + 'static) -> String {
+        let id = format!("_editorType.{action}.{editor_id}");
+        // The picker's last showing registered it with that resource.
+        self.commands.unregister(&id);
+        self.commands.register(id.clone(), move |workbench, _, window, cx| run(workbench, window, cx));
+        id
     }
 
     /// `group.replaceEditors`: a text model's editor stays and gains or loses its webview; a custom document's editor
@@ -485,6 +565,13 @@ pub(super) fn resource_matcher(scheme: &str, path: &Path) -> Option<impl Fn(&str
     })
 }
 
+/// `RegisteredEditorInfo`: an editor that can open a resource, with its provider's name.
+pub(super) struct EditorType {
+    pub(super) id: String,
+    pub(super) label: String,
+    pub(super) detail: String,
+}
+
 /// A `contributes.customEditors` entry as contributedCustomEditors.ts reads it.
 pub(super) struct Contribution {
     pub(super) view_type: String,
@@ -509,7 +596,7 @@ fn custom_editor_contributions(extensions: &[exthost::scan::ScannedExtension]) -
             let Some(view_type) = contribution["viewType"].as_str() else { continue };
             let priority = &contribution["priority"];
             let rank = match priority.as_str().or(priority["textEditor"].as_str()) {
-                Some("option") => 1,
+                Some("option") => RANK_OPTION,
                 Some("explicit") => 0,
                 Some("builtin") if is_builtin => RANK_BUILTIN,
                 _ => RANK_DEFAULT,
@@ -546,6 +633,28 @@ mod tests {
         assert_eq!(ranks(true), [RANK_DEFAULT, 1, RANK_BUILTIN, 0]);
         let contributions = custom_editor_contributions(&[extension(false, editors)]);
         assert_eq!((contributions[1].provider.as_str(), contributions[1].patterns.len()), ("Hex", 2));
+    }
+
+    #[gpui::test]
+    fn lists_the_editor_types_of_a_resource_as_get_available_editor_types_does(cx: &mut gpui::TestAppContext) {
+        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let themes = exthost::scan::scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
+        let theme = crate::theme::load_theme(&[themes], "Dark Modern").unwrap();
+        let (workbench, cx) = cx.add_window_view(|_, cx| Workbench::new(theme, app_root.clone(), None, crate::languages::Languages::new(&[]), crate::default_settings(), crate::host_sync::HostSync::new(std::sync::mpsc::channel().0), cx));
+        let editors = json!([
+            { "viewType": "hex", "displayName": "Hex Editor", "priority": "option", "selector": [{ "filenamePattern": "*" }] },
+            { "viewType": "md", "displayName": "Preview", "priority": "option", "selector": [{ "filenamePattern": "*.md" }] },
+        ]);
+        workbench.update(cx, |workbench, _| workbench.extensions = vec![extension(false, editors)]);
+        let types = |path: &str, current: &str, cx: &mut gpui::VisualTestContext| {
+            let resource = json!({ "scheme": "file", "path": path });
+            workbench.read_with(cx, |workbench, _| workbench.available_editor_types(&resource, current).map(|types| types.into_iter().map(|editor| format!("{} {}", editor.id, editor.detail)).collect::<Vec<_>>()))
+        };
+        // The image preview's glob is longer than the text editor's `*`; the unconfigured `*` option editor is left out.
+        assert_eq!(types("/a.png", "imagePreview.previewEditor", cx), Some(vec!["imagePreview.previewEditor Built-in".into(), "default Built-in".into()]));
+        assert_eq!(types("/a.md", "default", cx), Some(vec!["default Built-in".into(), "md Hex".into()]));
+        assert_eq!(types("/a.txt", "default", cx), None);
+        assert_eq!(types("/a.txt", "hex", cx), Some(vec!["default Built-in".into(), "hex Hex".into()]));
     }
 
     #[test]
