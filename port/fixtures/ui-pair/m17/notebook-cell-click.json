@@ -1,0 +1,18 @@
+[
+	{ "wait": 15000 },
+	{ "hotkey": ["cmd", "p"] },
+	{ "wait": 800 },
+	{ "type": "sample.ipynb" },
+	{ "wait": 800 },
+	{ "key": "return" },
+	{ "wait": 30000 },
+	{ "click": [420, 480] },
+	{ "wait": 1000 },
+	{ "shot": "second-code" },
+	{ "click": [400, 600] },
+	{ "wait": 1000 },
+	{ "shot": "third-code" },
+	{ "click": [450, 330] },
+	{ "wait": 1000 },
+	{ "shot": "first-code" }
+]

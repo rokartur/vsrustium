@@ -1081,7 +1081,7 @@ impl Workbench {
             .border_color(self.theme.color("notebook.cellBorderColor").unwrap_or(self.color("editorWidget.border")))
             .bg(self.theme.color("notebook.cellEditorBackground").unwrap_or(self.color("editor.background")))
             .overflow_hidden()
-            .child(self.cell_editor(cell, row.layout.editor_height, window, cx))
+            .child(self.cell_editor(tab, cell, row.layout.editor_height, window, cx))
             .child(self.cell_status_bar(model, row.index, focused, window, cx));
         container = container.child(editor_box);
         if row.kind == CODE {
@@ -1091,12 +1091,25 @@ impl Workbench {
     }
 
     /// The cell's code editor, between the editor paddings.
-    fn cell_editor(&self, cell: &notebook::Cell, height: f32, window: &mut Window, cx: &mut Context<Self>) -> Div {
+    fn cell_editor(&self, tab: u32, cell: &notebook::Cell, height: f32, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let Some(editor) = self.cell_model(&cell.uri) else { return div() };
+        let handle = cell.handle;
+        let inactive = !self.editors.active().is_some_and(|active| std::ptr::eq(active, editor));
         let text_height = height - layout::EDITOR_TOP_PADDING - layout::EDITOR_BOTTOM_PADDING;
         // The box's 1px border takes layout space here and none upstream (an outline), so the text starts 1px higher and
         // 1px further left.
-        div().absolute().left(px(-1.)).right_0().top(px(layout::EDITOR_TOP_PADDING - 1.)).h(px(text_height)).flex().overflow_hidden().child(self.embedded_code_editor(editor, window, cx))
+        div().absolute().left(px(-1.)).right_0().top(px(layout::EDITOR_TOP_PADDING - 1.)).h(px(text_height)).flex().overflow_hidden()
+            .debug_selector(move || format!("notebook-cell-editor-{handle}"))
+            // The lines of an inactive cell editor act on the active editor: the cell takes the focus first, in the capture phase,
+            // so the line's own press places the cursor in this cell.
+            .when(inactive, |area| {
+                area.capture_any_mouse_down(cx.listener(move |workbench, event: &MouseDownEvent, window, cx| {
+                    if event.button == MouseButton::Left {
+                        workbench.focus_notebook_cell(tab, handle, true, window, cx);
+                    }
+                }))
+            })
+            .child(self.embedded_code_editor(editor, window, cx))
     }
 
     /// cellExecution.ts and the run toolbar: the run button over the gutter of a focused cell, the execution order

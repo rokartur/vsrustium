@@ -116,6 +116,25 @@ fn the_focused_cell_is_the_code_editor_the_workbench_edits(cx: &mut TestAppConte
 }
 
 #[gpui::test]
+fn a_click_on_the_text_of_another_code_cell_edits_that_cell(cx: &mut TestAppContext) {
+    let cells = json!([
+        { "cellKind": 2, "language": "python", "source": "a = 1", "outputs": [], "metadata": {} },
+        { "cellKind": 2, "language": "python", "source": "b = 2", "outputs": [], "metadata": {} },
+    ]);
+    let (workbench, cx, _) = workbench_with_cells(cells, cx);
+    let handle = workbench.read_with(cx, |workbench, _| workbench.host.notebooks.models[0].cells[1].handle);
+    let bounds = cx.debug_bounds(Box::leak(format!("notebook-cell-editor-{handle}").into_boxed_str())).unwrap();
+    cx.simulate_click(bounds.origin + gpui::point(gpui::px(60.), gpui::px(8.)), gpui::Modifiers::default());
+    workbench.update_in(cx, |workbench, window, _| {
+        assert_eq!(workbench.active_notebook_editor().unwrap().focus, 1);
+        assert!(workbench.editor_focus.is_focused(window));
+        let editor = workbench.editors.active().unwrap();
+        assert_eq!(editor.document().lines[0], "b = 2");
+        assert_eq!(editor.selection().head.line, 0);
+    });
+}
+
+#[gpui::test]
 fn the_cell_list_takes_the_keyboard_and_enter_and_escape_move_into_and_out_of_a_cell(cx: &mut TestAppContext) {
     let cells = json!([
         { "cellKind": 1, "language": "markdown", "source": "# Title\ntext", "outputs": [], "metadata": {} },
