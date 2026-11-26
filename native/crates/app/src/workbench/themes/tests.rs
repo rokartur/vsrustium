@@ -170,6 +170,40 @@ fn the_file_icon_theme_picker_previews_writes_and_restores(cx: &mut TestAppConte
     assert_eq!(serde_json::from_str::<Value>(&user_settings().unwrap()).unwrap(), json!({ "workbench.iconTheme": null }));
 }
 
+/// themes.contribution.ts `SelectProductIconThemeCommandId`: Default and the installed product icon themes; the
+/// accepted theme is written to `workbench.productIconTheme` and draws its glyphs.
+#[gpui::test]
+fn the_product_icon_theme_picker_writes_the_accepted_theme(cx: &mut TestAppContext) {
+    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let extensions = vec![scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap(), scan_extension(&app_root.join("port/fixtures/extensions/product-icons"), false).unwrap()];
+    let theme = load_theme(&extensions, "Dark 2026").unwrap();
+    let dir = std::env::temp_dir().join(format!("code-gpui-product-icon-themes-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("User")).unwrap();
+    let settings = Arc::new(Mutex::new(Settings::load(Registry::with_extensions(&[]), dir.join("User"), None)));
+    let (workbench, cx) = cx.add_window_view(|_, cx| {
+        let mut workbench = Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), settings.clone(), HostSync::new(std::sync::mpsc::channel().0), cx);
+        workbench.load_keybindings(crate::keybindings::default_keybindings(&[]), dir.join("User/keybindings.json"), cx);
+        workbench.extensions = extensions.clone();
+        workbench
+    });
+    cx.run_until_parked();
+    let product_icons = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.product_icons.as_ref().map(|theme| theme.settings_id.clone()));
+    let run = |cx: &mut gpui::VisualTestContext| workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("workbench.action.selectProductIconTheme", Vec::new(), window, cx)));
+
+    run(cx);
+    assert_eq!(workbench.read_with(cx, rows), ["--product icon themes--Default", "Fixture Icons (fixture-icons)"]);
+    cx.simulate_keystrokes("down enter");
+    cx.run_until_parked();
+    assert_eq!(product_icons(cx).as_deref(), Some("fixture-icons"));
+    let user_settings = std::fs::read_to_string(dir.join("User/settings.json")).unwrap();
+    assert_eq!(serde_json::from_str::<Value>(&user_settings).unwrap(), json!({ "workbench.productIconTheme": "fixture-icons" }));
+
+    run(cx);
+    cx.simulate_keystrokes("up enter");
+    assert_eq!(product_icons(cx), None);
+}
+
 // themeConfiguration.ts `getColorThemeSettingId` and workbenchThemeService.ts `onDidChangeColorScheme`.
 #[gpui::test]
 fn the_host_color_scheme_picks_the_preferred_theme_setting(cx: &mut TestAppContext) {

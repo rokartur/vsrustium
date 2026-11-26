@@ -1,0 +1,1 @@
+[{"wait": 4000}, {"shot": "icons"}, {"hotkey": ["cmd", "shift", "p"]}, {"wait": 800}, {"type": "Product Icon Theme"}, {"wait": 800}, {"key": "return"}, {"wait": 1200}, {"shot": "picker"}, {"key": "escape"}]

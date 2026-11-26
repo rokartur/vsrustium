@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Product icon theme in both apps: ui-pair with port/fixtures/ui-steps/product-icons.json, the
+# port/fixtures/extensions/product-icons theme installed as a user extension and set by `workbench.productIconTheme`.
+# Run on the Studio after a release build. Usage: port/tools/product-icons-pair <out-dir>
+set -uo pipefail
+out=${1:?out dir}
+for app in reference port; do
+  dir=$(mktemp -d)
+  mkdir -p "$dir/extensions"
+  cp -R port/fixtures/extensions/product-icons "$dir/extensions/port.product-icons-0.0.1"
+  # The reference reads the profile's extensions.json (extensionsProfileScannerService.ts), not the folder.
+  printf '[{"identifier":{"id":"port.product-icons"},"version":"0.0.1","location":{"$mid":1,"scheme":"file","path":"%s"},"relativeLocation":"port.product-icons-0.0.1"}]' \
+    "$dir/extensions/port.product-icons-0.0.1" >"$dir/extensions/extensions.json"
+  ONLY=$app ARGS="--extensions-dir $dir/extensions" SETTINGS='{"workbench.productIconTheme": "fixture-icons"}' port/tools/ui-pair "$out" port/fixtures/ui-steps/product-icons.json
+  rm -rf "$dir"
+done

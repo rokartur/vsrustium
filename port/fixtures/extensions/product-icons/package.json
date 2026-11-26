@@ -1,0 +1,12 @@
+{
+	"name": "product-icons",
+	"publisher": "port",
+	"displayName": "Product Icons Fixture",
+	"version": "0.0.1",
+	"engines": { "vscode": "^1.90.0" },
+	"contributes": {
+		"productIconThemes": [
+			{ "id": "fixture-icons", "label": "Fixture Icons", "path": "./theme.json" }
+		]
+	}
+}

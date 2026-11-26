@@ -18,6 +18,7 @@ use crate::theme::{ColorThemeEntry, ThemeKind};
 
 const COLOR_THEME_SETTING: &str = "workbench.colorTheme";
 const ICON_THEME_SETTING: &str = "workbench.iconTheme";
+const PRODUCT_ICON_THEME_SETTING: &str = "workbench.productIconTheme";
 /// `ThemeSettingDefaults.COLOR_THEME_DARK` and `COLOR_THEME_LIGHT`: pinned first in their group.
 const DEFAULT_DARK: &str = "Dark 2026";
 const DEFAULT_LIGHT: &str = "Light 2026";
@@ -63,6 +64,7 @@ pub enum SettingTarget {
 enum ThemeType {
     Color,
     FileIcon,
+    ProductIcon,
 }
 
 /// What the open picker remembers: the theme to restore, the settings id of each item by handle (`""` for the
@@ -85,6 +87,55 @@ impl Workbench {
             workbench.show_file_icon_theme_picker(window, cx);
             Outcome::done()
         });
+        self.commands.register("workbench.action.selectProductIconTheme", |workbench, _, window, cx| {
+            workbench.show_product_icon_theme_picker(window, cx);
+            Outcome::done()
+        });
+    }
+
+    /// The `selectProductIconTheme` action: Default first, then the installed product icon themes.
+    fn show_product_icon_theme_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (entries, picks) = product_icon_theme_entries(&crate::product_icons::product_icon_themes(&self.extensions));
+        let current = self.product_icons.as_ref().map_or(crate::product_icons::DEFAULT_PRODUCT_ICON_THEME, |theme| theme.settings_id.as_str()).to_string();
+        let mut input = QuickInput::new(0, Kind::QuickPick);
+        input.placeholder = Some("Select Product Icon Theme (Up/Down Keys to Preview)".into());
+        input.match_on_description = true;
+        input.set_items(entries);
+        if let Some(handle) = picks.iter().position(|id| *id == current) {
+            input.set_active_items(&[handle as i64]);
+        }
+        let picker = ColorThemePicker { theme_type: ThemeType::ProductIcon, current, picks, completed: false, preview: None };
+        let id = self.quick_inputs.add(input, Owner::ColorThemes(picker));
+        self.show_quick_input(id, window, cx);
+        self.flush_quick_input_events(window, cx);
+    }
+
+    /// `WorkbenchThemeService.setProductIconTheme`: `Default` is the codicons; a theme that fails to load leaves the
+    /// current one.
+    fn set_product_icon_theme(&mut self, settings_id: &str, target: SettingTarget, cx: &mut Context<Self>) {
+        let current = self.product_icons.as_ref().map_or(crate::product_icons::DEFAULT_PRODUCT_ICON_THEME, |theme| theme.settings_id.as_str());
+        if current != settings_id {
+            self.product_icons = match settings_id {
+                crate::product_icons::DEFAULT_PRODUCT_ICON_THEME => None,
+                id => match crate::product_icons::ProductIconTheme::load(&self.extensions, id) {
+                    Ok(theme) => Some(theme),
+                    Err(error) => {
+                        eprintln!("loading product icon theme {id}: {error:#}");
+                        return;
+                    }
+                },
+            };
+            cx.notify();
+        }
+        if target == SettingTarget::Preview {
+            return;
+        }
+        let mut settings = self.settings.lock().unwrap();
+        match settings.update_value_derived(PRODUCT_ICON_THEME_SETTING, Some(&json!(settings_id))) {
+            Ok(change) if !change.is_empty() => self.host.send_configuration_change(&settings, &change),
+            Ok(_) => {}
+            Err(error) => eprintln!("writing {PRODUCT_ICON_THEME_SETTING}: {error}"),
+        }
     }
 
     /// The `selectIconTheme` action: None first, then the installed file icon themes, the current one focused.
@@ -108,6 +159,7 @@ impl Workbench {
         match theme_type {
             ThemeType::Color => self.set_color_theme(settings_id, target, cx),
             ThemeType::FileIcon => self.set_file_icon_theme(settings_id, target, cx),
+            ThemeType::ProductIcon => self.set_product_icon_theme(settings_id, target, cx),
         }
     }
 
@@ -201,7 +253,10 @@ impl Workbench {
                 let theme = &picker.picks[handle as usize];
                 let extension = match theme_type {
                     ThemeType::Color => self.color_themes.iter().find(|entry| entry.settings_id == *theme).map(|entry| entry.extension_id.clone()),
-                    ThemeType::FileIcon => self.extensions.iter().find(|extension| extension.description["contributes"]["iconThemes"].as_array().is_some_and(|themes| themes.iter().any(|entry| entry["id"] == *theme))).map(|extension| extension.id.clone()),
+                    ThemeType::FileIcon | ThemeType::ProductIcon => {
+                        let point = if theme_type == ThemeType::FileIcon { "iconThemes" } else { "productIconThemes" };
+                        self.extensions.iter().find(|extension| extension.description["contributes"][point].as_array().is_some_and(|themes| themes.iter().any(|entry| entry["id"] == *theme))).map(|extension| extension.id.clone())
+                    }
                 };
                 let Some(extension) = extension else { return };
                 // `extensionsWorkbenchService.openSearch` runs as the command the Extensions view registers.
@@ -340,6 +395,27 @@ fn file_icon_theme_entries(themes: &[crate::file_icons::FileIconThemeEntry]) -> 
             ..Item::default()
         }));
         picks.push(theme.id.clone());
+    }
+    (entries, picks)
+}
+
+/// The `selectProductIconTheme` picks: the "product icon themes" separator, Default, then the themes by label.
+fn product_icon_theme_entries(themes: &[crate::product_icons::ProductIconThemeEntry]) -> (Vec<Entry>, Vec<String>) {
+    let default = Item { handle: 0, label: "Default".into(), pickable: true, ..Item::default() };
+    let mut entries = vec![Entry::Separator(Some("product icon themes".into())), Entry::Item(default)];
+    let mut picks = vec![crate::product_icons::DEFAULT_PRODUCT_ICON_THEME.to_string()];
+    let mut sorted: Vec<_> = themes.iter().collect();
+    sorted.sort_by(|a, b| locale_compare(&a.label, &b.label));
+    for theme in sorted {
+        entries.push(Entry::Item(Item {
+            handle: picks.len() as i64,
+            label: theme.label.clone(),
+            description: theme.description.clone().or_else(|| (theme.label != theme.settings_id).then(|| theme.settings_id.clone())),
+            pickable: true,
+            buttons: vec![Button { handle: 0, codicon: Some("gear".into()), tooltip: Some("Manage Extension".into()), ..Button::default() }],
+            ..Item::default()
+        }));
+        picks.push(theme.settings_id.clone());
     }
     (entries, picks)
 }

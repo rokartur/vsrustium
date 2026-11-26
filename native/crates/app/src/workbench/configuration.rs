@@ -91,6 +91,10 @@ impl Workbench {
                 Err(error) => eprintln!("loading the file icon theme: {error:#}"),
             }
         }
+        // `restoreProductIconTheme`
+        if affects(change, "workbench.productIconTheme") {
+            self.product_icons = crate::product_icons::settings_product_icons(&self.extensions, &self.settings.lock().unwrap());
+        }
         if ["workbench.colorCustomizations", "editor.tokenColorCustomizations", "editor.semanticTokenColorCustomizations"].iter().any(|key| affects(change, key)) {
             self.customize_theme();
             self.semantic_tokens_settings_changed(cx);

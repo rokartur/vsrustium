@@ -32,6 +32,7 @@ mod extension_recommendations;
 mod extensions_model;
 mod file_actions;
 mod file_icons;
+mod product_icons;
 mod filters;
 mod history;
 mod fuzzy_scorer;
@@ -503,6 +504,7 @@ pub(crate) fn open_window(request: WindowRequest, cx: &mut App) -> anyhow::Resul
                 workbench.command_icons = menus::command_icons(&extensions);
                 workbench.status_entries = main_thread_status_bar::static_entries(&extensions);
                 workbench.file_icons = file_icons;
+                workbench.product_icons = product_icons::settings_product_icons(&extensions, &settings.lock().unwrap());
                 workbench.color_themes = color_themes;
                 workbench.set_tree_views(&extensions);
                 workbench.host.set_running_extensions(&extensions);
