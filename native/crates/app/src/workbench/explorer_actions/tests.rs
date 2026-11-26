@@ -233,8 +233,8 @@ fn the_context_menu_selects_the_row_and_runs_its_items_with_keys_and_clicks(cx: 
     let empty = point(px(120.), px(300.));
     cx.simulate_mouse_down(empty, MouseButton::Right, Modifiers::none());
     cx.run_until_parked();
-    // As the reference's (port/fixtures/ui-pair/m12/workspace-folders.json), less the commands the port lacks.
-    let below = ["New File...", "New Folder...", "Reveal in Finder", "---", "Add Folder to Workspace...", "Open Folder Settings", "Remove Folder from Workspace", "---", "Open Timeline", "---", "(Paste)", "---", "Copy Path", "Copy Relative Path"];
+    // As the reference's (port/fixtures/ui-pair/m12/workspace-folders.json), less the commands the port lacks; imageCarousel.contribution.ts adds Open in Images Preview (navigation, order 25).
+    let below = ["New File...", "New Folder...", "Reveal in Finder", "Open in Images Preview", "---", "Add Folder to Workspace...", "Open Folder Settings", "Remove Folder from Workspace", "---", "Open Timeline", "---", "(Paste)", "---", "Copy Path", "Copy Relative Path"];
     assert_eq!(menu_titles(&workbench, cx), below);
     cx.simulate_keystrokes("escape");
     assert!(workbench.update_in(cx, |workbench, window, _| workbench.context_menu.is_none() && workbench.explorer.focus.is_focused(window)));

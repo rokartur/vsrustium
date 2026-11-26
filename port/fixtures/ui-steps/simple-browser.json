@@ -1,0 +1,4 @@
+[
+	{ "wait": 7000 },
+	{ "shot": "simple-browser" }
+]

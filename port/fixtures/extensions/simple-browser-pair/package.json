@@ -1,0 +1,8 @@
+{
+	"name": "simple-browser-pair",
+	"publisher": "port",
+	"version": "0.0.1",
+	"main": "./extension.js",
+	"activationEvents": ["onStartupFinished"],
+	"engines": { "vscode": "^1.90.0" }
+}

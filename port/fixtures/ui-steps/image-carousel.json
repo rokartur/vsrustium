@@ -1,0 +1,7 @@
+[
+	{ "wait": 7000 },
+	{ "shot": "carousel" },
+	{ "key": "right" },
+	{ "wait": 1500 },
+	{ "shot": "carousel-next" }
+]

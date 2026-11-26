@@ -326,6 +326,7 @@ impl Workbench {
         let scheme = scheme.to_owned();
         let provider = &self.webview_panels.custom_editors.providers[view_type];
         let (text, extension, retain) = (provider.text, provider.extension.clone(), provider.options["retainContextWhenHidden"] == true);
+        let find_enabled = provider.options["enableFindWidget"] == true;
         let title = path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
         let custom = Some(CustomEditor { resource: resource.clone(), resolved: false });
         let shows = |panel: &WebviewPanel| panel.view_type == view_type && panel.custom.as_ref().is_some_and(|custom| custom.resource == *resource);
@@ -346,10 +347,16 @@ impl Workbench {
                 handle
             }
         };
+        if let Some(panel) = self.webview_panel_mut(&handle) {
+            panel.find_enabled = find_enabled;
+        }
         if text {
             self.try_show_text_document(resource, options, window, cx)?;
         } else {
-            let index = self.webview_editor_index(&handle).expect("the panel's editor is open");
+            // shortcut: one panel per resource, so a custom editor open in another group shows there; upstream opens a
+            // second editor of the resource in the active group.
+            let (group, index) = self.webview_editor_group(&handle).expect("the panel's editor is open");
+            self.activate_group(group);
             self.editors.activate(index);
             if options["pinned"] == true {
                 self.editors.pin(index);

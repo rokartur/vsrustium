@@ -382,6 +382,8 @@ impl Workbench {
     /// `explorer.autoRevealExclude` matches it, and with `true` scrolls a row out of view to the middle (`reveal(item, 0.5)`).
     pub(super) fn reveal_active_file(&mut self) {
         let Some(path) = self.editors.active().map(|editor| editor.document().path.clone()) else { return };
+        // `EditorResourceAccessor.getOriginalUri`: a custom editor or media preview reveals its file.
+        let path = self.webview_resource(&path).unwrap_or(path);
         let auto_reveal = self.setting("explorer.autoReveal");
         if auto_reveal == json!(false) || self.auto_reveal_excluded(&path) {
             return;

@@ -648,6 +648,7 @@ fn tab_dto(group: u32, editor: &OpenEditor, active: bool, sync: &HostSync) -> Va
         tab["label"] = json!(webview.label);
         tab["input"] = match &webview.custom_resource {
             Some(uri) => json!({ "kind": 6, "viewType": webview.view_type, "uri": uri }),
+            None if !webview.view_type.starts_with("mainThreadWebview-") => json!({ "kind": 0 }),
             None => json!({ "kind": 7, "viewType": webview.view_type }),
         };
         tab["editorId"] = json!(webview.view_type);

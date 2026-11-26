@@ -320,6 +320,10 @@ impl Workbench {
         if let Some(icon) = self.webview_icon(&document.path) {
             return Some(div().flex().items_center().h(px(line_height)).child(gpui::img(icon.to_path_buf()).size(px(16.))));
         }
+        // A custom editor or media preview tab is labeled by its resource (CustomEditorInput), with the file's icon.
+        if let Some(resource) = self.webview_resource(&document.path) {
+            return self.file_icons.as_ref()?.file_icon(&resource, self.languages.language_of(&resource, ""), self.theme.kind, 13., line_height, foreground);
+        }
         self.file_icons.as_ref()?.file_icon(&document.path, &document.language_id, self.theme.kind, 13., line_height, foreground)
     }
 
@@ -637,6 +641,7 @@ impl Workbench {
                     .children(self.breakpoint_widget_element(editor, metrics.content_left(), window, cx))
                     .children(self.exception_widget_element(editor, metrics.content_left(), cx))
             })
+            .children(self.editor_inset_elements(editor, metrics.content_left()))
     }
 
     /// wordHighlighter.ts: `onDidBlurEditorWidget` stops the highlights once no code editor has the focus,

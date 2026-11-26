@@ -382,8 +382,13 @@ impl Workbench {
     /// `activateGroup` and the focus of its editor (`IEditorGroup.focus`).
     pub(crate) fn focus_group(&mut self, group: u32, window: &mut Window, cx: &mut Context<Self>) {
         self.activate_group(group);
-        window.focus(&self.editor_focus, cx);
         self.editors_changed(cx);
+        // editorGroupView.ts `focus` focuses the active pane: a webview editor focuses its webview.
+        let webview = self.editors.active().and_then(|editor| self.webview_panels.panels.iter().find(|panel| panel.shows(editor)));
+        match webview.map(|panel| panel.handle.clone()) {
+            Some(handle) => self.focus_webview_panel(&handle, window, cx),
+            None => window.focus(&self.editor_focus, cx),
+        }
     }
 
     /// Makes `group` the active one: its code editor state comes back from `views`, the leaving one goes there.
@@ -441,7 +446,7 @@ impl Workbench {
     }
 
     /// `findGroup({ direction }, active)`.
-    fn group_in_direction(&self, direction: Direction) -> Option<u32> {
+    pub(super) fn group_in_direction(&self, direction: Direction) -> Option<u32> {
         self.editor_groups.grid.as_ref()?.neighbor(self.editors.id, direction)
     }
 

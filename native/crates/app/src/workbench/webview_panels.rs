@@ -23,6 +23,9 @@ use crate::webview::{self, Webview, WebviewEvent};
 
 /// `Schemas.webviewPanel`.
 pub const WEBVIEW_PANEL_SCHEME: &str = "webview-panel";
+/// editorService.ts `ACTIVE_GROUP` and `SIDE_GROUP`, as a `viewColumn` of the show options.
+const ACTIVE_GROUP: i64 = -1;
+const SIDE_GROUP: i64 = -2;
 
 #[derive(Default)]
 pub struct WebviewPanels {
@@ -31,8 +34,9 @@ pub struct WebviewPanels {
     events: Option<UnboundedSender<WebviewEvent>>,
     /// `$registerSerializer` view types.
     serializers: HashSet<String>,
-    /// The handle whose view state the host heard last as active (`onDidChangeActiveWebviewEditor`).
-    active: Option<String>,
+    pub(super) insets: Vec<super::editor_insets::EditorInset>,
+    /// The view states the host heard last.
+    view_states: Value,
 }
 
 pub(super) struct WebviewPanel {
@@ -57,9 +61,18 @@ pub(super) struct WebviewPanel {
     icon: Option<(PathBuf, PathBuf)>,
     /// Created when the editor first shows; released while hidden unless `retainContextWhenHidden`.
     pub(super) webview: Option<Webview>,
+    /// overlayWebview.ts `_firstLoadPendingMessages`: the messages posted before the first webview was made.
+    first_load_messages: Option<Vec<Value>>,
     pub(super) custom: Option<CustomEditor>,
     /// A built-in media preview's page, which talks to the workbench instead of an extension.
     pub(super) media: Option<MediaPreview>,
+    /// `enableFindWidget` of the panel options, and the find widget's state (`webviewFindWidgetVisible`,
+    /// `webviewFindWidgetFocused`).
+    pub(super) find_enabled: bool,
+    /// The files of an Images Preview (contrib/imageCarousel), whose page talks to the workbench.
+    pub(super) carousel: Option<Vec<PathBuf>>,
+    find_visible: bool,
+    find_focused: bool,
 }
 
 impl Workbench {
@@ -75,20 +88,13 @@ impl Workbench {
                 self.webview_panels.serializers.remove(&handle);
             }
             "$disposeWebview" => {
-                if let Some(index) = self.webview_editor_index(&handle) {
-                    self.editors.close(index);
+                if let Some((group, index)) = self.webview_editor_group(&handle) {
+                    self.with_group(group, |workbench| workbench.editors.close(index));
+                    self.close_group_if_empty(group);
                     self.editors_changed(cx);
                 }
             }
-            "$reveal" => {
-                if let Some(index) = self.webview_editor_index(&handle) {
-                    self.editors.activate(index);
-                    self.editors_changed(cx);
-                    if arg(1)["preserveFocus"] != true {
-                        self.focus_webview_panel(&handle, window, cx);
-                    }
-                }
-            }
+            "$reveal" => self.reveal_webview_panel(&handle, &arg(1), window, cx),
             "$setTitle" => {
                 if let Some(panel) = self.webview_panel_mut(&handle) {
                     panel.title = arg(1).as_str().unwrap_or_default().to_owned();
@@ -123,10 +129,15 @@ impl Workbench {
                 }
             }
             "$postMessage" => {
-                let Some(webview) = self.webview_panel_mut(&handle).and_then(|panel| panel.webview.as_mut()) else { return Outcome::Ready(Ok(json!(false))) };
+                let Some(panel) = self.webview_panel_mut(&handle) else { return Outcome::Ready(Ok(json!(false))) };
                 // deserializeWebviewMessage runs in the host page's bridge, where the ArrayBuffers are made.
                 let buffers: Vec<Value> = args.iter().skip(2).map(|buffer| buffer[VSBUFFER_KEY].clone()).collect();
-                webview.send("message", json!({ "message": arg(1), "buffers": buffers }));
+                let message = json!({ "message": arg(1), "buffers": buffers });
+                match (&mut panel.webview, &mut panel.first_load_messages) {
+                    (Some(webview), _) => webview.send("message", message),
+                    (None, Some(pending)) => pending.push(message),
+                    (None, None) => return Outcome::Ready(Ok(json!(false))),
+                }
                 return Outcome::Ready(Ok(json!(true)));
             }
             _ => {}
@@ -134,21 +145,80 @@ impl Workbench {
         Outcome::done()
     }
 
-    /// `$createWebviewPanel`: the panel opens pinned in the active group and, unless `preserveFocus`, takes the focus.
-    // shortcut: one editor group, so every view column opens in it; ViewColumn.Beside needs the editor groups row.
+    /// `$createWebviewPanel`: the panel opens pinned in the group of its view column and, unless `preserveFocus`,
+    /// takes the focus.
     fn create_webview_panel(&mut self, args: &[Value], window: &mut Window, cx: &mut Context<Self>) {
         let (extension, handle, view_type, init, show) = (&args[0], args[1].as_str().unwrap_or_default(), args[2].as_str().unwrap_or_default(), &args[3], &args[4]);
         let path = PathBuf::from(format!("webview-panel/webview-undefined-{handle}"));
         let document = TextDocument::from_text(WEBVIEW_PANEL_SCHEME, &path, "", "utf8".into(), None, &self.languages, &self.settings.lock().unwrap());
         let title = init["title"].as_str().unwrap_or_default().to_owned();
         let retain = init["panelOptions"]["retainContextWhenHidden"] == true;
-        let panel = WebviewPanel::new(handle.to_owned(), WEBVIEW_PANEL_SCHEME.into(), path, view_type, title, extension, init["webviewOptions"].clone(), retain, None);
+        let mut panel = WebviewPanel::new(handle.to_owned(), WEBVIEW_PANEL_SCHEME.into(), path, view_type, title, extension, init["webviewOptions"].clone(), retain, None);
+        panel.find_enabled = init["panelOptions"]["enableFindWidget"] == true;
         self.webview_panels.panels.push(panel);
-        self.editors.open(document, false);
+        let column = &show["viewColumn"];
+        let target = self.webview_target_group(column).unwrap_or(self.editors.id);
+        let preserve_focus = show["preserveFocus"] == true;
+        self.open_in_group(target, preserve_focus, |workbench| workbench.editors.open(document, false));
         self.editors_changed(cx);
-        if show["preserveFocus"] != true {
+        if !preserve_focus {
             self.focus_webview_panel(handle, window, cx);
         }
+    }
+
+    /// webviewWorkbenchService.ts `revealWebview`: the panel shows in the group of the view column, moving there
+    /// from its group (webviewPanel.contribution.ts `onEditorOpening`); without a column it shows where it is.
+    fn reveal_webview_panel(&mut self, handle: &str, show: &Value, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((group, index)) = self.webview_editor_group(handle) else { return };
+        let target = self.webview_target_group(&show["viewColumn"]).unwrap_or(group);
+        let preserve_focus = show["preserveFocus"] == true;
+        self.open_in_group(target, preserve_focus, |workbench| {
+            if target == group {
+                workbench.editors.activate(index);
+                return;
+            }
+            let editor = workbench.with_group(group, |workbench| workbench.editors.take_editor(index));
+            workbench.editors.insert_moved(editor);
+        });
+        if target != group {
+            self.close_group_if_empty(group);
+        }
+        self.editors_changed(cx);
+        if !preserve_focus {
+            self.focus_webview_panel(handle, window, cx);
+        }
+    }
+
+    /// Runs `open` in `group`, which becomes the active group unless `stay`: a preserveFocus open of a webview
+    /// leaves the active group (webviewWorkbenchService.ts `EditorActivation.RESTORE`).
+    fn open_in_group(&mut self, group: u32, stay: bool, open: impl FnOnce(&mut Self)) {
+        match stay {
+            true => self.with_group(group, open),
+            false => {
+                self.activate_group(group);
+                open(self);
+            }
+        }
+    }
+
+    /// mainThreadWebviewPanels.ts `getTargetGroupFromShowOptions`, resolved to a group: none for the active group
+    /// (no column, ACTIVE, or one empty group); SIDE is the group beside the active one, made when missing; a column
+    /// past the last group adds one group after the last.
+    fn webview_target_group(&mut self, column: &Value) -> Option<u32> {
+        let column = column.as_i64().filter(|column| *column != ACTIVE_GROUP)?;
+        let groups = self.groups_in_grid_order();
+        if groups.len() == 1 && self.editors.editors.is_empty() {
+            return None;
+        }
+        let direction = self.side_by_side_direction();
+        if column == SIDE_GROUP {
+            return Some(self.group_in_direction(direction).unwrap_or_else(|| self.add_group_beside(direction)));
+        }
+        let index = usize::try_from(column).ok()?;
+        Some(match groups.get(index) {
+            Some(&group) => group,
+            None => self.with_group(*groups.last().expect("one group at least"), |workbench| workbench.add_group_beside(direction)),
+        })
     }
 
     /// The editor is a webview panel's or a custom editor's, which draws a webview in place of the text.
@@ -182,7 +252,7 @@ impl Workbench {
     pub(super) fn update_webview_panels(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.update_webview_views();
         let visible_views = self.visible_webview_views();
-        let active = self.editors.active().map(|editor| (editor.document().scheme.clone(), editor.document().path.clone()));
+        let visible_editors = self.visible_editor_documents();
         // Native views draw over GPUI's layer: a quick input or menu on top of the webview would be hidden.
         // shortcut: the webview hides under these overlays, where Electron draws them over its iframe.
         let covered = self.quick_inputs.current().is_some() || self.keybindings_editor.open || self.context_menu.is_some();
@@ -191,7 +261,7 @@ impl Workbench {
         for panel in &mut self.webview_panels.panels {
             let shown = match panel.scheme == WEBVIEW_VIEW_SCHEME {
                 true => visible_views.contains(&panel.path),
-                false => active.as_ref().is_some_and(|(scheme, path)| panel.scheme == *scheme && panel.path == *path),
+                false => visible_editors.iter().any(|(scheme, path)| panel.scheme == *scheme && panel.path == *path),
             };
             if shown && panel.webview.is_none() {
                 created.push(panel.handle.clone());
@@ -207,9 +277,36 @@ impl Workbench {
         for handle in created {
             self.create_webview(&handle, window, cx);
         }
+        self.update_editor_insets(window, cx);
+    }
+
+    /// The scheme and path of each group's active editor.
+    fn visible_editor_documents(&self) -> Vec<(String, PathBuf)> {
+        let groups = self.groups_in_grid_order().into_iter();
+        let active = groups.filter_map(|group| {
+            let (editors, active) = self.editors.group_tabs(group);
+            active.map(|index| (editors[index].document().scheme.clone(), editors[index].document().path.clone()))
+        });
+        active.collect()
+    }
+
+    /// webviewEditor.ts `setEditorVisible(false)` and `clearInput`: a panel's webview without `retainContextWhenHidden` is released
+    /// as its editor hides, not at the next frame, so a reveal right after loads it again.
+    fn release_hidden_webview_panels(&mut self) {
+        let visible_editors = self.visible_editor_documents();
+        for panel in &mut self.webview_panels.panels {
+            let shown = visible_editors.iter().any(|(scheme, path)| panel.scheme == *scheme && panel.path == *path);
+            if panel.scheme != WEBVIEW_VIEW_SCHEME && !shown && !panel.retain_context_when_hidden {
+                panel.webview = None;
+            }
+        }
     }
 
     fn create_webview(&mut self, handle: &str, window: &mut Window, cx: &mut Context<Self>) {
+        // gpui tests run off the main thread, where AppKit views cannot be made.
+        if cfg!(test) {
+            return;
+        }
         let events = self.webview_events(window, cx);
         let pre = self.app_root.join("src/vs/workbench/contrib/webview/browser/pre");
         let styles = self.webview_styles();
@@ -218,6 +315,10 @@ impl Workbench {
         webview.send("styles", styles);
         panel.webview = Some(webview);
         panel.update_content();
+        let webview = panel.webview.as_mut().expect("just made");
+        for message in panel.first_load_messages.take().unwrap_or_default() {
+            webview.send("message", message);
+        }
     }
 
     /// The channel the webviews' host pages post on, read on the window's executor.
@@ -243,6 +344,9 @@ impl Workbench {
         if event.id.starts_with("extension-editor-") {
             return self.handle_extension_editor_event(&event.id, &event.channel, &event.data, window, cx);
         }
+        if event.id.starts_with(super::editor_insets::INSET_ID_PREFIX) {
+            return self.handle_editor_inset_event(event);
+        }
         let Some(panel) = self.webview_panel_mut(&event.id) else { return };
         let data = event.data;
         match event.channel.as_str() {
@@ -250,6 +354,10 @@ impl Workbench {
                 if let Some(webview) = &mut panel.webview {
                     webview.did_become_ready();
                 }
+            }
+            "onmessage" if panel.carousel.is_some() => {
+                let message = data["message"].as_str().and_then(|text| serde_json::from_str(text).ok()).unwrap_or_default();
+                self.handle_carousel_message(&event.id, &message, cx);
             }
             "onmessage" if panel.media.is_some() => {
                 let message = data["message"].as_str().and_then(|text| serde_json::from_str(text).ok()).unwrap_or_default();
@@ -284,6 +392,19 @@ impl Workbench {
             "did-keydown" => {
                 if let Some(keystroke) = keystroke(&data) {
                     window.dispatch_keystroke(keystroke, cx);
+                }
+            }
+            "find-focus" => {
+                panel.find_focused = data["focused"] == true;
+                if panel.find_focused {
+                    window.blur(cx);
+                }
+            }
+            "find-hidden" => {
+                (panel.find_visible, panel.find_focused) = (false, false);
+                // `WebviewFindWidget.hide` gives the focus back to the webview.
+                if let Some(webview) = &mut panel.webview {
+                    webview.focus();
                 }
             }
             "fatal-error" => eprintln!("[webview] {}: {}", event.id, data["message"].as_str().unwrap_or_default()),
@@ -324,13 +445,15 @@ impl Workbench {
     }
 
     /// Run from `editors_changed`: panels whose editor closed are disposed, tabs get titles, and the host hears
-    /// which panel became active (`updateWebviewViewStates`).
+    /// where each panel shows (`updateWebviewViewStates`).
     pub(super) fn sync_webview_panels(&mut self) {
         let editors = &self.editors;
+        let group_editors = editors.editors.iter().chain(editors.other_groups.iter().flat_map(|group| &group.editors));
         let (open, closed): (Vec<WebviewPanel>, Vec<WebviewPanel>) =
-            std::mem::take(&mut self.webview_panels.panels).into_iter().partition(|panel| panel.scheme == WEBVIEW_VIEW_SCHEME || editors.editors.iter().any(|editor| panel.shows(editor)));
+            std::mem::take(&mut self.webview_panels.panels).into_iter().partition(|panel| panel.scheme == WEBVIEW_VIEW_SCHEME || group_editors.clone().any(|editor| panel.shows(editor)));
         self.webview_panels.panels = open;
-        for panel in closed.into_iter().filter(|panel| panel.media.is_none()) {
+        self.release_hidden_webview_panels();
+        for panel in closed.into_iter().filter(|panel| panel.is_extensions()) {
             self.host.send("ExtHostWebviewPanels", "$onDidDisposeWebviewPanel", vec![json!(panel.handle)]);
             // The custom document's last editor closed: its model reference is released.
             let Some(custom) = panel.custom.filter(|custom| custom.resolved && panel.scheme == WEBVIEW_PANEL_SCHEME) else { continue };
@@ -352,34 +475,108 @@ impl Workbench {
                         custom_resource: Some(custom.resource.clone()),
                         custom_text: panel.scheme != WEBVIEW_PANEL_SCHEME,
                     },
+                    // An editor that is no webview input upstream: TabInputKind.UnknownInput.
+                    None if panel.carousel.is_some() => WebviewTab { label: panel.title.clone(), view_type: panel.view_type.clone(), custom_resource: None, custom_text: false },
                     None => WebviewTab { label: panel.title.clone(), view_type: format!("mainThreadWebview-{}", panel.view_type), custom_resource: None, custom_text: false },
                 };
                 (panel.path.clone(), tab)
             })
             .collect();
-        let active_editor = self.editors.active();
-        let active = self.webview_panels.panels.iter().find(|panel| active_editor.is_some_and(|editor| panel.shows(editor))).map(|panel| panel.handle.clone());
-        if active == self.webview_panels.active {
+        let states = Value::Object(self.webview_panel_view_states());
+        if states.as_object().is_some_and(serde_json::Map::is_empty) || states == self.webview_panels.view_states {
             return;
         }
-        self.webview_panels.active = active.clone();
-        let editor_panels = self.webview_panels.panels.iter().filter(|panel| panel.scheme != WEBVIEW_VIEW_SCHEME && panel.media.is_none());
-        if editor_panels.clone().next().is_none() {
-            return;
+        self.webview_panels.view_states = states.clone();
+        self.host.send("ExtHostWebviewPanels", "$onDidChangeWebviewPanelViewStates", vec![states]);
+    }
+
+    /// Each editor panel's state: visible as its group's active editor, active as the active editor, and its
+    /// group's index in grid order (`editorGroupToColumn`, which the host turns into a ViewColumn).
+    fn webview_panel_view_states(&self) -> serde_json::Map<String, Value> {
+        let active_group = self.editors.id;
+        let mut states = serde_json::Map::new();
+        for (column, group) in self.groups_in_grid_order().into_iter().enumerate() {
+            let (editors, active_index) = self.editors.group_tabs(group);
+            for (index, editor) in editors.iter().enumerate() {
+                let Some(panel) = self.webview_panels.panels.iter().find(|panel| panel.scheme != WEBVIEW_VIEW_SCHEME && panel.is_extensions() && panel.shows(editor)) else { continue };
+                let visible = active_index == Some(index);
+                states.insert(panel.handle.clone(), json!({ "visible": visible, "active": visible && group == active_group, "position": column }));
+            }
         }
-        let states: serde_json::Map<String, Value> = editor_panels
-            .map(|panel| {
-                let shown = active.as_ref() == Some(&panel.handle);
-                (panel.handle.clone(), json!({ "visible": shown, "active": shown, "position": 1 }))
-            })
-            .collect();
-        self.host.send("ExtHostWebviewPanels", "$onDidChangeWebviewPanelViewStates", vec![Value::Object(states)]);
+        states
+    }
+
+    /// webviewCommands.ts (find in the active webview editor) and the Developer commands of webview.contribution.ts.
+    pub(super) fn register_webview_actions(&mut self) {
+        self.commands.register("editor.action.webvieweditor.showFind", |workbench, _, _, _| {
+            let styles = workbench.webview_styles();
+            let icon = |name: &str| std::fs::read_to_string(crate::codicons::svg_path(&workbench.app_root, name)).unwrap_or_default();
+            let icons = [icon("arrow-up"), icon("arrow-down"), icon("close")];
+            if let Some(panel) = workbench.active_webview_panel_mut().filter(|panel| panel.find_enabled) {
+                panel.find_visible = true;
+                if let Some(webview) = &panel.webview {
+                    webview.show_find(&styles, icons);
+                }
+            }
+            Outcome::done()
+        });
+        self.commands.register("editor.action.webvieweditor.hideFind", |workbench, _, _, _| {
+            if let Some(webview) = workbench.active_webview_panel_mut().and_then(|panel| panel.webview.as_ref()) {
+                webview.hide_find();
+            }
+            Outcome::done()
+        });
+        for (command, previous) in [("editor.action.webvieweditor.findNext", false), ("editor.action.webvieweditor.findPrevious", true)] {
+            self.commands.register(command, move |workbench, _, _, _| {
+                if let Some(webview) = workbench.active_webview_panel_mut().and_then(|panel| panel.webview.as_ref()) {
+                    webview.find(previous);
+                }
+                Outcome::done()
+            });
+        }
+        self.commands.register("workbench.action.webview.openDeveloperTools", |workbench, _, _, _| {
+            for webview in workbench.webview_panels.panels.iter().filter_map(|panel| panel.webview.as_ref()) {
+                webview.open_inspector();
+            }
+            Outcome::done()
+        });
+        self.commands.register("workbench.action.webview.reloadWebviewAction", |workbench, _, _, _| {
+            for panel in &mut workbench.webview_panels.panels {
+                panel.update_content();
+            }
+            Outcome::done()
+        });
+    }
+
+    /// The panel of the active editor when it is a webview editor (`WebviewEditor`), not a built-in media preview.
+    fn active_webview_panel_mut(&mut self) -> Option<&mut WebviewPanel> {
+        let active = self.editors.active()?;
+        let index = self.webview_panels.panels.iter().position(|panel| panel.is_extensions() && panel.shows(active))?;
+        Some(&mut self.webview_panels.panels[index])
+    }
+
+    /// The context keys of the active webview editor: its editor id and its find widget's state.
+    pub(super) fn webview_editor_context(&self, context: &mut std::collections::HashMap<String, Value>) {
+        let Some(active) = self.editors.active() else { return };
+        let Some(panel) = self.webview_panels.panels.iter().find(|panel| panel.is_extensions() && panel.shows(active)) else { return };
+        context.insert("activeEditor".into(), json!("WebviewEditor"));
+        // webviewWorkbenchService.ts `getWebviewId` and customEditors.ts `getActiveCustomEditorId`, per group.
+        context.insert("activeWebviewPanelId".into(), json!(panel.view_type));
+        if panel.custom.is_some() {
+            context.insert("activeCustomEditorId".into(), json!(panel.view_type));
+        }
+        context.insert("webviewFindWidgetEnabled".into(), json!(panel.find_enabled));
+        context.insert("webviewFindWidgetVisible".into(), json!(panel.find_visible));
+        context.insert("webviewFindWidgetFocused".into(), json!(panel.find_focused));
     }
 
     /// Sends the theme to every webview, as `WebviewThemeDataProvider.onThemeDataChanged` does.
     pub(super) fn restyle_webviews(&mut self) {
         let styles = self.webview_styles();
         for webview in self.webview_panels.panels.iter_mut().filter_map(|panel| panel.webview.as_mut()) {
+            webview.send("styles", styles.clone());
+        }
+        for webview in self.webview_panels.insets.iter_mut().filter_map(|inset| inset.webview.as_mut()) {
             webview.send("styles", styles.clone());
         }
     }
@@ -389,7 +586,7 @@ impl Workbench {
         self.webview_panel(path).map(|panel| panel.title.clone())
     }
 
-    fn webview_styles(&self) -> Value {
+    pub(super) fn webview_styles(&self) -> Value {
         let label = self.color_themes.iter().find(|entry| entry.settings_id == self.theme.settings_id).map_or(self.theme.settings_id.clone(), |entry| entry.label.clone());
         webview::theme_data(&self.theme, &label, &self.setting("editor"), self.setting("accessibility.underlineLinks") == true)
     }
@@ -403,6 +600,16 @@ impl Workbench {
         })
     }
 
+    /// The file a custom editor or media preview panel shows.
+    pub(super) fn webview_resource(&self, path: &Path) -> Option<PathBuf> {
+        let panel = self.webview_panel(path)?;
+        if let Some(media) = &panel.media {
+            return Some(media.path.clone());
+        }
+        let resource = &panel.custom.as_ref()?.resource;
+        (resource["scheme"] == "file").then(|| PathBuf::from(resource["path"].as_str().unwrap_or_default()))
+    }
+
     fn webview_panel(&self, path: &Path) -> Option<&WebviewPanel> {
         self.webview_panels.panels.iter().find(|panel| panel.path == path)
     }
@@ -411,9 +618,10 @@ impl Workbench {
         self.webview_panels.panels.iter_mut().find(|panel| panel.handle == handle)
     }
 
-    pub(super) fn webview_editor_index(&self, handle: &str) -> Option<usize> {
+    /// The group and index of the editor that shows the panel, in any group of the grid.
+    pub(super) fn webview_editor_group(&self, handle: &str) -> Option<(u32, usize)> {
         let panel = self.webview_panels.panels.iter().find(|panel| panel.handle == handle)?;
-        self.editors.editors.iter().position(|editor| panel.shows(editor))
+        self.groups_in_grid_order().into_iter().find_map(|group| self.editors.group_tabs(group).0.iter().position(|editor| panel.shows(editor)).map(|index| (group, index)))
     }
 }
 
@@ -435,12 +643,22 @@ impl WebviewPanel {
             state: Value::Null,
             icon: None,
             webview: None,
+            first_load_messages: Some(Vec::new()),
             custom,
             media: None,
+            find_enabled: false,
+            carousel: None,
+            find_visible: false,
+            find_focused: false,
         }
     }
 
-    fn shows(&self, editor: &OpenEditor) -> bool {
+    /// A panel an extension made, not a built-in page (media preview, Images Preview).
+    fn is_extensions(&self) -> bool {
+        self.media.is_none() && self.carousel.is_none()
+    }
+
+    pub(super) fn shows(&self, editor: &OpenEditor) -> bool {
         editor.document().is(&self.scheme, &self.path)
     }
 
@@ -464,7 +682,7 @@ impl WebviewPanel {
 }
 
 /// The `file` paths of `localResourceRoots`; the extension host already put in the defaults.
-fn local_resource_roots(options: &Value) -> Vec<PathBuf> {
+pub(super) fn local_resource_roots(options: &Value) -> Vec<PathBuf> {
     let roots = options["localResourceRoots"].as_array().into_iter().flatten();
     roots.filter(|root| root["scheme"] == "file").filter_map(|root| root["path"].as_str()).map(PathBuf::from).collect()
 }
@@ -537,6 +755,42 @@ mod tests {
         assert_eq!(parsed(event("ArrowUp", "ArrowUp", false, false)), Some("up".into()));
         assert_eq!(parsed(event("Escape", "Escape", false, false)), Some("escape".into()));
         assert_eq!(parsed(event("Shift", "ShiftLeft", false, true)), None);
+    }
+
+    #[gpui::test]
+    fn panels_open_in_their_view_column_and_move_on_reveal(cx: &mut gpui::TestAppContext) {
+        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let themes = exthost::scan::scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
+        let theme = crate::theme::load_theme(&[themes], "Dark Modern").unwrap();
+        let dir = std::env::temp_dir().join(format!("code-gpui-webview-columns-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.md"), "# a").unwrap();
+        let (workbench, cx) = cx.add_window_view(|_, cx| Workbench::new(theme, app_root.clone(), None, crate::languages::Languages::new(&[]), crate::default_settings(), crate::host_sync::HostSync::new(std::sync::mpsc::channel().0), cx));
+        let file = json!({ "scheme": "file", "path": dir.join("a.md").to_string_lossy() });
+        workbench.update_in(cx, |workbench, window, cx| workbench.api_open_editor(&[file], window, cx)).unwrap();
+        let request = |method: &str, args: Vec<Value>, cx: &mut gpui::VisualTestContext| workbench.update_in(cx, |workbench, window, cx| drop(workbench.handle_webview_request(method, &args, window, cx)));
+        let states = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| (workbench.groups_in_grid_order().len(), Value::Object(workbench.webview_panel_view_states())));
+        let init = json!({ "title": "Preview", "panelOptions": {}, "webviewOptions": {} });
+
+        // Beside with preserveFocus adds a group and leaves the source's group active.
+        request("$createWebviewPanel", vec![json!({ "id": "ext" }), json!("h1"), json!("preview"), init, json!({ "viewColumn": SIDE_GROUP, "preserveFocus": true })], cx);
+        assert_eq!(states(cx), (2, json!({ "h1": { "visible": true, "active": false, "position": 1 } })));
+
+        // A message posted before the first webview is made waits for it.
+        let posted = workbench.update_in(cx, |workbench, window, cx| workbench.handle_webview_request("$postMessage", &[json!("h1"), json!("{}")], window, cx));
+        assert!(matches!(posted, Outcome::Ready(Ok(Value::Bool(true)))));
+        assert_eq!(workbench.read_with(cx, |workbench, _| workbench.webview_panels.panels[0].first_load_messages.as_ref().map(Vec::len)), Some(1));
+
+        // A reveal in column One moves the panel there; its emptied group closes.
+        request("$reveal", vec![json!("h1"), json!({ "viewColumn": 0, "preserveFocus": true })], cx);
+        assert_eq!(states(cx), (1, json!({ "h1": { "visible": true, "active": true, "position": 0 } })));
+        let mut context = std::collections::HashMap::new();
+        workbench.read_with(cx, |workbench, _| workbench.webview_editor_context(&mut context));
+        assert_eq!(context.get("activeWebviewPanelId"), Some(&json!("preview")));
+
+        request("$disposeWebview", vec![json!("h1")], cx);
+        assert!(workbench.read_with(cx, |workbench, _| workbench.webview_panels.panels.is_empty()));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
